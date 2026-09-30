@@ -2,60 +2,26 @@ package store
 
 import (
 	"database/sql"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
-
-// venvPython is the worktree's interpreter, named before a test changes its working directory.
-func venvPython(t *testing.T) string {
-	t.Helper()
-	return filepath.Join(repositoryRoot(t), ".venv", "bin", "python")
-}
-
-// pythonAt runs script with python from dir, in this test process's environment as it stands.
-// Its answer is recorded (pythonOracle).
-func pythonAt(t *testing.T, python, dir, script string, args ...string) string {
-	t.Helper()
-	parts := append([]string{"at", python, dir, script}, oracleEnvironmentNow()...)
-	raw := pythonOracle(t, append(parts, args...), func() ([]byte, error) {
-		command := exec.Command(python, append([]string{"-c", script}, args...)...)
-		command.Dir = dir
-		command.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
-		raw, err := command.CombinedOutput()
-		if err != nil {
-			return nil, fmt.Errorf("python: %v\n%s", err, raw)
-		}
-		return raw, nil
-	})
-	return strings.TrimSpace(string(raw))
-}
 
 // PathlibSpelling is str(Path(value)) as the interpreter answers it: empty and "." components
 // collapse, ".." stays, exactly two leading slashes remain a root of their own (POSIX leaves "//"
 // implementation-defined) and three or more fold to one.
 func TestPathlibSpellingIsStrOfPath(t *testing.T) {
 	inputs := []string{"//var/x", "///var/x", "////x", "//", "/", "", ".", "./a", "a//b/./c", "//a/../b", "//./x", "x/", "//x/", "/a//b/"}
-	raw, err := json.Marshal(inputs)
-	if err != nil {
-		t.Fatal(err)
+	var got [][2]string
+	for _, input := range inputs {
+		got = append(got, [2]string{input, PathlibSpelling(input)})
 	}
-	var want []string
-	if err = json.Unmarshal([]byte(pythonOutput(t, "import json, sys; from pathlib import Path; print(json.dumps([str(Path(p)) for p in json.loads(sys.argv[1])]))", string(raw))), &want); err != nil {
-		t.Fatal(err)
-	}
-	for i, input := range inputs {
-		if got := PathlibSpelling(input); got != want[i] {
-			t.Errorf("PathlibSpelling(%q) = %q, Python's str(Path()) is %q", input, got, want[i])
-		}
-	}
+	checkJSON(t, "str(Path())", got)
 }
 
 // A state directory spelled with two leading slashes, by --state, the environment override or
@@ -66,38 +32,26 @@ func TestAStateDirectoryKeepsTwoLeadingSlashesAsPythonDoes(t *testing.T) {
 	t.Setenv("CODEX_SESSION_RELAY_STATE", "")
 	t.Setenv("XDG_STATE_HOME", "/"+filepath.Join(root, "xdg"))
 	state := "/" + filepath.Join(root, "st")
-	var want struct{ Flag, Env, Discovered, Detail string }
-	script := `import json, os, sys
-from codex_session_relay.store import discover_state_dir, resolve_state_dir
-flag = resolve_state_dir(sys.argv[1]).path
-discovered = discover_state_dir(None)
-os.environ["CODEX_SESSION_RELAY_STATE"] = sys.argv[1]
-print(json.dumps({"Flag": str(flag), "Env": str(resolve_state_dir(None).path), "Discovered": str(discovered.path), "Detail": discovered.detail}))`
-	if err := json.Unmarshal([]byte(pythonStoreValue(t, script, state)), &want); err != nil {
-		t.Fatal(err)
-	}
-	if want.Flag != state || want.Discovered != "/"+filepath.Join(root, "xdg", "codex-session-relay", "default") {
-		t.Fatalf("Python named %+v", want)
-	}
 	flag, err := ResolveStateDir(state, "")
-	if err != nil || flag.Path != want.Flag {
-		t.Errorf("--state %s: %q, Python %q: %v", state, flag.Path, want.Flag, err)
+	if err != nil || flag.Path != state {
+		t.Errorf("--state %s: %q: %v", state, flag.Path, err)
 	}
 	discovered, err := DiscoverStateDir("")
-	if err != nil || discovered.Path != want.Discovered || discovered.Detail != want.Detail {
-		t.Errorf("XDG_STATE_HOME %s: %q (%s), Python %q (%s): %v", os.Getenv("XDG_STATE_HOME"), discovered.Path, discovered.Detail, want.Discovered, want.Detail, err)
+	if err != nil || discovered.Path != "/"+filepath.Join(root, "xdg", "codex-session-relay", "default") {
+		t.Errorf("XDG_STATE_HOME %s: %q (%s): %v", os.Getenv("XDG_STATE_HOME"), discovered.Path, discovered.Detail, err)
 	}
 	t.Setenv("CODEX_SESSION_RELAY_STATE", state)
 	env, err := ResolveStateDir("", "")
-	if err != nil || env.Path != want.Env {
-		t.Errorf("CODEX_SESSION_RELAY_STATE=%s: %q, Python %q: %v", state, env.Path, want.Env, err)
+	if err != nil {
+		t.Fatalf("CODEX_SESSION_RELAY_STATE=%s: %v", state, err)
 	}
+	named := struct{ Flag, Env, Discovered, Detail string }{flag.Path, env.Path, discovered.Path, discovered.Detail}
+	checkJSON(t, "resolve_state_dir and discover_state_dir", named, golden.Substitute(root, "<ROOT>"))
 }
 
 // A relative --state, override or XDG_STATE_HOME is read against the working directory as the
 // kernel names it (os.getcwd), not as $PWD spells it through a symbolic link.
 func TestARelativeStateDirectoryIsReadAgainstThePhysicalWorkingDirectory(t *testing.T) {
-	python := venvPython(t)
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -114,77 +68,56 @@ func TestARelativeStateDirectoryIsReadAgainstThePhysicalWorkingDirectory(t *test
 	t.Setenv("HOME", filepath.Join(root, "home"))
 	t.Setenv("CODEX_SESSION_RELAY_STATE", "")
 	t.Setenv("XDG_STATE_HOME", "xdg")
-	var want struct{ Flag, Env, Discovered string }
-	script := `import json, os, sys
-from codex_session_relay.store import discover_state_dir, resolve_state_dir
-flag = resolve_state_dir("st").path
-discovered = discover_state_dir(None).path
-os.environ["CODEX_SESSION_RELAY_STATE"] = "st"
-print(json.dumps({"Flag": str(flag), "Env": str(resolve_state_dir(None).path), "Discovered": str(discovered)}))`
-	if err = json.Unmarshal([]byte(pythonAt(t, python, alias, script)), &want); err != nil {
-		t.Fatal(err)
-	}
-	if want.Flag != filepath.Join(physical, "st") {
-		t.Fatalf("Python named %+v", want)
-	}
 	flag, err := ResolveStateDir("st", "")
-	if err != nil || flag.Path != want.Flag {
-		t.Errorf("--state st: %q, Python %q: %v", flag.Path, want.Flag, err)
+	if err != nil || flag.Path != filepath.Join(physical, "st") {
+		t.Errorf("--state st: %q: %v", flag.Path, err)
 	}
 	discovered, err := DiscoverStateDir("")
-	if err != nil || discovered.Path != want.Discovered {
-		t.Errorf("XDG_STATE_HOME=xdg: %q, Python %q: %v", discovered.Path, want.Discovered, err)
+	if err != nil {
+		t.Fatalf("XDG_STATE_HOME=xdg: %v", err)
 	}
 	t.Setenv("CODEX_SESSION_RELAY_STATE", "st")
 	env, err := ResolveStateDir("", "")
-	if err != nil || env.Path != want.Env {
-		t.Errorf("CODEX_SESSION_RELAY_STATE=st: %q, Python %q: %v", env.Path, want.Env, err)
+	if err != nil {
+		t.Fatalf("CODEX_SESSION_RELAY_STATE=st: %v", err)
 	}
+	named := struct{ Flag, Env, Discovered string }{flag.Path, env.Path, discovered.Path}
+	checkJSON(t, "resolve_state_dir and discover_state_dir", named, golden.Substitute(root, "<ROOT>"))
 }
 
 // ~ is Path.home(): HOME when it is set at all, an empty HOME being the root and a HOME's
 // trailing slashes dropped, and the passwd entry when HOME is unset. The default state directory
 // is under that home, never under the working directory.
 func TestHomeIsPathlibsHome(t *testing.T) {
-	python := venvPython(t)
 	root := t.TempDir()
 	t.Chdir(root)
 	t.Setenv("CODEX_SESSION_RELAY_STATE", "")
 	t.Setenv("XDG_STATE_HOME", "")
-	script := `import json
-from pathlib import Path
-from codex_session_relay.store import discover_state_dir
-print(json.dumps([str(Path("~").expanduser()), str(Path("~/x").expanduser()), str(Path("~//x/").expanduser())]))`
-	discover := `import json
-from codex_session_relay.store import discover_state_dir
-selected = discover_state_dir(None)
-print(json.dumps([str(selected.path), selected.detail]))`
+	expansions := func(t *testing.T) [][2]string {
+		t.Helper()
+		var out [][2]string
+		for _, spelled := range []string{"~", "~/x", "~//x/"} {
+			got, err := expandUser(spelled)
+			if err != nil {
+				t.Fatalf("%s: %v", spelled, err)
+			}
+			out = append(out, [2]string{spelled, pathlibSpelling(got)})
+		}
+		return out
+	}
 	for _, c := range []struct{ name, home string }{
 		{"empty", ""}, {"root", "/"}, {"trailing-slashes", filepath.Join(root, "user-home") + "//"}, {"two-leading-slashes", "/" + filepath.Join(root, "user-home")},
 	} {
 		home := c.home
 		t.Run("HOME="+c.name, func(t *testing.T) {
 			t.Setenv("HOME", home)
-			var want []string
-			if err := json.Unmarshal([]byte(pythonAt(t, python, root, script)), &want); err != nil {
-				t.Fatal(err)
-			}
-			for i, spelled := range []string{"~", "~/x", "~//x/"} {
-				got, err := expandUser(spelled)
-				if err == nil {
-					got = pathlibSpelling(got)
-				}
-				if err != nil || got != want[i] {
-					t.Errorf("%s: %q, Python %q: %v", spelled, got, want[i], err)
-				}
-			}
-			if err := json.Unmarshal([]byte(pythonAt(t, python, root, discover)), &want); err != nil {
-				t.Fatal(err)
-			}
+			got := expansions(t)
+			checkJSON(t, "expanduser", got, golden.Substitute(root, "<ROOT>"))
 			selected, err := DiscoverStateDir("")
-			if err != nil || selected.Path != want[0] || selected.Detail != want[1] {
-				t.Errorf("default state %q (%s), Python %q (%s): %v", selected.Path, selected.Detail, want[0], want[1], err)
+			if err != nil {
+				t.Fatal(err)
 			}
+			checkJSON(t, "default state", [2]string{selected.Path, selected.Detail}, golden.Substitute(root, "<ROOT>"))
 		})
 	}
 	// Unset, HOME is the passwd entry. Only ~ is compared: the default state directory under the
@@ -194,42 +127,24 @@ print(json.dumps([str(selected.path), selected.detail]))`
 		if err := os.Unsetenv("HOME"); err != nil {
 			t.Fatal(err)
 		}
-		var want []string
-		if err := json.Unmarshal([]byte(pythonAt(t, python, root, script)), &want); err != nil {
-			t.Fatal(err)
-		}
-		for i, spelled := range []string{"~", "~/x", "~//x/"} {
-			got, err := expandUser(spelled)
-			if err == nil {
-				got = pathlibSpelling(got)
-			}
-			if err != nil || got != want[i] || got == root || got == "/x" {
-				t.Errorf("%s: %q, Python %q: %v", spelled, got, want[i], err)
+		got := expansions(t)
+		for _, expanded := range got {
+			if expanded[1] == root || expanded[1] == "/x" {
+				t.Errorf("%s is %q with HOME unset", expanded[0], expanded[1])
 			}
 		}
+		checkJSON(t, "expanduser", got, passwdHomeSubstitution())
 	})
 }
 
 // PathlibChild and PathlibParent are str(Path(parent) / name) and str(Path(path).parent).
 func TestPathlibChildAndParentAreJoinAndParentOfPath(t *testing.T) {
 	inputs := []string{"//var/x", "///var/x", "//", "/", ".", "", "a", "..", "a/b/", "//x", "/x", "/a/../b"}
-	raw, err := json.Marshal(inputs)
-	if err != nil {
-		t.Fatal(err)
+	var got [][3]string
+	for _, input := range inputs {
+		got = append(got, [3]string{input, PathlibChild(input, "n"), PathlibParent(input)})
 	}
-	var want [][2]string
-	script := "import json, sys; from pathlib import Path; print(json.dumps([[str(Path(p) / 'n'), str(Path(p).parent)] for p in json.loads(sys.argv[1])]))"
-	if err = json.Unmarshal([]byte(pythonOutput(t, script, string(raw))), &want); err != nil {
-		t.Fatal(err)
-	}
-	for i, input := range inputs {
-		if got := PathlibChild(input, "n"); got != want[i][0] {
-			t.Errorf("PathlibChild(%q, n) = %q, Python %q", input, got, want[i][0])
-		}
-		if got := PathlibParent(input); got != want[i][1] {
-			t.Errorf("PathlibParent(%q) = %q, Python %q", input, got, want[i][1])
-		}
-	}
+	checkJSON(t, "Path(p) / n, Path(p).parent", got)
 }
 
 // Every store discovery names besides the canonical one, the legacy store it keeps, the store it
@@ -239,7 +154,6 @@ func TestPathlibChildAndParentAreJoinAndParentOfPath(t *testing.T) {
 // through the absolute directory the selection names, so a store recording this socket is adopted
 // and one recording none is named absolute, in both runtimes.
 func TestDiscoverySpellsEveryStoreItNamesAsPythonDoes(t *testing.T) {
-	python := venvPython(t)
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -247,12 +161,6 @@ func TestDiscoverySpellsEveryStoreItNamesAsPythonDoes(t *testing.T) {
 	t.Chdir(root)
 	t.Setenv("HOME", filepath.Join(root, "home"))
 	t.Setenv("CODEX_SESSION_RELAY_STATE", "")
-	discover := `import json, sys
-from codex_session_relay.store import discover_state_dir, legacy_socket_scope
-if sys.argv[1] == "legacy":
-    print(legacy_socket_scope(sys.argv[2]))
-else:
-    print(json.dumps(discover_state_dir(sys.argv[2]).to_record()))`
 	// A store discovery asks about: a schema_meta table, recording socket when one is given. (Python's
 	// sqlite3 wrote these until todo 44; the file is the same to either reader.)
 	store := func(dir, socket string) {
@@ -267,25 +175,19 @@ else:
 		}
 		must(t, errors.Join(err, db.Close()))
 	}
-	compare := func(t *testing.T, socket string) StateSelection {
+	type discovered struct {
+		Path, DBPath, Detail, SocketScope string
+		Ambiguous, Unidentified           []string
+	}
+	// compare checks what discovery names for socket, as the key says, with the golden.
+	compare := func(t *testing.T, key, socket string) StateSelection {
 		t.Helper()
-		var want struct {
-			Path, DBPath, Detail, SocketScope string
-			Ambiguous, Unidentified           []string
-		}
-		if err := json.Unmarshal([]byte(pythonAt(t, python, root, discover, "discover", socket)), &want); err != nil {
-			t.Fatal(err)
-		}
 		got, err := DiscoverStateDir(socket)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got.Path != want.Path || got.DBPath() != want.DBPath || got.Detail != want.Detail || got.SocketScope != want.SocketScope ||
-			strings.Join(got.Ambiguous, "|") != strings.Join(want.Ambiguous, "|") || strings.Join(got.Unidentified, "|") != strings.Join(want.Unidentified, "|") {
-			t.Errorf("socket %s:\n Go     %q %q %q ambiguous %q unidentified %q\n Python %q %q %q ambiguous %q unidentified %q",
-				socket, got.Path, got.Detail, got.SocketScope, got.Ambiguous, got.Unidentified,
-				want.Path, want.Detail, want.SocketScope, want.Ambiguous, want.Unidentified)
-		}
+		named := discovered{got.Path, got.DBPath(), got.Detail, got.SocketScope, append([]string{}, got.Ambiguous...), append([]string{}, got.Unidentified...)}
+		checkJSON(t, key, named, golden.Substitute(root, "<ROOT>"))
 		return got
 	}
 	for _, base := range []struct{ name, xdg, home, stores string }{
@@ -299,22 +201,23 @@ else:
 			}
 			stores := filepath.Join(root, base.stores, "codex-session-relay")
 			// A relative socket's old key names a store that records no socket: discovery keeps it.
-			legacy := pythonAt(t, python, root, discover, "legacy", "a/../b.sock")
+			// The key is legacy_socket_scope's (the golden), the digest of the socket as spelled.
+			legacy := wantText(t, "legacy_socket_scope", func() string { return socketHash(pathlibSpelling("a/../b.sock")) })
 			store(filepath.Join(stores, legacy), "")
-			if kept := compare(t, "a/../b.sock"); kept.SocketScope != legacy {
+			if kept := compare(t, "kept", "a/../b.sock"); kept.SocketScope != legacy {
 				t.Fatalf("the legacy store was not kept: %+v", kept)
 			}
 			// Another socket reports that store as one recording no socket.
-			if other := compare(t, "/x/other.sock"); len(other.Unidentified) != 1 {
+			if other := compare(t, "unidentified", "/x/other.sock"); len(other.Unidentified) != 1 {
 				t.Fatalf("the store recording no socket was not reported: %+v", other)
 			}
 			// A store recording the socket is adopted, and two of them are ambiguous.
 			store(filepath.Join(stores, "adopt-a"), "/x/third.sock")
-			if adopted := compare(t, "/x/third.sock"); adopted.SocketScope != "adopt-a" {
+			if adopted := compare(t, "adopted", "/x/third.sock"); adopted.SocketScope != "adopt-a" {
 				t.Fatalf("the store recording this socket was not adopted: %+v", adopted)
 			}
 			store(filepath.Join(stores, "adopt-b"), "/x/third.sock")
-			if ambiguous := compare(t, "/x/third.sock"); len(ambiguous.Ambiguous) != 2 {
+			if ambiguous := compare(t, "ambiguous", "/x/third.sock"); len(ambiguous.Ambiguous) != 2 {
 				t.Fatalf("two stores recording this socket were not ambiguous: %+v", ambiguous)
 			}
 			// A link to a store directory is a directory to Path.is_dir(), which follows it.
@@ -323,7 +226,7 @@ else:
 			if err := os.Symlink(outside, filepath.Join(stores, "linked")); err != nil {
 				t.Fatal(err)
 			}
-			if linked := compare(t, "/x/fourth.sock"); len(linked.Unidentified) != 2 {
+			if linked := compare(t, "linked", "/x/fourth.sock"); len(linked.Unidentified) != 2 {
 				t.Fatalf("the linked store recording no socket was not reported: %+v", linked)
 			}
 		})
@@ -335,7 +238,6 @@ else:
 // Path(p).expanduser().absolute(). A relative path is read against the working directory the
 // kernel names, not $PWD's spelling through a link, and under the root it gains no second slash.
 func TestAbsolutePathsAreThePathsPythonNames(t *testing.T) {
-	python := venvPython(t)
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -347,26 +249,12 @@ func TestAbsolutePathsAreThePathsPythonNames(t *testing.T) {
 		t.Fatal(err)
 	}
 	inputs := []string{"relay.sqlite3", "st/relay.sqlite3", "a/../st//relay.sqlite3", "./st/", "//x/relay.sqlite3", "/x/./relay.sqlite3", "//relay.sqlite3", "/relay.sqlite3", "."}
-	raw, err := json.Marshal(inputs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	script := `import json, os, sys
-from pathlib import Path
-from codex_session_relay.assignment import store_directory
-class Held:
-    def __init__(self, path):
-        self.path = Path(path)
-print(json.dumps([[os.path.abspath(p), os.path.dirname(os.path.abspath(p)), store_directory(Held(p)), str(Path(p).absolute()), str(Path(p).expanduser().absolute())] for p in json.loads(sys.argv[1])]))`
 	for _, c := range []struct{ name, cwd string }{{"alias-wd", filepath.Join(root, "alias", "wd")}, {"root", "/"}} {
 		cwd := c.cwd
 		t.Run("cwd "+c.name, func(t *testing.T) {
 			t.Chdir(cwd)
-			var want [][5]string
-			if err := json.Unmarshal([]byte(pythonAt(t, python, cwd, script, string(raw))), &want); err != nil {
-				t.Fatal(err)
-			}
-			for i, input := range inputs {
+			var named [][6]string
+			for _, input := range inputs {
 				abspath, err := Abspath(input)
 				if err != nil {
 					t.Fatal(err)
@@ -383,11 +271,9 @@ print(json.dumps([[os.path.abspath(p), os.path.dirname(os.path.abspath(p)), stor
 				if err != nil {
 					t.Fatal(err)
 				}
-				got := [5]string{abspath, Dirname(abspath), directory, absolute, scope}
-				if got != want[i] {
-					t.Errorf("%q: Abspath, Dirname, StoreDirectory, Absolute, ScopeRoot\n go     %q\n python %q", input, got, want[i])
-				}
+				named = append(named, [6]string{input, abspath, Dirname(abspath), directory, absolute, scope})
 			}
+			checkJSON(t, "input, Abspath, Dirname, StoreDirectory, Absolute, ScopeRoot", named, golden.Substitute(root, "<ROOT>"))
 		})
 	}
 }
@@ -397,7 +283,6 @@ print(json.dumps([[os.path.abspath(p), os.path.dirname(os.path.abspath(p)), stor
 // spelled and the walk goes on, a link loop is kept where it is met, a ".." after a link applies
 // to the link's target, and a relative path is read against the physical working directory.
 func TestRealpathIsPathResolve(t *testing.T) {
-	python := venvPython(t)
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -431,20 +316,15 @@ func TestRealpathIsPathResolve(t *testing.T) {
 		root + "/file/x/y", root + "/real/wd/back/alias/wd", "st", ".", "", "..", "/", "//x/./y//", "/" + strings.Repeat("n", 300) + "/x",
 		root + "/alias/../file",
 	}
-	raw, err := json.Marshal(inputs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var want []string
-	if err = json.Unmarshal([]byte(pythonAt(t, python, wd, "import json, os, sys; print(json.dumps([os.path.realpath(p) for p in json.loads(sys.argv[1])]))", string(raw))), &want); err != nil {
-		t.Fatal(err)
-	}
-	for i, input := range inputs {
+	var resolved [][2]string
+	for _, input := range inputs {
 		got, err := Realpath(input)
-		if err != nil || got != want[i] {
-			t.Errorf("Realpath(%q) = %q, %v; Python's os.path.realpath is %q", input, got, err, want[i])
+		if err != nil {
+			t.Errorf("Realpath(%q): %v", input, err)
 		}
+		resolved = append(resolved, [2]string{input, got})
 	}
+	checkJSON(t, "os.path.realpath", resolved, golden.Substitute(root, "<ROOT>"))
 	if _, err = Realpath("a\x00b"); err == nil {
 		t.Error("Realpath accepted an embedded NUL, which Python's lstat refuses with ValueError")
 	}

@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"path/filepath"
 	"testing"
 )
@@ -23,32 +22,16 @@ func TestEncodeUTF8IsStrEncode(t *testing.T) {
 		{"\U0001f600\xff", `"\U0001f600" + os.fsdecode(b"\xff")`},
 		{"plain", `"plain"`},
 	}
-	script := `import json, os, sys
-out = []
-for text in [`
+	var refusals [][2]any
 	for _, c := range cases {
-		script += c.python + ", "
-	}
-	script += `]:
-    try:
-        text.encode("utf-8")
-        out.append(None)
-    except UnicodeEncodeError as error:
-        out.append(str(error))
-print(json.dumps(out))`
-	var want []*string
-	if err := json.Unmarshal([]byte(pythonAt(t, venvPython(t), t.TempDir(), script)), &want); err != nil {
-		t.Fatal(err)
-	}
-	for i, c := range cases {
-		err := EncodeUTF8(c.goText)
-		switch {
-		case want[i] == nil && err != nil:
-			t.Errorf("EncodeUTF8(%q) = %v, Python encodes it", c.goText, err)
-		case want[i] != nil && (err == nil || err.Error() != *want[i]):
-			t.Errorf("EncodeUTF8(%q) = %v, Python raises %s", c.goText, err, *want[i])
+		var refusal any
+		if err := EncodeUTF8(c.goText); err != nil {
+			refusal = err.Error()
 		}
+		refusals = append(refusals, [2]any{c.python, refusal})
 	}
+	// str.encode("utf-8") of each text, as CPython answered it (the golden).
+	checkJSON(t, "str, UnicodeEncodeError", refusals)
 }
 
 // A store connection binds a string argument as Python's sqlite3 binds a str: one it cannot encode

@@ -1,132 +1,21 @@
 package store
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"reflect"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
 
-// pythonParityScript runs named Python test cases to completion, keeps each case's store, and
-// dumps every row of the named tables as Python's sqlite3 reads them. "declarations" is the
-// declarations module writing a reporting session and a turn declaration into a fresh store;
-// "fault_second_occurrence" is FaultLedger.record twice, 60 s apart, so the fault's first_seen_at
-// and last_seen_at differ.
-const pythonParityScript = `
-import importlib, json, os, sqlite3, sys, unittest
-tables = json.loads(sys.argv[1])
-def dump(path):
-    db = sqlite3.connect(path)
-    db.row_factory = sqlite3.Row
-    rows = {}
-    for table in tables:
-        found = [dict(row) for row in db.execute("SELECT * FROM " + table + " ORDER BY rowid")]
-        if found:
-            rows[table] = found
-    db.close()
-    return rows
-out = []
-for case_id in sys.argv[2:]:
-    if case_id == "declarations":
-        from codex_session_relay import declarations
-        from codex_session_relay.store import Store
-        import tempfile
-        path = os.path.join(tempfile.mkdtemp(prefix="decl-"), "relay.sqlite3")
-        Store(path).close()
-        claim = declarations.record_claim(path, assignment="asg-1", session_id="sess-1",
-            dispatch_request_id="dispatch-1", marker_root="/markers", workspace="/work",
-            issue_key="CRW-1", at="2026-09-25T00:00:00Z")
-        with declarations.Held(path) as held:
-            declared = held.settled(held.disposition(assignment="asg-1", session_id="sess-1",
-                turn_id="turn-1", outcome="done", declared_at="2026-09-25T00:00:01Z",
-                at="2026-09-25T00:00:02Z"))
-        assert claim["recorded"] and declared["recorded"], (claim, declared)
-        out.append({"case": case_id, "db": path, "rows": dump(path)})
-        continue
-    if case_id == "fault_second_occurrence":
-        from tests import test_faults
-        class Second(test_faults.LedgerCase):
-            def runTest(self): pass
-        case = Second(); case.setUp()
-        case.ledger.record(test_faults.omission("k1"))
-        case.clock.advance(60)
-        case.ledger.record(test_faults.omission("k2"))
-        path = str(case.store.path)
-        case.store.close()
-        out.append({"case": case_id, "db": path, "rows": dump(path)})
-        continue
-    module, cls, method = case_id.rsplit(".", 2)
-    case = getattr(importlib.import_module(module), cls)(method)
-    case.setUp()
-    getattr(case, method)()
-    path = str(case.store.path)
-    case.store.close()
-    out.append({"case": case_id, "db": path, "rows": dump(path)})
-print(json.dumps(out))
-`
-
-type parityStore struct {
-	Case string                       `json:"case"`
-	DB   string                       `json:"db"`
-	Raw  map[string][]json.RawMessage `json:"rows"`
-	// Store is every row of the case's store (dumpStore), which Go reads back in a store of its
-	// own (restoreStore).
-	Store storeRows `json:"store"`
-}
-
-// pythonParityStores runs the Python cases in an isolated HOME and TMPDIR under t.TempDir. What
-// they wrote is recorded (pythonOracle).
-func pythonParityStores(t *testing.T, tables []string, cases ...string) []parityStore {
-	t.Helper()
-	root := t.TempDir()
-	t.Setenv("HOME", root)
-	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
-	t.Setenv("TMPDIR", root)
-	encoded, err := json.Marshal(tables)
-	if err != nil {
-		t.Fatal(err)
-	}
-	package_ := filepath.Join(repositoryRoot(t), "packages/codex-session-relay")
-	isolated := isolatedEnv(t)
-	args := append([]string{string(encoded)}, cases...)
-	var stores []parityStore
-	parts := append([]string{"parity-stores", package_, pythonParityScript}, keptEnvironment()...)
-	jsonAnswer(t, append(parts, args...), &stores, func() (any, error) {
-		raw, err := runPythonStore(t, isolated, package_, pythonParityScript, args...)
-		if err != nil {
-			return nil, err
-		}
-		out := strings.TrimSpace(string(raw))
-		var stores []parityStore
-		if err := json.Unmarshal([]byte(out[strings.LastIndex(out, "\n")+1:]), &stores); err != nil {
-			return nil, fmt.Errorf("python output %q: %v", out, err)
-		}
-		for i := range stores {
-			if stores[i].Store, err = dumpStore(stores[i].DB); err != nil {
-				return nil, err
-			}
-			// Each case's store is a temporary directory of its own; the rows stand for it.
-			stores[i].DB = ""
-		}
-		return stores, nil
-	}, sameUpToNoise)
-	return stores
-}
-
-// pyRow is one row as Python read it: json.Number for numbers, string, or nil for NULL.
+// pyRow is one row of a store fixture as Python's sqlite3 read it: json.Number for a number, a
+// string, or nil for NULL.
 type pyRow map[string]any
-
-func decodeRow(raw json.RawMessage) (pyRow, error) {
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	var row pyRow
-	return row, decoder.Decode(&row)
-}
 
 func (r pyRow) text(column string) string { value, _ := r[column].(string); return value }
 
@@ -150,9 +39,9 @@ func pick[T any](rows []T, err error, match func(T) bool) (any, error) {
 
 func one[T any](row T, err error) (any, error) { return row, err }
 
-// parityReaders read the row a Python row names back through the typed Go query for its table.
+// parityReaders read the row a fixture row names back through the typed Go query for its table.
 // A table the product reads with its own SQL elsewhere has no typed store query and no entry:
-// its rows are dumped (the recorded Python run names every table) but not compared here.
+// its rows are in the fixture (the Python run dumped every table) but not read back here.
 var parityReaders = map[string]func(context.Context, *Store, pyRow) (any, error){
 	"linkage_conflicts": func(c context.Context, s *Store, r pyRow) (any, error) {
 		rows, err := s.LinkageConflicts(c, r.text("scope_kind"), r.text("scope_key"))
@@ -211,60 +100,6 @@ var parityReaders = map[string]func(context.Context, *Store, pyRow) (any, error)
 	},
 }
 
-// sameValue compares one Go field with the value Python's sqlite3 read from the same cell.
-func sameValue(goValue reflect.Value, python any) (bool, string) {
-	switch v := goValue.Interface().(type) {
-	case string:
-		text, ok := python.(string)
-		return ok && text == v, fmt.Sprintf("%q", v)
-	case int64:
-		number, ok := python.(json.Number)
-		parsed, err := number.Int64()
-		return ok && err == nil && parsed == v, fmt.Sprint(v)
-	case float64:
-		number, ok := python.(json.Number)
-		parsed, err := number.Float64()
-		return ok && err == nil && parsed == v, fmt.Sprint(v)
-	case sql.NullString:
-		if !v.Valid {
-			return python == nil, "NULL"
-		}
-		return sameValue(reflect.ValueOf(v.String), python)
-	case sql.NullInt64:
-		if !v.Valid {
-			return python == nil, "NULL"
-		}
-		return sameValue(reflect.ValueOf(v.Int64), python)
-	case sql.NullFloat64:
-		if !v.Valid {
-			return python == nil, "NULL"
-		}
-		return sameValue(reflect.ValueOf(v.Float64), python)
-	}
-	return false, fmt.Sprintf("unsupported %T", goValue.Interface())
-}
-
-// compareRow checks every column of the Go row against Python's, in DDL order.
-func compareRow(t *testing.T, where string, goRow any, python pyRow) {
-	t.Helper()
-	value := reflect.ValueOf(goRow)
-	columns := reflect.TypeOf(goRow)
-	if len(python) != value.NumField() {
-		t.Errorf("%s: Python row has %d columns, Go row %d", where, len(python), value.NumField())
-	}
-	for i := 0; i < value.NumField(); i++ {
-		column := snake(columns.Field(i).Name)
-		pythonValue, present := python[column]
-		if !present {
-			t.Errorf("%s: Go field %s has no Python column %s", where, columns.Field(i).Name, column)
-			continue
-		}
-		if same, rendered := sameValue(value.Field(i), pythonValue); !same {
-			t.Errorf("%s.%s: Go read %s, Python %v", where, column, rendered, pythonValue)
-		}
-	}
-}
-
 // snake is the DDL column name of a generated row field.
 func snake(field string) string {
 	for _, pair := range [][2]string{{"ID", "Id"}, {"SHA", "Sha"}, {"TS", "Ts"}, {"PR", "Pr"}, {"CWD", "Cwd"}, {"CXC", "Cxc"}} {
@@ -283,94 +118,142 @@ func snake(field string) string {
 	return out.String()
 }
 
-// runParity opens a Go store holding each Python-written store's rows and reads every row of the
-// group's tables that have a typed query back through it; each of those must have been read at
-// least once.
-func runParity(t *testing.T, tables []string, cases ...string) []parityStore {
+// parityStore is the store one Python test case left, run to completion by the retired Python
+// implementation: every row but schema_meta, as the fixture parity-<group>.json.gz holds it.
+type parityStore struct {
+	Case  string    `json:"case"`
+	Store storeRows `json:"store"`
+}
+
+// dumpedRow is one row of a table in a store fixture, as Python's sqlite3 read it: json.Number
+// for a number, a string, nil for NULL. The rowid a table without an INTEGER PRIMARY KEY was
+// dumped with is not a column.
+func dumpedRow(t *testing.T, table tableRows, cells []cell) pyRow {
 	t.Helper()
-	stores := pythonParityStores(t, tables, cases...)
+	row := pyRow{}
+	for i, column := range table.Columns {
+		if column == "rowid" {
+			continue
+		}
+		value, err := cells[i].value()
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch v := value.(type) {
+		case int64:
+			row[column] = json.Number(strconv.FormatInt(v, 10))
+		case float64:
+			row[column] = json.Number(strconv.FormatFloat(v, 'g', -1, 64))
+		default:
+			row[column] = v
+		}
+	}
+	return row
+}
+
+// rowFields is a typed Go row as its columns, in the DDL's names: text, an integer, a real, or
+// nil for NULL.
+func rowFields(t *testing.T, goRow any) map[string]any {
+	t.Helper()
+	value, columns := reflect.ValueOf(goRow), reflect.TypeOf(goRow)
+	out := map[string]any{}
+	for i := 0; i < value.NumField(); i++ {
+		column := snake(columns.Field(i).Name)
+		switch v := value.Field(i).Interface().(type) {
+		case string, int64, float64:
+			out[column] = v
+		case sql.NullString:
+			out[column] = nullable(v.Valid, v.String)
+		case sql.NullInt64:
+			out[column] = nullable(v.Valid, v.Int64)
+		case sql.NullFloat64:
+			out[column] = nullable(v.Valid, v.Float64)
+		default:
+			t.Fatalf("%s: unsupported %T", column, v)
+		}
+	}
+	return out
+}
+
+func nullable[T any](valid bool, value T) any {
+	if !valid {
+		return nil
+	}
+	return value
+}
+
+// runParity opens a Go store holding each store the group's Python cases wrote (the fixture) and
+// reads every row of the group's tables that have a typed query back through it: what Go reads is
+// the golden, which is what Python's sqlite3 read from the same rows. Each of those tables must
+// have been read at least once.
+func runParity(t *testing.T, group string, tables []string) {
+	t.Helper()
+	var stores []parityStore
+	readFixture(t, "parity-"+group+".json", &stores)
+	ctx := context.Background()
+	read := map[string]any{}
 	compared := map[string]int{}
-	for i, python := range stores {
-		s := restoreStore(t, filepath.Join(t.TempDir(), fmt.Sprintf("case-%d", i), "relay.sqlite3"), python.Store)
-		ctx := context.Background()
-		for table, raws := range python.Raw {
-			read := parityReaders[table]
-			if read == nil {
+	for i, fixture := range stores {
+		s := restoreStore(t, filepath.Join(t.TempDir(), fmt.Sprintf("case-%d", i), "relay.sqlite3"), fixture.Store)
+		for _, table := range fixture.Store.Tables {
+			reader := parityReaders[table.Table]
+			if reader == nil || !slices.Contains(tables, table.Table) {
 				continue
 			}
-			for i, raw := range raws {
-				row, err := decodeRow(raw)
-				if err != nil {
-					t.Fatal(err)
-				}
-				where := fmt.Sprintf("%s %s[%d]", python.Case, table, i)
-				goRow, err := read(ctx, s, row)
+			for j, cells := range table.Rows {
+				where := fmt.Sprintf("%s %s[%d]", fixture.Case, table.Table, j)
+				goRow, err := reader(ctx, s, dumpedRow(t, table, cells))
 				if err != nil {
 					t.Errorf("%s: Go query: %v", where, err)
 					continue
 				}
-				compareRow(t, where, goRow, row)
-				compared[table]++
+				read[where] = rowFields(t, goRow)
+				compared[table.Table]++
 			}
 		}
 		if err := s.Close(); err != nil {
 			t.Fatal(err)
 		}
 	}
+	checkJSON(t, "rows read back", read)
 	for _, table := range tables {
-		if _, read := parityReaders[table]; read && compared[table] == 0 {
+		if _, readable := parityReaders[table]; readable && compared[table] == 0 {
 			t.Errorf("no Python case wrote %s, so its Go query was never compared", table)
 		}
 	}
 	t.Logf("rows compared per table: %v", compared)
-	return stores
 }
 
 func TestPythonParity_linkage(t *testing.T) {
-	runParity(t, []string{"scope_bindings", "scope_links", "scope_directives", "linkage_conflicts", "relationship_scope", "coordination_conflicts"},
-		"tests.test_linkage.Directives.test_only_the_execution_supervisor_may_instruct",
-		"tests.test_linkage.Attachment.test_attaching_twice_converges",
-		"tests.test_merge_turn.TheBaseTheTargetActuallyReads.test_only_a_landed_turn_is_restated")
+	runParity(t, "linkage", []string{"scope_bindings", "scope_links", "scope_directives", "linkage_conflicts", "relationship_scope", "coordination_conflicts"})
 }
 
 func TestPythonParity_merge_turn(t *testing.T) {
-	runParity(t, []string{"merge_turns", "merge_turn_ledger", "merge_turn_checks"},
-		"tests.test_merge_turn.TheBaseTheTargetActuallyReads.test_a_restatement_states_why")
+	runParity(t, "merge-turn", []string{"merge_turns", "merge_turn_ledger", "merge_turn_checks"})
 }
 
 func TestPythonParity_capacity(t *testing.T) {
-	runParity(t, []string{"execution_slots", "execution_limits", "execution_usage"},
-		"tests.test_capacity.StatingABoundIsNotAnybodysCall.test_the_canonical_store_ceiling_does_apply",
-		"tests.test_capacity.CountsAndDeclaredCeilingsAreDifferentKindsOfFact.test_only_an_observation_gives_a_resource_dimension_a_value")
+	runParity(t, "capacity", []string{"execution_slots", "execution_limits", "execution_usage"})
 }
 
 func TestPythonParity_supervisor(t *testing.T) {
-	runParity(t, []string{"supervisor_messages", "supervisor_attempts", "supervisor_readbacks"},
-		"tests.test_supervisor_channel.TheRoundtrip.test_the_whole_record_reads_back_as_one_answer")
+	runParity(t, "supervisor", []string{"supervisor_messages", "supervisor_attempts", "supervisor_readbacks"})
 }
 
 func TestPythonParity_product_routing(t *testing.T) {
-	runParity(t, []string{"product_registry", "product_bindings", "routing_policy", "incident_routes", "route_incidents"},
-		"tests.test_product_routing.Projects.test_an_existing_suitable_project_is_reused")
+	runParity(t, "product-routing", []string{"product_registry", "product_bindings", "routing_policy", "incident_routes", "route_incidents"})
 }
 
 func TestPythonParity_sync(t *testing.T) {
-	runParity(t, []string{"sync_targets", "sync_outbox"},
-		"tests.test_sync_outbox.BlockParsing.test_blocks_round_trip")
+	runParity(t, "sync", []string{"sync_targets", "sync_outbox"})
 }
 
 func TestPythonParity_managed(t *testing.T) {
-	runParity(t, []string{"managed_start_requests"},
-		"tests.test_managed_start.ManagedEntry.test_paused_child_is_not_sent_business")
+	runParity(t, "managed", []string{"managed_start_requests"})
 }
 
 func TestPythonParity_remaining(t *testing.T) {
-	runParity(t, []string{"recipient_rate", "recipient_lifecycle", "poll_observations", "delivery_intent", "authorized_settings",
+	runParity(t, "remaining", []string{"recipient_rate", "recipient_lifecycle", "poll_observations", "delivery_intent", "authorized_settings",
 		"attempt_settings_violations", "canonical_criteria", "verification_mode", "claim_context", "verdict_context",
-		"assignment_marks", "reporting_sessions", "turn_declarations"},
-		"tests.test_assignment.CriteriaCurrency.test_an_existing_mark_stops_being_state_when_the_criteria_change",
-		"tests.test_fault_notices.WhatTheSixthAuditFound.test_a_pause_after_the_reservation_is_kept",
-		"tests.test_diagnostics.RefusedBeforeTheQueue.test_a_scoped_status_filters_the_pending_intents_too",
-		"tests.test_settings_preservation.ViolationAnnotatesItDoesNotReclassify.test_an_annotated_dispatch_is_not_retried",
-		"declarations")
+		"assignment_marks", "reporting_sessions", "turn_declarations"})
 }

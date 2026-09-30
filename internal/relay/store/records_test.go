@@ -2,12 +2,10 @@ package store
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -126,38 +124,16 @@ func TestTransaction_rolls_back_when_process_dies_before_commit(t *testing.T) {
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("partial journal: %+v: %v", entries, err)
 	}
-	repo, err := filepath.Abs("../../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Python's own store, crashed the same way (testdata/crash_capture.py); its answer is recorded.
-	python := filepath.Join(t.TempDir(), "python.sqlite3")
-	out := pythonOracle(t, []string{"crash-capture", python}, func() ([]byte, error) {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		cmd := exec.CommandContext(ctx, "uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/store/testdata/crash_capture.py"), python)
-		cmd.Dir = repo
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			return nil, fmt.Errorf("Python %v\n%s", err, out)
-		}
-		return out, nil
-	})
-	var want any
-	if err := json.Unmarshal(out, &want); err != nil {
-		t.Fatal(err)
-	}
 	actual, err := json.Marshal(map[string]any{"journal": append([]JournalEntry{}, entries...)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	expected, err := json.Marshal(want)
-	if err != nil {
+	var journal any
+	if err := json.Unmarshal(actual, &journal); err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(actual, expected) {
-		t.Fatalf("Go %s\nPython %s", actual, expected)
-	}
+	// As Python's own store, crashed the same way, keeps it (the golden).
+	checkJSON(t, "journal after the crash", journal)
 }
 
 func TestTransaction_rolls_back_when_body_fails(t *testing.T) {

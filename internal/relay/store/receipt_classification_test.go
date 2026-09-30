@@ -1,7 +1,6 @@
 package store
 
 import (
-	"encoding/json"
 	"testing"
 )
 
@@ -37,56 +36,32 @@ func TestClassifyObservation_python_five_endings(t *testing.T) {
 	}
 }
 
-// Every (turn status, claim) pair classified by Python's classify_observation and by Go.
+// Every (turn status, claim) pair classified by Go, as Python's classify_observation classified
+// it (the golden): a refusal is "refused:" and its reason.
 func TestClassifyObservation_matches_python_for_every_pair(t *testing.T) {
-	out := pythonStoreValue(t, `
-import json
-from codex_session_relay.receipts import classify_observation, ReceiptRefused
-rows = []
-for status in ("completed", "failed", "interrupted", "inProgress", "bogus"):
-    for claim in [None] + [{"outcome": o, "producer": p} for o in ("ready_for_review", "failed", "interrupted", "blocked_needs_input", "bogus") for p in ("child", "daemon_observation")]:
-        try:
-            got = classify_observation(status, claim).value
-        except ReceiptRefused as refused:
-            got = "refused:" + refused.reason.value
-        rows.append([status, claim, got])
-print(json.dumps(rows))
-`)
-	var rows []struct {
-		Status string
-		Claim  *ChildClaim
-		Want   string
-	}
-	var raw [][3]json.RawMessage
-	if err := json.Unmarshal([]byte(out), &raw); err != nil {
-		t.Fatal(err)
-	}
-	for _, r := range raw {
-		var row struct {
-			Status string
-			Claim  *ChildClaim
-			Want   string
+	var rows []any
+	for _, status := range []string{"completed", "failed", "interrupted", "inProgress", "bogus"} {
+		claims := []*ChildClaim{nil}
+		for _, outcome := range []string{"ready_for_review", "failed", "interrupted", "blocked_needs_input", "bogus"} {
+			for _, producer := range []string{"child", "daemon_observation"} {
+				claims = append(claims, &ChildClaim{Outcome: ObservationOutcome(outcome), Producer: producer})
+			}
 		}
-		var claim *struct{ Outcome, Producer string }
-		if json.Unmarshal(r[0], &row.Status) != nil || json.Unmarshal(r[1], &claim) != nil || json.Unmarshal(r[2], &row.Want) != nil {
-			t.Fatalf("row %s", r)
+		for _, claim := range claims {
+			got, err := ClassifyObservation(status, claim)
+			answer := string(got)
+			if err != nil {
+				answer = "refused:" + RefusalReason(err)
+			}
+			var spelled any
+			if claim != nil {
+				spelled = map[string]string{"outcome": string(claim.Outcome), "producer": claim.Producer}
+			}
+			rows = append(rows, []any{status, spelled, answer})
 		}
-		if claim != nil {
-			row.Claim = &ChildClaim{Outcome: ObservationOutcome(claim.Outcome), Producer: claim.Producer}
-		}
-		rows = append(rows, row)
 	}
 	if len(rows) != 55 {
-		t.Fatalf("python matrix has %d rows", len(rows))
+		t.Fatalf("the matrix has %d rows", len(rows))
 	}
-	for _, row := range rows {
-		got, err := ClassifyObservation(row.Status, row.Claim)
-		answer := string(got)
-		if err != nil {
-			answer = "refused:" + RefusalReason(err)
-		}
-		if answer != row.Want {
-			t.Errorf("%s %+v: go %q python %q", row.Status, row.Claim, answer, row.Want)
-		}
-	}
+	checkJSON(t, "status, claim, classification", rows)
 }

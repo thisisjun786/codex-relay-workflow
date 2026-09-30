@@ -6,12 +6,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 // intent.registration_hold stats the store before the fence's Admission, so a store that does
 // not exist, whose directory does not, that sits below a regular file or behind a dangling
 // symlink is answered in str(OSError)'s words, and nothing is created. RegistrationHold, which
-// intent-register runs, answers the Python fence's bytes (recorded).
+// intent-register runs, answers the Python fence's bytes (the golden).
 func TestRegistrationHold_answers_an_unstattable_store_as_python_does(t *testing.T) {
 	root := t.TempDir()
 	file := filepath.Join(root, "a-file")
@@ -23,16 +25,13 @@ func TestRegistrationHold_answers_an_unstattable_store_as_python_does(t *testing
 		t.Fatal(err)
 	}
 	before := listTree(t, root)
+	var answered [][2]string
 	for _, path := range []string{
 		filepath.Join(root, "no-such-store.sqlite3"),
 		filepath.Join(root, "state", "no-such-store.sqlite3"),
 		filepath.Join(file, "relay.sqlite3"),
 		dangling,
 	} {
-		python := pythonStoreValue(t, `import sys
-from codex_session_relay.intent import registration_hold
-with registration_hold(sys.argv[1]) as (held, why):
-    print("held" if held is not None else str(why))`, path)
 		var registration string
 		if err := RegistrationHold(t.Context(), path, func(conn *sql.Conn, why string) error {
 			if conn != nil {
@@ -43,10 +42,9 @@ with registration_hold(sys.argv[1]) as (held, why):
 		}); err != nil {
 			t.Fatal(err)
 		}
-		if registration != python {
-			t.Errorf("%s\npython:           %s\nRegistrationHold: %s", path, python, registration)
-		}
+		answered = append(answered, [2]string{path, registration})
 	}
+	checkJSON(t, "store, why", answered, golden.Substitute(root, "<ROOT>"))
 	if after := listTree(t, root); after != before {
 		t.Fatalf("a refused hold changed the tree\nbefore: %s\nafter:  %s", before, after)
 	}
@@ -94,25 +92,15 @@ func TestOpen_reads_a_gateless_store_before_refusing_it_as_python_does(t *testin
 			path := filepath.Join(t.TempDir(), "relay.sqlite3")
 			c.write(t, path)
 			before := listTree(t, filepath.Dir(path))
-			python := pythonStoreValue(t, `import sys
-from codex_session_relay.store import Store
-try:
-    Store(sys.argv[1]).close()
-except Exception as error:
-    print(f"{type(error).__name__}: {error}")
-else:
-    print("opened")`, path)
-			if after := listTree(t, filepath.Dir(path)); after != before {
-				t.Fatalf("Python changed the directory\nbefore: %s\nafter:  %s", before, after)
-			}
 			opened, err := Open(t.Context(), path, "")
 			if err == nil {
 				_ = opened.Close()
 				t.Fatal("Go opened a gateless store")
 			}
-			if err.Error() != python || RefusalReason(err) != "" {
-				t.Fatalf("python: %s\ngo:     %s (reason %q)", python, err, RefusalReason(err))
+			if RefusalReason(err) != "" {
+				t.Fatalf("%s (reason %q)", err, RefusalReason(err))
 			}
+			checkText(t, "error", err.Error(), golden.Substitute(filepath.Dir(path), "<DIR>"))
 			if after := listTree(t, filepath.Dir(path)); after != before {
 				t.Fatalf("Go changed the directory\nbefore: %s\nafter:  %s", before, after)
 			}

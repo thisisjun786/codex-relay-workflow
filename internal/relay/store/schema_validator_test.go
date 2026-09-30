@@ -1,16 +1,19 @@
 package store
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
+	"regexp"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
-// The frozen record schemas, validated by the repository's own jsonschema Draft7Validator run
-// in an isolated Python, as test_schema_conformance.py does, and recorded. No new Go module is
+// The frozen record schemas, as the repository's own jsonschema Draft7Validator judged each case
+// in an isolated Python, as test_schema_conformance.py does (draft7Verdict). No new Go module is
 // involved.
 var recordSchemas = []string{"relationship", "completion-receipt", "delivery-attempt", "acknowledgement", "verification-verdict"}
 
@@ -22,60 +25,61 @@ type schemaCase struct {
 	Valid    bool            `json:"valid"`
 }
 
-type schemaVerdict struct {
-	Label  string   `json:"label"`
-	Errors []string `json:"errors"`
+// draft7Verdict is what the repository's jsonschema Draft7Validator, run in the retired Python
+// implementation (test_schema_conformance.py's validator), answered for one case: the fixture
+// draft7-verdicts.json.gz holds one per case, in the order the test builds them, with the
+// instance it judged as normalInstance spells it. No Go validator of Draft 7 is in the module, so the verdicts are frozen: a case
+// whose instance changes in substance fails until the new instance is judged and its verdict
+// written to the fixture.
+type draft7Verdict struct {
+	Schema   string   `json:"schema"`
+	Label    string   `json:"label"`
+	Instance string   `json:"instance"`
+	Errors   []string `json:"errors"`
 }
 
-const draft7Script = `
-import json, sys
-from pathlib import Path
-from jsonschema import Draft7Validator
-directory = Path(sys.argv[1])
-schemas = {}
-for name in sys.argv[2].split(","):
-    schema = json.loads((directory / (name + ".json")).read_text())
-    Draft7Validator.check_schema(schema)
-    schemas[name] = Draft7Validator(schema)
-verdicts = []
-for case in json.load(sys.stdin):
-    errors = sorted(schemas[case["schema"]].iter_errors(case["instance"]), key=lambda e: list(e.path))
-    verdicts.append({"label": case["label"], "errors": [f"{list(e.path)}: {e.message}" for e in errors]})
-print(json.dumps(verdicts))
-`
+var (
+	// judgedTemporary is a temporary directory an instance names: this run's, or the one the
+	// fixture's Python run named, <TMP:name>/NNN. The validator judged a path's form only.
+	judgedTemporary = regexp.MustCompile(regexp.QuoteMeta(filepath.Clean(os.TempDir())) + `/[^/"\\]+/[0-9]+|<TMP:[^>]*>/[0-9]+`)
+)
 
-// validateAgainstSchemas grades every case in one Python run. A case fails when its outcome
-// differs from what it declares: a positive with errors, or a negative the validator accepted.
-// It returns the failures per Python test name and how many positives each schema validated.
-func validateAgainstSchemas(t *testing.T, cases []schemaCase) (map[string][]string, map[string]int) {
+// normalInstance is an instance as the verdict fixture keeps it: its JSON with sorted keys, every
+// temporary directory <TMP>, and every value a rerun changes (a digest, a tempfile name, a clock
+// time) spelled by its kind and length alone (maskNoise), since the validator judged their form.
+func normalInstance(t *testing.T, instance json.RawMessage) string {
 	t.Helper()
-	input, err := json.Marshal(cases)
+	decoder := json.NewDecoder(bytes.NewReader(instance))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		t.Fatalf("instance %s: %v", instance, err)
+	}
+	encoded, err := golden.Encode(value)
 	if err != nil {
 		t.Fatal(err)
 	}
-	stdin := filepath.Join(t.TempDir(), "cases.json")
-	if err := os.WriteFile(stdin, input, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	script := "import sys; sys.stdin = open(" + pythonLiteral(stdin) + ")\n" + draft7Script
-	// The validator's verdicts are recorded (pythonOracle) under the instances they judged, each
-	// value a rerun changes spelled by its length alone (maskNoise): an event id and a revision
-	// hash are digests of this run's temporary paths, and the validator judges only their form.
-	dir := repositoryRoot(t)
-	isolated := isolatedEnv(t)
-	args := []string{filepath.Join(dir, "contract", "schema"), strings.Join(recordSchemas, ",")}
-	judged := maskNoise(string(input))
-	parts := append([]string{"store-value", dir, script, judged}, keptEnvironment()...)
-	out := strings.TrimSpace(string(pythonOracle(t, append(parts, args...), func() ([]byte, error) {
-		return runPythonStore(t, isolated, dir, script, args...)
-	})))
-	var verdicts []schemaVerdict
-	if err := json.Unmarshal([]byte(out), &verdicts); err != nil || len(verdicts) != len(cases) {
-		t.Fatalf("validator output %q: %v", out, err)
+	return maskNoise(judgedTemporary.ReplaceAllString(string(encoded), "<TMP>"))
+}
+
+// validateAgainstSchemas grades every case with the validator's verdict (the fixture). A case
+// fails when its outcome differs from what it declares: a positive with errors, or a negative the
+// validator accepted. It returns the failures per Python test name and how many positives each
+// schema validated.
+func validateAgainstSchemas(t *testing.T, cases []schemaCase) (map[string][]string, map[string]int) {
+	t.Helper()
+	var fixture []draft7Verdict
+	readFixture(t, "draft7-verdicts.json", &fixture)
+	if len(fixture) != len(cases) {
+		t.Fatalf("the verdict fixture holds %d verdicts for %d cases: judge the cases anew", len(fixture), len(cases))
 	}
 	failures, counts := map[string][]string{}, map[string]int{}
-	for i, verdict := range verdicts {
-		c := cases[i]
+	for i, c := range cases {
+		verdict := fixture[i]
+		if instance := normalInstance(t, c.Instance); verdict.Schema != c.Schema || verdict.Label != c.Label || instance != verdict.Instance {
+			t.Errorf("case %d, the %s case %q, is not the instance the validator judged (%s %q); judge it anew\njudged:\n%s\nnow:\n%s", i, c.Schema, c.Label, verdict.Schema, verdict.Label, verdict.Instance, instance)
+			continue
+		}
 		switch {
 		case c.Valid && len(verdict.Errors) > 0:
 			failures[c.Test] = append(failures[c.Test], fmt.Sprintf("%s should satisfy %s: %v", c.Label, c.Schema, verdict.Errors))
@@ -86,11 +90,6 @@ func validateAgainstSchemas(t *testing.T, cases []schemaCase) (map[string][]stri
 		}
 	}
 	return failures, counts
-}
-
-func pythonLiteral(text string) string {
-	encoded, _ := json.Marshal(text)
-	return string(encoded)
 }
 
 // mutated returns a deep copy of a JSON record with one change applied to its object form.
