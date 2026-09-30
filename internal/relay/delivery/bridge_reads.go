@@ -1,7 +1,6 @@
 package delivery
 
 import (
-	"encoding/json"
 	"strings"
 )
 
@@ -41,21 +40,8 @@ func cursorOf(result Obj) any {
 	return next
 }
 
-func number(v any) *float64 {
-	switch n := v.(type) {
-	case float64:
-		return &n
-	case int64:
-		f := float64(n)
-		return &f
-	case json.Number:
-		f, err := n.Float64()
-		if err == nil {
-			return &f
-		}
-	}
-	return nil
-}
+// number is a listed turn's start as HostTime reads it.
+func number(v any) *float64 { return HostTime(v) }
 
 // FindDispatchedTurn is find_dispatched_turn: newest first, without items, stopping at the first
 // turn begun before the send.

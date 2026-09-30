@@ -5,6 +5,7 @@ model, effort, sandbox, approval policy, goal or archive state, because the rela
 business doing any of that and an interface that cannot express it cannot do it by accident.
 """
 
+import math
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -23,6 +24,25 @@ class TurnInfo:
     turn_id: str
     status: str
     started_at: float | None = None
+
+
+def host_time(value):
+    """A host timestamp in seconds, or None when it is not a finite number.
+
+    started_at is whatever the host sent. Every reader of it takes it through here, so a start
+    of "not-a-timestamp", NaN, an infinity or a bool is no start, exactly as a missing one is,
+    and a string float() reads (" 1e3 ", "1_000") is the time it spells. Comparing the raw value
+    answered differently at each reader: a TypeError in a listing, 1 s after the epoch for True,
+    and "not earlier" - so verified - for a value the comparison could not read. An unreadable
+    time is not established, and the callers treat that as not verified.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return seconds if math.isfinite(seconds) else None
 
 
 @dataclass(frozen=True)
@@ -175,7 +195,8 @@ def find_in_listing(pages, turn_id: str, sent_at: float) -> TurnPresence:
                 older = _older_after_match(turns[index + 1:], follows, pages, cutoff)
                 return TurnPresence(TURN_PRESENT, turn, scanned, "matched", tuple(seen), older,
                                     tuple(seen_turns))
-            if turn.started_at is not None and turn.started_at <= cutoff:
+            started = host_time(turn.started_at)
+            if started is not None and started <= cutoff:
                 return TurnPresence(TURN_ABSENT, None, scanned, "older_than_send", tuple(seen),
                                     _older(turns[index:], cutoff), tuple(seen_turns), turn)
             seen.append(turn.turn_id)
@@ -196,7 +217,7 @@ def find_in_listing(pages, turn_id: str, sent_at: float) -> TurnPresence:
 
 def _older(turns, cutoff) -> tuple:
     return tuple(turn.turn_id for turn in turns
-                 if turn.started_at is not None and turn.started_at <= cutoff)
+                 if (started := host_time(turn.started_at)) is not None and started <= cutoff)
 
 
 def _older_after_match(rest, follows, pages, cutoff) -> tuple:
@@ -209,7 +230,8 @@ def _older_after_match(rest, follows, pages, cutoff) -> tuple:
     try:
         while True:
             for index, turn in enumerate(rest):
-                if turn.started_at is not None and turn.started_at <= cutoff:
+                started = host_time(turn.started_at)
+                if started is not None and started <= cutoff:
                     return _older(rest[index:], cutoff)
             if not follows:
                 return ()

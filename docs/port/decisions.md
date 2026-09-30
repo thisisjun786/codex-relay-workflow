@@ -2197,6 +2197,54 @@ go-interrupted-together 15 of 20 times. Under the load that failed the previous 
 times, the final build passed every run: the takeover test 50 of 50,
 `Test42InterruptedSupervisorStopsItsWorker` 50 of 50, and go-interrupted-together 200 more.
 
+## 43. A host turn start is a time only when it reads as a finite number, in both runtimes
+
+Decision: every reader of a host turn's `startedAt` reads it by one rule, the fence's
+`hostadapter.host_time` and Go's `delivery.HostTime`. Null and a bool are no time. A number, or a
+string Python's `float()` reads (surrounding whitespace, a sign, underscores between digits, an
+exponent, Unicode decimal digits), is the seconds it spells. NaN and an infinity, however spelled,
+an integer too large for a double, and anything `float()` refuses (other text, a list, an object)
+are no time. A start that is no time is read exactly as a missing one: an acknowledgement from
+that turn is `unverified_turn`, a supervisor readback naming it is `unverified_turn`, a listed turn
+never ends the dispatched-turn listing and is never a fold candidate, and a continuation's host
+ordering is `not_corroborated`. The fence's readers that changed are `ack._verify_ack_turn`,
+`hostadapter.find_in_listing` (with `_older` and `_older_after_match`), `hostloss._fold_candidates`
+and `admission.AnchorOrExplicit._corroborate`. `supervisorchannel._host_time`, where the rule was
+written first, is now `host_time` itself. Go's `TurnStartedAt` and the `BridgeReads` listing now
+read a numeric string as the fence does.
+
+Why: only the supervisor channel applied the rule, and each other reader compared the raw value.
+The fence's acknowledgement checked only for a missing start and then asked `certainly_before`,
+whose `float()` answered False for what it could not read. So a start of `"bad"`, `[1]` or NaN
+verified the acknowledgement, and `True` (1 s after the epoch) or `"-inf"` refused it as a turn
+begun before the delivery. The listing and the fold raised TypeError on any string, and the
+admission raised it or compared two strings as text. Go read every string and bool as no start,
+so the runtimes disagreed on a numeric-string start: Go left the acknowledgement unverified where
+the fence verified or refused it, and Go's listing read on where the fence raised. The App Server
+sends numbers, so only a host that sends something else reaches any of this.
+
+Cost: a fence acknowledgement whose turn start is unreadable stays `unverified_turn` where it was
+verified, and one with a `True` or negative-infinity start stays unverified where it was refused.
+A listing or fold that meets a string start reads it instead of raising.
+
+Evidence: `packages/codex-session-relay/src/codex_session_relay/hostadapter.py:29` (`host_time`),
+`:174-233` (`find_in_listing`, `_older`, `_older_after_match`), `ack.py:420` (`_verify_ack_turn`),
+`hostloss.py:429` (`_fold_candidates`), `admission.py:118` (`_corroborate`),
+`supervisorchannel.py:220`; `internal/relay/delivery/adapter.go:49-99` (`TurnStartedAt`,
+`HostTime`), `internal/relay/delivery/bridge_reads.go:44`. Tests:
+`internal/relay/delivery/host_time_test.go` (`TestHostTimeReadsEveryValueAsTheFence`, 49 values
+against the live fence), `currency_ack_test.go` (`TestAckTurnStartIsReadAsAHostTime`, ten starts,
+whole records and tables against the fence), `unknownsend_a_test.go`
+(`Test21_USL09b_a_listed_turn_start_is_read_as_a_host_time`, mirroring
+`AListedTurnStartIsReadAsAHostTime`), `internal/relay/supervisor/batch6_test.go`
+(`Test24_SCH_52b_TurnStartIsReadAsAHostTime`); in the fence, `tests/test_ack_reconcile.py`
+(`Acknowledgement.test_a_turn_start_that_is_no_time_does_not_verify_the_ack`,
+`test_a_numeric_string_start_is_the_time_it_spells`) and `tests/test_delivery.py`
+(`ContinuationCorroborationReadsHostTimes`). Before the change the acknowledgement test failed
+for all ten starts, the listing test on the fence's TypeError, the readback test for its three
+numeric strings, and the fence's acknowledgement and ordering tests for every start that is no
+time.
+
 ## 45. Discovery asks the stores under the absolute state root, in both runtimes
 
 Decision: the retained Python fence's `discover_state_dir` walks the stores beside the canonical

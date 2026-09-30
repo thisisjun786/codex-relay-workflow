@@ -24,6 +24,7 @@ from .currency import (
 )
 from .delivery import COMPLETION, MANIFEST_LINES, REVISION, SENDING
 from .errors import AckRefused, RefusalReason, RelayError
+from .hostadapter import host_time
 from .identity import (
     ack_proof as derive_ack_proof,
     revision_request_event_id,
@@ -441,9 +442,12 @@ class AckService:
             return "unverified_turn"
         if turn is None:
             return "unverified_turn"
-        if turn.started_at is None:
-            # The host did not say when this turn began, so its chronology is unknown and an
-            # unknown chronology is not a verification.
+        started = host_time(turn.started_at)
+        if started is None:
+            # The host did not say when this turn began, or said it in a form that is no time
+            # (hostadapter.host_time), so its chronology is unknown and an unknown chronology is
+            # not a verification. Before, only a missing start stopped here: an unreadable one
+            # reached certainly_before, which answers False for what it cannot read, and verified.
             return "unverified_turn"
         if attempt is not None:
             # sent_at is when the send STARTED. Using the settlement time would make a slow
@@ -459,7 +463,7 @@ class AckService:
             # an earlier attempt reached is not this attempt's (review 3).
             if not dispatched_turn and attempt["affirmative_evidence"] == "turn_found":
                 dispatched_turn = row["dispatch_turn_id"]
-            if ack_turn_id != dispatched_turn and certainly_before(turn.started_at, sent_at):
+            if ack_turn_id != dispatched_turn and certainly_before(started, sent_at):
                 raise AckRefused(
                     RefusalReason.ACK_TURN_UNVERIFIED,
                     f"turn {ack_turn_id!r} started before the delivery, so it cannot be its "

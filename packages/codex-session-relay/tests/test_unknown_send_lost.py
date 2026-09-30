@@ -26,8 +26,14 @@ import re
 import shlex
 import unittest
 
-from codex_session_relay import faults, faultsweep
-from codex_session_relay.hostadapter import TURN_ABSENT, ListingBounded, TurnInfo, find_in_listing
+from codex_session_relay import faults, faultsweep, hostloss
+from codex_session_relay.hostadapter import (
+    TURN_ABSENT,
+    ListingBounded,
+    TurnInfo,
+    TurnPresence,
+    find_in_listing,
+)
 from codex_session_relay.mergeturn import MERGE_TURN_REGRANTED
 from codex_session_relay.transport import DISPATCHED, HELD_UNCERTAIN, QUEUED
 
@@ -417,6 +423,46 @@ class TheListingSinceASendWithNoTurnId(unittest.TestCase):
                          (TURN_ABSENT, "older_than_send", (None,), ("older",)))
         self.assertEqual([turn.status for turn in presence.seen_turns], ["completed"])
         self.assertEqual(presence.stop_turn.turn_id, "older")
+
+
+class AListedTurnStartIsReadAsAHostTime(unittest.TestCase):
+    """A listed turn's start is read by the one host-time rule (hostadapter.host_time).
+
+    A finite number, or a string float() reads as one, is a start; anything else (a bool, a list,
+    text that is no number, NaN, an infinity) is no start, as a missing one is. Comparing the raw
+    value raised TypeError for a string and read True as 1 s after the epoch. The send is at
+    150.0, so the listing's cutoff is 89.0 and a fold candidate began by 151.0.
+    """
+
+    SENT = 150.0
+    CASES = (
+        ("100", False, False, True),
+        (" 1e1 ", True, True, True),
+        ("1_0", True, True, True),
+        (10, True, True, True),
+        ("200", False, False, False),
+        ("bad", False, False, False),
+        (True, False, False, False),
+        ([10], False, False, False),
+        (float("nan"), False, False, False),
+        ("-inf", False, False, False),
+        (None, False, False, False),
+    )
+
+    def test_a_listing_reads_each_start_as_a_host_time(self):
+        for started, stops, older_after_match, folds in self.CASES:
+            listed = TurnInfo("listed", "completed", started)
+            presence = find_in_listing(
+                [([TurnInfo("newer", "completed", 200.0), listed], False)], "wanted", self.SENT)
+            self.assertEqual((presence.finding, presence.stop, presence.seen, presence.older),
+                             (TURN_ABSENT, "older_than_send", ("newer",), ("listed",)) if stops
+                             else (TURN_ABSENT, "listing_end", ("newer", "listed"), ()))
+            matched = find_in_listing(
+                [([TurnInfo("wanted", "completed", 200.0), listed], False)], "wanted", self.SENT)
+            self.assertEqual(matched.older, ("listed",) if older_after_match else ())
+            seen = TurnPresence(TURN_ABSENT, None, 1, "listing_end", ("listed",), (), (listed,))
+            self.assertEqual([turn.turn_id for turn in hostloss._fold_candidates(seen, self.SENT)],
+                             ["listed"] if folds else [])
 
 
 class ASendTheTransportHasNotAnsweredIsHeldByName(UnknownSendCase):

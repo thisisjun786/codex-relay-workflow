@@ -1,6 +1,7 @@
 package delivery
 
 import (
+	"math"
 	"testing"
 )
 
@@ -75,6 +76,46 @@ func TestVCU11_an_offline_ack_is_recorded_intent_and_upgraded_by_a_host(t *testi
 			}
 		})
 	})
+}
+
+// An acknowledging turn's start is read by one host-time rule in both runtimes: a finite number,
+// or a string Python's float() reads as one; anything else (a bool, a list, text that is not a
+// number, NaN, an infinity) is no start at all, and an ack whose turn has no start is unverified.
+func TestAckTurnStartIsReadAsAHostTime(t *testing.T) {
+	for _, c := range []struct {
+		kind    string
+		started any
+		want    string
+	}{
+		{"numeric_before", "1000", AckTurnUnverified},
+		{"numeric_after", "1800000000", "verified"},
+		{"spaced_exponent", " 1e3 ", AckTurnUnverified},
+		{"underscored", "1_000", AckTurnUnverified},
+		{"bad", "bad", "unverified_turn"},
+		{"true", true, "unverified_turn"},
+		{"list", []any{int64(1)}, "unverified_turn"},
+		{"nan", math.NaN(), "unverified_turn"},
+		{"nan_text", "nan", "unverified_turn"},
+		{"negative_infinity_text", "-inf", "unverified_turn"},
+	} {
+		t.Run(c.kind, func(t *testing.T) {
+			runVCUAck(t, "start_"+c.kind, func(v *vcu, out map[string]any) {
+				e := v.dispatched()
+				v.host.startTurn(parent, "parent-own-turn", "inProgress", "")
+				turns := v.host.threads[parent].turns
+				turns[len(turns)-1].StartedAt = c.started
+				result := outcome(v.ack.Acknowledge(v.ctx, e, "parent-own-turn", AckProof(e, "parent-own-turn"), true, nil, v.host))
+				out["ack"] = result
+				got := result["reason"]
+				if record, ok := result["ok"].(Obj); ok {
+					got = str(record, "_verified")
+				}
+				if got != c.want {
+					t.Fatalf("start %#v: want %s, got %v", c.started, c.want, result)
+				}
+			})
+		})
+	}
 }
 
 func (v *vcu) pendingAck() string {

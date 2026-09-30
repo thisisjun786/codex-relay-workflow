@@ -1,7 +1,9 @@
 package delivery
 
 import (
+	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 )
@@ -496,6 +498,30 @@ func Test21_USL09_a_listed_turn_without_an_id_is_not_taken_for_the_sends_turn(t 
 		}
 		h.eq(statuses)
 		h.eq(presence.StopTurn.TurnID)
+	})
+}
+
+// A listed turn's start is read by the one host-time rule the fence's listing now applies too:
+// a numeric string is the time it spells, and a bool, a list, other text, NaN or an infinity is
+// no start at all, in the dispatched-turn listing, after a match, and among the fold candidates.
+func Test21_USL09b_a_listed_turn_start_is_read_as_a_host_time(t *testing.T) {
+	mirror(t, usl, "AListedTurnStartIsReadAsAHostTime.test_a_listing_reads_each_start_as_a_host_time", func(h *hl) {
+		const sent = 150.0
+		newer := 200.0
+		for _, started := range []any{"100", " 1e1 ", "1_0", json.Number("10"), "200", "bad", true, []any{json.Number("10")}, math.NaN(), "-inf", nil} {
+			listed := TurnInfo{TurnID: "listed", Status: "completed", StartedAt: started}
+			presence, err := FindInListing([]ListingPage{{Turns: []TurnInfo{{TurnID: "newer", Status: "completed", StartedAt: &newer}, listed}}}, "wanted", sent)
+			mustDo(t, err)
+			h.eq([]any{presence.Finding, presence.Stop, presence.Seen, strs(presence.Older)})
+			matched, err := FindInListing([]ListingPage{{Turns: []TurnInfo{{TurnID: "wanted", Status: "completed", StartedAt: &newer}, listed}}}, "wanted", sent)
+			mustDo(t, err)
+			h.eq(strs(matched.Older))
+			folded := []any{}
+			for _, turn := range foldCandidates(TurnPresence{Finding: TurnAbsent, Scanned: 1, Stop: "listing_end", Seen: []any{"listed"}, SeenTurns: []TurnInfo{listed}}, sent) {
+				folded = append(folded, turn.TurnID)
+			}
+			h.eq(folded)
+		}
 	})
 }
 

@@ -12,6 +12,15 @@ if m in ("offline", "no_verdict"):
 elif m == "dispatch_turn":
     t = c.delivery.find(e)["dispatch_turn_id"]
     out["ack"] = c.ack.acknowledge(e, ack_turn_id=t, ack_proof=identity.ack_proof(e, t), accepted=True, adapter=None)
+elif m.startswith("start_"):
+    # The host reports the acknowledging turn's start as this value instead of a number.
+    from codex_session_relay.hostadapter import TurnInfo
+    started = {"numeric_before": "1000", "numeric_after": "1800000000", "spaced_exponent": " 1e3 ",
+               "underscored": "1_000", "bad": "bad", "true": True, "list": [1], "nan": float("nan"),
+               "nan_text": "nan", "negative_infinity_text": "-inf"}[m[len("start_"):]]
+    t = c.adapter.start_turn(PARENT, turn_id="parent-own-turn", status="inProgress")
+    c.adapter.threads[PARENT].turns[-1] = TurnInfo(t.turn_id, t.status, started)
+    out["ack"] = refusal(c.ack.acknowledge, e, ack_turn_id="parent-own-turn", ack_proof=identity.ack_proof(e, "parent-own-turn"), accepted=True, adapter=c.adapter)
 else:
     c.adapter.start_turn(PARENT, turn_id="parent-own-turn", status="inProgress")
     out["ack"] = c.ack.acknowledge(e, ack_turn_id="parent-own-turn", ack_proof=identity.ack_proof(e, "parent-own-turn"), accepted=True, adapter=None)

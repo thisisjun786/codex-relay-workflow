@@ -7,6 +7,7 @@ from codex_session_relay import identity
 from codex_session_relay.ack import certainly_before
 from codex_session_relay.delivery import REVISION
 from codex_session_relay.errors import RefusalReason
+from codex_session_relay.hostadapter import TurnInfo
 from codex_session_relay.lifecycle import UNKNOWN, observe
 from codex_session_relay.reconcile import Evidence
 from codex_session_relay.transport import ACKNOWLEDGED, DISPATCHED, HELD_UNCERTAIN
@@ -154,6 +155,36 @@ class Acknowledgement(DeliveryTestCase):
                 adapter=self.adapter,
             ),
         )
+
+    def _acknowledged_from_a_turn_started_at(self, started):
+        """The ack's turn as the host lists it, with its start given as this value."""
+        _relationship, event_id = self.queued_event()
+        self.attempt(event_id)
+        self.clock.advance(5)
+        turns = self.adapter.threads[PARENT].turns
+        turn_id = f"parent-ack-turn-{len(turns)}"
+        turns.append(TurnInfo(turn_id, "inProgress", started))
+        proof = identity.ack_proof(event_id, turn_id)
+        return event_id, lambda: self.ack.acknowledge(
+            event_id, ack_turn_id=turn_id, ack_proof=proof, accepted=True, adapter=self.adapter,
+        )
+
+    def test_a_turn_start_that_is_no_time_does_not_verify_the_ack(self):
+        """An unreadable start is an unknown chronology, as a missing one is (host_time)."""
+        for started in ("bad", True, [1], float("nan"), "nan", "-inf"):
+            with self.subTest(started=started):
+                event_id, acknowledge = self._acknowledged_from_a_turn_started_at(started)
+                self.assertEqual(acknowledge()["_verified"], "unverified_turn")
+                self.assertEqual(self.delivery_row(event_id)["state"], DISPATCHED)
+
+    def test_a_numeric_string_start_is_the_time_it_spells(self):
+        for started in ("1000", " 1e3 ", "1_000"):
+            with self.subTest(started=started):
+                _event_id, acknowledge = self._acknowledged_from_a_turn_started_at(started)
+                self.assertRefused(RefusalReason.ACK_TURN_UNVERIFIED, acknowledge)
+        event_id, acknowledge = self._acknowledged_from_a_turn_started_at("1800000000")
+        self.assertEqual(acknowledge()["_verified"], "verified")
+        self.assertEqual(self.delivery_row(event_id)["state"], ACKNOWLEDGED)
 
     def test_a_generation_that_advanced_after_dispatch_cannot_be_accepted(self):
         event_id, _record, turn = self._dispatched()
