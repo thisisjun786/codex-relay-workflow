@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "python 2323ccf284b50f9e6db4": "txt:{\"result\": [\"ad9ff70d3dab330ab0cfeb1701c2103a2f0a8efe9b2f218f94483bcc6bc19ec6\", [\"/a: frozen bytes unreadable for 0000000000000000000000000000000000000000000000000000000000000000: path_changed: component 'files' of '<TMP:Test28FrozenDetailedJSONParityfloat-bytes>/001/files/0000000000000000000000000000000000000000000000000000000000000000' disappeared during resolution\"], []]}\n"
- }
-}

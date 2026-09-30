@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "python 9f5dc50f32d9b421df4b": "txt:f83596c44898ba16\n"
- }
-}

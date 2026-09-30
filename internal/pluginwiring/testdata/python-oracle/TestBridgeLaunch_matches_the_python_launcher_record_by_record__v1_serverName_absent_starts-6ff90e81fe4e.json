@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "launch": "txt:exit 0\nstdout 36\nargv=\npolicy=<unset>\ndigest=<unset>\nstderr 0\n"
- }
-}

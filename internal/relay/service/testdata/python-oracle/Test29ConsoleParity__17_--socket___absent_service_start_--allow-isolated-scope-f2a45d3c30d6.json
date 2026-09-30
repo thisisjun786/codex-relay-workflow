@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "python": "txt:{\"answer\":{\"capture\":{\"Out\":\"{\\n  \\\"ok\\\": false,\\n  \\\"reason\\\": \\\"service_disabled\\\",\\n  \\\"intent\\\": {\\n    \\\"enabled\\\": false,\\n    \\\"configured\\\": false,\\n    \\\"changedAt\\\": null,\\n    \\\"changedBy\\\": null\\n  },\\n  \\\"detail\\\": \\\"start never enables a service; enable it explicitly first\\\"\\n}\\n\",\"Err\":\"\",\"Code\":2},\"files\":{}},\"left\":[],\"emptied\":false}"
- }
-}

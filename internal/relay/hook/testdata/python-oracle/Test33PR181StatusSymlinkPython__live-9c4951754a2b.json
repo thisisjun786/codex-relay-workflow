@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "read_configuration": "txt:{\"state\": \"PRESENT\", \"value\": {\"configVersion\": 1, \"mode\": \"observe\", \"relayExecutable\": \"<HOME>/never-run\", \"markerRoot\": \"<HOME>/markers\", \"dbPath\": \"<HOME>/state/relay.sqlite3\", \"timeoutSeconds\": 5.0, \"journalRoot\": \"<HOME>/journal\"}}\n"
- }
-}

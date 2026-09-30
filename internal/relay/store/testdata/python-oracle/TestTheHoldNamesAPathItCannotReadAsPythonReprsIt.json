@@ -1,9 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "python 1271f27875dcfc8d07bc": "txt:\"<TMP:TestTheHoldNamesAPathItCannotReadAsPythonReprsIt>/001/xdg/codex-session-relay/it's\\xa0x/relay.sqlite3\"\n",
-  "python 280958ed772ab415c817": "txt:'<TMP:TestTheHoldNamesAPathItCannotReadAsPythonReprsIt>/001/xdg/codex-session-relay/l\\u2028s/relay.sqlite3'\n",
-  "python 66c05d55ae99aa185889": "txt:'<TMP:TestTheHoldNamesAPathItCannotReadAsPythonReprsIt>/001/xdg/codex-session-relay/b\\udcffyte/relay.sqlite3'\n",
-  "python e69fa23b8b5f71d2c557": "txt:'<TMP:TestTheHoldNamesAPathItCannotReadAsPythonReprsIt>/001/xdg/codex-session-relay/back\\\\slash/relay.sqlite3'\n"
- }
-}

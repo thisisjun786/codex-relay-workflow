@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "bridgerecord.document": "txt:{\n  \"args\": [\n    \"--socket\",\n    \"<SOCKET-DIR>/app.sock\",\n    \"--state-dir\",\n    \"<HOME>/bridge-ledger\"\n  ],\n  \"bridgeExecutable\": \"<HOME>/.local/share/crw-runtime/current/bin/codex-thread-bridge\",\n  \"executionPolicy\": {\n    \"digest\": \"309653a358654da827c8867234d3afe53297b7bc2a4bfab0f09ae8ae7117a663\",\n    \"path\": \"<HOME>/pol\\udc80icy.json\"\n  },\n  \"installedBy\": \"CRW-158\",\n  \"owner\": \"plugin\",\n  \"recordVersion\": 2,\n  \"serverName\": \"codex-thread-bridge\"\n}\n"
- }
-}

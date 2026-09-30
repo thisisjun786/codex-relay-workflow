@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "launch": "txt:exit 1\nstdout 0\nstderr 380\nTraceback (most recent call last):\n  File \"<ROOT>/.codex/plugins/cache/crw/crw/0.4.0/./wiring/crw-bridge.sh\", line 239, in <module>\n    main()\n    ~~~~^^\n  File \"<ROOT>/.codex/plugins/cache/crw/crw/0.4.0/./wiring/crw-bridge.sh\", line 230, in main\n    os.execv(executable, [executable, *arguments])\n    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: embedded null byte\n"
- }
-}

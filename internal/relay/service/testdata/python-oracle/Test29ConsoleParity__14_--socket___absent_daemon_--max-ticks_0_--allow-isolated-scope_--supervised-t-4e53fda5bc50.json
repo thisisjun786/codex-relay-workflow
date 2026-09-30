@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "python": "txt:{\"answer\":{\"capture\":{\"Out\":\"{\\n  \\\"ok\\\": false,\\n  \\\"reason\\\": \\\"supervised_invocation_incomplete\\\",\\n  \\\"detail\\\": \\\"a supervised worker needs the token and both descriptors together\\\"\\n}\\n\",\"Err\":\"\",\"Code\":2},\"files\":{}},\"left\":[],\"emptied\":false}"
- }
-}

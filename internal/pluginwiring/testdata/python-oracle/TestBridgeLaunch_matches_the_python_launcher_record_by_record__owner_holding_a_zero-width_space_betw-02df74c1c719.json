@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "launch": "txt:exit 2\nstdout 0\nstderr 204\ncrw bridge launcher: the record at <ROOT>/.codex/crw-bridge-mcp.json names 'é\\u200b😀' as the owner of this server, so the Codex configuration registers it and this package must not start a second one\n"
- }
-}

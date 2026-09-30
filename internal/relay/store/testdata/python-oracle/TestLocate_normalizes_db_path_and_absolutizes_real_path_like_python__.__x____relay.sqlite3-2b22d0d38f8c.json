@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "python 219f35ec58cbafbdf364": "txt:[\"<TMP:TestLocate_normalizes_db_path_and_absolutizes_real_path_like_pyt>/001/x/relay.sqlite3\", \"<TMP:TestLocate_normalizes_db_path_and_absolutizes_real_path_like_pyt>/001/x/relay.sqlite3\"]\n"
- }
-}

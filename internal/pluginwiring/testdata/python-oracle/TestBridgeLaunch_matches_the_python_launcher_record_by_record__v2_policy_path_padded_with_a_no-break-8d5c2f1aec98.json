@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "launch": "txt:exit 2\nstdout 0\nstderr 215\ncrw bridge launcher: the record at <ROOT>/.codex/crw-bridge-mcp.json must name the execution policy as an absolute path with no surrounding whitespace or control characters, found '<ROOT>/execution-policy.json\\xa0'\n"
- }
-}

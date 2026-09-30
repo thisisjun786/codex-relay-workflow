@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "python 37d7095c53f024c80506": "txt:[\"<TMP:TestDiscoverStateDir_adopts_python_legacy_parent_spellings>/001/user-home/x/../y.sock\", \"314a97c5884c08d4\"]\n"
- }
-}

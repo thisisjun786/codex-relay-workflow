@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "python": "txt:{\"answer\":{\"Out\":\"\",\"Err\":\"usage: codex-session-relay service declare [-h] [--actor ACTOR]\\n                                           (--execution-policy EXECUTION_POLICY |\\n                                           --forget-execution-policy)\\ncodex-session-relay service declare: error: one of the arguments --execution-policy --forget-execution-policy is required\\n\",\"Code\":2},\"left\":[],\"emptied\":false}"
- }
-}

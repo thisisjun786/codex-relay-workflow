@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "deliverable_state": "txt:[\"unverifiable\", null, \"<BASE>//work/./../frozen/: the frozen manifest could not be reached: [Errno 13] Permission denied: '<BASE>/work/../frozen/MANIFEST.json'\"]\n"
- }
-}

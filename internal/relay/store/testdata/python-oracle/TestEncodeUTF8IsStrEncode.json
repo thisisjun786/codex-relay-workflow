@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "python 66bfcb1a9c2b63db1d21": "txt:[\"'utf-8' codec can't encode character '\\\\udcff' in position 1: surrogates not allowed\", \"'utf-8' codec can't encode characters in position 0-1: surrogates not allowed\", \"'utf-8' codec can't encode character '\\\\udcff' in position 1: surrogates not allowed\", \"'utf-8' codec can't encode character '\\\\udcff' in position 1: surrogates not allowed\", \"'utf-8' codec can't encode characters in position 2-4: surrogates not allowed\", \"'utf-8' codec can't encode character '\\\\ud800' in position 1: surrogates not allowed\", \"'utf-8' codec can't encode character '\\\\udcff' in position 1: surrogates not allowed\", null]\n"
- }
-}

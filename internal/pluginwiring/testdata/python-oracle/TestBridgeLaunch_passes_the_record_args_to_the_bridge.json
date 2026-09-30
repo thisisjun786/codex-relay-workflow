@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "launch": "txt:exit 0\nstdout 67\nargv=--socket <ROOT>/app server.sock\npolicy=<unset>\ndigest=<unset>\nstderr 0\n"
- }
-}

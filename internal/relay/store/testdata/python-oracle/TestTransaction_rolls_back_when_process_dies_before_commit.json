@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "python 81c4868f19ec40d10be4": "txt:{\"journal\": []}\n"
- }
-}

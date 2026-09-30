@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "python": "txt:{\"answer\":{\"capture\":{\"Out\":\"{\\n  \\\"ok\\\": false,\\n  \\\"reason\\\": \\\"supervised_token_mismatch\\\",\\n  \\\"detail\\\": \\\"the token does not match this state directory\\\"\\n}\\n\",\"Err\":\"\",\"Code\":2},\"files\":{}},\"left\":[],\"emptied\":false}"
- }
-}

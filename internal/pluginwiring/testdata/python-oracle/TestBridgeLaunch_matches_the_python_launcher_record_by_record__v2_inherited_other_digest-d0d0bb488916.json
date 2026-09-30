@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "launch": "txt:exit 2\nstdout 0\nstderr 354\ncrw bridge launcher: the record at <ROOT>/.codex/crw-bridge-mcp.json names the policy digest d01e3e1e13e08b0a52791fabf962fbcd69ce76bca10b09de6d3efc1d7c3409e6 and this process was started with CODEX_THREAD_BRIDGE_EXECUTION_POLICY_DIGEST=1111111111111111111111111111111111111111111111111111111111111111. Unset the variable, or register the policy it names\n"
- }
-}

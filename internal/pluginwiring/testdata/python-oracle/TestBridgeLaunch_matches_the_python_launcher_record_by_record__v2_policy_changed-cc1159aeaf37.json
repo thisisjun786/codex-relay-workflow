@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "launch": "txt:exit 2\nstdout 0\nstderr 587\ncrw bridge launcher: the execution policy at <ROOT>/execution-policy.json now hashes to d01e3e1e13e08b0a52791fabf962fbcd69ce76bca10b09de6d3efc1d7c3409e6, and the record at <ROOT>/.codex/crw-bridge-mcp.json was written when it hashed to 0000000000000000000000000000000000000000000000000000000000000000. It changed after it was registered, so the bridge is not started under a policy nobody registered. Run runtime_install.py register-mcp --owner plugin --execution-policy <file> again after moving <ROOT>/.codex/crw-bridge-mcp.json aside, so the record names the policy as it now stands.\n"
- }
-}

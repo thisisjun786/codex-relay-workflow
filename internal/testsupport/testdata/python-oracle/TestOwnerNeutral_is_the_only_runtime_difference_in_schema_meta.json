@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "created": "txt:{\"meta\":{\"owner\":\"python\",\"owner_epoch\":\"1\",\"python_compatibility_build\":\"codex-session-relay/0.2.0\",\"rollback_allowed\":\"1\",\"socket_path\":\"/crw-test/app.sock\",\"takeover_id\":\"\",\"version\":\"1\",\"writer_protocol\":\"1\"},\"mirror\":{\"appServerSocket\":\"/crw-test/app.sock\",\"controller\":null,\"epoch\":1,\"holder\":null,\"owner\":\"python\",\"phase\":\"active\",\"protocol\":1,\"pythonCompatibilityBuild\":\"codex-session-relay/0.2.0\",\"rollbackAllowed\":true,\"scopeKey\":\"<SCOPE-KEY>\",\"transition\":null}}"
- }
-}

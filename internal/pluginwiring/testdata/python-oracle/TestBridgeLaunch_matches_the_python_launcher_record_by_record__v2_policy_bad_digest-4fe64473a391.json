@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "launch": "txt:exit 2\nstdout 0\nstderr 146\ncrw bridge launcher: the record at <ROOT>/.codex/crw-bridge-mcp.json must name the execution policy digest as 64 lowercase hexadecimal characters\n"
- }
-}

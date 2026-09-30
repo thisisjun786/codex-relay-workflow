@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "cells": "txt:[[\"ACCESS_ERROR\", \"the journal could not be opened: 'utf-8' codec can't encode character '\\\\ud800' in position R+4: surrogates not allowed\", \"<ROOT>/a/b\\ud800\"], [\"ACCESS_ERROR\", \"the journal could not be opened: 'utf-8' codec can't encode characters in position R+6-R+7: surrogates not allowed\", \"/<ROOT>/a/b/\\ud800\\ud800/c\"], [\"ACCESS_ERROR\", \"the journal could not be opened: 'utf-8' codec can't encode character '\\\\ud800' in position R+2: surrogates not allowed\", \"<ROOT>/a\\ud800\"], [\"ABSENT\", \"the journal directory does not exist, so this hook has recorded no invocation into it\", \"<ROOT>/a/b\"], [\"ABSENT\", \"the journal directory does not exist, so this hook has recorded no invocation into it\", \"<ROOT>/c\"], [\"ABSENT\", \"the journal directory does not exist, so this hook has recorded no invocation into it\", \"/<ROOT>/c\"], [\"ABSENT\", \"the journal directory does not exist, so this hook has recorded no invocation into it\", \"<ROOT>/c\"], [\"1\", \"invocations this hook recorded for itself\", \"<ROOT>/d\"], [\"1\", \"invocations this hook recorded for itself\", \"/<ROOT>/d\"], [\"1\", \"invocations this hook recorded for itself\", \"<ROOT>/d\"]]\n"
- }
-}

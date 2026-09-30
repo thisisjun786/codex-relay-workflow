@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "python 975213990313668e37f4": "txt:[[\"//var/x/n\", \"//var\"], [\"/var/x/n\", \"/var\"], [\"//n\", \"//\"], [\"/n\", \"/\"], [\"n\", \".\"], [\"n\", \".\"], [\"a/n\", \".\"], [\"../n\", \".\"], [\"a/b/n\", \"a\"], [\"//x/n\", \"//\"], [\"/x/n\", \"/\"], [\"/a/../b/n\", \"/a/..\"]]\n"
- }
-}

@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "python": "txt:{\"answer\":{\"Out\":\"\",\"Err\":\"usage: codex-session-relay service [-h]\\n                                   {status,enable,disable,stop,declare,start,restart,run} ...\\ncodex-session-relay service: error: the following arguments are required: service_command\\n\",\"Code\":2},\"left\":[],\"emptied\":false}"
- }
-}

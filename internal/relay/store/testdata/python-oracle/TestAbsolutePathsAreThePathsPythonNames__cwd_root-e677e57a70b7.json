@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "python 1d6126bbbf6928027e96": "txt:[[\"/relay.sqlite3\", \"/\", \"/\", \"/relay.sqlite3\", \"/relay.sqlite3\"], [\"/st/relay.sqlite3\", \"/st\", \"/st\", \"/st/relay.sqlite3\", \"/st/relay.sqlite3\"], [\"/st/relay.sqlite3\", \"/st\", \"/st\", \"/a/../st/relay.sqlite3\", \"/a/../st/relay.sqlite3\"], [\"/st\", \"/\", \"/\", \"/st\", \"/st\"], [\"//x/relay.sqlite3\", \"//x\", \"//x\", \"//x/relay.sqlite3\", \"//x/relay.sqlite3\"], [\"/x/relay.sqlite3\", \"/x\", \"/x\", \"/x/relay.sqlite3\", \"/x/relay.sqlite3\"], [\"//relay.sqlite3\", \"//\", \"//\", \"//relay.sqlite3\", \"//relay.sqlite3\"], [\"/relay.sqlite3\", \"/\", \"/\", \"/relay.sqlite3\", \"/relay.sqlite3\"], [\"/\", \"/\", \"/\", \"/\", \"/\"]]\n"
- }
-}

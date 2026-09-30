@@ -1,9 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "/repo main": "txt:tgt-7f7365817d4c86ca05bc5627b73691f2\n",
-  "owner/other release/1.2": "txt:tgt-8010ebe11826725c6956c08f8015502b\n",
-  "owner/repo dev": "txt:tgt-7d24338411e486ac9bb24b50c947fa96\n",
-  "owner/repo main": "txt:tgt-92c7a7024fb8178ad3dece61143f6d6a\n"
- }
-}

@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "python": "txt:{\"answer\":{\"capture\":{\"Out\":\"{\\n  \\\"ok\\\": true,\\n  \\\"reason\\\": null,\\n  \\\"intent\\\": {\\n    \\\"enabled\\\": false,\\n    \\\"changedAt\\\": \\\"TIME\\\",\\n    \\\"changedBy\\\": \\\"cli\\\",\\n    \\\"configured\\\": true\\n  },\\n  \\\"stop\\\": {\\n    \\\"ok\\\": false,\\n    \\\"reason\\\": \\\"not_running\\\",\\n    \\\"detail\\\": \\\"no daemon record\\\",\\n    \\\"supervisor\\\": \\\"gone\\\",\\n    \\\"worker\\\": \\\"gone\\\"\\n  }\\n}\\n\",\"Err\":\"\",\"Code\":0},\"files\":{\"service.json\":\"{\\n  \\\"enabled\\\": false,\\n  \\\"changedAt\\\": \\\"TIME\\\",\\n  \\\"changedBy\\\": \\\"cli\\\"\\n}\"}},\"left\":[\"d 0700 state\"],\"emptied\":false}"
- }
-}

@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "launch": "txt:exit 2\nstdout 0\nstderr 159\ncrw bridge launcher: the record at <ROOT>/.codex/crw-bridge-mcp.json could not be read: 'utf-8' codec can't decode byte 0xff in position 7: invalid start byte\n"
- }
-}

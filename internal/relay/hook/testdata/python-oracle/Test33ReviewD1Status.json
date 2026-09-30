@@ -1,7 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "override=false": "txt:{\"configuration\": \"<HOME>/crw-completion-hook.json\", \"value\": \"config_absent\"}\n",
-  "override=true": "txt:{\"configuration\": \"<HOME>/override.json\", \"value\": \"config_absent\"}\n"
- }
-}

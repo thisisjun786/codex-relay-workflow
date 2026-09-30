@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "python 2e4eb25141c2224eec9f": "txt:{\"z\": 1, \"a\": {\"second\": 2, \"first\": 1}}\n"
- }
-}

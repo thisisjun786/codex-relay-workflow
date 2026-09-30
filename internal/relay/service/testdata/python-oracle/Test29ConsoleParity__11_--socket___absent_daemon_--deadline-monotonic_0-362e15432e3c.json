@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "python": "txt:{\"answer\":{\"capture\":{\"Out\":\"{\\n  \\\"ok\\\": false,\\n  \\\"reason\\\": \\\"bound_already_spent\\\",\\n  \\\"detail\\\": \\\"the instant this run was given had passed by the time it reached its own clock, so it took no tick\\\"\\n}\\n\",\"Err\":\"\",\"Code\":5},\"files\":{}},\"left\":[],\"emptied\":false}"
- }
-}

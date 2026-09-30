@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "event_identity": "txt:[null, {\"established\": false, \"reason\": \"answer_text_ambiguous\", \"answerItem\": null, \"transcriptPath\": \"<HOME>/transcript.jsonl\", \"scannedBytes\": 3143, \"scannedLines\": 8}]\n"
- }
-}

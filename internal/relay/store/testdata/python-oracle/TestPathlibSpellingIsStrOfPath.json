@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "python 2544c13872056a75d4b8": "txt:[\"//var/x\", \"/var/x\", \"/x\", \"//\", \"/\", \".\", \".\", \"a\", \"a/b/c\", \"//a/../b\", \"//x\", \"x\", \"//x\", \"/a/b\"]\n"
- }
-}

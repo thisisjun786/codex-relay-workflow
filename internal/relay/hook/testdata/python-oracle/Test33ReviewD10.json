@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "D10": "txt:[{\"code\": 3, \"kind\": \"cli\", \"stderr\": \"\", \"stdout\": \"{\\n  \\\"error\\\": \\\"host\\\",\\n  \\\"detail\\\": \\\"UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 6: invalid start byte\\\"\\n}\\n\"}, {\"code\": 3, \"kind\": \"cli\", \"stderr\": \"\", \"stdout\": \"{\\n  \\\"error\\\": \\\"host\\\",\\n  \\\"detail\\\": \\\"UnicodeDecodeError: 'utf-8' codec can't decode bytes in position 6-7: invalid continuation byte\\\"\\n}\\n\"}, {\"code\": 3, \"kind\": \"cli\", \"stderr\": \"\", \"stdout\": \"{\\n  \\\"error\\\": \\\"host\\\",\\n  \\\"detail\\\": \\\"UnicodeDecodeError: 'utf-8' codec can't decode byte 0x80 in position 0: invalid start byte\\\"\\n}\\n\"}]"
- }
-}

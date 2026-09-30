@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "python": "txt:{\"answer\":{\"capture\":{\"Out\":\"{\\n  \\\"ok\\\": false,\\n  \\\"reason\\\": \\\"isolated_scope_not_allowed\\\",\\n  \\\"detail\\\": \\\"CODEX_SESSION_RELAY_SCOPE_DIR is set, which moves the ownership record away from the one authority every launch shares. Pass --allow-isolated-scope if that is deliberate; single ownership is not enforced across differently isolated roots.\\\"\\n}\\n\",\"Err\":\"\",\"Code\":2},\"entries\":null,\"tables\":\"absent\"},\"left\":[],\"emptied\":false}"
- }
-}

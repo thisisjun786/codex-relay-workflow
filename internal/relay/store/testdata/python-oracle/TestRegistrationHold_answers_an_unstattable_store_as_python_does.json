@@ -1,9 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "python 15e74df83a0795adc825": "txt:the relay store could not be opened for writing: [Errno 20] Not a directory: '<TMP:TestRegistrationHold_answers_an_unstattable_store_as_python_does>/001/a-file/relay.sqlite3'\n",
-  "python c8b2671c2cd4a3faa7e0": "txt:the relay store could not be opened for writing: [Errno 2] No such file or directory: '<TMP:TestRegistrationHold_answers_an_unstattable_store_as_python_does>/001/state/no-such-store.sqlite3'\n",
-  "python ef491fb40bac04d4e909": "txt:the relay store could not be opened for writing: [Errno 2] No such file or directory: '<TMP:TestRegistrationHold_answers_an_unstattable_store_as_python_does>/001/dangling.sqlite3'\n",
-  "python f133f4d7c4c5184263ff": "txt:the relay store could not be opened for writing: [Errno 2] No such file or directory: '<TMP:TestRegistrationHold_answers_an_unstattable_store_as_python_does>/001/no-such-store.sqlite3'\n"
- }
-}

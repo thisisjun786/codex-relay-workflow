@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "launch": "txt:exit 0\nstdout 114\nargv=\npolicy=<ROOT>/execution-policy.json\ndigest=d01e3e1e13e08b0a52791fabf962fbcd69ce76bca10b09de6d3efc1d7c3409e6\nstderr 0\n"
- }
-}

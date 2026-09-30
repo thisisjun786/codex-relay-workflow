@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "python": "txt:{\"answer\":{\"capture\":{\"Out\":\"{\\n  \\\"error\\\": \\\"usage\\\",\\n  \\\"detail\\\": \\\"--deadline and --deadline-monotonic are two different bounds; pass one\\\"\\n}\\n\",\"Err\":\"\",\"Code\":4},\"files\":{}},\"left\":[],\"emptied\":false}"
- }
-}

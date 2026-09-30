@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "answers": "txt:{\"cells\": [[\"1\", \"invocations this hook recorded for itself\", \"<ROOT>/j\\udcff\"], [\"ACCESS_ERROR\", \"the journal could not be opened: 'utf-8' codec can't encode character '\\\\ud800' in position R+3: surrogates not allowed\", \"<ROOT>/j\\udcff\\ud800\"]], \"reasons\": [\"no_answer_item_for_turn\", \"transcript_absent\", \"transcript_unreachable\"], \"claim\": \"claim_failed\", \"row\": null}\n"
- }
-}

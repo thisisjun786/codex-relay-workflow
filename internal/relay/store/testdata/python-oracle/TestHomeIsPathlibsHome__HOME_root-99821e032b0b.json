@@ -1,7 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "python 0f788e784c12722fddf7": "txt:[\"/.local/state/codex-session-relay/default\", \"default under /.local/state\"]\n",
-  "python 8691f4996590b86bce7d": "txt:[\"/\", \"/x\", \"/x\"]\n"
- }
-}

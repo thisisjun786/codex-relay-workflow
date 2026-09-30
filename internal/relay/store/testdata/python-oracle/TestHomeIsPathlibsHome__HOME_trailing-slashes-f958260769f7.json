@@ -1,7 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "python 0dd20720e3c071cad41e": "txt:[\"<TMP:TestHomeIsPathlibsHome>/001/user-home\", \"<TMP:TestHomeIsPathlibsHome>/001/user-home/x\", \"<TMP:TestHomeIsPathlibsHome>/001/user-home/x\"]\n",
-  "python 9cbe6108dd6ab27bfbc6": "txt:[\"<TMP:TestHomeIsPathlibsHome>/001/user-home/.local/state/codex-session-relay/default\", \"default under <TMP:TestHomeIsPathlibsHome>/001/user-home/.local/state\"]\n"
- }
-}

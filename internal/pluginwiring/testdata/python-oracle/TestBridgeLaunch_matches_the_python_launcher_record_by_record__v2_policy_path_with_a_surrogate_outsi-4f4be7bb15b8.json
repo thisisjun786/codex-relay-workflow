@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "launch": "txt:exit 2\nstdout 0\nstderr 155\ncrw bridge launcher: the record at <ROOT>/.codex/crw-bridge-mcp.json names an execution policy path this system cannot encode, found '<ROOT>/p\\ud800.json'\n"
- }
-}

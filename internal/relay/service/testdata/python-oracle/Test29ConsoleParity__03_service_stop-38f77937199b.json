@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "python": "txt:{\"answer\":{\"capture\":{\"Out\":\"{\\n  \\\"ok\\\": false,\\n  \\\"reason\\\": \\\"not_running\\\",\\n  \\\"detail\\\": \\\"no daemon record\\\",\\n  \\\"supervisor\\\": \\\"gone\\\",\\n  \\\"worker\\\": \\\"gone\\\"\\n}\\n\",\"Err\":\"\",\"Code\":2},\"files\":{}},\"left\":[\"d 0700 state\"],\"emptied\":false}"
- }
-}

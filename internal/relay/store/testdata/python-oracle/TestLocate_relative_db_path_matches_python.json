@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "python a413f47a214396d1ce9a": "txt:[\"x/relay.sqlite3\", \"<TMP:TestLocate_relative_db_path_matches_python>/001/x/relay.sqlite3\"]\n"
- }
-}

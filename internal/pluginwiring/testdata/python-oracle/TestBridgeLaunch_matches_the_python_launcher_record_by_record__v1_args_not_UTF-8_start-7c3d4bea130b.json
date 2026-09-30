@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "launch": "b64:ZXhpdCAwCnN0ZG91dCA4NAphcmd2PS0tc3RhdGUtZGlyIDxST09UPi9zdIB0ZSAtLXNvY2tldCA8Uk9PVD4vc/8uc29jawpwb2xpY3k9PHVuc2V0PgpkaWdlc3Q9PHVuc2V0PgpzdGRlcnIgMAo="
- }
-}

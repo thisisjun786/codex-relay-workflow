@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "python a5589e55b773a3b36e10": "txt:ready_for_review,failed,interrupted,blocked_needs_input\n"
- }
-}

@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "python 2d152ad7617d53579048": "txt:DatabaseError: file is not a database\n"
- }
-}

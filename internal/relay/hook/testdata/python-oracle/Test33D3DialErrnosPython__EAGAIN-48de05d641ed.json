@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "EAGAIN": "txt:{\"errno\": \"EAGAIN\", \"detail\": \"the configured runtime could not be run: [Errno 11] Resource temporarily unavailable: '<HOME>/state/control.sock'\"}\n"
- }
-}

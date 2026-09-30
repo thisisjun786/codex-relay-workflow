@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "status": "txt:[\"PRESENT\", \"<HOME>/s\\udcff.json\", \"PRESENT\", \"<HOME>/a\\udcff/completion_hook.py\", [[\"<HOME>/s\\udcff.json\", \"PRESENT\", true]]]\n"
- }
-}
