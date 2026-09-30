@@ -126,8 +126,10 @@ under the plugin-owned one, each in its own home, and requires the same printed 
 the same journal record apart from the six volatile fields the Python runner's `runner/files.py`
 excluded.
 `release` reads the named step's shell block from `.github/workflows/release.yml` with the
-same grammar as `scripts/ci/tests/release_steps.py` and runs it with bash in a fresh clone,
-beside copies of the fake `gh` and `git` in `internal/contracttest/testdata/release`.
+grammar the Python `release_steps.py` used (`internal/contracttest/release.go`) and runs it with
+bash in a fresh clone, beside the fake `gh` and `git` in `internal/contracttest/testdata/release`.
+The rest of the release route, every refusal and recovery test_release.py held, is the Go
+`TestReleaseWorkflow_*` tests beside it, which run the same steps in the same fixture.
 `${PYTHON}` and `${ENTRY}` expand to stand-ins that answer the status probe and exist;
 no fixture executes them.
 

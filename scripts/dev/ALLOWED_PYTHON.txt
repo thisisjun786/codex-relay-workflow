@@ -12,10 +12,8 @@ scripts/check_operations_contract.py
 scripts/ci/gate.py
 scripts/ci/plugin.py
 scripts/ci/scope.py
-scripts/ci/tests/release_steps.py
 scripts/ci/tests/test_gate.py
 scripts/ci/tests/test_plugin.py
-scripts/ci/tests/test_release.py
 scripts/ci/tests/test_scope.py
 scripts/ci/tests/test_validate.py
 scripts/ci/validate.py

@@ -36,6 +36,11 @@ The README describes general ordered steps, SQL observations and release operati
 
 ## test_release.py
 
+Since wave R1 of the post-port refactoring every case below is a Go test,
+`internal/contracttest/release_workflow_test.go` (`TestReleaseWorkflow_*`), run against the same
+workflow steps and the fake `gh` and `git` of `internal/contracttest/testdata/release`; the Python
+file and its copies of the fakes are deleted. The table is the corpus survey as it was.
+
 | Case | Status | Fixture / required kind |
 | --- | --- | --- |
 | test_owner_dispatch_inputs | blocked (happy-path fixture pre-existing) | `contract/fixtures/records/test_release__test_owner_dispatch_inputs.json`; its existing source function still asserts the additional owner, rerun, branch, SHA, tag and notes refusals, so it is **not yet a thin runner**. Full conversion requires R1. |
