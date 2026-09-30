@@ -108,8 +108,8 @@ host (load average 6-14, Python 3.14) on 2026-09-29: `test_runtime_install` 98 s
 `test_plugin_wiring` 18 s (`test_hook_comparison`, 43 s, was deleted with the harness it
 tested in todo 46). Todo 44 deletes the modules that tested the Python implementation, the
 Python installers and harnesses (`test_stop_events`, `test_completion_hook`,
-`test_adapter_agreement`, `test_packages` and `test_relay_schema_shipped` so far), so `rest` is
-now the lighter leg. Re-measure and move a module when one leg grows well past the other. `test_gate.py` and `internal/dev/ci`
+`test_adapter_agreement`, `test_packages`, `test_relay_schema_shipped` and
+`test_install_acceptance` so far), so `heavy` is `test_runtime_install` alone until it goes too. Re-measure and move a module when one leg grows well past the other. `test_gate.py` and `internal/dev/ci`
 run the step's own script once per leg over a copy of the test directory, with
 `python3` replaced by a recorder, and check that together the legs run every module
 discovery would load exactly once.
