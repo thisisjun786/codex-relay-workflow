@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -34,6 +35,11 @@ func TestMain(m *testing.M) {
 			os.Exit(1)
 		}
 	}
+	// The replay tests compare fault-sweep's facts with the live-Python oracle's, which runs
+	// from this checkout and names its package directory there.
+	sweepInstallation = func() (Installation, error) {
+		return Installation{Package: "codex-session-relay", Version: RelayPackageVersion, Location: filepath.Join(f1Root(), "packages", "codex-session-relay", "src", "codex_session_relay")}, nil
+	}
 	code := m.Run()
 	if err := os.RemoveAll(home); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -44,4 +50,10 @@ func TestMain(m *testing.M) {
 
 func testHostRecordPath() string {
 	return filepath.Join(os.Getenv("XDG_STATE_HOME"), "codex-relay-workflow", "host-record.json")
+}
+
+// f1Root is the repository checkout this package's tests run from.
+func f1Root() string {
+	_, file, _, _ := runtime.Caller(0)
+	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".."))
 }

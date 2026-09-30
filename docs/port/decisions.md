@@ -1105,9 +1105,10 @@ start, null for an absent store.
 The relay's `faultsweep.INSTALLATION.version` and the bridge's `__version__` are mirrored
 as `faults.RelayPackageVersion` and `appserver.BridgeVersion` (0.2.0), each checked
 against the real Python package; `ownership.PythonBuild` stays the fence identity and does
-not follow later bumps. Open question, not decided here: the Go daemon's installation
-location is its executable's directory under package `codex-session-relay`, so the
-host-record revision lookup reports `unknown` (refactor-backlog.md, audit 50).
+not follow later bumps. The Go relay's installation identity is decision 34's: package
+`codex-session-relay` at the directory of its resolved executable
+(`faults.ExecutableInstallation`), which `crw install` records as the Go install entry's
+`location`, for the daemon's sweeper and the `fault-sweep` command alike.
 
 Evidence: `internal/relay/argparse/readonly.go` (`ReadOnlyForm`, read by the relay CLI and
 `registry.ExecuteAs`), `internal/relay/cli/readonly.go`, `internal/relay/store/hold.go`
@@ -1435,8 +1436,11 @@ install entry carries `location` (`<runtime>/bin`, the directory a running Go re
 its own), `entryPoint`, `environment`, `integrity` and `binaryDigest` (the binary's SHA-256),
 `target` (`<goos>/<goarch>`), `reachedVia`, `digestMatchesDefinition` and `source`, and no
 `interpreter`, `interpreterPath` or `installMode`. `source` is what both fault sweepers read as
-the installed revision: `repositoryCommit` and `workingTreeClean` come from the binary's build
-information, and `repositoryTree` and `subdirectoryTree` (equal: the Go module is the repository
+the installed revision. A Go relay finds its own entry by that `location`: the daemon's sweeper
+and `fault-sweep` both name the directory of the resolved executable
+(`faults.ExecutableInstallation`), never a path derived from the Go source, which a `-trimpath`
+build turns into a module path that matches no entry. `repositoryCommit` and
+`workingTreeClean` come from the binary's build information, and `repositoryTree` and `subdirectoryTree` (equal: the Go module is the repository
 root) from the tree `make build`/`make dist` stamp with
 `-X .../internal/runtime/record.sourceTree=$(git rev-parse HEAD^{tree})`, and only when the
 working tree is clean (`git status --porcelain` empty, the test behind Go's own `vcs.modified`):
@@ -1460,8 +1464,10 @@ reduced to three installs and two points per component); `TestV1RecordRoundTrips
 `TestUpdateWritesWhatPythonWrites` (seven deltas against Python's bytes in
 internal/runtime/testdata/goldens.json), `TestMakefileStampsTheTreeOnlyFromACleanTree` (the
 Makefile run in a temporary repository: clean stamps HEAD's tree, modified or untracked stamps
-nothing), `TestSourceWithoutAStampIsNull`, `Test37_SweeperReadsTheGoInstallEntry`
-(internal/relay/faults) and, under the parity tag, `TestParity_python_faultsweep_reads_a_go_install_entry`.
+nothing), `TestSourceWithoutAStampIsNull`, `Test37_SweeperReadsTheGoInstallEntry` and
+`Test37_FaultSweepCLIRecordsTheRunningBinarysInstallEntry` (a `-trimpath` build's `fault-sweep`
+records its Go install entry's location and revision; internal/relay/faults) and, under the
+parity tag, `TestParity_python_faultsweep_reads_a_go_install_entry`.
 
 ## 35. The components definition stays definitionVersion 1, without per-target digests
 

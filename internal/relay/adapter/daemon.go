@@ -39,10 +39,7 @@ func daemonFactory(ctx context.Context, services cli.Services, s *store.Store) (
 	d := daemon.New(s, a, clock, channel)
 	d.Faults = &faults.Ledger{Store: s, Clock: clock}
 	d.Notices = &faults.NoticeDeliverer{Ledger: d.Faults, Channel: supervisor.NoticeChannel{Channel: channel, Ledger: d.Faults, Host: a}, Owner: "relay-daemon"}
-	executable, err := os.Executable()
-	if err == nil {
-		executable, err = filepath.EvalSymlinks(executable)
-	}
+	installation, err := faults.ExecutableInstallation()
 	if err != nil {
 		return nil, errors.Join(err, a.Close())
 	}
@@ -55,6 +52,6 @@ func daemonFactory(ctx context.Context, services cli.Services, s *store.Store) (
 		stateHome = filepath.Join(home, ".local", "state")
 	}
 	d.Sweeper = &faults.Sweeper{Store: s, MaxAttempts: d.Delivery.Policy.MaxAttempts, Selection: services.Selection, Now: clock.ISO, SupersessionReason: d.Delivery.SupersessionReason,
-		Installation: faults.Installation{Package: "codex-session-relay", Version: faults.RelayPackageVersion, Location: filepath.Dir(executable)}, HostRecordPath: filepath.Join(stateHome, "codex-relay-workflow", "host-record.json")}
+		Installation: installation, HostRecordPath: filepath.Join(stateHome, "codex-relay-workflow", "host-record.json")}
 	return d, nil
 }
