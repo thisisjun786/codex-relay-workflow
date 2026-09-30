@@ -70,7 +70,8 @@ const routeBudget = 5 * time.Second
 // the exit status it carries: 0, or 2, 3 or 4 for an error record's refused, host or usage (2
 // for any other error). Readable is false when the owner closed without a readable answer (none,
 // bytes that are not UTF-8 or JSON, more than 64 MiB of them, or a JSON null, as the fence reads
-// them), and TimedOut when it did not answer within the budget, which Detail words.
+// them), and TimedOut when it did not answer within the budget, which Detail words. JSON nested
+// deeper than the fence's json.loads reads is RouteGuard's error, as it is the fence's.
 type Routed struct {
 	Answer   any
 	Code     int
@@ -130,8 +131,14 @@ func RouteGuard(ctx context.Context, state string, stop Object, options GuardOpt
 			return nil, err
 		}
 	}
-	if len(raw) == 0 || len(raw) > maxControlBytes {
+	if len(raw) == 0 || len(raw) > maxControlBytes || !store.ValidUTF8(raw) {
 		return &Routed{}, nil
+	}
+	// The fence decodes the bytes, then json.loads them, whose C scanner takes 9998 nested
+	// containers here and raises RecursionError from 9999: not a ValueError, so it leaves
+	// socket_guard and cli.main reports it as a host error.
+	if message, recursion := store.PythonJSONErrorWithLimit(string(raw), 9998); recursion {
+		return nil, fmt.Errorf("RecursionError: %s", message)
 	}
 	value, err := Decode(raw)
 	if err != nil || value == nil {

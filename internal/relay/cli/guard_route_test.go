@@ -202,6 +202,16 @@ func TestGuardEvaluate_routes_to_the_owners_control_socket_as_the_fence_does(t *
 		// The fence reads a JSON null as no answer at all (socket_guard's `if value is None`).
 		{"an owner that answers null", "null\n", "the owner closed control.sock without a readable guard-evaluate answer"},
 		{"an owner whose error kind is a list", "{\"error\": [\"refused\"]}\n", "TypeError: unhashable type: 'list'"},
+		// The fence's json.loads takes 9998 nested containers and raises RecursionError from
+		// 9999, which leaves socket_guard for cli.main's host error: at 9999 and 10000, where Go's
+		// decoder still reads the answer, and above 10000, where it no longer does.
+		{"an owner that answers 9999 nested arrays", strings.Repeat("[", 9999) + strings.Repeat("]", 9999) + "\n", "RecursionError: maximum recursion depth exceeded while decoding a JSON array from a unicode string"},
+		{"an owner that answers 9999 nested objects", strings.Repeat("{\"a\": ", 9998) + "{}" + strings.Repeat("}", 9998) + "\n", "RecursionError: maximum recursion depth exceeded while decoding a JSON object from a unicode string"},
+		{"an owner that answers 10000 nested arrays", strings.Repeat("[", 10000) + strings.Repeat("]", 10000) + "\n", "RecursionError: maximum recursion depth exceeded while decoding a JSON array from a unicode string"},
+		{"an owner that answers 10001 nested arrays", strings.Repeat("[", 10001) + strings.Repeat("]", 10001) + "\n", "RecursionError: maximum recursion depth exceeded while decoding a JSON array from a unicode string"},
+		// The fence decodes the bytes before it parses them: at any depth, bytes that are not
+		// UTF-8 are no answer.
+		{"an owner that answers 9999 nested arrays that are not UTF-8", strings.Repeat("[", 9999) + "\"\xff\"" + strings.Repeat("]", 9999) + "\n", "the owner closed control.sock without a readable guard-evaluate answer"},
 	} {
 		closed := fakeOwner(t, filepath.Join(python, "control.sock"), owner.reply)
 		got = goCLI(t, argv(python, pf, pf.Root)...)
