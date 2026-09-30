@@ -10,16 +10,15 @@ import (
 	"strings"
 	"unicode/utf16"
 	"unicode/utf8"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
-// Field is one entry in a Python insertion-ordered JSON object.
-type Field struct {
-	Key   string
-	Value any
-}
+// Field is one entry in a Python insertion-ordered JSON object (pyjson.Field).
+type Field = pyjson.Field
 
-// OrderedObject preserves field order at every object nesting level.
-type OrderedObject []Field
+// OrderedObject preserves field order at every object nesting level (pyjson.Object).
+type OrderedObject = pyjson.Object
 
 // Result is the JSON envelope returned by a relay command.
 type Result = OrderedObject
