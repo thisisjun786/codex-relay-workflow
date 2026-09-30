@@ -6,10 +6,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"os"
 	"path/filepath"
 	"reflect"
-	"sync"
 	"testing"
 	"time"
 
@@ -17,6 +15,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 // Fixture identities, as tests/support.py and test_linkage.py.
@@ -237,49 +236,12 @@ func (w *world) ownerStep(kind, key string) any {
 	return w.step(o, err)
 }
 
-// python is testdata/python_linkage.json.
-var python = pythonFile("testdata/python_linkage.json")
-
-// pythonFile loads one recorded oracle file once: scenario name -> steps.
-func pythonFile(path string) func() (map[string][]map[string]any, error) {
-	return sync.OnceValues(func() (map[string][]map[string]any, error) {
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			return nil, err
-		}
-		var out map[string][]map[string]any
-		return out, json.Unmarshal(raw, &out)
-	})
-}
-
-// sameAsPython compares every recorded step's whole JSON with Python's.
-func (w *world) sameAsPython(name string) []map[string]any {
+// matchesGolden compares every recorded step's whole JSON with the scenario's golden
+// (testdata/golden, which began as the Python answer to the same calls) and returns the steps.
+func (w *world) matchesGolden(name string) []map[string]any {
 	w.t.Helper()
-	return w.sameAs(python, name)
-}
-
-// sameAs compares every recorded step's whole JSON with the named scenario of one oracle file.
-func (w *world) sameAs(oracle func() (map[string][]map[string]any, error), name string) []map[string]any {
-	w.t.Helper()
-	all, err := oracle()
-	if err != nil {
-		w.t.Fatal(err)
-	}
-	want, ok := all[name]
-	if !ok {
-		w.t.Fatalf("no python scenario %q", name)
-	}
-	if len(w.steps) != len(want) {
-		w.t.Fatalf("%s: %d steps, python has %d\n go: %v", name, len(w.steps), len(want), w.steps)
-	}
-	for i := range want {
-		if !reflect.DeepEqual(w.steps[i], want[i]) {
-			g, _ := json.MarshalIndent(w.steps[i], "", " ")
-			p, _ := json.MarshalIndent(want[i], "", " ")
-			w.t.Errorf("%s step %d differs from Python\n go: %s\n py: %s", name, i, g, p)
-		}
-	}
-	return want
+	golden.CheckJSON(w.t, name, w.steps)
+	return w.steps
 }
 
 func text(v any) string {
