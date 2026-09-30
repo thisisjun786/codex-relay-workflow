@@ -186,7 +186,12 @@ func (in ReceiptIntake) checkDeliverable(claim ReceiptClaim, relationship Relati
 func (in ReceiptIntake) verifyBytes(entries []ManifestEntry, roots []string, manifestRef *string) (PathBinding, error) {
 	problems, mode := verifyAgainstDisk(entries, roots, in.Minimum == LeaseEnforced)
 	if len(problems) > 0 && manifestRef != nil {
-		frozen := VerifyFrozen(*manifestRef, entries)
+		// A frozen copy that is not a manifest raises in the fence, as it does here: a refusal
+		// only when it is one (a relative path in it), otherwise the host error it is.
+		frozen, err := VerifyFrozen(*manifestRef, entries)
+		if err != nil {
+			return "", err
+		}
 		if len(frozen) == 0 {
 			return in.requireMinimum(BestEffortDetection)
 		}

@@ -266,11 +266,11 @@ def _read_frozen_blob(reference: Path, digest: str) -> tuple[str, int]:
 
 
 def _frozen_document_access(document, manifest_ref) -> list:
-    """Why is_file() said no: absent, or out of reach? Returns the access failures, if any.
+    """Why the regular-file test said no: absent, or out of reach? Returns the access failures.
 
-    is_file() answers False for both, and they are different facts. A frozen copy that does not
-    exist is a receipt that never froze one; a frozen copy behind a permission or a vanished mount
-    is one nobody was able to check. Only the second means the verification did not happen.
+    os.path.isfile answers False for both, and they are different facts. A frozen copy that does
+    not exist is a receipt that never froze one; a frozen copy behind a permission or a vanished
+    mount is one nobody was able to check. Only the second means the verification did not happen.
     """
     try:
         document.stat()
@@ -303,7 +303,11 @@ def verify_frozen_detailed(manifest_ref: str, entries=None) -> tuple[str, list, 
     """
     reference = Path(manifest_ref)
     document = reference / "MANIFEST.json"
-    if not document.is_file():
+    # os.path.isfile rather than Path.is_file(): the latter raised PermissionError for a blocked
+    # parent up to Python 3.13 and answers False from 3.14, so the same frozen copy was an
+    # exception on one interpreter and a named access failure on the other. isfile has answered
+    # False for any stat failure on every supported interpreter, and the probe below names it.
+    if not os.path.isfile(document):
         return (
             "",
             [f"{manifest_ref}: no MANIFEST.json in the frozen copy"],

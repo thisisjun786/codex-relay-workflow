@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,59 +13,53 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// VerifyFrozenDetailed is manifest.verify_frozen_detailed: the revision the frozen copy's own
+// manifest hashes to, every problem found, and the subset of them that were failures to read.
+// A frozen MANIFEST.json that is absent, is not a regular file or cannot be reached is a
+// problem; which of those was an access failure is asked of stat as the fence asks it
+// (_frozen_document_access). A document that was reached and could not be read, or was read and
+// is not a manifest, is the exception the fence raises instead of an answer (FrozenException).
 func VerifyFrozenDetailed(reference string, entries []ManifestEntry) (string, []string, []string, error) {
 	document := filepath.Join(reference, "MANIFEST.json")
-	info, err := os.Stat(document)
-	if err != nil {
-		problem := []string{reference + ": no MANIFEST.json in the frozen copy"}
-		if errors.Is(err, unix.EACCES) {
-			return "", nil, nil, &frozenAccessError{err}
-		}
-		if errors.Is(err, unix.ENOENT) || errors.Is(err, unix.ENOTDIR) || errors.Is(err, unix.ELOOP) || errors.Is(err, unix.ESTALE) {
-			return "", problem, []string{}, nil
-		}
-		return "", nil, nil, &frozenAccessError{err}
+	if strings.ContainsRune(document, 0) {
+		// os.stat refuses the name before any system call, and the probe lets that out.
+		return "", nil, nil, &FrozenException{Class: "ValueError", text: "embedded null byte"}
 	}
-	if !info.Mode().IsRegular() {
-		return "", []string{reference + ": no MANIFEST.json in the frozen copy"}, []string{}, nil
+	info, err := os.Stat(document)
+	if err != nil || !info.Mode().IsRegular() {
+		problems, unreadable := []string{reference + ": no MANIFEST.json in the frozen copy"}, []string{}
+		if err != nil && !interpretedErrno(err) {
+			unreadable = append(unreadable, reference+": the frozen manifest could not be reached: "+PythonOSErrorText(err))
+		}
+		return "", problems, unreadable, nil
 	}
 	raw, err := os.ReadFile(document)
 	if err != nil {
-		return "", nil, nil, &frozenAccessError{err}
+		return "", nil, nil, frozenOSException(err)
 	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &fields); err != nil {
+	if err := FrozenDocumentError(raw); err != nil {
 		return "", nil, nil, err
 	}
-	if fields == nil {
-		return "", nil, nil, errors.New("frozen manifest is not an object")
-	}
-	if _, present := fields["entries"]; !present {
-		return "", nil, nil, errors.New("frozen manifest has no entries")
-	}
-	if string(fields["entries"]) == "null" {
-		return "", nil, nil, errors.New("frozen manifest entries is null")
-	}
 	var documentValue struct {
-		Entries []map[string]json.RawMessage `json:"entries"`
+		Entries json.RawMessage `json:"entries"`
 	}
 	if err := json.Unmarshal(raw, &documentValue); err != nil {
 		return "", nil, nil, err
+	}
+	// The shape walk above leaves a list of records, or an empty dict or str that iterates to none.
+	var records []map[string]json.RawMessage
+	if list := bytes.TrimSpace(documentValue.Entries); len(list) > 0 && list[0] == '[' {
+		if err := json.Unmarshal(list, &records); err != nil {
+			return "", nil, nil, err
+		}
 	}
 	type frozenEntry struct {
 		ManifestEntry
 		bytes *frozenByteCount
 	}
 	payload := struct{ Entries []frozenEntry }{}
-	for _, record := range documentValue.Entries {
-		path, ok := record["path"]
-		if !ok {
-			return "", nil, nil, &pythonJSONKeyError{"path"}
-		}
-		digest, ok := record["sha256"]
-		if !ok {
-			return "", nil, nil, &pythonJSONKeyError{"sha256"}
-		}
+	for _, record := range records {
+		path, digest := record["path"], record["sha256"]
 		var entry ManifestEntry
 		if err := json.Unmarshal(path, &entry.Path); err != nil {
 			return "", nil, nil, err
@@ -189,15 +184,128 @@ func (c frozenByteCount) pythonString() string {
 	return pythonFloat(value)
 }
 
-type pythonJSONKeyError struct{ key string }
+// FrozenException is an exception manifest.verify_frozen_detailed raises instead of answering: the
+// frozen MANIFEST.json was reached and could not be read (an OSError), or was read and is not a
+// manifest (UnicodeDecodeError, JSONDecodeError, KeyError, TypeError). Error is str(exception)
+// and Class its type, which the fence's host envelope and guard.deliverable_state name.
+type FrozenException struct {
+	Class string
+	text  string
+	cause error
+}
 
-func (e *pythonJSONKeyError) Error() string { return PythonRepr(e.key) }
+func (e *FrozenException) Error() string { return e.text }
+func (e *FrozenException) Unwrap() error { return e.cause }
 
-// Preserve the underlying errno while exposing the Python boundary's text.
-type frozenAccessError struct{ cause error }
+// OSError reports an OSError: a manifest that is there and that nobody could read, which
+// guard.deliverable_state answers as a comparison that did not happen rather than a change.
+func (e *FrozenException) OSError() bool {
+	var errno unix.Errno
+	return errors.As(e.cause, &errno)
+}
 
-func (e *frozenAccessError) Error() string { return PythonOSErrorText(e.cause) }
-func (e *frozenAccessError) Unwrap() error { return e.cause }
+// PythonText is the fence's f"{type(error).__name__}: {error}".
+func (e *FrozenException) PythonText() string { return e.Class + ": " + e.text }
+
+func frozenOSException(err error) *FrozenException {
+	return &FrozenException{Class: pythonOSErrorClass(err), text: PythonOSErrorText(err), cause: err}
+}
+
+// interpretedErrno is manifest._INTERPRETED_ERRNOS: an answer about the path rather than a
+// failure to reach it.
+func interpretedErrno(err error) bool {
+	return errors.Is(err, unix.ENOENT) || errors.Is(err, unix.ENOTDIR) || errors.Is(err, unix.ELOOP) || errors.Is(err, unix.ESTALE)
+}
+
+// FrozenDocumentError is what verify_frozen_detailed raises for MANIFEST.json's bytes before it
+// looks at any blob: a UnicodeDecodeError, a JSONDecodeError, or the KeyError or TypeError of
+// reading payload["entries"] and each record's path and digest. Nil when the bytes are a manifest.
+func FrozenDocumentError(raw []byte) error {
+	text, err := DecodeUTF8(raw)
+	if err != nil {
+		return &FrozenException{Class: "UnicodeDecodeError", text: err.Error(), cause: err}
+	}
+	if message := PythonJSONError(text); message != "" {
+		class := "JSONDecodeError"
+		if strings.HasPrefix(message, "Exceeds the limit (") {
+			// int() refuses an over-long integer literal with a plain ValueError.
+			class = "ValueError"
+		}
+		return &FrozenException{Class: class, text: message}
+	}
+	return frozenRecordShape(raw)
+}
+
+// frozenRecordShape walks payload["entries"] and each record's ["path"] and ["sha256"] as
+// verify_frozen_detailed does, and returns the exception the first step that fails raises.
+func frozenRecordShape(raw []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var document any
+	if err := decoder.Decode(&document); err != nil {
+		return err
+	}
+	entries, err := pythonSubscript(document, "entries")
+	if err != nil {
+		return err
+	}
+	var records []any
+	switch value := entries.(type) {
+	case []any:
+		records = value
+	case map[string]any:
+		// Iterating a dict yields its keys, each a str the record subscript refuses.
+		if len(value) > 0 {
+			records = []any{""}
+		}
+	case string:
+		if value != "" {
+			records = []any{""}
+		}
+	default:
+		return &FrozenException{Class: "TypeError", text: "'" + pythonTypeName(entries) + "' object is not iterable"}
+	}
+	for _, record := range records {
+		for _, key := range []string{"path", "sha256"} {
+			if _, err := pythonSubscript(record, key); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// pythonSubscript is value[key] for a str key over a decoded JSON value.
+func pythonSubscript(value any, key string) (any, error) {
+	switch v := value.(type) {
+	case map[string]any:
+		if item, ok := v[key]; ok {
+			return item, nil
+		}
+		return nil, &FrozenException{Class: "KeyError", text: PythonRepr(key)}
+	case []any:
+		return nil, &FrozenException{Class: "TypeError", text: "list indices must be integers or slices, not str"}
+	case string:
+		return nil, &FrozenException{Class: "TypeError", text: "string indices must be integers, not 'str'"}
+	}
+	return nil, &FrozenException{Class: "TypeError", text: "'" + pythonTypeName(value) + "' object is not subscriptable"}
+}
+
+// pythonTypeName is type(value).__name__ for a JSON scalar as json.loads builds it.
+func pythonTypeName(value any) string {
+	switch v := value.(type) {
+	case nil:
+		return "NoneType"
+	case bool:
+		return "bool"
+	case json.Number:
+		if strings.ContainsAny(string(v), ".eE") {
+			return "float"
+		}
+		return "int"
+	}
+	return fmt.Sprintf("%T", value)
+}
 
 // Path.resolve(strict=False) keeps an inaccessible suffix for the pinned walk.
 func resolveFrozenPath(path string) (string, error) {

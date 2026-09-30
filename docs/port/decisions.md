@@ -2245,6 +2245,72 @@ for all ten starts, the listing test on the fence's TypeError, the readback test
 numeric strings, and the fence's acknowledgement and ordering tests for every start that is no
 time.
 
+## 44. A frozen copy is reached, read and raised the same way in both runtimes
+
+Decision: the fence's `manifest.verify_frozen_detailed` asks whether a frozen `MANIFEST.json` is
+a regular file with `os.path.isfile`, which answers False for any stat failure on every supported
+interpreter. It then names the failure as before. Absence, a traversed file, a loop and a stale
+handle (ENOENT, ENOTDIR, ELOOP, ESTALE) are a problem only. Any other errno is also an access
+failure: `<ref>: the frozen manifest could not be reached: [Errno N] <strerror>: '<ref>/MANIFEST.json'`.
+A document that is reached and cannot be read, or is not UTF-8, not JSON, or not shaped as a
+manifest's records, still raises. Go's `store.VerifyFrozenDetailed` answers the same, and raises
+`store.FrozenException` with the Python exception's class and words. Each Go reader answers as
+the fence's reader of the same function:
+
+- the intake reads `store.VerifyFrozen`, now the detailed call without the access list, as
+  `verify_frozen` is. An unreachable frozen copy is refused `manifest_unverified` and recorded.
+  One that is not a manifest is the fence's host error (`{"error": "host", "detail":
+  "JSONDecodeError: ..."}`), and no refusal is recorded;
+- the omission reader (`delivery.omissionDeliverable`) and the Stop hook (`hook.DeliverableState`)
+  follow `guard.deliverable_state`. An unreachable frozen copy, a manifest that cannot be read, and
+  unreadable live bytes that no frozen copy answers for are unverifiable, which the omission
+  reports as `receipt_unreadable`. A frozen copy that is not a manifest is changed, and the
+  detail is the exception's words alone. A live artifact that is gone is changed;
+- `store.FreezeManifest` re-reads the blob it copied where `_read_frozen_blob` reads it, with the
+  blob and its files directory resolved as `Path.resolve()` resolves them. A destination reached
+  through a symlinked directory, or named relative to the working directory, now freezes, and the
+  refusals quote paths as Python's `repr` does.
+
+Why: `Path.is_file()` raised PermissionError for a blocked parent up to Python 3.13 and answers
+False from 3.14. The fence runs on 3.13, and the packages are tested on 3.11 and 3.13. There, a
+frozen copy behind a permission left the fence as an exception: the intake printed a host error
+and recorded nothing, and the guard answered unverifiable with the exception's text. A 3.14 fence
+refused the same copy and named it. Go's detailed verifier returned an error, as 3.13 did. Go's
+intake used a loop of its own. It read every read failure as "no MANIFEST.json" and every
+undecodable document as "the frozen manifest is not readable JSON", both refused. It refused a
+symlinked or relative reference that the fence verified, because it resolved with
+`filepath.EvalSymlinks` and not as `Path.resolve()` does. `FreezeManifest` refused such
+destinations too (`symlink_component`, `scope_escape`). The omission reader read the frozen copy
+through that loop, so an unreachable copy was a changed deliverable, and it read every failed live
+hash as unreadable where the fence reads a vanished artifact as changed. The Stop hook named a
+blocked frozen copy "no MANIFEST.json" and merged a JSONDecodeError into the live problems. It
+also resolved blobs strictly, so a blocked blob directory surfaced Go's `lstat` text.
+
+Cost: a 3.13 fence now refuses and records a receipt whose frozen copy it cannot reach, where it
+answered a host error. The guard's detail for that copy now names the unreachable manifest, not
+the PermissionError. Go's intake answers a host error for a corrupt frozen copy where it refused.
+No contract fixture freezes a copy.
+
+Evidence: `packages/codex-session-relay/src/codex_session_relay/manifest.py:268-310`
+(`_frozen_document_access`, `verify_frozen_detailed`), `:208-265` (`freeze`, `_read_frozen_blob`),
+`guard.py:123-195` (`deliverable_state`); `internal/relay/store/frozen_detailed.go:22-80`
+(`VerifyFrozenDetailed`), `:191-260` (`FrozenException`, `FrozenDocumentError`),
+`internal/relay/store/manifest.go:83-173` (`FreezeManifest`, `ReadFrozenBlob`, `VerifyFrozen`),
+`receipt_intake.go:186` (`verifyBytes`), `ownership.go:120` (`PythonHostDetail`),
+`internal/relay/delivery/omitted.go:660` (`omissionDeliverable`),
+`internal/relay/hook/receipt.go:183-362` (`DeliverableState`, `verifyFrozen`). Tests:
+`internal/relay/adapter/scope_test.go` (`Test28_MSC_9_AccessFailureIsNotDisagreement`, whose
+fence answer flips with the fix and which fails on Go's former error),
+`intake_test.go` (`Test28_MSC_11_IntakeAdmissionUnchanged`: blocked, corrupt and unreadable
+frozen copies, with the host detail and the recorded refusals compared),
+`internal/relay/delivery/omitted_deliverable_test.go` and
+`internal/relay/hook/deliverable_test.go` (every case against the fence's `deliverable_state`),
+`internal/relay/store/frozen_copy_test.go` (a source changed during the copy, a blob pre-seeded
+under the digest's name, symlinked and relative destinations); in the fence,
+`tests/test_manifest_scope.py` (`test_an_unreachable_frozen_directory_is_named_as_an_access_failure`,
+`test_an_unreachable_frozen_directory_is_refused_as_unverified`,
+`test_a_corrupt_frozen_manifest_raises_and_records_no_refusal`, and three `FrozenCopy` tests).
+
 ## 45. Discovery asks the stores under the absolute state root, in both runtimes
 
 Decision: the retained Python fence's `discover_state_dir` walks the stores beside the canonical

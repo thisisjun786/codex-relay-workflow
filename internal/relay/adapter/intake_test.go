@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -34,7 +35,7 @@ func seedIntake(t *testing.T, path, root string) *store.Store {
 	return s
 }
 func Test28_MSC_11_IntakeAdmissionUnchanged(t *testing.T) {
-	for _, kind := range []string{"frozen-good", "frozen-unreachable", "frozen-tampered", "frozen-absent", "live-good", "live-changed", "live-unreadable"} {
+	for _, kind := range []string{"frozen-good", "frozen-unreachable", "frozen-tampered", "frozen-absent", "frozen-blocked", "frozen-corrupt", "frozen-manifest-unreadable", "live-good", "live-changed", "live-unreadable"} {
 		t.Run(kind, func(t *testing.T) {
 			root := t.TempDir()
 			work := filepath.Join(root, "work")
@@ -65,8 +66,15 @@ func Test28_MSC_11_IntakeAdmissionUnchanged(t *testing.T) {
 			}
 			payload := map[string]any{"eventId": event, "relationshipId": "rel-1", "executionGeneration": 1, "attempt": 1, "revisionHash": revision, "outcome": "ready_for_review", "producer": "child", "turnRef": map[string]any{"threadId": "01child-task", "turnId": "turn-dispatch-1", "turnStatus": "completed"}, "manifest": entriesRecord(entries), "emittedAt": "2023-11-14T22:13:20.000000+00:00"}
 			ref := filepath.Join(root, "frozen")
+			t.Cleanup(func() {
+				for _, path := range []string{ref, filepath.Join(ref, "MANIFEST.json")} {
+					if err := os.Chmod(path, 0o700); err != nil && !os.IsNotExist(err) {
+						t.Error(err)
+					}
+				}
+			})
 			switch kind {
-			case "frozen-good", "frozen-unreachable", "frozen-tampered", "frozen-absent":
+			case "frozen-good", "frozen-unreachable", "frozen-tampered", "frozen-absent", "frozen-blocked", "frozen-corrupt", "frozen-manifest-unreadable":
 				if _, err := Freeze(entries, ref); err != nil {
 					t.Fatal(err)
 				}
@@ -89,6 +97,23 @@ func Test28_MSC_11_IntakeAdmissionUnchanged(t *testing.T) {
 				}
 				if kind == "frozen-absent" {
 					if err := os.RemoveAll(ref); err != nil {
+						t.Fatal(err)
+					}
+				}
+				// A frozen copy nobody can reach is absent to the two-value form; bytes that are
+				// read and are not a manifest, or a manifest that cannot be read, are exceptions.
+				if kind == "frozen-blocked" {
+					if err := os.Chmod(ref, 0); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if kind == "frozen-corrupt" {
+					if err := os.WriteFile(filepath.Join(ref, "MANIFEST.json"), []byte("not json"), 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if kind == "frozen-manifest-unreadable" {
+					if err := os.Chmod(filepath.Join(ref, "MANIFEST.json"), 0); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -115,8 +140,15 @@ func Test28_MSC_11_IntakeAdmissionUnchanged(t *testing.T) {
 			got := map[string]any{"accepted": err == nil}
 			if err == nil {
 				got["event"] = event
+			} else if reason := store.RefusalReason(err); reason != "" {
+				got["reason"] = reason
 			} else {
-				got["reason"] = store.RefusalReason(err)
+				got["reason"] = nil
+				detail, ok := store.PythonHostDetail(err)
+				if !ok {
+					detail = "RuntimeError: " + err.Error()
+				}
+				got["host"] = detail
 			}
 			rows, err := goStore.Querier(context.Background()).QueryContext(context.Background(), "SELECT event_id,path_binding_mode FROM events ORDER BY event_id")
 			if err != nil {
@@ -137,6 +169,22 @@ func Test28_MSC_11_IntakeAdmissionUnchanged(t *testing.T) {
 				t.Fatal(err)
 			}
 			got["rows"] = all
+			refusals := []any{}
+			reasons, err := goStore.Querier(context.Background()).QueryContext(context.Background(), "SELECT reason FROM refusals ORDER BY id")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for reasons.Next() {
+				var reason string
+				if err := reasons.Scan(&reason); err != nil {
+					t.Fatal(err)
+				}
+				refusals = append(refusals, reason)
+			}
+			if err := errors.Join(reasons.Err(), reasons.Close()); err != nil {
+				t.Fatal(err)
+			}
+			got["refusals"] = refusals
 			spec, _ := json.Marshal(map[string]any{"store": pyStore.Path, "payload": payload})
 			repo, _ := filepath.Abs("../../..")
 			cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/adapter/testdata/intake_capture.py"))

@@ -1,9 +1,9 @@
 package store
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -78,12 +78,6 @@ func verifyAgainstDisk(entries []ManifestEntry, roots []string, allowLease bool)
 	return problems, weakest
 }
 
-type frozenManifest struct {
-	Serialization string          `json:"serialization"`
-	RevisionHash  string          `json:"revisionHash"`
-	Entries       []ManifestEntry `json:"entries"`
-}
-
 // FreezeManifest copies the bytes under their digests while keeping the original declared
 // paths, so a later verification reproduces the same revision (manifest.freeze).
 func FreezeManifest(entries []ManifestEntry, destination string) error {
@@ -94,7 +88,7 @@ func FreezeManifest(entries []ManifestEntry, destination string) error {
 	for _, entry := range entries {
 		// The digest names a file, so it is validated before it is ever joined to a path.
 		if !lowerDigest.MatchString(entry.SHA256) {
-			return refuse(ReasonManifestUnverified, "refusing to store bytes under a non-digest name %q", entry.SHA256)
+			return refuse(ReasonManifestUnverified, "refusing to store bytes under a non-digest name %s", PythonRepr(entry.SHA256))
 		}
 		blob := filepath.Join(files, entry.SHA256)
 		if _, err := os.Stat(blob); errors.Is(err, os.ErrNotExist) {
@@ -102,15 +96,19 @@ func FreezeManifest(entries []ManifestEntry, destination string) error {
 				return err
 			}
 		}
-		copied, size, _, err := HashArtifact(blob, []string{files}, false)
+		// Never publish a manifest over bytes that were not re-read and confirmed, and re-read them
+		// where _read_frozen_blob does: the blob and the files directory as Path.resolve() names
+		// them, so a destination reached through a symlink or named relative to the working
+		// directory is read from the place it was written to.
+		copied, size, err := ReadFrozenBlob(context.Background(), files, entry.SHA256)
 		if err != nil {
 			return err
 		}
 		if copied != entry.SHA256 {
-			return refuse(ReasonManifestUnverified, "frozen copy of %q hashes to %s, not %s", entry.Path, copied, entry.SHA256)
+			return refuse(ReasonManifestUnverified, "frozen copy of %s hashes to %s, not %s", PythonRepr(entry.Path), copied, entry.SHA256)
 		}
 		if entry.Bytes != nil && *entry.Bytes != size {
-			return refuse(ReasonManifestUnverified, "frozen copy of %q is %d bytes, not %d", entry.Path, size, *entry.Bytes)
+			return refuse(ReasonManifestUnverified, "frozen copy of %s is %d bytes, not %d", PythonRepr(entry.Path), size, *entry.Bytes)
 		}
 	}
 	revision, err := ManifestRevision(entries)
@@ -127,6 +125,10 @@ func FreezeManifest(entries []ManifestEntry, destination string) error {
 	return nil
 }
 
+// afterFrozenCopy is a test seam between freeze's copy of a source and its stability check,
+// where a writer can move the source; production leaves it nil.
+var afterFrozenCopy func(source string)
+
 func copyAuthorized(source, blob string) (err error) {
 	handle, err := OpenAuthorized(source, []string{"/"}, false)
 	if err != nil {
@@ -140,67 +142,32 @@ func copyAuthorized(source, blob string) (err error) {
 	if err := os.WriteFile(blob, data, 0o600); err != nil {
 		return fmt.Errorf("frozen blob: %w", err)
 	}
+	if afterFrozenCopy != nil {
+		afterFrozenCopy(source)
+	}
 	return handle.VerifyStable()
 }
 
-// VerifyFrozen checks entries against a frozen copy instead of files that may have moved on,
-// including each claimed byte count (manifest.verify_frozen).
-func VerifyFrozen(reference string, entries []ManifestEntry) []string {
-	data, err := os.ReadFile(filepath.Join(reference, "MANIFEST.json"))
+// ReadFrozenBlob is _read_frozen_blob: one stored blob hashed through the pinned traversal a
+// live artifact would use, with the blob and its files directory resolved as Path.resolve()
+// resolves them (resolveFrozenPath), within ctx's deadline.
+func ReadFrozenBlob(ctx context.Context, files, digest string) (string, int64, error) {
+	blob, err := resolveFrozenPath(filepath.Join(files, digest))
 	if err != nil {
-		return []string{reference + ": no MANIFEST.json in the frozen copy"}
+		return "", 0, err
 	}
-	var frozen frozenManifest
-	if err := json.Unmarshal(data, &frozen); err != nil {
-		return []string{reference + ": the frozen manifest is not readable JSON"}
+	root, err := resolveFrozenPath(files)
+	if err != nil {
+		return "", 0, err
 	}
-	var problems []string
-	claimed, stored := map[[2]string]bool{}, map[[2]string]bool{}
-	sizes := map[string]*int64{}
-	for _, entry := range entries {
-		claimed[[2]string{entry.Path, entry.SHA256}] = true
-	}
-	for _, entry := range frozen.Entries {
-		stored[[2]string{entry.Path, entry.SHA256}] = true
-		sizes[entry.Path] = entry.Bytes
-	}
-	if len(claimed) != len(stored) || !containsAll(claimed, stored) {
-		problems = append(problems, reference+": the frozen manifest does not describe the same deliverables")
-	}
-	for _, entry := range entries {
-		if recorded := sizes[entry.Path]; entry.Bytes != nil && recorded != nil && *recorded != *entry.Bytes {
-			problems = append(problems, fmt.Sprintf("%s: caller claims %d bytes but the frozen copy records %d", entry.Path, *entry.Bytes, *recorded))
-		}
-	}
-	files := filepath.Join(reference, "files")
-	for _, entry := range frozen.Entries {
-		if !lowerDigest.MatchString(entry.SHA256) {
-			problems = append(problems, fmt.Sprintf("%s: %q is not a digest", entry.Path, entry.SHA256))
-			continue
-		}
-		resolved, err := filepath.EvalSymlinks(files)
-		if err != nil {
-			problems = append(problems, fmt.Sprintf("%s: frozen bytes unreadable for %s: %v", entry.Path, entry.SHA256, err))
-			continue
-		}
-		digest, size, _, err := HashArtifact(filepath.Join(resolved, entry.SHA256), []string{resolved}, false)
-		switch {
-		case err != nil:
-			problems = append(problems, fmt.Sprintf("%s: frozen bytes unreadable for %s: %v", entry.Path, entry.SHA256, err))
-		case digest != entry.SHA256:
-			problems = append(problems, fmt.Sprintf("%s: frozen bytes do not match %s", entry.Path, entry.SHA256))
-		case entry.Bytes != nil && *entry.Bytes != size:
-			problems = append(problems, fmt.Sprintf("%s: frozen bytes are %d, not the claimed %d", entry.Path, size, *entry.Bytes))
-		}
-	}
-	return problems
+	hashed, size, _, err := HashArtifactContext(ctx, blob, []string{root}, false)
+	return hashed, size, err
 }
 
-func containsAll(a, b map[[2]string]bool) bool {
-	for key := range b {
-		if !a[key] {
-			return false
-		}
-	}
-	return true
+// VerifyFrozen is manifest.verify_frozen: VerifyFrozenDetailed with the access breakdown dropped,
+// so every branch answers as the fence's two-value form does, including the exception it raises
+// for a frozen copy that was reached and is not a manifest (FrozenException).
+func VerifyFrozen(reference string, entries []ManifestEntry) ([]string, error) {
+	_, problems, _, err := VerifyFrozenDetailed(reference, entries)
+	return problems, err
 }

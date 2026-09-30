@@ -2,10 +2,12 @@
 
 import fcntl
 import hashlib
+import json
 import mmap
 import os
 import shutil
 import unittest
+from unittest import mock
 
 from codex_session_relay import manifest
 from codex_session_relay.errors import RefusalReason, ScopeError
@@ -341,6 +343,58 @@ class FrozenCopy(RelayTestCase):
         _digest, problems = manifest.verify_frozen(reference, entries)
         self.assertTrue(problems)
 
+    def test_a_source_that_changes_during_the_copy_is_refused_and_not_published(self):
+        """The copy is checked against the source's stat, not only against its digest.
+
+        Only the timestamps move here, so the bytes still hash to the digest and the re-hash after
+        the copy would pass: this refusal is verify_stable's alone.
+        """
+        path = self.artifact("moving.txt", "the delivered bytes")
+        entries, _ = manifest.build([path], [self.root])
+        reference = os.path.join(self.tmp, "frozen-moving")
+        real_pread = os.pread
+        touched = []
+
+        def pread(fd, size, offset):
+            if not touched:
+                touched.append(offset)
+                os.utime(path, ns=(0, 0))
+            return real_pread(fd, size, offset)
+
+        with mock.patch.object(manifest.os, "pread", pread):
+            with self.assertRaises(ScopeError) as caught:
+                manifest.freeze(entries, reference)
+        self.assertEqual(caught.exception.reason, RefusalReason.ARTIFACT_MUTATED_DURING_READ)
+        self.assertFalse(os.path.exists(os.path.join(reference, "MANIFEST.json")))
+
+    def test_bytes_already_under_the_digest_name_are_rehashed_before_publishing(self):
+        """A blob is not trusted for having the digest's name: the re-hash refuses other bytes."""
+        path = self.artifact("seeded.txt", "the delivered bytes")
+        entries, _ = manifest.build([path], [self.root])
+        reference = os.path.join(self.tmp, "frozen-seeded")
+        os.makedirs(os.path.join(reference, "files"))
+        with open(os.path.join(reference, "files", entries[0].sha256), "wb") as handle:
+            handle.write(b"not those bytes")
+        with self.assertRaises(ScopeError) as caught:
+            manifest.freeze(entries, reference)
+        self.assertEqual(caught.exception.reason, RefusalReason.MANIFEST_UNVERIFIED)
+        self.assertIn(f"frozen copy of {path!r} hashes to ", caught.exception.detail)
+        self.assertFalse(os.path.exists(os.path.join(reference, "MANIFEST.json")))
+
+    def test_a_destination_through_a_symlink_or_relative_to_the_cwd_freezes_and_verifies(self):
+        """The frozen blob is read where Path.resolve() places it, so neither form is refused."""
+        path = self.artifact("placed.txt", "the delivered bytes")
+        entries, _ = manifest.build([path], [self.root])
+        os.mkdir(os.path.join(self.tmp, "real"))
+        os.symlink(os.path.join(self.tmp, "real"), os.path.join(self.tmp, "link"))
+        linked = os.path.join(self.tmp, "link", "frozen")
+        manifest.freeze(entries, linked)
+        self.assertEqual(manifest.verify_frozen(linked, entries)[1], [])
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(self.tmp)
+        manifest.freeze(entries, "frozenrel")
+        self.assertEqual(manifest.verify_frozen("frozenrel", entries)[1], [])
+
 
 class FrozenAccessIsNotFrozenDisagreement(RelayTestCase):
     """verify_frozen catches its access errors and returns them as problem strings.
@@ -413,21 +467,27 @@ class FrozenAccessIsNotFrozenDisagreement(RelayTestCase):
         self.assertEqual(unreadable, [])
 
     @unittest.skipIf(os.geteuid() == 0, "root bypasses the permission this depends on")
-    def test_an_unreachable_frozen_directory_raises_rather_than_answering_absent(self):
-        """Path.is_file() does not swallow this one, and that is worth pinning down.
+    def test_an_unreachable_frozen_directory_is_named_as_an_access_failure(self):
+        """A blocked parent is an access failure on every interpreter, never an exception.
 
-        On this interpreter it raises PermissionError instead of returning False, so the
-        three-state probe beside it never runs for a blocked parent. The error does not disappear:
-        it leaves as an exception, which the guard's classification boundary turns into an
-        unverifiable deliverable. The failure is reported either way; which mechanism reports it
-        depends on the interpreter, so it is asserted rather than assumed.
+        Path.is_file() raised PermissionError for it up to 3.13 and answers False from 3.14, so
+        the same frozen copy left the fence as an exception on one interpreter and as a named
+        access failure on the other. The regular-file test is os.path.isfile, which has answered
+        False for any stat failure on every supported interpreter, and the three-state probe
+        beside it names what stat said.
         """
         holder = os.path.join(self.tmp, "blocked-holder")
-        os.makedirs(os.path.join(holder, "frozen"))
+        reference = os.path.join(holder, "frozen")
+        os.makedirs(reference)
         self.addCleanup(os.chmod, holder, 0o700)
         os.chmod(holder, 0o000)
-        with self.assertRaises(OSError):
-            manifest.verify_frozen_detailed(os.path.join(holder, "frozen"))
+        digest, problems, unreadable = manifest.verify_frozen_detailed(reference)
+        self.assertEqual(digest, "")
+        self.assertEqual(problems, [f"{reference}: no MANIFEST.json in the frozen copy"])
+        self.assertEqual(unreadable, [
+            f"{reference}: the frozen manifest could not be reached: [Errno 13] Permission denied:"
+            f" {os.path.join(reference, 'MANIFEST.json')!r}"
+        ])
 
     def test_a_frozen_reference_that_is_not_a_directory_is_not_an_access_failure(self):
         """ENOTDIR is an errno scope interprets, so it answers about the reference itself."""
@@ -515,6 +575,23 @@ class IntakeBehaviourIsUnchangedByTheAccessSplit(RelayTestCase):
         payload, reference = self.moved_on("intake-frozen-absent")
         shutil.rmtree(reference)
         self.assertRefused(RefusalReason.MANIFEST_UNVERIFIED, self.accept, payload)
+
+    @unittest.skipIf(os.geteuid() == 0, "root bypasses the permission this depends on")
+    def test_an_unreachable_frozen_directory_is_refused_as_unverified(self):
+        """The two-value form answers a blocked frozen copy as absent, on every interpreter."""
+        payload, reference = self.moved_on("intake-frozen-blocked")
+        self.addCleanup(os.chmod, reference, 0o700)
+        os.chmod(reference, 0o000)
+        self.assertRefused(RefusalReason.MANIFEST_UNVERIFIED, self.accept, payload)
+
+    def test_a_corrupt_frozen_manifest_raises_and_records_no_refusal(self):
+        """Readable bytes that are not a manifest are an exception, as they always were."""
+        payload, reference = self.moved_on("intake-frozen-corrupt")
+        with open(os.path.join(reference, "MANIFEST.json"), "w", encoding="utf-8") as handle:
+            handle.write("not json")
+        with self.assertRaises(json.JSONDecodeError):
+            self.accept(payload)
+        self.assertEqual(self.store.all("SELECT reason FROM refusals"), [])
 
 
 class LiveAccessIsNotLiveDisagreement(RelayTestCase):

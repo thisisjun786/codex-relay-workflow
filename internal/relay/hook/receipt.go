@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -220,7 +221,10 @@ func DeliverableState(ctx context.Context, payload any, reference string, rootsV
 		return "current", "live", ""
 	}
 	if reference != "" {
-		frozen, unreachable := verifyFrozen(ctx, reference, entries)
+		frozen, unreachable, raisedState, raised := verifyFrozen(ctx, reference, entries)
+		if raisedState != "" {
+			return raisedState, "", raised
+		}
 		if len(frozen) == 0 {
 			return "current", "frozen", ""
 		}
@@ -256,26 +260,52 @@ func verifyEntries(ctx context.Context, entries []store.ManifestEntry, roots []s
 	}
 	return problems, unreadable
 }
-func verifyFrozen(ctx context.Context, reference string, entries []store.ManifestEntry) ([]string, []string) {
-	raw, err := readRegular(ctx, filepath.Join(reference, "MANIFEST.json"), maxInputBytes)
-	if err != nil {
+
+// verifyFrozen is manifest.verify_frozen_detailed as guard.deliverable_state reads it, under the
+// hook's deadline and read bound: the problems, the subset that were failures to read, and what
+// it raised instead of answering, as the state deliverable_state gives the exception
+// ("unverifiable" for an OSError or a ScopeError, "changed" for a document that is not a
+// manifest) and the exception's words. A raised exception is the whole answer: the fence's
+// exception leaves before any live problem or unreadable live file is weighed.
+func verifyFrozen(ctx context.Context, reference string, entries []store.ManifestEntry) ([]string, []string, string, string) {
+	document := filepath.Join(reference, "MANIFEST.json")
+	if strings.ContainsRune(document, 0) {
+		// os.stat refuses the name before any system call; the fence lets that ValueError out.
+		return nil, nil, "changed", "ValueError: embedded null byte"
+	}
+	// _frozen_document_access: absent, or out of reach. Only the second is a failure to read.
+	if info, err := os.Stat(document); err != nil || !info.Mode().IsRegular() {
 		message := reference + ": no MANIFEST.json in the frozen copy"
-		if accessFailure(err) {
-			return []string{message}, []string{message}
+		if err != nil && accessFailure(err) {
+			return []string{message}, []string{reference + ": the frozen manifest could not be reached: " + store.PythonOSErrorText(err)}, "", ""
 		}
-		return []string{message}, nil
+		return []string{message}, nil, "", ""
+	}
+	raw, err := readRegular(ctx, document, maxInputBytes)
+	if err != nil {
+		// Reached and not read: the fence raises the OSError, a comparison that did not happen.
+		return nil, nil, "unverifiable", store.PythonOSError(err)
+	}
+	if err := store.FrozenDocumentError(raw); err != nil {
+		var exception *store.FrozenException
+		if errors.As(err, &exception) {
+			return nil, nil, "changed", exception.PythonText()
+		}
+		return nil, nil, "changed", "ValueError: " + err.Error()
 	}
 	v, err := Decode(raw)
 	if err != nil {
-		return []string{"JSONDecodeError: " + err.Error()}, nil
+		return nil, nil, "changed", "JSONDecodeError: " + err.Error()
 	}
-	o, ok := evidence.Object(v)
-	if !ok {
-		return []string{"TypeError: frozen manifest is not an object"}, nil
+	o, _ := evidence.Object(v)
+	records := get(o, "entries")
+	if _, ok := evidence.List(records); !ok {
+		// The shape check passed, so this is an empty dict or str, which iterates to no record.
+		records = []any{}
 	}
-	frozen, err := manifestEntries(get(o, "entries"))
+	frozen, err := manifestEntries(records)
 	if err != nil {
-		return []string{err.Error()}, nil
+		return nil, nil, "changed", err.Error()
 	}
 	problems, unreadable := []string{}, []string{}
 	claimed, stored := map[[2]string]bool{}, map[[2]string]bool{}
@@ -304,24 +334,14 @@ func verifyFrozen(ctx context.Context, reference string, entries []store.Manifes
 			problems = append(problems, e.Path+": "+evidence.StrRepr(e.SHA256)+" is not a digest")
 			continue
 		}
-		root, err := store.ResolvePath(filepath.Join(reference, "files"))
-		if err != nil {
-			unreadable = append(unreadable, err.Error())
-			problems = append(problems, err.Error())
-			continue
-		}
-		blob, err := store.ResolvePath(filepath.Join(root, e.SHA256))
-		if err != nil {
-			unreadable = append(unreadable, err.Error())
-			problems = append(problems, err.Error())
-			continue
-		}
-		digest, size, _, err := store.HashArtifactContext(ctx, blob, []string{root}, false)
+		digest, size, err := store.ReadFrozenBlob(ctx, filepath.Join(reference, "files"), e.SHA256)
 		message := ""
 		switch {
 		case err != nil:
 			message = e.Path + ": frozen bytes unreadable for " + e.SHA256 + ": " + err.Error()
-			if accessFailure(err) {
+			// A deleted blob is a broken snapshot (the pinned walk's answer), not a failure to look.
+			var scope *store.RefusedError
+			if !errors.As(err, &scope) || accessFailure(err) {
 				unreadable = append(unreadable, message)
 			}
 		case digest != e.SHA256:
@@ -333,5 +353,10 @@ func verifyFrozen(ctx context.Context, reference string, entries []store.Manifes
 			problems = append(problems, message)
 		}
 	}
-	return problems, unreadable
+	// revision_hash(frozen) closes the fence's function, and a path in the frozen copy it will not
+	// normalize raises there, after every problem was found.
+	if _, err := store.ManifestRevision(frozen); err != nil {
+		return nil, nil, "unverifiable", "ScopeError: " + err.Error()
+	}
+	return problems, unreadable, "", ""
 }
