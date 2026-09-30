@@ -647,7 +647,8 @@ Additional checks: `Test23_CLI_ArgparseBytes` (COLUMNS 80, 120 and unset), `Test
 All 51 contract/behavior properties from `test_product_routing.py`,
 `test_product_routing_decisions.py`, and `test_project_completion.py` have independent
 live-Python replay tests in `internal/relay/routing`. Each test selects its own
-original scenarios; `testdata/properties.md` is the local scenario inventory.
+original scenarios; `testdata/properties.md` was the local scenario inventory, read only by
+the capture scripts, and left with them (wave R1).
 PRD-14/15 and PC-0 are the only omitted Python-internal properties (signature/AST
 introspection and duplicate constant identity); compile-time imports plus PR-25
 cover the Go equivalents. Project completion reuses registry/linkage, not a second
