@@ -26,7 +26,7 @@ var (
 		"uv.lock": true, "plugins/crw/LICENSE": true, "go.mod": true, "go.sum": true, "tools.go": true,
 		"Makefile": true, ".goreleaser.yaml": true, "conftest.py": true, "plugins/skill_assets.go": true}
 	scopePrefixes = []string{"scripts/", "packages/", "plugins/crw/wiring/", "plugins/crw/.codex-plugin/",
-		".agents/", ".github/", "cmd/", "internal/", "contract/", "docs/port/"}
+		".agents/", ".github/", "cmd/", "internal/", "contract/", "docs/port/", "docs/relay/"}
 	scopeReasons = map[string]bool{"paths": true, "empty": true, "base-unavailable": true, "dispatch": true}
 	scopeFields  = []string{"version", "event", "base", "head", "base_ref", "ref", "changed", "unknown",
 		"unsafe", "reason", "selected"}

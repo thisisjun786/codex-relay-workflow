@@ -7,7 +7,7 @@ the breakages this store can already see, converges every repeated observation o
 onto one record, and hands a caller that holds a Linear connector the exact write to make.
 
 Nothing here performs a network call, for the same reason [the synchronisation
-outbox](../../../internal/relay/sync) does not: the relay records WHAT must be written
+outbox](../../internal/relay/sync) does not: the relay records WHAT must be written
 and WHICH fact it belongs to, and the process holding the credential does the writing and
 reports back. That separation is what lets a Linear failure be retried on its own without
 re-deriving the diagnosis it describes.
@@ -604,7 +604,7 @@ Tables, all new because this store has no migration path: `fault_target_projects
 
 A fault is the machinery failing to do its job. It is not a child failing at its task: a child
 that reports `blocked` has worked correctly, and
-[supervision](../../../internal/relay/supervisor) owns deciding what the level above is
+[supervision](../../internal/relay/supervisor) owns deciding what the level above is
 owed about it. A fault is the layer below that — the turn that settled without reporting at
 all, the deliveries that will not leave the queue for one recipient, the Linear writes that
 exhausted their attempts against one document, the anchor nobody has successfully polled. Each

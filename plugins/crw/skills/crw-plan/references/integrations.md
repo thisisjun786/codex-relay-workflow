@@ -553,7 +553,7 @@ identifies a message, what the recipient owes because it arrived, and how far it
 decided once. This section is the workflow rule: which occasion is which, what each form carries,
 and when the level above is woken. The record form itself - the field names, the version, and what
 each state means to the code that builds a message - belongs to the relay, as `relay-envelope/1`
-in `packages/codex-session-relay/docs/envelope.md`, and is read there rather than copied here.
+in `docs/relay/envelope.md`, and is read there rather than copied here.
 The words below are the ones that document uses, so a parent and a supervisor mean the same thing
 by them.
 

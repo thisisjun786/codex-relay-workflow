@@ -63,7 +63,7 @@ class ScopeTests(unittest.TestCase):
                      "plugins/crw/wiring/launch.py", "plugins/crw/.codex-plugin/plugin.json",
                      ".github/workflows/ci.yml", "pyproject.toml", "conftest.py",
                      "contract/runner/core.py", "contract/fixtures/records/a.json",
-                     "docs/port/test-map.md"):
+                     "docs/port/test-map.md", "docs/relay/invariants.md"):
             with self.subTest(path=path):
                 self.assertEqual(scope.classify(path), "full")
 

@@ -47,7 +47,7 @@ too, so an existing unregistered component cannot hide behind a docs-only diff.
 | --- | --- |
 | Named root prose files and Markdown directly under `docs/` | Validation, plugin identity, offline contracts and secrets |
 | `plugins/crw/skills/**` or the root `skills` link | Above, plus installer/CI tests on Python 3.10 and 3.13 |
-| Runtime, package, wiring, manifest, shared configuration or CI-control paths | All checks |
+| Runtime, package, wiring, manifest, shared configuration or CI-control paths, and the relay's documents under `docs/relay/` | All checks |
 | Go product and contract corpus paths: `go.mod`, `go.sum`, `tools.go`, `Makefile`, `.goreleaser.yaml`, root `conftest.py`, `cmd/**`, `internal/**`, `contract/**`, `docs/port/**`, `scripts/port/**` | All checks |
 | Mixed paths | Union of their coverage |
 | Empty/unavailable diff or manual dispatch | Full coverage |
@@ -58,9 +58,10 @@ with a skill edit still selects full coverage; this selector does not infer a
 version-only exemption from JSON contents. The PR template lives under `.github/`
 and conservatively selects full coverage too.
 
-Markdown under `packages/`, the package READMEs included, stays in the full class: every
-file there belongs to a package, and the class is a path rule, not a judgement of the
-content.
+Markdown under `packages/` stays in the full class: every file there belongs to a package, and
+the class is a path rule, not a judgement of the content. So does `docs/relay/`, the relay's
+normative documents (its invariants, protocol and records), which moved there from the relay
+package in todo 44: they are what the Go relay is held to, not prose about it.
 
 `selection` runs first. The selected test job and `validate` then run independently;
 secret scanning is independent. The contract check runs once in

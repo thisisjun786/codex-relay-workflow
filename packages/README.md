@@ -1,13 +1,17 @@
 # Packages
 
-Two Python packages live here. They were developed in separate checkouts and were
+Todo 44 removes the Python execution path: the relay's package is gone (its documents are
+[docs/relay](../docs/relay/README.md)), and the bridge's source follows. What follows is the
+record of how the two Python packages came here.
+
+Two Python packages lived here. They were developed in separate checkouts and were
 imported into this repository so that one change can cross both of them and one
 check can prove they still work together.
 
 | Package | Module | CLI |
 | --- | --- | --- |
 | [codex-thread-bridge](codex-thread-bridge/README.md) | `codex_thread_bridge` | `codex-thread-bridge` |
-| [codex-session-relay](codex-session-relay/README.md) | `codex_session_relay` | `codex-session-relay` |
+| [codex-session-relay](../docs/relay/README.md) | `codex_session_relay` | `codex-session-relay` |
 
 Module names, CLI names, the wire protocol and the database paths and formats are
 unchanged by the import. Each package keeps its own `pyproject.toml`, tests and

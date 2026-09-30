@@ -32,7 +32,7 @@ The shared [integration guide](plugins/crw/skills/crw-plan/references/integratio
 | Package | Purpose |
 |---|---|
 | [codex-thread-bridge](packages/codex-thread-bridge/README.md) | An MCP server that creates and messages Codex sessions through the App Server running on the same host |
-| [codex-session-relay](packages/codex-session-relay/README.md) | Durable same-host verification requests and completion reports between two independent Codex tasks |
+| [codex-session-relay](docs/relay/README.md) | Durable same-host verification requests and completion reports between two independent Codex tasks |
 
 Both are described in [packages/README.md](packages/README.md), including where they
 were imported from and what was deliberately left behind.

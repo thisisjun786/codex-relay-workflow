@@ -16,4 +16,4 @@ Contract bundle revision c37d332e2daba95c9ef47adf00a82bc9c6a539ab62538f0ad857561
 
 These are the child-to-parent direction. The parent-to-child revision request is a relay-owned
 record with no schema here, because contract v1 defines none for that direction; see the relay's
-protocol-v1.md (packages/codex-session-relay/docs until todo 44 moves the relay docs).
+[protocol-v1.md](../../docs/relay/protocol-v1.md).

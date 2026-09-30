@@ -22,44 +22,40 @@ store lives outside repositories; caller-selected receipt and artifact locations
 
 | Component | State | Proof |
 |---|---|---|
-| identity, manifest, scope | implemented | tests/test_identity.py, tests/test_manifest_scope.py |
-| durable store | implemented | tests/test_store.py |
-| registry, generations, turn admission | implemented | tests/test_registry.py, tests/test_delivery.py |
-| receipts and outcome classification | implemented | tests/test_receipts.py |
-| delivery, transport classification, bounds | implemented | tests/test_delivery.py |
-| acknowledgement, verdicts, revision routing | implemented | tests/test_ack_reconcile.py |
-| reconciliation and restart recovery | implemented | tests/test_ack_reconcile.py |
-| bridge host adapter | implemented | tests/test_bridge_adapter.py |
-| bounded daemon | implemented | tests/test_daemon.py |
-| CLI | implemented | tests/test_cli.py |
-| frozen-schema conformance | implemented | tests/test_schema_conformance.py |
+| identity, manifest, scope | implemented | `internal/relay/store`, `internal/relay/adapter` |
+| durable store | implemented | `internal/relay/store` |
+| registry, generations, turn admission | implemented | `internal/relay/registry`, `internal/relay/delivery` |
+| receipts and outcome classification | implemented | `internal/relay/store` |
+| delivery, transport classification, bounds | implemented | `internal/relay/delivery` |
+| acknowledgement, verdicts, revision routing | implemented | `internal/relay/delivery` |
+| reconciliation and restart recovery | implemented | `internal/relay/delivery` |
+| bridge host adapter | implemented | `internal/relay/adapter` |
+| bounded daemon | implemented | `internal/relay/daemon` |
+| CLI | implemented | `internal/relay/cli`; the corpus's `cli-shape` and `exit-codes` domains |
+| frozen-schema conformance | implemented | `internal/relay/store`; the corpus's `records` domain |
+
+Until todo 44 each row's proof was a test of the Python package under
+`packages/codex-session-relay/tests`; [the test map](../port/test-map.md) names where each one's
+properties went.
 
 ## Install
 
 A host runs this relay as the `codex-session-relay` name of the `crw` runtime, one Go binary
 built from this repository and installed with `crw install`
-([runtime installation](../../docs/runtime-install.md)). Its command line, records and store are
-the ones this README documents, and both implementations are held to them by
+([runtime installation](../runtime-install.md)). Its command line, records and store are the ones
+this README documents, and the Go implementation is held to them by
 [the contract corpus](../../contract/README.md).
 
-This package is the Python implementation that runtime was ported from. Installing it is
-developer-only: it is the development path, and the fence release's rollback path, until the
-Python execution path is removed. The core has no third-party dependency. The real host adapter
-needs the transport bridge.
-
-    pip install -e .
-    pip install -e '.[bridge]'      # only to talk to a live App Server
-
-The wheel carries the five JSON schemas as package data, from the package selection alone. An
-explicit `force-include` for that directory would map it a second time and the build fails on the
-duplicate archive path, so there is deliberately no such table in `pyproject.toml`.
-
-Build and install checks cover the wheel contents, schema data, imports and CLI. JUN-93 also
-exercised a dedicated installed environment against a real App Server: child completion, automatic
-parent review, a correction to the same child, busy-recipient deferral, accepted-response loss and
-recovery without resending. Host versions, exact revisions, remaining cases and activation/stop
-procedures are maintained in the canonical Linear project record. These observations do not
-activate a service on another host or establish that an earlier test process is still running.
+This README first documented the Python package that runtime was ported from,
+`packages/codex-session-relay`, which the fence release installed as a Python virtual environment
+until the cutover. Todo 44 removed that package from the repository with the rest of the Python
+execution path; its last source is the parent of the commit that deleted it, and these documents
+moved to `docs/relay/` from its `docs/`. JUN-93 exercised a dedicated installed environment of
+the Python package against a real App Server: child completion, automatic parent review, a
+correction to the same child, busy-recipient deferral, accepted-response loss and recovery
+without resending. Host versions, exact revisions, remaining cases and activation/stop procedures
+are maintained in the canonical Linear project record. These observations do not activate a
+service on another host or establish that an earlier test process is still running.
 
 ## State
 
@@ -85,7 +81,7 @@ connection opened, so two participants share one log when their databases sit un
 directory entry, and `store-identity` reports that entry for each side to send. A file bind
 mount reaches one inode at a second pathname without changing the name count, which is why the
 count is not the check. Anything short of all of it is reported `unproven` and exits non-zero
-rather than being read as yes. See [docs/operations.md](docs/operations.md).
+rather than being read as yes. See [operations](operations.md).
 
 ## Authorized execution settings
 
@@ -446,7 +442,7 @@ it ran `intent-claim` and `intent-disposition`. It is what the daemon's supervis
 omission from. A child that claimed without that record is `unmeasured` /
 `declarations_not_recorded`, and nothing is derived for it. Both readings carry `owed` beside
 the diagnosis: false when the turn's own final receipt exists, when a later turn was admitted, or
-inside the grace. See [the supervisor channel](docs/supervisor-channel.md#an-omission-this-store-derives).
+inside the grace. See [the supervisor channel](supervisor-channel.md#an-omission-this-store-derives).
 
 ## Commands
 
@@ -749,13 +745,13 @@ These are recorded because behaviour depends on them.
 
 ## Documents
 
-- `docs/protocol-v1.md` — the wire and record protocol, derived from the frozen contract.
-- `docs/linkage.md` — the three-level execution linkage and peer links. Relay-owned records,
+- `protocol-v1.md` — the wire and record protocol, derived from the frozen contract.
+- `linkage.md` — the three-level execution linkage and peer links. Relay-owned records,
   outside the frozen contract, with the transaction protocol they are written under.
-- `docs/invariants.md` — every invariant and the code that enforces it.
-- `docs/faults.md` — the operational fault ledger: one breakage, one record, one Linear issue,
+- `invariants.md` — every invariant and the code that enforces it.
+- `faults.md` — the operational fault ledger: one breakage, one record, one Linear issue,
   closed only by reverification.
-- `docs/product-routing.md` — where a product's incident belongs: the current issue, an existing
+- `product-routing.md` — where a product's incident belongs: the current issue, an existing
   issue, a reopen, a follow-up, a new issue in its project, or one pending-classification record.
-- `docs/operations.md` — where the state lives, who owns the daemon, and how to read a
+- `operations.md` — where the state lives, who owns the daemon, and how to read a
   stuck delivery. Each section says whether the behaviour is implemented or planned.
