@@ -22,10 +22,10 @@ class Connection:
     """A peer that sent frame and then closed its sending side."""
 
     def __init__(self, frame):
-        self.frame, self.sent = frame, b""
+        self.frame, self.sent = io.BytesIO(frame), b""
 
-    def makefile(self, mode):
-        return io.BytesIO(self.frame)
+    def recv(self, size):
+        return self.frame.read(size)
 
     def settimeout(self, seconds):
         pass
@@ -109,4 +109,20 @@ add("a raw surrogate in a key", json.dumps({"protocol": 1, "method": "guard-eval
     ensure_ascii=False).encode("utf-8", "surrogatepass") + b"\n")
 add("a surrogate marker root", json.dumps(request("2999-01-01T00:00:00+00:00", markerRoot="/x\udc80\ud800"),
                                           ensure_ascii=False).encode("utf-8", "surrogatepass") + b"\n")
+# An escape the frame ends on: json.loads refuses it as an invalid escape, not an unterminated
+# string (the scanner's bound is end >= len).
+add("an escape ends the frame", b'{"protocol": 1, "method": "guard-evaluate", "params": {"deadline": "\\u0041')
+add("a surrogate pair ends the frame", b'{"protocol": 1, "method": "\\ud800\\udc00')
+add("an escape and one character end the frame", b'{"protocol": 1, "method": "\\u0041x')
+
+# The request's fields as control.py reads them: protocol compared with == 1 (true, 1.0 and 1e0
+# are 1), and mode and now, when present and not null, strings.
+later = "2999-01-01T00:00:00+00:00"
+for protocol in [True, 1.0, "1e0", "10e-1", "0.99999999999999999", 2, 0, False, "1", None, [1], "NaN"]:
+    spelled = protocol if isinstance(protocol, str) and protocol not in ("1",) else json.dumps(protocol)
+    frame = json.dumps(request(later)).replace('"protocol": 1', '"protocol": ' + spelled, 1)
+    add("protocol " + spelled, frame.encode() + b"\n")
+for key in ["mode", "now"]:
+    for value in [5, 0, True, False, [], ["observe"], {}, {"a": 1}, "", "observe", None, 1.5]:
+        add(key + " " + json.dumps(value), json.dumps(request(later, **{key: value})).encode() + b"\n")
 json.dump(corpus, sys.stdout)

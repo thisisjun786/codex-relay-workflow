@@ -1010,7 +1010,8 @@ def ask(path, raw, *, timeout=10):
     return json.loads(answer) if answer else None
 
 
-@pytest.mark.parametrize("fault", ["peer-credentials", "accept-emfile", "null-deadline", "nested-json"])
+@pytest.mark.parametrize("fault", ["peer-credentials", "accept-emfile", "null-deadline", "nested-json",
+                                   "mode-not-a-string", "now-not-a-string"])
 def test_python_control_server_survives_every_per_connection_failure(database, owner_markers, fault):
     from codex_session_relay import control
 
@@ -1038,6 +1039,13 @@ def test_python_control_server_survives_every_per_connection_failure(database, o
         elif fault == "null-deadline":
             assert ask(server.path, guard_request(database, deadline=None)) == {
                 "error": "host", "detail": "TypeError: guard deadline must be a string"}
+        elif fault == "mode-not-a-string":
+            # Never evaluated with a mode, or recorded with a time, that is not a string.
+            assert ask(server.path, guard_request(database, mode=5)) == {
+                "error": "host", "detail": "TypeError: guard mode must be a string"}
+        elif fault == "now-not-a-string":
+            assert ask(server.path, guard_request(database, now=0)) == {
+                "error": "host", "detail": "TypeError: guard now must be a string"}
         else:
             answer = ask(server.path, b'{"params":' + b"[" * 200000 + b"\n")
             assert answer["error"] == "host" and answer["detail"].startswith("RecursionError")
@@ -1046,6 +1054,52 @@ def test_python_control_server_survives_every_per_connection_failure(database, o
         assert "decision" in verdict and "hook_output" in verdict
     finally:
         server.close()
+
+
+def test_python_control_server_bounds_the_whole_request_line(database, owner_markers, monkeypatch):
+    """The read bound is on the request line, from the moment the peer is served, not on each read.
+
+    A peer that sends its line in parts, each well within the bound, the whole line past it, is
+    answered TimeoutError('timed out') when the bound is spent, as the Go owner answers it; a line
+    sent in parts within the bound is served.
+    """
+    from codex_session_relay import control
+
+    monkeypatch.setattr(control, "READ_TIMEOUT", 1.0)
+    request = guard_request(database)
+    parts = [request[:10], request[10:20], request[20:]]
+
+    def trickled(gap):
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+            client.settimeout(10)
+            client.connect(str(server.path))
+            for index, part in enumerate(parts):
+                # gap between parts, and no more parts once the owner has answered.
+                if index and select_readable(client, gap):
+                    break
+                client.sendall(part)
+            answer = bytearray()
+            while not answer.endswith(b"\n"):
+                chunk = client.recv(65536)
+                if not chunk:
+                    break
+                answer.extend(chunk)
+        return json.loads(answer)
+
+    server = control.GuardServer(database.parent)
+    try:
+        assert trickled(0.6) == {"error": "host", "detail": "TimeoutError: timed out"}
+        verdict = trickled(0.05)
+        assert "decision" in verdict and "hook_output" in verdict
+    finally:
+        server.close()
+
+
+def select_readable(connection, seconds):
+    """Whether connection has something to read within seconds."""
+    with selectors.DefaultSelector() as selector:
+        selector.register(connection, selectors.EVENT_READ)
+        return bool(selector.select(seconds))
 
 
 def test_darwin_peer_credentials_read_local_peercred(monkeypatch):

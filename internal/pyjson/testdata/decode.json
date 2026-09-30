@@ -34,6 +34,21 @@
   "hookedError": "Expecting value: line 1 column 1 (char 0)",
   "text": ""
  },
+ "escape-before-the-close": {
+  "hex": "7b2261223a20225c7530303166227d",
+  "hookedError": null,
+  "text": "{\"a\": \"\\u001f\"}"
+ },
+ "escape-ends-the-document": {
+  "hex": "7b2261223a20225c7530303166",
+  "hookedError": "Invalid \\uXXXX escape: line 1 column 9 (char 8)",
+  "text": "{\"a\": \"\\u001f"
+ },
+ "escape-then-one-character": {
+  "hex": "7b2261223a20225c753030316678",
+  "hookedError": "Unterminated string starting at: line 1 column 7 (char 6)",
+  "text": "{\"a\": \"\\u001fx"
+ },
  "extra": {
   "hex": "7b7d2078",
   "hookedError": "Extra data: line 1 column 4 (char 3)",
@@ -53,6 +68,11 @@
   "hex": "7b2261223a204e614e2c202262223a20496e66696e6974792c202263223a202d496e66696e6974797d",
   "hookedError": null,
   "text": "{\"a\": NaN, \"b\": Infinity, \"c\": -Infinity}"
+ },
+ "pair-ends-the-document": {
+  "hex": "225c75643830305c7564633030",
+  "hookedError": "Invalid \\uXXXX escape: line 1 column 9 (char 8)",
+  "text": "\"\\ud800\\udc00"
  },
  "syntax-then-duplicate": {
   "hex": "7b2278223a20212c202261223a20312c202261223a20327d",

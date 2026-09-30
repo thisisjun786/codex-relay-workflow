@@ -1408,6 +1408,9 @@ UNACCOUNTED_FAULT_OCCURRENCES = (
     # branch with a fake connection; no store or DB hook is involved.
     ("test_fence.py", "test_darwin_peer_credentials_read_local_peercred", "calls setattr"),
     ("test_fence.py", "test_darwin_peer_credentials_read_local_peercred", "calls setattr"),
+    # Lowers control.READ_TIMEOUT so a line trickled past the bound is answered quickly; no
+    # store or DB hook is involved.
+    ("test_fence.py", "test_python_control_server_bounds_the_whole_request_line", "calls setattr"),
     # Lowers ownership.LOCK_WAIT_SECONDS so a held write-gate SH expires the binding quickly.
     ("test_fence.py", "test_socket_binding_waits_for_other_writers_within_the_declared_bound",
      "calls setattr"),

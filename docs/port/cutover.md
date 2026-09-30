@@ -526,21 +526,30 @@ answers failures the same way. The line is `json.loads` of its bytes: decoded as
 decodes bytes (UTF-8 with or without its byte order mark, UTF-16 or UTF-32 by their marks or
 NUL bytes, a lone surrogate passed and kept), then scanned to the nesting the C scanner reaches
 in `GuardServer`'s serving thread (9996 containers under CPython 3.13; the 9997th raises
-`RecursionError`). The deadline is `datetime.fromisoformat` of it as CPython 3.13 parses it
-(after `Z` becomes `+00:00`), subtracted from the aware present. A frame whose bytes do not
-decode, that is not a JSON object, nests too deep, lacks `params` or `stopInput`, carries a
-deadline that is not a string, does not parse, has no offset or has passed, or a `socketPath` or
-`program` that is not a string, is answered by both owners with the same host detail,
-`control.py`'s `<exception class>: <message>` (`TypeError: guard params must be an object`,
-`TypeError: can't subtract offset-naive and offset-aware datetimes`, `TimeoutError: guard
-request deadline expired`), and a peer that has not finished its request line when the 5 s
-read timeout expires is answered `TimeoutError: timed out`. Nothing a peer does ends or fails
-either owner (PR #185 4128954449): a peer that goes away before its answer is skipped, an
-accept the kernel refuses for want of descriptors, buffers or memory is retried after 50 ms,
-and neither reaches the daemon's exit status. One difference is kept: `control.py`'s timeout
-applies to each read, so a peer that trickles its line, each part within 5 s of the last, is
-served by Python however long it takes and answered `TimeoutError: timed out` by Go 5 s after
-it connected; the Go owner serves each connection concurrently and bounds each one whole.
+`RecursionError`). That depth is the thread's whole recursion budget, and the calls the scanner
+makes to raise a refusal or to convert a constant draw on it too: a `JSONDecodeError` other than
+`Expecting value` raised at 9993 to 9996 open containers, and an `Expecting value`, an
+over-long integer or a `NaN`, `Infinity` or `-Infinity` at 9996, raise `RecursionError`
+instead, with the message CPython gives there, and both owners answer them alike
+(`pyjson.ErrorWithBudget`, measured through `GuardServer`). The request is served when its
+`protocol` equals 1 as Python compares it (`1`, `1.0` or `true`) and its `method` is
+`guard-evaluate`; `noRecord` is read by its truth value. The deadline is `datetime.fromisoformat`
+of it as CPython 3.13 parses it (after `Z` becomes `+00:00`), subtracted from the aware present.
+A frame whose bytes do not decode, that is not a JSON object, nests too deep, lacks `params` or
+`stopInput`, carries a deadline that is not a string, does not parse, has no offset or has
+passed, or a `socketPath`, `program`, `mode` or `now` that is present, not null and not a
+string, is answered by both owners with the same host detail, `control.py`'s `<exception
+class>: <message>` (`TypeError: guard params must be an object`, `TypeError: can't subtract
+offset-naive and offset-aware datetimes`, `TimeoutError: guard request deadline expired`,
+`TypeError: guard mode must be a string`). A `mode` or `now` that is null or empty asks for the
+default; neither reaches the verdict or the observation it records unless it is a string. A peer
+has 5 s from being served to send its whole request line: the bound is on the line, each read
+given only the time that remains, so a peer that has not finished the line by then, whether it
+sent nothing more or trickled it in parts, is answered `TimeoutError: timed out` by both owners.
+Nothing a peer does ends or fails either owner (PR #185 4128954449): a peer that goes away before
+its answer is skipped, an accept the kernel refuses for want of descriptors, buffers or memory is
+retried after 50 ms, and neither reaches the daemon's exit status. The Go owner serves each
+connection concurrently; the Python owner serves one at a time.
 
 Every client sends those two selection inputs: the Go hook client (`RequestGuard`), the Stop
 adapter's pinned route (`socketPath` from its settings, `program` its `relayExecutable`) and

@@ -16,7 +16,6 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // The control protocol is one JSON object per line with a 64 MiB transport bound.
@@ -25,7 +24,7 @@ const maxControlBytes = 64 << 20
 
 // ControlAnswerGrace is how long before its deadline HandleControl stops waiting for the request
 // line, to answer a peer that never finished it: the owner's listener gives each connection
-// control.py's 5 s read timeout plus this grace.
+// control.py's 5 s bound on the whole line (READ_TIMEOUT) plus this grace.
 const ControlAnswerGrace = 250 * time.Millisecond
 
 type responseError struct{ outcome, reading string }
@@ -104,7 +103,9 @@ func ControlAddress(path string) (string, func(), error) {
 // controlDepth is the container depth to which control.py's json.loads decodes a request in
 // the GuardServer's serving thread before the C scanner raises RecursionError (at 9997,
 // measured through GuardServer itself against CPython 3.13, the fence interpreter; a plain
-// thread's json.loads reaches two levels further). The Go decoder has no bound of its own short
+// thread's json.loads reaches two levels further). It is that thread's whole budget: a refusal
+// raised within four levels of it, or a NaN, Infinity or over-long integer at it, raises
+// RecursionError too (pyjson.ErrorWithBudget). The Go decoder has no bound of its own short
 // of the goroutine stack, and overflowing that is fatal to the whole owner, not to one request.
 const controlDepth = 9996
 
@@ -133,7 +134,7 @@ func readRequest(r io.Reader) (request Object, refused string, err error) {
 		// one mark was the codec's; a character U+FEFF left after it is no value.
 		return nil, "JSONDecodeError: Expecting value: line 1 column 1 (char 0)", nil
 	}
-	message, recursion := store.PythonJSONErrorWithLimit(text, controlDepth)
+	message, recursion := pyjson.ErrorWithBudget(text, controlDepth)
 	switch {
 	case recursion:
 		return nil, "RecursionError: " + message, nil
@@ -192,7 +193,8 @@ func guardParams(request Object, now time.Time) (params, stop Object, deadline t
 	if !deadline.After(now) {
 		return nil, nil, time.Time{}, "TimeoutError: guard request deadline expired"
 	}
-	for _, key := range []string{"socketPath", "program"} {
+	// mode and now as well: only a string names either (null or "" asks for the default).
+	for _, key := range []string{"socketPath", "program", "mode", "now"} {
 		if value := get(params, key); value != nil {
 			if _, ok := value.(string); !ok {
 				return nil, nil, time.Time{}, "TypeError: guard " + key + " must be a string"
@@ -200,6 +202,42 @@ func guardParams(request Object, now time.Time) (params, stop Object, deadline t
 		}
 	}
 	return params, stop, deadline, ""
+}
+
+// isOne is control.py's request.get("protocol") == 1 for a decoded JSON value: the integer 1,
+// a float equal to it, or true.
+func isOne(value any) bool {
+	switch v := value.(type) {
+	case int64:
+		return v == 1
+	case float64:
+		return v == 1
+	case bool:
+		return v
+	}
+	return false
+}
+
+// truthy is Python's bool() of a decoded JSON value: control.py reads noRecord so.
+func truthy(value any) bool {
+	switch v := value.(type) {
+	case nil:
+		return false
+	case bool:
+		return v
+	case int64:
+		return v != 0
+	case float64:
+		return v != 0 // NaN is true, as bool(float("nan")) is
+	case string:
+		return v != ""
+	case []any:
+		return len(v) > 0
+	}
+	if o, ok := evidence.Object(value); ok {
+		return len(o) > 0
+	}
+	return true // an integer past int64, never zero
 }
 
 // answerHost answers a request with the relay's host record, as control.py answers a request

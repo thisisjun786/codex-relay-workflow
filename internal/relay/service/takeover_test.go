@@ -208,13 +208,17 @@ func Test30ControlDisconnectBeforeARequestIsNoFailure(t *testing.T) {
 // PR #185 4128954449, the rule it cites (control.py GuardServer._serve): nothing a peer or the
 // kernel does ends or fails the owner. Every frame below is one the retained Python owner
 // answers with its host record, and the Go owner answers it with the same bytes: among them the
-// nesting edge of GuardServer's serving thread (9996 containers decode, 9997 raise), a naive
-// deadline, and a peer that has not finished its request line when control.py's 5 s read
-// timeout expires. A frame Python serves, one led by a UTF-8 byte order mark, Go serves with the
-// same verdict. A peer that hangs up after a complete request is skipped, and a failed accept is
-// retried. Both owners still serve the next Stop afterwards, and none of it reaches Go's Close,
-// so a daemon segment whose work succeeded exits 0. (Every other reading of a frame is
-// TestControlReadsEveryFrameAsControlPyReadsIt, over control.py's _answer.)
+// nesting edge of GuardServer's serving thread (9996 containers decode, 9997 raise, and a
+// refusal raised within four levels of the edge, or a NaN or over-long integer at it, raises
+// RecursionError on the way), a naive deadline, a mode or now that is not a string, and a peer
+// whose request line is not complete when control.py's 5 s read bound expires, whether it sent
+// nothing more or trickled the line in parts. A corpus of refusals and values at 9989 to 9997
+// open containers gets the same answers from both. Frames Python serves (one led by a UTF-8
+// byte order mark, a protocol of true or 1.0, a truthy noRecord that is not true) Go serves with
+// the same verdict. A peer that hangs up after a complete request is skipped, and a failed
+// accept is retried. Both owners still serve the next Stop afterwards, and none of it reaches
+// Go's Close, so a daemon segment whose work succeeded exits 0. (Every other reading of a frame
+// is TestControlReadsEveryFrameAsControlPyReadsIt, over control.py's _answer.)
 func Test30ControlPeerFailuresAreAnsweredAsPythonAnswersThem(t *testing.T) {
 	home, err := os.MkdirTemp("", "t30-peer-")
 	if err != nil {
@@ -250,7 +254,28 @@ func Test30ControlPeerFailuresAreAnsweredAsPythonAnswersThem(t *testing.T) {
 		{"naive deadline", "TypeError: can't subtract offset-naive and offset-aware datetimes"},
 		{"socketPath not a string", "TypeError: guard socketPath must be a string"},
 		{"program not a string", "TypeError: guard program must be a string"},
+		{"mode not a string", "TypeError: guard mode must be a string"},
+		{"now not a string", "TypeError: guard now must be a string"},
 		{"silent past the read timeout", "TimeoutError: timed out"},
+		{"trickled past the read timeout", "TimeoutError: timed out"},
+		{"a refusal at the edge", "RecursionError: maximum recursion depth exceeded while calling a Python object"},
+		{"a refusal one level inside the edge", "RecursionError: maximum recursion depth exceeded"},
+		{"a refusal two levels inside the edge", "RecursionError: maximum recursion depth exceeded"},
+		{"a refusal three levels inside the edge", "RecursionError: maximum recursion depth exceeded while calling a Python object"},
+		{"a refusal four levels inside the edge", "JSONDecodeError: Expecting ',' delimiter: line 1 column 9995 (char 9994)"},
+		{"a missing value at the edge", "RecursionError: maximum recursion depth exceeded while calling a Python object"},
+		{"a missing value one level inside the edge", "JSONDecodeError: Expecting value: line 1 column 9996 (char 9995)"},
+		{"NaN at the edge", "RecursionError: maximum recursion depth exceeded while calling a Python object"},
+		{"NaN one level inside the edge", "TypeError: guard request must be an object"},
+		{"an over-long integer at the edge", "RecursionError: maximum recursion depth exceeded while calling a Python object"},
+		{"an over-long integer one level inside the edge", "ValueError: Exceeds the limit (4300 digits) for integer string conversion: value has 4301 digits; use sys.set_int_max_str_digits() to increase the limit"},
+	}
+	nested := func(depth int, inner string, closed bool) []byte {
+		frame := strings.Repeat("[", depth) + inner
+		if closed {
+			frame += strings.Repeat("]", depth)
+		}
+		return []byte(frame + "\n")
 	}
 	frames := map[string][]byte{
 		"not json":                      []byte("not json\n"),
@@ -273,6 +298,44 @@ func Test30ControlPeerFailuresAreAnsweredAsPythonAnswersThem(t *testing.T) {
 		"silent past the read timeout": []byte(`{"protocol":1`),
 		"socketPath not a string":      frame(params(later, `,"socketPath":1`)),
 		"program not a string":         frame(params(later, `,"program":["crw"]`)),
+		// A later key replaces an earlier one in both owners, as in a Python dict.
+		"mode not a string": frame(params(later, `,"mode":5`)),
+		"now not a string":  frame(params(later, `,"now":0`)),
+		// The edge of the serving thread's budget: the calls that raise a refusal, or read a
+		// constant, draw on it too.
+		"a refusal at the edge":                          nested(9996, "1 2", false),
+		"a refusal one level inside the edge":            nested(9995, "1 2", false),
+		"a refusal two levels inside the edge":           nested(9994, "1 2", false),
+		"a refusal three levels inside the edge":         nested(9993, "1 2", false),
+		"a refusal four levels inside the edge":          nested(9992, "1 2", false),
+		"a missing value at the edge":                    nested(9996, "x", false),
+		"a missing value one level inside the edge":      nested(9995, "x", false),
+		"NaN at the edge":                                nested(9996, "NaN", true),
+		"NaN one level inside the edge":                  nested(9995, "NaN", true),
+		"an over-long integer at the edge":               nested(9996, strings.Repeat("1", 4301), true),
+		"an over-long integer one level inside the edge": nested(9995, strings.Repeat("1", 4301), true),
+	}
+	// Every kind of refusal and value the scanner meets, at 9989 to 9997 open containers; the
+	// frame's line end is whitespace after its last token.
+	edge := map[string][]byte{}
+	for depth := 9989; depth <= 9997; depth++ {
+		open, closed := strings.Repeat("[", depth-1), strings.Repeat("]", depth-1)
+		long := strings.Repeat("1", 4301)
+		for kind, request := range map[string]string{
+			"a missing value": open + "[x" + closed, "the end of the frame": open + "[",
+			"a comma": open + "[1 2" + closed, "NaN": open + "[NaN]" + closed, "Infinity": open + "[Infinity]" + closed,
+			"-Infinity": open + "[-Infinity]" + closed, "an over-long integer": open + "[" + long + "]" + closed,
+			"an over-long negative integer": open + "[-" + long + "]" + closed,
+			"a control character":           open + "[\"\x01\"]" + closed, "a bad escape": open + `["\q"]` + closed,
+			"a bad unicode escape": open + `["\uzzzz"]` + closed, "a colon": open + `{"a" 1}` + closed,
+			"a trailing comma in an array": open + "[1,]" + closed, "a trailing comma in an object": open + `{"a":1,}` + closed,
+			"a property name": open + "{1}" + closed, "an object value": open + `{"a":}` + closed,
+			"an object comma": open + `{"a":1 "b":2}` + closed, "a refusal after a close": open + "[[]x" + closed,
+			"a string": open + `["s"]` + closed, "a number": open + "[1.5e3]" + closed, "true": open + "[true]" + closed,
+			"an object": open + `{"a":1}` + closed, "an empty array": open + "[]" + closed, "extra data": open + "[]" + closed + "]x",
+		} {
+			edge[fmt.Sprintf("%s at %d", kind, depth)] = []byte(request + "\n")
+		}
 	}
 	ask := func(t *testing.T, path string, request []byte) []byte {
 		t.Helper()
@@ -303,20 +366,67 @@ func Test30ControlPeerFailuresAreAnsweredAsPythonAnswersThem(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// A frame led by a UTF-8 byte order mark: json.loads decodes bytes as utf-8-sig.
-	marked := append([]byte("\xef\xbb\xbf"), frame(params(later, ""))...)
-	// served asks every failing frame, then the marked frame, then hangs up after a complete
-	// request, then asks a Stop the owner must still answer with a verdict.
+	// trickle sends a request line in parts 3 s apart, each well inside a read's 5 s, the whole
+	// line past them: the bound is on the line, so the owner answers at 5 s.
+	trickle := func(t *testing.T, path string) []byte {
+		t.Helper()
+		conn, err := net.Dial("unix", path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Close()
+		if err = conn.SetDeadline(time.Now().Add(15 * time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		request := frame(params(later, ""))
+		go func() {
+			for i, part := range [][]byte{request[:10], request[10:20], request[20:]} {
+				if i > 0 {
+					time.Sleep(3 * time.Second)
+				}
+				if _, err := conn.Write(part); err != nil {
+					return // answered and closed before the line was complete
+				}
+			}
+		}()
+		line, _ := bufio.NewReader(conn).ReadBytes('\n')
+		return line
+	}
+	// Served, not refused: a frame led by a UTF-8 byte order mark (json.loads decodes bytes as
+	// utf-8-sig), a protocol control.py compares equal to 1, and a noRecord it reads as true,
+	// which downgrades hold to observe.
+	servedFrames := map[string][]byte{
+		"marked":         append([]byte("\xef\xbb\xbf"), frame(params(later, ""))...),
+		"protocol true":  []byte(`{"protocol":true,"method":"guard-evaluate","params":` + params(later, "") + "}\n"),
+		"protocol 1.0":   []byte(`{"protocol":1.0,"method":"guard-evaluate","params":` + params(later, "") + "}\n"),
+		"noRecord 1":     frame(params(later, `,"mode":"hold","noRecord":1`)),
+		"noRecord false": frame(params(later, `,"mode":"hold","noRecord":false`)),
+	}
+	// served asks every failing frame, the edge corpus and the served frames, then hangs up
+	// after a complete request, then asks a Stop the owner must still answer with a verdict.
 	served := func(t *testing.T, path string) map[string][]byte {
 		t.Helper()
 		answers := map[string][]byte{}
 		for _, failure := range failures {
+			if failure.name == "trickled past the read timeout" {
+				answers[failure.name] = trickle(t, path)
+				continue
+			}
 			answers[failure.name] = ask(t, path, frames[failure.name])
 		}
-		answers["marked"] = ask(t, path, marked)
+		for name, request := range edge {
+			answers["edge "+name] = ask(t, path, request)
+		}
+		for name, request := range servedFrames {
+			answers[name] = ask(t, path, request)
+			var verdict map[string]any
+			if err := json.Unmarshal(answers[name], &verdict); err != nil || verdict["decision"] != "release" {
+				t.Errorf("the owner did not serve %s: %q %v", name, answers[name], err)
+			}
+		}
 		var verdict map[string]any
-		if err := json.Unmarshal(answers["marked"], &verdict); err != nil || verdict["decision"] != "release" {
-			t.Errorf("the owner did not serve a frame led by a byte order mark: %q %v", answers["marked"], err)
+		if json.Unmarshal(answers["noRecord 1"], &verdict) != nil || verdict["modeDowngraded"] != "hold_requires_a_recorded_observation" {
+			t.Errorf("a noRecord of 1 did not ask for no record: %q", answers["noRecord 1"])
 		}
 		hangUp(t, path, frame(params(later, "")))
 		verdict = nil
@@ -383,10 +493,17 @@ server.close()`, state)
 				t.Errorf("%s: the Go owner answered %q where the Python owner answered %q", failure.name, answers[failure.name], python[failure.name])
 			}
 		}
+		for name := range edge {
+			if string(answers["edge "+name]) != string(python["edge "+name]) {
+				t.Errorf("%s: the Go owner answered %q where the Python owner answered %q", name, answers["edge "+name], python["edge "+name])
+			}
+		}
 		// The same verdict; each owner spaces its verdict line as its own serializer does.
-		var goVerdict, pythonVerdict any
-		if json.Unmarshal(answers["marked"], &goVerdict) != nil || json.Unmarshal(python["marked"], &pythonVerdict) != nil || !reflect.DeepEqual(goVerdict, pythonVerdict) {
-			t.Errorf("a frame led by a byte order mark: the Go owner answered %q where the Python owner answered %q", answers["marked"], python["marked"])
+		for name := range servedFrames {
+			var goVerdict, pythonVerdict any
+			if json.Unmarshal(answers[name], &goVerdict) != nil || json.Unmarshal(python[name], &pythonVerdict) != nil || !reflect.DeepEqual(goVerdict, pythonVerdict) {
+				t.Errorf("%s: the Go owner answered %q where the Python owner answered %q", name, answers[name], python[name])
+			}
 		}
 		if err = server.Close(); err != nil {
 			t.Fatalf("a failed peer failed the listener: %v", err)
