@@ -580,3 +580,86 @@ func TestDrain_an_unwritable_inbox_fails_on_the_replay_lock(t *testing.T) {
 		t.Fatalf("%v %v", err, r.calls)
 	}
 }
+
+// Check stops where Drain stops on the replay lock (backlog line 40, review): the lock opened as
+// lockReplay opens it, never following a link and for writing, or created where there is none.
+// For each lock the drain cannot open, Check fails with the drain's own error before any entry is
+// read, and it neither creates nor takes the lock; over a lock the drain opens, Check passes and
+// the drain applies the entry.
+func TestCheck_stops_where_the_drain_stops_on_its_replay_lock(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		prepare func(t *testing.T, directory, lock string)
+		refused bool
+	}{
+		{"a symbolic link", func(t *testing.T, directory, lock string) {
+			if err := os.Symlink("elsewhere", lock); err != nil {
+				t.Fatal(err)
+			}
+		}, true},
+		{"a symbolic link to a lock file", func(t *testing.T, directory, lock string) {
+			if err := os.WriteFile(filepath.Join(directory, "saved~"), nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("saved~", lock); err != nil {
+				t.Fatal(err)
+			}
+		}, true},
+		{"a directory", func(t *testing.T, directory, lock string) {
+			if err := os.Mkdir(lock, 0700); err != nil {
+				t.Fatal(err)
+			}
+		}, true},
+		{"a lock this user cannot write", func(t *testing.T, directory, lock string) {
+			if err := os.WriteFile(lock, nil, 0400); err != nil {
+				t.Fatal(err)
+			}
+		}, true},
+		{"no lock in an inbox this user cannot write", func(t *testing.T, directory, lock string) {
+			if err := os.Chmod(directory, 0500); err != nil {
+				t.Fatal(err)
+			}
+		}, true},
+		{"no lock yet", func(t *testing.T, directory, lock string) {}, false},
+		{"a lock file", func(t *testing.T, directory, lock string) {
+			if err := os.WriteFile(lock, nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+		}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if os.Geteuid() == 0 {
+				t.Skip("root is refused no permission")
+			}
+			st, state := goStore(t)
+			entry := mustEnvelope(t, "ack", cases["ack"]...)
+			publish(t, state, entry)
+			directory := Directory(state)
+			lock := filepath.Join(directory, ReplayLock)
+			if err := os.Remove(lock); err != nil && !errors.Is(err, os.ErrNotExist) {
+				t.Fatal(err)
+			}
+			tc.prepare(t, directory, lock)
+			defer func() { _ = os.Chmod(directory, 0700) }()
+			before := names(t, directory)
+			checked := Check(state)
+			if after := names(t, directory); !slices.Equal(after, before) {
+				t.Fatalf("Check changed the inbox: %v, then %v", before, after)
+			}
+			r := &recorder{}
+			drained := Drain(t.Context(), st, state, r.apply)
+			if !tc.refused {
+				if checked != nil || drained != nil || len(r.calls) != 1 {
+					t.Fatalf("check %v, drain %v, applied %v", checked, drained, r.calls)
+				}
+				return
+			}
+			if drained == nil || len(r.calls) != 0 {
+				t.Fatalf("the drain opened the lock: %v %v", drained, r.calls)
+			}
+			if checked == nil || checked.Error() != drained.Error() {
+				t.Fatalf("Check answered %v where the drain stopped with %v", checked, drained)
+			}
+		})
+	}
+}

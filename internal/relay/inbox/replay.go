@@ -103,11 +103,12 @@ func Drain(ctx context.Context, st *store.Store, state string, apply Apply) erro
 	return nil
 }
 
-// Check reads S/takeover-inbox as Drain reads it and applies nothing: every name the replay
-// reads, read (inbox.py read_entry) and validated (_replay_entry's checks) as the replay does.
-// Its error is the one the first failing entry would stop a drain with, so the takeover transfer
-// refuses at Step 4, before ownership moves, on an entry the candidate's recovery could only fail
-// closed on (cutover.md Step 4). A missing inbox is nothing to check.
+// Check reads S/takeover-inbox as Drain reads it and applies nothing: the replay lock opened as
+// the replay opens it, without taking it, then every name the replay reads, read (inbox.py
+// read_entry) and validated (_replay_entry's checks) as the replay does. Its error is the one
+// the drain would stop with first, so the takeover transfer refuses at Step 4, before ownership
+// moves, on an inbox the candidate's recovery could only fail closed on (cutover.md Step 4). A
+// missing inbox is nothing to check.
 func Check(state string) error {
 	directory := Directory(state)
 	if _, err := os.Stat(directory); err != nil {
@@ -115,6 +116,9 @@ func Check(state string) error {
 			return nil
 		}
 		return &Error{Detail: store.PythonOSError(err)}
+	}
+	if err := checkReplayLock(directory); err != nil {
+		return err
 	}
 	names, err := list(directory)
 	if err != nil {
@@ -131,6 +135,27 @@ func Check(state string) error {
 		if _, _, err = validate(name, raw); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// checkReplayLock is lockReplay's open without its side effects: the lock file opened for
+// reading and writing without following a link, or, where there is none yet, the inbox
+// directory writable and searchable, as creating it needs. It fails as that open would (a
+// symbolic link, a directory, a file or directory this user may not write), with the drain's
+// wording, and it neither creates nor takes the lock.
+func checkReplayLock(directory string) error {
+	path := filepath.Join(directory, ReplayLock)
+	fd, err := unix.Open(path, unix.O_RDWR|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err == nil {
+		_ = unix.Close(fd)
+		return nil
+	}
+	if errors.Is(err, unix.ENOENT) {
+		err = unix.Access(directory, unix.W_OK|unix.X_OK)
+	}
+	if err != nil {
+		return &Error{Detail: store.PythonOSError(&os.PathError{Op: "open", Path: path, Err: err})}
 	}
 	return nil
 }

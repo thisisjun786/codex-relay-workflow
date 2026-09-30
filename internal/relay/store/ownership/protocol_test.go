@@ -397,8 +397,9 @@ func Test30BackupIncludesWALAndInventory(t *testing.T) {
 // and validate over the names the decision-25 grammar admits), so what the transfer refuses and
 // what the drain fails closed on are the same set. A corrupt, symlinked or non-regular entry is
 // refused at Step 4, where the owner has not changed and the recovery is repair or abort
-// (cutover.md Step 4), never after Step 5 commits owner=go phase=starting. A name outside the
-// grammar and anything below a subdirectory are nothing the drain reads, so they refuse nothing.
+// (cutover.md Step 4), never after Step 5 commits owner=go phase=starting, and so is a replay
+// lock the drain cannot open. Any other name outside the grammar and anything below a
+// subdirectory are nothing the drain reads, so they refuse nothing.
 func Test30TransferInspectsTheInboxAsTheDrainReadsIt(t *testing.T) {
 	valid, err := inbox.Envelope("ack", []string{"--event", "event-1", "--ack-turn", "parent-turn", "--ack-proof", "proof-1"})
 	must(t, err)
@@ -419,6 +420,16 @@ func Test30TransferInspectsTheInboxAsTheDrainReadsIt(t *testing.T) {
 		{"a directory entry", func(t *testing.T, directory string) {
 			must(t, os.Mkdir(filepath.Join(directory, "ack.directory"), 0700))
 		}, "ValueError: invalid takeover inbox entry: ack.directory: not a regular file"},
+		// The drain opens its replay lock before any entry, without following a link and for
+		// writing: a lock it cannot open stops it as surely as a corrupt entry.
+		{"a symlinked replay lock", func(t *testing.T, directory string) {
+			must(t, removeIfPresent(filepath.Join(directory, inbox.ReplayLock)))
+			must(t, os.Symlink("elsewhere", filepath.Join(directory, inbox.ReplayLock)))
+		}, "OSError: [Errno 40] Too many levels of symbolic links: '"},
+		{"a replay lock that is a directory", func(t *testing.T, directory string) {
+			must(t, removeIfPresent(filepath.Join(directory, inbox.ReplayLock)))
+			must(t, os.Mkdir(filepath.Join(directory, inbox.ReplayLock), 0700))
+		}, "IsADirectoryError: [Errno 21] Is a directory: '"},
 		{"names the drain never reads", func(t *testing.T, directory string) {
 			must(t, os.Symlink("/nonexistent", filepath.Join(directory, "not an entry")))
 			must(t, os.Symlink(valid.ID, filepath.Join(directory, ".hidden")))
@@ -463,11 +474,12 @@ func Test30TransferInspectsTheInboxAsTheDrainReadsIt(t *testing.T) {
 			}
 			// Refused before the ownership-transfer point: the owner has not changed.
 			assertState(t, c, "python", "draining", 1)
-			// Recovery is repair (cutover.md Step 4): without the entry the transfer proceeds.
+			// Recovery is repair (cutover.md Step 4): without the entry, or the lock, that stops
+			// the drain, the transfer proceeds.
 			entries, e := os.ReadDir(directory)
 			must(t, e)
 			for _, entry := range entries {
-				if entry.Name() != valid.ID && entry.Name() != ".replay.lock" {
+				if entry.Name() != valid.ID && (entry.Name() != inbox.ReplayLock || !entry.Type().IsRegular()) {
 					must(t, os.RemoveAll(filepath.Join(directory, entry.Name())))
 				}
 			}
@@ -475,6 +487,14 @@ func Test30TransferInspectsTheInboxAsTheDrainReadsIt(t *testing.T) {
 			assertState(t, c, "go", "starting", 2)
 		})
 	}
+}
+
+// removeIfPresent removes path, which may already be absent.
+func removeIfPresent(path string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 func Test30DisagreementNeverRepairs(t *testing.T) {
 	for _, what := range []string{"owner", "epoch", "inode", "build", "transition", "missing-json", "missing-key", "missing-db", "rollback", "protocol", "missing-field", "missing-gate", "scope", "transition-path", "unsupported-db"} {
