@@ -176,3 +176,9 @@ func asJSON(t testing.TB, value any) any {
 	}
 	return decoded
 }
+
+// The tree fixture helpers, for this package's external tests (package supervisor_test).
+var (
+	TreeFixture = treeFixture
+	TreeGolden  = treeGolden
+)
