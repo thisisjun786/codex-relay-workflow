@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "001 relay --state <home>/relay --json fault-update --definitely-unknown a4a5ec00": "txt:{\"code\":2,\"stdout\":\"\",\"stderr\":\"usage: codex-session-relay fault-update [-h] --fault FAULT\\n                                        --op {set_project,reopen,add_relation,add_label}\\n                                        [--value VALUE]\\ncodex-session-relay fault-update: error: the following arguments are required: --fault, --op\\n\"}"
- }
-}

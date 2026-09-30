@@ -1,7 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "scope_capture.py #1": "txt:{\"error\": \"TypeError: expected string or bytes-like object, got 'int'\"}\n",
-  "scope_capture.py #2": "txt:{\"error\": \"TypeError: expected string or bytes-like object, got 'int'\"}\n"
- }
-}

@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "001 relay --state <home>/py --json fault-move --fault missing --scope not-js… 691b124a": "txt:{\"code\":2,\"stdout\":\"{\\n  \\\"error\\\": \\\"refused\\\",\\n  \\\"reason\\\": \\\"fault_observation_malformed\\\",\\n  \\\"detail\\\": \\\"the scope is not readable JSON: Expecting value: line 1 column 1 (char 0)\\\"\\n}\\n\"}"
- }
-}

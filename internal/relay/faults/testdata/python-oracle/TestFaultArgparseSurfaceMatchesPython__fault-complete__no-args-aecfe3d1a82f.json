@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "001 relay --state <home>/relay --json fault-complete eac270c1": "txt:{\"code\":2,\"stdout\":\"\",\"stderr\":\"usage: codex-session-relay fault-complete [-h] --publication PUBLICATION\\n                                          [--claim-token CLAIM_TOKEN]\\n                                          [--readback READBACK]\\n                                          [--external-ref EXTERNAL_REF]\\n                                          [--project-ref PROJECT_REF]\\n                                          [--observed-fields OBSERVED_FIELDS]\\ncodex-session-relay fault-complete: error: the following arguments are required: --publication\\n\"}"
- }
-}

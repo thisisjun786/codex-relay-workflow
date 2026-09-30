@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "001 relay --state <home>/relay --json fault-target --definitely-unknown 1fd10f5e": "txt:{\"code\":2,\"stdout\":\"\",\"stderr\":\"usage: codex-session-relay fault-target [-h] --product PRODUCT\\n                                        [--workspace WORKSPACE]\\n                                        [--project PROJECT] --team TEAM\\n                                        [--project-ref PROJECT_REF]\\ncodex-session-relay fault-target: error: the following arguments are required: --product, --team\\n\"}"
- }
-}

@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "001 relay --state <home>/py --json fault-move --fault missing --scope {\"othe… 2563376c": "txt:{\"code\":2,\"stdout\":\"{\\n  \\\"error\\\": \\\"refused\\\",\\n  \\\"reason\\\": \\\"fault_observation_malformed\\\",\\n  \\\"detail\\\": \\\"scope.other is not a JSON scalar\\\"\\n}\\n\"}"
- }
-}

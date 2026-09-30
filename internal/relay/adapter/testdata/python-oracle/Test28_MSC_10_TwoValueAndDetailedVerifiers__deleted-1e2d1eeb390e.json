@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "scope_capture.py #1": "txt:{\"digest\": \"<frozen-manifest-digest>\", \"problems\": [\"<test-tmp>/001/deliver.txt: frozen bytes unreadable for 4e91f19b0807540ba324ae0b1e7ca915b52b1839d3d67ac6f1599d24569d48ae: path_changed: component '4e91f19b0807540ba324ae0b1e7ca915b52b1839d3d67ac6f1599d24569d48ae' of '<test-tmp>/001/frozen/files/4e91f19b0807540ba324ae0b1e7ca915b52b1839d3d67ac6f1599d24569d48ae' disappeared during resolution\"], \"unreadable\": []}\n"
- }
-}

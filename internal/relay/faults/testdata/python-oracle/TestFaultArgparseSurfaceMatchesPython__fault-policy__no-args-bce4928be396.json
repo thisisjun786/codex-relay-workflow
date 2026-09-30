@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "001 relay --state <home>/relay --json fault-policy 8a0925cd": "txt:{\"code\":2,\"stdout\":\"\",\"stderr\":\"usage: codex-session-relay fault-policy [-h] --product PRODUCT\\n                                        [--fault-class FAULT_CLASS]\\n                                        [--severity {notice,degraded,broken}]\\n                                        [--threshold THRESHOLD]\\n                                        [--window WINDOW] [--reason REASON]\\n                                        [--limit LIMIT] [--after AFTER]\\ncodex-session-relay fault-policy: error: the following arguments are required: --product\\n\"}"
- }
-}

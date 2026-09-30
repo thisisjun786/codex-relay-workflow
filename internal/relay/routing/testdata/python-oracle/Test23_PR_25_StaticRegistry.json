@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "integration_capture.py PR-25": "txt:[{\"operation\": \"reset\", \"args\": [], \"kwargs\": {}, \"expected\": \"null\", \"scenario\": \"test_the_port_binds_and_routing_registered_its_classes_and_kind\"}, {\"operation\": \"registry-installed\", \"args\": [], \"kwargs\": {}, \"expected\": \"{\\\"completion_mismatch\\\": true, \\\"missing\\\": [], \\\"project_create\\\": true}\"}]\n"
- }
-}

@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "001 relay --state <home>/py --json fault-update --fault missing --op reopen ed9c0837": "txt:{\"code\":2,\"stdout\":\"{\\n  \\\"error\\\": \\\"refused\\\",\\n  \\\"reason\\\": \\\"fault_unknown\\\",\\n  \\\"detail\\\": \\\"no fault 'missing'\\\"\\n}\\n\"}"
- }
-}

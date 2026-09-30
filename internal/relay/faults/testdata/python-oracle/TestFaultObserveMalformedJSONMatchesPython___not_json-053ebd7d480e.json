@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "001 relay --state <home>/relay --json fault-observe --observation {not json cd037bb2": "txt:{\"code\":2,\"stdout\":\"{\\n  \\\"error\\\": \\\"refused\\\",\\n  \\\"reason\\\": \\\"fault_observation_malformed\\\",\\n  \\\"detail\\\": \\\"the observation is not readable JSON: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)\\\"\\n}\\n\",\"created\":true}"
- }
-}

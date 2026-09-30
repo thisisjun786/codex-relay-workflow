@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "packet_capture.py abead14ddf58c48c": "txt:[{\"function\": \"report.child_purpose\", \"args\": [\"blocked_needs_input\"], \"kwargs\": {}, \"result\": \"blocked\"}, {\"function\": \"report.child_purpose\", \"args\": [\"ready_for_review\"], \"kwargs\": {}, \"result\": \"review_ready\"}, {\"function\": \"report.child_purpose\", \"args\": [\"ready_for_review\"], \"kwargs\": {}, \"result\": \"review_ready\"}, {\"function\": \"report.child_purpose\", \"args\": [\"blocked_needs_input\"], \"kwargs\": {}, \"result\": \"blocked\"}, {\"function\": \"report.child_purpose\", \"args\": [\"failed\"], \"kwargs\": {}, \"result\": \"completion\"}, {\"function\": \"report.child_purpose\", \"args\": [\"interrupted\"], \"kwargs\": {}, \"result\": \"completion\"}]\n"
- }
-}

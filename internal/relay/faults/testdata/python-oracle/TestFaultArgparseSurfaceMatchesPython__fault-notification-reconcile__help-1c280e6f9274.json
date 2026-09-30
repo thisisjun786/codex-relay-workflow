@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "001 relay --state <home>/relay --json fault-notification-reconcile --help aa74d9cd": "txt:{\"code\":0,\"stdout\":\"usage: codex-session-relay fault-notification-reconcile [-h]\\n                                                        --notification NOTIFICATION\\n                                                        --delivered {yes,no}\\n                                                        --ref REF\\n\\noptions:\\n  -h, --help            show this help message and exit\\n  --notification NOTIFICATION\\n  --delivered {yes,no}\\n  --ref REF\\n\"}"
- }
-}

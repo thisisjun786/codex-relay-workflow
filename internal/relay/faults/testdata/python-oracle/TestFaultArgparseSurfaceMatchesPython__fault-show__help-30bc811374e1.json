@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "001 relay --state <home>/relay --json fault-show --help 900a6612": "txt:{\"code\":0,\"stdout\":\"usage: codex-session-relay fault-show [-h] [--fault FAULT |\\n                                      --publication PUBLICATION]\\n                                      [--product PRODUCT]\\n                                      [--fault-class FAULT_CLASS]\\n                                      [--scope SCOPE]\\n                                      [--fault-state {observed,open,fix_pending,resolved,withdrawn}]\\n                                      [--limit LIMIT] [--after AFTER]\\n\\noptions:\\n  -h, --help            show this help message and exit\\n  --fault FAULT\\n  --publication PUBLICATION\\n                        one write, with what it created and its newest\\n                        attempts\\n  --product PRODUCT\\n  --fault-class FAULT_CLASS\\n  --scope SCOPE\\n  --fault-state {observed,open,fix_pending,resolved,withdrawn}\\n  --limit LIMIT         faults per page, or occurrences and remediations with\\n                        --fault\\n  --after AFTER         continue a listing from the next value the last page\\n                        returned\\n\"}"
- }
-}

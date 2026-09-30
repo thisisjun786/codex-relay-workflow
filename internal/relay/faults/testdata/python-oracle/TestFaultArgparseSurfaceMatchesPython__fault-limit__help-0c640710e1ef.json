@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "001 relay --state <home>/relay --json fault-limit --help 0760ed3c": "txt:{\"code\":0,\"stdout\":\"usage: codex-session-relay fault-limit [-h] --product PRODUCT [--kind KIND]\\n                                       [--max-count MAX_COUNT]\\n                                       [--window WINDOW] [--limit LIMIT]\\n                                       [--after AFTER]\\n\\noptions:\\n  -h, --help            show this help message and exit\\n  --product PRODUCT\\n  --kind KIND\\n  --max-count MAX_COUNT\\n  --window WINDOW       seconds\\n  --limit LIMIT         budgets per page when listing\\n  --after AFTER         continue a listing from the next it returned\\n\"}"
- }
-}

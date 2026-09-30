@@ -3,7 +3,6 @@ package pyoracle
 import (
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -45,7 +44,7 @@ func TestAnswerInterned_keeps_a_small_answer_readable(t *testing.T) {
 	path := filepath.Join(Directory, fileName(t.Name()))
 	AnswerInterned(t, "k", func() ([]byte, error) { return []byte("{\"a\": 1}\n{\"a\": 1}\n"), nil })
 	forget()
-	data, err := os.ReadFile(path)
+	data, err := readRecording(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +85,7 @@ func TestAnswerInterned_records_the_encoding_and_replays_the_answer_with_run_pat
 		}
 	}
 	forget()
-	data, err := os.ReadFile(path)
+	data, err := readRecording(path)
 	if err != nil {
 		t.Fatal(err)
 	}

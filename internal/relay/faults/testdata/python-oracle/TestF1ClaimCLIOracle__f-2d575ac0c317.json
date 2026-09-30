@@ -1,7 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "001 f1_cli.py fault-sweep --readings [{\"schema\":\"reporting-observation/1\",\"r… 4709efd6": "txt:{\"code\":0,\"stdout\":\"{\\n  \\\"read\\\": 2,\\n  \\\"recorded\\\": 0,\\n  \\\"queued\\\": 0,\\n  \\\"gaps\\\": [],\\n  \\\"readingsNext\\\": null,\\n  \\\"readingsTotal\\\": 1,\\n  \\\"limits\\\": \\\"each source is read at most 32 rows per sweep, in rotations bounded by its upper key when the rotation started, so every rotation reaches the end; readings are reduced to the last per turn and read 32 at a time from readingsNext. A class this sweep does not derive is never cleared by its absence here\\\"\\n}\\n\"}",
-  "002 f1_cli.py fault-sweep --readings [{\"schema\":\"bad\"}] 0904f734": "txt:{\"code\":0,\"stdout\":\"{\\n  \\\"read\\\": 0,\\n  \\\"recorded\\\": 0,\\n  \\\"queued\\\": 0,\\n  \\\"gaps\\\": [\\n    {\\n      \\\"gap\\\": \\\"reading_unusable\\\",\\n      \\\"reason\\\": \\\"not an object under reporting-observation/1\\\"\\n    }\\n  ],\\n  \\\"readingsNext\\\": null,\\n  \\\"readingsTotal\\\": 1,\\n  \\\"limits\\\": \\\"each source is read at most 32 rows per sweep, in rotations bounded by its upper key when the rotation started, so every rotation reaches the end; readings are reduced to the last per turn and read 32 at a time from readingsNext. A class this sweep does not derive is never cleared by its absence here\\\"\\n}\\n\"}"
- }
-}

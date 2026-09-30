@@ -3,9 +3,10 @@
 //
 // The port was proven by running the Python implementation live beside the Go one. That
 // implementation leaves the repository (todo 44), so a test reads the answer Python gave from a
-// recording instead of asking Python again. A recording is one file per test under the calling
-// package's testdata/python-oracle directory, holding each answer the test asked for under a key
-// the test names.
+// recording instead of asking Python again. A recording is one gzip-compressed JSON file per test
+// under the calling package's testdata/python-oracle directory, holding each answer the test asked
+// for under a key the test names. Recordings are generated data: they are compressed so that a
+// change to them reads as a binary file in a review diff rather than megabytes of JSON.
 //
 // CRW_PYTHON_ORACLE selects the mode:
 //
@@ -50,8 +51,9 @@ const ModeEnv = "CRW_PYTHON_ORACLE"
 // Directory is where a package keeps its recordings, relative to the package directory.
 const Directory = "testdata/python-oracle"
 
-// compressAbove is the size from which a recording is written gzip-compressed.
-const compressAbove = 256 << 10
+// compressAbove is the size from which a recording is written gzip-compressed: every recording
+// is. A plain .json recording is still read, for a file written before compression was the rule.
+const compressAbove = 0
 
 // CurrentMode reads ModeEnv.
 func CurrentMode() Mode {
@@ -329,7 +331,7 @@ func (r *recording) save() error {
 	}
 	_ = os.Remove(r.path)
 	_ = os.Remove(r.path + ".gz")
-	if len(data) <= compressAbove {
+	if len(data) < compressAbove {
 		return os.WriteFile(r.path, data, 0o644)
 	}
 	var buf bytes.Buffer

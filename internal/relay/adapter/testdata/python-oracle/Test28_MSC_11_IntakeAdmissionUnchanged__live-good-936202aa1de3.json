@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "intake_capture.py": "txt:{\"accepted\": true, \"event\": \"<event>\", \"refusals\": [], \"rows\": [[\"<event>\", \"best_effort_detection\"]]}\n"
- }
-}

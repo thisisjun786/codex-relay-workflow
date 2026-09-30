@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "001 relay --state <home>/python --json fault-policy --product crw --fault-cl… 08c3b13e": "txt:{\"code\":2,\"stdout\":\"{\\n  \\\"error\\\": \\\"refused\\\",\\n  \\\"reason\\\": \\\"fault_policy_fixed\\\",\\n  \\\"detail\\\": \\\"a broken fault's policy is fixed: a broken fault files at once and a notice never files\\\"\\n}\\n\",\"created\":true}"
- }
-}

@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "001 relay --state <home>/relay --json fault-stage --definitely-unknown d3b1d653": "txt:{\"code\":2,\"stdout\":\"\",\"stderr\":\"usage: codex-session-relay fault-stage [-h] --fault FAULT\\n                                       --stage {accepted,assigned,merged,installed}\\n                                       --ref REF [--detail DETAIL]\\ncodex-session-relay fault-stage: error: the following arguments are required: --fault, --stage, --ref\\n\"}"
- }
-}

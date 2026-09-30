@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "scope_capture.py #1": "txt:{\"binding\": {\"leaseDetail\": \"lease not attempted\", \"pathBindingMode\": \"best_effort_detection\"}, \"digest\": \"bf573149b23303cac63c2a359b53760d919770c5d070047e76de42e2184f1046\", \"size\": 16}\n"
- }
-}

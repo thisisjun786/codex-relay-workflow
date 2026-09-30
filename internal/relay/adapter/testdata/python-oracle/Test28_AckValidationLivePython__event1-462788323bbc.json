@@ -1,9 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "ack codex-session-relay": "txt:{\"code\":2,\"stdout\":\"{\\n  \\\"error\\\": \\\"refused\\\",\\n  \\\"reason\\\": \\\"not_claimable\\\",\\n  \\\"detail\\\": \\\"no delivery for '0123456789abcdef0123456789abcdef\\\\\\\\n'\\\"\\n}\\n\"}",
-  "ack crw": "txt:{\"code\":2,\"stdout\":\"{\\n  \\\"error\\\": \\\"refused\\\",\\n  \\\"reason\\\": \\\"not_claimable\\\",\\n  \\\"detail\\\": \\\"no delivery for '0123456789abcdef0123456789abcdef\\\\\\\\n'\\\"\\n}\\n\"}",
-  "ack-proof codex-session-relay": "txt:{\"code\":0,\"stdout\":\"{\\n  \\\"eventId\\\": \\\"0123456789abcdef0123456789abcdef\\\\n\\\",\\n  \\\"turnId\\\": \\\"turn-9\\\",\\n  \\\"ackProof\\\": \\\"46f90245a777f19830639b1dded23f5bc010c08d50eee4666df635458db5a422\\\"\\n}\\n\"}",
-  "ack-proof crw": "txt:{\"code\":0,\"stdout\":\"{\\n  \\\"eventId\\\": \\\"0123456789abcdef0123456789abcdef\\\\n\\\",\\n  \\\"turnId\\\": \\\"turn-9\\\",\\n  \\\"ackProof\\\": \\\"46f90245a777f19830639b1dded23f5bc010c08d50eee4666df635458db5a422\\\"\\n}\\n\"}"
- }
-}

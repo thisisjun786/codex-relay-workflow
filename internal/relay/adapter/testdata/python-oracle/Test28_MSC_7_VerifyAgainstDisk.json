@@ -1,8 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "scope_capture.py #1": "txt:{\"bindings\": {\"<test-tmp>/001/a.txt\": {\"leaseDetail\": \"lease not attempted\", \"pathBindingMode\": \"best_effort_detection\"}}, \"problems\": [], \"unreadable\": []}\n",
-  "scope_capture.py #2": "txt:{\"bindings\": {\"<test-tmp>/001/a.txt\": {\"leaseDetail\": \"lease not attempted\", \"pathBindingMode\": \"best_effort_detection\"}}, \"problems\": [\"<test-tmp>/001/a.txt: bytes hash to 9e08e9f870dfbd00ca1746e56440b1aa59ddd7a4d884ef115774c6b89aee5e54 but the manifest claims ac39c8ddc18fad15ba68754a1137965f21e5569f340285864822ef6549ada48e\"], \"unreadable\": []}\n",
-  "scope_capture.py #3": "txt:{\"bindings\": {}, \"problems\": [\"<test-tmp>/001/a.txt: path_changed: component 'a.txt' of '<test-tmp>/001/a.txt' disappeared during resolution\"], \"unreadable\": []}\n"
- }
-}

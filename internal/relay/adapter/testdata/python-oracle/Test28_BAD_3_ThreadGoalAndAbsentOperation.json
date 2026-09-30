@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "capture.py #1": "txt:{\n  \"attemptBytes\": [],\n  \"calls\": [\n    [\n      \"thread/read\",\n      {\n        \"threadId\": \"01child-task\"\n      }\n    ],\n    [\n      \"thread/goal/get\",\n      {\n        \"threadId\": \"01child-task\"\n      }\n    ],\n    [\n      \"thread/goal/get\",\n      {\n        \"threadId\": \"01child-task\"\n      }\n    ]\n  ],\n  \"cursors\": [],\n  \"receiptBytes\": [],\n  \"results\": [\n    {\n      \"can_accept_input\": false,\n      \"runtime_status\": \"idle\"\n    },\n    null,\n    \"budgetLimited\",\n    null\n  ]\n}\n"
- }
-}

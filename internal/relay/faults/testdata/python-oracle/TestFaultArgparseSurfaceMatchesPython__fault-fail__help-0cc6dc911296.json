@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "001 relay --state <home>/relay --json fault-fail --help a84cd5ba": "txt:{\"code\":0,\"stdout\":\"usage: codex-session-relay fault-fail [-h] --publication PUBLICATION\\n                                      --claim-token CLAIM_TOKEN --error ERROR\\n                                      [--ended]\\n\\noptions:\\n  -h, --help            show this help message and exit\\n  --publication PUBLICATION\\n  --claim-token CLAIM_TOKEN\\n  --error ERROR\\n  --ended               the connector answered with a definitive refusal\\n\"}"
- }
-}

@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "001 relay --state <home>/relay --json fault-retry --definitely-unknown 9e15fa90": "txt:{\"code\":2,\"stdout\":\"\",\"stderr\":\"usage: codex-session-relay fault-retry [-h] --publication PUBLICATION\\ncodex-session-relay fault-retry: error: the following arguments are required: --publication\\n\"}"
- }
-}

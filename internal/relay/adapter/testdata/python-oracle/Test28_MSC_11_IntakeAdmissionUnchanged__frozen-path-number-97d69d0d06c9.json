@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "intake_capture.py": "txt:{\"accepted\": false, \"host\": \"AttributeError: 'int' object has no attribute 'encode'\", \"reason\": null, \"refusals\": [], \"rows\": []}\n"
- }
-}

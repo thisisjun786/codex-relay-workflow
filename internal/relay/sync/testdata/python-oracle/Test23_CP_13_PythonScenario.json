@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "packet_capture.py f84b4572480f7b4f": "txt:[{\"function\": \"report._check_restore\", \"args\": [{\"phase\": \"C\", \"plan\": \"devlog/_plan/x\"}], \"kwargs\": {}, \"error\": {\"reason\": \"malformed_receipt\", \"detail\": \"a restore section states the effective workflow in mode: it is the one field no transport carries, so leaving it out drops it rather than deferring it. Present fields were ['phase', 'plan']\"}}, {\"function\": \"report._check_restore\", \"args\": [{\"mode\": \"   \", \"scope\": null}], \"kwargs\": {}, \"result\": {}}, {\"function\": \"report._check_restore\", \"args\": [{\"mode\": \"CXC Loop\", \"phase\": \"C\"}], \"kwargs\": {}, \"result\": {\"mode\": \"CXC Loop\", \"phase\": \"C\"}}]\n"
- }
-}

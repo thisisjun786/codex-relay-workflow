@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "capture.py #1": "txt:{\n  \"attemptBytes\": [],\n  \"calls\": [\n    [\n      \"thread/read\",\n      {\n        \"threadId\": \"thread-1\"\n      }\n    ]\n  ],\n  \"cursors\": [],\n  \"receiptBytes\": [],\n  \"results\": [\n    {\n      \"can_accept_input\": 3,\n      \"runtime_status\": \"idle\"\n    }\n  ]\n}\n"
- }
-}

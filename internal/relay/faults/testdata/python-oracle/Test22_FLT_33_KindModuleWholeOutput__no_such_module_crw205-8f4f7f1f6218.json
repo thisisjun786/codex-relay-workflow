@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "001 relay --kind-module no_such_module_crw205 --state <home>/py --json fault… b6a13127": "txt:{\"code\":4,\"stdout\":\"{\\n  \\\"error\\\": \\\"usage\\\",\\n  \\\"detail\\\": \\\"--kind-module 'no_such_module_crw205' could not be imported: No module named 'no_such_module_crw205'\\\"\\n}\\n\"}"
- }
-}

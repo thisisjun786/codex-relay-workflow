@@ -1,9 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "scope_capture.py #1": "txt:{\"payload\": \"/a/one:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\n/b/two:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\", \"revision\": \"341d60cba3ae9a1a6546154eaf2cac357f507b503e289ae43b2f9953f319b7e8\"}\n",
-  "scope_capture.py #2": "txt:{\"payload\": \"/a:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"revision\": \"bdfbaf0047082be3f57c1af904c0c190dc236f946b077da4b8622083761a48f9\"}\n",
-  "scope_capture.py #3": "txt:{\"payload\": \"\", \"revision\": \"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\"}\n",
-  "scope_capture.py #4": "txt:{\"payload\": \"/a/-:3333333333333333333333333333333333333333333333333333333333333333\\n/a/B:2222222222222222222222222222222222222222222222222222222222222222\\n/a/b:1111111111111111111111111111111111111111111111111111111111111111\", \"revision\": \"21ee47a7ea79c78a5799a97e4011a36776155aac5fc5a0a1b8e0baf4f0940d90\"}\n"
- }
-}

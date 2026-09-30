@@ -1,7 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "001 relay fault-attention ccfbe99d": "txt:{\n  \"unsent\": {\n    \"ready\": 0,\n    \"awaitingTarget\": 1,\n    \"held\": 0,\n    \"awaitingRecord\": 0,\n    \"scopeKeyContested\": 0,\n    \"backingOff\": 0,\n    \"kindUnregistered\": 0,\n    \"issueOwned\": 0,\n    \"unclassified\": 0,\n    \"claimed\": 0,\n    \"claimedLapsed\": 0,\n    \"issued\": 0,\n    \"issuedLapsed\": 0,\n    \"failed\": 0,\n    \"uncertain\": 0\n  },\n  \"unlinked\": 0,\n  \"notifications\": {\n    \"pending\": 1,\n    \"reserved\": 0,\n    \"uncertain\": 0,\n    \"reservedLapsed\": 0\n  },\n  \"warning\": \"fault writes need attention: 1 awaitingTarget\"\n}\n",
-  "002 relay fault-attention 1ccab8b4": "txt:{\n  \"unsent\": {\n    \"ready\": 0,\n    \"awaitingTarget\": 0,\n    \"held\": 0,\n    \"awaitingRecord\": 0,\n    \"scopeKeyContested\": 0,\n    \"backingOff\": 0,\n    \"kindUnregistered\": 0,\n    \"issueOwned\": 0,\n    \"unclassified\": 0,\n    \"claimed\": 0,\n    \"claimedLapsed\": 0,\n    \"issued\": 1,\n    \"issuedLapsed\": 1,\n    \"failed\": 0,\n    \"uncertain\": 0\n  },\n  \"unlinked\": 0,\n  \"notifications\": {\n    \"pending\": 1,\n    \"reserved\": 0,\n    \"uncertain\": 0,\n    \"reservedLapsed\": 0\n  },\n  \"warning\": \"fault writes need attention: 1 issued, 1 issuedLapsed\"\n}\n"
- }
-}

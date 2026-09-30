@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "001 relay --state <home>/python --json fault-notifications 1b2361d6": "txt:{\"code\":2,\"stdout\":\"{\\n  \\\"error\\\": \\\"refused\\\",\\n  \\\"reason\\\": \\\"store_absent\\\",\\n  \\\"detail\\\": \\\"no relay store exists at <home>/python/relay.sqlite3; a read-only command never creates one\\\"\\n}\\n\"}"
- }
-}

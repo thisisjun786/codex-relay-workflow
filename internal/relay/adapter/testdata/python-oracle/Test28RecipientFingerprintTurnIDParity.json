@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "fingerprint_capture.py #1": "txt:23656ef14a9db5264d7b351f21fa9a7f8a3a311ba7785e44dcf76644a0e92a74\nfe40a2c545931bef9a71f62fce258d79e11b8b0d7589b91fd3b1d84a5442b077\nc12c55a409ec92f2f276330dc3c17d046a0b69b9bea53d19df0b1560d76d62b4\nb4f54baf3a2348a312f37d8fc247afe1ebaa1c1e48c47dac3633deebfe98d132\n5cc1e4db1eebf813f1c299076c6e53a9daa301a0e9502cfda20a8a75829d376e\n302be4ba6709ddde53b2edef92f970842640988c2bfffc6690e96563eabd5720\n"
- }
-}

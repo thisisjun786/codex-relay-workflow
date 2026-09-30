@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "001 relay --state <home>/relay --json fault-reverify --help f33d4eaf": "txt:{\"code\":0,\"stdout\":\"usage: codex-session-relay fault-reverify [-h] --fault FAULT\\n                                          --method {suite,command,observation}\\n                                          --ref REF\\n                                          --outcome {passed,absent,failed}\\n                                          [--detail DETAIL]\\n\\noptions:\\n  -h, --help            show this help message and exit\\n  --fault FAULT\\n  --method {suite,command,observation}\\n  --ref REF             the command or reading\\n  --outcome {passed,absent,failed}\\n  --detail DETAIL\\n\"}"
- }
-}

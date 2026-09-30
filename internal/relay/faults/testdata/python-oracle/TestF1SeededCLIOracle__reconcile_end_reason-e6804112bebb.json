@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "001 f1_cli.py fault-reconcile --publication 1e622995d34efab65f7154800d80522f… 97d6dad2": "txt:{\"code\":2,\"stdout\":\"{\\n  \\\"error\\\": \\\"refused\\\",\\n  \\\"reason\\\": \\\"fault_observation_malformed\\\",\\n  \\\"detail\\\": \\\"an attested end says what ended the request\\\"\\n}\\n\"}"
- }
-}

@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "001 relay --state <home>/relay --json fault-reverify 25e82667": "txt:{\"code\":2,\"stdout\":\"\",\"stderr\":\"usage: codex-session-relay fault-reverify [-h] --fault FAULT\\n                                          --method {suite,command,observation}\\n                                          --ref REF\\n                                          --outcome {passed,absent,failed}\\n                                          [--detail DETAIL]\\ncodex-session-relay fault-reverify: error: the following arguments are required: --fault, --method, --ref, --outcome\\n\"}"
- }
-}

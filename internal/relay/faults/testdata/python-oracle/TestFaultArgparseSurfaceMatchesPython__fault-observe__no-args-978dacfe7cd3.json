@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "001 relay --state <home>/relay --json fault-observe e0259e9b": "txt:{\"code\":2,\"stdout\":\"\",\"stderr\":\"usage: codex-session-relay fault-observe [-h] --observation OBSERVATION\\n                                         [--adopt ADOPT]\\ncodex-session-relay fault-observe: error: the following arguments are required: --observation\\n\"}"
- }
-}

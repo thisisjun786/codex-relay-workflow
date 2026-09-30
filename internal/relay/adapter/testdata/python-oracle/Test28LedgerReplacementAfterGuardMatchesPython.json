@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "ledger_replacement_capture.py #1": "txt:{\"returned\":false,\"status\":null,\"turnId\":null,\"calls\":[\"thread/read\",\"thread/resume\",\"turn/start\"]}\n"
- }
-}

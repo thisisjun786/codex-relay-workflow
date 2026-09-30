@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "001 relay --state <home>/python --json fault-stage --fault d0c19e1dd5adcb089… fcc4ae09": "txt:{\"code\":2,\"stdout\":\"{\\n  \\\"error\\\": \\\"refused\\\",\\n  \\\"reason\\\": \\\"fault_state_conflict\\\",\\n  \\\"detail\\\": \\\"accepted is recorded against an issue the fault owns, and it owns none yet\\\"\\n}\\n\"}"
- }
-}

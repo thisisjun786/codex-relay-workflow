@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "001 relay --state <home>/relay --json fault-adopt --help 09f106cb": "txt:{\"code\":0,\"stdout\":\"usage: codex-session-relay fault-adopt [-h] --fault FAULT\\n                                       --external-ref EXTERNAL_REF\\n                                       --scope SCOPE\\n\\noptions:\\n  -h, --help            show this help message and exit\\n  --fault FAULT\\n  --external-ref EXTERNAL_REF\\n                        the existing issue\\n  --scope SCOPE         JSON of the issue's scope (its projectKey), or @path\\n\"}"
- }
-}

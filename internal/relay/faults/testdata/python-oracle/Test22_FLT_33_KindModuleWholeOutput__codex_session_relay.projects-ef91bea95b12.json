@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "001 relay --kind-module codex_session_relay.projects --state <home>/py --jso… be539161": "txt:{\"code\":0,\"stdout\":\"{\\n  \\\"scopeKey\\\": \\\"crw\\\",\\n  \\\"product\\\": \\\"crw\\\",\\n  \\\"team\\\": \\\"team-relay\\\",\\n  \\\"projectRef\\\": null,\\n  \\\"changed\\\": true,\\n  \\\"backfilled\\\": 0,\\n  \\\"backfillPending\\\": 0,\\n  \\\"relinked\\\": 0,\\n  \\\"relinkPending\\\": 0\\n}\\n\"}"
- }
-}

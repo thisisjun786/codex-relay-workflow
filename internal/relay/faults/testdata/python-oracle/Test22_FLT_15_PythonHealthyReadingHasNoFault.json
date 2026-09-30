@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "001 capture.py a68383dd": "txt:{\"reply\": {\"faultId\": \"4c4ef0d33eaf63cf1af8cb7c937577e0\", \"occurrenceCount\": 0, \"publication\": null, \"reason\": \"a clearing observation for a fault that was never recorded\", \"recorded\": false, \"state\": null}, \"tables\": {}}\n"
- }
-}

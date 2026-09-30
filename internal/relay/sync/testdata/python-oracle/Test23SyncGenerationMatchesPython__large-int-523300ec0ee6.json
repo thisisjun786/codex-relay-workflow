@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "generation 1180591620717411303424": "txt:{\"error\": \"OverflowError: Python int too large to convert to SQLite INTEGER\"}\n"
- }
-}

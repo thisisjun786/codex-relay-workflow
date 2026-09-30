@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "001 relay fault-relink --limit 1 e3b0c442": "txt:{\"stdout\":\"{\\n  \\\"relinked\\\": 0,\\n  \\\"relinkPending\\\": 0,\\n  \\\"backfilled\\\": 1,\\n  \\\"backfillPending\\\": 0\\n}\\n\",\"trackerRef\":\"team-relay\"}"
- }
-}

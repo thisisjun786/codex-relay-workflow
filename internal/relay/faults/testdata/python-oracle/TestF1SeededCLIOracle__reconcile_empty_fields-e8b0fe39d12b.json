@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "001 f1_cli.py fault-reconcile --publication 1e622995d34efab65f7154800d80522f… c701cabe": "txt:{\"code\":0,\"stdout\":\"{\\n  \\\"publicationId\\\": \\\"1e622995d34efab65f7154800d80522f\\\",\\n  \\\"state\\\": \\\"uncertain\\\",\\n  \\\"outcome\\\": \\\"absent_unattested\\\",\\n  \\\"detail\\\": \\\"no block was observed, and nobody attested that the search covered where it would be\\\"\\n}\\n\"}"
- }
-}

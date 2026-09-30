@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "001 relay --state <home>/relay --json fault-policy --help 99022a28": "txt:{\"code\":0,\"stdout\":\"usage: codex-session-relay fault-policy [-h] --product PRODUCT\\n                                        [--fault-class FAULT_CLASS]\\n                                        [--severity {notice,degraded,broken}]\\n                                        [--threshold THRESHOLD]\\n                                        [--window WINDOW] [--reason REASON]\\n                                        [--limit LIMIT] [--after AFTER]\\n\\noptions:\\n  -h, --help            show this help message and exit\\n  --product PRODUCT\\n  --fault-class FAULT_CLASS\\n  --severity {notice,degraded,broken}\\n  --threshold THRESHOLD\\n  --window WINDOW       seconds\\n  --reason REASON\\n  --limit LIMIT         classes per page when listing\\n  --after AFTER         continue a listing from the next it returned\\n\"}"
- }
-}

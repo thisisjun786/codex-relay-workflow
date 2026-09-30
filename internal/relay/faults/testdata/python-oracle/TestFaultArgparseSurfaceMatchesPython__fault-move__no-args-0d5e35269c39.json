@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "001 relay --state <home>/relay --json fault-move dd301e30": "txt:{\"code\":2,\"stdout\":\"\",\"stderr\":\"usage: codex-session-relay fault-move [-h] --fault FAULT --scope SCOPE\\ncodex-session-relay fault-move: error: the following arguments are required: --fault, --scope\\n\"}"
- }
-}

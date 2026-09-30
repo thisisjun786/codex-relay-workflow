@@ -1,7 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "ledger_capture.py #1": "txt:{\"device\":\"<device>\",\"inode\":\"<inode>\",\"path\":\"<test-tmp>/001/same/<ledger-file>\",\"realPath\":\"<test-tmp>/001/same/<ledger-file>\"}",
-  "ledger_capture.py #2": "txt:{\"error\": \"ledger identity changed or is unknown; refusing before mutation\"}\n"
- }
-}

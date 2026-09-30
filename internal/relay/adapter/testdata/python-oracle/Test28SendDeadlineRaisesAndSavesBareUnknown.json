@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "timeout_capture.py #1": "txt:{\"caller\":{\"detail\":\"\",\"error\":\"TimeoutError\"},\"receipt\":{\"fingerprintVersion\":2,\"operation\":\"send_message_to_thread\",\"requestId\":\"deadline\",\"resumed\":{\"activePermissionProfile\":null,\"approvalPolicy\":\"never\",\"cwd\":\"/workspace/example/codex-session-relay/relay-core\",\"model\":\"anthropic/claude-opus-5\",\"reasoningEffort\":\"xhigh\",\"runtimeWorkspaceRoots\":[\"/workspace/example/codex-session-relay/relay-core\"],\"sandbox\":{\"excludeSlashTmp\":false,\"excludeTmpdirEnvVar\":false,\"networkAccess\":false,\"type\":\"workspaceWrite\",\"writableRoots\":[]},\"thread\":{\"environments\":[{\"cwd\":\"/workspace/example/codex-session-relay/relay-core\",\"environmentId\":\"local\",\"runtimeWorkspaceRoots\":[\"/workspace/example/codex-session-relay/relay-core\"]}],\"id\":\"thread-1\"}},\"retrySafe\":false,\"startedAt\":\"<wall-clock>\",\"status\":\"outcome_unknown\",\"statusBeforeResume\":\"idle\",\"threadId\":\"thread\",\"updatedAt\":\"<wall-clock>\"}}"
- }
-}

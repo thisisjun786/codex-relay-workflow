@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "001 relay --state <home>/relay --json fault-relink --l 1 aa2e8a6a": "txt:{\"code\":0,\"stdout\":\"{\\n  \\\"relinked\\\": 0,\\n  \\\"relinkPending\\\": 0,\\n  \\\"backfilled\\\": 0,\\n  \\\"backfillPending\\\": 0\\n}\\n\",\"created\":true}"
- }
-}

@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "001 capture.py 0423c79e": "txt:{\"reply\": {\"detail\": \"fault_class_unregistered: 'invented' is not a registered fault class, so nothing declares what would clear it\", \"error\": \"FaultRefused\", \"reason\": \"fault_class_unregistered\"}, \"tables\": {}}\n"
- }
-}

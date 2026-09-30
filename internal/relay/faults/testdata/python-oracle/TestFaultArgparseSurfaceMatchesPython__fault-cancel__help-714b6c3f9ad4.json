@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "001 relay --state <home>/relay --json fault-cancel --help 84fda151": "txt:{\"code\":0,\"stdout\":\"usage: codex-session-relay fault-cancel [-h] --publication PUBLICATION\\n                                        --reason REASON\\n\\noptions:\\n  -h, --help            show this help message and exit\\n  --publication PUBLICATION\\n  --reason REASON\\n\"}"
- }
-}

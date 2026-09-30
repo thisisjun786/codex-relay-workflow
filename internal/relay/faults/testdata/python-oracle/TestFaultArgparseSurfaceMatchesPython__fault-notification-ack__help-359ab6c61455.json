@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "001 relay --state <home>/relay --json fault-notification-ack --help 64b0a5d9": "txt:{\"code\":0,\"stdout\":\"usage: codex-session-relay fault-notification-ack [-h]\\n                                                  --notification NOTIFICATION\\n                                                  --token TOKEN --ref REF\\n\\noptions:\\n  -h, --help            show this help message and exit\\n  --notification NOTIFICATION\\n  --token TOKEN\\n  --ref REF\\n\"}"
- }
-}

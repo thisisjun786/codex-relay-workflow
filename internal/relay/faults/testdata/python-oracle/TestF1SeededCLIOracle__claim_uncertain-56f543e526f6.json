@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "001 f1_cli.py fault-claim --publication 1e622995d34efab65f7154800d80522f --o… 20ba21b3": "txt:{\"code\":2,\"stdout\":\"{\\n  \\\"error\\\": \\\"refused\\\",\\n  \\\"reason\\\": \\\"fault_not_claimable\\\",\\n  \\\"detail\\\": \\\"publication 1e622995d34efab65f7154800d80522f is uncertain. An uncertain write is not reclaimed; reconcile it by reporting what you observed\\\"\\n}\\n\"}"
- }
-}

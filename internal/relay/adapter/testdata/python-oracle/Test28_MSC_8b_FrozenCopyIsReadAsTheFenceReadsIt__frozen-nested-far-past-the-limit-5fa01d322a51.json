@@ -1,7 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "scope_capture.py #1": "txt:{\"error\": \"RecursionError: maximum recursion depth exceeded while decoding a JSON array from a unicode string\"}\n",
-  "scope_capture.py #2": "txt:{\"error\": \"RecursionError: maximum recursion depth exceeded while decoding a JSON array from a unicode string\"}\n"
- }
-}

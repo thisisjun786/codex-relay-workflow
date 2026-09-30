@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "001 relay --state <home>/relay --json fault-update --help 89f00788": "txt:{\"code\":0,\"stdout\":\"usage: codex-session-relay fault-update [-h] --fault FAULT\\n                                        --op {set_project,reopen,add_relation,add_label}\\n                                        [--value VALUE]\\n\\noptions:\\n  -h, --help            show this help message and exit\\n  --fault FAULT\\n  --op {set_project,reopen,add_relation,add_label}\\n  --value VALUE         JSON, or @path (a string value is quoted)\\n\"}"
- }
-}

@@ -1,9 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "ack codex-session-relay": "txt:{\"code\":3,\"stdout\":\"{\\n  \\\"error\\\": \\\"host\\\",\\n  \\\"detail\\\": \\\"ValueError: event id must be 32 lowercase hex characters\\\"\\n}\\n\"}",
-  "ack crw": "txt:{\"code\":3,\"stdout\":\"{\\n  \\\"error\\\": \\\"host\\\",\\n  \\\"detail\\\": \\\"ValueError: event id must be 32 lowercase hex characters\\\"\\n}\\n\"}",
-  "ack-proof codex-session-relay": "txt:{\"code\":3,\"stdout\":\"{\\n  \\\"error\\\": \\\"host\\\",\\n  \\\"detail\\\": \\\"ValueError: event id must be 32 lowercase hex characters\\\"\\n}\\n\"}",
-  "ack-proof crw": "txt:{\"code\":3,\"stdout\":\"{\\n  \\\"error\\\": \\\"host\\\",\\n  \\\"detail\\\": \\\"ValueError: event id must be 32 lowercase hex characters\\\"\\n}\\n\"}"
- }
-}

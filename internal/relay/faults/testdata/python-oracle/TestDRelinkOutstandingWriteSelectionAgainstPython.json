@@ -1,8 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "001 relay fault-relink --limit 1 e3b0c442": "txt:{\n  \"relinked\": 0,\n  \"relinkPending\": 0,\n  \"backfilled\": 0,\n  \"backfillPending\": 0\n}\n",
-  "002 relay fault-relink --limit 1 e3b0c442": "txt:{\n  \"relinked\": 1,\n  \"relinkPending\": 0,\n  \"backfilled\": 0,\n  \"backfillPending\": 0\n}\n",
-  "003 python store after relink e3b0c442": "txt:{\"state\":\"unlinked\",\"projectRef\":\"P2\",\"revision\":2,\"found\":true,\"writeState\":\"pending\",\"summary\":\"[crw] report_omitted: relationship=r turn=t\\n\\n\\nfault: d0c19e1dd5adcb089100f1e34bdb7aad\\nclass: report_omitted  component: reporting  severity: broken\\ndomain: relationship=r turn=t\\nobserved: 1 occurrence(s), first 1970-01-02T03:46:40.000000+00:00, most recent 1970-01-02T03:46:40.000000+00:00\\n\\nevidence, as observed at the time:\\n- 1970-01-02T03:46:40.000000+00:00 a\\n\\nRecorded by codex-session-relay. The occurrence count counts observations, not incidents: a source that overwrites its own history is observed once per sweep, not once per failure.\\npublication: 4cff5f86e3d819f952c8f4562ba63b9f\",\"payload\":\"{\\\"op\\\": \\\"set_project\\\", \\\"value\\\": \\\"P2\\\"}\"}"
- }
-}

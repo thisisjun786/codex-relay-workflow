@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "generation 3.0": "txt:{\"id\": \"67845b43d33e22aee1684ea48289627a\", \"generation\": 3, \"digest\": \"67845b43d33e22aee1684ea48289627aab546d9a773cdda2f54994e84dd2c6d1\", \"block\": \"<!-- relay-sync:67845b43d33e22aee1684ea48289627a -->\\nblockFormat: v2\\nsyncId: 67845b43d33e22aee1684ea48289627a\\nsubjectKind: x\\nissueKey: I\\nrelationshipId: r\\neventId: \\nexecutionGeneration: 3\\nrevisionHash: \\ndisposition: \\nidentityDigest: 67845b43d33e22aee1684ea48289627aab546d9a773cdda2f54994e84dd2c6d1\\nsummarySha256: 043a718774c572bd8a25adbeb1bfcd5c0256ae11cecf9f9c3f925d0e52beaf89\\n\\n```text\\ns\\n```\\n<!-- /relay-sync:67845b43d33e22aee1684ea48289627a -->\"}\n"
- }
-}

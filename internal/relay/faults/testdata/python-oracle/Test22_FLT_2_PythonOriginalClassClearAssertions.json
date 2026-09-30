@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "001 capture_case.py test_faults.TheFaultPathReachesNoNetwork.test_every_regi… dc19cc4a": "txt:{\"assertions\": [true, true, true, true, true, true, true, true], \"problems\": []}\n"
- }
-}

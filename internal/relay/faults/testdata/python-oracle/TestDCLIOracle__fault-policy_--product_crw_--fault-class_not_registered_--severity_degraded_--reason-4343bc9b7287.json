@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "001 relay --state <home>/python --json fault-policy --product crw --fault-cl… bc135586": "txt:{\"code\":2,\"stdout\":\"{\\n  \\\"error\\\": \\\"refused\\\",\\n  \\\"reason\\\": \\\"fault_class_unregistered\\\",\\n  \\\"detail\\\": \\\"'not_registered' is not a registered fault class, so nothing declares what would clear it\\\"\\n}\\n\",\"created\":true}"
- }
-}
