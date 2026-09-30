@@ -440,7 +440,10 @@ func probeRegistrations(ctx context.Context, ours []statusRegistration) (map[str
 			if err != nil {
 				tp = cell(absent, "PATH lookup for the registered native hook "+r.Target+" failed: "+err.Error(), map[string]any{"path": r.Target})
 			} else {
-				tp = presenceCell(resolved, "the registered native hook found by PATH lookup", false)
+				// shutil.which answers a str, os.fsdecode of the bytes it found, which presenceCell
+				// encodes back: the raw lookup result would read bytes that spell a surrogate
+				// (ED B3 BF) as the byte it escapes.
+				tp = presenceCell(store.FSDecode(resolved), "the registered native hook found by PATH lookup", false)
 			}
 		} else if !filepath.IsAbs(r.Target) {
 			tp = cell(relativeAdapter, "the registration names the adapter with the relative path "+r.Target+", which the hook resolves against each session's workspace; no single file answers for it and none was read", map[string]any{"path": r.Target})
@@ -503,7 +506,7 @@ func interpreterProbe(ctx context.Context, named string, ask bool) map[string]an
 			return cell(workspaceDependent, "the registration names its interpreter with the relative path "+named+", which resolves differently in every workspace; it was not probed here", map[string]any{"path": named})
 		}
 	} else if p, e := exec.LookPath(named); e == nil {
-		resolved = p
+		resolved = store.FSDecode(p) // shutil.which's str, as the native hook's lookup above
 	}
 	p := presenceCell(resolved, "the registered interpreter", false)
 	p["path"] = resolved

@@ -355,3 +355,26 @@ print(json.dumps([s["configuration"]["value"], s["configuration"]["configuration
 		t.Fatalf("the fixture did not reach a present configuration in Python: %s", want)
 	}
 }
+
+// A program found by PATH lookup is judged at the path the lookup found. shutil.which answers
+// os.fsdecode of the bytes it found, so a directory whose name holds the bytes ED B3 BF (the
+// encoding of a surrogate, which fsdecode escapes byte by byte) is the same directory when the
+// cell encodes the str back, not the byte FF that a raw U+DCFF would stand for.
+func TestAProgramFoundByPATHLookupIsJudgedWhereItWasFound(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "x\xed\xb3\xbf")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	program := filepath.Join(dir, "crw-lookup-probe")
+	if err := os.WriteFile(program, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	cell := interpreterProbe(context.Background(), "crw-lookup-probe", false)
+	if cell["value"] == absent {
+		t.Fatalf("the program PATH lookup found is reported absent: %v", cell)
+	}
+	if want := store.FSDecode(program); cell["path"] != want {
+		t.Fatalf("path %q, want shutil.which's str %q", cell["path"], want)
+	}
+}
