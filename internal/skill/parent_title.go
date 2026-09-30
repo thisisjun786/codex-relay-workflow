@@ -17,6 +17,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 )
 
@@ -34,39 +35,6 @@ var parentReadback = []string{"verified", "mismatch", "unread"}
 type titleRequestError string
 
 func (e titleRequestError) Error() string { return string(e) }
-
-func pyString(value any) string {
-	switch typed := value.(type) {
-	case nil:
-		return "None"
-	case bool:
-		if typed {
-			return "True"
-		}
-		return "False"
-	case string:
-		return typed
-	case []any:
-		parts := make([]string, len(typed))
-		for i, item := range typed {
-			parts[i] = pyRepr(item)
-		}
-		return "[" + strings.Join(parts, ", ") + "]"
-	case map[string]any:
-		keys := make([]string, 0, len(typed))
-		for key := range typed {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		parts := make([]string, len(keys))
-		for i, key := range keys {
-			parts[i] = pyRepr(key) + ": " + pyRepr(typed[key])
-		}
-		return "{" + strings.Join(parts, ", ") + "}"
-	default:
-		return fmt.Sprint(value)
-	}
-}
 
 func titleResult(decision, reason string, title, prefix, body, stripped any, matched any, requires ...string) map[string]any {
 	if requires == nil {
@@ -408,50 +376,48 @@ func replayTitles(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, e)
 			return 1
 		}
-		fixtures[i] = orderedPlain(decoded)
+		fixtures[i] = decoded
 	}
 	if len(paths) == 0 {
 		fmt.Fprintf(stderr, "No fixtures under %s; nothing was checked\n", dir)
 		return 1
 	}
-	fail := false
+	// command_replay collects its failures and prints them only once every
+	// fixture has been replayed, so a fixture that raises prints none of them.
+	// Each fixture keeps its decoded order: expected is compared key by key in
+	// the order the fixture writes it, with Python's == and repr().
+	var failures []string
 	reasons := map[string]bool{}
 	reads := map[string]bool{}
 	matches := map[string]bool{}
 	for i, p := range paths {
-		fixture := fixtures[i]
-		f, ok := fixture.(map[string]any)
+		name := filepath.Base(p)
+		fixture, ok := fixtures[i].(contract.OrderedObject)
 		if !ok {
-			fmt.Fprintln(stderr, pythonAttribute(fixture, "get"))
+			fmt.Fprintln(stderr, pythonAttribute(fixtures[i], "get"))
 			return 1
 		}
-		expected, ok := f["expected"].(map[string]any)
+		f := orderedPlain(fixture).(map[string]any)
+		sub := any("decide")
+		if objHas(fixture, "subcommand") {
+			sub = objGet(fixture, "subcommand")
+		}
+		expected, ok := objGet(fixture, "expected").(contract.OrderedObject)
 		if !ok {
-			fmt.Fprintf(stderr, "%s: no recorded expectation\n", filepath.Base(p))
-			fail = true
+			failures = append(failures, name+": no recorded expectation")
 			continue
 		}
-		sub, exists := f["subcommand"]
-		if !exists {
-			sub = "decide"
-		}
+		var got map[string]any
 		if sub == "decide" {
-			in := f["input"]
-			got, e := titleDecide(in)
+			decided, e := titleDecide(f["input"])
 			if e != nil {
-				fmt.Fprintf(stderr, "%s: request rejected: %s\n", filepath.Base(p), e)
-				fail = true
+				failures = append(failures, fmt.Sprintf("%s: request rejected: %s", name, e))
 				continue
 			}
+			got = decided
 			reasons[got["reason"].(string)] = true
 			if got["matched"] != nil {
 				matches[got["matched"].(string)] = true
-			}
-			for k, want := range expected {
-				if !jsonEqual(got[k], want) {
-					fmt.Fprintf(stderr, "%s: %s expected %s, got %s\n", filepath.Base(p), k, pyRepr(want), pyRepr(got[k]))
-					fail = true
-				}
 			}
 		} else if sub == "readback" {
 			in, _ := f["input"].(map[string]any)
@@ -461,19 +427,22 @@ func replayTitles(args []string, stdout, stderr io.Writer) int {
 			}
 			state := titleReadback(in["requested_title"], in["observed_title"])
 			reads[state] = true
-			got := map[string]any{"readback": state}
-			for _, key := range sortedKeys(expected) {
-				if !jsonEqual(expected[key], got[key]) {
-					fmt.Fprintf(stderr, "%s: %s expected %s, got %s\n", filepath.Base(p), key, evidence.Repr(expected[key]), evidence.Repr(got[key]))
-					fail = true
-				}
-			}
+			got = map[string]any{"readback": state}
 		} else {
-			fmt.Fprintf(stderr, "%s: unknown subcommand %v\n", filepath.Base(p), pyString(sub))
-			fail = true
+			failures = append(failures, fmt.Sprintf("%s: unknown subcommand %s", name, evidence.Text(sub)))
+			continue
+		}
+		for _, field := range expected {
+			if !evidence.Equal(got[field.Key], field.Value) {
+				failures = append(failures, fmt.Sprintf("%s: %s expected %s, got %s", name, field.Key, evidence.Repr(field.Value), evidence.Repr(got[field.Key])))
+			}
 		}
 	}
 	fmt.Fprintf(stdout, "Replayed %d title fixtures against their recorded expectations.\n", len(paths))
+	for _, failure := range failures {
+		fmt.Fprintln(stderr, failure)
+	}
+	fail := len(failures) > 0
 	var missing []string
 	for r := range parentReasons {
 		if !reasons[r] {

@@ -82,7 +82,68 @@ func titleShapeCases(t *testing.T) []skillShapeCase {
 		[]string{"input"}, []string{"expected"}, []string{"expected", "readback"},
 		[]string{"input", "requested_title"}, []string{"input", "observed_title"})
 	cases = append(cases, titleReadbackPairCases()...)
+	cases = append(cases, titleReplayFailureCases()...)
 	return append(cases, titleBracketShapeCases(t)...)
+}
+
+// titleReplayFailureCases hold fixtures whose expectations fail. command_replay
+// compares expected key by key in the order the fixture writes it, with
+// Python's != and repr(), names an unknown subcommand with str(), and prints
+// the failures it collected only after every fixture was replayed, so a later
+// fixture that raises prints none of them. Cases whose output depends on key
+// order repeat, so an unordered walk cannot pass by chance.
+func titleReplayFailureCases() []skillShapeCase {
+	decideInput := `{"role": "parent", "binding_verified": true, "observed_title": "Body", "summary": "S", "user_title": "none", "family_candidates": ["CRW"], "project_labels": ["CRW"]}`
+	decide := func(expected string) string {
+		return `{"subcommand": "decide", "input": ` + decideInput + `, "expected": ` + expected + `}`
+	}
+	readback := func(expected string) string {
+		return `{"subcommand": "readback", "input": {"requested_title": "a", "observed_title": "a"}, "expected": ` + expected + `}`
+	}
+	readbackOrder := readback(`{"z": 1, "readback": "mismatch", "a": 2}`)
+	fixtures := []struct {
+		name    string
+		repeats int
+		files   map[string]string
+	}{
+		{"readback-key-order", 4, map[string]string{"case.json": readbackOrder}},
+		{"decide-key-order", 4, map[string]string{"case.json": decide(`{"zeta": 1, "decision": "x", "alpha": 2, "reason": "y", "body": "B", "matched": null, "title": "T"}`)}},
+		{"decide-repr", 1, map[string]string{"case.json": decide(`{"decision": ["x", "true", "it's", "say \"hi\""], "reason": {"b": 1.0, "a": "é"}, "matched": 1, "prefix": false, "title": NaN, "summary": 1e400, "unknown": NaN, "stripped": [null, -0.0, 12345678901234567890]}`)}},
+		{"decide-equal", 1, map[string]string{"case.json": decide(`{"requires": [], "stripped": null, "unknown": null, "decision": "apply", "prefix": "CRW"}`)}},
+		{"readback-repr", 1, map[string]string{"case.json": readback(`{"readback": ["verified"], "absent": NaN, "other": {"b": [1.0, "it's \"q\""], "a": null}}`)}},
+		{"readback-equal", 1, map[string]string{"case.json": readback(`{"readback": "verified", "absent": null}`)}},
+		{"unknown-subcommand", 1, map[string]string{
+			"a.json": `{"subcommand": {"b": 1.0, "a": [true, "x"]}, "expected": {}}`,
+			"b.json": `{"subcommand": 1.0, "expected": {}}`,
+			"c.json": `{"subcommand": "d\u00e9", "expected": {}}`,
+			"d.json": `{"subcommand": null, "expected": {}}`,
+			"e.json": `{"subcommand": ["decide"], "expected": {}}`,
+		}},
+		{"failures-then-fixture-raises", 1, map[string]string{"a.json": readbackOrder, "b.json": `[1]`}},
+		{"failures-then-input-raises", 1, map[string]string{"a.json": readbackOrder, "b.json": `{"subcommand": "readback", "input": [1], "expected": {}}`}},
+		{"failures-in-fixture-order", 1, map[string]string{
+			"a.json": readbackOrder,
+			"b.json": `{"subcommand": "readback"}`,
+			"c.json": `{"subcommand": "decide", "input": "bad", "expected": {}}`,
+			"d.json": decide(`{"reason": "y", "decision": "x"}`),
+		}},
+	}
+	var cases []skillShapeCase
+	for _, fixture := range fixtures {
+		files := map[string]any{}
+		for name, text := range fixture.files {
+			files[name] = shapeRawFile(text)
+		}
+		for repeat := range fixture.repeats {
+			cases = append(cases, skillShapeCase{
+				name:   fmt.Sprintf("title/replay/failures/%s/%d", fixture.name, repeat),
+				family: "parent-title",
+				args:   []string{"replay", "--fixtures", "$TMP", "--allow-unreached"},
+				files:  files,
+			})
+		}
+	}
+	return cases
 }
 
 // titleReadbackPairCases replay readback fixtures whose two titles are both set,

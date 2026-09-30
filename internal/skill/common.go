@@ -6,7 +6,6 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"reflect"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/plugins"
@@ -39,13 +38,6 @@ func invalidChoice(w io.Writer, prog, what, got string, choices ...string) int {
 func invalidOption(w io.Writer, prog, opt string) int {
 	fmt.Fprintf(w, "%s: error: unrecognized arguments: %s\n", prog, opt)
 	return 2
-}
-func jsonEqual(a, b any) bool { return reflect.DeepEqual(normalizeJSON(a), normalizeJSON(b)) }
-func normalizeJSON(v any) any {
-	raw, _ := json.Marshal(v)
-	var out any
-	_ = json.Unmarshal(raw, &out)
-	return out
 }
 func pyRepr(v any) string {
 	switch x := v.(type) {
