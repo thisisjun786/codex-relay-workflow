@@ -344,8 +344,8 @@ precondition, and a Go opener cannot infer it from the database. If step 4 stops
 `schema_meta` COMMIT and the `takeover.json` publication, the store is in the torn state
 **initial stamp committed, mirror absent** (Record): writers refuse, step 5's `doctor --json`
 fails loudly with `takeover record missing`, and only the explicit mirror recovery,
-`crw relay takeover repair-mirror`, completes the publication. If a first opener dies after placing the gate and before creating `D`,
-`S` holds only `write-gate.lock` (and possibly a stray `S/.write-gate-*`): every opener of
+`crw relay takeover repair-mirror`, completes the publication. If a first opener dies after
+placing the gate and before creating `D`, `S` holds only `write-gate.lock` (and possibly a stray `S/.write-gate-*`): every opener of
 either runtime, writable or read-only, refuses it non-queueably with reason
 `store_owned_by_other`, detail `partial store: write-gate.lock without a database`, exit 2 (a
 writer once no creator holds the gate, a reader without taking it), and so do the service
