@@ -14,8 +14,8 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
@@ -277,7 +277,7 @@ func replay(t *testing.T, input []action) {
 			Value any
 		}{table, records})
 	}
-	got := evidence.Dumps(obj("replies", replies, "tables", tables), false, false, true) + "\n"
+	got := pyjson.Dumps(obj("replies", replies, "tables", tables), pyjson.Options{}) + "\n"
 	sum := sha256.Sum256(raw)
 	golden.Check(t, "outbox "+hex.EncodeToString(sum[:8]), []byte(got), golden.Substitute(home, "<home>"))
 }

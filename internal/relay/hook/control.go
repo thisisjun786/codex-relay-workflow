@@ -66,7 +66,7 @@ func RequestGuard(ctx context.Context, conn net.Conn, stop Object, options Guard
 	params := Object{{Key: "markerRoot", Value: options.Root}, {Key: "stopInput", Value: stop}, {Key: "mode", Value: options.Mode}, {Key: "dbPath", Value: nullable(options.DBPath)}, {Key: "now", Value: nullable(options.Now)}, {Key: "noRecord", Value: options.NoRecord}, {Key: "deadline", Value: deadline.UTC().Format(time.RFC3339Nano)}}
 	params = append(params, Field{Key: "socketPath", Value: nullable(options.SocketPath)}, Field{Key: "program", Value: nullable(options.Program)})
 	request := Object{{Key: "protocol", Value: int64(1)}, {Key: "method", Value: "guard-evaluate"}, {Key: "params", Value: params}}
-	if _, err := io.WriteString(conn, evidence.Dumps(request, true, false, true)+"\n"); err != nil {
+	if _, err := io.WriteString(conn, pyjson.Dumps(request, pyjson.Options{Compact: true})+"\n"); err != nil {
 		return nil, err
 	}
 	response, err := readFrame(conn)
@@ -243,7 +243,7 @@ func truthy(value any) bool {
 // answerHost answers a request with the relay's host record, as control.py answers a request
 // it could not serve: the requester journals guard_host_error, never a refusal or silence.
 func answerHost(conn net.Conn, detail string) error {
-	_, err := io.WriteString(conn, evidence.Dumps(Object{{Key: "error", Value: "host"}, {Key: "detail", Value: detail}}, false, false, true)+"\n")
+	_, err := io.WriteString(conn, pyjson.Dumps(Object{{Key: "error", Value: "host"}, {Key: "detail", Value: detail}}, pyjson.Options{})+"\n")
 	return err
 }
 

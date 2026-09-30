@@ -12,6 +12,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pluginwiring"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -198,7 +199,7 @@ var bridgeIdentity = []string{"owner", "serverName", "bridgeExecutable", "args",
 
 func sameRegistration(found, wanted Object) bool {
 	for _, key := range bridgeIdentity {
-		if evidence.Dumps(record.Get(found, key), true, true, false) != evidence.Dumps(record.Get(wanted, key), true, true, false) {
+		if pyjson.Dumps(record.Get(found, key), pyjson.Options{Compact: true, SortKeys: true, Unicode: true}) != pyjson.Dumps(record.Get(wanted, key), pyjson.Options{Compact: true, SortKeys: true, Unicode: true}) {
 			return false
 		}
 	}
@@ -265,7 +266,7 @@ func bridgeWrite(ctx context.Context, path string, wanted Object, apply bool) Ob
 		return append(answer, field("detail", "the record could not be written: "+store.PythonOSError(err)))
 	}
 	back := reading.ReadJSON(path, "the bridge MCP record", nil, nil)
-	readBack := back.OK() && evidence.Dumps(back.Value, true, true, false) == evidence.Dumps(wanted, true, true, false)
+	readBack := back.OK() && pyjson.Dumps(back.Value, pyjson.Options{Compact: true, SortKeys: true, Unicode: true}) == pyjson.Dumps(wanted, pyjson.Options{Compact: true, SortKeys: true, Unicode: true})
 	if stale := policyNow(); readBack && len(stale) > 0 {
 		return append(record.Set(record.Set(record.Set(answer, "outcome", RecordPolicyChanged), "applied", true), "wrote", true),
 			field("detail", "the execution policy changed while this record was being written: "+strings.Join(stale, "; ")+". This run removed nothing"), field("repair", strings.ReplaceAll(policyRepair, "%s", path)))

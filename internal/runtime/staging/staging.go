@@ -26,6 +26,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
@@ -128,11 +129,11 @@ func repr(v any) string {
 		}
 		return "False"
 	case float64:
-		return evidence.Float(value)
+		return pyjson.Float(value)
 	case int64:
 		return strconv.FormatInt(value, 10)
 	}
-	return evidence.Dumps(v, false, false, false)
+	return pyjson.Dumps(v, pyjson.Options{Unicode: true})
 }
 
 // ReadClaim is staging.read_claim: absent, present, unreadable and unreachable stay four

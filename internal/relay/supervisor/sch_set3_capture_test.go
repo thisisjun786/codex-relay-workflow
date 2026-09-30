@@ -11,11 +11,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -94,7 +94,7 @@ func Test24_SCH_43_Capture(t *testing.T) {
 		}
 		values := []any{attempts[0].TransportStartedAt.Valid, getSet3(t, c, id).State}
 		c.clockISO = func() string { return delivery.ISOOf(1700000301) }
-		if _, err := s.DB.ExecContext(ctx, "UPDATE supervisor_attempts SET record=? WHERE request_id=?", evidence.Dumps(map[string]any{"requestId": attempts[0].RequestID}, false, true, false), attempts[0].RequestID); err != nil {
+		if _, err := s.DB.ExecContext(ctx, "UPDATE supervisor_attempts SET record=? WHERE request_id=?", pyjson.Dumps(map[string]any{"requestId": attempts[0].RequestID}, pyjson.Options{SortKeys: true, Unicode: true}), attempts[0].RequestID); err != nil {
 			t.Fatal(err)
 		}
 		row := getSet3(t, c, id)
@@ -110,7 +110,7 @@ func Test24_SCH_43_Capture(t *testing.T) {
 		if err := s.SettleSupervisorAttempt(ctx, attempts[0].RequestID, "dispatched", "yes", 0, sql.NullString{String: turn, Valid: true}, `{"requestId": "`+attempts[0].RequestID+`"}`, delivery.ISOOf(1700000301)); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := s.DB.ExecContext(ctx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_attempted',?,?)", delivery.ISOOf(1700000301), id, evidence.Dumps(contract.OrderedObject{{Key: "requestId", Value: attempts[0].RequestID}, {Key: "attemptNo", Value: 1}, {Key: "deliveryState", Value: "dispatched"}, {Key: "sendAttempted", Value: "yes"}, {Key: "turnId", Value: turn}, {Key: "holdReason", Value: nil}, {Key: "messageMoved", Value: false}, {Key: "messageState", Value: "read"}, {Key: "reason", Value: "this claim no longer held the message when its receipt arrived, so the receipt is recorded on its attempt and the message is left where it is"}}, false, false, true)); err != nil {
+		if _, err := s.DB.ExecContext(ctx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_attempted',?,?)", delivery.ISOOf(1700000301), id, pyjson.Dumps(contract.OrderedObject{{Key: "requestId", Value: attempts[0].RequestID}, {Key: "attemptNo", Value: 1}, {Key: "deliveryState", Value: "dispatched"}, {Key: "sendAttempted", Value: "yes"}, {Key: "turnId", Value: turn}, {Key: "holdReason", Value: nil}, {Key: "messageMoved", Value: false}, {Key: "messageState", Value: "read"}, {Key: "reason", Value: "this claim no longer held the message when its receipt arrived, so the receipt is recorded on its attempt and the message is left where it is"}}, pyjson.Options{})); err != nil {
 			t.Fatal(err)
 		}
 		return append(values, getSet3(t, c, id).State, "dispatched")
@@ -282,7 +282,7 @@ func Test24_SCH_48_QueuedTransportCapture(t *testing.T) {
 			t.Fatal(err)
 		}
 		at := delivery.ISOOf(1700000010)
-		if _, err := s.DB.ExecContext(ctx, "UPDATE supervisor_attempts SET observed_at=?,record=? WHERE message_id=?", at, evidence.Dumps(map[string]any{"schema": channelVersion, "requestId": record["requestId"], "messageId": id, "attemptNo": 1, "recipientTaskId": "01supervisor-task", "deliveryState": "dispatched", "sendAttempted": "yes", "retrySafe": false, "transportReceiptStatus": "accepted", "failedOperation": nil, "turnId": record["turnId"], "observedAt": at}, false, true, false), id); err != nil {
+		if _, err := s.DB.ExecContext(ctx, "UPDATE supervisor_attempts SET observed_at=?,record=? WHERE message_id=?", at, pyjson.Dumps(map[string]any{"schema": channelVersion, "requestId": record["requestId"], "messageId": id, "attemptNo": 1, "recipientTaskId": "01supervisor-task", "deliveryState": "dispatched", "sendAttempted": "yes", "retrySafe": false, "transportReceiptStatus": "accepted", "failedOperation": nil, "turnId": record["turnId"], "observedAt": at}, pyjson.Options{SortKeys: true, Unicode: true}), id); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := s.DB.ExecContext(ctx, "UPDATE journal SET at=? WHERE kind='supervisor_message_attempted' AND subject=?", at, id); err != nil {

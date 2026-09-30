@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 )
@@ -126,7 +127,7 @@ func Load(path string, definitionVersion int) reading.Reading {
 
 // Encode is json.dump(record, indent=2, sort_keys=True) followed by the newline save writes.
 func Encode(value any) []byte {
-	return []byte(evidence.DumpsIndent(value, 2, true, true) + "\n")
+	return []byte(pyjson.Dumps(value, pyjson.Options{Indent: 2, SortKeys: true}) + "\n")
 }
 
 // Save is hostrecord.save: atomic, so an interrupted write cannot leave a truncated record.
@@ -254,7 +255,7 @@ func AddPoint(record Object, name string, point Object) Object {
 }
 
 func equalJSON(a, b any) bool {
-	return evidence.Dumps(a, true, true, false) == evidence.Dumps(b, true, true, false)
+	return pyjson.Dumps(a, pyjson.Options{Compact: true, SortKeys: true, Unicode: true}) == pyjson.Dumps(b, pyjson.Options{Compact: true, SortKeys: true, Unicode: true})
 }
 
 // Presence policies of a point dimension.

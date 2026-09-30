@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -87,7 +88,7 @@ func fakeGH(args []string, stdout, stderr io.Writer) (code int) {
 		if err != nil {
 			panic(err)
 		}
-		_, _ = io.WriteString(f, evidence.Dumps(items, false, false, true)+"\n")
+		_, _ = io.WriteString(f, pyjson.Dumps(items, pyjson.Options{})+"\n")
 		_ = f.Close()
 	}
 	graphql := len(args) >= 2 && args[0] == "api" && args[1] == "graphql"
@@ -138,7 +139,7 @@ func fakeGH(args []string, stdout, stderr io.Writer) (code int) {
 				}
 			}
 		}
-		fmt.Fprintln(stdout, evidence.Dumps(v, true, false, true))
+		fmt.Fprintln(stdout, pyjson.Dumps(v, pyjson.Options{Compact: true}))
 	}
 	forbidden := func() int {
 		fmt.Fprintln(stderr, "gh: forbidden (HTTP 403)")

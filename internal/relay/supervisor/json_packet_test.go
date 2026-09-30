@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
@@ -25,7 +26,7 @@ func Test24PacketAccessorPython(t *testing.T) {
 		field := evidence.Text(tc["field"])
 		t.Run(field+"/"+evidence.Repr(tc["value"]), func(t *testing.T) {
 			got, failure := packetAccessor(f, row.Packet, field, tc["value"])
-			if evidence.Dumps(failure, false, true, true) != evidence.Dumps(tc["error"], false, true, true) || (failure == nil && got != tc["result"]) {
+			if pyjson.Dumps(failure, pyjson.Options{SortKeys: true}) != pyjson.Dumps(tc["error"], pyjson.Options{SortKeys: true}) || (failure == nil && got != tc["result"]) {
 				t.Fatalf("diff: Go=(%v,%v) golden=(%v,%v)", got, failure, tc["result"], tc["error"])
 			}
 		})
@@ -45,7 +46,7 @@ func packetAccessorRows(f *stageFixture, packet string) []byte {
 			rows = append(rows, contract.OrderedObject{{Key: "field", Value: field}, {Key: "value", Value: value}, {Key: "result", Value: result}, {Key: "error", Value: failure}})
 		}
 	}
-	return []byte(evidence.Dumps(rows, false, false, true) + "\n")
+	return []byte(pyjson.Dumps(rows, pyjson.Options{}) + "\n")
 }
 
 // packetAccessor renders packet with field set to value: the rendered message, or the refusal's

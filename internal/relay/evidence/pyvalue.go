@@ -5,7 +5,6 @@ package evidence
 import (
 	"encoding/json"
 	"fmt"
-	"math"
 	"math/big"
 	"slices"
 	"strconv"
@@ -13,220 +12,12 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 // Python value semantics for the decoded JSON a caller restates: an object is a
 // contract.OrderedObject or a map[string]any, an integer is a json.Number, int or int64, a
 // number with a fraction is a float64, and a list is []any or []map[string]any.
-
-// Dumps is json.dumps(value) with the separators, sort_keys and ensure_ascii Python passes.
-func Dumps(value any, compact, sortKeys, ascii bool) string {
-	var b strings.Builder
-	d := dumper{b: &b, item: ", ", key: ": ", sortKeys: sortKeys, ascii: ascii}
-	if compact {
-		d.item, d.key = ",", ":"
-	}
-	d.write(value)
-	return b.String()
-}
-
-// DumpsIndent is json.dumps(value, indent=indent, sort_keys=sortKeys, ensure_ascii=ascii): with
-// any integer indent Python's default separators are (",", ": "), every member of a non-empty
-// container starts a new line indented one level deeper by indent spaces (none for indent 0 or
-// less, as " " * indent gives), and an empty container stays "{}" or "[]". Only indent=None is
-// compact, and that is Dumps.
-func DumpsIndent(value any, indent int, sortKeys, ascii bool) string {
-	var b strings.Builder
-	d := dumper{b: &b, item: ",", key: ": ", sortKeys: sortKeys, ascii: ascii, pretty: true, indent: strings.Repeat(" ", max(indent, 0))}
-	d.write(value)
-	return b.String()
-}
-
-type dumper struct {
-	b               *strings.Builder
-	item, key       string
-	sortKeys, ascii bool
-	// pretty is an indent given at all (each member on its own line); indent is one level of
-	// indentation, which may be ""; level is how deep the member being written sits.
-	pretty bool
-	indent string
-	level  int
-}
-
-// open writes the line break and indentation before member i of a container at d.level.
-func (d dumper) open(i int) {
-	if i > 0 {
-		d.b.WriteString(d.item)
-	}
-	if d.pretty {
-		d.b.WriteString("\n" + strings.Repeat(d.indent, d.level+1))
-	}
-}
-
-// close writes the line break and indentation before a non-empty container's closing bracket.
-func (d dumper) close() {
-	if d.pretty {
-		d.b.WriteString("\n" + strings.Repeat(d.indent, d.level))
-	}
-}
-
-func (d dumper) inner() dumper {
-	d.level++
-	return d
-}
-
-func (d dumper) write(value any) {
-	switch v := value.(type) {
-	case contract.OrderedObject:
-		fields := v
-		if d.sortKeys {
-			fields = slices.Clone(v)
-			slices.SortStableFunc(fields, func(x, y contract.Field) int { return strings.Compare(x.Key, y.Key) })
-		}
-		d.b.WriteByte('{')
-		for i, f := range fields {
-			d.open(i)
-			d.str(f.Key)
-			d.b.WriteString(d.key)
-			d.inner().write(f.Value)
-		}
-		if len(fields) > 0 {
-			d.close()
-		}
-		d.b.WriteByte('}')
-	case map[string]any:
-		// A Go map has no insertion order; every caller passing one asks for sorted keys.
-		keys := make([]string, 0, len(v))
-		for k := range v {
-			keys = append(keys, k)
-		}
-		slices.Sort(keys)
-		o := make(contract.OrderedObject, 0, len(keys))
-		for _, k := range keys {
-			o = append(o, contract.Field{Key: k, Value: v[k]})
-		}
-		d.write(o)
-	case []any:
-		d.b.WriteByte('[')
-		for i, item := range v {
-			d.open(i)
-			d.inner().write(item)
-		}
-		if len(v) > 0 {
-			d.close()
-		}
-		d.b.WriteByte(']')
-	case []string:
-		items := make([]any, len(v))
-		for i, s := range v {
-			items[i] = s
-		}
-		d.write(items)
-	case []map[string]any:
-		items := make([]any, len(v))
-		for i, m := range v {
-			items[i] = m
-		}
-		d.write(items)
-	case string:
-		d.str(v)
-	case bool:
-		d.b.WriteString(strconv.FormatBool(v))
-	case nil:
-		d.b.WriteString("null")
-	case json.Number:
-		d.b.WriteString(v.String())
-	case int:
-		d.b.WriteString(strconv.Itoa(v))
-	case int64:
-		d.b.WriteString(strconv.FormatInt(v, 10))
-	case float64:
-		switch {
-		case math.IsNaN(v):
-			d.b.WriteString("NaN")
-		case math.IsInf(v, 1):
-			d.b.WriteString("Infinity")
-		case math.IsInf(v, -1):
-			d.b.WriteString("-Infinity")
-		default:
-			d.b.WriteString(Float(v))
-		}
-	default:
-		fmt.Fprintf(d.b, "%v", v)
-	}
-}
-
-func (d dumper) str(s string) {
-	d.b.WriteByte('"')
-	for i := 0; i < len(s); {
-		// The bridge ledger and hook preserve Python's lone surrogate code points
-		// as WTF-8. They must round-trip as escapes, not U+FFFD, even when ascii
-		// is false: a surrogate has no valid UTF-8 representation on the wire.
-		// A byte that is not UTF-8 is its surrogate escape (an argv or environment byte, which
-		// Python holds surrogate-escaped) and is written the same way (settings.CodePoint).
-		r, size := settings.CodePoint(s, i)
-		i += size
-		if r >= 0xd800 && r <= 0xdfff {
-			fmt.Fprintf(d.b, `\u%04x`, r)
-			continue
-		}
-		switch {
-		case r == '"':
-			d.b.WriteString(`\"`)
-		case r == '\\':
-			d.b.WriteString(`\\`)
-		case r == '\n':
-			d.b.WriteString(`\n`)
-		case r == '\r':
-			d.b.WriteString(`\r`)
-		case r == '\t':
-			d.b.WriteString(`\t`)
-		case r == '\b':
-			d.b.WriteString(`\b`)
-		case r == '\f':
-			d.b.WriteString(`\f`)
-		case r < 0x20 || (d.ascii && r > 0x7e):
-			if r > 0xffff {
-				r -= 0x10000
-				fmt.Fprintf(d.b, `\u%04x\u%04x`, 0xd800+(r>>10), 0xdc00+(r&0x3ff))
-			} else {
-				fmt.Fprintf(d.b, `\u%04x`, r)
-			}
-		default:
-			d.b.WriteRune(r)
-		}
-	}
-	d.b.WriteByte('"')
-}
-
-// Float is float.__repr__.
-func Float(v float64) string {
-	if math.IsNaN(v) {
-		return "nan"
-	}
-	if math.IsInf(v, 1) {
-		return "inf"
-	}
-	if math.IsInf(v, -1) {
-		return "-inf"
-	}
-	magnitude := math.Abs(v)
-	if magnitude == 0 || magnitude >= 1e-4 && magnitude < 1e16 {
-		text := strconv.FormatFloat(v, 'f', -1, 64)
-		if !strings.Contains(text, ".") {
-			text += ".0"
-		}
-		return text
-	}
-	text := strconv.FormatFloat(v, 'e', -1, 64)
-	mantissa, exponent, _ := strings.Cut(text, "e")
-	sign := exponent[0]
-	digits := strings.TrimLeft(exponent[1:], "0")
-	if len(digits) < 2 {
-		digits = fmt.Sprintf("%02s", digits)
-	}
-	return mantissa + "e" + string(sign) + digits
-}
 
 // Object reads a decoded JSON object as an ordered one.
 func Object(v any) (contract.OrderedObject, bool) {
@@ -344,7 +135,7 @@ func Text(v any) string {
 		}
 		return "False"
 	case float64:
-		return Float(x)
+		return pyjson.Float(x)
 	case json.Number, int, int64, *big.Int:
 		return fmt.Sprint(x)
 	}

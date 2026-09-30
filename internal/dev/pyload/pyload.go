@@ -2,7 +2,8 @@
 
 // Package pyload is json.loads for the development judges (crw-dev stop-events and
 // crw-dev trial-ledger): the value hook.Decode builds from a record (ordered objects, int64 or
-// json.Number integers, float64, WTF-8 strings), without encoding/json's nesting limit of 10000.
+// json.Number integers, float64, WTF-8 strings), read by pyjson.Loads, which has no nesting limit
+// of its own.
 //
 // CPython 3.14, the interpreter the judges answer for, has no nesting limit of its own: its C
 // scanner recurses until the thread's stack runs out and raises RecursionError there. Loads
@@ -13,14 +14,8 @@
 package pyload
 
 import (
-	"encoding/json"
 	"errors"
-	"math"
-	"strconv"
-	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
-	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -47,8 +42,7 @@ func Loads(raw []byte) (any, error) {
 	} else if message != "" {
 		return nil, errors.New(message)
 	}
-	p := parser{s: text}
-	return p.value()
+	return pyjson.Loads(text, pyjson.LoadOptions{Constants: true, Surrogates: true, Numbers: pyjson.Int64Numbers, Deep: true})
 }
 
 // Recursion is the RecursionError Loads returned, if it returned one.
@@ -58,144 +52,4 @@ func Recursion(err error) (*evidence.PythonError, bool) {
 		return python, true
 	}
 	return nil, false
-}
-
-// parser walks a document pyjson has already accepted, so it looks only for where each value
-// ends; every syntax question was answered, with Python's message, before it starts.
-type parser struct {
-	s string
-	i int
-}
-
-func (p *parser) space() {
-	for p.i < len(p.s) && strings.IndexByte(" \t\n\r", p.s[p.i]) >= 0 {
-		p.i++
-	}
-}
-
-func (p *parser) value() (any, error) {
-	p.space()
-	switch c := p.s[p.i]; {
-	case c == '{':
-		p.i++
-		o := contract.OrderedObject{}
-		p.space()
-		if p.s[p.i] == '}' {
-			p.i++
-			return o, nil
-		}
-		for {
-			p.space()
-			key, err := p.str()
-			if err != nil {
-				return nil, err
-			}
-			p.space()
-			p.i++ // ':'
-			item, err := p.value()
-			if err != nil {
-				return nil, err
-			}
-			o = set(o, key, item)
-			p.space()
-			if p.s[p.i] == ',' {
-				p.i++
-				continue
-			}
-			p.i++ // '}'
-			return o, nil
-		}
-	case c == '[':
-		p.i++
-		a := []any{}
-		p.space()
-		if p.s[p.i] == ']' {
-			p.i++
-			return a, nil
-		}
-		for {
-			item, err := p.value()
-			if err != nil {
-				return nil, err
-			}
-			a = append(a, item)
-			p.space()
-			if p.s[p.i] == ',' {
-				p.i++
-				continue
-			}
-			p.i++ // ']'
-			return a, nil
-		}
-	case c == '"':
-		return p.str()
-	case strings.HasPrefix(p.s[p.i:], "null"):
-		p.i += 4
-		return nil, nil
-	case strings.HasPrefix(p.s[p.i:], "true"):
-		p.i += 4
-		return true, nil
-	case strings.HasPrefix(p.s[p.i:], "false"):
-		p.i += 5
-		return false, nil
-	case strings.HasPrefix(p.s[p.i:], "NaN"):
-		p.i += 3
-		return math.NaN(), nil
-	case strings.HasPrefix(p.s[p.i:], "Infinity"):
-		p.i += 8
-		return math.Inf(1), nil
-	case strings.HasPrefix(p.s[p.i:], "-Infinity"):
-		p.i += 9
-		return math.Inf(-1), nil
-	}
-	start := p.i
-	for p.i < len(p.s) && strings.IndexByte("0123456789+-.eE", p.s[p.i]) >= 0 {
-		p.i++
-	}
-	spelled := p.s[start:p.i]
-	if strings.ContainsAny(spelled, ".eE") {
-		n, err := strconv.ParseFloat(spelled, 64)
-		if math.IsInf(n, 0) {
-			return n, nil // Python's float() overflows to inf rather than refusing.
-		}
-		return n, err
-	}
-	if n, err := strconv.ParseInt(spelled, 10, 64); err == nil {
-		return n, nil
-	}
-	return json.Number(spelled), nil // an int past int64, as hook.Decode leaves one
-}
-
-// str is one string, decoded by the bridge ledger's decoder as hook.Decode decodes it: a lone
-// surrogate escape stays that code point (WTF-8) rather than becoming U+FFFD.
-func (p *parser) str() (string, error) {
-	start := p.i
-	p.i++
-	for p.s[p.i] != '"' {
-		if p.s[p.i] == '\\' {
-			p.i++
-		}
-		p.i++
-	}
-	p.i++
-	decoded, err := ledger.DecodeJSON([]byte(p.s[start:p.i]))
-	if err != nil {
-		return "", err
-	}
-	text, ok := decoded.(string)
-	if !ok {
-		return "", errors.New("a JSON string did not decode to text")
-	}
-	return text, nil
-}
-
-// set is a dict assignment: a repeated key keeps its first position and takes the last value.
-func set(o contract.OrderedObject, key string, value any) contract.OrderedObject {
-	for i := range o {
-		if o[i].Key == key {
-			o[i].Value = value
-			return o
-		}
-	}
-	return append(o, contract.Field{Key: key, Value: value})
 }

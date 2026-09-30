@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
@@ -125,7 +125,7 @@ func Test33RoutedSelectionRefusals(t *testing.T) {
 			if served.Load() != 1 {
 				t.Fatalf("the Stop was not routed to the Go owner: %d", served.Load())
 			}
-			golden.Check(t, "answer", names.spell([]byte(evidence.DumpsIndent(answer, 2, true, true)+"\n")), golden.Substitute(home, "<ROOT>"), golden.Substitute(testRoot, "<REPO>"))
+			golden.Check(t, "answer", names.spell([]byte(pyjson.Dumps(answer, pyjson.Options{Indent: 2, SortKeys: true})+"\n")), golden.Substitute(home, "<ROOT>"), golden.Substitute(testRoot, "<REPO>"))
 			if held, _ := filepath.Glob(filepath.Join(f.Root, "*", "*", "hook", "*", "*", "*.json")); len(held) != 0 {
 				t.Fatalf("a refusal recorded an observation: %v", held)
 			}
@@ -203,7 +203,7 @@ func Test33OwnerEvaluatesOnlyItsOwnLocations(t *testing.T) {
 	served := goOwner(t, ctx, state)
 	for _, c := range refusals {
 		frame := ask(request(c.root, c.db))
-		want := evidence.Dumps(Object{{Key: "error", Value: "host"}, {Key: "detail", Value: c.detail + c.named}}, false, false, true) + "\n"
+		want := pyjson.Dumps(Object{{Key: "error", Value: "host"}, {Key: "detail", Value: c.detail + c.named}}, pyjson.Options{}) + "\n"
 		if string(frame) != want {
 			t.Fatalf("Go owner answered %q, want %q", frame, want)
 		}

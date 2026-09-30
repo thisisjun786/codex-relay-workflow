@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
@@ -162,7 +162,7 @@ func Test24_SCH_62_OmissionEvidenceSelectsItsStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	from := shown["stagedFrom"].(map[string]any)
-	if evidence.Dumps(from["reading"], false, true, false) != evidence.Dumps(reading, false, true, false) {
+	if pyjson.Dumps(from["reading"], pyjson.Options{SortKeys: true, Unicode: true}) != pyjson.Dumps(reading, pyjson.Options{SortKeys: true, Unicode: true}) {
 		t.Fatalf("reading %v", from)
 	}
 	line := from["recheck"].(string)

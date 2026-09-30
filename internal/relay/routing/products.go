@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	// The shared Python value helpers live here at the todo-22 base revision.
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 )
 
@@ -387,7 +388,7 @@ func (v *validator) causeSignature(value any) Object {
 			v.scalar(m[k], "cause.signature."+k+" is a scalar; a signature names a failure domain")
 		}
 	}
-	if len(evidence.Dumps(m, true, true, false)) > 1024 {
+	if len(pyjson.Dumps(m, pyjson.Options{Compact: true, SortKeys: true, Unicode: true})) > 1024 {
 		v.fail("cause.signature is larger than 1024 bytes")
 	}
 	return m
@@ -426,7 +427,7 @@ func (v *validator) evidence(value any) []any {
 		}
 		entries = append(entries, entry)
 	}
-	if len(evidence.Dumps(entries, true, true, false)) > 4096 {
+	if len(pyjson.Dumps(entries, pyjson.Options{Compact: true, SortKeys: true, Unicode: true})) > 4096 {
 		v.fail("evidence is larger than 4096 bytes; it names where to look, not the thing looked at")
 	}
 	return entries
@@ -500,7 +501,7 @@ func Canonical(value any) (string, error) {
 	if !finite(value) {
 		return "", malformed("a value has no JSON text: Out of range float values are not JSON compliant: " + bad)
 	}
-	return evidence.Dumps(value, true, true, false), nil
+	return pyjson.Dumps(value, pyjson.Options{Compact: true, SortKeys: true, Unicode: true}), nil
 }
 
 // ReadClassification names who classified a pending incident; severity cannot be changed here.

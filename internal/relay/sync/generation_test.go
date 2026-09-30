@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/reception"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
@@ -51,7 +51,7 @@ func Test23SyncGenerationMatchesTheGolden(t *testing.T) {
 				t.Fatal(err)
 			}
 			got := map[string]any{"id": id, "generation": row.Get("execution_generation"), "digest": row.Get("identity_digest"), "block": reception.Get(op, "block")}
-			golden.Check(t, "answer", []byte(evidence.Dumps(got, false, true, true)))
+			golden.Check(t, "answer", []byte(pyjson.Dumps(got, pyjson.Options{SortKeys: true})))
 		})
 	}
 }

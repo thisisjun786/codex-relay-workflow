@@ -10,6 +10,7 @@ import (
 	"unicode"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -499,5 +500,5 @@ func SectionProblems(body any, sections []string) []string {
 	return out
 }
 func equal(a, b any) bool {
-	return reflect.DeepEqual(a, b) || evidence.Dumps(a, true, true, false) == evidence.Dumps(b, true, true, false)
+	return reflect.DeepEqual(a, b) || pyjson.Dumps(a, pyjson.Options{Compact: true, SortKeys: true, Unicode: true}) == pyjson.Dumps(b, pyjson.Options{Compact: true, SortKeys: true, Unicode: true})
 }

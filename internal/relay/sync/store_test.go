@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/reception"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
@@ -167,7 +167,7 @@ func storeReplay(t *testing.T, names ...string) {
 			if e != nil {
 				t.Fatal(e)
 			}
-			golden.Check(t, fmt.Sprintf("%03d stdout", index), []byte(evidence.Dumps(result, false, false, true)), options...)
+			golden.Check(t, fmt.Sprintf("%03d stdout", index), []byte(pyjson.Dumps(result, pyjson.Options{})), options...)
 			continue
 		}
 		// The Python test has finished and removed these fixture roots; the independent Go

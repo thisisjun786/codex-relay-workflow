@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -91,7 +91,7 @@ func Test33DeadlineReachesNestedWork(t *testing.T) {
 	if err != context.Canceled {
 		t.Fatal(err)
 	}
-	if text := evidence.Dumps([]any{EventKeyTag, "s", "t", false, "i"}, true, false, true); text == "" {
+	if text := pyjson.Dumps([]any{EventKeyTag, "s", "t", false, "i"}, pyjson.Options{Compact: true}); text == "" {
 		t.Fatal("empty event key preimage")
 	}
 }

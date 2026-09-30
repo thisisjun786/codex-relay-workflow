@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
@@ -20,7 +21,7 @@ func Test24EnvelopeAccessorPython(t *testing.T) {
 		}{Text(row["op"]), row["value"], row["result"], row["error"]}
 		t.Run(tc.Op+"/"+Repr(tc.Value), func(t *testing.T) {
 			got, failure := envelopeAccessor(tc.Op, tc.Value)
-			if Dumps(failure, false, true, true) != Dumps(tc.Error, false, true, true) || (failure == nil && Dumps(got, false, true, true) != Dumps(tc.Result, false, true, true)) {
+			if pyjson.Dumps(failure, pyjson.Options{SortKeys: true}) != pyjson.Dumps(tc.Error, pyjson.Options{SortKeys: true}) || (failure == nil && pyjson.Dumps(got, pyjson.Options{SortKeys: true}) != pyjson.Dumps(tc.Result, pyjson.Options{SortKeys: true})) {
 				t.Fatalf("diff: Go=(%v,%v) golden=(%v,%v)", got, failure, tc.Result, tc.Error)
 			}
 		})
@@ -40,7 +41,7 @@ func envelopeAccessorRows() []byte {
 			rows = append(rows, contract.OrderedObject{{Key: "op", Value: op}, {Key: "value", Value: value}, {Key: "result", Value: result}, {Key: "error", Value: failure}})
 		}
 	}
-	return []byte(Dumps(rows, false, false, true) + "\n")
+	return []byte(pyjson.Dumps(rows, pyjson.Options{}) + "\n")
 }
 
 // envelopeAccessor runs one accessor on value: its result, or the refusal's text (nil when none).

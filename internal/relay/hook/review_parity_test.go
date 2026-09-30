@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
@@ -52,7 +52,7 @@ func Test33ReviewD3Keys(t *testing.T) {
 			// The key and the values' compact bytes, which began as stopadapter.event_key's and
 			// json.dumps's.
 			key := EventKey(v[0], v[1], v[2], v[3])
-			golden.Check(t, raw, []byte(key+"\n"+evidence.Dumps(v, true, false, true)+"\n"))
+			golden.Check(t, raw, []byte(key+"\n"+pyjson.Dumps(v, pyjson.Options{Compact: true})+"\n"))
 		}
 	}
 	for _, raw := range []string{`{"x":"NaN", "y":0,"s":"\\\"Infinity", "z":-Infinity}`, `[NaN,0,"\ud800",Infinity]`} {
@@ -60,7 +60,7 @@ func Test33ReviewD3Keys(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		golden.Check(t, raw, []byte(evidence.Dumps(v, true, false, true)+"\n"))
+		golden.Check(t, raw, []byte(pyjson.Dumps(v, pyjson.Options{Compact: true})+"\n"))
 	}
 }
 
@@ -69,7 +69,7 @@ func Test33ReviewD4Complaints(t *testing.T) {
 	for _, budget := range []any{int64(7), 7.0001, int64(8), int64(9), true, math.NaN(), math.Inf(1), math.Inf(-1), json.Number("999999999999999999999999")} {
 		cfg := set(append(Object{}, base...), "timeoutSeconds", budget)
 		// The complaints are the golden, which began as completion.complaints's.
-		golden.CheckJSON(t, evidence.Dumps(cfg, false, false, true), Complaints(cfg))
+		golden.CheckJSON(t, pyjson.Dumps(cfg, pyjson.Options{}), Complaints(cfg))
 	}
 }
 

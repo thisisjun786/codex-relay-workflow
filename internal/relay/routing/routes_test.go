@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
@@ -133,7 +134,7 @@ func routeReplay(t *testing.T, property string) {
 				}
 				answer = Object{"error": "refused", "reason": refusal.Reason, "detail": refusal.Error()}
 			}
-			got = evidence.Dumps(answer, false, true, false)
+			got = pyjson.Dumps(answer, pyjson.Options{SortKeys: true, Unicode: true})
 		}) {
 			return
 		}

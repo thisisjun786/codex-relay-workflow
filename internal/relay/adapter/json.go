@@ -7,13 +7,15 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 )
 
 // dumps delegates to the existing shared Python encoder. Todo 24 moves this
 // implementation from supervisor to evidence; this import is the only migration point.
-func dumps(value any, sorted bool) string { return evidence.Dumps(value, false, sorted, true) }
+func dumps(value any, sorted bool) string {
+	return pyjson.Dumps(value, pyjson.Options{SortKeys: sorted})
+}
 
 // receiptObject preserves the guarded-send's Python insertion order. Ledger.save
 // returns a copy, so updatedAt is appended after the operation's fields. Nested values are ordered

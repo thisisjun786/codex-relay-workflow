@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
@@ -120,13 +121,13 @@ func PyStr(v any) string {
 		}
 		return "False"
 	case float64:
-		return evidence.Float(value)
+		return pyjson.Float(value)
 	case int64:
 		return strconv.FormatInt(value, 10)
 	case int:
 		return strconv.Itoa(value)
 	}
-	return evidence.Dumps(v, false, false, false)
+	return pyjson.Dumps(v, pyjson.Options{Unicode: true})
 }
 
 // TypeName is type(value).__name__ of a decoded JSON value.
@@ -241,7 +242,7 @@ func seconds(d time.Duration) string {
 	if d%time.Second == 0 {
 		return strconv.FormatInt(int64(d/time.Second), 10)
 	}
-	return evidence.Float(d.Seconds())
+	return pyjson.Float(d.Seconds())
 }
 
 func nullable(s string) any {

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -203,7 +204,7 @@ func slotRecord(row store.ExecutionSlotsRow) contract.OrderedObject {
 // finite is Capacity._finite: a bound and a measurement are real, finite and not negative.
 func finite(value float64, what string) error {
 	if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
-		return refuse(contract.RefusalLinkNotActive, what+" is a finite number of zero or more, not "+pyFloat(value))
+		return refuse(contract.RefusalLinkNotActive, what+" is a finite number of zero or more, not "+pyjson.Float(value))
 	}
 	return nil
 }
@@ -389,13 +390,13 @@ func (c *Capacity) ceilingRefusal(ctx context.Context, project string, initiativ
 				}
 				if float64(used) >= row.Ceiling {
 					return &refusal{contract.RefusalCapacityExhausted, sc.kind + " " + repr(sc.key) + " already holds " +
-						strconv.FormatInt(used, 10) + " of " + pyFloat(row.Ceiling) + " runs", domainExecution, subject, sc.key, parent}, nil
+						strconv.FormatInt(used, 10) + " of " + pyjson.Float(row.Ceiling) + " runs", domainExecution, subject, sc.key, parent}, nil
 				}
 				continue
 			}
 			seen, err := c.Store.ExecutionUsage(ctx, sc.kind, sc.key, row.Dimension)
 			if noRows(err) {
-				return &refusal{contract.RefusalCapacityUnmeasured, "an enforced ceiling of " + pyFloat(row.Ceiling) + " " +
+				return &refusal{contract.RefusalCapacityUnmeasured, "an enforced ceiling of " + pyjson.Float(row.Ceiling) + " " +
 					row.Unit + " is declared for " + repr(row.Dimension) + " on " + sc.kind + " " + repr(sc.key) +
 					" and nothing has measured it. A count of running tasks is not a measurement of this dimension, so" +
 					" there is no basis to say whether the bound holds", domainExecution, subject, row.Dimension, parent}, nil
@@ -404,8 +405,8 @@ func (c *Capacity) ceilingRefusal(ctx context.Context, project string, initiativ
 				return nil, err
 			}
 			if seen.Observed >= row.Ceiling {
-				return &refusal{contract.RefusalCapacityExhausted, repr(row.Dimension) + " was observed at " + pyFloat(seen.Observed) +
-					" " + row.Unit + " against a ceiling of " + pyFloat(row.Ceiling), domainExecution, subject, row.Dimension, parent}, nil
+				return &refusal{contract.RefusalCapacityExhausted, repr(row.Dimension) + " was observed at " + pyjson.Float(seen.Observed) +
+					" " + row.Unit + " against a ceiling of " + pyjson.Float(row.Ceiling), domainExecution, subject, row.Dimension, parent}, nil
 			}
 		}
 	}

@@ -17,7 +17,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 )
 
@@ -32,7 +32,9 @@ func Root() string { return filepath.Join(Dir(), "..", "..", "..") }
 
 // Canon is a value's canonical JSON, for comparing two values whatever their key order (and for
 // a golden holding one).
-func Canon(v any) string { return evidence.Dumps(v, true, true, false) }
+func Canon(v any) string {
+	return pyjson.Dumps(v, pyjson.Options{Compact: true, SortKeys: true, Unicode: true})
+}
 
 // Obj is v as an object.
 func Obj(v any) record.Object {

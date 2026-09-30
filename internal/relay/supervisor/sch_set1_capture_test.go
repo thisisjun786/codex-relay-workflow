@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
@@ -284,7 +285,7 @@ func set1ClaimWithoutTransport(t *testing.T, c *Channel, s *store.Store, id, own
 	if _, err := s.DB.ExecContext(ctx, "UPDATE supervisor_messages SET state='sending',attempt_count=1,lease_owner=?,lease_until=?,updated_at=? WHERE message_id=?", owner, now+300, at, id); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.DB.ExecContext(ctx, "INSERT INTO supervisor_attempts(request_id,message_id,attempt_no,message,state,send_attempted,retry_safe,record,sent_at,observed_at,delivery_token) VALUES(?,?,1,?,'held_uncertain','unknown',0,?,?,?,?)", request, id, message, evidence.Dumps(map[string]any{"requestId": request, "messageId": id, "attemptNo": 1, "deliveryState": "held_uncertain"}, false, true, false), at, at, request+".0000000000000000"); err != nil {
+	if _, err := s.DB.ExecContext(ctx, "INSERT INTO supervisor_attempts(request_id,message_id,attempt_no,message,state,send_attempted,retry_safe,record,sent_at,observed_at,delivery_token) VALUES(?,?,1,?,'held_uncertain','unknown',0,?,?,?,?)", request, id, message, pyjson.Dumps(map[string]any{"requestId": request, "messageId": id, "attemptNo": 1, "deliveryState": "held_uncertain"}, pyjson.Options{SortKeys: true, Unicode: true}), at, at, request+".0000000000000000"); err != nil {
 		t.Fatal(err)
 	}
 }

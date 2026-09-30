@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -19,7 +18,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 )
@@ -105,56 +104,17 @@ func randomID() (string, error) {
 	b[8] = (b[8] & 63) | 128
 	return hex.EncodeToString(b[:]), nil
 }
-func decode(d *json.Decoder) (any, error) {
-	t, err := d.Token()
-	if err != nil {
-		return nil, err
-	}
-	if delim, ok := t.(json.Delim); ok {
-		switch delim {
-		case '{':
-			o := Object{}
-			for d.More() {
-				k, e := d.Token()
-				if e != nil {
-					return nil, e
-				}
-				v, e := decode(d)
-				if e != nil {
-					return nil, e
-				}
-				o = append(o, contract.Field{Key: k.(string), Value: v})
-			}
-			_, err = d.Token()
-			return o, err
-		case '[':
-			a := []any{}
-			for d.More() {
-				v, e := decode(d)
-				if e != nil {
-					return nil, e
-				}
-				a = append(a, v)
-			}
-			_, err = d.Token()
-			return a, err
-		}
-	}
-	return t, nil
-}
+
+// parse reads a service record as encoding/json reads it (pyjson.Loads): every number a
+// json.Number as spelled and a repeated key kept as a field of its own.
 func parse(raw []byte) (Object, error) {
-	d := json.NewDecoder(bytes.NewReader(raw))
-	d.UseNumber()
-	v, err := decode(d)
+	v, err := pyjson.Loads(string(raw), pyjson.LoadOptions{Numbers: pyjson.SpelledNumbers, Repeats: true})
 	if err != nil {
 		return nil, err
 	}
 	o, ok := v.(Object)
 	if !ok {
 		return nil, fmt.Errorf("record is not an object")
-	}
-	if _, err = d.Token(); err != io.EOF {
-		return nil, fmt.Errorf("record has trailing data")
 	}
 	return o, nil
 }
@@ -324,7 +284,7 @@ func (s *Service) PublishStoreIdentity() error {
 	if scope == nil {
 		return nil
 	}
-	return atomicWriteText(s.Scope.path(s.Socket, ".json"), evidence.Dumps(set(scope, "storeId", nullable(s.StoreID)), false, false, true))
+	return atomicWriteText(s.Scope.path(s.Socket, ".json"), pyjson.Dumps(set(scope, "storeId", nullable(s.StoreID)), pyjson.Options{}))
 }
 func (s *Service) JournalNote(detail string) error {
 	// A pre-start spent bound has no state directory and Python leaves no log.

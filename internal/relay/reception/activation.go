@@ -3,6 +3,7 @@ package reception
 import (
 	"slices"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 )
 
@@ -158,7 +159,7 @@ func ContentDigest(one any) string {
 		}
 	}
 	Set(&payload, "envelope", kept)
-	return digest(evidence.Dumps(payload, true, true, false))
+	return digest(pyjson.Dumps(payload, pyjson.Options{Compact: true, SortKeys: true, Unicode: true}))
 }
 func Repeat(one, answered any) Obj {
 	id := Get(Get(one, "envelope"), "messageId")

@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
@@ -138,7 +138,7 @@ func withOwner(t *testing.T, home string, owner any) {
 		config = set(config, "adapterInterpreter", filepath.Join(home, "never-run"))
 		config = set(config, "adapterEntryPoint", filepath.Join(home, "never-run"))
 	}
-	writeTest(t, filepath.Join(home, ConfigName), []byte(evidence.Dumps(config, false, false, true)))
+	writeTest(t, filepath.Join(home, ConfigName), []byte(pyjson.Dumps(config, pyjson.Options{})))
 }
 
 // A host carrying both registrations (the user's hook-file entry, `crw hook`, and the plugin's
@@ -294,7 +294,7 @@ func withVersion(t *testing.T, home string, version any, present bool) {
 	if present {
 		config = append(Object{{Key: "configVersion", Value: version}}, config...)
 	}
-	writeTest(t, filepath.Join(home, ConfigName), []byte(evidence.Dumps(config, false, false, true)))
+	writeTest(t, filepath.Join(home, ConfigName), []byte(pyjson.Dumps(config, pyjson.Options{})))
 }
 
 // Settings the plugin owns are evaluated under --plugin-launch exactly as without the flag.

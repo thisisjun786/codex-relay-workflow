@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"math"
 	"time"
@@ -209,7 +210,7 @@ func (c *Channel) ReadBack(ctx context.Context, id, turnID, proof, assertedBy st
 	}
 	at := delivery.ISOOf(now)
 	data := map[string]any{"turnOrigin": origin, "detail": detail, "delivered": delivered, "assertedBy": asserted, "reconciled": reconciled}
-	encoded := evidence.Dumps(data, false, true, false)
+	encoded := pyjson.Dumps(data, pyjson.Options{SortKeys: true, Unicode: true})
 	var answer map[string]any
 	err = c.Store.Transaction(ctx, func(tx context.Context, _ *sql.Conn) error {
 		existing, e := c.Store.SupervisorReadback(tx, id)
@@ -238,12 +239,12 @@ func (c *Channel) ReadBack(ctx context.Context, id, turnID, proof, assertedBy st
 			}
 		}
 		if reconciled != nil {
-			journal := evidence.Dumps(contract.OrderedObject{{Key: "from", Value: "held_uncertain"}, {Key: "by", Value: "readback"}, {Key: "requestId", Value: attempt.RequestID}, {Key: "attemptNo", Value: attempt.AttemptNo}, {Key: "deliveredTurnId", Value: delivered["turnId"]}, {Key: "readTurnId", Value: turnID}}, false, false, true)
+			journal := pyjson.Dumps(contract.OrderedObject{{Key: "from", Value: "held_uncertain"}, {Key: "by", Value: "readback"}, {Key: "requestId", Value: attempt.RequestID}, {Key: "attemptNo", Value: attempt.AttemptNo}, {Key: "deliveredTurnId", Value: delivered["turnId"]}, {Key: "readTurnId", Value: turnID}}, pyjson.Options{})
 			if _, e = c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_reconciled',?,?)", at, id, string(journal)); e != nil {
 				return e
 			}
 		}
-		readJournal := evidence.Dumps(contract.OrderedObject{{Key: "verified", Value: verified}, {Key: "turnOrigin", Value: origin}, {Key: "readTurnId", Value: turnID}, {Key: "deliveredEvidence", Value: delivered["found"]}, {Key: "reconciled", Value: reconciled != nil}}, false, false, true)
+		readJournal := pyjson.Dumps(contract.OrderedObject{{Key: "verified", Value: verified}, {Key: "turnOrigin", Value: origin}, {Key: "readTurnId", Value: turnID}, {Key: "deliveredEvidence", Value: delivered["found"]}, {Key: "reconciled", Value: reconciled != nil}}, pyjson.Options{})
 		if _, e = c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_read',?,?)", at, id, readJournal); e != nil {
 			return e
 		}

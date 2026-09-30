@@ -10,7 +10,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
@@ -93,7 +93,7 @@ func Test23_SyncCommandsBuiltBinaryWholeBytes(t *testing.T) {
 				for _, row := range rows {
 					values = append(values, rowObject(row))
 				}
-				answer.tables = append(answer.tables, evidence.Dumps(values, false, false, true))
+				answer.tables = append(answer.tables, pyjson.Dumps(values, pyjson.Options{}))
 			}
 			if e = s.Close(); e != nil {
 				t.Fatal(e)

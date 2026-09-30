@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -148,7 +149,7 @@ func (c *Channel) refreshProposal(ctx context.Context, row store.SupervisorMessa
 	if row.State == "sending" {
 		instant = "transport_start"
 	}
-	detail := evidence.Dumps(contract.OrderedObject{{Key: "fromEvent", Value: row.EventID.String}, {Key: "toEvent", Value: eventID}, {Key: "fromSubmission", Value: optionalNumber(row.SubmissionNo)}, {Key: "toSubmission", Value: optionalNumber(submission)}, {Key: "at", Value: instant}, {Key: "reason", Value: "what the obligation says moved after staging and nothing had been sent, so the message now carries what is owed now"}}, false, false, true)
+	detail := pyjson.Dumps(contract.OrderedObject{{Key: "fromEvent", Value: row.EventID.String}, {Key: "toEvent", Value: eventID}, {Key: "fromSubmission", Value: optionalNumber(row.SubmissionNo)}, {Key: "toSubmission", Value: optionalNumber(submission)}, {Key: "at", Value: instant}, {Key: "reason", Value: "what the obligation says moved after staging and nothing had been sent, so the message now carries what is owed now"}}, pyjson.Options{})
 	_, err = c.Store.Q(ctx).ExecContext(ctx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_restated',?,?)", at, row.MessageID, detail)
 	return true, err
 }
@@ -210,14 +211,14 @@ func (c *Channel) newestRaising(ctx context.Context, row store.SupervisorMessage
 }
 
 func (c *Channel) holdSuperseded(ctx context.Context, id, requestID string, attemptNo int64, at, detail, owner string) error {
-	record := evidence.Dumps(map[string]any{"requestId": requestID, "messageId": id, "attemptNo": attemptNo, "deliveryState": "withheld_pre_send", "sendAttempted": "no", "retrySafe": true, "reason": "what is owed moved between the claim and the transport", "proposal": "obsolete", "detail": detail}, false, true, true)
+	record := pyjson.Dumps(map[string]any{"requestId": requestID, "messageId": id, "attemptNo": attemptNo, "deliveryState": "withheld_pre_send", "sendAttempted": "no", "retrySafe": true, "reason": "what is owed moved between the claim and the transport", "proposal": "obsolete", "detail": detail}, pyjson.Options{SortKeys: true})
 	if err := c.Store.SettleSupervisorAttempt(ctx, requestID, "withheld_pre_send", "no", 1, sql.NullString{}, record, at); err != nil {
 		return err
 	}
 	if _, err := c.Store.SettleSupervisorMessage(ctx, id, "queued", sql.NullFloat64{}, sql.NullString{String: "superseded_by_report", Valid: true}, at, "sending", attemptNo, sql.NullString{String: owner, Valid: true}); err != nil {
 		return err
 	}
-	_, err := c.Store.Q(ctx).ExecContext(ctx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_superseded',?,?)", at, id, evidence.Dumps(contract.OrderedObject{{Key: "requestId", Value: requestID}, {Key: "detail", Value: detail}}, false, false, true))
+	_, err := c.Store.Q(ctx).ExecContext(ctx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_superseded',?,?)", at, id, pyjson.Dumps(contract.OrderedObject{{Key: "requestId", Value: requestID}, {Key: "detail", Value: detail}}, pyjson.Options{}))
 	return err
 }
 
@@ -239,7 +240,7 @@ func (c *Channel) reopenAddressed(ctx context.Context, row store.SupervisorMessa
 		if err != nil || changed != 1 {
 			return err
 		}
-		detail := evidence.Dumps(contract.OrderedObject{{Key: "proposal", Value: "addressed"}, {Key: "reason", Value: "the hierarchy names this message's endpoints again, so the hierarchy_unresolved hold is released"}}, false, false, true)
+		detail := pyjson.Dumps(contract.OrderedObject{{Key: "proposal", Value: "addressed"}, {Key: "reason", Value: "the hierarchy names this message's endpoints again, so the hierarchy_unresolved hold is released"}}, pyjson.Options{})
 		_, err = c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_reopened',?,?)", at, row.MessageID, detail)
 		return err
 	})
@@ -273,7 +274,7 @@ func (c *Channel) reopenProposal(ctx context.Context, row store.SupervisorMessag
 		if err != nil || changed != 1 {
 			return err
 		}
-		detail := evidence.Dumps(contract.OrderedObject{{Key: "proposal", Value: "current"}, {Key: "reason", Value: "what this message is for is owed through it again, so the superseded_by_report hold is released"}}, false, false, true)
+		detail := pyjson.Dumps(contract.OrderedObject{{Key: "proposal", Value: "current"}, {Key: "reason", Value: "what this message is for is owed through it again, so the superseded_by_report hold is released"}}, pyjson.Options{})
 		_, err = c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_reopened',?,?)", at, row.MessageID, detail)
 		return err
 	})
@@ -290,7 +291,7 @@ func sameSettings24(first, second *delivery.TaskSettings) bool {
 	if first == nil || second == nil {
 		return first == second
 	}
-	return first.SettingsFreeResume == second.SettingsFreeResume && evidence.Dumps(first.Data, false, true, true) == evidence.Dumps(second.Data, false, true, true)
+	return first.SettingsFreeResume == second.SettingsFreeResume && pyjson.Dumps(first.Data, pyjson.Options{SortKeys: true}) == pyjson.Dumps(second.Data, pyjson.Options{SortKeys: true})
 }
 
 func optionalNumber(n sql.NullInt64) any {

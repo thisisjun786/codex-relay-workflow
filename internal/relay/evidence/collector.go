@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 // Runner is the read-only forge process seam. Tests feed the same scripted gh transcript to
@@ -126,7 +127,7 @@ func (f *Forge) GraphQL(document, where string, variables map[string]any) (map[s
 	}
 	o := forgeObject(raw, true)
 	if Truthy(o["errors"]) {
-		return nil, &Unreadable{Where: where, Detail: "the forge refused the query for " + where + ": " + truncate(Dumps(o["errors"], false, false, true), 400)}
+		return nil, &Unreadable{Where: where, Detail: "the forge refused the query for " + where + ": " + truncate(pyjson.Dumps(o["errors"], pyjson.Options{}), 400)}
 	}
 	return forgeObject(o["data"], true), nil
 }
@@ -289,7 +290,7 @@ func collectReview(f *Forge, owner, name string, number any, problems *[]Problem
 				n := forgeObject(item, false)
 				after[HashKey(n["id"])] = boolOf(n["isResolved"])
 			}
-			if Dumps(before, true, true, false) != Dumps(after, true, true, false) {
+			if pyjson.Dumps(before, pyjson.Options{Compact: true, SortKeys: true, Unicode: true}) != pyjson.Dumps(after, pyjson.Options{Compact: true, SortKeys: true, Unicode: true}) {
 				*problems = append(*problems, Problem{Code: ReviewSetUnstable, Detail: "the review threads were read twice and the two readings disagree about which threads exist or which are resolved, so no stable set of them was observed and the zero this would have reported is not a count"})
 			}
 		}
@@ -555,7 +556,7 @@ func collectGates(f *Forge, owner, name string, base any, problems *[]Problem, c
 	g["requiredDeclared"] = required
 	g["requiredProviders"] = providerAny
 	digestInput := map[string]any{"required": required, "providers": providerAny, "strictBase": g["strictBase"], "threadResolutionRequired": g["threadResolutionRequired"]}
-	sum := sha256String(Dumps(digestInput, false, true, true))
+	sum := sha256String(pyjson.Dumps(digestInput, pyjson.Options{SortKeys: true}))
 	g["digest"] = sum
 	return g
 }
@@ -719,7 +720,7 @@ func RestateProblems(head string, record, snapshot any) []Problem {
 		problems = append(problems, Problem{Code: GatesMoved, Detail: "the record was graded against required checks " + Repr(sortedTexts(stated)) + " and this branch now declares " + Repr(sortedTexts(fresh))})
 	}
 	expected, recorded := providerObject(gates["requiredProviders"]), providerObject(providers)
-	if _, ok := Object(gates["requiredProviders"]); ok && Dumps(expected, true, true, false) != Dumps(recorded, true, true, false) {
+	if _, ok := Object(gates["requiredProviders"]); ok && pyjson.Dumps(expected, pyjson.Options{Compact: true, SortKeys: true, Unicode: true}) != pyjson.Dumps(recorded, pyjson.Options{Compact: true, SortKeys: true, Unicode: true}) {
 		said := "nothing"
 		if len(recorded) > 0 {
 			said = Repr(recorded)

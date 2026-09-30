@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/faults"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -322,7 +323,7 @@ func clone(m Object) Object {
 	return out
 }
 func equal(a, b any) bool {
-	return evidence.Dumps(a, true, true, false) == evidence.Dumps(b, true, true, false)
+	return pyjson.Dumps(a, pyjson.Options{Compact: true, SortKeys: true, Unicode: true}) == pyjson.Dumps(b, pyjson.Options{Compact: true, SortKeys: true, Unicode: true})
 }
 func registryKeys(registries map[string]Object) []string {
 	m := Object{}

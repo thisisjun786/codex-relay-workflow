@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -33,7 +33,7 @@ func managedFixture(t *testing.T) (string, string, Object) {
 	}
 	slices.Sort(names)
 	for _, name := range names {
-		writeTest(t, filepath.Join(directory, name), []byte(evidence.Dumps(facts[name], false, false, true)))
+		writeTest(t, filepath.Join(directory, name), []byte(pyjson.Dumps(facts[name], pyjson.Options{})))
 	}
 	return root, directory, Object{{Key: "session_id", Value: "s"}, {Key: "turn_id", Value: "t"}, {Key: "cwd", Value: workspace}}
 }

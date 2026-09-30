@@ -17,7 +17,7 @@ import (
 	"syscall"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -227,7 +227,7 @@ func Decode(raw []byte) (any, error) {
 	if message := store.PythonJSONError(text); message != "" {
 		return nil, &Failure{Class: "JSONDecodeError", Message: message}
 	}
-	value, err := hook.Decode([]byte(text))
+	value, err := pyjson.Loads(text, pyjson.LoadOptions{Constants: true, Surrogates: true, RawSurrogates: true, Numbers: pyjson.Int64Numbers})
 	if err != nil {
 		return nil, &Failure{Class: "ValueError", Message: err.Error()}
 	}

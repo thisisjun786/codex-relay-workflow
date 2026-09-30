@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -90,7 +90,7 @@ func (c *Channel) FromEvent(ctx context.Context, eventID string) (*Obligation, e
 	}
 	subject := eventID
 	if kind != "completion" {
-		cause := evidence.Dumps([]string{firstNonempty(report.status, outcome), report.reason, report.summary}, true, false, false)
+		cause := pyjson.Dumps([]string{firstNonempty(report.status, outcome), report.reason, report.summary}, pyjson.Options{Compact: true, Unicode: true})
 		subject = fmt.Sprintf("g%d:%s", generation, hash32(cause)[:16])
 	}
 	var issue sql.NullString

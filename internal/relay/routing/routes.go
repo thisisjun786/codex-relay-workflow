@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -213,14 +214,14 @@ func (r RouteStore) UnreachedProposal(ctx context.Context, product string, goal 
 	if goal == nil {
 		return nil, nil
 	}
-	row, err := r.Store.One(ctx, "SELECT fault_id "+unreached+" AND product_key = ? AND goal = ? ORDER BY rowid LIMIT 1", "filed", "project_proposal", evidence.Dumps(reached, false, false, true), product, goal)
+	row, err := r.Store.One(ctx, "SELECT fault_id "+unreached+" AND product_key = ? AND goal = ? ORDER BY rowid LIMIT 1", "filed", "project_proposal", pyjson.Dumps(reached, pyjson.Options{}), product, goal)
 	if err != nil || row == nil {
 		return nil, err
 	}
 	return row.Get("fault_id"), nil
 }
 func (r RouteStore) UnreachedCount(ctx context.Context, reached []any) (int64, error) {
-	row, err := r.Store.One(ctx, "SELECT COUNT(*) AS n FROM (SELECT DISTINCT product_key, goal "+unreached+")", "filed", "project_proposal", evidence.Dumps(reached, false, false, true))
+	row, err := r.Store.One(ctx, "SELECT COUNT(*) AS n FROM (SELECT DISTINCT product_key, goal "+unreached+")", "filed", "project_proposal", pyjson.Dumps(reached, pyjson.Options{}))
 	if err != nil {
 		return 0, err
 	}

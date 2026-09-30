@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 )
 
@@ -22,7 +23,7 @@ const scanChunk = 1 << 16
 
 // EventKey is byte-identical to stopadapter.event_key, including ensure_ascii.
 func EventKey(session, turn, active, item any) string {
-	sum := sha256.Sum256([]byte(evidence.Dumps([]any{EventKeyTag, session, turn, active, item}, true, false, true)))
+	sum := sha256.Sum256([]byte(pyjson.Dumps([]any{EventKeyTag, session, turn, active, item}, pyjson.Options{Compact: true})))
 	return hex.EncodeToString(sum[:])
 }
 

@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -9,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -84,20 +84,7 @@ func pyRepr(v any) string {
 	case json.Number:
 		return string(value)
 	case float64:
-		var buf bytes.Buffer
-		if err := contract.Emit(&buf, value); err != nil {
-			return fmt.Sprint(value)
-		}
-		text := strings.TrimSuffix(buf.String(), "\n")
-		switch text {
-		case "NaN":
-			return "nan"
-		case "Infinity":
-			return "inf"
-		case "-Infinity":
-			return "-inf"
-		}
-		return text
+		return pyjson.Float(value)
 	case []any:
 		parts := make([]string, len(value))
 		for i, item := range value {

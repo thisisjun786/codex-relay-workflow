@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/reception"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -146,6 +147,6 @@ func packetReplay(t *testing.T, family string, names ...string) {
 		} else {
 			result = obj("result", got)
 		}
-		golden.Check(t, fmt.Sprintf("%04d %s", i, function), []byte(evidence.Dumps(result, false, false, true)))
+		golden.Check(t, fmt.Sprintf("%04d %s", i, function), []byte(pyjson.Dumps(result, pyjson.Options{})))
 	}
 }

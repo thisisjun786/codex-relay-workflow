@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 const collectorHead = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -214,8 +216,8 @@ func Test24_MEE_2_IndependentOracle(t *testing.T) {
 		if len(ps) > 0 {
 			got = []any{"merge_review_incomplete", strings.Join(Details(ps), "; "), "", "task-parent", "merge_target", "owner/repo@dev"}
 		}
-		if Dumps(got, true, true, false) != Dumps(expected, true, true, false) {
-			t.Fatalf("review %d go=%s oracle=%s", i, Dumps(got, true, true, false), Dumps(expected, true, true, false))
+		if pyjson.Dumps(got, pyjson.Options{Compact: true, SortKeys: true, Unicode: true}) != pyjson.Dumps(expected, pyjson.Options{Compact: true, SortKeys: true, Unicode: true}) {
+			t.Fatalf("review %d go=%s oracle=%s", i, pyjson.Dumps(got, pyjson.Options{Compact: true, SortKeys: true, Unicode: true}), pyjson.Dumps(expected, pyjson.Options{Compact: true, SortKeys: true, Unicode: true}))
 		}
 	}
 	whole(t, "MEE-2", oracle)

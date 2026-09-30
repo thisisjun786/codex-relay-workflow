@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -56,7 +57,7 @@ func (s *Outbox) SetTarget(ctx context.Context, rid, target, ref string) (Obj, e
 	return obj("relationshipId", rid, "target", target, "targetRef", ref), e
 }
 func (s *Outbox) journal(ctx context.Context, kind, id string, detail Obj, at string) error {
-	_, e := s.Store.Q(ctx).ExecContext(ctx, "INSERT INTO journal (at, kind, subject, detail) VALUES (?,?,?,?)", at, kind, id, evidence.Dumps(detail, false, false, true))
+	_, e := s.Store.Q(ctx).ExecContext(ctx, "INSERT INTO journal (at, kind, subject, detail) VALUES (?,?,?,?)", at, kind, id, pyjson.Dumps(detail, pyjson.Options{}))
 	return e
 }
 
@@ -183,10 +184,10 @@ func (s *Outbox) Claim(ctx context.Context, id, owner string, now float64) (Obj,
 			return refuse("sync_not_claimable", "%s is failed after %v attempts; call retry to resume it deliberately", store.PyRepr(id), r.Get("attempts"))
 		}
 		if n, ok := r.Get("next_attempt_at").(float64); ok && n > now {
-			return refuse("sync_not_claimable", "%s is backing off until %s", store.PyRepr(id), evidence.Dumps(n, false, false, true))
+			return refuse("sync_not_claimable", "%s is backing off until %s", store.PyRepr(id), pyjson.Dumps(n, pyjson.Options{}))
 		}
 		if n, ok := r.Get("lease_until").(float64); ok && n > now {
-			return refuse("sync_not_claimable", "%s is leased by %s until %s", store.PyRepr(id), store.PyRepr(text(r.Get("lease_owner"))), evidence.Dumps(n, false, false, true))
+			return refuse("sync_not_claimable", "%s is leased by %s until %s", store.PyRepr(id), store.PyRepr(text(r.Get("lease_owner"))), pyjson.Dumps(n, pyjson.Options{}))
 		}
 		return s.Store.ClaimSync(ctx, id, "claimed", owner, now+300, token, s.Clock.ISO())
 	})
