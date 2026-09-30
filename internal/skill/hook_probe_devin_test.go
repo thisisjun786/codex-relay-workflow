@@ -46,10 +46,9 @@ func TestHookProbeReplayFailuresMatchLivePython(t *testing.T) {
 	goldenRoot(t)
 	binary := recordedCRW(t)
 	root := repositoryRoot()
-	inputs := pythonInputs(t)
-	decisions := filepath.Join(inputs, "decisions")
-	contractPath := filepath.Join(inputs, "hook-contract.md")
-	host := filepath.Join(inputs, "host")
+	decisions := diskSkillPath(defaultFixture("decisions"))
+	contractPath := diskSkillPath(defaultContract("hook-contract.md"))
+	host := diskSkillPath(defaultFixture("host"))
 
 	t.Run("drifted documented trace", func(t *testing.T) {
 		fixtures := filepath.Join(t.TempDir(), "decisions")
@@ -110,7 +109,7 @@ func TestHookProbeReplayFailuresMatchLivePython(t *testing.T) {
 func TestHookProbeMalformedSelectionAndCountersMatchLivePython(t *testing.T) {
 	goldenRoot(t)
 	binary := recordedCRW(t)
-	decisions := filepath.Join(pythonInputs(t), "decisions")
+	decisions := diskSkillPath(defaultFixture("decisions"))
 	raw, err := os.ReadFile(filepath.Join(decisions, "claim-whose-preimage-is-not-a-string.json"))
 	if err != nil {
 		t.Fatal(err)

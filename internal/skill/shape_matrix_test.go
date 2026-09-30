@@ -35,8 +35,7 @@ func TestSkillJSONShapeLivePython(t *testing.T) {
 	goldenRoot(t)
 	t.Setenv("TZ", "Pacific/Honolulu")
 	binary := recordedCRW(t)
-	inputs := pythonInputs(t)
-	cases := append(hookShapeCases(t, inputs), titleShapeCases(t)...)
+	cases := append(hookShapeCases(t), titleShapeCases(t)...)
 	cases = append(cases, hostShapeCases()...)
 	cases = append(cases, observeShapeCases(t)...)
 	cases = append(cases, osErrorShapeCases()...)
@@ -83,8 +82,6 @@ func TestSkillJSONShapeLivePython(t *testing.T) {
 			for i, arg := range test.args {
 				args[i] = strings.ReplaceAll(arg, "$TMP", dir)
 			}
-			// A replay reads the frozen inputs wherever the case names no path of its own.
-			args = frozenReplayArgs(inputs, test.family, args)
 			input, err := json.Marshal(test.stdin)
 			if err != nil {
 				t.Fatal(err)

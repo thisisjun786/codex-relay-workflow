@@ -14,9 +14,8 @@ import (
 func TestHookHostMutationsLivePython(t *testing.T) {
 	goldenRoot(t)
 	crw := recordedCRW(t)
-	inputs := pythonInputs(t)
-	host := filepath.Join(inputs, "host")
-	contractPath := filepath.Join(inputs, "hook-contract.md")
+	host := diskSkillPath(defaultFixture("host"))
+	contractPath := diskSkillPath(defaultContract("hook-contract.md"))
 	for _, name := range []string{"missing capability", "wrong pair", "wrong version", "missing required fields", "delivered fields", "missing types", "type fields", "unknown type", "missing rows", "extra row", "row question", "row status", "row observed", "row evidence", "unresolved row", "duplicate packet", "unreadable packet", "invalid observation"} {
 		t.Run(name, func(t *testing.T) {
 			dir := filepath.Join(t.TempDir(), "host")
@@ -99,7 +98,7 @@ func TestHookHostMutationsLivePython(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			args := []string{"replay", "--fixtures", filepath.Join(inputs, "decisions"), "--host-fixtures", dir, "--contract", contract}
+			args := []string{"replay", "--host-fixtures", dir, "--contract", contract}
 			// The host facts replay reads are the golden's (first taken as what hook_probe.py's
 			// check_host_observations answered).
 			contractFS, relative := explicitSkillFS(contract)

@@ -172,8 +172,7 @@ func TestSkillReplayUnreadableFixturesLivePython(t *testing.T) {
 		}
 		return to
 	}
-	inputs := pythonInputs(t)
-	bundled := func(name string) string { return filepath.Join(inputs, name) }
+	bundled := func(name string) string { return diskSkillPath(defaultFixture(name)) }
 	unreadable := func(t *testing.T, path string) {
 		t.Helper()
 		if err := os.Chmod(path, 0); err != nil {
@@ -214,8 +213,8 @@ func TestSkillReplayUnreadableFixturesLivePython(t *testing.T) {
 			if test.fixtures == "host" {
 				args = []string{"replay", "--host-fixtures", dir}
 			}
-			// When the real command replays it, every other path at the frozen inputs.
-			answer := runSkill(t, binary, test.family, frozenReplayArgs(inputs, test.family, args), nil)
+			// When the real command replays it, every other path at the shipped default.
+			answer := runSkill(t, binary, test.family, args, nil)
 			// Then it fails, as the golden holds.
 			if answer.exit == 0 {
 				t.Fatalf("a bad fixture passed: %+v", answer)
@@ -268,7 +267,7 @@ func TestHookOracleSelfCheckLivePython(t *testing.T) {
 // fixture observation.
 func TestHookReplayReachMatchesPythonTracer(t *testing.T) {
 	fixtures := t.TempDir()
-	if output, err := exec.Command("cp", "-r", filepath.Join(pythonInputs(t), "decisions")+"/.", fixtures).CombinedOutput(); err != nil {
+	if output, err := exec.Command("cp", "-r", diskSkillPath(defaultFixture("decisions"))+"/.", fixtures).CombinedOutput(); err != nil {
 		t.Fatalf("%v %s", err, output)
 	}
 	for name, mutate := range map[string]func(o, current, older map[string]any){
