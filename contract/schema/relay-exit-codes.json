@@ -19,7 +19,6 @@
     "SYMLINK_COMPONENT": "symlink_component",
     "PATH_CHANGED": "path_changed",
     "PATH_RELOCATED": "path_relocated",
-    "ROOT_MOVED": "root_moved",
     "UNVERIFIABLE_PATH_BINDING": "unverifiable_path_binding",
     "INSUFFICIENT_PATH_BINDING": "insufficient_path_binding",
     "ARTIFACT_MUTATED_DURING_READ": "artifact_mutated_during_read",
@@ -43,8 +42,6 @@
     "ACK_TURN_UNVERIFIED": "ack_turn_unverified",
     "DISPOSITION_CONFLICT": "disposition_conflict",
     "NOT_ACKNOWLEDGED": "not_acknowledged",
-    "OPERATOR_RELEASE_DISABLED": "operator_release_disabled",
-    "RELEASE_EVIDENCE_MISSING": "release_evidence_missing",
     "SETTINGS_UNAVAILABLE": "settings_unavailable",
     "SETTINGS_INCOMPLETE": "settings_incomplete",
     "SETTINGS_MISTYPED": "settings_mistyped",
@@ -101,7 +98,6 @@
     "FAULT_STATE_CONFLICT": "fault_state_conflict",
     "FAULT_NOT_CLAIMABLE": "fault_not_claimable",
     "FAULT_CLAIM_STALE": "fault_claim_stale",
-    "FAULT_WRITE_UNCERTAIN": "fault_write_uncertain",
     "FAULT_READBACK_MISMATCH": "fault_readback_mismatch",
     "FAULT_UNVERIFIED": "fault_unverified",
     "FAULT_VERIFICATION_STALE": "fault_verification_stale",
@@ -116,12 +112,10 @@
     "ROUTE_PRODUCT_UNKNOWN": "route_product_unknown",
     "ROUTE_SURFACE_UNWATCHED": "route_surface_unwatched",
     "ROUTE_STATE_CONFLICT": "route_state_conflict",
-    "ROUTE_LEDGER_PENDING": "route_ledger_pending",
     "MERGE_TARGET_UNREADABLE": "merge_target_unreadable",
     "MERGE_BASE_MISMATCH": "merge_base_mismatch",
     "MERGE_BASE_NOT_ADVANCED": "merge_base_not_advanced",
     "MERGE_EVIDENCE_MALFORMED": "merge_evidence_malformed",
-    "STORE_OWNED_BY_OTHER": "store_owned_by_other",
-    "INBOX_CONFLICT": "inbox_conflict"
+    "STORE_OWNED_BY_OTHER": "store_owned_by_other"
   }
 }

@@ -11,17 +11,34 @@ import (
 	"strings"
 )
 
+// schemaPath and outputPath are relative to internal/contract, where `go generate` runs this.
+var (
+	schemaPath = filepath.Join("..", "..", "contract", "schema", "relay-exit-codes.json")
+	outputPath = "exit_codes_generated.go"
+)
+
 func main() {
-	input, err := os.ReadFile(filepath.Join("..", "..", "contract", "schema", "relay-exit-codes.json"))
+	input, err := os.ReadFile(schemaPath)
 	if err != nil {
 		fail(err)
 	}
+	formatted, err := render(input)
+	if err != nil {
+		fail(err)
+	}
+	if err := os.WriteFile(outputPath, formatted, 0644); err != nil {
+		fail(err)
+	}
+}
+
+// render is exit_codes_generated.go for the schema's bytes.
+func render(input []byte) ([]byte, error) {
 	var schema struct {
 		Codes          map[string]int    `json:"codes"`
 		RefusalReasons map[string]string `json:"refusalReasons"`
 	}
 	if err := json.Unmarshal(input, &schema); err != nil {
-		fail(err)
+		return nil, err
 	}
 	var out bytes.Buffer
 	out.WriteString("// Code generated from contract/schema/relay-exit-codes.json; DO NOT EDIT.\npackage contract\n\n")
@@ -44,13 +61,7 @@ func main() {
 		fmt.Fprintf(&out, "Refusal%s RefusalReason = %q\n", title(key), schema.RefusalReasons[key])
 	}
 	out.WriteString(")\n")
-	formatted, err := format.Source(out.Bytes())
-	if err != nil {
-		fail(err)
-	}
-	if err := os.WriteFile("exit_codes_generated.go", formatted, 0644); err != nil {
-		fail(err)
-	}
+	return format.Source(out.Bytes())
 }
 
 func title(key string) string {

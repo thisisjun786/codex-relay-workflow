@@ -47,6 +47,18 @@ func tablesJSON(ctx context.Context, s *store.Store) (string, error) {
 	}
 	return evidence.Dumps(tables, false, true, false), nil
 }
+
+// retiredLedgerScenarios are the recorded PRD-13 scenarios that ran with the ledger contract
+// absent and whose answers are its route_ledger_pending refusal. The Go runtime always carries
+// the ledger contract, so that refusal is unreachable and was retired in wave R1; the recording
+// keeps them, and the replay skips them. The other PRD-13 scenarios answer the same with the
+// contract present.
+var retiredLedgerScenarios = map[string]bool{
+	"test_every_port_method_refuses_by_name_while_the_contract_is_absent": true,
+	"test_every_ledger_backed_path_refuses_before_writing":                true,
+	"test_a_binding_whose_decisions_were_refused_is_not_kept":             true,
+}
+
 func integrationReplay(t *testing.T, property string) {
 	t.Helper()
 	_, file, _, _ := runtime.Caller(0)
@@ -70,7 +82,6 @@ func integrationReplay(t *testing.T, property string) {
 		PageSize                                int64
 		PageInjection                           bool
 		Failure                                 string
-		Missing                                 []string
 		TransactionReads                        []any
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
@@ -92,7 +103,14 @@ func integrationReplay(t *testing.T, property string) {
 			}
 		}
 	}()
+	retired := false
 	for i, record := range records {
+		if record.Operation == "reset" {
+			retired = retiredLedgerScenarios[record.Scenario]
+		}
+		if retired {
+			continue
+		}
 		ok := t.Run(fmt.Sprintf("%03d_%s", i, record.Operation), func(t *testing.T) {
 			clock.stamp, clock.now = record.Stamp, record.Now
 			entropy := make([]byte, 256)
@@ -106,8 +124,7 @@ func integrationReplay(t *testing.T, property string) {
 			var err error
 			reads := []any{}
 			if router != nil {
-				router.Missing = record.Missing
-				router.DecisionRead = func(ctx context.Context, name string) { reads = append(reads, []any{name, s.InTransaction(ctx)}) }
+				router.test.decisionRead = func(ctx context.Context, name string) { reads = append(reads, []any{name, s.InTransaction(ctx)}) }
 			}
 			if record.Operation == "reset" {
 				if s != nil {
@@ -122,19 +139,19 @@ func integrationReplay(t *testing.T, property string) {
 			} else if record.Operation == "sql" {
 				_, err = s.Q(ctx).ExecContext(ctx, text(args[0]), list(args[1])...)
 			} else {
-				router.DigestPageSize = record.PageSize
-				router.BeforeWrite = nil
+				router.test.digestPageSize = record.PageSize
+				router.test.beforeWrite = nil
 				if record.Failure != "" {
-					router.BeforeWrite = func(_ context.Context, step string) error {
+					router.test.beforeWrite = func(_ context.Context, step string) error {
 						if step == "queue" && record.Failure == "queue" || step == "save" && record.Failure == "filing failed" {
 							return fmt.Errorf("%s", record.Failure)
 						}
 						return nil
 					}
 				}
-				router.BeforeDigestPage = nil
+				router.test.beforeDigestPage = nil
 				if record.PageInjection {
-					router.BeforeDigestPage = func(ctx context.Context, page int) error {
+					router.test.beforeDigestPage = func(ctx context.Context, page int) error {
 						if page != 2 {
 							return nil
 						}
@@ -242,8 +259,6 @@ func integrationCall(ctx context.Context, r *Router, name string, a []any, k Obj
 	}
 	l := r.Ledger
 	switch name {
-	case "port.require":
-		return nil, r.ready(text(a[0]))
 	case "registry-installed":
 		return Object{"project_create": faults.RegisteredKind("project_create"), "completion_mismatch": faults.RegisteredClass("completion_mismatch"), "missing": []any{}}, nil
 	case "router.register_product":

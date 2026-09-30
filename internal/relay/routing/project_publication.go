@@ -62,9 +62,6 @@ func issuable(ctx context.Context, s *store.Store, fault Object, value any) ([]s
 	return ProjectEligibility(ctx, s, payload)
 }
 func (r *Router) EvaluateProjects(ctx context.Context, product string) (Object, error) {
-	if err := r.ready("route-projects"); err != nil {
-		return nil, err
-	}
 	registry, err := r.Registry(ctx, product)
 	if err != nil {
 		return nil, err
@@ -93,9 +90,7 @@ func (r *Router) evaluateProjects(ctx context.Context, product string) (Object, 
 			answer = Object{"queued": []any{}, "skipped": []any{}, "cancelled": cancelled, "reason": "no explicit project creation policy is enabled"}
 			return nil
 		}
-		if r.DecisionRead != nil {
-			r.DecisionRead(ctx, "groups")
-		}
+		r.test.read(ctx, "groups")
 		groups := Object{}
 		var after any
 		for {
@@ -148,9 +143,6 @@ func (r *Router) evaluateProjects(ctx context.Context, product string) (Object, 
 				skipped = append(skipped, Object{"goal": goal, "reasons": problems})
 				continue
 			}
-			if err = r.ready("fault_id"); err != nil {
-				return err
-			}
 			id, err := r.Ledger.CanonicalID(ctx, product, "project_needed", Object{"goal": goal}, text(group["workspace"]))
 			if err != nil {
 				return err
@@ -187,10 +179,8 @@ func (r *Router) evaluateProjects(ctx context.Context, product string) (Object, 
 			if _, err = r.Ledger.RecordObservation(ctx, o, nil); err != nil {
 				return err
 			}
-			if r.BeforeWrite != nil {
-				if err := r.BeforeWrite(ctx, "queue"); err != nil {
-					return err
-				}
+			if err := r.test.write(ctx, "queue"); err != nil {
+				return err
 			}
 			if _, err = r.Ledger.Queue(ctx, id, "project_create", trigger, payload); err != nil {
 				return err
@@ -215,9 +205,6 @@ func (r *Router) withdrawProjects(ctx context.Context, product string) ([]any, e
 			return nil, err
 		}
 		for _, v := range list(page["routes"]) {
-			if err = r.ready("get"); err != nil {
-				return nil, err
-			}
 			route := object(v)
 			id := text(route["fault_id"])
 			fault, err := r.Ledger.Get(ctx, id)

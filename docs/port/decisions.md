@@ -2900,3 +2900,39 @@ Evidence: `internal/relay/hook/registrations.go` (`readRegistrations`, `nativeRe
 `Test33ReviewD1Status`; `internal/contracttest/hook.go` (`runHook`); the product's exec sites,
 `git grep -n 'exec.Command' -- 'cmd/*.go' 'internal/*.go' ':!*_test.go'`, none of which runs an
 interpreter.
+
+## 58. Refusal reasons no runtime can give leave the vocabulary (wave R1)
+
+Decision: six members of the relay's frozen refusal vocabulary
+(`contract/schema/relay-exit-codes.json` `refusalReasons`, and the `contract.Refusal*` constants
+generated from it) are removed. `route_ledger_pending` was product routing's answer when the
+ledger contract it binds to was absent: the Python `ledger_port.py` checked the binding at run
+time, and the Go router kept the state as a `Missing` list only its tests filled, because the Go
+binary always carries the ledger. That list, the readiness checks on every ledger-backed path and
+the CLI's context override go with it. `operator_release_disabled`, `release_evidence_missing`,
+`root_moved` and `fault_write_uncertain` are raised nowhere: no Go path, document, skill or
+recorded answer names them outside the schema. `inbox_conflict` was the takeover inbox's refusal
+of a retried entry whose bytes differ; with the inbox retired (decision 55) nothing queues an
+entry, so nothing can give it. The exit codes are unchanged, and every reason a command can still
+give is still a member.
+
+Alongside: the router's test hooks (`BeforeWrite`, `BeforeDigestPage`, `DigestPageSize`,
+`DecisionRead`) leave its exported fields for an unexported `routerSeams` only the package's
+tests set, and the generator gains a sync test (`TestTheGeneratedCodesAreTheSchemas`). That test
+found the generated constants already behind the schema by two members: `store_owned_by_other`,
+which the regeneration adds, and `inbox_conflict`, which leaves the schema as above.
+
+Why: a consumer reads a refusal's `reason`; a reason nothing can emit only asks every reader to
+handle a case that cannot occur, and a state reachable only by a test's injection is a second
+behaviour the product does not have.
+
+Cost: the recorded PRD-13 scenarios that ran with the ledger contract absent are skipped by the
+integration replay (`retiredLedgerScenarios`), and the CLI replay of PRD-13, whose route commands
+all answered `route_ledger_pending`, is deleted with its recording; docs/port/test-map.md keeps
+naming it as the record of the port. The other PRD-13 scenarios (an unwatched surface refused
+before the ledger, a binding that touches no ledger) replay unchanged.
+
+Evidence: `contract/schema/relay-exit-codes.json`; `internal/contract/exit_codes_generated.go`,
+`internal/contract/generate/main_test.go`; `internal/relay/routing/router.go` (`Router`,
+`routerSeams`), `integration_test.go` (`retiredLedgerScenarios`, `Test23_PRD_13_LedgerGate`);
+`git grep -n` for each removed reason prints only history; docs/relay/product-routing.md "Status".

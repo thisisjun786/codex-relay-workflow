@@ -16,30 +16,44 @@ type Router struct {
 	Store  *store.Store
 	Clock  faults.Clock
 	Ledger *faults.Ledger
-	// Missing models an explicitly unavailable ledger contract for embedded callers.
-	Missing []string
-	// Hooks let embedded callers observe transaction-bound decisions and inject failures.
-	BeforeWrite      func(context.Context, string) error
-	BeforeDigestPage func(context.Context, int) error
-	DigestPageSize   int64
-	DecisionRead     func(context.Context, string)
+	// test holds the seams the package's tests set; production leaves it zero.
+	test routerSeams
+}
+
+// routerSeams let this package's tests observe transaction-bound decisions, inject failures and
+// page the digest in smaller pages; each is a no-op while unset.
+type routerSeams struct {
+	beforeWrite      func(context.Context, string) error
+	beforeDigestPage func(context.Context, int) error
+	digestPageSize   int64
+	decisionRead     func(context.Context, string)
+}
+
+func (s routerSeams) write(ctx context.Context, step string) error {
+	if s.beforeWrite == nil {
+		return nil
+	}
+	return s.beforeWrite(ctx, step)
+}
+
+func (s routerSeams) digestPage(ctx context.Context, page int) error {
+	if s.beforeDigestPage == nil {
+		return nil
+	}
+	return s.beforeDigestPage(ctx, page)
+}
+
+func (s routerSeams) read(ctx context.Context, decision string) {
+	if s.decisionRead != nil {
+		s.decisionRead(ctx, decision)
+	}
 }
 
 func New(s *store.Store, clock faults.Clock) *Router {
 	faults.InstallProductDeclarations()
 	return &Router{Store: s, Clock: clock, Ledger: &faults.Ledger{Store: s, Clock: clock}}
 }
-func (r *Router) routes() RouteStore { return RouteStore{Store: r.Store, Clock: r.Clock} }
-func (r *Router) ready(capability string) error {
-	if len(r.Missing) == 0 {
-		return nil
-	}
-	shown := strings.Join(r.Missing[:min(6, len(r.Missing))], ", ")
-	if len(r.Missing) > 6 {
-		shown += " ..."
-	}
-	return &Refusal{"route_ledger_pending", capability + " needs CRW-205's corrected ledger contract; this checkout lacks " + shown}
-}
+func (r *Router) routes() RouteStore           { return RouteStore{Store: r.Store, Clock: r.Clock} }
 func routeRefused(reason, detail string) error { return &Refusal{reason, detail} }
 func (r *Router) Registry(ctx context.Context, product string) (Object, error) {
 	row, err := r.Store.One(ctx, "SELECT record FROM product_registry WHERE product_key = ?", product)
@@ -191,9 +205,7 @@ func (r *Router) Bind(ctx context.Context, value any) (Object, error) {
 		if registry == nil {
 			return routeRefused("route_product_unknown", fmt.Sprintf("%s is not a registered product; register it first", evidence.Repr(product)))
 		}
-		if r.DecisionRead != nil {
-			r.DecisionRead(ctx, "binding")
-		}
+		r.test.read(ctx, "binding")
 		binding, err = ReadBinding(value, registry)
 		if err != nil {
 			return err
@@ -329,9 +341,6 @@ func snapshot(route, fault Object) Object {
 	return Object{"stage": route["stage"], "disposition": route["disposition"], "hold": target["hold"], "project": target["project"], "unverifiedCause": target["unverifiedCause"], "claimedSeverity": route["claimed_severity"], "state": fault["state"], "severity": fault["severity"], "occurrenceCount": count, "externalRef": fault["external_ref"], "linkState": fault["linkState"]}
 }
 func (r *Router) Show(ctx context.Context, product any, attention bool, limit, after any) (Object, error) {
-	if err := r.ready("route-show"); err != nil {
-		return nil, err
-	}
 	page, err := r.routes().Listing(ctx, product, nil, nil, limit, after)
 	if err != nil {
 		return nil, err

@@ -214,7 +214,6 @@ func Test23_CLIWholeRepliesAndTables(t *testing.T) { cliReplay(t, "qa") }
 func Test23_PRD_2_PolicyCLI(t *testing.T)          { cliReplay(t, "PRD-2") }
 func Test23_PRD_10_RegistryCLI(t *testing.T)       { cliReplay(t, "PRD-10") }
 func Test23_PRD_16_UnreadableJSON(t *testing.T)    { cliReplay(t, "PRD-16") }
-func Test23_PRD_13_LedgerGateCLI(t *testing.T)     { cliReplay(t, "PRD-13") }
 func cliReplay(t *testing.T, mode string) {
 	pythonState := filepath.Join(t.TempDir(), "state")
 	raw := oracleScript(t, "cli_capture.py", mode, pythonState)
@@ -248,9 +247,6 @@ func cliReplay(t *testing.T, mode string) {
 	for _, record := range records {
 		t.Run(strings.Join(record.Args[:1], ""), func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
-			if mode == "PRD-13" && strings.HasPrefix(record.Args[0], "route-") {
-				ctx = context.WithValue(ctx, ledgerMissingKey{}, []string{"FaultLedger.adopt", "FaultLedger.record(adopt=)", "faults.UNASSIGNED"})
-			}
 			code := cli.ExecuteAs(ctx, "codex-session-relay", append([]string{"--state", pythonState}, record.Args...), &stdout, &stderr)
 			if code != record.Code || stdout.String() != record.Stdout || stderr.String() != record.Stderr {
 				t.Fatalf("CLI bytes differ exit Python=%d Go=%d\nPython: %s\nGo: %s\nstderr: %s", record.Code, code, record.Stdout, stdout.String(), stderr.String())

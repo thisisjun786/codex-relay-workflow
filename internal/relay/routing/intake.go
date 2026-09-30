@@ -126,9 +126,6 @@ func (r *Router) intake(ctx context.Context, incident Object) (Object, error) {
 	return r.place(ctx, incident, registry, workspace)
 }
 func (r *Router) unresolved(ctx context.Context, incident Object, workspace, why string) (Object, error) {
-	if err := r.ready("fault_id"); err != nil {
-		return nil, err
-	}
 	signature := PendingSignature(incident)
 	id, err := r.Ledger.CanonicalID(ctx, "unclassified", "unclassified_incident", signature, workspace)
 	if err != nil {
@@ -187,9 +184,6 @@ func (r *Router) unresolved(ctx context.Context, incident Object, workspace, why
 	return Object{"faultId": id, "product": nil, "workspace": workspace, "disposition": "pending_classification", "stage": "pending_classification", "reason": why}, nil
 }
 func (r *Router) place(ctx context.Context, incident, registry Object, workspace string) (Object, error) {
-	if err := r.ready("fault_id"); err != nil {
-		return nil, err
-	}
 	cause := object(incident["cause"])
 	var causeID, claim any
 	var causeRow Object
@@ -239,9 +233,7 @@ func (r *Router) file(ctx context.Context, incident, registry Object, workspace 
 	if err != nil {
 		return nil, err
 	}
-	if r.DecisionRead != nil {
-		r.DecisionRead(ctx, "decide")
-	}
+	r.test.read(ctx, "decide")
 	decision := Decide(incident, registry, bindings, run)
 	observe := decision["disposition"] == "observe"
 	class, severity := "product_defect", text(incident["severity"])
@@ -398,10 +390,8 @@ func ownerRefusal(err error) bool {
 	return strings.HasPrefix(s, "fault_adopt_conflict:") || strings.HasPrefix(s, "fault_scope_conflict:")
 }
 func (r *Router) saveIncident(ctx context.Context, id, product, workspace string, decision, destination, incident Object) error {
-	if r.BeforeWrite != nil {
-		if err := r.BeforeWrite(ctx, "save"); err != nil {
-			return err
-		}
+	if err := r.test.write(ctx, "save"); err != nil {
+		return err
 	}
 	if err := r.routes().Upsert(ctx, Object{"fault_id": id, "product": product, "workspace": workspace, "disposition": decision["disposition"], "stage": decision["stage"], "target": destination, "origin": incident["origin"], "claimed_severity": incident["severity"], "goal": object(incident["goal"])["key"], "detail": decision["reason"]}); err != nil {
 		return err
@@ -435,9 +425,6 @@ func (r *Router) discharge(ctx context.Context, id string) ([]any, error) {
 	}
 	if len(pending) == 0 {
 		return queued, nil
-	}
-	if err = r.ready("get"); err != nil {
-		return nil, err
 	}
 	row, err := r.Ledger.Get(ctx, id)
 	if err != nil {
@@ -524,9 +511,6 @@ func (r *Router) Classify(ctx context.Context, id string, value any) (Object, er
 			if err = watched(registry, classified(object(v), classification)); err != nil {
 				return err
 			}
-		}
-		if err = r.ready("route-classify"); err != nil {
-			return err
 		}
 		var successor any
 		for _, v := range stored {
