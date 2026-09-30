@@ -1,76 +1,61 @@
 package evidence
 
 import (
-	"fmt"
-	"os/exec"
-	"path/filepath"
 	"testing"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 // Shown is the one envelope helper the product reads (the supervisor channel's rendered message).
-// Compare it with the real Python implementation over every JSON value shape, directly and as an
-// absence's detail; the recorded answer also holds the reach-ladder helpers retired in wave R1.
+// Its answers over every JSON value shape, directly and as an absence's detail, are the golden;
+// they began as the Python implementation's.
 func Test24EnvelopeAccessorPython(t *testing.T) {
-	root, err := filepath.Abs("../../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	script := `import json
-from codex_session_relay import envelope as e
-out=[]
-for v in [None,False,True,0,2,1.5,"","x",[],[1],{}, {"a":1}]:
- for op in ("shown","detail","holds","promotion","reach","source"):
-  ladder=e.unreached(e.CHILD_TO_PARENT)
-  ladder[e.TRANSPORT_ACCEPTED]=v
-  try:
-   if op=="shown": result=e.shown(v)
-   elif op=="detail": result=e.shown({"absent":"unknown","detail":v})
-   elif op=="holds": result=e.stage_holds(ladder,e.TRANSPORT_ACCEPTED)
-   elif op=="promotion": result=e.promotion_refused(ladder)
-   else:
-    if op=="source": ladder[e.TRANSPORT_ACCEPTED]={"state":"yes","source":v}
-    result=e.check_reach(e.CHILD_TO_PARENT,ladder)
-   error=None
-  except e.EnvelopeRefused as ex: result=None;error=ex.detail
-  except Exception as ex: result=None;error=type(ex).__name__+": "+str(ex)
-  out.append({"op":op,"value":v,"result":result,"error":error})
-print(json.dumps(out))`
-	raw := pyoracle.Answer(t, "envelope-accessors", func() ([]byte, error) {
-		raw, err := exec.Command(filepath.Join(root, ".venv/bin/python"), "-c", script).CombinedOutput()
-		if err != nil {
-			return nil, fmt.Errorf("oracle: %v\n%s", err, raw)
-		}
-		return raw, nil
-	})
-	for _, value := range Items(Decode(string(raw))) {
+	rows := golden.Want(t, "envelope-accessors", envelopeAccessorRows)
+	for _, value := range Items(Decode(string(rows))) {
 		row := Dict(value, false)
 		tc := struct {
 			Op                   string
 			Value, Result, Error any
 		}{Text(row["op"]), row["value"], row["result"], row["error"]}
-		if tc.Op != "shown" && tc.Op != "detail" {
-			continue
-		}
 		t.Run(tc.Op+"/"+Repr(tc.Value), func(t *testing.T) {
-			var got any
-			err := func() (err error) {
-				defer RecoverPython(&err)
-				if tc.Op == "shown" {
-					got = Shown(tc.Value)
-				} else {
-					got = Shown(map[string]any{"absent": "unknown", "detail": tc.Value})
-				}
-				return nil
-			}()
-			var failure any
-			if err != nil {
-				failure = err.Error()
-			}
-			if Dumps(failure, false, true, true) != Dumps(tc.Error, false, true, true) || (err == nil && Dumps(got, false, true, true) != Dumps(tc.Result, false, true, true)) {
-				t.Fatalf("diff: Go=(%v,%v) Python=(%v,%v)", got, failure, tc.Result, tc.Error)
+			got, failure := envelopeAccessor(tc.Op, tc.Value)
+			if Dumps(failure, false, true, true) != Dumps(tc.Error, false, true, true) || (failure == nil && Dumps(got, false, true, true) != Dumps(tc.Result, false, true, true)) {
+				t.Fatalf("diff: Go=(%v,%v) golden=(%v,%v)", got, failure, tc.Result, tc.Error)
 			}
 		})
 	}
+}
+
+// envelopeAccessorValues is every JSON value shape the envelope accessors are asked about.
+const envelopeAccessorValues = `[null, false, true, 0, 2, 1.5, "", "x", [], [1], {}, {"a": 1}]`
+
+// envelopeAccessorRows is Shown's answer for each value, directly ("shown") and as an absence's
+// detail ("detail"), as json.dumps renders the rows.
+func envelopeAccessorRows() []byte {
+	var rows []any
+	for _, value := range Items(Decode(envelopeAccessorValues)) {
+		for _, op := range []string{"shown", "detail"} {
+			result, failure := envelopeAccessor(op, value)
+			rows = append(rows, contract.OrderedObject{{Key: "op", Value: op}, {Key: "value", Value: value}, {Key: "result", Value: result}, {Key: "error", Value: failure}})
+		}
+	}
+	return []byte(Dumps(rows, false, false, true) + "\n")
+}
+
+// envelopeAccessor runs one accessor on value: its result, or the refusal's text (nil when none).
+func envelopeAccessor(op string, value any) (result, failure any) {
+	err := func() (err error) {
+		defer RecoverPython(&err)
+		if op == "shown" {
+			result = Shown(value)
+		} else {
+			result = Shown(map[string]any{"absent": "unknown", "detail": value})
+		}
+		return nil
+	}()
+	if err != nil {
+		return nil, err.Error()
+	}
+	return result, nil
 }
