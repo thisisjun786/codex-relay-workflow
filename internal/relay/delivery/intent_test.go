@@ -334,7 +334,7 @@ func TestINT16_a_claim_must_correlate_with_the_intents_dispatch(t *testing.T) {
 // the Go side uses its WTF-8 byte spelling so both real implementations receive the value
 // their string model can represent. Removing CorrelationProblem's utf8.ValidString guard
 // compiles and changes only the Go result to claim_dispatch_mismatch.
-func TestINT16_unencodable_dispatch_is_unnamed_live_python(t *testing.T) {
+func TestINT16_unencodable_dispatch_is_unnamed(t *testing.T) {
 	answers := sameOps(t, nil,
 		markerOp{"op": "unencodable_correlation"},
 		markerOp{"op": "unencodable_selection", "assignment": AssignmentID(string([]byte{0xed, 0xa0, 0x80}))},

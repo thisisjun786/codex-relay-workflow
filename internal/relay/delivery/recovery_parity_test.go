@@ -1,16 +1,14 @@
 package delivery
 
 import (
-	"encoding/json"
 	"os"
-	"os/exec"
 	"os/user"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 // A store serving another socket lists, beside the socket-first line, the directory
@@ -18,9 +16,9 @@ import (
 // Path(pinned).expanduser().resolve(). ~user is that user's passwd home, and a relative pin is
 // read against the working directory the kernel names, not $PWD's spelling through a link. A pin
 // under a directory this user may not search, or through a link loop, resolves as os.path.realpath
-// keeps it and is offered. A ~user nothing answers is said rather than offered.
+// keeps it and is offered. A ~user nothing answers is said rather than offered. The lines are
+// checked against the golden, which began as what _wrong_socket_recovery answered.
 func TestAWrongSocketRecoveryResolvesThePinnedDirectoryAsPythonDoes(t *testing.T) {
-	python := filepath.Join(repoRoot(t), ".venv", "bin", "python")
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -32,8 +30,8 @@ func TestAWrongSocketRecoveryResolvesThePinnedDirectoryAsPythonDoes(t *testing.T
 		t.Fatal(err)
 	}
 	alias := filepath.Join(root, "alias", "wd")
-	// Each side runs in alias, $PWD spelling it through the link: Python's command there, and the Go
-	// call inside inDirectory (the recordings are filed relative to this package's directory).
+	// The call runs in alias, $PWD spelling it through the link, inside inDirectory: the goldens are
+	// filed relative to this package's directory.
 	t.Setenv("PWD", alias)
 	t.Setenv("HOME", filepath.Join(root, "home"))
 	current, err := user.Current()
@@ -58,34 +56,17 @@ func TestAWrongSocketRecoveryResolvesThePinnedDirectoryAsPythonDoes(t *testing.T
 	// more than the home's own entry.
 	for _, pinned := range []string{"st", "~" + current.Username + "/crw-test-absent-" + filepath.Base(root), "~crw-no-such-user-here/st", "~/st",
 		filepath.Join(locked, "inner", "st"), filepath.Join(alias, "loopa", "st"), "loopa"} {
-		// Named without this run's directory or this user's name: the recording is found by name.
+		// Named without this run's directory or this user's name: the golden is found by name.
 		label := strings.NewReplacer(root, "<root>", current.Username, "<user>").Replace(pinned)
 		t.Run(label, func(t *testing.T) {
 			t.Setenv(stateEnv, pinned)
-			raw := pyAnswer(t, "wrong_socket_recovery", func() ([]byte, error) {
-				command := exec.Command(python, "-c", `import json, sys
-from pathlib import Path
-from codex_session_relay import cli
-from codex_session_relay.store import StateSelection
-cli.PROGRAM.set("PROG")
-print(json.dumps(cli._wrong_socket_recovery(StateSelection(Path(sys.argv[1]), "flag", "d", None), "/r.sock", "/w.sock")))`, selected)
-				command.Dir = alias
-				command.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
-				return pythonCombined(command)
-			}, pyoracle.Substitute(filepath.Join(root, "home"), "<root-home>"), pyoracle.Substitute(root, "<root>"), pyoracle.Substitute(current.HomeDir, "<user-home>"), pyoracle.Substitute("~"+current.Username, "~<user>"))
-			var want []string
-			if err := json.Unmarshal(raw, &want); err != nil {
-				t.Fatalf("%v: %s", err, raw)
-			}
 			var got []string
 			inDirectory(t, alias, func() {
 				for _, line := range wrongSocketRecovery(store.StateSelection{Path: selected}, "/r.sock", "/w.sock") {
 					got = append(got, strings.ReplaceAll(line.(string), program(), "PROG"))
 				}
 			})
-			if strings.Join(got, "\n") != strings.Join(want, "\n") {
-				t.Errorf("go:\n%s\npython:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
-			}
+			golden.Check(t, "wrong_socket_recovery", []byte(strings.Join(got, "\n")), golden.Substitute(filepath.Join(root, "home"), "<root-home>"), golden.Substitute(root, "<root>"), golden.Substitute(current.HomeDir, "<user-home>"), golden.Substitute("~"+current.Username, "~<user>"))
 		})
 	}
 }

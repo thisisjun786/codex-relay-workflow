@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 // The ownership checks the fence makes before a marker command writes anything, and where it
@@ -26,8 +27,9 @@ import (
 // A broken store answers what check_start raises: an unreadable mirror refuses in the fence's
 // words, an unreadable database is the host error.
 //
-// testdata/marker_preflight.json holds Python's answers, captured once from the live Python
-// console script before todo 44 removed it; the suite runs only the Go CLI against them.
+// Each case's outcome is checked against its golden, which began as Python's answers (captured once
+// from the live Python console script into testdata/marker_preflight.json before todo 44 removed
+// it).
 
 const markerDispatch = "dispatch-1"
 
@@ -239,38 +241,13 @@ func stateListing(root string) string {
 	return strings.Join(entries, " ")
 }
 
-func readMarkerGolden(t *testing.T) map[string]markerOutcome {
-	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("testdata", "marker_preflight.json"))
-	mustDo(t, err)
-	golden := map[string]markerOutcome{}
-	mustDo(t, json.Unmarshal(raw, &golden))
-	return golden
-}
-
 func TestCLI_marker_preflight_answers_what_python_answers(t *testing.T) {
-	golden := readMarkerGolden(t)
-	cases := markerCases()
-	if len(golden) != len(cases) {
-		t.Errorf("golden has %d cases, the table %d: the golden is Python's frozen answer (its live capture left with Python in todo 44), so a new case needs its expected outcome added to testdata/marker_preflight.json by hand", len(golden), len(cases))
-	}
-	for _, c := range cases {
+	for _, c := range markerCases() {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			want, ok := golden[c.name]
-			if !ok {
-				t.Fatalf("no Python answer captured for %s", c.name)
-			}
-			got := runMarkerCase(t, markerSide(t), c)
-			if !equalOutcome(got, want) {
-				t.Errorf("go:\n%s\npython:\n%s", outcomeText(got), outcomeText(want))
-			}
+			golden.CheckJSON(t, "outcome", runMarkerCase(t, markerSide(t), c))
 		})
 	}
-}
-
-func equalOutcome(a, b markerOutcome) bool {
-	return a.Exit == b.Exit && a.Stdout == b.Stdout && slices.Equal(a.Markers, b.Markers) && a.StateChanged == b.StateChanged
 }
 
 func outcomeText(o markerOutcome) string {

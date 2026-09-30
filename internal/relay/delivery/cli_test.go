@@ -7,18 +7,17 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
-// The twelve delivery commands through the real processes: Python's `codex-session-relay` and
-// the built `crw relay`, each over its own copy of the same seeded store. Every stdout is
-// compared whole, byte for byte, after the wall-clock stamps (the only nondeterministic bytes)
-// are replaced by one token; exit codes are compared exactly.
+// The twelve delivery commands through the built `crw relay` over a copy of the seeded store.
+// Every stdout is checked whole against the golden, byte for byte, after the wall-clock stamps
+// (the only nondeterministic bytes) are replaced by one token, and so is every exit code. The
+// goldens began as the Python console script's answers over its own copy of the same seed.
 
 // TestMain builds this once before isolating HOME.
 var crwPath string
@@ -36,65 +35,24 @@ type cliSide struct {
 	argv0 []string
 	dir   string
 	env   []string
-	// python marks a side whose answers are Python's, recorded: run and query read them.
-	python bool
-	asked  int
+	// checked numbers the golden keys.
+	checked int
 }
 
-// newSide keeps the artifact tree at one shared path (work, a parityTree), because a revision
-// hash covers the declared path; each side has its own home and store. The Python side's store
-// is seeded only when Python answers live.
-func newSide(t *testing.T, python bool, work string) *cliSide {
+// newSide is the built `crw relay` with its own home and a copy of the CLI seed, over the artifact
+// tree at work (a parityTree, because a revision hash covers the declared path).
+func newSide(t *testing.T, work string) *cliSide {
 	home := t.TempDir()
-	s := &cliSide{t: t, home: home, state: filepath.Join(home, "state"), work: work, python: python}
-	root := repoRoot(t)
+	s := &cliSide{t: t, home: home, state: filepath.Join(home, "state"), work: work}
 	s.env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "xs"), "XDG_DATA_HOME="+filepath.Join(home, "xd"), "XDG_CONFIG_HOME="+filepath.Join(home, "xc"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+home, "CODEX_SESSION_RELAY_STATE=")
-	if python {
-		s.argv0 = []string{"uv", "run", "--no-sync", "codex-session-relay"}
-		s.dir = filepath.Join(root, "packages", "codex-session-relay")
-		if !pyoracle.Live() {
-			return s
-		}
-	} else {
-		s.argv0 = []string{crwBinary(t), "relay"}
-		s.dir = root
-	}
-	copyCLISeed(t, s.state, s.work, python)
+	s.argv0 = []string{crwBinary(t), "relay"}
+	s.dir = repoRoot(t)
+	copyCLISeed(t, s.state, s.work)
 	return s
 }
 
-// run is the command's stdout and exit code: live for the Go side, as recorded for the Python one.
+// run is the command's stdout and exit code.
 func (s *cliSide) run(args ...string) (string, int) {
-	if !s.python {
-		return s.exec(args...)
-	}
-	answer := s.recorded("run "+strings.Join(args, " "), func() ([]byte, error) {
-		out, code := s.exec(args...)
-		return []byte(fmt.Sprintf("%d\n%s", code, liveNeutral(out))), nil
-	})
-	code, out, _ := strings.Cut(string(answer), "\n")
-	n, err := strconv.Atoi(code)
-	mustDo(s.t, err)
-	return out, n
-}
-
-// recorded is the Python side's answer to its next question, what, under a key numbering it.
-func (s *cliSide) recorded(what string, capture func() ([]byte, error)) []byte {
-	s.t.Helper()
-	s.asked++
-	what = strings.NewReplacer(s.work, "<work>", s.home, "<home>").Replace(what)
-	return pyAnswer(s.t, fmt.Sprintf("%d %s", s.asked, what), capture, pyoracle.Substitute(s.work, "<work>"), pyoracle.Substitute(s.home, "<home>"))
-}
-
-// liveNeutral stores what a live Python run printed without the values a rerun changes: the
-// wall-clock stamps and ages every comparison masks (normal, ageless) and a conflict's pid.
-func liveNeutral(out string) string {
-	out = stamp.ReplaceAllString(out, "0000-00-00T00:00:00.000000+00:00")
-	out = ageSeconds.ReplaceAllString(out, `"$1": 0`)
-	return loserProcess.ReplaceAllString(out, `"loserProcess": "<pid>"`)
-}
-
-func (s *cliSide) exec(args ...string) (string, int) {
 	argv := append(append([]string(nil), s.argv0...), append([]string{"--state", s.state}, args...)...)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = s.dir
@@ -111,6 +69,15 @@ func (s *cliSide) exec(args ...string) (string, int) {
 	return out.String(), code
 }
 
+// expect checks got, the answer to what with the side's home already masked (normal), against the
+// golden under a key numbering it.
+func (s *cliSide) expect(what, got string) {
+	s.t.Helper()
+	s.checked++
+	key := fmt.Sprintf("%d %s", s.checked, strings.NewReplacer(s.work, "<work>", s.home, "<home>").Replace(what))
+	golden.Check(s.t, key, []byte(got), golden.Substitute(s.work, "<work>"))
+}
+
 var stamp = regexp.MustCompile(`\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}\+00:00`)
 
 func (s *cliSide) normal(text string) string {
@@ -119,47 +86,34 @@ func (s *cliSide) normal(text string) string {
 
 func TestCLI_every_delivery_command_answers_byte_for_byte_like_python(t *testing.T) {
 	work := filepath.Join(parityTree(t), "work")
-	py, gosd := newSide(t, true, work), newSide(t, false, work)
+	side := newSide(t, work)
 	mustDo(t, os.WriteFile(filepath.Join(work, "out.txt"), []byte("the deliverable"), 0o644))
-	realRID := func(s *cliSide) string {
-		if !s.python {
-			return strings.Trim(goSQLiteDump(t, filepath.Join(s.state, "relay.sqlite3"), "select relationship_id from relationships"), "[]\"\n ")
-		}
-		return strings.TrimSpace(string(s.recorded("relationship id", func() ([]byte, error) {
-			cmd := exec.Command("uv", "run", "--no-sync", "python", "-c", "import sqlite3,sys;print(sqlite3.connect(sys.argv[1]).execute('select relationship_id from relationships').fetchone()[0])", filepath.Join(s.state, "relay.sqlite3"))
-			cmd.Dir = py.dir
-			cmd.Env = s.env
-			return pythonOutput(cmd)
-		})))
-	}
-	pr, gr := realRID(py), realRID(gosd)
-	if pr != gr {
-		t.Fatalf("seeded ids differ %s %s", pr, gr)
-	}
+	rid := strings.Trim(goSQLiteDump(t, filepath.Join(side.state, "relay.sqlite3"), "select relationship_id from relationships"), "[]\"\n ")
+	side.expect("relationship id", rid)
 	mustDo(t, os.WriteFile(filepath.Join(work, "self.txt"), []byte("declares itself"), 0o644))
 	entries, err := store.BuildManifest([]string{filepath.Join(work, "self.txt")}, []string{work})
 	mustDo(t, err)
 	selfHash, err := store.ManifestRevision(entries)
 	mustDo(t, err)
 	cases := [][]string{
-		{"criteria-show", "--relationship", pr},
-		{"criteria-register", "--relationship", pr, "--criterion", "c1=one", "--criterion", "c2=two", "--optional", "c2", "--source-ref", "doc"},
-		{"criteria-show", "--relationship", pr},
-		{"criteria-register", "--relationship", pr, "--criterion", "c1=one", "--criterion", " c1 =again"},
+		{"criteria-show", "--relationship", rid},
+		{"criteria-register", "--relationship", rid, "--criterion", "c1=one", "--criterion", "c2=two", "--optional", "c2", "--source-ref", "doc"},
+		{"criteria-show", "--relationship", rid},
+		{"criteria-register", "--relationship", rid, "--criterion", "c1=one", "--criterion", " c1 =again"},
 		{"ack-proof", "--event", "0123456789abcdef0123456789abcdef", "--turn", "t"},
 		{"ack-proof", "--event", "nope", "--turn", "t"},
-		{"revision-head", "--relationship", pr},
+		{"revision-head", "--relationship", rid},
 		{"revision-head", "--relationship", "rel-missing"},
-		{"emit", "--relationship", pr, "--generation", "1", "--outcome", "failed", "--turn-thread", "01child-task", "--turn-id", "turn-dispatch-1", "--turn-status", "failed"},
-		{"emit", "--relationship", pr, "--generation", "1", "--outcome", "failed", "--turn-thread", "01child-task", "--turn-id", "turn-dispatch-1", "--turn-status", "failed"},
-		{"emit", "--relationship", pr, "--generation", "1", "--outcome", "ready_for_review", "--turn-thread", "01child-task", "--turn-id", "turn-dispatch-1", "--turn-status", "completed", "--artifact", "<work>/out.txt"},
+		{"emit", "--relationship", rid, "--generation", "1", "--outcome", "failed", "--turn-thread", "01child-task", "--turn-id", "turn-dispatch-1", "--turn-status", "failed"},
+		{"emit", "--relationship", rid, "--generation", "1", "--outcome", "failed", "--turn-thread", "01child-task", "--turn-id", "turn-dispatch-1", "--turn-status", "failed"},
+		{"emit", "--relationship", rid, "--generation", "1", "--outcome", "ready_for_review", "--turn-thread", "01child-task", "--turn-id", "turn-dispatch-1", "--turn-status", "completed", "--artifact", "<work>/out.txt"},
 		// QA: a duplicate emit of the same revision, and a revision declaring itself its own
 		// predecessor, which is refused with the same reason on both sides.
-		{"emit", "--relationship", pr, "--generation", "1", "--outcome", "ready_for_review", "--turn-thread", "01child-task", "--turn-id", "turn-dispatch-1", "--turn-status", "completed", "--artifact", "<work>/out.txt"},
-		{"emit", "--relationship", pr, "--generation", "1", "--outcome", "ready_for_review", "--turn-thread", "01child-task", "--turn-id", "turn-dispatch-1", "--artifact", "<work>/self.txt", "--supersedes-revision", selfHash},
-		{"emit", "--relationship", pr, "--generation", "1", "--outcome", "failed", "--turn-thread", "someone-else", "--turn-id", "turn-dispatch-1", "--turn-status", "failed"},
+		{"emit", "--relationship", rid, "--generation", "1", "--outcome", "ready_for_review", "--turn-thread", "01child-task", "--turn-id", "turn-dispatch-1", "--turn-status", "completed", "--artifact", "<work>/out.txt"},
+		{"emit", "--relationship", rid, "--generation", "1", "--outcome", "ready_for_review", "--turn-thread", "01child-task", "--turn-id", "turn-dispatch-1", "--artifact", "<work>/self.txt", "--supersedes-revision", selfHash},
+		{"emit", "--relationship", rid, "--generation", "1", "--outcome", "failed", "--turn-thread", "someone-else", "--turn-id", "turn-dispatch-1", "--turn-status", "failed"},
 		{"emit", "--relationship", "rel-missing", "--generation", "1", "--outcome", "failed", "--turn-thread", "a", "--turn-id", "b"},
-		{"revision-head", "--relationship", pr},
+		{"revision-head", "--relationship", rid},
 		{"claim", "--event", "<failed>", "--turn", "t1"},
 		{"claim", "--event", "<failed>", "--turn", "t1"},
 		{"ack", "--event", "<failed>", "--ack-turn", "t1", "--ack-proof", "<proof>"},
@@ -185,13 +139,10 @@ func TestCLI_every_delivery_command_answers_byte_for_byte_like_python(t *testing
 			}
 			return out
 		}
-		pout, pcode := py.run(expand(py)...)
-		gout, gcode := gosd.run(expand(gosd)...)
-		if pcode != gcode || py.normal(pout) != gosd.normal(gout) {
-			t.Errorf("case %d %v: exit python %d go %d\npython:\n%s\ngo:\n%s", i, args, pcode, gcode, py.normal(pout), gosd.normal(gout))
-		}
+		out, code := side.run(expand(side)...)
+		side.expect("run "+strings.Join(args, " "), fmt.Sprintf("%d\n%s", code, side.normal(out)))
 		if args[0] == "emit" && i == 8 {
-			if m := regexp.MustCompile(`"eventId": "([0-9a-f]{32})"`).FindStringSubmatch(pout); m != nil {
+			if m := regexp.MustCompile(`"eventId": "([0-9a-f]{32})"`).FindStringSubmatch(out); m != nil {
 				failed = m[1]
 			}
 		}

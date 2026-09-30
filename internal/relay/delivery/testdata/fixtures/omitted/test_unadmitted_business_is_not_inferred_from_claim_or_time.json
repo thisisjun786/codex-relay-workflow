@@ -1,0 +1,21 @@
+{
+ "calls": [
+  {
+   "args": [
+    {
+     "path": "<root>/tree/relay-test-0/state",
+     "source": "flag"
+    },
+    "<root>/tree/relay-guard-1",
+    "<root>/tree/relay-test-0/work",
+    "539ed001eef41a4c78b4182d5dfa70e3fcae1d01d368c989f9f680072df2ce76",
+    "01child-task",
+    "unadmitted-business",
+    "2026-01-01T00:06:00+00:00",
+    {}
+   ],
+   "snapshot": "<root>/call-0",
+   "writes": []
+  }
+ ]
+}

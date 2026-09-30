@@ -9,121 +9,74 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 // The store-selection refusals every delivery command prints before its handler (cli.py
-// _selection_refusal): ambiguous, unidentified and wrong-socket, byte for byte with Python's
-// once the program name each side prints for itself is replaced by one token. Each runtime is
-// asked on a store it owns: on the other runtime's, check_start refuses first (decision 31).
-// Python's answer is recorded; the Go side's store is the one Python creates, recorded too
-// (recordedPythonStore), in a fixed tree because it names its socket's path.
+// _selection_refusal): ambiguous, unidentified and wrong-socket, checked against the golden byte
+// for byte once the program name is replaced by one token. The goldens began as Python's answers.
+// The command is asked on a store the runtime owns (on the other runtime's, check_start refuses
+// first, decision 31): the store the Python package created, a fixture, published again and taken
+// over by Go. The wrong-socket store names its socket's path, so the socket directory and the home
+// are fixed trees (parityTree).
 func TestCLI_store_selection_refusals_match_python(t *testing.T) {
-	root := repoRoot(t)
-	// createStore has Python create a store at path, recording socket as its socket when named.
-	createStore := func(t *testing.T, path, socket string, env []string) {
-		script := "import sys;from codex_session_relay.store import Store;Store(sys.argv[1]).close()"
-		args := []string{path}
-		if socket != "" {
-			script = "import sys;from codex_session_relay.store import Store;Store(sys.argv[1], socket_path=sys.argv[2]).close()"
-			args = append(args, socket)
-		}
-		py := exec.Command("uv", append([]string{"run", "--no-sync", "python", "-c", script}, args...)...)
-		py.Dir = filepath.Join(root, "packages", "codex-session-relay")
-		py.Env = env
-		mustDo(t, py.Run())
-	}
 	for _, tc := range []struct {
-		name  string
-		store func(xs string) string
-		state bool
+		name    string
+		fixture string
+		store   func(xs string) string
+		state   bool
 	}{
-		{"unidentified", func(xs string) string {
+		{"unidentified", "selection-unidentified.sqlite3", func(xs string) string {
 			return filepath.Join(xs, "codex-session-relay", "0123456789abcdef", "relay.sqlite3")
 		}, false},
-		{"wrong socket", nil, true},
+		{"wrong socket", "selection-wrong-socket.sqlite3", nil, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var outs [2]string
-			var codes [2]int
-			sockets := parityTree(t)
-			for i, python := range []bool{true, false} {
-				home := t.TempDir()
-				if !python {
-					home = parityTree(t)
-				}
-				xs := filepath.Join(home, "xs")
-				env := append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+xs, "TMPDIR="+home, "CODEX_SESSION_RELAY_STATE=")
-				args := []string{"--socket", filepath.Join(sockets, "app.sock"), "claim", "--event", "e"}
-				var path, socket string
-				if tc.store != nil {
-					path = tc.store(xs)
-				}
-				if tc.state {
-					state := filepath.Join(home, "state")
-					path, socket = filepath.Join(state, "relay.sqlite3"), filepath.Join(sockets, "other.sock")
-					args = append([]string{"--state", state}, args...)
-				}
-				setup := func() {
-					if path != "" {
-						mustDo(t, os.MkdirAll(filepath.Dir(path), 0o700))
-						createStore(t, path, socket, env)
-					}
-				}
-				var out string
-				if python {
-					answer := pyAnswer(t, "refusal", func() ([]byte, error) {
-						setup()
-						cmd := exec.Command("uv", append([]string{"run", "--no-sync", "codex-session-relay"}, args...)...)
-						cmd.Dir = filepath.Join(root, "packages", "codex-session-relay")
-						cmd.Env = env
-						out, err := cmd.Output()
-						return []byte(fmt.Sprintf("%d\n%s", exitCode(err), liveNeutral(string(out)))), nil
-					}, pyoracle.Substitute(home, "<home>"), pyoracle.Substitute(sockets, "<sockets>"))
-					code, text, _ := strings.Cut(string(answer), "\n")
-					n, err := strconv.Atoi(code)
-					mustDo(t, err)
-					codes[i], out = n, text
-				} else {
-					if pyoracle.Live() {
-						setup()
-					}
-					if path != "" {
-						recordedPythonStore(t, "store", path)
-					}
-					if tc.state {
-						testsupport.HandOver(t, path, "go")
-					}
-					cmd := exec.Command(crwBinary(t), append([]string{"relay"}, args...)...)
-					cmd.Env = env
-					raw, err := cmd.Output()
-					if e, ok := err.(*exec.ExitError); ok {
-						codes[i] = e.ExitCode()
-					}
-					out = string(raw)
-				}
-				side := &cliSide{home: home}
-				text := strings.ReplaceAll(side.normal(out), sockets, "<sockets>")
-				outs[i] = programPath.ReplaceAllString(text, `"$1<program> `)
+			sockets, home := parityTree(t), parityTree(t)
+			xs := filepath.Join(home, "xs")
+			env := append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+xs, "TMPDIR="+home, "CODEX_SESSION_RELAY_STATE=")
+			args := []string{"--socket", filepath.Join(sockets, "app.sock"), "claim", "--event", "e"}
+			var path string
+			if tc.store != nil {
+				path = tc.store(xs)
 			}
-			if codes[0] != 2 || codes[1] != 2 || outs[0] != outs[1] {
-				t.Fatalf("exit python %d go %d\npython:\n%s\ngo:\n%s", codes[0], codes[1], outs[0], outs[1])
+			if tc.state {
+				state := filepath.Join(home, "state")
+				path = filepath.Join(state, "relay.sqlite3")
+				args = append([]string{"--state", state}, args...)
+			}
+			if path != "" {
+				pythonCreatedStore(t, tc.fixture, path)
+			}
+			if tc.state {
+				testsupport.HandOver(t, path, "go")
+			}
+			cmd := exec.Command(crwBinary(t), append([]string{"relay"}, args...)...)
+			cmd.Env = env
+			raw, err := cmd.Output()
+			code := exitCode(err)
+			side := &cliSide{home: home}
+			text := strings.ReplaceAll(side.normal(string(raw)), sockets, "<sockets>")
+			text = programPath.ReplaceAllString(text, `"$1<program> `)
+			golden.Check(t, "refusal", []byte(fmt.Sprintf("%d\n%s", code, text)))
+			if code != 2 {
+				t.Fatalf("exit %d\n%s", code, text)
 			}
 		})
 	}
 }
 
-// recordedPythonStore is a store Python created at path (recordedStore), fenced as Python left
-// it: its mirror is published again from the store's own stamp (testsupport.Rehome), because the
-// recording neutralized the id the created mirror names.
-func recordedPythonStore(t *testing.T, key, path string) {
+// pythonCreatedStore writes the named fixture, a store the Python package created (Store(path)
+// with or without a socket path), at path, fenced as Python left it: its mirror is published again
+// from the store's own stamp (testsupport.Rehome), because the fixture's id was neutralized.
+func pythonCreatedStore(t *testing.T, fixture, path string) {
 	t.Helper()
-	recordedStore(t, key, path)
+	mustDo(t, os.MkdirAll(filepath.Dir(path), 0o700))
+	mustDo(t, os.WriteFile(path, golden.Fixture(t, fixture), 0o600))
 	if err := os.Remove(filepath.Join(filepath.Dir(path), "takeover.json")); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		t.Fatal(err)
 	}
@@ -145,27 +98,20 @@ func exitCode(err error) int {
 }
 
 // Both installed entry points produce recovery commands through the built binary. The alias
-// bytes equal Python's (recorded) when Python is invoked under that same alias path; the multi-call
-// command names the actual crw executable and runs successfully when pasted into a shell. Each
-// runtime answers the store while it owns it: on the other runtime's, check_start refuses first.
+// bytes are checked against the golden, which began as Python's answer invoked under that same
+// alias path; the multi-call command names the actual crw executable and runs successfully when
+// pasted into a shell. The store is the one the Python package created (a fixture), taken over by
+// Go: on the other runtime's store, check_start refuses first.
 func TestCLI_selection_recovery_program_parity_and_execution(t *testing.T) {
-	root := repoRoot(t)
 	home := parityTree(t)
 	state := filepath.Join(home, "state")
 	sockets := filepath.Join(home, "sockets")
 	mustDo(t, os.MkdirAll(state, 0o700))
 	mustDo(t, os.MkdirAll(sockets, 0o700))
-	recorded := filepath.Join(sockets, "recorded.sock")
 	wanted := filepath.Join(sockets, "wanted.sock")
 	env := append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "xs"), "TMPDIR="+home, "CODEX_SESSION_RELAY_STATE=")
-	if pyoracle.Live() {
-		seed := exec.Command(filepath.Join(root, ".venv", "bin", "python"), "-c", "import sys;from codex_session_relay.store import Store;Store(sys.argv[1], socket_path=sys.argv[2]).close()", filepath.Join(state, "relay.sqlite3"), recorded)
-		seed.Dir = filepath.Join(root, "packages", "codex-session-relay")
-		seed.Env = env
-		mustDo(t, seed.Run())
-	}
-	// The store Python created, as recorded; it names the recorded socket's path: a fixed home.
-	recordedPythonStore(t, "seed", filepath.Join(state, "relay.sqlite3"))
+	// The store Python created with <home>/sockets/recorded.sock as its socket: a fixed home.
+	pythonCreatedStore(t, "selection-recovery.sqlite3", filepath.Join(state, "relay.sqlite3"))
 
 	built := crwBinary(t)
 	alias := filepath.Join(filepath.Dir(built), "codex-session-relay")
@@ -179,23 +125,7 @@ func TestCLI_selection_recovery_program_parity_and_execution(t *testing.T) {
 	if exitCode(gotErr) != 2 {
 		t.Fatalf("alias exit=%d: %s", exitCode(gotErr), got)
 	}
-	pyScript := `import sys
-from codex_session_relay import cli
-sys.argv=[sys.argv[1],*sys.argv[2:]]
-raise SystemExit(cli.main())`
-	answer := pyAnswer(t, "alias recovery", func() ([]byte, error) {
-		testsupport.HandOver(t, db, "python")
-		python := exec.Command(filepath.Join(root, ".venv", "bin", "python"), append([]string{"-c", pyScript, alias}, args...)...)
-		python.Dir = filepath.Join(root, "packages", "codex-session-relay")
-		python.Env = env
-		want, wantErr := python.Output()
-		testsupport.HandOver(t, db, "go")
-		return []byte(fmt.Sprintf("%d\n%s", exitCode(wantErr), want)), nil
-	}, pyoracle.Substitute(alias, "<alias>"), pyoracle.Substitute(home, "<home>"))
-	code, want, _ := strings.Cut(string(answer), "\n")
-	if code != "2" || string(got) != want {
-		t.Fatalf("alias recovery differs from Python\nGo exit=%d\n%s\nPython exit=%s\n%s", exitCode(gotErr), got, code, want)
-	}
+	golden.Check(t, "alias recovery", []byte(fmt.Sprintf("%d\n%s", exitCode(gotErr), got)), golden.Substitute(alias, "<alias>"), golden.Substitute(home, "<home>"))
 
 	multi := exec.Command(built, append([]string{"relay"}, args...)...)
 	multi.Env = env

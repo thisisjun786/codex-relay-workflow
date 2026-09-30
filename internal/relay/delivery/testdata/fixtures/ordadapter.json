@@ -1,0 +1,177 @@
+{
+  "folded": {
+    "sentAt": "2023-11-14T22:23:20.000000+00:00",
+    "turnStartedAt": 1700000000.0
+  },
+  "settings_free": {
+    "resumed": {
+      "activePermissionProfile": null,
+      "approvalPolicy": "on-request",
+      "cwd": "/workspace/example/codex-session-relay/relay-core",
+      "model": "anthropic/claude-opus-5",
+      "reasoningEffort": "xhigh",
+      "runtimeWorkspaceRoots": [
+        "/workspace/example/codex-session-relay/relay-core"
+      ],
+      "sandbox": {
+        "excludeSlashTmp": false,
+        "excludeTmpdirEnvVar": false,
+        "networkAccess": false,
+        "type": "workspaceWrite",
+        "writableRoots": []
+      },
+      "thread": {
+        "environments": [
+          {
+            "cwd": "/workspace/example/codex-session-relay/relay-core",
+            "environmentId": "local",
+            "runtimeWorkspaceRoots": [
+              "/workspace/example/codex-session-relay/relay-core"
+            ]
+          }
+        ],
+        "id": "thread-1"
+      }
+    },
+    "settings": {
+      "approvalPolicy": "never",
+      "cwd": "/workspace/example/codex-session-relay/relay-core",
+      "environments": [
+        {
+          "cwd": "/workspace/example/codex-session-relay/relay-core",
+          "environmentId": "local",
+          "runtimeWorkspaceRoots": [
+            "/workspace/example/codex-session-relay/relay-core"
+          ]
+        }
+      ],
+      "model": "anthropic/claude-opus-5",
+      "reasoningEffort": "xhigh",
+      "runtimeWorkspaceRoots": [
+        "/workspace/example/codex-session-relay/relay-core"
+      ],
+      "sandbox": {
+        "excludeSlashTmp": false,
+        "excludeTmpdirEnvVar": false,
+        "networkAccess": false,
+        "type": "workspaceWrite",
+        "writableRoots": []
+      }
+    },
+    "settingsFree": true
+  },
+  "transmitted": {
+    "resumed": {
+      "activePermissionProfile": null,
+      "approvalPolicy": "on-request",
+      "cwd": "/workspace/example/codex-session-relay/relay-core",
+      "model": "anthropic/claude-opus-5",
+      "reasoningEffort": "xhigh",
+      "runtimeWorkspaceRoots": [
+        "/workspace/example/codex-session-relay/relay-core"
+      ],
+      "sandbox": {
+        "excludeSlashTmp": false,
+        "excludeTmpdirEnvVar": false,
+        "networkAccess": false,
+        "type": "workspaceWrite",
+        "writableRoots": []
+      },
+      "thread": {
+        "environments": [
+          {
+            "cwd": "/workspace/example/codex-session-relay/relay-core",
+            "environmentId": "local",
+            "runtimeWorkspaceRoots": [
+              "/workspace/example/codex-session-relay/relay-core"
+            ]
+          }
+        ],
+        "id": "thread-1"
+      }
+    },
+    "settings": {
+      "approvalPolicy": "never",
+      "cwd": "/workspace/example/codex-session-relay/relay-core",
+      "environments": [
+        {
+          "cwd": "/workspace/example/codex-session-relay/relay-core",
+          "environmentId": "local",
+          "runtimeWorkspaceRoots": [
+            "/workspace/example/codex-session-relay/relay-core"
+          ]
+        }
+      ],
+      "model": "anthropic/claude-opus-5",
+      "reasoningEffort": "xhigh",
+      "runtimeWorkspaceRoots": [
+        "/workspace/example/codex-session-relay/relay-core"
+      ],
+      "sandbox": {
+        "excludeSlashTmp": false,
+        "excludeTmpdirEnvVar": false,
+        "networkAccess": false,
+        "type": "workspaceWrite",
+        "writableRoots": []
+      }
+    },
+    "settingsFree": false
+  },
+  "untrusted": {
+    "resumed": {
+      "activePermissionProfile": null,
+      "approvalPolicy": "untrusted",
+      "cwd": "/workspace/example/codex-session-relay/relay-core",
+      "model": "anthropic/claude-opus-5",
+      "reasoningEffort": "xhigh",
+      "runtimeWorkspaceRoots": [
+        "/workspace/example/codex-session-relay/relay-core"
+      ],
+      "sandbox": {
+        "excludeSlashTmp": false,
+        "excludeTmpdirEnvVar": false,
+        "networkAccess": false,
+        "type": "workspaceWrite",
+        "writableRoots": []
+      },
+      "thread": {
+        "environments": [
+          {
+            "cwd": "/workspace/example/codex-session-relay/relay-core",
+            "environmentId": "local",
+            "runtimeWorkspaceRoots": [
+              "/workspace/example/codex-session-relay/relay-core"
+            ]
+          }
+        ],
+        "id": "thread-1"
+      }
+    },
+    "settings": {
+      "approvalPolicy": "never",
+      "cwd": "/workspace/example/codex-session-relay/relay-core",
+      "environments": [
+        {
+          "cwd": "/workspace/example/codex-session-relay/relay-core",
+          "environmentId": "local",
+          "runtimeWorkspaceRoots": [
+            "/workspace/example/codex-session-relay/relay-core"
+          ]
+        }
+      ],
+      "model": "anthropic/claude-opus-5",
+      "reasoningEffort": "xhigh",
+      "runtimeWorkspaceRoots": [
+        "/workspace/example/codex-session-relay/relay-core"
+      ],
+      "sandbox": {
+        "excludeSlashTmp": false,
+        "excludeTmpdirEnvVar": false,
+        "networkAccess": false,
+        "type": "workspaceWrite",
+        "writableRoots": []
+      }
+    },
+    "settingsFree": false
+  }
+}
