@@ -66,6 +66,37 @@ func StartPreflight(ctx context.Context, dbPath, socketPath string) error {
 //   - a fenced store is refused where StartPreflight's judgement (ownership.CheckStart, with
 //     socketPath) refuses it, in validate's words wherever validate refuses it too.
 func CheckStartLikeFence(ctx context.Context, dbPath, socketPath string) error {
+	socket := ""
+	if socketPath != "" {
+		socket, _ = CanonicalSocket(socketPath)
+	}
+	return checkLikeFence(ctx, dbPath, readMetadata, func(ctx context.Context) error {
+		return ownership.CheckStart(ctx, dbPath, socket)
+	})
+}
+
+// CheckStop is ownership.check_stop, answered as CheckStartLikeFence answers: the verdict of a
+// candidate-less, socketless check_start for guard-evaluate's local path, in the fence's order
+// and words, with the durable half read in place (OpenStopRead, Python's stop_metadata): no copy
+// of the store and no SQLite sidecar. An absent or unfenced store passes; a fenced one must be
+// this runtime's active store.
+func CheckStop(ctx context.Context, dbPath string) error {
+	return checkLikeFence(ctx, dbPath, stopMetadata, func(ctx context.Context) error {
+		return ownership.CheckStop(ctx, dbPath, func(ctx context.Context, path string) (ownership.Stamp, error) {
+			ro, err := OpenStopRead(ctx, path, 0)
+			if err != nil {
+				return ownership.Stamp{}, err
+			}
+			defer ro.Close()
+			return ownership.ReadStamp(ctx, ro)
+		})
+	})
+}
+
+// checkLikeFence is ownership.check_start's reading in the fence's order (CheckStartLikeFence):
+// the mirror, then the durable metadata meta reads, then judge's verdict for a fenced store,
+// worded as validate words it.
+func checkLikeFence(ctx context.Context, dbPath string, meta func(context.Context, string) (map[string]string, error), judge func(context.Context) error) error {
 	resolved := resolveLoosely(dbPath)
 	raw, err := os.ReadFile(filepath.Join(filepath.Dir(resolved), "takeover.json"))
 	switch {
@@ -78,23 +109,19 @@ func CheckStartLikeFence(ctx context.Context, dbPath, socketPath string) error {
 			return fenceRefused(why)
 		}
 	}
-	meta, err := readMetadata(ctx, dbPath)
+	durable, err := meta(ctx, dbPath)
 	if err != nil {
 		return &pythonHostError{cause: err}
 	}
 	fenced := raw != nil
 	for _, key := range ownership.Keys {
-		_, stamped := meta[key]
+		_, stamped := durable[key]
 		fenced = fenced || stamped
 	}
 	if !fenced {
 		return nil
 	}
-	socket := ""
-	if socketPath != "" {
-		socket, _ = CanonicalSocket(socketPath)
-	}
-	err = ownership.CheckStart(ctx, dbPath, socket)
+	err = judge(ctx)
 	var refused *ownership.Refused
 	switch {
 	case err == nil:
@@ -102,7 +129,7 @@ func CheckStartLikeFence(ctx context.Context, dbPath, socketPath string) error {
 	case !errors.As(err, &refused):
 		return &pythonHostError{cause: err}
 	}
-	if why := fenceRefusal(resolved, meta, raw); why != "" {
+	if why := fenceRefusal(resolved, durable, raw); why != "" {
 		return fenceRefused(why)
 	}
 	return &RefusedError{Reason: "store_owned_by_other", Detail: OwnershipRefusalDetail(err), cause: err}

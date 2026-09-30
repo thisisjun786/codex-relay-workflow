@@ -225,6 +225,17 @@ func Unbound(ctx context.Context, r Record, s Stamp, socket string) bool {
 // socket the command's writable open passes ("" for none), so a binding that open would
 // complete (Unbound) is judged as the binding judges it, not refused here first.
 func CheckStart(ctx context.Context, path, socket string) error {
+	return checkStart(ctx, path, socket, SnapshotMeta)
+}
+
+// CheckStop is CheckStart for the read-only Stop path (Python ownership.check_stop): the verdict
+// of a candidate-less, socketless start, with the durable stamp read by stamp from the resolved
+// database (in place, without the copy SnapshotMeta makes) and no SQLite sidecar created.
+func CheckStop(ctx context.Context, path string, stamp func(context.Context, string) (Stamp, error)) error {
+	return checkStart(ctx, path, "", stamp)
+}
+
+func checkStart(ctx context.Context, path, socket string, stamp func(context.Context, string) (Stamp, error)) error {
 	dir := filepath.Dir(path)
 	absent := true
 	for _, name := range []string{path, filepath.Join(dir, "takeover.json"), filepath.Join(dir, "write-gate.lock")} {
@@ -244,7 +255,7 @@ func CheckStart(ctx context.Context, path, socket string) error {
 	if err != nil {
 		return err
 	}
-	s, err := SnapshotMeta(ctx, path)
+	s, err := stamp(ctx, path)
 	if err != nil {
 		return err
 	}

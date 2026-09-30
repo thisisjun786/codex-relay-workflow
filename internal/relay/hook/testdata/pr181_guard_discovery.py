@@ -7,8 +7,10 @@ import sys
 import tempfile
 from contextlib import closing
 
+import sqlite3
+
 from codex_session_relay.store import Store
-from codex_session_relay import marker
+from codex_session_relay import marker, ownership
 
 binary, root = sys.argv[1], Path(sys.argv[2])
 results = []
@@ -28,6 +30,13 @@ with tempfile.TemporaryDirectory(prefix='guard-discovery-') as temp:
     (home / 'stop.json').write_text(json.dumps({'cwd': str(workspace), 'session_id': 's', 'turn_id': 't'}))
     with closing(Store(str(home / 'explicit.sqlite3'))):
         pass
+    # A store neither runtime fences, which both CLIs evaluate in-process: a fenced one is read
+    # only by its owner, and the other runtime's CLI routes the Stop to that owner's control.sock
+    # (cutover.md, Go finding owner=python).
+    with closing(sqlite3.connect(home / 'explicit.sqlite3')) as db, db:
+        db.executemany('DELETE FROM schema_meta WHERE key=?', [(key,) for key in ownership.KEYS])
+    (home / 'takeover.json').unlink()
+    (home / 'write-gate.lock').unlink()
     locked = home / 'locked'; locked.mkdir(); locked.chmod(0)
     try:
         cases = [('unknown_override', {'CODEX_SESSION_RELAY_STATE': '~crw_user_that_does_not_exist/state'}, 3),
