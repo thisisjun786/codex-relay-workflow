@@ -12,6 +12,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 // cancellationStage names what is suspended when the caller cancels: a host call, or the
@@ -131,8 +132,8 @@ func (c *heldCaller) propagate() {
 
 // cancellationRows cancels the caller while each stage is suspended and releases that stage's
 // answer only after the caller has been answered. With prompt propagation the cancellation
-// usually reaches the call first; with held propagation the answer always lands first. Python
-// takes the cancellation either way, so both must equal the oracle.
+// usually reaches the call first; with held propagation the answer always lands first. The
+// cancellation is taken either way, as Python took it, so both must equal the golden.
 func cancellationRows(t *testing.T, held bool) []map[string]any {
 	t.Helper()
 	got := make([]map[string]any, 0, len(cancellationStages))
@@ -200,23 +201,21 @@ func cancellationRows(t *testing.T, held bool) []map[string]any {
 func Test28CallerCancellationStageParity(t *testing.T) {
 	prompt := cancellationRows(t, false)
 	held := cancellationRows(t, true)
-	stages := make([]map[string]any, len(cancellationStages))
-	for i, stage := range cancellationStages {
-		stages[i] = map[string]any{"name": stage.name, "held": stage.held, "busy": stage.busy}
+	// Both propagations answer the same rows, the golden's.
+	encode := func(rows []map[string]any) []byte {
+		encoded, err := golden.Encode(rows)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return encoded
 	}
-	input, _ := json.Marshal(map[string]any{"settings": authorized(), "resume": resume(), "stages": stages})
-	want := pyDriver(t, "cancellation_capture.py", input)
-	var expected []map[string]any
-	if err := json.Unmarshal(want, &expected); err != nil {
-		t.Fatal(err)
-	}
-	canonical, _ := json.Marshal(expected)
+	rows := wantBytes(t, "stages", func() []byte { return encode(prompt) })
 	for _, run := range []struct {
 		propagation string
 		rows        []map[string]any
 	}{{"prompt", prompt}, {"held", held}} {
-		if actual, _ := json.Marshal(run.rows); !bytes.Equal(actual, canonical) {
-			t.Errorf("%s propagation\nGo %s\nPython %s", run.propagation, actual, want)
+		if actual := encode(run.rows); !bytes.Equal(actual, rows) {
+			t.Errorf("%s propagation\nGo %s\ngolden %s", run.propagation, actual, rows)
 		}
 	}
 }

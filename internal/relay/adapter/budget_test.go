@@ -1,10 +1,7 @@
 package adapter
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"math"
 	"path/filepath"
 	"testing"
 	"time"
@@ -58,23 +55,6 @@ func Test28_BAD_19_GuardBudgets(t *testing.T) {
 			methods = append(methods, call.([]any)[0].(string))
 		}
 		execution, caller := a.Budgets(guardCount)
-		got := map[string]any{"receipt": plain(receipt), "calls": methods, "invalid": invalid}
-		spec := map[string]any{"root": root, "guard": guardCount, "settings": authorized(), "resume": resume()}
-		raw, _ := json.Marshal(spec)
-		out := pyDriver(t, "budget_capture.py", raw)
-		var want map[string]any
-		if err := json.Unmarshal(out, &want); err != nil {
-			t.Fatal(err)
-		}
-		if math.Abs(want["execution"].(float64)-execution.Seconds()) > 1e-12 || math.Abs(want["caller"].(float64)-caller.Seconds()) > 1e-12 {
-			t.Fatalf("budgets Go %v %v Python %v %v", execution, caller, want["execution"], want["caller"])
-		}
-		delete(want, "execution")
-		delete(want, "caller")
-		expected, _ := json.Marshal(want)
-		actual, _ := json.Marshal(got)
-		if !bytes.Equal(actual, expected) {
-			t.Fatalf("Go %s Python %s", actual, expected)
-		}
+		expectJSON(t, "budget", map[string]any{"receipt": plain(receipt), "calls": methods, "invalid": invalid, "execution": execution.Seconds(), "caller": caller.Seconds()})
 	}
 }

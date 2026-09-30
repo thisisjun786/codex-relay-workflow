@@ -1,7 +1,6 @@
 package adapter
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -16,7 +15,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func Test28_WorkerObservationMatchesPython(t *testing.T) {
+func Test28_WorkerObservationMatchesTheGolden(t *testing.T) {
 	root := t.TempDir()
 	state := filepath.Join(root, "state")
 	scope := filepath.Join(root, "scopes")
@@ -96,23 +95,12 @@ func Test28_WorkerObservationMatchesPython(t *testing.T) {
 			reasonValue = reason
 		}
 		got := map[string]any{"policy": gotPolicy, "reason": reasonValue}
-		spec := map[string]any{"state": state, "socket": socket, "scope": scope, "storeId": loc.StoreID, "installationId": installation}
-		raw, _ := json.Marshal(spec)
-		out := pyDriver(t, "worker_capture.py", raw)
-		var want any
-		if err := json.Unmarshal(out, &want); err != nil {
-			t.Fatal(err)
-		}
-		expected, _ := json.Marshal(want)
-		actual, _ := json.Marshal(got)
-		if !bytes.Equal(actual, expected) {
-			t.Fatalf("Go %s Python %s", actual, expected)
-		}
+		expectJSON(t, "worker observation", got)
 	}
 	check()
 	// Python explicitly treats these files and locks as same-user cooperative evidence. A writer
 	// that can replace all of them and hold both locks may publish any policy; Go must not imply a
-	// stronger authentication boundary than the oracle does.
+	// stronger authentication boundary than the Python reference did.
 	policy["forgedBySameUID"] = true
 	write(filepath.Join(state, "worker-policy.json"), receipt)
 	check()

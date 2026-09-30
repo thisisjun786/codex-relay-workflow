@@ -6,7 +6,8 @@ import (
 	"testing"
 )
 
-func Test28_CursorValuesLivePython(t *testing.T) {
+func Test28_CursorValuesMatchTheGolden(t *testing.T) {
+	shareGoldens(t)
 	for i, cursor := range []any{7, true, 0, false, nil, "", []any{}, map[string]any{}, []any{7}, map[string]any{"next": 7}, "next", json.Number("1e-999"), json.Number("7.5")} {
 		t.Run(fmt.Sprint(i), func(t *testing.T) {
 			first := page(item("first", "i", "noise"))

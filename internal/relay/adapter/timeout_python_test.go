@@ -2,7 +2,6 @@ package adapter
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -36,20 +35,10 @@ func Test28SendDeadlineRaisesAndSavesBareUnknown(t *testing.T) {
 	if _, present := receipt["error"]; present {
 		t.Fatalf("deadline receipt has error: %v", receipt)
 	}
-	settings, _ := json.Marshal(authorized())
-	resumed, _ := json.Marshal(resume())
-	// The Python driver keeps the wall clock: the receipt's times are not compared.
-	out := pyDriverNormalized(t, "timeout_capture.py", append(append(settings, '\n'), append(resumed, '\n')...), withoutWallClock)
-	var python map[string]any
-	if err := json.Unmarshal(out, &python); err != nil {
+	// The receipt's times are the wall clock's.
+	settled, err := withoutWallClock(map[string]any{"caller": map[string]any{"error": timeout.Kind, "detail": timeout.Message}, "receipt": receipt})
+	if err != nil {
 		t.Fatal(err)
 	}
-	caller := python["caller"].(map[string]any)
-	retained := python["receipt"].(map[string]any)
-	if caller["error"] != "TimeoutError" || retained["status"] != "outcome_unknown" {
-		t.Fatal(python)
-	}
-	if _, present := retained["error"]; present {
-		t.Fatalf("Python deadline receipt has error: %v", retained)
-	}
+	expectJSON(t, "deadline", settled)
 }

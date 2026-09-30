@@ -8,6 +8,7 @@ import (
 )
 
 func Test28_MSC_10_TwoValueAndDetailedVerifiers(t *testing.T) {
+	shareGoldens(t)
 	for _, kind := range []string{"good", "deleted", "tampered", "absent", "different"} {
 		t.Run(kind, func(t *testing.T) {
 			file, reference, entries := frozenFixture(t)

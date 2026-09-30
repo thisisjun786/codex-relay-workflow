@@ -1,13 +1,11 @@
 package adapter
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,7 +14,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 func seedIntake(t *testing.T, path, root string) *store.Store {
@@ -39,6 +37,7 @@ func seedIntake(t *testing.T, path, root string) *store.Store {
 	return s
 }
 func Test28_MSC_11_IntakeAdmissionUnchanged(t *testing.T) {
+	shareGoldens(t)
 	kinds := []string{"frozen-good", "frozen-unreachable", "frozen-tampered", "frozen-absent", "frozen-blocked", "frozen-corrupt", "frozen-manifest-unreadable", "frozen-parent-of-missing", "frozen-parent-through-symlink", "live-good", "live-changed", "live-unreadable", "claimed-digest-newline", "claimed-revision-newline"}
 	// A frozen MANIFEST.json no freeze writes is read as json.loads reads it, so the intake takes
 	// or refuses it, or fails on it, as the fence's intake does.
@@ -223,38 +222,15 @@ func Test28_MSC_11_IntakeAdmissionUnchanged(t *testing.T) {
 				t.Fatal(err)
 			}
 			got["refusals"] = refusals
-			// The revision and the event id are digests over the test's temporary paths: the
-			// payload carries them, so the recording names them.
-			options := []pyoracle.Option{pyoracle.Substitute(revision, "<revision>"), pyoracle.Substitute(event, "<event>")}
+			// The revision and the event id are digests over the test's temporary paths, and so
+			// is where a manifest naming them fails to decode.
+			derived := []golden.Option{golden.Substitute(revision, "<revision>"), golden.Substitute(event, "<event>")}
 			if host, ok := got["host"].(string); ok {
 				if position := jsonPosition.FindString(host); position != "" {
-					options = append(options, asGoAnswers(position, "<json-error-position>"))
+					derived = append(derived, golden.Substitute(position, "<json-error-position>"))
 				}
 			}
-			repo := pyRepo(t)
-			out := pyOutput(t, "intake_capture.py", func() *exec.Cmd {
-				// The oracle's store has a directory of its own (one takeover.json per directory)
-				// and is seeded by Go like Go's; Python then accepts on it after a takeover.
-				pyStore := seedIntake(t, filepath.Join(root, "python", "python.sqlite3"), work)
-				if err := pyStore.Close(); err != nil {
-					t.Fatal(err)
-				}
-				testsupport.HandOver(t, pyStore.Path, "python")
-				spec, _ := json.Marshal(map[string]any{"store": pyStore.Path, "payload": payload})
-				cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/adapter/testdata/intake_capture.py"))
-				cmd.Dir = repo
-				cmd.Stdin = bytes.NewReader(spec)
-				return cmd
-			}, options...)
-			var want any
-			if err := json.Unmarshal(out, &want); err != nil {
-				t.Fatal(err)
-			}
-			expected, _ := json.Marshal(want)
-			actual, _ := json.Marshal(got)
-			if !bytes.Equal(actual, expected) {
-				t.Fatalf("Go %s Python %s", actual, expected)
-			}
+			expectJSON(t, "intake", got, derived...)
 		})
 	}
 }

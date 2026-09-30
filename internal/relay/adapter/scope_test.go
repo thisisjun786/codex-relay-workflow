@@ -1,8 +1,6 @@
 package adapter
 
 import (
-	"bytes"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -11,48 +9,34 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
+// scopeCapture checks got, the answer to spec, with the golden.
 func scopeCapture(t *testing.T, spec map[string]any, got any) {
 	t.Helper()
-	raw, err := json.Marshal(spec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	out := pyDriver(t, "scope_capture.py", raw, runDerived(spec, got)...)
-	var want any
-	if err := json.Unmarshal(out, &want); err != nil {
-		t.Fatal(err)
-	}
-	expected, _ := json.Marshal(want)
-	actual, err := json.Marshal(got)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(expected, actual) {
-		t.Fatalf("Go %s\nPython %s", actual, expected)
-	}
+	expectJSON(t, "scope", got, scopeDerived(spec, got)...)
 }
 
 // jsonPosition is where a JSON decoder says a document went wrong.
 var jsonPosition = regexp.MustCompile(`line \d+ column \d+ \(char \d+\)`)
 
-// runDerived names the values of a scope answer that follow from the run's own paths (asGoAnswers):
-// the digest of a frozen manifest, which lists the test's temporary files, and the offset at
-// which such a manifest fails to decode.
-func runDerived(spec map[string]any, got any) []pyoracle.Option {
+// scopeDerived names the values of a scope answer that follow from the run's own paths, so a
+// golden holds a placeholder and a run puts back what Go answers then: the digest of a frozen
+// manifest, which lists the test's temporary files, and the offset at which such a manifest
+// fails to decode.
+func scopeDerived(spec map[string]any, got any) []golden.Option {
 	result, ok := got.(map[string]any)
 	if !ok || spec["op"] != "frozen" {
 		return nil
 	}
-	var options []pyoracle.Option
+	var options []golden.Option
 	if digest, ok := result["digest"].(string); ok && digest != "" {
-		options = append(options, asGoAnswers(digest, "<frozen-manifest-digest>"))
+		options = append(options, golden.Substitute(digest, "<frozen-manifest-digest>"))
 	}
 	if message, ok := result["error"].(string); ok {
 		if position := jsonPosition.FindString(message); position != "" {
-			options = append(options, asGoAnswers(position, "<json-error-position>"))
+			options = append(options, golden.Substitute(position, "<json-error-position>"))
 		}
 	}
 	return options
@@ -248,6 +232,7 @@ func frozenRaisedCapture(t *testing.T, reference string, entries []Entry) {
 // whose '..' the kernel resolves. Go answers the same revision, problems and access failures, or
 // raises the same exception, with the caller's entries and without them.
 func Test28_MSC_8b_FrozenCopyIsReadAsTheFenceReadsIt(t *testing.T) {
+	shareGoldens(t)
 	for _, manifest := range testsupport.FrozenManifests() {
 		t.Run(manifest.Name, func(t *testing.T) {
 			file, reference, entries := frozenFixture(t)

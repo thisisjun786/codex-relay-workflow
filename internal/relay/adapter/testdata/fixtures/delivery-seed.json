@@ -1,0 +1,258 @@
+{
+  "event": "<seed-event>",
+  "tables": {
+    "authorized_settings": {
+      "columns": [
+        "task_id",
+        "settings",
+        "source",
+        "recorded_at"
+      ],
+      "rows": [
+        [
+          "01parent-task",
+          "{\"approvalPolicy\": \"never\", \"cwd\": \"/parent\", \"environments\": [{\"cwd\": \"/parent\", \"environmentId\": \"local\", \"runtimeWorkspaceRoots\": [\"/parent\"]}], \"model\": \"anthropic/claude-opus-5\", \"reasoningEffort\": \"xhigh\", \"runtimeWorkspaceRoots\": [\"/parent\"], \"sandbox\": {\"excludeSlashTmp\": false, \"excludeTmpdirEnvVar\": false, \"networkAccess\": false, \"type\": \"workspaceWrite\", \"writableRoots\": []}}",
+          "creation_result",
+          "2023-11-14T22:13:20.000000+00:00"
+        ],
+        [
+          "01child-task",
+          "{\"approvalPolicy\": \"never\", \"cwd\": \"<suite>/oracle-seed/work\", \"environments\": [{\"cwd\": \"<suite>/oracle-seed/work\", \"environmentId\": \"local\", \"runtimeWorkspaceRoots\": [\"<suite>/oracle-seed/work\"]}], \"model\": \"anthropic/claude-opus-5\", \"reasoningEffort\": \"xhigh\", \"runtimeWorkspaceRoots\": [\"<suite>/oracle-seed/work\"], \"sandbox\": {\"excludeSlashTmp\": false, \"excludeTmpdirEnvVar\": false, \"networkAccess\": false, \"type\": \"workspaceWrite\", \"writableRoots\": []}}",
+          "creation_result",
+          "2023-11-14T22:13:20.000000+00:00"
+        ]
+      ]
+    },
+    "deliveries": {
+      "columns": [
+        "event_id",
+        "relationship_id",
+        "kind",
+        "recipient_task_id",
+        "recipient_thread_id",
+        "state",
+        "attempt_count",
+        "next_eligible_at",
+        "hold_reason",
+        "lease_owner",
+        "lease_until",
+        "dispatch_evidence",
+        "dispatch_turn_id",
+        "provenance",
+        "created_at",
+        "updated_at"
+      ],
+      "rows": [
+        [
+          "<seed-event>",
+          "rel-46d5b5ac690ef861",
+          "completion_event",
+          "01parent-task",
+          "01parent-task",
+          "queued",
+          0,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          "2023-11-14T22:13:20.000000+00:00",
+          "2023-11-14T22:13:20.000000+00:00"
+        ]
+      ]
+    },
+    "events": {
+      "columns": [
+        "event_id",
+        "relationship_id",
+        "execution_generation",
+        "revision_hash",
+        "outcome",
+        "producer",
+        "attempt",
+        "turn_thread_id",
+        "turn_id",
+        "turn_status",
+        "receipt",
+        "manifest_ref",
+        "path_binding_mode",
+        "stage",
+        "staged_at",
+        "finalized_at",
+        "finalizing_status",
+        "suppressed_reason",
+        "first_seen_at",
+        "last_seen_at",
+        "observation_count"
+      ],
+      "rows": [
+        [
+          "<seed-event>",
+          "rel-46d5b5ac690ef861",
+          1,
+          "<seed-revision>",
+          "ready_for_review",
+          "child",
+          1,
+          "01child-task",
+          "turn-dispatch-1",
+          "completed",
+          "{\"eventId\": \"<seed-event>\", \"relationshipId\": \"rel-46d5b5ac690ef861\", \"executionGeneration\": 1, \"attempt\": 1, \"revisionHash\": \"<seed-revision>\", \"outcome\": \"ready_for_review\", \"producer\": \"child\", \"turnRef\": {\"threadId\": \"01child-task\", \"turnId\": \"turn-dispatch-1\", \"turnStatus\": \"completed\"}, \"manifest\": [{\"path\": \"<suite>/oracle-seed/work/out.txt\", \"sha256\": \"91526ba42eed6dd5fee60133fa564862ec8cdcb0f8cf5f5faa52bfd727f21efb\", \"bytes\": 15}], \"emittedAt\": \"2023-11-14T22:13:20.000000+00:00\"}",
+          null,
+          "best_effort_detection",
+          "final",
+          null,
+          null,
+          null,
+          null,
+          "2023-11-14T22:13:20.000000+00:00",
+          "2023-11-14T22:13:20.000000+00:00",
+          1
+        ]
+      ]
+    },
+    "generations": {
+      "columns": [
+        "relationship_id",
+        "execution_generation",
+        "dispatch_request_id",
+        "anchor_state",
+        "dispatch_turn_id",
+        "reason",
+        "opened_at",
+        "bound_at"
+      ],
+      "rows": [
+        [
+          "rel-46d5b5ac690ef861",
+          1,
+          "dispatch-1",
+          "bound",
+          "turn-dispatch-1",
+          "initial_assignment",
+          "2023-11-14T22:13:20.000000+00:00",
+          "2023-11-14T22:13:20.000000+00:00"
+        ]
+      ]
+    },
+    "journal": {
+      "columns": [
+        "seq",
+        "at",
+        "kind",
+        "subject",
+        "detail"
+      ],
+      "rows": [
+        [
+          1,
+          "2023-11-14T22:13:20.000000+00:00",
+          "relationship_registered",
+          "rel-46d5b5ac690ef861",
+          "{\"issueKey\": \"REL-1\"}"
+        ],
+        [
+          2,
+          "2023-11-14T22:13:20.000000+00:00",
+          "settings_recorded",
+          "01parent-task",
+          "{\"source\": \"creation_result\"}"
+        ],
+        [
+          3,
+          "2023-11-14T22:13:20.000000+00:00",
+          "settings_recorded",
+          "01child-task",
+          "{\"source\": \"creation_result\"}"
+        ],
+        [
+          4,
+          "2023-11-14T22:13:20.000000+00:00",
+          "event_accepted",
+          "<seed-event>",
+          "{\"outcome\": \"ready_for_review\", \"stage\": \"final\"}"
+        ],
+        [
+          5,
+          "2023-11-14T22:13:20.000000+00:00",
+          "delivery_queued",
+          "<seed-event>",
+          "{\"kind\": \"completion_event\"}"
+        ]
+      ]
+    },
+    "relationships": {
+      "columns": [
+        "relationship_id",
+        "issue_key",
+        "status",
+        "parent_task_id",
+        "parent_host_id",
+        "parent_cwd",
+        "parent_cxc_session",
+        "child_task_id",
+        "child_host_id",
+        "child_cwd",
+        "child_cxc_session",
+        "execution_generation",
+        "artifact_roots",
+        "allowed_recipients",
+        "scope_ref",
+        "supersedes",
+        "superseded_by",
+        "created_at",
+        "updated_at"
+      ],
+      "rows": [
+        [
+          "rel-46d5b5ac690ef861",
+          "REL-1",
+          "active",
+          "01parent-task",
+          "host-a",
+          "/parent",
+          "cxc-parent",
+          "01child-task",
+          "host-a",
+          "<suite>/oracle-seed/work",
+          "cxc-child",
+          1,
+          "[\"<suite>/oracle-seed/work\"]",
+          "[\"01parent-task\"]",
+          null,
+          null,
+          null,
+          "2023-11-14T22:13:20.000000+00:00",
+          "2023-11-14T22:13:20.000000+00:00"
+        ]
+      ]
+    },
+    "revision_lineage": {
+      "columns": [
+        "relationship_id",
+        "execution_generation",
+        "event_id",
+        "revision_hash",
+        "supersedes_hash",
+        "declared_by",
+        "recorded_at"
+      ],
+      "rows": [
+        [
+          "rel-46d5b5ac690ef861",
+          1,
+          "<seed-event>",
+          "<seed-revision>",
+          null,
+          "undeclared",
+          "2023-11-14T22:13:20.000000+00:00"
+        ]
+      ]
+    }
+  },
+  "files": {
+    "work/out.txt": "the deliverable"
+  }
+}

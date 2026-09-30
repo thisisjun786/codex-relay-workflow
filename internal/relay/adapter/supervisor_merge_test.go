@@ -19,8 +19,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 type supervisorRun struct {
@@ -133,31 +132,6 @@ func runSupervisorBinary(t *testing.T, program, state, socket, message string) [
 	return runs
 }
 
-func runSupervisorPython(t *testing.T, state, socket, message string, relayProgram []string) []supervisorRun {
-	t.Helper()
-	repo, _ := filepath.Abs("../../..")
-	proof := sha256.Sum256([]byte(message + "|supervisor-turn"))
-	commands := [][]string{{"--state", state, "--socket", socket, "supervisor-send", "--message", message}, {"--state", state, "--socket", socket, "supervisor-read", "--message", message, "--turn", "supervisor-turn", "--proof", hex.EncodeToString(proof[:]), "--as", "supervisor"}}
-	programJSON, _ := json.Marshal(relayProgram)
-	var runs []supervisorRun
-	for _, argv := range commands {
-		argvJSON, _ := json.Marshal(argv)
-		cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/adapter/testdata/supervisor_cli_capture.py"), string(programJSON), string(argvJSON))
-		cmd.Dir = repo
-		var out, stderr bytes.Buffer
-		cmd.Stdout, cmd.Stderr = &out, &stderr
-		err := cmd.Run()
-		code := 0
-		if exit, ok := err.(*exec.ExitError); ok {
-			code = exit.ExitCode()
-		} else if err != nil {
-			t.Fatal(err)
-		}
-		runs = append(runs, supervisorRun{code, out.String(), stderr.String()})
-	}
-	return runs
-}
-
 func normalizeSupervisorTables(tables map[string]any, state, socket string) map[string]any {
 	delete(tables, "schema_meta")
 	var replace func(any) any
@@ -197,6 +171,7 @@ func supervisorTables(t *testing.T, state string) map[string]any {
 }
 
 func Test28_HOST_24_SupervisorSendRead(t *testing.T) {
+	shareGoldens(t)
 	policy := filepath.Join(t.TempDir(), "policy.json")
 	if err := os.WriteFile(policy, []byte(`{"roles":{"supervisor":{"expectation":"record"}}}`), 0600); err != nil {
 		t.Fatal(err)
@@ -207,61 +182,30 @@ func Test28_HOST_24_SupervisorSendRead(t *testing.T) {
 		unreachable  bool
 		refused      bool
 	}{{"success", "idle", false, false}, {"busy", "active", false, false}, {"missing", "idle", true, false}, {"refused", "idle", true, true}} {
-		for _, mode := range []struct {
-			name, program string
-			rendered      []string
-		}{{"crw-relay", suiteBinary, []string{suiteBinary, "relay"}}, {"codex-session-relay", suiteAlias, []string{suiteAlias}}} {
+		for _, mode := range []struct{ name, program string }{{"crw-relay", suiteBinary}, {"codex-session-relay", suiteAlias}} {
 			t.Run(tc.name+"/"+mode.name, func(t *testing.T) {
-				goHost, pyHost := fakehost.Start(t), fakehost.Start(t)
+				host := fakehost.Start(t)
 				if tc.unreachable {
-					goHost.Close()
-					pyHost.Close()
+					host.Close()
 					if !tc.refused {
-						_ = os.Remove(goHost.SocketPath)
-						_ = os.Remove(pyHost.SocketPath)
+						_ = os.Remove(host.SocketPath)
 					}
 				} else {
-					scriptSupervisorHost(goHost, tc.status)
-					scriptSupervisorHost(pyHost, tc.status)
+					scriptSupervisorHost(host, tc.status)
 				}
-				goState, pyState := filepath.Join(t.TempDir(), "go"), filepath.Join(t.TempDir(), "python")
-				goID := seedSupervisorCLI(t, goState, goHost.SocketPath)
-				pyID := seedSupervisorCLI(t, pyState, pyHost.SocketPath)
-				if goID != pyID {
-					t.Fatalf("message ids differ: %s %s", goID, pyID)
-				}
-				goRuns := runSupervisorBinary(t, mode.program, goState, goHost.SocketPath, goID)
-				var python struct {
-					Runs   []supervisorRun
-					Tables map[string]any
-				}
-				pyoracle.JSON(t, "supervisor_cli_capture.py", &python, func() (any, error) {
-					// The oracle's store was seeded by Go: Python serves it after a takeover, and
-					// Go reads its tables back after one more.
-					testsupport.HandOver(t, filepath.Join(pyState, "relay.sqlite3"), "python")
-					runs := runSupervisorPython(t, pyState, pyHost.SocketPath, pyID, mode.rendered)
-					testsupport.HandOver(t, filepath.Join(pyState, "relay.sqlite3"), "go")
-					return map[string]any{"Runs": runs, "Tables": normalizeSupervisorTables(supervisorTables(t, pyState), pyState, pyHost.SocketPath)}, nil
-				}, pyOptions(t, pyoracle.Substitute(pyHost.SocketPath, "<python-host-socket>"))...)
-				pyRuns := python.Runs
-				if !reflect.DeepEqual(goRuns, pyRuns) {
-					t.Fatalf("CLI differs\nGo: %#v\nPython: %#v", goRuns, pyRuns)
-				}
-				// Python's tables are recorded as JSON, so Go's are compared as JSON too.
-				var goTables map[string]any
-				encoded, err := json.Marshal(normalizeSupervisorTables(supervisorTables(t, goState), goState, goHost.SocketPath))
+				state := filepath.Join(t.TempDir(), "go")
+				id := seedSupervisorCLI(t, state, host.SocketPath)
+				runs := runSupervisorBinary(t, mode.program, state, host.SocketPath, id)
+				// The golden holds the tables as JSON reads them back.
+				var tables map[string]any
+				encoded, err := json.Marshal(normalizeSupervisorTables(supervisorTables(t, state), state, host.SocketPath))
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err := decodeNumbers(encoded, &goTables); err != nil {
+				if err := decodeNumbers(encoded, &tables); err != nil {
 					t.Fatal(err)
 				}
-				pyTables := python.Tables
-				if !reflect.DeepEqual(goTables, pyTables) {
-					g, _ := json.Marshal(goTables)
-					p, _ := json.Marshal(pyTables)
-					t.Fatalf("tables differ\nGo: %s\nPython: %s", g, p)
-				}
+				expectJSON(t, "supervisor", map[string]any{"runs": runs, "tables": tables}, golden.Substitute(host.SocketPath, "<host-socket>"))
 			})
 		}
 	}

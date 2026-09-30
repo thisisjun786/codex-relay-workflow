@@ -1,7 +1,6 @@
 package adapter
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"path/filepath"
@@ -101,21 +100,7 @@ func concurrencyCase(t *testing.T, kind string) {
 	case <-timer.C:
 		t.Fatal("caller not settled")
 	}
-	spec := map[string]any{"root": root, "case": kind, "settings": authorized(), "resume": resume()}
-	raw, err := json.Marshal(spec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	out := pyDriver(t, "concurrency_capture.py", raw)
-	var want any
-	if err := json.Unmarshal(out, &want); err != nil {
-		t.Fatal(err)
-	}
-	actual, _ := json.Marshal(result)
-	expected, _ := json.Marshal(want)
-	if !bytes.Equal(actual, expected) {
-		t.Fatalf("Go %s\nPython %s", actual, expected)
-	}
+	expectJSON(t, "concurrency", result)
 }
 func Test28_BAD_12_BusyRecipients(t *testing.T) {
 	s := sendScenario(resume(), []any{"send", "req-active", "thread-1", "hello"})
