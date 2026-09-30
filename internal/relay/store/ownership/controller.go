@@ -124,9 +124,13 @@ func (c *Controller) Status(ctx context.Context) (Status, error) {
 	if err != nil {
 		// The torn publication "initial stamp committed, mirror absent" is reported, not
 		// refused: the durable half is authoritative, and the mirror RepairMirror publishes
-		// from it is what the status shows, stale until it is published.
-		var e error
-		if r, s, e = c.torn(ctx); e != nil {
+		// from it is what the status shows, stale until it is published. Where the mirror is
+		// absent and the stamp is not that state, the refusal says why, as RepairMirror's does
+		// (a stamp past its initial publication, a socket or scope it does not name).
+		if _, e := os.Lstat(filepath.Join(filepath.Dir(c.Path), "takeover.json")); !errors.Is(e, os.ErrNotExist) {
+			return Status{}, err
+		}
+		if r, s, err = c.torn(ctx); err != nil {
 			return Status{}, err
 		}
 		stale = true

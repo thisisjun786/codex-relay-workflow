@@ -105,6 +105,19 @@ func Test30RepairMirrorPublishesTheStampedMirror(t *testing.T) {
 				t.Fatal(err)
 			}
 			meta := schemaMeta(t, state)
+			// A --socket the stamp does not name disagrees with it, as it disagrees with any
+			// mirror: neither status nor the repair serves it, and the torn store is left as
+			// it is.
+			torn := stateFiles(t, state)
+			for _, action := range []string{"status", "repair-mirror"} {
+				other := binaryRun(t, alias, "--state", state, "--socket", filepath.Join(home, "other.sock"), "takeover", action)
+				if got := takeoverAnswer(t, other); other.code != 2 || got["reason"] != "store_owned_by_other" || got["detail"] != "App Server socket disagrees" {
+					t.Fatalf("%s with a socket the stamp does not name: %+v", action, other)
+				}
+			}
+			if after := stateFiles(t, state); !reflect.DeepEqual(after, torn) {
+				t.Fatalf("a refused repair changed the torn store:\n%v\n%v", torn, after)
+			}
 			status := binaryRun(t, alias, with("takeover", "status")...)
 			if got := takeoverAnswer(t, status); status.code != 0 || got["owner"] != creator || got["epoch"] != float64(1) || got["takeoverId"] != "" || got["phase"] != "active" || got["jsonStale"] != true {
 				t.Fatalf("status of the torn stamp: %+v", status)
@@ -123,6 +136,14 @@ func Test30RepairMirrorPublishesTheStampedMirror(t *testing.T) {
 			}
 			if after := schemaMeta(t, state); !reflect.DeepEqual(after, meta) {
 				t.Fatalf("repair-mirror wrote schema_meta:\n%v\n%v", meta, after)
+			}
+			// The repaired store is an ordinary store: a socketed one's status is served from its
+			// mirror, and a socketless one has no scope and so no takeover, whose every action
+			// refuses it as it refuses any socketless store (cutover.md Record).
+			status = binaryRun(t, alias, with("takeover", "status")...)
+			if got := takeoverAnswer(t, status); socketed && (status.code != 0 || got["owner"] != creator || got["jsonStale"] != false) ||
+				!socketed && (status.code != 2 || got["detail"] != "takeover requires an existing App Server scope") {
+				t.Fatalf("status of the repaired store: %+v", status)
 			}
 			for runtime, doctor := range relay {
 				if block := ownershipBlock(t, doctor("--state", state, "--json", "doctor").stdout); !strings.Contains(block, `"detail": null`) || !strings.Contains(block, `"phase": "active"`) {
@@ -211,6 +232,13 @@ func Test30RepairMirrorRefusesAnythingButTheTornStamp(t *testing.T) {
 				if got := takeoverAnswer(t, repaired); repaired.code != 2 || got["reason"] != "store_owned_by_other" || !strings.Contains(fmt.Sprint(got["detail"]), tc.detail) {
 					t.Fatalf("repair-mirror over %s: %+v", tc.name, repaired)
 				}
+			}
+			// Status reports a store that is not the torn stamp with the repair's own refusal,
+			// save the intact store it serves.
+			status := binaryRun(t, alias, "--state", state, "--socket", socket, "takeover", "status")
+			if got := takeoverAnswer(t, status); tc.torn && tc.detail != "" && (status.code != 2 || got["reason"] != "store_owned_by_other" || !strings.Contains(fmt.Sprint(got["detail"]), tc.detail)) ||
+				!tc.torn && status.code != 0 {
+				t.Fatalf("status of %s: %+v", tc.name, status)
 			}
 			if after := stateFiles(t, state); !reflect.DeepEqual(after, before) {
 				t.Fatalf("a refused repair changed the store:\n%v\n%v", before, after)

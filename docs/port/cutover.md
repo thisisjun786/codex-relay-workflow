@@ -177,7 +177,15 @@ Every writer refuses it (non-queueable) and `doctor --json` reports its ownershi
 action, `crw relay takeover repair-mirror` (`takeover status` reports the state from the stamp,
 with `jsonStale` true), under the full lock order (`takeover.lock`, `daemon.lock`, the scope's
 `K.lock` when `socket_path` names one, `write-gate.lock` EX). It refuses every other state,
-unchanged, and publishes the mirror derived only from `schema_meta`:
+unchanged, and `takeover status` answers a store whose mirror is absent but whose stamp is not
+that state with the same refusal (a stamp past epoch 1 or naming a takeover). A `--socket`
+other than the stamp's `socket_path` is refused by both, `App Server socket disagrees`, as it
+is against any mirror, including where the stamp names none. A store without `socket_path` has
+no scope and so no takeover: the controller serves it only in this torn state, and once its
+mirror is published every takeover action refuses it, `takeover status` included, with
+`takeover requires an existing App Server scope`, as it refuses any socketless store
+(`repair-mirror` itself answers with the repaired status, and `doctor --json` reports the store).
+The recovery publishes the mirror derived only from `schema_meta`:
 protocol 1, `storeId`, `database` from the physical store, `appServerSocket`/`scopeKey` from
 `socket_path` (both null when absent), epoch 1, the stamped owner, `phase=active`, null
 `transition`/`holder`/`controller`, `rollbackAllowed` and `pythonCompatibilityBuild` from the

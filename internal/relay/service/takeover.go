@@ -51,8 +51,12 @@ func NewTakeover(ctx context.Context, selection store.StateSelection, socket, bu
 		// A stamp whose mirror is absent (the torn publication "initial stamp committed, mirror
 		// absent", cutover.md Record) names its socket in the stamp. The controller judges the
 		// state under its locks; only status and repair-mirror can succeed on it. A store with
-		// no socket has no scope: its controller takes no K.lock and serves only those two.
+		// no socket has no scope: its controller takes no K.lock and serves only those two, and
+		// a --socket naming one disagrees with the stamp, as it does with any mirror.
 		if stamp.SocketPath == "" {
+			if socket != "" {
+				return nil, &ownership.Refused{Detail: "App Server socket disagrees"}
+			}
 			return &ownership.Controller{Path: physical.RealPath, Identity: ProcessIdentity(""), ValidateSchema: store.ValidateOwnershipSchema, ValidateInbox: inbox.Check}, nil
 		}
 		recorded = &stamp.SocketPath

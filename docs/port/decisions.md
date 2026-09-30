@@ -1241,7 +1241,10 @@ mirror absent", is recovered by an explicit controller action, `crw relay takeov
 repair-mirror` (cutover.md Record). Under the full lock order it publishes the mirror
 `InitialRecord` derives from `schema_meta` and writes no key. It refuses every other state,
 including a directory holding only `write-gate.lock`. `takeover status` reports that state
-from the stamp, with `jsonStale` true, rather than failing on the missing mirror.
+from the stamp, with `jsonStale` true, rather than failing on the missing mirror, and answers an
+absent mirror whose stamp is not that state with the repair's refusal. Both refuse a `--socket`
+the stamp does not name. A store without a socket has no takeover once repaired: every takeover
+action then refuses it as it refuses any socketless store.
 Before refusing an existing `D` that has no `write-gate.lock`, a Go writable open reads
 its `schema_meta` from a disposable copy, as the fence's `Store()` reads it before
 deciding what the store is: a `D` that cannot be read, or is not a database, fails
