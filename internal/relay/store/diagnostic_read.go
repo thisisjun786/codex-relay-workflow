@@ -194,8 +194,43 @@ func OwnershipMetadata(ctx context.Context, dbPath string) (map[string]string, e
 	return meta, nil
 }
 
+// stopMetadata is ownership.stop_metadata: schema_meta read in place for the read-only Stop path
+// (OpenStopRead), with no copy and no SQLite sidecar; an absent database or one without
+// schema_meta has none.
+func stopMetadata(ctx context.Context, dbPath string) (map[string]string, error) {
+	return metadataBy(ctx, dbPath, func(resolved string) (queryer, func() error, error) {
+		ro, err := OpenStopRead(ctx, resolved, 0)
+		if err != nil {
+			return nil, nil, err
+		}
+		return ro, ro.Close, nil
+	})
+}
+
 // readMetadata is OwnershipMetadata with the underlying OS or SQLite error.
 func readMetadata(ctx context.Context, dbPath string) (map[string]string, error) {
+	return metadataBy(ctx, dbPath, func(resolved string) (queryer, func() error, error) {
+		copied, cleanup, err := ownership.CopySnapshot(resolved)
+		if err != nil {
+			return nil, nil, err
+		}
+		db, err := boundedDB(copied, "ro", 0)
+		if err != nil {
+			return nil, nil, errors.Join(err, cleanup())
+		}
+		return db, func() error { return errors.Join(db.Close(), cleanup()) }, nil
+	})
+}
+
+// queryer is the read a metadata reader makes: a copy's *sql.DB or an in-place *ReadOnly.
+type queryer interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+// metadataBy is schema_meta of the store at dbPath, read through the connection open makes for
+// the resolved database: none for an absent database (Path.exists()) or one without schema_meta.
+func metadataBy(ctx context.Context, dbPath string, open func(string) (queryer, func() error, error)) (map[string]string, error) {
 	meta := map[string]string{}
 	resolved, err := resolvePath(dbPath)
 	if err != nil {
@@ -210,16 +245,11 @@ func readMetadata(ctx context.Context, dbPath string) (map[string]string, error)
 		}
 		return nil, err
 	}
-	copied, cleanup, err := ownership.CopySnapshot(resolved)
+	db, closeDB, err := open(resolved)
 	if err != nil {
 		return nil, err
 	}
-	defer cleanup()
-	db, err := boundedDB(copied, "ro", 0)
-	if err != nil {
-		return nil, err
-	}
-	defer db.Close()
+	defer func() { _ = closeDB() }()
 	var present int
 	switch err = db.QueryRowContext(ctx, "SELECT 1 FROM sqlite_master WHERE name='schema_meta'").Scan(&present); {
 	case errors.Is(err, sql.ErrNoRows):

@@ -244,12 +244,6 @@ func TestReadOnlyForms_match_python_in_every_ownership_state(t *testing.T) {
 					fail("%v", err)
 					return
 				}
-				// The Python fence routes guard-evaluate to the owner's control.sock unless it
-				// owns an active store; the Go CLI does not route yet (refactor-backlog.md,
-				// Deferred review findings, audit 7).
-				if f.command == "guard-evaluate" && !(state.owner == "python" && state.phase == "active") {
-					continue
-				}
 				pyText, pyErr := comparable(f.command, py.stdout)
 				goText, goErr := comparable(f.command, got.stdout)
 				if py.code != got.code || pyErr != nil || goErr != nil || pyText != goText {
@@ -308,8 +302,11 @@ func TestReadOnlyForms_never_create_an_absent_store(t *testing.T) {
 }
 
 // A partial store (a write gate or an ownership mirror without D) is refused, never read or
-// repaired (decision 30): read forms answer the refusal a write form answers, with exit 2
-// rather than a host error that invites a retry, and leave S exactly as they found it.
+// repaired (decision 30): read forms answer the refusal the writer admission gives it, with exit
+// 2 rather than a host error that invites a retry, and leave S exactly as they found it. A write
+// form meets cli.py main's check_start first (decision 31), which refuses a mirror without D in
+// validate's words, as the fence's write form does; a gate alone passes it and meets the writer
+// admission.
 func TestReadOnlyForms_refuse_a_partial_store_as_a_writer_does(t *testing.T) {
 	home := pythonHome(t)
 	_, alias := packageBinary(t)
@@ -339,8 +336,15 @@ func TestReadOnlyForms_refuse_a_partial_store_as_a_writer_does(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			expected := want
+			if partial.name == "mirror only" && argv[0] == "store-challenge" && argv[1] == "--write" {
+				expected = "{\n  \"error\": \"refused\",\n  \"reason\": \"store_owned_by_other\",\n  \"detail\": \"missing or unsupported writer protocol\"\n}\n"
+				if fence := pythonCLI(t, append([]string{"--state", state}, argv...))[0]; fence.code != 2 || fence.stdout != expected {
+					t.Errorf("the fence's %s %v: %+v", partial.name, argv, fence)
+				}
+			}
 			got := binaryRun(t, alias, append([]string{"--state", state}, argv...)...)
-			if got.code != 2 || got.stdout != want {
+			if got.code != 2 || got.stdout != expected {
 				t.Errorf("%s %v: exit %d\n%s", partial.name, argv, got.code, got.stdout)
 			}
 			if after, err := storeFiles(state); err != nil || !maps.Equal(before, after) {
@@ -353,7 +357,8 @@ func TestReadOnlyForms_refuse_a_partial_store_as_a_writer_does(t *testing.T) {
 // The live-state guard stays until todo 43 (decisions D4): a read it refuses is reported,
 // never read as an unreadable store. A Stop whose receipt lives under the live state root is
 // answered with the refusal unless CRW_ALLOW_LIVE_STATE=1 is exported, and with a verdict
-// when it is.
+// when it is. The store is Go's, so no daemon's absence refuses the Stop first: the Go CLI
+// evaluates its own store in-process, and the other runtime's it routes to that owner.
 func TestGuardEvaluate_reports_the_live_state_refusal(t *testing.T) {
 	home := pythonHome(t)
 	_, alias := packageBinary(t)
@@ -362,6 +367,7 @@ func TestGuardEvaluate_reports_the_live_state_refusal(t *testing.T) {
 	if err := json.Unmarshal([]byte(matrixPython(t, "guard", filepath.Join(home, "guard"), filepath.Join(state, "relay.sqlite3"))), &guard); err != nil {
 		t.Fatal(err)
 	}
+	restamp(t, state, "go")
 	argv := []string{"--state", state, "guard-evaluate", "--marker-root", guard.Root, "--stop-input", guard.Stop,
 		"--mode", "observe", "--now", guard.Now, "--no-record"}
 	refused := binaryRun(t, alias, argv...)

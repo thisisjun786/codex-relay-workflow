@@ -65,6 +65,7 @@ func stateTree(t *testing.T, state string) map[string]string {
 func Test30GroupWritableStateDirectoryLocks(t *testing.T) {
 	defer unix.Umask(unix.Umask(0o002))
 	home := t.TempDir()
+	goHome := home
 	state := home + "/state"
 	if err := os.Mkdir(state, 0o775); err != nil {
 		t.Fatal(err)
@@ -96,13 +97,26 @@ func Test30GroupWritableStateDirectoryLocks(t *testing.T) {
 	if code, out := relayWrite(t, home, false); code != 2 || !strings.Contains(out, "the relay store belongs to another runtime") {
 		t.Fatalf("Go on the Python store in a 0775 state directory: %d %s", code, out)
 	}
-	// A gate granting group access in a group-writable directory is refused unchanged;
-	// the same gate in an owner-only directory is trusted (the live host's 0664 locks).
+	// On the Python store the lock-free check_start refuses first, as the fence's does (decision
+	// 31), so a gate granting group access is never opened there and nothing changes.
 	if err := os.Chmod(state+"/write-gate.lock", 0o664); err != nil {
 		t.Fatal(err)
 	}
 	before := stateTree(t, state)
-	if code, out := relayWrite(t, home, false); code != 2 || !strings.Contains(out, "unsafe lock file") {
+	if code, out := relayWrite(t, home, false); code != 2 || !strings.Contains(out, "the relay store belongs to another runtime") {
+		t.Fatalf("0664 gate of the Python store in a 0775 state directory: %d %s", code, out)
+	}
+	if !reflect.DeepEqual(before, stateTree(t, state)) {
+		t.Fatal("refused write changed the state directory")
+	}
+	// On Go's own store a gate granting group access in a group-writable directory is refused
+	// unchanged; the same gate in an owner-only directory is trusted (the live host's 0664 locks).
+	state = goHome + "/state"
+	if err := os.Chmod(state+"/write-gate.lock", 0o664); err != nil {
+		t.Fatal(err)
+	}
+	before = stateTree(t, state)
+	if code, out := relayWrite(t, goHome, false); code != 2 || !strings.Contains(out, "unsafe lock file") {
 		t.Fatalf("0664 gate in a 0775 state directory: %d %s", code, out)
 	}
 	if !reflect.DeepEqual(before, stateTree(t, state)) {
@@ -111,7 +125,7 @@ func Test30GroupWritableStateDirectoryLocks(t *testing.T) {
 	if err := os.Chmod(state, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if code, out := relayWrite(t, home, false); code != 2 || !strings.Contains(out, "the relay store belongs to another runtime") {
+	if code, out := relayWrite(t, goHome, false); code != 0 {
 		t.Fatalf("0664 gate in an owner-only state directory: %d %s", code, out)
 	}
 }

@@ -25,6 +25,24 @@ cases = ['unmanaged', 'unclaimed', 'uncorrelated', 'unbound', 'other', 'unregist
          'in_progress', 'blocked_needs_input', 'interrupted', 'failed', 'no_record']
 if selected != 'all':
     cases = selected.split(',')
+
+
+def own_by_go(db):
+    """Hand the fixture's store to Go, as test_fence's stamp does. The Go CLI evaluates in-process
+    only a store it may evaluate: a Stop that reads another runtime's store is routed to that
+    owner's control.sock, and refused when none answers (cutover.md, Go finding owner=python)."""
+    import sqlite3
+    from codex_session_relay import inbox, ownership
+    connection = sqlite3.connect(db)
+    with connection:
+        connection.execute("UPDATE schema_meta SET value='go' WHERE key='owner'")
+    connection.close()
+    path = pathlib.Path(db)
+    record = json.loads((path.parent / 'takeover.json').read_bytes())
+    record.update(owner='go', database=ownership.physical(path))
+    (path.parent / 'takeover.json').write_bytes(inbox.canonical(record))
+
+
 answers = []
 for name in cases:
     base = home / name
@@ -101,7 +119,10 @@ for name in cases:
             for n in range(count):
                 folder = directory if name != 'window_spent' else directory.parent / ('f' * 63 + str(n))
                 guard.reserve_hold(folder, session_id='child', turn_id='turn' if name == 'hold_spent' else str(n), at=now, mode='hold', root=root)
-        before = list(store.db.iterdump())
+    own_by_go(db)
+    import sqlite3
+    with contextlib.closing(sqlite3.connect(db)) as conn:
+        before = list(conn.iterdump())
     mode = 'observe' if name in ['observe', 'no_record'] else 'hold'
     stop_path = base / 'stop.json'; stop_path.write_text(json.dumps(stop))
     expected = guard.evaluate(root, stop, now=now, mode=mode, record=name != 'no_record')

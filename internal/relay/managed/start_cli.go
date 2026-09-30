@@ -17,12 +17,14 @@ func init() {
 }
 
 // HostStart is installed by the production adapter; nil preserves the existing
-// host-unavailable path after the exact same input and selector checks.
-var HostStart func(cli.Services, cli.Args, []byte) (any, error)
+// host-unavailable path after the exact same input and selector checks. ctx is the
+// command's: the CLI's interrupt cancels it, and the host start ends through the
+// adapter's caller cancellation (decision 39).
+var HostStart func(context.Context, cli.Services, cli.Args, []byte) (any, error)
 
 // runStart performs input validation before acquiring the store. The production
 // host adapter is todo 28: never authorize a host effect without its ledger.
-func runStart(_ context.Context, services cli.Services, args cli.Args) (any, error) {
+func runStart(ctx context.Context, services cli.Services, args cli.Args) (any, error) {
 	if services.SocketPath == "" || services.Selection.Source != "flag" {
 		return nil, &cli.UsageError{Detail: "managed-start requires explicit --state and --socket", Code: contract.ExitUsage}
 	}
@@ -60,7 +62,7 @@ func runStart(_ context.Context, services cli.Services, args cli.Args) (any, err
 		return nil, &cli.HostError{Class: "HostUnavailable", Detail: err.Error()}
 	}
 	if HostStart != nil {
-		return HostStart(services, args, raw)
+		return HostStart(ctx, services, args, raw)
 	}
 	return nil, &cli.HostError{Class: "HostUnavailable", Detail: "the relay host adapter (bridge_adapter.py) is not ported to Go yet (todo 28)"}
 }

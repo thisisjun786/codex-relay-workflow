@@ -461,7 +461,9 @@ The plugin payload that declares the native wiring (its Stop command runs `crw h
 decision 26. It is never cached beside a pointer at a Go runtime built before it, which releases
 every Stop without output or a journal row, or beside one at a Python `env-*` runtime. The
 order, and the reverse one for a rollback, are in docs/plugin-packaging.md "Turning the wired
-surfaces on" and "Update and roll back".
+surfaces on" and "Update and roll back". `crw install rollback` refuses, with nothing written, to
+point at a Python `env-*` runtime while a cached plugin version declares that wiring
+(docs/runtime-install.md "Rolling back").
 
 The legacy `guard-evaluate` CLI (stopadapter.py:69, command assembled at invocation time from
 settings at stopadapter.py:418-442) keeps its flags and its full verdict envelope so cached
@@ -539,6 +541,30 @@ endpoint, a Go `emit`, `ack` or `fault-notification-ack` is queued in the inbox 
 fence queues it, and every other Go writer refuses. There is no "lock looks stale, start another
 daemon" path.
 
+The `guard-evaluate` CLI routes a Stop the same way in both runtimes (`cli.py`
+`cmd_guard_evaluate` and `stopadapter.socket_guard`, Go `internal/relay/cli/guard.go` and
+`hook.RouteGuard`). A Stop judged on its marker alone reads no store, so it is evaluated
+in-process whoever owns one. A Stop that reads its receipt (`guard.selected_store`,
+`hook.SelectedStore`, whose selection refusal is answered first) is sent to `<S>/control.sock` of
+the store it reads: `--db-path` (sent as an absolute path), else the `dbPath` the intent
+recorded, else the selected store. The request is sent only once the peer is established as this
+user's direct socket in a directory no group or other user may write, and within one 5 s budget.
+The owner's answer is the command's, with the exit status its error record carries (`refused` 2,
+`host` 3, `usage` 4). An owner that does not answer in time is `{"error": "host", "detail": "the
+owner did not answer guard-evaluate within 5s"}` and one that says nothing readable (no bytes,
+bytes that are not UTF-8 or not JSON, more than 64 MiB of them, or the JSON value `null`) is
+`{"error": "host", "detail": "the owner closed control.sock without a readable guard-evaluate
+answer"}`, both exit 3. Bytes that are not UTF-8 are unreadable even where replacing them would
+leave JSON, an error record included. A failure after the request was sent is a host error too,
+never a refusal or a second evaluation. When the socket cannot be reached or trusted, the CLI
+evaluates in-process only where `takeover.json` is absent or names its own runtime as owner,
+after the read-only Stop path has checked that store (`ownership.check_stop`, `store.CheckStop`:
+no copy, no sidecar), which refuses a store of its own that is draining or mid-transition.
+Otherwise it refuses, exit 2 `store_owned_by_other`, `the owner could not answer guard-evaluate:
+<error>` in Python's `str(OSError)` words
+(`TestGuardEvaluate_routes_to_the_owners_control_socket_as_the_fence_does`, against the live
+fence and a live Python owner).
+
 ### Read-only clients under a foreign owner
 
 Read-only Store transactions use deferred `BEGIN` with `query_only=ON`, never
@@ -572,10 +598,7 @@ store was opened (`services.store.read_only`, Go's `Store.ReadOnly`), never on t
 read-only classification. Its `--limit` is checked before the store is opened, as
 `cmd_fault_next` checks it before its first store access. For a store that exists, the answer
 is the same whichever runtime serves it, except that `doctor`'s `ownership`, `access`, `actorReachability`,
-`accessReceipt` and `runtime` blocks are each runtime's own diagnosis (decision 31), and
-that until it lands the Go CLI evaluates `guard-evaluate` in-process where the Python fence
-routes it to the owner's `control.sock` (refactor-backlog.md, Deferred review findings,
-audit 7).
+`accessReceipt` and `runtime` blocks are each runtime's own diagnosis (decision 31).
 
 A read-only client never creates, initializes, binds or repairs a store. When `D`,
 `takeover.json` and `write-gate.lock` are all missing, a read-only form that opens the

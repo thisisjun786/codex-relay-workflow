@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/definition"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/pointer"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/scope"
@@ -88,6 +89,74 @@ func RegisteredMatching(ctx context.Context, o RetentionOptions, inside func(pat
 		}
 	}
 	return found, s.unreadable
+}
+
+// pluginLaunchFlag is the flag a runtime built with decision 26 reads as a launch by the plugin's
+// declared commands (pluginwiring.Flag).
+const pluginLaunchFlag = "--plugin-launch"
+
+// PluginLaunches is every command a cached plugin version declares (the retention scan's row 5,
+// read by the scan's own readers) that runs a runtime program through the owned pointer in
+// plugin-launch mode: crw hook or crw bridge, or codex-thread-bridge, given --plugin-launch first
+// (decision 26), a command in a shell script the declaration runs included. Each is named with
+// its cached version directory, the declaration and field that hold it, the command as written
+// and the program it names. unreadable is everything row 5 could not read or judge, which leaves
+// whether a cached declaration launches that way unknown. A runtime that does not read the flag,
+// a Python env-* runtime or a Go one built before decision 26, serves none of them. It writes
+// nothing.
+func PluginLaunches(o RetentionOptions) (launches []any, unreadable []string) {
+	if o.CodexHome == "" {
+		o.CodexHome = CodexHome(o.Env)
+	}
+	if o.Destination == "" {
+		o.Destination = DefaultDestination(o.Env)
+	}
+	root := filepath.Join(o.CodexHome, "plugins", "cache", "crw", "crw")
+	s := &scan{o: o, pointer: pointer.Path(o.Destination)}
+	// A script is judged once as the program its #! line runs and again as what the shell
+	// reading it runs, so the same command can be seen twice.
+	listed := map[string]bool{}
+	s.seen = func(row int, source, field string, argv []shellWord, command Executable) {
+		if row != 5 || !command.ThroughPointer || !pluginLaunch(argv) {
+			return
+		}
+		written := make([]string, len(argv))
+		for i, w := range argv {
+			written[i] = w.Written
+		}
+		key := source + "\x00" + field + "\x00" + strings.Join(written, "\x00")
+		if listed[key] {
+			return
+		}
+		listed[key] = true
+		version := root
+		if relative, err := filepath.Rel(root, source); err == nil {
+			version = filepath.Join(root, strings.Split(relative, string(filepath.Separator))[0])
+		}
+		launches = append(launches, Object{
+			{Key: "version", Value: version}, {Key: "source", Value: source}, {Key: "field", Value: field},
+			{Key: "command", Value: strings.Join(written, " ")}, {Key: "names", Value: argv[0].Value},
+		})
+	}
+	s.pluginCache()
+	return launches, s.unreadable
+}
+
+// pluginLaunch is whether one command runs a runtime program in plugin-launch mode: crw hook or
+// crw bridge, or codex-thread-bridge, whose first argument is --plugin-launch.
+func pluginLaunch(argv []shellWord) bool {
+	words := argv[1:]
+	switch filepath.Base(argv[0].Value) {
+	case "crw":
+		if len(words) == 0 || words[0].Missing != "" || words[0].Value != "hook" && words[0].Value != "bridge" {
+			return false
+		}
+		words = words[1:]
+	case definition.Bridge:
+	default:
+		return false
+	}
+	return len(words) > 0 && words[0].Missing == "" && words[0].Value == pluginLaunchFlag
 }
 
 // DaemonRecords is what RecordedDaemons read and found.

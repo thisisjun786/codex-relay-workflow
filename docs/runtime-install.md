@@ -455,9 +455,17 @@ refuses with nothing changed.
 The plugin's declared commands do not follow it there. The native wiring runs
 `current/bin/crw hook --plugin-launch` and execs `current/bin/codex-thread-bridge --plugin-launch`,
 and a Python runtime has no `bin/crw` and a bridge that refuses the flag. So with the native payload
-installed, a rollback onto a Python runtime releases every Stop without a record and stops the
-server from starting. Reinstall a plugin revision whose declarations are the Python bootstrap first,
-then roll the runtime back ([update and roll back](plugin-packaging.md#update-and-roll-back)).
+installed, a rollback onto a Python runtime would release every Stop without a record and stop the
+server from starting. It refuses instead, with nothing written: before it commits, it reads every
+cached plugin version's hook and MCP declarations the way `crw doctor`'s retention scan reads them
+(row 5, the shell scripts they run included), and any command that runs a program through the
+pointer with `--plugin-launch` keeps the pointer where it is. The refusal names the cached version
+directory, each such command (`pluginLaunches`) and the repair. A cached declaration that cannot
+be read or judged refuses too, since whether it launches that way is then unknown. Reinstall a
+plugin revision whose declarations are the Python bootstrap first, then roll the runtime back
+([update and roll back](plugin-packaging.md#update-and-roll-back)). Nothing checks this for a Go
+runtime built before decision 26, which reads the flag as something else; the order is its only
+guard.
 
 Install rollback is not takeover rollback. `crw install rollback` moves which runtime the pointer
 names, and onto a Python runtime it rewrites no settings. It does not move the store's ownership. After the cutover

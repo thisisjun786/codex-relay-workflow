@@ -10,7 +10,6 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 
@@ -959,10 +958,10 @@ func f1ObserveLink(ctx context.Context, l *Ledger, id string, reference, observe
 	return nil
 }
 
-func f1Root() string {
-	_, file, _, _ := runtime.Caller(0)
-	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".."))
-}
+// sweepInstallation is the installation fault-sweep's facts name: the running binary's own.
+// The package's replay tests name the checkout's Python package, the copy their live-Python
+// oracle runs from, so its facts compare byte for byte.
+var sweepInstallation = ExecutableInstallation
 
 type sweepInput struct {
 	readings any
@@ -1019,7 +1018,11 @@ func f1Sweep(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
 	if stateRoot == "" {
 		stateRoot = filepath.Join(os.Getenv("HOME"), ".local", "state")
 	}
-	sw := &Sweeper{Store: l.Store, MaxAttempts: 6, Now: l.Clock.ISO, HostRecordPath: filepath.Join(stateRoot, "codex-relay-workflow", "host-record.json"), Installation: Installation{Package: "codex-session-relay", Version: RelayPackageVersion, Location: filepath.Join(f1Root(), "packages", "codex-session-relay", "src", "codex_session_relay")}}
+	installation, e := sweepInstallation()
+	if e != nil {
+		return nil, e
+	}
+	sw := &Sweeper{Store: l.Store, MaxAttempts: 6, Now: l.Clock.ISO, HostRecordPath: filepath.Join(stateRoot, "codex-relay-workflow", "host-record.json"), Installation: installation}
 	sw.SupersessionReason = func(ctx context.Context, event string) (string, error) { return f1SupersessionReason(ctx, l, event) }
 	sw.Current = func(ctx context.Context, event string) (bool, error) {
 		reason, e := f1SupersessionReason(ctx, l, event)

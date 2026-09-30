@@ -170,6 +170,17 @@ func ExecuteAs(ctx context.Context, argv0 string, argv []string, stdout, stderr 
 	// takeover inbox on that store, all before its handler reads its own arguments; the handler's
 	// store is that store.
 	drains := drainsBeforeHandler(remaining[0]) && !store.ReadOnlyCommand(ctx)
+	// cli.py main's check_start, for the families' dispatch: after the command's own argument
+	// parse and before the selection refusal, --kind-module and the handler. The intent
+	// commands' dispatch runs its own (delivery's fenced markers), and a command that answers
+	// without the selected store is checked with none.
+	startChecked := !store.ReadOnlyCommand(ctx) && !strings.HasPrefix(remaining[0], "intent-")
+	checkStart := func(selection store.StateSelection, socket string) error {
+		if !startChecked || selection.Path == "" {
+			return nil
+		}
+		return store.CheckStartLikeFence(ctx, selection.DBPath(), socket)
+	}
 	ctx, admitted := store.WithAdmitted(ctx)
 	defer func() { _ = admitted.Release() }()
 	admit := func(selection store.StateSelection, socket string) error {
@@ -189,6 +200,9 @@ func ExecuteAs(ctx context.Context, argv0 string, argv []string, stdout, stderr 
 		return err
 	}
 	refusal := func(selection store.StateSelection, socket string) error {
+		if err := checkStart(selection, socket); err != nil {
+			return err
+		}
 		services := Services{Selection: selection, SocketPath: socket, AdapterRequested: socket != "", Program: program(argv0)}
 		refusal, err := selectionRefusal(services)
 		if err != nil {
@@ -320,12 +334,12 @@ func admitIf(drains bool, admit func(store.StateSelection, string) error) func(s
 	return nil
 }
 
-// run is cli.main for a command of this package's table: the selection refusal, then admit (the
-// writable open, --kind-module and the inbox replay) for a command that drains, or
-// --kind-module alone, then the handler.
+// run is cli.main for a command of this package's table: check_start, the selection refusal,
+// then admit (the writable open, --kind-module and the inbox replay) for a command that drains,
+// or --kind-module alone, then the handler.
 func run(ctx context.Context, command *Command, argv0, state, socket string, kindModules []string, admit func(store.StateSelection, string) error, args Args) (any, error) {
 	services := Services{SocketPath: socket, AdapterRequested: socket != "", Program: program(argv0)}
-	if !command.Exempt {
+	if command.Name != "merge-evidence" {
 		selection, err := store.ResolveStateDir(state, socket)
 		if err != nil {
 			if errors.Is(err, store.ErrNoHome) {
@@ -334,6 +348,18 @@ func run(ctx context.Context, command *Command, argv0, state, socket string, kin
 			return nil, err
 		}
 		services.Selection = selection
+	}
+	// cli.py main runs the lock-free check_start (ownership.check_start, with --socket) for
+	// every command that is neither read-only nor answers without the selected store, before
+	// the selection refusal, --kind-module and the handler's own refusals: another runtime's
+	// store, or one mid-transition, is refused first. The takeover candidate is checked by its
+	// handler, which holds the permit (runService).
+	if !store.ReadOnlyCommand(ctx) && !candidateRun(command, args.Positionals, args.Flags) && command.Name != "merge-evidence" {
+		if err := store.CheckStartLikeFence(ctx, services.Selection.DBPath(), socket); err != nil {
+			return nil, err
+		}
+	}
+	if !command.Exempt {
 		refusal, err := selectionRefusal(services)
 		if err != nil {
 			return nil, err
@@ -341,15 +367,6 @@ func run(ctx context.Context, command *Command, argv0, state, socket string, kin
 		if refusal != nil {
 			return nil, &PayloadExit{Payload: refusal, Code: contract.ExitRefused}
 		}
-	} else if command.Name != "merge-evidence" {
-		selection, err := store.ResolveStateDir(state, socket)
-		if err != nil {
-			if errors.Is(err, store.ErrNoHome) {
-				return nil, &HostError{Class: "RuntimeError", Detail: "Could not determine home directory."}
-			}
-			return nil, err
-		}
-		services.Selection = selection
 	}
 	if admit != nil && !command.Exempt {
 		if err := admit(services.Selection, socket); err != nil {

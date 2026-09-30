@@ -15,6 +15,10 @@ func CanonicalSocket(path string) (string, error) { return canonicalSocket(path)
 // ResolvePath is Path.resolve() (non-strict): symlinks followed, a missing tail kept.
 func ResolvePath(path string) (string, error) { return resolvePath(path) }
 
+// ResolveLoosely is Path.resolve() as ownership.mirror and the Stop client call it (strict=False):
+// a component that cannot be examined is kept as spelled.
+func ResolveLoosely(path string) string { return resolveLoosely(path) }
+
 // ExpandUser is Path.expanduser(): an unknown ~user is an error, as Python's RuntimeError.
 func ExpandUser(path string) (string, error) { return expandUser(path) }
 

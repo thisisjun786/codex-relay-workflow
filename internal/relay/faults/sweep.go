@@ -43,6 +43,22 @@ type Installation struct {
 	Package, Version, Location string
 }
 
+// ExecutableInstallation is the running relay's own Installation (decision 34): package
+// codex-session-relay at RelayPackageVersion, located at the directory of this executable with
+// its links resolved, the directory crw install records as its Go install entry's location.
+// The daemon's sweeper and the fault-sweep command both name it, as Python's name its
+// installed PACKAGE_DIRECTORY.
+func ExecutableInstallation() (Installation, error) {
+	executable, err := os.Executable()
+	if err == nil {
+		executable, err = filepath.EvalSymlinks(executable)
+	}
+	if err != nil {
+		return Installation{}, err
+	}
+	return Installation{Package: "codex-session-relay", Version: RelayPackageVersion, Location: filepath.Dir(executable)}, nil
+}
+
 // RelayPackageVersion is codex_session_relay.__version__, the version faultsweep.INSTALLATION
 // records in every observation's facts. It follows the package, unlike ownership.PythonBuild,
 // which names the fence release and never moves with a later bump.

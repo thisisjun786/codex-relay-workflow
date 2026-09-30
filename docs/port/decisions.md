@@ -927,8 +927,14 @@ contract the Python launchers carried is enforced by the runtime in that mode.
   effects: against an empty CODEX_HOME, `codex-thread-bridge --plugin-launch` exits 2 in all three
   cases, with Go's `flag provided but not defined: -plugin-launch` from a runtime built before this
   decision, `crw bridge launcher: no record at ...` from one built with it, and argparse's
-  `unrecognized arguments: --plugin-launch` from a Python runtime. Nothing runs that probe yet
-  (refactor-backlog, the todo 34 compatibility entry).
+  `unrecognized arguments: --plugin-launch` from a Python runtime. Nothing runs that probe yet.
+  The Python half needs no probe, since no Python runtime reads the flag: `crw install rollback`
+  onto a Python `env-*` runtime reads every cached version's declarations with the retention
+  scan's row-5 readers (`doctor.PluginLaunches`, the shell scripts they run included) and
+  refuses, with nothing written, while any runs a program through the pointer with
+  `--plugin-launch` or cannot be read (`TestARollbackToAVenvRefusesWhileTheNativePayloadIsCached`
+  in internal/runtime/install/rollback_test.go). The order stays the only guard for a Go runtime
+  built before this decision, and `crw doctor` and `crw install status` do not report the pair.
 - `scripts/plugin_transition.py` `transition`, `disable` and `remove` refused with exit 2 and one
   line on stderr before reading the host. Their steps hand the surfaces only to a Python runtime
   (preflight requires `<dest>/current/bin/python3` and a cached payload equal to this checkout's),
@@ -1063,8 +1069,21 @@ without exactly one selector and `linkage-up --scope` without `--task` answer
 arguments (`register`'s unreadable settings, `settings-record --exception` beside
 `--clear-exception`) leaves an absent store initialized, and a store another runtime owns
 answers the ownership refusal instead. Go's relay-registry dispatch (`registry.run`) opens a
-write form's store before the command's `precheck` and a read-only form's after it; the
-`--kind-module` refusal still precedes a write form's store in Go (refactor-backlog.md).
+write form's store before the command's `precheck` and a read-only form's after it. Before
+either, `cli.py` `main` runs `ownership.check_start` for every command that is neither read-only
+nor answers without the selected store (`_reads_no_selected_store`), and so does the Go relay
+dispatch (`store.CheckStartLikeFence`, with the command's `--socket`): after the command's own
+argument parse, and before the selection refusal, `--kind-module` and the handler's own
+refusals. A store the other runtime owns, or one mid-transition, therefore answers
+`store_owned_by_other` in both runtimes, byte for byte, where the command's `--kind-module`
+cannot be imported, where `daemon` or `managed-start` names no `--socket`, and where its
+`--socket` is not the one the store recorded, and a write form on a mirror without `D` is
+refused in `validate`'s words (`missing or unsupported writer protocol`), as the fence's is,
+where a read form still answers the writer admission's refusal above. The intent commands keep
+their own check (delivery's fenced markers), and the takeover candidate (`service run
+--takeover-candidate`) is checked by its handler, which holds the permit
+(`Test31_check_start_precedes_the_selection_kind_module_and_handler_refusals` and
+`TestReadOnlyForms_refuse_a_partial_store_as_a_writer_does`, against the live fence).
 
 A read the live-state guard refuses (until todo 43) reports the refusal. The owner's
 control socket answers a guard that failed with the relay's host record, as `control.py`
@@ -1105,9 +1124,10 @@ start, null for an absent store.
 The relay's `faultsweep.INSTALLATION.version` and the bridge's `__version__` are mirrored
 as `faults.RelayPackageVersion` and `appserver.BridgeVersion` (0.2.0), each checked
 against the real Python package; `ownership.PythonBuild` stays the fence identity and does
-not follow later bumps. Open question, not decided here: the Go daemon's installation
-location is its executable's directory under package `codex-session-relay`, so the
-host-record revision lookup reports `unknown` (refactor-backlog.md, audit 50).
+not follow later bumps. The Go relay's installation identity is decision 34's: package
+`codex-session-relay` at the directory of its resolved executable
+(`faults.ExecutableInstallation`), which `crw install` records as the Go install entry's
+`location`, for the daemon's sweeper and the `fault-sweep` command alike.
 
 Evidence: `internal/relay/argparse/readonly.go` (`ReadOnlyForm`, read by the relay CLI and
 `registry.ExecuteAs`), `internal/relay/cli/readonly.go`, `internal/relay/store/hold.go`
@@ -1435,8 +1455,11 @@ install entry carries `location` (`<runtime>/bin`, the directory a running Go re
 its own), `entryPoint`, `environment`, `integrity` and `binaryDigest` (the binary's SHA-256),
 `target` (`<goos>/<goarch>`), `reachedVia`, `digestMatchesDefinition` and `source`, and no
 `interpreter`, `interpreterPath` or `installMode`. `source` is what both fault sweepers read as
-the installed revision: `repositoryCommit` and `workingTreeClean` come from the binary's build
-information, and `repositoryTree` and `subdirectoryTree` (equal: the Go module is the repository
+the installed revision. A Go relay finds its own entry by that `location`: the daemon's sweeper
+and `fault-sweep` both name the directory of the resolved executable
+(`faults.ExecutableInstallation`), never a path derived from the Go source, which a `-trimpath`
+build turns into a module path that matches no entry. `repositoryCommit` and
+`workingTreeClean` come from the binary's build information, and `repositoryTree` and `subdirectoryTree` (equal: the Go module is the repository
 root) from the tree `make build`/`make dist` stamp with
 `-X .../internal/runtime/record.sourceTree=$(git rev-parse HEAD^{tree})`, and only when the
 working tree is clean (`git status --porcelain` empty, the test behind Go's own `vcs.modified`):
@@ -1460,8 +1483,10 @@ reduced to three installs and two points per component); `TestV1RecordRoundTrips
 `TestUpdateWritesWhatPythonWrites` (seven deltas against Python's bytes in
 internal/runtime/testdata/goldens.json), `TestMakefileStampsTheTreeOnlyFromACleanTree` (the
 Makefile run in a temporary repository: clean stamps HEAD's tree, modified or untracked stamps
-nothing), `TestSourceWithoutAStampIsNull`, `Test37_SweeperReadsTheGoInstallEntry`
-(internal/relay/faults) and, under the parity tag, `TestParity_python_faultsweep_reads_a_go_install_entry`.
+nothing), `TestSourceWithoutAStampIsNull`, `Test37_SweeperReadsTheGoInstallEntry` and
+`Test37_FaultSweepCLIRecordsTheRunningBinarysInstallEntry` (a `-trimpath` build's `fault-sweep`
+records its Go install entry's location and revision; internal/relay/faults) and, under the
+parity tag, `TestParity_python_faultsweep_reads_a_go_install_entry`.
 
 ## 35. The components definition stays definitionVersion 1, without per-target digests
 
@@ -1924,6 +1949,18 @@ caller's own context error instead of the transport-shutdown message. The receip
 and fields are the ones Python writes; what changes is that which one a send gets no longer
 depends on scheduling.
 
+`managed-start` sends on the command's own context, as every other relay command does. The
+first SIGINT cancels that context (cmd/crw `cancelOn`), so an interrupted start ends through
+this path: nothing more is sent, the send it interrupted keeps `outcome_unknown`, and the
+command closes its adapter and store and answers exit 3 `{"error": "host", "detail": "context
+canceled"}`. Python installs no handler there: `KeyboardInterrupt` ends `cmd_managed_start`,
+`cli.main`'s `finally` closes the transport, whose drain cancels the send and saves the same
+`outcome_unknown` receipt, and the process dies of the interrupt without a stdout document.
+The stored outcome and the retry by request id are the same in both runtimes; only the
+interrupted process's own ending differs. Before this, the Go start ran on
+`context.Background`: the first interrupt was ignored until the host answered, and a second
+one killed the process before its adapter or store was closed.
+
 Why: Python's `_guarded_send` takes a cancellation at the `await` it is suspended in. Its
 answer or error is never read and no later request is made, whether the answer arrived
 before or after the cancel. The Go worker only learned of the cancellation when the
@@ -1946,7 +1983,10 @@ guard, `turn/start`) twice. In the first run the caller's cancellation propagate
 In the second, `heldCaller` holds it back until the worker has finished. Both runs are
 compared with the live Python oracle, where each answer also arrives after the cancel. With
 the transport change reverted, the held run fails every time: `failed`, `not_attempted`,
-`accepted`, and an extra `thread/resume`.
+`accepted`, and an extra `thread/resume`. `Test28_ManagedStartEndsOnTheFirstInterrupt` in
+internal/relay/adapter/managed_test.go interrupts the built CLI's `managed-start` while the
+business `turn/start` is unanswered; with `managedStart` back on `context.Background` the
+process outlives the interrupt.
 
 ## 40. A stopped process has exited when its pidfd says so, in both runtimes
 

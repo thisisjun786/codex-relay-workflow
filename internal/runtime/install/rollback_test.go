@@ -136,6 +136,70 @@ func TestARollbackToAVenvNeverRewritesTheSettings(t *testing.T) {
 	}
 }
 
+// A rollback onto a Python runtime refuses while a cached plugin version declares the native
+// commands (backlog before todo 42). They run current/bin/crw hook --plugin-launch and exec
+// current/bin/codex-thread-bridge --plugin-launch, and a venv has no bin/crw and a bridge that
+// refuses the flag, so the pointer on the venv would release every Stop without a record and
+// start no bridge. The refusal names the cached version and the repair, writes nothing, and
+// leaves the pointer on the Go runtime, whose Stops are still recorded. A cached declaration that
+// cannot be read refuses too, since whether it launches that way is not established. Once the
+// cache holds the Python bootstrap declarations again (the payload goes back first), the same
+// rollback applies and the venv's adapter records the Stop.
+func TestARollbackToAVenvRefusesWhileTheNativePayloadIsCached(t *testing.T) {
+	needsPython(t)
+	h := newHost(t)
+	venv, goRuntime, settings := h.goEraAfterPythonEra(t)
+	version := filepath.Join(h.codex, "plugins", "cache", "crw", "crw", "0.9.0")
+	cache := func(from func(...string) string, names ...string) {
+		if err := os.RemoveAll(version); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range names {
+			write(t, filepath.Join(version, "wiring", name), readFile(t, from(name)))
+		}
+	}
+	path := filepath.Join(h.codex, install.SettingsName)
+	recorded := readFile(t, h.record)
+	refuses := func(what string) record.Object {
+		t.Helper()
+		result, code := install.Rollback(context.Background(), h.options(), venv)
+		if code != install.Refused || h.pointerTarget(t) != goRuntime || readFile(t, h.record) != recorded || readFile(t, path) != settings || !strings.Contains(text(at(result, "refused")), version) {
+			t.Fatalf("%s: exit %d\n%s", what, code, golden.Canon(result))
+		}
+		if !h.nativeStopRecorded(t) {
+			t.Fatalf("%s: a Stop on the Go runtime was not recorded after the refusal", what)
+		}
+		return result
+	}
+
+	cache(wiring, filepath.Join("hooks", "stop-recording-completion.json"), "mcp.json", "crw-bridge.sh")
+	refused := refuses("the native payload")
+	launches, _ := at(refused, "pluginLaunches", "launches").([]any)
+	var commands []string
+	for _, launch := range launches {
+		commands = append(commands, filepath.Base(text(at(golden.Obj(launch), "names"))))
+	}
+	if strings.Join(commands, " ") != "crw codex-thread-bridge" || !strings.Contains(text(at(refused, "repair")), "Python bootstrap") {
+		t.Fatalf("the native payload's launches: %v\n%s", commands, golden.Canon(refused))
+	}
+
+	write(t, filepath.Join(version, "wiring", "hooks", "stop-recording-completion.json"), "{")
+	if unread := refuses("an unreadable declaration"); len(at(unread, "pluginLaunches", "unread").([]any)) == 0 {
+		t.Fatalf("an unreadable declaration is not named:\n%s", golden.Canon(unread))
+	}
+
+	cache(preNativeWiring, filepath.Join("hooks", "stop-recording-completion.json"), "mcp.json")
+	write(t, filepath.Join(version, "wiring", "crw_stop_hook.py"), readFile(t, wiring("crw_stop_hook.py")))
+	write(t, filepath.Join(version, "wiring", "crw_bridge_mcp.py"), readFile(t, wiring("crw_bridge_mcp.py")))
+	result, code := install.Rollback(context.Background(), h.options(), venv)
+	if code != install.OK || h.pointerTarget(t) != venv || readFile(t, path) != settings {
+		t.Fatalf("the Python bootstrap payload: exit %d\n%s", code, golden.Canon(result))
+	}
+	if !h.stopRecorded(t) {
+		t.Fatal("a Stop through the venv's Python adapter was not recorded")
+	}
+}
+
 // A rollback killed with SIGKILL at its commit - after every settings step a rollback takes and
 // before the selection and the pointer move - leaves a host whose Stops are recorded: the
 // settings were never rewritten, the pointer still names the Go runtime, and the ordinary
