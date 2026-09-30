@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "001 relay --state <home>/relay --json fault-operation --definitely-unknown fff44f6a": "txt:{\"code\":2,\"stdout\":\"\",\"stderr\":\"usage: codex-session-relay fault-operation [-h] --publication PUBLICATION\\n                                           --claim-token CLAIM_TOKEN\\ncodex-session-relay fault-operation: error: the following arguments are required: --publication, --claim-token\\n\"}"
+ }
+}

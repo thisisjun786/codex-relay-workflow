@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "transport_edges.py": "txt:{\"submission\": {\"error\": \"the relay transport is shutting down; nothing was sent\"}}\n"
+ }
+}

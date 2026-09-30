@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "001 relay --state <home>/relay --json fault-sweep --help 2c1e8bf9": "txt:{\"code\":0,\"stdout\":\"usage: codex-session-relay fault-sweep [-h] [--product PRODUCT]\\n                                       [--project PROJECT]\\n                                       [--readings READINGS]\\n                                       [--readings-after READINGS_AFTER]\\n\\noptions:\\n  -h, --help            show this help message and exit\\n  --product PRODUCT\\n  --project PROJECT\\n  --readings READINGS   reporting-observation/1 JSON list, or @path\\n  --readings-after READINGS_AFTER\\n                        continue a readings batch from the readingsNext the\\n                        last sweep returned\\n\"}"
+ }
+}

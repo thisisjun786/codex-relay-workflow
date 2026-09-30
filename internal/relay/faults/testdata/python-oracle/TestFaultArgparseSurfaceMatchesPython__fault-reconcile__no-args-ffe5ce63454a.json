@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "001 relay --state <home>/relay --json fault-reconcile a7d172ee": "txt:{\"code\":2,\"stdout\":\"\",\"stderr\":\"usage: codex-session-relay fault-reconcile [-h] --publication PUBLICATION\\n                                           [--observed OBSERVED]\\n                                           [--observed-fields OBSERVED_FIELDS]\\n                                           [--prior-ended] [--reason REASON]\\n                                           [--searched]\\ncodex-session-relay fault-reconcile: error: the following arguments are required: --publication\\n\"}"
+ }
+}

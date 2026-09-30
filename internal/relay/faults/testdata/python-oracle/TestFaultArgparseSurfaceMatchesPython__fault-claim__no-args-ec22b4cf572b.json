@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "001 relay --state <home>/relay --json fault-claim 403256cd": "txt:{\"code\":2,\"stdout\":\"\",\"stderr\":\"usage: codex-session-relay fault-claim [-h] --publication PUBLICATION\\n                                       --owner OWNER [--takeover]\\ncodex-session-relay fault-claim: error: the following arguments are required: --publication, --owner\\n\"}"
+ }
+}

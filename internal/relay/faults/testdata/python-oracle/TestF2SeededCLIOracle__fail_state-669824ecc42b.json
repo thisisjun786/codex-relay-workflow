@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "001 relay --state <home>/py --json fault-fail --publication 58d437daf68a4509… 4df2ddbb": "txt:{\"code\":2,\"stdout\":\"{\\n  \\\"error\\\": \\\"refused\\\",\\n  \\\"reason\\\": \\\"fault_not_claimable\\\",\\n  \\\"detail\\\": \\\"only a claimed or issued publication fails; this one is pending\\\"\\n}\\n\"}"
+ }
+}

@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "scope_capture.py #1": "txt:{\"bindings\": {}, \"problems\": [\"<test-tmp>/001/deliver.txt: path_changed: component 'deliver.txt' of '<test-tmp>/001/deliver.txt' disappeared during resolution\"], \"unreadable\": []}\n"
+ }
+}

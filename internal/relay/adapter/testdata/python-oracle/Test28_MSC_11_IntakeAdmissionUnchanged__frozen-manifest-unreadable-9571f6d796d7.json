@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "intake_capture.py": "txt:{\"accepted\": false, \"host\": \"PermissionError: [Errno 13] Permission denied: '<test-tmp>/001/frozen/MANIFEST.json'\", \"reason\": null, \"refusals\": [], \"rows\": []}\n"
+ }
+}

@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "001 capture_case.py test_faults.Evidence.test_an_occurrence_keeps_what_was_o… 3c9c9144": "txt:{\"assertions\": [\"failed\", \"afef8c99b239a62bb3cc4b7fc823b14f50fd51e37cd72164ceea9ecc38b498ec\"], \"problems\": []}\n"
+ }
+}

@@ -51,13 +51,16 @@ func integrationReplay(t *testing.T, property string) {
 	t.Helper()
 	_, file, _, _ := runtime.Caller(0)
 	script := filepath.Join(filepath.Dir(file), "testdata/integration_capture.py")
-	cmd := exec.Command("uv", "run", "--no-sync", "--no-project", "python3", script, property, filepath.Join(filepath.Dir(file), "testdata/properties.md"))
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	raw, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("Python %s: %v\n%s", property, err, stderr.String())
-	}
+	raw := scenarioAnswer(t, "integration_capture.py", property, func() ([]byte, error) {
+		cmd := exec.Command("uv", "run", "--no-sync", "--no-project", "python3", script, property, filepath.Join(filepath.Dir(file), "testdata/properties.md"))
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		raw, err := cmd.Output()
+		if err != nil {
+			return nil, fmt.Errorf("Python %s: %v\n%s", property, err, stderr.String())
+		}
+		return raw, nil
+	})
 	var records []struct {
 		Operation                               string
 		Args                                    []any

@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "001 relay --state <home>/python --json fault-queue --fault d0c19e1dd5adcb089… 01b6f4e8": "txt:{\"code\":0,\"stdout\":\"{\\n  \\\"publicationId\\\": \\\"7b2a6c2dea3c6fbf4fc1393b74dc184c\\\",\\n  \\\"kind\\\": \\\"append_comment\\\",\\n  \\\"trigger\\\": \\\"extra\\\",\\n  \\\"queued\\\": true,\\n  \\\"awaitingTarget\\\": false,\\n  \\\"awaitingRecord\\\": true,\\n  \\\"reason\\\": \\\"queued\\\"\\n}\\n\"}"
+ }
+}

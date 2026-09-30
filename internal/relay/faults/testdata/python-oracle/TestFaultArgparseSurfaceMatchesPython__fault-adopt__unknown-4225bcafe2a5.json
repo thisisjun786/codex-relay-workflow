@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "001 relay --state <home>/relay --json fault-adopt --definitely-unknown efc28d5a": "txt:{\"code\":2,\"stdout\":\"\",\"stderr\":\"usage: codex-session-relay fault-adopt [-h] --fault FAULT\\n                                       --external-ref EXTERNAL_REF\\n                                       --scope SCOPE\\ncodex-session-relay fault-adopt: error: the following arguments are required: --fault, --external-ref, --scope\\n\"}"
+ }
+}

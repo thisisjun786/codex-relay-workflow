@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "generation true": "txt:{\"id\": \"ac38c77b1c1d770137b260987d4f53b5\", \"generation\": 1, \"digest\": \"ac38c77b1c1d770137b260987d4f53b525fc78d483f7ca9a146d68f514132732\", \"block\": \"<!-- relay-sync:ac38c77b1c1d770137b260987d4f53b5 -->\\nblockFormat: v2\\nsyncId: ac38c77b1c1d770137b260987d4f53b5\\nsubjectKind: x\\nissueKey: I\\nrelationshipId: r\\neventId: \\nexecutionGeneration: 1\\nrevisionHash: \\ndisposition: \\nidentityDigest: ac38c77b1c1d770137b260987d4f53b525fc78d483f7ca9a146d68f514132732\\nsummarySha256: 043a718774c572bd8a25adbeb1bfcd5c0256ae11cecf9f9c3f925d0e52beaf89\\n\\n```text\\ns\\n```\\n<!-- /relay-sync:ac38c77b1c1d770137b260987d4f53b5 -->\"}\n"
+ }
+}

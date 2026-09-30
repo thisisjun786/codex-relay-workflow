@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "001 relay --state <home>/relay --json fault-queue --definitely-unknown cb2ef125": "txt:{\"code\":2,\"stdout\":\"\",\"stderr\":\"usage: codex-session-relay fault-queue [-h] --fault FAULT --kind KIND\\n                                       --trigger TRIGGER [--payload PAYLOAD]\\ncodex-session-relay fault-queue: error: the following arguments are required: --fault, --kind, --trigger\\n\"}"
+ }
+}

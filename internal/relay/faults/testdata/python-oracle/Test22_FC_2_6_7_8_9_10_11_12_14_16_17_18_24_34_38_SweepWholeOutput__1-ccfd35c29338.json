@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "001 still_present e3b0c442": "txt:{\"memo\": [{\"event_id\": \"evt0000\", \"noted_at\": \"now\", \"reason\": \"overtaken by test\"}], \"present\": null}\n"
+ }
+}

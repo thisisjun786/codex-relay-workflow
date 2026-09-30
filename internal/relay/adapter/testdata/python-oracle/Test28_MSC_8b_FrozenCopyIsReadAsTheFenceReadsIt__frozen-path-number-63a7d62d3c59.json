@@ -1,0 +1,7 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "scope_capture.py #1": "txt:{\"error\": \"AttributeError: 'int' object has no attribute 'encode'\"}\n",
+  "scope_capture.py #2": "txt:{\"error\": \"AttributeError: 'int' object has no attribute 'encode'\"}\n"
+ }
+}

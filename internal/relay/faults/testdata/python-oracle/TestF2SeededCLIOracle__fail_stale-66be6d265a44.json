@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "001 relay --state <home>/py --json fault-fail --publication 58d437daf68a4509… 2c989d9f": "txt:{\"code\":2,\"stdout\":\"{\\n  \\\"error\\\": \\\"refused\\\",\\n  \\\"reason\\\": \\\"fault_claim_stale\\\",\\n  \\\"detail\\\": \\\"this claim token is not the current one\\\"\\n}\\n\"}"
+ }
+}

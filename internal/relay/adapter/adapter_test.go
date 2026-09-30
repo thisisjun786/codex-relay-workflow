@@ -285,17 +285,13 @@ func capture(t *testing.T, s scenario) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo, err := filepath.Abs("../../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command("uv", "run", "--no-sync", "--project", repo, "python", filepath.Join(repo, "internal/relay/adapter/testdata/capture.py"))
-	cmd.Env = append(os.Environ(), "PYTHONPATH="+filepath.Join(repo, "packages/codex-session-relay/src")+":"+filepath.Join(repo, "packages/codex-thread-bridge/src"))
-	cmd.Stdin = bytes.NewReader(input)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("Python: %v\n%s", err, output)
-	}
+	repo := pyRepo(t)
+	output := pyOutput(t, pyKey(t, "capture.py"), func() *exec.Cmd {
+		cmd := exec.Command("uv", "run", "--no-sync", "--project", repo, "python", filepath.Join(repo, "internal/relay/adapter/testdata/capture.py"))
+		cmd.Env = append(os.Environ(), "PYTHONPATH="+filepath.Join(repo, "packages/codex-session-relay/src")+":"+filepath.Join(repo, "packages/codex-thread-bridge/src"))
+		cmd.Stdin = bytes.NewReader(input)
+		return cmd
+	})
 	var expected any
 	decoder := json.NewDecoder(bytes.NewReader(output))
 	decoder.UseNumber()

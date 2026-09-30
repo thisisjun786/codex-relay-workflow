@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "001 relay --state <home>/py --json fault-update --fault 43408d6aaf59f0b6faa2… 77b5e074": "txt:{\"code\":0,\"stdout\":\"null\\n\"}"
+ }
+}

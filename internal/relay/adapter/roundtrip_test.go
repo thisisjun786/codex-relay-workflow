@@ -13,11 +13,12 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 func Test28_EmitDeliverClaimAckRoundTrip(t *testing.T) {
 	root := t.TempDir()
-	repo, _ := filepath.Abs("../../..")
+	repo := pyRepo(t)
 	binary, alias := suiteBinary, suiteAlias
 	seed := copyDeliverySeed(t, root)
 	host := fakehost.Start(t)
@@ -28,12 +29,17 @@ func Test28_EmitDeliverClaimAckRoundTrip(t *testing.T) {
 	// fence stamps both, and Go's is that store after a takeover to Go: the oracle's store
 	// reaches Go the same way before the final comparison, so the two stamps agree.
 	prepared := []string{"DELETE FROM deliveries", "DELETE FROM events", "DELETE FROM journal WHERE kind IN ('event_accepted','delivery_enqueued')"}
-	for _, state := range []string{goState, pyState} {
+	prepare := func(state string) {
 		path := filepath.Join(state, "relay.sqlite3")
 		preFenceFixture(t, filepath.Join(root, "python.sqlite3"), path, host.SocketPath, prepared...)
 		testsupport.Fence(t, path, "python")
 	}
+	prepare(goState)
+	pyPrepared := false
 	testsupport.HandOver(t, filepath.Join(goState, "relay.sqlite3"), "go")
+	// The seed's event and revision, and the proof of that event's acknowledgement, are digests
+	// over the seed artifact's path in this run's suite directory.
+	derived := append([]pyoracle.Option{pyoracle.Substitute(host.SocketPath, "<host-socket>"), pyoracle.Substitute(delivery.AckProof(seed.Event, "ack-turn"), "<ack-proof>")}, seed.derived()...)
 	host.Handle("thread/list", func(raw json.RawMessage) fakehost.Reply {
 		var p map[string]any
 		if err := json.Unmarshal(raw, &p); err != nil {
@@ -98,23 +104,21 @@ func Test28_EmitDeliverClaimAckRoundTrip(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		raw, _ := json.Marshal(map[string]any{"argv": append([]string{"--state", pyState, "--socket", host.SocketPath}, args...)})
-		cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/adapter/testdata/roundtrip_capture.py"))
-		cmd.Dir = repo
-		cmd.Stdin = bytes.NewReader(raw)
-		cmd.Env = append(os.Environ(), "CODEX_SESSION_RELAY_STATE="+filepath.Join(root, "python-ledger"))
-		var want, pyErr bytes.Buffer
-		cmd.Stdout = &want
-		cmd.Stderr = &pyErr
-		err := cmd.Run()
-		pyCode := 0
-		if exit, ok := err.(*exec.ExitError); ok {
-			pyCode = exit.ExitCode()
-		} else if err != nil {
-			t.Fatal(err)
-		}
-		if code != pyCode || !bytes.Equal(got.Bytes(), want.Bytes()) || !bytes.Equal(stderr.Bytes(), pyErr.Bytes()) {
-			t.Fatalf("%v Go(%d) %s %s Python(%d) %s %s", args, code, &got, &stderr, pyCode, &want, &pyErr)
+		python := pyProcess(t, pyKey(t, "roundtrip_capture.py"), false, func() *exec.Cmd {
+			if !pyPrepared {
+				prepare(pyState)
+				pyPrepared = true
+			}
+			raw, _ := json.Marshal(map[string]any{"argv": append([]string{"--state", pyState, "--socket", host.SocketPath}, args...)})
+			cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/adapter/testdata/roundtrip_capture.py"))
+			cmd.Dir = repo
+			cmd.Stdin = bytes.NewReader(raw)
+			cmd.Env = append(os.Environ(), "CODEX_SESSION_RELAY_STATE="+filepath.Join(root, "python-ledger"))
+			return cmd
+		}, derived...)
+		pyCode, want, pyErr := python.Code, python.Stdout, python.Stderr
+		if code != pyCode || got.String() != want || stderr.String() != pyErr {
+			t.Fatalf("%v Go(%d) %s %s Python(%d) %s %s", args, code, &got, &stderr, pyCode, want, pyErr)
 		}
 		if code != 0 {
 			t.Fatalf("unexpected round trip exit %d: %v: %s", code, args, &got)
@@ -165,19 +169,21 @@ func Test28_EmitDeliverClaimAckRoundTrip(t *testing.T) {
 	// Go reads the oracle's store back after a takeover. Both stores went from python@1 to go@2
 	// with the same takeover id (their store_id is the same), so every table, schema_meta too,
 	// compares whole.
-	testsupport.HandOver(t, filepath.Join(pyState, "relay.sqlite3"), "go")
 	left, err := store.Open(context.Background(), filepath.Join(goState, "relay.sqlite3"), "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer left.Close()
-	right, err := store.Open(context.Background(), filepath.Join(pyState, "relay.sqlite3"), "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer right.Close()
 	actual, _ := json.Marshal(allTables(t, left))
-	expected, _ := json.Marshal(allTables(t, right))
+	expected := pyoracle.Answer(t, "tables", func() ([]byte, error) {
+		testsupport.HandOver(t, filepath.Join(pyState, "relay.sqlite3"), "go")
+		right, err := store.Open(context.Background(), filepath.Join(pyState, "relay.sqlite3"), "")
+		if err != nil {
+			return nil, err
+		}
+		defer right.Close()
+		return json.Marshal(allTables(t, right))
+	}, pyOptions(t, derived...)...)
 	if !bytes.Equal(actual, expected) {
 		t.Fatalf("all table mismatch\nGo %s\nPython %s", actual, expected)
 	}

@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "001 relay --state <home>/python --json fault-next 37fe8234": "txt:{\"code\":0,\"stdout\":\"{\\n  \\\"publications\\\": [],\\n  \\\"held\\\": [\\n    {\\n      \\\"publicationId\\\": \\\"258e24762dbe0291b2707f9b8d55e73d\\\",\\n      \\\"kind\\\": \\\"open_record\\\",\\n      \\\"product\\\": \\\"crw\\\",\\n      \\\"reason\\\": \\\"awaiting_target\\\"\\n    }\\n  ],\\n  \\\"budgets\\\": [\\n    {\\n      \\\"product\\\": \\\"crw\\\",\\n      \\\"kind\\\": \\\"open_record\\\",\\n      \\\"limit\\\": 5,\\n      \\\"window\\\": 3600.0,\\n      \\\"used\\\": 0,\\n      \\\"remaining\\\": 5,\\n      \\\"source\\\": \\\"default\\\"\\n    }\\n  ],\\n  \\\"budgetsTruncated\\\": false\\n}\\n\"}"
+ }
+}

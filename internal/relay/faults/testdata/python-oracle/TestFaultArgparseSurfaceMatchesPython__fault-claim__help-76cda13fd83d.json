@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "001 relay --state <home>/relay --json fault-claim --help 5db8f40d": "txt:{\"code\":0,\"stdout\":\"usage: codex-session-relay fault-claim [-h] --publication PUBLICATION\\n                                       --owner OWNER [--takeover]\\n\\noptions:\\n  -h, --help            show this help message and exit\\n  --publication PUBLICATION\\n  --owner OWNER\\n  --takeover            take over a write another owner claimed first\\n                        (recorded)\\n\"}"
+ }
+}

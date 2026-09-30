@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -71,14 +70,7 @@ func Test28LedgerReplacementAfterGuardMatchesPython(t *testing.T) {
 	}
 
 	input, _ := json.Marshal(map[string]any{"root": filepath.Join(root, "python"), "settings": authorized(), "resume": resume()})
-	repo, _ := filepath.Abs("../../..")
-	cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/adapter/testdata/ledger_replacement_capture.py"))
-	cmd.Dir = repo
-	cmd.Stdin = bytes.NewReader(input)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("Python ledger replacement oracle: %v\n%s", err, out)
-	}
+	out := pyDriver(t, "ledger_replacement_capture.py", input)
 	var want map[string]any
 	if err := json.Unmarshal(out, &want); err != nil {
 		t.Fatal(err)

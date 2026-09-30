@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "001 relay --state <home>/py --json fault-move --fault 43408d6aaf59f0b6faa271… 4938fa4a": "txt:{\"code\":2,\"stdout\":\"{\\n  \\\"error\\\": \\\"refused\\\",\\n  \\\"reason\\\": \\\"fault_scope_conflict\\\",\\n  \\\"detail\\\": \\\"a fault moves inside its workspace, or out of unassigned; this one is in None and was asked to move to 'other'\\\"\\n}\\n\"}"
+ }
+}

@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "001 relay --state <home>/py --json fault-update --fault 43408d6aaf59f0b6faa2… c052414d": "txt:{\"code\":2,\"stdout\":\"{\\n  \\\"error\\\": \\\"refused\\\",\\n  \\\"reason\\\": \\\"fault_state_conflict\\\",\\n  \\\"detail\\\": \\\"set_project puts the owned issue in the project its scope targets (None: awaiting_target), never another; set_target() or move() changes where it belongs\\\"\\n}\\n\"}"
+ }
+}

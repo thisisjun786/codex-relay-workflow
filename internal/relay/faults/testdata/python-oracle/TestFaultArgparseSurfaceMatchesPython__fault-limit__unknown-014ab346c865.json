@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "001 relay --state <home>/relay --json fault-limit --definitely-unknown 97b5af55": "txt:{\"code\":2,\"stdout\":\"\",\"stderr\":\"usage: codex-session-relay fault-limit [-h] --product PRODUCT [--kind KIND]\\n                                       [--max-count MAX_COUNT]\\n                                       [--window WINDOW] [--limit LIMIT]\\n                                       [--after AFTER]\\ncodex-session-relay fault-limit: error: the following arguments are required: --product\\n\"}"
+ }
+}

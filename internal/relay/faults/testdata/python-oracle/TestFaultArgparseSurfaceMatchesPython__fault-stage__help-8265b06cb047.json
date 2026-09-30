@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "001 relay --state <home>/relay --json fault-stage --help 68cac6bb": "txt:{\"code\":0,\"stdout\":\"usage: codex-session-relay fault-stage [-h] --fault FAULT\\n                                       --stage {accepted,assigned,merged,installed}\\n                                       --ref REF [--detail DETAIL]\\n\\noptions:\\n  -h, --help            show this help message and exit\\n  --fault FAULT\\n  --stage {accepted,assigned,merged,installed}\\n  --ref REF\\n  --detail DETAIL\\n\"}"
+ }
+}

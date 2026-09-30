@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "001 relay --state <home>/relay --json fault-resolve 5bb6d9c2": "txt:{\"code\":2,\"stdout\":\"\",\"stderr\":\"usage: codex-session-relay fault-resolve [-h] --fault FAULT\\ncodex-session-relay fault-resolve: error: the following arguments are required: --fault\\n\"}"
+ }
+}

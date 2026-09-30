@@ -1,0 +1,10 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "scope_capture.py #1": "txt:{\"error\": \"scope_escape: path must be absolute: 'relative/path'\"}\n",
+  "scope_capture.py #2": "txt:{\"error\": \"scope_escape: path must already be normalized; '/a/../b' normalizes to '/b'\"}\n",
+  "scope_capture.py #3": "txt:{\"error\": \"scope_escape: path must already be normalized; '/a/b/' normalizes to '/a/b'\"}\n",
+  "scope_capture.py #4": "txt:{\"error\": \"scope_escape: path must already be normalized; '/a/./b' normalizes to '/a/b'\"}\n",
+  "scope_capture.py #5": "txt:{\"error\": \"scope_escape: path must be absolute: '~/a'\"}\n"
+ }
+}

@@ -1,0 +1,9 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "scope_capture.py #1": "txt:{\"binding\": {\"leaseDetail\": \"lease not attempted\", \"pathBindingMode\": \"best_effort_detection\"}, \"digest\": \"239f59ed55e737c77147cf55ad0c1b030b6d7ee748a7426952f9b852d5a935e5\", \"size\": 7}\n",
+  "scope_capture.py #2": "txt:{\"binding\": {\"leaseDetail\": \"a writable open already exists, so no lease could be taken\", \"pathBindingMode\": \"best_effort_detection\"}, \"digest\": \"239f59ed55e737c77147cf55ad0c1b030b6d7ee748a7426952f9b852d5a935e5\", \"size\": 7}\n",
+  "scope_capture.py #3": "txt:{\"binding\": {\"leaseDetail\": \"read lease held for the whole read\", \"pathBindingMode\": \"lease_enforced\"}, \"digest\": \"239f59ed55e737c77147cf55ad0c1b030b6d7ee748a7426952f9b852d5a935e5\", \"size\": 7}\n",
+  "scope_capture.py #4": "txt:{\"error\": \"artifact_lease_broken: the read lease on '<test-tmp>/001/lease.txt' was broken during the read\"}\n"
+ }
+}

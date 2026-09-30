@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "error_label_capture.py #1": "txt:{\"error\":\"ConnectionRefusedError: [Errno 111] Connection refused\",\"fingerprintVersion\":2,\"operation\":\"send_message_to_thread\",\"requestId\":\"refused\",\"retrySafe\":false,\"startedAt\":\"<wall-clock>\",\"status\":\"outcome_unknown\",\"threadId\":\"thread\",\"updatedAt\":\"<wall-clock>\"}"
+ }
+}

@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "001 relay --state <home>/py --json fault-update --fault missing --op add_lab… 59f3b66a": "txt:{\"code\":2,\"stdout\":\"{\\n  \\\"error\\\": \\\"refused\\\",\\n  \\\"reason\\\": \\\"fault_observation_malformed\\\",\\n  \\\"detail\\\": \\\"add_label names a label\\\"\\n}\\n\"}"
+ }
+}

@@ -1,18 +1,11 @@
 package sync
 
 import (
-	"encoding/json"
-	"path/filepath"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 )
-
-func pythonPaths(root string) string {
-	raw, _ := json.Marshal([]string{filepath.Join(root, "packages/codex-session-relay/src"), filepath.Join(root, "packages/codex-thread-bridge/src")})
-	return string(raw)
-}
 
 var syncCommands = []string{"sync-target", "sync-next", "sync-claim", "sync-operation", "sync-reconcile", "sync-complete", "sync-fail", "sync-retry", "sync-status", "sync-progress", "packet-check"}
 

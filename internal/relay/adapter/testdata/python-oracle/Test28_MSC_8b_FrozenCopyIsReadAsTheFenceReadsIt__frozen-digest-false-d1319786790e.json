@@ -1,0 +1,7 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "scope_capture.py #1": "txt:{\"error\": \"ScopeError: manifest_unverified: entry '<test-tmp>/001/deliver.txt' has a digest that is not 64 lowercase hex characters: False\"}\n",
+  "scope_capture.py #2": "txt:{\"error\": \"ScopeError: manifest_unverified: entry '<test-tmp>/001/deliver.txt' has a digest that is not 64 lowercase hex characters: False\"}\n"
+ }
+}

@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "001 relay --state <home>/py --json fault-move --fault 43408d6aaf59f0b6faa271… 5c2257e5": "txt:{\"code\":0,\"stdout\":\"{\\n  \\\"faultId\\\": \\\"43408d6aaf59f0b6faa2711805200a99\\\",\\n  \\\"scopeKey\\\": \\\"crw:Q\\\",\\n  \\\"moved\\\": true,\\n  \\\"repointed\\\": 0,\\n  \\\"repointPending\\\": 0,\\n  \\\"alias\\\": null\\n}\\n\"}"
+ }
+}

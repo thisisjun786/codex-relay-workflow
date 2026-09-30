@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "001 capture_case.py test_faults.Identity.test_signature_order_does_not_chang… e607f6ad": "txt:{\"assertions\": [\"a6cfad5ffb779b06eea85cec88555428\"], \"problems\": []}\n"
+ }
+}

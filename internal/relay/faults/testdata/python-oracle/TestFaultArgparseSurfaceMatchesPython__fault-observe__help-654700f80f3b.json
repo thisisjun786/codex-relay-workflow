@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "001 relay --state <home>/relay --json fault-observe --help 8ec5f8e2": "txt:{\"code\":0,\"stdout\":\"usage: codex-session-relay fault-observe [-h] --observation OBSERVATION\\n                                         [--adopt ADOPT]\\n\\noptions:\\n  -h, --help            show this help message and exit\\n  --observation OBSERVATION\\n                        JSON, or @path\\n  --adopt ADOPT         JSON {externalRef, scope}, or @path: adopt this\\n                        existing issue at the first record instead of creating\\n                        one\\n\"}"
+ }
+}

@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "001 f1_cli.py fault-reconcile --publication 1e622995d34efab65f7154800d80522f… 757a133e": "txt:{\"code\":0,\"stdout\":\"{\\n  \\\"publicationId\\\": \\\"1e622995d34efab65f7154800d80522f\\\",\\n  \\\"state\\\": \\\"uncertain\\\",\\n  \\\"outcome\\\": \\\"absent_unproven\\\",\\n  \\\"detail\\\": \\\"nobody attested that the issuing request ended, and one still travelling can land after this search; the write stays uncertain\\\"\\n}\\n\"}"
+ }
+}

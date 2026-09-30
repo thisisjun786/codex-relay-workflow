@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "001 f1_cli.py fault-complete --publication 1e622995d34efab65f7154800d80522f … 51ce05a6": "txt:{\"code\":2,\"stdout\":\"{\\n  \\\"error\\\": \\\"refused\\\",\\n  \\\"reason\\\": \\\"fault_claim_stale\\\",\\n  \\\"detail\\\": \\\"this claim token is not the current one\\\"\\n}\\n\"}"
+ }
+}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"os"
 	"os/exec"
@@ -26,15 +27,22 @@ func TestF1WholeOutput(t *testing.T) {
 			if e != nil {
 				t.Fatal(e)
 			}
-			cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(root, "internal/relay/faults/testdata/f1_capture.py"), filepath.Join(home, "py"), action)
-			cmd.Dir = root
-			cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home+"/xs", "XDG_CONFIG_HOME="+home+"/xc", "CODEX_HOME="+home+"/ch", "TMPDIR=/dev/shm")
-			raw, e := cmd.CombinedOutput()
+			raw := pyAnswer(t, "f1_capture.py "+action, []string{action}, pyRunPaths(t, home), func() ([]byte, error) {
+				cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(root, "internal/relay/faults/testdata/f1_capture.py"), filepath.Join(home, "py"), action)
+				cmd.Dir = root
+				cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home+"/xs", "XDG_CONFIG_HOME="+home+"/xc", "CODEX_HOME="+home+"/ch", "TMPDIR=/dev/shm")
+				raw, e := cmd.CombinedOutput()
+				if e != nil {
+					return nil, fmt.Errorf("python: %v %s", e, raw)
+				}
+				return recordEvidenceDigests(raw)
+			})
+			raw, e = replayEvidenceDigests(raw)
 			if e != nil {
-				t.Fatalf("python: %v %s", e, raw)
+				t.Fatalf("recorded Python answer: %v", e)
 			}
 			var expected map[string]any
-			if e = json.Unmarshal(raw, &expected); e != nil {
+			if e := json.Unmarshal(raw, &expected); e != nil {
 				t.Fatal(e)
 			}
 			t.Setenv("HOME", home)
@@ -70,7 +78,7 @@ func TestF1WholeOutput(t *testing.T) {
 			var answer any
 			switch action {
 			case "sweep", "sweep_readings":
-				sw := &Sweeper{Store: s, HostRecordPath: testHostRecordPath(), Now: l.Clock.ISO, Installation: Installation{Package: "codex-session-relay", Version: RelayPackageVersion, Location: filepath.Join(root, "packages", "codex-session-relay", "src", "codex_session_relay")}}
+				sw := &Sweeper{Store: s, HostRecordPath: testHostRecordPath(), Now: l.Clock.ISO, Installation: Installation{Package: "codex-session-relay", Version: RelayPackageVersion, Location: relayPackageLocation}}
 				var batch Batch
 				if action == "sweep_readings" {
 					batch, e = sw.SweepReadings(ctx, "crw", "", []any{map[string]any{"schema": "reporting-observation/1", "relationshipId": "rel-1", "selectors": map[string]any{"turn": "turn-1"}, "reportingState": "unreported"}}, 0)

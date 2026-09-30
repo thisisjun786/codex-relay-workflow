@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "001 relay --state <home>/py --json fault-adopt --fault 43408d6aaf59f0b6faa27… f054946b": "txt:{\"code\":0,\"stdout\":\"{\\n  \\\"faultId\\\": \\\"43408d6aaf59f0b6faa2711805200a99\\\",\\n  \\\"externalRef\\\": \\\"CRW-1\\\",\\n  \\\"state\\\": \\\"materialized\\\",\\n  \\\"cancelled\\\": [\\n    \\\"58d437daf68a450947ca9b290e21b3eb\\\"\\n  ],\\n  \\\"publication\\\": {\\n    \\\"publicationId\\\": \\\"b37b151fcf2961ef211940afd19de38f\\\",\\n    \\\"kind\\\": \\\"append_comment\\\",\\n    \\\"trigger\\\": \\\"open\\\",\\n    \\\"queued\\\": true,\\n    \\\"awaitingTarget\\\": false,\\n    \\\"awaitingRecord\\\": false,\\n    \\\"reason\\\": \\\"queued\\\"\\n  }\\n}\\n\"}"
+ }
+}

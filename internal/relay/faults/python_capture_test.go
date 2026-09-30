@@ -14,9 +14,9 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
-// capturePythonFault executes the real Python ledger in a disposable state tree.
-// The complete answer and every populated fault_* table are the oracle, not a
-// hand-selected subset of fields or reason strings.
+// capturePythonFault executes the real Python ledger in a disposable state tree (its recorded
+// answer on replay). The complete answer and every populated fault_* table are the oracle, not
+// a hand-selected subset of fields or reason strings.
 func capturePythonFault(t *testing.T, observation map[string]any) (any, map[string]any) {
 	return capturePythonFaults(t, []map[string]any{observation})
 }
@@ -31,19 +31,22 @@ func capturePythonFaults(t *testing.T, observations []map[string]any) (any, map[
 	if err != nil {
 		t.Fatal(err)
 	}
-	state := filepath.Join(home, "relay")
-	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
-	script := filepath.Join(root, "internal", "relay", "faults", "testdata", "capture.py")
-	cmd := exec.Command("uv", "run", "--no-sync", "python", script, state, string(raw))
-	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR=/dev/shm")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("python capture: %v\n%s", err, out)
-	}
+	out := pyAnswer(t, "capture.py", []string{string(raw)}, pyRunPaths(t, home), func() ([]byte, error) {
+		state := filepath.Join(home, "relay")
+		root, err := filepath.Abs(filepath.Join("..", "..", ".."))
+		if err != nil {
+			return nil, err
+		}
+		script := filepath.Join(root, "internal", "relay", "faults", "testdata", "capture.py")
+		cmd := exec.Command("uv", "run", "--no-sync", "python", script, state, string(raw))
+		cmd.Dir = root
+		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR=/dev/shm")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("python capture: %v\n%s", err, out)
+		}
+		return out, nil
+	})
 	var expected map[string]any
 	if err = json.Unmarshal(out, &expected); err != nil {
 		t.Fatal(err)
@@ -196,18 +199,22 @@ func captureOriginalAssertions(t *testing.T, module, class, method string) []any
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(home) })
-	root, err := filepath.Abs(filepath.Join("..", "..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
-	script := filepath.Join(root, "internal", "relay", "faults", "testdata", "capture_case.py")
-	cmd := exec.Command("uv", "run", "--no-sync", "python", script, module, class, method)
-	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR=/dev/shm", "PYTHONPATH="+filepath.Join(root, "packages", "codex-session-relay", "src")+":"+filepath.Join(root, "packages", "codex-session-relay"))
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("Python test capture: %v: %s", err, output)
-	}
+	// The values the original Python unittest asserted, run in its own disposable tree.
+	output := pyAnswer(t, "capture_case.py "+module+"."+class+"."+method, []string{module, class, method}, pyRunPaths(t, home), func() ([]byte, error) {
+		root, err := filepath.Abs(filepath.Join("..", "..", ".."))
+		if err != nil {
+			return nil, err
+		}
+		script := filepath.Join(root, "internal", "relay", "faults", "testdata", "capture_case.py")
+		cmd := exec.Command("uv", "run", "--no-sync", "python", script, module, class, method)
+		cmd.Dir = root
+		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR=/dev/shm", "PYTHONPATH="+filepath.Join(root, "packages", "codex-session-relay", "src")+":"+filepath.Join(root, "packages", "codex-session-relay"))
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("Python test capture: %v: %s", err, output)
+		}
+		return output, nil
+	})
 	var result struct {
 		Assertions []any
 		Problems   []string

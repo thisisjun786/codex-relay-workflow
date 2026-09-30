@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "001 fc_paths.py fields_create  52b2e45e": "txt:{\"replies\": [{\"error\": \"ValueError\", \"detail\": \"a kind that creates is confirmed by its block, never by fields\"}, {\"registered\": false}, {\"creates\": false, \"requires_issue\": true, \"target\": null, \"evidence\": \"fields\"}], \"calls\": [], \"tables\": {\"fault_adoptions\": [], \"fault_aliases\": [], \"fault_budget_uses\": [], \"fault_cursors\": [], \"fault_ledger\": [], \"fault_limits\": [], \"fault_links\": [], \"fault_notifications\": [], \"fault_occurrences\": [], \"fault_overtaken_deliveries\": [], \"fault_policies\": [], \"fault_publication_attempts\": [], \"fault_publication_payloads\": [], \"fault_publications\": [], \"fault_remediations\": [], \"fault_target_projects\": [], \"fault_targets\": [], \"fault_timeline\": [], \"journal\": [], \"supervisor_attempts\": [], \"supervisor_messages\": [], \"supervisor_readbacks\": []}}\n"
+ }
+}

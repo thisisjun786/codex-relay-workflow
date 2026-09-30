@@ -29,15 +29,18 @@ func TestF2WholeOutput(t *testing.T) {
 			if e != nil {
 				t.Fatal(e)
 			}
-			cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(root, "internal/relay/faults/testdata/f2_capture.py"), filepath.Join(home, "py"), action)
-			cmd.Dir = root
-			cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR=/dev/shm")
-			raw, e := cmd.CombinedOutput()
-			if e != nil {
-				t.Fatalf("python %v: %s", e, raw)
-			}
+			raw := pyAnswer(t, "f2_capture.py "+action, []string{action}, pyRunPaths(t, home), func() ([]byte, error) {
+				cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(root, "internal/relay/faults/testdata/f2_capture.py"), filepath.Join(home, "py"), action)
+				cmd.Dir = root
+				cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR=/dev/shm")
+				raw, e := cmd.CombinedOutput()
+				if e != nil {
+					return nil, fmt.Errorf("python %v: %s", e, raw)
+				}
+				return raw, nil
+			})
 			var expected map[string]any
-			if e = json.Unmarshal(raw, &expected); e != nil {
+			if e := json.Unmarshal(raw, &expected); e != nil {
 				t.Fatal(e)
 			}
 			ctx := context.Background()

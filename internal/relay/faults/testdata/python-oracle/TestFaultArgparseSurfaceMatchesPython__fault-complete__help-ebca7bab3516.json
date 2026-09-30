@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "001 relay --state <home>/relay --json fault-complete --help e52b1356": "txt:{\"code\":0,\"stdout\":\"usage: codex-session-relay fault-complete [-h] --publication PUBLICATION\\n                                          [--claim-token CLAIM_TOKEN]\\n                                          [--readback READBACK]\\n                                          [--external-ref EXTERNAL_REF]\\n                                          [--project-ref PROJECT_REF]\\n                                          [--observed-fields OBSERVED_FIELDS]\\n\\noptions:\\n  -h, --help            show this help message and exit\\n  --publication PUBLICATION\\n  --claim-token CLAIM_TOKEN\\n  --readback READBACK   the text, or @path\\n  --external-ref EXTERNAL_REF\\n  --project-ref PROJECT_REF\\n                        the project the created issue reads back as\\n  --observed-fields OBSERVED_FIELDS\\n                        JSON of the owned issue's fields read back, or @path\\n\"}"
+ }
+}

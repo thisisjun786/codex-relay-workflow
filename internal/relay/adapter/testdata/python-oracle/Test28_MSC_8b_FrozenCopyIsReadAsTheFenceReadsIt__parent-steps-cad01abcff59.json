@@ -1,0 +1,9 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "scope_capture.py #1": "txt:{\"digest\": \"\", \"problems\": [\"<test-tmp>/001/missing/../frozen: no MANIFEST.json in the frozen copy\"], \"unreadable\": []}\n",
+  "scope_capture.py #2": "txt:{\"digest\": \"<frozen-manifest-digest>\", \"problems\": [], \"unreadable\": []}\n",
+  "scope_capture.py #3": "txt:{\"error\": \"JSONDecodeError: Expecting value: <json-error-position>\"}\n",
+  "scope_capture.py #4": "txt:{\"digest\": \"\", \"problems\": [\"<test-tmp>/001/blocked/frozen/../../frozen: no MANIFEST.json in the frozen copy\"], \"unreadable\": [\"<test-tmp>/001/blocked/frozen/../../frozen: the frozen manifest could not be reached: [Errno 13] Permission denied: '<test-tmp>/001/blocked/frozen/../../frozen/MANIFEST.json'\"]}\n"
+ }
+}

@@ -3,13 +3,14 @@ package sync
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/reception"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 	"golang.org/x/sys/unix"
 	"os"
 	"os/exec"
@@ -67,10 +68,14 @@ type storeCapture struct {
 		Symlink string
 		FIFO    bool
 	}
-	Database       *string
+	// Database is a path in Python's capture and the store's dump in the recording.
+	Database       json.RawMessage
 	Stdout, Stderr string
 	Exit           int
 	After          map[string]*string
+	// PathDigests, in the recording only, names each packet whose content digest depends on
+	// the temporary path it carries: Python's digest, by the packet file it digests.
+	PathDigests map[string]string `json:",omitempty"`
 }
 
 func processCode(e error) int {
@@ -94,18 +99,28 @@ func storeReplay(t *testing.T, names ...string) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	keep := t.TempDir()
-	cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(root, "internal/relay/sync/testdata/store_capture.py"), keep, string(raw))
-	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "UV_PROJECT_ENVIRONMENT="+filepath.Join(root, ".venv"), "UV_CACHE_DIR="+keep+"/uv")
-	out, e := cmd.Output()
-	if e != nil {
-		var exit *exec.ExitError
-		if errors.As(e, &exit) {
-			t.Fatalf("Python store scenario %v: %v\n%s", names, e, exit.Stderr)
+	out := pythonAnswer(t, "store_capture.py", raw, func() ([]byte, error) {
+		keep := t.TempDir()
+		pyTmp := filepath.Join(keep, "tmp")
+		if e := os.Mkdir(pyTmp, 0o700); e != nil {
+			return nil, e
 		}
-		t.Fatal(e)
-	}
+		cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(root, "internal/relay/sync/testdata/store_capture.py"), keep, string(raw))
+		cmd.Dir = root
+		cmd.Env = append(os.Environ(), "UV_PROJECT_ENVIRONMENT="+filepath.Join(root, ".venv"), "UV_CACHE_DIR="+keep+"/uv", "TMPDIR="+pyTmp)
+		out, e := cmd.Output()
+		if e != nil {
+			var exit *exec.ExitError
+			if errors.As(e, &exit) {
+				return nil, fmt.Errorf("python store scenario %v: %v\n%s", names, e, exit.Stderr)
+			}
+			return nil, e
+		}
+		return storeCapturesRecorded(out, pyTmp)
+	}, pyoracle.SameWhen(sameUpToIdentifiers))
+	// The scenarios' temporary directories, and the files the calls read there, are this run's.
+	out, pool := openStores(t, relocated(out, "<pytmp>", t.TempDir()))
+	out = relocatedDigests(t, out)
 	var captures []storeCapture
 	if e = json.Unmarshal(out, &captures); e != nil {
 		t.Fatal(e)
@@ -124,7 +139,9 @@ func storeReplay(t *testing.T, names ...string) {
 				t.Fatal(e)
 			}
 			ctx := context.Background()
-			ro, e := store.OpenReadOnly(ctx, *c.Database, time.Second)
+			database := filepath.Join(t.TempDir(), "relay.sqlite3")
+			restoreStore(t, pool.dump(t, c.Database), database)
+			ro, e := store.OpenReadOnly(ctx, database, time.Second)
 			if e != nil {
 				t.Fatal(e)
 			}
@@ -180,19 +197,14 @@ func storeReplay(t *testing.T, names ...string) {
 				t.Fatal(e)
 			}
 		}
-		if c.Database == nil {
+		hasDatabase := len(c.Database) > 0 && string(c.Database) != "null"
+		if !hasDatabase {
 			if e = os.Remove(db); e != nil && !os.IsNotExist(e) {
 				t.Fatal(e)
 			}
 		}
-		if c.Database != nil {
-			data, e := os.ReadFile(*c.Database)
-			if e != nil {
-				t.Fatal(e)
-			}
-			if e = os.WriteFile(db, data, 0600); e != nil {
-				t.Fatal(e)
-			}
+		if hasDatabase {
+			restoreStore(t, pool.dump(t, c.Database), db)
 			if holdsLive {
 				// The store Go holds live is a copy of Python's: it gets its own identity and
 				// is Go's after a takeover, as a Go host holding it would have it.
@@ -203,7 +215,7 @@ func storeReplay(t *testing.T, names ...string) {
 		var beforeRows []store.Row
 		tableRows := map[string][]store.Row{}
 		var beforeDB *store.ReadOnly
-		if c.Database != nil {
+		if hasDatabase {
 			beforeDB, e = store.OpenReadOnly(context.Background(), db, time.Second)
 			if e != nil {
 				t.Fatal(e)
@@ -237,7 +249,7 @@ func storeReplay(t *testing.T, names ...string) {
 				}
 				continue
 			}
-			data, e := hex.DecodeString(*encoded)
+			data, e := recordedFileBytes(*encoded)
 			if e != nil {
 				t.Fatal(e)
 			}
@@ -314,7 +326,7 @@ func storeReplay(t *testing.T, names ...string) {
 		if code != c.Exit || stdout.String() != c.Stdout || stderr.String() != c.Stderr {
 			t.Fatalf("call %d %v\nexit Python=%d Go=%d\nPython stdout: %s\nGo stdout: %s\nPython stderr: %s\nGo stderr: %s", index, c.Argv, c.Exit, code, c.Stdout, stdout.String(), c.Stderr, stderr.String())
 		}
-		if c.Database == nil {
+		if !hasDatabase {
 			if _, err := os.Stat(db); !os.IsNotExist(err) {
 				t.Fatalf("packet-check created absent store: %v", err)
 			}
@@ -360,7 +372,7 @@ func storeReplay(t *testing.T, names ...string) {
 			if e != nil {
 				t.Fatal(e)
 			}
-			want, e := hex.DecodeString(*encoded)
+			want, e := recordedFileBytes(*encoded)
 			if e != nil {
 				t.Fatal(e)
 			}

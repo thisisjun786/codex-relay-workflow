@@ -1,24 +1,23 @@
 package faults
 
 import (
-	"os"
-	"os/exec"
-	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/definition"
 )
 
-// Every observation's facts carry faultsweep.INSTALLATION.version, which is the relay
-// package's __version__; the Go constant is read against the real package so a later bump
-// cannot drift silently. ownership.PythonBuild is the fence identity and is not checked here.
-func TestRelayPackageVersion_is_the_python_package_version(t *testing.T) {
-	command := exec.Command("uv", "run", "--no-sync", "--project", f1Root(), "python", "-c",
-		"import codex_session_relay, codex_session_relay.faultsweep as s; print(codex_session_relay.__version__); print(s.INSTALLATION['version'])")
-	command.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
-	python, err := command.Output()
-	if err != nil {
-		t.Fatalf("the Python reference is required: %v", err)
+// Every observation's facts carry the relay package's version (faultsweep.INSTALLATION.version
+// in the Python reference, codex_session_relay.__version__). That is the relay component's
+// version in the one compatibility definition, scripts/crw_runtime/components.json, which
+// internal/runtime/definition carries and TestDefinitionAgreesWithComponentsJSON keeps equal to
+// the committed file; the Go constant is read against it so a later bump cannot drift silently.
+// ownership.PythonBuild is the fence identity and is not checked here.
+func TestRelayPackageVersion_is_the_relay_component_version(t *testing.T) {
+	relay, ok := definition.Of(definition.Relay)
+	if !ok {
+		t.Fatalf("the definition has no %s component", definition.Relay)
 	}
-	if lines := strings.Fields(string(python)); len(lines) != 2 || lines[0] != RelayPackageVersion || lines[1] != RelayPackageVersion {
-		t.Fatalf("python %q, go %q", python, RelayPackageVersion)
+	if relay.Version != RelayPackageVersion {
+		t.Fatalf("definition %s version %q, go %q", definition.Relay, relay.Version, RelayPackageVersion)
 	}
 }

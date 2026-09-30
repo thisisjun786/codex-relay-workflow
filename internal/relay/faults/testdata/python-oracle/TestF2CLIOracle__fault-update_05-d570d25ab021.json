@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "001 relay --state <home>/py --json fault-update --fault missing --op invalid 508f8dfe": "txt:{\"code\":2,\"stdout\":\"\",\"stderr\":\"usage: codex-session-relay fault-update [-h] --fault FAULT\\n                                        --op {set_project,reopen,add_relation,add_label}\\n                                        [--value VALUE]\\ncodex-session-relay fault-update: error: argument --op: invalid choice: 'invalid' (choose from 'set_project', 'reopen', 'add_relation', 'add_label')\\n\"}"
+ }
+}

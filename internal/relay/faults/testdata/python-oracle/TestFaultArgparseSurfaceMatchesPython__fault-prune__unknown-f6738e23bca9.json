@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "001 relay --state <home>/relay --json fault-prune --definitely-unknown 006297cb": "txt:{\"code\":2,\"stdout\":\"\",\"stderr\":\"usage: codex-session-relay fault-prune [-h] --fault FAULT [--keep KEEP]\\ncodex-session-relay fault-prune: error: the following arguments are required: --fault\\n\"}"
+ }
+}

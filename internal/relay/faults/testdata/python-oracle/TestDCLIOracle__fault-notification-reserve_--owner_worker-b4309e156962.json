@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "001 relay --state <home>/python --json fault-notification-reserve --owner wo… 61728b5e": "txt:{\"code\":0,\"stdout\":\"{\\n  \\\"reserved\\\": [],\\n  \\\"withheld\\\": 0,\\n  \\\"held\\\": 0,\\n  \\\"waiting\\\": 0\\n}\\n\",\"created\":true}"
+ }
+}

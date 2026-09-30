@@ -1,0 +1,7 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "scope_capture.py #1": "txt:{\"error\": \"UnicodeEncodeError: 'utf-8' codec can't encode characters in position 8-9: surrogates not allowed\"}\n",
+  "scope_capture.py #2": "txt:{\"error\": \"UnicodeEncodeError: 'utf-8' codec can't encode characters in position 8-9: surrogates not allowed\"}\n"
+ }
+}

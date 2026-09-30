@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "001 relay --state <home>/py --json fault-adopt --fault missing --external-re… 5f37eaec": "txt:{\"code\":2,\"stdout\":\"{\\n  \\\"error\\\": \\\"refused\\\",\\n  \\\"reason\\\": \\\"fault_observation_malformed\\\",\\n  \\\"detail\\\": \\\"an adoption's scope carries the owner's projectKey\\\"\\n}\\n\"}"
+ }
+}

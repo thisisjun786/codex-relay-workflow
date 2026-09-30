@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -61,17 +62,24 @@ func packetReplay(t *testing.T, family string, names ...string) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(root, "internal/relay/sync/testdata/packet_capture.py"), family, string(raw))
-	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "UV_PROJECT_ENVIRONMENT="+filepath.Join(root, ".venv"), "UV_CACHE_DIR="+t.TempDir()+"/uv")
-	stdout, e := cmd.Output()
+	question, e := json.Marshal([]any{family, names})
 	if e != nil {
-		var exit *exec.ExitError
-		if errors.As(e, &exit) {
-			t.Fatalf("Python scenario: %v\n%s", e, exit.Stderr)
-		}
 		t.Fatal(e)
 	}
+	stdout := pythonAnswer(t, "packet_capture.py", question, func() ([]byte, error) {
+		cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(root, "internal/relay/sync/testdata/packet_capture.py"), family, string(raw))
+		cmd.Dir = root
+		cmd.Env = append(os.Environ(), "UV_PROJECT_ENVIRONMENT="+filepath.Join(root, ".venv"), "UV_CACHE_DIR="+t.TempDir()+"/uv")
+		stdout, e := cmd.Output()
+		if e != nil {
+			var exit *exec.ExitError
+			if errors.As(e, &exit) {
+				return nil, fmt.Errorf("python scenario: %v\n%s", e, exit.Stderr)
+			}
+			return nil, e
+		}
+		return stdout, nil
+	})
 	d := json.NewDecoder(bytes.NewReader(stdout))
 	d.UseNumber()
 	decoded, e := decodeValue(d)

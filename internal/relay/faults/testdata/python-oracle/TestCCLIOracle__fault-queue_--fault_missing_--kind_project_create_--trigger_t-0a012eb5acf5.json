@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "001 relay --state <home>/python --json fault-queue --fault missing --kind pr… 32b5f625": "txt:{\"code\":2,\"stdout\":\"{\\n  \\\"error\\\": \\\"refused\\\",\\n  \\\"reason\\\": \\\"fault_kind_unregistered\\\",\\n  \\\"detail\\\": \\\"kind 'project_create' is not registered in this process; load the module that declares it (--kind-module) before acting on its writes\\\"\\n}\\n\",\"created\":true}"
+ }
+}

@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "001 relay --state <home>/relay --json fault-notification-reserve 7a344978": "txt:{\"code\":2,\"stdout\":\"\",\"stderr\":\"usage: codex-session-relay fault-notification-reserve [-h] --owner OWNER\\n                                                      [--limit LIMIT]\\ncodex-session-relay fault-notification-reserve: error: the following arguments are required: --owner\\n\"}"
+ }
+}

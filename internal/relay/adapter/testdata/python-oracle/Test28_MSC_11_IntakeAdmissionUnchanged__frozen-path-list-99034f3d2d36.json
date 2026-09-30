@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "intake_capture.py": "txt:{\"accepted\": false, \"host\": \"TypeError: unhashable type: 'list'\", \"reason\": null, \"refusals\": [], \"rows\": []}\n"
+ }
+}

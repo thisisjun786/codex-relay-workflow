@@ -1,0 +1,13 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "worker_capture.py #1": "txt:{\"policy\": {\"detail\": null, \"digest\": \"policy-digest\", \"roles\": {}, \"state\": \"declared\"}, \"reason\": null}\n",
+  "worker_capture.py #2": "txt:{\"policy\": {\"detail\": null, \"digest\": \"policy-digest\", \"forgedBySameUID\": true, \"roles\": {}, \"state\": \"declared\"}, \"reason\": null}\n",
+  "worker_capture.py #3": "txt:{\"policy\": null, \"reason\": \"worker_policy_version_unknown\"}\n",
+  "worker_capture.py #4": "txt:{\"policy\": null, \"reason\": \"worker_policy_version_unknown\"}\n",
+  "worker_capture.py #5": "txt:{\"policy\": null, \"reason\": \"worker_policy_version_unknown\"}\n",
+  "worker_capture.py #6": "txt:{\"policy\": null, \"reason\": \"worker_policy_version_unknown\"}\n",
+  "worker_capture.py #7": "txt:{\"policy\": null, \"reason\": \"worker_policy_process_mismatch\"}\n",
+  "worker_capture.py #8": "txt:{\"policy\": null, \"reason\": \"worker_policy_service_mismatch\"}\n"
+ }
+}

@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "intake_capture.py": "txt:{\"accepted\": false, \"host\": \"UnicodeEncodeError: 'utf-8' codec can't encode characters in position 8-9: surrogates not allowed\", \"reason\": null, \"refusals\": [], \"rows\": []}\n"
+ }
+}

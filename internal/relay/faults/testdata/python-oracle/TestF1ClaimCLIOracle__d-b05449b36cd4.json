@@ -1,0 +1,11 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "001 f1_cli.py fault-operation --publication missing --claim-token bad 5bc91051": "txt:{\"code\":2,\"stdout\":\"{\\n  \\\"error\\\": \\\"refused\\\",\\n  \\\"reason\\\": \\\"fault_unknown\\\",\\n  \\\"detail\\\": \\\"no publication 'missing'\\\"\\n}\\n\"}",
+  "002 f1_cli.py fault-reconcile --publication missing 1c3a40fe": "txt:{\"code\":2,\"stdout\":\"{\\n  \\\"error\\\": \\\"refused\\\",\\n  \\\"reason\\\": \\\"fault_unknown\\\",\\n  \\\"detail\\\": \\\"no publication 'missing'\\\"\\n}\\n\"}",
+  "003 f1_cli.py fault-complete --publication missing 458b8931": "txt:{\"code\":2,\"stdout\":\"{\\n  \\\"error\\\": \\\"refused\\\",\\n  \\\"reason\\\": \\\"fault_unknown\\\",\\n  \\\"detail\\\": \\\"no publication 'missing'\\\"\\n}\\n\"}",
+  "004 f1_cli.py fault-sweep 141c7ca2": "txt:{\"code\":0,\"stdout\":\"{\\n  \\\"read\\\": 0,\\n  \\\"recorded\\\": 0,\\n  \\\"queued\\\": 0,\\n  \\\"gaps\\\": [],\\n  \\\"readingsNext\\\": null,\\n  \\\"readingsTotal\\\": 0,\\n  \\\"limits\\\": \\\"each source is read at most 32 rows per sweep, in rotations bounded by its upper key when the rotation started, so every rotation reaches the end; readings are reduced to the last per turn and read 32 at a time from readingsNext. A class this sweep does not derive is never cleared by its absence here\\\"\\n}\\n\"}",
+  "005 f1_cli.py fault-sweep --readings-after -1 e970ffde": "txt:{\"code\":2,\"stdout\":\"{\\n  \\\"error\\\": \\\"refused\\\",\\n  \\\"reason\\\": \\\"fault_observation_malformed\\\",\\n  \\\"detail\\\": \\\"--readings-after is a non-negative integer, not -1\\\"\\n}\\n\"}",
+  "006 f1_cli.py fault-sweep --readings {\"wrong\":1} 472a0c83": "txt:{\"code\":2,\"stdout\":\"{\\n  \\\"error\\\": \\\"refused\\\",\\n  \\\"reason\\\": \\\"fault_observation_malformed\\\",\\n  \\\"detail\\\": \\\"readings are a list of reporting-observation/1 objects\\\"\\n}\\n\"}"
+ }
+}

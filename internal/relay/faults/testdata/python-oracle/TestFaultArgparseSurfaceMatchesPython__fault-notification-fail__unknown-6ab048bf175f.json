@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "001 relay --state <home>/relay --json fault-notification-fail --definitely-u… d8492261": "txt:{\"code\":2,\"stdout\":\"\",\"stderr\":\"usage: codex-session-relay fault-notification-fail [-h]\\n                                                   --notification NOTIFICATION\\n                                                   --token TOKEN --error ERROR\\ncodex-session-relay fault-notification-fail: error: the following arguments are required: --notification, --token, --error\\n\"}"
+ }
+}

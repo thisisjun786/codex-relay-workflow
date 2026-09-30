@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "001 relay --state <home>/relay --json fault-notification-reconcile 97300fe5": "txt:{\"code\":2,\"stdout\":\"\",\"stderr\":\"usage: codex-session-relay fault-notification-reconcile [-h]\\n                                                        --notification NOTIFICATION\\n                                                        --delivered {yes,no}\\n                                                        --ref REF\\ncodex-session-relay fault-notification-reconcile: error: the following arguments are required: --notification, --delivered, --ref\\n\"}"
+ }
+}

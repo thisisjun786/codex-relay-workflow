@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "001 relay --state <home>/relay --json fault-reconcile --help 7d8841fe": "txt:{\"code\":0,\"stdout\":\"usage: codex-session-relay fault-reconcile [-h] --publication PUBLICATION\\n                                           [--observed OBSERVED]\\n                                           [--observed-fields OBSERVED_FIELDS]\\n                                           [--prior-ended] [--reason REASON]\\n                                           [--searched]\\n\\noptions:\\n  -h, --help            show this help message and exit\\n  --publication PUBLICATION\\n  --observed OBSERVED   observed text, or @path\\n  --observed-fields OBSERVED_FIELDS\\n                        JSON of the owned issue's fields read back, or @path\\n  --prior-ended         attest that the issuing request can no longer land\\n  --reason REASON       what ended the issuing request\\n  --searched            attest that the search covered where the block would\\n                        be. Without it a negative read is not read as absence\\n\"}"
+ }
+}

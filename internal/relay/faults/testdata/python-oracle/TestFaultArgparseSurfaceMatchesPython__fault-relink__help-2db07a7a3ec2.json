@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "001 relay --state <home>/relay --json fault-relink --help 0103cb2f": "txt:{\"code\":0,\"stdout\":\"usage: codex-session-relay fault-relink [-h] [--limit LIMIT]\\n\\noptions:\\n  -h, --help     show this help message and exit\\n  --limit LIMIT\\n\"}"
+ }
+}

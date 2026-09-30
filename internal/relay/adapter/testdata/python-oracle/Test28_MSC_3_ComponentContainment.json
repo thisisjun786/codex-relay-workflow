@@ -1,0 +1,12 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "scope_capture.py #1": "txt:true\n",
+  "scope_capture.py #2": "txt:true\n",
+  "scope_capture.py #3": "txt:false\n",
+  "scope_capture.py #4": "txt:false\n",
+  "scope_capture.py #5": "txt:false\n",
+  "scope_capture.py #6": "txt:true\n",
+  "scope_capture.py #7": "txt:false\n"
+ }
+}

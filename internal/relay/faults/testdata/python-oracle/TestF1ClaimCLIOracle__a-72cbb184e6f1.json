@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "001 f1_cli.py fault-claim --publication missing --owner operator a11714cb": "txt:{\"code\":2,\"stdout\":\"{\\n  \\\"error\\\": \\\"refused\\\",\\n  \\\"reason\\\": \\\"fault_unknown\\\",\\n  \\\"detail\\\": \\\"no publication 'missing'\\\"\\n}\\n\"}"
+ }
+}

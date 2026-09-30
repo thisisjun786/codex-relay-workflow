@@ -1,0 +1,7 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "scope_capture.py #1": "txt:{\"digest\": \"<frozen-manifest-digest>\", \"problems\": [\"<test-tmp>/001/deliver.txt: caller claims 19 bytes but the frozen copy records 100000000000000000000000000000019\", \"<test-tmp>/001/deliver.txt: frozen bytes are 19, not the claimed 100000000000000000000000000000019\"], \"unreadable\": []}\n",
+  "scope_capture.py #2": "txt:{\"digest\": \"<frozen-manifest-digest>\", \"problems\": [\"<test-tmp>/001/deliver.txt: frozen bytes are 19, not the claimed 100000000000000000000000000000019\"], \"unreadable\": []}\n"
+ }
+}

@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "cancellation_capture.py #1": "txt:[{\"stage\":\"before\",\"calls\":[],\"status\":null},{\"stage\":\"thread/read\",\"calls\":[\"thread/read\"],\"status\":\"outcome_unknown\"},{\"stage\":\"thread/read (active)\",\"calls\":[\"thread/read\"],\"status\":\"outcome_unknown\"},{\"stage\":\"thread/resume\",\"calls\":[\"thread/read\",\"thread/resume\"],\"status\":\"outcome_unknown\"},{\"stage\":\"guard\",\"calls\":[\"thread/read\",\"thread/resume\"],\"status\":\"outcome_unknown\"},{\"stage\":\"turn/start\",\"calls\":[\"thread/read\",\"thread/resume\",\"turn/start\"],\"status\":\"outcome_unknown\"}]\n"
+ }
+}

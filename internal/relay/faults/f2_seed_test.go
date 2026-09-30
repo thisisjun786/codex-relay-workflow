@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -12,10 +11,6 @@ import (
 )
 
 func TestF2SeededCLIOracle(t *testing.T) {
-	root, e := filepath.Abs("../../..")
-	if e != nil {
-		t.Fatal(e)
-	}
 	for _, tc := range []struct {
 		name string
 		args func(string, string) []string
@@ -78,18 +73,8 @@ func TestF2SeededCLIOracle(t *testing.T) {
 			}
 			args := tc.args(id, publication)
 			pythonCopy(t, goDir, pyDir)
-			py := exec.Command("uv", append([]string{"run", "--no-sync", "codex-session-relay", "--state", pyDir, "--json"}, args...)...)
-			py.Dir = root
-			py.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR=/dev/shm")
-			want, err := py.Output()
-			pyCode := 0
-			if err != nil {
-				if x, ok := err.(*exec.ExitError); ok {
-					pyCode = x.ExitCode()
-				} else {
-					t.Fatal(err)
-				}
-			}
+			answer := pyCLIRun(t, home, "", append([]string{"--state", pyDir, "--json"}, args...), false, pyHomeEnv(home)...)
+			want, pyCode := []byte(answer.Stdout), answer.Code
 			var got, stderr bytes.Buffer
 			goCode, handled := executeAsCLI(context.Background(), append([]string{"--state", goDir, "--json"}, args...), &got, &stderr)
 			if !handled || pyCode != goCode || !bytes.Equal(want, got.Bytes()) {

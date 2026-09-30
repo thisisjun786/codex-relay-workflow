@@ -32,15 +32,14 @@ func TestDAttentionWholeOutputAgainstPython(t *testing.T) {
 	compare := func(label string) {
 		t.Helper()
 		gc, g := cliCall(t, goDir, "fault-attention")
-		cmd := exec.Command("uv", "run", "--no-sync", "codex-session-relay", "--state", pyDir, "--json", "fault-attention")
-		cmd.Dir = root
-		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR=/dev/shm")
-		out, e := cmd.Output()
-		if e != nil {
-			t.Fatal(e)
-		}
+		out := pyAnswer(t, "relay fault-attention", []string{label}, pyRunPaths(t, home), func() ([]byte, error) {
+			cmd := exec.Command("uv", "run", "--no-sync", "codex-session-relay", "--state", pyDir, "--json", "fault-attention")
+			cmd.Dir = root
+			cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR=/dev/shm")
+			return cmd.Output()
+		})
 		var p map[string]any
-		if e = json.Unmarshal(out, &p); e != nil {
+		if e := json.Unmarshal(out, &p); e != nil {
 			t.Fatal(e)
 		}
 		if gc != 0 || !reflect.DeepEqual(g, p) {
