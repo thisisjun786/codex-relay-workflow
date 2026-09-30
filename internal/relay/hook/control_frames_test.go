@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"syscall"
 	"testing"
 	"time"
 
@@ -17,7 +18,15 @@ import (
 // socketPair is a connected pair of stream sockets: the owner's end and the peer's.
 func socketPair(t *testing.T) (owner, peer *net.UnixConn) {
 	t.Helper()
-	fds, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
+	// Darwin has no SOCK_CLOEXEC: mark both ends close-on-exec under ForkLock instead, so a
+	// concurrent exec (the Python oracle) inherits neither.
+	syscall.ForkLock.RLock()
+	fds, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM, 0)
+	if err == nil {
+		unix.CloseOnExec(fds[0])
+		unix.CloseOnExec(fds[1])
+	}
+	syscall.ForkLock.RUnlock()
 	if err != nil {
 		t.Fatal(err)
 	}
