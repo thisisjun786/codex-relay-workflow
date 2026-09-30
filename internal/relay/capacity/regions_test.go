@@ -10,9 +10,9 @@ import (
 )
 
 // test_edit_regions.py properties EDR-1..EDR-14 (.omo/ulw-execute/todo27-properties.md). Each
-// subtest replays one scenario of testdata/gen_editregion.py call for call and compares every
-// answer and refusal whole with Python's (python_editregion.json); the assertions after it pin
-// the fields the property names.
+// subtest replays one scenario of the former Python generator call for call and compares every
+// answer and refusal whole with the scenario's golden (testdata/golden, which began as Python's
+// answers); the assertions after it pin the fields the property names.
 
 func reasons(e *regionEnv, want map[int]string) {
 	e.t.Helper()
@@ -29,7 +29,7 @@ func Test27_EDR1_a_region_is_a_place(t *testing.T) {
 		e.propose("src/a.py", proposeOpt{kind: "symbol", key: "parse"})
 		e.propose("src/a.py", proposeOpt{kind: "symbol", key: "render"})
 		e.propose("src/b.py", proposeOpt{})
-		e.sameAsPython("two_symbols_in_one_file")
+		e.matchesGolden("two_symbols_in_one_file")
 		if e.ok(0)["regionId"] == e.ok(1)["regionId"] || e.ok(2)["state"] != "proposed" {
 			t.Fatal("two symbols share a region")
 		}
@@ -39,21 +39,21 @@ func Test27_EDR1_a_region_is_a_place(t *testing.T) {
 		e.propose("src/a.py", proposeOpt{kind: "symbol", key: "parse"})
 		e.propose("src/a.py", proposeOpt{right: "PRJ-Z", link: e.other})
 		e.show(ShowFilter{})
-		e.sameAsPython("whole_file_overlaps_symbol")
+		e.matchesGolden("whole_file_overlaps_symbol")
 		reasons(e, map[int]string{1: "region_overlap"})
 	})
 	t.Run("same symbol in another file", func(t *testing.T) {
 		e := newRegionEnv(t)
 		e.propose("src/a.py", proposeOpt{kind: "symbol", key: "parse"})
 		e.propose("src/b.py", proposeOpt{kind: "symbol", key: "parse", right: "PRJ-Z", link: e.other})
-		e.sameAsPython("same_symbol_other_file")
+		e.matchesGolden("same_symbol_other_file")
 	})
 	t.Run("tree contains by component", func(t *testing.T) {
 		e := newRegionEnv(t)
 		e.propose("src/a", proposeOpt{kind: "tree"})
 		e.propose("src/ab/x.py", proposeOpt{right: "PRJ-Z", link: e.other})
 		e.propose("src/a/x.py", proposeOpt{right: "PRJ-Z", link: e.other})
-		e.sameAsPython("tree_contains_by_component")
+		e.matchesGolden("tree_contains_by_component")
 		reasons(e, map[int]string{2: "region_overlap"})
 	})
 	t.Run("classified once", func(t *testing.T) {
@@ -61,7 +61,7 @@ func Test27_EDR1_a_region_is_a_place(t *testing.T) {
 		e.propose("scripts/components.json", proposeOpt{class: "generated", regen: "derive"})
 		e.propose("scripts/components.json", proposeOpt{right: "PRJ-Z", link: e.other})
 		e.show(ShowFilter{})
-		e.sameAsPython("classified_once")
+		e.matchesGolden("classified_once")
 		reasons(e, map[int]string{1: "region_overlap"})
 	})
 }
@@ -83,7 +83,7 @@ func Test27_EDR2_region_shape_is_refused_region_too_broad(t *testing.T) {
 	e.propose("src/a.py", proposeOpt{right: "PRJ-A"})
 	e.rows("SELECT * FROM edit_regions")
 	e.show(ShowFilter{})
-	e.sameAsPython("region_shapes")
+	e.matchesGolden("region_shapes")
 	for i := range 14 {
 		if got := e.reason(i); got != "region_too_broad" {
 			t.Errorf("step %d: %s", i, got)
@@ -102,7 +102,7 @@ func Test27_EDR3_agreement_identity(t *testing.T) {
 		e.rows("SELECT kind, subject, detail FROM journal WHERE kind LIKE 'edit_%' ORDER BY seq")
 		e.agreement(first)
 		e.agreement("agr-missing")
-		e.sameAsPython("either_side_converges")
+		e.matchesGolden("either_side_converges")
 		again := e.ok(1)
 		if again["agreementId"] != e.ok(0)["agreementId"] || again["alreadyProposed"] != true {
 			t.Fatal(again)
@@ -118,7 +118,7 @@ func Test27_EDR3_agreement_identity(t *testing.T) {
 		e.propose("src/c.py", proposeOpt{link: "lnk-nothing"})
 		e.propose("src/c.py", proposeOpt{link: e.other})
 		e.show(ShowFilter{})
-		e.sameAsPython("never_peers")
+		e.matchesGolden("never_peers")
 		reasons(e, map[int]string{0: "unregistered_scope", 1: "unregistered_scope", 2: "unregistered_scope"})
 	})
 	t.Run("refused proposal leaves no region", func(t *testing.T) {
@@ -126,7 +126,7 @@ func Test27_EDR3_agreement_identity(t *testing.T) {
 		e.propose("scripts/components.json", proposeOpt{class: "generated", task: zeta, regen: "derive"})
 		e.rows("SELECT * FROM edit_regions")
 		e.propose("scripts/components.json", proposeOpt{})
-		e.sameAsPython("refused_leaves_no_region")
+		e.matchesGolden("refused_leaves_no_region")
 		if e.steps[1]["ok"] != "[]" || e.ok(2)["state"] != "proposed" {
 			t.Fatal(e.steps)
 		}
@@ -138,7 +138,7 @@ func Test27_EDR4_generated_metadata_is_rederived(t *testing.T) {
 		e := newRegionEnv(t)
 		e.propose("scripts/components.json", proposeOpt{class: "generated", regen: "runtime_install.py verify-definition"})
 		e.propose("scripts/components.json", proposeOpt{class: "generated", regen: "runtime_install.py verify-definition", right: "PRJ-Z", link: e.other})
-		e.sameAsPython("generated_do_not_conflict")
+		e.matchesGolden("generated_do_not_conflict")
 	})
 	t.Run("reported under regenerate", func(t *testing.T) {
 		e := newRegionEnv(t)
@@ -147,7 +147,7 @@ func Test27_EDR4_generated_metadata_is_rederived(t *testing.T) {
 		e.show(ShowFilter{})
 		e.show(ShowFilter{BaseRevision: ns(rev), Project: ns("PRJ-B"), Path: ns("src/a.py")})
 		e.show(ShowFilter{BaseRevision: ns("rev-0")})
-		e.sameAsPython("generated_is_regenerate")
+		e.matchesGolden("generated_is_regenerate")
 		shown := e.ok(2)
 		regenerate := shown["regenerate"].([]any)
 		if len(regenerate) != 1 || len(shown["exclusive"].([]any)) != 1 || regenerate[0].(map[string]any)["resolution"] != "rederive" {
@@ -162,7 +162,7 @@ func Test27_EDR5_settlement(t *testing.T) {
 		record := e.propose("src/a.py", proposeOpt{})
 		e.settle(record, beta, "accepted", null(), null())
 		e.agreement(record)
-		e.sameAsPython("needs_both_sides")
+		e.matchesGolden("needs_both_sides")
 		if e.ok(0)["state"] != "proposed" || e.ok(2)["state"] != "agreed" {
 			t.Fatal(e.steps)
 		}
@@ -172,7 +172,7 @@ func Test27_EDR5_settlement(t *testing.T) {
 		record := e.propose("src/a.py", proposeOpt{})
 		e.settle(record, beta, "declined", ns("only if the old name keeps forwarding"), ns("too broad"))
 		e.agreement(record)
-		e.sameAsPython("conditional_decline")
+		e.matchesGolden("conditional_decline")
 		if a := e.ok(2); a["state"] != "declined" || a["rightCondition"] != "only if the old name keeps forwarding" {
 			t.Fatal(a)
 		}
@@ -182,7 +182,7 @@ func Test27_EDR5_settlement(t *testing.T) {
 		record := e.propose("src/a.py", proposeOpt{})
 		e.settle(record, alpha, "withdrawn", null(), null())
 		e.propose("src/a.py", proposeOpt{right: "PRJ-Z", link: e.other})
-		e.sameAsPython("withdrawal_frees")
+		e.matchesGolden("withdrawal_frees")
 	})
 	t.Run("authority and closed agreements", func(t *testing.T) {
 		e := newRegionEnv(t)
@@ -198,7 +198,7 @@ func Test27_EDR5_settlement(t *testing.T) {
 		e.settle(record, beta, "accepted", null(), null())
 		e.settle(record, beta, "released", null(), ns("late"))
 		e.show(ShowFilter{})
-		e.sameAsPython("settlement_authority")
+		e.matchesGolden("settlement_authority")
 		reasons(e, map[int]string{1: "scope_role_mismatch", 2: "scope_role_mismatch", 3: "scope_role_mismatch", 4: "link_not_active",
 			5: "link_not_active", 6: "unregistered_scope", 9: "agreement_not_open", 10: "agreement_not_open"})
 	})
@@ -206,7 +206,7 @@ func Test27_EDR5_settlement(t *testing.T) {
 		e := newRegionEnv(t)
 		record := e.agreed("src/a.py")
 		e.settle(record, beta, "released", null(), ns("merged"))
-		e.sameAsPython("released_closes")
+		e.matchesGolden("released_closes")
 	})
 }
 
@@ -217,7 +217,7 @@ func Test27_EDR6_a_proposer_pre_accepts_its_own_side(t *testing.T) {
 			LeftProject: "PRJ-B", RightProject: "PRJ-A", PeerLinkID: e.pair, ProposerTaskID: alpha, ConstraintText: "keep the signature"}))
 		e.settle(reversed, alpha, "accepted", null(), null())
 		e.settle(reversed, beta, "accepted", null(), null())
-		e.sameAsPython("proposer_pre_accepts")
+		e.matchesGolden("proposer_pre_accepts")
 		if a := e.ok(0); a["leftAcceptedAt"] == nil || a["rightAcceptedAt"] != nil {
 			t.Fatal(a)
 		}
@@ -240,7 +240,7 @@ func Test27_EDR6_a_proposer_pre_accepts_its_own_side(t *testing.T) {
 		e.rows("SELECT * FROM edit_agreements")
 		e.rows("SELECT * FROM edit_regions")
 		e.show(ShowFilter{})
-		e.sameAsPython("losing_ownership_mid_proposal")
+		e.matchesGolden("losing_ownership_mid_proposal")
 		reasons(e, map[int]string{0: "scope_role_mismatch"})
 	})
 }
@@ -266,7 +266,7 @@ func Test27_EDR7_follow_ups(t *testing.T) {
 		e.settleFollowup(item, alpha, "done")
 		e.accept(item, beta, "PRJ-B")
 		e.show(ShowFilter{})
-		e.sameAsPython("followup_unassigned")
+		e.matchesGolden("followup_unassigned")
 		reasons(e, map[int]string{5: "followup_unassigned", 6: "link_not_active", 9: "agreement_not_open", 10: "agreement_not_open"})
 		for _, i := range []int{2, 3, 4} {
 			if accepted := e.ok(i)["followups"].(map[string]any)["accepted"].([]any); len(accepted) != 0 {
@@ -291,7 +291,7 @@ func Test27_EDR7_follow_ups(t *testing.T) {
 		e.followup(Followup{Agreement: id(record), Trigger: "a temporary duplicate implementation", Acceptance: "restated differently"})
 		e.settleFollowup("fup-missing", alpha, "done")
 		e.accept("fup-missing", alpha, "PRJ-A")
-		e.sameAsPython("followup_accepted")
+		e.matchesGolden("followup_accepted")
 		reasons(e, map[int]string{2: "scope_role_mismatch", 5: "scope_role_mismatch", 7: "scope_role_mismatch", 11: "unregistered_scope", 12: "unregistered_scope"})
 		taken := e.ok(3)
 		if taken["assigneeTaskId"] != beta || taken["acceptedAt"] == nil || taken["issueRef"] != "CRW-200" || e.ok(6)["nextOwner"] != "task-beta" {
@@ -311,7 +311,7 @@ func Test27_EDR7_follow_ups(t *testing.T) {
 		e.followup(Followup{Agreement: "agr-missing"})
 		e.followup(Followup{Agreement: id(record), Trigger: "mine", AssigneeTask: ns(alpha), AssigneeProject: ns("PRJ-A")})
 		e.show(ShowFilter{})
-		e.sameAsPython("followup_authority")
+		e.matchesGolden("followup_authority")
 		reasons(e, map[int]string{1: "scope_role_mismatch", 2: "scope_role_mismatch", 3: "unregistered_scope", 4: "unregistered_scope", 5: "unregistered_scope"})
 	})
 }
@@ -319,7 +319,7 @@ func Test27_EDR7_follow_ups(t *testing.T) {
 func Test27_EDR8_an_agreement_is_not_permission(t *testing.T) {
 	e := newRegionEnv(t)
 	e.propose("src/a.py", proposeOpt{})
-	e.sameAsPython("authorizes_nothing")
+	e.matchesGolden("authorizes_nothing")
 	if a := e.ok(0); len(a["authorizes"].([]any)) != 0 || a["grantsMergePermission"] != false {
 		t.Fatal(a)
 	}
@@ -346,7 +346,7 @@ func Test27_EDR9_revision_moves(t *testing.T) {
 		e.agreement(open)
 		e.restate(rev, rev, alpha)
 		e.restate(rev, "a|b", alpha)
-		e.sameAsPython("restating_reopens")
+		e.matchesGolden("restating_reopens")
 		for _, i := range []int{4, 5} {
 			if a := e.ok(i); a["state"] != "reopened" || a["baseRevision"] != rev {
 				t.Fatal(a)
@@ -363,7 +363,7 @@ func Test27_EDR9_revision_moves(t *testing.T) {
 		e.current("rev-2")
 		e.current("rev-3")
 		e.current(rev)
-		e.sameAsPython("superseded_settlement")
+		e.matchesGolden("superseded_settlement")
 		reasons(e, map[int]string{3: "agreement_revision_stale"})
 		if e.steps[4]["ok"] != "false" || e.steps[5]["ok"] != "true" {
 			t.Fatal(e.steps)
@@ -376,7 +376,7 @@ func Test27_EDR9_revision_moves(t *testing.T) {
 		e.restate(rev, "rev-9", beta)
 		e.rows("SELECT * FROM edit_revision_marks")
 		e.show(ShowFilter{})
-		e.sameAsPython("one_successor")
+		e.matchesGolden("one_successor")
 		reasons(e, map[int]string{2: "agreement_revision_stale"})
 		if e.ok(1)["toRevision"] != "rev-2" {
 			t.Fatal(e.steps[1])
@@ -389,7 +389,7 @@ func Test27_EDR9_revision_moves(t *testing.T) {
 		e.restate("rev-2", rev, alpha)
 		e.current("rev-2")
 		e.show(ShowFilter{})
-		e.sameAsPython("revision_cycle")
+		e.matchesGolden("revision_cycle")
 		reasons(e, map[int]string{3: "agreement_revision_stale"})
 	})
 	t.Run("a stranger cannot restate", func(t *testing.T) {
@@ -398,7 +398,7 @@ func Test27_EDR9_revision_moves(t *testing.T) {
 		e.restate(rev, "rev-2", zeta)
 		e.step(e.regions.RestateRevision(ctx(), "other/repo", "x-1", "x-2", alpha))
 		e.step(e.regions.RestateRevision(ctx(), "empty/repo", "x-1", "x-2", "task-nobody"))
-		e.sameAsPython("stranger_restates")
+		e.matchesGolden("stranger_restates")
 		reasons(e, map[int]string{2: "scope_role_mismatch", 4: "scope_role_mismatch"})
 	})
 }
@@ -416,7 +416,7 @@ func Test27_EDR10_base_moves_chain_from_the_last_recorded_revision(t *testing.T)
 		e.settle(record, beta, "accepted", null(), null())
 		e.reaffirm(record, beta, "rev-2", null())
 		e.reaffirm(record, beta, "rev-3", null())
-		e.sameAsPython("consecutive_moves")
+		e.matchesGolden("consecutive_moves")
 		reasons(e, map[int]string{2: "agreement_revision_stale", 7: "agreement_revision_stale", 8: "agreement_revision_stale"})
 		if !strings.Contains(e.detail(2), "--from-revision rev-2 --to-revision rev-3") || !strings.Contains(e.detail(7), "--revision rev-3") {
 			t.Fatal(e.detail(2), e.detail(7))
@@ -432,7 +432,7 @@ func Test27_EDR10_base_moves_chain_from_the_last_recorded_revision(t *testing.T)
 		e.restate("rev-9", "rev-10", alpha)
 		e.rows("SELECT * FROM edit_revision_marks")
 		e.show(ShowFilter{})
-		e.sameAsPython("move_from_nowhere")
+		e.matchesGolden("move_from_nowhere")
 		if !strings.Contains(e.detail(2), "'rev-2'") {
 			t.Fatal(e.detail(2))
 		}
@@ -443,7 +443,7 @@ func Test27_EDR10_base_moves_chain_from_the_last_recorded_revision(t *testing.T)
 		e.restate(rev, "rev-2", alpha)
 		e.propose("src/b.py", proposeOpt{revision: "other-1"})
 		e.restate("other-1", "other-2", alpha)
-		e.sameAsPython("another_revision_own_chain")
+		e.matchesGolden("another_revision_own_chain")
 	})
 	t.Run("a closed agreement is not a start", func(t *testing.T) {
 		e := newRegionEnv(t)
@@ -455,7 +455,7 @@ func Test27_EDR10_base_moves_chain_from_the_last_recorded_revision(t *testing.T)
 		e.restate("closed-1", "rev-3", alpha)
 		e.rows("SELECT * FROM edit_revision_marks")
 		e.agreement(successor)
-		e.sameAsPython("closed_not_a_start")
+		e.matchesGolden("closed_not_a_start")
 		reasons(e, map[int]string{5: "agreement_revision_stale"})
 	})
 }
@@ -472,7 +472,7 @@ func Test27_EDR11_reaffirm_carries_onto_the_current_revision(t *testing.T) {
 		e.rows("SELECT * FROM edit_reaffirmations")
 		e.rows("SELECT kind, subject, detail FROM journal WHERE kind LIKE 'edit_%' ORDER BY seq")
 		e.reaffirm("agr-missing", alpha, "rev-2", null())
-		e.sameAsPython("owner_carries")
+		e.matchesGolden("owner_carries")
 		reasons(e, map[int]string{3: "scope_role_mismatch", 9: "unregistered_scope"})
 		s := e.ok(4)
 		if s["baseRevision"] != "rev-2" || s["supersedes"] != id(record) || s["state"] != "proposed" || e.ok(5)["supersededBy"] != id(successor) {
@@ -487,7 +487,7 @@ func Test27_EDR11_reaffirm_carries_onto_the_current_revision(t *testing.T) {
 		record := e.propose("src/a.py", proposeOpt{})
 		e.settle(record, alpha, "withdrawn", null(), null())
 		e.reaffirm(record, alpha, rev, null())
-		e.sameAsPython("closed_is_proposed_again")
+		e.matchesGolden("closed_is_proposed_again")
 		reasons(e, map[int]string{2: "agreement_not_open"})
 	})
 	t.Run("never reached", func(t *testing.T) {
@@ -496,7 +496,7 @@ func Test27_EDR11_reaffirm_carries_onto_the_current_revision(t *testing.T) {
 		e.restate(rev, "rev-2", alpha)
 		e.reaffirm(record, alpha, "rev-typo", null())
 		e.show(ShowFilter{})
-		e.sameAsPython("reaffirm_never_reached")
+		e.matchesGolden("reaffirm_never_reached")
 		reasons(e, map[int]string{3: "agreement_revision_stale"})
 	})
 	t.Run("onto the revision it stands on", func(t *testing.T) {
@@ -505,7 +505,7 @@ func Test27_EDR11_reaffirm_carries_onto_the_current_revision(t *testing.T) {
 		e.settle(original, alpha, "accepted", null(), null())
 		e.reaffirm(original, alpha, rev, null())
 		e.agreement(original)
-		e.sameAsPython("reaffirm_same_revision")
+		e.matchesGolden("reaffirm_same_revision")
 		reasons(e, map[int]string{2: "link_not_active"})
 		if a := e.ok(3); a["state"] != "agreed" || a["supersededBy"] != nil || a["rightAcceptedAt"] == nil {
 			t.Fatal(a)
@@ -523,7 +523,7 @@ func Test27_EDR12_what_a_carry_keeps(t *testing.T) {
 		e.agreement(original)
 		e.settle(successor, beta, "accepted", null(), null())
 		e.show(ShowFilter{})
-		e.sameAsPython("answering_side_reaffirms")
+		e.matchesGolden("answering_side_reaffirms")
 		reasons(e, map[int]string{3: "agreement_revision_stale"})
 		s := e.ok(4)
 		waiting := s["reaffirmation"].(map[string]any)["awaitingAcceptance"].(map[string]any)
@@ -541,7 +541,7 @@ func Test27_EDR12_what_a_carry_keeps(t *testing.T) {
 		original := e.byBeta()
 		e.moved("rev-2")
 		e.reaffirm(original, beta, "rev-2", null())
-		e.sameAsPython("proposing_side_control")
+		e.matchesGolden("proposing_side_control")
 		waiting := e.ok(2)["reaffirmation"].(map[string]any)["awaitingAcceptance"].(map[string]any)
 		if waiting["reason"] != "not_yet_accepted" || waiting["priorAcceptedAt"] != nil || waiting["task"] != alpha {
 			t.Fatal(waiting)
@@ -553,14 +553,14 @@ func Test27_EDR12_what_a_carry_keeps(t *testing.T) {
 		e.settle(original, alpha, "accepted", null(), null())
 		e.moved("rev-2")
 		e.reaffirm(original, alpha, "rev-2", null())
-		e.sameAsPython("agreed_carried_asks_again")
+		e.matchesGolden("agreed_carried_asks_again")
 	})
 	t.Run("restates only its own condition", func(t *testing.T) {
 		e := newRegionEnv(t)
 		original := e.byBeta()
 		e.moved("rev-2")
 		e.reaffirm(original, alpha, "rev-2", ns("alpha's condition, lines 14-15 at rev-2"))
-		e.sameAsPython("restates_own_condition")
+		e.matchesGolden("restates_own_condition")
 	})
 	t.Run("both conditions survive a second carry", func(t *testing.T) {
 		e := newRegionEnv(t)
@@ -570,7 +570,7 @@ func Test27_EDR12_what_a_carry_keeps(t *testing.T) {
 		e.restate("rev-2", "rev-3", alpha)
 		e.reaffirm(first, beta, "rev-3", null())
 		e.rows("SELECT * FROM edit_reaffirmations ORDER BY recorded_at, agreement_id")
-		e.sameAsPython("second_carry")
+		e.matchesGolden("second_carry")
 	})
 	t.Run("a decline after a carry", func(t *testing.T) {
 		e := newRegionEnv(t)
@@ -578,7 +578,7 @@ func Test27_EDR12_what_a_carry_keeps(t *testing.T) {
 		e.moved("rev-2")
 		successor := e.reaffirm(original, alpha, "rev-2", null())
 		e.settle(successor, beta, "declined", ns("only if parse keeps forwarding"), ns("the tree moved"))
-		e.sameAsPython("decline_after_carry")
+		e.matchesGolden("decline_after_carry")
 	})
 	t.Run("a conditionless decline after a carry", func(t *testing.T) {
 		e := newRegionEnv(t)
@@ -586,7 +586,7 @@ func Test27_EDR12_what_a_carry_keeps(t *testing.T) {
 		e.moved("rev-2")
 		successor := e.reaffirm(original, alpha, "rev-2", null())
 		e.settle(successor, beta, "declined", null(), ns("changed our mind"))
-		e.sameAsPython("conditionless_decline_after_carry")
+		e.matchesGolden("conditionless_decline_after_carry")
 	})
 	t.Run("a legacy successor says where its text was written", func(t *testing.T) {
 		e := newRegionEnv(t)
@@ -598,7 +598,7 @@ func Test27_EDR12_what_a_carry_keeps(t *testing.T) {
 		e.show(ShowFilter{})
 		e.restate("rev-2", "rev-3", beta)
 		e.reaffirm(legacy, alpha, "rev-3", null())
-		e.sameAsPython("legacy_successor")
+		e.matchesGolden("legacy_successor")
 		if carried := e.ok(5); carried["proposerTaskId"] != beta || carried["rightCondition"] != betaCondition || carried["legacyCarry"] != nil {
 			t.Fatal(carried)
 		}
@@ -611,7 +611,7 @@ func Test27_EDR12_what_a_carry_keeps(t *testing.T) {
 		e.handover("PRJ-B", beta, "task-beta-next", "host-b")
 		e.agreement(successor)
 		e.settle(successor, "task-beta-next", "accepted", null(), null())
-		e.sameAsPython("next_owner_follows_handover")
+		e.matchesGolden("next_owner_follows_handover")
 		waiting := e.ok(3)["reaffirmation"].(map[string]any)["awaitingAcceptance"].(map[string]any)
 		if e.ok(3)["nextOwner"] != "task-beta-next" || !strings.Contains(waiting["command"].(string), "--actor task-beta-next") {
 			t.Fatal(waiting)
@@ -626,7 +626,7 @@ func Test27_EDR12_what_a_carry_keeps(t *testing.T) {
 			t.Fatal(err)
 		}
 		e.agreement(successor)
-		e.sameAsPython("awaiting_without_single_parent")
+		e.matchesGolden("awaiting_without_single_parent")
 	})
 }
 
@@ -639,7 +639,7 @@ func Test27_EDR13_a_refused_carry_retires_nothing_and_records_its_contest(t *tes
 		e.reaffirm(record, alpha, "rev-2", null())
 		e.agreement(record)
 		e.show(ShowFilter{})
-		e.sameAsPython("failed_reaffirmation_overlap")
+		e.matchesGolden("failed_reaffirmation_overlap")
 		reasons(e, map[int]string{4: "region_overlap"})
 	})
 	t.Run("the pair already holds the place", func(t *testing.T) {
@@ -650,7 +650,7 @@ func Test27_EDR13_a_refused_carry_retires_nothing_and_records_its_contest(t *tes
 		e.reaffirm(original, alpha, "rev-2", null())
 		e.agreement(original)
 		e.rows("SELECT * FROM edit_reaffirmations")
-		e.sameAsPython("carry_onto_held_place")
+		e.matchesGolden("carry_onto_held_place")
 		if !strings.Contains(e.detail(3), id(standing)) {
 			t.Fatal(e.detail(3))
 		}
@@ -665,7 +665,7 @@ func Test27_EDR13_a_refused_carry_retires_nothing_and_records_its_contest(t *tes
 		e.rows("SELECT * FROM edit_reaffirmations")
 		e.rows("SELECT * FROM edit_agreements WHERE base_revision = 'rev-2'")
 		e.show(ShowFilter{})
-		e.sameAsPython("move_while_carrying")
+		e.matchesGolden("move_while_carrying")
 		reasons(e, map[int]string{3: "agreement_revision_stale"})
 	})
 	t.Run("a same-pair proposal while carrying", func(t *testing.T) {
@@ -677,7 +677,7 @@ func Test27_EDR13_a_refused_carry_retires_nothing_and_records_its_contest(t *tes
 		e.agreement(record)
 		e.rows("SELECT * FROM edit_reaffirmations")
 		e.show(ShowFilter{})
-		e.sameAsPython("same_pair_while_carrying")
+		e.matchesGolden("same_pair_while_carrying")
 		reasons(e, map[int]string{3: "region_overlap"})
 	})
 	t.Run("a destination that is not the predecessor's place", func(t *testing.T) {
@@ -697,7 +697,7 @@ func Test27_EDR13_a_refused_carry_retires_nothing_and_records_its_contest(t *tes
 		e.rows("SELECT * FROM edit_reaffirmations")
 		e.rows("SELECT * FROM edit_agreements WHERE base_revision = 'rev-2'")
 		e.show(ShowFilter{})
-		e.sameAsPython("carry_elsewhere")
+		e.matchesGolden("carry_elsewhere")
 		reasons(e, map[int]string{2: "unregistered_scope", 3: "unregistered_scope", 4: "unregistered_scope", 5: "unregistered_scope"})
 	})
 	t.Run("a handover while carrying", func(t *testing.T) {
@@ -710,7 +710,7 @@ func Test27_EDR13_a_refused_carry_retires_nothing_and_records_its_contest(t *tes
 		e.rows("SELECT * FROM edit_reaffirmations")
 		e.rows("SELECT * FROM edit_regions WHERE base_revision = 'rev-2'")
 		e.show(ShowFilter{})
-		e.sameAsPython("handover_while_carrying")
+		e.matchesGolden("handover_while_carrying")
 		reasons(e, map[int]string{2: "scope_role_mismatch"})
 	})
 	t.Run("a classification clash", func(t *testing.T) {
@@ -722,7 +722,7 @@ func Test27_EDR13_a_refused_carry_retires_nothing_and_records_its_contest(t *tes
 		e.agreement(original)
 		e.rows("SELECT * FROM edit_reaffirmations")
 		e.show(ShowFilter{})
-		e.sameAsPython("classification_clash")
+		e.matchesGolden("classification_clash")
 		reasons(e, map[int]string{3: "region_overlap"})
 	})
 	t.Run("settled while carrying", func(t *testing.T) {
@@ -732,7 +732,7 @@ func Test27_EDR13_a_refused_carry_retires_nothing_and_records_its_contest(t *tes
 		e.racing(func() { e.settle(record, beta, "withdrawn", null(), null()) })
 		e.reaffirm(record, alpha, "rev-2", null())
 		e.show(ShowFilter{})
-		e.sameAsPython("settled_while_carrying")
+		e.matchesGolden("settled_while_carrying")
 	})
 }
 
