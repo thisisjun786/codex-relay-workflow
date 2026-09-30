@@ -140,14 +140,14 @@ publishing an existing private repository.
 
 Keep the skills and their shared references consistent. CXC and Paperthin remain
 external runtime dependencies; do not vendor their source. The task bridge and the
-session relay are imported source under `packages/`, each keeping its own
-`pyproject.toml`, tests and module names, and the root `uv.lock` resolves the
-relay's bridge dependency to this checkout. Record tested versions, consumer
+session relay began as imported source under `packages/`; their Go ports are the product,
+and the bridge's upstream MIT notice and provenance stay in `packages/codex-thread-bridge`.
+Record tested versions, consumer
 interfaces, old/new behavior and unresolved host observations. An upstream green
 build is not this repository's compatibility proof. Do not copy private runtime
 stores or update running installations as a CI side effect.
 
-Until todo 44 a `packages` check installed, tested and built that imported Python
+Until todo 44 a `packages` check installed, tested and built the imported Python
 source. The Go port under `cmd/` and `internal/` replaced it as the product, the
 Python source is removed, and the Go checks carry the test burden: passing them is
 evidence about this source; it establishes nothing about an installed runtime, a live

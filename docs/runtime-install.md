@@ -590,8 +590,8 @@ Python packages' trees and source digests for the Python installer to re-derive;
 last Python reader, and the Go package, which had carried the fields a Go install uses, became
 the only copy (decision 47). The ported bridge's upstream provenance, which the file recorded
 because the import brought source rather than history, is kept in
-[packages/README.md](../packages/README.md), the provenance narrative OPS-1.5 says is retained
-rather than replaced.
+[its PROVENANCE.md](../packages/codex-thread-bridge/PROVENANCE.md) beside its licence, the
+provenance narrative OPS-1.5 says is retained rather than replaced.
 
 What the definition does not carry is as important. Installed locations, entry points, host names
 and measured points are host facts. OPS-3.2 makes a real record a private receipt, so they go to the

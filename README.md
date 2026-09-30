@@ -9,9 +9,10 @@ resolution, and parent-task verification and integration.
 This is an experimental workflow built from a personal setup. It contains the skill
 instruction sets listed below, the `crw` runtime the workflow delegates and reports
 through (one Go binary serving the task bridge, the session relay and the completion
-hook), a symlink installer for development, and the two Python packages that runtime
-was ported from, kept as the development and rollback path until the Python execution
-path is removed. CXC and Paperthin remain separate dependencies. Having the source here
+hook) and a symlink installer for development. The two Python packages that runtime was
+ported from left the repository in todo 44, after the cutover; the bridge's upstream
+provenance and licence stay in [packages/codex-thread-bridge](packages/codex-thread-bridge/PROVENANCE.md).
+CXC and Paperthin remain separate dependencies. Having the source here
 does not install or activate a runtime, and offline contract checks do not establish
 live Codex hook or Desktop compatibility.
 
@@ -29,13 +30,14 @@ live Codex hook or Desktop compatibility.
 
 The shared [integration guide](plugins/crw/skills/crw-plan/references/integrations.md) owns Linear document authority and CXC/Paperthin routing. Keep the skills together because their references link to one another.
 
-| Package | Purpose |
+| Component of `crw` | Purpose |
 |---|---|
-| [codex-thread-bridge](packages/codex-thread-bridge/README.md) | An MCP server that creates and messages Codex sessions through the App Server running on the same host |
+| `codex-thread-bridge` ([provenance](packages/codex-thread-bridge/PROVENANCE.md)) | An MCP server that creates and messages Codex sessions through the App Server running on the same host |
 | [codex-session-relay](docs/relay/README.md) | Durable same-host verification requests and completion reports between two independent Codex tasks |
 
-Both are described in [packages/README.md](packages/README.md), including where they
-were imported from and what was deliberately left behind.
+Both began as Python packages imported into this repository;
+[the bridge's provenance](packages/codex-thread-bridge/PROVENANCE.md) records where they came
+from, what was deliberately left behind, and where their Go ports live.
 
 ## Sources of truth
 
@@ -223,7 +225,7 @@ python3 scripts/ci/plugin.py
 python3 -m unittest discover -s scripts/ci/tests -v
 ```
 
-The Python packages under `packages/` are no longer built or tested; todo 44 removes them.
+The Python packages the runtime was ported from left the repository in todo 44.
 
 When the bundled Codex skill validator is available:
 

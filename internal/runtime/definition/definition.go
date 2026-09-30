@@ -6,8 +6,7 @@
 // installer and the developer harnesses, and this package carried the fields a Go install uses
 // and a test kept them equal to the file. The file left with its last Python reader, and this
 // package is the only copy (decision 47). The upstream provenance it recorded for the ported
-// bridge is packages/codex-thread-bridge/PROVENANCE.md (packages/README.md until that file
-// exists). Nothing here carries a per-target binary digest: release digests live in the
+// bridge is packages/codex-thread-bridge/PROVENANCE.md. Nothing here carries a per-target binary digest: release digests live in the
 // release's SHA256SUMS and in the host record (decision 35).
 package definition
 

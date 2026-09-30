@@ -272,7 +272,7 @@ its Python/skill checks and existing task ownership. Lina application builds,
 Bun dependencies, deployment assumptions and personal operational data are not
 part of this adaptation. Preserve upstream notices for any copied source.
 
-The imported packages' provenance is recorded in [packages/README.md](../packages/README.md).
+The imported packages' provenance is recorded in [the bridge's PROVENANCE.md](../packages/codex-thread-bridge/PROVENANCE.md).
 The bridge's own `.github/workflows/ci.yml` was not imported as a nested workflow;
 its ruff, ty, pytest and build steps informed the `packages` job, which ran the pytest
 and build parts for both packages until todo 44.
