@@ -162,11 +162,10 @@ func ExecuteAs(ctx context.Context, argv0 string, argv []string, stdout, stderr 
 	kindModules := root.Values["kind-module"]
 	argv = root.RootArgs()
 	ctx = readOnlyContext(ctx, remaining)
-	// cli.main's _ownership_preflight and inbox.replay: a writable command that drains opens its
-	// store once the selection refusal passed, then imports --kind-module, then replays the
-	// takeover inbox on that store, all before its handler reads its own arguments; the handler's
-	// store is that store.
-	drains := drainsBeforeHandler(remaining[0]) && !store.ReadOnlyCommand(ctx)
+	// cli.main's _ownership_preflight: a writable command opens its store once the selection
+	// refusal passed, then imports --kind-module, all before its handler reads its own
+	// arguments; the handler's store is that store.
+	drains := admitsBeforeHandler(remaining[0]) && !store.ReadOnlyCommand(ctx)
 	// cli.py main's check_start, for the families' dispatch: after the command's own argument
 	// parse and before the selection refusal, --kind-module and the handler. The intent
 	// commands' dispatch runs its own (delivery's fenced markers), and a command that answers
@@ -186,10 +185,8 @@ func ExecuteAs(ctx context.Context, argv0 string, argv []string, stdout, stderr 
 			return err
 		}
 		if err = kindModuleRefusal(kindModules); err == nil {
-			if err = drainInbox(ctx, st, socket); err == nil {
-				admitted.Hold(st, selection.DBPath(), socket)
-				return nil
-			}
+			admitted.Hold(st, selection.DBPath(), socket)
+			return nil
 		}
 		if e := st.Close(); e != nil {
 			err = errors.Join(err, e)
@@ -326,7 +323,7 @@ func admitIf(drains bool, admit func(store.StateSelection, string) error) func(s
 }
 
 // run is cli.main for a command of this package's table: check_start, the selection refusal,
-// then admit (the writable open, --kind-module and the inbox replay) for a command that drains,
+// then admit (the writable open and --kind-module) for a command admitted before its handler,
 // or --kind-module alone, then the handler.
 func run(ctx context.Context, command *Command, argv0, state, socket string, kindModules []string, admit func(store.StateSelection, string) error, args Args) (any, error) {
 	services := Services{SocketPath: socket, AdapterRequested: socket != "", Program: program(argv0)}
@@ -510,4 +507,16 @@ func (s *stringsFlag) String() string { return fmt.Sprint([]string(*s)) }
 func (s *stringsFlag) Set(value string) error {
 	*s = append(*s, value)
 	return nil
+}
+
+// admitsBeforeHandler reports whether a writable command admits its store at dispatch, before
+// its handler reads its own arguments (cli.py main: _ownership_preflight opens services.store,
+// then the handler). The service and daemon commands open theirs in their own recovery;
+// managed-start and the intent commands open their own admitted connection.
+func admitsBeforeHandler(command string) bool {
+	switch command {
+	case "service", "daemon", "managed-start":
+		return false
+	}
+	return !strings.HasPrefix(command, "intent-")
 }

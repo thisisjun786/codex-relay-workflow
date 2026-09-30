@@ -79,8 +79,7 @@ func Open(ctx context.Context, path, socketPath string) (*Store, error) {
 type admittedKey struct{}
 
 // Admitted is the one writable store a relay command admitted before its handler ran (cli.main's
-// _ownership_preflight opens services.store once, the takeover inbox is replayed on it, and the
-// handler uses that same store). Hold places the store in the slot; the first writable Open of
+// _ownership_preflight opens services.store once, and the handler uses that same store). Hold places the store in the slot; the first writable Open of
 // the same database with the same socket under the slot's context is handed it instead of
 // opening another, and that caller then owns and closes it.
 type Admitted struct {

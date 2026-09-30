@@ -51,7 +51,7 @@ func (e *RefusedError) Unwrap() error { return e.cause }
 
 // RefusedBecause is a refusal that keeps the failure it was decided on reachable through
 // errors.As, as Python chains a RelayError `from` its cause: a receipt refused because the host
-// could not confirm the turn stays a HostUnavailable underneath (inbox.Retained).
+// could not confirm the turn stays a HostUnavailable underneath.
 func RefusedBecause(reason, detail string, cause error) *RefusedError {
 	return &RefusedError{Reason: reason, Detail: detail, cause: cause}
 }

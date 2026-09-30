@@ -12,7 +12,6 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/inbox"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 )
@@ -205,13 +204,6 @@ func ExecuteAs(ctx context.Context, prog string, argv []string, stdout, stderr i
 		if err != nil {
 			return reply(stdout, Obj{{Key: "error", Value: "host"}, {Key: "detail", Value: "OSError: " + err.Error()}}, contract.ExitHost), true
 		}
-		// cli.main runs its lock-free check_start before the selection refusal and before
-		// --kind-module: a receipt or acknowledgment the store's ownership refuses queueably is
-		// queued whatever --socket or --kind-module says (decision 25).
-		if inbox.Queueable(command) && inbox.RefusedAtStart(ctx, selection.DBPath(), socket) {
-			body, code := inbox.Queue(selection.Path, command, argv[i+1:])
-			return reply(stdout, body, code), true
-		}
 		exempt := spec.exempt != nil && spec.exempt(parsed)
 		// cli.py main: check_start before the selection refusal and the handler, for a
 		// command that is neither read-only nor answers without the selected store. Of the
@@ -233,12 +225,8 @@ func ExecuteAs(ctx context.Context, prog string, argv []string, stdout, stderr i
 				checked = store.StateSelection{}
 			}
 			// The relay CLI's check also admits a writable command's store (its open can be
-			// refused like the handler's own) and replays the takeover inbox on it.
+			// refused like the handler's own).
 			if err := check(checked, socket); err != nil {
-				if inbox.Queueable(command) && inbox.QueueableRefusal(err) {
-					body, code := inbox.Queue(selection.Path, command, argv[i+1:])
-					return reply(stdout, body, code), true
-				}
 				value, code := answer(nil, err)
 				return reply(stdout, value, code), true
 			}
@@ -253,12 +241,6 @@ func ExecuteAs(ctx context.Context, prog string, argv []string, stdout, stderr i
 		}
 	}()
 	result, err := spec.run(run)
-	if inbox.Queueable(command) && inbox.QueueableRefusal(err) {
-		// Another runtime owns the store, or it is draining or starting: the receipt or
-		// acknowledgment is durably queued for the owner instead (decision 25, cli.main).
-		body, code := inbox.Queue(run.state, command, argv[i+1:])
-		return reply(stdout, body, code), true
-	}
 	value, code := answer(result, err)
 	return reply(stdout, value, code), true
 }
@@ -281,64 +263,6 @@ func answer(result any, err error) (any, int) {
 	return result, contract.ExitOk
 }
 
-// QueuedAckHost opens a host adapter for a queued ack's replay that shares no store: the
-// replay runs inside the drainer's transaction, which holds the store's one connection. It is
-// installed by the production adapter; nil replays the ack offline, as cmd_ack runs without a
-// host adapter.
-var QueuedAckHost func(ctx context.Context, socket string, clock Clock) (Adapter, func() error, error)
-
-// ApplyQueued runs a queued emit or ack (decision 25) through its existing handler on the
-// drainer's store st, inside the composing transaction ctx carries, with the drainer's App
-// Server socket ("" for none) as its host, as inbox.replay calls args.handler(services, args).
-// It answers as inbox.Apply does: 0, 2 or 4 with the handler's stdout object; a retained
-// failure (inbox.Retained) or any host failure is err.
-func ApplyQueued(ctx context.Context, st *store.Store, command string, argv []string, socket string) (any, int, error) {
-	spec, ok := deliveryCommands[command]
-	if !ok || command != "emit" && command != "ack" {
-		return nil, 0, fmt.Errorf("not a queued delivery command: %s", command)
-	}
-	parsed, parsing := parseArgs(command, spec, argv)
-	if parsing.Message != "" || parsing.Help {
-		return nil, 0, fmt.Errorf("queued %s arguments: %s", command, parsing.Message)
-	}
-	run := &cliRun{command: command, ctx: ctx, args: parsed, state: store.PathlibParent(st.Path), socket: socket, store: st, clock: cliClock}
-	if CommandClock != nil {
-		run.clock = CommandClock
-	}
-	var result any
-	var err error
-	if command == "emit" {
-		result, err = cmdEmit(run)
-	} else {
-		result, err = queuedAck(run)
-	}
-	if err != nil && inbox.Retained(err) {
-		return nil, 0, err
-	}
-	value, code := answer(result, err)
-	if code == contract.ExitHost {
-		return nil, code, err
-	}
-	return value, code, nil
-}
-
-// queuedAck is cmd_ack on the drainer's store: with the drainer's host when it has one, never
-// through HostCommand, which would open the store a second time.
-func queuedAck(c *cliRun) (_ any, err error) {
-	d := NewService(c.store, c.clock)
-	ack := NewAck(d)
-	event, turn, proof, reject := c.s("--event"), c.s("--ack-turn"), c.s("--ack-proof"), c.opt("--reject")
-	if c.socket == "" || QueuedAckHost == nil {
-		return AckCommand(c.ctx, ack, nil, nil, event, turn, proof, reject)
-	}
-	host, release, err := QueuedAckHost(c.ctx, c.socket, c.clock)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { err = errors.Join(err, release()) }()
-	return AckCommand(c.ctx, ack, NewReconciler(d), host, event, turn, proof, reject)
-}
-
 // hostError carries the Python exception class name of a host failure.
 type hostError struct{ kind, message string }
 
@@ -352,11 +276,7 @@ func hostDetail(err error) string {
 	if errors.As(err, &overflow) {
 		return overflow.Error()
 	}
-	// The fence's own exceptions: a replay failure and a bounded lock wait that expired.
-	var replay *inbox.Error
-	if errors.As(err, &replay) {
-		return replay.Error()
-	}
+	// The fence's own exception: a bounded lock wait that expired.
 	var expired *ownership.LockWaitExpired
 	if errors.As(err, &expired) {
 		return expired.Error()

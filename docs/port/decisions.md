@@ -2769,3 +2769,27 @@ Evidence: `git grep -n 'takeover' -- plugins` (only the mirror's file name in
 crw-run/references/relay.md); internal/relay/store/ownership/admission.go (`judge`);
 internal/relay/store/ownership/protocol_test.go (the admission tests, now on a Go-created store);
 internal/relay/service/control_test.go (`Test30ForeignOwnerCLIRefusesWithoutDBChanges`).
+
+## 55. The takeover inbox is retired: nothing queues into S/takeover-inbox or drains it (refactor R1)
+
+Decision: the decision-25 takeover inbox leaves the Go runtime: `internal/relay/inbox` (the
+envelope, the durable enqueue and the replay), the relay CLI's drain on a writable command's first
+admitted open, in the daemon before its first tick and in the service supervisor's recovery, the
+per-family appliers (`delivery.ApplyQueued`, `faults.ApplyQueued`, the legacy `supervisor-read`
+replay and its lazy host), the queue branches of `emit`, `ack` and `fault-notification-ack`,
+`ownership.IsInboxEntry`, the `Queueable` mark on an ownership refusal, and
+contract/golden/takeover-inbox. A receipt or acknowledgment the store's ownership refuses (another
+runtime's store, or one draining or starting) is now answered with that refusal - exit 2,
+`store_owned_by_other`, in the fence's words - where it used to be queued with
+`{"status": "durably_queued", ...}`. A writable command still opens its store once before its
+handler and before `--kind-module`, so the refusal order is unchanged.
+
+Why: the inbox carried receipts and acknowledgments across the interval when no runtime was the
+active owner during a takeover; with no takeover left (decision 54) and the owner's host on an
+active Go owner for good, nothing can be refused queueably, and the live `S/takeover-inbox` was
+empty when the drain was removed (checked 2026-10-01). The directory and its `.replay.lock` are the
+operator's to delete. docs/port/cutover.md marks the Inbox section historical.
+
+Evidence: `internal/relay/delivery/cli.go`, `internal/relay/faults/cli.go` (no queue branch);
+`internal/relay/cli/registry.go` (`admit`, `admitsBeforeHandler`);
+`Test31_check_start_precedes_the_selection_kind_module_and_handler_refusals` (refusal order).

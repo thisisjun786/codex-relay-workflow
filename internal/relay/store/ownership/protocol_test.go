@@ -276,7 +276,7 @@ func TestValidateRefusesARecordWhoseAuthorityHasNoHome(t *testing.T) {
 		},
 	} {
 		var refused *ownership.Refused
-		if err = check(); !errors.As(err, &refused) || refused.Detail != ownership.NoAuthorityDetail || refused.Queueable {
+		if err = check(); !errors.As(err, &refused) || refused.Detail != ownership.NoAuthorityDetail {
 			t.Errorf("a bound record under an authority with no home: %#v", err)
 		}
 	}

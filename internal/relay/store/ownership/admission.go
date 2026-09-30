@@ -176,12 +176,12 @@ func judge(path string, r Record, s Stamp) error {
 		return err
 	}
 	if s.Owner != "go" {
-		return queueable("store belongs to " + s.Owner)
+		return refuse("store belongs to %s", s.Owner)
 	}
 	if r.Phase == "starting" {
-		return queueable("only designated candidate may enter starting")
+		return refuse("only designated candidate may enter starting")
 	} else if r.Phase != "active" {
-		return queueable("store is draining")
+		return refuse("store is draining")
 	}
 	return nil
 }

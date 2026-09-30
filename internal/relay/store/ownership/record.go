@@ -29,18 +29,13 @@ const PythonBuild = "codex-session-relay/0.2.0"
 
 var Keys = []string{"writer_protocol", "owner", "owner_epoch", "takeover_id", "rollback_allowed", "python_compatibility_build"}
 
-// Refused is an ownership refusal. Queueable marks the three the fence answers a queueable
-// command's refusal by publishing it in the takeover inbox instead (ownership.py
-// OwnershipRefused.queueable, decision 25): another runtime owns the store, it is draining, or
-// it is starting and this process is not the designated candidate.
+// Refused is an ownership refusal.
 type Refused struct {
-	Detail    string
-	Queueable bool
+	Detail string
 }
 
 func (e *Refused) Error() string              { return "ownership refused: " + e.Detail }
 func refuse(format string, args ...any) error { return &Refused{Detail: fmt.Sprintf(format, args...)} }
-func queueable(detail string) error           { return &Refused{Detail: detail, Queueable: true} }
 
 type Database struct {
 	RealPath           string `json:"realPath"`

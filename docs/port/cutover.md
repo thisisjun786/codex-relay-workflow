@@ -46,10 +46,10 @@ Objects the fence release adds, all owner-only (`0700` directories, `0600` files
 | `S/takeover.lock` | permanent-inode exclusive lock that serializes transition controllers |
 | `S/write-gate.lock` | permanent-inode shared/exclusive admission barrier for DB writers |
 | `S/takeover.json` | durable transition record and admission mirror (atomic replace) |
-| `S/takeover-inbox/` | immutable, durable receipt/ACK requests awaiting application |
-| `S/takeover-inbox/.replay.lock` | permanent-inode exclusive lock held by an inbox replayer from reading an entry until after its unlink and directory fsync |
+| `S/takeover-inbox/` | immutable, durable receipt/ACK requests awaiting application (historical: no Go reader or writer since decision 55) |
+| `S/takeover-inbox/.replay.lock` | permanent-inode exclusive lock held by an inbox replayer from reading an entry until after its unlink and directory fsync (historical, decision 55) |
 | `S/control.sock` | stable local control and `guard-evaluate` RPC address served by both runtimes |
-| `S/takeover-backups/<transition-id>/` | SQLite backup plus inventory manifest; disaster-recovery evidence only, never rollback input |
+| `S/takeover-backups/<transition-id>/` | SQLite backup plus inventory manifest; disaster-recovery evidence only, never rollback input (historical: no controller writes one since decision 54) |
 
 Rule that applies to every lock file, old or new: **never unlink it and never replace it
 atomically.** The inode is the rendezvous point. Atomic replace is for `takeover.json` only.
@@ -879,6 +879,11 @@ rollback does not by itself permit removing them.
 
 ## Inbox
 
+Historical since refactor R1 (decision 55): the Go runtime neither queues into nor drains
+`S/takeover-inbox/`; a receipt or acknowledgment the store's ownership refuses is answered with that
+refusal. The directory, which was empty on the owner's host when the drain was removed, is the
+operator's to delete. This section and its wire format record the protocol as it ran.
+
 `S/takeover-inbox/<operation-id>` is the durable ingress that preserves receipts and ACKs across
 the interval when no owner is active. It ships in the fence release, not only in Go.
 
@@ -1065,9 +1070,10 @@ message, another recipient, a wrong proof: the same exit-2 answer in both runtim
 opened only on its first use, as Python's `_LazyAdapter` is. Go's readback host, like its
 queued-ack host, shares no store, and a readback asks for no lifecycle observation either.
 
-Golden entry bytes live in `contract/golden/takeover-inbox/`, one per queueable command plus
-the retained legacy `supervisor-read` format; Go's envelope (`internal/relay/inbox.Envelope`)
-reproduces them byte for byte, and its replay accepts exactly the entries the fence accepts: it
+Golden entry bytes lived in `contract/golden/takeover-inbox/` until refactor R1 deleted them
+with the inbox (decision 55), one per queueable command plus the retained legacy
+`supervisor-read` format; Go's envelope (`internal/relay/inbox.Envelope`) reproduced them byte for
+byte, and its replay accepts exactly the entries the fence accepts: it
 re-derives an entry from its typed arguments, as the fence does from the rebuilt namespace, so
 an empty append list (which no producer writes) is kept and accepted, never dropped.
 

@@ -239,10 +239,6 @@ func runService(ctx context.Context, services Services, args Args) (out any, err
 				if e = s.PublishStoreIdentity(); e != nil {
 					return e
 				}
-				// cli.py recover(): the takeover inbox is replayed before recovery.
-				if e = drainInbox(ctx, db, services.SocketPath); e != nil {
-					return e
-				}
 				d, e := DaemonFactory(ctx, services, db)
 				if e != nil {
 					return e
@@ -386,11 +382,6 @@ func runDaemon(ctx context.Context, services Services, args Args) (out any, err 
 		return nil, e
 	}
 	defer func() { err = errors.Join(err, control.Close()) }()
-	// cmd_daemon: the takeover inbox is replayed before the first tick, including by an
-	// adopted worker (decision 25; cutover.md Wire format).
-	if err = drainInbox(ctx, db, services.SocketPath); err != nil {
-		return nil, err
-	}
 	stop := func() bool {
 		return ctx.Err() != nil || s.StopRequested() || s.Draining() || (bound != nil && service.Monotonic() >= *bound)
 	}

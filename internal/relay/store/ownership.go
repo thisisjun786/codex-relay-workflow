@@ -232,17 +232,6 @@ func OwnershipRefusalDetail(err error) string {
 	return err.Error()
 }
 
-// AsOwnershipRefusal answers a bare ownership refusal as a refused admission answers it
-// (reason store_owned_by_other, in the fence's words where it has them), keeping it reachable
-// through errors.As; any other error is returned unchanged.
-func AsOwnershipRefusal(err error) error {
-	var refused *ownership.Refused
-	if RefusalReason(err) == "" && errors.As(err, &refused) {
-		return &RefusedError{Reason: "store_owned_by_other", Detail: OwnershipRefusalDetail(err), cause: err}
-	}
-	return err
-}
-
 // fenceWords is the fence's wording of the ownership decisions both runtimes make that Go's
 // judge words its own way (the three the fence answers queueably, and validate's two
 // lock-authority refusals, which Go words alike but under Refused's prefix), or "" for any

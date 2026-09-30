@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -323,25 +322,6 @@ func Test30CreateAbsentNeverExposesUnstampedDatabase(t *testing.T) {
 				t.Fatal("partial store admitted")
 			}
 		})
-	}
-}
-
-// A bare ownership refusal raised after admission (the takeover inbox's drain revalidating
-// its transaction) answers as a refused admission does: reason store_owned_by_other, the
-// fence's words, and the refusal (with its queueable mark) still reachable. Anything else is
-// left alone.
-func Test31AsOwnershipRefusalAnswersAsAdmissionDoes(t *testing.T) {
-	cause := &ownership.Refused{Detail: "store is draining", Queueable: true}
-	err := AsOwnershipRefusal(fmt.Errorf("drain: %w", cause))
-	var refused *RefusedError
-	var inner *ownership.Refused
-	if !errors.As(err, &refused) || refused.Reason != "store_owned_by_other" || refused.Detail != "the relay store is draining" || !errors.As(err, &inner) || !inner.Queueable {
-		t.Fatalf("%#v", err)
-	}
-	already := &RefusedError{Reason: "unassigned_turn", Detail: "x", cause: cause}
-	other := errors.New("disk I/O error")
-	if AsOwnershipRefusal(already) != error(already) || AsOwnershipRefusal(other) != other || AsOwnershipRefusal(nil) != nil {
-		t.Fatal("a non-ownership error was rewritten")
 	}
 }
 
