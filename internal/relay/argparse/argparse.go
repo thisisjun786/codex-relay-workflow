@@ -1,5 +1,6 @@
 // Package argparse preserves the relay's CPython 3.13 argument and help contract.
-// Specs are generated from build_parser, without width-dependent rendered text.
+// specs.json was generated from the Python relay's build_parser (generate_spec.py), without
+// width-dependent rendered text; since todo 44 removed the Python relay it is the frozen source.
 package argparse
 
 import (

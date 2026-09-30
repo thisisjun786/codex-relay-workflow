@@ -126,8 +126,8 @@ before the two marker forms that name the selected store (`intent-declare` witho
 draining, refuses them before any marker write; a legacy store passes; a broken one answers the
 refusal or host error the fence does. `TestCLI_marker_preflight_answers_what_python_answers`
 checks 29 such cases against Python's answers in `testdata/marker_preflight.json`, captured once by
-the parity-tagged `TestCLI_marker_preflight_parity_with_live_python` (`make parity`), so the
-default suite starts no Python for them.
+the parity-tagged `TestCLI_marker_preflight_parity_with_live_python` (`make parity`) before todo 44
+removed it with the Python implementation, so the suite starts no Python for them.
 
 ## Todo 21 part B2 host-loss and unknown-send property progress (2026-09-26)
 
@@ -183,8 +183,9 @@ remove, registration, hook and promotion-order classes are todo 38's and are lis
 Python answers are captured once by `internal/runtime/testdata/python_goldens.py` into
 `goldens.json` (record bytes after seven update deltas, the 180-row staging table, 72
 ownership rows, every swap-gate cell and verdict, scope summaries, shapes, the OPS-1.2 walk);
-the `parity` tag regenerates them from live Python and adds cross-runtime lock, filesystem,
-declared-schema and fault-sweep checks (`internal/runtime/record/parity_test.go`).
+until todo 44 the `parity` tag regenerated them from live Python and added cross-runtime lock,
+filesystem, declared-schema and fault-sweep checks (`internal/runtime/record/parity_test.go`); todo
+44 deleted the tag, those checks and the generator, and `goldens.json` is frozen.
 
 | Python class (tests) | property | Go test |
 | --- | --- | --- |

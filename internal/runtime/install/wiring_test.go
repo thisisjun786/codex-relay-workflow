@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -41,23 +40,6 @@ func preNativePayload(t *testing.T) string {
 	write(t, filepath.Join(dir, "wiring", "crw_stop_hook.py"), readFile(t, preNativeWiring("crw_stop_hook.py")))
 	return dir
 }
-
-// runnablePython3 is the python3 on PATH when it runs, or "" when there is none or it does not
-// run. The pre-native launchers are Python scripts that a turn or session which cached the
-// pre-native declaration still runs, with this host's own interpreter, until the retention scan
-// clears them; the tests that start them are skipped on a host without one. They are not the
-// Python implementation (which leaves the repository in todo 44) but the host's interpreter
-// running a launcher kept as testdata.
-var runnablePython3 = sync.OnceValue(func() string {
-	found, err := exec.LookPath("python3")
-	if err != nil {
-		return ""
-	}
-	if err := exec.Command(found, "-c", "pass").Run(); err != nil {
-		return ""
-	}
-	return found
-})
 
 // stopCommandIn is the Stop command a declaration file registers, as Codex caches it.
 func stopCommandIn(t *testing.T, path string) string {
@@ -167,62 +149,11 @@ func TestTheNativeStopCommandJournalsTheStopThroughThePointer(t *testing.T) {
 	}
 }
 
-// The launchers a turn cached before this install still runs - the pre-native bootstrap, opening
-// the pre-native payload's crw_stop_hook.py and the <CODEX_HOME>/crw-stop-hook.py copy it falls
-// back to - run [adapterInterpreter, adapterEntryPoint, settings]. With adapterInterpreter
-// /usr/bin/env that reaches the Go hook through the pointer with the settings path as its
-// argument, and the hook journals the Stop.
-func TestLegacyStopLaunchersReachTheGoHook(t *testing.T) {
-	if runnablePython3() == "" {
-		t.Skip("no python3 that runs on PATH: the legacy launchers are Python scripts the host's interpreter runs")
-	}
-	h := newHost(t)
-	h.mustInstall(t, "install", archive(t, "0.9.0", ""))
-	if _, code := install.Hook(context.Background(), h.options(), h.hookOptions()); code != install.OK {
-		t.Fatal("hook settings")
-	}
-	journal := filepath.Join(h.home, "journal")
-	command := stopCommandIn(t, preNativeWiring("hooks", "stop-recording-completion.json"))
-	for _, launcher := range []struct {
-		name, pluginRoot string
-		fallback         bool
-	}{
-		{"packaged launcher", preNativePayload(t), false},
-		{"CODEX_HOME copy after the cache was replaced", filepath.Join(h.home, "replaced-cache"), true},
-	} {
-		session := "s-" + strings.ReplaceAll(launcher.name, " ", "-")
-		if launcher.fallback {
-			// Without the copy the bootstrap has nothing to open and releases the Stop unrecorded,
-			// which shows the row below comes from the Python launcher and not from any runtime
-			// the command could reach on its own.
-			before := len(journalRows(t, journal))
-			if stdout, stderr := runStop(t, command, h.launcherEnv(launcher.pluginRoot), stopPayloadFor(h, session+"-uncopied", "t-1")); len(journalRows(t, journal)) != before {
-				t.Fatalf("%s: a row without the launcher copy; stdout %q stderr %q", launcher.name, stdout, stderr)
-			}
-			write(t, filepath.Join(h.codex, "crw-stop-hook.py"), readFile(t, preNativeWiring("crw_stop_hook.py")))
-		}
-		before := len(journalRows(t, journal))
-		stdout, stderr := runStop(t, command, h.launcherEnv(launcher.pluginRoot), stopPayloadFor(h, session, "t-1"))
-		rows := journalRows(t, journal)
-		if len(rows) != before+1 {
-			t.Fatalf("%s: the Go hook journaled %d rows (from %d); stdout %q stderr %q", launcher.name, len(rows), before, stdout, stderr)
-		}
-		found := false
-		for _, row := range rows {
-			found = found || row["sessionId"] == session && row["turnId"] == "t-1"
-		}
-		if !found {
-			t.Fatalf("%s: no row for session %s: %v", launcher.name, session, rows)
-		}
-	}
-}
-
 // bridgeLauncher starts one of the plugin's bridge launchers from the cache layout under the
 // Codex home, with exactly env.
 type bridgeLauncher struct {
-	name   string
-	python bool
-	place  func(t *testing.T, h *host) (dir string, argv []string)
+	name  string
+	place func(t *testing.T, h *host) (dir string, argv []string)
 	// repair is what a refusal names as the repair.
 	repair string
 }
@@ -236,14 +167,6 @@ var bridgeLaunchers = []bridgeLauncher{
 			write(t, filepath.Join(version, "wiring", "crw-bridge.sh"), readFile(t, wiring("crw-bridge.sh")))
 			return filepath.Join(version, cwd), append([]string{command}, args...)
 		}},
-	// A session that loaded the pre-native declaration still starts the Python launcher, which
-	// keeps naming runtime_install.py, the host's installer until the cutover (decision 38).
-	{name: "legacy crw_bridge_mcp.py", python: true, repair: "register-mcp",
-		place: func(t *testing.T, h *host) (string, []string) {
-			cached := filepath.Join(h.codex, "plugins", "cache", "crw", "crw", "0.9.0", "wiring", "crw_bridge_mcp.py")
-			write(t, cached, readFile(t, preNativeWiring("crw_bridge_mcp.py")))
-			return "", []string{"python3", cached}
-		}},
 }
 
 // The plugin's bridge is started with a bare environment, so the only way the host's execution
@@ -254,13 +177,12 @@ var bridgeLaunchers = []bridgeLauncher{
 // reports the allowlist and its digest, not presence_only), and refuses to start - exit 2, naming
 // the record and the repair - when the policy file is missing, not a regular file, no longer
 // hashes to the recorded digest, or the environment names a different policy. The native
-// launcher is the declared one; the legacy one serves sessions that cached the older declaration.
+// launcher is the declared one. The legacy Python launcher that served sessions which cached the
+// pre-native declaration ran on the host's python3, and its test left with the Python runtime
+// in todo 44 (the host that cached it was cut over and cleared at todo 43).
 func TestTheWiringLaunchersStartTheGoBridgeUnderTheRecordedPolicy(t *testing.T) {
 	for _, launcher := range bridgeLaunchers {
 		t.Run(launcher.name, func(t *testing.T) {
-			if launcher.python && runnablePython3() == "" {
-				t.Skip("no python3 that runs on PATH: the legacy bridge launcher is a Python script the host's interpreter runs")
-			}
 			h := newHost(t)
 			h.mustInstall(t, "install", archive(t, "0.9.0", ""))
 			policy, digest := h.policy(t)

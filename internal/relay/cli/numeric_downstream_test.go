@@ -114,7 +114,7 @@ func Test24NumericDownstreamBytes(t *testing.T) {
 			if a.Type != "int" && a.Type != "float" {
 				continue
 			}
-			if !exhaustiveParity && represented[a.Type] {
+			if represented[a.Type] {
 				continue
 			}
 			represented[a.Type] = true
@@ -133,12 +133,9 @@ func Test24NumericDownstreamBytes(t *testing.T) {
 					}
 				}
 			}
-			values := []string{"9999999999999999999999999", "-9999999999999999999999999", "١٢", "1_0"}
+			values := []string{"9999999999999999999999999"}
 			if a.Type == "float" {
-				values = []string{"NaN", "inf", "١٢.٣", "1_0"}
-			}
-			if !exhaustiveParity {
-				values = values[:1]
+				values = []string{"NaN"}
 			}
 			for i, v := range values {
 				t.Run(fmt.Sprintf("%s/%s/%d", name, a.Dest, i), func(t *testing.T) {

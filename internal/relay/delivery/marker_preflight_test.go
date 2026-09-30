@@ -25,9 +25,8 @@ import (
 // A broken store answers what check_start raises: an unreadable mirror refuses in the fence's
 // words, an unreadable database is the host error.
 //
-// testdata/marker_preflight.json holds Python's answers, captured once by the parity-tagged
-// TestCLI_marker_preflight_parity_with_live_python (-update-marker-preflight), so the default
-// suite runs only the Go CLI against them.
+// testdata/marker_preflight.json holds Python's answers, captured once from the live Python
+// console script before todo 44 removed it; the suite runs only the Go CLI against them.
 
 const markerDispatch = "dispatch-1"
 
@@ -185,20 +184,15 @@ func markerCases() []markerCase {
 	return cases
 }
 
-// markerSide is one runtime's CLI over a home of its own: no seed, the state directory and
-// the marker root left for each case to shape.
-func markerSide(t *testing.T, python bool) *cliSide {
+// markerSide is the Go CLI over a home of its own: no seed, the state directory and the marker
+// root left for each case to shape.
+func markerSide(t *testing.T) *cliSide {
 	t.Helper()
 	home := t.TempDir()
 	s := &cliSide{t: t, home: home, state: filepath.Join(home, "state"), work: filepath.Join(home, "work")}
 	s.env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "xs"), "XDG_DATA_HOME="+filepath.Join(home, "xd"), "XDG_CONFIG_HOME="+filepath.Join(home, "xc"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+home, "CODEX_SESSION_RELAY_STATE=")
-	if python {
-		s.argv0 = []string{"uv", "run", "--no-sync", "codex-session-relay"}
-		s.dir = filepath.Join(repoRoot(t), "packages", "codex-session-relay")
-	} else {
-		s.argv0 = []string{crwBinary(t), "relay"}
-		s.dir = repoRoot(t)
-	}
+	s.argv0 = []string{crwBinary(t), "relay"}
+	s.dir = repoRoot(t)
 	mustDo(t, os.MkdirAll(s.work, 0o700))
 	return s
 }
@@ -220,13 +214,9 @@ func (s *cliSide) workspaceKey() string {
 }
 
 // runMarkerCase builds the case on the side, runs its command and reports the outcome.
-func runMarkerCase(t *testing.T, s *cliSide, python bool, c markerCase) markerOutcome {
+func runMarkerCase(t *testing.T, s *cliSide, c markerCase) markerOutcome {
 	t.Helper()
-	own, other := "go", "python"
-	if python {
-		own, other = "python", "go"
-	}
-	c.build(t, s, own, other)
+	c.build(t, s, "go", "python")
 	before := stateListing(s.state)
 	out, code := s.run(s.expand(c.command)...)
 	key := s.workspaceKey()
@@ -283,7 +273,7 @@ func TestCLI_marker_preflight_answers_what_python_answers(t *testing.T) {
 	golden := readMarkerGolden(t)
 	cases := markerCases()
 	if len(golden) != len(cases) {
-		t.Errorf("golden has %d cases, the table %d: recapture with -tags parity -update-marker-preflight", len(golden), len(cases))
+		t.Errorf("golden has %d cases, the table %d: the golden is Python's frozen answer (its live capture left with Python in todo 44), so a new case needs its expected outcome added to testdata/marker_preflight.json by hand", len(golden), len(cases))
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -292,7 +282,7 @@ func TestCLI_marker_preflight_answers_what_python_answers(t *testing.T) {
 			if !ok {
 				t.Fatalf("no Python answer captured for %s", c.name)
 			}
-			got := runMarkerCase(t, markerSide(t, false), false, c)
+			got := runMarkerCase(t, markerSide(t), c)
 			if !equalOutcome(got, want) {
 				t.Errorf("go:\n%s\npython:\n%s", outcomeText(got), outcomeText(want))
 			}
@@ -319,8 +309,8 @@ func TestCLI_intent_register_refuses_a_legacy_store_before_any_marker(t *testing
 		}
 	}
 	legacy.command = markerArgs("intent-register")
-	side := markerSide(t, false)
-	got := runMarkerCase(t, side, false, legacy)
+	side := markerSide(t)
+	got := runMarkerCase(t, side, legacy)
 	if got.Exit != 2 || got.StateChanged || !strings.Contains(got.Stdout, `"reason": "store_owned_by_other"`) {
 		t.Fatalf("register on a legacy store:\n%s", outcomeText(got))
 	}

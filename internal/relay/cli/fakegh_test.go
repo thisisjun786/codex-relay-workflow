@@ -17,10 +17,11 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
-// The forge the merge-evidence tests collect from is a scripted gh on PATH. testdata/gh is the
-// scripted forge the Python oracle ran against (a Python script); fakeGH is the same script in
-// Go, which the Go side of those tests runs: this test binary, invoked through a link named gh
-// (TestMain dispatches on the name). The environment scripts it as it scripts testdata/gh:
+// The forge the merge-evidence tests collect from is a scripted gh on PATH. testdata/gh was the
+// scripted forge the Python oracle ran against (a Python script, deleted with the oracle drivers
+// in todo 44; the recorded answers are what Python said against it); fakeGH is the same script
+// in Go, which the Go side of those tests runs: this test binary, invoked through a link named gh
+// (TestMain dispatches on the name). The environment scripts it as it scripted testdata/gh:
 // CRW_FORGE_SCENARIO, CRW_FORGE_RULES, CRW_FORGE_RULES_JSON, CRW_FORGE_PATCH and CRW_FORGE_LOG.
 
 var (
@@ -56,7 +57,7 @@ func ghObject(fields ...any) contract.OrderedObject {
 	return o
 }
 
-// fakeGH answers one gh invocation as testdata/gh does and returns its exit status.
+// fakeGH answers one gh invocation as testdata/gh did and returns its exit status.
 func fakeGH(args []string, stdout, stderr io.Writer) (code int) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
@@ -303,7 +304,7 @@ func pySlice(list []any, start, stop int) []any {
 	return list[start:stop]
 }
 
-// applyForgePatch is testdata/gh's CRW_FORGE_PATCH: set or delete the value at path.
+// applyForgePatch was testdata/gh's CRW_FORGE_PATCH: set or delete the value at path.
 func applyForgePatch(v any, patch contract.OrderedObject) any {
 	path, _ := evidence.Get(patch, "path").([]any)
 	remove := evidence.Truthy(evidence.Get(patch, "delete"))

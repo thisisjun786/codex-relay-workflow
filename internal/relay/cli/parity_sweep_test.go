@@ -35,10 +35,6 @@ func todo24(name string) bool {
 // repeats deterministic, proves dispatch reached the same boundary, and prevents
 // mutating handlers or host-dependent clocks from obscuring argument parity.
 func Test24BuiltBinaryArgparseSweep(t *testing.T) {
-	if exhaustiveParity {
-		runBuiltBinarySweep(t, false, false)
-		return
-	}
 	for _, command := range []string{"intent-declare", "reporting-show", "supervisor-stage", "merge-evidence"} {
 		t.Run(command, func(t *testing.T) {
 			t.Setenv("CRW_SWEEP_COMMAND", command)
@@ -49,11 +45,6 @@ func Test24BuiltBinaryArgparseSweep(t *testing.T) {
 }
 
 func Test24BuiltBinaryRuntimeSweep(t *testing.T) {
-	if exhaustiveParity {
-		t.Parallel()
-		runBuiltBinarySweep(t, true, false)
-		return
-	}
 	for _, command := range []string{"supervisor-stage", "merge-evidence"} {
 		t.Run(command, func(t *testing.T) {
 			t.Setenv("CRW_SWEEP_COMMAND", command)

@@ -14,7 +14,10 @@
 //   - "record": run capture (the live Python) and write what it answered.
 //   - "check": run capture and fail when it answers other than the recording.
 //
-// Only a checkout that still carries the Python implementation can record or check.
+// Only a checkout that still carries the Python implementation can record or check. Todo 44
+// deleted that implementation and the drivers under each package's testdata that ran it, so
+// record and check need a checkout from before that deletion; the capture closures that name
+// them stay as the record of how each answer was taken, and the recordings are frozen.
 package pyoracle
 
 import (

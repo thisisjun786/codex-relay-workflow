@@ -50,43 +50,29 @@ and 36-case st.py matrices also remain separate and retain all their cases. Only
 scratch paths and the removed checker venv path are adapted.
 
 The default four-core test run also keeps representative cases from the CLI argparse,
-merge-evidence defect, fix-X, and numeric-downstream matrices. Their exhaustive expansions
-run under the `parity` build tag. Run all tagged CLI matrices with the repository target:
-
-```sh
-make parity
-```
-
-This covers every command/argument parser case, every merge-evidence defect and fix-X input,
-every numeric downstream action, and the 500-case in-process parser-oracle equivalence sample.
+merge-evidence defect, fix-X, and numeric-downstream matrices. Until todo 44 their exhaustive
+expansions ran under the `parity` build tag (`make parity`) against live Python: every
+command/argument parser case, every merge-evidence defect and fix-X input, every numeric
+downstream action, and the 500-case in-process parser-oracle equivalence sample. Todo 44 removed
+the Python implementation, and those expansions, the tag and the target went with it; the
+representatives replay Python's recorded answers (`docs/port/oracles/g2.md`).
 The bounded default representatives are: four commands spanning intent/reporting/supervisor/
 merge-evidence parser families; one rich paginated merge-evidence run; one nested wrong-shaped
 required-check rule; and one huge integer plus one NaN downstream action. Parser and defect
 representatives are mutation-backed by the generated-spec drift and JSON-access mutation suites;
 the fix-X representative is killed by changing `Dict` to accept its wrong-shaped context; the
 numeric representatives are killed by replacing arbitrary-size integer/NaN conversion with Go
-machine-number parsing. CI does not invoke this target yet; wiring it into CI is tracked
-separately from this port fix.
+machine-number parsing.
 
-Run the checked-in exhaustive JSON-access harness from the repository root after building:
+Until todo 44 the exhaustive JSON-access harness (`internal/relay/cli/testdata/json_access.py`,
+run with the workspace Python against a built binary) and the development-only mutation runner
+(`json_access_mutations.py`) were checked in beside the tests. The mutation runner first passed
+those same 31 representatives, then built one mutant at a time and required an actual byte/table
+diff, restoring each source file by byte copy and verifying it with `cmp` even after failure.
+Both were Python drivers and left with the Python implementation; the record below is what they
+measured.
 
-```sh
-go build -o /dev/shm/crw-parity ./cmd/crw
-.venv/bin/python internal/relay/cli/testdata/json_access.py \
-  --root "$PWD" --binary /dev/shm/crw-parity
-```
-
-The development-only mutation runner first passes those same 31 representatives,
-then builds one mutant at a time and requires an actual byte/table diff. Each
-source file is restored by byte copy and verified with `cmp` even after failure:
-
-```sh
-.venv/bin/python internal/relay/cli/testdata/json_access_mutations.py \
-  --root "$PWD" --work /dev/shm/crw-accessor-mutations
-```
-
-Do not run that writer concurrently with builds or tests. The 12 CLI mutants cover
-dict access, string conversion, truthiness, integer conversion, absent totals,
+The 12 CLI mutants covered dict access, string conversion, truthiness, integer conversion, absent totals,
 hashability, ASCII dumps, length, numeric indexing, required keys, iteration,
 and the marker workspace boundary. Four additional library mutants cover strict
 iteration, envelope detail conversion, managed business status and report status.
