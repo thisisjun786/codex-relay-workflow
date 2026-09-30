@@ -451,11 +451,12 @@ newest input, a familiar key after a clear included.
 
 Status: the registry, the decision and the completion verdicts do not depend on the ledger. The
 paths that record, adopt, target, move, update or queue go through `ledger_port.py`, which binds
-to CRW-205's corrected ledger contract, now present. The binding is checked, not assumed: every
-function, every keyword the port passes and every refusal value routing tells apart must exist,
-and a checkout where any is missing refuses every route command except the registry ones with
-`route_ledger_pending` before writing anything. An intake from a surface the product does not
-watch is refused first, since that check needs no ledger. The scenarios in
+to CRW-205's corrected ledger contract, now present. The Python binding was checked, not
+assumed: a checkout missing any function, keyword or refusal value refused every route command
+except the registry ones with `route_ledger_pending` before writing anything. The Go runtime
+builds the ledger contract into the same binary, so it has no such state, and wave R1 retired the
+reason (decision 58 in [the port decisions](../port/decisions.md)). An intake from a surface
+the product does not watch is refused before the ledger is asked. The scenarios in
 `tests/test_product_routing.py` run every path against the real ledger and a fake Linear target;
 nothing here is evidence about an installed runtime, a live service, or anything written to
 Linear.

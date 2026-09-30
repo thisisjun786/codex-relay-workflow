@@ -120,9 +120,6 @@ func completionEvidence(reading Object, check, key string) []any {
 	return entries
 }
 func (r *Router) CheckCompletion(ctx context.Context, value any) (Object, error) {
-	if err := r.ready("completion-check"); err != nil {
-		return nil, err
-	}
 	reading, err := ReadReading(value)
 	if err != nil {
 		return nil, err
@@ -192,9 +189,7 @@ func (r *Router) recordReading(ctx context.Context, reading Object) (Object, err
 	if err != nil {
 		return nil, err
 	}
-	if r.DecisionRead != nil {
-		r.DecisionRead(ctx, "evaluate")
-	}
+	r.test.read(ctx, "evaluate")
 	answer := EvaluateCompletion(reading, Object{"bindings": bindings, "openMismatches": open, "recurrences": recurrences, "recurrenceUnknown": unknown})
 	team, project := registry["team"], subject["project"]
 	if project == nil {

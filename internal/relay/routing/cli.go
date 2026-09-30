@@ -24,7 +24,6 @@ func (wallClock) Now() float64 { return float64(time.Now().UnixMicro()) / 1e6 }
 func (wallClock) ISO() string  { return time.Now().UTC().Format("2006-01-02T15:04:05.000000+00:00") }
 
 type clockContextKey struct{}
-type ledgerMissingKey struct{}
 
 func WithClock(ctx context.Context, clock interface {
 	Now() float64
@@ -36,13 +35,7 @@ func init() {
 	for _, name := range CommandNames {
 		name := name
 		spec := argparse.Specs[name]
-		required := []string{}
-		for _, action := range spec.Actions {
-			if action.Required {
-				required = append(required, strings.TrimPrefix(action.Flags[len(action.Flags)-1], "--"))
-			}
-		}
-		cli.Commands = append(cli.Commands, cli.Command{Name: name, Required: required, Flags: func(f *flag.FlagSet) {
+		cli.Commands = append(cli.Commands, cli.Command{Name: name, Flags: func(f *flag.FlagSet) {
 			for _, action := range spec.Actions {
 				if len(action.Flags) == 0 || action.Kind == "_HelpAction" {
 					continue
@@ -107,9 +100,6 @@ func runCommand(ctx context.Context, services cli.Services, args cli.Args, name 
 		clock = injected
 	}
 	r := New(s, clock)
-	if missing, ok := ctx.Value(ledgerMissingKey{}).([]string); ok {
-		r.Missing = missing
-	}
 	get := func(key string) string { v, _ := args.String(key); return v }
 	optional := func(key string) any {
 		v, present := args.String(key)

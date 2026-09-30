@@ -41,14 +41,11 @@ func (a Args) TruthyString(name string) (string, bool) {
 
 func (a Args) Bool(name string) bool { return a.Flags.Lookup(name).Value.String() == "true" }
 
+// Command is one relay command of this package's table. Its arguments are parsed by its
+// argparse spec (argparse.Specs[Name]); Flags declares where their values are stored.
 type Command struct {
-	Name string
-	// Required lists flags argparse declares required=True.
-	Required []string
-	Flags    func(*flag.FlagSet)
-	// Parse optionally supplies a domain's argparse-compatible parser until shared argparse lands.
-	// It returns normalized command arguments, or a completed help/error response.
-	Parse func(string, []string, io.Writer, io.Writer) ([]string, int, bool)
+	Name  string
+	Flags func(*flag.FlagSet)
 	// Exempt commands answer without the store default discovery would pick
 	// (_refuse_ambiguous_state's exemption list).
 	Exempt bool
@@ -251,14 +248,6 @@ func ExecuteAs(ctx context.Context, argv0 string, argv []string, stdout, stderr 
 		return parseError(globalUsage, fmt.Sprintf("argument command: invalid choice: %s (choose from %s)", store.PythonRepr(remaining[0]), choices()))
 	}
 	commandArgs := remaining[1:]
-	if command.Parse != nil {
-		var code int
-		var handled bool
-		commandArgs, code, handled = command.Parse(prog, commandArgs, stdout, stderr)
-		if handled {
-			return code
-		}
-	}
 	parserName := command.Name
 	var positionals []string
 	if command.Name == "service" {
@@ -280,37 +269,11 @@ func ExecuteAs(ctx context.Context, argv0 string, argv []string, stdout, stderr 
 	if command.Flags != nil {
 		command.Flags(flags)
 	}
-	if _, ok := argparse.Specs[command.Name]; ok {
-		given, code, done := parseRelayArgs(prog, flags, commandArgs, stdout, stderr)
-		if done {
-			return code
-		}
-		result, err := run(ctx, command, argv0, state, socket, kindModules, admitIf(drains, admit), Args{Flags: flags, Set: given, Positionals: positionals})
-		return emit(stdout, stderr, result, err)
+	given, code, done := parseRelayArgs(prog, flags, commandArgs, stdout, stderr)
+	if done {
+		return code
 	}
-	commandUsage := "usage: " + prog + " " + command.Name + commandSynopsis(flags)
-	if err := flags.Parse(commandArgs); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			fmt.Fprintln(stdout, commandUsage)
-			return contract.ExitOk
-		}
-		return parseErrorAs(prog+" "+command.Name, commandUsage, argparseMessage(err))
-	}
-	if extra := flags.Args(); len(extra) > 0 {
-		return parseError(globalUsage, "unrecognized arguments: "+strings.Join(extra, " "))
-	}
-	given := map[string]bool{}
-	flags.Visit(func(f *flag.Flag) { given[f.Name] = true })
-	var missing []string
-	for _, name := range command.Required {
-		if !given[name] {
-			missing = append(missing, "--"+name)
-		}
-	}
-	if len(missing) > 0 {
-		return parseErrorAs(prog+" "+command.Name, commandUsage, "the following arguments are required: "+strings.Join(missing, ", "))
-	}
-	result, err := run(ctx, command, argv0, state, socket, kindModules, admitIf(drains, admit), Args{Flags: flags, Set: given})
+	result, err := run(ctx, command, argv0, state, socket, kindModules, admitIf(drains, admit), Args{Flags: flags, Set: given, Positionals: positionals})
 	return emit(stdout, stderr, result, err)
 }
 
@@ -453,24 +416,6 @@ func emit(stdout, stderr io.Writer, result any, err error) int {
 	return code
 }
 
-// argparseMessage turns a flag package parse failure into argparse's wording.
-func argparseMessage(err error) string {
-	text := err.Error()
-	if name, found := strings.CutPrefix(text, "flag needs an argument: -"); found {
-		return "argument --" + strings.TrimPrefix(name, "-") + ": expected one argument"
-	}
-	if name, found := strings.CutPrefix(text, "flag provided but not defined: -"); found {
-		return "unrecognized arguments: --" + strings.TrimPrefix(name, "-")
-	}
-	// flag: invalid boolean value "1" for -write: parse error
-	if rest, found := strings.CutPrefix(text, "invalid boolean value "); found {
-		value, name, _ := strings.Cut(rest, " for -")
-		name, _, _ = strings.Cut(name, ":")
-		return "argument --" + strings.TrimPrefix(name, "-") + ": ignored explicit argument " + store.PythonRepr(strings.Trim(value, `"`))
-	}
-	return text
-}
-
 // allNames is every relay command this build registers: this package's, registry's, delivery's and faults'.
 func allNames() []string {
 	names := make([]string, 0, len(Commands))
@@ -487,18 +432,6 @@ func choices() string {
 		names[i] = store.PythonRepr(name)
 	}
 	return strings.Join(names, ", ")
-}
-
-func commandSynopsis(flags *flag.FlagSet) string {
-	var parts []string
-	flags.VisitAll(func(f *flag.Flag) {
-		if boolean, ok := f.Value.(interface{ IsBoolFlag() bool }); ok && boolean.IsBoolFlag() {
-			parts = append(parts, "[--"+f.Name+"]")
-			return
-		}
-		parts = append(parts, "[--"+f.Name+" "+strings.ToUpper(strings.ReplaceAll(f.Name, "-", "_"))+"]")
-	})
-	return " [-h] " + strings.Join(parts, " ")
 }
 
 type stringsFlag []string

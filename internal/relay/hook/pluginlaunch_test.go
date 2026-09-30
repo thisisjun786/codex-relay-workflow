@@ -388,9 +388,9 @@ func configurations(rows []map[string]any) []any {
 	return out
 }
 
-// Hook status reads the shipped native command, flag included, as a native registration of this
-// adapter that names no settings file: `--plugin-launch` is not a settings path.
-func TestPluginLaunch_status_reads_the_declared_command_as_naming_no_settings(t *testing.T) {
+// The installer reads the shipped native command, flag included, as a registration of this
+// adapter when a user hook file carries it: a second owner of the Stop surface.
+func TestPluginLaunch_the_declared_command_is_a_registration_of_this_adapter(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	raw, err := os.ReadFile(filepath.Join(testRoot, "plugins/crw/wiring/hooks/stop-recording-completion.json"))
@@ -398,8 +398,8 @@ func TestPluginLaunch_status_reads_the_declared_command_as_naming_no_settings(t 
 		t.Fatal(err)
 	}
 	writeTest(t, filepath.Join(home, "hooks.json"), raw)
-	_, ours, readable := readRegistrations(filepath.Join(home, "hooks.json"), "Stop")
-	if !readable || len(ours) != 1 || !ours[0].Native || ours[0].Settings != "" || ours[0].Target != filepath.Join(home, ".local/share/crw-runtime/current/bin/crw") {
+	ours, readable := AdapterCommands(filepath.Join(home, "hooks.json"), "Stop")
+	if !readable || len(ours) != 1 || ours[0].Identity != "user:Stop:0:0" || !slices.Equal(ours[0].Words, []string{"$HOME/.local/share/crw-runtime/current/bin/crw", "hook", PluginLaunch}) {
 		t.Fatalf("readable %v registrations %+v", readable, ours)
 	}
 }

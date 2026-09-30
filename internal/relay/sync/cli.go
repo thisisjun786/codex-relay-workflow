@@ -23,13 +23,7 @@ func init() {
 	for _, name := range []string{"sync-target", "sync-next", "sync-claim", "sync-operation", "sync-reconcile", "sync-complete", "sync-fail", "sync-retry", "sync-status", "sync-progress", "packet-check"} {
 		name := name
 		spec := argparse.Specs[name]
-		required := []string{}
-		for _, action := range spec.Actions {
-			if action.Required {
-				required = append(required, strings.TrimPrefix(action.Flags[len(action.Flags)-1], "--"))
-			}
-		}
-		cli.Commands = append(cli.Commands, cli.Command{Name: name, Required: required, Exempt: name == "packet-check", Flags: func(f *flag.FlagSet) {
+		cli.Commands = append(cli.Commands, cli.Command{Name: name, Exempt: name == "packet-check", Flags: func(f *flag.FlagSet) {
 			for _, action := range spec.Actions {
 				if len(action.Flags) == 0 || action.Kind == "_HelpAction" {
 					continue

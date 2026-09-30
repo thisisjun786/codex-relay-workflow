@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -344,4 +345,19 @@ func Test23_SO_10_PreV2Labels(t *testing.T) {
 		replay(t, actions(a("reconcile", "document", mode, "replace", [][]string{{"issueKey: REL-1", "issueKey: ANOTHER-1"}, {"relationshipId: rel-1", "relationshipId: rel-other"}}), a("claim"), a("complete", "document", mode, "replace", [][]string{{"issueKey: REL-1", "issueKey: ANOTHER-1"}, {"relationshipId: rel-1", "relationshipId: rel-other"}})))
 	}
 	replay(t, actions(a("real", "replace", [][]string{{"issueKey: JUN-93", "issueKey: ANOTHER-1"}, {"relationshipId: rel-6bb7a7340dccd2ef", "relationshipId: rel-other"}})))
+}
+
+// Record is a parsed block as sync.py's parse_document returned it, which the recorded scenarios
+// compare; the product reads Block's fields directly.
+func (b Block) Record() Obj {
+	return obj("fields", b.Fields, "text", b.Text, "body", b.Text, "summary", b.Summary, "format", b.Format, "problems", b.Problems)
+}
+
+// Record is parse_document's answer, blocks in document order.
+func (d Document) Record() Obj {
+	blocks := Obj{}
+	for _, id := range d.Order {
+		blocks = append(blocks, contract.Field{Key: id, Value: d.Blocks[id].Record()})
+	}
+	return obj("blocks", blocks, "duplicates", d.Duplicates, "malformed", d.Malformed)
 }

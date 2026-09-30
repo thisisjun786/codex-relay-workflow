@@ -45,8 +45,7 @@ var statusCommand = Command{
 }
 
 var showCommand = Command{
-	Name:     "show",
-	Required: []string{"event"},
+	Name: "show",
 	Flags: func(f *flag.FlagSet) {
 		f.String("event", "", "")
 		f.Bool("message", false, "include the exact text a recipient was or would be sent")

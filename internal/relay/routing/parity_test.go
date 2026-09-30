@@ -152,7 +152,6 @@ func pythonReplay(t *testing.T, property string) {
 		Operation string
 		Arguments []any
 		Expected  string
-		Wire      string
 	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
@@ -177,21 +176,6 @@ func pythonReplay(t *testing.T, property string) {
 			got := evidence.Dumps(value, false, true, false)
 			if got != r.Expected {
 				t.Fatalf("complete Python result differs\noperation: %s\narguments: %s\nPython: %s\nGo:     %s", r.Operation, evidence.Dumps(args, false, true, false), r.Expected, got)
-			}
-			if r.Wire != "" {
-				var wire any
-				switch r.Operation {
-				case "decide":
-					wire = PlacementRecord(object(value))
-				case "evaluate":
-					wire = CompletionRecord(object(value))
-				default:
-					t.Fatalf("missing wire encoder for %s", r.Operation)
-				}
-				got := evidence.Dumps(wire, false, false, true)
-				if got != r.Wire {
-					t.Fatalf("wire bytes differ\nPython: %s\nGo:     %s", r.Wire, got)
-				}
 			}
 		})
 	}

@@ -576,6 +576,11 @@ read-only journal counting and retention boundary); .omo/evidence/task-33-reader
 
 ## 23. Hook status recognizes the shipped native registration
 
+(Superseded in part by decision 57: the status reading is gone. The recognition of the shipped
+native command stays in the hook-file reader the installer uses, `nativeRegistration` in
+`internal/relay/hook/registrations.go`; resolving and probing the registered target went with
+the reading.)
+
 Decision: keep Python registration parsing unchanged and additionally recognize a direct
 `crw hook` command, including the shipped quoted `$HOME` runtime path and optional
 `; exit 0` suffix. Expand quoted or unquoted `$HOME/`, `${HOME}/`, and unquoted
@@ -2639,6 +2644,9 @@ Evidence: `internal/bridge/settings/printable.go`, `printable_generated.go`,
 
 ## 50. `hook-status` still asks a named program whether it runs Python (todo 44)
 
+(Superseded by decision 57: the status reading and its interpreter probe are deleted, so no
+product path executes a Python interpreter.)
+
 Decision: the Stop-hook status reading (`answersPython` in `internal/relay/hook/status.go`) keeps
 running a program that a registration or the settings name as the adapter's interpreter with a
 bounded `-c` version probe (5 s, only the printed version is read). No other product path
@@ -2853,3 +2861,78 @@ Test30SocketBindingBindsAnUnboundStoreOnce, Test30TornSocketBindingIsCompletedOn
 Test30CreateAbsentNeverExposesUnstampedDatabase (a crashed creation is written on its stamp),
 TestDoctor_ownership_block_matches_python_on_a_broken_store (the probe's words for a mirror-only
 breakage).
+
+## 57. The Stop-hook status reading is deleted (wave R1)
+
+Decision: `hook.Status`, the Go port of the Python installer's `hook-status` reading
+(`completion.status`), is deleted with its absence diagnosis (`status_absence.go`), its
+target and interpreter probes (`probeRegistrations`, `interpreterProbe`, `answersPython`), its
+journal and budget cells and the helpers only they used. No command reached it: `crw` has no
+`hook-status` (the causes of a missing journal row are read from `crw doctor`, the settings and
+the journal, [as the runtime page lists them](../runtime-install.md#registration-is-not-firing)), and its only callers were tests, the contract corpus's hook `status` runs and the
+isolated-home integration test. What the installer reads of the user hook file stays:
+`AdapterIdentities` and `AdapterCommands` over the same registration reader, which recognizes the
+Python-era entry point by name and the shipped native command as decision 23 describes, a home
+prefix counting only while the home directory can be named. This supersedes decision 50 and the
+status half of decision 23.
+
+The contract corpus drops the reading's scenarios: the 119 `status` runs under
+contract/fixtures/hook and the 11 hook runs whose only checks read `status` afterwards are
+deleted; `test_completion_hook__test_a_registration_that_keeps_no_journal_is_reported_beside_a_peer_that_does`
+and `...__test_an_unstartable_peer_does_not_make_a_working_one_look_like_another_path` keep their
+run and its journal-row check without `run.status`. internal/contracttest answers a hook `status`
+run (other than the settings document, `document: true`) and `run.status` as fixture errors. The
+Go tests that judged the reading go with it; those that judged a production reader through it now
+call that reader: `ReadSettings` (the settings-symlink cases), `configurationPath` (the override),
+`AdapterIdentities`/`AdapterCommands` (which commands are registrations of this adapter). The
+integration test reads the installed settings' owner and the files they name directly.
+
+Why: the reading ran host programs (the relay with `--help`, a registered interpreter with a
+`-c` probe) for an answer nobody asked for, and it kept Python-era judgements (whether a named
+interpreter runs a supported Python) alive in the product after the cutover.
+
+Cost: none that a command offered. An operator asking why a Stop left no journal row reads the
+same causes by hand, in the order docs/runtime-install.md gives.
+
+Evidence: `internal/relay/hook/registrations.go` (`readRegistrations`, `nativeRegistration`,
+`AdapterIdentities`, `AdapterCommands`); `TestPluginLaunch_the_declared_command_is_a_registration_of_this_adapter`,
+`Test33PR181NativeAndPythonRegistration`, `Test33ReviewD12`, `Test33PR181StatusSymlinkPython`,
+`Test33ReviewD1Status`; `internal/contracttest/hook.go` (`runHook`); the product's exec sites,
+`git grep -n 'exec.Command' -- 'cmd/*.go' 'internal/*.go' ':!*_test.go'`, none of which runs an
+interpreter.
+
+## 58. Refusal reasons no runtime can give leave the vocabulary (wave R1)
+
+Decision: six members of the relay's frozen refusal vocabulary
+(`contract/schema/relay-exit-codes.json` `refusalReasons`, and the `contract.Refusal*` constants
+generated from it) are removed. `route_ledger_pending` was product routing's answer when the
+ledger contract it binds to was absent: the Python `ledger_port.py` checked the binding at run
+time, and the Go router kept the state as a `Missing` list only its tests filled, because the Go
+binary always carries the ledger. That list, the readiness checks on every ledger-backed path and
+the CLI's context override go with it. `operator_release_disabled`, `release_evidence_missing`,
+`root_moved` and `fault_write_uncertain` are raised nowhere: no Go path, document, skill or
+recorded answer names them outside the schema. `inbox_conflict` was the takeover inbox's refusal
+of a retried entry whose bytes differ; with the inbox retired (decision 55) nothing queues an
+entry, so nothing can give it. The exit codes are unchanged, and every reason a command can still
+give is still a member.
+
+Alongside: the router's test hooks (`BeforeWrite`, `BeforeDigestPage`, `DigestPageSize`,
+`DecisionRead`) leave its exported fields for an unexported `routerSeams` only the package's
+tests set, and the generator gains a sync test (`TestTheGeneratedCodesAreTheSchemas`). That test
+found the generated constants already behind the schema by two members: `store_owned_by_other`,
+which the regeneration adds, and `inbox_conflict`, which leaves the schema as above.
+
+Why: a consumer reads a refusal's `reason`; a reason nothing can emit only asks every reader to
+handle a case that cannot occur, and a state reachable only by a test's injection is a second
+behaviour the product does not have.
+
+Cost: the recorded PRD-13 scenarios that ran with the ledger contract absent are skipped by the
+integration replay (`retiredLedgerScenarios`), and the CLI replay of PRD-13, whose route commands
+all answered `route_ledger_pending`, is deleted with its recording; docs/port/test-map.md keeps
+naming it as the record of the port. The other PRD-13 scenarios (an unwatched surface refused
+before the ledger, a binding that touches no ledger) replay unchanged.
+
+Evidence: `contract/schema/relay-exit-codes.json`; `internal/contract/exit_codes_generated.go`,
+`internal/contract/generate/main_test.go`; `internal/relay/routing/router.go` (`Router`,
+`routerSeams`), `integration_test.go` (`retiredLedgerScenarios`, `Test23_PRD_13_LedgerGate`);
+`git grep -n` for each removed reason prints only history; docs/relay/product-routing.md "Status".

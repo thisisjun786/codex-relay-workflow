@@ -10,32 +10,6 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 )
 
-type argOption struct {
-	name              string
-	required, boolean bool
-}
-type argCommand struct {
-	name    string
-	options []argOption
-}
-
-// Retain the command listing used by the fault surface tests, sourced from the
-// same live-parser spec as parsing and formatting rather than a second table.
-var faultArgCommands = func() []argCommand {
-	var commands []argCommand
-	for _, name := range Names() {
-		c := argCommand{name: name}
-		for _, a := range argparse.Specs[name].Actions {
-			if a.Kind == "_HelpAction" {
-				continue
-			}
-			c.options = append(c.options, argOption{strings.TrimPrefix(a.Flags[len(a.Flags)-1], "--"), a.Required, a.Kind == "_StoreTrueAction" || a.Kind == "_StoreFalseAction"})
-		}
-		commands = append(commands, c)
-	}
-	return commands
-}()
-
 type faultArgs struct {
 	text    map[string]string
 	numbers map[string]any

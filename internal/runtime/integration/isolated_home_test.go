@@ -89,7 +89,7 @@ func TestMain(m *testing.M) {
 	}
 	toolchainEnv = os.Environ()
 	// This process's own homes and relay state roots point at a temporary tree too, so nothing
-	// the test runs in-process (the hook-status reading) can reach the machine's real ones.
+	// the test runs in-process can reach the machine's real ones.
 	cleanup, err := testsupport.IsolateRelayState()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -858,9 +858,9 @@ func (h *isolated) relayScope(t *testing.T) {
 	}
 }
 
-// settingsAccepted is hook-status's reading of the settings the installer wrote: the Go hook's
-// own validator has no complaint, and the relay and adapter they name are present through the
-// pointer, the relay offering the guard.
+// settingsAccepted reads the settings the installer wrote: the Go hook's own validator has no
+// complaint, the plugin owns them, and the relay and adapter they name are files through the
+// pointer. The Stops the test then sends are what show the hook answering under them.
 func (h *isolated) settingsAccepted(t *testing.T) {
 	t.Helper()
 	document, err := hook.Decode(readFile(t, h.settings))
@@ -870,11 +870,19 @@ func (h *isolated) settingsAccepted(t *testing.T) {
 	if complaints := hook.Complaints(document); len(complaints) != 0 {
 		t.Fatalf("the Go hook refuses the installer's settings: %q", complaints)
 	}
-	status := hook.Status(context.Background(), h.codex, map[string]string{"HOME": h.home, "CODEX_HOME": h.codex, "XDG_STATE_HOME": h.state}, "Stop")
-	for cell, want := range map[string]string{"configuration": "PRESENT", "registrationOwner": "plugin", "relayExecutable": "PRESENT",
-		"adapterEntryPoint": "PRESENT", "guardEvaluateOffered": "guard-evaluate"} {
-		if value := at(status, cell, "value"); value != want {
-			t.Errorf("hook-status %s is %v, want %s: %s", cell, value, want, show(status[cell]))
+	fields := map[string]any{}
+	if object, ok := document.(hook.Object); ok {
+		for _, field := range object {
+			fields[field.Key] = field.Value
+		}
+	}
+	if fields["owner"] != "plugin" {
+		t.Errorf("the settings' owner is %v, want plugin", fields["owner"])
+	}
+	for _, key := range []string{"relayExecutable", "adapterEntryPoint"} {
+		path, _ := fields[key].(string)
+		if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() {
+			t.Errorf("the settings' %s %q is not a file: %v", key, path, err)
 		}
 	}
 }

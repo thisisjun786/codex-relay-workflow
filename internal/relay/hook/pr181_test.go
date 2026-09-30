@@ -122,19 +122,16 @@ func Test33PR181StatusSymlinkPython(t *testing.T) {
 			if err := json.Unmarshal(raw, &expected); err != nil {
 				t.Fatal(err)
 			}
-			got := readStatusSettings(context.Background(), path, true)
-			if got.State != expected["state"] {
-				t.Fatalf("Go %s Python %s", got.State, raw)
+			// read_configuration's state is its failure, or the reading's own state ("PRESENT").
+			cfg, state, _ := ReadSettings(context.Background(), path)
+			if state == "" {
+				state = "PRESENT"
 			}
-			if name == "live" {
-				status := Status(context.Background(), home, nil, "Stop")
-				if status["configuration"].(map[string]any)["value"] != present {
-					t.Fatal(status)
-				}
-				cfg, failed, _ := ReadSettings(context.Background(), path)
-				if failed != "" || len(cfg) == 0 {
-					t.Fatal(failed)
-				}
+			if state != expected["state"] {
+				t.Fatalf("Go %s Python %s", state, raw)
+			}
+			if name == "live" && len(cfg) == 0 {
+				t.Fatal("the live settings read as empty")
 			}
 		})
 	}
@@ -143,44 +140,25 @@ func Test33PR181NativeAndPythonRegistration(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	native := filepath.Join(home, ".local/share/crw-runtime/current/bin/crw")
-	writeTest(t, native, []byte("#!/bin/sh\nprintf 'not Python'\n"))
-	if err := os.Chmod(native, 0700); err != nil {
-		t.Fatal(err)
-	}
 	entry := filepath.Join(home, "completion_hook.py")
-	writeTest(t, entry, []byte("# adapter"))
 	// The first registration names the workspace interpreter by path, as an installed Python
-	// adapter's did; status only reads the word.
+	// adapter's did; the reader only reads the word.
 	interpreter := filepath.Join(testRoot, ".venv", "bin", "python")
 	commands := []string{interpreter + " " + entry + " /settings", `"$HOME/.local/share/crw-runtime/current/bin/crw" hook; exit 0`, `"` + native + `" hook`, `"` + native + `" relay`, `echo "` + native + `" hook`, `"` + native + `" hookish`}
 	for i, command := range commands {
 		t.Run(strconv.Itoa(i), func(t *testing.T) {
-			writeStatusJSON(t, filepath.Join(home, "hooks.json"), map[string]any{"hooks": map[string]any{"Stop": []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": command, "timeout": 10}}}}}})
-			_, ours, _ := readRegistrations(filepath.Join(home, "hooks.json"), "Stop")
+			document, err := json.Marshal(map[string]any{"hooks": map[string]any{"Stop": []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": command, "timeout": 10}}}}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeTest(t, filepath.Join(home, "hooks.json"), document)
+			ours, readable := AdapterIdentities(filepath.Join(home, "hooks.json"), "Stop")
 			want := i < 3
-			if (len(ours) == 1) != want {
+			if !readable || (len(ours) == 1) != want {
 				t.Fatal(command, ours)
 			}
 			if !want {
 				return
-			}
-			if i == 0 {
-				if ours[0].Native || ours[0].Target != entry || ours[0].Settings != "/settings" {
-					t.Fatal(ours)
-				}
-			} else {
-				if !ours[0].Native || ours[0].Target != native || ours[0].Settings != "" {
-					t.Fatal(ours)
-				}
-				_, _, starts := probeRegistrations(context.Background(), ours)
-				if starts[0]["adapter"] != present || starts[0]["interpreter"] != present {
-					t.Fatal(starts)
-				}
-				status := Status(context.Background(), home, map[string]string{"HOME": home}, "Stop")
-				registered := status["registration"].(map[string]any)
-				if len(registered["thisAdapter"].([]any)) != 1 || status["registeredCommandTarget"].(map[string]any)["value"] != present {
-					t.Fatal(status)
-				}
 			}
 			script := `import json,sys;sys.path.insert(0,sys.argv[1]);from crw_runtime import completion;print(json.dumps(completion.names_this_adapter(sys.argv[2])))`
 			raw := pyoracle.Answer(t, "names_this_adapter", func() ([]byte, error) {

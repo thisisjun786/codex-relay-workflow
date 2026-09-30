@@ -52,6 +52,17 @@ func decodeValue(d *json.Decoder) (any, error) {
 		return token, nil
 	}
 }
+
+// retiredPacketFunctions are the Python packet library's entry points that no Go path calls: the
+// packet composer and its field constructors, and report.py's restore validator. Wave R1 removed
+// their Go ports; a recorded scenario still calls them, so its other calls are compared without
+// them.
+var retiredPacketFunctions = map[string]bool{
+	"packets.pull_request": true, "packets.locator": true, "packets.policy": true, "packets.callback": true,
+	"packets.unexamined": true, "packets.compose": true, "packets.progression_lines": true,
+	"report.child_purpose": true, "report._check_restore": true,
+}
+
 func packetReplay(t *testing.T, family string, names ...string) {
 	t.Helper()
 	root, e := filepath.Abs("../../..")
@@ -90,8 +101,18 @@ func packetReplay(t *testing.T, family string, names ...string) {
 	if len(calls) == 0 {
 		t.Fatal("scenario captured no public calls")
 	}
+	compared := 0
+	defer func() {
+		if compared == 0 {
+			t.Error("every call this scenario made is retired, so it compares nothing")
+		}
+	}()
 	for i, call := range calls {
 		function := text(reception.Get(call, "function"))
+		if retiredPacketFunctions[function] {
+			continue
+		}
+		compared++
 		args, _ := evidence.List(reception.Get(call, "args"))
 		kwargs, _ := evidence.Object(reception.Get(call, "kwargs"))
 		kw := func(k string) any { return reception.Get(kwargs, k) }
@@ -106,26 +127,14 @@ func packetReplay(t *testing.T, family string, names ...string) {
 		switch function {
 		case "packets.required_for":
 			got, err = reception.RequiredFor(text(arg(0)), text(arg(1)))
-		case "packets.pull_request":
-			got, err = reception.PullRequest(kw("repository"), kw("number"), kw("head_sha"), kw("base_sha"), kw("url"))
-		case "packets.locator":
-			got, err = reception.Locator(kw("path"), kw("digest"), kw("produced_at"))
-		case "packets.policy":
-			got, err = reception.Policy(kw("model"), kw("effort"), kw("workflow"), kw("mode"), kw("sandbox"), kw("approval"))
-		case "packets.callback":
-			got, err = reception.Callback(kw("task_id"), kw("model"), kw("effort"))
 		case "packets.activation_fact":
 			got, err = reception.ActivationFact(arg(0), kw("source"), text(kw("detail")))
-		case "packets.unexamined":
-			got, err = reception.Unexamined(text(arg(0)))
 		case "packets.activation_class":
 			mode := "loop"
 			if kw("mode") != nil {
 				mode = text(kw("mode"))
 			}
 			got, err = reception.ActivationClass(arg(0), mode, kw("earlier"))
-		case "packets.compose":
-			got, err = reception.Compose(kwargs)
 		case "packets.check":
 			err = reception.CheckJSONText([]byte(text(reception.Get(call, "packetJSON"))))
 			if err == nil {
@@ -151,14 +160,8 @@ func packetReplay(t *testing.T, family string, names ...string) {
 			got, err = reception.UnsupportedPromotions(arg(0))
 		case "packets.claims":
 			got, err = reception.Claims(arg(0), arg(1))
-		case "packets.progression_lines":
-			got = reception.ProgressionLines(arg(0))
 		case "cxc.dispatch_problems":
 			got = reception.SectionProblems(arg(0), reception.DispatchSections)
-		case "report.child_purpose":
-			got = reception.ChildPurpose(text(arg(0)))
-		case "report._check_restore":
-			got, err = reception.RestoreSection(arg(0))
 		default:
 			t.Fatalf("no Go entry point for %s", function)
 		}

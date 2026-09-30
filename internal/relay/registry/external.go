@@ -14,14 +14,6 @@ import (
 // implements them over this package's argparse parsing, store opening and JSON emitting. The
 // merge turn registers its merge-turn-* commands here from its init.
 
-// OptionSpec is one argparse option: add_argument("--name", required=..., action=...,
-// type=int, choices=...).
-type OptionSpec struct {
-	Name                           string
-	Required, Multi, Flag, Integer bool
-	Choices                        []string
-}
-
 // Parsed is the parsed arguments of an external command.
 type Parsed struct{ p parsed }
 
@@ -40,21 +32,16 @@ func (p Parsed) Values(name string) []string { return append([]string{}, p.p.val
 // Integer is a type=int argument's value.
 func (p Parsed) Integer(name string) *big.Int { return p.p.integer(name) }
 
-// AddCommand registers an external relay command. exclusive names a required mutually
-// exclusive group of flag options.
-func AddCommand(name string, options []OptionSpec, exclusive []string, run func(context.Context, *Registry, Parsed) (any, error)) {
-	AddCheckedCommand(name, options, exclusive, nil, run)
+// AddCommand registers an external relay command; its argparse spec (argparse.Specs[name])
+// parses its arguments.
+func AddCommand(name string, run func(context.Context, *Registry, Parsed) (any, error)) {
+	AddCheckedCommand(name, nil, run)
 }
 
 // AddCheckedCommand is AddCommand for a handler that refuses its own arguments before it touches
 // the store: precheck is that refusal, run where cli.main would reach it (see run in cli.go).
-func AddCheckedCommand(name string, options []OptionSpec, exclusive []string, precheck func(Parsed) error, run func(context.Context, *Registry, Parsed) (any, error)) {
-	converted := make([]option, len(options))
-	for i, o := range options {
-		converted[i] = option{name: o.Name, required: o.Required, multi: o.Multi, flag: o.Flag, integer: o.Integer, choices: o.Choices}
-	}
-	c := command{name: name, options: converted, exclusive: exclusive,
-		run: func(ctx context.Context, r *Registry, p parsed) (any, error) { return run(ctx, r, Parsed{p}) }}
+func AddCheckedCommand(name string, precheck func(Parsed) error, run func(context.Context, *Registry, Parsed) (any, error)) {
+	c := command{name: name, run: func(ctx context.Context, r *Registry, p parsed) (any, error) { return run(ctx, r, Parsed{p}) }}
 	if precheck != nil {
 		c.precheck = func(p *parsed) error { return precheck(Parsed{*p}) }
 	}

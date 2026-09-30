@@ -97,19 +97,11 @@ func errorRow(value any, err error) any {
 	if err == nil {
 		return map[string]any{"ok": value}
 	}
-	reason, detail := any(nil), err.Error()
-	if _, ok := err.(*EnvelopeError); ok {
-		reason = "malformed_receipt"
-		detail = "malformed_receipt: " + detail
-	}
-	return map[string]any{"error": typeName(err), "reason": reason, "detail": detail}
+	return map[string]any{"error": typeName(err), "reason": nil, "detail": err.Error()}
 }
 func typeName(err error) string {
-	switch err.(type) {
-	case *ForgeUsage:
+	if _, ok := err.(*ForgeUsage); ok {
 		return "ForgeUsage"
-	case *EnvelopeError:
-		return "EnvelopeRefused"
 	}
 	return "error"
 }

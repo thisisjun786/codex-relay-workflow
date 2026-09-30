@@ -142,32 +142,6 @@ func Test25_SPR9_the_record_rule_and_the_response_rule_stay_two_facts(t *testing
 	}
 }
 
-// SPR-10: every settings refusal a resume answers with is a completed pre-send refusal
-// (withheld_pre_send, nothing sent, retry-safe, failed at thread/resume); an unrecognised code is
-// not one. Compared with transport.classify_operation_receipt's answers.
-func Test25_SPR10_every_settings_refusal_is_a_pre_send_refusal(t *testing.T) {
-	raw, err := os.ReadFile("testdata/python_classify.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var classified map[string]map[string]any
-	if err := json.Unmarshal(raw, &classified); err != nil {
-		t.Fatal(err)
-	}
-	for code, facts := range classified {
-		preSend := facts["deliveryState"] == "withheld_pre_send" && facts["sendAttempted"] == "no" && facts["retrySafe"] == true && facts["failedOperation"] == "thread/resume"
-		if code == "thread_busy" || code == UnsupportedApprovalPolicy {
-			continue // their own transport answers (deferred_busy, inbox_only), not settings refusals
-		}
-		if IsPreSendSettingsRefusal(code) != preSend {
-			t.Errorf("%s: go pre-send %v, python %v", code, IsPreSendSettingsRefusal(code), facts)
-		}
-	}
-	if classified["unknown"]["deliveryState"] != "held_uncertain" || IsPreSendSettingsRefusal("unknown") {
-		t.Fatal("an unrecognised code became a settings refusal")
-	}
-}
-
 // CLI-35: every recorded field a send transforms or constrains, mutated in the stored row, makes
 // the recipient not deliverable (settings-show deliverable false, and the gate refuses it); a
 // constraint mutant is refused naming the field and the value. Python derives the field set

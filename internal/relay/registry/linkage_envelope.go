@@ -23,13 +23,6 @@ var envelopePurposes = map[string][]string{
 	"parent_to_supervisor": {"completion", "blocked", "decision_request", "status_response", "fault_notice", "fault_decision"},
 }
 
-// SupervisorPurposes is sorted(envelope.PURPOSES[SUPERVISOR_TO_PARENT]), linkage-directive's --purpose choices.
-func SupervisorPurposes() []string {
-	out := slices.Clone(envelopePurposes[supervisorToParent])
-	slices.Sort(out)
-	return out
-}
-
 // messageID is envelope.message_id.
 func messageID(direction, relation, purpose, subject string) (string, error) {
 	kinds, known := envelopePurposes[direction]

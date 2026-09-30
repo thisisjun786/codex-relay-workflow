@@ -87,7 +87,6 @@ func present(v any) bool {
 	}
 	return true
 }
-func Absence(reason, detail string) Obj { return O("absent", reason, "detail", detail) }
 func shown(v any) string {
 	if absent(v) {
 		if d := Get(v, "detail"); truth(d) {
@@ -174,61 +173,6 @@ var states = []string{"yes", "no", "conditional", "unmeasured", "not_applicable"
 
 func Stage(state string, source any, detail string) Obj {
 	return O("state", state, "source", source, "detail", detail)
-}
-func Unreached(direction string) Obj {
-	o := Obj{}
-	for i, n := range reachNames {
-		s := "unmeasured"
-		d := "nothing readable answered yet"
-		if reachSources[direction][i] == "" {
-			s = "not_applicable"
-			d = noMechanism[direction]
-		}
-		Set(&o, n, Stage(s, nil, d))
-	}
-	return o
-}
-
-// Compose takes the same keyword names as packets.compose; omitted optional values are null.
-func Compose(args Obj) (Obj, error) {
-	direction, purpose := str(Get(args, "direction")), str(Get(args, "purpose"))
-	kind, e := KindOf(direction, purpose)
-	if e != nil {
-		return nil, e
-	}
-	id, e := MessageID(direction, str(Get(args, "relation_id")), purpose, str(Get(args, "subject")))
-	if e != nil {
-		return nil, e
-	}
-	fallback := func(k, reason, detail string) any {
-		v := Get(args, k)
-		if v == nil {
-			return Absence(reason, detail)
-		}
-		return v
-	}
-	owed := any("recipient")
-	switch kind {
-	case "decision":
-		owed = "user"
-	case "notification", "status_response":
-		owed = Absence("not_applicable", "this kind owes no answer")
-	}
-	reach := Get(args, "reach")
-	if reach == nil {
-		reach = Unreached(direction)
-	}
-	ev := Get(args, "evidence")
-	if ev == nil {
-		ev = []any{}
-	}
-	observed := Get(args, "observed_at")
-	if !truth(observed) {
-		observed = Absence("unknown", "nothing has recorded when this was observed")
-	}
-	region := O("version", "relay-envelope/1", "direction", direction, "kind", kind, "purpose", purpose, "messageId", id, "relationId", Get(args, "relation_id"), "relationRevision", fallback("relation_revision", "unknown", "the link revision was not read"), "sender", O("role", roles[direction][0], "taskId", Get(args, "sender")), "recipient", O("role", roles[direction][1], "taskId", Get(args, "recipient")), "subject", Get(args, "subject"), "scope", fallback("scope", "unknown", "no Linear scope was read"), "basis", fallback("basis", "unknown", "no generation or revision was read"), "observedAt", observed, "evidence", ev, "correlationId", fallback("correlation_id", "not_applicable", "this message answers nothing earlier"), "replyTo", fallback("reply_to", "not_applicable", "no reply is directed at one message"), "answerOwedBy", owed, "decision", fallback("decision", "not_applicable", "no user decision is being asked for"), "reach", reach)
-	one := O("version", "relay-packet/1", "envelope", region, "issue", Get(args, "issue"), "generation", Get(args, "generation"), "criteriaDigest", Get(args, "criteria_digest"), "policy", Get(args, "policy_record"), "callback", Get(args, "callback"), "artifact", Get(args, "artifact"), "evidence", ev, "body", Get(args, "body"), "activation", Get(args, "activation"))
-	return one, Check(one)
 }
 func checkEnvelope(region any) error {
 	for _, k := range []string{"direction", "kind", "purpose"} {

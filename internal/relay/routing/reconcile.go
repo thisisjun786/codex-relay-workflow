@@ -50,9 +50,6 @@ func (r *Router) again(ctx context.Context, route, registry Object, bindings []O
 	var fault Object
 	var err error
 	if route["stage"] == "filed" {
-		if err := r.ready("get"); err != nil {
-			return nil, err
-		}
 		fault, err = r.Ledger.Get(ctx, id)
 		if err != nil {
 			return nil, err
@@ -73,9 +70,7 @@ func (r *Router) again(ctx context.Context, route, registry Object, bindings []O
 	if err != nil {
 		return nil, err
 	}
-	if r.DecisionRead != nil {
-		r.DecisionRead(ctx, "decide")
-	}
+	r.test.read(ctx, "decide")
 	decision := Decide(incident, registry, bindings, run)
 	if decision["disposition"] == "attach_current" {
 		return nil, nil
@@ -100,9 +95,6 @@ func (r *Router) again(ctx context.Context, route, registry Object, bindings []O
 	place := scope(text(route["workspace"]), decision["project"])
 	unplaced := false
 	if decision["project"] == nil {
-		if err := r.ready("get"); err != nil {
-			return nil, err
-		}
 		fault, err = r.Ledger.Get(ctx, id)
 		if err != nil {
 			return nil, err
@@ -111,17 +103,11 @@ func (r *Router) again(ctx context.Context, route, registry Object, bindings []O
 	}
 	err = r.Store.Compose(ctx, func(ctx context.Context, _ *sql.Conn) error {
 		if decision["owner"] != nil {
-			if err := r.ready("adopt"); err != nil {
-				return err
-			}
 			if _, err := r.Ledger.Adopt(ctx, id, text(decision["owner"]), place); err != nil {
 				return err
 			}
 		}
 		if decision["project"] != nil {
-			if err := r.ready("ensure_target"); err != nil {
-				return err
-			}
 			if _, err := r.Ledger.SetWorkspaceTarget(ctx, text(registry["product"]), text(route["workspace"]), text(decision["project"]), text(destination["team"]), text(decision["project"])); err != nil {
 				return err
 			}
@@ -169,9 +155,6 @@ func (r *Router) reconcileRoute(ctx context.Context, route Object) (Object, erro
 	return empty(), nil
 }
 func (r *Router) Reconcile(ctx context.Context, product any, limit, after any) (Object, error) {
-	if err := r.ready("route-reconcile"); err != nil {
-		return nil, err
-	}
 	return r.reconcile(ctx, product, limit, after)
 }
 func (r *Router) reconcile(ctx context.Context, product any, limit, after any) (Object, error) {
@@ -229,9 +212,6 @@ func (r *Router) Digest(ctx context.Context, limit, after any) (Object, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err = r.ready("route-digest"); err != nil {
-		return nil, err
-	}
 	made, reached := []any{}, []any{}
 	proposals, err := r.routes().OutstandingProposals(ctx, bound)
 	if err != nil {
@@ -252,17 +232,15 @@ func (r *Router) Digest(ctx context.Context, limit, after any) (Object, error) {
 	linked, severes, decisions, resolutions := []any{}, []any{}, []any{}, []any{}
 	routine := Object{}
 	read := int64(0)
-	pageSize := r.DigestPageSize
+	pageSize := r.test.digestPageSize
 	if pageSize == 0 {
 		pageSize = 100
 	}
 	pageNumber := 0
 	for read < bound {
 		pageNumber++
-		if r.BeforeDigestPage != nil {
-			if err := r.BeforeDigestPage(ctx, pageNumber); err != nil {
-				return nil, err
-			}
+		if err := r.test.digestPage(ctx, pageNumber); err != nil {
+			return nil, err
 		}
 		page, err := r.routes().Listing(ctx, nil, nil, nil, min(pageSize, bound-read), cursor)
 		if err != nil {

@@ -11,11 +11,6 @@ import (
 // CLI's argparse surface. Every reader answers from a TargetReader, as the Python CLI builds
 // MergeTurn(target_reader=TargetReader()).
 
-type opt = registry.OptionSpec
-
-func req(name string) opt  { return opt{Name: name, Required: true} }
-func free(name string) opt { return opt{Name: name} }
-
 func service(r *registry.Registry) *Service {
 	return &Service{Store: r.Store, Registry: r, Now: r.Now, Delivery: StoreDelivery{Store: r.Store}}
 }
@@ -121,7 +116,7 @@ func optional(p registry.Parsed, name string) string { return p.Optional(name).S
 func init() {
 	reader := TargetReader{}
 	add := registry.AddCommand
-	add("merge-turn-request", []opt{req("repository"), req("base-ref"), req("project"), req("task"), req("host"), free("cwd"), free("cxc-session"), req("head"), {Name: "pr", Integer: true}, free("relationship"), {Name: "ready", Flag: true}}, nil,
+	add("merge-turn-request",
 		func(ctx context.Context, r *registry.Registry, p registry.Parsed) (any, error) {
 			options := ClaimOptions{Relationship: p.Optional("relationship")}
 			if p.Given("pr") {
@@ -129,24 +124,24 @@ func init() {
 			}
 			return answer(service(r).Request(ctx, p.Text("repository"), p.Text("base-ref"), p.Text("project"), p.Text("task"), p.Text("host"), p.Text("head"), p.Given("ready"), options))
 		})
-	add("merge-turn-ready", []opt{req("turn"), req("actor"), free("head"), free("cause"), {Name: "ready", Flag: true}, {Name: "not-ready", Flag: true}}, []string{"ready", "not-ready"},
+	add("merge-turn-ready",
 		func(ctx context.Context, r *registry.Registry, p registry.Parsed) (any, error) {
 			return answer(service(r).Ready(ctx, p.Text("turn"), p.Text("actor"), p.Given("ready"), p.Text("head"), p.Text("cause")))
 		})
-	add("merge-turn-acknowledge", []opt{req("turn"), req("actor"), req("grant"), req("evidence")}, nil,
+	add("merge-turn-acknowledge",
 		func(ctx context.Context, r *registry.Registry, p registry.Parsed) (any, error) {
 			return answer(service(r).Acknowledge(ctx, p.Text("turn"), p.Text("actor"), p.Text("grant"), p.Text("evidence")))
 		})
-	add("merge-turn-attest", []opt{req("turn"), req("evidence-kind"), req("idempotency-key"), req("actor"), req("evidence")}, nil,
+	add("merge-turn-attest",
 		func(ctx context.Context, r *registry.Registry, p registry.Parsed) (any, error) {
 			return answer(service(r).Attest(ctx, p.Text("turn"), p.Text("evidence-kind"), p.Text("idempotency-key"), p.Text("actor"), p.Text("evidence")))
 		})
-	add("merge-turn-request-return", []opt{req("turn"), req("actor"), req("evidence")}, nil,
+	add("merge-turn-request-return",
 		func(ctx context.Context, r *registry.Registry, p registry.Parsed) (any, error) {
 			actor := p.Text("actor")
 			return answer(service(r).Attest(ctx, p.Text("turn"), "return_requested", "return_requested:"+actor, actor, p.Text("evidence")))
 		})
-	add("merge-turn-check", []opt{req("turn"), req("actor"), req("head-sha"), req("base-sha"), req("checks"), req("review"), {Name: "required", Multi: true}}, nil,
+	add("merge-turn-check",
 		func(ctx context.Context, r *registry.Registry, p registry.Parsed) (any, error) {
 			checks, err := jsonShape(p.Text("checks"), "--checks", true)
 			if err != nil {
@@ -158,29 +153,29 @@ func init() {
 			}
 			return answer(service(r).Check(ctx, p.Text("turn"), p.Text("actor"), p.Text("head-sha"), p.Text("base-sha"), checks, review, p.Values("required"), reader))
 		})
-	add("merge-turn-land", []opt{req("turn"), req("actor"), req("landed-sha"), free("observed-base-sha"), req("evidence")}, nil,
+	add("merge-turn-land",
 		func(ctx context.Context, r *registry.Registry, p registry.Parsed) (any, error) {
 			return answer(service(r).Land(ctx, p.Text("turn"), p.Text("actor"), p.Text("landed-sha"), optional(p, "observed-base-sha"), p.Text("evidence"), reader))
 		})
-	add("merge-turn-unknown", []opt{req("turn"), req("actor"), req("reason")}, nil,
+	add("merge-turn-unknown",
 		func(ctx context.Context, r *registry.Registry, p registry.Parsed) (any, error) {
 			return answer(service(r).Unknown(ctx, p.Text("turn"), p.Text("actor"), p.Text("reason")))
 		})
-	add("merge-turn-resolve", []opt{req("turn"), req("actor"), req("observed-base-sha"), {Name: "pr-state", Required: true, Choices: []string{"merged", "open", "closed"}}, req("evidence")}, nil,
+	add("merge-turn-resolve",
 		func(ctx context.Context, r *registry.Registry, p registry.Parsed) (any, error) {
 			return answer(service(r).Resolve(ctx, p.Text("turn"), p.Text("actor"), p.Text("observed-base-sha"), p.Text("pr-state"), p.Text("evidence"), reader))
 		})
-	add("merge-turn-restate-base", []opt{req("turn"), req("actor"), free("observed-base-sha"), req("evidence")}, nil,
+	add("merge-turn-restate-base",
 		func(ctx context.Context, r *registry.Registry, p registry.Parsed) (any, error) {
 			return answer(service(r).RestateBase(ctx, p.Text("turn"), p.Text("actor"), optional(p, "observed-base-sha"), p.Text("evidence"), reader))
 		})
-	add("merge-turn-release", []opt{req("turn"), req("actor"), {Name: "disposition", Required: true, Choices: []string{"returned", "cancelled"}}, req("reason"), free("evidence")}, nil,
+	add("merge-turn-release",
 		func(ctx context.Context, r *registry.Registry, p registry.Parsed) (any, error) {
 			return answer(service(r).Release(ctx, p.Text("turn"), p.Text("actor"), p.Text("disposition"), p.Text("reason"), p.Text("evidence")))
 		})
-	add("merge-turn-withdraw", []opt{req("turn"), req("actor")}, nil,
+	add("merge-turn-withdraw",
 		func(ctx context.Context, r *registry.Registry, p registry.Parsed) (any, error) {
 			return answer(service(r).Withdraw(ctx, p.Text("turn"), p.Text("actor")))
 		})
-	registry.AddCheckedCommand("merge-turn-show", []opt{free("turn"), free("repository"), free("base-ref"), free("parent-task")}, nil, showSelectors, show)
+	registry.AddCheckedCommand("merge-turn-show", showSelectors, show)
 }

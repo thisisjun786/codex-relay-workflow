@@ -1,10 +1,8 @@
 package reception
 
-// JSONDepthProblem mirrors the Python reader's recursion refusal at the JSON boundary.
+// JSONReaderDepthProblem mirrors the Python reader's recursion refusal at the JSON boundary: the
+// installed console script reaches the same CPython decoder boundary at every relay read.
 // Legitimate settings are bounded separately only where a value is copied into an answer.
-func JSONDepthProblem(raw []byte) string { return jsonDepthProblem(raw, 9998) }
-
-// The installed console script reaches the same CPython decoder boundary at every relay read.
 func JSONReaderDepthProblem(raw []byte) string   { return jsonDepthProblem(raw, 9998) }
 func JSONSettingsDepthProblem(raw []byte) string { return jsonDepthProblem(raw, 9997) }
 

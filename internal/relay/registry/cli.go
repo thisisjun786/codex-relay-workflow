@@ -22,16 +22,6 @@ import (
 // relationship-status and relationship-resume. Parsing follows argparse: a command line it
 // cannot parse exits 2 with usage on stderr; every other ending prints one JSON document.
 
-type option struct {
-	name     string
-	required bool
-	multi    bool // action="append"
-	flag     bool // action="store_true"
-	integer  bool // type=int
-	choices  []string
-	def      string
-}
-
 type parsed struct {
 	values  map[string][]string
 	set     map[string]bool
@@ -59,69 +49,49 @@ func (p parsed) integer(name string) *big.Int {
 	return p.numbers[name].(*big.Int)
 }
 
+// command is one relay command of this package. Its arguments are parsed by its argparse spec
+// (argparse.Specs[name]); defaults are the argparse defaults of the options it reads unset.
 type command struct {
-	name    string
-	options []option
-	run     func(context.Context, *Registry, parsed) (any, error)
+	name     string
+	defaults map[string]string
+	run      func(context.Context, *Registry, parsed) (any, error)
 	// precheck is the part of a handler that refuses its own arguments before it touches the
 	// store. cli.main decides when that is (run): a write form refuses them only after
 	// _ownership_preflight opened the store, a read-only form before its lazy Services.store.
 	precheck func(*parsed) error
-	// exclusive names a required mutually exclusive group (argparse add_mutually_exclusive_group).
-	exclusive []string
 	// read answers without constructing a Store (dispositions-show).
 	read func(context.Context, store.StateSelection, parsed) (any, error)
 }
 
-var roleChoices = []string{"supervisor", "parent", "child"}
-
 var commands = []command{
-	{"register", []option{
-		{name: "parent-task", required: true}, {name: "parent-host", required: true}, {name: "parent-cwd"}, {name: "parent-cxc-session"},
-		{name: "child-task", required: true}, {name: "child-host", required: true}, {name: "child-cwd"}, {name: "child-cxc-session"},
-		{name: "issue", required: true}, {name: "artifact-root", required: true, multi: true},
-		{name: "allowed-recipient", required: true, multi: true}, {name: "scope-ref"},
-		{name: "dispatch-request-id", required: true}, {name: "dispatch-turn-id"}, {name: "supersedes"}, {name: "project"},
-		{name: "parent-settings"}, {name: "child-settings"},
-		{name: "parent-role", choices: roleChoices}, {name: "child-role", choices: roleChoices},
-		{name: "parent-exception"}, {name: "child-exception"},
-	}, cmdRegister, registerPrecheck, nil, nil},
-	{"settings-record", []option{{name: "task", required: true}, {name: "settings", required: true},
-		{name: "source", def: "creation_result"}, {name: "role", choices: roleChoices}, {name: "exception"},
-		{name: "clear-exception", flag: true}}, cmdSettingsRecord, settingsRecordPrecheck, nil, nil},
-	{"settings-show", []option{{name: "task", required: true}}, func(ctx context.Context, r *Registry, p parsed) (any, error) {
+	{name: "register", run: cmdRegister, precheck: registerPrecheck},
+	{name: "settings-record", defaults: map[string]string{"source": "creation_result"}, run: cmdSettingsRecord, precheck: settingsRecordPrecheck},
+	{name: "settings-show", run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
 		return r.SettingsShow(ctx, p.text("task"))
-	}, nil, nil, nil},
-	{"generation-open", []option{{name: "relationship", required: true}, {name: "dispatch-request-id", required: true},
-		{name: "reason", def: "needs_changes_revision"}, {name: "dispatch-turn-id"}}, func(ctx context.Context, r *Registry, p parsed) (any, error) {
+	}},
+	{name: "generation-open", defaults: map[string]string{"reason": "needs_changes_revision"}, run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
 		g, err := r.OpenGeneration(ctx, p.text("relationship"), p.text("dispatch-request-id"), p.text("reason"), p.optional("dispatch-turn-id"))
 		return g.Record(), err
-	}, nil, nil, nil},
-	{"generation-bind", []option{{name: "relationship", required: true}, {name: "generation", required: true, integer: true},
-		{name: "dispatch-turn-id", required: true}, {name: "source", def: "dispatch_receipt"}}, func(ctx context.Context, r *Registry, p parsed) (any, error) {
+	}},
+	{name: "generation-bind", defaults: map[string]string{"source": "dispatch_receipt"}, run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
 		g, err := r.BindAnchor(ctx, p.text("relationship"), p.integer("generation"), p.text("dispatch-turn-id"), p.text("source"))
 		return g.Record(), err
-	}, nil, nil, nil},
-	{"admit-turn", []option{{name: "relationship", required: true}, {name: "generation", required: true, integer: true},
-		{name: "turn", required: true}, {name: "actor", required: true}, {name: "reason", def: ""}}, cmdAdmitTurn, nil, nil, nil},
-	{"relationship-status", []option{{name: "relationship", required: true}, {name: "status", required: true, choices: []string{"paused", "cancelled", "archived"}},
-		{name: "actor", required: true}}, func(ctx context.Context, r *Registry, p parsed) (any, error) {
+	}},
+	{name: "admit-turn", run: cmdAdmitTurn},
+	{name: "relationship-status", run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
 		x, err := r.SetStatus(ctx, p.text("relationship"), p.text("status"), p.text("actor"))
 		return x.ContractRecord(), err
-	}, nil, nil, nil},
-	{"relationship-resume", []option{{name: "relationship", required: true}, {name: "expect-generation", required: true, integer: true},
-		{name: "expect-artifact-root", required: true, multi: true}, {name: "expect-allowed-recipient", required: true, multi: true},
-		{name: "actor", required: true}}, func(ctx context.Context, r *Registry, p parsed) (any, error) {
+	}},
+	{name: "relationship-resume", run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
 		x, err := r.Resume(ctx, p.text("relationship"), p.integer("expect-generation"), p.values["expect-artifact-root"], p.values["expect-allowed-recipient"], p.text("actor"))
 		return x.ContractRecord(), err
-	}, nil, nil, nil},
-	{name: "assignment-show", options: []option{{name: "relationship"}, {name: "issue"}}, run: cmdAssignmentShow},
-	{name: "assignment-find", options: []option{{name: "issue", required: true}}, run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
+	}},
+	{name: "assignment-show", run: cmdAssignmentShow},
+	{name: "assignment-find", run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
 		return assignmentView(r).ForIssue(ctx, p.text("issue"))
 	}},
-	{name: "dispositions-show", options: []option{{name: "project"}, {name: "relationship"}}, exclusive: []string{"project", "relationship"}, read: cmdDispositionsShow},
-	{name: "assignment-mark", options: []option{{name: "relationship", required: true}, {name: "mark", required: true, choices: []string{"merged"}},
-		{name: "evidence", required: true}, {name: "actor", required: true}, {name: "expected-event", required: true}},
+	{name: "dispositions-show", read: cmdDispositionsShow},
+	{name: "assignment-mark",
 		run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
 			return assignmentView(r).Mark(ctx, p.text("relationship"), p.text("mark"), p.text("evidence"), p.text("actor"), p.text("expected-event"))
 		}},
@@ -211,9 +181,9 @@ func (c command) parse(prog string, argv []string) (parsed, error) {
 		return p, &usageError{c.usage(prog), result.Message}
 	}
 	p.values, p.set, p.numbers = result.Values, result.Given, result.Numbers
-	for _, o := range c.options {
-		if !p.set[o.name] && o.def != "" {
-			p.values[o.name] = []string{o.def}
+	for name, value := range c.defaults {
+		if !p.set[name] {
+			p.values[name] = []string{value}
 		}
 	}
 	return p, nil

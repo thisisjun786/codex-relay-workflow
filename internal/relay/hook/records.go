@@ -1,10 +1,8 @@
 package hook
 
 import (
-	"fmt"
 	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 )
 
@@ -174,34 +172,4 @@ func fsencode(path string) (string, bool) {
 		i++
 	}
 	return encoded.String(), true
-}
-
-// fsencodeRefusal is the UnicodeEncodeError os.fsencode raises for a path fsencode cannot encode,
-// in Python's words: the first run of lone surrogates holding one other than U+DC80..U+DCFF,
-// from that one to the end of the run, counted in code points.
-func fsencodeRefusal(path string) string {
-	position, start := 0, -1
-	var first rune
-	for i := 0; i < len(path); position++ {
-		r, size := settings.CodePoint(path, i)
-		i += size
-		surrogate := r >= 0xd800 && r <= 0xdfff
-		if start >= 0 && !surrogate {
-			return encodeRefusal(first, start, position)
-		}
-		if start < 0 && surrogate && (r < 0xdc80 || r > 0xdcff) {
-			start, first = position, r
-		}
-	}
-	if start < 0 {
-		return ""
-	}
-	return encodeRefusal(first, start, position)
-}
-
-func encodeRefusal(first rune, start, end int) string {
-	if end-start == 1 {
-		return fmt.Sprintf("'utf-8' codec can't encode character '\\u%04x' in position %d: surrogates not allowed", first, start)
-	}
-	return fmt.Sprintf("'utf-8' codec can't encode characters in position %d-%d: surrogates not allowed", start, end-1)
 }

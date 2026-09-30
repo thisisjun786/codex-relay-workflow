@@ -2,6 +2,12 @@
 
 Source: `scripts/ci/tests/test_completion_hook.py`, 221 test functions. Fixtures live in `contract/fixtures/hook/`, run by `packages/codex-session-relay/tests/test_contract_corpus.py`, and each converted test function is a `run_contract(...)` thin runner over its fixtures. Every expected value was produced by running the checkout Python hook/status through the corpus runner and was checked against the original test's own assertion before the fixture was written.
 
+Wave R1 deleted the Go status reading these conversions exercised (decision 57 in
+[the port decisions](../../docs/port/decisions.md)), and with it the 119 `status` fixtures and the
+11 hook fixtures whose only checks read the status after their run; two more keep their run
+without the status checks. The record below is the conversion as it was made, so it still names
+those fixtures.
+
 Totals: converted 125 (20 from the spike, 98 in the first lane, 7 in round 2; 168 fixture files), kept 26, blocked 70. 9 converted cases keep a residual in-process assertion; each is listed below.
 
 ## Converted

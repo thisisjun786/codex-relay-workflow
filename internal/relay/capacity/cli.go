@@ -226,24 +226,6 @@ func withEnforcement(s *store.Store, answer contract.OrderedObject) contract.Ord
 	return append(answer, contract.Field{Key: "unenforcedIndexes", Value: unenforced})
 }
 
-// Names lists this package's relay commands, in cli.py's add_parser order.
-func Names() []string {
-	names := make([]string, len(commands))
-	for i, c := range commands {
-		names[i] = c.name
-	}
-	return names
-}
-
-// CommandOf is the relay command argv names after the global flags, if this package owns it.
-func CommandOf(argv []string) (string, bool) {
-	_, rest, err := globals(argv)
-	if err != nil || len(rest) == 0 || !slices.Contains(Names(), rest[0]) {
-		return "", false
-	}
-	return rest[0], true
-}
-
 type globalFlags struct{ state, socket string }
 
 func globals(argv []string) (globalFlags, []string, error) {

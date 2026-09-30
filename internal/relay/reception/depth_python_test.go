@@ -119,12 +119,10 @@ func Test23JSONDepthBoundaryMatchesPython(t *testing.T) {
 				raw := []byte(strings.Repeat("[", depth) + "0" + strings.Repeat("]", depth))
 				var got string
 				switch site {
-				case "packet", "ledger":
+				case "packet", "ledger", "declaration":
 					got = JSONReaderDepthProblem(raw)
 				case "settings":
 					got = JSONSettingsDepthProblem(raw)
-				case "declaration":
-					got = JSONDepthProblem(raw)
 				case "policy":
 					// This file is parsed by rolepolicy before packetPolicy's safety scan.
 					got = ""
