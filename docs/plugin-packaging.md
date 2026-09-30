@@ -17,11 +17,10 @@ installer, and the package only points at what that installer left behind.
 | `plugins/crw/skills/` | The registered skills, one of the two declared components |
 | `plugins/crw/wiring/` | The declared Stop hook and MCP server, and the `crw-bridge.sh` launcher the server starts. The two Python launchers the pre-native declarations started left the package in todo 43 ([the native wiring](#the-native-wiring)) |
 | `plugins/crw/LICENSE` | The repository license, shipped with the package |
-| `skills` | A link to `plugins/crw/skills`, kept for installations made before the move |
-
-Edit the skills at `plugins/crw/skills/`; the root `skills` link is a compatibility
-path, not a second copy, and it is a Git symlink, so a checkout without symlink
-support turns it into a plain text file. The supported platform is Linux x86_64.
+Edit the skills at `plugins/crw/skills/`. Until todo 44 the repository root also kept `skills`, a
+Git symlink to that directory, for installations made before the move; nothing installed through
+it any more, and it left, so a link made through it is dangling and `crw-dev skills link` reports
+it as a CONFLICT to relink. The supported platform is Linux x86_64.
 
 What may sit in the plugin root is whatever the manifest declares, plus
 `.codex-plugin/` and `LICENSE`. Installation copies that directory verbatim,
@@ -311,8 +310,8 @@ records and never holds a turn.
 
 The linked installation in [README](../README.md#install) still works. Both
 installations read the same source: `crw-dev skills link` links the directory the manifest
-declares, and the repository root keeps `skills` as a link to it so links created before the
-move still resolve.
+declares (links created before the move went through the root `skills` link, which todo 44
+retired).
 
 A host carrying a manual install of the bridge or the hook beside the plugin runs two of
 everything. [Moving a manual install to the plugin install](plugin-transition.md) records how

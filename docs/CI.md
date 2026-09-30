@@ -46,7 +46,7 @@ too, so an existing unregistered component cannot hide behind a docs-only diff.
 | Change | Selected work |
 | --- | --- |
 | Named root prose files and Markdown directly under `docs/` | Validation, plugin identity, offline contracts and secrets |
-| `plugins/crw/skills/**` or the root `skills` link | Above, plus installer/CI tests on Python 3.10 and 3.13 |
+| `plugins/crw/skills/**` (and the root `skills` path, the compatibility link todo 44 retired) | Above, plus installer/CI tests on Python 3.10 and 3.13 |
 | Runtime, package, wiring, manifest, shared configuration or CI-control paths, and the relay's documents under `docs/relay/` | All checks |
 | Go product and contract corpus paths: `go.mod`, `go.sum`, `tools.go`, `Makefile`, `.goreleaser.yaml`, root `conftest.py`, `cmd/**`, `internal/**`, `contract/**`, `docs/port/**`, `scripts/port/**` | All checks |
 | Mixed paths | Union of their coverage |
@@ -119,9 +119,9 @@ verbatim, so a symlink inside it is dropped and its files disappear, while an
 untracked or ignored file is published; both are rejected, along with anything
 outside `.codex-plugin/`, `skills/` and `LICENSE`, operational state and credential
 names, and a personal home path in any shipped instruction. It also requires each
-declared skill to carry `SKILL.md` and `agents/openai.yaml`, and the repository
-root link to point at the declared skills directory so the linked and packaged
-installations cannot drift apart.
+declared skill to carry `SKILL.md` and `agents/openai.yaml`. (Until todo 44 it also
+required the repository root `skills` link to point at the declared skills directory;
+the link left, and both installations read the declared directory.)
 
 An empty directory is refused for the same reason: it carries no file for any other
 rule to inspect and still reaches the cache. Shipped files must sit inside the

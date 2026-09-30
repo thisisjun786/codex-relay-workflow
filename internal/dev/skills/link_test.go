@@ -30,7 +30,6 @@ func checkout(t *testing.T) string {
 	}
 	must(t, os.WriteFile(filepath.Join(plugin, "skills", "notes.md"), []byte("not a skill"), 0o644))
 	must(t, os.MkdirAll(filepath.Join(plugin, "skills", "no-skill-file"), 0o755))
-	must(t, os.Symlink("plugins/crw/skills", filepath.Join(root, "skills")))
 	return root
 }
 
@@ -204,9 +203,10 @@ func TestAPathThatAppearsAfterThePreflightIsNeverReplaced(t *testing.T) {
 	}
 }
 
-func TestALinkThroughTheRootSkillsAliasIsLinked(t *testing.T) {
+func TestALinkThroughTheRetiredRootSkillsAliasIsAConflict(t *testing.T) {
 	// Installations made before the skills moved under the plugin point at <root>/skills/<name>.
-	// While the root keeps that alias they read the same source and must be left alone.
+	// The root kept that alias until todo 44; without it such a link resolves to nothing, so it is
+	// a CONFLICT to inspect by hand and is never replaced.
 	root := checkout(t)
 	dest := filepath.Join(t.TempDir(), "skills")
 	must(t, os.MkdirAll(dest, 0o755))
@@ -216,8 +216,8 @@ func TestALinkThroughTheRootSkillsAliasIsLinked(t *testing.T) {
 	before := inodes(t, dest)
 	for _, apply := range []bool{false, true} {
 		got := runLink(root, dest, apply)
-		if got.code != 0 || strings.Count(got.stdout, "LINKED ") != len(skillNames) || strings.Contains(got.stdout, "CREATED") {
-			t.Fatalf("apply=%v over alias links: %+v", apply, got)
+		if got.code == 0 || strings.Count(got.stderr, "CONFLICT ") != len(skillNames) || strings.Contains(got.stdout, "CREATED") {
+			t.Fatalf("apply=%v over retired alias links: %+v", apply, got)
 		}
 	}
 	after := inodes(t, dest)

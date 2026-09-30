@@ -11,7 +11,7 @@ plugin; `docs/plugin-packaging.md` describes the package and what may sit in its
 root. Start from `dev` on a short-lived branch. Use a separate worktree when another
 task owns the checkout, and preserve its uncommitted work. Read the target skill
 and linked references before editing. Shared workflow rules belong in
-`skills/crw-plan/references/integrations.md`; operation-specific guidance
+`plugins/crw/skills/crw-plan/references/integrations.md`; operation-specific guidance
 belongs with that skill.
 
 Keep each PR focused on one outcome. Explain the triggering problem, expected

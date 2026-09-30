@@ -28,13 +28,13 @@ differ, when a line count differs from `wc -l`, when an owning issue is missing,
 
 ## Files
 
-Total non-test lines: 2075
+Total non-test lines: 2047
 
 | path | lines | invoked | runs | owner | disposition | consumer_search | removal_trigger |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `scripts/check_operations_contract.py` | 276 | CI: scripts/ci/contracts.py:12 (operations fixtures replay) | dev/CI | CRW-160 | port | - | - |
 | `scripts/ci/gate.py` | 45 | CI: ci.yml:122 required-checks gate | dev/CI | CRW-160 | port | - | - |
-| `scripts/ci/plugin.py` | 999 | CI: ci.yml:54 | dev/CI | CRW-160 | port | - | - |
+| `scripts/ci/plugin.py` | 971 | CI: ci.yml:54 | dev/CI | CRW-160 | port | - | - |
 | `scripts/ci/scope.py` | 155 | CI: ci.yml:39 path-scope selection | dev/CI | CRW-160 | port | - | - |
 | `scripts/ci/validate.py` | 145 | CI: ci.yml:53 link/metadata validation | dev/CI | CRW-160 | port | - | - |
 | `scripts/port/check_inventory.py` | 145 | dev CLI `python3 scripts/port/check_inventory.py` (this document's check, todo 1) | dev/CI | CRW-160 | retire-with-evidence | `grep -rn check_inventory` over scripts/, docs/, .github/ (consumers: this document only; no CI job runs it yet) | the Python inventory is obsolete once todo 44 (CRW-141) deletes the product Python; deleted with the remaining dev Python in todo 48 |

@@ -307,7 +307,7 @@ func Test47_PLG_2_VersionIsSemVer(t *testing.T) {
 		expectFragment(t, bad, manifestParity(t, testManifest().set("version", bad), "crw", nil),
 			"version "+pyRepr(bad)+" is not a semantic version")
 	}
-	r := pluginRepo(t, goodFiles(t).with(manifestPath, dumps(testManifest().set("version", "1.0.0\n"))), "plugins/crw/skills")
+	r := pluginRepo(t, goodFiles(t).with(manifestPath, dumps(testManifest().set("version", "1.0.0\n"))), "")
 	got := pluginCLIParity(t, r.root)
 	if got.code != 1 || !strings.Contains(got.stderr, "semantic version") {
 		t.Errorf("CLI trailing newline: %+v", got)
@@ -475,7 +475,7 @@ func Test47_PLG_8_MarketplaceEntryIsPinned(t *testing.T) {
 	marketplaceParity(t, testCatalog().set("plugins", []any{testEntry(), testEntry()}))
 	marketplaceParity(t, testCatalog().set("plugins", []any{"x", 5}))
 	// Read from the revision: a committed wrong path fails the CLI even with a clean tree.
-	r := pluginRepo(t, goodFiles(t), "plugins/crw/skills")
+	r := pluginRepo(t, goodFiles(t), "")
 	broken := catalogWithEntry(testEntry().set("source", source.set("path", "./plugins/elsewhere")))
 	r.write(marketplacePath, dumps(broken))
 	r.gitCommit("break")
@@ -608,7 +608,7 @@ func Test47_PLG_12_VersionNamesItsPayload(t *testing.T) {
 	errs = manifestParity(t, testManifest(), "crw", good.with(manifestPath, dumps(testManifest())).payload())
 	expectFragment(t, "plain", errs, "version '0.1.0' does not name this payload")
 	// CLI: a committed skill edited after recording; an installed LICENSE edited.
-	r := pluginRepo(t, good.with("skills/crw-run/SKILL.md", testSkill+"\nAn extra paragraph.\n"), "plugins/crw/skills")
+	r := pluginRepo(t, good.with("skills/crw-run/SKILL.md", testSkill+"\nAn extra paragraph.\n"), "")
 	got := pluginCLIParity(t, r.root)
 	if got.code != 1 || !strings.Contains(got.stderr, "does not name this payload") {
 		t.Errorf("CLI release digest: %+v", got)
@@ -622,8 +622,8 @@ func Test47_PLG_12_VersionNamesItsPayload(t *testing.T) {
 
 func Test47_PLG_13_RecordVersionWritesAndSettles(t *testing.T) {
 	plain := goodFiles(t).with(manifestPath, dumps(testManifest()))
-	pyRepo := pluginRepo(t, plain, "plugins/crw/skills")
-	goRepo := pluginRepo(t, plain, "plugins/crw/skills")
+	pyRepo := pluginRepo(t, plain, "")
+	goRepo := pluginRepo(t, plain, "")
 	written := func(r *fixtureRepo) string {
 		data, err := os.ReadFile(filepath.Join(r.root, "plugins/crw", manifestPath))
 		if err != nil {
@@ -647,7 +647,7 @@ func Test47_PLG_13_RecordVersionWritesAndSettles(t *testing.T) {
 	}
 	twice := parseObject(t, goodFiles(t)[manifestPath])
 	twice = twice.set("description", twice.get("version"))
-	r := pluginRepo(t, goodFiles(t).with(manifestPath, dumps(twice)), "plugins/crw/skills")
+	r := pluginRepo(t, goodFiles(t).with(manifestPath, dumps(twice)), "")
 	py = runCommand(t, r.root, nil, "python3", "scripts/ci/plugin.py", "--record-version")
 	got = goCheck(t, r.root, nil, "plugin", "--record-version")
 	sameResult(t, "cannot derive", py, got)
@@ -658,7 +658,7 @@ func Test47_PLG_13_RecordVersionWritesAndSettles(t *testing.T) {
 
 func Test47_PLG_14_RepositoryCheckReadsTheRevision(t *testing.T) {
 	good := goodFiles(t)
-	expectEqual(t, "healthy", pluginCLIParity(t, pluginRepo(t, good, "plugins/crw/skills").root).code, 0)
+	expectEqual(t, "healthy", pluginCLIParity(t, pluginRepo(t, good, "").root).code, 0)
 	for _, row := range []struct {
 		f        files
 		fragment string
@@ -668,28 +668,25 @@ func Test47_PLG_14_RepositoryCheckReadsTheRevision(t *testing.T) {
 		{good.with("LICENSE", "Apache"), "repository license"},
 		{good.with(manifestPath, dumps(testManifest().set("license", "Apache-2.0"))), "license"},
 	} {
-		got := pluginCLIParity(t, pluginRepo(t, row.f, "plugins/crw/skills").root)
+		got := pluginCLIParity(t, pluginRepo(t, row.f, "").root)
 		if got.code != 1 || !strings.Contains(got.stderr, row.fragment) {
 			t.Errorf("%s: %+v", row.fragment, got)
 		}
 	}
 }
 
-func Test47_PLG_15_RootSkillsLinkIsExact(t *testing.T) {
-	for _, row := range []struct{ link, fragment string }{
-		{"", "skills: the repository root must keep a link to the packaged skills"},
-		{"plugins/crw", "skills: the root link points at 'plugins/crw' instead of 'plugins/crw/skills'"},
-		{"plugins/crw/skills ", "root link points at"},
-	} {
-		got := pluginCLIParity(t, pluginRepo(t, goodFiles(t), row.link).root)
-		if got.code != 1 || !strings.Contains(got.stderr, row.fragment) {
-			t.Errorf("link %q: %+v", row.link, got)
+func Test47_PLG_15_RootSkillsEntryIsNeitherRequiredNorRead(t *testing.T) {
+	// The root `skills` compatibility link left in todo 44: nothing installs through it, so a
+	// checkout without it passes, and so does one whose root entry names something else.
+	for _, link := range []string{"", "plugins/crw"} {
+		if got := pluginCLIParity(t, pluginRepo(t, goodFiles(t), link).root); got.code != 0 {
+			t.Errorf("link %q: %+v", link, got)
 		}
 	}
 }
 
 func Test47_PLG_16_WorkingTreeGetsTheSameChecks(t *testing.T) {
-	r := pluginRepo(t, goodFiles(t), "plugins/crw/skills")
+	r := pluginRepo(t, goodFiles(t), "")
 	r.write("plugins/crw/"+manifestPath, "not-json")
 	got := pluginCLIParity(t, r.root)
 	if got.code != 1 || !strings.Contains(got.stderr, "working tree") {
@@ -698,7 +695,7 @@ func Test47_PLG_16_WorkingTreeGetsTheSameChecks(t *testing.T) {
 	withPlan := goodFiles(t).with("skills/crw-plan/SKILL.md", "---\nname: crw-plan\ndescription: d\n---\n").
 		with("skills/crw-plan/agents/openai.yaml", testInterface("crw-plan"))
 	withPlan = recordedFiles(t, withPlan, parseObject(t, withPlan[manifestPath]).set("version", "0.1.0"))
-	r = pluginRepo(t, withPlan, "plugins/crw/skills")
+	r = pluginRepo(t, withPlan, "")
 	if err := os.RemoveAll(filepath.Join(r.root, "plugins/crw/skills/crw-plan")); err != nil {
 		t.Fatal(err)
 	}
@@ -706,7 +703,7 @@ func Test47_PLG_16_WorkingTreeGetsTheSameChecks(t *testing.T) {
 	if got.code != 1 || !strings.Contains(got.stderr, "working tree: crw-plan ships in the revision but is missing here") {
 		t.Errorf("missing skill: %+v", got)
 	}
-	r = pluginRepo(t, goodFiles(t), "plugins/crw/skills")
+	r = pluginRepo(t, goodFiles(t), "")
 	r.write("plugins/crw/notes.txt", "local")
 	got = pluginCLIParity(t, r.root)
 	if got.code != 1 || !strings.Contains(got.stderr, "working tree plugins/crw/notes.txt: untracked or ignored files") {
@@ -715,7 +712,7 @@ func Test47_PLG_16_WorkingTreeGetsTheSameChecks(t *testing.T) {
 }
 
 func Test47_PLG_17_DirectoryPayloadHasNoEmptyDirOrSymlink(t *testing.T) {
-	r := pluginRepo(t, goodFiles(t), "plugins/crw/skills")
+	r := pluginRepo(t, goodFiles(t), "")
 	if err := os.Mkdir(filepath.Join(r.root, "plugins/crw/extra-empty"), 0o755); err != nil {
 		t.Fatal(err)
 	}
