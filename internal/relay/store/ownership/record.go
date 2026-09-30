@@ -206,6 +206,15 @@ func ReadStamp(ctx context.Context, db Queryer) (Stamp, error) {
 	if err = rows.Err(); err != nil {
 		return Stamp{}, err
 	}
+	return StampFromMeta(meta)
+}
+
+// StampFromMeta judges schema_meta as the durable stamp a writer is admitted by: every ownership
+// key present, a positive canonical epoch, writer protocol 1, a known owner, a store id, schema
+// version 1, the compatibility build and a boolean rollback flag. The preflights that read
+// schema_meta in place (checkStamp) judge it the same way, so a marker-only write is never
+// allowed on a store the writable open would refuse.
+func StampFromMeta(meta map[string]string) (Stamp, error) {
 	for _, k := range Keys {
 		if _, ok := meta[k]; !ok {
 			return Stamp{}, refuse("durable ownership missing %s", k)
