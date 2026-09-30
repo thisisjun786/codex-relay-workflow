@@ -127,14 +127,35 @@ func (c *Controller) inspect(ctx context.Context, db *sql.DB, r Record) error {
 		}
 		inventory.Tables[name] = count
 	}
+	root := filepath.Dir(c.Path)
+	// The inbox is judged as the candidate's drain will judge it, before ownership moves: an
+	// entry that would fail the candidate's recovery closed is refused here, where the owner has
+	// not changed and the recovery is repair or abort (cutover.md Step 4).
+	if c.ValidateInbox == nil {
+		return refuse("inbox validator unavailable")
+	}
+	if err = c.ValidateInbox(root); err != nil {
+		return refuse("the takeover inbox would stop the candidate's recovery: %v", err)
+	}
 	// Inventory all state-local receiver/transport ledgers, sidecar locks and
 	// immutable inbox entries; never traverse links or copy an operational ledger.
-	root := filepath.Dir(c.Path)
+	inboxDir := filepath.Join(root, "takeover-inbox")
 	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, e error) error {
 		if e != nil {
 			return e
 		}
-		if entry.IsDir() {
+		if filepath.Dir(path) == inboxDir {
+			// The inbox's entries are the names the drain reads: the decision-25 grammar,
+			// directly inside it. Any other name there, and anything below a subdirectory, the
+			// drain never reads; a directory named as an entry was refused above, as the drain
+			// refuses it.
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			if !IsInboxEntry(entry.Name()) {
+				return nil
+			}
+		} else if entry.IsDir() {
 			if path == filepath.Join(root, "takeover-backups") {
 				return filepath.SkipDir
 			}
@@ -143,9 +164,6 @@ func (c *Controller) inspect(ctx context.Context, db *sql.DB, r Record) error {
 		rel, e := filepath.Rel(root, path)
 		if e != nil {
 			return e
-		}
-		if strings.HasPrefix(rel, "takeover-inbox/.") {
-			return nil
 		}
 		if !strings.HasPrefix(rel, "takeover-inbox/") && !strings.Contains(rel, "ledger") && !strings.Contains(rel, "receiver") && !strings.HasPrefix(filepath.Base(rel), "operations-") {
 			return nil

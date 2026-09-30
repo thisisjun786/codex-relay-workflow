@@ -376,6 +376,12 @@ While holding the barrier: revalidate the physical database and WAL identity aga
 integrity_check`, create a consistent backup through the SQLite backup API into
 `S/takeover-backups/<transition-id>/`, fsync the backup and its directory, and record the
 receipt/ACK, attempt, inbox, receiver-ledger and transport-ledger inventory in the manifest.
+The takeover inbox is read here as the candidate's drain will read it: the names the entry
+grammar admits directly in `S/takeover-inbox`, each opened without following a link and
+validated as the replay validates it. An entry the drain would fail closed on (a symbolic link,
+a non-regular file, bytes that are no valid entry) refuses the transfer with the drain's own
+error, while the owner has not changed; any other name, and anything below a subdirectory, is
+no entry, is not inventoried and refuses nothing.
 
 Never copy only the main DB file, never require WAL truncation as a precondition, never delete
 WAL or SHM to make the store look clean.

@@ -35,6 +35,9 @@ type Controller struct {
 	Identity       Identity
 	Runtime        Runtime
 	ValidateSchema func(context.Context, Queryer) error
+	// ValidateInbox reads the state directory's takeover inbox as the candidate's drain will
+	// (internal/relay/inbox Check), returning the error that drain would stop on.
+	ValidateInbox func(state string) error
 	// Fault is nil outside tests; errors model controller death at durable edges.
 	Fault func(step, point string) error
 }

@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/inbox"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 	"golang.org/x/sys/unix"
@@ -63,7 +64,7 @@ func NewTakeover(ctx context.Context, selection store.StateSelection, socket, bu
 	}
 	// The existing authority, not a freshly created alternate scope, is used.
 	// A Python fence created in an isolated root must record that root's key.
-	return &ownership.Controller{Path: physical.RealPath, Socket: canonical, ScopeKey: s.Scope.Key(canonical), ScopeLock: s.Scope.path(canonical, ".lock"), Identity: ProcessIdentity(""), Runtime: &takeoverRuntime{s, build, options}, ValidateSchema: store.ValidateOwnershipSchema}, nil
+	return &ownership.Controller{Path: physical.RealPath, Socket: canonical, ScopeKey: s.Scope.Key(canonical), ScopeLock: s.Scope.path(canonical, ".lock"), Identity: ProcessIdentity(""), Runtime: &takeoverRuntime{s, build, options}, ValidateSchema: store.ValidateOwnershipSchema, ValidateInbox: inbox.Check}, nil
 }
 
 type takeoverRuntime struct {

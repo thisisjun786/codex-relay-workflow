@@ -103,6 +103,38 @@ func Drain(ctx context.Context, st *store.Store, state string, apply Apply) erro
 	return nil
 }
 
+// Check reads S/takeover-inbox as Drain reads it and applies nothing: every name the replay
+// reads, read (inbox.py read_entry) and validated (_replay_entry's checks) as the replay does.
+// Its error is the one the first failing entry would stop a drain with, so the takeover transfer
+// refuses at Step 4, before ownership moves, on an entry the candidate's recovery could only fail
+// closed on (cutover.md Step 4). A missing inbox is nothing to check.
+func Check(state string) error {
+	directory := Directory(state)
+	if _, err := os.Stat(directory); err != nil {
+		if errors.Is(err, os.ErrNotExist) || errors.Is(err, unix.ENOTDIR) || errors.Is(err, unix.ELOOP) {
+			return nil
+		}
+		return &Error{Detail: store.PythonOSError(err)}
+	}
+	names, err := list(directory)
+	if err != nil {
+		return &Error{Detail: store.PythonOSError(err)}
+	}
+	for _, name := range names {
+		raw, _, ok, err := readEntry(filepath.Join(directory, name), name)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			continue // retired since the listing, as the replay skips it
+		}
+		if _, _, err = validate(name, raw); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // lockReplay opens (creating 0600, never following a link) and takes the replay lock EX within
 // the fence's bound.
 func lockReplay(ctx context.Context, path string) (*os.File, error) {
