@@ -439,6 +439,9 @@ func (d *pythonDecoder) value() (any, error) {
 
 func (d *pythonDecoder) object() (any, error) {
 	object := contract.OrderedObject{}
+	// Where each key already stands, so a repeated key is found without walking the fields and a
+	// document with many keys decodes in time proportional to its length.
+	index := map[string]int{}
 	d.at++
 	for d.space(); d.at < len(d.text) && d.text[d.at] != '}'; d.space() {
 		key, err := d.str()
@@ -454,13 +457,10 @@ func (d *pythonDecoder) object() (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		replaced := false
-		for i := range object {
-			if object[i].Key == key {
-				object[i].Value, replaced = item, true
-			}
-		}
-		if !replaced {
+		if at, repeated := index[key]; repeated {
+			object[at].Value = item
+		} else {
+			index[key] = len(object)
 			object = append(object, contract.Field{Key: key, Value: item})
 		}
 		if d.space(); d.at < len(d.text) && d.text[d.at] == ',' {

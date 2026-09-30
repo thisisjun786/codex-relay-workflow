@@ -20,7 +20,8 @@ REQUEST_ID_RE = re.compile(r"^del-[0-9a-f]{12}-a([0-9]+)$")
 # separately so a reader of either regex can see which identity is being checked.
 MESSAGE_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 SUPERVISOR_REQUEST_ID_RE = re.compile(r"^sup-[0-9a-f]{12}-a([0-9]+)$")
-DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
+# \Z and not $: a "$" also matches just before a final newline, which no digest ends in.
+DIGEST_RE = re.compile(r"^[0-9a-f]{64}\Z")
 
 
 def sha256_hex(text: str) -> str:

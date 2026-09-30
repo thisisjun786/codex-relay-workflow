@@ -3,6 +3,7 @@ package delivery
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -236,7 +237,12 @@ func guardDeliverableState(t *testing.T, entries []store.ManifestEntry, revision
 	cmd := exec.Command("uv", "run", "--no-sync", "python", "-c", `import json, sys
 from codex_session_relay.guard import deliverable_state
 spec = json.load(sys.stdin)
-print(json.dumps(list(deliverable_state(spec["payload"], spec["reference"], spec["roots"]))))`)
+try:
+    answer = list(deliverable_state(spec["payload"], spec["reference"], spec["roots"]))
+except Exception as error:
+    # An exception its except clauses do not name leaves deliverable_state.
+    answer = ["raised", type(error).__name__ + ": " + str(error)]
+print(json.dumps(answer))`)
 	cmd.Dir = repo
 	cmd.Stdin = bytes.NewReader(spec)
 	out, err := cmd.Output()
@@ -252,8 +258,10 @@ print(json.dumps(list(deliverable_state(spec["payload"], spec["reference"], spec
 
 // The omission reader replays guard.lookup_receipt, so a stored receipt's deliverable is judged
 // by guard.deliverable_state's rule: a frozen copy nobody could reach, like live bytes nobody
-// could read, leaves the deliverable unverifiable (the omission's receipt_unreadable), and one
-// that was read and is not a manifest is a changed deliverable with the fence's exception words.
+// could read, leaves the deliverable unverifiable (the omission's receipt_unreadable), one that
+// was read and is not a manifest is a changed deliverable with the fence's exception words, and
+// one nested deeper than json.loads descends raises out of it (the omission's
+// evidence_unreadable, Test24_OMI_7b).
 func TestOmissionDeliverableAnswersAsTheGuard(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root bypasses the permissions these cases depend on")
@@ -263,7 +271,10 @@ func TestOmissionDeliverableAnswersAsTheGuard(t *testing.T) {
 			entries, revision, reference, roots := stageDeliverable(t, c)
 			binding, detail, err := omissionDeliverable(entries, revision, reference, roots)
 			var got []any
+			var raised *store.ManifestException
 			switch {
+			case errors.As(err, &raised) && raised.RuntimeError():
+				got = []any{"raised", raised.PythonText()}
 			case err != nil:
 				got = []any{"unverifiable", nil}
 			case binding != "":

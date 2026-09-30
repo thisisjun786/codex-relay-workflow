@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -27,9 +28,9 @@ type deliverableStateCase struct {
 }
 
 // The Stop hook judges a stored receipt's deliverable by guard.deliverable_state's rule: a frozen
-// copy nobody could reach leaves it unverifiable with the reason named, and one that was read and
-// is not a manifest is changed, answered with the exception the fence raised rather than merged
-// into the live problems. Every record, the stored receipt's and the frozen copy's, is read as the
+// copy nobody could reach leaves it unverifiable with the reason named, one that was read and is
+// not a manifest is changed, answered with the exception the fence raised rather than merged into
+// the live problems, and one nested deeper than json.loads descends raises out of it. Every record, the stored receipt's and the frozen copy's, is read as the
 // values json.loads made of it. Each case is staged once and answered by both, word for word.
 func TestDeliverableStateAnswersAsTheGuard(t *testing.T) {
 	if os.Geteuid() == 0 {
@@ -240,7 +241,12 @@ func TestDeliverableStateAnswersAsTheGuard(t *testing.T) {
 			cmd := exec.Command(python(t), "-c", `import json, sys
 from codex_session_relay.guard import deliverable_state
 spec = json.load(sys.stdin)
-print(json.dumps(list(deliverable_state(spec["payload"], spec["reference"], spec["roots"]))))`)
+try:
+    answer = list(deliverable_state(spec["payload"], spec["reference"], spec["roots"]))
+except Exception as error:
+    # An exception its except clauses do not name leaves deliverable_state.
+    answer = ["raised", type(error).__name__ + ": " + str(error)]
+print(json.dumps(answer))`)
 			cmd.Stdin = bytes.NewReader(raw)
 			want, err := cmd.Output()
 			if err != nil {
@@ -251,12 +257,19 @@ print(json.dumps(list(deliverable_state(spec["payload"], spec["reference"], spec
 				t.Fatal(err)
 			}
 			o, _ := spec.(Object)
-			state, binding, detail := DeliverableState(context.Background(), get(o, "payload"), named, get(o, "roots"))
+			state, binding, detail, raised := DeliverableState(context.Background(), get(o, "payload"), named, get(o, "roots"))
 			var guard []any
 			if err := json.Unmarshal(want, &guard); err != nil {
 				t.Fatalf("%v: %s", err, want)
 			}
 			got := []any{state, nullable(binding), nullable(detail)}
+			if raised != nil {
+				var exception *store.ManifestException
+				if !errors.As(raised, &exception) {
+					t.Fatalf("raised %T %v", raised, raised)
+				}
+				got = []any{"raised", exception.PythonText()}
+			}
 			if !reflect.DeepEqual(got, guard) {
 				t.Fatalf("hook  %q\nguard %q", got, guard)
 			}

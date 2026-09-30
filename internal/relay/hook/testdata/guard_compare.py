@@ -22,7 +22,12 @@ cases = ['unmanaged', 'unclaimed', 'uncorrelated', 'unbound', 'other', 'unregist
          'frozen', 'generation', 'dispatch', 'generation_absent', 'inactive', 'foreign_turn',
          'malformed_disposition', 'unreadable_disposition', 'malformed_marker', 'bad_identity',
          'active', 'hold_spent', 'generation_spent', 'window_spent', 'observe',
-         'in_progress', 'blocked_needs_input', 'interrupted', 'failed', 'no_record']
+         'in_progress', 'blocked_needs_input', 'interrupted', 'failed', 'no_record',
+         'frozen_at_depth', 'frozen_past_depth']
+# json.loads's C scanner spends one level of its recursion budget per container, and the budget
+# left where the guard reads a frozen MANIFEST.json is 9998: the outer object and 9997 nested
+# lists are read, and one list more is a RecursionError deliverable_state does not catch.
+depths = {'frozen_at_depth': 9997, 'frozen_past_depth': 9998}
 if selected != 'all':
     cases = selected.split(',')
 
@@ -75,10 +80,10 @@ for name in cases:
         if name == 'other':
             stop['session_id'] = 'other'
         if name in ['ready_missing', 'ready_receipted', 'ready_staged', 'artifacts_changed', 'frozen',
-                    'generation', 'dispatch', 'generation_absent', 'inactive', 'foreign_turn']:
+                    'generation', 'dispatch', 'generation_absent', 'inactive', 'foreign_turn', *depths]:
             intent.publish_disposition(root, workspace=work, assignment=assignment, session_id='child',
                                        turn_id='turn', outcome='ready_for_review', at=now)
-        if name in ['ready_receipted', 'ready_staged', 'artifacts_changed', 'frozen', 'foreign_turn']:
+        if name in ['ready_receipted', 'ready_staged', 'artifacts_changed', 'frozen', 'foreign_turn', *depths]:
             artifact = work / 'out.txt'; artifact.write_text('work')
             entries, _ = manifest.build([str(artifact)], [str(work)])
             revision = manifest.revision_hash(entries)
@@ -88,11 +93,15 @@ for name in cases:
                            relationshipId=rid, executionGeneration=1, attempt=1, revisionHash=revision,
                            outcome='ready_for_review', producer='child', turnRef=ref.to_record(),
                            manifest=[e.to_record() for e in entries], emittedAt=clock.iso())
-            if name == 'frozen':
+            if name == 'frozen' or name in depths:
                 payload['manifestRef'] = manifest.freeze(entries, base / 'frozen')
             ReceiptIntake(store, registry, clock).accept_child_receipt(payload, observation=ref)
-            if name in ['artifacts_changed', 'frozen']:
+            if name in ['artifacts_changed', 'frozen', *depths]:
                 artifact.write_text('changed')
+            if name in depths:
+                document = base / 'frozen' / 'MANIFEST.json'
+                frozen = json.loads(document.read_text())
+                document.write_text(json.dumps(frozen)[:-1] + ', "x": ' + '[' * depths[name] + ']' * depths[name] + '}')
             if name == 'foreign_turn':
                 store.db.execute("UPDATE events SET turn_id='foreign'")
         if name == 'generation':

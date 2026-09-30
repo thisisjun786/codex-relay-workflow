@@ -203,6 +203,12 @@ func Test24_OMI_2_WholeOutput(t *testing.T) {
 func Test24_OMI_7_WholeOutput(t *testing.T) {
 	replayOmittedCalls(t, "test_staged_ready_stays_staged")
 }
+
+// A frozen copy nested past json.loads's depth leaves guard.deliverable_state as a
+// RecursionError, which the reader answers as unreadable evidence with the exception's words.
+func Test24_OMI_7b_WholeOutput(t *testing.T) {
+	replayOmittedCalls(t, "test_a_frozen_copy_nested_past_the_decoder_is_unreadable_evidence")
+}
 func Test24_OMI_8_WholeOutput(t *testing.T) {
 	replayOmittedCalls(t, "test_failed_settlement_without_receipt_is_not_a_report")
 }

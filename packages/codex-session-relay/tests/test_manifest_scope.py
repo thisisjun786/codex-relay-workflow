@@ -9,7 +9,7 @@ import shutil
 import unittest
 from unittest import mock
 
-from codex_session_relay import manifest
+from codex_session_relay import identity, manifest
 from codex_session_relay.errors import RefusalReason, ScopeError
 from codex_session_relay.manifest import Entry
 from codex_session_relay.scope import (
@@ -53,6 +53,20 @@ class Canonicalization(unittest.TestCase):
         for bad in ("relative/path", "/a/../b", "/a/b/", "/a/./b", "~/a"):
             with self.assertRaises(ScopeError, msg=bad):
                 normalize_declared_path(bad)
+
+    def test_a_digest_ending_in_a_newline_is_not_a_digest(self):
+        """A digest is 64 lowercase hex characters and nothing after them.
+
+        re's '$' also matches just before a final newline, so '<hex>\n' used to pass the digest
+        check here and at the receipt's identity, and the Go runtime refused it. Both now refuse.
+        """
+        digest = "a" * 64 + "\n"
+        with self.assertRaises(ScopeError) as raised:
+            manifest.canonical_payload([Entry("/a", digest)])
+        self.assertEqual(raised.exception.reason, RefusalReason.MANIFEST_UNVERIFIED)
+        self.assertIn(repr(digest), raised.exception.detail)
+        with self.assertRaises(ValueError):
+            identity.event_id("rel-" + "0" * 16, 1, digest, "ready_for_review")
 
 
 class Containment(unittest.TestCase):
@@ -381,6 +395,39 @@ class FrozenCopy(RelayTestCase):
         self.assertIn(f"frozen copy of {path!r} hashes to ", caught.exception.detail)
         self.assertFalse(os.path.exists(os.path.join(reference, "MANIFEST.json")))
 
+    def test_a_digest_ending_in_a_newline_names_no_blob(self):
+        """The digest check that guards the blob's name refuses a trailing newline too."""
+        path = self.artifact("newline.txt", "the delivered bytes")
+        entries, _ = manifest.build([path], [self.root])
+        destination = os.path.join(self.tmp, "frozen-newline")
+        bad = Entry(entries[0].path, entries[0].sha256 + "\n", entries[0].bytes)
+        with self.assertRaises(ScopeError) as raised:
+            manifest.freeze([bad], destination)
+        self.assertEqual(
+            raised.exception.detail,
+            f"refusing to store bytes under a non-digest name {bad.sha256!r}",
+        )
+        self.assertEqual(os.listdir(os.path.join(destination, "files")), [])
+        self.assertFalse(os.path.exists(os.path.join(destination, "MANIFEST.json")))
+
+    def test_a_frozen_record_whose_digest_ends_in_a_newline_is_not_hashed(self):
+        """It is a digest problem, and the revision over it raises as for any other non-digest."""
+        path = self.artifact("frozen-newline.txt", "the delivered bytes")
+        entries, _ = manifest.build([path], [self.root])
+        reference = os.path.join(self.tmp, "frozen-record-newline")
+        manifest.freeze(entries, reference)
+        document = os.path.join(reference, "MANIFEST.json")
+        with open(document, encoding="utf-8") as handle:
+            payload = json.load(handle)
+        payload["entries"][0]["sha256"] += "\n"
+        with open(document, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle)
+        for claimed in (entries, None):
+            with self.assertRaises(ScopeError) as raised:
+                manifest.verify_frozen_detailed(reference, claimed)
+            self.assertEqual(raised.exception.reason, RefusalReason.MANIFEST_UNVERIFIED)
+            self.assertIn(repr(payload["entries"][0]["sha256"]), raised.exception.detail)
+
     def test_a_destination_through_a_symlink_or_relative_to_the_cwd_freezes_and_verifies(self):
         """The frozen blob is read where Path.resolve() places it, so neither form is refused."""
         path = self.artifact("placed.txt", "the delivered bytes")
@@ -583,6 +630,18 @@ class IntakeBehaviourIsUnchangedByTheAccessSplit(RelayTestCase):
         self.addCleanup(os.chmod, reference, 0o700)
         os.chmod(reference, 0o000)
         self.assertRefused(RefusalReason.MANIFEST_UNVERIFIED, self.accept, payload)
+
+    def test_a_receipt_digest_ending_in_a_newline_is_malformed(self):
+        """The intake's shape check reads a digest by the same rule as the manifest's."""
+        relationship = self.register()
+        path = self.artifact("intake-newline.txt", "the delivered bytes")
+        for field in ("sha256", "revisionHash"):
+            payload = self.ready_payload(relationship, [path])
+            if field == "sha256":
+                payload["manifest"][0]["sha256"] += "\n"
+            else:
+                payload["revisionHash"] += "\n"
+            self.assertRefused(RefusalReason.MALFORMED_RECEIPT, self.accept, payload)
 
     def test_a_corrupt_frozen_manifest_raises_and_records_no_refusal(self):
         """Readable bytes that are not a manifest are an exception, as they always were."""

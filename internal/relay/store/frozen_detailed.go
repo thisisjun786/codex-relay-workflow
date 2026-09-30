@@ -161,18 +161,31 @@ func VerifyFrozenDocument(ctx context.Context, reference string, raw []byte, ent
 	return revision, problems, unreadable, nil
 }
 
+// frozenJSONDepth is how many nested containers json.loads's C scanner reads where the fence reads
+// a frozen MANIFEST.json: the recursion budget left at that call when the installed console script
+// runs the relay (decision 44), the boundary every other Go reader of a fence JSON document keeps.
+const frozenJSONDepth = 9998
+
 // frozenRecords is [Entry.from_record(record) for record in json.loads(text)["entries"]] over the
-// MANIFEST.json bytes: a UnicodeDecodeError, a JSONDecodeError (or the ValueError of an integer
-// too long to read), then the KeyError or TypeError of reading payload["entries"] and each
-// record's path and digest.
+// MANIFEST.json bytes, text being what Path.read_text() makes of them: a UnicodeDecodeError, then
+// universal newlines, then a JSONDecodeError (or the ValueError of an integer too long to read,
+// or the RecursionError of a document nested deeper than frozenJSONDepth), then the KeyError or
+// TypeError of reading payload["entries"] and each record's path and digest.
 func frozenRecords(raw []byte) ([]PythonEntry, error) {
 	text, err := DecodeUTF8(raw)
 	if err != nil {
+		// Its positions count the bytes before any newline is translated, as the fence's do.
 		return nil, &ManifestException{Class: "UnicodeDecodeError", text: err.Error(), cause: err}
 	}
-	if message := PythonJSONError(text); message != "" {
+	// read_text() opens the file in text mode, so a CRLF or a lone CR is one line feed by the time
+	// json.loads counts lines, columns and characters to say where a document stops being JSON.
+	text = strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
+	if message, recursion := PythonJSONErrorWithLimit(text, frozenJSONDepth); message != "" {
 		class := "JSONDecodeError"
-		if strings.HasPrefix(message, "Exceeds the limit (") {
+		switch {
+		case recursion:
+			class = "RecursionError"
+		case strings.HasPrefix(message, "Exceeds the limit ("):
 			// int() refuses an over-long integer literal with a plain ValueError.
 			class = "ValueError"
 		}
@@ -206,11 +219,12 @@ func frozenRecords(raw []byte) ([]PythonEntry, error) {
 }
 
 // ManifestException is an exception the fence raises while reading a manifest instead of
-// answering: verify_frozen_detailed's frozen MANIFEST.json, reached and not read (an OSError) or
-// read and not a manifest (UnicodeDecodeError, JSONDecodeError, KeyError, TypeError), and the
-// records and revision it and guard.deliverable_state read (TypeError, AttributeError,
-// UnicodeEncodeError). Error is str(exception) and Class its type, which the fence's host
-// envelope and guard.deliverable_state name.
+// answering: verify_frozen_detailed's frozen MANIFEST.json, reached and not read (an OSError),
+// read and not a manifest (UnicodeDecodeError, JSONDecodeError, KeyError, TypeError), or nested
+// deeper than json.loads descends (RecursionError), and the records and revision it and
+// guard.deliverable_state read (TypeError, AttributeError, UnicodeEncodeError). Error is
+// str(exception) and Class its type, which the fence's host envelope and guard.deliverable_state
+// name.
 type ManifestException struct {
 	Class string
 	text  string
@@ -226,6 +240,12 @@ func (e *ManifestException) OSError() bool {
 	var errno unix.Errno
 	return errors.As(e.cause, &errno)
 }
+
+// RuntimeError reports a RecursionError, the one exception here that is not an OSError, a
+// ValueError, a KeyError, a TypeError or an AttributeError. guard.deliverable_state's except
+// clauses name only those, so this one leaves it: the guard faults, and the omission reader, which
+// catches RuntimeError, answers it as evidence it could not read.
+func (e *ManifestException) RuntimeError() bool { return e.Class == "RecursionError" }
 
 // PythonText is the fence's f"{type(error).__name__}: {error}".
 func (e *ManifestException) PythonText() string { return e.Class + ": " + e.text }

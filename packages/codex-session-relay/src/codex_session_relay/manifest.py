@@ -25,7 +25,8 @@ from .scope import (
 )
 
 CHUNK = 1 << 20
-DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
+# \Z and not $: a "$" also matches just before a final newline, and a digest names a file.
+DIGEST_RE = re.compile(r"^[0-9a-f]{64}\Z")
 SERIALIZATION = (
     "MANIFEST-CANON-01: absolute normalized POSIX paths, sorted byte-wise, "
     "'<absolutePath>:<lowercase hex sha256>' per entry, joined with a single LF and no "

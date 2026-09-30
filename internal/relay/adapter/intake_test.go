@@ -36,7 +36,7 @@ func seedIntake(t *testing.T, path, root string) *store.Store {
 	return s
 }
 func Test28_MSC_11_IntakeAdmissionUnchanged(t *testing.T) {
-	kinds := []string{"frozen-good", "frozen-unreachable", "frozen-tampered", "frozen-absent", "frozen-blocked", "frozen-corrupt", "frozen-manifest-unreadable", "frozen-parent-of-missing", "frozen-parent-through-symlink", "live-good", "live-changed", "live-unreadable"}
+	kinds := []string{"frozen-good", "frozen-unreachable", "frozen-tampered", "frozen-absent", "frozen-blocked", "frozen-corrupt", "frozen-manifest-unreadable", "frozen-parent-of-missing", "frozen-parent-through-symlink", "live-good", "live-changed", "live-unreadable", "claimed-digest-newline", "claimed-revision-newline"}
 	// A frozen MANIFEST.json no freeze writes is read as json.loads reads it, so the intake takes
 	// or refuses it, or fails on it, as the fence's intake does.
 	crafted := map[string]testsupport.FrozenManifest{}
@@ -161,6 +161,12 @@ func Test28_MSC_11_IntakeAdmissionUnchanged(t *testing.T) {
 				if err := os.Chmod(work, 0); err != nil {
 					t.Fatal(err)
 				}
+			// A digest is its 64 hex characters and nothing after them: the receipt's shape
+			// check refuses a trailing newline before any byte is read.
+			case kind == "claimed-digest-newline":
+				payload["manifest"].([]any)[0].(map[string]any)["sha256"] = entries[0].SHA256 + "\n"
+			case kind == "claimed-revision-newline":
+				payload["revisionHash"] = revision + "\n"
 			}
 			goStore := seedIntake(t, filepath.Join(root, "go", "go.sqlite3"), work)
 			// The oracle's store has a directory of its own (one takeover.json per directory)

@@ -685,9 +685,10 @@ func omissionDeliverable(entries []store.ManifestEntry, revision, reference stri
 		_, frozen, unreachable, err := store.VerifyFrozenDetailed(reference, entries)
 		if err != nil {
 			// The fence raises here. An OSError or a ScopeError is a comparison that did not
-			// happen; anything else read the frozen copy and found no manifest in it.
+			// happen, and a RecursionError leaves deliverable_state (omissionReceiptFailure names
+			// both); anything else read the frozen copy and found no manifest in it.
 			var exception *store.ManifestException
-			if errors.As(err, &exception) && !exception.OSError() {
+			if errors.As(err, &exception) && !exception.OSError() && !exception.RuntimeError() {
 				return "", exception.PythonText(), nil
 			}
 			return "", "", err
@@ -704,6 +705,19 @@ func omissionDeliverable(entries []store.ManifestEntry, revision, reference stri
 		return "", "", errors.New(strings.Join(unreachableLive[:min(3, len(unreachableLive))], "; "))
 	}
 	return "", strings.Join(problems[:min(3, len(problems))], "; "), nil
+}
+
+// omissionReceiptFailure is the reason a receipt lookup that failed leaves the omission
+// unmeasured with. A receipt nobody could read, or a deliverable nobody could compare, is
+// lookup_receipt's readable False (receipt_unreadable). The RecursionError of a frozen copy nested
+// past json.loads's depth leaves lookup_receipt instead, and observe and derive catch it as a
+// RuntimeError: evidence_unreadable with its words.
+func omissionReceiptFailure(err error) string {
+	var exception *store.ManifestException
+	if errors.As(err, &exception) && exception.RuntimeError() {
+		return "evidence_unreadable: " + exception.Error()
+	}
+	return "receipt_unreadable"
 }
 
 func resolvedPath(value string) (string, error) {
@@ -829,7 +843,7 @@ func observeOmission(ctx context.Context, selection store.StateSelection, root, 
 	if str(disposition, "outcome") == "ready_for_review" {
 		receipt, err = omissionReceipt(ctx, selection.DBPath(), rid, session, turn, fieldOf(markerFact(marker, "relationship"), "executionGeneration"), dispatch)
 		if err != nil {
-			return omissionUnmeasured(result, "receipt_unreadable")
+			return omissionUnmeasured(result, omissionReceiptFailure(err))
 		}
 	}
 	label := declarationLabel(disposition, session, turn, fieldOf(receipt, "atCurrentHead") == true)
@@ -944,7 +958,7 @@ func DeriveOmission(ctx context.Context, s *store.Store, stateDir, rid, turn, no
 	if str(disposition, "outcome") == "ready_for_review" {
 		receipt, err = omissionReceipt(ctx, s.Path, rid, child, turn, generation, dispatch)
 		if err != nil {
-			return omissionUnmeasured(result, "receipt_unreadable")
+			return omissionUnmeasured(result, omissionReceiptFailure(err))
 		}
 	}
 	label := declarationLabel(disposition, child, turn, fieldOf(receipt, "atCurrentHead") == true)

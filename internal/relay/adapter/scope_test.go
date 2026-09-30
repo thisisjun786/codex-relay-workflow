@@ -64,6 +64,17 @@ func Test28_MSC_1_CanonicalManifest(t *testing.T) {
 		scopeCapture(t, map[string]any{"op": "canonical", "entries": entriesRecord(entries)}, map[string]any{"payload": payload, "revision": revision})
 	}
 }
+
+// A digest is its 64 lowercase hex characters and nothing after them: Python's '$' also matched
+// just before a final newline, so the fence's canonical form took '<hex>\n' where Go's refused it.
+func Test28_MSC_1b_DigestEndingInANewlineIsRefused(t *testing.T) {
+	entries := []Entry{{Path: "/a", SHA256: strings.Repeat("a", 64) + "\n"}}
+	_, err := CanonicalPayload(entries)
+	if err == nil {
+		t.Fatal("a digest ending in a newline was canonicalized")
+	}
+	scopeCapture(t, map[string]any{"op": "canonical", "entries": entriesRecord(entries)}, map[string]any{"error": err.Error()})
+}
 func Test28_MSC_2_NormalizedAbsolutePaths(t *testing.T) {
 	for _, path := range []string{"relative/path", "/a/../b", "/a/b/", "/a/./b", "~/a"} {
 		_, err := NormalizeDeclaredPath(path)

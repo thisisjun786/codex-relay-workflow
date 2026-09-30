@@ -46,9 +46,9 @@ read by `hook_probe.py` through `scripts/ci/contracts.py`, not by a test file; t
 ## Totals
 
 Files: 122
-Tests: 5799
+Tests: 5804
 Class A: files=16 tests=634
-Class B: files=88 tests=3378
+Class B: files=88 tests=3383
 Class C: files=18 tests=1787
 
 ## Todo 15 bridge property progress (2026-09-25)
@@ -378,7 +378,7 @@ executables `PATH` and the installer's settings name, which are classified where
 | `packages/codex-session-relay/tests/test_managed_reservation.py` | 15 | B | managed admission reservation: one pending request, one owner | - | todo 27 / CRW-154 | go-test: managed-start package (todo 27) + go-test: `internal/relay/store` (todo 19: typed queries, guard-index refusals and Python-store parity for the tables this file writes) | - |
 | `packages/codex-session-relay/tests/test_managed_start.py` | 35 | B | managed entry drives registry/criteria/marker state | - | todo 27 / CRW-154 | go-test: managed-start package (todo 27) + go-test: `internal/relay/store` (todo 19: typed queries, guard-index refusals and Python-store parity for the tables this file writes) | - |
 | `packages/codex-session-relay/tests/test_management_cli.py` | 28 | A | managed marker through the real command line | - | todo 32 / CRW-155 | corpus: cli-shape + corpus: records | - |
-| `packages/codex-session-relay/tests/test_manifest_scope.py` | 56 | B | MANIFEST-CANON-01, path containment, artifact-read stability | - | todo 28 / CRW-154 | go-test: internal/relay/adapter Test28_MSC_*; store scope reused (todo 28) | - |
+| `packages/codex-session-relay/tests/test_manifest_scope.py` | 60 | B | MANIFEST-CANON-01, path containment, artifact-read stability | - | todo 28 / CRW-154 | go-test: internal/relay/adapter Test28_MSC_*; store scope reused (todo 28) | - |
 | `packages/codex-session-relay/tests/test_marker.py` | 17 | B | create-once marker write protocol | - | todo 21 / CRW-153 | go-test: `internal/relay/delivery` (todo 21) | - |
 | `packages/codex-session-relay/tests/test_merge_evidence.py` | 36 | B | mergeevidence predicates agree with the landed merge turn | `tests/fixtures/merge_turn_oracle.json` | todo 24 / CRW-153 | go-test: `internal/relay/supervisor` (todo 24) | - |
 | `packages/codex-session-relay/tests/test_merge_target.py` | 19 | B | merge target base branch read from real git repos (CRW-229) | - | todo 26 / CRW-154 | go-test: `internal/relay/mergeturn/{target,forge_target,target_cli,commands}_test.go` (MTG-1..8; forge HTTP status via httptest, whole-CLI parity covered by MTG-6 oracle) | - |
@@ -386,7 +386,7 @@ executables `PATH` and the installer's settings name, which are classified where
 | `packages/codex-session-relay/tests/test_merge_turn_wake.py` | 62 | B | freed merge target reaches the parent it was handed to | - | todo 26 / CRW-154 | go-test: `internal/relay/mergeturn/{wake,wake_reports}_test.go` and `internal/relay/delivery/mergegrant_test.go` (MTW-1..10; fake-host dispatch, report readings, whole-JSON parity covered by MTW oracle) | - |
 | `packages/codex-session-relay/tests/test_multi_parent_isolation.py` | 8 | B | two parents, two repos, one store | - | todo 21 / CRW-153 | go-test: `internal/relay/delivery` (todo 21) | - |
 | `packages/codex-session-relay/tests/test_observation_budget.py` | 22 | B | observation budget never skips the current generation | - | todo 29 / CRW-155 | go-test: `internal/relay/daemon` (todo 29) | - |
-| `packages/codex-session-relay/tests/test_omitted.py` | 35 | B | persisted Stop vs relay settlement as separate evidence | - | todo 24 / CRW-153 | go-test: `internal/relay/delivery` Test24_OMI_1..22 (OMI-3 carried to todo 29 daemon integration) | omitted.py carried from todo 21 |
+| `packages/codex-session-relay/tests/test_omitted.py` | 36 | B | persisted Stop vs relay settlement as separate evidence | - | todo 24 / CRW-153 | go-test: `internal/relay/delivery` Test24_OMI_1..22 (OMI-3 carried to todo 29 daemon integration) | omitted.py carried from todo 21 |
 | `packages/codex-session-relay/tests/test_on_request_delivery.py` | 11 | B | on-request recipients carried; approvals not answered (CRW-225) | - | todo 21 / CRW-153 | go-test: `internal/relay/delivery` (todo 21) | - |
 | `packages/codex-session-relay/tests/test_operational_scale.py` | 8 | B | how far/how much a bounded daemon carries | `codex_session_relay.fakehost` | todo 29 / CRW-155 | go-test: `internal/relay/daemon` (todo 29) | - |
 | `packages/codex-session-relay/tests/test_product_routing.py` | 82 | B | product routing against the fault ledger (CRW-206 matrix) | - | todo 23 / CRW-153 | go-test: `internal/relay/routing` (todo 23) + go-test: `internal/relay/store` (todo 19: typed queries, guard-index refusals and Python-store parity for the tables this file writes) | - |

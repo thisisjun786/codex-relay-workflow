@@ -27,6 +27,13 @@ func compareGuard(t *testing.T, cases string) {
 func Test33GuardBinaryPython(t *testing.T) {
 	compareGuard(t, "unmanaged,unregistered,ready_missing,ready_receipted,ready_staged,artifacts_changed,frozen,generation,dispatch,generation_absent,hold_spent,malformed_disposition,in_progress,no_record")
 }
+
+// A frozen copy nested deeper than json.loads can descend leaves guard.deliverable_state as the
+// RecursionError its except clauses do not name, so the guard faults and releases, recorded. One
+// level less is read, and the receipt stands at the head through its frozen copy.
+func Test33GuardFrozenCopyAtTheDecoderDepth(t *testing.T) {
+	compareGuard(t, "frozen_at_depth,frozen_past_depth")
+}
 func Test33GuardUsagePython(t *testing.T) {
 	cmd := exec.Command(python(t), "testdata/guard_usage.py", binary(t), t.TempDir())
 	out, err := cmd.CombinedOutput()

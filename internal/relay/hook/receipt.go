@@ -125,7 +125,10 @@ func LookupReceipt(ctx context.Context, path string, fallback func() (string, er
 		}
 		return answer("stored_receipt_unreadable", Field{Key: "detail", Value: "JSONDecodeError: " + e.Error()}, Field{Key: "eventId", Value: id})
 	}
-	state, binding, detail := DeliverableState(ctx, pv, manifest.String, rv)
+	state, binding, detail, err := DeliverableState(ctx, pv, manifest.String, rv)
+	if err != nil {
+		return nil, false, err
+	}
 	if state == "unverifiable" {
 		return append(set(base, "evidence", "deliverable_unverifiable"), Field{Key: "detail", Value: nullable(detail)}), false, nil
 	}
@@ -150,15 +153,17 @@ func accessFailure(err error) bool {
 // DeliverableState is guard.deliverable_state. The stored receipt's records and the frozen copy's
 // are read as the values json.loads made of them (store.PythonManifestEntries), so a path, digest
 // or byte count of another type is compared, printed and refused as the fence does, and an
-// exception the fence raises is answered as its except clauses answer it (raisedState).
-func DeliverableState(ctx context.Context, payload any, reference string, rootsValue any) (string, string, string) {
+// exception the fence raises is answered as its except clauses answer it (raisedState). The error
+// is the exception those clauses do not name (a *store.ManifestException whose RuntimeError holds),
+// which leaves deliverable_state and lookup_receipt, so the guard faults on it.
+func DeliverableState(ctx context.Context, payload any, reference string, rootsValue any) (string, string, string, error) {
 	o, ok := evidence.Object(payload)
 	if !ok && evidence.Truthy(payload) {
-		return "changed", "", "AttributeError: '" + evidence.TypeName(payload) + "' object has no attribute 'get'"
+		return "changed", "", "AttributeError: '" + evidence.TypeName(payload) + "' object has no attribute 'get'", nil
 	}
 	records, ok := evidence.List(get(o, "manifest"))
 	if !ok || len(records) == 0 {
-		return "changed", "", "the stored receipt carries no manifest to verify"
+		return "changed", "", "the stored receipt carries no manifest to verify", nil
 	}
 	entries, err := store.PythonManifestEntries(records)
 	if err != nil {
@@ -170,59 +175,73 @@ func DeliverableState(ctx context.Context, payload any, reference string, rootsV
 	}
 	claimed := get(o, "revisionHash")
 	if !evidence.Truthy(claimed) {
-		return "changed", "", "the stored receipt names no revision"
+		return "changed", "", "the stored receipt names no revision", nil
 	}
 	if claimed != revision {
-		return "changed", "", "the stored manifest hashes to " + revision + " but the receipt claims " + evidence.Text(claimed)
+		return "changed", "", "the stored manifest hashes to " + revision + " but the receipt claims " + evidence.Text(claimed), nil
 	}
 	rootsList, ok := evidence.List(rootsValue)
 	if !ok {
-		return "changed", "", "TypeError: artifact roots are not a list"
+		return "changed", "", "TypeError: artifact roots are not a list", nil
 	}
 	roots := []string{}
 	for _, r := range rootsList {
 		s, ok := r.(string)
 		if !ok {
-			return "changed", "", "TypeError: artifact root is not a string"
+			return "changed", "", "TypeError: artifact root is not a string", nil
 		}
 		roots = append(roots, s)
 	}
 	problems, unreadable := verifyEntries(ctx, entries, roots)
 	if len(problems) == 0 {
-		return "current", "live", ""
+		return "current", "live", "", nil
 	}
 	if reference != "" {
-		frozen, unreachable, raisedState, raised := verifyFrozen(ctx, reference, entries)
-		if raisedState != "" {
-			return raisedState, "", raised
+		frozen, unreachable, err := verifyFrozen(ctx, reference, entries)
+		if err != nil {
+			return raisedState(err)
 		}
 		if len(frozen) == 0 {
-			return "current", "frozen", ""
+			return "current", "frozen", "", nil
 		}
 		if len(unreachable) > 0 {
-			return "unverifiable", "", strings.Join(unreachable[:min(3, len(unreachable))], "; ")
+			return "unverifiable", "", strings.Join(unreachable[:min(3, len(unreachable))], "; "), nil
 		}
 		problems = append(problems, frozen...)
 	}
 	if len(unreadable) > 0 {
-		return "unverifiable", "", strings.Join(unreadable[:min(3, len(unreadable))], "; ")
+		return "unverifiable", "", strings.Join(unreadable[:min(3, len(unreadable))], "; "), nil
 	}
-	return "changed", "", strings.Join(problems[:min(3, len(problems))], "; ")
+	return "changed", "", strings.Join(problems[:min(3, len(problems))], "; "), nil
 }
 
 // raisedState is guard.deliverable_state's except clauses: an OSError or a ScopeError could not
-// look (unverifiable), and any other exception looked and found a record that is not the shape a
-// receipt is (changed), each named f"{type(error).__name__}: {error}".
-func raisedState(err error) (string, string, string) {
+// look (unverifiable), and a ValueError, KeyError, TypeError or AttributeError looked and found a
+// record that is not the shape a receipt is (changed), each named f"{type(error).__name__}:
+// {error}". A RecursionError is none of those, so it is returned, to leave deliverable_state.
+func raisedState(err error) (string, string, string, error) {
+	var answered *frozenAnswer
+	if errors.As(err, &answered) {
+		return answered.state, "", answered.detail, nil
+	}
 	var exception *store.ManifestException
 	if errors.As(err, &exception) {
-		if exception.OSError() {
-			return "unverifiable", "", exception.PythonText()
+		switch {
+		case exception.RuntimeError():
+			return "", "", "", exception
+		case exception.OSError():
+			return "unverifiable", "", exception.PythonText(), nil
 		}
-		return "changed", "", exception.PythonText()
+		return "changed", "", exception.PythonText(), nil
 	}
-	return "unverifiable", "", "ScopeError: " + err.Error()
+	return "unverifiable", "", "ScopeError: " + err.Error(), nil
 }
+
+// frozenAnswer is an exception the hook's own read of a frozen MANIFEST.json raises before the
+// store reads the document, with the state guard.deliverable_state's except clauses give it.
+type frozenAnswer struct{ state, detail string }
+
+func (e *frozenAnswer) Error() string { return e.detail }
 
 // verifyEntries is manifest.verify_against_disk_detailed over entries revision_hash accepted, so
 // each path and digest is a str; a byte count is compared as the value it is.
@@ -252,36 +271,35 @@ func verifyEntries(ctx context.Context, entries []store.PythonEntry, roots []str
 }
 
 // verifyFrozen is manifest.verify_frozen_detailed as guard.deliverable_state reads it, under the
-// hook's deadline and read bound: the problems, the subset that were failures to read, and what
-// it raised instead of answering, as the state deliverable_state gives the exception and the
-// exception's words (raisedState). A raised exception is the whole answer: the fence's exception
-// leaves before any live problem or unreadable live file is weighed. The document is the path
-// pathlib spells (store.FrozenDocument), and what follows its read is the store's own reading of
-// a frozen copy (store.VerifyFrozenDocument), so the hook, the intake and the omission reader
-// judge one frozen copy alike.
-func verifyFrozen(ctx context.Context, reference string, entries []store.PythonEntry) ([]string, []string, string, string) {
+// hook's deadline and read bound: the problems, the subset that were failures to read, or what it
+// raised instead of answering, which raisedState answers as deliverable_state does. A raised
+// exception is the whole answer: the fence's exception leaves before any live problem or
+// unreadable live file is weighed. The document is the path pathlib spells
+// (store.FrozenDocument), and what follows its read is the store's own reading of a frozen copy
+// (store.VerifyFrozenDocument), so the hook, the intake and the omission reader judge one frozen
+// copy alike.
+func verifyFrozen(ctx context.Context, reference string, entries []store.PythonEntry) ([]string, []string, error) {
 	document := store.FrozenDocument(reference)
 	if strings.ContainsRune(document, 0) {
 		// os.stat refuses the name before any system call; the fence lets that ValueError out.
-		return nil, nil, "changed", "ValueError: embedded null byte"
+		return nil, nil, &frozenAnswer{"changed", "ValueError: embedded null byte"}
 	}
 	// _frozen_document_access: absent, or out of reach. Only the second is a failure to read.
 	if info, err := os.Stat(document); err != nil || !info.Mode().IsRegular() {
 		message := reference + ": no MANIFEST.json in the frozen copy"
 		if err != nil && accessFailure(err) {
-			return []string{message}, []string{reference + ": the frozen manifest could not be reached: " + store.PythonOSErrorText(err)}, "", ""
+			return []string{message}, []string{reference + ": the frozen manifest could not be reached: " + store.PythonOSErrorText(err)}, nil
 		}
-		return []string{message}, nil, "", ""
+		return []string{message}, nil, nil
 	}
 	raw, err := readRegular(ctx, document, maxInputBytes)
 	if err != nil {
 		// Reached and not read: the fence raises the OSError, a comparison that did not happen.
-		return nil, nil, "unverifiable", store.PythonOSError(err)
+		return nil, nil, &frozenAnswer{"unverifiable", store.PythonOSError(err)}
 	}
 	_, problems, unreadable, err := store.VerifyFrozenDocument(ctx, reference, raw, entries)
 	if err != nil {
-		state, _, detail := raisedState(err)
-		return nil, nil, state, detail
+		return nil, nil, err
 	}
-	return problems, unreadable, "", ""
+	return problems, unreadable, nil
 }
