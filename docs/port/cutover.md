@@ -46,10 +46,10 @@ Objects the fence release adds, all owner-only (`0700` directories, `0600` files
 | `S/takeover.lock` | permanent-inode exclusive lock that serializes transition controllers |
 | `S/write-gate.lock` | permanent-inode shared/exclusive admission barrier for DB writers |
 | `S/takeover.json` | durable transition record and admission mirror (atomic replace) |
-| `S/takeover-inbox/` | immutable, durable receipt/ACK requests awaiting application |
-| `S/takeover-inbox/.replay.lock` | permanent-inode exclusive lock held by an inbox replayer from reading an entry until after its unlink and directory fsync |
+| `S/takeover-inbox/` | immutable, durable receipt/ACK requests awaiting application (historical: no Go reader or writer since decision 55) |
+| `S/takeover-inbox/.replay.lock` | permanent-inode exclusive lock held by an inbox replayer from reading an entry until after its unlink and directory fsync (historical, decision 55) |
 | `S/control.sock` | stable local control and `guard-evaluate` RPC address served by both runtimes |
-| `S/takeover-backups/<transition-id>/` | SQLite backup plus inventory manifest; disaster-recovery evidence only, never rollback input |
+| `S/takeover-backups/<transition-id>/` | SQLite backup plus inventory manifest; disaster-recovery evidence only, never rollback input (historical: no controller writes one since decision 54) |
 
 Rule that applies to every lock file, old or new: **never unlink it and never replace it
 atomically.** The inode is the rendezvous point. Atomic replace is for `takeover.json` only.
@@ -62,6 +62,14 @@ directory is refused. Locks Go creates are 0600, so Go never leaves behind a loc
 refuses, and a 0775 state directory (Python's `mkdir` under umask 002) serves in both runtimes.
 
 ## Record
+
+Since refactor R1 (decision 56) the Go writer's admission is the durable stamp alone: a
+writable open reads `schema_meta` on the connection it opened and requires the six keys naming
+owner `go` and the frozen schema, before any statement of the open writes; it takes
+`write-gate SH` for the store's lifetime and no longer reads or judges the mirror, copies the
+database, or rereads the stamp per transaction. A new store still gets the six keys and the mirror
+below, the socket binding still republishes the mirror, and no writer rewrites or deletes either.
+What follows describes the record both runtimes kept during the cutover.
 
 Ownership has two halves. The durable truth lives in the existing `schema_meta` table; the
 admission mirror lives in `S/takeover.json`. Writer admission requires that both agree while the
@@ -243,6 +251,10 @@ The `database` block is how Go proves it opened the same physical store: `Store.
 
 ## Lock order
 
+Since decisions 54 to 56 only the creation, the socket binding and the ordinary writer's
+`write-gate SH` remain of the order below; the transition controller, its barrier and the inbox
+replay are removed.
+
 Every path that needs more than one of these locks takes them in this order and releases them
 in reverse:
 
@@ -315,6 +327,12 @@ These steps ran on the owner's host at todo 42 and were committed at todo 43. Th
 the fence release Step 0 installs and the Python candidate a rollback launches, left the repository
 in todo 44 (decision 48), so this page is the record of what ran; a host still on the Python
 runtime would run it from a revision before that.
+
+Historical since refactor R1 (decision 54): the transition controller that ran Steps 1-7, the
+Rollback and the Commit point below - `crw relay takeover` with every action, its candidate channel
+and `service run --takeover-candidate` - is removed from the Go runtime. These sections record the
+protocol as it ran; the Record, the Lock order and the durable stamp above still describe what
+every store carries, and no Go writer rewrites or deletes them.
 
 Each step names what the controller does, then its failure branch and recovery. No step deletes
 `D-wal` or `D-shm`, and no step creates an alternate empty database.
@@ -780,6 +798,8 @@ adapter journals it as `guard_host_error`. The fault sweep's managed readings na
 
 ## Rollback
 
+Historical (decision 54): no controller remains to run a rollback.
+
 Since todo 44 the controller launches no Python candidate (decision 48): `crw relay takeover
 rollback --to python`, and a `takeover activate` that would resume a Python activation, are
 refused before any durable edge with `store_owned_by_other`, whatever `--python-relay` names,
@@ -828,6 +848,9 @@ with row counts and a `schema_meta` dump equal across the three states except fo
 
 ## Commit point
 
+Historical (decision 54): the commit ran on the owner's host at todo 43; no controller remains
+to run another.
+
 The irreversible point is an operator-authorized, durable write of
 `schema_meta.rollback_allowed = "0"` inside a SQLite transaction (`crw relay takeover commit`,
 run only after Jun ends the observation window, todo 43). The JSON mirror follows afterwards.
@@ -867,6 +890,11 @@ Cached hook compatibility paths have a separate retirement condition (Retention)
 rollback does not by itself permit removing them.
 
 ## Inbox
+
+Historical since refactor R1 (decision 55): the Go runtime neither queues into nor drains
+`S/takeover-inbox/`; a receipt or acknowledgment the store's ownership refuses is answered with that
+refusal. The directory, which was empty on the owner's host when the drain was removed, is the
+operator's to delete. This section and its wire format record the protocol as it ran.
 
 `S/takeover-inbox/<operation-id>` is the durable ingress that preserves receipts and ACKs across
 the interval when no owner is active. It ships in the fence release, not only in Go.
@@ -1054,9 +1082,10 @@ message, another recipient, a wrong proof: the same exit-2 answer in both runtim
 opened only on its first use, as Python's `_LazyAdapter` is. Go's readback host, like its
 queued-ack host, shares no store, and a readback asks for no lifecycle observation either.
 
-Golden entry bytes live in `contract/golden/takeover-inbox/`, one per queueable command plus
-the retained legacy `supervisor-read` format; Go's envelope (`internal/relay/inbox.Envelope`)
-reproduces them byte for byte, and its replay accepts exactly the entries the fence accepts: it
+Golden entry bytes lived in `contract/golden/takeover-inbox/` until refactor R1 deleted them
+with the inbox (decision 55), one per queueable command plus the retained legacy
+`supervisor-read` format; Go's envelope (`internal/relay/inbox.Envelope`) reproduced them byte for
+byte, and its replay accepts exactly the entries the fence accepts: it
 re-derives an entry from its typed arguments, as the fence does from the rebuilt namespace, so
 an empty append list (which no producer writes) is kept and accepted, never dropped.
 

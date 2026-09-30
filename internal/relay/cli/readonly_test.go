@@ -230,8 +230,8 @@ func unauthenticatedGH(t *testing.T) string {
 // Every read form of test_fence_readonly.py's READ_FORMS, through the built binary, answers
 // what the real Python CLI answers for the same copy of one populated store, whoever owns it
 // and whatever phase it is in (cli.py:185-205, cutover.md Read-only clients). Where Go may
-// not write - another owner, draining, starting without a permit, a contended write gate -
-// the Go reads change no byte of the store.
+// not write - another owner, a contended write gate - the Go reads change no byte of the
+// store. A Go store's mirror phase is no longer an input (decision 56).
 func TestReadOnlyForms_match_python_in_every_ownership_state(t *testing.T) {
 	home := pythonHome(t)
 	recordedGH := unauthenticatedGH(t)
@@ -275,6 +275,12 @@ func TestReadOnlyForms_match_python_in_every_ownership_state(t *testing.T) {
 	failures := make([][]string, len(states))
 	var wait sync.WaitGroup
 	for i, state := range states {
+		if state.phase == "starting" {
+			// A Go store's mirror phase is no longer an input (decision 56); the state keeps
+			// its place, since each state's directory, which the recorded answers name, is
+			// lettered by it.
+			continue
+		}
 		dir := filepath.Join(home, "states", string(rune('a'+i)))
 		copyStore(t, filepath.Dir(built.DB), dir)
 		epoch, _ := strconv.ParseInt(state.epoch, 10, 64)

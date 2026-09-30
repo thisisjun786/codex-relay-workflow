@@ -13,7 +13,6 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/inbox"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -74,23 +73,15 @@ func ExecuteAs(ctx context.Context, prog string, argv []string, stdout, stderr i
 	if err != nil {
 		return response(stdout, map[string]any{"error": "host", "detail": hostText(err)}, 3), true
 	}
-	// cli.main runs its lock-free check_start before the selection refusal and before
-	// --kind-module: an acknowledgment the store's ownership refuses queueably is queued
-	// whatever --socket or --kind-module says (decision 25).
-	if name == "fault-notification-ack" && inbox.RefusedAtStart(ctx, selection.DBPath(), socket) {
-		return queued(stdout, selection.Path, name, argv[i+1:]), true
-	}
 	if check != nil {
 		// The relay CLI's check also admits a writable command's store (its open can be
-		// refused like the one below) and replays the takeover inbox on it.
+		// refused like the one below).
 		if err = check(selection, socket); err != nil {
 			var payload interface {
 				ExitPayload() (contract.OrderedObject, int)
 			}
 			var refused *store.RefusedError
 			switch {
-			case name == "fault-notification-ack" && inbox.QueueableRefusal(err):
-				return queued(stdout, selection.Path, name, argv[i+1:]), true
 			case errors.As(err, &payload):
 				body, code := payload.ExitPayload()
 				return response(stdout, body, code), true
@@ -145,11 +136,6 @@ func ExecuteAs(ctx context.Context, prog string, argv []string, stdout, stderr i
 		return response(stdout, map[string]any{"error": "host", "detail": hostText(err)}, 3), true
 	}
 	s, err := store.Open(ctx, selection.DBPath(), socket)
-	if name == "fault-notification-ack" && inbox.QueueableRefusal(err) {
-		// Another runtime owns the store, or it is draining or starting: the acknowledgment
-		// is durably queued for the owner instead (decision 25, cli.main).
-		return queued(stdout, selection.Path, name, argv[i+1:]), true
-	}
 	if err != nil {
 		// A refusal keeps its reason and exit 2, as cli.main answers every RelayError.
 		var refused *store.RefusedError
@@ -313,16 +299,6 @@ func ExecuteAs(ctx context.Context, prog string, argv []string, stdout, stderr i
 	return code, true
 }
 
-// queued is cli.main's answer to a queueable refusal of a fault-notification-ack: the request
-// published in S/takeover-inbox, with the fence's answer and exit code.
-func queued(stdout io.Writer, state, name string, argv []string) int {
-	body, code := inbox.Queue(state, name, argv)
-	if e := contract.Emit(stdout, body); e != nil {
-		return 3
-	}
-	return code
-}
-
 // faultAnswer is cli.main's reply to a fault handler's ending: the printed object, in the
 // command family's own key order, and its exit code.
 func faultAnswer(name string, result any, err error) (any, int) {
@@ -363,25 +339,6 @@ func faultAnswer(name string, result any, err error) (any, int) {
 		return cOrdered(result, ""), 0
 	}
 	return ordered(result), 0
-}
-
-// ApplyQueued runs a queued fault-notification-ack (decision 25) through its existing handler
-// on the drainer's store st, inside the composing transaction ctx carries, as inbox.replay
-// calls args.handler(services, args). It answers as inbox.Apply does: 0 or 2 with the
-// handler's stdout object; any host failure is err.
-func ApplyQueued(ctx context.Context, st *store.Store, argv []string) (any, int, error) {
-	const name = "fault-notification-ack"
-	parsed, _, handled := faultParse(name, name, argv, io.Discard, io.Discard)
-	if handled {
-		return nil, 0, fmt.Errorf("queued %s arguments do not parse", name)
-	}
-	ctx = context.WithValue(ctx, numberArgsKey{}, parsed.numbers)
-	result, err := executeD(ctx, &Ledger{Store: st, Clock: f1Clock(ctx)}, name, parsed.text)
-	value, code := faultAnswer(name, result, err)
-	if code == 3 {
-		return nil, code, err
-	}
-	return value, code, nil
 }
 
 func latestPublicationAnswer(ctx context.Context, l *Ledger, id string, before int64) any {

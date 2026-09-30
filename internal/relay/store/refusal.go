@@ -3,35 +3,38 @@ package store
 import (
 	"errors"
 	"fmt"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 )
 
-// Refusal reasons shared with Python's errors.RefusalReason; the strings are machine-consumed.
+// Refusal reasons of the relay exit-code contract (contract/schema/relay-exit-codes.json, generated
+// into internal/contract); the strings are machine-consumed.
 const (
-	ReasonUnregisteredRelationship = "unregistered_relationship"
-	ReasonRelationshipNotActive    = "relationship_not_active"
-	ReasonStaleGeneration          = "stale_generation"
-	ReasonUnknownGeneration        = "unknown_generation"
-	ReasonUnboundGeneration        = "unbound_generation"
-	ReasonScopeEscape              = "scope_escape"
-	ReasonSymlinkComponent         = "symlink_component"
-	ReasonPathChanged              = "path_changed"
-	ReasonPathRelocated            = "path_relocated"
-	ReasonUnverifiablePathBinding  = "unverifiable_path_binding"
-	ReasonInsufficientPathBinding  = "insufficient_path_binding"
-	ReasonArtifactMutated          = "artifact_mutated_during_read"
-	ReasonArtifactLeaseBroken      = "artifact_lease_broken"
-	ReasonNotARegularFile          = "not_a_regular_file"
-	ReasonManifestRequired         = "manifest_required"
-	ReasonManifestForbidden        = "manifest_forbidden"
-	ReasonManifestUnverified       = "manifest_unverified"
-	ReasonRevisionMismatch         = "revision_mismatch"
-	ReasonEventIDMismatch          = "event_id_mismatch"
-	ReasonTurnRefMismatch          = "turnref_mismatch"
-	ReasonUnassignedTurn           = "unassigned_turn"
-	ReasonContradictoryObservation = "contradictory_observation"
-	ReasonMalformedReceipt         = "malformed_receipt"
-	ReasonOutcomeInconsistent      = "outcome_inconsistent"
-	ReasonProducerNotPermitted     = "producer_not_permitted"
+	ReasonUnregisteredRelationship = string(contract.RefusalUnregisteredRelationship)
+	ReasonRelationshipNotActive    = string(contract.RefusalRelationshipNotActive)
+	ReasonStaleGeneration          = string(contract.RefusalStaleGeneration)
+	ReasonUnknownGeneration        = string(contract.RefusalUnknownGeneration)
+	ReasonUnboundGeneration        = string(contract.RefusalUnboundGeneration)
+	ReasonScopeEscape              = string(contract.RefusalScopeEscape)
+	ReasonSymlinkComponent         = string(contract.RefusalSymlinkComponent)
+	ReasonPathChanged              = string(contract.RefusalPathChanged)
+	ReasonPathRelocated            = string(contract.RefusalPathRelocated)
+	ReasonUnverifiablePathBinding  = string(contract.RefusalUnverifiablePathBinding)
+	ReasonInsufficientPathBinding  = string(contract.RefusalInsufficientPathBinding)
+	ReasonArtifactMutated          = string(contract.RefusalArtifactMutatedDuringRead)
+	ReasonArtifactLeaseBroken      = string(contract.RefusalArtifactLeaseBroken)
+	ReasonNotARegularFile          = string(contract.RefusalNotARegularFile)
+	ReasonManifestRequired         = string(contract.RefusalManifestRequired)
+	ReasonManifestForbidden        = string(contract.RefusalManifestForbidden)
+	ReasonManifestUnverified       = string(contract.RefusalManifestUnverified)
+	ReasonRevisionMismatch         = string(contract.RefusalRevisionMismatch)
+	ReasonEventIDMismatch          = string(contract.RefusalEventIdMismatch)
+	ReasonTurnRefMismatch          = string(contract.RefusalTurnrefMismatch)
+	ReasonUnassignedTurn           = string(contract.RefusalUnassignedTurn)
+	ReasonContradictoryObservation = string(contract.RefusalContradictoryObservation)
+	ReasonMalformedReceipt         = string(contract.RefusalMalformedReceipt)
+	ReasonOutcomeInconsistent      = string(contract.RefusalOutcomeInconsistent)
+	ReasonProducerNotPermitted     = string(contract.RefusalProducerNotPermitted)
 	// ReasonStoreAbsent is cli.py Services.store's refusal of a read-only command on a store
 	// that does not exist (no D, takeover.json or write-gate.lock); like "store_absent" in
 	// declarations.py it is a literal there, not a member of errors.RefusalReason.
@@ -51,7 +54,7 @@ func (e *RefusedError) Unwrap() error { return e.cause }
 
 // RefusedBecause is a refusal that keeps the failure it was decided on reachable through
 // errors.As, as Python chains a RelayError `from` its cause: a receipt refused because the host
-// could not confirm the turn stays a HostUnavailable underneath (inbox.Retained).
+// could not confirm the turn stays a HostUnavailable underneath.
 func RefusedBecause(reason, detail string, cause error) *RefusedError {
 	return &RefusedError{Reason: reason, Detail: detail, cause: cause}
 }

@@ -240,7 +240,7 @@ func (h *host) pythonVenv(t *testing.T) string {
 	for name, text := range map[string]string{
 		"__init__.py":    "",
 		"errors.py":      "# placeholder: the fence release's errors module\n",
-		"ownership.py":   "# placeholder: the fence release's ownership module\nBUILD = \"" + ownership.PythonBuild + "\"\n",
+		"ownership.py":   "# placeholder: the fence release's ownership module\nBUILD = \"" + ownership.CompatibilityBuild + "\"\n",
 		"stopadapter.py": "# placeholder: the fence release's Python Stop adapter\ndef main():\n    return 0\n",
 	} {
 		write(t, filepath.Join(sitePackages(env), "codex_session_relay", name), text)

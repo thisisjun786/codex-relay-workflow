@@ -1,7 +1,6 @@
 package service
 
 import (
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
@@ -42,13 +41,7 @@ func (s *ScopeRegistry) Key(socket string) string {
 	if err != nil {
 		canonical = socket
 	}
-	hash := sha256.Sum256([]byte(canonical))
-	key := fmt.Sprintf("%x", hash[:8])
-	if s.Authority != "production" {
-		salt := sha256.Sum256([]byte(s.Root))
-		key = fmt.Sprintf("isolated-%x-%s", salt[:4], key)
-	}
-	return key
+	return ownership.ScopeKeyIn(canonical, s.Root, s.Authority != "production")
 }
 
 // path is pathlib's root / f"{key}{suffix}": the root joined as spelled, never

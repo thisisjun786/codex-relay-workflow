@@ -2713,3 +2713,143 @@ through other code, so a copy that only its tests call tests nothing the product
 
 Evidence: `git grep -n 'testonly_test.go'`; `internal/relay/delivery/onrequest_adapter_test.go`
 (`verifyResume`); `internal/relay/supervisor/partd_res_rcf_slf_test.go` (`slfCheck`).
+
+## 53. No work-report writer: the supervisor's report library is deleted (refactor R1)
+
+Decision: the supervisor's work-report library - `RecordWorkReport` with its validation and
+normalization (`report_record.go`, `report_review.go`, `report_restore.go`, `report_subset.go`),
+its read-back (`ReadWorkReport`, `ReadWorkReports`), the correction gate
+(`AssertReportResubmission`) and delivery's `ProjectReportRestoration` - is deleted, with the
+tests whose subject it was and their recordings. The `work_reports`, `work_report_handoffs` and
+`attempt_report_submissions` tables stay in the schema with any rows a store holds, and every
+product reader of them stays: delivery's report composition and the attempt's submission freeze,
+`crw relay show`, the supervisor obligation and packet reads, the registry's dispositions and the
+evidence reports. The supervisor replay harness (`partd_report_alias_test.go`) no longer replays
+Python's recorded `report` and `read` operations; each operation runs on its own snapshot, so
+the others are unchanged. The invariants `report.record` enforced (I-90, I-96, I-100, I-105,
+I-113, I-118, I-129, I-132, I-122 in docs/relay/invariants.md) are marked retired.
+
+Why: nothing in the product records a work report in either runtime (Python's `report.record`
+had only test callers, and so did the Go port of it), so the library tested a writer nobody runs.
+The owner chose deletion over wiring a command for it (2026-10-01).
+
+Evidence: `git grep -n 'INSERT INTO work_reports'` (no product match); the readers named above;
+`internal/relay/store/table_coverage_test.go` (every report table still has a product query).
+
+## 54. The takeover controller, its candidate and `crw relay takeover` are removed (refactor R1)
+
+Decision: the Go runtime no longer carries the ownership transition controller. Removed:
+`crw relay takeover` with every action (`status`, `begin`, `drain`, `transfer`, `activate`,
+`abort`, `rollback`, `commit`, `repair-mirror`) and its options (`--to`, `--python-relay`,
+`--ready-timeout`); the candidate's inherited activation channel and the hidden
+`service run --takeover-candidate` flag; `ownership.Controller` with its transfer backup and
+inventory; the candidate permit (`ownership.Candidate`, `WithCandidate`); the takeover-only
+export `store.RefuseLiveState`; and the `takeoverStatus` record in contract/schema/records.json.
+A command line naming `takeover` is now an unknown command (argparse's exit 2), and `service run
+--takeover-candidate` an unknown flag. A store whose mirror says `starting` is refused to every
+opener with the words a process without the candidate's permit always got ("only designated
+candidate may enter starting"). Nothing else an opener, the hook or the doctor reads changes: the
+mirror, the six schema_meta ownership rows, write-gate.lock and takeover.lock stay as every store
+has them, and `S/takeover-backups/`, which only the transfer wrote, is the operator's to delete.
+docs/port/cutover.md marks Steps 1-7, the Rollback and the Commit point historical.
+
+Not removed here, although survey B-03 names them: the `guard-evaluate` command and the doctor's
+`ownership.processes` echo of each record's `python_compatibility_build`. Removing the command
+changes the root parser's usage and choice list, and removing the echo changes the doctor's
+ownership block, in about 140 recorded Python answers (argparse sweeps, formatter and doctor
+comparisons) that wave R1 can neither keep byte-identical nor regenerate; they go in wave R3, once
+the goldens have an update mode.
+
+Why: the owner's host committed the cutover at todo 43 (owner go, epoch 8, rollback_allowed 0),
+no Python runtime or candidate remains (decision 48), and no skill, hook, wiring file or
+relay-emitted text names the takeover command. A controller whose only transitions are refused
+or already done is a second, unexercised writer of the fence.
+
+Evidence: `git grep -n 'takeover' -- plugins` (only the mirror's file name in
+crw-run/references/relay.md); internal/relay/store/ownership/admission.go (`judge`);
+internal/relay/store/ownership/protocol_test.go (the admission tests, now on a Go-created store);
+internal/relay/service/control_test.go (`Test30ForeignOwnerCLIRefusesWithoutDBChanges`).
+
+## 55. The takeover inbox is retired: nothing queues into S/takeover-inbox or drains it (refactor R1)
+
+Decision: the decision-25 takeover inbox leaves the Go runtime: `internal/relay/inbox` (the
+envelope, the durable enqueue and the replay), the relay CLI's drain on a writable command's first
+admitted open, in the daemon before its first tick and in the service supervisor's recovery, the
+per-family appliers (`delivery.ApplyQueued`, `faults.ApplyQueued`, the legacy `supervisor-read`
+replay and its lazy host), the queue branches of `emit`, `ack` and `fault-notification-ack`,
+`ownership.IsInboxEntry`, the `Queueable` mark on an ownership refusal, and
+contract/golden/takeover-inbox. A receipt or acknowledgment the store's ownership refuses (another
+runtime's store, or one draining or starting) is now answered with that refusal - exit 2,
+`store_owned_by_other`, in the fence's words - where it used to be queued with
+`{"status": "durably_queued", ...}`. A writable command still opens its store once before its
+handler and before `--kind-module`, so the refusal order is unchanged.
+
+Why: the inbox carried receipts and acknowledgments across the interval when no runtime was the
+active owner during a takeover; with no takeover left (decision 54) and the owner's host on an
+active Go owner for good, nothing can be refused queueably, and the live `S/takeover-inbox` was
+empty when the drain was removed (checked 2026-10-01). The directory and its `.replay.lock` are the
+operator's to delete. docs/port/cutover.md marks the Inbox section historical.
+
+Evidence: `internal/relay/delivery/cli.go`, `internal/relay/faults/cli.go` (no queue branch);
+`internal/relay/cli/registry.go` (`admit`, `admitsBeforeHandler`);
+`Test31_check_start_precedes_the_selection_kind_module_and_handler_refusals` (refusal order).
+
+## 56. The write fence is a frozen stamp read on the writer's own connection (refactor R1)
+
+Decision: a writable open of an existing store no longer runs the fence's admission. It opens the
+database read-write and, on that connection and before any statement of the open writes, reads
+`schema_meta`: the six ownership keys must be present and valid and `owner` must be `go`, and
+every table and column of the frozen v1 schema must exist; then it takes `write-gate.lock` SH for
+the store's lifetime (binding the store to the App Server socket it names first, when the store
+records none). Removed: `ownership.Admission` (`Admit`, the per-connection `Check`, the
+per-transaction `Revalidate` and `Compose`'s revalidation), the start preflight's `CheckStart`
+and `CheckStop` judgements of the mirror against the stamp (`ownership.Validate`), the fence's
+wording of mirror disagreements (store/fence_wording.go), and every disposable copy of the
+database a writable open used to read (`SnapshotMeta` for the admission, the connection hook and
+the binding, `validateSchemaSnapshot`). The lock-free preflights (`StartPreflight`,
+`CheckStartLikeFence`, `CheckStop`) still refuse a mirror whose bytes are unreadable or not a JSON
+object, then read the stamp in place (no copy, no sidecar; a command's preflight waits for a
+writer's lock as its open would, the Stop path does not wait) and refuse a fenced store that names
+another owner, or none, in the fence's words ("the relay store belongs to another runtime",
+"missing or unsupported writer protocol"); a store whose write-ahead log an in-place read cannot
+use is left to the writable open. `ownership.PythonBuild` is `ownership.CompatibilityBuild`, with the
+same value.
+
+Kept, for the one live store and for any older Go runtime (the rollback target admits a store only
+with all of them): the six `schema_meta` ownership rows, `takeover.json`, `write-gate.lock` and
+`takeover.lock` are never rewritten or deleted. A new store is still created with the six rows
+(owner go, epoch 1), the gate and the mirror; the socket binding still records `socket_path` and
+republishes the mirror with the socket and scope key, every other field as it was, and a torn
+binding is completed by the next open naming the same socket. Nothing repairs a missing mirror
+(decision D0): a store whose creator died after linking its stamped database and before publishing
+the mirror is written on its stamp, and its mirror stays absent (the operator's
+`takeover repair-mirror` went with decision 54). The Stop hook (`ownsGuard`, `localStop`) and
+the doctor's ownership block read the mirror and the stamp as before.
+
+Changed, only for states the live host cannot reach: the mirror's phase and its agreement with the
+stamp are no longer inputs, so a Go store whose mirror says draining or starting, or disagrees
+with the stamp, is written as any Go store is; the doctor's access probe names another owner in
+the fence's words instead of validate's; and opening another runtime's store read-write before
+refusing it may leave SQLite's WAL sidecars beside it (no row changes: the stamp is judged before
+the schema script runs).
+
+Why: the admission guarded a two-runtime handoff that no longer exists (decisions 54 and
+55). It copied the database and its WAL three to four times per writable open (the admission,
+the schema check, the connection hook, and the binding's preflight) and reread the mirror and the
+stamp on every transaction; the stamp alone decides who may write, and it is read where the write
+happens.
+
+Measured (`go test -run XXX -bench 'BenchmarkWritableOpen|BenchmarkTransaction' -benchtime 30x
+./internal/relay/store/`, five CPUs, the same host, before and after this change): an open and
+close of an empty store went from 5.3 ms to 3.0 ms, of a store holding 20 MB of rows from 25.0 ms
+to 2.7 ms (the copies grew with the database; the stamp read does not), and a one-row transaction
+from 6.8 ms and 173 allocations to 6.9 ms and 16 allocations (its time is the synchronous commit;
+the stamp and mirror reread were its allocations).
+
+Evidence: internal/relay/store/stamp.go (`verifyWritable`, `holdGate`, `bindSocket`,
+`stampInPlace`), internal/relay/store/ownership.go (`checkStamp`);
+internal/relay/store/open_bench_test.go;
+Test30SocketBindingBindsAnUnboundStoreOnce, Test30TornSocketBindingIsCompletedOnlyByItsSocket,
+Test30CreateAbsentNeverExposesUnstampedDatabase (a crashed creation is written on its stamp),
+TestDoctor_ownership_block_matches_python_on_a_broken_store (the probe's words for a mirror-only
+breakage).

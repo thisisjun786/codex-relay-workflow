@@ -27,7 +27,7 @@ func ownershipBlock(t *testing.T, stdout string) string {
 	}
 	end := start + strings.Index(stdout[start:], "\n  }")
 	block := stdout[start : end+len("\n  }")]
-	return regexp.MustCompile(`"runtime_build": "[^"]*"`).ReplaceAllString(block, `"runtime_build": "`+ownership.PythonBuild+`"`)
+	return regexp.MustCompile(`"runtime_build": "[^"]*"`).ReplaceAllString(block, `"runtime_build": "`+ownership.CompatibilityBuild+`"`)
 }
 
 // doctor's ownership block is ownership.report's all-or-nothing reading: a mirror or database
@@ -59,6 +59,8 @@ func TestDoctor_ownership_block_matches_python_on_a_broken_store(t *testing.T) {
 			}
 		}
 	}
+	stampOnly := map[string]bool{"empty mirror object": true, "incomplete record": true, "mistyped record": true, "numeric phase": true,
+		"control socket of another state directory": true, "transition of another takeover": true, "invalid durable epoch": true, "record of another store": true}
 	for _, c := range []struct {
 		name      string
 		break_    func(t *testing.T, state string)
@@ -134,6 +136,14 @@ func TestDoctor_ownership_block_matches_python_on_a_broken_store(t *testing.T) {
 			}
 			pyAccess, goAccess := decode(t, py.stdout)["access"], decode(t, got.stdout)["access"]
 			detail, _ := goAccess.(map[string]any)["detail"].(string)
+			if stampOnly[c.name] {
+				// The fence's validate refused this record for its mirror, which Go no longer
+				// judges (decision 56): Go's probe reads the stamp, which names Python.
+				if !strings.Contains(detail, "store_owned_by_other: the relay store belongs to another runtime") {
+					t.Fatalf("go access detail %q", detail)
+				}
+				return
+			}
 			if !reflect.DeepEqual(pyAccess, goAccess) || !strings.Contains(detail, c.access) {
 				t.Fatalf("access detail carrying %q\npython: %v\ngo:     %v", c.access, pyAccess, goAccess)
 			}
@@ -196,7 +206,7 @@ func TestDoctor_runtime_build_is_the_answering_go_build(t *testing.T) {
 	version := strings.TrimSpace(binaryRun(t, binary, "version").stdout)
 	report := decode(t, binaryRun(t, alias, "--state", filepath.Join(home, "state"), "doctor").stdout)
 	build := report["ownership"].(map[string]any)["runtime_build"]
-	if build != version || build == ownership.PythonBuild {
+	if build != version || build == ownership.CompatibilityBuild {
 		t.Fatalf("runtime_build %v, crw version %q", build, version)
 	}
 	command := exec.Command("go", "list", "-deps", "./cmd/crw")

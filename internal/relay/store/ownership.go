@@ -2,9 +2,9 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -17,41 +17,21 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 )
 
-// RefuseLiveState is the live-state guard every Go writable opener applies, which refuses only
-// under test isolation (CRW_REFUSE_LIVE_STATE=1); the takeover controller checks it before a
-// transition whose Go candidate must open D.
-func RefuseLiveState(path string) (string, error) { return refuseLiveState(path) }
-
-func admitWrite(ctx context.Context, path string) (*ownership.Admission, error) {
-	admission, err := ownership.Admit(ctx, path)
-	if err != nil {
-		return nil, &RefusedError{Reason: "store_owned_by_other", Detail: OwnershipRefusalDetail(err), cause: err}
-	}
-	return admission, nil
-}
-
-// StartPreflight is ownership.check_start as cli.py main runs it before a command that opens
-// its own admitted connection (service, daemon, and the marker commands that record or
-// confirm the selected store): an absent store passes, because the writable opener creates
-// it; a partial one (a gate or a mirror without D) is refused in the words the fence's writer
-// meets it with (partialStore); anything else must be Go-owned and active, or starting for
-// the designated candidate ctx carries, or it is refused before any lock, record, marker or
-// child exists.
-// socketPath is the command's --socket as given, so the opener that completes a torn socket
-// binding is let through (cutover.md Record); one that cannot be canonicalized binds
-// nothing, and the opener reports it.
+// StartPreflight is the start check cli.py main ran before a command that opens its own
+// admitted connection (service, daemon, and the marker commands that record or confirm the
+// selected store): an absent store passes, because the writable opener creates it; a partial one
+// (a gate or a mirror without D) is refused in the words the fence's writer meets it with
+// (partialStore); a fenced store whose stamp names another runtime is refused
+// (CheckStartLikeFence), before any lock, record, marker or child exists.
 // The store is named as every opener names it, beside Path.resolve()'s D: a dangling D link
 // alone is an absent store, which the writable opener creates through the link. A gate that
-// another opener holds EX beside no D and no mirror is a first opener of either runtime still
-// creating the store (creating), which is neither a partial store nor one to act on yet: a
-// service form changes S with no admitted open after it, so passing it would let this runtime
-// write intent for a store the creator may stamp for the other runtime. The preflight waits,
+// another opener holds EX beside no D and no mirror is a first opener still creating the store
+// (creating), which is neither a partial store nor one to act on yet. The preflight waits,
 // polling without blocking, until no opener holds the gate EX (awaitCreator), for at most
-// CreationWait, and then judges the store again from the start: the other runtime's store is
-// refused, a creator that gave up (the gate let go, no D) leaves a partial store, and a creator
-// still holding the gate at the bound is refused as a creation in progress (creationRefused).
-// ownership.py refuse_partial waits and judges alike, with the same bound and words.
-func StartPreflight(ctx context.Context, dbPath, socketPath string) error {
+// CreationWait, and then judges the store again from the start: a creator that gave up (the gate
+// let go, no D) leaves a partial store, and a creator still holding the gate at the bound is
+// refused as a creation in progress (creationRefused).
+func StartPreflight(ctx context.Context, dbPath string) error {
 	resolved := resolveLoosely(dbPath)
 	deadline := time.Now().Add(CreationWait)
 	for creating(resolved) {
@@ -64,14 +44,7 @@ func StartPreflight(ctx context.Context, dbPath, socketPath string) error {
 			return err
 		}
 	}
-	socket := ""
-	if socketPath != "" {
-		socket, _ = CanonicalSocket(socketPath)
-	}
-	if err := ownership.CheckStart(ctx, resolved, socket); err != nil {
-		return &RefusedError{Reason: "store_owned_by_other", Detail: OwnershipRefusalDetail(err)}
-	}
-	return nil
+	return CheckStartLikeFence(ctx, resolved)
 }
 
 // CreationWait bounds how long a start preflight waits for a first opener still creating the
@@ -105,60 +78,28 @@ func creationRefused() error {
 		strconv.FormatFloat(CreationWait.Seconds(), 'g', -1, 64) + "s; retry")
 }
 
-// CheckStartLikeFence is ownership.check_start without a candidate, read in the fence's order
-// and answered with its outcomes, for the commands the fence runs it for ahead of anything else
-// they check: cli.py main before intent-declare recording the selected store and
-// intent-register confirming against it, and before a daemon without --socket asks for one;
-// cmd_intent_claim on the store an intent names, and declarations.Held's Store() on it for
-// intent-disposition. In order:
-//
-//   - ownership.mirror: an absent takeover.json (ENOENT) is no record; any other read failure,
-//     and bytes json.loads refuses or that are not an object, refuse with "takeover record
-//     unreadable: <Class>: ..." or "takeover record is not an object". The state directory is
-//     Path.resolve()'s, which never fails on an unreadable or non-directory component;
-//   - ownership.metadata: the OS or SQLite failure it raises is returned as it is, for the
-//     command's host envelope (PythonHostDetail);
-//   - a store with neither an ownership key nor a mirror (absent or legacy) passes, as
-//     check_start lets it. A command that goes on to open such a store meets the Go opener,
-//     which never initializes a legacy one (decision 30) and refuses it there, before any
-//     marker fact exists (intent-register's hold);
-//   - a fenced store is refused where StartPreflight's judgement (ownership.CheckStart, with
-//     socketPath) refuses it, in validate's words wherever validate refuses it too, judged as
-//     check_start judges it: without the socket_path of a torn binding that socket's opener
-//     would complete (`unbound(...) or meta`, fenceUnbound).
-func CheckStartLikeFence(ctx context.Context, dbPath, socketPath string) error {
-	socket := ""
-	if socketPath != "" {
-		socket, _ = CanonicalSocket(socketPath)
-	}
-	return checkLikeFence(ctx, dbPath, socket, readMetadata, func(ctx context.Context) error {
-		return ownership.CheckStart(ctx, dbPath, socket)
-	})
+// CheckStartLikeFence is the lock-free preflight cli.py main ran for the commands that answer
+// with the selected store ahead of anything else they check (decision 31): the mirror's bytes, if
+// any, must read as a JSON object, and a fenced store whose durable stamp, read in place
+// (stampInPlace), names another owner or none is refused, before the selection refusal,
+// --kind-module and the handler. An absent store and one with neither an ownership key nor a
+// mirror pass, as does a store whose write-ahead log an in-place read cannot use: the writable
+// open decides them (decision 56).
+func CheckStartLikeFence(ctx context.Context, dbPath string) error {
+	return checkStamp(ctx, dbPath, false)
 }
 
-// CheckStop is ownership.check_stop, answered as CheckStartLikeFence answers: the verdict of a
-// candidate-less, socketless check_start for guard-evaluate's local path, in the fence's order
-// and words, with the durable half read in place (OpenStopRead, Python's stop_metadata): no copy
-// of the store and no SQLite sidecar. An absent or unfenced store passes; a fenced one must be
-// this runtime's active store.
+// CheckStop is the read-only Stop path's check (guard-evaluate's local evaluation): as
+// CheckStartLikeFence, except that a store an in-place read cannot read at all is an error, which
+// the Stop answers as a host error rather than trusting D.
 func CheckStop(ctx context.Context, dbPath string) error {
-	return checkLikeFence(ctx, dbPath, "", stopMetadata, func(ctx context.Context) error {
-		return ownership.CheckStop(ctx, dbPath, func(ctx context.Context, path string) (ownership.Stamp, error) {
-			ro, err := OpenStopRead(ctx, path, 0)
-			if err != nil {
-				return ownership.Stamp{}, err
-			}
-			defer ro.Close()
-			return ownership.ReadStamp(ctx, ro)
-		})
-	})
+	return checkStamp(ctx, dbPath, true)
 }
 
-// checkLikeFence is ownership.check_start's reading in the fence's order (CheckStartLikeFence):
-// the mirror, then the durable metadata meta reads, then judge's verdict for a fenced store,
-// worded as validate words it. socket is the canonical socket the caller checks against ("" for
-// check_stop's socketless reading), which completes a torn binding as check_start does.
-func checkLikeFence(ctx context.Context, dbPath, socket string, meta func(context.Context, string) (map[string]string, error), judge func(context.Context) error) error {
+// checkStamp is the preflights' reading, in the fence's order: the mirror's bytes (absent is
+// none; unreadable, or not a JSON object, is refused in the fence's words), then the stamp read
+// in place (an OS or SQLite failure is the command's host error), then the stamp's judgement.
+func checkStamp(ctx context.Context, dbPath string, strict bool) error {
 	resolved := resolveLoosely(dbPath)
 	raw, err := os.ReadFile(filepath.Join(filepath.Dir(resolved), "takeover.json"))
 	switch {
@@ -171,30 +112,28 @@ func checkLikeFence(ctx context.Context, dbPath, socket string, meta func(contex
 			return fenceRefused(why)
 		}
 	}
-	durable, err := meta(ctx, dbPath)
+	// The Stop path never waits on a lock (its hook has a budget); a command's preflight waits
+	// for a writer as its own open would.
+	wait := ownership.LockWait
+	if strict {
+		wait = 0
+	}
+	meta, err := inPlaceMetadata(ctx, dbPath, wait)
 	if err != nil {
+		if !strict && errors.Is(err, ErrWALWithoutIndex) {
+			return nil
+		}
 		return &pythonHostError{cause: err}
 	}
 	fenced := raw != nil
 	for _, key := range ownership.Keys {
-		_, stamped := durable[key]
+		_, stamped := meta[key]
 		fenced = fenced || stamped
 	}
 	if !fenced {
 		return nil
 	}
-	err = judge(ctx)
-	var refused *ownership.Refused
-	switch {
-	case err == nil:
-		return nil
-	case !errors.As(err, &refused):
-		return &pythonHostError{cause: err}
-	}
-	if why := fenceRefusal(resolved, durable, raw, socket); why != "" {
-		return fenceRefused(why)
-	}
-	return &RefusedError{Reason: "store_owned_by_other", Detail: OwnershipRefusalDetail(err), cause: err}
+	return stampRefusal(meta)
 }
 
 func fenceRefused(detail string) error {
@@ -222,48 +161,15 @@ func PythonHostDetail(err error) (string, bool) {
 	return "", false
 }
 
-// OwnershipRefusalDetail is the detail a refused Go admission or start preflight answers
-// with. Where the fence refuses for the same reason (ownership.py validate: another owner, a
-// draining store, a starting store without the candidate's permit) it is the fence's
-// OwnershipRefused detail, so a refused write form answers Python's bytes; every other
-// refusal keeps Go's own words.
+// OwnershipRefusalDetail is the detail a refused writable open or start preflight answers with:
+// for another runtime's store the fence's words, so a refused write form answers what the fence
+// answered; every other refusal keeps Go's own words.
 func OwnershipRefusalDetail(err error) string {
 	var refused *ownership.Refused
-	if errors.As(err, &refused) {
-		if words := fenceWords(refused.Detail); words != "" {
-			return words
-		}
+	if errors.As(err, &refused) && strings.HasPrefix(refused.Detail, "store belongs to ") {
+		return "the relay store belongs to another runtime"
 	}
 	return err.Error()
-}
-
-// AsOwnershipRefusal answers a bare ownership refusal as a refused admission answers it
-// (reason store_owned_by_other, in the fence's words where it has them), keeping it reachable
-// through errors.As; any other error is returned unchanged.
-func AsOwnershipRefusal(err error) error {
-	var refused *ownership.Refused
-	if RefusalReason(err) == "" && errors.As(err, &refused) {
-		return &RefusedError{Reason: "store_owned_by_other", Detail: OwnershipRefusalDetail(err), cause: err}
-	}
-	return err
-}
-
-// fenceWords is the fence's wording of the ownership decisions both runtimes make that Go's
-// judge words its own way (the three the fence answers queueably, and validate's two
-// lock-authority refusals, which Go words alike but under Refused's prefix), or "" for any
-// other refusal.
-func fenceWords(detail string) string {
-	switch {
-	case strings.HasPrefix(detail, "store belongs to "):
-		return "the relay store belongs to another runtime"
-	case detail == "only designated candidate may enter starting":
-		return "only the designated candidate may enter starting"
-	case detail == "store is draining":
-		return "the relay store is draining"
-	case detail == "scope key disagrees with lock authority", detail == ownership.NoAuthorityDetail:
-		return detail
-	}
-	return ""
 }
 
 func openFenced(ctx context.Context, path, socket string, options OpenOptions) (s *Store, err error) {
@@ -282,60 +188,19 @@ func openFenced(ctx context.Context, path, socket string, options OpenOptions) (
 	if err = partialStore(resolved); err != nil {
 		return nil, err
 	}
-	// A binding holds the gate SH from its own EX until admission holds it SH too.
-	bound, err := bindSocket(ctx, resolved, socket)
-	if err != nil {
-		return nil, err
+	options.verify = func(ctx context.Context, db *sql.DB) (*os.File, error) {
+		return verifyWritable(ctx, db, resolved, socket)
 	}
-	admission, err := admitWrite(ctx, resolved)
-	if bound != nil {
-		err = errors.Join(err, bound.Close())
-	}
-	if err != nil {
-		return nil, errors.Join(err, admission.Close())
-	}
-	defer func() {
-		if err != nil {
-			err = errors.Join(err, admission.Close())
-		}
-	}()
-	r, err := ownership.ReadRecord(resolved)
-	if err != nil {
-		return nil, err
-	}
-	if socket != "" {
-		canonical, e := canonicalSocket(socket)
-		if e != nil {
-			return nil, e
-		}
-		if r.AppServerSocket == nil || *r.AppServerSocket != canonical {
-			// A domain refusal (exit 2), like every other admission refusal, in the fence's
-			// words: a bound store is opened only for the socket its record names.
-			refused := &ownership.Refused{Detail: "requested socket disagrees with ownership record"}
-			return nil, &RefusedError{Reason: "store_owned_by_other", Detail: refused.Detail, cause: refused}
-		}
-	}
-	// The exact schema is checked before the legacy initializer can run any DDL.
-	if err = validateSchemaSnapshot(ctx, resolved); err != nil {
-		return nil, err
-	}
-	options.admission = admission
-	s, err = open(ctx, path, socket, options)
-	if err != nil {
-		return nil, err
-	}
-	s.admission = admission
-	return s, nil
+	return open(ctx, path, socket, options)
 }
 
-// readGateless is the fence's first look at an existing store with no write gate
-// (ownership.py Admission for a Store() opener, initialize=True): it reads D's schema_meta from
-// a disposable copy before anything decides what the store is. A D that cannot be copied or
-// read as a database fails with that error, in Python's f"{type(error).__name__}: {error}"
-// (Store() raises it: the host envelope, and declarations._open's store_unopenable), rather
-// than as an unfenced store. A readable D goes on to admission, which still refuses a legacy or
-// partial store: Go never initializes one (decision 30). The takeover candidate, which Python
-// admits without initialize, only ever opens a store whose gate its controller holds.
+// readGateless is the first look at an existing store with no write gate (a store no runtime
+// ever fenced, or one whose gate was removed): D's schema_meta is read from a disposable copy
+// before anything decides what the store is, so a D that cannot be read as a database fails
+// with that error in Python's f"{type(error).__name__}: {error}" (the host envelope), rather
+// than as an unfenced store. A readable D goes on to the writable open, which refuses a store
+// with no gate: Go never initializes one (decision 30). A store with a gate, every store a
+// runtime created, is never copied.
 func readGateless(ctx context.Context, resolved string) error {
 	if _, err := os.Lstat(filepath.Join(filepath.Dir(resolved), "write-gate.lock")); !errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -403,164 +268,13 @@ func ValidateOwnershipSchema(ctx context.Context, db ownership.Queryer) error {
 	return nil
 }
 
-// validateSchemaSnapshot requires the frozen v1 schema of the store at resolved, read from
-// a disposable copy so no byte beside the database changes; it never repairs the store.
-func validateSchemaSnapshot(ctx context.Context, resolved string) error {
-	snapshot, cleanup, err := ownership.CopySnapshot(resolved)
-	if err != nil {
-		return err
-	}
-	defer cleanup()
-	db, err := ownership.OpenExisting(ctx, snapshot, "ro")
-	if err != nil {
-		return err
-	}
-	return errors.Join(ValidateOwnershipSchema(ctx, db), db.Close())
-}
-
-// bindSocket is the socket binding (cutover.md Record; Python ownership.unbound and
-// Admission.initialize). A writable open that passes an App Server socket to an unbound store
-// this runtime owns, active and with no transition, binds it: under write-gate EX, waited for
-// at most ownership.LockWait (other admitted connections hold SH for their lifetime), the rest
-// of the record is revalidated, schema_meta.socket_path is committed, then the mirror is
-// published with appServerSocket and scopeKey, every other field unchanged but updatedAt. The
-// torn state a crash between the commit and the publication leaves (socket_path set under a
-// null mirror) is completed by the next opener passing the same socket. It returns the gate
-// downgraded to SH, which the caller holds until its admission holds SH too, or nil when this
-// open binds nothing. Read-only commands and the takeover candidate never bind; anything the
-// binding does not start from is left to admission, which refuses it in its own words.
-func bindSocket(ctx context.Context, resolved, socket string) (held *os.File, err error) {
-	if socket == "" || ReadOnlyCommand(ctx) {
-		return nil, nil
-	}
-	canonical, err := canonicalSocket(socket)
-	if err != nil {
-		return nil, err
-	}
-	// The lock-free preflight: only a record that binds takes the exclusive gate.
-	if r, s, e := readOwnership(ctx, resolved); e != nil || !ownership.Unbound(ctx, r, s, canonical) {
-		return nil, nil
-	}
-	gate, err := ownership.LockWithin(ctx, filepath.Join(filepath.Dir(resolved), "write-gate.lock"), true, "write-gate EX for the socket binding")
-	var expired *ownership.LockWaitExpired
-	if errors.As(err, &expired) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return nil, err
-	}
-	if err != nil {
-		return nil, nil
-	}
-	defer func() {
-		if held == nil {
-			err = errors.Join(err, gate.Close())
-		}
-	}()
-	r, s, err := readOwnership(ctx, resolved)
-	if err != nil || !ownership.Unbound(ctx, r, s, canonical) {
-		return nil, nil // changed while this opener waited: admission decides
-	}
-	// Every other part of the record is validated before anything is written.
-	start := s
-	start.SocketPath = ""
-	if err = ownership.Validate(resolved, r, start); err != nil {
-		return nil, &RefusedError{Reason: "store_owned_by_other", Detail: OwnershipRefusalDetail(err), cause: err}
-	}
-	if err = validateSchemaSnapshot(ctx, resolved); err != nil {
-		return nil, err
-	}
-	key, err := ownership.ScopeKey(canonical)
-	if err != nil {
-		return nil, err
-	}
-	if err = commitSocket(ctx, r.Database, canonical, s); err != nil {
-		return nil, err
-	}
-	if err = bindFault("committed"); err != nil {
-		return nil, err
-	}
-	r.AppServerSocket, r.ScopeKey = &canonical, &key
-	if err = ownership.Publish(r.Database.RealPath, r, nil); err != nil {
-		return nil, err
-	}
-	// Downgrade in place. A holder that slipped in between keeps the gate; admission decides.
-	if unix.Flock(int(gate.Fd()), unix.LOCK_SH|unix.LOCK_NB) != nil {
-		return nil, nil
-	}
-	return gate, nil
-}
-
-// bindFault is a deterministic crash seam for tests; production leaves it inert.
-var bindFault = func(string) error { return nil }
-
-// readOwnership is the record and the durable stamp as a lock-free preflight reads them.
-func readOwnership(ctx context.Context, resolved string) (ownership.Record, ownership.Stamp, error) {
-	r, err := ownership.ReadRecord(resolved)
-	if err != nil {
-		return r, ownership.Stamp{}, err
-	}
-	s, err := ownership.SnapshotMeta(ctx, resolved)
-	return r, s, err
-}
-
-// commitSocket is the binding's DB half: under the caller's write-gate EX, on the database
-// whose physical identity and stamp were validated, schema_meta.socket_path is recorded with
-// INSERT OR IGNORE (the first recording wins, as store.py _open records it) and must then be
-// the socket this opener binds.
-func commitSocket(ctx context.Context, database ownership.Database, socket string, validated ownership.Stamp) (err error) {
-	db, err := boundedDB(database.RealPath, "rw", ownership.LockWait, "PRAGMA synchronous=FULL")
-	if err != nil {
-		return err
-	}
-	defer func() { err = errors.Join(err, db.Close()) }()
-	conn, err := db.Conn(ctx)
-	if err != nil {
-		return err
-	}
-	defer func() { err = errors.Join(err, conn.Close()) }()
-	if physical, e := ownership.Physical(database.RealPath); e != nil || physical != database {
-		return errors.Join(&ownership.Refused{Detail: "physical store changed before the socket binding"}, e)
-	}
-	if _, err = conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
-		return err
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_, e := conn.ExecContext(context.WithoutCancel(ctx), "ROLLBACK")
-			err = errors.Join(err, e)
-		}
-	}()
-	current, err := ownership.ReadStamp(ctx, conn)
-	if err != nil {
-		return err
-	}
-	if current.StoreID != validated.StoreID || current.Owner != validated.Owner || current.Epoch != validated.Epoch || current.TakeoverID != validated.TakeoverID {
-		return &ownership.Refused{Detail: "admitted ownership changed"}
-	}
-	if _, err = conn.ExecContext(ctx, "INSERT OR IGNORE INTO schema_meta VALUES ('socket_path', ?)", socket); err != nil {
-		return fmt.Errorf("record socket_path: %w", err)
-	}
-	var recorded string
-	if err = conn.QueryRowContext(ctx, "SELECT value FROM schema_meta WHERE key='socket_path'").Scan(&recorded); err != nil {
-		return err
-	}
-	if recorded != socket {
-		refused := &ownership.Refused{Detail: "requested socket disagrees with the recorded store socket"}
-		return &RefusedError{Reason: "store_owned_by_other", Detail: refused.Detail, cause: refused}
-	}
-	if _, err = conn.ExecContext(ctx, "COMMIT"); err != nil {
-		return err
-	}
-	committed = true
-	return nil
-}
-
 // createAbsent initializes a store that does not exist at all - no database, no
 // ownership mirror and no write gate - as the fence release does for Python
 // (ownership.py Admission(initialize=True)), with this runtime as the owner:
 // owner=go, owner_epoch=1, writer_protocol=1, rollback_allowed=1 and the matching
 // takeover.json, all under an exclusive maintenance gate (decision 30; IS-1: a host
 // with no Python interpreter still needs a store). Anything partially present is
-// left to admission, which refuses it; an existing unfenced store is never adopted
+// left to the writable open, which refuses it; an existing unfenced store is never adopted
 // here, because only the retained Python fence may initialize it (cutover Step 0).
 //
 // The gate is placed already held EX (placeGate), as Python places it, so a concurrent
@@ -587,7 +301,7 @@ func createAbsent(ctx context.Context, path, socket string, options OpenOptions)
 	defer func() { err = errors.Join(err, gate.Close()) }()
 	// Held EX since before any other opener could find it.
 	if _, e := os.Lstat(path); e == nil {
-		return nil // not created here; admission decides
+		return nil // not created here; the writable open decides
 	}
 	if _, e := os.Lstat(filepath.Join(dir, "takeover.json")); e == nil {
 		return nil
@@ -615,7 +329,8 @@ func createAbsent(ctx context.Context, path, socket string, options OpenOptions)
 	if err = file.Close(); err != nil {
 		return err
 	}
-	if err = buildAbsent(ctx, temp, socket, options); err != nil {
+	stamp, err := buildAbsent(ctx, temp, socket, options)
+	if err != nil {
 		return err
 	}
 	if err = syncFile(temp); err != nil {
@@ -626,7 +341,7 @@ func createAbsent(ctx context.Context, path, socket string, options OpenOptions)
 	}
 	if err = os.Link(temp, path); err != nil {
 		if errors.Is(err, os.ErrExist) {
-			return nil // another creator won; admission decides
+			return nil // another creator won; the writable open decides
 		}
 		return err
 	}
@@ -636,7 +351,7 @@ func createAbsent(ctx context.Context, path, socket string, options OpenOptions)
 	if err = createFault("linked"); err != nil {
 		return err
 	}
-	return publishAbsent(ctx, path)
+	return publishAbsent(path, stamp)
 }
 
 // placeGate creates S/write-gate.lock already held EX (Python ownership._create_gate): a
@@ -695,7 +410,7 @@ func awaitCreation(ctx context.Context, path string, options OpenOptions) error 
 			return gate.Close()
 		}
 		if !errors.Is(err, unix.EWOULDBLOCK) {
-			return nil // an untrusted or unreadable gate: admission refuses it in its own words
+			return nil // an untrusted or unreadable gate: the writable open refuses it in its own words
 		}
 		if !waited && !creatingOrBinding(path) {
 			return nil
@@ -728,31 +443,31 @@ func creatingOrBinding(path string) bool {
 var createFault = func(string) error { return nil }
 
 // buildAbsent runs the frozen DDL, seeds and the six ownership keys on the unpublished
-// temporary database, then closes it so no WAL outlives the connection.
-func buildAbsent(ctx context.Context, temp, socket string, options OpenOptions) (err error) {
+// temporary database, then closes it so no WAL outlives the connection. It returns the stamp it
+// wrote, which the mirror publishAbsent writes is derived from.
+func buildAbsent(ctx context.Context, temp, socket string, options OpenOptions) (stamp ownership.Stamp, err error) {
 	s, err := open(ctx, temp, socket, OpenOptions{BusyTimeout: options.BusyTimeout})
 	if err != nil {
-		return err
+		return stamp, err
 	}
 	defer func() { err = errors.Join(err, s.DB.Close()) }()
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return stamp, err
 	}
-	for _, pair := range [][2]string{{"writer_protocol", "1"}, {"owner", "go"}, {"owner_epoch", "1"}, {"takeover_id", ""}, {"rollback_allowed", "1"}, {"python_compatibility_build", ownership.PythonBuild}} {
+	for _, pair := range [][2]string{{"writer_protocol", "1"}, {"owner", "go"}, {"owner_epoch", "1"}, {"takeover_id", ""}, {"rollback_allowed", "1"}, {"python_compatibility_build", ownership.CompatibilityBuild}} {
 		if _, err = tx.ExecContext(ctx, "INSERT INTO schema_meta VALUES (?, ?)", pair[0], pair[1]); err != nil {
-			return errors.Join(err, tx.Rollback())
+			return stamp, errors.Join(err, tx.Rollback())
 		}
 	}
-	return tx.Commit()
+	if err = tx.Commit(); err != nil {
+		return stamp, err
+	}
+	return ownership.ReadStamp(ctx, s.DB)
 }
 
-// publishAbsent writes the mirror of the linked store from its durable stamp.
-func publishAbsent(ctx context.Context, path string) error {
-	stamp, err := ownership.SnapshotMeta(ctx, path)
-	if err != nil {
-		return err
-	}
+// publishAbsent writes the mirror of the linked store from the stamp it was built with.
+func publishAbsent(path string, stamp ownership.Stamp) error {
 	record, err := ownership.InitialRecord(path, stamp)
 	if err != nil {
 		return err

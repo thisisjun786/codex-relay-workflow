@@ -22,9 +22,6 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
-//go:linkname rrProjectionBudget github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery.reportProjectionBudget
-var rrProjectionBudget int
-
 type rrOperation struct {
 	Kind   string         `json:"kind"`
 	Args   map[string]any `json:"args"`
@@ -292,24 +289,8 @@ func rrReplay(t *testing.T, root string, op rrOperation) {
 		got, err = d.PreviewMessage(ctx, event)
 	case "preview":
 		got, err = d.PreviewMessage(ctx, event)
-	case "read":
-		got, err = supervisor.ReadWorkReport(ctx, s, event)
 	case "tight":
 		got, err = d.PreviewReport(ctx, event, rrString(args, "request"), args["budget"].(int))
-	case "report":
-		event = rrString(args, "event_id")
-		if args["settleFirst"] == true {
-			// Python patches the gate while it holds the write lock. A BEFORE INSERT trigger
-			// provides the corresponding deterministic in-transaction state change in Go.
-			_, err = s.DB.Exec(`CREATE TEMP TRIGGER rr_settle BEFORE INSERT ON work_reports BEGIN UPDATE deliveries SET attempt_count=8 WHERE event_id=NEW.event_id; END`)
-			if err != nil {
-				t.Fatal(err)
-			}
-		}
-		previous := rrProjectionBudget
-		rrProjectionBudget = args["budget"].(int)
-		got, err = supervisor.RecordWorkReport(ctx, s, clock, event, args)
-		rrProjectionBudget = previous
 	case "attempt":
 		got, err = d.Attempt(ctx, event, &rrHost{}, nil, "relay")
 	case "cli-verdict", "show":
@@ -379,6 +360,12 @@ func rrRun(t *testing.T, module string, methods []string) {
 		t.Run(method, func(t *testing.T) {
 			root, ops := rrCapture(t, module, method)
 			for i, op := range ops {
+				if op.Kind == "report" || op.Kind == "read" {
+					// Python's report.record and its read-back are recorded but not replayed: no
+					// product path writes a work report (decision 53). Each operation runs on its
+					// own snapshot, so the others do not depend on them.
+					continue
+				}
 				t.Run(fmt.Sprintf("%02d_%s", i, op.Kind), func(t *testing.T) { rrReplay(t, root, op) })
 			}
 		})

@@ -64,12 +64,6 @@
     "markers": [],
     "stateChanged": false
   },
-  "declare/draining": {
-    "exit": 2,
-    "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"store_owned_by_other\",\n  \"detail\": \"the relay store is draining\"\n}\n",
-    "markers": [],
-    "stateChanged": false
-  },
   "declare/legacy-store": {
     "exit": 0,
     "stdout": "{\n  \"assignmentId\": \"539ed001eef41a4c78b4182d5dfa70e3fcae1d01d368c989f9f680072df2ce76\",\n  \"assignmentDir\": \"<home>/markers/<workspace-key>/539ed001eef41a4c78b4182d5dfa70e3fcae1d01d368c989f9f680072df2ce76\",\n  \"outcome\": \"published\",\n  \"declaredAt\": \"2026-01-01T00:00:00+00:00\"\n}\n",
@@ -171,12 +165,6 @@
   "register/database-garbage": {
     "exit": 3,
     "stdout": "{\n  \"error\": \"host\",\n  \"detail\": \"DatabaseError: file is not a database\"\n}\n",
-    "markers": [],
-    "stateChanged": false
-  },
-  "register/draining": {
-    "exit": 2,
-    "stdout": "{\n  \"error\": \"refused\",\n  \"reason\": \"store_owned_by_other\",\n  \"detail\": \"the relay store is draining\"\n}\n",
     "markers": [],
     "stateChanged": false
   },

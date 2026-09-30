@@ -47,7 +47,6 @@ var serviceCommand = Command{Name: "service", Exempt: true, Flags: func(f *flag.
 	f.Float64("deadline-monotonic", 0, "")
 	f.String("launch-id", "", "")
 	f.Bool("takeover-scope", false, "")
-	f.Bool("takeover-candidate", false, "")
 }, Run: runService}
 
 func boundValue(args Args, name string) (*float64, error) {
@@ -136,7 +135,7 @@ func requireDaemonHost(s Services) error {
 // ownershipPreflight is Python's check_start before a service or daemon command
 // (store.StartPreflight), with the command's App Server socket.
 func ownershipPreflight(ctx context.Context, services Services) error {
-	return store.StartPreflight(ctx, services.Selection.DBPath(), services.SocketPath)
+	return store.StartPreflight(ctx, services.Selection.DBPath())
 }
 
 // applyLaunchPolicy is cli.py main's _apply_launch_policy for `service run`: before the handler
@@ -162,41 +161,7 @@ func applyLaunchPolicy(s *service.Service) error {
 	return nil
 }
 
-// candidateRouting requires the controller's start record to name the very store and
-// App Server scope this process was pointed at, however either was spelled.
-func candidateRouting(channel *service.CandidateChannel, services Services) error {
-	physical, err := ownership.Physical(services.Selection.DBPath())
-	socket, socketErr := store.CanonicalSocket(services.SocketPath)
-	if err != nil || socketErr != nil || physical != channel.Record.Database || channel.Record.AppServerSocket == nil || *channel.Record.AppServerSocket != socket {
-		return &UsageError{"candidate routing disagrees", 4}
-	}
-	return nil
-}
-
-// candidateRun is `service run --takeover-candidate`, the controller-launched candidate.
-func candidateRun(command *Command, positionals []string, flags *flag.FlagSet) bool {
-	candidate := flags.Lookup("takeover-candidate")
-	return command.Name == "service" && len(positionals) > 0 && positionals[0] == "run" && candidate != nil && candidate.Value.String() == "true"
-}
-
 func runService(ctx context.Context, services Services, args Args) (out any, err error) {
-	var channel *service.CandidateChannel
-	if args.Positionals[0] == "run" && args.Bool("takeover-candidate") {
-		// Decision 28: the designation is consumed before any writable open, and the
-		// permit travels only in this supervisor's context, never to its workers.
-		var candidateCtx context.Context
-		if candidateCtx, channel, err = service.ReceiveCandidate(ctx); err != nil {
-			return nil, takeoverError(err)
-		}
-		defer func() { _ = channel.Close() }()
-		if err = requireDaemonHost(services); err != nil {
-			return nil, err
-		}
-		if err = candidateRouting(channel, services); err != nil {
-			return nil, err
-		}
-		ctx = context.WithValue(candidateCtx, activationKey{}, channel)
-	}
 	if args.Positionals[0] != "status" {
 		if err = ownershipPreflight(ctx, services); err != nil {
 			return nil, err
@@ -274,11 +239,6 @@ func runService(ctx context.Context, services Services, args Args) (out any, err
 				if e = s.PublishStoreIdentity(); e != nil {
 					return e
 				}
-				// cli.py recover(): the takeover inbox is replayed before recovery, and for the
-				// candidate under its starting permit before readiness (cutover.md Step 6).
-				if e = drainInbox(ctx, db, services.SocketPath); e != nil {
-					return e
-				}
 				d, e := DaemonFactory(ctx, services, db)
 				if e != nil {
 					return e
@@ -292,10 +252,7 @@ func runService(ctx context.Context, services Services, args Args) (out any, err
 					_, e := db.Q(tx).ExecContext(tx, "UPDATE deliveries SET state='held_uncertain',lease_owner=NULL,lease_until=NULL,updated_at=? WHERE state='sending' AND lease_until IS NOT NULL AND lease_until<=?", d.Clock.ISO(), d.Clock.Now())
 					return e
 				})
-				if e != nil || channel == nil {
-					return e
-				}
-				return readyCandidate(ctx, services.Selection.Path)
+				return e
 			}, nil)
 		}
 	}
@@ -306,19 +263,6 @@ func runService(ctx context.Context, services Services, args Args) (out any, err
 		return nil, &PayloadExit{Payload: payload, Code: 2}
 	}
 	return payload, nil
-}
-
-// readyCandidate finishes the candidate supervisor's start after recovery, which drained
-// the takeover inbox (cutover Step 6): the control socket, then readiness and the
-// activation exchange. Workers are spawned only after it returns, under ordinary admission.
-func readyCandidate(ctx context.Context, state string) error {
-	control, err := service.ListenControl(ctx, state)
-	if err != nil {
-		return err
-	}
-	// Readiness follows recovery and control-socket binding (decision 30). The first
-	// worker binds control.sock for itself once this listener is closed.
-	return errors.Join(activateCandidate(ctx), control.Close())
 }
 
 func runDaemon(ctx context.Context, services Services, args Args) (out any, err error) {
@@ -337,7 +281,7 @@ func runDaemon(ctx context.Context, services Services, args Args) (out any, err 
 		// draining or partial one that holds a mirror), in its words, and only then for the
 		// missing socket; a store check_start passes (absent, legacy, a gate alone) gets the
 		// usage error. Nothing is written either way.
-		if err = store.CheckStartLikeFence(ctx, services.Selection.DBPath(), ""); err != nil {
+		if err = store.CheckStartLikeFence(ctx, services.Selection.DBPath()); err != nil {
 			return nil, err
 		}
 	}
@@ -438,11 +382,6 @@ func runDaemon(ctx context.Context, services Services, args Args) (out any, err 
 		return nil, e
 	}
 	defer func() { err = errors.Join(err, control.Close()) }()
-	// cmd_daemon: the takeover inbox is replayed before the first tick, including by an
-	// adopted worker (decision 25; cutover.md Wire format).
-	if err = drainInbox(ctx, db, services.SocketPath); err != nil {
-		return nil, err
-	}
 	stop := func() bool {
 		return ctx.Err() != nil || s.StopRequested() || s.Draining() || (bound != nil && service.Monotonic() >= *bound)
 	}

@@ -144,7 +144,12 @@ func Test30ConcurrentFirstOpenersNeverSeeAPartialStore(t *testing.T) {
 		// Whichever runtime created it, both halves of the record agree.
 		record, err := ownership.ReadRecord(path)
 		must(t, err)
-		must(t, ownership.Validate(path, record, stamp))
+		physical, err := ownership.Physical(path)
+		must(t, err)
+		if record.Owner != stamp.Owner || record.Epoch != stamp.Epoch || record.StoreID != stamp.StoreID || record.Database != physical ||
+			record.RollbackAllowed != stamp.RollbackAllowed || record.CompatibilityBuild != stamp.CompatibilityBuild || record.Phase != "active" || record.Transition != nil {
+			t.Fatalf("mirror %+v disagrees with stamp %+v", record, stamp)
+		}
 	}
 	// Go's first openers alone: the Python fence's creator and waiter took part until todo 44.
 	for _, tc := range []struct{ creator, second string }{{"go", "go"}} {
@@ -224,7 +229,7 @@ func Test31StartPreflightWaitsForACreationAndRefusesAnAbandonedGate(t *testing.T
 			}
 			preflight := func(path string) <-chan error {
 				verdict := make(chan error, 1)
-				go func() { verdict <- StartPreflight(t.Context(), path, "") }()
+				go func() { verdict <- StartPreflight(t.Context(), path) }()
 				return verdict
 			}
 			waiting := func(verdict <-chan error) {
@@ -254,7 +259,7 @@ func Test31StartPreflightWaitsForACreationAndRefusesAnAbandonedGate(t *testing.T
 				t.Fatalf("D exists before the creation: %v", err)
 			}
 			CreationWait = 200 * time.Millisecond
-			if got := detail(StartPreflight(t.Context(), path, "")); got != "store creation in progress: write-gate.lock still held after 0.2s; retry" {
+			if got := detail(StartPreflight(t.Context(), path)); got != "store creation in progress: write-gate.lock still held after 0.2s; retry" {
 				t.Fatalf("a creator holding the gate past the bound: %q", got)
 			}
 			CreationWait = bound
@@ -279,7 +284,7 @@ func Test31StartPreflightWaitsForACreationAndRefusesAnAbandonedGate(t *testing.T
 			}
 			must(t, dead.command.Process.Kill())
 			<-dead.done
-			if got := detail(StartPreflight(t.Context(), abandoned, "")); got != partial {
+			if got := detail(StartPreflight(t.Context(), abandoned)); got != partial {
 				t.Fatalf("a gate its dead creator left: %q", got)
 			}
 			dying := filepath.Join(stateDir(t), "state", "relay.sqlite3")

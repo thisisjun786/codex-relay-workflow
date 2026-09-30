@@ -345,7 +345,8 @@ start with the voided attempt recorded as sending nothing, after which the same 
 again, at most twice, and sends what is owed now.
 
 The writers that can change an obligation after staging are the ones it reads: `report.record`
-(a first, corrected or kind-changing work report), the receipt intake (a newer statement of the
+(a first, corrected or kind-changing work report; the Go runtime has no work-report writer, decision
+53, and reads only the reports a store already holds), the receipt intake (a newer statement of the
 same block or decision, or a final receipt for an omitted turn), the linkage (a handover, an
 archived assignment, a project re-linked, a contested edge) and the sync outbox confirming a
 verdict. The authorized settings the send carries are asked again in the same write too: a

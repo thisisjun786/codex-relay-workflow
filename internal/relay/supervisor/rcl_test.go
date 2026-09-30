@@ -138,7 +138,7 @@ func Test24_RCL_4_DoctorWholeStdoutBytes(t *testing.T) {
 		block, _ := value["ownership"].(map[string]any)
 		want := goBuild
 		if python {
-			want = ownership.PythonBuild
+			want = ownership.CompatibilityBuild
 		}
 		if block == nil || block["runtime_build"] != want {
 			t.Fatalf("python=%t: ownership.runtime_build must name the answering runtime's build %q\n%s", python, want, raw)
