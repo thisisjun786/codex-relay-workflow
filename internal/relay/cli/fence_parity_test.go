@@ -2,11 +2,14 @@ package cli_test
 
 import (
 	"database/sql"
+	"encoding/binary"
 	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+	"unicode/utf16"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
@@ -326,6 +329,104 @@ func TestScopeKey_from_another_lock_authority_is_refused_as_the_fence_refuses_it
 	for creator, state := range states {
 		if answer := relay(creator, state, "--socket", app, "store-challenge", "--write"); answer.code != 0 {
 			t.Errorf("%s under the binding authority: %+v", creator, answer)
+		}
+	}
+}
+
+// encodedMirror spells a UTF-8 takeover.json in an encoding json.loads reads from bytes
+// (json.detect_encoding), or, for "truncated utf-16", one its codec refuses.
+func encodedMirror(plain []byte, encoding string) []byte {
+	var out []byte
+	switch encoding {
+	case "utf-8-sig":
+		return append([]byte{0xef, 0xbb, 0xbf}, plain...)
+	case "utf-16", "truncated utf-16":
+		out = []byte{0xff, 0xfe}
+		for _, unit := range utf16.Encode([]rune(string(plain))) {
+			out = binary.LittleEndian.AppendUint16(out, unit)
+		}
+		if encoding == "truncated utf-16" {
+			out = out[:len(out)-1]
+		}
+	case "utf-16-be":
+		for _, unit := range utf16.Encode([]rune(string(plain))) {
+			out = binary.BigEndian.AppendUint16(out, unit)
+		}
+	case "utf-32":
+		out = []byte{0xff, 0xfe, 0, 0}
+		for _, r := range string(plain) {
+			out = binary.LittleEndian.AppendUint32(out, uint32(r))
+		}
+	}
+	return out
+}
+
+// takeover.json is read as ownership.mirror reads it, json.loads(bytes): a UTF-8 byte order
+// mark and UTF-16 or UTF-32 documents are the record their UTF-8 spelling is, in every reader
+// (the writer's admission and doctor's ownership block and probe), and bytes the codec refuses
+// are refused alike. Whichever runtime created the store, doctor answers
+// what the fence answers, its owner writes it, and the other runtime's writer is refused as the
+// fence refuses it: the store belongs to another runtime.
+func TestMirror_encodings_are_read_as_the_fence_reads_them(t *testing.T) {
+	home := pythonHome(t)
+	_, alias := packageBinary(t)
+	fenceProgram := filepath.Join(repositoryRoot(t), ".venv", "bin", "codex-session-relay")
+	relay := func(runtime string, argv ...string) run {
+		if runtime == "go" {
+			return binaryRun(t, alias, argv...)
+		}
+		return fence(t, argv...)
+	}
+	for _, creator := range []string{"go", "python"} {
+		for _, encoding := range []string{"utf-8-sig", "utf-16", "utf-16-be", "utf-32", "truncated utf-16"} {
+			name := creator + " " + encoding
+			state := filepath.Join(home, strings.ReplaceAll(name, " ", "-"))
+			if created := relay(creator, "--state", state, "store-challenge", "--write"); created.code != 0 {
+				t.Fatalf("%s: %+v", name, created)
+			}
+			mirror := filepath.Join(state, "takeover.json")
+			plain, err := os.ReadFile(mirror)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(mirror, encodedMirror(plain, encoding), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			accepted := encoding != "truncated utf-16"
+			py, got := fence(t, "--state", state, "doctor"), binaryRun(t, alias, "--state", state, "doctor")
+			pyBlock, goBlock := ownershipBlock(t, py.stdout), ownershipBlock(t, got.stdout)
+			healthy := strings.Contains(goBlock, `"detail": null`) && strings.Contains(goBlock, `"owner": "`+creator+`"`)
+			if pyBlock != goBlock || healthy != accepted {
+				t.Errorf("%s: doctor's ownership block\npython:%s\ngo:%s", name, pyBlock, goBlock)
+			}
+			// The access block is each runtime's own diagnosis of a healthy store (decision 31): the
+			// owner's probe may write it, the other's is refused as the fence refuses it. A mirror
+			// both refuse is refused alike.
+			pyAccess, goAccess := decode(t, py.stdout)["access"], decode(t, got.stdout)["access"]
+			for runtime, access := range map[string]any{"go": goAccess, "python": pyAccess} {
+				var want any
+				if runtime != creator {
+					want = "store_owned_by_other: the relay store belongs to another runtime"
+				}
+				if detail := access.(map[string]any)["detail"]; accepted && detail != want {
+					t.Errorf("%s: %s doctor's access detail %v, want %v", name, runtime, detail, want)
+				}
+			}
+			if !accepted && !reflect.DeepEqual(pyAccess, goAccess) {
+				t.Errorf("%s: doctor's access block\npython: %v\ngo:     %v", name, pyAccess, goAccess)
+			}
+			answers := map[string]run{}
+			for _, runtime := range []string{"go", "python"} {
+				answers[runtime] = relay(runtime, "--state", state, "store-challenge", "--write")
+				answer := answers[runtime]
+				if want := map[bool]int{true: 0, false: 2}[accepted && runtime == creator]; answer.code != want {
+					t.Errorf("%s: %s writer exit %d, want %d\n%s", name, runtime, answer.code, want, strings.ReplaceAll(answer.stdout, fenceProgram, "<relay>"))
+				}
+			}
+			other := map[string]string{"go": "python", "python": "go"}[creator]
+			if accepted && answers[other].stdout != "{\n  \"error\": \"refused\",\n  \"reason\": \"store_owned_by_other\",\n  \"detail\": \"the relay store belongs to another runtime\"\n}\n" {
+				t.Errorf("%s: the %s writer on the %s-owned store:\n%s", name, other, creator, answers[other].stdout)
+			}
 		}
 	}
 }

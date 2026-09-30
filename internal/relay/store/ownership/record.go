@@ -20,6 +20,8 @@ import (
 
 	"golang.org/x/sys/unix"
 	_ "modernc.org/sqlite"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 const Protocol = 1
@@ -142,6 +144,13 @@ func ReadRecord(path string) (Record, error) {
 	if err != nil {
 		return Record{}, refuse("read mirror: %v", err)
 	}
+	// The bytes as ownership.mirror's json.loads(bytes) decodes them: UTF-8, behind its byte
+	// order mark or not, UTF-16 or UTF-32 (json.detect_encoding).
+	text, err := pyjson.DecodeBytes(raw)
+	if err != nil {
+		return Record{}, refuse("decode mirror: %v", err)
+	}
+	raw = []byte(text)
 	var fields map[string]json.RawMessage
 	if err = json.Unmarshal(raw, &fields); err != nil {
 		return Record{}, refuse("decode mirror: %v", err)

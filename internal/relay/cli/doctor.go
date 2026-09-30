@@ -189,10 +189,11 @@ func readOwnership(ctx context.Context, dbPath string) (map[string]string, any, 
 		return meta, nil, nil
 	}
 	// The probe's preflight reads the same bytes the same way (store.MirrorRefusal).
-	if why := store.MirrorRefusal(raw); why != "" {
+	text, why := store.MirrorDocument(raw)
+	if why != "" {
 		return nil, nil, "store_owned_by_other: " + why
 	}
-	value, err := decodeJSON(raw)
+	value, err := decodeJSON([]byte(text))
 	if err != nil {
 		return nil, nil, "store_owned_by_other: takeover record unreadable: JSONDecodeError: " + err.Error()
 	}

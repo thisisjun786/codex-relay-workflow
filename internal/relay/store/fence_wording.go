@@ -1,7 +1,6 @@
 package store
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -10,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 )
 
@@ -17,17 +17,26 @@ import (
 // "" when json.loads reads them as an object, otherwise the OwnershipRefused detail. It is
 // the one reading of the mirror's bytes behind doctor's ownership block and its probe.
 func MirrorRefusal(raw []byte) string {
-	if _, err := DecodeUTF8(raw); err != nil {
-		return "takeover record unreadable: UnicodeDecodeError: " + err.Error()
+	_, why := MirrorDocument(raw)
+	return why
+}
+
+// MirrorDocument is ownership.mirror's json.loads(bytes) of takeover.json: the text the bytes
+// decode to (json.detect_encoding's UTF-8, behind its byte order mark or not, UTF-16 or UTF-32,
+// pyjson.DecodeBytes), which json.loads reads as an object, or why it refuses them.
+func MirrorDocument(raw []byte) (text, why string) {
+	text, err := pyjson.DecodeBytes(raw)
+	if err != nil {
+		return "", "takeover record unreadable: UnicodeDecodeError: " + err.Error()
 	}
-	if message := PythonJSONError(string(raw)); message != "" {
-		return "takeover record unreadable: JSONDecodeError: " + message
+	if message := pyjson.DecodedError(text); message != "" {
+		return "", "takeover record unreadable: JSONDecodeError: " + message
 	}
-	// The document is valid JSON, so its first non-whitespace byte names its type.
-	if !strings.HasPrefix(strings.TrimLeft(string(raw), " \t\n\r"), "{") {
-		return "takeover record is not an object"
+	// The document is valid JSON, so its first non-whitespace character names its type.
+	if !strings.HasPrefix(strings.TrimLeft(text, " \t\n\r"), "{") {
+		return "", "takeover record is not an object"
 	}
-	return ""
+	return text, ""
 }
 
 // fenceRefusal is the detail ownership.py validate(path, meta, record) refuses with, worded
@@ -37,7 +46,11 @@ func MirrorRefusal(raw []byte) string {
 func fenceRefusal(resolved string, meta map[string]string, raw []byte) string {
 	var record map[string]any
 	if raw != nil {
-		decoder := json.NewDecoder(bytes.NewReader(raw))
+		text, err := pyjson.DecodeBytes(raw)
+		if err != nil {
+			return ""
+		}
+		decoder := json.NewDecoder(strings.NewReader(text))
 		decoder.UseNumber()
 		if decoder.Decode(&record) != nil {
 			return ""

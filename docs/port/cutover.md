@@ -116,6 +116,12 @@ updatedAt                diagnostic timestamp
 ```
 
 `holder`, `controller` and `transition` may be null when not applicable.
+
+Both runtimes read `S/takeover.json` as `json.loads` reads bytes: UTF-8 with or without its
+byte order mark, UTF-16 or UTF-32 (`json.detect_encoding`, `surrogatepass`), so every reader
+(admission, the preflights, `doctor`, the Stop path's owner read) accepts and refuses the same
+bytes. Both publish it as plain UTF-8.
+
 `appServerSocket` and `scopeKey` are null exactly when `schema_meta.socket_path` is absent:
 an **unbound** store, created by a socketless writable opener (crw-run's
 `--state "$RELAY_STATE" register`, a `default/` scope). An unbound store is never a takeover
