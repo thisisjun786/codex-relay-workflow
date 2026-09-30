@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
-	"encoding/hex"
 	"fmt"
 	"net/url"
 	"os"
@@ -32,18 +31,9 @@ func boundedURI(path string, params url.Values, timeout time.Duration, pragmas .
 		}
 		return nil
 	})
-	id, err := randomBytes(8)
-	if err != nil {
-		return nil, err
-	}
-	name := "crw-read-" + hex.EncodeToString(id)
-	sql.Register(name, textGuard{d})
 	u := url.URL{Scheme: "file", Path: path}
 	u.RawQuery = params.Encode()
-	db, err := sql.Open(name, u.String())
-	if err != nil {
-		return nil, err
-	}
+	db := sql.OpenDB(dsnConnector{textGuard{d}, u.String()})
 	db.SetMaxOpenConns(1)
 	return db, nil
 }

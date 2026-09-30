@@ -9,10 +9,11 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
+	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 )
 
 // ReasonRevisionLineageInvalid is errors.RefusalReason.REVISION_LINEAGE_INVALID.
-const ReasonRevisionLineageInvalid = "revision_lineage_invalid"
+const ReasonRevisionLineageInvalid = string(contract.RefusalRevisionLineageInvalid)
 
 // continuationClaim is admission.ContinuationClaim: what a child states when it completes on a
 // turn other than the anchor.

@@ -248,18 +248,28 @@ func OpenExisting(ctx context.Context, path, mode string) (*sql.DB, error) {
 // CODEX_SESSION_RELAY_SCOPE_DIR overrides the registry root. The socket binding records it in
 // the mirror beside the socket it binds.
 func ScopeKey(socket string) (string, error) {
-	hash := sha256.Sum256([]byte(socket))
-	key := fmt.Sprintf("%x", hash[:8])
 	override := os.Getenv("CODEX_SESSION_RELAY_SCOPE_DIR")
 	if override == "" {
-		return key, nil
+		return ScopeKeyIn(socket, "", false), nil
 	}
 	root, err := ScopeRoot(override)
 	if err != nil {
 		return "", err
 	}
+	return ScopeKeyIn(socket, root, true), nil
+}
+
+// ScopeKeyIn is the key of socket, hashed as given, in the production registry or in the
+// isolated one rooted at root: the one derivation of a scope key, whose bytes name the scope
+// files on disk and the mirror's scopeKey.
+func ScopeKeyIn(socket, root string, isolated bool) string {
+	hash := sha256.Sum256([]byte(socket))
+	key := fmt.Sprintf("%x", hash[:8])
+	if !isolated {
+		return key
+	}
 	salt := sha256.Sum256([]byte(root))
-	return fmt.Sprintf("isolated-%x-%s", salt[:4], key), nil
+	return fmt.Sprintf("isolated-%x-%s", salt[:4], key)
 }
 
 // noHome is str() of pathlib's RuntimeError for a ~ or ~user expanduser cannot resolve.

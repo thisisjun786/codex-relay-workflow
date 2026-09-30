@@ -177,12 +177,6 @@ func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ 
 		}
 		return nil
 	})
-	driverID, err := randomBytes(8)
-	if err != nil {
-		return nil, fmt.Errorf("driver identity: %w", err)
-	}
-	name := "crw-store-" + hex.EncodeToString(driverID)
-	sql.Register(name, textGuard{d})
 	u := url.URL{Scheme: "file", Path: resolved}
 	q := u.Query()
 	q.Set("mode", "rw")
@@ -191,10 +185,7 @@ func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ 
 	// from sqlite3.connect(timeout=30); the hook repeats it for explicit parity.
 	q.Set("_busy_timeout", fmt.Sprint(options.BusyTimeout.Milliseconds()))
 	u.RawQuery = q.Encode()
-	db, err := sql.Open(name, u.String())
-	if err != nil {
-		return nil, fmt.Errorf("open database: %w", err)
-	}
+	db := sql.OpenDB(dsnConnector{textGuard{d}, u.String()})
 	db.SetMaxOpenConns(1)
 	defer func() {
 		if err != nil {
@@ -406,3 +397,14 @@ func SchemaStatements() (string, []string, error) {
 	}
 	return sections[0], statements, nil
 }
+
+// dsnConnector opens every connection of one *sql.DB through its own driver and DSN (sql.OpenDB),
+// so an open registers nothing in database/sql's process-wide driver table: a registration can
+// never be removed, and a long-running process opens stores again and again.
+type dsnConnector struct {
+	driver driver.Driver
+	dsn    string
+}
+
+func (c dsnConnector) Connect(context.Context) (driver.Conn, error) { return c.driver.Open(c.dsn) }
+func (c dsnConnector) Driver() driver.Driver                        { return c.driver }

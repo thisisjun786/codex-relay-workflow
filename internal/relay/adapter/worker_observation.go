@@ -17,6 +17,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/service"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"golang.org/x/sys/unix"
 )
@@ -128,11 +129,8 @@ func (o WorkerObservation) Read(ctx context.Context) (map[string]any, string) {
 	if !ticksOK || ticks < 0 || !wpok || !wtok || wp != pid || wt != ticks {
 		return nil, "worker_policy_process_mismatch"
 	}
-	boot, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
-	if err != nil {
-		return nil, "worker_policy_boot_mismatch"
-	}
-	if text(record["bootId"]) == "" || worker["bootId"] != record["bootId"] || record["bootId"] != strings.TrimSpace(string(boot)) {
+	boot := service.BootID()
+	if boot == nil || text(record["bootId"]) == "" || worker["bootId"] != record["bootId"] || record["bootId"] != boot {
 		return nil, "worker_policy_boot_mismatch"
 	}
 	dbpath := filepath.Join(o.State, "relay.sqlite3")
