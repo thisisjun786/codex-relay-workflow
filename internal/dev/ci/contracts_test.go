@@ -3,23 +3,35 @@
 package ci
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 const opsReferences = "plugins/crw/skills/crw-run/references"
 
-// opsCopy copies this repository's operations contract and fixtures into a scratch root.
+// opsFiles are the operations contract and the fixtures its checker reads.
+var opsFiles = []string{"operations.md", "operations/check-result.example.json",
+	"operations/compatibility-record.example.json", "operations/installation-plan.example.md",
+	"operations/scenarios.md"}
+
+// opsCopy copies the operations contract and fixtures the parity rows were recorded against into
+// a scratch root. They are a snapshot (testdata/operations-contract, each file with an .in
+// suffix so the repository's link check leaves the copy alone) of the contract as it stood when
+// the Python checker's answers were recorded, so that a later edit of the live contract does not
+// invalidate a recording nobody can take again. The live contract is judged by `crw-dev ci
+// contracts` itself (Test47_ContractsPairsAndAbsentComponents, "repository").
 func opsCopy(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
-	for _, rel := range []string{"operations.md", "operations/check-result.example.json",
-		"operations/compatibility-record.example.json", "operations/installation-plan.example.md",
-		"operations/scenarios.md"} {
-		data, err := os.ReadFile(filepath.Join(repoRoot(), opsReferences, rel))
+	for _, rel := range opsFiles {
+		data, err := os.ReadFile(filepath.Join(repoRoot(), "internal", "dev", "ci", "testdata", "operations-contract", rel+".in"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -50,9 +62,31 @@ func editOps(t *testing.T, root, rel string, edit func(string) string) {
 	}
 }
 
+// recordedPython is what capture's Python command answered under key for this test, replayed
+// from the test's recording (internal/testsupport/pyoracle): CRW_PYTHON_ORACLE=record or check
+// runs capture again, which only a checkout that still has the Python scripts can do. root, the
+// scratch directory the command ran in, is stored as $ROOT and the checkout as $REPO.
+func recordedPython(t *testing.T, key, root string, capture func() result) result {
+	t.Helper()
+	var answer struct {
+		Code   int    `json:"code"`
+		Stdout string `json:"stdout"`
+		Stderr string `json:"stderr"`
+	}
+	pyoracle.JSON(t, key, &answer, func() (any, error) {
+		r := capture()
+		return map[string]any{"code": r.code, "stdout": r.stdout, "stderr": r.stderr}, nil
+	}, pyoracle.Substitute(root, "$ROOT"), pyoracle.Substitute(repoRoot(), "$REPO"))
+	return result{answer.Code, answer.Stdout, answer.Stderr}
+}
+
+// opsParity requires `crw-dev ci operations` to answer what scripts/check_operations_contract.py
+// answered for the same root.
 func opsParity(t *testing.T, label, root string) result {
 	t.Helper()
-	py := python(t, root, nil, "scripts/check_operations_contract.py", "--root", root)
+	py := recordedPython(t, label, root, func() result {
+		return runCommand(t, root, nil, "python3", filepath.Join(repoRoot(), "scripts", "check_operations_contract.py"), "--root", root)
+	})
 	got := goCheck(t, root, nil, "operations", "--root", root)
 	sameResult(t, label, py, got)
 	return got
@@ -221,15 +255,11 @@ func TestOperationsUnicodeClauseBoundaryParity(t *testing.T) {
 	}
 }
 
-// contractsRepo is a Git checkout holding contracts.py and the named files (empty).
+// contractsRepo is a Git checkout holding the named files (empty).
 func contractsRepo(t *testing.T, present ...string) *fixtureRepo {
 	t.Helper()
 	r := newRepo(t)
-	script, err := os.ReadFile(filepath.Join(repoRoot(), "scripts/ci/contracts.py"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	r.write("scripts/ci/contracts.py", string(script))
+	r.write("README.md", "")
 	for _, path := range present {
 		r.write(path, "")
 	}
@@ -237,75 +267,198 @@ func contractsRepo(t *testing.T, present ...string) *fixtureRepo {
 	return r
 }
 
+// runPythonContracts copies scripts/ci/contracts.py into root and runs it there (live Python).
+func runPythonContracts(t *testing.T, root string) result {
+	t.Helper()
+	(&fixtureRepo{t, root}).write("scripts/ci/contracts.py", readRepo(t, "scripts/ci/contracts.py"))
+	return runCommand(t, root, nil, "python3", "scripts/ci/contracts.py")
+}
+
+// contractInputs are the files the five checks read, as this checkout has them.
+var contractInputs = []string{
+	"plugins/crw/skills/crw-run/references/hook-contract.md",
+	"plugins/crw/skills/crw-run/scripts/fixtures",
+	"plugins/crw/skills/crw-run/references/operations.md",
+	"plugins/crw/skills/crw-run/references/operations",
+	"scripts/crw_runtime/components.json",
+	"contract/schema/bridge-mcp-tools.json",
+	"LICENSE",
+	"packages/codex-thread-bridge/LICENSE",
+	"plugins/crw/skills/crw-run/references/start-policy.md",
+	"plugins/crw/skills/crw-plan/references/integrations.md",
+}
+
+// copyTree copies the file or directory rel from this checkout into root.
+func copyTree(t *testing.T, root, rel string) {
+	t.Helper()
+	err := filepath.WalkDir(filepath.Join(repoRoot(), rel), func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(root, strings.TrimPrefix(path, repoRoot()))
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, 0o644)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Every check is built into crw-dev: a component is present exactly when its contract is, and no
+// checker script has to sit beside it. scripts/ci/contracts.py, the Python twin, still refuses a
+// contract whose checker script is missing (and the reverse); Go no longer has a script to pair.
 func Test47_ContractsPairsAndAbsentComponents(t *testing.T) {
-	// No component present: every check reports it claims no coverage.
+	// No component present: every check reports it claims no coverage, as the Python twin did.
 	r := contractsRepo(t)
-	py := runCommand(t, r.root, nil, "python3", "scripts/ci/contracts.py")
 	got := goCheck(t, r.root, nil, "contracts")
+	py := recordedPython(t, "all absent", r.root, func() result { return runPythonContracts(t, r.root) })
 	sameResult(t, "all absent", py, got)
 	if got.code != 0 || strings.Count(got.stdout, "component absent; no coverage claimed") != len(contractChecks) {
 		t.Errorf("all absent: %+v", got)
 	}
-	// A contract without its checker (or the reverse) is refused.
-	for _, pair := range [][]string{
-		{"plugins/crw/skills/crw-run/references/hook-contract.md"},
-		{"plugins/crw/skills/crw-run/scripts/start_policy.py"},
-		{"scripts/crw_runtime/components.json"},
+	// A Python checker script without its contract is not a component: nothing runs it.
+	r = contractsRepo(t, "plugins/crw/skills/crw-run/scripts/hook_probe.py", "scripts/check_operations_contract.py",
+		"scripts/runtime_install.py", "plugins/crw/skills/crw-run/scripts/start_policy.py",
+		"plugins/crw/skills/crw-run/scripts/parent_title.py")
+	if got := goCheck(t, r.root, nil, "contracts"); got.code != 0 || strings.Count(got.stdout, "component absent; no coverage claimed") != len(contractChecks) {
+		t.Errorf("scripts without contracts: %+v", got)
+	}
+	// A present contract is checked with the data it needs, and fails without it rather than
+	// claim coverage.
+	for _, contract := range []string{
+		"plugins/crw/skills/crw-run/references/hook-contract.md",
+		"plugins/crw/skills/crw-run/references/start-policy.md",
+		"scripts/crw_runtime/components.json",
 	} {
-		r := contractsRepo(t, pair...)
-		py := runCommand(t, r.root, nil, "python3", "scripts/ci/contracts.py")
-		got := goCheck(t, r.root, nil, "contracts")
-		sameResult(t, pair[0], py, got)
-		if got.code != 1 || !strings.HasPrefix(got.stderr, "Incomplete ") {
-			t.Errorf("%s: %+v", pair[0], got)
+		r := contractsRepo(t, contract)
+		if got := goCheck(t, r.root, nil, "contracts"); got.code != 1 || !strings.Contains(got.stderr, " contract check failed with exit status ") {
+			t.Errorf("%s alone: %+v", contract, got)
 		}
 	}
-	// This repository: every present pair runs and passes, output identical.
-	root := repoRoot()
-	sameResult(t, "repository", runCommand(t, root, nil, "python3", "scripts/ci/contracts.py"), goCheck(t, root, nil, "contracts"))
+	// The checkout's contracts and their data, without one Python script: every check runs and
+	// passes, which is what the checkout is once the Python implementation leaves (todo 44).
+	root := newRepo(t).root
+	for _, rel := range contractInputs {
+		copyTree(t, root, rel)
+	}
+	if err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && strings.HasSuffix(path, ".py") {
+			return errors.New("a Python file was copied: " + path)
+		}
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	checked := goCheck(t, root, nil, "contracts")
+	if checked.code != 0 || strings.Contains(checked.stdout, "component absent") {
+		t.Fatalf("contracts without Python checkers: %+v", checked)
+	}
+	// This repository: every check runs and passes.
+	here := goCheck(t, repoRoot(), nil, "contracts")
+	if here.code != 0 || strings.Contains(here.stdout, "component absent") {
+		t.Fatalf("repository: %+v", here)
+	}
+	for _, line := range []string{"fixtures matched", "sites reached", "OK every clause cited by any fixture exists",
+		"runtime: scripts/crw_runtime/components.json agrees with the Go definition", "vocabulary: 3 run modes and 3 observation paths, as declared",
+		"title fixtures against their recorded expectations"} {
+		if !strings.Contains(here.stdout, line) || !strings.Contains(checked.stdout, line) {
+			t.Errorf("a check did not report %q\nrepository: %s\nwithout Python: %s", line, here.stdout, checked.stdout)
+		}
+	}
 }
 
-// contractsParityExit runs contracts.py and `crw-dev ci contracts` in root and requires the
-// same exit status; stdout and stderr are returned for the caller's own checks.
-func contractsParityExit(t *testing.T, label, root string) (result, result) {
-	t.Helper()
-	py := runCommand(t, root, nil, "python3", "scripts/ci/contracts.py")
-	got := goCheck(t, root, nil, "contracts")
-	if py.code != got.code {
-		t.Errorf("%s: python exit %d, go exit %d\npython stderr: %s\ngo stderr: %s", label, py.code, got.code, py.stderr, got.stderr)
+// The runtime check judges what the Go build takes from components.json, one property per row.
+func TestContractsRuntimeDefinition(t *testing.T) {
+	base := func(t *testing.T) string {
+		root := newRepo(t).root
+		for _, rel := range []string{"scripts/crw_runtime/components.json", "contract/schema/bridge-mcp-tools.json", "LICENSE", "packages/codex-thread-bridge/LICENSE"} {
+			copyTree(t, root, rel)
+		}
+		return root
 	}
-	return py, got
+	if got := goCheck(t, base(t), nil, "contracts"); got.code != 0 || !strings.Contains(got.stdout, "links codex-session-relay, codex-thread-bridge, crw-completion-hook") {
+		t.Fatalf("clean: %+v", got)
+	}
+	edit := func(t *testing.T, root, rel, old, new string) {
+		t.Helper()
+		path := filepath.Join(root, rel)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		changed := strings.Replace(string(data), old, new, 1)
+		if changed == string(data) {
+			t.Fatalf("%s: %q not found", rel, old)
+		}
+		if err := os.WriteFile(path, []byte(changed), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, row := range []struct {
+		label, rel, old, new, fragment string
+	}{
+		{"version", "scripts/crw_runtime/components.json", `"definitionVersion": 1`, `"definitionVersion": 2`, "definitionVersion is not 1"},
+		{"field", "scripts/crw_runtime/components.json", `"version": "0.2.0"`, `"version": "0.3.0"`, `component 0 version is "0.3.0", the Go definition's is "0.2.0"`},
+		{"identity tool", "contract/schema/bridge-mcp-tools.json", `"name": "get_capabilities"`, `"name": "get_abilities"`, `identity tool "get_capabilities" is not a tool contract/schema/bridge-mcp-tools.json lists`},
+		{"link", "scripts/crw_runtime/components.json", `"consoleScript": "codex-session-relay"`, `"consoleScript": "crw-completion-hook"`, "the links the installer places are"},
+	} {
+		root := base(t)
+		edit(t, root, row.rel, row.old, row.new)
+		got := goCheck(t, root, nil, "contracts")
+		if got.code != 1 || !strings.Contains(got.stderr, "FAIL runtime: ") || !strings.Contains(got.stderr, row.fragment) ||
+			!strings.Contains(got.stderr, "runtime contract check failed with exit status 1") {
+			t.Errorf("%s: %+v", row.label, got)
+		}
+	}
+	for _, row := range []struct{ label, rel, fragment string }{
+		{"licence", "packages/codex-thread-bridge/LICENSE", `FAIL runtime: codex-thread-bridge: licence "packages/codex-thread-bridge/LICENSE" is not a file in this checkout`},
+		{"tool schema", "contract/schema/bridge-mcp-tools.json", "FAIL runtime: contract/schema/bridge-mcp-tools.json: "},
+	} {
+		root := base(t)
+		if err := os.Remove(filepath.Join(root, row.rel)); err != nil {
+			t.Fatal(err)
+		}
+		if got := goCheck(t, root, nil, "contracts"); got.code != 1 || !strings.Contains(got.stderr, row.fragment) {
+			t.Errorf("%s: %+v", row.label, got)
+		}
+	}
 }
 
 func Test47_ContractsOperationsPairAndResult(t *testing.T) {
-	// The operations checker is ported, but its pair is judged by the same rule contracts.py
-	// uses: checker script present without its contract is an incomplete pair.
+	// The operations checker is built in: its Python script without the contract is no component.
 	r := contractsRepo(t, "scripts/check_operations_contract.py")
-	py := runCommand(t, r.root, nil, "python3", "scripts/ci/contracts.py")
 	got := goCheck(t, r.root, nil, "contracts")
-	sameResult(t, "operations script without contract", py, got)
-	expectEqual(t, "operations incomplete", got.code, 1)
-	if !strings.Contains(got.stderr, "Incomplete operations contract/check pair") {
-		t.Errorf("operations incomplete: %+v", got)
+	if got.code != 0 || !strings.Contains(got.stdout, "operations: component absent; no coverage claimed") {
+		t.Errorf("operations script without contract: %+v", got)
 	}
 
-	// A failing operations replay fails contracts in both implementations. Python ends in a
-	// CalledProcessError traceback, so only the exit and the checker's own FAIL lines compare.
+	// A failing operations replay fails contracts in both implementations. Python ended in a
+	// CalledProcessError traceback, so only the exit, stdout and the checker's own FAIL lines compare.
 	root := opsCopy(t)
 	editOps(t, root, "operations/scenarios.md", func(s string) string { return strings.Replace(s, "OPS-2.3", "OPS-99.1", 1) })
-	scriptData, err := os.ReadFile(filepath.Join(repoRoot(), "scripts/check_operations_contract.py"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	contractsData, err := os.ReadFile(filepath.Join(repoRoot(), "scripts/ci/contracts.py"))
-	if err != nil {
-		t.Fatal(err)
-	}
 	fr := &fixtureRepo{t, root}
 	fr.git("init", "-q")
-	fr.write("scripts/check_operations_contract.py", string(scriptData))
-	fr.write("scripts/ci/contracts.py", string(contractsData))
-	pyFail, goFail := contractsParityExit(t, "failing operations replay", root)
+	pyFail := recordedPython(t, "failing operations replay", root, func() result {
+		fr.write("scripts/check_operations_contract.py", readRepo(t, "scripts/check_operations_contract.py"))
+		py := runPythonContracts(t, root)
+		var fails []string
+		for _, line := range strings.Split(py.stderr, "\n") {
+			if strings.HasPrefix(line, "FAIL ") {
+				fails = append(fails, line)
+			}
+		}
+		return result{py.code, py.stdout, strings.Join(fails, "\n")}
+	})
+	goFail := goCheck(t, root, nil, "contracts")
+	if pyFail.code != goFail.code {
+		t.Errorf("failing operations replay: python exit %d, go exit %d\ngo stderr: %s", pyFail.code, goFail.code, goFail.stderr)
+	}
 	expectEqual(t, "failing replay exit", goFail.code, 1)
 	const line = "FAIL fixtures cite OPS-99.1, which the contract does not define"
 	for label, r := range map[string]result{"python": pyFail, "go": goFail} {
@@ -314,6 +467,16 @@ func Test47_ContractsOperationsPairAndResult(t *testing.T) {
 		}
 	}
 	expectEqual(t, "replay stdout", goFail.stdout, pyFail.stdout)
+}
+
+// readRepo is a file of this checkout.
+func readRepo(t *testing.T, rel string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(repoRoot(), rel))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }
 
 // The Action part needs at least 80 non-space characters: 79 fails and 80 passes, in both.

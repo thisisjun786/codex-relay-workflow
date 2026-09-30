@@ -5,9 +5,8 @@ package stopevents
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"os"
-	"os/exec"
 	"os/user"
 	"path/filepath"
 	"slices"
@@ -560,21 +559,18 @@ func TestSEV08_LedgerIntegrity(t *testing.T) {
 	// Python reads a root or a Codex home at Path(arg).expanduser(), and Path() spells the path
 	// before expanduser looks at it: "//" and "." collapse ("..", and exactly two leading
 	// separators, stay), so "./~" is "~", ".//~/x" is "~/x" and "~//x" is "~/x", each HOME's.
-	// Every row is what scripts/stop_events.py prints for the same argv, HOME and working
-	// directory, and is checked against it when python3 is CPython 3.14.
+	// Every row is what scripts/stop_events.py printed for the same argv, HOME and working
+	// directory under CPython 3.14, replayed from its recording (pythonReading).
 	t.Run("a path is spelled as Path() spells it before its ~ is expanded", func(t *testing.T) {
-		script := filepath.Join(repositoryRoot(), "scripts", "stop_events.py")
-		python := cpython314()
 		h, _ := oneEvent(t)
 		// What a reading that took "./~" for a directory named ~ would read instead.
 		if err := os.MkdirAll(h.root+"/~/journal", 0o700); err != nil {
 			t.Fatal(err)
 		}
-		t.Chdir(h.root)
 		missing := "nonexistent-" + filepath.Base(h.root)
 		missingLedger := filepath.Join(append([]string{"/" + missing}, hook.HostLedgerParts...)...)
 		homed := func(home string) []string { return append(roots(h.journal), "--codex-home", home) }
-		for _, c := range []struct {
+		rows := []struct {
 			home    string
 			args    []string
 			code    int
@@ -594,7 +590,19 @@ func TestSEV08_LedgerIntegrity(t *testing.T) {
 			{h.codex, homed("~"), 0, h.journal, []string{h.ledger}},
 			{h.codex, homed("codex"), 0, h.journal, []string{h.ledger}},
 			{"", homed("~//" + missing), 0, h.journal, []string{missingLedger, h.ledger}},
-		} {
+		}
+		// Python's answers are read before the working directory changes: the recording is found
+		// relative to this package's directory.
+		type reading struct {
+			code   int
+			stdout string
+		}
+		python := make([]reading, len(rows))
+		for row, c := range rows {
+			python[row].code, python[row].stdout = pythonReading(t, fmt.Sprintf("row %d", row), h, missing, c.home, c.args)
+		}
+		t.Chdir(h.root)
+		for row, c := range rows {
 			t.Setenv("HOME", c.home)
 			var out, errs bytes.Buffer
 			code := Run(c.args, &out, &errs)
@@ -613,27 +621,10 @@ func TestSEV08_LedgerIntegrity(t *testing.T) {
 			if code != c.code || root != c.root || !slices.Equal(ledgers, c.ledgers) {
 				t.Errorf("HOME=%s %v: exit %d, root %v, host ledgers %v (reader fault %v); want %d, %s, %v", c.home, c.args, code, root, ledgers, answer["readerFault"], c.code, c.root, c.ledgers)
 			}
-			if python == "" {
-				continue
+			pyCode, pyOut := python[row].code, python[row].stdout
+			if pyCode != code || pyOut != out.String() {
+				t.Errorf("HOME=%s %v: Python exits %d and prints\n%s\nthe judge exits %d and prints\n%s%s", c.home, c.args, pyCode, pyOut, code, out.String(), errs.String())
 			}
-			cmd := exec.Command(python, append([]string{script}, c.args...)...)
-			cmd.Dir, cmd.Env = h.root, []string{"PATH=" + os.Getenv("PATH"), "HOME=" + c.home, "PYTHONDONTWRITEBYTECODE=1"}
-			var pyOut, pyErr bytes.Buffer
-			cmd.Stdout, cmd.Stderr = &pyOut, &pyErr
-			pyCode := 0
-			if err := cmd.Run(); err != nil {
-				var exit *exec.ExitError
-				if !errors.As(err, &exit) {
-					t.Fatal(err)
-				}
-				pyCode = exit.ExitCode()
-			}
-			if pyCode != code || !bytes.Equal(pyOut.Bytes(), out.Bytes()) {
-				t.Errorf("HOME=%s %v: Python exits %d and prints\n%s\nthe judge exits %d and prints\n%s%s", c.home, c.args, pyCode, pyOut.String(), code, out.String(), pyErr.String())
-			}
-		}
-		if python == "" {
-			t.Log("python3 is not CPython 3.14: the rows were not checked against scripts/stop_events.py")
 		}
 	})
 	t.Run("an entry in the ledger this reader does not know", func(t *testing.T) {

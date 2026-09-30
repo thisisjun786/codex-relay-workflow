@@ -59,8 +59,13 @@ func corpus(t *testing.T) map[string][]byte {
 		t.Fatal(err)
 	}
 	docs := map[string][]byte{}
-	for _, dir := range []string{"internal/relay/hook/testdata", "internal/dev/trialledger/testdata", "contract", "packages/codex-session-relay/tests/fixtures"} {
+	// internal/dev/pyload/testdata holds copies of the relay package's test fixtures, which leave
+	// the repository with the Python implementation (todo 44).
+	for _, dir := range []string{"internal/relay/hook/testdata", "internal/dev/trialledger/testdata", "contract", "internal/dev/pyload/testdata"} {
 		err := filepath.WalkDir(filepath.Join(root, dir), func(path string, d os.DirEntry, err error) error {
+			if err == nil && d.IsDir() && d.Name() == "python-oracle" {
+				return filepath.SkipDir // recorded answers (internal/testsupport/pyoracle), not test data
+			}
 			if err != nil || d.IsDir() || !(strings.HasSuffix(path, ".json") || strings.HasSuffix(path, ".jsonl")) {
 				return err
 			}
