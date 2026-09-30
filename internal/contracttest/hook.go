@@ -19,8 +19,6 @@ import (
 	"syscall"
 	"testing"
 	"time"
-
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 )
 
 // runHook drives the real binary and a control.sock peer. The peer supplies the
@@ -29,8 +27,14 @@ func runHook(t *testing.T, s Scenario) (map[string]any, error) {
 	if s.Domain != "hook" && s.Domain != "records" {
 		return nil, fmt.Errorf("%w: %s/%s", ErrNotPorted, s.Domain, s.Kind)
 	}
-	if s.Kind == "status" && truthy(s.Run["document"]) {
-		return statusDocument(s)
+	if s.Kind == "status" {
+		if truthy(s.Run["document"]) {
+			return statusDocument(s)
+		}
+		return nil, fmt.Errorf("%w: the hook status reading was retired in wave R1 (decisions.md, decision 57); only the settings document remains", ErrFixture)
+	}
+	if truthy(s.Run["status"]) {
+		return nil, fmt.Errorf("%w: run.status reads the retired hook status reading (decisions.md, decision 57)", ErrFixture)
 	}
 	relay, hasRelay := s.Given["relay"].(map[string]any)
 	steps, err := cliSteps(s.Run)
@@ -75,7 +79,7 @@ func runHook(t *testing.T, s Scenario) (map[string]any, error) {
 	// a fake subprocess. Native RPC needs a private owner directory instead of
 	// binding a shared /tmp/control.sock. Preserve the legacy argv observation.
 	legacyDB := config["dbPath"]
-	if db, ok := legacyDB.(string); ok && db != "" && s.Kind != "status" && !strings.HasPrefix(db, home+string(filepath.Separator)) {
+	if db, ok := legacyDB.(string); ok && db != "" && !strings.HasPrefix(db, home+string(filepath.Separator)) {
 		config["dbPath"] = filepath.Join(home, "fixture-state", filepath.Base(db))
 	}
 	if s.Kind == "stop" && config["owner"] == nil {
@@ -119,7 +123,7 @@ func runHook(t *testing.T, s Scenario) (map[string]any, error) {
 	// Published before stdin is delivered, so the post-claim request can kill its
 	// owner without racing process startup or relying on a sleep.
 	firstProcess := make(chan *os.Process, 1)
-	if hasRelay && s.Kind != "status" {
+	if hasRelay {
 		state := home + "/state"
 		if db, ok := config["dbPath"].(string); ok && db != "" {
 			state = filepath.Dir(db)
@@ -235,10 +239,6 @@ func runHook(t *testing.T, s Scenario) (map[string]any, error) {
 		}
 		workers.Wait()
 	}()
-	if s.Kind == "status" {
-		status := standIns.status(ctx, home, env)
-		return map[string]any{"exit": float64(0), "stdout": "", "stderr": "", "stdout_json": nil, "status": status, "files": expectedFiles(home, s.Expect.Files), "observed": map[string]any{}}, nil
-	}
 	outcomes := []any{}
 	started := time.Now()
 	for stepIndex, step := range steps {
@@ -438,9 +438,6 @@ func runHook(t *testing.T, s Scenario) (map[string]any, error) {
 		observed[name] = observePath(filepath.Join(home, name))
 	}
 	actual["observed"] = observed
-	if truthy(s.Run["status"]) {
-		actual["status"] = standIns.status(ctx, home, env)
-	}
 	return actual, nil
 }
 func number(v any) float64 { n, _ := v.(float64); return n }
@@ -507,16 +504,13 @@ func runVerify(ctx context.Context, step map[string]any, env []string, expand fu
 const stopEventR1 = "contract/golden/stop_event_r1.json"
 
 // hookStandInsFor are the programs a hook fixture's given files name: ${PYTHON}, an interpreter,
-// and ${ENTRY}, the Python-era completion_hook.py entry point. The fixtures observe what the
-// status reading says about them (whether the entry point is a file, whether the interpreter
-// answers the version probe), never what they do, so neither needs a Python installation.
+// and ${ENTRY}, the Python-era completion_hook.py entry point. A registration in the fixture's
+// hook file names them; nothing in the corpus runs them, so neither needs a Python installation.
 type hookStandInsFor struct{ bin, python, entry string }
 
-// pythonStandIn answers internal/relay/hook's status probe (`-c <version probe>`) as a supported
-// interpreter would, and refuses anything else: nothing in the corpus runs the entry point.
+// pythonStandIn refuses to run anything: nothing in the corpus runs the entry point.
 const pythonStandIn = "#!/bin/sh\n" +
-	"if [ \"$1\" = -c ]; then printf 'crw-status-probe 3.13'; exit 0; fi\n" +
-	"echo 'contracttest: a stand-in interpreter answers only the status probe' >&2\n" +
+	"echo 'contracttest: a stand-in interpreter is never run' >&2\n" +
 	"exit 2\n"
 
 func hookStandIns(t *testing.T) (hookStandInsFor, error) {
@@ -546,25 +540,6 @@ func hookStandIns(t *testing.T) (hookStandInsFor, error) {
 		return hookStandInsFor{}, err
 	}
 	return s, nil
-}
-
-// status is hook.Status for the scenario home. The reading resolves a bare interpreter name
-// through this process's PATH, as the host resolves it through its own, so the stand-in directory
-// leads PATH while it reads, and only then: a Python process the test itself starts must find the
-// real interpreter.
-func (s hookStandInsFor) status(ctx context.Context, home string, env []string) map[string]any {
-	previous, set := os.LookupEnv("PATH")
-	if err := os.Setenv("PATH", s.bin+string(os.PathListSeparator)+previous); err != nil {
-		panic(err)
-	}
-	defer func() {
-		if set {
-			_ = os.Setenv("PATH", previous)
-		} else {
-			_ = os.Unsetenv("PATH")
-		}
-	}()
-	return hook.Status(ctx, home, envMap(env), "Stop")
 }
 
 func writeHookFiles(home string, files any, standIns hookStandInsFor) error {
@@ -615,17 +590,6 @@ func applyHookModes(home string, modes any) error {
 	return nil
 }
 
-func envMap(env []string) map[string]string {
-	out := map[string]string{}
-	for _, item := range env {
-		key, value, ok := strings.Cut(item, "=")
-		if ok {
-			out[key] = value
-		}
-	}
-	return out
-}
-
 func shellSingleQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
@@ -660,15 +624,6 @@ func observePath(path string) map[string]any {
 			}
 			out["entries"] = names
 		}
-	}
-	return out
-}
-
-func expectedFiles(home string, files map[string]bool) map[string]any {
-	out := map[string]any{}
-	for name := range files {
-		_, err := os.Lstat(filepath.Join(home, name))
-		out[name] = err == nil
 	}
 	return out
 }

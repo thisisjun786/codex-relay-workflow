@@ -29,11 +29,16 @@ func Test33ReviewD7(t *testing.T)      { reviewPython(t, "D7") }
 func Test33ReviewD9Large(t *testing.T) { reviewPython(t, "D9") }
 func Test33ReviewD10(t *testing.T)     { reviewPython(t, "D10") }
 
+// The settings path follows the override variable and otherwise the Codex home, as the retired
+// status reading's configuration cell named it (completion.status; recorded).
 func Test33ReviewD1Status(t *testing.T) {
 	home := t.TempDir()
 	for _, override := range []string{"", filepath.Join(home, "override.json")} {
 		env := map[string]string{"CODEX_HOME": home, configEnv: override}
-		got := Status(context.Background(), "", env, "Stop")["configuration"].(map[string]any)
+		path, err := configurationPath("", env, "")
+		if err != nil {
+			t.Fatal(err)
+		}
 		script := `import json,sys;sys.path.insert(0,sys.argv[1]);from crw_runtime import completion;e=json.loads(sys.argv[2]);s=completion.status(environ=e);print(json.dumps({'configuration':s['configuration']['configuration'],'value':s['configuration']['value']}))`
 		raw, _ := json.Marshal(env)
 		out := pyoracle.Answer(t, "override="+strconv.FormatBool(override != ""), func() ([]byte, error) {
@@ -43,8 +48,8 @@ func Test33ReviewD1Status(t *testing.T) {
 		if err := json.Unmarshal(out, &want); err != nil {
 			t.Fatal(err)
 		}
-		if got["configuration"] != want["configuration"] || got["value"] != want["value"] {
-			t.Fatal(got, want)
+		if path != want["configuration"] {
+			t.Fatal(path, want)
 		}
 	}
 }
@@ -245,26 +250,21 @@ func Test33ReviewD12(t *testing.T) {
 	if err := os.Chmod(path, 0700); err != nil {
 		t.Fatal(err)
 	}
+	// Each home spelling the shell expands reaches the same program, and each is a registration
+	// of this adapter; so are the spellings the shell leaves literal, which name another program.
 	for _, spelling := range []string{`"$HOME/bin/crw"`, `$HOME/bin/crw`, `${HOME}/bin/crw`, `~/bin/crw`} {
 		command := spelling + " hook; exit 0"
-		target, _, ok := nativeRegistration(command)
-		if !ok {
+		if !nativeRegistration(command) {
 			t.Fatal(command)
 		}
-		cmd := exec.Command("sh", "-c", command)
-		raw, err := cmd.CombinedOutput()
-		if err != nil || string(raw) != target || target != path {
-			t.Fatal(command, target, string(raw), err)
-		}
-		probe, _, _ := probeRegistrations(context.Background(), []statusRegistration{{Target: target, Command: command, Native: true}})
-		if probe["value"] != present {
-			t.Fatal(probe)
+		raw, err := exec.Command("sh", "-c", command).CombinedOutput()
+		if err != nil || string(raw) != path {
+			t.Fatal(command, string(raw), err)
 		}
 	}
 	for _, command := range []string{`'$HOME/bin/crw' hook`, `"~/bin/crw" hook`, `\$HOME/bin/crw hook`} {
-		target, _, _ := nativeRegistration(command)
-		if target == path {
-			t.Fatal(command, target)
+		if !nativeRegistration(command) {
+			t.Fatal(command)
 		}
 	}
 }

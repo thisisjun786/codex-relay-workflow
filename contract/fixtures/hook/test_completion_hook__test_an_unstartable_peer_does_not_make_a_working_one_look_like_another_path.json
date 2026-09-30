@@ -11,8 +11,7 @@
     }
   },
   "run": {
-    "kind": "hook",
-    "status": true
+    "kind": "hook"
   },
   "expect": {
     "exit": 0,
@@ -23,37 +22,6 @@
           "rows"
         ],
         "value": 1
-      },
-      {
-        "kind": "length",
-        "path": [
-          "status",
-          "firingRecordAbsence",
-          "candidates"
-        ],
-        "value": 1
-      },
-      {
-        "kind": "eq",
-        "path": [
-          "status",
-          "firingRecordAbsence",
-          "candidates",
-          0,
-          "cause"
-        ],
-        "value": "adapter_cannot_run"
-      },
-      {
-        "kind": "eq",
-        "path": [
-          "status",
-          "firingRecordAbsence",
-          "candidates",
-          0,
-          "cause"
-        ],
-        "value": "adapter_cannot_run"
       }
     ]
   }

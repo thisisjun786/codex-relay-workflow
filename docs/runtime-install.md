@@ -996,7 +996,8 @@ A subagent's turn is no signal: on the measured host subagent turns recorded no 
 daemon is not on this path. The guard reads the marker and a read-only database, so a stopped daemon
 is not observable from a Stop and is never inferred from one. `runtime_install.py hook-status`, the
 Python installer's cell-by-cell reading of the same question, has no `crw` counterpart
-([the Python fence installer](#the-python-fence-installer)).
+([the Python fence installer](#the-python-fence-installer)); its Go port was deleted unused in
+wave R1 (decision 57 in [the port decisions](port/decisions.md)).
 
 ## The composed acceptance run
 

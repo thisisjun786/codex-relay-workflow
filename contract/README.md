@@ -19,7 +19,10 @@ A scenario is `{"given": {...}, "run": {...}, "expect": {"exit": 0, "checks": [.
 For the checkout hook, `{"run":{"kind":"entry","stdin":{}},"expect":{"exit":0}}`
 spawns the entrypoint; `{"run":{"kind":"hook","stdin":{}},"expect":{"exit":0}}`
 invokes its real API; `{"run":{"kind":"status"},"expect":{"exit":0}}`
-reads its real status. These are distinct from the packaged `stop` run kind.
+read its real status until wave R1 deleted that reading (decision 57 in
+[the port decisions](../docs/port/decisions.md)): the runner now refuses a `status` run other
+than the settings document below, and `run.status`. These are distinct from the packaged `stop`
+run kind.
 The hook spike's implemented form uses `given.relay` (a real executable stub with `stdout` and `exit`), `given.settings` (false means absent), `given.settings_overrides`, and `given.files` (relative UTF-8 text). File content supports `${HOME}`, `${PYTHON}`, `${ENTRY}` expansion. `run.kind` is `entry` (subprocess), `hook` (the real completion.run) or `status` (the real completion.status); `run.stdin` is a JSON value or a raw string, `run.argv` contains entrypoint arguments, `run.status` reads the status after an invocation. `expect.exit` is mandatory. `expect.stdout_json` compares parsed JSON. `expect.files` maps relative paths to expected existence. `expect.checks` is a list of `{"kind":"eq", "path":["rows",0,"adapterOutcome"], "value":"guard_answered"}`. Paths address `exit`, `stdout`, `stderr`, `rows` (journal JSON), `status`, `call` (the fake relay's actual argv and stdin), and `files`. Checks run against observed data; expected values must not be derived from the observed values.
 
 ## Assertion survey of all 14 class-A files

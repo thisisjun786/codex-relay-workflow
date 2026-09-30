@@ -11,8 +11,7 @@
     }
   },
   "run": {
-    "kind": "hook",
-    "status": true
+    "kind": "hook"
   },
   "expect": {
     "exit": 0,
@@ -25,17 +24,6 @@
           "adapterOutcome"
         ],
         "value": "guard_answered"
-      },
-      {
-        "kind": "eq",
-        "path": [
-          "status",
-          "firingRecordAbsence",
-          "candidates",
-          0,
-          "cause"
-        ],
-        "value": "journalling_off"
       }
     ]
   }

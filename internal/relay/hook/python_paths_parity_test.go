@@ -23,10 +23,11 @@ import (
 
 // A path the settings or the Stop payload name reaches the system as os.fsencode's bytes: a
 // surrogate escape (U+DCFF) is the byte it stands for, and a lone surrogate nothing encodes
-// (U+D800) is the ValueError Python's adapter and status catch. Each answer is Python's own
-// function over the same str: the status cell (completion._journal_cell), the transcript scan
-// (stopadapter.event_identity), the claim (stopadapter.claim_event) and the journal row
-// (stopadapter.journal). Python's answers are recorded (pyoracle) in this file's tests.
+// (U+D800) is the ValueError Python's adapter catches. Each answer is Python's own function over
+// the same str: the transcript scan (stopadapter.event_identity), the claim
+// (stopadapter.claim_event) and the journal row (stopadapter.journal). Python's answers are
+// recorded (pyoracle) in this file's tests; the recording also holds the retired status
+// reading's journal cells (completion._journal_cell), which nothing compares any more.
 func TestAPathFromJSONReachesTheSystemAsPythonEncodesIt(t *testing.T) {
 	root := t.TempDir()
 	journal := filepath.Join(root, "j\xff") // a directory whose name is not UTF-8
@@ -67,14 +68,6 @@ print(json.dumps({"cells": cells, "reasons": reasons, "claim": claim[0], "row": 
 		t.Fatal(err)
 	}
 
-	cells := get(want, "cells").([]any)
-	for i, spelling := range []string{spelled, unencodable} {
-		got := journalCell(Object{{Key: "journalRoot", Value: spelling}, {Key: "journalPolicy", Value: "every_invocation"}})
-		expected := cells[i].([]any)
-		if got["value"] != expected[0] || got["evidence"] != expected[1] || got["journalRoot"] != expected[2] {
-			t.Errorf("journal cell for %q: %q %q %q\npython %q", spelling, got["value"], got["evidence"], got["journalRoot"], expected)
-		}
-	}
 	stop := Object{{Key: "session_id", Value: "s"}, {Key: "turn_id", Value: "t"}, {Key: "stop_hook_active", Value: false}, {Key: "last_assistant_message", Value: "x"}}
 	reasons := get(want, "reasons").([]any)
 	for i, path := range []string{spelled + "/transcript.jsonl", spelled + "/missing.jsonl", unencodable} {
@@ -190,38 +183,6 @@ print(json.dumps([str(completion.configuration_path()), str(stopadapter.host_led
 	}
 }
 
-// hook status reads a registration's settings where completion._settled puts them: Path.expanduser
-// (an empty HOME is the root, ~ alone is the home itself) and then os.path.abspath.
-func TestStatusSettlesARegistrationsSettingsAsPythonDoes(t *testing.T) {
-	home := t.TempDir()
-	entry := filepath.Join(home, entryPointName)
-	writeTest(t, entry, []byte("# adapter"))
-	script := `import json, os, sys
-sys.path.insert(0, os.path.join(sys.argv[1], "scripts"))
-from crw_runtime import completion
-s = completion.status(environ=json.loads(sys.argv[2]))
-print(json.dumps([s["configuration"]["configuration"], s["configuration"]["value"]]))`
-	for _, settings := range []string{"~/s.json", "~"} {
-		t.Run(settings, func(t *testing.T) {
-			t.Setenv("HOME", "")
-			writeStatusJSON(t, filepath.Join(home, "hooks.json"), map[string]any{"hooks": map[string]any{"Stop": []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "python3 " + entry + " " + settings, "timeout": 10}}}}}})
-			env := map[string]string{"CODEX_HOME": home}
-			raw, _ := json.Marshal(env)
-			out := pyoracle.Answer(t, "status", func() ([]byte, error) {
-				return pythonScript(t, append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1"), nil, "-c", script, testRoot, string(raw))
-			}, pyoracle.Substitute(home, "<HOME>"))
-			var want []any
-			if err := json.Unmarshal(out, &want); err != nil {
-				t.Fatalf("%v: %s", err, out)
-			}
-			got := Status(context.Background(), "", env, "Stop")["configuration"].(map[string]any)
-			if got["configuration"] != want[0] || got["value"] != want[1] {
-				t.Errorf("configuration %v (%v), python %v (%v)", got["configuration"], got["value"], want[0], want[1])
-			}
-		})
-	}
-}
-
 // The owner's control socket is dialled in the directory each source names. A dbPath is the
 // settings' str, so a surrogate escape in it (U+DCFF) is the byte it stands for, as Python's
 // socket_guard connects to os.fsencode(str(state / "control.sock")). A directory the environment
@@ -279,120 +240,5 @@ func TestTheControlSocketIsDialledWhereItsSourceNamesIt(t *testing.T) {
 			}
 			awaitHost(t, done)
 		})
-	}
-}
-
-// The status journal cell reads and names str(Path(root).expanduser()), as completion._journal_cell
-// does: ~ expanded, "." and empty components and a trailing slash dropped, exactly two leading
-// slashes kept. os.fsencode's refusal of a lone surrogate counts its position in that spelling.
-func TestTheJournalCellNamesTheRootAsPathlibSpellsIt(t *testing.T) {
-	root, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("HOME", root)
-	if err = os.MkdirAll(filepath.Join(root, "d", "20260930"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	writeTest(t, filepath.Join(root, "d", "20260930", strings.Repeat("a", 32)+".json"), []byte("{}\n"))
-	unencodable := "\xed\xa0\x80" // U+D800 as a JSON string decodes it
-	var roots []any
-	for _, spelled := range []string{
-		root + "//a/./b" + unencodable, "/" + root + "/./a//b/" + unencodable + unencodable + "/c", "~/./a" + unencodable,
-		root + "//a/./b", root + "/c/", "/" + root + "/c", "~/./c/",
-		root + "//d/./", "/" + root + "/d", "~//d",
-	} {
-		roots = append(roots, spelled)
-	}
-	script := `import json, os, sys
-sys.path.insert(0, os.path.join(sys.argv[1], "scripts"))
-from crw_runtime import completion
-cells = []
-for root in json.loads(sys.argv[2]):
-    cell = completion._journal_cell({"journalRoot": root, "journalPolicy": "every_invocation"})
-    cells.append([cell["value"], cell["evidence"], cell.get("journalRoot")])
-print(json.dumps(cells))`
-	raw := fromRootPositions(pyoracle.Answer(t, "cells", func() ([]byte, error) {
-		out, err := pythonScript(t, append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1"), nil, "-c", script, testRoot, evidence.Dumps(roots, false, false, true))
-		return toRootPositions(out, root), err
-	}, pyoracle.Substitute(root, "<ROOT>")), root)
-	decoded, err := Decode(raw)
-	if err != nil {
-		t.Fatalf("%v: %s", err, raw)
-	}
-	for i, want := range decoded.([]any) {
-		expected := want.([]any)
-		got := journalCell(Object{{Key: "journalRoot", Value: roots[i]}, {Key: "journalPolicy", Value: "every_invocation"}})
-		if got["value"] != expected[0] || got["evidence"] != expected[1] || got["journalRoot"] != expected[2] {
-			t.Errorf("journal cell for %q:\n go     %q %q %q\n python %q", roots[i], got["value"], got["evidence"], got["journalRoot"], expected)
-		}
-	}
-}
-
-// hook status opens the paths a registration names as completion.status does: the hook file's
-// strings keep a surrogate escape ("\udcff") as json.loads does, and the settings path and the
-// adapter target reach the system as os.fsencode's bytes, so a settings file and an adapter under
-// a name that is not UTF-8 are found and read, and each cell names the path as the str it is.
-func TestStatusOpensARegistrationsPathsAsPythonEncodesThem(t *testing.T) {
-	home := t.TempDir()
-	adapter := filepath.Join(home, "a\xff", entryPointName)
-	writeTest(t, adapter, []byte("# adapter"))
-	writeTest(t, filepath.Join(home, "s\xff.json"), []byte(`{"configVersion": 1, "mode": "observe", "relayExecutable": "/x/r", "markerRoot": "/x/m", "timeoutSeconds": 5}`))
-	spelled := func(name string) string { return strings.ReplaceAll(filepath.Join(home, name), "\xff", `\udcff`) }
-	hooks := `{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "python3 ` + spelled("a\xff/"+entryPointName) + " " + spelled("s\xff.json") + `", "timeout": 10}]}]}}`
-	writeTest(t, filepath.Join(home, "hooks.json"), []byte(hooks))
-	t.Setenv("HOME", home)
-	script := `import json, os, sys
-sys.path.insert(0, os.path.join(sys.argv[1], "scripts"))
-from crw_runtime import completion
-s = completion.status(environ={"CODEX_HOME": sys.argv[2]})
-named = s["configuration"]["namedSettings"]
-print(json.dumps([s["configuration"]["value"], s["configuration"]["configuration"], s["registeredCommandTarget"]["value"],
-    s["registeredCommandTarget"]["probes"][0]["path"], [[n["settings"], n["settingsState"], n["usable"]] for n in named]]))`
-	out := pyoracle.Answer(t, "status", func() ([]byte, error) {
-		return pythonScript(t, append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1"), nil, "-c", script, testRoot, home)
-	}, pyoracle.Substitute(home, "<HOME>"))
-	decoded, err := Decode(out) // keeps Python's surrogate escapes as the code points they are
-	if err != nil {
-		t.Fatalf("%v: %s", err, out)
-	}
-	want := evidence.Dumps(decoded, false, false, true)
-	status := Status(context.Background(), home, map[string]string{"CODEX_HOME": home}, "Stop")
-	configuration := status["configuration"].(map[string]any)
-	target := status["registeredCommandTarget"].(map[string]any)
-	named := []any{}
-	for _, n := range configuration["namedSettings"].([]any) {
-		entry := n.(map[string]any)
-		named = append(named, []any{entry["settings"], entry["settingsState"], entry["usable"]})
-	}
-	got := evidence.Dumps([]any{configuration["value"], configuration["configuration"], target["value"], target["probes"].([]any)[0].(map[string]any)["path"], named}, false, false, true)
-	if got != want {
-		t.Errorf("status:\n go     %s\n python %s", got, want)
-	}
-	if !strings.Contains(want, `"PRESENT"`) {
-		t.Fatalf("the fixture did not reach a present configuration in Python: %s", want)
-	}
-}
-
-// A program found by PATH lookup is judged at the path the lookup found. shutil.which answers
-// os.fsdecode of the bytes it found, so a directory whose name holds the bytes ED B3 BF (the
-// encoding of a surrogate, which fsdecode escapes byte by byte) is the same directory when the
-// cell encodes the str back, not the byte FF that a raw U+DCFF would stand for.
-func TestAProgramFoundByPATHLookupIsJudgedWhereItWasFound(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "x\xed\xb3\xbf")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	program := filepath.Join(dir, "crw-lookup-probe")
-	if err := os.WriteFile(program, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir)
-	cell := interpreterProbe(context.Background(), "crw-lookup-probe", false)
-	if cell["value"] == absent {
-		t.Fatalf("the program PATH lookup found is reported absent: %v", cell)
-	}
-	if want := store.FSDecode(program); cell["path"] != want {
-		t.Fatalf("path %q, want shutil.which's str %q", cell["path"], want)
 	}
 }
