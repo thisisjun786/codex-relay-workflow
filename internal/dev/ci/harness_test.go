@@ -8,8 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
-	"strings"
 	"testing"
 )
 
@@ -134,6 +134,10 @@ func (r *fixtureRepo) commit() {
 	r.git("commit", "-qm", "fixture")
 }
 
-func (r *fixtureRepo) head() string {
-	return strings.TrimSpace(r.git("rev-parse", "HEAD"))
+// expectEqual reports label's value when it is not want.
+func expectEqual(t *testing.T, label string, got, want any) {
+	t.Helper()
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("%s = %#v, want %#v", label, got, want)
+	}
 }

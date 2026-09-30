@@ -65,16 +65,12 @@ state that separately from installation and successful live operation.
 
 ## Verification
 
-CI classifies the changed paths and candidate inventory, runs the selected checks
-in parallel, and reports one result-only `dev-gate`. Validation, plugin identity,
-offline contracts, secret scanning and the Go product checks always run. Explicitly
-listed prose paths skip the installer/CI test matrix; skill instructions, runtime,
-packaging metadata and CI-control changes run it. Mixed changes take the union. An unknown path runs full checks and
-blocks the gate until its verification mapping is registered. Empty or unavailable
-diffs and manual dispatch run all checks. See the exact map in
-[scripts/ci/scope.py](scripts/ci/scope.py).
+CI runs every check on every event, in parallel, and reports one result-only
+`dev-gate`: validation, plugin identity, offline contracts, secret scanning and the
+Go product checks (lint, the test parts, the release binaries and the isolated-home
+install). Nothing is selected by changed paths. See [CI operation](docs/CI.md).
 
-Every PR base receives selection and a final gate, including explicit dependent
+Every PR base receives the checks and the final gate, including explicit dependent
 PRs; main-target PRs fail. A push to `dev` also runs CI on the integrated commit,
 providing the exact-SHA evidence used for release. PR merge-candidate evidence
 cannot replace it. No live-service suite or automatic publication/deployment runs.
@@ -84,17 +80,15 @@ The release workflow is manual and owner-controlled.
 | --- | --- |
 | Skill metadata, local links and the syntax of the Python developer tools left | Repository structure and readable source |
 | Installer and skill-linker tests in temporary destinations (Go) | Idempotence and preservation of conflicting files, directories and links |
-| CI-control negative tests | Missing, malformed, failed, cancelled or skipped prerequisites cannot pass the aggregator; main-target PRs and invalid release sources are rejected |
+| CI-control negative tests | Missing, malformed, failed, cancelled or skipped prerequisites cannot pass the gate; main-target PRs and invalid release sources are rejected |
 | Go lint, the Go test suite with the contract corpus, static release binaries and the isolated-home install | The Go runtime builds, passes its tests and installs and wires from this checkout |
 | Pinned secret scan of available Git history | No finding under the reviewed scanner configuration in that fetched history |
 | Owning offline contract checks, when present | Their documented parser, fixture or shape behavior |
 | Independent scenario review | Instruction consistency and consequential edge cases within its scope |
 
-The stable gate runs after failures. Every selected job must succeed and every
-unselected job must be explicitly skipped; missing, malformed, failed, cancelled
-or unexpectedly skipped results refuse the gate. A selected job cannot silently
-opt out. The selection itself and all always-on checks must succeed. Gate jobs
-do not rerun source tests. Record exact commands, candidate revisions, check attempts and limitations
+The stable gate runs after failures. Every job it needs must succeed; a missing,
+malformed, failed, cancelled or skipped result refuses the gate, and no job can
+silently opt out. The gate does not rerun source tests. Record exact commands, candidate revisions, check attempts and limitations
 in the PR; reuse evidence only while its bytes, criteria and environment remain
 applicable. A structural test does not prove the workflow's meaning, and a fixture
 replay does not prove an actual Codex hook, relay delivery or Desktop behavior.
@@ -107,8 +101,9 @@ and local. Ordinary CI does not need a
 contributor's Codex, CXC, Paperthin, Linear account, App Server socket or user
 skill installation. `crw-dev skills link` in the development binary links a checkout's skills
 (its Python predecessor, `scripts/install.py`, left in todo 44). While the twins
-remain, CI runs them on the documented minimum Python version; cross-platform symlink behavior and
-actual host compatibility need their own evidence before claiming support.
+remain, `make test` compares them with their Go checks under the runner's Python, and the
+validate job checks their syntax on the documented minimum Python version; cross-platform
+symlink behavior and actual host compatibility need their own evidence before claiming support.
 
 Use hosted Linux runners, pinned Action commits, bounded timeouts and a
 read-only CI token. Cancel obsolete CI runs only within the same PR or branch.

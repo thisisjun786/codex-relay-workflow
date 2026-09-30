@@ -19,7 +19,7 @@ func TestAnUnknownCheckIsEchoedAsPythonsRepr(t *testing.T) {
 		{"it's", `"it's"`},
 	} {
 		got := runCommand(t, repoRoot(), nil, crwDev, "ci", c.arg)
-		line := "crw-dev ci: error: invalid choice: " + c.want + " (choose from contracts, gate, operations, plugin, scope, validate)\n"
+		line := "crw-dev ci: error: invalid choice: " + c.want + " (choose from contracts, operations, plugin, validate)\n"
 		if got.code != 2 || !strings.HasSuffix(got.stderr, line) {
 			t.Errorf("crw-dev ci %q: exit %d\n%s\nwant the line %s", c.arg, got.code, got.stderr, line)
 		}

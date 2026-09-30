@@ -16,8 +16,7 @@ import (
 // as it did. Objects decode to map[string]any (last duplicate wins), numbers to json.Number.
 type pyDecoder struct {
 	text    []rune
-	ordered bool     // objects decode to *pyDict, keeping Python's key order
-	topKeys []string // member names of a top-level object in first-occurrence order
+	ordered bool // objects decode to *pyDict, keeping Python's key order
 }
 
 // pyJSONLoads is json.loads(text).
@@ -30,13 +29,6 @@ func pyJSONLoads(text string) (any, error) {
 func pyJSONLoadsOrdered(text string) (any, error) {
 	d := &pyDecoder{text: []rune(text), ordered: true}
 	return d.document()
-}
-
-// pyJSONLoadsKeys is json.loads(text) plus the top-level object's key order.
-func pyJSONLoadsKeys(text string) (any, []string, error) {
-	d := &pyDecoder{text: []rune(text)}
-	value, err := d.document()
-	return value, d.topKeys, err
 }
 
 func (d *pyDecoder) fail(message string, pos int) error {
@@ -237,9 +229,6 @@ func (d *pyDecoder) object(pos, depth int) (any, int, error) {
 		name := key.(string)
 		if _, seen := result[name]; !seen {
 			order = append(order, name)
-			if depth == 0 {
-				d.topKeys = append(d.topKeys, name)
-			}
 		}
 		result[name] = value
 		pos = d.skip(end)

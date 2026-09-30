@@ -3254,3 +3254,29 @@ internal/relay/hook/stall_test.go stops the process from the guard request until
 fails without the change (no row). With every hook process of the two fixtures stopped for a
 random 50-450 ms, the pre-change binary failed 17 of 50 runs with exactly the CI signature and the
 changed one none of 50.
+
+## 71. CI runs every check on every event; `dev-gate` is a shell check of its prerequisites
+
+Decision: the `selection` job, `crw-dev ci scope` and `crw-dev ci gate` are removed, with their
+Python twins (`scripts/ci/scope.py`, `scripts/ci/gate.py`) and tests. Every CI job runs on every
+pull request, dev push and dispatch, and `dev-gate`, the one required check (its name is
+unchanged), needs every other job, runs `if: always()`, and passes only when every job it needs
+reports `success`; it still fails a pull request whose base is `main`. The job results reach its
+shell step as a file the step's own script writes from `toJSON(needs)`, never as an environment
+variable. The `tests` job, which ran the CI checks' Python twins' own tests, is removed too: its
+release cases are Go tests (R1D1), and the twins that stay (`plugin.py`, `validate.py`) are
+compared with their Go checks by `internal/dev/ci` in `make test` until todo 48. The dist leg's
+second `crw-dev ci plugin` run is removed; the validate job runs it once.
+
+Why: the Go product legs, the longest, always ran whatever changed, so path selection only ever
+skipped the Python tests job, and it put one job (and a `crw-dev` build in the gate) on every
+run's critical path. The selection's changed-path list travelled to the gate in `NEEDS_JSON`, one
+environment variable, so a pull request that changed about a thousand paths made the gate fail
+with "Argument list too long" before it judged anything. No consumer reads these commands: no
+skill, hook or wiring file names them; they are developer tools.
+
+Evidence: .github/workflows/ci.yml (`dev-gate`); internal/dev/ci/workflow_test.go
+(`TestWorkflow_the_gate_passes_only_when_every_prerequisite_succeeded` runs the step's script
+against written results, including a failed, cancelled and skipped job, unreadable results, a PR
+into main and a 240 KB result; the structural tests hold the needs list, `if: always()`, pinning,
+the legs and one run of each check); docs/CI.md.
