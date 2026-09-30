@@ -164,9 +164,17 @@ func (h *heldConn) around(query string) func() {
 	}
 }
 
-func (h *heldConn) scanRow(ctx context.Context, query string, args []any, dest ...any) error {
+// scanRow and query prepare the statement before they bind its parameters, as sqlite3's
+// execute does: a statement SQLite cannot prepare (no such table, a file that is not a
+// database) fails as that sqlite3.Error before a parameter it cannot bind raises.
+func (h *heldConn) scanRow(ctx context.Context, query string, args []any, dest ...any) (err error) {
 	defer h.around(query)()
-	return h.conn.QueryRowContext(ctx, query, args...).Scan(dest...)
+	statement, err := h.conn.PrepareContext(ctx, query)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, statement.Close()) }()
+	return statement.QueryRowContext(ctx, args...).Scan(dest...)
 }
 
 func (h *heldConn) exec(ctx context.Context, query string) error {
@@ -177,7 +185,12 @@ func (h *heldConn) exec(ctx context.Context, query string) error {
 
 func (h *heldConn) query(ctx context.Context, query string, args []any, each func(*sql.Rows) error) (err error) {
 	defer h.around(query)()
-	rows, err := h.conn.QueryContext(ctx, query, args...)
+	statement, err := h.conn.PrepareContext(ctx, query)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, statement.Close()) }()
+	rows, err := statement.QueryContext(ctx, args...)
 	if err != nil {
 		return err
 	}

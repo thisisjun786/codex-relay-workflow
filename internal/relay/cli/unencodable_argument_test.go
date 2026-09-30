@@ -2,10 +2,12 @@ package cli_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -124,4 +126,94 @@ print(json.dumps([sqlite3.connect(path).execute("SELECT artifact_roots FROM rela
 	if want := `[[["[\"a\\udcff\"]"]], [["[\"a\\udcff\"]"]]]` + "\n"; string(raw) != want {
 		t.Errorf("stored artifact roots, Python's store then Go's: %s want %s", raw, want)
 	}
+}
+
+// doctor prepares its read-only lookup before it binds the argument, as sqlite3's execute does:
+// over a file that holds no relay tables, or that is not a database, the statement fails as that
+// sqlite3.Error, which read_only_rows and nonce_lookup answer as a reading, before an argument
+// that is not UTF-8 is bound. Only a store whose tables exist reaches the bind and raises
+// (TestAnArgumentThatIsNotUTF8IsRefusedWherePythonEncodesIt).
+func TestDoctorLookupsReadAStoreTheyCannotPrepareBeforeTheyBind(t *testing.T) {
+	_, relay := packageBinary(t)
+	root := t.TempDir()
+	notRelay := func(path string) {
+		command := exec.Command(filepath.Join(repositoryRoot(t), ".venv", "bin", "python"), "-c",
+			"import sqlite3, sys; c = sqlite3.connect(sys.argv[1]); c.execute('create table t(x)'); c.commit()", path)
+		if raw, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("%v\n%s", err, raw)
+		}
+	}
+	garbage := bytes.Repeat([]byte("not a database \x00\xff"), 256)
+	dropped := func(path string) {
+		command := exec.Command(filepath.Join(repositoryRoot(t), ".venv", "bin", "python"), "-c",
+			"import sqlite3, sys; c = sqlite3.connect(sys.argv[1]); c.execute('drop table store_challenge'); c.commit()", path)
+		if raw, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("%v\n%s", err, raw)
+		}
+	}
+	for _, flag := range []string{"--issue", "--expect-nonce"} {
+		for _, kind := range []string{"tables", "garbage", "dropped"} {
+			states := map[string]string{"python": filepath.Join(root, flag, kind, "python"), "go": filepath.Join(root, flag, kind, "go")}
+			for _, state := range states {
+				if err := os.MkdirAll(state, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				database := filepath.Join(state, "relay.sqlite3")
+				switch kind {
+				case "tables":
+					notRelay(database)
+				case "garbage":
+					if err := os.WriteFile(database, garbage, 0o600); err != nil {
+						t.Fatal(err)
+					}
+				case "dropped":
+					// A relay store without the table the nonce lookup reads.
+					registered := exec.Command(relay, "--state", state, "--json", "register", "--parent-task", "p", "--parent-host", "h",
+						"--child-task", "c", "--child-host", "h", "--issue", "T", "--artifact-root", filepath.Join(root, "artifacts"),
+						"--allowed-recipient", "p", "--dispatch-request-id", "d1")
+					if raw, err := registered.CombinedOutput(); err != nil {
+						t.Fatalf("%v\n%s", err, raw)
+					}
+					dropped(database)
+				}
+			}
+			argv := []string{"--json", "doctor", flag, "x\xffy"}
+			want := pythonCLI(t, append([]string{"--state", states["python"]}, argv...))[0]
+			command := exec.Command(relay, append([]string{"--state", states["go"]}, argv...)...)
+			var stdout bytes.Buffer
+			command.Stdout = &stdout
+			code := 0
+			if err := command.Run(); err != nil {
+				exit, ok := err.(*exec.ExitError)
+				if !ok {
+					t.Fatal(err)
+				}
+				code = exit.ExitCode()
+			}
+			if code != want.code || doctorLookup(t, stdout.String(), states["go"]) != doctorLookup(t, want.stdout, states["python"]) {
+				t.Errorf("%s over %s:\ngo     %d %s\npython %d %s", flag, kind, code, stdout.String(), want.code, want.stdout)
+			}
+		}
+	}
+}
+
+// doctorLookup is the part of a doctor answer the lookup decides: its issue or nonce reading, or
+// the host error, with the state directory spelled <state>.
+func doctorLookup(t *testing.T, printed, state string) string {
+	t.Helper()
+	var document map[string]any
+	if err := json.Unmarshal([]byte(printed), &document); err != nil {
+		return printed
+	}
+	kept := map[string]any{}
+	for _, key := range []string{"issue", "nonce", "error", "detail"} {
+		if value, ok := document[key]; ok {
+			kept[key] = value
+		}
+	}
+	raw, err := json.Marshal(kept)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.ReplaceAll(string(raw), state, "<state>")
 }
