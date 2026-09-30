@@ -65,3 +65,21 @@ func CodePoint(s string, i int) (rune, int) {
 	}
 	return r, size
 }
+
+// StderrText is text as Python's sys.stderr writes it, which always uses
+// errors="backslashreplace": a lone surrogate, held as WTF-8 (CodePoint), is written as its
+// \uXXXX escape and everything else as it stands. A path that holds one reaches a message
+// unescaped, as Python's str() of it does, and only the stream escapes it.
+func StderrText(text string) string {
+	var b strings.Builder
+	for i := 0; i < len(text); {
+		r, size := CodePoint(text, i)
+		if r >= 0xd800 && r <= 0xdfff {
+			fmt.Fprintf(&b, "\\u%04x", r)
+		} else {
+			b.WriteString(text[i : i+size])
+		}
+		i += size
+	}
+	return b.String()
+}

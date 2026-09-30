@@ -3,7 +3,6 @@ package install_test
 import (
 	"bytes"
 	"context"
-	elfbinary "encoding/binary"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -24,55 +23,6 @@ import (
 )
 
 const stopPayload = `{"session_id": "s-1", "turn_id": "t-1", "transcript_path": "/nonexistent/absent.jsonl", "cwd": "/", "hook_event_name": "Stop", "stop_hook_active": false, "last_assistant_message": "DONE"}`
-
-// A host rolling back to a venv holds the pre-native declaration, whose packaged launcher runs
-// [adapterInterpreter, adapterEntryPoint, settings] under python3, because the payload goes back
-// before the runtime (decision 26, docs/plugin-packaging.md "Update and roll back"). Until todo 44
-// these tests also ran that launcher and, once the pointer named the venv, the venv's Python Stop
-// adapter: rollback to Python closed at todo 43 (rollback_allowed=0) and the Python runtime
-// leaves in todo 44, so they check the Go runtime's side alone, with the native declaration.
-
-// pythonFirstOnPath puts first on the PATH the host's commands are judged with a python3 that is
-// a Python interpreter image: a minimal 64-bit ELF carrying the .PyRuntime section every CPython
-// executable carries, which is how the plugin-launch scan knows an interpreter by its image. The
-// pre-native bootstrap declaration names a bare python3, and what this host's own PATH holds under
-// that name may be anything or nothing.
-func (h *host) pythonFirstOnPath(t *testing.T) {
-	t.Helper()
-	names := []byte("\x00.shstrtab\x00.PyRuntime\x00")
-	const header, entry = 64, 64
-	shoff := header + (len(names)+7)/8*8
-	image := make([]byte, shoff+3*entry)
-	copy(image, []byte{0x7f, 'E', 'L', 'F', 2, 1, 1})
-	le := elfbinary.LittleEndian
-	le.PutUint16(image[16:], 2)  // ET_EXEC
-	le.PutUint16(image[18:], 62) // EM_X86_64
-	le.PutUint32(image[20:], 1)  // EV_CURRENT
-	le.PutUint64(image[40:], uint64(shoff))
-	le.PutUint16(image[52:], header)
-	le.PutUint16(image[54:], 56)
-	le.PutUint16(image[58:], entry)
-	le.PutUint16(image[60:], 3) // sections: null, .shstrtab, .PyRuntime
-	le.PutUint16(image[62:], 1)
-	copy(image[header:], names)
-	for i, section := range [][3]uint64{{1, 3, uint64(len(names))}, {11, 1, 0}} { // name, type, size
-		at := image[shoff+(i+1)*entry:]
-		le.PutUint32(at[0:], uint32(section[0]))
-		le.PutUint32(at[4:], uint32(section[1]))
-		le.PutUint64(at[24:], header)
-		le.PutUint64(at[32:], section[2])
-		le.PutUint64(at[48:], 1)
-	}
-	bin := filepath.Join(h.home, "python-bin")
-	executable(t, filepath.Join(bin, "python3"), string(image))
-	for i, entry := range h.env {
-		if value, ok := strings.CutPrefix(entry, "PATH="); ok {
-			h.env[i] = "PATH=" + bin + ":" + value
-			return
-		}
-	}
-	h.env = append(h.env, "PATH="+bin)
-}
 
 // nativeStopRecorded runs the Stop command the package declares, `crw hook --plugin-launch`
 // through the pointer, and answers whether it journaled the Stop.
@@ -96,43 +46,30 @@ func (h *host) stopRecordedBy(t *testing.T, command string) bool {
 	return len(journalRows(t, journal)) == before+1
 }
 
-// goEraAfterPythonEra is the relay host after its first Go install: the Python venv installed
-// and the outgoing selection, the Go runtime selected and named by the pointer, the Python-era
-// Stop settings archived and their Go variant in place. It answers the venv, the Go runtime and
-// the settings' bytes.
-func (h *host) goEraAfterPythonEra(t *testing.T) (string, string, string) {
+// twoGoRuntimes is a host on its second Go runtime: 0.8.0 installed with the plugin-owned Stop
+// settings `crw install hook` writes, then 0.9.0 installed over it. It answers the runtime the
+// update replaced, the one the pointer names and the settings' bytes.
+func (h *host) twoGoRuntimes(t *testing.T) (string, string, string) {
 	t.Helper()
-	venv, _ := h.pythonEraHost(t)
-	result := h.mustInstall(t, "update", archive(t, "0.9.0", ""))
-	if at(result, "settings", "action") != "replaced" {
-		t.Fatalf("settings: %s", golden.Canon(at(result, "settings")))
-	}
-	return venv, h.pointerTarget(t), readFile(t, filepath.Join(h.codex, install.SettingsName))
+	previous, settings := h.goEraHost(t)
+	h.mustInstall(t, "update", archive(t, "0.9.0", ""))
+	return previous, h.pointerTarget(t), settings
 }
 
-// No window: a rollback to the Python runtime never rewrites the Stop settings, so a Stop is
-// recorded while the selection is committed and while the pointer is placed (the pointer still
-// on the Go runtime, whose hook the document reaches). The archived Python-era document is never
-// put back.
-//
-// The native declaration, `crw hook --plugin-launch`, evaluates the same Go-era document - the one
-// the update over the Python-era host wrote, owner plugin with /usr/bin/env and
-// current/bin/crw-completion-hook - while the pointer names the Go runtime, and reaches nothing once
-// it names the venv, which has no bin/crw: that is why the payload goes back first. (The
-// pre-native declaration's Stops, and the venv's Python adapter recording one after the pointer
-// moved, were checked here until todo 44.)
-func TestARollbackToAVenvNeverRewritesTheSettings(t *testing.T) {
+// No window: a rollback never rewrites the Stop settings, so the native Stop command,
+// `crw hook --plugin-launch` through the pointer, records a Stop while the selection is committed
+// and while the pointer is placed, and once the pointer names the runtime rolled back to.
+func TestARollbackNeverRewritesTheSettings(t *testing.T) {
 	h := newHost(t)
-	venv, goRuntime, settings := h.goEraAfterPythonEra(t)
+	previous, current, settings := h.twoGoRuntimes(t)
 	path := filepath.Join(h.codex, install.SettingsName)
-	archives := must(filepath.Glob(path + ".superseded-*"))
 	if !h.nativeStopRecorded(t) {
-		t.Fatalf("the native Stop command on the Go runtime was not recorded under the Go-era settings\n%s", settings)
+		t.Fatalf("the native Stop command was not recorded under the settings\n%s", settings)
 	}
 	windows := map[string]bool{}
 	restoreCommit := install.ReplaceSelectionCommit(func(recordPath string, version int, delta record.Delta) (reading.Reading, error) {
 		windows["native commit"] = h.nativeStopRecorded(t)
-		if h.pointerTarget(t) != goRuntime || readFile(t, path) != settings {
+		if h.pointerTarget(t) != current || readFile(t, path) != settings {
 			t.Errorf("at the commit the pointer names %s and the settings read\n%s", h.pointerTarget(t), readFile(t, path))
 		}
 		return record.Update(recordPath, version, delta)
@@ -141,98 +78,36 @@ func TestARollbackToAVenvNeverRewritesTheSettings(t *testing.T) {
 		windows["native placement"] = h.nativeStopRecorded(t)
 		return pointer.Place(pointerPath, target)
 	})
-	result, code := install.Rollback(context.Background(), h.options(), venv)
+	result, code := install.Rollback(context.Background(), h.options(), previous)
 	restorePlace()
 	restoreCommit()
 	if !windows["native commit"] || !windows["native placement"] {
 		t.Fatalf("a Stop during the rollback reached no adapter: %v", windows)
 	}
-	if code != install.OK || h.pointerTarget(t) != venv || at(result, "settings", "action") != "none" {
+	if code != install.OK || h.pointerTarget(t) != previous || at(result, "settings", "action") != "none" {
 		t.Fatalf("exit %d\n%s", code, golden.Canon(result))
 	}
-	if readFile(t, path) != settings || len(must(filepath.Glob(path+".superseded-*"))) != len(archives) {
+	if readFile(t, path) != settings {
 		t.Fatalf("the rollback rewrote the settings:\n%s", readFile(t, path))
 	}
-	if h.nativeStopRecorded(t) {
-		t.Fatal("the native Stop command recorded a Stop on a venv, which has no bin/crw")
+	if !h.nativeStopRecorded(t) {
+		t.Fatal("the native Stop command was not recorded on the runtime rolled back to")
 	}
 }
 
-// A rollback onto a Python runtime refuses while a cached plugin version declares the native
-// commands (backlog before todo 42). They run current/bin/crw hook --plugin-launch and exec
-// current/bin/codex-thread-bridge --plugin-launch, and a venv has no bin/crw and a bridge that
-// refuses the flag, so the pointer on the venv would release every Stop without a record and
-// start no bridge. The refusal names the cached version and the repair, writes nothing, and
-// leaves the pointer on the Go runtime, whose Stops are still recorded. A cached declaration that
-// cannot be read refuses too, since whether it launches that way is not established. Once the
-// cache holds the Python bootstrap declarations again (the payload goes back first), the same
-// rollback applies. (That the venv's Python adapter then records the Stop was checked here until
-// todo 44.)
-func TestARollbackToAVenvRefusesWhileTheNativePayloadIsCached(t *testing.T) {
-	h := newHost(t)
-	h.pythonFirstOnPath(t)
-	venv, goRuntime, settings := h.goEraAfterPythonEra(t)
-	version := filepath.Join(h.codex, "plugins", "cache", "crw", "crw", "0.9.0")
-	cache := func(from func(...string) string, names ...string) {
-		if err := os.RemoveAll(version); err != nil {
-			t.Fatal(err)
-		}
-		for _, name := range names {
-			write(t, filepath.Join(version, "wiring", name), readFile(t, from(name)))
-		}
-	}
-	path := filepath.Join(h.codex, install.SettingsName)
-	recorded := readFile(t, h.record)
-	refuses := func(what string) record.Object {
-		t.Helper()
-		result, code := install.Rollback(context.Background(), h.options(), venv)
-		if code != install.Refused || h.pointerTarget(t) != goRuntime || readFile(t, h.record) != recorded || readFile(t, path) != settings || !strings.Contains(text(at(result, "refused")), version) {
-			t.Fatalf("%s: exit %d\n%s", what, code, golden.Canon(result))
-		}
-		if !h.nativeStopRecorded(t) {
-			t.Fatalf("%s: a Stop on the Go runtime was not recorded after the refusal", what)
-		}
-		return result
-	}
-
-	cache(wiring, filepath.Join("hooks", "stop-recording-completion.json"), "mcp.json", "crw-bridge.sh")
-	refused := refuses("the native payload")
-	launches, _ := at(refused, "pluginLaunches", "launches").([]any)
-	var commands []string
-	for _, launch := range launches {
-		commands = append(commands, filepath.Base(text(at(golden.Obj(launch), "names"))))
-	}
-	if strings.Join(commands, " ") != "crw codex-thread-bridge" || !strings.Contains(text(at(refused, "repair")), "Python bootstrap") {
-		t.Fatalf("the native payload's launches: %v\n%s", commands, golden.Canon(refused))
-	}
-
-	write(t, filepath.Join(version, "wiring", "hooks", "stop-recording-completion.json"), "{")
-	if unread := refuses("an unreadable declaration"); len(at(unread, "pluginLaunches", "unread").([]any)) == 0 {
-		t.Fatalf("an unreadable declaration is not named:\n%s", golden.Canon(unread))
-	}
-
-	cache(preNativeWiring, filepath.Join("hooks", "stop-recording-completion.json"), "mcp.json")
-	write(t, filepath.Join(version, "wiring", "crw_stop_hook.py"), legacyLauncher)
-	write(t, filepath.Join(version, "wiring", "crw_bridge_mcp.py"), "#!/usr/bin/env python3\n# The bridge launcher the package shipped before todo 43 (a stand-in).\n")
-	result, code := install.Rollback(context.Background(), h.options(), venv)
-	if code != install.OK || h.pointerTarget(t) != venv || readFile(t, path) != settings {
-		t.Fatalf("the Python bootstrap payload: exit %d\n%s", code, golden.Canon(result))
-	}
-}
-
-// A rollback killed with SIGKILL at its commit - after every settings step a rollback takes and
-// before the selection and the pointer move - leaves a host whose Stops are recorded: the
-// settings were never rewritten, the pointer still names the Go runtime, and the ordinary
-// rerun finishes the rollback.
+// A rollback killed with SIGKILL at its commit - after the settings check and before the
+// selection and the pointer move - leaves a host whose Stops are recorded: the settings were
+// never rewritten, the pointer still names the runtime it named, and the ordinary rerun finishes
+// the rollback.
 func TestARollbackKilledAtItsCommitLeavesStopsRecorded(t *testing.T) {
 	if spec := os.Getenv("CRW_TEST_KILLED_ROLLBACK"); spec != "" {
 		killedRollback(t, spec)
 		return
 	}
 	h := newHost(t)
-	venv, goRuntime, settings := h.goEraAfterPythonEra(t)
+	previous, current, settings := h.twoGoRuntimes(t)
 	spec, err := json.Marshal(map[string]any{"home": h.home, "dest": h.dest, "codex": h.codex, "state": h.state, "record": h.record,
-		"relayState": h.relayState, "socket": h.fake.SocketPath, "env": []string(h.env), "venv": venv})
+		"relayState": h.relayState, "socket": h.fake.SocketPath, "env": []string(h.env), "target": previous})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,34 +118,34 @@ func TestARollbackKilledAtItsCommitLeavesStopsRecorded(t *testing.T) {
 		t.Fatalf("the rollback was not killed at its commit: %v\n%s", err, out)
 	}
 	if !h.nativeStopRecorded(t) {
-		t.Fatal("after the kill a Stop on the Go runtime was not recorded")
+		t.Fatal("after the kill a Stop was not recorded")
 	}
-	if h.pointerTarget(t) != goRuntime || readFile(t, filepath.Join(h.codex, install.SettingsName)) != settings {
+	if h.pointerTarget(t) != current || readFile(t, filepath.Join(h.codex, install.SettingsName)) != settings {
 		t.Fatalf("after the kill the pointer names %s and the settings changed", h.pointerTarget(t))
 	}
-	// The killed run's <venv>.crw-lock (runtime_install.py's O_EXCL protocol) is left behind: a
+	// The killed run's <env>.crw-lock (the O_EXCL protocol of decision 33) is left behind: a
 	// rerun is refused naming it until it is stale, and then finishes the rollback.
 	saved := record.LockTimeout
 	record.LockTimeout = 200 * time.Millisecond
 	defer func() { record.LockTimeout = saved }()
-	if refused, code := install.Rollback(context.Background(), h.options(), venv); code != install.Refused || !strings.Contains(text(at(refused, "refused")), venv+record.LockSuffix) {
+	if refused, code := install.Rollback(context.Background(), h.options(), previous); code != install.Refused || !strings.Contains(text(at(refused, "refused")), previous+record.LockSuffix) {
 		t.Fatalf("the rerun beside the killed run's lock: exit %d\n%s", code, golden.Canon(refused))
 	}
 	stale := time.Now().Add(-record.StaleLock - time.Minute)
-	if err := os.Chtimes(venv+record.LockSuffix, stale, stale); err != nil {
+	if err := os.Chtimes(previous+record.LockSuffix, stale, stale); err != nil {
 		t.Fatal(err)
 	}
-	if result, code := install.Rollback(context.Background(), h.options(), venv); code != install.OK || h.pointerTarget(t) != venv {
+	if result, code := install.Rollback(context.Background(), h.options(), previous); code != install.OK || h.pointerTarget(t) != previous {
 		t.Fatalf("the rerun: exit %d\n%s", code, golden.Canon(result))
 	}
 }
 
 // killedRollback is the child of TestARollbackKilledAtItsCommitLeavesStopsRecorded: it rolls the
-// host back to the venv and kills itself at the commit.
+// host back to the runtime the update replaced and kills itself at the commit.
 func killedRollback(t *testing.T, spec string) {
 	var given struct {
-		Home, Dest, Codex, State, Record, RelayState, Socket, Venv string
-		Env                                                        []string
+		Home, Dest, Codex, State, Record, RelayState, Socket, Target string
+		Env                                                          []string
 	}
 	if err := json.Unmarshal([]byte(spec), &given); err != nil {
 		t.Fatal(err)
@@ -281,50 +156,15 @@ func killedRollback(t *testing.T, spec string) {
 		_ = syscall.Kill(os.Getpid(), syscall.SIGKILL)
 		select {}
 	})
-	result, code := install.Rollback(context.Background(), o, given.Venv)
+	result, code := install.Rollback(context.Background(), o, given.Target)
 	t.Fatalf("the rollback returned instead of reaching its commit: exit %d\n%s", code, golden.Canon(result))
 }
 
-// The one document needs no archive to roll back with: on a host whose settings `crw install
-// hook` wrote (no Python-era document was ever archived) a rollback to the venv is allowed (that
-// the venv's Python adapter then records the Stop was checked here until todo 44). A venv that
-// could not serve the document - no crw-completion-hook console script - is refused with the
-// repair named, and nothing moves.
-func TestARollbackToAVenvNeedsNoArchive(t *testing.T) {
-	h := newHost(t)
-	venv := h.pythonVenv(t)
-	h.mustInstall(t, "install", archive(t, "0.9.0", ""))
-	goRuntime := h.pointerTarget(t)
-	if _, code := install.Hook(context.Background(), h.options(), h.hookOptions()); code != install.OK {
-		t.Fatal("hook settings")
-	}
-	path := filepath.Join(h.codex, install.SettingsName)
-	settings := readFile(t, path)
-
-	result, code := install.Rollback(context.Background(), h.options(), venv)
-	if code != install.OK || h.pointerTarget(t) != venv || readFile(t, path) != settings || len(must(filepath.Glob(path+".superseded-*"))) != 0 {
-		t.Fatalf("exit %d\n%s", code, golden.Canon(result))
-	}
-	if forward, code := install.Rollback(context.Background(), h.options(), ""); code != install.OK || h.pointerTarget(t) != goRuntime {
-		t.Fatalf("forward: exit %d\n%s", code, golden.Canon(forward))
-	}
-
-	hookScript := filepath.Join(venv, "bin", "crw-completion-hook")
-	if err := os.Remove(hookScript); err != nil {
-		t.Fatal(err)
-	}
-	refused, code := install.Rollback(context.Background(), h.options(), venv)
-	if code != install.Refused || h.pointerTarget(t) != goRuntime || readFile(t, path) != settings || !strings.Contains(text(at(refused, "refused")), hookScript) {
-		t.Fatalf("a venv without the Python adapter's console script: exit %d\n%s", code, golden.Canon(refused))
-	}
-}
-
-// A rollback never reverts a host fact: the operator's hold-mode settings, written on the Go
-// host after the Python-era observe document was archived, are what the host has after a
-// rollback to the venv and after rolling forward again.
+// A rollback never reverts a host fact: the operator's hold-mode settings, written on the current
+// runtime, are what the host has after a rollback and after rolling forward again.
 func TestARollbackKeepsTheHostFactsTheSettingsRecord(t *testing.T) {
 	h := newHost(t)
-	venv, _, _ := h.goEraAfterPythonEra(t)
+	previous, _, _ := h.twoGoRuntimes(t)
 	path := filepath.Join(h.codex, install.SettingsName)
 	if err := os.Rename(path, filepath.Join(h.home, "set-aside.json")); err != nil {
 		t.Fatal(err)
@@ -335,7 +175,7 @@ func TestARollbackKeepsTheHostFactsTheSettingsRecord(t *testing.T) {
 		t.Fatalf("hold: exit %d\n%s", code, golden.Canon(result))
 	}
 	settings := readFile(t, path)
-	if back, code := install.Rollback(context.Background(), h.options(), venv); code != install.OK || readFile(t, path) != settings {
+	if back, code := install.Rollback(context.Background(), h.options(), previous); code != install.OK || readFile(t, path) != settings {
 		t.Fatalf("rollback: exit %d, settings\n%s\n%s", code, readFile(t, path), golden.Canon(back))
 	}
 	if again, code := install.Rollback(context.Background(), h.options(), ""); code != install.OK || readFile(t, path) != settings {
@@ -457,58 +297,41 @@ func (h *host) runDaemon(t *testing.T, relay string) {
 	}
 }
 
-// A rollback points the pointer only at a runtime that can be launched as it stands: a venv
-// whose interpreter link names nothing (an OS Python upgrade), whose Stop adapter script is not
-// the Python Stop adapter, or whose relay package is from before the fence; a Go runtime whose
-// compatibility link is gone. Each is refused with what is wrong, and nothing moves.
+// A rollback points the pointer only at a Go runtime that can be launched as it stands: one
+// whose compatibility link is gone, and a directory the record lists that holds no bin/crw (a
+// Python venv an older installer left, say), are each refused with what is wrong, and nothing
+// moves.
 func TestARollbackRefusesARuntimeThatCannotBeLaunched(t *testing.T) {
-	for name, tc := range map[string]struct {
-		venv  bool
-		spoil func(t *testing.T, target string) string
-	}{
-		"a venv whose python names nothing": {venv: true, spoil: func(t *testing.T, venv string) string {
-			python := filepath.Join(venv, "bin", "python3")
-			if err := os.Remove(python); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Symlink(filepath.Join(venv, "gone", "python3.12"), python); err != nil {
-				t.Fatal(err)
-			}
-			return python
-		}},
-		"a venv whose hook script is not the Stop adapter": {venv: true, spoil: func(t *testing.T, venv string) string {
-			hookScript := filepath.Join(venv, "bin", "crw-completion-hook")
-			executable(t, hookScript, "#!/bin/sh\nexit 0\n")
-			return hookScript
-		}},
-		"a venv whose relay predates the fence": {venv: true, spoil: func(t *testing.T, venv string) string {
-			fence := filepath.Join(sitePackages(venv), "codex_session_relay", "ownership.py")
-			if err := os.Remove(fence); err != nil {
-				t.Fatal(err)
-			}
-			return "before the fence"
-		}},
-		"a Go runtime without its bridge link": {spoil: func(t *testing.T, runtime string) string {
+	for name, spoil := range map[string]func(t *testing.T, h *host, runtime string) (string, string){
+		"a Go runtime without its bridge link": func(t *testing.T, h *host, runtime string) (string, string) {
 			link := filepath.Join(runtime, "bin", "codex-thread-bridge")
 			if err := os.Remove(link); err != nil {
 				t.Fatal(err)
 			}
-			return link
-		}},
+			return runtime, link
+		},
+		"a recorded directory without bin/crw": func(t *testing.T, h *host, _ string) (string, string) {
+			other := filepath.Join(h.dest, "env-1-0be23c258476")
+			if err := os.MkdirAll(filepath.Join(other, "bin"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			write(t, staging.ClaimPath(other), string(record.Encode(staging.NewPayload(staging.Complete, "CRW-116", "1"))))
+			var delta record.Delta
+			for _, component := range []string{"codex-session-relay", "codex-thread-bridge"} {
+				delta.Installs = append(delta.Installs, record.Named{Component: component, Entry: record.GoInstall(other, component, strings.Repeat("0", 64), "by hand", false)})
+			}
+			if _, err := record.Update(h.record, 1, delta); err != nil {
+				t.Fatal(err)
+			}
+			return other, "is not a Go runtime"
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := newHost(t)
 			first, second := archive(t, "0.9.0", ""), archive(t, "0.9.1", "")
-			var target string
-			if tc.venv {
-				target = h.pythonVenv(t)
-				h.mustInstall(t, "install", first)
-			} else {
-				target = runtimeDir(h, "0.9.0", first, t)
-				h.mustInstall(t, "install", first)
-				h.mustInstall(t, "update", second)
-			}
-			named := tc.spoil(t, target)
+			h.mustInstall(t, "install", first)
+			h.mustInstall(t, "update", second)
+			target, named := spoil(t, h, runtimeDir(h, "0.9.0", first, t))
 			before := h.pointerTarget(t)
 			selected := golden.Canon(at(h.hostRecord(t), "selected"))
 			result, code := install.Rollback(context.Background(), h.options(), target)

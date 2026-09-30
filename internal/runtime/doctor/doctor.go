@@ -1,10 +1,10 @@
 // Package doctor is `crw doctor`: the host-level diagnosis (runtime_install.py diagnose,
-// ported by property) and `crw doctor retention-scan`, distinct from the relay's own
-// `crw relay doctor`. It writes nothing.
+// ported by property), distinct from the relay's own `crw relay doctor`, and the readings of the
+// host's registrations and relay records `crw install remove` rests on (RegisteredMatching,
+// RecordedDaemons). It writes nothing.
 //
-// It reports which runtime the owned pointer selects (a Go binary or a Python venv) from the
-// pointer target, pyvenv.cfg and the host record's selected map, without any interpreter,
-// module-location or shebang-interpreter probe; whether the promotion lock is held; the host
+// It reports which runtime the owned pointer selects (a Go binary, or unknown) from the pointer
+// target and the host record's selected map, without running anything; whether the promotion lock is held; the host
 // record's four-state reading; each settings record's executables and what they resolve to;
 // the OPS-2.2 class of each component of a Go install; residue on the destination; and the
 // OPS-6.2 check record. Relay readings are subprocesses of the selected relay executable.
@@ -130,7 +130,7 @@ var SettingsFiles = []struct {
 	Name string
 	Keys []string
 }{
-	{"crw-completion-hook.json", []string{"relayExecutable", "adapterEntryPoint", "adapterInterpreter"}},
+	{"crw-completion-hook.json", []string{"relayExecutable"}},
 	{"crw-bridge-mcp.json", []string{"bridgeExecutable"}},
 }
 
@@ -305,8 +305,8 @@ func pointerEntryAbout(entry any, path string) Object {
 	return nil
 }
 
-// selectionKind is the runtime kind a recorded selection lives in: a Python selection names a
-// package directory inside a venv, a Go selection names <runtime>/bin beside crw.
+// selectionKind is the runtime kind a recorded selection lives in: a Go selection names
+// <runtime>/bin beside crw.
 func selectionKind(location string) string {
 	for dir := location; ; dir = filepath.Dir(dir) {
 		if kind := RuntimeKind(dir); kind != "unknown" {
@@ -393,8 +393,7 @@ func classifyGo(c definition.Component, target string, rec Object, recordUsable 
 	location := filepath.Dir(resolved)
 	out = append(out, record.Object{{Key: "entryPointResolves", Value: resolved}, {Key: "location", Value: location}}...)
 	_, component := record.Component(append(Object{}, rec...), c.Name)
-	// The Go install entry at this location: a Python entry recorded there (interpreter fields,
-	// no binaryDigest) is not the Go install and records no digest for these bytes.
+	// The install entry at this location, the last one the record lists there.
 	var install Object
 	recordedAs := any(nil)
 	installs, _ := record.Get(component, "installs").([]any)
@@ -405,12 +404,6 @@ func classifyGo(c definition.Component, target string, rec Object, recordUsable 
 			continue
 		}
 		if real, err := record.Resolve(recorded); err != nil || real != location {
-			continue
-		}
-		if pythonInstall(candidate) {
-			if install == nil {
-				recordedAs = "python"
-			}
 			continue
 		}
 		install, recordedAs = candidate, "go"
@@ -569,17 +562,6 @@ func observe(ctx context.Context, o Options, bridge string) observations {
 
 // sha256Hex is a recorded binaryDigest: a SHA-256, lowercase hex.
 var sha256Hex = regexp.MustCompile(`^[0-9a-f]{64}$`)
-
-// pythonInstall reports an install entry the Python installer wrote: it names an interpreter
-// or an install mode, and a Go entry carries neither (record.GoInstall).
-func pythonInstall(entry Object) bool {
-	for _, key := range []string{"interpreter", "interpreterPath", "installMode"} {
-		if _, ok := record.Lookup(entry, key); ok {
-			return true
-		}
-	}
-	return false
-}
 
 // launchProblems is what keeps a host from launching a Go runtime's entry points, and what
 // could not be examined: bin/crw must be a regular file the invoking user may execute (access(2)
@@ -757,9 +739,6 @@ func Diagnose(ctx context.Context, o Options) Object {
 		case selected == KindGoRuntime && target != "":
 			one = classifyGo(c, target, rec, host.Usable(), runtime, seen, registrations)
 			classes = append(classes, scope.PyStr(record.Get(one, "class")))
-		case selected == KindPythonVenv:
-			one = Object{{Key: "component", Value: c.Name}, {Key: "class", Value: nil},
-				{Key: "reason", Value: "the pointer selects a Python install, which this command does not classify: it classifies Go installs only, and the Python installer that classified Python installs left with the Python runtime in todo 44"}}
 		default:
 			one = Object{{Key: "component", Value: c.Name}, {Key: "class", Value: nil}, {Key: "reason", Value: "the pointer selects no runtime this command can classify"}}
 		}
@@ -830,10 +809,7 @@ func Diagnose(ctx context.Context, o Options) Object {
 
 	measured := stamp(now())
 	installed := field("not_verified", "component classes: "+evidence.Dumps(classOf(components), false, false, true)+". Only 'own' is reusable (OPS-2.2).", "crw doctor", measured)
-	switch {
-	case selected == KindPythonVenv:
-		installed = field("unknown", "the pointer selects a Python venv, which this command does not classify (the Python installer that did left with the Python runtime in todo 44)", "crw doctor", "")
-	case len(classes) > 0 && allOwn(classes):
+	if len(classes) > 0 && allOwn(classes) {
 		installed = field("verified", "component classes: "+evidence.Dumps(classOf(components), false, false, true)+". Only 'own' is reusable (OPS-2.2).", "crw doctor", measured)
 	}
 	connect := record.Get(summary, "socketConnect")

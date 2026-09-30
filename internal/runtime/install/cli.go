@@ -13,7 +13,6 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
-	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/scope"
 )
@@ -79,7 +78,7 @@ func Main(ctx context.Context, args []string, env scope.Env, stdout, stderr io.W
 	issue := flags.String("issue", DefaultIssue, "the issue recorded as the evidence of this run")
 	socket := flags.String("socket", "", "the App Server socket the runtime is exercised and gated against")
 	state := flags.String("state", "", "the relay state directory the gate reads")
-	var from, sums, release, releaseURL, owner, name, bridgeCommand, adapter, event, relayCommand, markerRoot, dbPath, journalRoot, mode, isolation *string
+	var from, sums, release, releaseURL, owner, name, bridgeCommand, relayCommand, markerRoot, dbPath, journalRoot, mode, isolation *string
 	var bridgeArgs repeated
 	var policy given
 	var dryRun *bool
@@ -92,16 +91,14 @@ func Main(ctx context.Context, args []string, env scope.Env, stdout, stderr io.W
 		releaseURL = flags.String("release-url", ReleaseURL, "where release assets are fetched from")
 	case "rollback", "remove", "status":
 	case "register-mcp":
-		owner = flags.String("owner", "", "who registers the bridge: plugin (the only supported owner)")
+		owner = flags.String("owner", OwnerPlugin, "who registers the bridge: plugin (the only supported owner)")
 		name = flags.String("name", ServerName, "the server name the plugin declares")
 		bridgeCommand = flags.String("bridge-command", "", "the bridge executable (default ~/.local/share/crw-runtime/current/bin/codex-thread-bridge)")
 		flags.Var(&bridgeArgs, "bridge-arg", "an argument the launcher passes the bridge (repeatable)")
 		flags.Var(&policy, "execution-policy", "the host's execution policy file, named by path and digest in the record")
 		dryRun = flags.Bool("dry-run", false, "report what would be written and write nothing")
 	case "hook":
-		owner = flags.String("owner", "", "who registers the Stop adapter: plugin (the only supported owner)")
-		adapter = flags.String("adapter", "completion", "the adapter: completion")
-		event = flags.String("event", "Stop", "the hook event: Stop")
+		owner = flags.String("owner", OwnerPlugin, "who registers the Stop adapter: plugin (the only supported owner)")
 		relayCommand = flags.String("relay-command", "", "an explicit relay executable (default ~/.local/share/crw-runtime/current/bin/codex-session-relay)")
 		markerRoot = flags.String("marker-root", "", "the intent marker root (default: the relay's own resolution)")
 		dbPath = flags.String("db-path", "", "the relay database the guard reads")
@@ -198,11 +195,7 @@ func Main(ctx context.Context, args []string, env scope.Env, stdout, stderr io.W
 	case "register-mcp":
 		result, code = RegisterMCP(ctx, o, RegisterOptions{Owner: *owner, Name: *name, BridgeCommand: *bridgeCommand, BridgeArgs: bridgeArgs, ExecutionPolicy: policy.value, PolicyGiven: policy.set, DryRun: *dryRun})
 	case "hook":
-		if *adapter != "completion" {
-			fmt.Fprintf(stderr, "crw install hook: error: argument --adapter: invalid choice: %s (choose from 'completion')\n", store.PythonRepr(*adapter))
-			return Usage
-		}
-		result, code = Hook(ctx, o, HookOptions{Owner: *owner, Event: *event, Relay: *relayCommand, MarkerRoot: *markerRoot, Database: *dbPath, Socket: *socket,
+		result, code = Hook(ctx, o, HookOptions{Owner: *owner, Relay: *relayCommand, MarkerRoot: *markerRoot, Database: *dbPath, Socket: *socket,
 			JournalRoot: *journalRoot, Mode: *mode, Isolation: *isolation, GuardTimeout: *guardTimeout, Timeout: *timeout, DryRun: *dryRun})
 	}
 	if err := contract.Emit(stdout, result); err != nil {
@@ -310,7 +303,7 @@ func notUTF8(values []namedValue) string {
 // character and name a file that does not exist. The execution policy path is the one path
 // recorded surrogate-escaped, as runtime_install.py records it.
 func notUTF8Detail(name, value string) string {
-	return name + " holds a byte that is not UTF-8 (" + store.PythonRepr(reading.FSDecode(value)) + "), and crw install records only paths it can spell as UTF-8, so nothing was read or written; use a path whose name is UTF-8"
+	return name + " holds a byte that is not UTF-8 (" + store.PythonRepr(store.FSDecode(value)) + "), and crw install records only paths it can spell as UTF-8, so nothing was read or written; use a path whose name is UTF-8"
 }
 
 func absolute(path string) (string, error) {

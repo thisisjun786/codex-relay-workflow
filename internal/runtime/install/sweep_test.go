@@ -11,38 +11,9 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/golden"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install"
-	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/staging"
 )
-
-// A venv's STAGING claim that runtime_install.py wrote (a Python exit 3) is settled, when a
-// promotion replaces that runtime, as runtime_install.py would settle it: its own marker and
-// shape, state COMPLETE. runtime_install.py's staging.shape accepts only its own marker, so a
-// "crw install" claim would make it read its own venv as unreadable and keep it for ever.
-func TestSettlingAPythonClaimKeepsItPythons(t *testing.T) {
-	h := newHost(t)
-	venv, _ := h.pythonEraHost(t)
-	write(t, staging.ClaimPath(venv), string(record.Encode(staging.Payload(staging.Staging, staging.WrittenByPython, "CRW-116", "1", 1, "host", "2026-09-25T00:40:21Z"))))
-	result := h.mustInstall(t, "update", archive(t, "0.9.0", ""))
-	if at(result, "leftClaim", "settled") != true {
-		t.Fatalf("leftClaim: %s", golden.Canon(at(result, "leftClaim")))
-	}
-	claim := reading.ReadJSON(staging.ClaimPath(venv), "claim", nil, nil)
-	value, _ := claim.Value.(record.Object)
-	if record.Get(value, "writtenBy") != staging.WrittenByPython || record.Get(value, "state") != staging.Complete {
-		t.Fatalf("the venv's claim now reads %s", golden.Canon(value))
-	}
-	shape := staging.Payload(staging.Complete, staging.WrittenByPython, nil, nil, 0, "", "")
-	if len(value) != len(shape) {
-		t.Fatalf("the claim is not runtime_install.py's shape: %s", golden.Canon(value))
-	}
-	for _, f := range shape {
-		if _, ok := record.Lookup(value, f.Key); !ok {
-			t.Fatalf("the claim lacks %s: %s", f.Key, golden.Canon(value))
-		}
-	}
-}
 
 // Where there is no process table (darwin), an abandoned staging cannot be ruled out of use, so
 // the reinstall keeps it - and says what the operator does about a staging that was never

@@ -1,5 +1,6 @@
-// Code generated from contract/schema/bridge-mcp-tools.json (the tool descriptions Python's
-// FastMCP lists) and server.py (the server instructions); DO NOT EDIT.
+// Code generated from contract/schema/bridge-mcp-tools.json (the tool descriptions) and the
+// retired Python server's instructions, by a tool todo 44 removed; DO NOT EDIT: the contract
+// test holds the live tools/list to that schema.
 
 package mcp
 

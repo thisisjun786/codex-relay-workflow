@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -193,13 +194,13 @@ func (command pythonCommand) matchOption(arg string) (pythonOption, *string, boo
 // only the arguments it prints as they are.
 func (family pythonFamily) error(stderr io.Writer, usage, message string) int {
 	_, _ = io.WriteString(stderr, usage)
-	fmt.Fprintf(stderr, "%s: error: %s\n", family.program, stderrText(store.FSDecode(message)))
+	fmt.Fprintf(stderr, "%s: error: %s\n", family.program, settings.StderrText(store.FSDecode(message)))
 	return 2
 }
 
 func (family pythonFamily) commandError(stderr io.Writer, command, usage, message string) int {
 	_, _ = io.WriteString(stderr, usage)
-	fmt.Fprintf(stderr, "%s %s: error: %s\n", family.program, command, stderrText(store.FSDecode(message)))
+	fmt.Fprintf(stderr, "%s %s: error: %s\n", family.program, command, settings.StderrText(store.FSDecode(message)))
 	return 2
 }
 

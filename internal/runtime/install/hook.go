@@ -8,7 +8,6 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
-	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/pointer"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
@@ -24,9 +23,9 @@ const (
 
 // HookOptions are `crw install hook`'s inputs.
 type HookOptions struct {
-	Owner, Event, Relay, MarkerRoot, Database, Socket, JournalRoot, Mode, Isolation string
-	GuardTimeout, Timeout                                                           int64
-	DryRun                                                                          bool
+	Owner, Relay, MarkerRoot, Database, Socket, JournalRoot, Mode, Isolation string
+	GuardTimeout, Timeout                                                    int64
+	DryRun                                                                   bool
 }
 
 // budgetComplaints is completion.budget_complaints: the adapter's own budget against the
@@ -45,14 +44,11 @@ func budgetComplaints(guard, registered int64) []string {
 }
 
 // Hook is `crw install hook --owner plugin`: write the settings the plugin's declared Stop hook
-// (and every legacy launcher a cached turn still runs) reads, with the relay and the Go adapter
-// named through the owned pointer and adapterInterpreter /usr/bin/env. It registers nothing:
-// the plugin package declares the registration. It places no launcher file. A Python-era
-// document is replaced only while the pointer already names a Go runtime (before that,
-// `crw install install` replaces it immediately before it moves the pointer), and only by
-// settings that record every host fact it records - mode, isolation, roots, database, socket,
-// relay and budget - so that only the adapter and installedBy move; settings built from other
-// flags answer config_differs with the fields and the repair, and nothing is written.
+// reads, with the relay named through the owned pointer. It registers nothing: the plugin package
+// declares the registration. It places no launcher file. Settings already there that say
+// something else answer config_differs with the fields, and nothing is written, but for settings
+// that differ only by the retired adapter keys and installedBy, which are rewritten without them
+// (config_replaced).
 func Hook(ctx context.Context, o Options, h HookOptions) (Object, int) {
 	hookFile := filepath.Join(o.CodexHome, "hooks.json")
 	base := Object{field("command", "hook"), field("adapter", "completion"), field("owner", h.Owner), field("hookFile", hookFile)}
@@ -62,18 +58,10 @@ func Hook(ctx context.Context, o Options, h HookOptions) (Object, int) {
 	if h.Owner != OwnerPlugin {
 		return usage([]string{"only --owner plugin is supported: the user-owned registration (a hooks.json entry running completion_hook.py) is retired with runtime_install.py"})
 	}
-	event := h.Event
-	if event == "" {
-		event = "Stop"
-	}
-	var complaints []string
-	if event != "Stop" {
-		complaints = append(complaints, "this adapter implements the Stop contract and has no decision for "+event)
-	}
-	complaints = append(complaints, budgetComplaints(h.GuardTimeout, h.Timeout)...)
-	if override := o.Env.Get(SettingsOverride); override != "" {
-		complaints = append(complaints, SettingsOverride+" is set to "+override+", and a plugin-owned registration carries no settings argument: the hook rediscovers the path at every Stop from the Codex home. Unset it so the settings land where the hook looks")
-	}
+	// The adapter is the completion hook and its event Stop, the only ones there are (decision
+	// 69); the answer still names both.
+	const event = "Stop"
+	complaints := budgetComplaints(h.GuardTimeout, h.Timeout)
 	mode := h.Mode
 	if mode == "" {
 		mode = hook.Observe
@@ -107,12 +95,7 @@ func Hook(ctx context.Context, o Options, h HookOptions) (Object, int) {
 		return append(base, field("error", "this adapter is already registered for Stop in the hook file as "+strings.Join(registrations, ", ")+", which is the user-owned registration; a plugin declaration beside it would run two copies on every Stop. Remove that registration first, by hand"),
 			field("registrations", strs(registrations)), field("settings", nil), field("note", "nothing was written. One owner registers this event; the other is reported with its evidence rather than joined.")), Refused
 	}
-	current := pointer.Path(o.Dest)
-	replace := false
-	if target, ok := pointerTarget(current); ok {
-		replace = doctor.RuntimeKind(target) == doctor.KindGoRuntime
-	}
-	written := settingsWrite(ctx, path, wanted, !h.DryRun, replace)
+	written := settingsWrite(ctx, path, wanted, !h.DryRun)
 	outcome, _ := record.Get(written, "outcome").(string)
 	out := append(base, field("settings", written), field("registrations", []any{}),
 		field("note", "Settings written; no registration was made and the hook file was not touched. The plugin owner registers this event through the plugin package's own manifest, so install that package to register it. Written, registered and observed to have fired stay three separate claims."))

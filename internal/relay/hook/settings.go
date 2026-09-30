@@ -19,37 +19,31 @@ import (
 )
 
 const ConfigName = "crw-completion-hook.json"
-const configEnv = "CRW_COMPLETION_HOOK_CONFIG"
 
 // Evidence file bounds are independent of the timed stdin read.
 const maxInputBytes = 4 << 20
 
-// configurationPath follows the checkout adapter's configuration_path, including
-// empty overrides and _settled's lexical normalization (never resolving symlinks).
-func configurationPath(home string, environ map[string]string, named string) (string, error) {
+// configurationPath is the settings `crw hook` reads without --plugin-launch: <home>/ConfigName,
+// home being given, else CODEX_HOME, else ~/.codex, with _settled's lexical normalization (never
+// resolving symlinks). A settings path argument and CRW_COMPLETION_HOOK_CONFIG are no longer read
+// (decision 66).
+func configurationPath(home string, environ map[string]string) (string, error) {
 	env := os.Getenv
 	if environ != nil {
 		env = func(key string) string { return environ[key] }
 	}
-	path := named
-	if path == "" {
-		path = env(configEnv)
+	if home == "" {
+		home = env("CODEX_HOME")
 	}
-	if path == "" {
-		if home == "" {
-			home = env("CODEX_HOME")
+	if home == "" {
+		h, err := store.Home()
+		if err != nil {
+			return "", err
 		}
-		if home == "" {
-			h, err := store.Home()
-			if err != nil {
-				return "", err
-			}
-			home = strings.TrimSuffix(h, "/") + "/.codex"
-		}
-		// Path(home) / CONFIG_NAME: a root home gains no second slash, and "//" keeps both.
-		path = store.PathlibChild(home, ConfigName)
+		home = strings.TrimSuffix(h, "/") + "/.codex"
 	}
-	path, err := store.ExpandUser(path)
+	// Path(home) / CONFIG_NAME: a root home gains no second slash, and "//" keeps both.
+	path, err := store.ExpandUser(store.PathlibChild(home, ConfigName))
 	if err != nil {
 		return "", err
 	}
@@ -116,23 +110,9 @@ func Complaints(value any) []string {
 	if owner != nil && owner != "user" && owner != "plugin" {
 		found = append(found, "owner must be one of user, plugin when it is present at all, found "+evidence.Repr(owner))
 	}
-	for _, k := range []string{"adapterInterpreter", "adapterEntryPoint"} {
-		v := get(o, k)
-		if v == nil {
-			continue
-		}
-		if !delivery.Named(v) {
-			found = append(found, k+" must be a non-empty string when it is present at all")
-		} else if !filepath.IsAbs(text(v)) {
-			found = append(found, k+" must be an absolute path")
-		}
-	}
+	// adapterInterpreter and adapterEntryPoint named the adapter the retired Python launchers ran;
+	// nothing reads them, and a document that still carries them is read as it is (decision 66).
 	if owner == "plugin" {
-		for _, k := range []string{"adapterInterpreter", "adapterEntryPoint"} {
-			if !evidence.Truthy(get(o, k)) {
-				found = append(found, k+" is required when owner is plugin: a registration declared by the plugin package cannot resolve this repository's adapter, so the install records it here")
-			}
-		}
 		budget, _ := seconds(get(o, "timeoutSeconds"))
 		if number, ok := get(o, "timeoutSeconds").(json.Number); ok {
 			budget, _ = number.Float64()

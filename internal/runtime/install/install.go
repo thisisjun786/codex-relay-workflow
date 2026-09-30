@@ -201,7 +201,7 @@ func Install(ctx context.Context, o Options, command string, source Source) (Obj
 
 // insideARuntime is why a destination cannot hold a candidate, or "": it is spelled through the
 // owned pointer, it resolves inside the pointer's target, or it (or an ancestor, as written or
-// resolved) is itself a runtime directory - an env-* or bin-* directory carrying a staging claim.
+// resolved) is itself a runtime directory - a bin-* directory carrying a staging claim.
 func insideARuntime(dest, pointerPath string) string {
 	if record.Within(filepath.Clean(dest), filepath.Clean(pointerPath)) {
 		return "the destination " + dest + " is spelled through the owned pointer " + pointerPath + ", so a candidate built there would live inside the runtime the pointer names"
@@ -467,7 +467,7 @@ func settleInService(o Options, environment, why string) Object {
 	if liveness, _ := staging.OwnerLiveness(environment); liveness != staging.Dead {
 		return nil
 	}
-	err := staging.WriteClaim(environment, completePayload(environment, o.Issue))
+	err := staging.WriteClaim(environment, completePayload(o.Issue))
 	says, _ := claimSays(environment)
 	var detail any
 	if err != nil {
@@ -610,26 +610,6 @@ func selectedInstall(rec Object, name string) Object {
 	return nil
 }
 
-// leavingSelection is the selection of the runtime the pointer names - the one a promotion moves
-// the host off - when the record lists every component there; otherwise the record's selection.
-// It is rollback.go's leftSelection, repeated here so that a promotion and a moving rollback record
-// the same outgoing (docs/port/refactor-backlog.md).
-func leavingSelection(rec Object, pointerPath string, current Object) Object {
-	target, ok := pointerTarget(pointerPath)
-	if !ok || selectsEvery(rec, target) {
-		return current
-	}
-	left := Object{}
-	for _, c := range definition.Components {
-		installs := installsAt(rec, c.Name, target)
-		if len(installs) == 0 {
-			return current
-		}
-		left = append(left, field(c.Name, record.Get(installs[len(installs)-1], "location")))
-	}
-	return left
-}
-
 // outgoingOf is what is selected when a promotion starts, and whether its bytes are still there:
 // the rollback baseline the promotion records.
 func outgoingOf(selected Object) Object {
@@ -645,8 +625,6 @@ func outgoingOf(selected Object) Object {
 		var digest any
 		if present {
 			if value, err := record.FileDigest(filepath.Join(location, Binary)); err == nil && doctor.RuntimeKind(filepath.Dir(location)) == doctor.KindGoRuntime {
-				digest = value
-			} else if value, err := definition.Digest(location); err == nil {
 				digest = value
 			}
 		}
@@ -716,7 +694,7 @@ func (r *run) promote(installs, measurement Object) (Object, int) {
 		return r.failed("establish the pointer is this command's", failure{})
 	}
 	leaving := inService(rec, r.pointerPath)
-	owners, conflict := secondOwners(r.o.CodexHome, filepath.Join(r.pointerPath, "bin", definition.Bridge))
+	owners, conflict := secondOwners(r.o.CodexHome, r.pointerPath)
 	if conflict != "" {
 		r.step("refuse a second owner", false, field("detail", conflict))
 		return r.failed("refuse a second owner", failure{owners: owners})
@@ -726,10 +704,10 @@ func (r *run) promote(installs, measurement Object) (Object, int) {
 		r.step("carry the Stop settings to this runtime", false, field("detail", interrupted(err)))
 		return r.failed("carry the Stop settings to this runtime", failure{err: err})
 	}
-	transition := transitionSettings(r.ctx, r.o.CodexHome, r.pointerPath, doctor.KindGoRuntime)
+	transition := checkSettings(r.o.CodexHome, r.pointerPath)
 	if transition.refused != "" {
 		r.step("carry the Stop settings to this runtime", false, field("detail", transition.refused))
-		return r.failed("carry the Stop settings to this runtime", failure{settings: append(transition.report, field("undone", transition.undo()))})
+		return r.failed("carry the Stop settings to this runtime", failure{settings: transition.report})
 	}
 	r.step("carry the Stop settings to this runtime", true, field("detail", record.Get(transition.report, "detail")))
 
@@ -737,35 +715,24 @@ func (r *run) promote(installs, measurement Object) (Object, int) {
 	for _, f := range installs {
 		selection = append(selection, field(f.Key, record.Get(f.Value.(Object), "location")))
 	}
-	outgoing := outgoingOf(leavingSelection(rec, r.pointerPath, previous))
+	outgoing := outgoingOf(leftSelection(rec, r.pointerPath, previous))
 	if err := r.ctx.Err(); err != nil {
 		r.step("commit the selection", false, field("detail", interrupted(err)))
-		undone := transition.undo()
-		return r.failed("commit the selection", failure{err: err, settings: append(transition.report, field("undone", undone))})
+		return r.failed("commit the selection", failure{err: err, settings: transition.report})
 	}
-	promoted, err := commitSelection(r.ctx, r.o.RecordPath, definition.Version, record.Delta{
+	s := swap(r.ctx, r.o, r.pointerPath, r.environment, record.Delta{
 		Select:   selection,
 		Pointer:  Object{field("path", r.pointerPath), field("recordedAt", r.o.stamp()), field("recordedBy", r.o.Issue)},
 		Outgoing: &record.Outgoing{Value: outgoing},
-	})
-	if err != nil || !promoted.Usable() {
-		r.step("commit the selection", false, field("detail", commitDetail(promoted, err)))
-		undone := transition.undo()
-		return r.failed("commit the selection", failure{reading: &promoted, err: err, settings: append(transition.report, field("undone", undone))})
+	}, true, before, ownedBefore, previous, outgoingBefore)
+	if s.commitFailed() {
+		r.step("commit the selection", false, field("detail", commitDetail(s.committed, s.commitErr)))
+		return r.failed("commit the selection", failure{reading: &s.committed, err: s.commitErr, settings: transition.report})
 	}
-	placeErr := placePointer(r.pointerPath, r.environment)
-	landed, why := landedAt(r.pointerPath, r.environment)
-	if placeErr != nil || !landed {
-		detail := "the pointer does not reach this runtime after it was placed: " + why
-		if placeErr != nil {
-			detail = "the pointer could not be placed: " + store.PythonOSError(placeErr)
-		}
-		r.step("replace the owned pointer", false, field("detail", detail))
-		putBack := restorePointer(r.o, r.pointerPath, before, r.environment, ownedBefore)
-		r.step("put the pointer back", record.Get(putBack, "verified") == true, field("detail", record.Get(putBack, "detail")))
-		restored := restoreSelection(r.o, previous, selection, outgoingBefore)
-		undone := transition.undo()
-		return r.failed("replace the owned pointer", failure{restored: restored, pointerRestored: putBack, settings: append(transition.report, field("undone", undone))})
+	if !s.landed {
+		r.step("replace the owned pointer", false, field("detail", s.placement("this runtime")))
+		r.step("put the pointer back", record.Get(s.pointerRestored, "verified") == true, field("detail", record.Get(s.pointerRestored, "detail")))
+		return r.failed("replace the owned pointer", failure{restored: s.restored, pointerRestored: s.pointerRestored, settings: transition.report})
 	}
 	var previousTarget any
 	if before.Target != "" {
@@ -780,7 +747,7 @@ func (r *run) promote(installs, measurement Object) (Object, int) {
 	locked = false
 
 	settled := settleClaim(r.o, r.environment, r.o.Issue)
-	current := promoted.Value.(Object)
+	current := s.committed.Value.(Object)
 	code := OK
 	if record.Get(settled, "settled") != true {
 		code = Incomplete
@@ -845,37 +812,27 @@ func (r *run) resume() (Object, int) {
 	// One owner per surface, read now under the promotion lock: the registrations may have changed
 	// since the interrupted run judged them, and finishing its promotion moves the pointer they
 	// start through as a promotion does.
-	owners, conflict := secondOwners(r.o.CodexHome, filepath.Join(r.pointerPath, "bin", definition.Bridge))
+	owners, conflict := secondOwners(r.o.CodexHome, r.pointerPath)
 	if conflict != "" {
 		return refusedResult(r.command, conflict, "nothing was written; the selection stays as the interrupted run committed it, and a rerun finishes it once one owner registers each surface.", field("environment", r.environment), field("secondOwner", owners))
 	}
 	if err := r.ctx.Err(); err != nil {
 		return refusedResult(r.command, interrupted(err), "nothing was written.", field("environment", r.environment))
 	}
-	transition := transitionSettings(r.ctx, r.o.CodexHome, r.pointerPath, doctor.KindGoRuntime)
+	transition := checkSettings(r.o.CodexHome, r.pointerPath)
 	if transition.refused != "" {
-		return refusedResult(r.command, transition.refused, "nothing was written; any Stop settings this run had set aside were put back (settings.undone).", field("environment", r.environment), field("settings", append(transition.report, field("undone", transition.undo()))))
-	}
-	if err := r.ctx.Err(); err != nil {
-		undone := transition.undo()
-		return refusedResult(r.command, interrupted(err), "nothing was written; any Stop settings this run had set aside were put back (settings.undone).", field("environment", r.environment), field("settings", append(transition.report, field("undone", undone))))
+		return refusedResult(r.command, transition.refused, "nothing was written.", field("environment", r.environment), field("settings", transition.report))
 	}
 	if names == nil || !*names {
-		// The placement is recorded before the link moves (OPS-4.4: a transition is committed
-		// before its side effect), and put back with it when the move does not land.
-		if written, err := commitSelection(r.ctx, r.o.RecordPath, definition.Version, record.Delta{Pointer: Object{field("path", r.pointerPath), field("recordedAt", r.o.stamp()), field("recordedBy", r.o.Issue)}}); err != nil || !written.Usable() {
-			undone := transition.undo()
-			return refusedResult(r.command, "the pointer ownership could not be recorded: "+commitDetail(written, err), "the pointer was not moved.", field("environment", r.environment), field("settings", append(transition.report, field("undone", undone))))
+		// The placement is recorded before the link moves, and put back with it when the move does
+		// not land; the selection stays as the interrupted run committed it.
+		s := swap(r.ctx, r.o, r.pointerPath, r.environment, record.Delta{Pointer: Object{field("path", r.pointerPath), field("recordedAt", r.o.stamp()), field("recordedBy", r.o.Issue)}},
+			true, before, ownedBefore, nil, nil)
+		if s.commitFailed() {
+			return refusedResult(r.command, "the pointer ownership could not be recorded: "+commitDetail(s.committed, s.commitErr), "the pointer was not moved.", field("environment", r.environment), field("settings", transition.report))
 		}
-		placeErr := placePointer(r.pointerPath, r.environment)
-		if landed, why := landedAt(r.pointerPath, r.environment); placeErr != nil || !landed {
-			putBack := restorePointer(r.o, r.pointerPath, before, r.environment, ownedBefore)
-			undone := transition.undo()
-			detail := "the pointer does not reach this runtime after it was placed: " + why
-			if placeErr != nil {
-				detail = "the pointer could not be placed: " + store.PythonOSError(placeErr)
-			}
-			return refusedResult(r.command, detail, "the pointer and its ownership were put back; the selection stays as the interrupted run committed it.", field("environment", r.environment), field("pointerRestored", putBack), field("settings", append(transition.report, field("undone", undone))))
+		if !s.landed {
+			return refusedResult(r.command, s.placement("this runtime"), "the pointer and its ownership were put back; the selection stays as the interrupted run committed it.", field("environment", r.environment), field("pointerRestored", s.pointerRestored), field("settings", transition.report))
 		}
 	}
 	r.step("replace the owned pointer", true, field("target", r.environment))
@@ -1133,7 +1090,7 @@ func restoreSelection(o Options, previous Object, wrote []contract.Field, outgoi
 // the record says now, read under the promotion lock with a short timeout.
 func settleClaim(o Options, environment, issue string) Object {
 	path := staging.ClaimPath(environment)
-	err := staging.WriteClaim(environment, completePayload(environment, issue))
+	err := staging.WriteClaim(environment, completePayload(issue))
 	var busy *record.Busy
 	contended := errors.As(err, &busy)
 	left := staging.ReadClaim(environment)

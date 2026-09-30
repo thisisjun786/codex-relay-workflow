@@ -2,13 +2,8 @@ package doctor
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -17,8 +12,8 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
-	"golang.org/x/sys/unix"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pluginwiring"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -33,19 +28,18 @@ import (
 // selected runtime:
 //
 //   - the Stop settings (crw-completion-hook.json), through the Go hook's own acceptance check
-//     (hook.ReadSettings: a document it refuses runs no relay); then relayExecutable and, for a
-//     plugin owner, the [adapterInterpreter, adapterEntryPoint, <settings>] invocation of the
-//     Python launcher (crw_stop_hook.py, packaged until todo 43, and its
-//     <CODEX_HOME>/crw-stop-hook.py copy);
-//   - every Stop command of <CODEX_HOME>/hooks.json that runs a Stop adapter, which is what a
-//     user-owned registration runs (runtime_install.py hook appends it there);
+//     (hook.ReadSettings: a document it refuses runs no relay); then relayExecutable (the
+//     retired adapter keys run nothing, decision 66);
+//   - every Stop command of <CODEX_HOME>/hooks.json that runs crw hook (or the retired
+//     crw-completion-hook link a runtime installed before decision 66 still carries), which is
+//     a second registration of the Stop hook beside the plugin's declaration;
 //   - the plugin-owned bridge record (crw-bridge-mcp.json), through the launcher's record
 //     contract (crw_bridge_mcp.py until todo 43, codex-thread-bridge --plugin-launch since todo
 //     34): a record it refuses starts no bridge;
 //   - config.toml's mcp_servers, read whole as codexconfig.registration_view reads it (a
 //     malformed table makes the configuration unreadable), and every table that starts the
-//     bridge: the one named codex-thread-bridge, the one a user-owned bridge record names, and
-//     any whose command runs the bridge (runtime_install._starts_this_bridge).
+//     bridge: the one named codex-thread-bridge and any whose command runs the bridge
+//     (runtime_install._starts_this_bridge).
 //
 // Each is the OPS-2.1 registration signal for its component: one that starts something other
 // than the selected runtime's entry point under the component's name, or that its consumer
@@ -78,8 +72,11 @@ func (c *componentRegistrations) unreadable(entry Object, resolves any, what, wh
 	c.add(entry, resolves, nil, why)
 }
 
+// crwHook is the Stop hook's name in a judgement: crw started with the mode argument hook.
+const crwHook = "crw hook"
+
 // crwModes are the component names crw runs for a mode argument (crw relay, crw bridge, crw hook).
-var crwModes = map[string]string{"relay": definition.Relay, "bridge": definition.Bridge, "hook": definition.HookScript}
+var crwModes = map[string]string{"relay": definition.Relay, "bridge": definition.Bridge, "hook": crwHook}
 
 // ReadRegistrations reads every registration of the relay and the bridge and judges it against
 // the runtime at target (the pointer's resolved target). env supplies HOME for the expansions a
@@ -96,23 +93,22 @@ func ReadRegistrations(ctx context.Context, codexHome, target string, env scope.
 	// The expansions a hook command's shell makes that the scan's grammar makes too; PATH is only
 	// where the grammar finds what a bare command around a hook is (a shell whose -c program it
 	// reads, a script): a hook word itself must be absolute.
-	j := judge{crw: crw, x: Expander{Vars: map[string]string{"HOME": env.Get("HOME"), "CODEX_HOME": codexHome}, Path: env.Get("PATH")}, override: env.Get(settingsEnv)}
+	j := judge{crw: crw, x: Expander{Vars: map[string]string{"HOME": env.Get("HOME"), "CODEX_HOME": codexHome}, Path: env.Get("PATH")}}
 
 	relay := out[definition.Relay]
 	stop := filepath.Join(codexHome, hook.ConfigName)
 	j.stopSettings(ctx, relay, stop)
-	j.stopHooks(relay, filepath.Join(codexHome, "hooks.json"), stop)
+	j.stopHooks(relay, filepath.Join(codexHome, "hooks.json"))
 
 	bridge := out[definition.Bridge]
-	named := j.bridgeRecord(bridge, filepath.Join(codexHome, "crw-bridge-mcp.json"))
-	j.codexConfig(bridge, filepath.Join(codexHome, "config.toml"), named)
+	j.bridgeRecord(bridge, filepath.Join(codexHome, "crw-bridge-mcp.json"))
+	j.codexConfig(bridge, filepath.Join(codexHome, "config.toml"))
 	return out
 }
 
 type judge struct {
-	crw      string   // the selected runtime's binary, resolved
-	x        Expander // what a hook command's shell expands that the scan's grammar expands too
-	override string   // $CRW_COMPLETION_HOOK_CONFIG, which a hook naming no settings reads
+	crw string   // the selected runtime's binary, resolved
+	x   Expander // what a hook command's shell expands that the scan's grammar expands too
 }
 
 // executable judges one registered command the host execs directly: path (absolute) is what
@@ -156,9 +152,8 @@ func (j judge) executable(into *componentRegistrations, source, field, command, 
 // stopSettings judges the Stop settings as the Go hook reads them (hook.ReadSettings, the check
 // every Stop runs before it asks the relay anything): a document it refuses is a conflict naming
 // its complaints, because the hook then releases without running any relay; one it cannot read
-// is unreadable. An accepted document's relayExecutable is judged, and a plugin owner's adapter
-// invocation. The launcher's own gates (owner plugin, configVersion absent or 1, absolute
-// adapter paths) are all inside the hook's check.
+// is unreadable. An accepted document's relayExecutable is judged; the adapter keys a document
+// may still carry are read by nothing (decision 66).
 func (j judge) stopSettings(ctx context.Context, into *componentRegistrations, path string) {
 	document, failure, detail := hook.ReadSettings(ctx, path)
 	entry := registrationEntry(path, nil, nil)
@@ -175,100 +170,13 @@ func (j judge) stopSettings(ctx context.Context, into *componentRegistrations, p
 	}
 	relay, _ := record.Get(document, "relayExecutable").(string)
 	j.executable(into, path, "relayExecutable", relay, relay, nil, definition.Relay)
-	if record.Get(document, "owner") != "plugin" {
-		return
-	}
-	entryPoint, _ := record.Get(document, "adapterEntryPoint").(string)
-	interpreter, _ := record.Get(document, "adapterInterpreter").(string)
-	j.executable(into, path, "adapterEntryPoint", entryPoint, entryPoint, nil, definition.HookScript)
-	j.interpreter(into, path, interpreter, entryPoint)
 }
 
-// systemEnv are the spellings of the system's env program. The launcher runs its interpreter by
-// the path the settings give it, so env is recognised by that path, never by a basename: any
-// file can be named env, and a multi-call binary (/bin/env -> busybox, or coreutils) dispatches on
-// the name it is run under, which is this one.
-var systemEnv = []string{"/usr/bin/env", "/bin/env"}
-
-// interpreter judges the Stop settings' adapterInterpreter against the launcher contract of
-// decision 18 (as todo 38 corrects it): the Python launcher (crw_stop_hook.py, packaged until
-// todo 43, and its <CODEX_HOME>/crw-stop-hook.py copy) runs [adapterInterpreter, adapterEntryPoint,
-// <settings>]. That reaches the Go hook only when adapterInterpreter is the system env
-// (systemEnv, resolving to a native executable regular file), so that the entry point runs as
-// crw-completion-hook with the settings path as its one argument, and only when the entry point
-// holds no '=', which env reads as a NAME=VALUE assignment before the program (it would then run
-// the settings path). Any other interpreter (a Python interpreter, a shell, the crw binary
-// itself, another file named env) is a conflict naming the invocation it produces; one that
-// cannot be examined is unreadable.
-func (j judge) interpreter(into *componentRegistrations, source, interpreter, entryPoint string) {
-	invocation := "the packaged launcher runs [" + interpreter + ", " + entryPoint + ", <settings>]"
-	entry := registrationEntry(source, "adapterInterpreter", interpreter)
-	conflict := func(resolves any, why string) {
-		into.conflict(entry, resolves, source+" adapterInterpreter: "+invocation+", and "+why)
-	}
-	unread := func(resolves any, why string) {
-		into.unreadable(entry, resolves, source+" adapterInterpreter "+interpreter, why)
-	}
-	if !filepath.IsAbs(interpreter) {
-		conflict(nil, "the launcher declines an interpreter that is not an absolute path, so it runs nothing")
-		return
-	}
-	resolved, err := record.Resolve(interpreter)
-	if err != nil {
-		unread(nil, "the interpreter could not be resolved: "+err.Error())
-		return
-	}
-	info, err := os.Stat(resolved)
-	switch {
-	case errors.Is(err, os.ErrNotExist):
-		conflict(resolved, interpreter+" does not exist, so the launcher starts nothing")
-		return
-	case err != nil:
-		unread(resolved, "the interpreter could not be examined: "+store.PythonOSError(err))
-		return
-	case !info.Mode().IsRegular():
-		conflict(resolved, interpreter+" is not a regular file, so the launcher starts nothing")
-		return
-	}
-	if err := unix.Access(resolved, unix.X_OK); errors.Is(err, unix.EACCES) {
-		conflict(resolved, interpreter+" is not executable by this user, so the launcher starts nothing")
-		return
-	} else if err != nil {
-		unread(resolved, "whether the interpreter is executable could not be read: "+err.Error())
-		return
-	}
-	e := Classify(interpreter, "", "")
-	isSystemEnv := false
-	for _, spelling := range systemEnv {
-		isSystemEnv = isSystemEnv || store.PathlibSpelling(interpreter) == spelling
-	}
-	switch {
-	case resolved == j.crw:
-		conflict(resolved, interpreter+" is the selected crw binary itself, started as "+filepath.Base(interpreter)+", which reads "+entryPoint+" as its first argument instead of running the hook with the settings path")
-	case e.Python:
-		conflict(resolved, interpreter+" is a Python interpreter ("+e.Detail+"), which runs "+entryPoint+" as a Python program rather than the selected runtime's hook")
-	case !isSystemEnv:
-		conflict(resolved, interpreter+" (resolving to "+resolved+") is not the system env ("+strings.Join(systemEnv, " or ")+"), so what it does with "+entryPoint+" is not running it as "+definition.HookScript+" with the settings path")
-	case !isNative(resolved):
-		unread(resolved, "the system env "+interpreter+" resolves to "+resolved+", which is not a native program, so what it runs could not be established")
-	case strings.ContainsRune(entryPoint, '='):
-		conflict(resolved, "env reads "+entryPoint+" as a NAME=VALUE assignment because it holds '=', and runs the settings path as the program instead")
-	default:
-		into.add(entry, resolved, true, "env runs "+entryPoint+" as "+definition.HookScript+" with the settings path")
-	}
-}
-
-// pythonStopAdapter is the checkout's Python Stop adapter (completion.ENTRY_POINT_NAME). A Stop
-// command may also run the Go hook (crw-completion-hook, or crw hook), which hookWord judges, or
-// the packaged launcher, which runs what the settings name and stands down unless the plugin owns
-// them, so it is judged through the settings rather than here.
-const pythonStopAdapter = "completion_hook.py"
-
-// stopHooks judges every Stop command of hooks.json that runs a Stop adapter. The host runs
-// each of them on every Stop, whoever the settings name as owner: for a user owner (or none,
-// which completion.owner_of reads as user) they are the registration, and for a plugin owner
-// they run beside the plugin's declared hook.
-func (j judge) stopHooks(into *componentRegistrations, path, settings string) {
+// stopHooks judges every Stop command of hooks.json that runs the Stop hook. The host runs each
+// of them on every Stop, whoever the settings name as owner: for a user owner (or none, which
+// completion.owner_of reads as user) they are the registration, and for a plugin owner they run
+// beside the plugin's declared hook.
+func (j judge) stopHooks(into *componentRegistrations, path string) {
 	read := reading.ReadJSON(path, "hooks.json", nil, jsonObject("hooks.json"))
 	switch {
 	case read.State == reading.Absent:
@@ -330,26 +238,20 @@ func (j judge) stopHooks(into *componentRegistrations, path, settings string) {
 				shape(field+".command", field+".command is "+scope.TypeName(command)+", not a string")
 				continue
 			}
-			j.stopCommand(into, path, field+".command", text, settings)
+			j.stopCommand(into, path, field+".command", text)
 		}
 	}
 }
 
-// stopCommand judges one Stop command line through the retention scan's reader
+// stopCommand judges one Stop command line through the registration readings' reader
 // (readStopCommand: its allowlisted grammar, with exec, env and sh -c programs followed): each
-// command in it that runs a Stop adapter is judged, and a command whose hooks cannot all be told
-// (a word or construct outside the grammar, a script that may run the adapter itself) is
-// unreadable. The packaged launcher runs what the settings name, so it is judged through them.
-func (j judge) stopCommand(into *componentRegistrations, source, field, command, settings string) {
+// command in it that runs the Stop hook is judged, and a command whose hooks cannot all be told
+// (a word or construct outside the grammar, a script that may run the hook itself) is
+// unreadable.
+func (j judge) stopCommand(into *componentRegistrations, source, field, command string) {
 	calls, unknown := readStopCommand(argvJudge{c: Classifier{Expand: j.x}}, command)
 	for _, call := range calls {
-		switch base := filepath.Base(call.argv[call.at].Written); {
-		case launcherEntries[base]:
-		case base == pythonStopAdapter:
-			into.conflict(registrationEntry(source, field, command), nil, source+" "+field+" runs the checkout's Python Stop adapter "+call.argv[call.at].Written+" (through "+call.argv[0].Written+"), not the selected runtime's "+definition.HookScript)
-		default:
-			j.hookCall(into, source, field, command, call, settings)
-		}
+		j.hookCall(into, source, field, command, call)
 	}
 	if unknown != "" {
 		into.unreadable(registrationEntry(source, field, command), nil, source+" "+field, unknown+", so whether it starts the relay's hook cannot be told")
@@ -357,13 +259,15 @@ func (j judge) stopCommand(into *componentRegistrations, source, field, command,
 }
 
 // hookCall judges one call of the Go hook: its word must be the program the command executes
-// (not an argument of another), an absolute path once the grammar's expansions are made, and it
-// must read the settings this command judged.
-func (j judge) hookCall(into *componentRegistrations, source, field, command string, call stopAdapterCall, settings string) {
+// (not an argument of another), an absolute path once the grammar's expansions are made, started
+// as crw hook, and given no argument but --plugin-launch: since decision 66 crw hook reads no
+// settings path, and any other argument releases every Stop in silence. With no argument or
+// --plugin-launch it reads the Stop settings judged above.
+func (j judge) hookCall(into *componentRegistrations, source, field, command string, call stopAdapterCall) {
 	entry := registrationEntry(source, field, command)
 	word := call.argv[call.at]
 	if call.at > 0 {
-		into.conflict(entry, nil, source+" "+field+" hands "+word.Written+" to "+call.argv[0].Written+" as an argument, so the host's Stop does not run it as "+definition.HookScript)
+		into.conflict(entry, nil, source+" "+field+" hands "+word.Written+" to "+call.argv[0].Written+" as an argument, so the host's Stop does not run it as "+crwHook)
 		return
 	}
 	var args []string
@@ -381,92 +285,61 @@ func (j judge) hookCall(into *componentRegistrations, source, field, command str
 		into.unreadable(entry, nil, source+" "+field+" "+word.Written, "a bare command the host's shell looks up on the session's PATH, which this doctor does not read")
 		return
 	}
-	j.executable(into, source, field, word.Written, word.Value, args, definition.HookScript)
-	named := call.settings
-	switch {
-	case call.launcher:
-		// crw hook --plugin-launch reads the default settings, the ones judged here
-	case named.Written == "" && j.override != "":
-		if store.PathlibSpelling(j.override) != store.PathlibSpelling(settings) {
-			into.unreadable(entry, nil, source+" "+field+" settings", "the hook names no settings, so it reads $"+settingsEnv+" ("+j.override+"), not the Stop settings "+settings+" this doctor judged")
-		}
-	case named.Written == "":
-		// the hook reads its default settings, the ones judged here
-	case named.Missing != "":
-		into.unreadable(entry, nil, source+" "+field+" settings argument "+named.Written, "it needs "+named.Missing+", an expansion this doctor does not make")
-	case !filepath.IsAbs(named.Value):
-		into.unreadable(entry, nil, source+" "+field+" settings argument "+named.Written, "a relative path, which resolves in the session's workspace")
-	case store.PathlibSpelling(named.Value) != store.PathlibSpelling(settings):
-		into.unreadable(entry, nil, source+" "+field+" settings argument "+named.Written, "the hook reads "+named.Value+", not the Stop settings "+settings+" this doctor judged, so the relay it starts is not known")
+	if named := call.settings; call.crwHook && named.Written != "" && !call.launcher {
+		into.conflict(entry, nil, source+" "+field+" gives crw hook the argument "+named.Written+", and crw hook given any argument but --plugin-launch releases every Stop in silence (decision 66), so it runs no hook")
+		return
 	}
+	j.executable(into, source, field, word.Written, word.Value, args, crwHook)
 }
 
-// bridgeRecord judges the bridge record as the packaged launcher reads it, and returns the
-// server name a user-owned record gives its configuration entry.
-func (j judge) bridgeRecord(into *componentRegistrations, path string) []string {
+// bridgeRecord judges the bridge record as the packaged launcher reads it. A user-owned record
+// starts nothing (the launcher stands down for it), so only a plugin-owned one is judged.
+func (j judge) bridgeRecord(into *componentRegistrations, path string) {
 	read := reading.ReadJSON(path, "the bridge record", nil, jsonObject("the bridge record"))
 	switch {
 	case read.State == reading.Absent:
-		return nil
+		return
 	case !read.OK():
 		into.unreadable(registrationEntry(path, nil, nil), nil, "the bridge record "+path, read.Detail)
-		return nil
+		return
 	}
-	document := read.Value.(Object)
-	switch record.Get(document, "owner") {
-	case "plugin":
+	if document := read.Value.(Object); record.Get(document, "owner") == "plugin" {
 		j.pluginBridge(into, path, document)
-	case "user":
-		if name, ok := record.Get(document, "serverName").(string); ok && name != "" {
-			return []string{name}
-		}
 	}
-	return nil
 }
 
-// pluginBridge applies crw_bridge_mcp.py's record contract before judging what it execs: a
-// record the launcher refuses (it exits 2 before exec) starts no bridge, which is a conflict.
+// pluginBridge applies the launcher's record contract (pluginwiring.ReadBridgeRecord) before
+// judging what it execs: a record the launcher refuses (it exits 2 before exec) starts no bridge,
+// which is a conflict.
 func (j judge) pluginBridge(into *componentRegistrations, path string, document Object) {
 	refuse := func(field any, why string) {
 		into.conflict(registrationEntry(path, field, nil), nil, "the packaged bridge launcher refuses "+path+": "+why+", so it starts no bridge")
 	}
-	version := record.Get(document, "recordVersion")
-	number, integral := pyInteger(version)
-	if !integral || number != 1 && number != 2 {
-		refuse("recordVersion", "it is version "+evidence.Repr(version)+", and the launcher reads versions 1 and 2")
+	read := pluginwiring.ReadBridgeRecord(document)
+	if read.Version == 0 {
+		refuse("recordVersion", "it is version "+evidence.Repr(read.VersionValue)+", and the launcher reads versions 1 and 2")
 		return
 	}
-	if name := record.Get(document, "serverName"); name != nil && name != definition.Bridge {
-		refuse("serverName", "it names the server "+evidence.Repr(name)+", and the package declares '"+definition.Bridge+"'")
+	if read.ServerName != nil && read.ServerName != definition.Bridge {
+		refuse("serverName", "it names the server "+evidence.Repr(read.ServerName)+", and the package declares '"+definition.Bridge+"'")
 		return
 	}
-	executable, isString := record.Get(document, "bridgeExecutable").(string)
-	if !isString || !filepath.IsAbs(executable) {
-		refuse("bridgeExecutable", "it must name bridgeExecutable as an absolute path, found "+evidence.Repr(record.Get(document, "bridgeExecutable")))
+	if !read.IsString || !filepath.IsAbs(read.Executable) {
+		refuse("bridgeExecutable", "it must name bridgeExecutable as an absolute path, found "+evidence.Repr(read.ExecutableValue))
 		return
 	}
-	var args []string
-	if raw := record.Get(document, "args"); raw != nil {
-		list, ok := raw.([]any)
-		for _, word := range list {
-			text, isString := word.(string)
-			ok = ok && isString
-			args = append(args, text)
-		}
-		if !ok {
-			refuse("args", "it must list args as strings, found "+evidence.Repr(raw))
-			return
-		}
+	if !read.ArgsOK {
+		refuse("args", "it must list args as strings, found "+evidence.Repr(read.ArgsValue))
+		return
 	}
-	_, hasPolicy := record.Lookup(document, "executionPolicy")
 	switch {
-	case number == 1 && hasPolicy:
+	case read.Version == 1 && read.HasPolicy:
 		refuse("executionPolicy", "it is version 1 and names an execution policy, which only a version 2 record carries")
 		return
-	case number == 2 && !j.policy(into, path, record.Get(document, "executionPolicy"), refuse):
+	case read.Version == 2 && !j.policy(into, path, read.Policy, refuse):
 		return
 	}
-	j.executable(into, path, "bridgeExecutable", executable, executable, args, definition.Bridge)
+	j.executable(into, path, "bridgeExecutable", read.Executable, read.Executable, read.Args, definition.Bridge)
 }
 
 // policy is the launcher's policy_environment for a version-2 record, minus the two variables it
@@ -476,92 +349,50 @@ func (j judge) pluginBridge(into *componentRegistrations, path string, document 
 // hash to it. A policy that does not exist, is not a regular file or changed is refused; one this
 // command could not open or read for another reason is unreadable.
 func (j judge) policy(into *componentRegistrations, path string, reference any, refuse func(field any, why string)) bool {
-	object, ok := reference.(Object)
-	_, hasPath := record.Lookup(object, "path")
-	_, hasDigest := record.Lookup(object, "digest")
-	if !ok || len(object) != 2 || !hasPath || !hasDigest {
+	policy := pluginwiring.ReadPolicyReference(reference)
+	if !policy.Shaped {
 		refuse("executionPolicy", "it is version 2 and must name executionPolicy as an object with exactly digest and path")
 		return false
 	}
-	file, _ := record.Get(object, "path").(string)
-	if file == "" || file != strings.TrimSpace(file) || strings.IndexFunc(file, func(r rune) bool { return r < 32 || r == 127 }) >= 0 || !filepath.IsAbs(file) {
-		refuse("executionPolicy.path", "it must name the execution policy as an absolute path with no surrounding whitespace or control characters, found "+evidence.Repr(record.Get(object, "path")))
+	file := policy.File.Text
+	if !policy.File.OK() {
+		refuse("executionPolicy.path", "it must name the execution policy as an absolute path with no surrounding whitespace or control characters, found "+evidence.Repr(policy.File.Value))
 		return false
 	}
-	digest, _ := record.Get(object, "digest").(string)
-	if !sha256Hex.MatchString(digest) {
+	if !policy.DigestOK {
 		refuse("executionPolicy.digest", "it must name the execution policy digest as 64 lowercase hexadecimal characters")
 		return false
 	}
 	entry := registrationEntry(path, "executionPolicy.path", file)
 	// The launcher opens os.fsencode(path): a surrogate escape U+DC80..U+DCFF is the byte it
 	// stands for, and any other surrogate is a path it refuses.
-	name, encodable := reading.FSEncode(file)
-	if !encodable {
+	actual, encodable, err := pluginwiring.PolicyDigest(file)
+	var opening *os.PathError
+	switch {
+	case !encodable:
 		refuse("executionPolicy.path", "it names an execution policy path this system cannot encode, found "+evidence.Repr(file))
 		return false
-	}
-	handle, err := os.OpenFile(name, os.O_RDONLY|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
-			refuse("executionPolicy.path", "the execution policy "+file+" does not exist")
-		} else {
-			into.unreadable(entry, nil, "the execution policy "+file+" the bridge record "+path+" names", store.PythonOSError(err))
-		}
+	case errors.As(err, &opening) && (errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOTDIR)):
+		refuse("executionPolicy.path", "the execution policy "+file+" does not exist")
 		return false
-	}
-	defer handle.Close()
-	info, err := handle.Stat()
-	if err == nil && !info.Mode().IsRegular() {
+	case errors.Is(err, pluginwiring.ErrNotRegular):
 		refuse("executionPolicy.path", "the execution policy "+file+" is not a regular file")
 		return false
-	}
-	sum := sha256.New()
-	if err == nil {
-		_, err = io.Copy(sum, handle)
-	}
-	if err != nil {
+	case err != nil:
 		into.unreadable(entry, nil, "the execution policy "+file+" the bridge record "+path+" names", store.PythonOSError(err))
 		return false
-	}
-	if actual := hex.EncodeToString(sum.Sum(nil)); actual != digest {
-		refuse("executionPolicy.digest", "the execution policy at "+file+" now hashes to "+actual+", and the record was written when it hashed to "+digest)
+	case actual != policy.Digest:
+		refuse("executionPolicy.digest", "the execution policy at "+file+" now hashes to "+actual+", and the record was written when it hashed to "+policy.Digest)
 		return false
 	}
 	return true
 }
 
-// pyInteger is the integer a decoded JSON value equals under Python's ==, which is how the
-// launchers compare recordVersion and configVersion: true is 1 and 1.0 is 1.
-func pyInteger(v any) (int64, bool) {
-	switch n := v.(type) {
-	case bool:
-		if n {
-			return 1, true
-		}
-		return 0, true
-	case int64:
-		return n, true
-	case int:
-		return int64(n), true
-	case float64:
-		if n == math.Trunc(n) && math.Abs(n) < 1<<53 {
-			return int64(n), true
-		}
-	case json.Number:
-		if i, err := n.Int64(); err == nil {
-			return i, true
-		}
-	}
-	return 0, false
-}
-
 // codexConfig judges config.toml's mcp_servers: the whole table is read as
 // codexconfig.registration_view reads it, so a server entry that is not a table, a command that
 // is not a string or args that are not a list of strings makes the configuration unreadable;
-// then every table that starts the bridge is judged (named is the table a user-owned bridge
-// record names).
-func (j judge) codexConfig(into *componentRegistrations, path string, named []string) {
+// then every table that starts the bridge is judged.
+func (j judge) codexConfig(into *componentRegistrations, path string) {
 	read := reading.ReadText(path, "config.toml")
 	switch {
 	case read.State == reading.Absent:
@@ -611,15 +442,11 @@ func (j judge) codexConfig(into *componentRegistrations, path string, named []st
 			}
 		}
 	}
-	judged := map[string]bool{definition.Bridge: true}
-	for _, name := range named {
-		judged[name] = true
-	}
 	for _, name := range names {
 		table := servers[name].(map[string]any)
 		command, _ := table["command"].(string)
 		args, _ := tomlStrings(table["args"])
-		if !judged[name] && !startsTheBridge(command, args) {
+		if name != definition.Bridge && !startsTheBridge(command, args) {
 			continue
 		}
 		field := "mcp_servers." + name + ".command"
@@ -631,9 +458,9 @@ func (j judge) codexConfig(into *componentRegistrations, path string, named []st
 	}
 }
 
-// startsTheBridge is runtime_install._starts_this_bridge widened to what a Go or Python host may
-// register under any table name: the bridge's console script as the command or as an argument
-// (an interpreter running it), crw bridge, or python -m codex_thread_bridge.
+// startsTheBridge is runtime_install._starts_this_bridge widened to what a host may register
+// under any table name: the bridge's console script as the command or as an argument (an
+// interpreter running it), or crw bridge.
 func startsTheBridge(command string, args []string) bool {
 	switch base := filepath.Base(command); {
 	case base == definition.Bridge:
@@ -641,11 +468,8 @@ func startsTheBridge(command string, args []string) bool {
 	case base == "crw" && len(args) > 0 && args[0] == "bridge":
 		return true
 	}
-	for i, arg := range args {
+	for _, arg := range args {
 		if filepath.Base(arg) == definition.Bridge {
-			return true
-		}
-		if arg == "-m" && i+1 < len(args) && (args[i+1] == "codex_thread_bridge" || strings.HasPrefix(args[i+1], "codex_thread_bridge.")) {
 			return true
 		}
 	}

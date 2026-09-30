@@ -7,7 +7,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/plugins"
@@ -46,23 +45,6 @@ func invalidOption(w io.Writer, prog, opt string) int {
 // byte outside a well-formed UTF-8 sequence, the three of an encoded surrogate included, the
 // lone surrogate U+DC00+byte, and repr() escapes it.
 func argvRepr(arg string) string { return evidence.StrRepr(store.FSDecode(arg)) }
-
-// stderrText is text as Python's sys.stderr writes it, which always uses
-// errors="backslashreplace": a lone surrogate, held as WTF-8, is written as its \uXXXX escape
-// and everything else as it is.
-func stderrText(text string) string {
-	var b strings.Builder
-	for i := 0; i < len(text); {
-		r, size := settings.CodePoint(text, i)
-		if r >= 0xd800 && r <= 0xdfff {
-			fmt.Fprintf(&b, "\\u%04x", r)
-		} else {
-			b.WriteString(text[i : i+size])
-		}
-		i += size
-	}
-	return b.String()
-}
 
 func readFileOrStdin(path string, stdin io.Reader) ([]byte, error) {
 	if path == "" {

@@ -2,7 +2,6 @@ package install
 
 import (
 	"context"
-	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
@@ -46,21 +45,4 @@ func ReplaceProcessOwner(owner func(dir string) (int, error)) (restore func()) {
 	saved := processOwner
 	processOwner = owner
 	return func() { processOwner = saved }
-}
-
-// ReplaceExchange makes every settings exchange go through swap until restored.
-func ReplaceExchange(swap func(a, b string) error) (restore func()) {
-	saved := swapNames
-	swapNames = swap
-	return func() { swapNames = saved }
-}
-
-// ErrNoExchange is the answer of a platform or filesystem that cannot exchange two names.
-var ErrNoExchange = errNoExchange
-
-// ReplaceLauncherLock makes RemoveLauncher take its lock through lock until restored.
-func ReplaceLauncherLock(lock func(ctx context.Context, target string, timeout time.Duration) (*record.Locked, error)) (restore func()) {
-	saved := lockLauncher
-	lockLauncher = lock
-	return func() { lockLauncher = saved }
 }

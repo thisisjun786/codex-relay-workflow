@@ -23,10 +23,10 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/staging"
 )
 
-// runtimeDirectory is whether name is one of the installers' runtime directories: a Python
-// env-<definition>-<digest> or a Go bin-<version>-<digest>.
+// runtimeDirectory is whether name is one of the installer's runtime directories,
+// bin-<version>-<digest>.
 func runtimeDirectory(name string) bool {
-	return strings.HasPrefix(name, "env-") || strings.HasPrefix(name, "bin-")
+	return strings.HasPrefix(name, "bin-")
 }
 
 // processScope is what a process-table reading can see, stated in every answer that rests on
@@ -39,13 +39,13 @@ const processScope = "this host's process table, as this command's PID namespace
 // destination and judged by file identity (runtimeDir), so an alias of the destination - a
 // symlink, a bind mount, a case-folded spelling - cannot pass a check its canonical spelling
 // fails. It refuses a directory the record selects, one the owned pointer names (or might - an
-// unread pointer is not a pointer aimed elsewhere), one with no claim this command (or
-// runtime_install.py) wrote, an unreadable claim, a staging another run still holds, any
+// unread pointer is not a pointer aimed elsewhere), one with no claim this command wrote, an
+// unreadable claim, a staging another run still holds, any
 // directory a live process runs out of (liveProcesses, and every daemon a daemon.json records
 // alive), and any directory a registration the host reads names a path inside
 // (doctor.RegisteredMatching: the Stop settings, the bridge record, config.toml's mcp_servers,
-// hooks.json, the cached plugin declarations and the launcher copy), or holds something that
-// could not be read. It accepts a Python env-* directory and a Go bin-* one alike. An answer
+// hooks.json and the cached plugin declarations), or holds something that
+// could not be read. An answer
 // that removes names what its verdict rests on: the process table (processTable) and the relay
 // records it read (relayRecords: the scope registries and state directories of this
 // environment's relay, doctor.RecordedDaemons).
@@ -83,7 +83,7 @@ func Remove(ctx context.Context, o Options, named string) (Object, int) {
 		original = name
 	}
 	if !runtimeDirectory(original) || !reading.SameDirectory(filepath.Dir(spelled), o.Dest) {
-		return refuse(spelled + " is not an env-* or bin-* runtime directory (or the tombstone of one) directly under the destination " + o.Dest + ", so it is not one this command installs")
+		return refuse(spelled + " is not a bin-* runtime directory (or the tombstone of one) directly under the destination " + o.Dest + ", so it is not one this command installs")
 	}
 	directory := filepath.Join(o.Dest, original)
 	base = append(base, field("directory", directory))
@@ -137,7 +137,7 @@ func Remove(ctx context.Context, o Options, named string) (Object, int) {
 	claim := staging.ReadClaim(directory)
 	switch {
 	case claim.State == reading.Absent:
-		return refuse("this directory carries no claim written by crw install or runtime_install.py, so it is somebody else's and is left alone")
+		return refuse("this directory carries no claim written by crw install, so it is somebody else's and is left alone")
 	case !claim.OK():
 		return refuse("the claim in this directory could not be read, so who owns it was not established: "+claim.Detail, "claim", claim.Refusal())
 	}
@@ -217,7 +217,7 @@ func tombstoneInUse(ctx context.Context, o Options, grave string) (*use, Object)
 
 // finishRemoval finishes a removal a killed or failed run left as a tombstone: the tombstone is
 // deleted, its claim last, once it is established as this command's (it carries a readable claim
-// of crw install's or runtime_install.py's whose staging lock nobody holds, or it is empty), no
+// of crw install's whose staging lock nobody holds, or it is empty), no
 // live process runs out of it and no registration names it, and when nothing is
 // under the runtime's name any more, what the host record still lists under that name (its
 // install entries, an outgoing selection naming it) is dropped first. A runtime installed again
@@ -365,12 +365,12 @@ func runningOrRegistered(ctx context.Context, o Options, d *runtimeDir) (*use, O
 		return &use{"what a live process runs could not be read, so it cannot be ruled out that it runs out of this directory", "unreadableProcesses", unruled,
 			byHand(d, " once none of the processes named in unreadableProcesses (each with its pid, its uid and why it could not be ruled out) runs out of it")}, nil
 	}
-	retention := doctor.RetentionOptions{Env: o.Env, CodexHome: o.CodexHome, Destination: o.Dest, Proc: o.proc(), ScopeRegistry: o.ScopeRegistry}
-	daemons := doctor.RecordedDaemons(retention, o.State)
+	host := doctor.ScanOptions{Env: o.Env, CodexHome: o.CodexHome, Destination: o.Dest, Proc: o.proc(), ScopeRegistry: o.ScopeRegistry}
+	daemons := doctor.RecordedDaemons(host, o.State)
 	if len(daemons.Unreadable) > 0 {
 		return &use{"a relay daemon record could not be read, so whether a daemon it records still runs out of this directory was not established", "unreadable", strs(daemons.Unreadable), ""}, nil
 	}
-	registered, unreadable := doctor.RegisteredMatching(ctx, retention, func(path, resolves string) string {
+	registered, unreadable := doctor.RegisteredMatching(ctx, host, func(path, resolves string) string {
 		switch {
 		case d.holds(path):
 			return path
@@ -504,14 +504,13 @@ var readExe = os.Readlink
 // answer as the kernel does when ptrace access is refused).
 var readCwd = os.Readlink
 
-// interpreter is whether a program reads its first operand as a script: a Python, or a shell.
-func interpreter(word string) (python, shell bool) {
-	base := filepath.Base(word)
-	switch base {
+// shell is whether a program reads its first operand as a script: a shell.
+func shell(word string) bool {
+	switch filepath.Base(word) {
 	case "sh", "bash", "dash", "zsh", "ksh", "mksh", "ash", "busybox":
-		return false, true
+		return true
 	}
-	return doctor.PythonName(base), false
+	return false
 }
 
 // argvOperands is what a command line runs as its program and reads as its script, spelled as
@@ -519,11 +518,9 @@ func interpreter(word string) (python, shell bool) {
 // argv[0], unless the process's executable was read (exe), which settles what it runs, and never a
 // word holding whitespace, which is a process title a program wrote over its argv (sshd, nginx)
 // rather than a path; through env (its options and NAME=VALUE assignments skipped) the command env
-// runs; and for an interpreter - a Python or a shell, known by argv[0] or by the executable - the
-// script operand, the first word after its options, unless -c (an inline program) or, for a Python,
-// -m (a module found on sys.path, whose first entry is the working directory, which is judged on
-// its own) ends them. A bare program name is found on PATH, not against the working directory, so
-// it is not returned.
+// runs; and for a shell, known by argv[0] or by the executable, the script operand, the first word
+// after its options, unless -c (an inline program) ends them. A bare program name is found on
+// PATH, not against the working directory, so it is not returned.
 func argvOperands(words []string, exe string, exeRead bool) []string {
 	var out []string
 	first := true
@@ -532,10 +529,8 @@ func argvOperands(words []string, exe string, exeRead bool) []string {
 		if strings.Contains(program, "/") && !strings.ContainsAny(program, " \t\n") && !(first && exeRead) {
 			out = append(out, program)
 		}
-		if first && exeRead {
-			if python, shell := interpreter(exe); python || shell {
-				program = exe
-			}
+		if first && exeRead && shell(exe) {
+			program = exe
 		}
 		first = false
 		rest := words[1:]
@@ -553,8 +548,7 @@ func argvOperands(words []string, exe string, exeRead bool) []string {
 			words = rest[min(i, len(rest)):]
 			continue
 		}
-		python, shell := interpreter(program)
-		if !python && !shell {
+		if !shell(program) {
 			return out
 		}
 		for i := 0; i < len(rest); i++ {
@@ -568,17 +562,17 @@ func argvOperands(words []string, exe string, exeRead bool) []string {
 			case word == "-" || word == "":
 				return out
 			case strings.HasPrefix(word, "--"):
-				if word == "--check-hash-based-pycs" || word == "--rcfile" || word == "--init-file" {
+				if word == "--rcfile" || word == "--init-file" {
 					i++
 				}
-			case strings.HasPrefix(word, "-") || (shell && strings.HasPrefix(word, "+")):
+			case strings.HasPrefix(word, "-") || strings.HasPrefix(word, "+"):
 				flags := word[1:]
 			letters:
 				for j, flag := range flags {
 					switch {
-					case flag == 'c' || (python && flag == 'm'):
+					case flag == 'c':
 						return out
-					case (python && (flag == 'W' || flag == 'X')) || (shell && flag == 'o'):
+					case flag == 'o':
 						// The option's value is the rest of this word, or the next word.
 						if j == len(flags)-1 {
 							i++

@@ -7,12 +7,10 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	"golang.org/x/sys/unix"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
-	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/pointer"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
@@ -194,7 +192,7 @@ func deleteTombstone(tombstone string) error {
 
 // unclaimedTombstone is why the tombstone at path is not one this command may finish, or "": an
 // empty one may go (its deletion reached the claim), and one that carries a readable claim of
-// crw install's or runtime_install.py's whose staging lock nobody holds may; anything else is
+// crw install's whose staging lock nobody holds may; anything else is
 // somebody's directory of that name and is left alone. Whether a process runs out of it or a
 // registration names it is the caller's question (runningOrRegistered).
 func unclaimedTombstone(path string) string {
@@ -208,7 +206,7 @@ func unclaimedTombstone(path string) string {
 	claim := staging.ReadClaim(path)
 	switch {
 	case claim.State == reading.Absent:
-		return path + " carries no claim of crw install's or runtime_install.py's, so it is not a removal this command began: it is somebody's directory of that name and is left alone"
+		return path + " carries no claim of crw install's, so it is not a removal this command began: it is somebody's directory of that name and is left alone"
 	case !claim.OK():
 		return "the claim in " + path + " could not be read, so whether it is an interrupted removal of this command's was not established: " + claim.Detail
 	}
@@ -216,27 +214,6 @@ func unclaimedTombstone(path string) string {
 		return "a run may still hold " + path + ": " + detail
 	}
 	return ""
-}
-
-// reached is landedAt for a runtime of kind: a Go runtime is proved through its bin/crw, and a
-// Python venv (a rollback's target, judged launchable before the move) by the pointer resolving,
-// without an error, to the directory itself.
-func reached(pointerPath, environment, kind string) (bool, string) {
-	if kind == doctor.KindGoRuntime {
-		return landedAt(pointerPath, environment)
-	}
-	at, err := os.Stat(pointerPath)
-	if err != nil {
-		return false, "the pointer does not resolve: " + store.PythonOSError(err)
-	}
-	wanted, err := os.Stat(environment)
-	if err != nil {
-		return false, "the runtime the pointer was placed at could not be read: " + store.PythonOSError(err)
-	}
-	if !os.SameFile(at, wanted) {
-		return false, "the pointer resolves to a directory other than " + environment
-	}
-	return true, ""
 }
 
 // landedAt proves the placed pointer reaches environment as a host will: it resolves without an
@@ -269,16 +246,8 @@ func landedAt(pointerPath, environment string) (bool, string) {
 	return true, ""
 }
 
-// completePayload is the COMPLETE claim that settles environment's STAGING one, in the writer's
-// own shape: a claim runtime_install.py wrote (a venv's) is settled as runtime_install.py would
-// write it, so that runtime_install.py still reads the directory as its own (its staging.shape
-// accepts only its own marker); any other is crw install's.
-func completePayload(environment string, issue any) record.Object {
-	claim := staging.ReadClaim(environment)
-	if value, ok := claim.Value.(record.Object); ok && claim.OK() && record.Get(value, "writtenBy") == staging.WrittenByPython {
-		host, _ := os.Hostname()
-		return staging.Payload(staging.Complete, staging.WrittenByPython, issue, strconv.Itoa(os.Getpid()), os.Getpid(), host, time.Now().UTC().Format("2006-01-02T15:04:05Z"))
-	}
+// completePayload is the COMPLETE claim that settles environment's STAGING one.
+func completePayload(issue any) record.Object {
 	return staging.NewPayload(staging.Complete, issue, strconv.Itoa(os.Getpid()))
 }
 

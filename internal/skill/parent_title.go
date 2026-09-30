@@ -17,6 +17,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -380,7 +381,7 @@ func replayTitles(args []string, stdout, stderr io.Writer) int {
 		fixtures[i] = decoded
 	}
 	if len(paths) == 0 {
-		fmt.Fprintf(stderr, "No fixtures under %s; nothing was checked\n", stderrText(store.FSDecode(dir)))
+		fmt.Fprintf(stderr, "No fixtures under %s; nothing was checked\n", settings.StderrText(store.FSDecode(dir)))
 		return 1
 	}
 	// command_replay collects its failures and prints them only once every
@@ -443,7 +444,7 @@ func replayTitles(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "Replayed %d title fixtures against their recorded expectations.\n", len(paths))
 	for _, failure := range failures {
-		fmt.Fprintln(stderr, stderrText(failure))
+		fmt.Fprintln(stderr, settings.StderrText(failure))
 	}
 	fail := len(failures) > 0
 	var missing []string

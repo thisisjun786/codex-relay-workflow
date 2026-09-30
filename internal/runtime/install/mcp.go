@@ -2,20 +2,16 @@ package install
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"io"
+	"errors"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
-	"syscall"
-	"unicode"
 
 	"github.com/BurntSushi/toml"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pluginwiring"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -55,8 +51,6 @@ const (
 
 var recordSettled = map[string]bool{RecordUnchanged: true, RecordCreated: true, RecordWouldCreate: true}
 
-var policyDigest = regexp.MustCompile(`^[0-9a-f]{64}$`)
-
 // BridgeDocument is bridgerecord.document for the plugin owner: built once so the writer and the
 // launcher cannot disagree about its shape. policy is nil or {path, digest}.
 func BridgeDocument(command string, args []string, name, issue string, policy Object) Object {
@@ -76,129 +70,111 @@ func BridgeDocument(command string, args []string, name, issue string, policy Ob
 	return document
 }
 
-// pyStrip is str.strip().
-func pyStrip(s string) string {
-	return strings.TrimFunc(s, func(r rune) bool { return unicode.IsSpace(r) || r >= 0x1c && r <= 0x1f })
-}
-
-// policyPathComplaints is bridgerecord.policy_path_complaints.
+// policyPathComplaints is bridgerecord.policy_path_complaints, over the launcher's reading of the
+// path (pluginwiring.ReadPolicyPath).
 func policyPathComplaints(path any) []string {
-	text, ok := path.(string)
-	if !ok || text == "" {
+	p := pluginwiring.ReadPolicyPath(path)
+	if p.NotString {
 		return []string{"the execution policy path must be a non-empty string"}
 	}
 	var wrong []string
-	if text != pyStrip(text) {
-		wrong = append(wrong, "the execution policy path "+evidence.Repr(text)+" has leading or trailing whitespace, which the bridge would strip and so open a different file")
+	if p.Padded {
+		wrong = append(wrong, "the execution policy path "+evidence.Repr(p.Text)+" has leading or trailing whitespace, which the bridge would strip and so open a different file")
 	}
-	for _, r := range text {
-		if r < 32 || r == 127 {
-			wrong = append(wrong, "the execution policy path "+evidence.Repr(text)+" contains a control character")
-			break
-		}
+	if p.Control {
+		wrong = append(wrong, "the execution policy path "+evidence.Repr(p.Text)+" contains a control character")
 	}
-	if !filepath.IsAbs(text) {
-		wrong = append(wrong, "the execution policy path "+evidence.Repr(text)+" must be absolute, because the packaged launcher runs from the installed package directory")
+	if p.Relative {
+		wrong = append(wrong, "the execution policy path "+evidence.Repr(p.Text)+" must be absolute, because the packaged launcher runs from the installed package directory")
 	}
 	return wrong
 }
 
-// policyComplaints is bridgerecord.policy_complaints.
+// policyComplaints is bridgerecord.policy_complaints, over the launcher's reading of the
+// reference (pluginwiring.ReadPolicyReference).
 func policyComplaints(reference any) []string {
 	o, ok := reference.(Object)
 	if !ok {
 		return []string{"executionPolicy must be an object naming path and digest"}
 	}
-	var keys []string
-	for _, f := range o {
-		keys = append(keys, f.Key)
-	}
-	sort.Strings(keys)
-	if strings.Join(keys, ",") != "digest,path" {
+	policy := pluginwiring.ReadPolicyReference(o)
+	if !policy.Shaped {
+		var keys []string
+		for _, f := range o {
+			keys = append(keys, f.Key)
+		}
+		sort.Strings(keys)
 		return []string{"executionPolicy must have exactly the keys digest, path, found " + strings.Join(keys, ", ")}
 	}
-	wrong := policyPathComplaints(record.Get(o, "path"))
-	if digest, ok := record.Get(o, "digest").(string); !ok || !policyDigest.MatchString(digest) {
+	wrong := policyPathComplaints(policy.File.Value)
+	if !policy.DigestOK {
 		wrong = append(wrong, "executionPolicy digest must be 64 lowercase hexadecimal characters")
 	}
 	return wrong
 }
 
 // policyFileComplaints is bridgerecord.policy_file_complaints: the launcher's own two questions,
-// asked before a record naming the policy is written or confirmed.
+// asked before a record naming the policy is written or confirmed, with the launcher's reading of
+// the file (pluginwiring.PolicyDigest).
 func policyFileComplaints(reference any) []string {
 	if wrong := policyComplaints(reference); len(wrong) > 0 {
 		return wrong
 	}
-	o := reference.(Object)
-	path, recorded := record.Get(o, "path").(string), record.Get(o, "digest").(string)
+	policy := pluginwiring.ReadPolicyReference(reference)
+	path, recorded := policy.File.Text, policy.Digest
 	// The launcher opens os.fsencode(path): a byte the path held that is not UTF-8 is recorded
 	// as its surrogate escape, and opened as that byte again.
-	name, encodable := reading.FSEncode(path)
-	if !encodable {
+	actual, encodable, err := pluginwiring.PolicyDigest(path)
+	var opening *os.PathError
+	switch {
+	case !encodable:
 		return []string{"the execution policy path " + evidence.Repr(path) + " names a surrogate os.fsencode refuses, so no launcher can open it"}
-	}
-	file, err := os.OpenFile(name, os.O_RDONLY|syscall.O_NONBLOCK, 0)
-	if err != nil {
+	case errors.As(err, &opening) && opening.Op == "open":
 		return []string{"the execution policy " + path + " could not be opened (" + store.PythonOSError(err) + ")"}
-	}
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil || !info.Mode().IsRegular() {
+	case errors.Is(err, pluginwiring.ErrNotRegular):
 		return []string{"the execution policy " + path + " is not a regular file"}
-	}
-	hash := sha256.New()
-	if _, err := io.Copy(hash, file); err != nil {
+	case err != nil:
 		return []string{"the execution policy " + path + " could not be read (" + store.PythonOSError(err) + ")"}
-	}
-	if actual := hex.EncodeToString(hash.Sum(nil)); actual != recorded {
+	case actual != recorded:
 		return []string{"the execution policy " + path + " now hashes to " + actual + ", not the recorded " + recorded}
 	}
 	return nil
 }
 
-// bridgeComplaints is bridgerecord.complaints.
+// bridgeComplaints is bridgerecord.complaints, over the launcher's reading of the record
+// (pluginwiring.ReadBridgeRecord); it also takes a user-owned record, which the launcher does
+// not start.
 func bridgeComplaints(found any) []string {
 	o, ok := found.(Object)
 	if !ok {
 		return []string{"the record is a " + evidence.TypeName(found) + ", not an object"}
 	}
+	read := pluginwiring.ReadBridgeRecord(o)
 	var wrong []string
-	version := record.Get(o, "recordVersion")
-	if version != int64(BridgeRecordVersion) && version != int64(PolicyRecordVersion) {
-		wrong = append(wrong, "recordVersion must be one of 1, 2, found "+evidence.Repr(version))
+	if read.Version == 0 {
+		wrong = append(wrong, "recordVersion must be one of 1, 2, found "+evidence.Repr(read.VersionValue))
 	}
-	owner := record.Get(o, "owner")
+	owner := read.Owner
 	if owner != OwnerUser && owner != OwnerPlugin {
 		wrong = append(wrong, "owner must be one of user, plugin, found "+evidence.Repr(owner))
 	}
-	executable, ok := record.Get(o, "bridgeExecutable").(string)
 	switch {
-	case !ok || strings.TrimSpace(executable) == "":
+	case !read.IsString || strings.TrimSpace(read.Executable) == "":
 		wrong = append(wrong, "bridgeExecutable must be a non-empty string")
-	case owner == OwnerPlugin && !filepath.IsAbs(executable):
+	case owner == OwnerPlugin && !filepath.IsAbs(read.Executable):
 		wrong = append(wrong, "bridgeExecutable must be an absolute path when owner is plugin")
 	}
-	if args, has := record.Lookup(o, "args"); has && args != nil {
-		list, ok := args.([]any)
-		for _, word := range list {
-			if _, isString := word.(string); !isString {
-				ok = false
-			}
-		}
-		if !ok {
-			wrong = append(wrong, "args must be a list of strings when it is present at all")
-		}
+	if !read.ArgsOK {
+		wrong = append(wrong, "args must be a list of strings when it is present at all")
 	}
-	_, hasPolicy := record.Lookup(o, "executionPolicy")
-	if version == int64(BridgeRecordVersion) && hasPolicy {
+	if read.Version == BridgeRecordVersion && read.HasPolicy {
 		wrong = append(wrong, "a version 1 record names no executionPolicy; a record that names one is version 2")
 	}
-	if version == int64(PolicyRecordVersion) {
+	if read.Version == PolicyRecordVersion {
 		if owner != OwnerPlugin {
 			wrong = append(wrong, "only a plugin-owned record names an execution policy")
 		}
-		wrong = append(wrong, policyComplaints(record.Get(o, "executionPolicy"))...)
+		wrong = append(wrong, policyComplaints(read.Policy)...)
 	}
 	return wrong
 }
@@ -433,22 +409,17 @@ func bridgeTables(view servers, exclude, executable string) []string {
 	return names
 }
 
-// secondOwners is secondOwnersFor a Go runtime reached through the pointer bridgeEntry lies in
-// (<pointer>/bin/codex-thread-bridge), which is where every promotion moves it.
-func secondOwners(codexHome, bridgeEntry string) (Object, string) {
-	return secondOwnersFor(codexHome, bridgeEntry, filepath.Dir(filepath.Dir(bridgeEntry)), goProvides)
-}
-
-// secondOwnersFor is the one-owner-per-surface check a promotion makes on the reading it
-// promotes on: the bridge is registered by the Codex configuration or by the plugin record,
-// never both, and a configuration entry for it names the owned pointer rather than a runtime
-// this install would not select; the Stop hook is registered by the user hook file or by
-// plugin-owned settings, never both. A registration that reaches through the pointer something
-// the runtime about to be named does not provide (target) is refused too: the user-owned
-// registrations are retired with runtime_install.py, so such an entry is the second owner beside
-// the plugin's declaration, and the swap would leave it running nothing. Any reading that failed
-// refuses: registering on an unanswered question is how a second copy arrives.
-func secondOwnersFor(codexHome, bridgeEntry, pointerPath string, target provides) (Object, string) {
+// secondOwners is the one-owner-per-surface check a promotion or a rollback makes on the reading
+// it moves the pointer on: the bridge is registered by the Codex configuration or by the plugin
+// record, never both, and a configuration entry for it names the owned pointer rather than a
+// runtime this install would not select; the Stop hook is registered by the user hook file or by
+// plugin-owned settings, never both. A registration that reaches through the pointer something a
+// Go runtime does not provide (goProvides) is refused too: the user-owned registrations are
+// retired with runtime_install.py, so such an entry is the second owner beside the plugin's
+// declaration, and the swap would leave it running nothing. Any reading that failed refuses:
+// registering on an unanswered question is how a second copy arrives.
+func secondOwners(codexHome, pointerPath string) (Object, string) {
+	bridgeEntry := filepath.Join(pointerPath, "bin", definition.Bridge)
 	recordPath := filepath.Join(codexHome, BridgeRecordName)
 	found, outcome, detail := readBridgeRecord(recordPath)
 	if found == nil && outcome != RecordAbsent {
@@ -497,7 +468,7 @@ func secondOwnersFor(codexHome, bridgeEntry, pointerPath string, target provides
 	for _, name := range names {
 		server := view[name]
 		for _, word := range append([]string{server.Command}, server.Args...) {
-			if rel, through := throughPointer(word, pointerPath); through && !target(rel) {
+			if rel, through := throughPointer(word, pointerPath); through && !goProvides(rel) {
 				return report, "the Codex configuration starts " + evidence.Repr(name) + " with " + word + ", which it reaches through the owned pointer, and the runtime about to be named provides no " + rel + ": after the swap that server would start nothing. Remove or repoint that table in " + configPath + " first"
 			}
 		}
@@ -510,7 +481,7 @@ func secondOwnersFor(codexHome, bridgeEntry, pointerPath string, target provides
 	}
 	for _, command := range commands {
 		for _, word := range command.Words {
-			if rel, through := throughPointer(word, pointerPath); through && !target(rel) {
+			if rel, through := throughPointer(word, pointerPath); through && !goProvides(rel) {
 				return report, "the user hook file registers the Stop adapter as " + command.Identity + " (" + evidence.Repr(command.Command) + "), which runs " + word + " through the owned pointer, and the runtime about to be named provides no " + rel + ": after the swap that registration would run nothing, and the host reads the failure as a hook error, never as a judged Stop. The user-owned registration is retired with runtime_install.py and the plugin package declares the Stop hook, so this entry is the second owner: remove it from " + hookFile + " by hand, move " + settingsPath + " aside and run crw install hook --owner plugin, then rerun"
 			}
 		}
@@ -542,7 +513,7 @@ type RegisterOptions struct {
 // parser: the path as the record will name it (Path(value).expanduser().absolute(): expanded
 // and absolute, never resolved, '..' kept) and the digest of the bytes the parser accepted.
 func executionPolicyReading(value string) (Object, string) {
-	if value == "" || value != pyStrip(value) || strings.IndexFunc(value, func(r rune) bool { return r < 32 || r == 127 }) >= 0 {
+	if path := pluginwiring.ReadPolicyPath(value); path.NotString || path.Padded || path.Control {
 		return nil, "the execution policy path " + evidence.Repr(value) + " is empty, padded with whitespace or contains a control character; the bridge strips the variable it reads, so such a path would be checked here as one file and opened there as another"
 	}
 	expanded, err := store.ExpandUser(value)
@@ -563,7 +534,7 @@ func executionPolicyReading(value string) (Object, string) {
 	summary := policy.Summary()
 	// Recorded as os.fsdecode spells it: a byte that is not UTF-8 is its surrogate escape, which
 	// the record carries as "\udcXX" and each launcher fs-encodes back to the byte.
-	return Object{field("path", reading.FSDecode(candidate)), field("digest", summary["digest"]), field("mode", summary["mode"]), field("roles", ordered(summary["roles"])),
+	return Object{field("path", store.FSDecode(candidate)), field("digest", summary["digest"]), field("mode", summary["mode"]), field("roles", ordered(summary["roles"])),
 		field("parsedWith", "this crw binary's bridge policy parser; the installed runtime parses the file again at every start and decides for itself")}, ""
 }
 

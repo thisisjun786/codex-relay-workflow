@@ -26,7 +26,7 @@ func TestInstallRecordsThePointerAndSettlesTheClaimLast(t *testing.T) {
 	if target := h.pointerTarget(t); target != env {
 		t.Fatalf("pointer names %s", target)
 	}
-	for _, name := range []string{"codex-session-relay", "codex-thread-bridge", "crw-completion-hook"} {
+	for _, name := range []string{"codex-session-relay", "codex-thread-bridge"} {
 		if link, err := os.Readlink(filepath.Join(env, "bin", name)); err != nil || link != "crw" {
 			t.Fatalf("%s -> %q %v", name, link, err)
 		}

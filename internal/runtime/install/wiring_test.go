@@ -24,18 +24,10 @@ func wiring(parts ...string) string {
 	return filepath.Join(append([]string{golden.Root(), "plugins", "crw", "wiring"}, parts...)...)
 }
 
-// preNativeWiring is the wiring the package declared before the native commands (todo 34), kept
-// as testdata because a turn or session that cached it may still name it. The two Python
-// launchers it started, shipped until todo 43, were kept beside it until todo 44 deleted them
-// with the Python implementation; legacyLauncher stands in for their bytes.
-func preNativeWiring(parts ...string) string {
-	return filepath.Join(append([]string{golden.Root(), "internal", "pluginwiring", "testdata", "pre-native-wiring"}, parts...)...)
-}
-
 // legacyLauncher stands in for a Python launcher CRW placed (crw_stop_hook.py, and the
 // <CODEX_HOME>/crw-stop-hook.py copy a host may still hold): what the Go side reads of one is
-// whether it exists and whether it carries install.LauncherMarker, never its code.
-const legacyLauncher = "#!/usr/bin/env python3\n# The Stop launcher CRW placed before todo 43 (a stand-in: todo 44 deleted the kept copy).\nLAUNCHER_MARKER = \"" + install.LauncherMarker + "\"\n"
+// whether it exists, never its code.
+const legacyLauncher = "#!/usr/bin/env python3\n# The Stop launcher CRW placed before todo 43 (a stand-in: todo 44 deleted the kept copy).\nLAUNCHER_MARKER = \"crw-stop-hook/1\"\n"
 
 // preNativePayload is a cached version directory of a pre-native payload, as far as its Stop
 // bootstrap reads it: the packaged launcher at ${PLUGIN_ROOT}/wiring/crw_stop_hook.py.

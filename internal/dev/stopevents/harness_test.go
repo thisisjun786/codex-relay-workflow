@@ -259,14 +259,34 @@ func (h *host) at(document stopFixture, index int) []byte {
 	return raw
 }
 
-// run is one registration answering one Stop, as the host starts it.
+// run is one registration answering one Stop, as the host starts it. crw hook reads the
+// settings under the Codex home and takes no settings argument (decision 66), so another
+// registration's settings stand at that path while it runs.
 func (h *host) run(settings string, payload []byte) string {
 	h.t.Helper()
 	bin, err := crwBinary()
 	if err != nil {
 		h.t.Fatal(err)
 	}
-	cmd := exec.Command(bin, "hook", settings)
+	if settings != h.settings {
+		saved, err := os.ReadFile(h.settings)
+		if err != nil {
+			h.t.Fatal(err)
+		}
+		raw, err := os.ReadFile(settings)
+		if err != nil {
+			h.t.Fatal(err)
+		}
+		if err := os.WriteFile(h.settings, raw, 0o600); err != nil {
+			h.t.Fatal(err)
+		}
+		defer func() {
+			if err := os.WriteFile(h.settings, saved, 0o600); err != nil {
+				h.t.Fatal(err)
+			}
+		}()
+	}
+	cmd := exec.Command(bin, "hook")
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + h.root, "CODEX_HOME=" + h.codex, "XDG_STATE_HOME=" + h.root + "/xdg", "CODEX_SESSION_RELAY_STATE=" + h.state, "TMPDIR=" + os.TempDir(), testsupport.RefuseLiveStateEnv + "=1"}
 	cmd.Stdin = bytes.NewReader(payload)
 	var out bytes.Buffer

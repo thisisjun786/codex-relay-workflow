@@ -61,7 +61,7 @@ func unspellable(document any) []string {
 		switch value := v.(type) {
 		case string:
 			if !reading.WTF8(value) {
-				found = append(found, key+" holds a byte that is not UTF-8 ("+store.PythonRepr(reading.FSDecode(value))+"), so it would be written as a replacement character naming nothing; crw install records only paths it can spell as UTF-8")
+				found = append(found, key+" holds a byte that is not UTF-8 ("+store.PythonRepr(store.FSDecode(value))+"), so it would be written as a replacement character naming nothing; crw install records only paths it can spell as UTF-8")
 			}
 		case Object:
 			for _, f := range value {

@@ -147,7 +147,7 @@ func archive(t *testing.T, version, extra string) string {
 		}
 	}
 	add(&tar.Header{Name: "crw", Mode: 0o755, Size: int64(len(raw)), Typeflag: tar.TypeReg}, raw)
-	for _, link := range []string{"codex-session-relay", "codex-thread-bridge", "crw-completion-hook"} {
+	for _, link := range []string{"codex-session-relay", "codex-thread-bridge"} {
 		add(&tar.Header{Name: link, Linkname: "crw", Mode: 0o777, Typeflag: tar.TypeSymlink}, nil)
 	}
 	licence := []byte("MIT " + version + extra + "\n")

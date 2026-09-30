@@ -198,7 +198,7 @@ func TestLiveProcessesRuleOutOnlyWhatTheyRead(t *testing.T) {
 		return me, nil
 	})
 	defer restore()
-	agent := Argv("python3", "-u", "bin/WALinuxAgent-2.16.0.2-py3.12.egg", "-run-exthandlers")
+	agent := Argv("/bin/sh", "-e", "bin/agent.sh", "--run")
 	strangers := ProcStatus([]int{stranger})
 	capable := strings.Replace(strangers, "CapPrm:\t0000000000000000", "CapPrm:\t0000000000000004", 1)
 	groupless := strings.Replace(strangers, "Groups:\t\n", "", 1)
@@ -226,23 +226,24 @@ func TestLiveProcessesRuleOutOnlyWhatTheyRead(t *testing.T) {
 		{"another user's process under hidepid", FakeProcess{Pid: other + 4, Exe: "denied", Cmdline: Argv("x"), Hidden: true}, false, true, 0, false},
 		{"a denied process starting a runtime name bare", FakeProcess{Pid: other + 6, Exe: "denied", Cmdline: Argv("codex-session-relay", "service", "run")}, false, true, 0, false},
 		// Relative operands are opened against the process's working directory.
-		{"a script named relative to the working directory", FakeProcess{Pid: 400, Exe: "/usr/bin/python3", Cmdline: Argv("/usr/bin/python3", filepath.Join(filepath.Base(directory), "bin", "codex-thread-bridge")), Cwd: filepath.Dir(directory)}, true, false, 0, false},
-		{"a script after interpreter options", FakeProcess{Pid: 401, Exe: "/usr/bin/python3", Cmdline: Argv("python3", "-u", "-Wignore::DeprecationWarning", "-X", "utf8", filepath.Join(filepath.Base(directory), "bin", "codex-thread-bridge")), Cwd: filepath.Dir(directory)}, true, false, 0, false},
-		{"a script env runs", FakeProcess{Pid: 402, Exe: "/usr/bin/env", Cmdline: Argv("/usr/bin/env", "-i", "LANG=C", "python3", "./"+filepath.Join(filepath.Base(directory), "bin", "codex-thread-bridge")), Cwd: filepath.Dir(directory)}, true, false, 0, false},
+		{"a script named relative to the working directory", FakeProcess{Pid: 400, Exe: "/usr/bin/bash", Cmdline: Argv("/usr/bin/bash", filepath.Join(filepath.Base(directory), "bin", "codex-thread-bridge")), Cwd: filepath.Dir(directory)}, true, false, 0, false},
+		{"a script after interpreter options", FakeProcess{Pid: 401, Exe: "/usr/bin/bash", Cmdline: Argv("bash", "-e", "-x", "-o", "pipefail", "+u", filepath.Join(filepath.Base(directory), "bin", "codex-thread-bridge")), Cwd: filepath.Dir(directory)}, true, false, 0, false},
+		{"a script env runs", FakeProcess{Pid: 402, Exe: "/usr/bin/env", Cmdline: Argv("/usr/bin/env", "-i", "LANG=C", "sh", "./"+filepath.Join(filepath.Base(directory), "bin", "codex-thread-bridge")), Cwd: filepath.Dir(directory)}, true, false, 0, false},
 		{"a shell script run relative", FakeProcess{Pid: 403, Exe: "/usr/bin/bash", Cmdline: Argv("bash", "-e", "-o", "pipefail", filepath.Join(filepath.Base(directory), "run.sh")), Cwd: filepath.Dir(directory)}, true, false, 0, false},
 		{"a relative program whose executable and working directory are denied", FakeProcess{Pid: other + 11, Exe: "denied", Cmdline: Argv(filepath.Join(filepath.Base(directory), "bin", "codex-session-relay"), "service"), Cwd: "denied", Status: strangers}, false, true, 0o755, false},
 		{"a process title another user wrote over its argv", FakeProcess{Pid: other + 10, Exe: "denied", Cmdline: Argv("sshd: /usr/sbin/sshd -D [listener] 0 of 10-100 startups"), Cwd: "denied"}, false, false, 0, false},
-		{"an interpreter known by its executable", FakeProcess{Pid: 410, Exe: "/usr/bin/python3", Cmdline: Argv("my-daemon", filepath.Join(filepath.Base(directory), "bin", "codex-thread-bridge")), Cwd: filepath.Dir(directory)}, true, false, 0, false},
+		{"an interpreter known by its executable", FakeProcess{Pid: 410, Exe: "/usr/bin/bash", Cmdline: Argv("my-daemon", filepath.Join(filepath.Base(directory), "bin", "codex-thread-bridge")), Cwd: filepath.Dir(directory)}, true, false, 0, false},
+		{"a Python program run relative, which a Go runtime holds none of", FakeProcess{Pid: 411, Exe: "/usr/bin/python3", Cmdline: Argv("python3", "-u", "bin/WALinuxAgent-2.16.0.2-py3.12.egg", "-run-exthandlers"), Cwd: "denied"}, false, false, 0, false},
 		{"an argument that is no operand", FakeProcess{Pid: 409, Exe: "/usr/bin/grep", Cmdline: Argv("grep", "-r", "x", filepath.Base(directory)), Cwd: filepath.Dir(directory)}, false, false, 0, false},
 		{"a module run with the working directory inside", FakeProcess{Pid: 405, Exe: "/usr/bin/python3", Cmdline: Argv("python3", "-m", "codex_thread_bridge"), Cwd: directory}, true, false, 0, false},
 		{"an inline program outside", FakeProcess{Pid: 406, Exe: "/usr/bin/python3", Cmdline: Argv("python3", "-c", "import bin"), Cwd: "/"}, false, false, 0, false},
 		{"a relative script outside", FakeProcess{Pid: 407, Exe: "/usr/bin/python3", Cmdline: Argv("python3", "bin/codex-thread-bridge"), Cwd: "/tmp"}, false, false, 0, false},
 		{"this user's process whose working directory fails otherwise", FakeProcess{Pid: 408, Exe: "/usr/bin/sleep", Cmdline: Argv("sleep", "30"), Cwd: "!"}, false, true, 0, false},
-		{"another user's relative script, its working directory denied and the runtime open to it", FakeProcess{Pid: other + 7, Exe: "denied", Cmdline: Argv("/usr/bin/python3", "bin/codex-thread-bridge"), Cwd: "denied", Status: strangers}, false, true, 0o755, false},
+		{"another user's relative script, its working directory denied and the runtime open to it", FakeProcess{Pid: other + 7, Exe: "denied", Cmdline: Argv("/usr/bin/sh", "bin/codex-thread-bridge"), Cwd: "denied", Status: strangers}, false, true, 0o755, false},
 		// A working directory the kernel hides may itself be inside, whatever a relative path
 		// names: only a directory on the way in closed to every uid the process holds rules out
 		// another user's, never root's, and what cannot be read rules out nothing.
-		{"root's agent run relative (every Azure VM's WALinuxAgent)", FakeProcess{Pid: root, Exe: "denied", Cmdline: agent, Cwd: "denied", Status: ProcStatus([]int{0})}, false, true, 0, false},
+		{"root's agent run relative", FakeProcess{Pid: root, Exe: "denied", Cmdline: agent, Cwd: "denied", Status: ProcStatus([]int{0})}, false, true, 0, false},
 		{"another user's agent, the runtime closed to it", FakeProcess{Pid: other + 12, Exe: "denied", Cmdline: agent, Cwd: "denied", Status: strangers}, false, false, 0, false},
 		{"another user's agent, the runtime open to it", FakeProcess{Pid: other + 13, Exe: "denied", Cmdline: agent, Cwd: "denied", Status: strangers}, false, true, 0o755, false},
 		{"another user's agent, the runtime open to a group it holds", FakeProcess{Pid: other + 14, Exe: "denied", Cmdline: agent, Cwd: "denied", Status: ProcStatus([]int{stranger}, 1<<30, gateGroup)}, false, true, 0o710, false},

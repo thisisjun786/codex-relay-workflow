@@ -2936,3 +2936,292 @@ Evidence: `contract/schema/relay-exit-codes.json`; `internal/contract/exit_codes
 `internal/contract/generate/main_test.go`; `internal/relay/routing/router.go` (`Router`,
 `routerSeams`), `integration_test.go` (`retiredLedgerScenarios`, `Test23_PRD_13_LedgerGate`);
 `git grep -n` for each removed reason prints only history; docs/relay/product-routing.md "Status".
+
+## 59. `crw doctor retention-scan` is retired; `crw install remove` keeps its registration and relay-record readers (refactor R1)
+
+Decision: `crw doctor retention-scan` and everything only it read are deleted: the Stop-event
+claims (row 1), the journal window (row 2), the managed-start lock holders (row 6), the resumable
+threads it asked the App Server for (row 7), the pointer-target row (row 11), the Python-reference
+report, the live holds and `clear`. `crw doctor retention-scan` is now an unknown argument of
+`crw doctor` (exit 2). What `crw install remove` (and the reclaim of an abandoned staging) reads
+before it deletes a runtime is kept as it was: `doctor.RegisteredMatching` reads the registration
+rows 4, 5, 8, 9 and 10 with the same readers, shell grammar and unreadable texts, and
+`doctor.RecordedDaemons` the relay records of row 3; a registration remove finds still carries its
+`row` and `surface` as the scan numbered and named them. `doctor.RetentionOptions` is
+`doctor.ScanOptions`, without the clock and the App Server socket only the scan read, and the
+unused `doctor.RegisteredInside` is deleted.
+
+Why: the scan was the clearance todo 43 waited on before removing any Python path. The owner's
+relay host has no Python runtime, venv or `<CODEX_HOME>/crw-stop-hook.py` shim left (verified
+2026-10-01), no skill, hook, wiring file or relay-emitted text runs the command, and the owner
+approved removing it (todo 45 reads a host with `grep` and `ps`). Its readers of the host's
+registrations and relay records are what `crw install remove`'s in-use rule rests on, so they stay.
+
+Cost: nothing in the product reports whether a turn that started before a replacement may still
+hold a replaced hook command; docs/runtime-install.md "Removing a runtime" says to wait for those
+turns, as the turn-command cache measurement bounds them (one turn).
+
+Evidence: `internal/runtime/doctor/scan.go`, `references.go`, `cli.go`; `scan_test.go` (the
+retention scan's tests of rows 3, 4, 5, 9 and 10, ported to `RegisteredMatching` and
+`RecordedDaemons`); `internal/runtime/install` remove and reclaim tests; docs/runtime-install.md
+"What remove reads", docs/port/cutover.md "Retention scan surface".
+
+## 60. `install.RemoveLauncher`, the legacy launcher remover, is deleted (refactor R1)
+
+Decision: `internal/runtime/install` no longer carries `RemoveLauncher` (with `LauncherName`,
+`LauncherMarker` and its outcome vocabulary), the ownership-checked removal of the
+`<CODEX_HOME>/crw-stop-hook.py` launcher copy that `scripts/crw_transition` did before todo 39. It
+was deliberately never a command and nothing in the product called it; decision 33's correction
+(todo 39), which made its `<launcher>.crw-lock` a leaf of the lock order, no longer applies.
+
+Why: the copy it removed is gone from the relay host (verified 2026-10-01), no Python writer
+places one any more, and the operator removes one found on another host by hand once no turn can
+still run the pre-native bootstrap that falls back to it (docs/port/cutover.md "Retention").
+
+Evidence: `git grep -n RemoveLauncher` over cmd/ and internal/ before the deletion (its own file,
+its tests and a test seam only); docs/plugin-transition.md.
+
+## 61. `crw install` moves the pointer only between Go runtimes and rewrites no Stop settings (refactor R1)
+
+Decision: `crw install rollback` takes only a Go runtime (`bin/crw`) as its target; a directory
+the record lists that is not one - a Python `env-*` runtime the fence installer made - is refused
+with nothing changed ("... is not a Go runtime (bin/crw), so the pointer is not moved to it",
+where it answered "is neither a Go runtime (bin/crw) nor a Python virtual environment" for any
+other kind). With it go what only a rollback onto a venv read: the venv launchability reading
+(`fenceProblems`, the console-script and interpreter checks), the cached native-payload refusal
+(`nativePayload`, `doctor.PluginLaunches`, the answer's `pluginLaunches` and its repair) and this
+build's declared schema standing in for the Python runtime's at the swap gate. And no promotion
+or rollback writes the Stop settings any more: the Python-era replacement decision 18 added for
+the relay host's first Go install - the archive `crw-completion-hook.json.superseded-<time>`, the
+Go variant, the atomic-exchange undo (`exchange_*.go`) and the retry on a document that changed
+under the read - is deleted. A move still reads the settings under the promotion lock and refuses
+settings that name through the pointer a path a Go runtime does not serve, as it did; the answer's
+`settings` member keeps `configuration`, `state`, `action` (always `none`) and `detail` and loses
+`undone`, `write`, `retired` and `rebuiltFromFreshReading`, which only the replacement wrote; the
+`detail` of Go-era settings is the generic "every path the settings reach through the pointer is
+one this runtime serves". `crw install hook` no longer replaces a Python-era document either: one
+found answers `config_differs` like any other document that says something else
+(`config_replaced` is no longer an outcome).
+
+Why: the relay host made the Python-era replacement at its first Go install and has had no Python
+runtime since (store owner=go, rollback_allowed=0, no venv or shim, 2026-10-01); decision 48
+already refuses the store's half of a return to Python, so a pointer moved back onto a venv could
+only release every Stop unrecorded.
+
+Evidence: `internal/runtime/install/{rollback.go,settings.go,target.go,install.go,hook.go,mcp.go}`;
+`TestARollbackNeverRewritesTheSettings`, `TestARollbackKilledAtItsCommitLeavesStopsRecorded`,
+`TestARollbackRefusesARuntimeThatCannotBeLaunched` (a recorded directory without bin/crw),
+`TestAFailedPromotionPutsBackEverythingItChanged`, `TestAUserRegistrationThroughThePointerIsASecondOwner`;
+docs/runtime-install.md "One Stop settings document" and "Rolling back".
+
+## 62. The doctor and `crw install remove` no longer tell Python apart (refactor R1)
+
+Decision: `internal/runtime/doctor` classifies an executable without asking whether it is Python.
+The kinds `python-interpreter`, `python-script` and `python-venv` are gone, with what decided them
+(a `python*`/`pypy*` name, the `.PyRuntime` section or `libpython` in an ELF image, `pyvenv.cfg`,
+a `.py` name, the `'''exec'` launcher pip and uv write), and the `python` member of every
+executable `crw doctor` and `crw install status` report under `settings` is removed. A Python
+interpreter is a native binary like any other: a script it runs is judged as a script run by an
+interpreter this reading does not read (unreadable), and a directory is `go-binary` or
+`unknown`, never `python-venv` (`crw doctor`'s `selected`, `runtime.kind` and
+`runtime.recordSelectsKind`, and each runtime's `kind` in `crw install status`). `crw doctor` no
+longer reports a pointer on a venv as "a Python install, which this command does not classify";
+it reports it as selecting no runtime it can classify, and a component's `recordedInstall` is
+`go` for any entry at its location (a Python entry there is read as the install, and its missing
+`binaryDigest` leaves the component unreadable). The doctor's registration judgement no longer
+names a Python interpreter or the checkout's `completion_hook.py` as such (each is a conflict as
+any other program is), and a `python -m codex_thread_bridge` table is not recognised as starting
+the bridge. `crw install remove` follows the script operand of a shell only: a Python
+interpreter's operand and its `-m`, `-c`, `-W` and `-X` options are no longer read, so a root
+Python agent run from a hidden working directory (the Azure WALinuxAgent) no longer makes remove
+refuse. A release archive may carry `pyvenv.cfg`, which nothing reads any more.
+
+Why: no Python runtime is left on the relay host, rollback and the settings transition no
+longer act on one (decision 61), and the retention scan that reported Python references is
+retired (decision 59). A Go runtime directory holds no Python program, so reading Python
+interpreters' operands found nothing that could run out of one.
+
+Evidence: `internal/runtime/doctor/{executable.go,shell.go,scan.go,doctor.go,registration.go}`,
+`internal/runtime/install/remove.go` (`shell`, `argvOperands`);
+`TestClassifyJudgesAScriptByWhatItRuns`, `TestAScriptIsJudgedByTheInterpreterItsHashBangResolvesTo`,
+`TestLiveProcessesRuleOutOnlyWhatTheyRead` (a Python program run relative),
+`TestRegisteredMatchingJudgesOnlyWhatItsGrammarReads`, `TestDoctorJudgesTheStopCommandsInHooksJSON`.
+
+## 63. A claim the Python installer wrote, and an `env-*` directory, are no longer `crw install`'s (refactor R1)
+
+Decision: a staging claim is this command's only when it says `writtenBy` `crw install`; one the
+retired Python installer wrote (`runtime_install.py`) reads as somebody else's file, like any
+other writer's ("this claim was not written by crw install, it names 'runtime_install.py'",
+where it named both writers). `staging.WriteClaim` no longer rewrites a claim into the Python
+installer's shape for an `env-*` directory or a claim that writer made, and settling a claim
+always writes `crw install`'s. `crw install remove`, `crw install status`, the tombstones and
+the destination check take only `bin-*` runtime directories: an `env-*` directory is refused as
+"not a bin-* runtime directory (or the tombstone of one)" and no longer listed among the runtimes
+`crw install status` reports.
+
+Why: the claims were written in the Python installer's shape so that `runtime_install.py`, which
+reads only its own marker, would still read its venvs as its own. It left with todo 44, the relay
+host has no `env-*` directory (2026-10-01), and `crw install rollback` no longer points at one
+(decision 61).
+
+Evidence: `internal/runtime/staging/staging.go`, `internal/runtime/install/{identity.go,remove.go}`;
+`TestReadClaimKeepsFourAnswersAndOwnership`, `TestRemoveRefusesWhatMayStillBeInUse`,
+`TestRemoveRefusesARuntimeARegistrationStillNames`.
+
+## 64. `definition.Digest` is deleted; an outgoing selection names a Go runtime's binary digest only (refactor R1)
+
+It supersedes the `definition.Digest` sentence of decision 35.
+
+Decision: `definition.Digest`, the port of `ops12_digest` (the tree digest of a Python selection's
+package directory, with `os.fsdecode` ordering and `UnicodeEncodeError`), and what only it used
+are deleted. The one caller, the outgoing baseline a promotion records, gave it the selected
+location when that was not a Go runtime's `bin` beside a native `crw`; such an entry's `digest` is
+now null (`present` and `selected` are as before). A Go runtime's entry keeps the SHA-256 of its
+`crw`.
+
+Why: only a Python selection took that branch, and no promotion leaves one any more (decision
+61).
+
+Evidence: `internal/runtime/definition/definition.go`, `internal/runtime/install/install.go`
+`outgoingOf`; `TestOutgoingIsWrittenOnlyByAPromotion`, `TestAPromotionRecordsTheRuntimeThePointerLeaves`.
+
+## 65. One reader of the bridge record for the launcher, the installer and the doctor (refactor R1)
+
+Decision: the bridge record's contract is read once, in `internal/pluginwiring` (`ReadBridgeRecord`,
+`ReadPolicyReference`, `ReadPolicyPath`, `PolicyDigest`), by the launcher (`Prepare`), the
+installer's record checks (`bridgeComplaints`, `policyComplaints`, `policyFileComplaints`,
+`executionPolicyReading`) and the doctor's judgement (`pluginBridge`, `policy`). Each keeps the
+order it checks in and its own words. Two readings of the installer and the doctor move to the
+launcher's: the installer reads `recordVersion` by Python's `==` as the launcher and the doctor
+already did (`true` and `1.0` are version 1, where it named them malformed), and a policy file
+whose descriptor cannot be examined (fstat failing) reads as not a regular file in all three,
+where the launcher named the error and the doctor left it unreadable.
+
+Why: the three copies had drifted only in those two corners, and the launcher is the reader
+whose answer decides whether a bridge starts.
+
+Evidence: `internal/pluginwiring/record.go`, `launch.go`; `internal/runtime/install/mcp.go`;
+`internal/runtime/doctor/registration.go`; `TestRegisterMCPWritesTheRecordAndRefusesASecondOwner`,
+`TestDoctorJudgesTheBridgeRecordAsTheLauncherAcceptsIt` and the launcher's contract tests in
+`internal/pluginwiring`.
+
+## 66. The Stop settings' adapter keys and the legacy hook entry forms are retired (refactor R1)
+
+Decision: the Stop settings keys `adapterInterpreter` and `adapterEntryPoint`, and every way of
+reaching the Go hook other than `crw hook --plugin-launch` and `crw hook` with no argument, are
+retired:
+
+- the hook's reader (`internal/relay/hook` `Complaints`) no longer requires the two keys for a
+  plugin owner nor checks them when present: a document that carries them is read as it is, so the
+  relay host's current settings stay accepted by the new build before anything rewrites them;
+- `crw install hook --owner plugin` no longer writes them, nor refuses while
+  `CRW_COMPLETION_HOOK_CONFIG` is set. Settings that differ from the document it would write only
+  by the two keys and `installedBy` are rewritten without them, answering a new outcome,
+  `config_replaced`, with `retiredFields` naming the keys dropped (a dry run answers
+  `config_would_create` with a detail saying so); any other difference is `config_differs` as
+  before. On the relay host, `crw install hook --owner plugin`, run with the flags its settings
+  were written with once a runtime carrying this change is installed, rewrites the document once;
+- `crw hook` reads no settings path argument and no `CRW_COMPLETION_HOOK_CONFIG`; given any
+  argument other than `--plugin-launch` it releases the Stop in silence, as every controlled path
+  of the hook already exits 0 with nothing on stderr;
+- `crw` no longer dispatches on the program name `crw-completion-hook`, the release build
+  (`.goreleaser.yaml`) no longer makes that link, and `crw install` no longer places it
+  (`definition.Links`); the `codex-session-relay` and `codex-thread-bridge` links stay;
+- the doctor no longer judges the two keys (the `adapterEntryPoint` and `adapterInterpreter`
+  registration entries, and the `env` interpreter contract of decision 18 as todo 38 corrected it,
+  leave its answer), `crw install remove` no longer counts them as registrations, and a move of the
+  pointer judges only `relayExecutable` of the settings; the Stop-hook status reading, which had
+  cells for them, is already deleted (decision 57).
+
+Why: the keys and the entry forms served the Python launchers (`crw_stop_hook.py` and its
+`<CODEX_HOME>/crw-stop-hook.py` copy) and the user-owned registration; the launcher left the
+package in todo 43, the user owner retired with the Python installer, and the plugin's declared
+Stop hook has run `crw hook --plugin-launch` since decision 26. The order keeps the live host
+working: the reader accepts the old document first, the writer stops writing the keys, and the
+rewrite is one command the operator runs.
+
+Evidence: `internal/relay/hook/settings.go`, `adapter.go`;
+`internal/runtime/install/settings.go`, `hook.go`; `internal/runtime/doctor/registration.go`,
+`doctor.go`, `scan.go`; `internal/runtime/definition/definition.go`; `cmd/crw/main.go`;
+`.goreleaser.yaml`; `TestHookWritesTheGoSettingsAndRefusesASecondOwner`,
+`TestHookRewritesSettingsThatDifferOnlyByTheRetiredKeys`, `TestHookSettingsBytesArePythons`, the
+hook's settings and plugin-launch tests, and the isolated-home integration test.
+
+## 67. The doctor and `crw install remove` stop recognising the Python Stop shapes and the user-owned bridge table (refactor R1)
+
+Decision: the user-owned registration shapes that `--owner user` wrote (retired with
+runtime_install.py) keep only their generic reading. What stays: `crw install hook` still refuses
+while `hooks.json` registers the Stop hook (hook.AdapterIdentities), a promotion or a rollback still
+refuses a second owner of either surface, and the doctor still judges every `hooks.json` Stop
+command that runs the hook against the selected runtime. What goes:
+
+- the doctor and the registration reading `crw install remove` rests on no longer recognise the
+  checkout's Python adapter (`completion_hook.py`) or the Python launchers (`crw_stop_hook.py` and
+  its `<CODEX_HOME>/crw-stop-hook.py` copy) as a Stop hook; such a command is read as any other
+  command is;
+- `crw install remove` no longer reads the launcher copy (row 8 of its readings; rows 4, 5, 9 and
+  10 keep their numbers), which the relay host no longer holds (decision 59);
+- neither reads `CRW_COMPLETION_HOOK_CONFIG` any longer (decision 66);
+- the doctor judges a `hooks.json` Stop hook as `crw hook` (the name its answers give it, where
+  they said `crw-completion-hook`): started under the retired `crw-completion-hook` link, or given
+  an argument other than `--plugin-launch`, it is a conflict, since the selected runtime then runs
+  no hook; a settings path such a command names is no longer compared with the judged settings.
+  `definition.HookScript` is deleted;
+- a user-owned bridge record's `serverName` no longer makes the doctor judge that `config.toml`
+  table: the launcher stands down for a user-owned record, and a table that starts the bridge is
+  judged under any name, as before.
+
+The registration reading still reads the settings document the word after `crw hook` (or after an
+older runtime's `crw-completion-hook` link) names, because a runtime installed before decision
+66 reads it; reading it can only find more.
+
+Why: nothing writes these shapes since the Python installer's removal, the relay host holds none of
+them, and the doctor's judgement of a Stop command should be the selected runtime's reading of it.
+
+Evidence: `internal/runtime/doctor/registration.go`, `scan.go`, `references.go`;
+`internal/runtime/install/remove.go`; `TestDoctorJudgesTheStopCommandsInHooksJSON`,
+`TestDoctorJudgesTheBridgeUnderEveryTableName`, `TestRegisteredMatchingFollowsEveryRegistrationIntoTheRuntime`,
+`TestRegisteredMatchingReadsTheSettingsAStopCommandReads`, `TestRemoveRefusesARuntimeARegistrationStillNames`.
+
+## 68. `crw install remove` holds a removal back only for what CRW registered in hooks.json and config.toml (refactor R1)
+
+Decision: in the registration reading `crw install remove` (and the reclaim of an abandoned staging)
+rests on, `doctor.RegisteredMatching`, an entry of `<CODEX_HOME>/hooks.json` (row 9, a hook command
+of any event) or of `config.toml`'s `mcp_servers` (row 10) is CRW's when a word it names or runs, a
+path the reading classifies for it, or where that path resolves is one of CRW's programs (`crw`,
+`codex-session-relay`, `codex-thread-bridge`, the retired `crw-completion-hook`) or lies in the
+destination, spelled literally, resolved, or from `$HOME`, `${HOME}` or `~`. What the reading could
+not read or judge of an entry that is not CRW's (and the Stop settings such an entry would leave
+unknown) is dropped rather than listed under `unreadable`, so it no longer refuses a removal. The
+rest is unchanged: a path any entry names inside the directory is still found and refuses; a
+`hooks.json` or `config.toml` that cannot be read or parsed, or holds a malformed entry, still
+refuses; the CRW files, the `crw-*.json` records (row 4) and the CRW plugin's cache (row 5), still
+refuse on anything they hold that cannot be judged. `doctor.ScanOptions.Foreign` keeps the dropped
+entries, for the tests of the reading's grammar.
+
+Why: todo 43's removal of the Python runtime directories refused on three registrations that were
+not CRW's and that the reading could not judge (another tool's `SessionStart` hook running
+`python3`, a `gemini_notebook` server started over `ssh`, an `oracle` server run by `node`), and
+succeeded only once `--codex-home` named an edited copy of the Codex home. Such an entry cannot
+start a runtime it never names: the risk accepted is a foreign script that starts a CRW runtime by
+a path it computes itself, which the reading could not have established either.
+
+Evidence: `internal/runtime/doctor/scan.go` (`shared`, `crwWord`, `crwPath`), `references.go`;
+`TestRegisteredMatchingHoldsARemovalBackOnlyForCRWsRegistrations`,
+`TestRemoveRefusesARuntimeARegistrationStillNames` (fails with the narrowing disabled);
+docs/runtime-install.md "What remove reads".
+
+## 69. `crw install hook` drops `--adapter` and `--event`; `--owner` defaults to plugin (refactor R1)
+
+Decision: `crw install hook` no longer takes `--adapter` (whose one value was `completion`) or
+`--event` (whose one value was `Stop`); either is now an unknown flag (exit 2). `--owner` of
+`crw install hook` and `crw install register-mcp` defaults to `plugin`, the only owner either
+accepts, so `--owner plugin` may be left out and `--owner user` is refused as before. The answers
+are unchanged: `hook` still names `adapter` `completion`, `event` `Stop` and `owner`. The no-op
+`--json` of `crw doctor` stays accepted. `record.Path` and `staging.Claim`, which nothing called,
+are deleted.
+
+Why: a switch with one allowed value only adds a way to fail; no skill, document or wiring file
+passes `--adapter` or `--event`, and every one that passes `--owner` passes `plugin`.
+
+Evidence: `internal/runtime/install/cli.go`, `hook.go`; `TestHookAndRegisterMCPNeedNoSingleValueSwitch`.

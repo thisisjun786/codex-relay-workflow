@@ -15,7 +15,6 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/scope"
-	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/staging"
 )
 
 // main runs `crw install` over env and answers the exit status, stdout and stderr.
@@ -65,8 +64,29 @@ func TestTheDestinationIsFixed(t *testing.T) {
 	if code, stdout, stderr := fixed.main(t, fixed.env, "hook", "--owner", "plugin", "--marker-root", filepath.Join(fixed.home, "markers")); code != install.OK {
 		t.Fatalf("hook on the fixed destination: exit %d\n%s%s", code, stdout, stderr)
 	}
-	if !strings.Contains(readFile(t, filepath.Join(fixed.codex, install.SettingsName)), filepath.Join(fixed.home, ".local", "share", "crw-runtime", "current", "bin", "crw-completion-hook")) {
+	if !strings.Contains(readFile(t, filepath.Join(fixed.codex, install.SettingsName)), filepath.Join(fixed.home, ".local", "share", "crw-runtime", "current", "bin", "codex-session-relay")) {
 		t.Fatal("hook did not name the fixed destination's pointer")
+	}
+}
+
+// --owner defaults to plugin, the only owner, and hook takes no --adapter or --event, whose only
+// values were completion and Stop (decision 69); the answer still names all three.
+func TestHookAndRegisterMCPNeedNoSingleValueSwitch(t *testing.T) {
+	h := newHost(t)
+	code, stdout, stderr := h.main(t, h.env, "hook", "--marker-root", filepath.Join(h.home, "markers"))
+	if code != install.OK || !strings.Contains(stdout, `"owner": "plugin"`) || !strings.Contains(stdout, `"adapter": "completion"`) || !strings.Contains(stdout, `"event": "Stop"`) {
+		t.Fatalf("hook: exit %d\n%s%s", code, stdout, stderr)
+	}
+	if code, stdout, stderr := h.main(t, h.env, "register-mcp"); code != install.OK || !strings.Contains(stdout, `"owner": "plugin"`) {
+		t.Fatalf("register-mcp: exit %d\n%s%s", code, stdout, stderr)
+	}
+	for _, flag := range []string{"--adapter=completion", "--event=Stop"} {
+		if code, _, stderr := h.main(t, h.env, "hook", flag); code != install.Usage || !strings.Contains(stderr, strings.Split(flag, "=")[0][1:]) {
+			t.Fatalf("%s: exit %d %s", flag, code, stderr)
+		}
+	}
+	if code, stdout, _ := h.main(t, h.env, "hook", "--owner", "user"); code != install.Usage || !strings.Contains(stdout, "only --owner plugin is supported") {
+		t.Fatalf("--owner user: exit %d\n%s", code, stdout)
 	}
 }
 
@@ -158,7 +178,7 @@ func TestAnEmptyExecutionPolicyIsRefused(t *testing.T) {
 // the pointer's bridge, not a foreign one.
 func TestTheSecondOwnerRuleKnowsThePointerByIdentity(t *testing.T) {
 	h := newHost(t)
-	venv, _ := h.pythonEraHost(t)
+	previous, _ := h.goEraHost(t)
 	alias := filepath.Join(filepath.Dir(h.home), filepath.Base(h.home)+"-alias")
 	if err := os.Symlink(h.home, alias); err != nil {
 		t.Fatal(err)
@@ -172,7 +192,7 @@ func TestTheSecondOwnerRuleKnowsThePointerByIdentity(t *testing.T) {
 	write(t, filepath.Join(h.codex, "hooks.json"), `{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "`+filepath.Join(aliasPointer, "bin", "python3")+` /repo/scripts/completion_hook.py /x.json", "timeout": 10}]}]}}`)
 	first := archive(t, "0.9.0", "")
 	result, code := install.Install(context.Background(), h.options(), "update", install.Source{From: first})
-	if code != install.Refused || at(result, "failedStep") != "refuse a second owner" || !strings.Contains(golden.Canon(at(result, "steps")), "provides no bin/python3") || h.pointerTarget(t) != venv {
+	if code != install.Refused || at(result, "failedStep") != "refuse a second owner" || !strings.Contains(golden.Canon(at(result, "steps")), "provides no bin/python3") || h.pointerTarget(t) != previous {
 		t.Fatalf("the registration through the alias: exit %d\n%s", code, golden.Canon(result))
 	}
 	if err := os.Remove(filepath.Join(h.codex, "hooks.json")); err != nil {
@@ -267,24 +287,5 @@ func TestARollbackHoldsItsTargetsDirectoryLock(t *testing.T) {
 	restore()
 	if code != install.OK || !excluded || h.pointerTarget(t) != old {
 		t.Fatalf("exit %d, excluded %v\n%s", code, excluded, golden.Canon(result))
-	}
-}
-
-// A claim runtime_install.py must read stays in its shape: settling the STAGING claim of a Python
-// venv a rollback returns to writes COMPLETE with writtenBy runtime_install.py. (That Python's
-// own staging.shape accepts it was checked here until todo 44: rollback to Python closed at todo
-// 43, rollback_allowed=0, and the Python installer leaves in todo 44.)
-func TestAClaimRuntimeInstallPyWroteStaysOneItCanRead(t *testing.T) {
-	h := newHost(t)
-	venv, _ := h.pythonEraHost(t)
-	h.mustInstall(t, "update", archive(t, "0.9.0", ""))
-	write(t, staging.ClaimPath(venv), string(record.Encode(staging.Payload(staging.Staging, staging.WrittenByPython, "CRW-116", "1", 1, "host", "2026-09-25T00:40:21Z"))))
-	result, code := install.Rollback(context.Background(), h.options(), venv)
-	if code != install.OK || at(result, "claim", "settled") != true {
-		t.Fatalf("exit %d\n%s", code, golden.Canon(result))
-	}
-	claim := readFile(t, staging.ClaimPath(venv))
-	if !strings.Contains(claim, `"writtenBy": "runtime_install.py"`) || !strings.Contains(claim, `"state": "COMPLETE"`) {
-		t.Fatalf("claim:\n%s", claim)
 	}
 }

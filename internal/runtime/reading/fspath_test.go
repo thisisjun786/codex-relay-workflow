@@ -1,8 +1,12 @@
 package reading
 
-import "testing"
+import (
+	"testing"
 
-// FSDecode spells each byte that is not part of UTF-8 as its surrogate escape (os.fsdecode with
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+)
+
+// store.FSDecode spells each byte that is not part of UTF-8 as its surrogate escape (os.fsdecode with
 // surrogateescape, as WTF-8), leaves UTF-8 alone, and FSEncode gives the bytes back; a
 // surrogate outside U+DC80..U+DCFF names no file.
 func TestFSDecodeAndEncodeAreOSFsdecodeAndFsencode(t *testing.T) {
@@ -13,10 +17,10 @@ func TestFSDecodeAndEncodeAreOSFsdecodeAndFsencode(t *testing.T) {
 		"/p/caf\xc3\xa9":     "/p/caf\xc3\xa9",
 		"/p/\xff":            "/p/\xed\xb3\xbf",
 	} {
-		if got := FSDecode(raw); got != want {
+		if got := store.FSDecode(raw); got != want {
 			t.Errorf("FSDecode(%q) = %q, want %q", raw, got, want)
 		}
-		if back, ok := FSEncode(FSDecode(raw)); !ok || back != raw {
+		if back, ok := FSEncode(store.FSDecode(raw)); !ok || back != raw {
 			t.Errorf("FSEncode(FSDecode(%q)) = %q %v", raw, back, ok)
 		}
 	}

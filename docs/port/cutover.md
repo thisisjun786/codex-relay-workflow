@@ -1152,8 +1152,8 @@ and an unlaunchable outer bootstrap are outside any hook's control.
 
 Rule: a Python interpreter, venv, `.py` entry point or `python3 -c` launcher that any live or
 resumable task can still spawn is retained, regardless of DB ownership and regardless of the
-commit point. Retirement of a cached Python path happens only when the retention scan reports
-zero references to it.
+commit point. Retirement of a cached Python path happened only when the retention scan reported
+zero references to it; the scan itself was retired once the relay host held none (below).
 
 What "live or resumable" means here:
 
@@ -1187,105 +1187,24 @@ the Python implementation; the Go record contract is compared with the launcher'
 answers.
 
 The `<CODEX_HOME>/crw-stop-hook.py` shim is host state, not package content, so no repository
-change removes it. The operator removes it on the host, with the ownership-checked
-`install.RemoveLauncher` (it takes only a regular file carrying the launcher marker), once
-`crw doctor retention-scan` reports no reference that could still reach it: no live hold, no
-unscanned row, and no Python reference but the shim's own row 8 entry, which lists the file for as
-long as it exists. The cached bootstrap commands of row 5 are what would fall back to it, and row 7
-the resumable threads that could still run one, so the scan has to read row 7 before this holds.
+change removes it. The operator removes it on the host once no turn can still hold a command that
+falls back to it: a cached bootstrap command (the pre-native declaration) is resolved when a turn
+starts and held until that turn ends ([the turn-command cache](../plugin-packaging.md#the-turn-command-cache)).
+On the relay host no Python runtime, venv or shim remained on 2026-10-01.
 
 ## Retention scan surface
 
-`crw doctor retention-scan --json` (todo 37, `internal/runtime/doctor`) enumerates exactly this
-fixed list. It resolves every executable reference through the owned pointer and every link and
-classifies what the reference resolves to, never the text of the reference: on the relay host
-`current/bin/codex-session-relay` names no Python while `current` points at a venv. A reference
-is Python when it resolves to a native Python interpreter (named `python*` or `pypy*`, ABI flags
-and `-dbg` included, or an ELF image that carries CPython's `.PyRuntime` section, links
-`libpython` or `libpypy`, or holds `Py_BytesMain`, `Py_Main` or `pypy_main_startup`, so a
-`python3.13t` or a copy under any name is found), a venv or any non-native file inside one, a
-`.py` file, the `#!/bin/sh` then `'''exec'` launcher pip and uv write for a long or spaced
-interpreter path, a `#!` script whose interpreter resolves to one of these, or a shell script
-that runs one. A `#!` interpreter is itself resolved and classified: `sh`, `bash` and `dash`
-scripts are read (below), `env NAME` runs the program PATH finds for `NAME`, one that does not
-exist cannot run, and any other interpreter (perl, node, busybox, a relative one) is unreadable,
-as is a non-native file with no `#!`, which a shell would run as a shell script.
+`crw doctor retention-scan --json` (todo 37, `internal/runtime/doctor`) enumerated a closed list of
+eleven surfaces and reported every reference that resolved to a Python interpreter, venv or `.py`
+path, every live hold (a Stop-event claim without an outcome, a recent journal row), the alive
+daemon and managed-start lock holders running Python, and every resumable Codex thread whose
+running turn could still hold a hook command from a replaced or Python plugin version. It was the
+reading todo 43 waited on before removing any Python path. With the Python runtime gone from the
+relay host it has no consumer, and it was retired (decisions.md, decision 59); its full description is
+this file at the parent of the commit that retired it.
 
-A hook command, a shell script a reference reaches, and a program handed to `sh -c` are parsed
-with `mvdan.cc/sh/v3/syntax` (Bash grammar; decisions.md 37) and judged only as far as they are
-written in a grammar the scan reads completely. That grammar is:
-
-- simple commands joined by `;`, `&`, `&&`, `||`, `|`, `|&` and newlines, with `!`;
-- words that are literal once the scan's expansions are made: a leading `~` or `~/` and `$HOME`
-  from the scan's environment, `$CODEX_HOME` as the scan reads it, and `${PLUGIN_ROOT}` (row 5
-  only) as the cached version's directory; a word that is exactly one positional parameter
-  (`"$@"`, `$1`, ...) as an argument, standing for the arguments its caller passed, which are
-  judged where it is called;
-- redirections to such words;
-- as commands: the builtins `exit`, `true` and `:`; `exec` and the command after it; a command
-  word that is an absolute path, or a bare name found on the scan's PATH searched in order, where
-  a relative or empty directory met before the match makes the name unreadable rather than
-  skipped; `sh`, `bash` and `dash` with the flags `-e`, `-u`, `-x`, `-f` and `-c`, whose `-c`
-  program is judged the same way and whose script operand is read as a shell script whatever its
-  `#!` says; `env` with `-i` and `--` (after `-i` only a command path); a Python program, a
-  reference whatever its arguments, which are reported too when they name Python; and any other
-  program, judged by what it is, with each argument judged as something it may run (`sudo`,
-  `xargs`, `flock`, `timeout` and `uv` run theirs): one naming a Python program is a reference,
-  and one naming a shell, holding program text (whitespace or shell syntax) or an assignment,
-  needing an expansion the scan does not make, or naming a script this scan cannot read is
-  unreadable.
-
-Everything else is unreadable and listed with its row, source, field and the construct, never
-interpreted: a function definition, any assignment (a prefix, `export`, `PATH=...`, `env NAME=`),
-a compound command (`if`, `case`, a loop, a subshell, a `{ }` group, `[[ ]]`, arithmetic,
-`time`, `coproc`), a here-document or here-string, a command or process substitution, an
-unquoted glob or brace pattern, any other expansion, a relative command or script word (a hook
-runs in the session's workspace, which the scan cannot name), a command no PATH directory holds,
-any other builtin (`cd`, `set`, `.`, `eval`, `trap`, ...), a shell other than those three, a
-login or interactive shell or one reading standard input, a program the parser rejects, and
-nesting deeper than four programs. The native Stop command
-(`"$HOME/.local/share/crw-runtime/current/bin/crw" hook --plugin-launch; exit 0`), the pre-native
-`python3 -c` bootstrap, a `<CODEX_HOME>/crw-stop-hook.py` launcher invocation and the bridge
-launcher `sh ./wiring/crw-bridge.sh` are inside the grammar.
-
-An MCP server is judged as Codex starts it: its `command` and `args` exec'd with no shell and no
-expansion, in its declared `cwd` (row 5: `.`, `./...` or `${PLUGIN_ROOT}` in the version
-directory; an absolute one as it stands), with its declared `env` over the `HOME` and `PATH`
-Codex passes on (not `CODEX_HOME` or `PLUGIN_ROOT`, docs/plugin-packaging.md). A relative word
-with no `cwd` the scan can place is unreadable; a bare command is found on the declared `PATH`,
-else the scan's. It reports:
-
-- `pythonReferences`: every reference that resolves to Python, with its row, source file, field
-  and what it resolves to;
-- `liveHolds`: every turn that may still be running a command this scan cannot see (rows 1 and
-  2); a hold is not a Python reference, it is a reason to wait;
-- `unscanned` and `unreadable`: the rows the scan did not read, and everything it could not
-  read, resolve or judge: files, references whose target cannot be read, every construct and
-  word outside the grammar above, a `crw-*.json` value that is not an absolute path (or not a
-  string or list of strings), a hooks document, event, group, hook, command, type or timeout,
-  or an MCP server table, entry, command, `args`, `cwd` or `env`, that is not what the host
-  reads there (a malformed Stop entry also leaves row 2's settings unknown), a relay state
-  directory that cannot be established, alive pids whose `exe` or `cmdline` cannot be read, and
-  a program whose reading failed inside the scan (recovered around that one program, never
-  ending the scan). A row with anything of its own listed unreadable is unscanned. Nothing the
-  scan cannot judge is dropped;
-- `clear`: true only when all four are empty. Todo 43 removes nothing until `clear` is true.
-
-| # | Surface | What counts |
-|---|---|---|
-| 1 | `<CODEX_HOME>/crw-completion-hook/stop-events/*.json` | a claim whose outcome `<claimedBy.journalRoot>/accepted/<eventKey>.outcome.json` is absent, or that names no journal root or one that is not absolute (never looked up against the scan's own directory): a live hold |
-| 2 | `<journalRoot>/<day>/*.json` rows under every journal root a retained Stop registration can write to: the `journalRoot` of `crw-completion-hook.json` (which the packaged launcher, `crw hook --plugin-launch` and a registration naming no settings read), the `journalRoot` of each settings document a `hooks.json` or cached plugin Stop command names as its settings argument (the word after `completion_hook.py`, `crw-completion-hook` or `crw hook`), or, naming none, the `CRW_COMPLETION_HOOK_CONFIG` of the scan's environment; `<CODEX_HOME>/crw-completion-hook/journal` (always, and for settings naming none) and each root a Stop-event claim names. Settings that cannot be established or read (a Stop command holding anything the scan cannot judge, or running a script other than the adapter or the launcher, which may name settings of its own) and a relative `journalRoot` are unreadable | a row younger than twice the longest configured Stop hook timeout (the settings `timeoutSeconds` and every cached or user Stop hook `timeout`, at least 10 s), read from every day directory the window reaches back into: a live hold. A row's time is the `at` its hook wrote, never the file's modification time, so a row that cannot be read, is not an object or has no RFC 3339 `at` is unreadable. A window too large for a duration holds every row. A timeout that is not finite is unreadable, naming its value and where it is configured: Infinity still holds every row (the conservative window) and NaN gives no window, and either leaves the row unscanned, since the window it sets is not one the settings meant |
-| 3 | every relay state directory's `daemon.json`: the state root, each directory under it (a link to one included), `CODEX_SESSION_RELAY_STATE` with `~` expanded, and each `stateDir` the relay's scope registry (`<passwd home>/.codex-session-relay/scopes/*.json` and `CODEX_SESSION_RELAY_SCOPE_DIR`) records, whose own pids are judged too | a supervisor or worker pid whose start time and boot still match the record (a zombie is not alive); a `pid` or `workerPid` that is present but not a positive integer pid is unreadable and leaves the row unscanned, while an absent or null one records no process, running a Python interpreter or a `.py` program. Where no process table can be read (darwin has no procfs), a record names a boot and the current boot id cannot be read, or a state directory cannot be established (a relative `CODEX_SESSION_RELAY_STATE`, a registry that cannot be listed), the row is unscanned and the cause unreadable |
-| 4 | `<CODEX_HOME>/crw-*.json` (`crw-completion-hook.json`, `crw-bridge-mcp.json`, any other) | `relayExecutable`, `bridgeExecutable`, `adapterEntryPoint`, `adapterInterpreter`, `interpreterPath`, `command`, each resolved as written (the launchers run them with no shell and no expansion), and each `args` entry as an argument (above). One of those values that is not an absolute path is a reference when it names Python (`python3`, a `.py` file) and unreadable otherwise: the Stop and bridge launchers accept only absolute paths, and the scan never resolves one against its own working directory. A file that is neither native nor `#!` is unreadable |
-| 5 | `<CODEX_HOME>/plugins/cache/crw/crw/*/wiring/hooks/*.json`, `wiring/mcp.json`, `.mcp.json` in every version directory (a stray file there declares nothing) | every hook command, judged under the grammar above, and every MCP server, judged as Codex starts it |
-| 6 | every `managed-start-*.lock` in those state directories | its `/proc/locks` flock holders and waiters, matched by the device the kernel prints (the superblock's, read from `/proc/self/mountinfo` for the mount holding the file; `stat` differs on btrfs) and inode, judged as in row 3, less the pids row 3 reports. The table names the pid that took a lock, not whoever holds it now: a taker that is 0 (not visible here), gone or no longer has the file open leaves the row unscanned and the lock unreadable. The directories rows 4, 5 and 6 enumerate (the Codex home, a cached version's `wiring/hooks`, each state directory) are listed explicitly: one that cannot be listed leaves its row unscanned and is unreadable |
-| 7 | resumable Codex threads: every thread the App Server at `--socket` (default `crw bridge`'s, `<CODEX_HOME>/app-server-control/app-server-control.sock`) lists through `thread/list`, as `list_threads` asks (from the state DB, 100 a page, every page), with every source kind, archived and not, each judged by its newest turn (`thread/turns/list`); read-only | a thread whose newest turn may still be running, `inProgress` or `interrupted` with no `completedAt` (a turn running in another App Server process, or one whose process died, reads so), held a hook command resolved when that turn started (the lifetime is one turn on codex-cli 0.154.0, [the turn-command cache](../plugin-packaging.md#the-turn-command-cache)). It is a reference, with the thread's id, name, status and times and the turn's id, status and times, when no cached version was installed before the second its `startedAt` names (a version's install time is the latest mtime or ctime of its directory, which `codex plugin add` writes new), since the version it was given has been replaced and cannot be read; when it records no `startedAt`; when a cached version's install time cannot be read; or when the version installed last before it started is one whose hook commands row 5 reports as Python or could not judge. An App Server that cannot be reached, or whose `initialize` names another Codex home, leaves the row unscanned; a page or a turn that cannot be read, a cursor that repeats and a turn status the scan does not know are unreadable. A dead turn stays a reference until one turn on its thread runs to completion |
-| 8 | `<CODEX_HOME>/crw-stop-hook.py` | the launcher copy the cached Python bootstrap falls back to, whenever it exists |
-| 9 | `<CODEX_HOME>/hooks.json` | every hook command, as row 5 |
-| 10 | `<CODEX_HOME>/config.toml` `mcp_servers.*` | every MCP server, as row 5 (a relative `cwd` is unplaced) |
-| 11 | the owned pointer `~/.local/share/crw-runtime/current` (or `--dest`) | its target, when that is a venv |
-
-The list is closed: adding a surface is a plan change, not a scan option. Rows 1, 4 (the
-`adapterInterpreter`, `command` and `args` keys), 8-11 and the pointer resolution are the scope
-analysis's corrections to the list first written here (.omo/ulw-execute/scope-analysis-31-46.md
-"# 37").
+What remains of it is what `crw install remove` reads before it deletes a runtime directory: the
+registration rows 4, 5, 9 and 10 (row 8, the launcher copy, retired with decision 67), under
+the same shell grammar, and the relay records of row 3
+([what remove reads](../runtime-install.md#what-remove-reads)). A registration `crw install remove`
+finds still names its row by the numbers this list gave.

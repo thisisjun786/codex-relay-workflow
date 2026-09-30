@@ -385,7 +385,7 @@ func writeArchive(t *testing.T, dir, version, binary string) string {
 		}
 	}
 	add(&tar.Header{Name: "crw", Mode: 0o755, Typeflag: tar.TypeReg}, raw)
-	for _, name := range []string{"codex-session-relay", "codex-thread-bridge", "crw-completion-hook"} {
+	for _, name := range []string{"codex-session-relay", "codex-thread-bridge"} {
 		add(&tar.Header{Name: name, Linkname: "crw", Mode: 0o777, Typeflag: tar.TypeSymlink}, nil)
 	}
 	for _, licence := range []string{"LICENSE", "packages/codex-thread-bridge/LICENSE"} {
@@ -793,7 +793,7 @@ func (h *isolated) installAndWire(t *testing.T, archiveA string) {
 	if info, err := os.Lstat(filepath.Join(envBin, "crw")); err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
 		t.Errorf("bin/crw: %v %v", info, err)
 	}
-	for _, name := range []string{"codex-session-relay", "codex-thread-bridge", "crw-completion-hook"} {
+	for _, name := range []string{"codex-session-relay", "codex-thread-bridge"} {
 		if link, err := os.Readlink(filepath.Join(envBin, name)); err != nil || link != "crw" {
 			t.Errorf("bin/%s -> %q %v, want a link to crw", name, link, err)
 		}
@@ -859,8 +859,8 @@ func (h *isolated) relayScope(t *testing.T) {
 }
 
 // settingsAccepted reads the settings the installer wrote: the Go hook's own validator has no
-// complaint, the plugin owns them, and the relay and adapter they name are files through the
-// pointer. The Stops the test then sends are what show the hook answering under them.
+// complaint, the plugin owns them, and the relay they name is a file through the pointer. The
+// Stops the test then sends are what show the hook answering under them.
 func (h *isolated) settingsAccepted(t *testing.T) {
 	t.Helper()
 	document, err := hook.Decode(readFile(t, h.settings))
@@ -879,7 +879,7 @@ func (h *isolated) settingsAccepted(t *testing.T) {
 	if fields["owner"] != "plugin" {
 		t.Errorf("the settings' owner is %v, want plugin", fields["owner"])
 	}
-	for _, key := range []string{"relayExecutable", "adapterEntryPoint"} {
+	for _, key := range []string{"relayExecutable"} {
 		path, _ := fields[key].(string)
 		if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() {
 			t.Errorf("the settings' %s %q is not a file: %v", key, path, err)

@@ -71,7 +71,7 @@ func TestRemoveAndReclaimRefuseAProcessTheyCannotRuleOut(t *testing.T) {
 	}
 	// Root's process whose working directory is hidden, running a relative script: that working
 	// directory may be inside the staging, and no directory is closed to root.
-	o.Proc = install.FakeProc(t, install.FakeProcess{Pid: 9003, Exe: "denied", Cmdline: install.Argv("python3", "-u", "bin/WALinuxAgent-2.16.0.2-py3.12.egg", "-run-exthandlers"), Cwd: "denied", Status: install.ProcStatus([]int{0})})
+	o.Proc = install.FakeProc(t, install.FakeProcess{Pid: 9003, Exe: "denied", Cmdline: install.Argv("/bin/sh", "-e", "bin/agent.sh", "--run"), Cwd: "denied", Status: install.ProcStatus([]int{0})})
 	kept, code = install.Install(context.Background(), o, "update", install.Source{From: first})
 	if unruled := golden.List(at(kept, "unreadableProcesses")); code != install.Refused || at(kept, "stagingDecision") != "RECLAIM" || len(unruled) != 1 || at(golden.Obj(unruled[0]), "pid") != int64(9003) || at(golden.Obj(unruled[0]), "uid") != int64(0) {
 		t.Fatalf("reclaim, root's hidden working directory: exit %d\n%s", code, golden.Canon(kept))
@@ -87,7 +87,7 @@ func TestRemoveAndReclaimRefuseAProcessTheyCannotRuleOut(t *testing.T) {
 	o.Proc = install.FakeProc(t,
 		install.FakeProcess{Pid: 4000},
 		install.FakeProcess{Pid: 5002, Exe: "denied", Cmdline: install.Argv("/usr/sbin/sshd", "-D")},
-		install.FakeProcess{Pid: 5004, Exe: "denied", Cmdline: install.Argv("python3", "-u", "bin/crw"), Cwd: "denied", Status: install.ProcStatus([]int{os.Getuid() + 1})})
+		install.FakeProcess{Pid: 5004, Exe: "denied", Cmdline: install.Argv("sh", "-e", "bin/crw"), Cwd: "denied", Status: install.ProcStatus([]int{os.Getuid() + 1})})
 	if removed, code := install.Remove(context.Background(), o, old); code != install.OK || at(removed, "removed") != true {
 		t.Fatalf("a table with nothing unruled: exit %d\n%s", code, golden.Canon(removed))
 	}

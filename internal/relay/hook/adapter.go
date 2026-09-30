@@ -93,8 +93,10 @@ type settingsResult struct {
 	failure, detail string
 }
 
-// Run is both crw hook and crw-completion-hook. started is captured at main entry.
-// Every controlled path returns zero and writes nothing to stderr.
+// Run is crw hook: with --plugin-launch the plugin's declared Stop command, and with no argument
+// the settings under the Codex home read whoever owns them. Any other argument - the settings
+// path the retired entry forms named (decision 66) - releases the Stop in silence. started is
+// captured at main entry. Every controlled path returns zero and writes nothing to stderr.
 func Run(parent context.Context, args []string, input io.Reader, output io.Writer, started time.Time) int {
 	return runAdapter(parent, args, input, output, started, nil)
 }
@@ -135,16 +137,15 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 	ctx, cancel := context.WithDeadline(parent, absolute)
 	defer cancel()
 	pluginLaunch := len(args) > 0 && args[0] == PluginLaunch
+	if len(args) > 0 && !pluginLaunch {
+		return 0
+	}
 	var path string
 	var err error
 	if pluginLaunch {
 		path, err = pluginSettingsPath()
 	} else {
-		named := ""
-		if len(args) > 0 {
-			named = args[0]
-		}
-		path, err = configurationPath("", nil, named)
+		path, err = configurationPath("", nil)
 	}
 	if err != nil {
 		return 0
@@ -172,8 +173,7 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 	// crw_stop_hook.py adapter_call's stand-down: settings the plugin does not own belong to
 	// another registration of this Stop, so nothing is journalled, claimed or asked. Its
 	// configVersion rule (absent or 1) is already the validator's, which accepts only 1 and has
-	// released anything else in silence above; its adapterInterpreter and adapterEntryPoint
-	// checks named the Python adapter this binary replaces.
+	// released anything else in silence above.
 	if pluginLaunch && get(settings.config, "owner") != "plugin" {
 		return 0
 	}

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"syscall"
 	"testing"
 
@@ -37,8 +38,16 @@ func Test33SettingsPython(t *testing.T) {
 	}
 	for i, v := range inputs {
 		got := Complaints(v)
-		if !reflect.DeepEqual(got, expected[i]) {
-			t.Fatalf("case %d %s\nGo %v\nPython %v", i, evidence.Dumps(v, false, false, true), got, expected[i])
+		// Python named the adapter keys the retired launchers ran; nothing reads them since
+		// decision 66, so its complaints about them are not this reader's.
+		want := []string{}
+		for _, complaint := range expected[i] {
+			if !strings.HasPrefix(complaint, "adapterInterpreter ") && !strings.HasPrefix(complaint, "adapterEntryPoint ") {
+				want = append(want, complaint)
+			}
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("case %d %s\nGo %v\nPython %v", i, evidence.Dumps(v, false, false, true), got, want)
 		}
 	}
 }

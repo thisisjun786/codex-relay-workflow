@@ -34,7 +34,7 @@ func staged(t *testing.T, dir, state string) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := staging.WriteClaim(dir, staging.Payload(state, staging.WrittenByPython, nil, nil, 1, "h", "t")); err != nil {
+	if err := staging.WriteClaim(dir, staging.Payload(state, staging.WrittenByGo, nil, nil, 1, "h", "t")); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "half-built"), []byte("x"), 0o644); err != nil {

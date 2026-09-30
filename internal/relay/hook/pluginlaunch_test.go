@@ -332,9 +332,10 @@ func pythonPluginSettingsPath(t *testing.T, home string, env []string) string {
 }
 
 // A plugin declaration carries no settings argument, so the Python plugin launcher reads only
-// <CODEX_HOME>/crw-completion-hook.json and never CRW_COMPLETION_HOOK_CONFIG. Under
-// --plugin-launch the Go hook reads the same file whatever the variable or an argument names;
-// without the flag the todo-33 precedence (argument, then the variable, then CODEX_HOME) holds.
+// <CODEX_HOME>/crw-completion-hook.json and never CRW_COMPLETION_HOOK_CONFIG. The Go hook reads
+// that same file with or without --plugin-launch, whatever the variable names (decision 66),
+// and a hook given any other argument - a settings path, as the retired entry forms passed one -
+// releases the Stop in silence, asking nothing and journalling nothing.
 func TestPluginLaunch_reads_only_the_codex_home_settings(t *testing.T) {
 	home := hookHome(t, 5)
 	withOwner(t, home, "plugin")
@@ -358,8 +359,8 @@ func TestPluginLaunch_reads_only_the_codex_home_settings(t *testing.T) {
 	}{
 		{"plugin launch, variable set", []string{"hook", "--plugin-launch"}, pythonReads},
 		{"plugin launch, variable and argument", []string{"hook", "--plugin-launch", argument}, pythonReads},
-		{"no flag, variable set", []string{"hook"}, elsewhere},
-		{"no flag, argument and variable", []string{"hook", argument}, argument},
+		{"no flag, variable set", []string{"hook"}, pythonReads},
+		{"no flag, argument and variable", []string{"hook", argument}, ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			_ = os.RemoveAll(filepath.Join(home, "journal"))
@@ -371,6 +372,12 @@ func TestPluginLaunch_reads_only_the_codex_home_settings(t *testing.T) {
 			cmd.Stdout, cmd.Stderr = &stdout, &stderr
 			if err := cmd.Run(); err != nil || stdout.Len() != 0 || stderr.Len() != 0 {
 				t.Fatalf("%v stdout %q stderr %q", err, stdout.String(), stderr.String())
+			}
+			if c.want == "" {
+				if requests, rows := stop(), rowsAt(t, home); requests != 0 || len(rows) != 0 {
+					t.Fatalf("a settings argument: requests %d rows %d", requests, len(rows))
+				}
+				return
 			}
 			rows := rowsAt(t, home)
 			if requests := stop(); requests != 1 || len(rows) != 1 || rows[0]["configuration"] != c.want {

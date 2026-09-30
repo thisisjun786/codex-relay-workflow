@@ -33,11 +33,6 @@ const Version = 1
 // Object is a decoded JSON object in Python's insertion order.
 type Object = contract.OrderedObject
 
-// Path is hostrecord.record_path.
-func Path(getenv func(string) string) string {
-	return filepath.Join(StateHome(getenv), "codex-relay-workflow", Name)
-}
-
 // Empty is hostrecord.empty: the record a clean host starts from.
 func Empty(definitionVersion int) Object {
 	host, _ := os.Hostname()
