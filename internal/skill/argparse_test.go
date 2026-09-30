@@ -73,9 +73,31 @@ func TestSkillArgparseMatchesLivePython(t *testing.T) {
 	}
 	// argparse names a refused value with repr(): a quote inside picks the other
 	// quote, and control and non-ASCII characters print as Python escapes them.
+	// sys.argv holds each byte outside well-formed UTF-8 as its own lone
+	// surrogate U+DC00+byte (os.fsdecode), the three bytes of an encoded
+	// surrogate included, and repr() escapes each one.
 	for family := range pythonArgparseFamilies {
-		for _, value := range []string{"it's", `say "hi"`, `it's "both"`, "tab\there", "caf\u00e9\x7f", "back\\slash"} {
+		for _, value := range []string{"it's", `say "hi"`, `it's "both"`, "tab\there", "caf\u00e9\x7f", "back\\slash", "\xff", "\xed\xa0\x80", "\xed\xb2\x80x", "a\xe2\x82", "\xf0\x9f\x98\x80\xed\xbf\xbf"} {
 			tests[family] = append(tests[family], argparseCase{"repr of invalid choice", []string{value}}, argparseCase{"repr of help argument", []string{"--help=" + value}})
+		}
+	}
+	// argparse prints an unrecognized argument as sys.argv holds it, and
+	// sys.stderr writes each lone surrogate as its \udcXX escape
+	// (errors="backslashreplace").
+	for family, spec := range pythonArgparseFamilies {
+		for _, value := range []string{"\xff", "\xed\xa0\x80", "caf\u00e9\xed\xb2\x80x"} {
+			tests[family] = append(tests[family], argparseCase{"unrecognized root option bytes", []string{"--" + value, spec.order[0]}})
+			for _, name := range spec.order {
+				tests[family] = append(tests[family], argparseCase{name + " unrecognized option bytes", []string{name, "--" + value}})
+				if spec.commands[name].maxArgs == 0 {
+					tests[family] = append(tests[family], argparseCase{name + " unrecognized argument bytes", []string{name, value}})
+				}
+				for _, option := range spec.commands[name].options {
+					if option.valueName == "" {
+						tests[family] = append(tests[family], argparseCase{name + " repr of boolean value bytes", []string{name, option.name + "=" + value}})
+					}
+				}
+			}
 		}
 	}
 	for family, spec := range pythonArgparseFamilies {

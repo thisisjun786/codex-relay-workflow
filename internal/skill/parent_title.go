@@ -19,6 +19,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 var bracket = regexp.MustCompile(`^(\[([^\]]*)\])(\s*)`)
@@ -379,13 +380,15 @@ func replayTitles(args []string, stdout, stderr io.Writer) int {
 		fixtures[i] = decoded
 	}
 	if len(paths) == 0 {
-		fmt.Fprintf(stderr, "No fixtures under %s; nothing was checked\n", dir)
+		fmt.Fprintf(stderr, "No fixtures under %s; nothing was checked\n", stderrText(store.FSDecode(dir)))
 		return 1
 	}
 	// command_replay collects its failures and prints them only once every
 	// fixture has been replayed, so a fixture that raises prints none of them.
 	// Each fixture keeps its decoded order: expected is compared key by key in
-	// the order the fixture writes it, with Python's == and repr().
+	// the order the fixture writes it, with Python's == and repr(). sys.stderr
+	// writes a lone surrogate that str() leaves in a line, in a subcommand or a
+	// key, as its \uXXXX escape.
 	var failures []string
 	reasons := map[string]bool{}
 	reads := map[string]bool{}
@@ -440,7 +443,7 @@ func replayTitles(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "Replayed %d title fixtures against their recorded expectations.\n", len(paths))
 	for _, failure := range failures {
-		fmt.Fprintln(stderr, failure)
+		fmt.Fprintln(stderr, stderrText(failure))
 	}
 	fail := len(failures) > 0
 	var missing []string

@@ -90,8 +90,10 @@ func titleShapeCases(t *testing.T) []skillShapeCase {
 // compares expected key by key in the order the fixture writes it, with
 // Python's != and repr(), names an unknown subcommand with str(), and prints
 // the failures it collected only after every fixture was replayed, so a later
-// fixture that raises prints none of them. Cases whose output depends on key
-// order repeat, so an unordered walk cannot pass by chance.
+// fixture that raises prints none of them. sys.stderr writes a lone surrogate
+// in a subcommand or key as its \uXXXX escape (errors="backslashreplace").
+// Cases whose output depends on key order repeat, so an unordered walk cannot
+// pass by chance.
 func titleReplayFailureCases() []skillShapeCase {
 	decideInput := `{"role": "parent", "binding_verified": true, "observed_title": "Body", "summary": "S", "user_title": "none", "family_candidates": ["CRW"], "project_labels": ["CRW"]}`
 	decide := func(expected string) string {
@@ -118,6 +120,12 @@ func titleReplayFailureCases() []skillShapeCase {
 			"c.json": `{"subcommand": "d\u00e9", "expected": {}}`,
 			"d.json": `{"subcommand": null, "expected": {}}`,
 			"e.json": `{"subcommand": ["decide"], "expected": {}}`,
+			"f.json": `{"subcommand": "\ud800", "expected": {}}`,
+			"g.json": `{"subcommand": "a\udc80b\ud83d\ude00\udfff", "expected": {}}`,
+		}},
+		{"surrogate-key", 1, map[string]string{
+			"a.json": readback(`{"\ud800": 1, "readback": "verified", "x\udcff\u00e9": null}`),
+			"b.json": decide(`{"\udfff": "\ud800", "decision": "apply"}`),
 		}},
 		{"failures-then-fixture-raises", 1, map[string]string{"a.json": readbackOrder, "b.json": `[1]`}},
 		{"failures-then-input-raises", 1, map[string]string{"a.json": readbackOrder, "b.json": `{"subcommand": "readback", "input": [1], "expected": {}}`}},
@@ -129,6 +137,16 @@ func titleReplayFailureCases() []skillShapeCase {
 		}},
 	}
 	var cases []skillShapeCase
+	// An empty --fixtures directory is named as sys.argv holds it: each byte
+	// outside well-formed UTF-8 is a lone surrogate (os.fsdecode), which
+	// sys.stderr writes as its \udcXX escape.
+	for _, name := range []string{"\xff", "\xed\xa0\x80", "caf\u00e9\xed\xb2\x80x"} {
+		cases = append(cases, skillShapeCase{
+			name:   "title/replay/failures/no-fixtures-under/" + fmt.Sprintf("%x", name),
+			family: "parent-title",
+			args:   []string{"replay", "--fixtures", "$TMP/" + name, "--allow-unreached"},
+		})
+	}
 	for _, fixture := range fixtures {
 		files := map[string]any{}
 		for name, text := range fixture.files {

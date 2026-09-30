@@ -5,6 +5,8 @@ import (
 	"io"
 	"regexp"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 type pythonOption struct {
@@ -35,7 +37,7 @@ func pythonHelpArgument(arg string) (bool, string) {
 	name, value, explicit := strings.Cut(arg, "=")
 	if strings.HasPrefix(name, "--") && len(name) > 2 && strings.HasPrefix("--help", name) || strings.HasPrefix(name, "-h") && !strings.HasPrefix(name, "--") {
 		if explicit {
-			return false, "argument -h/--help: ignored explicit argument " + pyRepr(value)
+			return false, "argument -h/--help: ignored explicit argument " + argvRepr(value)
 		}
 		return true, ""
 	}
@@ -85,7 +87,7 @@ func (family pythonFamily) parse(args []string, stdout, stderr io.Writer) ([]str
 		for i, choice := range family.order {
 			choices[i] = "'" + choice + "'"
 		}
-		message := fmt.Sprintf("argument %s: invalid choice: %s (choose from %s)", family.required, pyRepr(args[0]), strings.Join(choices, ", "))
+		message := fmt.Sprintf("argument %s: invalid choice: %s (choose from %s)", family.required, argvRepr(args[0]), strings.Join(choices, ", "))
 		return nil, family.error(stderr, family.usage, message), true
 	}
 	parsed, message, usage, help := family.parseCommand(args[0], args[1:], command)
@@ -136,7 +138,7 @@ func (family pythonFamily) parseCommand(name string, args []string, command pyth
 			parsed = append(parsed, option.name)
 			if option.valueName == "" {
 				if inline != nil {
-					return nil, "argument " + option.name + ": ignored explicit argument " + pyRepr(*inline), usage, false
+					return nil, "argument " + option.name + ": ignored explicit argument " + argvRepr(*inline), usage, false
 				}
 				continue
 			}
@@ -184,15 +186,20 @@ func (command pythonCommand) matchOption(arg string) (pythonOption, *string, boo
 	return matches[0], nil, true
 }
 
+// error and commandError print what parser.error prints. A message quotes the arguments as
+// sys.argv holds them (os.fsdecode: each byte outside well-formed UTF-8 is a lone surrogate),
+// and sys.stderr writes each lone surrogate as its \udcXX escape. A repr() in the message is
+// well-formed UTF-8 with its surrogates escaped already, so decoding the whole message changes
+// only the arguments it prints as they are.
 func (family pythonFamily) error(stderr io.Writer, usage, message string) int {
 	_, _ = io.WriteString(stderr, usage)
-	fmt.Fprintf(stderr, "%s: error: %s\n", family.program, message)
+	fmt.Fprintf(stderr, "%s: error: %s\n", family.program, stderrText(store.FSDecode(message)))
 	return 2
 }
 
 func (family pythonFamily) commandError(stderr io.Writer, command, usage, message string) int {
 	_, _ = io.WriteString(stderr, usage)
-	fmt.Fprintf(stderr, "%s %s: error: %s\n", family.program, command, message)
+	fmt.Fprintf(stderr, "%s %s: error: %s\n", family.program, command, stderrText(store.FSDecode(message)))
 	return 2
 }
 
