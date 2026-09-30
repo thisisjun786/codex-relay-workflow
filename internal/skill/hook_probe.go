@@ -450,11 +450,7 @@ func replayHook(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "%d/%d fixtures matched\n", checked-failed, checked)
 	traceIDs, e := replayTraceIDs(contractFS, contractPath)
 	if e != nil {
-		if errors.Is(e, fs.ErrNotExist) {
-			fmt.Fprintf(stderr, "Probe failed: [Errno 2] No such file or directory: '%s'. Nothing was written.\n", contractLabel)
-		} else {
-			fmt.Fprintf(stderr, "Probe failed: %s. Nothing was written.\n", e)
-		}
+		fmt.Fprintf(stderr, "Probe failed: %s. Nothing was written.\n", probeFileError(e, pythonPath(contractLabel)))
 		return 3
 	}
 	missingTraces := replayMissingTraces(paths, traceIDs)
@@ -571,15 +567,19 @@ func checkHookOneKeys(label string, observation, expectedValue any, out io.Write
 	return true, nil
 }
 
+// probeFileError is str(OSError) for a read of the path Python holds as name
+// (its bytes as argv or the directory listing gave them): the filename is
+// repr(os.fsdecode(name)), so a quote, a control or a byte outside UTF-8 is
+// spelled as Python spells it.
 func probeFileError(err error, name string) string {
 	if errors.Is(err, fs.ErrPermission) {
-		return fmt.Sprintf("[Errno 13] Permission denied: '%s'", name)
+		return "[Errno 13] Permission denied: " + store.PathRepr(name)
 	}
 	if errors.Is(err, fs.ErrNotExist) {
-		return fmt.Sprintf("[Errno 2] No such file or directory: '%s'", name)
+		return "[Errno 2] No such file or directory: " + store.PathRepr(name)
 	}
 	if errors.Is(err, syscall.EISDIR) {
-		return fmt.Sprintf("[Errno 21] Is a directory: '%s'", name)
+		return "[Errno 21] Is a directory: " + store.PathRepr(name)
 	}
 	return err.Error()
 }
