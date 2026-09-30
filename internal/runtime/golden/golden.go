@@ -1,6 +1,7 @@
-// Package golden reads internal/runtime/testdata/goldens.json, the answers
-// internal/runtime/testdata/python_goldens.py captured from scripts/crw_runtime, for the
-// runtime packages' tests. It is imported by tests only.
+// Package golden reads internal/runtime/testdata/goldens.json, the answers scripts/crw_runtime
+// gave (captured by internal/runtime/testdata/python_goldens.py until todo 44 removed the
+// Python runtime; the file is now frozen), for the runtime packages' tests. It is imported by
+// tests only.
 package golden
 
 import (

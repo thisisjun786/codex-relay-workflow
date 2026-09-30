@@ -9,12 +9,13 @@ VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 SOURCE_TREE := $(shell test -z "$$(git status --porcelain 2>/dev/null)" && git rev-parse 'HEAD^{tree}' 2>/dev/null)
 LDFLAGS := -s -w -X main.version=$(VERSION) -X github.com/thisisjun786/codex-relay-workflow/internal/runtime/record.sourceTree=$(SOURCE_TREE)
 STATICCHECK := $(GO) run honnef.co/go/tools/cmd/staticcheck
-# Per-package test binary budget. internal/relay/delivery drives its Python oracle serially and
-# takes about 450-500 s on eight CPUs, most of go test's 10m default, so two gates sharing a
-# disk push it past. In CI each leg's job timeout still bounds a hang.
+# Per-package test binary budget. internal/relay/delivery drove its Python oracle serially and
+# took about 450-500 s on eight CPUs, most of go test's 10m default; since todo 44 it replays
+# recorded answers, and the budget stays until the suite is measured again (CRW-241). In CI each
+# leg's job timeout still bounds a hang.
 TEST_TIMEOUT := -timeout 20m
 
-.PHONY: build test test-part contract parity lint dist crw-dev
+.PHONY: build test test-part contract lint dist crw-dev
 
 build:
 	@if ! $(GO) list ./... 2>/dev/null | grep -q .; then echo "no Go packages yet: build skipped"; else $(GO) build -o $(BINARY) -trimpath -ldflags="$(LDFLAGS)" ./cmd/crw; fi
@@ -49,13 +50,6 @@ endif
 
 contract:
 	@if [ ! -d ./internal/contracttest ] || ! $(GO) list ./internal/contracttest/... 2>/dev/null | grep -q .; then echo "no Go packages yet: contract skipped"; else $(GO) test ./internal/contracttest/...; fi
-
-# Exhaustive live-Python CLI matrices. The default suite keeps mutation-backed
-# representatives so ordinary CI remains bounded on four-core runners. The cli package
-# alone runs for several minutes and more under load, past go test's default 10m timeout.
-parity:
-	$(GO) test -tags parity -count=1 -timeout 30m ./internal/relay/cli/... ./internal/relay/adapter/... ./internal/relay/hook/... ./internal/runtime/...
-	$(GO) test -tags parity -count=1 -run '^TestCLI_marker_preflight_parity_with_live_python$$' ./internal/relay/delivery/
 
 # The development tooling (cmd/crw-dev, internal/dev) builds only with -tags dev, so lint and
 # test cover it in a second pass; dist and goreleaser never pass the tag. The isolated-home

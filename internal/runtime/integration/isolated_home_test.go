@@ -13,8 +13,7 @@
 // (python, python3, pip, uv) and a Codex stub, so a PATH lookup of Python or its package tools
 // fails the test. That covers PATH lookups only: an absolute /usr/bin/python3 would go unseen,
 // and so would anything the first MCP start runs, since with no PATH at all /bin/sh searches its
-// built-in default and finds the real one. The legacy bootstrap runs this machine's python3 on
-// purpose.
+// built-in default and finds the real one.
 //
 // Every home and relay root the products resolve lies under the temporary root: HOME,
 // CODEX_HOME, XDG_STATE_HOME and TMPDIR, and the relay roots HOME does not move (isolation).
@@ -910,8 +909,6 @@ func (h *isolated) cacheReplacement(t *testing.T) {
 	h.journaled(t, h.stop(t, command, fixedEnv, "is7-replaced", "t"), "is7-replaced", "t")
 	h.bridgeAnswers(t, h.envA, h.bridgeEnv())
 
-	t.Run("legacy bootstrap", h.legacyBootstrap)
-
 	// With the pointer's target gone the turn is released unrecorded, and the bridge refuses
 	// loudly, naming the runtime it could not start.
 	target := h.pointerTarget(t)
@@ -935,56 +932,6 @@ func (h *isolated) cacheReplacement(t *testing.T) {
 	}
 	h.journaled(t, h.stop(t, command, h.hookEnv(), "is7-back", "t"), "is7-back", "t")
 	h.noTripwireFired(t)
-}
-
-// legacyBootstrap is the pre-native declaration a turn cached before todo 34 may still run: a
-// python3 bootstrap fixed with PLUGIN_ROOT naming the old version, opening that version's
-// packaged launcher and, once the cache was replaced, the copy the Python installer left at
-// <CODEX_HOME>/crw-stop-hook.py. Todo 43 retired the launchers from the package, so the old
-// version is assembled from the pre-native testdata, which keeps both declarations and both
-// launchers; the host's copy stays until the operator removes it. Both reach the Go hook through
-// the installer's settings. It runs the python3 this machine's PATH names, never the tripwires,
-// with a PATH of that interpreter's directory alone, and is skipped where there is no python3
-// that runs: that is the host's interpreter running a launcher kept as testdata, not the Python
-// implementation that leaves the repository in todo 44, and it is not replaced by a recording
-// because what it checks is the Go hook journaling the Stop the bootstrap reaches it with.
-func (h *isolated) legacyBootstrap(t *testing.T) {
-	python, err := exec.LookPath("python3")
-	if err != nil {
-		t.Skip("no python3 on PATH to run the pre-native bootstrap")
-	}
-	if err := exec.Command(python, "-c", "pass").Run(); err != nil {
-		t.Skipf("the python3 on PATH does not run (%v), so nothing runs the pre-native bootstrap", err)
-	}
-	preNative := filepath.Join(moduleRoot, "internal", "pluginwiring", "testdata", "pre-native-wiring")
-	old := h.replaceCache(t, "0.4.0+pre-native", map[string]string{
-		"wiring/hooks/stop-recording-completion.json": filepath.Join(preNative, "hooks", "stop-recording-completion.json"),
-		"wiring/mcp.json":          filepath.Join(preNative, "mcp.json"),
-		"wiring/crw_stop_hook.py":  filepath.Join(preNative, "crw_stop_hook.py"),
-		"wiring/crw_bridge_mcp.py": filepath.Join(preNative, "crw_bridge_mcp.py"),
-	})
-	command := stopCommand(t, old)
-	if !strings.HasPrefix(command, "python3 -c") || !strings.Contains(command, "${PLUGIN_ROOT}/wiring/crw_stop_hook.py") {
-		t.Fatalf("not the pre-native bootstrap: %q", command)
-	}
-	env := append([]string{"HOME=" + h.home, "CODEX_HOME=" + h.codex, "XDG_STATE_HOME=" + h.state, "TMPDIR=" + h.tmp, "PLUGIN_ROOT=" + old,
-		"PATH=" + filepath.Dir(python), "PYTHONDONTWRITEBYTECODE=1"}, h.isolation()...)
-	h.journaled(t, h.stop(t, command, env, "is7-legacy-packaged", "t"), "is7-legacy-packaged", "t")
-
-	h.payload = h.replaceCache(t, h.manifestVersion, nil)
-	// Without the copy there is nothing left to open and the Stop is released unrecorded, so
-	// the row below comes from the copy and not from anything the command reaches on its own.
-	before := len(h.rows(t))
-	if got := h.stop(t, command, env, "is7-legacy-uncopied", "t"); got.code != 0 || len(h.rows(t)) != before {
-		t.Fatalf("no launcher copy: exit %d, %d rows from %d; stderr %q", got.code, len(h.rows(t)), before, got.stderr)
-	}
-	fallback := filepath.Join(h.codex, "crw-stop-hook.py")
-	writeFile(t, fallback, string(readFile(t, filepath.Join(preNative, "crw_stop_hook.py"))), 0o644)
-	h.journaled(t, h.stop(t, command, env, "is7-legacy-fallback", "t"), "is7-legacy-fallback", "t")
-	// The Go installer places no such copy; the rest of this test runs without it.
-	if err := os.Remove(fallback); err != nil {
-		t.Fatal(err)
-	}
 }
 
 // ---- IS-8

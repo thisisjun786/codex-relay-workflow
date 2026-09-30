@@ -89,14 +89,10 @@ func TestRegisterMCPRecordsANonUTF8PolicyPathAsPythonDoes(t *testing.T) {
 		t.Fatalf("record:\n%s\nPython's bridgerecord:\n%s", got, want)
 	}
 
-	// Both launchers: the native crw-bridge.sh the package declares, whose Go launcher
-	// fs-encodes the path with the same reading.FSEncode, and the legacy crw_bridge_mcp.py where
-	// this host has a python3 to run it (runnablePython3).
+	// The native crw-bridge.sh the package declares, whose Go launcher fs-encodes the path with
+	// the same reading.FSEncode. (The legacy crw_bridge_mcp.py, run by the host's python3, was
+	// started here too until todo 44 removed the Python launchers' tests.)
 	for _, launcher := range bridgeLaunchers {
-		if launcher.python && runnablePython3() == "" {
-			t.Logf("%s: not started, no python3 that runs on PATH", launcher.name)
-			continue
-		}
 		dir, argv := launcher.place(t, h)
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		started := exercise.ArgvIn(ctx, dir, argv, scope.Env(homeOnly))
