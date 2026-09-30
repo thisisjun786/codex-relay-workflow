@@ -98,21 +98,6 @@ func RegisteredClass(name string) bool {
 	return ok
 }
 
-// RegisterClassThreshold installs a declared class threshold at process initialization.
-// Built-in thresholds remain unchanged unless that class's module is installed.
-func RegisterClassThreshold(class string, threshold int64) error {
-	classMu.Lock()
-	defer classMu.Unlock()
-	if _, ok := classes[class]; !ok {
-		return fmt.Errorf("fault_class_unregistered: %s", class)
-	}
-	if threshold < 1 {
-		return fmt.Errorf("fault_observation_malformed: threshold is a positive integer")
-	}
-	classThresholds[class] = threshold
-	return nil
-}
-
 // WithInputs injects clock and claim-token entropy into library calls on this context.
 func WithInputs(ctx context.Context, clock Clock, entropy io.Reader) context.Context {
 	return context.WithValue(ctx, f1InputsKey{}, f1Inputs{clock: clock, entropy: entropy})

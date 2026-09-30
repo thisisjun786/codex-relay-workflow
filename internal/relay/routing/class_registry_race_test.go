@@ -22,9 +22,6 @@ func Test23ClassRegistryConcurrentRouterConstruction(t *testing.T) {
 				if err := faults.RegisterClass("completion_mismatch", 1); err != nil {
 					t.Error(err)
 				}
-				if err := faults.RegisterClassThreshold("completion_mismatch", 1); err != nil {
-					t.Error(err)
-				}
 			}
 		}()
 		go func() {
