@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -21,38 +20,21 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
-func partDPython(t *testing.T, module, id string) (string, supervisorCapture) {
+// partDFixture restores the tree a Python directive-places or autosend test left (the former
+// testdata/partd_dir_aut_capture.py): the snapshots each replay starts from and capture.json's
+// tick times.
+func partDFixture(t *testing.T, module, id string) string {
 	t.Helper()
 	root, err := os.MkdirTemp("", "crw-partd-")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(root) })
-	// capture.json and the snapshots are recorded (pythonTree); Python's final store and its
-	// final.sqlite3 copy are not, as no Go test reads them.
-	pythonTree(t, module+" "+id, root, func() ([]byte, error) {
-		repo := repoRoot(t)
-		script, _ := filepath.Abs("testdata/partd_dir_aut_capture.py")
-		home := filepath.Join(root, "home")
-		if err := os.MkdirAll(home, 0700); err != nil {
-			return nil, err
-		}
-		cmd := exec.Command("uv", "run", "--no-sync", "python", script, root, module, id)
-		cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
-		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "XDG_DATA_HOME="+filepath.Join(home, "data"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+os.TempDir(), "PYTHONPATH="+filepath.Join(repo, "packages/codex-session-relay/src")+":"+filepath.Join(repo, "packages/codex-session-relay"))
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return nil, fmt.Errorf("python %s: %v\n%s", id, err, out)
-		}
-		for _, gone := range []string{home, filepath.Join(root, "final.sqlite3")} {
-			if err := os.RemoveAll(gone); err != nil {
-				return nil, err
-			}
-		}
-		return nil, removeStoreFiles(filepath.Join(root, "tree", "state", "relay.sqlite3"))
-	})
-	return root, readSupervisorCapture(t, root)
+	treeFixture(t, module+" "+id, root)
+	return root
 }
 
 func partDOpen(t *testing.T, root, snapshot string) (*store.Store, *Channel, *registry.Registry) {
@@ -74,10 +56,10 @@ func partDOpen(t *testing.T, root, snapshot string) (*store.Store, *Channel, *re
 	c := &Channel{Store: s, Linkage: StoreLinkage{s}, Program: filepath.Join(repo, ".venv/bin/codex-session-relay"), clockISO: func() string { return captureTime }, Settings: &delivery.TaskSettings{}}
 	return s, c, r
 }
-func partDCompare(t *testing.T, s *store.Store, got []any, py supervisorCapture) {
+func partDCheck(t *testing.T, root string, s *store.Store, got []any) {
 	t.Helper()
-	compareSupervisorValues(t, got, py)
-	compareSupervisorTables(t, s, py)
+	checkSupervisorValues(t, got, treeGolden(t, root)...)
+	checkSupervisorTables(t, s, treeGolden(t, root)...)
 }
 func partDLink(t *testing.T, s *store.Store) string {
 	t.Helper()
@@ -137,7 +119,7 @@ func pdRecord(t *testing.T, r *registry.Registry, link, digest, purpose, corr, t
 }
 
 func Test24_DIR_1_WholeLivePython(t *testing.T) {
-	root, py := partDPython(t, "test_directive_places", "TheG1OrderReportsUpward.test_a_scope_correction_beside_both_does_not_need_the_others_settled")
+	root := partDFixture(t, "test_directive_places", "TheG1OrderReportsUpward.test_a_scope_correction_beside_both_does_not_need_the_others_settled")
 	s, c, r := partDOpen(t, root, "event")
 	captureTokens21(t)
 	h := &partDHost{sendHost{status: "idle"}}
@@ -145,10 +127,10 @@ func Test24_DIR_1_WholeLivePython(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	partDCompare(t, s, []any{0, 0, 0, len(partDIDs(t, r)), []any{got.SupervisorStaged, got.SupervisorSent}, partDContest(t, r)}, py)
+	partDCheck(t, root, s, []any{0, 0, 0, len(partDIDs(t, r)), []any{got.SupervisorStaged, got.SupervisorSent}, partDContest(t, r)})
 }
 func Test24_DIR_2_WholeLivePython(t *testing.T) {
-	root, py := partDPython(t, "test_directive_places", "ARealConflictIsRefusedWhereItIsRecorded.test_a_second_assignment_is_refused_and_names_the_one_in_force")
+	root := partDFixture(t, "test_directive_places", "ARealConflictIsRefusedWhereItIsRecorded.test_a_second_assignment_is_refused_and_names_the_one_in_force")
 	s, _, r := partDOpen(t, root, "setup")
 	l := partDLink(t, s)
 	a, e := pdRecord(t, r, l, "d-one", "project_assignment", "", "01supervisor-task")
@@ -165,7 +147,7 @@ func Test24_DIR_2_WholeLivePython(t *testing.T) {
 	_, _ = pdRecord(t, r, l, "d-two", "project_assignment", "", "01supervisor-task")
 	var n int
 	_ = s.DB.QueryRow("SELECT count(*) FROM linkage_conflicts").Scan(&n)
-	partDCompare(t, s, []any{0, 2, x["reason"], contains(x["detail"], did(a)), contains(x["detail"], "linkage-settle"), partDIDs(t, r), len(retained), retained[0]["incumbent"], 2, n}, py)
+	partDCheck(t, root, s, []any{0, 2, x["reason"], contains(x["detail"], did(a)), contains(x["detail"], "linkage-settle"), partDIDs(t, r), len(retained), retained[0]["incumbent"], 2, n})
 }
 func contains(v any, s string) bool {
 	x, _ := v.(string)
@@ -181,33 +163,33 @@ func stringContains(x, s string) bool {
 }
 
 func Test24_DIR_3_WholeLivePython(t *testing.T) {
-	root, py := partDPython(t, "test_directive_places", "ARealConflictIsRefusedWhereItIsRecorded.test_two_different_answers_to_one_message_are_refused")
+	root := partDFixture(t, "test_directive_places", "ARealConflictIsRefusedWhereItIsRecorded.test_two_different_answers_to_one_message_are_refused")
 	s, _, r := partDOpen(t, root, "setup")
 	l := partDLink(t, s)
 	a, _ := pdRecord(t, r, l, "d-yes", "relayed_decision", "msg-1", "01supervisor-task")
 	_, e := pdRecord(t, r, l, "d-no", "relayed_decision", "msg-1", "01supervisor-task")
 	x := partDRefusal(e)
-	partDCompare(t, s, []any{0, 2, contains(x["detail"], did(a)), partDIDs(t, r)}, py)
+	partDCheck(t, root, s, []any{0, 2, contains(x["detail"], did(a)), partDIDs(t, r)})
 }
 func Test24_DIR_4_WholeLivePython(t *testing.T) {
-	root, py := partDPython(t, "test_directive_places", "ARealConflictIsRefusedWhereItIsRecorded.test_a_refusal_names_the_message_the_live_correction_answers")
+	root := partDFixture(t, "test_directive_places", "ARealConflictIsRefusedWhereItIsRecorded.test_a_refusal_names_the_message_the_live_correction_answers")
 	s, _, r := partDOpen(t, root, "setup")
 	l := partDLink(t, s)
 	a, _ := pdRecord(t, r, l, "d-narrow", "scope_correction", "msg-blocked-7", "01supervisor-task")
 	_, e := pdRecord(t, r, l, "d-widen", "scope_correction", "", "01supervisor-task")
 	x := partDRefusal(e)
-	partDCompare(t, s, []any{0, 2, contains(x["detail"], did(a)), contains(x["detail"], "msg-blocked-7")}, py)
+	partDCheck(t, root, s, []any{0, 2, contains(x["detail"], did(a)), contains(x["detail"], "msg-blocked-7")})
 }
 func Test24_DIR_5_WholeLivePython(t *testing.T) {
-	root, py := partDPython(t, "test_directive_places", "ARealConflictIsRefusedWhereItIsRecorded.test_two_instructions_of_unknown_purpose_are_still_recorded_and_contested")
+	root := partDFixture(t, "test_directive_places", "ARealConflictIsRefusedWhereItIsRecorded.test_two_instructions_of_unknown_purpose_are_still_recorded_and_contested")
 	s, _, r := partDOpen(t, root, "setup")
 	l := partDLink(t, s)
 	_, _ = pdRecord(t, r, l, "d-one", "", "", "01supervisor-task")
 	_, _ = pdRecord(t, r, l, "d-two", "", "", "01supervisor-task")
-	partDCompare(t, s, []any{0, 0, len(partDIDs(t, r)), len(partDContest(t, r))}, py)
+	partDCheck(t, root, s, []any{0, 0, len(partDIDs(t, r)), len(partDContest(t, r))})
 }
 func Test24_DIR_6_WholeLivePython(t *testing.T) {
-	root, py := partDPython(t, "test_directive_places", "ARealConflictIsRefusedWhereItIsRecorded.test_a_place_keeps_one_live_row_across_a_handover")
+	root := partDFixture(t, "test_directive_places", "ARealConflictIsRefusedWhereItIsRecorded.test_a_place_keeps_one_live_row_across_a_handover")
 	s, _, r := partDOpen(t, root, "setup")
 	l := partDLink(t, s)
 	a, _ := pdRecord(t, r, l, "d-assignment", "project_assignment", "", "01supervisor-task")
@@ -229,7 +211,7 @@ func Test24_DIR_6_WholeLivePython(t *testing.T) {
 	}
 	mine, _ := pdRecord(t, r, l, "d-assignment", "project_assignment", "", "01supervisor-successor")
 	vals = append(vals, 0, 0, partDIDs(t, r), did(mine))
-	partDCompare(t, s, vals, py)
+	partDCheck(t, root, s, vals)
 }
 
 func Test24_DIR_7_WholeLivePython(t *testing.T) {
@@ -242,7 +224,7 @@ func Test24_DIR_9_WholeLivePython(t *testing.T) {
 	partDReplayReadScenario(t, "AHeldReportIsNamedWhereTheOperatorLooks.test_a_project_nobody_supervises_is_a_named_hold_of_its_own", 9)
 }
 func partDReplayReadScenario(t *testing.T, id string, kind int) {
-	root, py := partDPython(t, "test_directive_places", id)
+	root := partDFixture(t, "test_directive_places", id)
 	snap := "event"
 	s, c, r := partDOpen(t, root, snap)
 	var got []any
@@ -288,7 +270,7 @@ func partDReplayReadScenario(t *testing.T, id string, kind int) {
 		holds, _ := c.ReportHolds(context.Background(), standing)
 		got = []any{[]any{[]any{holds[0]["gap"], holds[0]["reason"]}}, holds[0]["obligationIds"]}
 	}
-	partDCompare(t, s, got, py)
+	partDCheck(t, root, s, got)
 }
 
 func Test24_AUT_1_WholeLivePython(t *testing.T) {
@@ -310,7 +292,7 @@ func Test24_AUT_8_WholeLivePython(t *testing.T) {
 	partDAutoReplay(t, "TwoSupervisorsOneStuck.test_a_head_that_is_never_sendable_does_not_starve_another", 8, 4, 1)
 }
 func partDAutoBasic(t *testing.T, id string, kind int) {
-	root, py := partDPython(t, "test_supervisor_autosend", id)
+	root := partDFixture(t, "test_supervisor_autosend", id)
 	s, c, _ := partDOpen(t, root, "event")
 	captureTokens21(t)
 	var got []any
@@ -348,7 +330,7 @@ func partDAutoBasic(t *testing.T, id string, kind int) {
 		partDExtra(t, root, "ticks", []any{partDTickValue(1700003600, a)})
 	}
 
-	partDCompare(t, s, got, py)
+	partDCheck(t, root, s, got)
 }
 
 type partDMissingHost struct{ partDHost }
@@ -416,19 +398,11 @@ func stateOf(t *testing.T, s *store.Store, _ int) string {
 	return x
 }
 
-// Each replay starts before the first tick, never from Python's final store.
-// The oracle contains complete per-tick results as well as every persisted row.
+// Each replay starts before the first tick, never from Python's final store. The golden holds
+// the complete per-tick results as well as every persisted row.
 func partDExtra(t *testing.T, root, key string, got any) {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(root, "capture.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var extra map[string]any
-	if err = json.Unmarshal(raw, &extra); err != nil {
-		t.Fatal(err)
-	}
-	compareSupervisorValues(t, []any{got}, supervisorCapture{Captures: []any{extra[key]}})
+	golden.CheckJSON(t, goldenKey(t, key), asJSON(t, []any{got}), treeGolden(t, root)...)
 }
 
 func partDTick(t *testing.T, c *Channel, h SendAdapter, now float64, projects, sends int, previous AutoSendResult) AutoSendResult {
@@ -445,7 +419,7 @@ func partDTickValue(now float64, result AutoSendResult) map[string]any {
 }
 func partDAutoReplay(t *testing.T, id string, kind, projects, sends int) {
 	t.Helper()
-	root, py := partDPython(t, "test_supervisor_autosend", id)
+	root := partDFixture(t, "test_supervisor_autosend", id)
 	s, c, _ := partDOpen(t, root, "pretick")
 	captureTokens21(t)
 	if id == "parity_expired_lease" {
@@ -544,7 +518,7 @@ func partDAutoReplay(t *testing.T, id string, kind, projects, sends int) {
 	case 11:
 		got = []any{h.count("01sup-4")}
 	}
-	partDCompare(t, s, got, py)
+	partDCheck(t, root, s, got)
 }
 
 func Test24_AUT_8_StrugglingWrapWholeLivePython(t *testing.T) {
@@ -659,12 +633,12 @@ func partDInterleaveStore(t *testing.T, s *store.Store, kind int, message string
 }
 
 func Test24_DIR_3_DifferentCorrelationsWholeLivePython(t *testing.T) {
-	root, py := partDPython(t, "test_directive_places", "ARealConflictIsRefusedWhereItIsRecorded.test_answers_to_two_messages_stand_together")
+	root := partDFixture(t, "test_directive_places", "ARealConflictIsRefusedWhereItIsRecorded.test_answers_to_two_messages_stand_together")
 	s, _, r := partDOpen(t, root, "setup")
 	l := partDLink(t, s)
 	_, first := pdRecord(t, r, l, "d-first", "relayed_decision", "msg-1", "01supervisor-task")
 	_, second := pdRecord(t, r, l, "d-second", "relayed_decision", "msg-2", "01supervisor-task")
-	partDCompare(t, s, []any{partDCode(first), partDCode(second), len(partDIDs(t, r)), partDContest(t, r)}, py)
+	partDCheck(t, root, s, []any{partDCode(first), partDCode(second), len(partDIDs(t, r)), partDContest(t, r)})
 }
 func partDCode(err error) int {
 	if err != nil {
@@ -673,7 +647,7 @@ func partDCode(err error) int {
 	return 0
 }
 func Test24_DIR_5_PurposedBesideUnknownWholeLivePython(t *testing.T) {
-	root, py := partDPython(t, "test_directive_places", "ARealConflictIsRefusedWhereItIsRecorded.test_a_purposed_instruction_beside_one_of_unknown_purpose_is_refused")
+	root := partDFixture(t, "test_directive_places", "ARealConflictIsRefusedWhereItIsRecorded.test_a_purposed_instruction_beside_one_of_unknown_purpose_is_refused")
 	s, _, r := partDOpen(t, root, "setup")
 	l := partDLink(t, s)
 	older, err := pdRecord(t, r, l, "d-legacy", "", "", "01supervisor-task")
@@ -682,10 +656,10 @@ func Test24_DIR_5_PurposedBesideUnknownWholeLivePython(t *testing.T) {
 	}
 	_, err = pdRecord(t, r, l, "d-new", "relayed_decision", "msg-1", "01supervisor-task")
 	refusal := partDRefusal(err)
-	partDCompare(t, s, []any{partDCode(err), contains(refusal["detail"], did(older)), contains(refusal["detail"], "purpose"), partDIDs(t, r)}, py)
+	partDCheck(t, root, s, []any{partDCode(err), contains(refusal["detail"], did(older)), contains(refusal["detail"], "purpose"), partDIDs(t, r)})
 }
 func Test24_DIR_9_CappedWholeLivePython(t *testing.T) {
-	root, py := partDPython(t, "test_directive_places", "AHeldReportIsNamedWhereTheOperatorLooks.test_a_capped_report_is_still_called_held")
+	root := partDFixture(t, "test_directive_places", "AHeldReportIsNamedWhereTheOperatorLooks.test_a_capped_report_is_still_called_held")
 	s, c, r := partDOpen(t, root, "event")
 	o := captureObligation4(t, c, s)
 	staged, err := c.Stage(context.Background(), o, "", captureTime)
@@ -714,5 +688,5 @@ func Test24_DIR_9_CappedWholeLivePython(t *testing.T) {
 	for _, hold := range holds {
 		ids = append(ids, hold["obligationIds"])
 	}
-	partDCompare(t, s, []any{0, ids}, py)
+	partDCheck(t, root, s, []any{0, ids})
 }

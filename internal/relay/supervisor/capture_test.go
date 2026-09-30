@@ -64,21 +64,6 @@ func removeStoreFiles(path string) error {
 	}
 	return nil
 }
-func readSupervisorCapture(t *testing.T, root string) supervisorCapture {
-	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(root, "capture.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var result supervisorCapture
-	if err := json.Unmarshal(raw, &result); err != nil {
-		t.Fatal(err)
-	}
-	if len(result.Problems) > 0 {
-		t.Fatalf("Python test failed: %v", result.Problems)
-	}
-	return result
-}
 
 // checkSupervisorValues compares the values a replay produced, as JSON decodes them, with the
 // golden.
