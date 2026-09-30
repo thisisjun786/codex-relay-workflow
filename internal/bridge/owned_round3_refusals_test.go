@@ -8,11 +8,12 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
-// Every refusal a caller can provoke at an argument boundary, byte for byte with Python.
+// Every refusal a caller can provoke at an argument boundary, byte for byte with its golden,
+// which began as the Python bridge's refusal.
 func Test_round3_argument_refusals_read_exactly_as_python(t *testing.T) {
-	refusals := object(pythonRound3(t)["refusals"])
 	b, host := testBridge(t)
 	cwd := t.TempDir()
 	host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{"id": "thread-1", "status": map[string]any{"type": "idle"}}}})
@@ -96,13 +97,11 @@ func Test_round3_argument_refusals_read_exactly_as_python(t *testing.T) {
 	slices.Sort(names)
 	for _, name := range names {
 		t.Run(name, func(t *testing.T) {
-			want, ok := refusals[name].(string)
-			if !ok {
-				t.Fatalf("no Python refusal recorded for %s", name)
+			err := cases[name]()
+			if err == nil {
+				t.Fatal("no refusal")
 			}
-			if err := cases[name](); err == nil || err.Error() != want {
-				t.Fatalf("refusal\n got: %v\nwant: %s", err, want)
-			}
+			golden.Check(t, "refusal", []byte(err.Error()))
 		})
 	}
 	if methods := hostMethods(host); slices.ContainsFunc(methods, func(m string) bool {

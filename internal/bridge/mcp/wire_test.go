@@ -5,12 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 // wire drives Main over raw newline-delimited JSON so a test sees exactly the bytes a host
@@ -151,32 +152,44 @@ func Test_an_unknown_method_is_answered_as_python_answers_it(t *testing.T) {
 	}
 }
 
-// pythonWireCase is one entry of testdata/wire_python.json, written by gen_wire_python.py: a
-// line sent to `python -m codex_thread_bridge.server` (mcp 1.30.0) and the exact lines it wrote
-// before answering the ping that followed.
-type pythonWireCase struct {
-	Case   string   `json:"case"`
-	Send   string   `json:"send"`
-	Frames []string `json:"frames"`
+// wireSend is one entry of the fixture wire-sends.json: a line to send, named. The lines a Go
+// server writes before answering the ping that follows are the golden, which began as what
+// `python -m codex_thread_bridge.server` (mcp 1.30.0) wrote.
+type wireSend struct {
+	Case string `json:"case"`
+	Send string `json:"send"`
 }
 
-func recordedWire(t *testing.T, name string) pythonWireCase {
+func wireLine(t *testing.T, name string) string {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("testdata", "wire_python.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var cases []pythonWireCase
-	if err := json.Unmarshal(raw, &cases); err != nil {
+	var cases []wireSend
+	if err := json.Unmarshal(golden.Fixture(t, "wire-sends.json"), &cases); err != nil {
 		t.Fatal(err)
 	}
 	for _, c := range cases {
 		if c.Case == name {
-			return c
+			return c.Send
 		}
 	}
-	t.Fatalf("no recorded case %q", name)
-	return pythonWireCase{}
+	t.Fatalf("no case %q", name)
+	return ""
+}
+
+// goldenFrames is the golden list of frames under key, or frames themselves when updating.
+func goldenFrames(t *testing.T, key string, frames []string) []string {
+	t.Helper()
+	raw := golden.Want(t, key, func() []byte {
+		encoded, err := golden.Encode(frames)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return encoded
+	})
+	var want []string
+	if err := json.Unmarshal(raw, &want); err != nil {
+		t.Fatalf("golden %q: %v", key, err)
+	}
+	return want
 }
 
 // framesBefore sends line and then a ping, and returns every line written before its answer.
@@ -202,20 +215,22 @@ func (w *wire) framesBefore(t *testing.T, line string, ping int) []string {
 	}
 }
 
-// matchesPython replays the named recorded cases on one Go server. A response must be Python's
-// bytes; a notification need only be JSON-equal, as Python writes its "jsonrpc" member last.
+// matchesPython replays the named cases on one Go server. A response must be the golden's
+// bytes; a notification need only be JSON-equal, as the golden began as Python's frames and
+// Python writes its "jsonrpc" member last.
 func matchesPython(t *testing.T, names ...string) {
 	w := startWire(t)
 	w.next(t) // initialize
 	w.send(t, `{"jsonrpc":"2.0","method":"notifications/initialized"}`)
 	for i, name := range names {
-		c := recordedWire(t, name)
-		got := w.framesBefore(t, c.Send, 900+i)
-		if len(got) != len(c.Frames) {
-			t.Errorf("%s: %s\n got %d frames %q\nwant %d frames %q", name, c.Send, len(got), got, len(c.Frames), c.Frames)
+		send := wireLine(t, name)
+		got := w.framesBefore(t, send, 900+i)
+		frames := goldenFrames(t, name, got)
+		if len(got) != len(frames) {
+			t.Errorf("%s: %s\n got %d frames %q\nwant %d frames %q", name, send, len(got), got, len(frames), frames)
 			continue
 		}
-		for j, want := range c.Frames {
+		for j, want := range frames {
 			var decodedGot, decodedWant map[string]any
 			if err := json.Unmarshal([]byte(got[j]), &decodedGot); err != nil {
 				t.Fatal(err)
@@ -225,7 +240,7 @@ func matchesPython(t *testing.T, names ...string) {
 			}
 			_, response := decodedWant["id"]
 			if response && got[j] != want || !reflect.DeepEqual(decodedGot, decodedWant) {
-				t.Errorf("%s: %s\n got %s\nwant %s", name, c.Send, got[j], want)
+				t.Errorf("%s: %s\n got %s\nwant %s", name, send, got[j], want)
 			}
 		}
 	}
@@ -247,15 +262,15 @@ func Test_tools_call_with_a_numeric_name_is_refused_as_python_refuses_it(t *test
 	matchesPython(t, "tools-call-numeric-name", "tools-call-missing-name", "tools-call-array-arguments")
 }
 
-// tools/list is Python's reply, JSON-equal (the SDK decides member order inside each tool),
-// and writes '<', '>' and '&' as Python does: unescaped. The reply is read directly because the
-// SDK may answer a following ping first.
+// tools/list is the golden reply (which began as Python's), JSON-equal (the SDK decides member
+// order inside each tool), and writes '<', '>' and '&' as Python does: unescaped. The reply is
+// read directly because the SDK may answer a following ping first.
 func Test_tools_list_writes_angle_brackets_unescaped_as_python_does(t *testing.T) {
-	c := recordedWire(t, "tools-list")
+	send := wireLine(t, "tools-list")
 	w := startWire(t)
 	w.next(t) // initialize
 	w.send(t, `{"jsonrpc":"2.0","method":"notifications/initialized"}`)
-	w.send(t, c.Send)
+	w.send(t, send)
 	if !w.lines.Scan() {
 		t.Fatalf("stdout ended: %v", w.lines.Err())
 	}
@@ -264,11 +279,15 @@ func Test_tools_list_writes_angle_brackets_unescaped_as_python_does(t *testing.T
 	if err := json.Unmarshal([]byte(got), &decodedGot); err != nil {
 		t.Fatal(err)
 	}
-	if err := json.Unmarshal([]byte(c.Frames[0]), &decodedWant); err != nil {
+	want := goldenFrames(t, "tools-list", []string{got})
+	if len(want) != 1 {
+		t.Fatalf("golden tools-list: %d frames", len(want))
+	}
+	if err := json.Unmarshal([]byte(want[0]), &decodedWant); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(decodedGot, decodedWant) {
-		t.Errorf("tools/list differs from Python's\n got %s\nwant %s", got, c.Frames[0])
+		t.Errorf("tools/list differs from the golden\n got %s\nwant %s", got, want[0])
 	}
 	for _, escape := range []string{`\u003c`, `\u003e`, `\u0026`} {
 		if strings.Contains(got, escape) {
