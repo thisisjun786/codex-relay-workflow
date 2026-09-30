@@ -29,7 +29,7 @@ func Test26_MTN_4_whole_outstanding(t *testing.T) {
 	w.step(w.m.Unknown(w.ctx, held, alpha.TaskID, "the host stopped answering"))
 	w.m.Now = func() string { return "2023-11-26T12:00:00.000000+00:00" }
 	w.step(w.m.Outstanding(w.ctx, alpha.TaskID))
-	w.sameAsPython("mtn4_outstanding")
+	w.matchesGolden("mtn4_outstanding")
 }
 
 func Test26_MTN_5_whole_claims(t *testing.T) {
@@ -46,7 +46,7 @@ func Test26_MTN_5_whole_claims(t *testing.T) {
 	w.contests()
 	w.step(w.claimOn(alpha, "PRJ-UNKNOWN", "head-x", fxBase, true))
 	w.step(w.m.Request(w.ctx, "owner/other", fxBase, fxB, beta.TaskID, beta.HostID, "head-b", true))
-	w.sameAsPython("mtn5_claims")
+	w.matchesGolden("mtn5_claims")
 }
 
 func Test26_MTN_6_whole_racing_claims(t *testing.T) {
@@ -65,7 +65,7 @@ func Test26_MTN_6_whole_racing_claims(t *testing.T) {
 			w.step(w.m.Target(w.ctx, fxRepo, fxBase))
 			key, _ := TargetKey(fxRepo, fxBase)
 			w.rows("SELECT turn_id,state FROM merge_turns WHERE target_key=? ORDER BY turn_id", key)
-			w.sameAsPython(row.name)
+			w.matchesGolden(row.name)
 		})
 	}
 }
@@ -86,7 +86,7 @@ func Test26_MTN_16_whole_grants(t *testing.T) {
 	w.step(fRelease(w, id, alpha.TaskID, "done", "returned", ""))
 	w.step(w.m.Acknowledge(w.ctx, id, alpha.TaskID, grant, "late"))
 	w.step(w.claimOn(alpha, fxA, "head-a", fxBase, true))
-	w.sameAsPython("mtn16_grants")
+	w.matchesGolden("mtn16_grants")
 }
 
 func fLegacyGrant(w *fx, id, kind, key, evidence string) {
@@ -108,7 +108,7 @@ func Test26_MTN_17_whole_namespace(t *testing.T) {
 		w.turn(id)
 		w.turn(waiter)
 		w.step(w.m.Target(w.ctx, fxRepo, fxBase))
-		w.sameAsPython("mtn17_namespace")
+		w.matchesGolden("mtn17_namespace")
 	})
 	t.Run("legacy", func(t *testing.T) {
 		w := newFx(t)
@@ -122,7 +122,7 @@ func Test26_MTN_17_whole_namespace(t *testing.T) {
 		w.step(w.m.Outstanding(w.ctx, alpha.TaskID))
 		w.step(w.m.Acknowledge(w.ctx, id, alpha.TaskID, g, "read the grant past the rows nobody can read"))
 		w.step(w.begin(id, defaults()))
-		w.sameAsPython("mtn17_legacy")
+		w.matchesGolden("mtn17_legacy")
 	})
 	t.Run("foreign grants", func(t *testing.T) {
 		w := newFx(t)
@@ -147,7 +147,7 @@ func Test26_MTN_17_whole_namespace(t *testing.T) {
 		w.turn(id)
 		w.step(w.m.Acknowledge(w.ctx, id, alpha.TaskID, mine, "the impersonating rows are not this turn's grant"))
 		w.turn(id)
-		w.sameAsPython("mtn17_foreign_grants")
+		w.matchesGolden("mtn17_foreign_grants")
 	})
 	t.Run("only legacy", func(t *testing.T) {
 		w := newFx(t)
@@ -156,7 +156,7 @@ func Test26_MTN_17_whole_namespace(t *testing.T) {
 		fLegacyGrant(w, id, "grant", "chat-note-1", "approved in chat")
 		w.turn(id)
 		w.step(w.begin(id, defaults()))
-		w.sameAsPython("mtn17_only_legacy")
+		w.matchesGolden("mtn17_only_legacy")
 	})
 }
 
@@ -197,5 +197,5 @@ func Test26_MTN_20_whole_readings(t *testing.T) {
 			w.step(w.m.Land(w.ctx, id, alpha.TaskID, "merge-1", "aaaaaaa", "merged", w.target))
 		}
 	}
-	w.sameAsPython("mtn20_readings")
+	w.matchesGolden("mtn20_readings")
 }

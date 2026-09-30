@@ -32,14 +32,14 @@ func Test26_MTN_3_whole_causes(t *testing.T) {
 		w.claim(beta, fxB, "head-b")
 		fStatus(w, fxA, "paused")
 		w.step(w.m.Target(w.ctx, fxRepo, fxBase))
-		w.sameAsPython("mtn3_holder_paused")
+		w.matchesGolden("mtn3_holder_paused")
 	})
 	t.Run("merging", func(t *testing.T) {
 		w := newFx(t)
 		id := w.held()
 		w.step(w.begin(id, defaults()))
 		w.step(w.m.Target(w.ctx, fxRepo, fxBase))
-		w.sameAsPython("mtn3_merge_in_flight")
+		w.matchesGolden("mtn3_merge_in_flight")
 	})
 	t.Run("other causes", func(t *testing.T) {
 		w := newFx(t)
@@ -93,7 +93,7 @@ func Test26_MTN_3_whole_causes(t *testing.T) {
 			}
 		}
 		w.step(w.m.Target(w.ctx, fxRepo, "empty"))
-		w.sameAsPython("mtn3_causes")
+		w.matchesGolden("mtn3_causes")
 	})
 }
 
@@ -103,7 +103,7 @@ func Test26_MTN_1_whole_paused(t *testing.T) {
 		fStatus(w, fxA, "paused")
 		w.step(w.claimOn(alpha, fxA, "head-a", fxBase, true))
 		w.step(w.m.Target(w.ctx, fxRepo, fxBase))
-		w.sameAsPython("mtn1_paused")
+		w.matchesGolden("mtn1_paused")
 	})
 	t.Run("waiter", func(t *testing.T) {
 		w := newFx(t)
@@ -125,7 +125,7 @@ func Test26_MTN_1_whole_paused(t *testing.T) {
 		b.head = "head-b"
 		b.checks = runChecks("head-b", "success", 1, "dev-gate", "run-1")
 		w.step(w.begin(id, b))
-		w.sameAsPython("mtn1_waiter")
+		w.matchesGolden("mtn1_waiter")
 	})
 	t.Run("skip", func(t *testing.T) {
 		w := newFx(t)
@@ -139,7 +139,7 @@ func Test26_MTN_1_whole_paused(t *testing.T) {
 		w.step(fRelease(w, held, alpha.TaskID, "done", "returned", ""))
 		w.turn(first)
 		w.turn(second)
-		w.sameAsPython("mtn1_skip")
+		w.matchesGolden("mtn1_skip")
 	})
 }
 
@@ -153,7 +153,7 @@ func Test26_MTN_2_whole_readiness(t *testing.T) {
 	next := fClaim(w, alpha, fxA, "head-c", true)
 	w.step(fReady(w, next, alpha.TaskID, true, "", "head-c2"))
 	w.turn(next)
-	w.sameAsPython("mtn2_readiness")
+	w.matchesGolden("mtn2_readiness")
 }
 
 func Test26_MTN_7_whole_transport(t *testing.T) {
@@ -168,7 +168,7 @@ func Test26_MTN_7_whole_transport(t *testing.T) {
 	w.turn(waiter)
 	w.rows("SELECT * FROM merge_turn_ledger WHERE turn_id=? ORDER BY recorded_at,entry_id", held)
 	w.step(fRelease(w, held, alpha.TaskID, "candidate is not ready", "returned", ""))
-	w.sameAsPython("mtn7_transport")
+	w.matchesGolden("mtn7_transport")
 }
 
 func Test26_MTN_8_whole_promotion(t *testing.T) {
@@ -203,7 +203,7 @@ func Test26_MTN_8_whole_promotion(t *testing.T) {
 			case "evidence":
 				w.step(fRelease(w, held, overseer.TaskID, "it stopped", "cancelled", ""))
 			}
-			w.sameAsPython("mtn8_" + c)
+			w.matchesGolden("mtn8_" + c)
 		})
 	}
 }
@@ -221,5 +221,5 @@ func Test26_MTN_9_whole_clock(t *testing.T) {
 	w.merged(fxPost)
 	w.step(w.resolve(held, fxPost, "merged", "the pull request reads merged", ""))
 	w.turn(waiter)
-	w.sameAsPython("mtn9_no_clock_release")
+	w.matchesGolden("mtn9_no_clock_release")
 }

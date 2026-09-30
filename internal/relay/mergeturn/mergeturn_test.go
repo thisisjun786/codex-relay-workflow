@@ -1,20 +1,15 @@
 package mergeturn
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"os"
-	"os/exec"
 	"path/filepath"
-	"reflect"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 func setup(t *testing.T) *Service {
@@ -46,51 +41,35 @@ func claim(t *testing.T, s *Service, project, holder string, ready bool) map[str
 	}
 	return v
 }
-func assertPythonJSON(t *testing.T, filename string, got any) {
+
+// matchesGoldenJSON compares an answer's whole JSON, target keys named in order of appearance,
+// with the golden under key.
+func matchesGoldenJSON(t *testing.T, key string, got any) {
 	t.Helper()
-	bytes, err := os.ReadFile(filepath.Join("testdata", filename))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var expected, actual any
-	if err = json.Unmarshal(bytes, &expected); err != nil {
-		t.Fatal(err)
-	}
 	encoded, err := json.Marshal(got)
 	if err != nil {
 		t.Fatal(err)
 	}
+	var actual any
 	if err = json.Unmarshal(encoded, &actual); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(stableTargets(t, actual), expected) {
-		t.Fatalf("%s differs from Python:\nGo: %s\nPython: %s", filename, encoded, bytes)
-	}
+	golden.CheckJSON(t, key, stableTargets(t, actual))
 }
-func Test26_target_derivation_matches_live_python(t *testing.T) {
+
+func Test26_target_derivation_matches_the_golden(t *testing.T) {
 	for _, pair := range [][2]string{{"owner/repo", "dev"}, {"/repo", "main"}, {"owner/other", "release/1.2"}, {"owner/repo", "main"}} {
 		got, err := TargetKey(pair[0], pair[1])
 		if err != nil {
 			t.Fatal(err)
 		}
-		out := pyoracle.Answer(t, pair[0]+" "+pair[1], func() ([]byte, error) {
-			cmd := exec.Command("uv", "run", "--no-sync", "python", "-c", "from codex_session_relay.mergeturn import target_key; import sys; print(target_key(*sys.argv[1:]))", pair[0], pair[1])
-			cmd.Dir = filepath.Join("..", "..", "..")
-			out, err := cmd.CombinedOutput()
-			if err != nil {
-				return nil, fmt.Errorf("Python derivation: %v: %s", err, out)
-			}
-			return out, nil
-		})
-		if got != string(bytes.TrimSpace(out)) {
-			t.Fatalf("derivation differs for %q: Go %s, Python %s", pair, got, out)
-		}
+		golden.CheckJSON(t, pair[0]+" "+pair[1], got)
 	}
 }
 
 func Test26_python_claim_whole_JSON(t *testing.T) {
 	s := setup(t)
-	assertPythonJSON(t, "python-claim.json", claim(t, s, "A", "p1", true))
+	matchesGoldenJSON(t, "claim", claim(t, s, "A", "p1", true))
 }
 func Test26_python_target_whole_JSON(t *testing.T) {
 	s := setup(t)
@@ -99,12 +78,12 @@ func Test26_python_target_whole_JSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertPythonJSON(t, "python-target.json", target)
+	matchesGoldenJSON(t, "target", target)
 }
 func Test26_python_waiter_whole_JSON(t *testing.T) {
 	s := setup(t)
 	claim(t, s, "A", "p1", true)
-	assertPythonJSON(t, "python-waiter.json", claim(t, s, "B", "p2", true))
+	matchesGoldenJSON(t, "waiter", claim(t, s, "B", "p2", true))
 }
 func Test26_python_ack_whole_JSON(t *testing.T) {
 	s := setup(t)
@@ -114,7 +93,7 @@ func Test26_python_ack_whole_JSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertPythonJSON(t, "python-ack.json", v)
+	matchesGoldenJSON(t, "ack", v)
 }
 func Test26_python_release_whole_JSON(t *testing.T) {
 	s := setup(t)
@@ -128,7 +107,7 @@ func Test26_python_release_whole_JSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertPythonJSON(t, "python-release.json", v)
+	matchesGoldenJSON(t, "release", v)
 }
 func Test26_MTN_6_racing_claims_one_holder(t *testing.T) {
 	s := setup(t)

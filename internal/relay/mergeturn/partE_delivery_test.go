@@ -6,9 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
-	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -19,6 +17,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 type wakeHost struct {
@@ -157,23 +156,11 @@ func (w *wakeParity) exec(query string, args ...any) {
 		w.t.Fatal(err)
 	}
 }
+
+// compare checks the recorded steps, target keys named in order of appearance, with the
+// scenario's golden.
 func (w *wakeParity) compare(name string) {
 	w.t.Helper()
-	raw, err := os.ReadFile(filepath.Join("testdata", "python_mergeturn.json"))
-	if err != nil {
-		w.t.Fatal(err)
-	}
-	var all map[string][]map[string]any
-	if err = json.Unmarshal(raw, &all); err != nil {
-		w.t.Fatal(err)
-	}
-	want, ok := all[name]
-	if !ok {
-		w.t.Fatal("missing oracle", name)
-	}
-	if len(w.out) != len(want) {
-		w.t.Fatalf("%s steps: Go %d Python %d", name, len(w.out), len(want))
-	}
 	encoded, err := json.Marshal(w.out)
 	if err != nil {
 		w.t.Fatal(err)
@@ -191,13 +178,7 @@ func (w *wakeParity) compare(name string) {
 	if err := json.Unmarshal([]byte(clean), &steps); err != nil {
 		w.t.Fatal(err)
 	}
-	for i := range want {
-		if !reflect.DeepEqual(steps[i], want[i]) {
-			g, _ := json.MarshalIndent(w.out[i], "", " ")
-			p, _ := json.MarshalIndent(want[i], "", " ")
-			w.t.Errorf("%s step %d:\nGo %s\nPython %s", name, i, g, p)
-		}
-	}
+	golden.CheckJSON(w.t, name, steps)
 }
 func newWakeParity(t *testing.T) *wakeParity {
 	t.Helper()
