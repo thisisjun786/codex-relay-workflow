@@ -1,13 +1,14 @@
-// Package definition is the Go side of the one compatibility definition (OPS-1.1),
-// scripts/crw_runtime/components.json.
+// Package definition is the one compatibility definition (OPS-1.1): the two components, the
+// console-script names the installer places beside crw as links to it, each component's version
+// and licence, and the tool that identifies the bridge.
 //
-// The committed file stays definitionVersion 1 and keeps its Python-shaped fields while the
-// Python installer and the developer harness read it (until todos 44 and 48). This package
-// carries only what a Go install needs - component names, console-script names (the
-// compatibility links beside crw), version, licence, upstream provenance and the identity
-// tool - and TestDefinitionAgreesWithComponentsJSON keeps it equal to the committed file.
-// Nothing here carries a per-target binary digest: release digests live in the release's
-// SHA256SUMS and in the host record (docs/port/decisions.md 35).
+// Until todo 44 scripts/crw_runtime/components.json was that definition, read by the Python
+// installer and the developer harnesses, and this package carried the fields a Go install uses
+// and a test kept them equal to the file. The file left with its last Python reader, and this
+// package is the only copy (decision 47). The upstream provenance it recorded for the ported
+// bridge is packages/codex-thread-bridge/PROVENANCE.md (packages/README.md until that file
+// exists). Nothing here carries a per-target binary digest: release digests live in the
+// release's SHA256SUMS and in the host record (decision 35).
 package definition
 
 import (
@@ -25,21 +26,18 @@ import (
 	"unicode/utf8"
 )
 
-// Version is components.json definitionVersion.
+// Version is the definitionVersion a host record states (decision 34: the host record stays at
+// definitionVersion 1). It is not the version of a file: no file carries the definition since
+// todo 44.
 const Version = 1
 
-// Upstream is a component's retained provenance.
-type Upstream struct{ Remote, Revision, Licence string }
-
-// Component is one component's retained fields.
+// Component is one component of the definition.
 type Component struct {
-	Name            string
-	ConsoleScript   string
-	Version         string
-	LicencePath     string
-	IdentityTool    string
-	ExerciseCommand string
-	Upstream        Upstream
+	Name          string
+	ConsoleScript string
+	Version       string
+	LicencePath   string
+	IdentityTool  string
 }
 
 // Names of the two components.
@@ -48,17 +46,15 @@ const (
 	Relay  = "codex-session-relay"
 )
 
-// Components is the definition, in components.json order.
+// Components is the definition, in the order components.json listed them.
 var Components = []Component{
 	{
 		Name: Bridge, ConsoleScript: "codex-thread-bridge", Version: "0.2.0",
 		LicencePath: "packages/codex-thread-bridge/LICENSE", IdentityTool: "get_capabilities",
-		Upstream: Upstream{Remote: "https://github.com/saidelike/codex-thread-bridge", Revision: "bb684f35b4919a82b09d2290dc26623716803d62", Licence: "MIT"},
 	},
 	{
 		Name: Relay, ConsoleScript: "codex-session-relay", Version: "0.2.0",
-		LicencePath: "LICENSE", ExerciseCommand: "doctor",
-		Upstream: Upstream{Remote: "none", Revision: "d3394038c108022dc0ff48d48ec878094c67e6df", Licence: "MIT"},
+		LicencePath: "LICENSE",
 	},
 }
 

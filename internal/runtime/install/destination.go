@@ -26,9 +26,11 @@ func foreignPointer(rec Object, dest string) string {
 	return "the host record names the owned pointer " + store.PythonRepr(recorded) + ", and crw install acts only on " + want + ", the pointer the plugin wiring runs: this host was installed at another destination (runtime_install.py --dest)"
 }
 
-// foreignRepair is how a host installed at another destination comes back under crw install.
+// foreignRepair is how a host installed at another destination comes back under crw install. The
+// Python installer that could reinstall at the fixed destination left with todo 44, so the one
+// repair is a clean record.
 func foreignRepair(o Options) string {
-	return "reinstall the runtime at the fixed destination with runtime_install.py install --dest " + o.Dest + ", so the host record names " + pointer.Path(o.Dest) + ", or, if the installation the record names is no longer used, move " + o.RecordPath + " aside so crw install starts from a clean record"
+	return "once the installation the record names is no longer used, move " + o.RecordPath + " aside so crw install starts from a clean record and installs at the fixed destination " + o.Dest + ", whose pointer " + pointer.Path(o.Dest) + " the plugin wiring runs"
 }
 
 // foreignDestination refuses a command on a host whose record names another pointer, before

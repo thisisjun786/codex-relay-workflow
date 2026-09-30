@@ -51,8 +51,8 @@ What the tool did that is still needed has another home:
 | the launcher half of `remove` | `install.RemoveLauncher` in `internal/runtime/install`: it deletes `<CODEX_HOME>/crw-stop-hook.py` only while the file carries the launcher marker, proves the marker again under the launcher's own lock, and never touches the settings. The cutover calls it once the retention scan is clear |
 | making the skill links | `crw-dev skills link --apply` (see [README](../README.md#install)) |
 
-`scripts/crw_transition/inventory.py` stays until the Python installer is removed, because
-`runtime_install.py register-mcp --execution-policy` reads the enabled plugin through it.
+`scripts/crw_transition/inventory.py` stayed until todo 44 removed the Python installer, because
+`runtime_install.py register-mcp --execution-policy` read the enabled plugin through it.
 
 ## A host that still needs it
 

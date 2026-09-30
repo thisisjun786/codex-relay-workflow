@@ -758,8 +758,8 @@ func Diagnose(ctx context.Context, o Options) Object {
 			one = classifyGo(c, target, rec, host.Usable(), runtime, seen, registrations)
 			classes = append(classes, scope.PyStr(record.Get(one, "class")))
 		case selected == KindPythonVenv:
-			one = Object{{Key: "component", Value: c.Name}, {Key: "class", Value: nil}, {Key: "classifiedBy", Value: "python3 scripts/runtime_install.py diagnose"},
-				{Key: "reason", Value: "a Python install is preserved and classified by the Python installer until todo 44; this command classifies Go installs only"}}
+			one = Object{{Key: "component", Value: c.Name}, {Key: "class", Value: nil},
+				{Key: "reason", Value: "the pointer selects a Python install, which this command does not classify: it classifies Go installs only, and the Python installer that classified Python installs left with the Python runtime in todo 44"}}
 		default:
 			one = Object{{Key: "component", Value: c.Name}, {Key: "class", Value: nil}, {Key: "reason", Value: "the pointer selects no runtime this command can classify"}}
 		}
@@ -832,7 +832,7 @@ func Diagnose(ctx context.Context, o Options) Object {
 	installed := field("not_verified", "component classes: "+evidence.Dumps(classOf(components), false, false, true)+". Only 'own' is reusable (OPS-2.2).", "crw doctor", measured)
 	switch {
 	case selected == KindPythonVenv:
-		installed = field("unknown", "the pointer selects a Python venv, which this command does not classify; python3 scripts/runtime_install.py diagnose does until todo 44", "crw doctor", "")
+		installed = field("unknown", "the pointer selects a Python venv, which this command does not classify (the Python installer that did left with the Python runtime in todo 44)", "crw doctor", "")
 	case len(classes) > 0 && allOwn(classes):
 		installed = field("verified", "component classes: "+evidence.Dumps(classOf(components), false, false, true)+". Only 'own' is reusable (OPS-2.2).", "crw doctor", measured)
 	}

@@ -216,8 +216,8 @@ is present but whether reusing it is safe, and only the class answers that.
 ### OPS-2.3 The skill link entry point is unchanged
 
 `crw-dev skills link` in the repository's development binary is the idempotent entry point that
-links this checkout's skills into Codex (`scripts/install.py` is its legacy standard-library
-equivalent until the Python execution path is removed), and it keeps refusing to replace an existing
+links this checkout's skills into Codex (its Python predecessor, `scripts/install.py`, left with the
+Python execution path in todo 44), and it keeps refusing to replace an existing
 directory or a foreign link. Runtime installation of the MCP server and the relay is a separate step
 that is never folded into it. The installer's `LINKED`, `MISSING`, and `CONFLICT` outcomes are reused
 as the vocabulary for describing runtime installs so that one word means one thing across both
