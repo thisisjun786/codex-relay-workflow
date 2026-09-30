@@ -168,9 +168,12 @@ Known limits of this wiring:
   `$HOME/.local/share/crw-runtime`.
 - The record's `bridgeExecutable` is checked (present and absolute) and not executed: the
   runtime behind the pointer is the bridge.
-- Nothing checks that the runtime behind the pointer can serve this payload. Both commands pass
-  `--plugin-launch`, which only a runtime built with decision 26 reads. Neither the package,
-  `crw install` nor `crw doctor` compares the two. If the pointer names a Python `env-*`
+- One reader checks that the runtime behind the pointer can serve this payload, and only for a
+  Python runtime. Both commands pass
+  `--plugin-launch`, which only a runtime built with decision 26 reads. `crw install rollback`
+  refuses to point at a Python `env-*` runtime while a cached version declares either command
+  ([rolling back](runtime-install.md#rolling-back)); nothing else, in the package, `crw install`
+  or `crw doctor`, compares the two. If the pointer names a Python `env-*`
   runtime, there is no `bin/crw`: the shell reports the missing program on stderr and the hook
   exits 0 with no record. If the pointer names a Go runtime built before decision 26, the hook
   releases the Stop with no output at all. That `crw hook` takes `--plugin-launch` for a
@@ -755,6 +758,9 @@ release's console script on a venv, and no rollback rewrites that document; only
 one is rewritten, when the pointer moves onto a Go runtime
 ([one Stop settings document](runtime-install.md#one-stop-settings-document)). In the other order,
 every Stop in between is released without a record ([the native wiring](#the-native-wiring)).
+Onto a Python runtime `crw install rollback` refuses that order, with nothing written, while a
+cached version still declares the native commands; onto a Go runtime built before decision 26
+nothing checks it.
 
 A rollback past the bridge record's version installs, and then its launcher refuses the record. A
 launcher that predates version 2 starts no bridge under a version-2 record: measured in isolation,

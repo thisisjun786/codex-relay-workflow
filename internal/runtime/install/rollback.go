@@ -3,6 +3,7 @@ package install
 import (
 	"context"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -232,6 +233,12 @@ func Rollback(ctx context.Context, o Options, named string) (Object, int) {
 		return nothing("the pointer would name a runtime that cannot be launched as it stands: "+strings.Join(append(problems, unread...), "; "),
 			field("launchable", Object{field("problems", strs(problems)), field("unread", strs(unread))}))
 	}
+	if kind == doctor.KindPythonVenv {
+		if detail, launches := nativePayload(o); detail != "" {
+			return nothing(detail, field("pluginLaunches", launches),
+				field("repair", "reinstall a plugin revision whose declarations are the Python bootstrap, so that no cached version runs --plugin-launch through the pointer, then rerun this rollback (docs/plugin-packaging.md \"Update and roll back\": the payload goes back before the runtime)"))
+		}
+	}
 	var gate Object
 	if moving {
 		var candidateSchema Object
@@ -337,6 +344,35 @@ func Rollback(ctx context.Context, o Options, named string) (Object, int) {
 		field("swapGate", orNull(gate)), field("secondOwner", owners), field("settings", transition.report), field("claim", orNull(claim)), field("leftClaim", orNull(left)),
 		field("note", "the pointer names the runtime the record selects again, read back after the move. The runtime it left is still installed and is now the outgoing selection, so rolling back again returns to it. A process already started keeps the runtime it started in."),
 	}, code
+}
+
+// nativePayload is why the plugin's cached declarations keep a rollback off a Python runtime,
+// or "" when nothing does, and what they launch (doctor.PluginLaunches). The native wiring runs
+// current/bin/crw hook --plugin-launch and execs current/bin/codex-thread-bridge
+// --plugin-launch (decision 26); a Python env-* runtime has no bin/crw and a bridge that refuses
+// the flag, so with the pointer on one every Stop would be released without a record and the
+// bridge would not start. A cached declaration that cannot be read leaves that unknown, which
+// keeps the pointer where it is as well.
+func nativePayload(o Options) (string, Object) {
+	launches, unread := doctor.PluginLaunches(doctor.RetentionOptions{Env: o.Env, CodexHome: o.CodexHome, Destination: o.Dest})
+	if launches == nil {
+		launches = []any{}
+	}
+	found := Object{field("launches", launches), field("unread", strs(unread))}
+	var versions []string
+	for _, launch := range launches {
+		version, _ := record.Get(launch.(Object), "version").(string)
+		if !slices.Contains(versions, version) {
+			versions = append(versions, version)
+		}
+	}
+	switch {
+	case len(versions) > 0:
+		return "a cached plugin version (" + strings.Join(versions, ", ") + ") declares commands that run through the pointer with --plugin-launch, which a Python runtime cannot serve: it has no bin/crw and its codex-thread-bridge refuses the flag, so with the pointer on it every Stop would be released without a record and the bridge would not start", found
+	case len(unread) > 0:
+		return "whether a cached plugin version under " + filepath.Join(o.CodexHome, "plugins", "cache", "crw", "crw") + " declares commands that run through the pointer with --plugin-launch, which a Python runtime cannot serve, is not established: " + strings.Join(unread, "; "), found
+	}
+	return "", found
 }
 
 // sameSpelling is whether two runtime directories are one by their resolved spelling, for a

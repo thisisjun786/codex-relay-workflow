@@ -461,7 +461,9 @@ The plugin payload that declares the native wiring (its Stop command runs `crw h
 decision 26. It is never cached beside a pointer at a Go runtime built before it, which releases
 every Stop without output or a journal row, or beside one at a Python `env-*` runtime. The
 order, and the reverse one for a rollback, are in docs/plugin-packaging.md "Turning the wired
-surfaces on" and "Update and roll back".
+surfaces on" and "Update and roll back". `crw install rollback` refuses, with nothing written, to
+point at a Python `env-*` runtime while a cached plugin version declares that wiring
+(docs/runtime-install.md "Rolling back").
 
 The legacy `guard-evaluate` CLI (stopadapter.py:69, command assembled at invocation time from
 settings at stopadapter.py:418-442) keeps its flags and its full verdict envelope so cached

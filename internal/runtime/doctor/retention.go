@@ -97,6 +97,9 @@ type scan struct {
 	// observe, when set, receives every path the registration rows classify, with the row,
 	// source and field naming it (RegisteredInside).
 	observe func(row int, source, field, path string, e Executable)
+	// seen, when set, receives every command the registration rows judge, those a shell script
+	// they run holds included, with the row, source and field naming it (PluginLaunches).
+	seen func(row int, source, field string, argv []shellWord, command Executable)
 }
 
 // stopTimeout is one configured Stop hook timeout, in seconds, and where it is configured.
@@ -171,7 +174,8 @@ func (s *scan) expander(pluginRoot string) Expander {
 
 // judge is an argvJudge whose reports are filed under one row, source and field.
 func (s *scan) judge(row int, source, field, cwd string, x Expander) argvJudge {
-	return argvJudge{c: s.classifier(row, source, field, x), cwd: cwd, report: func(word string, e Executable) {
+	c := s.classifier(row, source, field, x)
+	return argvJudge{c: c, cwd: cwd, seen: c.seen, report: func(word string, e Executable) {
 		e.Value = word
 		s.verdict(row, source, field, e)
 	}}
@@ -183,6 +187,9 @@ func (s *scan) classifier(row int, source, field string, x Expander) Classifier 
 	c := Classifier{Pointer: s.pointer, Expand: x}
 	if s.observe != nil {
 		c.Observe = func(path string, e Executable) { s.observe(row, source, field, path, e) }
+	}
+	if s.seen != nil {
+		c.seen = func(argv []shellWord, e Executable) { s.seen(row, source, field, argv, e) }
 	}
 	return c
 }
@@ -896,7 +903,7 @@ func stopAdapterIn(argv []shellWord) (stopAdapterCall, bool) {
 // command holds a word or construct the scan cannot judge, or runs a script that may run the
 // adapter itself.
 func readStopCommand(j argvJudge, command string) (calls []stopAdapterCall, unknown string) {
-	report := j.report
+	report, seen := j.report, j.seen
 	j.report = func(word string, e Executable) {
 		if e.Kind == KindUnreadable && unknown == "" {
 			unknown = "it holds " + strconv.Quote(word) + ", which this scan cannot judge"
@@ -906,6 +913,9 @@ func readStopCommand(j argvJudge, command string) (calls []stopAdapterCall, unkn
 		}
 	}
 	j.seen = func(argv []shellWord, command Executable) {
+		if seen != nil {
+			seen(argv, command)
+		}
 		if call, ok := stopAdapterIn(argv); ok {
 			calls = append(calls, call)
 			return

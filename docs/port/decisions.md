@@ -927,8 +927,14 @@ contract the Python launchers carried is enforced by the runtime in that mode.
   effects: against an empty CODEX_HOME, `codex-thread-bridge --plugin-launch` exits 2 in all three
   cases, with Go's `flag provided but not defined: -plugin-launch` from a runtime built before this
   decision, `crw bridge launcher: no record at ...` from one built with it, and argparse's
-  `unrecognized arguments: --plugin-launch` from a Python runtime. Nothing runs that probe yet
-  (refactor-backlog, the todo 34 compatibility entry).
+  `unrecognized arguments: --plugin-launch` from a Python runtime. Nothing runs that probe yet.
+  The Python half needs no probe, since no Python runtime reads the flag: `crw install rollback`
+  onto a Python `env-*` runtime reads every cached version's declarations with the retention
+  scan's row-5 readers (`doctor.PluginLaunches`, the shell scripts they run included) and
+  refuses, with nothing written, while any runs a program through the pointer with
+  `--plugin-launch` or cannot be read (`TestARollbackToAVenvRefusesWhileTheNativePayloadIsCached`
+  in internal/runtime/install/rollback_test.go). The order stays the only guard for a Go runtime
+  built before this decision, and `crw doctor` and `crw install status` do not report the pair.
 - `scripts/plugin_transition.py` `transition`, `disable` and `remove` refused with exit 2 and one
   line on stderr before reading the host. Their steps hand the surfaces only to a Python runtime
   (preflight requires `<dest>/current/bin/python3` and a cached payload equal to this checkout's),
