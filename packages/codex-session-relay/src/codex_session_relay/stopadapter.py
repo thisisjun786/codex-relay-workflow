@@ -608,8 +608,7 @@ def socket_guard(config, payload, *, state=None):
             except ValueError:
                 # Unreadable output, as the Go client classifies it: never a refusal. The stdout
                 # carries the bytes with U+FFFD for any that are not UTF-8, which can still parse,
-                # so the mark tells guard-evaluate that the owner said nothing readable (the
-                # adapter reads only the stdout, as before).
+                # so the mark tells guard-evaluate and run() that the owner said nothing readable.
                 return dict(exited(bytes(raw).decode("utf-8", "replace")), unreadable=True)
             if value is None:
                 return exited("")
@@ -1308,7 +1307,10 @@ def run(payload, codex_home=None, environ=None, settings=None):
                 claimed = key
         record["guardInvoked"] = True
         ending = invoke_guard(config, payload)
-        said, value = read_guard_stdout(ending.get("stdout"))
+        # An owner's bytes that are not UTF-8 are guard_output_unreadable, as the Go client
+        # classifies them (cutover.md): their replaced text may parse, but the owner did not say it.
+        said, value = ((SAID_SOMETHING_UNREADABLE, None) if ending.get("unreadable")
+                       else read_guard_stdout(ending.get("stdout")))
         record["processEnding"] = ending.get("ending")
         record["exitCode"] = ending.get("code")
         record["signal"] = ending.get("signal")

@@ -1263,6 +1263,54 @@ def test_guard_evaluate_cli_reports_an_owner_that_says_nothing_readable_as_a_hos
         "error": "host", "detail": "the owner closed control.sock without a readable guard-evaluate answer"}
 
 
+@pytest.mark.parametrize("reply", [
+    pytest.param(b'{"decision": "release", "state": "\xff", "hook_output": {}}\n', id="verdict-not-utf8"),
+    pytest.param(b'{"decision": "block", "state": "declared", "hook_output": {"decision": "block",'
+                 b' "reason": "verify \xff", "continue": true}}\n', id="hold-not-utf8"),
+    pytest.param(b'{"error": "refused", "reason": "\xff"}\n', id="error-record-not-utf8"),
+])
+def test_the_stop_adapters_pinned_route_reads_an_answer_that_is_not_utf8_as_unreadable(
+        database, tmp_path, reply):
+    """cutover.md: once sent, unreadable bytes are guard_output_unreadable, as Go classifies them.
+
+    Each byte that is not UTF-8 replaced with U+FFFD, these answers parse: the adapter neither
+    acts on the verdict (a hold would be printed) nor reads the owner's error record.
+    """
+    stamp(database, owner="go")
+    path = tmp_path / stopadapter.CONFIG_NAME
+    path.write_text(json.dumps({
+        "configVersion": stopadapter.CONFIG_VERSION, "event": stopadapter.EVENT,
+        "relayExecutable": str(tmp_path / "must-not-execute"), "markerRoot": str(tmp_path / "markers"),
+        "dbPath": str(database), "mode": stopadapter.OBSERVE, "timeoutSeconds": 5,
+        "journalRoot": str(tmp_path / "journal"), "journalPolicy": stopadapter.EVERY_INVOCATION,
+        "installedBy": "CRW-115", "isolationAssertedBy": None, "owner": stopadapter.OWNER_PLUGIN,
+        "adapterInterpreter": sys.executable,
+        "adapterEntryPoint": str(Path(stopadapter.__file__).resolve()),
+    }), encoding="utf-8")
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+        server.bind(str(database.parent / "control.sock"))
+        server.listen(1)
+        server.settimeout(10)
+
+        def owner():
+            connection, _ = server.accept()
+            with connection, connection.makefile("rb") as stream:
+                stream.readline()
+                connection.sendall(reply)
+
+        with (concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor,
+              mock.patch.object(stopadapter.subprocess, "Popen", side_effect=AssertionError("spawned"))):
+            future = executor.submit(owner)
+            printed = stopadapter.run(b"{}", codex_home=tmp_path / "codex-home", environ={},
+                                      settings=str(path))
+            future.result(timeout=10)
+    assert printed is None
+    [row] = [json.loads(entry.read_text()) for entry in (tmp_path / "journal").rglob("*.json")]
+    assert row["adapterOutcome"] == stopadapter.GUARD_OUTPUT_UNREADABLE, row
+    assert row["stdoutReading"] == stopadapter.SAID_SOMETHING_UNREADABLE
+    assert (row["held"], row["guardState"], row["guardDecision"]) == (False, None, None)
+
+
 def test_a_marker_only_stop_is_judged_whoever_owns_the_store_it_never_reads(database, tmp_path):
     """PR #185 4128954348: a verdict that reads no receipt is published as before the fence.
 
