@@ -142,6 +142,15 @@ func storeFiles(dir string) (map[string][32]byte, error) {
 		if strings.HasSuffix(entry.Name(), "-shm") || strings.HasSuffix(entry.Name(), "-wal") && info.Size() == 0 {
 			continue
 		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			// A link is the name it holds, never the file it names (which may not exist).
+			target, err := os.Readlink(filepath.Join(dir, entry.Name()))
+			if err != nil {
+				return nil, err
+			}
+			files[entry.Name()] = sha256.Sum256([]byte("symlink:" + target))
+			continue
+		}
 		raw, err := os.ReadFile(filepath.Join(dir, entry.Name()))
 		if err != nil {
 			return nil, err
@@ -301,12 +310,85 @@ func TestReadOnlyForms_never_create_an_absent_store(t *testing.T) {
 	}
 }
 
+// D is the file every opener opens, Path.resolve()'s, so a D link naming no file, beside no
+// mirror and no gate, is an absent store in both runtimes: every read form refuses it as
+// store_absent, byte for byte the live fence's answer, and leaves the link alone in S; a writer
+// and a service command's start preflight take it for the absent store a writable opener
+// creates, through the link (decision 30), answering alike and leaving the same names in S.
+func TestReadOnlyForms_take_a_dangling_database_link_for_an_absent_store(t *testing.T) {
+	home := pythonHome(t)
+	_, alias := packageBinary(t)
+	app := filepath.Join(home, "app.sock")
+	relay := func(runtime string, argv ...string) run {
+		if runtime == "go" {
+			return binaryRun(t, alias, argv...)
+		}
+		return fence(t, argv...)
+	}
+	dangling := func(name string) string {
+		state := filepath.Join(home, name)
+		if err := os.MkdirAll(state, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(state, "nowhere.sqlite3"), filepath.Join(state, "relay.sqlite3")); err != nil {
+			t.Fatal(err)
+		}
+		return state
+	}
+	names := func(state string) []string {
+		entries, err := os.ReadDir(state)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var listed []string
+		for _, entry := range entries {
+			listed = append(listed, entry.Name())
+		}
+		return listed
+	}
+	for i, argv := range [][]string{
+		{"status"}, {"show", "--event", "absent"}, {"store-identity"}, {"store-challenge", "--read", "absent"},
+		{"fault-show"}, {"fault-next"}, {"sync-status"}, {"route-show"}, {"--socket", app, "status"},
+	} {
+		answers := map[string]run{}
+		for _, runtime := range []string{"go", "python"} {
+			state := dangling(fmt.Sprintf("%s-read-%d", runtime, i))
+			answer := relay(runtime, append([]string{"--state", state}, argv...)...)
+			answer.stdout = strings.ReplaceAll(answer.stdout, state, "<S>")
+			answers[runtime] = answer
+			if listed := names(state); !slices.Equal(listed, []string{"relay.sqlite3"}) {
+				t.Errorf("%s %v on a dangling D link changed S: %v", runtime, argv, listed)
+			}
+		}
+		want := "{\n  \"error\": \"refused\",\n  \"reason\": \"store_absent\",\n  \"detail\": \"no relay store exists at <S>/relay.sqlite3; a read-only command never creates one\"\n}\n"
+		if got, py := answers["go"], answers["python"]; got.code != 2 || got.stdout != want || py.code != got.code || py.stdout != got.stdout {
+			t.Errorf("%v: go exit %d\n%s\npython exit %d\n%s", argv, got.code, got.stdout, py.code, py.stdout)
+		}
+	}
+	for i, argv := range [][]string{{"store-challenge", "--write"}, {"--socket", app, "service", "disable"}} {
+		listed := map[string][]string{}
+		for _, runtime := range []string{"go", "python"} {
+			state := dangling(fmt.Sprintf("%s-write-%d", runtime, i))
+			if answer := relay(runtime, append([]string{"--state", state}, argv...)...); answer.code != 0 {
+				t.Errorf("%s %v on a dangling D link: exit %d\n%s", runtime, argv, answer.code, answer.stdout)
+			}
+			listed[runtime] = names(state)
+		}
+		if !slices.Equal(listed["go"], listed["python"]) {
+			t.Errorf("%v on a dangling D link: go left %v, python %v", argv, listed["go"], listed["python"])
+		}
+	}
+}
+
 // A partial store (a write gate or an ownership mirror without D) is refused, never read or
 // repaired (decision 30): every form, read or write, answers the refusal the fence's writer
 // admission gives the same state (partial store: write-gate.lock without a database for a gate
 // alone, validate's missing or unsupported writer protocol beside a mirror), reason
 // store_owned_by_other with exit 2 rather than a host error that invites a retry, byte for byte
-// the live fence's answer on a twin S, and leaves S exactly as it found it.
+// the live fence's answer on a twin S, and leaves S and the scope registry exactly as it found
+// them: the service commands and the daemon refuse it before any daemon.lock, daemon.json,
+// service.json or scope claim. D is the file every opener opens, Path.resolve()'s, so a D link
+// naming no file beside a gate is a gate without a database.
 func TestReadOnlyForms_refuse_a_partial_store_as_a_writer_does(t *testing.T) {
 	home := pythonHome(t)
 	_, alias := packageBinary(t)
@@ -318,14 +400,17 @@ func TestReadOnlyForms_refuse_a_partial_store_as_a_writer_does(t *testing.T) {
 	}
 	app := filepath.Join(home, "app.sock")
 	fenceProgram := filepath.Join(repositoryRoot(t), ".venv", "bin", "codex-session-relay")
+	scopes := os.Getenv("CODEX_SESSION_RELAY_SCOPE_DIR")
 	for _, partial := range []struct {
-		name   string
-		files  map[string]string
-		detail string
+		name     string
+		files    map[string]string
+		dangling bool
+		detail   string
 	}{
-		{"gate only", map[string]string{"write-gate.lock": ""}, "partial store: write-gate.lock without a database"},
-		{"mirror only", map[string]string{"takeover.json": string(mirror)}, "missing or unsupported writer protocol"},
-		{"gate and mirror", map[string]string{"write-gate.lock": "", "takeover.json": string(mirror)}, "missing or unsupported writer protocol"},
+		{"gate only", map[string]string{"write-gate.lock": ""}, false, "partial store: write-gate.lock without a database"},
+		{"mirror only", map[string]string{"takeover.json": string(mirror)}, false, "missing or unsupported writer protocol"},
+		{"gate and mirror", map[string]string{"write-gate.lock": "", "takeover.json": string(mirror)}, false, "missing or unsupported writer protocol"},
+		{"gate beside a dangling link", map[string]string{"write-gate.lock": ""}, true, "partial store: write-gate.lock without a database"},
 	} {
 		states := map[string]string{}
 		for _, runtime := range []string{"go", "python"} {
@@ -338,6 +423,11 @@ func TestReadOnlyForms_refuse_a_partial_store_as_a_writer_does(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			if partial.dangling {
+				if err := os.Symlink(filepath.Join(state, "nowhere.sqlite3"), filepath.Join(state, "relay.sqlite3")); err != nil {
+					t.Fatal(err)
+				}
+			}
 			states[runtime] = state
 		}
 		want := "{\n  \"error\": \"refused\",\n  \"reason\": \"store_owned_by_other\",\n  \"detail\": \"" + partial.detail + "\"\n}\n"
@@ -345,7 +435,9 @@ func TestReadOnlyForms_refuse_a_partial_store_as_a_writer_does(t *testing.T) {
 			{"status"}, {"show", "--event", "absent"}, {"store-identity"}, {"store-challenge", "--read", "absent"},
 			{"fault-show"}, {"fault-next"}, {"sync-status"}, {"route-show"}, {"--socket", app, "status"},
 			{"store-challenge", "--write"}, {"--socket", app, "store-challenge", "--write"},
-			{"--socket", app, "daemon", "--allow-isolated-scope"},
+			{"--socket", app, "daemon", "--allow-isolated-scope", "--max-ticks", "0"},
+			{"--socket", app, "service", "enable"}, {"--socket", app, "service", "disable"},
+			{"--socket", app, "service", "stop"}, {"--socket", app, "service", "declare", "--forget-execution-policy"},
 		} {
 			answers := map[string]run{}
 			for runtime, state := range states {
@@ -358,12 +450,11 @@ func TestReadOnlyForms_refuse_a_partial_store_as_a_writer_does(t *testing.T) {
 				} else {
 					answers[runtime] = fence(t, append([]string{"--state", state}, argv...)...)
 				}
-				// The fence's daemon takes its own daemon.lock in S before its store is refused.
-				if runtime == "python" && slices.Contains(argv, "daemon") {
-					continue
-				}
 				if after, err := storeFiles(state); err != nil || !maps.Equal(before, after) {
 					t.Errorf("%s %s %v changed S (%v): %v -> %v", runtime, partial.name, argv, err, before, after)
+				}
+				if claims, err := os.ReadDir(scopes); !errors.Is(err, os.ErrNotExist) {
+					t.Errorf("%s %s %v touched the scope registry: %v %v", runtime, partial.name, argv, claims, err)
 				}
 			}
 			goAnswer, pyAnswer := answers["go"], answers["python"]

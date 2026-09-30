@@ -38,8 +38,11 @@ func admitWrite(ctx context.Context, path string) (*ownership.Admission, error) 
 // socketPath is the command's --socket as given, so the opener that completes a torn socket
 // binding is let through (cutover.md Record); one that cannot be canonicalized binds
 // nothing, and the opener reports it.
+// The store is named as every opener names it, beside Path.resolve()'s D: a dangling D link
+// alone is an absent store, which the writable opener creates through the link.
 func StartPreflight(ctx context.Context, dbPath, socketPath string) error {
-	if resolved := resolveLoosely(dbPath); !storeAbsent(resolved) {
+	resolved := resolveLoosely(dbPath)
+	if !storeAbsent(resolved) {
 		if err := partialStore(resolved); err != nil {
 			return err
 		}
@@ -48,7 +51,7 @@ func StartPreflight(ctx context.Context, dbPath, socketPath string) error {
 	if socketPath != "" {
 		socket, _ = CanonicalSocket(socketPath)
 	}
-	if err := ownership.CheckStart(ctx, dbPath, socket); err != nil {
+	if err := ownership.CheckStart(ctx, resolved, socket); err != nil {
 		return &RefusedError{Reason: "store_owned_by_other", Detail: OwnershipRefusalDetail(err)}
 	}
 	return nil
@@ -71,13 +74,15 @@ func StartPreflight(ctx context.Context, dbPath, socketPath string) error {
 //     which never initializes a legacy one (decision 30) and refuses it there, before any
 //     marker fact exists (intent-register's hold);
 //   - a fenced store is refused where StartPreflight's judgement (ownership.CheckStart, with
-//     socketPath) refuses it, in validate's words wherever validate refuses it too.
+//     socketPath) refuses it, in validate's words wherever validate refuses it too, judged as
+//     check_start judges it: without the socket_path of a torn binding that socket's opener
+//     would complete (`unbound(...) or meta`, fenceUnbound).
 func CheckStartLikeFence(ctx context.Context, dbPath, socketPath string) error {
 	socket := ""
 	if socketPath != "" {
 		socket, _ = CanonicalSocket(socketPath)
 	}
-	return checkLikeFence(ctx, dbPath, readMetadata, func(ctx context.Context) error {
+	return checkLikeFence(ctx, dbPath, socket, readMetadata, func(ctx context.Context) error {
 		return ownership.CheckStart(ctx, dbPath, socket)
 	})
 }
@@ -88,7 +93,7 @@ func CheckStartLikeFence(ctx context.Context, dbPath, socketPath string) error {
 // of the store and no SQLite sidecar. An absent or unfenced store passes; a fenced one must be
 // this runtime's active store.
 func CheckStop(ctx context.Context, dbPath string) error {
-	return checkLikeFence(ctx, dbPath, stopMetadata, func(ctx context.Context) error {
+	return checkLikeFence(ctx, dbPath, "", stopMetadata, func(ctx context.Context) error {
 		return ownership.CheckStop(ctx, dbPath, func(ctx context.Context, path string) (ownership.Stamp, error) {
 			ro, err := OpenStopRead(ctx, path, 0)
 			if err != nil {
@@ -102,8 +107,9 @@ func CheckStop(ctx context.Context, dbPath string) error {
 
 // checkLikeFence is ownership.check_start's reading in the fence's order (CheckStartLikeFence):
 // the mirror, then the durable metadata meta reads, then judge's verdict for a fenced store,
-// worded as validate words it.
-func checkLikeFence(ctx context.Context, dbPath string, meta func(context.Context, string) (map[string]string, error), judge func(context.Context) error) error {
+// worded as validate words it. socket is the canonical socket the caller checks against ("" for
+// check_stop's socketless reading), which completes a torn binding as check_start does.
+func checkLikeFence(ctx context.Context, dbPath, socket string, meta func(context.Context, string) (map[string]string, error), judge func(context.Context) error) error {
 	resolved := resolveLoosely(dbPath)
 	raw, err := os.ReadFile(filepath.Join(filepath.Dir(resolved), "takeover.json"))
 	switch {
@@ -136,7 +142,7 @@ func checkLikeFence(ctx context.Context, dbPath string, meta func(context.Contex
 	case !errors.As(err, &refused):
 		return &pythonHostError{cause: err}
 	}
-	if why := fenceRefusal(resolved, durable, raw); why != "" {
+	if why := fenceRefusal(resolved, durable, raw, socket); why != "" {
 		return fenceRefused(why)
 	}
 	return &RefusedError{Reason: "store_owned_by_other", Detail: OwnershipRefusalDetail(err), cause: err}

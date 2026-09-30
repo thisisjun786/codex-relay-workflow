@@ -1069,12 +1069,21 @@ mirror or a write gate without `D`) is never read, created or repaired: every fo
 runtimes that opens the store, read or write, answers the fence writer's refusal, reason
 `store_owned_by_other`, exit 2, detail `partial store: write-gate.lock without a database` for
 a gate alone and, beside a mirror, the refusal `check_start` meets first (the mirror's own when
-it cannot be read, else validate's `missing or unsupported writer protocol`), and Go's service
-and daemon start preflight refuses it in the same words. A reader never takes the gate. Go had
-worded all of these
-`ownership refused: existing database required: lstat <D>: ...` and the fence answered a
-read-only form with the host error `OperationalError: unable to open database file` (exit 3);
-both are corrected. A read-only form never binds an unbound store to
+it cannot be read, else validate's `missing or unsupported writer protocol`). The `service`
+forms but `status`, and `daemon` once it has the `--socket` it asks for first, refuse it in the
+same words before they write anything into `S` or the scope registry: Go in its start preflight
+(`store.StartPreflight`), the fence in `main` ahead of `check_start` (`ownership.refuse_partial`),
+since `check_start` passes a gate alone as unfenced. A reader never takes the gate. Both
+runtimes judge absence beside the `D` every opener opens, `Path.resolve()`'s, so a `D` link
+naming no file is no `D`: alone it is an absent store (`store_absent` to a read-only form, and
+created through the link by a writer, a service form or a daemon), beside a gate a partial one.
+Go had worded all of these `ownership refused: existing database required: lstat <D>: ...`
+(its start preflight so refused a dangling `D` link alone too); the fence answered a read-only
+form with the host error `OperationalError: unable to open database file` (exit 3), took a
+dangling `D` link for a store (creating one through it for a reader, or the host error beside a
+gate), let `service enable`, `disable`, `stop` and `declare` act on a gate alone, and had its
+daemon write `daemon.lock`, `daemon.json` and a released scope claim before refusing one. All
+are corrected. A read-only form never binds an unbound store to
 its socket either: it reads `mode=ro` instead (decision 30).
 
 Argument refusals keep `cli.py` `main`'s order against the store. A read-only form refuses

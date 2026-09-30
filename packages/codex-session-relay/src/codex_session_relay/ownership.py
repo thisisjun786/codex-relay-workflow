@@ -278,6 +278,33 @@ def check_start(path, *, candidate=None, socket=None):
     validate(path, meta, record, candidate=candidate)
 
 
+def refuse_partial(path):
+    """Refuse a write gate beside a certainly absent D and no mirror, without taking the gate.
+
+    A writer's Admission meets that partial store and refuses it, but the service and daemon
+    commands act on S and the scope registry (daemon.lock, daemon.json, service.json, the scope
+    claim) before any admitted open, and check_start passes it as unfenced; cli.main runs this
+    first for them, as Go's store.StartPreflight does. D, the mirror and the gate are named as
+    every opener names them, beside Path.resolve()'s D (a dangling D link names an absent D).
+    A mirror beside no D is left to check_start, which refuses it in the same place.
+    """
+    path = Path(path).resolve()
+
+    def absent(name):
+        # Only a name that is certainly not there is absent.
+        try:
+            os.lstat(name)
+        except FileNotFoundError:
+            return True
+        except OSError:
+            return False
+        return False
+
+    if (absent(path) and absent(path.parent / "takeover.json")
+            and not absent(path.parent / "write-gate.lock")):
+        raise OwnershipRefused("partial store: write-gate.lock without a database")
+
+
 def check_stop(path):
     """check_start for a read-only Stop evaluation (guard-evaluate's local path).
 
@@ -308,11 +335,21 @@ def report(path):
 
 
 def scope_key(socket_path):
-    """The scope-registry key the service locks for this socket (ScopeRegistry.key),
-    including the isolated-<salt>- namespace an overridden registry root adds."""
-    from .service import ScopeRegistry, resolve_scope_root
-    root, authority = resolve_scope_root()
-    return ScopeRegistry(root, authority).key(socket_path)
+    """The scope-registry key of a canonical socket as the ownership record carries it
+    (service.canonical_scope_key, Go ownership.ScopeKey), including the isolated-<salt>-
+    namespace an overridden registry root adds.
+
+    Every caller passes a canonical spelling (canonical_socket's at binding and initialization,
+    the recorded appServerSocket in validate), hashed as given: never resolved again, so a socket
+    directory that becomes a symlink after binding leaves the record valid in both runtimes. The
+    production authority's key has no salt, so its root (the passwd entry) is not looked up.
+    """
+    from .service import SCOPE_ENV, canonical_scope_key, resolve_scope_root
+
+    if not os.environ.get(SCOPE_ENV):
+        return canonical_scope_key(socket_path)
+    root, _authority = resolve_scope_root()
+    return canonical_scope_key(socket_path, root)
 
 
 def _legacy(meta, record):

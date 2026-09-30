@@ -420,3 +420,75 @@ def test_a_partial_store_is_refused_as_a_writer_refuses_it(tmp_path, partial, de
     for argv in PARTIAL_READS:
         assert answer(argv) == (2, refused), argv
         assert snapshot() == before, argv
+
+
+def _cli(argv):
+    output = StringIO()
+    with redirect_stdout(output):
+        code = cli.main(argv)
+    return code, json.loads(output.getvalue())
+
+
+# The service and daemon commands act on S and the scope registry before any admitted open.
+# `service start`, `restart` and `run` are left out: were the refusal lost they would spawn or
+# run a supervisor here; the Go parity test drives the rest of them.
+PARTIAL_STARTS = (["service", "enable"], ["service", "disable"], ["service", "stop"],
+                  ["service", "declare", "--forget-execution-policy"],
+                  ["daemon", "--allow-isolated-scope", "--max-ticks", "0"])
+
+
+@pytest.mark.parametrize("argv", PARTIAL_STARTS)
+@pytest.mark.parametrize("dangling", [False, True], ids=["gate", "gate-beside-a-dangling-link"])
+def test_a_gate_without_a_database_is_refused_before_service_or_daemon_touch_anything(
+        tmp_path, monkeypatch, argv, dangling):
+    """Go store.StartPreflight's partial-store refusal, in the fence (decision 31).
+
+    check_start passes a gate without D as unfenced, and no admitted open follows before a
+    service command or the daemon writes daemon.lock, daemon.json or service.json into S or a
+    claim into the scope registry. cli.main refuses it first, with a writer's words, reason
+    store_owned_by_other and exit 2; D is Path.resolve()'s, so a D link naming no file is no D.
+    A daemon asks for its --socket before that, as Go's does.
+    """
+    scopes = tmp_path / "scopes"
+    monkeypatch.setenv("CODEX_SESSION_RELAY_SCOPE_DIR", str(scopes))
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    (state / "write-gate.lock").touch(mode=0o600)
+    if dangling:
+        (state / "relay.sqlite3").symlink_to(state / "nowhere.sqlite3")
+    before = sorted(path.name for path in state.iterdir())
+    refused = {"error": "refused", "reason": "store_owned_by_other",
+               "detail": "partial store: write-gate.lock without a database"}
+    assert _cli(["--state", str(state), "--socket", str(tmp_path / "app.sock"), *argv]) == (2, refused)
+    assert sorted(path.name for path in state.iterdir()) == before
+    assert not scopes.exists()
+    if argv[0] == "daemon":
+        assert _cli(["--state", str(state), *argv]) == (4, {
+            "error": "usage", "detail": "this command needs --socket to reach the host"})
+        assert sorted(path.name for path in state.iterdir()) == before
+        assert not scopes.exists()
+
+
+def test_a_dangling_database_link_is_judged_as_the_file_it_names(tmp_path):
+    """D is the file every opener opens, Path.resolve()'s (Go's storeAbsent and partialStore).
+
+    A D link naming no file, beside no mirror and no gate, is an absent store: a read-only form
+    refuses it as store_absent and creates nothing through the link. Beside a gate it is a
+    partial store, refused with a writer's words rather than read (a host error, exit 3) after
+    taking the gate.
+    """
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    (state / "relay.sqlite3").symlink_to(state / "nowhere.sqlite3")
+    absent = {"error": "refused", "reason": "store_absent",
+              "detail": f"no relay store exists at {state / 'relay.sqlite3'}; a read-only command"
+                        " never creates one"}
+    for argv in PARTIAL_READS:
+        assert _cli(["--state", str(state), *argv]) == (2, absent), argv
+        assert sorted(path.name for path in state.iterdir()) == ["relay.sqlite3"], argv
+    (state / "write-gate.lock").touch(mode=0o600)
+    partial = {"error": "refused", "reason": "store_owned_by_other",
+               "detail": "partial store: write-gate.lock without a database"}
+    for argv in (*PARTIAL_READS, ["store-challenge", "--write"]):
+        assert _cli(["--state", str(state), *argv]) == (2, partial), argv
+        assert sorted(path.name for path in state.iterdir()) == ["relay.sqlite3", "write-gate.lock"], argv

@@ -414,3 +414,62 @@ func TestCheckStartLikeFence_words_the_scope_identity_as_validate_does(t *testin
 		t.Errorf("a socket with a null scope key: %q", got)
 	}
 }
+
+// check_start(path, socket=K) judges a torn binding K's opener would complete (socket_path
+// committed as K, the mirror still unbound) without that socket_path, as ownership.py's
+// `unbound(...) or meta` does, so a second defect of the owner's store is named rather than the
+// torn binding. Without a socket, or with another one, the torn binding is the refusal
+// (test_fence.py, fence_parity_test.go
+// TestSocketBinding_completes_a_torn_binding_only_for_its_socket).
+func TestCheckStartLikeFence_judges_a_torn_binding_as_its_socket_would_complete_it(t *testing.T) {
+	dir := stateDir(t)
+	path := filepath.Join(dir, "relay.sqlite3")
+	socket := filepath.Join(dir, "app.sock")
+	testsupport.Create(t, path, "", "go")
+	db, err := sql.Open("sqlite", path)
+	must(t, err)
+	_, err = db.Exec("INSERT INTO schema_meta VALUES ('socket_path', ?)", socket)
+	must(t, err)
+	must(t, db.Close())
+	detail := func(err error) string {
+		var refused *RefusedError
+		if !errors.As(err, &refused) || refused.Reason != "store_owned_by_other" {
+			t.Fatalf("not an ownership refusal: %#v", err)
+		}
+		return refused.Detail
+	}
+	if err := CheckStartLikeFence(t.Context(), path, socket); err != nil {
+		t.Fatalf("the torn binding's own socket: %v", err)
+	}
+	mirror := filepath.Join(dir, "takeover.json")
+	raw, err := os.ReadFile(mirror)
+	must(t, err)
+	var record map[string]any
+	must(t, json.Unmarshal(raw, &record))
+	record["storeId"] = "wrong"
+	raw, err = json.Marshal(record)
+	must(t, err)
+	must(t, os.WriteFile(mirror, raw, 0o600))
+	for _, check := range []struct{ socket, want string }{
+		{socket, "ownership record disagrees with the durable store"},
+		{"", "scope without socket"},
+		{filepath.Join(dir, "other.sock"), "scope without socket"},
+	} {
+		if got := detail(CheckStartLikeFence(t.Context(), path, check.socket)); got != check.want {
+			t.Errorf("socket %q: %q, want %q", check.socket, got, check.want)
+		}
+	}
+	// Another runtime's torn binding is never this runtime's to complete (unbound's owner).
+	db, err = sql.Open("sqlite", path)
+	must(t, err)
+	_, err = db.Exec("UPDATE schema_meta SET value='python' WHERE key='owner'")
+	must(t, err)
+	must(t, db.Close())
+	record["owner"] = "python"
+	raw, err = json.Marshal(record)
+	must(t, err)
+	must(t, os.WriteFile(mirror, raw, 0o600))
+	if got := detail(CheckStartLikeFence(t.Context(), path, socket)); got != "scope without socket" {
+		t.Errorf("the other runtime's torn binding: %q", got)
+	}
+}

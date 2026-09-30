@@ -1414,6 +1414,9 @@ UNACCOUNTED_FAULT_OCCURRENCES = (
     # Lowers ownership.LOCK_WAIT_SECONDS so a held write-gate SH expires the binding quickly.
     ("test_fence.py", "test_socket_binding_waits_for_other_writers_within_the_declared_bound",
      "calls setattr"),
+    # Makes pwd.getpwuid fail so no production-scope key may consult the passwd entry; the
+    # store and its transactions run unpatched.
+    ("test_fence.py", "test_the_production_scope_key_needs_no_passwd_entry", "calls setattr"),
     # Sets sys.platform to darwin so the Stop client's peer_uid reads LOCAL_PEERCRED from a
     # faked getsockopt on a real connection; no store or DB hook is involved.
     ("test_fence.py", "test_the_stop_client_authenticates_the_owner_with_its_platform_credentials",

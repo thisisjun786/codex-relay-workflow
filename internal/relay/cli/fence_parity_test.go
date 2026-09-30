@@ -3,10 +3,12 @@ package cli_test
 import (
 	"database/sql"
 	"encoding/binary"
+	"errors"
 	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"unicode/utf16"
@@ -329,6 +331,113 @@ func TestScopeKey_from_another_lock_authority_is_refused_as_the_fence_refuses_it
 	for creator, state := range states {
 		if answer := relay(creator, state, "--socket", app, "store-challenge", "--write"); answer.code != 0 {
 			t.Errorf("%s under the binding authority: %+v", creator, answer)
+		}
+	}
+}
+
+// The mirror's scopeKey is judged against the recorded appServerSocket as it is, never
+// resolved again (ownership.ScopeKey, ownership.py scope_key): the binding recorded the
+// canonical spelling and its key, so a socket directory replaced by a symlink after binding
+// leaves each store its owner's to write, and the other runtime's writer is refused alike.
+func TestScopeKey_of_a_bound_store_survives_a_symlinked_socket_directory(t *testing.T) {
+	home := pythonHome(t)
+	_, alias := packageBinary(t)
+	sockets := filepath.Join(home, "sockets")
+	if err := os.Mkdir(sockets, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	app := filepath.Join(sockets, "app.sock")
+	states := map[string]string{"go": filepath.Join(home, "go"), "python": filepath.Join(home, "python")}
+	relay := func(runtime, state string, argv ...string) run {
+		argv = append([]string{"--state", state}, argv...)
+		if runtime == "go" {
+			return binaryRun(t, alias, argv...)
+		}
+		return fence(t, argv...)
+	}
+	for creator, state := range states {
+		if created := relay(creator, state, "--socket", app, "store-challenge", "--write"); created.code != 0 {
+			t.Fatalf("%s creates the bound store: %+v", creator, created)
+		}
+	}
+	moved := filepath.Join(home, "moved")
+	if err := os.Rename(sockets, moved); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(moved, sockets); err != nil {
+		t.Fatal(err)
+	}
+	other := "{\n  \"error\": \"refused\",\n  \"reason\": \"store_owned_by_other\",\n  \"detail\": \"the relay store belongs to another runtime\"\n}\n"
+	for _, runtime := range []string{"go", "python"} {
+		for creator, state := range states {
+			if r, s := records(t, state); r.AppServerSocket == nil || *r.AppServerSocket != app || s.SocketPath != app {
+				t.Fatalf("the %s-owned store is not bound to %s: %+v", creator, app, r)
+			}
+			answer := relay(runtime, state, "store-challenge", "--write")
+			if runtime == creator && answer.code != 0 || runtime != creator && (answer.code != 2 || answer.stdout != other) {
+				t.Errorf("%s writer on the %s-owned store: exit %d\n%s", runtime, creator, answer.code, answer.stdout)
+			}
+		}
+	}
+}
+
+// A marker command's check_start judges a torn binding its own --socket would complete
+// (socket_path committed, the mirror still unbound) without that socket_path, as ownership.py's
+// `unbound(...) or meta` does: on each runtime's own store with a second defect, intent-declare
+// with that socket answers the second defect in both runtimes alike, and without the socket
+// both answer the torn binding; no marker is published.
+func TestMarkerPreflight_judges_a_torn_binding_with_its_socket_as_the_fence_does(t *testing.T) {
+	home := pythonHome(t)
+	_, alias := packageBinary(t)
+	app := filepath.Join(home, "app.sock")
+	workspace := filepath.Join(home, "work")
+	if err := os.Mkdir(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	storeID := regexp.MustCompile(`"storeId":\s*"[0-9a-f]+"`)
+	refused := func(detail string) string {
+		return "{\n  \"error\": \"refused\",\n  \"reason\": \"store_owned_by_other\",\n  \"detail\": \"" + detail + "\"\n}\n"
+	}
+	for _, runtime := range []string{"go", "python"} {
+		relay := func(argv ...string) run {
+			if runtime == "go" {
+				return binaryRun(t, alias, argv...)
+			}
+			return fence(t, argv...)
+		}
+		state := filepath.Join(home, runtime)
+		if created := relay("--state", state, "store-challenge", "--write"); created.code != 0 {
+			t.Fatalf("%s: %+v", runtime, created)
+		}
+		tear(t, state, app)
+		mirror := filepath.Join(state, "takeover.json")
+		raw, err := os.ReadFile(mirror)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !storeID.Match(raw) {
+			t.Fatalf("%s: no storeId in %s", runtime, raw)
+		}
+		if err := os.WriteFile(mirror, storeID.ReplaceAll(raw, []byte(`"storeId":"wrong"`)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		for _, check := range []struct {
+			socket []string
+			detail string
+		}{
+			{[]string{"--socket", app}, "ownership record disagrees with the durable store"},
+			{nil, "scope without socket"},
+		} {
+			markers := filepath.Join(home, "markers-"+runtime+strings.Join(check.socket, ""))
+			argv := append(append([]string{"--state", state}, check.socket...), "intent-declare", "--workspace", workspace,
+				"--dispatch-request-id", "dispatch-1", "--issue", "REL-1", "--declared-at", "2026-01-01T00:00:00+00:00",
+				"--marker-root", markers)
+			if answer := relay(argv...); answer.code != 2 || answer.stdout != refused(check.detail) {
+				t.Errorf("%s intent-declare %v on its own torn store: exit %d\n%s", runtime, check.socket, answer.code, answer.stdout)
+			}
+			if entries, err := os.ReadDir(markers); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("%s intent-declare %v published under the marker root: %v %v", runtime, check.socket, entries, err)
+			}
 		}
 	}
 }

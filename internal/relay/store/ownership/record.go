@@ -242,9 +242,11 @@ func OpenExisting(ctx context.Context, path, mode string) (*sql.DB, error) {
 	return db, nil
 }
 
-// ScopeKey is the scope-registry key of a canonical socket path (service.py
-// ScopeRegistry.key): the first 16 hex digits of its SHA-256, namespaced as
-// isolated-<salt>- when CODEX_SESSION_RELAY_SCOPE_DIR overrides the registry root.
+// ScopeKey is the scope-registry key of a canonical socket path, hashed as given (service.py
+// canonical_scope_key, as ownership.py scope_key calls it; ScopeRegistry.key resolves first):
+// the first 16 hex digits of its SHA-256, namespaced as isolated-<salt>- when
+// CODEX_SESSION_RELAY_SCOPE_DIR overrides the registry root. Validate judges the recorded
+// appServerSocket with it as recorded, never resolved again.
 func ScopeKey(socket string) (string, error) {
 	hash := sha256.Sum256([]byte(socket))
 	key := fmt.Sprintf("%x", hash[:8])

@@ -206,9 +206,12 @@ class Services:
                     return True
 
                 database = self.selection.db_path
+                # Judged beside the D every opener opens, Path.resolve()'s: a dangling D link
+                # names an absent D, and the mirror and gate sit beside the file it names.
+                resolved = database.resolve()
                 if not any(present(name) for name in (
-                        database, database.parent / "takeover.json",
-                        database.parent / "write-gate.lock")):
+                        resolved, resolved.parent / "takeover.json",
+                        resolved.parent / "write-gate.lock")):
                     # A reader never creates or initializes a store (decision 30): the first
                     # reader must not choose the owner or bind the store to no socket.
                     raise PayloadExit({
@@ -218,13 +221,13 @@ class Services:
                 try:
                     check_start(self.selection.db_path)
                 except OwnershipRefused:
-                    if not present(database):
+                    if not present(resolved):
                         # A partial store (a mirror without D) is refused as a writer's
                         # admission refuses it, never read or repaired (decision 30).
                         raise
                     read_only = True
                 else:
-                    if not present(database):
+                    if not present(resolved):
                         # A write gate without D: the refusal Admission gives a writer, here
                         # without taking the gate, which a reader never does (decision 30).
                         raise OwnershipRefused("partial store: write-gate.lock without a database")
@@ -6031,7 +6034,7 @@ def main(argv=None) -> int:
     from contextlib import ExitStack
 
     from . import inbox, rolepolicy
-    from .ownership import OwnershipRefused, check_start
+    from .ownership import OwnershipRefused, check_start, refuse_partial
 
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -6047,6 +6050,10 @@ def main(argv=None) -> int:
             services.candidate_channel = channel
             services.candidate = channel.permit
         if not services.read_only and not _reads_no_selected_store(args):
+            # Go store.StartPreflight's order: a service command, and a daemon once it has the
+            # --socket it asks for first, refuses a partial store before it touches S.
+            if args.command == "service" or (args.command == "daemon" and services.adapter_requested):
+                refuse_partial(services.selection.db_path)
             check_start(services.selection.db_path, candidate=services.candidate,
                         socket=services.socket_path)
         _refuse_ambiguous_state(services, args)

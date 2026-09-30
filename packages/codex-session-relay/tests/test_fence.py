@@ -8,6 +8,7 @@ import hashlib
 import io
 import json
 import os
+import pwd
 import re
 import selectors
 import shutil
@@ -1741,6 +1742,51 @@ def test_a_scope_key_from_another_lock_authority_is_refused_like_go(tmp_path, mo
     monkeypatch.setenv("CODEX_SESSION_RELAY_SCOPE_DIR", str(tmp_path / "bound"))
     Store(path, socket_path=socket_path).close()
     assert ownership.mirror(path)["scopeKey"] == bound
+
+
+def test_a_socket_directory_that_becomes_a_symlink_keeps_the_recorded_scope_key(tmp_path, capsys):
+    """validate judges the scopeKey against the recorded appServerSocket as it is (Go
+    ownership.ScopeKey): the binding recorded the canonical spelling and its key, so a socket
+    directory replaced by a symlink after binding leaves the owner's store admitted to every
+    opener, the Stop path's check_stop included, rather than refused by a second resolve.
+    """
+    sockets = tmp_path / "sockets"
+    sockets.mkdir()
+    path = tmp_path / "state" / "relay.sqlite3"
+    Store(path, socket_path=str(sockets / "app.sock")).close()
+    bound = ownership.mirror(path)
+    sockets.rename(tmp_path / "moved")
+    sockets.symlink_to(tmp_path / "moved")
+    recorded = bound["appServerSocket"]
+    assert str(Path(recorded).resolve()) != recorded
+    assert ownership.scope_key(recorded) == bound["scopeKey"]
+    ownership.check_start(path)
+    ownership.check_stop(path)
+    Store(path).close()
+    assert cli.main(["--state", str(path.parent), "store-challenge", "--write"]) == 0
+    capsys.readouterr()
+    after = ownership.mirror(path)
+    assert (after["appServerSocket"], after["scopeKey"]) == (recorded, bound["scopeKey"])
+
+
+def test_the_production_scope_key_needs_no_passwd_entry(tmp_path, monkeypatch):
+    """With no CODEX_SESSION_RELAY_SCOPE_DIR the key is the socket's bare digest, which needs no
+    registry root (Go ownership.ScopeKey needs no home), so binding and validation never look up
+    the passwd entry: a host whose lookup fails still admits its store rather than raising.
+    """
+    monkeypatch.delenv("CODEX_SESSION_RELAY_SCOPE_DIR", raising=False)
+
+    def unavailable(uid):
+        raise KeyError(f"getpwuid(): uid not found: {uid}")
+
+    monkeypatch.setattr(pwd, "getpwuid", unavailable)
+    path = tmp_path / "state" / "relay.sqlite3"
+    Store(path, socket_path=str(tmp_path / "app.sock")).close()
+    record = ownership.mirror(path)
+    assert record["scopeKey"] == hashlib.sha256(record["appServerSocket"].encode()).hexdigest()[:16]
+    ownership.check_start(path)
+    ownership.check_stop(path)
+    Store(path).close()
 
 
 def test_a_gate_without_a_database_is_partial_and_never_initialized(tmp_path):

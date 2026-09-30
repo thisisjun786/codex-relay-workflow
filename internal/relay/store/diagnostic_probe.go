@@ -144,7 +144,7 @@ func ownershipPreflight(ctx context.Context, dbPath string) string {
 	case !errors.As(err, &denied):
 		return ""
 	}
-	if why := fenceRefusal(resolved, meta, raw); why != "" {
+	if why := fenceRefusal(resolved, meta, raw, ""); why != "" {
 		return refused + why
 	}
 	// Refusals validate does not make keep Go's words, but for a decision the fence words too.

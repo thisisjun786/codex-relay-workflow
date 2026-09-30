@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"math/big"
 	"path/filepath"
 	"strconv"
@@ -43,7 +44,10 @@ func MirrorDocument(raw []byte) (text, why string) {
 // for this runtime as the admitted owner (no candidate, no admitted epoch): "" when validate
 // admits, or when a value cannot be read as Python reads it (the caller keeps its own words).
 // It words a refusal; whether the store is refused stays the admission preflight's decision.
-func fenceRefusal(resolved string, meta map[string]string, raw []byte) string {
+// socket is the canonical App Server socket of a check_start(path, socket=...) ("" for none):
+// a torn binding that socket's opener would complete is judged without its socket_path, as
+// check_start's `unbound(...) or meta` judges it (fenceUnbound).
+func fenceRefusal(resolved string, meta map[string]string, raw []byte, socket string) string {
 	var record map[string]any
 	if raw != nil {
 		text, err := pyjson.DecodeBytes(raw)
@@ -58,6 +62,10 @@ func fenceRefusal(resolved string, meta map[string]string, raw []byte) string {
 		if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
 			return ""
 		}
+	}
+	if fenceUnbound(record, meta, socket) {
+		meta = maps.Clone(meta)
+		delete(meta, "socket_path")
 	}
 	protocol, isInt := pyInt(record["protocol"])
 	if meta["writer_protocol"] != "1" || len(record) == 0 || !isInt || protocol.Cmp(big.NewInt(1)) != 0 {
@@ -134,6 +142,19 @@ func fenceRefusal(resolved string, meta map[string]string, raw []byte) string {
 		return "the relay store is draining"
 	}
 	return ""
+}
+
+// fenceUnbound is ownership.py unbound(meta, record, socket) for this runtime, without a
+// candidate: the mirror is an object naming no App Server socket and no scope key, schema_meta
+// records no socket_path or this canonical socket (the torn binding a crash between its commit
+// and its publication leaves), and both halves say this runtime owns the store, in phase active
+// with no transition (ownership.Unbound's rule, read from the bytes as the fence reads them).
+func fenceUnbound(record map[string]any, meta map[string]string, socket string) bool {
+	appServer, named := record["appServerSocket"]
+	recorded, bound := meta["socket_path"]
+	return socket != "" && record != nil && named && appServer == nil && record["scopeKey"] == nil &&
+		(!bound || recorded == socket) && meta["owner"] == "go" && pyStringIs(record["owner"], "go", true) &&
+		pyStringIs(record["phase"], "active", true) && record["transition"] == nil
 }
 
 // fenceScopeRefusal is validate's scope identity, in its order: the mirror's appServerSocket is
