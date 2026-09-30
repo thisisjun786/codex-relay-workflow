@@ -69,19 +69,18 @@ func fakeOwner(t *testing.T, path, reply string) func() {
 // owner can be asked and the other runtime owns the store, each runtime refuses with the fence's
 // words (no socket, a socket nobody listens on); an owner that says nothing readable is a host
 // error; under its own store and with no daemon, each evaluates in-process. The Go CLI answers
-// what the fence answered (recorded: see oracleRun) byte for byte, each against a store the other
-// runtime owns. (A live Python owner answering both runtimes' requests on its control socket
-// left with the Python runtime, todo 44; the Go owner's control server is
+// what its goldens hold byte for byte: the fence's answers to the twin Stops, each against the
+// store the other runtime owns. (A live Python owner answering both runtimes' requests on its
+// control socket left with the Python runtime, todo 44; the Go owner's control server is
 // internal/relay/control's.)
 func TestGuardEvaluate_routes_to_the_owners_control_socket_as_the_fence_does(t *testing.T) {
-	home := pythonHome(t)
+	// A fixed home: the fixtures' Stops are filed under a digest of their workspaces' paths.
+	home := fixedHome(t)
 	type fixture struct{ Root, Stop, Now string }
 	build := func(name string) (string, fixture) {
 		state := filepath.Join(home, name, "state")
 		var f fixture
-		built := pythonFixture(t, "guard "+name, filepath.Join(home, name), nil, func() (string, error) {
-			return matrixPython(t, "guard", filepath.Join(home, name, "guard"), filepath.Join(state, "relay.sqlite3")), nil
-		})
+		built := fixtureTree(t, "guard-route-"+name+".json", filepath.Join(home, name))
 		if err := json.Unmarshal([]byte(built), &f); err != nil {
 			t.Fatal(err)
 		}
@@ -94,10 +93,16 @@ func TestGuardEvaluate_routes_to_the_owners_control_socket_as_the_fence_does(t *
 	argv := func(state string, f fixture, root string) []string {
 		return []string{"--state", state, "guard-evaluate", "--marker-root", root, "--stop-input", f.Stop, "--now", f.Now, "--no-record"}
 	}
-	same := func(what string, got, want answer, code int) {
+	// expect checks Go's answers against the golden of the batch the fence answered: each argv
+	// there is the twin of Go's, the same Stop over the store the other runtime owns, so the key
+	// names the twins.
+	expect := func(what string, twins [][]string, got []answer, codes ...int) {
 		t.Helper()
-		if got != want || got.code != code {
-			t.Errorf("%s:\n go     %d %s\n python %d %s", what, got.code, got.stdout, want.code, want.stdout)
+		expectAnswers(t, batchKey(t, twins...), got, twins...)
+		for i := range got {
+			if got[i].code != codes[i] {
+				t.Errorf("%s: exit %d, want %d\n%s", what, got[i].code, codes[i], got[i].stdout)
+			}
 		}
 	}
 	unanswered := func(detail string) string {
@@ -106,25 +111,21 @@ func TestGuardEvaluate_routes_to_the_owners_control_socket_as_the_fence_does(t *
 
 	// No owner listens: each runtime refuses a store the other owns, and evaluates its own.
 	got := goCLI(t, argv(python, pf, pf.Root)...)
-	fence := pythonCLI(t, argv(golang, gf, gf.Root), argv(python, pf, pf.Root))
-	same("no control.sock, the other runtime's store", got, fence[0], 2)
 	if got.stdout != unanswered("[Errno 2] No such file or directory") {
 		t.Errorf("no control.sock: %s", got.stdout)
 	}
-	same("no daemon, this runtime's own store", goCLI(t, argv(golang, gf, gf.Root)...), fence[1], 0)
+	own := goCLI(t, argv(golang, gf, gf.Root)...)
+	expect("no control.sock", [][]string{argv(golang, gf, gf.Root), argv(python, pf, pf.Root)}, []answer{got, own}, 2, 0)
 
 	// A control.sock its daemon left behind.
 	staleSocket(t, filepath.Join(python, "control.sock"))
-	staleSocket(t, filepath.Join(golang, "control.sock"))
 	got = goCLI(t, argv(python, pf, pf.Root)...)
-	same("a socket nobody listens on", got, pythonCLI(t, argv(golang, gf, gf.Root))[0], 2)
+	expect("a socket nobody listens on", [][]string{argv(golang, gf, gf.Root)}, []answer{got}, 2)
 	if got.stdout != unanswered("[Errno 111] Connection refused") {
 		t.Errorf("a stale control.sock: %s", got.stdout)
 	}
-	for _, state := range []string{python, golang} {
-		if err := os.Remove(filepath.Join(state, "control.sock")); err != nil {
-			t.Fatal(err)
-		}
+	if err := os.Remove(filepath.Join(python, "control.sock")); err != nil {
+		t.Fatal(err)
 	}
 
 	// An owner that answers nothing readable (nothing, not UTF-8, not JSON, or null), and one
@@ -158,10 +159,7 @@ func TestGuardEvaluate_routes_to_the_owners_control_socket_as_the_fence_does(t *
 		closed := fakeOwner(t, filepath.Join(python, "control.sock"), owner.reply)
 		got = goCLI(t, argv(python, pf, pf.Root)...)
 		closed()
-		closed = fakeOwner(t, filepath.Join(golang, "control.sock"), owner.reply)
-		want := pythonCLI(t, argv(golang, gf, gf.Root))[0]
-		closed()
-		same(owner.name, got, want, 3)
+		expect(owner.name, [][]string{argv(golang, gf, gf.Root)}, []answer{got}, 3)
 		if !strings.Contains(got.stdout, owner.detail) {
 			t.Errorf("%s: %s", owner.name, got.stdout)
 		}

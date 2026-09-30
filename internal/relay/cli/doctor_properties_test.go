@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -18,7 +17,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 // plain renders an ordered answer the way the CLI prints it and decodes it back.
@@ -33,11 +32,11 @@ func plain(v any) any {
 }
 
 // test_cli.py properties of todo 25 part A that read doctor and status (CLI-1..4, 10, 12,
-// 17..20, 24..34, 36, 37). Each compares this build's CLI with the answer the real Python relay
-// CLI gave on the same isolated state (recorded: see oracleRun), the whole stdout (doctor minus
-// the documented runtime block, and each store file's own identity) and exit code, then asserts
-// the property's own fields on the answer. The state is written by this build only, so it is
-// the same whether or not Python runs beside it.
+// 17..20, 24..34, 36, 37). Each checks this build's CLI answer on an isolated state against its
+// golden (the answer the Python relay CLI gave on the same state, at first), the whole stdout
+// (doctor minus the documented runtime block, and each store file's own identity) and exit
+// code, then asserts the property's own fields on the answer. The state is written by this
+// build.
 
 const (
 	parentTask = "01parent-task"
@@ -47,50 +46,58 @@ const (
 )
 
 // timestamp is a wall-clock instant a command wrote: to the microsecond, or to the second (a
-// challenge's writtenAt), which a recorded answer read at another instant.
+// challenge's writtenAt), which the golden read at another instant.
 var timestamp = regexp.MustCompile(`\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{6}\+00:00|Z)`)
 
 var runtimeBuild = regexp.MustCompile(`"runtime_build": "[^"]*"`)
 
-// both runs argv through Python and Go and requires the same exit and stdout. Doctor's runtime
-// block (Go only, documented) is removed and its ownership.runtime_build normalised; timestamps
-// written by the commands themselves are normalised, because the two runs happen at different
-// instants, and so is the store file's own identity (identityNeutral), because a recorded
-// answer was read from another file with the same rows. It returns Go's answer.
-func both(t *testing.T, dir string, argv ...string) map[string]any {
+// goldenAnswer runs argv and requires the exit and stdout its golden holds (comparableAnswer):
+// doctor's runtime block (documented) removed and its ownership.runtime_build normalised;
+// timestamps written by the commands themselves normalised, because the golden was taken at
+// another instant, and so is the store file's own identity (identityNeutral), because the golden
+// was read from another file with the same rows. It returns the answer decoded.
+func goldenAnswer(t *testing.T, dir string, argv ...string) map[string]any {
 	t.Helper()
-	return sameAnswer(t, argv, python(t, dir, argv...), golang(t, dir, argv...))
+	key := answerKey(t, argv)
+	got := golang(t, dir, argv...)
+	return expectAnswer(t, key, dir, argv, got)
 }
 
-// bothAsIs is both without handing the store to each runtime first, for a state directory no
-// takeover can move: a second name of another directory's database has neither mirror nor gate.
-func bothAsIs(t *testing.T, argv ...string) map[string]any {
+// goldenAnswerAsIs is goldenAnswer through the built binary without handing the store to Go
+// first, for a state directory no takeover can move: a second name of another directory's
+// database has neither mirror nor gate.
+func goldenAnswerAsIs(t *testing.T, argv ...string) map[string]any {
 	t.Helper()
 	_, alias := packageBinary(t)
-	return sameAnswer(t, argv, fence(t, argv...), binaryRun(t, alias, argv...))
+	key := goldenKey(t, "fence "+keyLabel(argv...))
+	got := binaryRun(t, alias, argv...)
+	return expectAnswer(t, key, "", argv, got)
 }
 
-func sameAnswer(t *testing.T, argv []string, py, got run) map[string]any {
+// expectAnswer checks what a doctor or status comparison reads of an answer to argv run in dir
+// (comparableAnswer) against the golden under key, and returns the answer decoded.
+func expectAnswer(t *testing.T, key, dir string, argv []string, got run) map[string]any {
 	t.Helper()
-	goOut := got.stdout
-	if strings.Contains(goOut, "\n  \"runtime\": {") {
-		goOut = withoutKey(t, goOut, "runtime")
-	}
-	pyOut := timestamp.ReplaceAllString(py.stdout, "<T>")
-	goOut = timestamp.ReplaceAllString(goOut, "<T>")
-	// ownership.runtime_build names the answering runtime (decisions.md 31).
-	pyOut = runtimeBuild.ReplaceAllString(pyOut, `"runtime_build": "<build>"`)
-	goOut = runtimeBuild.ReplaceAllString(goOut, `"runtime_build": "<build>"`)
-	// Each runtime reads the store as its owner (ownedArgs hands it over first), so the
-	// ownership block's owner, epoch and takeover differ by that handover alone.
-	pyOut, goOut = identityNeutral(ownerNeutralBlock(pyOut)), identityNeutral(ownerNeutralBlock(goOut))
-	if py.code != got.code || pyOut != goOut {
-		t.Fatalf("%v\nexit python=%d go=%d\npython:\n%s\ngo:\n%s\ngo stderr: %s", argv, py.code, got.code, pyOut, goOut, got.stderr)
-	}
+	expectOver(t, key, dir, argv, map[string]any{"code": got.code, "stdout": comparableAnswer(t, got.stdout)})
 	if got.stdout == "" {
 		return nil
 	}
 	return decode(t, got.stdout)
+}
+
+// comparableAnswer is an answer without what a run's own instant and store file decide: doctor's
+// runtime block (the answering implementation's, documented) removed and its
+// ownership.runtime_build masked; timestamps the commands themselves wrote masked; the three
+// schema_meta values a takeover changes masked in doctor's ownership block; and the store file's
+// own identity masked (identityNeutral).
+func comparableAnswer(t *testing.T, stdout string) string {
+	t.Helper()
+	if strings.Contains(stdout, "\n  \"runtime\": {") {
+		stdout = withoutKey(t, stdout, "runtime")
+	}
+	stdout = timestamp.ReplaceAllString(stdout, "<T>")
+	stdout = runtimeBuild.ReplaceAllString(stdout, `"runtime_build": "<build>"`)
+	return identityNeutral(ownerNeutralBlock(stdout))
 }
 
 var handedOver = regexp.MustCompile(`\n    "(owner|owner_epoch|takeover_id)": "[^"]*",`)
@@ -109,7 +116,7 @@ func ownerNeutralBlock(stdout string) string {
 
 func exitOf(t *testing.T, dir string, argv ...string) int {
 	t.Helper()
-	return python(t, dir, argv...).code
+	return golang(t, dir, argv...).code
 }
 
 func obj(v any) map[string]any { m, _ := v.(map[string]any); return m }
@@ -151,35 +158,66 @@ func sqlite(t *testing.T, _, db, statement string) {
 	}
 }
 
-// runPython is what a Python snippet printed in the relay's environment (recorded under a key
-// of its own: see oracleRun).
-func runPython(t *testing.T, dir string, script string, args []string, options ...pyoracle.Option) string {
+// shellWords is shlex.split (POSIX mode, no comments), how a shell reads a pasted line, checked
+// against the golden under the line's key (the words Python's shlex gave, at first).
+func shellWords(t *testing.T, line string) []string {
 	t.Helper()
-	answer := oracleRun(t, oracleKey(t, "python -c "+oracleLabel(args...)), func() (run, error) {
-		out, err := pythonSnippet(dir, script, args...)
-		if err != nil {
-			return run{}, fmt.Errorf("python snippet: %v\n%s", err, out)
+	key := goldenKey(t, "python -c "+keyLabel(line))
+	var words []string
+	var word strings.Builder
+	inWord := false
+	for i := 0; i < len(line); i++ {
+		switch c := line[i]; {
+		case c == '\'':
+			end := strings.IndexByte(line[i+1:], '\'')
+			if end < 0 {
+				t.Fatalf("no closing quotation: %s", line)
+			}
+			word.WriteString(line[i+1 : i+1+end])
+			i, inWord = i+1+end, true
+		case c == '"':
+			for i++; i < len(line) && line[i] != '"'; i++ {
+				// Inside double quotes a backslash escapes only a quote or itself.
+				if line[i] == '\\' && i+1 < len(line) && (line[i+1] == '"' || line[i+1] == '\\') {
+					i++
+				}
+				word.WriteByte(line[i])
+			}
+			if i >= len(line) {
+				t.Fatalf("no closing quotation: %s", line)
+			}
+			inWord = true
+		case c == '\\':
+			if i+1 >= len(line) {
+				t.Fatalf("no escaped character: %s", line)
+			}
+			i++
+			word.WriteByte(line[i])
+			inWord = true
+		case c == ' ' || c == '\t' || c == '\r' || c == '\n':
+			if inWord {
+				words = append(words, word.String())
+				word.Reset()
+				inWord = false
+			}
+		default:
+			word.WriteByte(c)
+			inWord = true
 		}
-		return run{stdout: out}, nil
-	}, append(placeholders(append([]string{dir}, args...)...), options...)...)
-	return answer.stdout
-}
-
-func pythonJSON(t *testing.T, text string) map[string]any {
-	t.Helper()
-	var v map[string]any
-	if err := json.Unmarshal([]byte(text), &v); err != nil {
-		t.Fatal(err)
 	}
-	return v
+	if inWord {
+		words = append(words, word.String())
+	}
+	expectJSON(t, key, words, os.Getenv("HOME"), line)
+	return words
 }
 
 // CLI-1: doctor --issue against an absent store answers without creating it: readable false,
 // holds null, responsibleRelationship null, detail "not readable".
 func Test25_CLI1_doctor_issue_on_an_absent_store_answers_null_and_creates_nothing(t *testing.T) {
-	home := pythonHome(t)
+	home := tempHome(t)
 	state := filepath.Join(home, "state")
-	report := both(t, home, "--state", state, "doctor", "--issue", issueKey)
+	report := goldenAnswer(t, home, "--state", state, "doctor", "--issue", issueKey)
 	issue := obj(report["issue"])
 	if issue["readable"] != false || issue["holds"] != nil || issue["responsibleRelationship"] != nil || !strings.Contains(issue["detail"].(string), "not readable") {
 		t.Fatal(issue)
@@ -192,24 +230,24 @@ func Test25_CLI1_doctor_issue_on_an_absent_store_answers_null_and_creates_nothin
 // CLI-2: ownership: registered -> holds true with the child; another issue -> readable, holds
 // false (not null); paused still holds; superseded (active row with a successor) is no owner.
 func Test25_CLI2_doctor_issue_names_the_live_owner(t *testing.T) {
-	home := pythonHome(t)
+	home := tempHome(t)
 	state := filepath.Join(home, "state")
 	relationship := register(t, home, state)
 	rid := relationship["relationshipId"].(string)
-	issue := obj(both(t, home, "--state", state, "doctor", "--issue", issueKey)["issue"])
+	issue := obj(goldenAnswer(t, home, "--state", state, "doctor", "--issue", issueKey)["issue"])
 	if issue["holds"] != true || issue["responsibleChild"] != childTask || issue["responsibleRelationship"] != rid {
 		t.Fatal(issue)
 	}
-	other := obj(both(t, home, "--state", state, "doctor", "--issue", "SOME-OTHER-ISSUE")["issue"])
+	other := obj(goldenAnswer(t, home, "--state", state, "doctor", "--issue", "SOME-OTHER-ISSUE")["issue"])
 	if other["readable"] != true || other["holds"] != false || other["responsibleChild"] != nil {
 		t.Fatal(other)
 	}
-	both(t, home, "--state", state, "relationship-status", "--relationship", rid, "--status", "paused", "--actor", parentTask)
-	if obj(both(t, home, "--state", state, "doctor", "--issue", issueKey)["issue"])["holds"] != true {
+	goldenAnswer(t, home, "--state", state, "relationship-status", "--relationship", rid, "--status", "paused", "--actor", parentTask)
+	if obj(goldenAnswer(t, home, "--state", state, "doctor", "--issue", issueKey)["issue"])["holds"] != true {
 		t.Fatal("a paused owner stopped holding")
 	}
 	sqlite(t, home, filepath.Join(state, "relay.sqlite3"), "UPDATE relationships SET superseded_by = 'rel-0000000000000001'")
-	superseded := obj(both(t, home, "--state", state, "doctor", "--issue", issueKey)["issue"])
+	superseded := obj(goldenAnswer(t, home, "--state", state, "doctor", "--issue", issueKey)["issue"])
 	if superseded["holds"] != false || superseded["responsibleRelationship"] != nil {
 		t.Fatal(superseded)
 	}
@@ -217,10 +255,10 @@ func Test25_CLI2_doctor_issue_names_the_live_owner(t *testing.T) {
 
 // CLI-3: the issue rows and the store identity come from the same read.
 func Test25_CLI3_the_issue_rows_and_the_identity_come_from_one_read(t *testing.T) {
-	home := pythonHome(t)
+	home := tempHome(t)
 	state := filepath.Join(home, "state")
 	register(t, home, state)
-	report := both(t, home, "--state", state, "doctor", "--issue", issueKey)
+	report := goldenAnswer(t, home, "--state", state, "doctor", "--issue", issueKey)
 	issue := obj(report["issue"])
 	if issue["storeAgreement"] != "same" || issue["storeId"] != obj(report["store"])["storeId"] {
 		t.Fatal(issue)
@@ -229,18 +267,18 @@ func Test25_CLI3_the_issue_rows_and_the_identity_come_from_one_read(t *testing.T
 
 // CLI-4: doctor without --issue has no issue key.
 func Test25_CLI4_doctor_without_the_flag_has_no_issue_key(t *testing.T) {
-	home := pythonHome(t)
+	home := tempHome(t)
 	state := filepath.Join(home, "state")
 	register(t, home, state)
-	if _, found := both(t, home, "--state", state, "doctor")["issue"]; found {
+	if _, found := goldenAnswer(t, home, "--state", state, "doctor")["issue"]; found {
 		t.Fatal("issue key present")
 	}
 }
 
 // CLI-10: doctor reports the environment: procAvailable true, the read-only adapter line.
 func Test25_CLI10_doctor_reports_the_environment(t *testing.T) {
-	home := pythonHome(t)
-	report := both(t, home, "--state", filepath.Join(home, "state"), "doctor")
+	home := tempHome(t)
+	report := goldenAnswer(t, home, "--state", filepath.Join(home, "state"), "doctor")
 	if report["procAvailable"] != true || report["adapter"] != "none (read-only, no --socket)" {
 		t.Fatal(report["procAvailable"], report["adapter"])
 	}
@@ -249,9 +287,9 @@ func Test25_CLI10_doctor_reports_the_environment(t *testing.T) {
 // CLI-17: doctor never creates or adopts a store: an absent directory stays absent; an empty,
 // unrelated relay.sqlite3 stays byte-unchanged with no sidecars and contents unavailable.
 func Test25_CLI17_doctor_never_creates_or_adopts_a_store(t *testing.T) {
-	home := pythonHome(t)
+	home := tempHome(t)
 	absent := filepath.Join(home, "absent")
-	report := both(t, home, "--state", absent, "doctor")
+	report := goldenAnswer(t, home, "--state", absent, "doctor")
 	if obj(report["stateSelection"])["source"] != "flag" || obj(report["access"])["directoryExists"] != false || obj(report["contents"])["available"] != false {
 		t.Fatal(report)
 	}
@@ -292,15 +330,15 @@ func Test25_CLI17_doctor_never_creates_or_adopts_a_store(t *testing.T) {
 // CLI-18: stateSelection names the rule and path: env for CODEX_SESSION_RELAY_STATE, flag for
 // --state even when the variable is also set.
 func Test25_CLI18_doctor_names_the_rule_that_chose_the_directory(t *testing.T) {
-	home := pythonHome(t)
+	home := tempHome(t)
 	chosen := filepath.Join(home, "chosen")
 	t.Setenv("CODEX_SESSION_RELAY_STATE", chosen)
-	byEnv := obj(both(t, home, "doctor")["stateSelection"])
+	byEnv := obj(goldenAnswer(t, home, "doctor")["stateSelection"])
 	if byEnv["source"] != "env" || byEnv["path"] != chosen {
 		t.Fatal(byEnv)
 	}
 	t.Setenv("CODEX_SESSION_RELAY_STATE", filepath.Join(home, "ignored"))
-	byFlag := obj(both(t, home, "--state", chosen, "doctor")["stateSelection"])
+	byFlag := obj(goldenAnswer(t, home, "--state", chosen, "doctor")["stateSelection"])
 	if byFlag["source"] != "flag" || byFlag["path"] != chosen {
 		t.Fatal(byFlag)
 	}
@@ -322,7 +360,7 @@ func identity(t *testing.T, home, state string) map[string]any {
 	if _, err := os.Stat(filepath.Join(state, "relay.sqlite3")); errors.Is(err, os.ErrNotExist) {
 		pythonCreates(t, state) // a read-only form never creates a store
 	}
-	return obj(both(t, home, "--state", state, "store-identity")["store"])
+	return obj(goldenAnswer(t, home, "--state", state, "store-identity")["store"])
 }
 
 func number(v any) string {
@@ -342,14 +380,14 @@ func jsonNumber(f float64) string {
 // before the nonce -> mismatch; a hardlinked second name -> unproven naming "names" (and
 // "write-ahead log" with --expect-log), links 2; an empty or unusable value is never proven.
 func Test25_CLI19_same_store_proof_needs_the_nonce_and_the_physical_identity(t *testing.T) {
-	home := pythonHome(t)
+	home := tempHome(t)
 	a, b := filepath.Join(home, "a"), filepath.Join(home, "b")
 	mine := identity(t, home, a)
 	theirs := identity(t, home, b)
 	if mine["storeId"] == theirs["storeId"] {
 		t.Fatal("same id")
 	}
-	refused := both(t, home, "--state", b, "doctor", "--expect-store", mine["storeId"].(string))
+	refused := goldenAnswer(t, home, "--state", b, "doctor", "--expect-store", mine["storeId"].(string))
 	if refused["sameStore"] != "unproven" && refused["sameStore"] != "mismatch" {
 		t.Fatal(refused["sameStore"])
 	}
@@ -359,10 +397,10 @@ func Test25_CLI19_same_store_proof_needs_the_nonce_and_the_physical_identity(t *
 	nonce := challenge(t, home, a)
 	pair := number(mine["device"]) + ":" + number(mine["inode"])
 	log := number(mine["logDevice"]) + ":" + number(mine["logInode"]) + ":" + mine["logName"].(string)
-	if got := both(t, home, "--state", a, "doctor", "--expect-store", mine["storeId"].(string), "--expect-inode", pair, "--expect-log", log, "--expect-nonce", nonce)["sameStore"]; got != "proven" {
+	if got := goldenAnswer(t, home, "--state", a, "doctor", "--expect-store", mine["storeId"].(string), "--expect-inode", pair, "--expect-log", log, "--expect-nonce", nonce)["sameStore"]; got != "proven" {
 		t.Fatal(got)
 	}
-	alone := both(t, home, "--state", a, "doctor", "--expect-store", mine["storeId"].(string), "--expect-nonce", nonce)
+	alone := goldenAnswer(t, home, "--state", a, "doctor", "--expect-store", mine["storeId"].(string), "--expect-nonce", nonce)
 	if alone["sameStore"] != "unproven" || !strings.Contains(alone["detail"].(string), "--expect-inode") || !strings.Contains(alone["detail"].(string), "--expect-log") {
 		t.Fatal(alone["detail"])
 	}
@@ -385,7 +423,7 @@ func Test25_CLI19_same_store_proof_needs_the_nonce_and_the_physical_identity(t *
 	cNonce := challenge(t, home, c)
 	cPair := number(fresh["device"]) + ":" + number(fresh["inode"])
 	cLog := number(fresh["logDevice"]) + ":" + number(fresh["logInode"]) + ":" + fresh["logName"].(string)
-	if got := both(t, home, "--state", copyDir, "doctor", "--expect-store", fresh["storeId"].(string), "--expect-inode", cPair, "--expect-log", cLog, "--expect-nonce", cNonce)["sameStore"]; got != "mismatch" {
+	if got := goldenAnswer(t, home, "--state", copyDir, "doctor", "--expect-store", fresh["storeId"].(string), "--expect-inode", cPair, "--expect-log", cLog, "--expect-nonce", cNonce)["sameStore"]; got != "mismatch" {
 		t.Fatal("copy:", got)
 	}
 	// A hardlinked second name.
@@ -396,16 +434,16 @@ func Test25_CLI19_same_store_proof_needs_the_nonce_and_the_physical_identity(t *
 	if err := os.Link(filepath.Join(a, "relay.sqlite3"), filepath.Join(two, "relay.sqlite3")); err != nil {
 		t.Fatal(err)
 	}
-	counted := bothAsIs(t, "--state", two, "doctor", "--expect-store", mine["storeId"].(string), "--expect-inode", pair, "--expect-nonce", nonce)
+	counted := goldenAnswerAsIs(t, "--state", two, "doctor", "--expect-store", mine["storeId"].(string), "--expect-inode", pair, "--expect-nonce", nonce)
 	if counted["sameStore"] != "unproven" || !strings.Contains(counted["detail"].(string), "names") {
 		t.Fatal(counted["detail"])
 	}
-	graded := bothAsIs(t, "--state", two, "doctor", "--expect-store", mine["storeId"].(string), "--expect-inode", pair, "--expect-log", log, "--expect-nonce", nonce)
+	graded := goldenAnswerAsIs(t, "--state", two, "doctor", "--expect-store", mine["storeId"].(string), "--expect-inode", pair, "--expect-log", log, "--expect-nonce", nonce)
 	if graded["sameStore"] != "unproven" || !strings.Contains(graded["detail"].(string), "write-ahead log") || obj(graded["store"])["links"] != float64(2) {
 		t.Fatal(graded["detail"], graded["store"])
 	}
 	for _, flagValue := range [][2]string{{"--expect-log", ""}, {"--expect-log", "1:2"}, {"--expect-log", "nonsense"}, {"--expect-store", ""}, {"--expect-inode", ""}, {"--expect-nonce", ""}} {
-		answer := both(t, home, "--state", a, "doctor", flagValue[0], flagValue[1])
+		answer := goldenAnswer(t, home, "--state", a, "doctor", flagValue[0], flagValue[1])
 		if answer["sameStore"] == "proven" || exitOf(t, home, "--state", a, "doctor", flagValue[0], flagValue[1]) != 2 {
 			t.Fatal(flagValue, answer["sameStore"])
 		}
@@ -415,14 +453,15 @@ func Test25_CLI19_same_store_proof_needs_the_nonce_and_the_physical_identity(t *
 // CLI-20: ledger.configured and ledger.split: true when --state moved the store away from the
 // env-resolved ledger, false when they agree.
 func Test25_CLI20_doctor_reports_that_state_and_the_ledger_have_split(t *testing.T) {
-	home := pythonHome(t)
+	// A fixed home: the golden names the socket's scope directory, a digest of the socket's path.
+	home := fixedHome(t)
 	state, socket := filepath.Join(home, "state"), filepath.Join(home, "app.sock")
-	split := obj(both(t, home, "--state", state, "--socket", socket, "doctor")["ledger"])
+	split := obj(goldenAnswer(t, home, "--state", state, "--socket", socket, "doctor")["ledger"])
 	if split["configured"] != true || split["split"] != true {
 		t.Fatal(split)
 	}
 	t.Setenv("CODEX_SESSION_RELAY_STATE", state)
-	if together := obj(both(t, home, "--state", state, "--socket", socket, "doctor")["ledger"]); together["split"] != false {
+	if together := obj(goldenAnswer(t, home, "--state", state, "--socket", socket, "doctor")["ledger"]); together["split"] != false {
 		t.Fatal(together)
 	}
 }
@@ -456,15 +495,14 @@ func staged(t *testing.T, home, state, name string) (string, string) {
 
 var ages = regexp.MustCompile(`("(?:ageSeconds|oldestStagedAgeSeconds)": )[0-9.]+`)
 
-// statusBoth compares status whole; the ages are the one clock-dependent value (the two runs
-// read the wall clock at different instants) and are normalised, never dropped.
-func statusBoth(t *testing.T, home string, argv ...string) map[string]any {
+// statusGolden checks status whole against its golden; the ages are the one clock-dependent
+// value (the golden read the wall clock at another instant) and are normalised, never dropped.
+func statusGolden(t *testing.T, home string, argv ...string) map[string]any {
 	t.Helper()
-	py, got := python(t, home, argv...), golang(t, home, argv...)
+	key := answerKey(t, argv)
+	got := golang(t, home, argv...)
 	norm := func(s string) string { return ages.ReplaceAllString(timestamp.ReplaceAllString(s, "<T>"), "${1}<AGE>") }
-	if py.code != got.code || norm(py.stdout) != norm(got.stdout) {
-		t.Fatalf("%v\nexit python=%d go=%d\npython:\n%s\ngo:\n%s", argv, py.code, got.code, py.stdout, got.stdout)
-	}
+	expectRun(t, key, got.code, norm(got.stdout), append([]string{home}, argv...)...)
 	return decode(t, got.stdout)
 }
 
@@ -479,17 +517,18 @@ func keys(m map[string]any) []string {
 // CLI-12: status --relationship scopes stagedEvents, anchors and backlog to that assignment;
 // an unscoped status reports every assignment.
 func Test25_CLI12_a_scoped_status_reports_only_its_assignment(t *testing.T) {
-	home := pythonHome(t)
+	// A fixed home: the golden holds the staged events' ids, which hash the artifacts' paths.
+	home := fixedHome(t)
 	state := filepath.Join(home, "state")
 	mine, myEvent := staged(t, home, state, "a")
 	theirs, theirEvent := staged(t, home, state, "b")
-	scoped := obj(statusBoth(t, home, "--state", state, "status", "--relationship", mine)["observation"])
+	scoped := obj(statusGolden(t, home, "--state", state, "status", "--relationship", mine)["observation"])
 	events := scoped["stagedEvents"].([]any)
 	if len(events) != 1 || obj(events[0])["eventId"] != myEvent || len(obj(scoped["anchors"])) != 1 || obj(scoped["anchors"])[mine] == nil ||
 		len(obj(scoped["backlog"])) != 1 || obj(scoped["backlog"])[theirs] != nil {
 		t.Fatal(scoped)
 	}
-	all := obj(statusBoth(t, home, "--state", state, "status")["observation"])
+	all := obj(statusGolden(t, home, "--state", state, "status")["observation"])
 	seen := map[any]bool{}
 	for _, e := range all["stagedEvents"].([]any) {
 		seen[obj(e)["eventId"]] = true
@@ -505,13 +544,13 @@ const requirement = `[{"role": "parent", "model": "gpt-5.5", "reasoningEffort": 
 // @file goes through the same parser; wrong shapes are exit 2 with workerReadiness {ready false,
 // reason} naming each shape's own reason.
 func Test25_CLI24_worker_policy_requirements_are_parsed_then_judged(t *testing.T) {
-	home := pythonHome(t)
+	home := tempHome(t)
 	state := filepath.Join(home, "state")
-	bad := both(t, home, "--state", state, "doctor", "--require-worker-policy", "{not json")
+	bad := goldenAnswer(t, home, "--state", state, "doctor", "--require-worker-policy", "{not json")
 	if bad["error"] != "usage" || !strings.Contains(bad["detail"].(string), "worker policy requirements") || exitOf(t, home, "--state", state, "doctor", "--require-worker-policy", "{not json") != 4 {
 		t.Fatal(bad)
 	}
-	missing := both(t, home, "--state", state, "doctor", "--require-worker-policy", "@"+filepath.Join(home, "absent.json"))
+	missing := goldenAnswer(t, home, "--state", state, "doctor", "--require-worker-policy", "@"+filepath.Join(home, "absent.json"))
 	if missing["error"] != "usage" || !strings.Contains(missing["detail"].(string), "No such file") {
 		t.Fatal(missing)
 	}
@@ -519,7 +558,7 @@ func Test25_CLI24_worker_policy_requirements_are_parsed_then_judged(t *testing.T
 	if err := os.WriteFile(file, []byte(requirement), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if reason := obj(both(t, home, "--state", state, "doctor", "--require-worker-policy", "@"+file)["workerReadiness"])["reason"]; reason != "worker_policy_unreadable" {
+	if reason := obj(goldenAnswer(t, home, "--state", state, "doctor", "--require-worker-policy", "@"+file)["workerReadiness"])["reason"]; reason != "worker_policy_unreadable" {
 		t.Fatal(reason)
 	}
 	for raw, reason := range map[string]string{
@@ -528,7 +567,7 @@ func Test25_CLI24_worker_policy_requirements_are_parsed_then_judged(t *testing.T
 		`[{"role": "parent", "model": false, "reasoningEffort": "max"}]`:   "worker_policy_requirements_invalid",
 		`[]`: "worker_policy_requirements_invalid",
 	} {
-		readiness := obj(both(t, home, "--state", state, "doctor", "--require-worker-policy", raw)["workerReadiness"])
+		readiness := obj(goldenAnswer(t, home, "--state", state, "doctor", "--require-worker-policy", raw)["workerReadiness"])
 		if readiness["ready"] != false || readiness["reason"] != reason || exitOf(t, home, "--state", state, "doctor", "--require-worker-policy", raw) != 2 {
 			t.Fatal(raw, readiness)
 		}
@@ -537,8 +576,8 @@ func Test25_CLI24_worker_policy_requirements_are_parsed_then_judged(t *testing.T
 
 // CLI-25: doctor without the flag reports the worker and gates nothing.
 func Test25_CLI25_doctor_without_the_flag_reports_the_worker_and_gates_nothing(t *testing.T) {
-	home := pythonHome(t)
-	report := both(t, home, "--state", filepath.Join(home, "state"), "doctor")
+	home := tempHome(t)
+	report := goldenAnswer(t, home, "--state", filepath.Join(home, "state"), "doctor")
 	if obj(report["workerPolicy"])["observed"] != false || report["callerWorkerAgreement"] != "unknown" {
 		t.Fatal(report["workerPolicy"], report["callerWorkerAgreement"])
 	}
@@ -550,11 +589,11 @@ func Test25_CLI25_doctor_without_the_flag_reports_the_worker_and_gates_nothing(t
 // CLI-26: a readiness refusal (exit 2) keeps the whole diagnosis and the other answers of the
 // same invocation (proven store, nonce found, issue readable).
 func Test25_CLI26_a_readiness_refusal_keeps_the_whole_diagnosis(t *testing.T) {
-	home := pythonHome(t)
+	home := tempHome(t)
 	state := filepath.Join(home, "state")
 	mine := identity(t, home, state)
 	nonce := challenge(t, home, state)
-	report := both(t, home, "--state", state, "doctor", "--require-worker-policy", requirement,
+	report := goldenAnswer(t, home, "--state", state, "doctor", "--require-worker-policy", requirement,
 		"--expect-store", mine["storeId"].(string), "--expect-inode", number(mine["device"])+":"+number(mine["inode"]),
 		"--expect-log", number(mine["logDevice"])+":"+number(mine["logInode"])+":"+mine["logName"].(string),
 		"--expect-nonce", nonce, "--issue", issueKey)
@@ -582,27 +621,22 @@ func pythonStore(t *testing.T, home, dir, socket string) {
 	testsupport.Create(t, filepath.Join(dir, "relay.sqlite3"), socket, "python")
 }
 
-// recoverBoth runs argv in env through both implementations and compares the whole refusal.
-// The first word of every recovery command is each implementation's own running program
-// (CLI-29: a pasted line reaches the relay that printed it), so it is checked per side and then
-// normalised to <PROG> before the byte comparison.
-func recoverBoth(t *testing.T, dir string, argv ...string) map[string]any {
+// recoverGolden runs argv and checks the whole refusal against its golden. The first word of
+// every recovery command is the running program (CLI-29: a pasted line reaches the relay that
+// printed it), so it is checked and then normalised to <PROG> before the byte comparison.
+func recoverGolden(t *testing.T, dir string, argv ...string) map[string]any {
 	t.Helper()
-	py, got := python(t, dir, argv...), golang(t, dir, argv...)
-	pyProgram := filepath.Join(repositoryRoot(t), ".venv", "bin", "codex-session-relay")
+	key := answerKey(t, argv)
+	got := golang(t, dir, argv...)
 	goProgram := "codex-session-relay"
 	norm := func(text, program string) string {
 		text = strings.ReplaceAll(text, `"`+program+` `, `"<PROG> `)
 		return strings.ReplaceAll(text, `"env -u CODEX_SESSION_RELAY_STATE `+program+` `, `"env -u CODEX_SESSION_RELAY_STATE <PROG> `)
 	}
-	realPy, _ := filepath.EvalSymlinks(filepath.Dir(pyProgram))
-	pyOut := norm(norm(py.stdout, pyProgram), filepath.Join(realPy, "codex-session-relay"))
 	goOut := norm(got.stdout, goProgram)
-	if py.code != got.code || pyOut != goOut {
-		t.Fatalf("%v\nexit python=%d go=%d\npython:\n%s\ngo:\n%s", argv, py.code, got.code, pyOut, goOut)
-	}
-	if strings.Contains(pyOut, "codex-session-relay --") || strings.Contains(goOut, "codex-session-relay --") {
-		t.Fatalf("a recovery line was not rendered with the running program:\n%s\n%s", py.stdout, got.stdout)
+	expectRun(t, key, got.code, goOut, append([]string{dir}, argv...)...)
+	if strings.Contains(goOut, "codex-session-relay --") {
+		t.Fatalf("a recovery line was not rendered with the running program:\n%s", got.stdout)
 	}
 	return decode(t, got.stdout)
 }
@@ -649,10 +683,11 @@ func withHome(t *testing.T, home string) {
 // ambiguous_state_directory with 2 candidates and creates nothing; doctor still describes it;
 // an explicit --state resolves the contest.
 func Test25_CLI27_a_contested_socket_refuses_instead_of_creating_a_third_store(t *testing.T) {
-	pythonHome(t)
+	// A fixed home: the golden names the socket's scope directory, a digest of the socket's path.
+	fixedHome(t)
 	home, root, socket := contested(t, "contested")
 	withHome(t, home)
-	refused := recoverBoth(t, home, "--socket", socket, "status")
+	refused := recoverGolden(t, home, "--socket", socket, "status")
 	if refused["reason"] != "ambiguous_state_directory" || len(refused["candidates"].([]any)) != 2 {
 		t.Fatal(refused)
 	}
@@ -662,12 +697,12 @@ func Test25_CLI27_a_contested_socket_refuses_instead_of_creating_a_third_store(t
 	if entries, _ := os.ReadDir(root); len(entries) != 2 {
 		t.Fatal(entries)
 	}
-	siblings := obj(both(t, home, "--socket", socket, "doctor")["siblingStores"])
+	siblings := obj(goldenAnswer(t, home, "--socket", socket, "doctor")["siblingStores"])
 	if siblings["ambiguous"] != true || len(siblings["claimingThisSocket"].([]any)) != 2 {
 		t.Fatal(siblings)
 	}
 	chosen := filepath.Join(root, "aaaa444444444444")
-	if deliveries := both(t, home, "--state", chosen, "--socket", socket, "status")["deliveries"]; len(deliveries.([]any)) != 0 {
+	if deliveries := goldenAnswer(t, home, "--state", chosen, "--socket", socket, "status")["deliveries"]; len(deliveries.([]any)) != 0 {
 		t.Fatal(deliveries)
 	}
 }
@@ -676,10 +711,11 @@ func Test25_CLI27_a_contested_socket_refuses_instead_of_creating_a_third_store(t
 // naming recordedSocket; a store recording none is refused unidentified_state_directory before
 // one is created.
 func Test25_CLI28_a_store_for_another_socket_or_none_is_refused(t *testing.T) {
-	home := pythonHome(t)
+	// A fixed home: the golden names the socket's scope directory, a digest of the socket's path.
+	home := fixedHome(t)
 	state, first, second := filepath.Join(home, "reused"), filepath.Join(home, "first.sock"), filepath.Join(home, "second.sock")
 	pythonStore(t, home, state, first)
-	refused := recoverBoth(t, home, "--state", state, "--socket", second, "status")
+	refused := recoverGolden(t, home, "--state", state, "--socket", second, "status")
 	if refused["reason"] != "state_directory_serves_another_socket" || refused["recordedSocket"] != first {
 		t.Fatal(refused)
 	}
@@ -687,7 +723,7 @@ func Test25_CLI28_a_store_for_another_socket_or_none_is_refused(t *testing.T) {
 	root := filepath.Join(unlabelled, ".local", "state", "codex-session-relay")
 	pythonStore(t, home, filepath.Join(root, "0123456789abcdef"), "")
 	withHome(t, unlabelled)
-	refused = recoverBoth(t, unlabelled, "--socket", filepath.Join(home, "unlabelled.sock"), "status")
+	refused = recoverGolden(t, unlabelled, "--socket", filepath.Join(home, "unlabelled.sock"), "status")
 	if refused["reason"] != "unidentified_state_directory" {
 		t.Fatal(refused)
 	}
@@ -699,11 +735,7 @@ func Test25_CLI28_a_store_for_another_socket_or_none_is_refused(t *testing.T) {
 // optionValues is option_values: a shell round trip with --opt=value split back apart.
 func optionValues(t *testing.T, command string) []string {
 	t.Helper()
-	out := runPython(t, os.Getenv("HOME"), "import json,shlex,sys; print(json.dumps(shlex.split(sys.argv[1])))", []string{command})
-	var words []string
-	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &words); err != nil {
-		t.Fatal(err, out)
-	}
+	words := shellWords(t, command)
 	for i, w := range words {
 		if head, tail, ok := strings.Cut(w, "="); ok && strings.HasPrefix(head, "--") {
 			words[i] = tail
@@ -726,10 +758,11 @@ func contains(words []string, want string) bool {
 // shell-quoted ($(...) survives a round trip); a dash-leading socket path still parses; the first
 // word is the running program.
 func Test25_CLI29_recovery_lines_are_runnable_and_safe_to_paste(t *testing.T) {
-	pythonHome(t)
+	// Fixed homes: the goldens name the sockets' scope directories, digests of the sockets' paths.
+	fixedHome(t)
 	home, _, socket := contested(t, "recovery")
 	withHome(t, home)
-	refused := recoverBoth(t, home, "--socket", socket, "status")
+	refused := recoverGolden(t, home, "--socket", socket, "status")
 	lines := commands(refused["recover"].([]any))
 	joined := strings.Join(lines, "\n")
 	for _, line := range lines {
@@ -746,7 +779,7 @@ func Test25_CLI29_recovery_lines_are_runnable_and_safe_to_paste(t *testing.T) {
 		t.Fatal(lines)
 	}
 	// $(...) in a socket path survives a shell round trip whole.
-	pythonHome(t)
+	fixedHome(t)
 	qhome := filepath.Join(os.Getenv("HOME"), "quoted-home")
 	qroot := filepath.Join(qhome, ".local", "state", "codex-session-relay")
 	qsocket := filepath.Join(os.Getenv("HOME"), "sock$(touch pwned);x.sock")
@@ -754,18 +787,18 @@ func Test25_CLI29_recovery_lines_are_runnable_and_safe_to_paste(t *testing.T) {
 		pythonStore(t, qhome, filepath.Join(qroot, d), qsocket)
 	}
 	withHome(t, qhome)
-	quoted := recoverBoth(t, qhome, "--socket", qsocket, "status")
+	quoted := recoverGolden(t, qhome, "--socket", qsocket, "status")
 	for _, line := range commands(quoted["recover"].([]any)) {
 		if !contains(optionValues(t, line), qsocket) {
 			t.Fatal("socket did not survive:", line)
 		}
 	}
 	// The wrong-socket refusal quotes too.
-	pythonHome(t)
+	fixedHome(t)
 	base := os.Getenv("HOME")
 	state, first := filepath.Join(base, "quoted state"), filepath.Join(base, "first$(id).sock")
 	pythonStore(t, base, state, first)
-	wrong := recoverBoth(t, base, "--state", state, "--socket", filepath.Join(base, "second.sock"), "status")
+	wrong := recoverGolden(t, base, "--state", state, "--socket", filepath.Join(base, "second.sock"), "status")
 	var words []string
 	for _, line := range commands(wrong["recover"].([]any)) {
 		words = append(words, optionValues(t, line)...)
@@ -774,14 +807,14 @@ func Test25_CLI29_recovery_lines_are_runnable_and_safe_to_paste(t *testing.T) {
 		t.Fatal(words)
 	}
 	// A dash-leading relative socket path still produces runnable commands.
-	pythonHome(t)
+	fixedHome(t)
 	dhome := filepath.Join(os.Getenv("HOME"), "dash-home")
 	droot := filepath.Join(dhome, ".local", "state", "codex-session-relay")
 	for _, d := range []string{"aaaa666666666666", "bbbb666666666666"} {
 		pythonStore(t, os.Getenv("HOME"), filepath.Join(droot, d), filepath.Join(os.Getenv("HOME"), "-odd.sock"))
 	}
 	withHome(t, dhome)
-	dashed := recoverBoth(t, filepath.Dir(dhome), "--socket=-odd.sock", "status")
+	dashed := recoverGolden(t, filepath.Dir(dhome), "--socket=-odd.sock", "status")
 	for _, line := range commands(dashed["recover"].([]any)) {
 		if !contains(optionValues(t, line), "-odd.sock") {
 			t.Fatal(line)
@@ -799,11 +832,7 @@ func Test25_CLI29_recovery_lines_are_runnable_and_safe_to_paste(t *testing.T) {
 // optionArgv is the argv a printed line runs, minus its program word(s).
 func optionArgv(t *testing.T, line string) []string {
 	t.Helper()
-	out := runPython(t, os.Getenv("HOME"), "import json,shlex,sys; print(json.dumps(shlex.split(sys.argv[1])))", []string{line})
-	var words []string
-	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &words); err != nil {
-		t.Fatal(err)
-	}
+	words := shellWords(t, line)
 	for i, w := range words {
 		if strings.HasPrefix(w, "--") {
 			return words[i:]
@@ -823,10 +852,10 @@ func anyStrings(v any) []string {
 // CLI-30: the wrong-socket refusal offers a matching pair and a note that a store "does not
 // rewrite" the socket it recorded.
 func Test25_CLI30_the_wrong_socket_refusal_offers_a_matching_pair(t *testing.T) {
-	home := pythonHome(t)
+	home := tempHome(t)
 	state, first, second := filepath.Join(home, "pair"), filepath.Join(home, "pair-first.sock"), filepath.Join(home, "pair-second.sock")
 	pythonStore(t, home, state, first)
-	refused := recoverBoth(t, home, "--state", state, "--socket", second, "status")
+	refused := recoverGolden(t, home, "--state", state, "--socket", second, "status")
 	joined := strings.Join(anyStrings(refused["recover"]), " ")
 	if !strings.Contains(joined, first) || !strings.Contains(joined, second) || !strings.Contains(refused["note"].(string), "does not rewrite") {
 		t.Fatal(refused)
@@ -838,11 +867,11 @@ func Test25_CLI30_the_wrong_socket_refusal_offers_a_matching_pair(t *testing.T) 
 // its own candidate; a pin spelling the same directory differently is not offered; an
 // unexpandable pin keeps the refusal (exit 2, 2 commands, "does not resolve").
 func Test25_CLI31_recovery_lines_handle_a_state_pin(t *testing.T) {
-	home := pythonHome(t)
+	home := tempHome(t)
 	flagged, other, wanted := filepath.Join(home, "flagged"), filepath.Join(home, "other.sock"), filepath.Join(home, "wanted.sock")
 	pythonStore(t, home, flagged, other)
 	t.Setenv("CODEX_SESSION_RELAY_STATE", flagged)
-	same := recoverBoth(t, home, "--state", flagged, "--socket", wanted, "status")
+	same := recoverGolden(t, home, "--state", flagged, "--socket", wanted, "status")
 	unpinned := 0
 	for _, line := range commands(same["recover"].([]any)) {
 		if strings.Contains(line, wanted) && strings.HasPrefix(line, "env -u CODEX_SESSION_RELAY_STATE ") {
@@ -855,7 +884,7 @@ func Test25_CLI31_recovery_lines_handle_a_state_pin(t *testing.T) {
 	pinned := filepath.Join(home, "pinned")
 	pythonStore(t, home, pinned, wanted)
 	t.Setenv("CODEX_SESSION_RELAY_STATE", pinned)
-	flagCaused := recoverBoth(t, home, "--state", flagged, "--socket", wanted, "status")
+	flagCaused := recoverGolden(t, home, "--state", flagged, "--socket", wanted, "status")
 	offered := 0
 	for _, line := range commands(flagCaused["recover"].([]any)) {
 		if strings.Contains(line, "--state="+pinned) {
@@ -867,7 +896,7 @@ func Test25_CLI31_recovery_lines_handle_a_state_pin(t *testing.T) {
 	}
 	for _, spelling := range []string{flagged + "/../flagged", "~/flagged"} {
 		t.Setenv("CODEX_SESSION_RELAY_STATE", spelling)
-		answer := recoverBoth(t, home, "--state", flagged, "--socket", wanted, "status")
+		answer := recoverGolden(t, home, "--state", flagged, "--socket", wanted, "status")
 		states := 0
 		for _, line := range commands(answer["recover"].([]any)) {
 			if strings.Contains(line, "--state=") {
@@ -882,7 +911,7 @@ func Test25_CLI31_recovery_lines_handle_a_state_pin(t *testing.T) {
 		}
 	}
 	t.Setenv("CODEX_SESSION_RELAY_STATE", "~no-such-user-for-this-test/store")
-	bad := recoverBoth(t, home, "--state="+flagged, "--socket="+wanted, "status")
+	bad := recoverGolden(t, home, "--state="+flagged, "--socket="+wanted, "status")
 	if bad["reason"] != "state_directory_serves_another_socket" || len(commands(bad["recover"].([]any))) != 2 ||
 		!strings.Contains(strings.Join(anyStrings(bad["recover"]), " "), "does not resolve") {
 		t.Fatal(bad)
@@ -910,11 +939,11 @@ func receipt(report map[string]any) map[string]any { return obj(report["accessRe
 // device/inode, observed read and write, and their own selectedBy; a participant on another
 // store gets another storeId and sameStore is not proven.
 func Test25_CLI32_participants_reach_one_store_by_three_routes(t *testing.T) {
-	home := pythonHome(t)
+	home := tempHome(t)
 	state := seededReceipts(t, home, "", "")
-	byFlag := receipt(both(t, home, "--state", state, "doctor"))
+	byFlag := receipt(goldenAnswer(t, home, "--state", state, "doctor"))
 	t.Setenv("CODEX_SESSION_RELAY_STATE", state)
-	byEnv := receipt(both(t, home, "doctor"))
+	byEnv := receipt(goldenAnswer(t, home, "doctor"))
 	os.Unsetenv("CODEX_SESSION_RELAY_STATE")
 	for name, r := range map[string]map[string]any{"flag": byFlag, "env": byEnv} {
 		if obj(r["selectedBy"])["source"] != name || r["storeId"] != byFlag["storeId"] || r["inode"] != byFlag["inode"] || r["device"] != byFlag["device"] {
@@ -927,7 +956,7 @@ func Test25_CLI32_participants_reach_one_store_by_three_routes(t *testing.T) {
 	}
 	other := filepath.Join(home, "other")
 	pythonCreates(t, other)
-	elsewhere := both(t, home, "--state", other, "doctor", "--expect-store", byFlag["storeId"].(string))
+	elsewhere := goldenAnswer(t, home, "--state", other, "doctor", "--expect-store", byFlag["storeId"].(string))
 	if receipt(elsewhere)["storeId"] == byFlag["storeId"] || elsewhere["sameStore"] == "proven" {
 		t.Fatal(elsewhere["sameStore"])
 	}
@@ -937,9 +966,9 @@ func Test25_CLI32_participants_reach_one_store_by_three_routes(t *testing.T) {
 // writableRoots, networkAccess false, recordedFrom creation_result); omitted defaults are
 // filled; a deliverable participant has refusedBy null and resumeMode workspace-write.
 func Test25_CLI33_each_receipt_carries_the_effective_sandbox(t *testing.T) {
-	home := pythonHome(t)
+	home := tempHome(t)
 	state := seededReceipts(t, home, `{"type": "workspaceWrite"}`, "")
-	recorded := obj(receipt(both(t, home, "--state", state, "doctor"))["recordedSandbox"])
+	recorded := obj(receipt(goldenAnswer(t, home, "--state", state, "doctor"))["recordedSandbox"])
 	if recorded["available"] != true {
 		t.Fatal(recorded)
 	}
@@ -963,7 +992,7 @@ func Test25_CLI33_each_receipt_carries_the_effective_sandbox(t *testing.T) {
 // CLI-34: a readable record delivery cannot carry is deliverable false with delivery's reason in
 // refusedBy, resumeMode null and a detail naming the refusal.
 func Test25_CLI34_a_record_delivery_cannot_carry_is_not_reported_as_one_it_would(t *testing.T) {
-	home := pythonHome(t)
+	home := tempHome(t)
 	state := seededReceipts(t, home, "", "")
 	db := filepath.Join(state, "relay.sqlite3")
 	child := filepath.Join(home, "work")
@@ -976,7 +1005,7 @@ func Test25_CLI34_a_record_delivery_cannot_carry_is_not_reported_as_one_it_would
 	}
 	for _, c := range cases {
 		sqlite(t, home, db, "UPDATE authorized_settings SET settings = '"+strings.ReplaceAll(c.settings, "'", "''")+"' WHERE task_id = '"+childTask+"'")
-		participants := obj(obj(receipt(both(t, home, "--state", state, "doctor"))["recordedSandbox"])["participants"])
+		participants := obj(obj(receipt(goldenAnswer(t, home, "--state", state, "doctor"))["recordedSandbox"])["participants"])
 		p := obj(participants[childTask])
 		if p["deliverable"] != false || p["refusedBy"] != c.reason || p["resumeMode"] != nil || !strings.Contains(p["detail"].(string), c.says) || p["readable"] != true {
 			t.Fatal(c.reason, p)
@@ -990,10 +1019,10 @@ func Test25_CLI34_a_record_delivery_cannot_carry_is_not_reported_as_one_it_would
 // CLI-37: one unreadable participant row is reported (readable false, "not an object") while the
 // rest of the receipt survives.
 func Test25_CLI37_one_unreadable_participant_does_not_take_the_diagnosis_with_it(t *testing.T) {
-	home := pythonHome(t)
+	home := tempHome(t)
 	state := seededReceipts(t, home, "", "")
 	sqlite(t, home, filepath.Join(state, "relay.sqlite3"), "UPDATE authorized_settings SET settings = '[]' WHERE task_id = '"+childTask+"'")
-	r := receipt(both(t, home, "--state", state, "doctor"))
+	r := receipt(goldenAnswer(t, home, "--state", state, "doctor"))
 	participants := obj(obj(r["recordedSandbox"])["participants"])
 	if obj(participants[childTask])["readable"] != false || !strings.Contains(obj(participants[childTask])["detail"].(string), "not an object") ||
 		obj(participants[parentTask])["readable"] != true || r["storeId"] == nil || obj(r["observedAccess"])["read"] != true {
@@ -1006,7 +1035,7 @@ func Test25_CLI37_one_unreadable_participant_does_not_take_the_diagnosis_with_it
 // identity, is reported unavailable with no participants and a detail naming it. The details are
 // compared with Python's _access_receipt driven the same way.
 func Test25_CLI36_a_store_changed_under_the_read_is_reported_not_served(t *testing.T) {
-	home := pythonHome(t)
+	home := tempHome(t)
 	state := seededReceipts(t, home, "", "")
 	selection, err := store.ResolveStateDir(state, "")
 	if err != nil {
@@ -1021,18 +1050,11 @@ func Test25_CLI36_a_store_changed_under_the_read_is_reported_not_served(t *testi
 	moved := store.Probe(ctx, selection)
 	moved.Store.StoreID = "another-store-entirely"
 	swapped := recordedOf(cli.AccessReceipt(ctx, state, moved))
-	pySwapped := pythonJSON(t, runPython(t, home, `
-import json, sys
-from codex_session_relay.cli import _access_receipt
-from codex_session_relay.store import probe, resolve_state_dir
-class S: pass
-s = S(); s.selection = resolve_state_dir(sys.argv[1])
-report = probe(s.selection)
-moved = dict(report, store=dict(report["store"], storeId="another-store-entirely"))
-print(json.dumps(_access_receipt(s, moved)["recordedSandbox"]))`, []string{state}, pyoracle.Substitute(store.Probe(ctx, selection).Store.StoreID, "<store-id>")))
-	if swapped["available"] != false || len(obj(swapped["participants"])) != 0 || swapped["detail"] != pySwapped["detail"] ||
-		!strings.Contains(swapped["detail"].(string), "changed under this command") {
-		t.Fatalf("go %v\npython %v", swapped, pySwapped)
+	key := goldenKey(t, "python -c "+keyLabel(state))
+	options := append(goldenOptions(t, home, state), golden.Substitute(store.Probe(ctx, selection).Store.StoreID, "<store-id>"))
+	inPackageDirectory(t, func() { golden.CheckJSON(t, key, swapped["detail"], options...) })
+	if swapped["available"] != false || len(obj(swapped["participants"])) != 0 || !strings.Contains(swapped["detail"].(string), "changed under this command") {
+		t.Fatalf("go %v", swapped)
 	}
 	// A copy replacing the file after the probe.
 	measured := store.Probe(ctx, selection)

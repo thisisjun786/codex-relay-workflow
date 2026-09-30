@@ -4,9 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -15,20 +13,20 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
-// pythonHome isolates HOME, XDG_* and CODEX_HOME for BOTH implementations in one directory of
-// the test's own, so neither can reach the live relay state or ~/.codex. The directory is a
-// fixedTree: an answer the Python relay gave there carries digests of paths under it (a socket's
-// scope key, an artifact's revision and event id), which only the same path gives again.
-func pythonHome(t *testing.T) string {
+// fixedHome isolates HOME, XDG_* and CODEX_HOME in one directory of the test's own, so the
+// relay cannot reach the live relay state or ~/.codex. The directory is a fixedTree: an answer
+// given there carries digests of paths under it (a socket's scope key, an artifact's revision
+// and event id), which only the same path gives again.
+func fixedHome(t *testing.T) string {
 	t.Helper()
-	return pythonHomeAt(t, fixedTree(t, oracleKey(t, "home "+t.Name())))
+	return isolateHome(t, fixedTree(t, goldenKey(t, "home "+t.Name())))
 }
 
-// pythonHomeAt is pythonHome at a home the caller made.
-func pythonHomeAt(t *testing.T, home string) string {
+// isolateHome is fixedHome at a home the caller made.
+func isolateHome(t *testing.T, home string) string {
 	t.Helper()
 	for key, dir := range map[string]string{
 		"HOME": "", "XDG_STATE_HOME": "xdg-state", "XDG_CONFIG_HOME": "xdg-config", "XDG_DATA_HOME": "xdg-data",
@@ -53,33 +51,6 @@ type run struct {
 	code   int
 	stdout string
 	stderr string
-}
-
-// python is the answer the real Python relay CLI gave with this process's (isolated)
-// environment, on the selected store as its owner (recorded: see oracleRun). The store is
-// handed to Python whether or not Python runs, so the Go side meets the same store either way.
-func python(t *testing.T, dir string, argv ...string) run {
-	t.Helper()
-	ownedArgs(t, dir, argv, "python")
-	options := placeholders(append([]string{dir}, argv...)...)
-	if id := selectedStoreID(t, dir, argv); id != "" {
-		options = append(options, pyoracle.Substitute(id, "<store-id>"))
-	}
-	return oracleRun(t, oracleKey(t, "python "+oracleLabel(argv...)), func() (run, error) {
-		command := exec.Command("uv", append([]string{"run", "--no-sync", "--project", repositoryRoot(t), "codex-session-relay"}, argv...)...)
-		command.Dir = dir
-		var stdout, stderr bytes.Buffer
-		command.Stdout, command.Stderr = &stdout, &stderr
-		code := 0
-		if err := command.Run(); err != nil {
-			exitErr, ok := err.(*exec.ExitError)
-			if !ok {
-				return run{}, fmt.Errorf("python %v: %w", argv, err)
-			}
-			code = exitErr.ExitCode()
-		}
-		return run{code, stdout.String(), stderr.String()}, nil
-	}, options...)
 }
 
 // golang runs the Go relay CLI in-process, as `codex-session-relay`, on the selected store as
@@ -117,11 +88,34 @@ func withoutKey(t *testing.T, document, key string) string {
 	return strings.Replace(cut, ",\n\n}", "\n}", 1)
 }
 
-func requireSame(t *testing.T, py, got run) {
+// answerKey is the golden key of the answer to argv (the label the recorded answer was filed
+// under).
+func answerKey(t *testing.T, argv []string) string {
 	t.Helper()
-	if py.code != got.code || identityNeutral(py.stdout) != identityNeutral(got.stdout) {
-		t.Fatalf("exit python=%d go=%d\npython:\n%s\ngo:\n%s", py.code, got.code, py.stdout, got.stdout)
+	return goldenKey(t, "python "+keyLabel(argv...))
+}
+
+// expectSame checks an answer to argv run in dir ("" for this process's directory) - its exit and
+// its stdout without the store file's own identity - against the golden under key.
+func expectSame(t *testing.T, key, dir string, argv []string, got run) {
+	t.Helper()
+	expectOver(t, key, dir, argv, map[string]any{"code": got.code, "stdout": identityNeutral(got.stdout)})
+}
+
+// expectOver checks value, what a test compares of an answer to argv run in dir ("" for this
+// process's directory), against the golden under key: the run's directories and identities are
+// placeholders, and so is the id of the store argv selects.
+func expectOver(t *testing.T, key, dir string, argv []string, value any) {
+	t.Helper()
+	anchors := argv
+	if dir != "" {
+		anchors = append([]string{dir}, argv...)
 	}
+	options := goldenOptions(t, anchors...)
+	if id := selectedStoreID(t, dir, argv); id != "" {
+		options = append(options, golden.Substitute(id, "<store-id>"))
+	}
+	inPackageDirectory(t, func() { golden.CheckJSON(t, key, value, options...) })
 }
 
 func decode(t *testing.T, text string) map[string]any {
@@ -134,22 +128,22 @@ func decode(t *testing.T, text string) map[string]any {
 }
 
 func TestDoctor_matches_python_on_a_python_created_store(t *testing.T) {
-	home := pythonHome(t)
+	home := tempHome(t)
 	state := filepath.Join(home, "state")
 	// Given: a store as the real Python relay's absent-store initializer creates it.
 	pythonCreates(t, state)
 
-	// When: each implementation diagnoses it as its owner (the same file, restamped).
-	py := python(t, home, "--state", state, "doctor")
+	// When: the Go build diagnoses it as its owner (restamped).
+	argv := []string{"--state", state, "doctor"}
 	restamp(t, state, "go")
-	got := golang(t, home, "--state", state, "doctor")
+	got := golang(t, home, argv...)
 
 	// Then: the whole report is byte-identical once the documented runtime block is removed,
 	// and that block is the report's last key.
 	if !strings.HasSuffix(strings.TrimSpace(got.stdout), "}\n}") {
 		t.Fatalf("runtime is not the last key:\n%s", got.stdout)
 	}
-	requireSame(t, py, run{got.code, asPythonReport(t, got.stdout, "python"), got.stderr})
+	expectSame(t, answerKey(t, argv), home, argv, run{got.code, asPythonReport(t, got.stdout, "python"), ""})
 	runtimeBlock := decode(t, got.stdout)["runtime"].(map[string]any)
 	if runtimeBlock["language"] != "go" || runtimeBlock["version"] != cli.Version {
 		t.Fatalf("runtime %v", runtimeBlock)
@@ -160,15 +154,17 @@ func TestDoctor_matches_python_on_a_python_created_store(t *testing.T) {
 // a disposable copy, no live open and no probe file beside it, and the fence's refusal in the
 // access detail (store.py probe's check_start branch).
 func TestDoctor_matches_python_on_a_store_the_other_runtime_owns(t *testing.T) {
-	home := pythonHome(t)
+	home := tempHome(t)
 	_, alias := packageBinary(t)
 	state := filepath.Join(home, "state")
 	pythonCreates(t, state)
-	// Neither run hands the store to its runtime first: each diagnoses the other's store.
-	got := binaryRun(t, alias, "--state", state, "doctor")
+	// The store is not handed to Go first: Go diagnoses the fence's store, and its golden is the
+	// fence's diagnosis of the same store in Go's hands (asPythonReport words it so), which the
+	// restamp below leaves for the mirror without its database.
+	argv := []string{"--state", state, "doctor"}
+	got := binaryRun(t, alias, argv...)
 	restamp(t, state, "go")
-	py := fence(t, "--state", state, "doctor")
-	requireSame(t, py, run{got.code, asPythonReport(t, got.stdout, "go"), got.stderr})
+	expectSame(t, goldenKey(t, "fence "+keyLabel(argv...)), "", argv, run{got.code, asPythonReport(t, got.stdout, "go"), ""})
 	access := decode(t, got.stdout)["access"].(map[string]any)
 	if access["directoryWritable"] != false || access["dbWritable"] != false || access["dbReadable"] != true ||
 		access["detail"] != "store_owned_by_other: the relay store belongs to another runtime" {
@@ -179,33 +175,33 @@ func TestDoctor_matches_python_on_a_store_the_other_runtime_owns(t *testing.T) {
 	if err := os.Remove(filepath.Join(state, "relay.sqlite3")); err != nil {
 		t.Fatal(err)
 	}
-	py = fence(t, "--state", state, "doctor")
-	got = binaryRun(t, alias, "--state", state, "doctor")
-	requireSame(t, py, run{got.code, asPythonReport(t, got.stdout, "go"), got.stderr})
+	got = binaryRun(t, alias, argv...)
+	expectSame(t, goldenKey(t, "fence "+keyLabel(argv...)), "", argv, run{got.code, asPythonReport(t, got.stdout, "go"), ""})
 	if detail := decode(t, got.stdout)["access"].(map[string]any)["detail"].(string); !strings.HasSuffix(detail, "; store_owned_by_other: missing or unsupported writer protocol") {
 		t.Fatalf("detail %q", detail)
 	}
 }
 
 func TestDoctor_expect_inode_mismatch_refuses_with_python_reason(t *testing.T) {
-	home := pythonHome(t)
+	home := tempHome(t)
 	state := filepath.Join(home, "state")
 	pythonCreates(t, state)
-	py := python(t, home, "--state", state, "doctor", "--expect-inode", "1:2")
+	argv := []string{"--state", state, "doctor", "--expect-inode", "1:2"}
 	restamp(t, state, "go")
-	got := golang(t, home, "--state", state, "doctor", "--expect-inode", "1:2")
+	got := golang(t, home, argv...)
 	if got.code != 2 {
 		t.Fatalf("exit %d", got.code)
 	}
-	requireSame(t, py, run{got.code, asPythonReport(t, got.stdout, "python"), got.stderr})
+	expectSame(t, answerKey(t, argv), home, argv, run{got.code, asPythonReport(t, got.stdout, "python"), ""})
 	if detail := decode(t, got.stdout)["detail"].(string); !strings.Contains(detail, "is not 1:2") {
 		t.Fatalf("detail %q", detail)
 	}
 }
 
-// asPythonReport is a Go doctor report as the Python runtime would word the same observation:
-// without Go's trailing runtime block, with the owner the Python run saw, and with the Python
-// build as runtime_build, which names the answering runtime (decisions.md 31).
+// asPythonReport is a Go doctor report as the Python runtime would word the same observation,
+// which the goldens hold: without Go's trailing runtime block, with the owner the Python run saw,
+// and with the Python build as runtime_build, which names the answering runtime (decisions.md
+// 31).
 func asPythonReport(t *testing.T, stdout, pythonSawOwner string) string {
 	t.Helper()
 	report := withoutKey(t, stdout, "runtime")
@@ -218,7 +214,7 @@ func asPythonReport(t *testing.T, stdout, pythonSawOwner string) string {
 // file, a policy that declares no roles, and a worker-policy requirement. Every report is
 // byte-identical to Python's once the documented runtime block is removed.
 func TestDoctor_matches_python_with_a_declared_execution_policy(t *testing.T) {
-	home := pythonHome(t)
+	home := tempHome(t)
 	state := filepath.Join(home, "state")
 	pythonCreates(t, state)
 	policy := filepath.Join(home, "policy.json")
@@ -234,12 +230,11 @@ func TestDoctor_matches_python_with_a_declared_execution_policy(t *testing.T) {
 	declaration := filepath.Join(state, "launch-policy.json")
 	compare := func(t *testing.T, argv ...string) map[string]any {
 		t.Helper()
-		restamp(t, state, "python")
-		py := python(t, home, append([]string{"--state", state, "doctor"}, argv...)...)
+		argv = append([]string{"--state", state, "doctor"}, argv...)
 		restamp(t, state, "go")
-		got := golang(t, home, append([]string{"--state", state, "doctor"}, argv...)...)
-		requireSame(t, py, run{got.code, asPythonReport(t, got.stdout, "python"), got.stderr})
-		return decode(t, py.stdout)
+		got := golang(t, home, argv...)
+		expectSame(t, answerKey(t, argv), home, argv, run{got.code, asPythonReport(t, got.stdout, "python"), ""})
+		return decode(t, got.stdout)
 	}
 	t.Run("environment", func(t *testing.T) {
 		t.Setenv(policyEnv, policy)
@@ -285,7 +280,7 @@ const policyEnv = "CODEX_THREAD_BRIDGE_EXECUTION_POLICY"
 // --kind-module names a Python module, which this build cannot import: the answer is the one
 // Python gives for a module it cannot import, including the empty and relative spellings.
 func TestKindModule_matches_python_for_an_unimportable_module(t *testing.T) {
-	home := pythonHome(t)
+	home := tempHome(t)
 	state := filepath.Join(home, "state")
 	for _, argv := range [][]string{
 		{"--kind-module", "nosuch.mod", "status"},
@@ -297,64 +292,51 @@ func TestKindModule_matches_python_for_an_unimportable_module(t *testing.T) {
 		{"--kind-module", "nosuch", "bogus"},
 	} {
 		argv := append([]string{"--state", state}, argv...)
-		py, got := python(t, home, argv...), golang(t, home, argv...)
-		pyErr, goErr := lastLine(py.stderr), lastLine(got.stderr)
-		if strings.Contains(pyErr, "invalid choice") {
-			pyErr, goErr = pyErr[:strings.Index(pyErr, "(choose")], goErr[:max(0, strings.Index(goErr, "(choose"))]
+		key := answerKey(t, argv)
+		got := golang(t, home, argv...)
+		// The choices an unknown command lists differ by the commands this build registers: the
+		// line is compared up to them.
+		compared := lastLine(got.stderr)
+		if strings.Contains(compared, "invalid choice") {
+			compared = compared[:max(0, strings.Index(compared, "(choose"))]
 		}
-		if py.code != got.code || py.stdout != got.stdout || pyErr != goErr {
-			t.Fatalf("%v: python %d %q %q\ngo %d %q %q", argv, py.code, py.stdout, lastLine(py.stderr), got.code, got.stdout, lastLine(got.stderr))
-		}
+		expectJSON(t, key, map[string]any{"code": got.code, "stdout": got.stdout, "stderr": compared}, append([]string{home}, argv...)...)
 	}
 }
 
 func TestDelivery_kind_module_refusal_matches_python_before_ack_proof(t *testing.T) {
-	home := pythonHome(t)
+	home := tempHome(t)
 	args := []string{"--kind-module", "does_not_exist", "ack-proof", "--event", "0123456789abcdef0123456789abcdef", "--turn", "turn-1"}
 	for _, argv := range [][]string{args, args[2:]} {
-		py, got := python(t, home, argv...), golang(t, home, argv...)
-		if py.code != got.code || py.stdout != got.stdout || py.stderr != got.stderr {
-			t.Fatalf("%v: python %+v; go %+v", argv, py, got)
-		}
+		key := answerKey(t, argv)
+		got := golang(t, home, argv...)
+		expectRunErr(t, key, got.code, got.stdout, got.stderr, append([]string{home}, argv...)...)
 	}
 }
 
 func TestRegistry_kind_module_refusal_matches_python_before_register(t *testing.T) {
-	home := pythonHome(t)
+	home := tempHome(t)
 	state := filepath.Join(home, "state")
 	args := []string{"--state", state, "--kind-module", "does_not_exist", "register",
 		"--parent-task", "p", "--parent-host", "p", "--child-task", "c", "--child-host", "c",
 		"--issue", "I-1", "--artifact-root", home, "--allowed-recipient", "p",
 		"--dispatch-request-id", "req"}
-	py, got := python(t, home, args...), golang(t, home, args...)
-	if py.code != got.code || py.stdout != got.stdout || py.stderr != got.stderr {
-		t.Fatalf("python %+v; go %+v", py, got)
+	key := answerKey(t, args)
+	got := golang(t, home, args...)
+	expectRunErr(t, key, got.code, got.stdout, got.stderr, append([]string{home}, args...)...)
+	if got.code != 4 || strings.Contains(got.stdout, "relationshipId") {
+		t.Fatalf("unexpected registration: %+v", got)
 	}
-	if py.code != 4 || strings.Contains(py.stdout, "relationshipId") {
-		t.Fatalf("unexpected registration: %+v", py)
-	}
-	// Without the invalid global option the same handler still behaves as Python's; the clock
+	// Without the invalid global option the same handler still behaves as it did; the clock
 	// reading each run registered at is its own.
 	valid := append(append([]string{}, args[:2]...), args[4:]...)
-	py, got = python(t, home, valid...), golang(t, home, valid...)
-	py.stdout, got.stdout = clockReading.ReplaceAllString(py.stdout, `"<at>"`), clockReading.ReplaceAllString(got.stdout, `"<at>"`)
-	if py.code != got.code || py.stdout != got.stdout || py.stderr != got.stderr {
-		t.Fatalf("valid: python %+v; go %+v", py, got)
-	}
+	key = answerKey(t, valid)
+	got = golang(t, home, valid...)
+	got.stdout = clockReading.ReplaceAllString(got.stdout, `"<at>"`)
+	expectRunErr(t, key, got.code, got.stdout, got.stderr, append([]string{home}, valid...)...)
 }
 
 func lastLine(text string) string {
 	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
 	return lines[len(lines)-1]
-}
-
-// pythonSnippet runs `python -c script args...` in the relay's uv environment. Only a capture
-// closure calls it (see oracleRun).
-func pythonSnippet(dir, script string, args ...string) (string, error) {
-	_, file, _, _ := runtime.Caller(0)
-	repo := filepath.Join(filepath.Dir(file), "..", "..", "..")
-	command := exec.Command("uv", append([]string{"run", "--no-sync", "--project", repo, "python", "-c", script}, args...)...)
-	command.Dir = dir
-	out, err := command.CombinedOutput()
-	return string(out), err
 }

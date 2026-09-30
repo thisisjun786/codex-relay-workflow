@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor"
@@ -24,53 +23,25 @@ func TestD11SupervisorReportRecordedRefusalMatchesPythonCLI(t *testing.T) {
 		}
 		os.Exit(ExecuteAs(context.Background(), os.Getenv("D11_ARGV0"), args, os.Stdout, os.Stderr))
 	}
-	root, err := filepath.Abs("../../..")
-	if err != nil {
-		t.Fatal(err)
-	}
 	reading := filepath.Join(t.TempDir(), "reading.json")
 	data := `{"schema":"reporting-observation/1","reportingState":"unreported","reason":"terminal_without_report","relationshipId":"rel-1","executionGeneration":1,"selectors":{"state":"/state","markerRoot":"/markers","workspace":"/work","assignment":"a","session":"s","turn":"turn-1"}}`
 	if err := os.WriteFile(reading, []byte(data), 0600); err != nil {
 		t.Fatal(err)
 	}
-	const script = `
-import sys
-from codex_session_relay import cli, supervision
-from codex_session_relay.errors import DeliveryRefused, RefusalReason
-def refused(*a,**kw): raise DeliveryRefused(RefusalReason.CONTRADICTORY_OBSERVATION,'record refusal')
-supervision.record_report=refused
-raise SystemExit(cli.main(sys.argv[1:]))
-`
-	// Each runtime answers over a home and store of its own; Python's answer is recorded (see
-	// askPython), and a path it names is spelled with the Go run's home.
+	// The recorder refuses, as the Python reference's supervision.record_report was made to
+	// (DeliveryRefused CONTRADICTORY_OBSERVATION 'record refusal'): each invocation answers over
+	// a home and store of its own.
 	environment := func(home string) []string {
-		return append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home+"/xdg", "XDG_CONFIG_HOME="+home+"/config", "XDG_DATA_HOME="+home+"/data", "CODEX_HOME="+home+"/codex", "CRW_REFUSE_LIVE_STATE=", "PYTHONPATH="+filepath.Join(root, "packages/codex-session-relay/src"))
+		return append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home+"/xdg", "XDG_CONFIG_HOME="+home+"/config", "XDG_DATA_HOME="+home+"/data", "CODEX_HOME="+home+"/codex", "CRW_REFUSE_LIVE_STATE=")
 	}
 	arguments := func(home string) []string {
 		return []string{"--state", filepath.Join(home, "state"), "supervisor-report-recorded", "--observation", reading}
 	}
-	pyHome, home := t.TempDir(), t.TempDir()
-	var python pythonAnswer
-	askPython(t, "supervisor-report-recorded", &python, func() (any, error) {
-		cmd := exec.Command(filepath.Join(root, ".venv/bin/python"), append([]string{"-c", script}, arguments(pyHome)...)...)
-		cmd.Env = environment(pyHome)
-		var pyOut, pyErr bytes.Buffer
-		cmd.Stdout, cmd.Stderr = &pyOut, &pyErr
-		pyCode := 0
-		if err := cmd.Run(); err != nil {
-			exit, ok := err.(*exec.ExitError)
-			if !ok {
-				return nil, err
-			}
-			pyCode = exit.ExitCode()
-		}
-		return pythonAnswer{pyCode, pyOut.String(), pyErr.String()}, nil
-	}, pyHome, reading)
-	pyCode := python.Code
-	pyOut, pyErr := strings.ReplaceAll(python.Stdout, pyHome, home), strings.ReplaceAll(python.Stderr, pyHome, home)
+	home := t.TempDir()
 	env, args := environment(home), arguments(home)
 	rawArgs, _ := json.Marshal(args)
 	for _, invocation := range []struct{ name, argv0 string }{{"codex-session-relay", "codex-session-relay"}, {"crw relay", "crw relay"}} {
+		var compared map[string]any
 		t.Run(invocation.name, func(t *testing.T) {
 			cmd := exec.Command(os.Args[0], "-test.run=^TestD11SupervisorReportRecordedRefusalMatchesPythonCLI$")
 			cmd.Env = append(env, "D11_CLI_HELPER=1", "D11_ARGV0="+invocation.argv0, "D11_CLI_ARGS="+string(rawArgs))
@@ -84,9 +55,10 @@ raise SystemExit(cli.main(sys.argv[1:]))
 				}
 				code = exit.ExitCode()
 			}
-			if code != pyCode || out.String() != pyOut || stderr.String() != pyErr {
-				t.Fatalf("byte diff\nGo exit=%d stdout=%q stderr=%q\nPython exit=%d stdout=%q stderr=%q", code, out.String(), stderr.String(), pyCode, pyOut, pyErr)
-			}
+			compared = map[string]any{"code": code, "stdout": out.String(), "stderr": stderr.String()}
 		})
+		if compared != nil {
+			expectGolden(t, "supervisor-report-recorded "+invocation.name, compared, home, reading)
+		}
 	}
 }
