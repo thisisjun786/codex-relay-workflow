@@ -2713,3 +2713,25 @@ through other code, so a copy that only its tests call tests nothing the product
 
 Evidence: `git grep -n 'testonly_test.go'`; `internal/relay/delivery/onrequest_adapter_test.go`
 (`verifyResume`); `internal/relay/supervisor/partd_res_rcf_slf_test.go` (`slfCheck`).
+
+## 53. No work-report writer: the supervisor's report library is deleted (refactor R1)
+
+Decision: the supervisor's work-report library - `RecordWorkReport` with its validation and
+normalization (`report_record.go`, `report_review.go`, `report_restore.go`, `report_subset.go`),
+its read-back (`ReadWorkReport`, `ReadWorkReports`), the correction gate
+(`AssertReportResubmission`) and delivery's `ProjectReportRestoration` - is deleted, with the
+tests whose subject it was and their recordings. The `work_reports`, `work_report_handoffs` and
+`attempt_report_submissions` tables stay in the schema with any rows a store holds, and every
+product reader of them stays: delivery's report composition and the attempt's submission freeze,
+`crw relay show`, the supervisor obligation and packet reads, the registry's dispositions and the
+evidence reports. The supervisor replay harness (`partd_report_alias_test.go`) no longer replays
+Python's recorded `report` and `read` operations; each operation runs on its own snapshot, so
+the others are unchanged. The invariants `report.record` enforced (I-90, I-96, I-100, I-105,
+I-113, I-118, I-129, I-132, I-122 in docs/relay/invariants.md) are marked retired.
+
+Why: nothing in the product records a work report in either runtime (Python's `report.record`
+had only test callers, and so did the Go port of it), so the library tested a writer nobody runs.
+The owner chose deletion over wiring a command for it (2026-10-01).
+
+Evidence: `git grep -n 'INSERT INTO work_reports'` (no product match); the readers named above;
+`internal/relay/store/table_coverage_test.go` (every report table still has a product query).

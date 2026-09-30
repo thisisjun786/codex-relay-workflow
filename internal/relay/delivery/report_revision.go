@@ -1,14 +1,12 @@
 package delivery
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"strings"
 
 	py "github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 func composeWorkRevision(row Row, receipt Obj, request string, report map[string]any, budget int) (string, error) {
@@ -241,93 +239,4 @@ func composeWorkRevisionMeasured(row Row, receipt Obj, request string, report ma
 		}
 	}
 	return text, survivors, restoreDropped, nil
-}
-
-// reportProjectionBudget is report.BUDGET; tests may squeeze it just as Python's
-// restoration test patches that value. Normal rendering keeps its own default.
-var reportProjectionBudget = 6000
-
-// ProjectReportRestoration measures the candidate report already inserted by its
-// caller. Call it inside RecordWorkReport's write transaction with that transaction's
-// ctx, before COMMIT; all reads use the Store's ctx-aware querier, so the candidate
-// and the latest delivery attempt count are measured under the same write lock.
-// A returned error must roll back the candidate. A non-nil result is journalled as
-// restoration_rendered and attached to the returned report by the caller.
-func ProjectReportRestoration(ctx context.Context, s *store.Store, eventID string) (map[string]any, error) {
-	event, err := one(ctx, s, "SELECT * FROM events WHERE event_id = ?", eventID)
-	if err != nil || event == nil || event.S("outcome") != Revision {
-		return nil, err
-	}
-	receipt := loadsObj(event.S("receipt"))
-	findings := correctionFindings(receipt)
-	index := -1
-	var block Obj
-	for i, f := range findings {
-		if v, _ := get(f, "restoration"); truthy(v) {
-			index, block = i, f
-			break
-		}
-	}
-	result := func(outcome string, criterion any, detail string) map[string]any {
-		return map[string]any{"outcome": outcome, "basis": "relay-report/1", "criterion": criterion, "detail": detail}
-	}
-	if block == nil {
-		return result("not_carried", nil, "no finding declared a restoration block"), nil
-	}
-	row, err := one(ctx, s, `SELECT d.*, EXISTS(SELECT 1 FROM relationships r WHERE r.relationship_id=d.relationship_id AND r.superseded_by IS NULL) AS relationship_live, NOT EXISTS(SELECT 1 FROM delivery_supersession ds WHERE ds.event_id=d.event_id) AS correction_open, EXISTS(SELECT 1 FROM events e JOIN relationships r ON r.relationship_id=e.relationship_id WHERE e.event_id=d.event_id AND e.stage='final' AND e.execution_generation>=r.execution_generation) AS event_current FROM deliveries d WHERE d.event_id=?`, eventID)
-	if err != nil {
-		return nil, err
-	}
-	unclaimable := ""
-	switch {
-	case row == nil:
-		unclaimable = "no delivery is queued for it"
-	case !row.N("hold_reason"):
-		unclaimable = "the delivery is held: " + store.PyRepr(row.S("hold_reason"))
-	case row.I("relationship_live") == 0:
-		unclaimable = "its relationship has been superseded"
-	case row.I("correction_open") == 0:
-		unclaimable = "the correction it belongs to has already been answered and superseded"
-	case row.I("event_current") == 0:
-		unclaimable = "the event is behind the assignment's current generation"
-	case row.S("state") != Queued && row.S("state") != DeferredBusy && row.S("state") != WithheldPreSend && row.S("state") != Sending && row.S("state") != HeldUncertain:
-		unclaimable = "the delivery is " + store.PyRepr(row.S("state"))
-	}
-	if unclaimable != "" {
-		return result("unmeasured", nil, "no further attempt will render this report; "+unclaimable), nil
-	}
-	report, err := reportRows(ctx, s, eventID)
-	if err != nil {
-		return nil, err
-	}
-	attempt := row.I("attempt_count") + 1
-	request, err := store.RequestID(eventID, int(attempt))
-	if err != nil {
-		return nil, err
-	}
-	_, survivors, restoreDropped, err := composeWorkRevisionMeasured(row, receipt, request, report, reportProjectionBudget)
-	id := reportField(block, "id")
-	if err != nil {
-		return nil, refuse(RestorationUndeliverable, "this report cannot be composed into a revision message, so the restoration block on %s cannot travel and every delivery attempt would fail the same way inside its claim: %s", pyReprValue(id), err)
-	}
-	present := false
-	for _, survivor := range survivors {
-		if survivor == id {
-			present = true
-		}
-	}
-	where := fmt.Sprintf("finding %d of %d", index+1, len(findings))
-	if !present {
-		return nil, refuse(RestorationUndeliverable, "this report would push the restoration block on %s out of the correction: %s, removed while fitting the message to its byte budget. Shorten the report or move the block and record it again. Afterwards there is no supported way to send the block: the verdict does not resend and a second channel is not allowed", pyReprValue(id), where)
-	}
-	projection := result("carried", id, where+", still present after the message was fitted")
-	projection["attempt"] = attempt
-	projection["restoreSection"] = "absent"
-	if py.Truthy(report["restore"]) {
-		projection["restoreSection"] = "carried"
-		if restoreDropped {
-			projection["restoreSection"] = "budget_dropped"
-		}
-	}
-	return projection, nil
 }

@@ -11,8 +11,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
@@ -42,95 +40,6 @@ s=sqlite3.connect(sys.argv[1]); d=sqlite3.connect(sys.argv[2]); s.backup(d); d.c
 	}
 	ownCopied(t, pyPath, "python")
 	return pyPath, nil
-}
-
-func Test24_ReportStorageBytes(t *testing.T) {
-	for _, revision := range []bool{false, true} {
-		t.Run(map[bool]string{false: "blocked", true: "revision"}[revision], func(t *testing.T) {
-			f := fixture24(t)
-			outcome := "blocked_needs_input"
-			if revision {
-				outcome = "revision_request"
-			}
-			if _, err := f.s.DB.Exec("UPDATE events SET outcome=?; DELETE FROM work_reports", outcome); err != nil {
-				t.Fatal(err)
-			}
-			input := map[string]any{"repository": "owner/repo", "cxc_status": "BLOCKED", "cxc_reason": "<reason> & café", "summary": "<summary> & café", "next_action": "review", "evidence": []any{map[string]any{"check": "<check> & café", "exitCode": 0, "detail": "<detail> & café"}, "second"}, "unresolved": []any{map[string]any{"id": "<id> & café", "note": "<note> & café"}}, "restore": map[string]any{"skills": []any{"development"}, "mode": "<mode> & café", "scope": "<scope> & café"}}
-			if revision {
-				input["review"] = map[string]any{"kind": "FAIL", "findings": []any{map[string]any{"id": "criterion", "verdict": "needs_changes", "note": "<note> & café", "anchor": "<anchor> & café"}}}
-			}
-			payload, err := json.Marshal(input)
-			if err != nil {
-				t.Fatal(err)
-			}
-			// Python records the same report on a copy of the store as it stands before Go does.
-			pyPath := ""
-			if pyoracle.Live() {
-				if pyPath, err = recheckCopy(t, f); err != nil {
-					t.Fatal(err)
-				}
-			}
-			stored, err := RecordWorkReport(f.ctx, f.s, &delivery.FakeClock{T: 1700000000}, f.event, input)
-			if err != nil {
-				t.Fatal(err)
-			}
-			want := pythonOutput(t, "record", func() ([]byte, error) {
-				return recheckPython(f.root, `import json,sys
-from codex_session_relay import report
-from codex_session_relay.store import Store
-from codex_session_relay.clock import FakeClock
-s=Store(sys.argv[1])
-stored=report.record(s,FakeClock(1700000000),event_id=sys.argv[2],**json.loads(sys.argv[3]))
-r=dict(s.one('SELECT evidence,unresolved,review,restore FROM work_reports WHERE event_id=?',(sys.argv[2],)))
-j=s.one("SELECT detail FROM journal WHERE kind='restoration_rendered'")
-r['restorationJournal']=j['detail'] if j else None
-r['restoration']=stored.get('restoration')
-r['readback']=json.dumps(report.read(s,sys.argv[2]),sort_keys=True)
-print(json.dumps(r,sort_keys=True))
-s.close()`, pyPath, f.event, string(payload))
-			}, pyoracle.Substitute(f.root, "<fixture>"))
-			row, err := f.s.One(f.ctx, "SELECT evidence,unresolved,review,restore FROM work_reports WHERE event_id=?", f.event)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var expected map[string]any
-			if err := json.Unmarshal(want, &expected); err != nil {
-				t.Fatal(err)
-			}
-			readback, err := ReadWorkReport(f.ctx, f.s, f.event)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got := evidence.Dumps(readback, false, true, true); got != expected["readback"] {
-				t.Errorf("ReadWorkReport byte diff\nGo: %s\nPython: %s", got, expected["readback"])
-			}
-			if revision {
-				var journal string
-				if err := f.s.DB.QueryRow("SELECT detail FROM journal WHERE kind='restoration_rendered'").Scan(&journal); err != nil {
-					t.Fatal(err)
-				}
-				if journal != expected["restorationJournal"] {
-					t.Errorf("restoration_rendered.detail byte diff\nGo: %s\nPython: %s", journal, expected["restorationJournal"])
-				}
-				gotProjection, err := json.Marshal(stored["restoration"])
-				if err != nil {
-					t.Fatal(err)
-				}
-				wantProjection, err := json.Marshal(expected["restoration"])
-				if err != nil {
-					t.Fatal(err)
-				}
-				if !bytes.Equal(gotProjection, wantProjection) {
-					t.Errorf("restoration projection diff\nGo: %s\nPython: %s", gotProjection, wantProjection)
-				}
-			}
-			for _, key := range []string{"evidence", "unresolved", "review", "restore"} {
-				if row.Get(key) != expected[key] {
-					t.Errorf("work_reports.%s byte diff\nGo: %s\nPython: %s", key, row.Get(key), expected[key])
-				}
-			}
-		})
-	}
 }
 
 func Test24_AutoFaultJournalBytes(t *testing.T) {
