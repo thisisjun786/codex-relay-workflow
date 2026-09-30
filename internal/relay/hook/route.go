@@ -1,6 +1,7 @@
 package hook
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -67,9 +68,9 @@ const routeBudget = 5 * time.Second
 // Routed is the owner's answer to a guard-evaluate the CLI handed to its control.sock
 // (stopadapter.socket_guard as cmd_guard_evaluate calls it). Answer is the answer decoded and Code
 // the exit status it carries: 0, or 2, 3 or 4 for an error record's refused, host or usage (2
-// for any other error). Readable is false when the owner closed without a readable answer (a
-// JSON null is none, as the fence reads it), and TimedOut when it did not answer within the
-// budget, which Detail words.
+// for any other error). Readable is false when the owner closed without a readable answer (none,
+// bytes that are not UTF-8 or JSON, more than 64 MiB of them, or a JSON null, as the fence reads
+// them), and TimedOut when it did not answer within the budget, which Detail words.
 type Routed struct {
 	Answer   any
 	Code     int
@@ -113,9 +114,12 @@ func RouteGuard(ctx context.Context, state string, stop Object, options GuardOpt
 	}
 	var raw []byte
 	chunk := make([]byte, 65536)
-	for !containsNewline(raw) && len(raw) <= maxControlBytes {
+	// Only the bytes just read can hold the first newline: rescanning the whole frame on every
+	// read made a 64 MiB answer outlast the budget.
+	for newline := false; !newline && len(raw) <= maxControlBytes; {
 		n, err := conn.Read(chunk[:min(len(chunk), maxControlBytes+1-len(raw))])
 		raw = append(raw, chunk[:n]...)
+		newline = bytes.IndexByte(chunk[:n], '\n') >= 0
 		if errors.Is(err, io.EOF) {
 			break
 		}
@@ -149,15 +153,6 @@ func RouteGuard(ctx context.Context, state string, stop Object, options GuardOpt
 		}
 	}
 	return routed, nil
-}
-
-func containsNewline(raw []byte) bool {
-	for _, b := range raw {
-		if b == '\n' {
-			return true
-		}
-	}
-	return false
 }
 
 func timeout(err error) bool {

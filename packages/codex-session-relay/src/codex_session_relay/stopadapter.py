@@ -582,7 +582,8 @@ def socket_guard(config, payload, *, state=None):
                 # The deadline covers the send too: an owner that does not read a large Stop
                 # payload is guard_timed_out, as the Go client classifies a write timeout.
                 connection.sendall(json.dumps(request).encode("utf-8") + b"\n")
-                while b"\n" not in raw and len(raw) <= MAX_GUARD_FRAME:
+                newline = False
+                while not newline and len(raw) <= MAX_GUARD_FRAME:
                     remaining = budget - (time.monotonic() - started)
                     if remaining <= 0:
                         raise TimeoutError("guard socket deadline exceeded")
@@ -591,6 +592,9 @@ def socket_guard(config, payload, *, state=None):
                     if not chunk:
                         break
                     raw.extend(chunk)
+                    # Only the bytes just read can hold the first newline: rescanning the
+                    # whole frame on every read spent seconds of the budget at 64 MiB.
+                    newline = b"\n" in chunk
             except TimeoutError:
                 return {"ending": TIMED_OUT, "argv": argv, "code": None, "signal": None,
                         "elapsedMs": round((time.monotonic() - started) * 1000),
@@ -602,8 +606,11 @@ def socket_guard(config, payload, *, state=None):
                 text = bytes(raw).decode("utf-8")
                 value = json.loads(text) if raw else None
             except ValueError:
-                # Unreadable output, as the Go client classifies it: never a refusal.
-                return exited(bytes(raw).decode("utf-8", "replace"))
+                # Unreadable output, as the Go client classifies it: never a refusal. The stdout
+                # carries the bytes with U+FFFD for any that are not UTF-8, which can still parse,
+                # so the mark tells guard-evaluate that the owner said nothing readable (the
+                # adapter reads only the stdout, as before).
+                return dict(exited(bytes(raw).decode("utf-8", "replace")), unreadable=True)
             if value is None:
                 return exited("")
             error = value.get("error") if isinstance(value, dict) else None

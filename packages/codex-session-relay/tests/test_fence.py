@@ -1218,7 +1218,21 @@ def test_go_owner_socket_answers_after_sending_are_never_invented_refusals(datab
         assert json.loads(result["stdout"]) == large
 
 
-def test_guard_evaluate_cli_reports_a_silent_owner_as_a_host_error(database, tmp_path):
+@pytest.mark.parametrize(("reply", "limit"), [
+    pytest.param(b"", None, id="silent"),
+    pytest.param(b"null\n", None, id="null"),
+    pytest.param(b"\xff not json\n", None, id="not-json"),
+    # JSON once each byte that is not UTF-8 is replaced with U+FFFD, and still not an answer:
+    # the owner's error record does not lend it its exit status, nor is it printed with exit 0.
+    pytest.param(b'{"a": "\xff"}\n', None, id="object-not-utf8"),
+    pytest.param(b'{"error": "refused", "reason": "\xff"}\n', None, id="refusal-not-utf8"),
+    pytest.param(b'{"error": "host", "detail": "\xc3"}\n', None, id="host-not-utf8"),
+    pytest.param(b'"\xff"\n', None, id="string-not-utf8"),
+    # One byte over the frame limit (16 here), where those 17 bytes are a whole JSON string.
+    pytest.param(b'"' + b"a" * 15 + b'"\n', 16, id="over-the-frame-limit"),
+])
+def test_guard_evaluate_cli_reports_an_owner_that_says_nothing_readable_as_a_host_error(
+        database, tmp_path, reply, limit):
     stamp(database, owner="go")
     stop = tmp_path / "stop.json"
     # A Stop that reads its receipt, so the owner is asked: a marker-only one never is.
@@ -1228,13 +1242,16 @@ def test_guard_evaluate_cli_reports_a_silent_owner_as_a_host_error(database, tmp
         server.listen(1)
         server.settimeout(10)
 
-        def silent():
+        def owner():
             connection, _ = server.accept()
             with connection, connection.makefile("rb") as stream:
                 stream.readline()
+                connection.sendall(reply)
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(silent)
+        with (concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor,
+              mock.patch.object(stopadapter, "MAX_GUARD_FRAME",
+                                limit or stopadapter.MAX_GUARD_FRAME)):
+            future = executor.submit(owner)
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
                 code = cli.main(["--state", str(database.parent), "guard-evaluate", "--marker-root",

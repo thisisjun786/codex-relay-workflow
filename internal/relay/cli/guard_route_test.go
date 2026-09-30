@@ -185,12 +185,20 @@ func TestGuardEvaluate_routes_to_the_owners_control_socket_as_the_fence_does(t *
 		}
 	}
 
-	// An owner that answers nothing readable (nothing, not JSON, or null), and one whose error
-	// record the fence cannot look up (an unhashable kind), after the request was sent: host
-	// errors, never a refusal.
+	// An owner that answers nothing readable (nothing, not UTF-8, not JSON, or null), and one
+	// whose error record the fence cannot look up (an unhashable kind), after the request was
+	// sent: host errors, never a refusal.
 	for _, owner := range []struct{ name, reply, detail string }{
 		{"an owner that answers nothing", "", "the owner closed control.sock without a readable guard-evaluate answer"},
 		{"an owner that answers bytes that are not JSON", "\xff not json\n", "the owner closed control.sock without a readable guard-evaluate answer"},
+		// JSON once each byte that is not UTF-8 is replaced with U+FFFD, and still unreadable:
+		// neither an answer printed with exit 0 nor an error record's own exit status.
+		{"an owner that answers an object that is not UTF-8", "{\"a\": \"\xff\"}\n", "the owner closed control.sock without a readable guard-evaluate answer"},
+		{"an owner that answers a refusal that is not UTF-8", "{\"error\": \"refused\", \"reason\": \"\xff\"}\n", "the owner closed control.sock without a readable guard-evaluate answer"},
+		{"an owner that answers a host error that is not UTF-8", "{\"error\": \"host\", \"detail\": \"\xc3\"}\n", "the owner closed control.sock without a readable guard-evaluate answer"},
+		{"an owner that answers a string that is not UTF-8", "\"\xff\"\n", "the owner closed control.sock without a readable guard-evaluate answer"},
+		// One byte over the 64 MiB frame limit, where those bytes are a whole JSON string.
+		{"an owner that answers over the frame limit", "\"" + strings.Repeat("a", 64<<20-1) + "\"\n", "the owner closed control.sock without a readable guard-evaluate answer"},
 		// The fence reads a JSON null as no answer at all (socket_guard's `if value is None`).
 		{"an owner that answers null", "null\n", "the owner closed control.sock without a readable guard-evaluate answer"},
 		{"an owner whose error kind is a list", "{\"error\": [\"refused\"]}\n", "TypeError: unhashable type: 'list'"},

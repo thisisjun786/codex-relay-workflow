@@ -4069,6 +4069,10 @@ def cmd_guard_evaluate(services, args) -> dict:
             if routed["ending"] != "exited":
                 raise PayloadExit({"error": "host", "detail": routed["detail"]}, EXIT_HOST)
             try:
+                if routed.get("unreadable"):
+                    # Bytes that are not UTF-8, not JSON or over the frame limit: their
+                    # replaced text may parse, but it is not what the owner said.
+                    raise ValueError("the owner's answer is unreadable")
                 answer = json.loads(routed["stdout"])
             except ValueError:
                 # The owner received the request and then said nothing readable: a host

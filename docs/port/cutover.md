@@ -552,16 +552,18 @@ user's direct socket in a directory no group or other user may write, and within
 The owner's answer is the command's, with the exit status its error record carries (`refused` 2,
 `host` 3, `usage` 4). An owner that does not answer in time is `{"error": "host", "detail": "the
 owner did not answer guard-evaluate within 5s"}` and one that says nothing readable (no bytes,
-bytes that are not JSON, or the JSON value `null`) is `{"error": "host", "detail": "the owner
-closed control.sock without a readable guard-evaluate answer"}`,
-both exit 3; a failure after the request was sent is a host error too, never a refusal or a
-second evaluation. When the socket cannot be reached or trusted, the CLI evaluates in-process only
-where `takeover.json` is absent or names its own runtime as owner, after the read-only Stop path
-has checked that store (`ownership.check_stop`, `store.CheckStop`: no copy, no sidecar), which
-refuses a store of its own that is draining or mid-transition. Otherwise it refuses, exit 2
-`store_owned_by_other`, `the owner could not answer guard-evaluate: <error>` in Python's
-`str(OSError)` words (`TestGuardEvaluate_routes_to_the_owners_control_socket_as_the_fence_does`,
-against the live fence and a live Python owner).
+bytes that are not UTF-8 or not JSON, more than 64 MiB of them, or the JSON value `null`) is
+`{"error": "host", "detail": "the owner closed control.sock without a readable guard-evaluate
+answer"}`, both exit 3. Bytes that are not UTF-8 are unreadable even where replacing them would
+leave JSON, an error record included. A failure after the request was sent is a host error too,
+never a refusal or a second evaluation. When the socket cannot be reached or trusted, the CLI
+evaluates in-process only where `takeover.json` is absent or names its own runtime as owner,
+after the read-only Stop path has checked that store (`ownership.check_stop`, `store.CheckStop`:
+no copy, no sidecar), which refuses a store of its own that is draining or mid-transition.
+Otherwise it refuses, exit 2 `store_owned_by_other`, `the owner could not answer guard-evaluate:
+<error>` in Python's `str(OSError)` words
+(`TestGuardEvaluate_routes_to_the_owners_control_socket_as_the_fence_does`, against the live
+fence and a live Python owner).
 
 ### Read-only clients under a foreign owner
 
