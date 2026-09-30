@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "markerops ce153ee169ee661c": "txt:[{\"ok\": \"published\"}, {\"ok\": \"published\"}, {\"ok\": \"published\"}, {\"ok\": {\"facts\": {\"intent\": {\"issueKey\": \"REL-1\", \"factId\": \"intent\"}, \"attempts\": [{\"outcome\": \"accepted\", \"factId\": \"attempts/0\"}], \"conflicts\": [], \"resolutions\": [], \"claims\": [{\"sessionId\": \"sess\", \"factId\": \"claims/sess/claim.json\"}]}, \"unreadable\": []}}, {\"ok\": null}, {\"ok\": {\"facts\": {\"attempts\": [], \"conflicts\": [], \"resolutions\": [], \"claims\": []}, \"unreadable\": [\"intent\"]}}, {\"ok\": null}, {\"ok\": null}, {\"ok\": {\"facts\": {\"intent\": {\"issueKey\": \"REL-1\", \"factId\": \"intent\"}, \"attempts\": [{\"outcome\": \"accepted\", \"factId\": \"attempts/0\"}], \"conflicts\": [], \"resolutions\": [], \"claims\": [\"bare\"]}, \"unreadable\": []}}, {\"ok\": null}, {\"ok\": {\"facts\": {\"attempts\": [], \"conflicts\": [], \"resolutions\": [], \"claims\": []}, \"unreadable\": [\"attempts/0\"]}}]\n"
+ }
+}

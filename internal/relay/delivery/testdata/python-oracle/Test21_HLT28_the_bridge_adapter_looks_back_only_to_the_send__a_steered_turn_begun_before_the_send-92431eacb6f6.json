@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "test_host_lost_turn/TheAdapterLooksBackOnlyToTheSend.test_a_steered_turn_begun_before_the_send_is_matched_before_the_cutoff": "txt:{\"captures\":[\"present\"],\"problems\":[],\"sends\":[],\"tables\":{}}"
+ }
+}

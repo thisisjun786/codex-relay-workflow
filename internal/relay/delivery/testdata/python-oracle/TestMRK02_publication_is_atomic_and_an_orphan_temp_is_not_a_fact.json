@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "markerops 2be579ecc33ca821": "txt:[{\"ok\": \"published\"}, {\"ok\": \"exists\"}, {\"ok\": [\"intent.json\"]}, {\"ok\": null}, {\"ok\": {\"facts\": {\"attempts\": [], \"conflicts\": [], \"resolutions\": [], \"claims\": []}, \"unreadable\": []}}, {\"ok\": null}, {\"ok\": \"published\"}]\n"
+ }
+}

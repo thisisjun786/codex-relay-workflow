@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"os/exec"
 	"path/filepath"
@@ -15,15 +16,18 @@ import (
 
 func Test28LifecycleNumericSQLiteParity(t *testing.T) {
 	raw := []string{"9223372036854775808", "-9223372036854775809", "1e300", "NaN", "Infinity", "-Infinity", "true", "false", "7", "1.5"}
-	repo, _ := filepath.Abs("../../..")
 	input, _ := json.Marshal(raw)
-	cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/delivery/testdata/lifecycle_numeric.py"))
-	cmd.Dir = repo
-	cmd.Stdin = bytes.NewReader(input)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("Python lifecycle oracle: %v\n%s", err, out)
-	}
+	out := pyAnswer(t, "lifecycle_numeric "+string(input), func() ([]byte, error) {
+		repo, _ := filepath.Abs("../../..")
+		cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/delivery/testdata/lifecycle_numeric.py"))
+		cmd.Dir = repo
+		cmd.Stdin = bytes.NewReader(input)
+		out, err := pythonCombined(cmd)
+		if err != nil {
+			return nil, fmt.Errorf("Python lifecycle oracle: %w", err)
+		}
+		return out, nil
+	})
 	var want []map[string]any
 	if err := json.Unmarshal(out, &want); err != nil {
 		t.Fatal(err)

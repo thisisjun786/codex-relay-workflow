@@ -1,0 +1,8 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "test_ack_reconcile/TurnStartPrecision.test_a_genuinely_earlier_whole_second_turn_is_still_refused": "txt:{\"captures\":[true,true],\"problems\":[],\"sends\":[],\"tables\":{}}",
+  "test_ack_reconcile/TurnStartPrecision.test_a_later_turn_is_never_refused": "txt:{\"captures\":[false],\"problems\":[],\"sends\":[],\"tables\":{}}",
+  "test_ack_reconcile/TurnStartPrecision.test_a_turn_starting_in_the_same_second_as_its_send_is_not_refused": "txt:{\"captures\":[false],\"problems\":[],\"sends\":[],\"tables\":{}}"
+ }
+}

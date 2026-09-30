@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "test_host_lost_turn/TheAdapterLooksBackOnlyToTheSend.test_a_turn_older_than_the_send_ends_the_search_without_reading_further": "txt:{\"captures\":[[\"absent\",\"older_than_send\",2],1],\"problems\":[],\"sends\":[],\"tables\":{}}"
+ }
+}

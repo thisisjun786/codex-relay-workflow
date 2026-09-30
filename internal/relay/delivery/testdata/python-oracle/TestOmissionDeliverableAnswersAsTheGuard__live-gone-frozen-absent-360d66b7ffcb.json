@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "deliverable_state": "txt:[\"changed\", null, \"<base>/work/deliver.txt: path_changed: component 'deliver.txt' of '<base>/work/deliver.txt' disappeared during resolution; <base>/frozen: no MANIFEST.json in the frozen copy\"]\n"
+ }
+}

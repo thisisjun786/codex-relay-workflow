@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "test_unknown_send_lost/TheHourlyCapIsNamedWithItsReopenTime.test_a_cap_of_zero_says_nothing_reopens_it_but_a_changed_policy": "txt:{\"captures\":[[\"hourly_cap\",null],true],\"problems\":[],\"sends\":[],\"tables\":{}}"
+ }
+}

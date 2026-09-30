@@ -1,0 +1,7 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "1 sqlite SELECT relationship_id FROM relationships": "txt:[[\"rel-46d5b5ac690ef861\"]]\n",
+  "2 run emit --relationship rel-46d5b5ac690ef861 --generation 1 --outcome ready_for_review --turn-thread 01child-task --turn-id turn-dispatch-1 --turn-status inProgress --artifact <work>/out.txt": "txt:0\n{\n  \"receipt\": {\n    \"eventId\": \"2be26909964d51dfe82b80c7eaf836dc\",\n    \"relationshipId\": \"rel-46d5b5ac690ef861\",\n    \"executionGeneration\": 1,\n    \"attempt\": 1,\n    \"revisionHash\": \"de145607ebdae236f6e2dd7c36f426d401963aecf1e87ae84733bc5c8083062e\",\n    \"outcome\": \"ready_for_review\",\n    \"producer\": \"child\",\n    \"turnRef\": {\n      \"threadId\": \"01child-task\",\n      \"turnId\": \"turn-dispatch-1\",\n      \"turnStatus\": \"inProgress\"\n    },\n    \"manifest\": [\n      {\n        \"path\": \"<work>/out.txt\",\n        \"sha256\": \"00b7d7bed7e32d29197248bed5d1296ddcb1a2a7f2f23094fd4856b7e7295d97\",\n        \"bytes\": 13\n      }\n    ],\n    \"emittedAt\": \"0000-00-00T00:00:00.000000+00:00\"\n  },\n  \"stage\": \"staged\",\n  \"duplicate\": false,\n  \"terminalProof\": \"claimed\",\n  \"observedTurnStatus\": \"inProgress\"\n}\n"
+ }
+}

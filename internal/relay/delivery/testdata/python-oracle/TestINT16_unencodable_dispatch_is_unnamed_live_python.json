@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "markerops b95808fce1c3ef79": "txt:[{\"ok\": \"claim_dispatch_unnamed\"}, {\"ok\": false}]\n"
+ }
+}

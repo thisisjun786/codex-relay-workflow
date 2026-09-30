@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "deliverable_state": "txt:[\"changed\", null, \"TypeError: expected string or bytes-like object, got 'int'\"]\n"
+ }
+}

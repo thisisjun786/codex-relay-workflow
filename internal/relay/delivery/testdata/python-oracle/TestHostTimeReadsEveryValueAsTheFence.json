@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "host_time": "txt:[1789420929.0, 1789420929.5, 0.0, 0.0, null, null, 0.0, 9007199254740992.0, null, null, null, null, null, null, 1789420929.0, 1000.0, 1000.0, null, null, null, null, null, 15000000000.0, 1.5, -0.0, 0.5, 5.0, null, null, null, null, null, null, null, null, null, null, 123.0, 123.0, 1.0, null, null, 42.0, null, null, 9007199254740992.0, 1.7976931348623157e+308, 34.0]\n"
+ }
+}

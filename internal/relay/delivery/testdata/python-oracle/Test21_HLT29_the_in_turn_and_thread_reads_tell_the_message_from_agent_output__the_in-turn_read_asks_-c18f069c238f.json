@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "test_host_lost_turn/TheAdapterLooksBackOnlyToTheSend.test_the_in_turn_read_asks_for_that_turns_items_oldest_first": "txt:{\"captures\":[true,[[\"thread/items/list\",{\"threadId\":\"thread\",\"turnId\":\"t1\",\"sortDirection\":\"asc\",\"limit\":2}]]],\"problems\":[],\"sends\":[],\"tables\":{}}"
+ }
+}

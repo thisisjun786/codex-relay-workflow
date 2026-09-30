@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 // Fixture identities match Python's tests/support.py.
@@ -39,29 +41,57 @@ type pyRun struct {
 	Sends  [][]any                     `json:"sends"`
 }
 
-// runPython drives testdata/scenarios/<name>.py through the real Python package over tree.
+// runPython is what testdata/scenarios/<name>.py answered, driven through the real Python package
+// over tree (a parityTree), as recorded.
 func runPython(t *testing.T, tree, name string, args ...string) pyRun {
 	t.Helper()
-	root := repoRoot(t)
-	script, _ := filepath.Abs("testdata/pyscenario.py")
-	cmd := exec.Command("uv", append([]string{"run", "--no-sync", "python", script, tree, name}, args...)...)
-	cmd.Dir = filepath.Join(root, "packages", "codex-session-relay")
+	return runScenario(t, tree, name, true, args...)
+}
+
+// runPythonOut is runPython for a test that reads only Python's out block and sends: the tables,
+// which it never compares, are not recorded.
+func runPythonOut(t *testing.T, tree, name string, args ...string) pyRun {
+	t.Helper()
+	return runScenario(t, tree, name, false, args...)
+}
+
+func runScenario(t *testing.T, tree, name string, tables bool, args ...string) pyRun {
+	t.Helper()
 	home := t.TempDir()
-	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "XDG_DATA_HOME="+filepath.Join(home, "data"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+home, "PYTHONPATH="+filepath.Join(root, "packages", "codex-session-relay", "src")+":"+filepath.Join(root, "packages", "codex-session-relay"))
-	output, err := cmd.Output()
-	if err != nil {
-		stderr := ""
-		if e, ok := err.(*exec.ExitError); ok {
-			stderr = string(e.Stderr)
+	raw := pyAnswer(t, strings.Join(append([]string{name}, args...), " "), func() ([]byte, error) {
+		root := repoRoot(t)
+		script, _ := filepath.Abs("testdata/pyscenario.py")
+		cmd := exec.Command("uv", append([]string{"run", "--no-sync", "python", script, tree, name}, args...)...)
+		cmd.Dir = filepath.Join(root, "packages", "codex-session-relay")
+		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "XDG_DATA_HOME="+filepath.Join(home, "data"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+home, "PYTHONPATH="+filepath.Join(root, "packages", "codex-session-relay", "src")+":"+filepath.Join(root, "packages", "codex-session-relay"))
+		output, err := pythonOutput(cmd)
+		if err != nil {
+			return nil, fmt.Errorf("python scenario %s: %w", name, err)
 		}
-		t.Fatalf("python scenario %s: %v\n%s", name, err, stderr)
-	}
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+		lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+		last := []byte(lines[len(lines)-1])
+		if tables {
+			return last, nil
+		}
+		var whole map[string]json.RawMessage
+		if err := json.Unmarshal(last, &whole); err != nil {
+			return nil, err
+		}
+		delete(whole, "tables")
+		return json.Marshal(whole)
+	}, pyoracle.Substitute(tree, "<tree>"), pyoracle.Substitute(home, "<home>"), pyoracle.SameWhen(sameJSON))
 	var run pyRun
-	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &run); err != nil {
-		t.Fatalf("python scenario %s output: %v\n%s", name, err, output)
+	if err := json.Unmarshal(raw, &run); err != nil {
+		t.Fatalf("python scenario %s output: %v\n%s", name, err, raw)
 	}
 	return run
+}
+
+// sameJSON compares two answers as JSON values: a dict filled by racing threads (MPI-3's next) may
+// list its keys in either order.
+func sameJSON(recorded, live []byte) bool {
+	var a, b any
+	return json.Unmarshal(recorded, &a) == nil && json.Unmarshal(live, &b) == nil && reflect.DeepEqual(a, b)
 }
 
 // fixture is DeliveryTestCase: a registered relationship, a final event, a fake host.
@@ -505,16 +535,17 @@ func (tf *tableFilter) fixture() *fixture {
 	return &c
 }
 
-// pythonValue runs one line of Python against the package and returns its stdout, trimmed.
+// pythonValue is what one line of Python printed against the package, trimmed, as recorded.
 func pythonValue(t *testing.T, script string) string {
 	t.Helper()
-	root := repoRoot(t)
-	cmd := exec.Command("uv", "run", "--no-sync", "python", "-c", script)
-	cmd.Dir = filepath.Join(root, "packages", "codex-session-relay")
 	home := t.TempDir()
-	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+home)
-	out, err := cmd.Output()
-	mustDo(t, err)
+	out := pyAnswer(t, script, func() ([]byte, error) {
+		root := repoRoot(t)
+		cmd := exec.Command("uv", "run", "--no-sync", "python", "-c", script)
+		cmd.Dir = filepath.Join(root, "packages", "codex-session-relay")
+		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+home)
+		return pythonOutput(cmd)
+	}, pyoracle.Substitute(home, "<home>"))
 	return strings.TrimSpace(string(out))
 }
 

@@ -3,9 +3,6 @@ package delivery
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
-	"os"
-	"path/filepath"
 	"slices"
 	"testing"
 )
@@ -185,12 +182,8 @@ func rrMirror(t *testing.T, name string, body func(h *hl)) {
 	t.Helper()
 	mirror(t, rrd, name, func(h *hl) {
 		body(h)
-		raw, err := os.ReadFile(filepath.Join(pythonCaptures(t, rrd), name, "capture.json"))
-		mustDo(t, err)
-		var python pyCapture
-		mustDo(t, json.Unmarshal(raw, &python))
 		got := normalizeJSON(t, h.tables()).(map[string]any)
-		want := normalizeJSON(t, python.Tables).(map[string]any)
+		want := normalizeJSON(t, h.python.Tables).(map[string]any)
 		for _, n := range reviewTables {
 			requireSameJSON(t, "table "+n, got[n], want[n])
 		}

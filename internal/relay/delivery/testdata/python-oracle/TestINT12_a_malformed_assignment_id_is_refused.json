@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "markerops 7d1beb0d32954e34": "txt:[{\"ok\": {\"assignmentId\": \"a61e89c315cd93edde6ca5f614051623fe70986a592a1f89b164101434c78171\", \"assignmentDir\": \"<tree>/markers/3e1a8f84be3cf4a80a19c1a3239a88adb630cff044a652cc78e6aca3098851f2/a61e89c315cd93edde6ca5f614051623fe70986a592a1f89b164101434c78171\", \"outcome\": \"published\", \"declaredAt\": \"2026-01-01T00:00:00+00:00\"}}, {\"reason\": \"unknown_generation\", \"detail\": \"an assignment id is the hex sha256 of a dispatch request id, not '../escape'\"}, {\"reason\": \"unknown_generation\", \"detail\": \"an assignment id is the hex sha256 of a dispatch request id, not 'not-hex'\"}, {\"reason\": \"unknown_generation\", \"detail\": \"an assignment id is the hex sha256 of a dispatch request id, not ''\"}, {\"reason\": \"unknown_generation\", \"detail\": \"an assignment id is the hex sha256 of a dispatch request id, not 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'\"}]\n"
+ }
+}

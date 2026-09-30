@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "lifecycle_numeric [\"9223372036854775808\",\"-9223372036854775809\",\"1e300\",\"NaN\",\"Infinity\",\"-Infinity\",\"true\",\"false\",\"7\",\"1.5\"]": "txt:[{\"error\": \"OverflowError\", \"detail\": \"Python int too large to convert to SQLite INTEGER\"}, {\"error\": \"OverflowError\", \"detail\": \"Python int too large to convert to SQLite INTEGER\"}, {\"error\": \"OverflowError\", \"detail\": \"Python int too large to convert to SQLite INTEGER\"}, {\"error\": \"ValueError\", \"detail\": \"cannot convert float NaN to integer\"}, {\"error\": \"OverflowError\", \"detail\": \"cannot convert float infinity to integer\"}, {\"error\": \"OverflowError\", \"detail\": \"cannot convert float infinity to integer\"}, {\"value\": 1, \"kind\": \"integer\"}, {\"value\": 0, \"kind\": \"integer\"}, {\"value\": 7, \"kind\": \"integer\"}, {\"value\": 1, \"kind\": \"integer\"}]"
+ }
+}

@@ -29,7 +29,7 @@ func crit(title string, required any) Obj {
 func withID(id string, o Obj) Obj { return append(Obj{{Key: "id", Value: id}}, o...) }
 
 func runCRR(t *testing.T, mode string, goSide func(f *fixture, c *Criteria, out map[string]any)) {
-	tree := t.TempDir()
+	tree := parityTree(t)
 	python := runPython(t, tree, "crr", mode)
 	f := newFixture(t, tree)
 	c := &Criteria{Store: f.store, Clock: f.clock}

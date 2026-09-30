@@ -45,8 +45,8 @@ func TestMain(m *testing.M) {
 	if err := os.Setenv("TMPDIR", root); err != nil {
 		panic(err)
 	}
-	cliSeedRoot = filepath.Join(root, "cli-seed")
 	code := m.Run()
+	releaseParityTrees()
 	for _, path := range captureCleanups {
 		if err := testsupport.RemoveTempTree(path); err != nil {
 			fmt.Fprintln(os.Stderr, "cleanup Python capture:", err)

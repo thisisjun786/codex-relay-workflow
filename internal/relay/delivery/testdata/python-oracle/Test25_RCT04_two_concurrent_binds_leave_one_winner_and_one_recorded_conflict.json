@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "markerops c6abab674beec300": "txt:[{\"ok\": {\"assignmentId\": \"a61e89c315cd93edde6ca5f614051623fe70986a592a1f89b164101434c78171\", \"assignmentDir\": \"<tree>/markers/25740a17f2b94ea8912bb1f09e93978dbe0b60d78b0582c47b345bc12244c6c6/a61e89c315cd93edde6ca5f614051623fe70986a592a1f89b164101434c78171\", \"outcome\": \"published\", \"declaredAt\": \"2026-01-01T00:00:00+00:00\"}}, {\"ok\": {\"assignmentId\": \"a61e89c315cd93edde6ca5f614051623fe70986a592a1f89b164101434c78171\", \"outcome\": \"bound\", \"sessionId\": \"01child-session\", \"taskId\": \"01child-task\"}}, {\"ok\": {\"assignmentId\": \"a61e89c315cd93edde6ca5f614051623fe70986a592a1f89b164101434c78171\", \"outcome\": \"conflict\", \"factId\": \"conflicts/0\", \"boundSessionId\": \"01child-session\", \"boundTaskId\": \"01child-task\"}}, {\"ok\": \"identity_bound\"}, {\"ok\": true}, {\"ok\": {\"assignmentId\": \"a61e89c315cd93edde6ca5f614051623fe70986a592a1f89b164101434c78171\", \"factId\": \"resolutions/0\", \"adjudicated\": 1}}, {\"ok\": false}]\n"
+ }
+}

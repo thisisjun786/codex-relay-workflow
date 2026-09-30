@@ -11,7 +11,7 @@ import (
 
 func TestDEL21_a_deactivation_is_reported_during_a_backoff_and_never_shortens_it(t *testing.T) {
 	t.Run("reported while a busy backoff runs, never shortened", func(t *testing.T) {
-		tree := t.TempDir()
+		tree := parityTree(t)
 		python := runPython(t, tree, "del21", "running")
 		f := newFixture(t, tree)
 		event := f.queuedEvent(regOpts{})
@@ -30,7 +30,7 @@ func TestDEL21_a_deactivation_is_reported_during_a_backoff_and_never_shortens_it
 		requireSameTables(t, f, python)
 	})
 	t.Run("a backoff extended after the row was read still wins", func(t *testing.T) {
-		tree := t.TempDir()
+		tree := parityTree(t)
 		python := runPython(t, tree, "del21", "extended")
 		f := newFixture(t, tree)
 		event := f.queuedEvent(regOpts{})
@@ -51,7 +51,7 @@ func TestDEL21_a_deactivation_is_reported_during_a_backoff_and_never_shortens_it
 }
 
 func TestDEL22_a_superseded_relationship_is_left_to_the_supersession_path(t *testing.T) {
-	tree := t.TempDir()
+	tree := parityTree(t)
 	python := runPython(t, tree, "del22", "superseded")
 	f := newFixture(t, tree)
 	event := f.queuedEvent(regOpts{})
@@ -66,7 +66,7 @@ func TestDEL22_a_superseded_relationship_is_left_to_the_supersession_path(t *tes
 }
 
 func TestDEL23_a_resume_racing_the_withhold_leaves_the_delivery_alone(t *testing.T) {
-	tree := t.TempDir()
+	tree := parityTree(t)
 	python := runPython(t, tree, "del22", "race")
 	f := newFixture(t, tree)
 	event := f.queuedEvent(regOpts{})
@@ -83,7 +83,7 @@ func TestDEL23_a_resume_racing_the_withhold_leaves_the_delivery_alone(t *testing
 
 func TestDEL24_guarded_transitions_prevent_duplicate_sends(t *testing.T) {
 	t.Run("a stale busy observation cannot overwrite a dispatch", func(t *testing.T) {
-		tree := t.TempDir()
+		tree := parityTree(t)
 		python := runPython(t, tree, "del24", "busy")
 		f := newFixture(t, tree)
 		event := f.queuedEvent(regOpts{})
@@ -104,7 +104,7 @@ func TestDEL24_guarded_transitions_prevent_duplicate_sends(t *testing.T) {
 		requireSameTables(t, f, python)
 	})
 	t.Run("reconciling an older attempt cannot reopen a dispatch", func(t *testing.T) {
-		tree := t.TempDir()
+		tree := parityTree(t)
 		python := runPython(t, tree, "del24", "reconcile")
 		f := newFixture(t, tree)
 		event := f.queuedEvent(regOpts{})
@@ -125,7 +125,7 @@ func TestDEL24_guarded_transitions_prevent_duplicate_sends(t *testing.T) {
 }
 
 func TestDEL25_receipt_recovery_keeps_the_dispatch_turn_and_its_provenance(t *testing.T) {
-	tree := t.TempDir()
+	tree := parityTree(t)
 	python := runPython(t, tree, "del25")
 	f := newFixture(t, tree)
 	event := f.queuedEvent(regOpts{})
@@ -155,7 +155,7 @@ func TestDEL26_a_later_turn_needs_an_explicit_continuation_admission(t *testing.
 		{"replay", "", ""},
 	} {
 		t.Run(tc.mode, func(t *testing.T) {
-			tree := t.TempDir()
+			tree := parityTree(t)
 			python := runPython(t, tree, "del26", tc.mode)
 			f := newFixture(t, tree)
 			rid := f.register(regOpts{})
@@ -212,8 +212,8 @@ func withoutUnderscored(m map[string]any) map[string]any {
 }
 
 func TestDEL27_the_completion_message_is_a_verification_request_with_the_ack_instruction(t *testing.T) {
-	tree := t.TempDir()
-	python := runPython(t, tree, "del27", "completion")
+	tree := parityTree(t)
+	python := runPythonOut(t, tree, "del27", "completion")
 	f := newFixture(t, tree)
 	event := f.queuedEvent(regOpts{})
 	message, err := f.delivery.PreviewMessage(f.ctx, event)
@@ -251,8 +251,8 @@ func revisionFixture(t *testing.T, tree string) (*fixture, *Ack, string, string,
 }
 
 func TestDEL28_the_revision_message_asks_for_no_acknowledgement_and_says_what_to_change(t *testing.T) {
-	tree := t.TempDir()
-	python := runPython(t, tree, "del27", "revision")
+	tree := parityTree(t)
+	python := runPythonOut(t, tree, "del27", "revision")
 	f, _, source, revision, acked, verdict := revisionFixture(t, tree)
 	requireSameJSON(t, "ack", acked, python.Out["ack"])
 	requireSameJSON(t, "verdict", verdict, python.Out["verdict"])
@@ -274,7 +274,7 @@ func TestDEL28_the_revision_message_asks_for_no_acknowledgement_and_says_what_to
 }
 
 func TestDEL29_the_instruction_each_side_is_given_is_the_one_that_works(t *testing.T) {
-	tree := t.TempDir()
+	tree := parityTree(t)
 	python := runPython(t, tree, "del27", "revision")
 	f, ack, source, revision, _, _ := revisionFixture(t, tree)
 	if f.one("SELECT 1 AS x FROM acks WHERE event_id = ?", source) == nil {
@@ -292,8 +292,8 @@ func TestDEL29_the_instruction_each_side_is_given_is_the_one_that_works(t *testi
 }
 
 func TestDEL30_project_key_distinguishes_projects_for_a_shared_service(t *testing.T) {
-	tree := t.TempDir()
-	python := runPython(t, tree, "del30")
+	tree := parityTree(t)
+	python := runPythonOut(t, tree, "del30")
 	f := newFixture(t, tree)
 	other := f.otherAssignment()
 	mine := f.register(regOpts{issue: "REL-3", dispatchRequest: "dispatch-3"})

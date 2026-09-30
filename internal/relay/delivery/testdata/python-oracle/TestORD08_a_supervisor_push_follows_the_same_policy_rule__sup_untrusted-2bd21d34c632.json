@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "ordadapter sup_untrusted": "txt:{\"record\": {\"schema\": \"relay-supervisor-channel/1\", \"requestId\": \"sup-e2d5c67105ac-a1\", \"messageId\": \"e2d5c67105ac9fd0b8c16301341147bf\", \"attemptNo\": 1, \"recipientTaskId\": \"01supervisor-task\", \"deliveryState\": \"withheld_pre_send\", \"sendAttempted\": \"no\", \"retrySafe\": true, \"transportReceiptStatus\": \"failed\", \"failedOperation\": \"thread/resume\", \"turnId\": null, \"observedAt\": \"2023-11-14T22:13:20.000000+00:00\", \"transportDeliveryState\": \"inbox_only\", \"reason\": \"the recipient's thread reported an approval policy this transport cannot serve; nothing was started or stored for it, and the message is attempted again after its backoff\", \"messageState\": \"withheld_pre_send\"}, \"state\": \"withheld_pre_send\"}"
+ }
+}

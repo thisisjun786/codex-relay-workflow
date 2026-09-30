@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "ordadapter folded": "txt:{\"turnStartedAt\": 1700000000.0, \"record\": {\"schema\": \"relay-supervisor-channel/1\", \"requestId\": \"sup-82a20972ec80-a1\", \"messageId\": \"82a20972ec8017991f33d7b092a396c6\", \"attemptNo\": 1, \"recipientTaskId\": \"01supervisor-task\", \"deliveryState\": \"dispatched\", \"sendAttempted\": \"yes\", \"retrySafe\": false, \"transportReceiptStatus\": \"accepted\", \"failedOperation\": null, \"turnId\": \"turn-01supervisor-task-1\", \"observedAt\": \"2023-11-14T22:23:20.000000+00:00\", \"messageState\": \"dispatched\"}, \"sentAt\": \"2023-11-14T22:23:20.000000+00:00\", \"verified\": \"turn_predates_send\", \"state\": \"dispatched\", \"resent\": 0}"
+ }
+}

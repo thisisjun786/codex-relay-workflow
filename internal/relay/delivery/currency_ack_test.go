@@ -19,7 +19,7 @@ func (v *vcu) verifyPending(now *float64) []any {
 }
 
 func runVCUAck(t *testing.T, mode string, goSide func(v *vcu, out map[string]any)) {
-	tree := t.TempDir()
+	tree := parityTree(t)
 	python := runPython(t, tree, "vcu_ack", mode)
 	v := newVCU(t, tree)
 	out := map[string]any{}

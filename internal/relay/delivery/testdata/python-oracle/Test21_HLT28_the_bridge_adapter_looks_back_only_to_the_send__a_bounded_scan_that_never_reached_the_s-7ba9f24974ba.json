@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "test_host_lost_turn/TheAdapterLooksBackOnlyToTheSend.test_a_bounded_scan_that_never_reached_the_send_is_not_evidence": "txt:{\"captures\":[20],\"problems\":[],\"sends\":[],\"tables\":{}}"
+ }
+}

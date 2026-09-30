@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "deliverable_state": "txt:[\"unverifiable\", null, \"ScopeError: manifest_unverified: entry '<base>/work/deliver.txt' has a digest that is not 64 lowercase hex characters: False\"]\n"
+ }
+}

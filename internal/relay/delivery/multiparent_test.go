@@ -85,7 +85,7 @@ func (f *fixture) inParallel(work map[string]func(*Ack) (Obj, error)) (map[strin
 }
 
 func TestMPI01_each_parent_keeps_its_scope_reference_and_project_key(t *testing.T) {
-	tree := t.TempDir()
+	tree := parityTree(t)
 	python := runPython(t, tree, "mpi", "scope")
 	f := newFixture(t, tree)
 	a, _ := f.twoParentAssignment("a", 1)
@@ -100,8 +100,8 @@ func TestMPI01_each_parent_keeps_its_scope_reference_and_project_key(t *testing.
 }
 
 func TestMPI02_two_parents_acknowledging_at_once_do_not_cross(t *testing.T) {
-	tree := t.TempDir()
-	python := runPython(t, tree, "mpi", "acks")
+	tree := parityTree(t)
+	python := runPythonOut(t, tree, "mpi", "acks")
 	f := newFixture(t, tree)
 	a, ai := f.twoParentAssignment("a", 1)
 	b, bi := f.twoParentAssignment("b", 1)
@@ -131,8 +131,8 @@ func TestMPI02_two_parents_acknowledging_at_once_do_not_cross(t *testing.T) {
 }
 
 func TestMPI03_two_parents_ruling_needs_changes_at_once_open_one_generation_each(t *testing.T) {
-	tree := t.TempDir()
-	python := runPython(t, tree, "mpi", "verdicts")
+	tree := parityTree(t)
+	python := runPythonOut(t, tree, "mpi", "verdicts")
 	f := newFixture(t, tree)
 	a, ai := f.twoParentAssignment("a", 1)
 	b, bi := f.twoParentAssignment("b", 1)
@@ -169,8 +169,8 @@ func TestMPI03_two_parents_ruling_needs_changes_at_once_open_one_generation_each
 }
 
 func TestMPI04_each_outbox_job_names_its_document_and_one_claim_cannot_complete_another(t *testing.T) {
-	tree := t.TempDir()
-	python := runPython(t, tree, "mpi", "outbox")
+	tree := parityTree(t)
+	python := runPythonOut(t, tree, "mpi", "outbox")
 	f := newFixture(t, tree)
 	ack := NewAck(f.delivery)
 	ack.Sync = VerdictSync(f.store, f.clock)

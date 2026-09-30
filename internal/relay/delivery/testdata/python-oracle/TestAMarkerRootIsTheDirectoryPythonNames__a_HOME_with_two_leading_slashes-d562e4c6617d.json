@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "resolve_marker_root": "txt:[\"/<root-home>/.local/state/codex-session-marker\", \"home\", \"default under /<root-home>/.local/state\"]\n"
+ }
+}

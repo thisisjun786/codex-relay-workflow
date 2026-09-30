@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "test_host_lost_turn/TheAdapterLooksBackOnlyToTheSend.test_the_end_of_the_listing_is_absence": "txt:{\"captures\":[[\"absent\",\"listing_end\"]],\"problems\":[],\"sends\":[],\"tables\":{}}"
+ }
+}

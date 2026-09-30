@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "markerops ec852fbfb259c97d": "txt:[{\"ok\": null}, {\"ok\": null}, {\"ok\": \"counters.holdsThisTurn\"}, {\"ok\": \"counters.holdsThisTurn\"}, {\"ok\": \"counters.holdsThisTurn\"}, {\"ok\": \"counters.holdsThisTurn\"}, {\"ok\": \"counters\"}]\n"
+ }
+}

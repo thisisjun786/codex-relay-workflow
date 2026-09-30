@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "markerops 4b46657b11125a56": "txt:[{\"ok\": \"30250e28118e703a042e74d53844e078bbd318ae45a4479eac217c385a5c284a\"}, {\"ok\": \"5041bf1f713df204784353e82f6a4a535931cb64f1f4b4a5aeaffcb720918b22\"}, {\"ok\": \"5041bf1f713df204784353e82f6a4a535931cb64f1f4b4a5aeaffcb720918b22\"}, {\"ok\": \"837e9922b82aadbf10cea4ea52f266613dcf085332af2ae8c737470873fd8040\"}]\n"
+ }
+}

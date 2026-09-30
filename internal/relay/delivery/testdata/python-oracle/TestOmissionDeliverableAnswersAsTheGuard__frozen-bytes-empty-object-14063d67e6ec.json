@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "deliverable_state": "txt:[\"changed\", null, \"<base>/work/deliver.txt: bytes hash to 60922d75091744c240171446e760fdd64359a7cf9419dee44b978cc46387d32f but the manifest claims 4e91f19b0807540ba324ae0b1e7ca915b52b1839d3d67ac6f1599d24569d48ae; <base>/work/deliver.txt: caller claims 19 bytes but the frozen copy records {}; <base>/work/deliver.txt: frozen bytes are 19, not the claimed {}\"]\n"
+ }
+}

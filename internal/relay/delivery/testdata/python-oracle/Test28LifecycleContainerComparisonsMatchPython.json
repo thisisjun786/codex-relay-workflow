@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "lifecycle_shape [{\"accepts\":true,\"goal\":null,\"runtime\":[\"active\"]},{\"accepts\":[\"active\"],\"goal\":null,\"runtime\":\"idle\"},{\"accepts\":true,\"goal\":null,\"runtime\":{\"type\":\"active\"}},{\"accepts\":{\"type\":\"active\"},\"goal\":null,\"runtime\":\"idle\"}]": "txt:[{\"deliverable\":\"unknown\",\"reason\":\"lifecycle_unknown\"},{\"deliverable\":\"yes\",\"reason\":null},{\"deliverable\":\"unknown\",\"reason\":\"lifecycle_unknown\"},{\"deliverable\":\"yes\",\"reason\":null}]"
+ }
+}

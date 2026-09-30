@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "test_unknown_send_lost/TheListingSinceASendWithNoTurnId.test_a_listed_turn_without_an_id_is_not_taken_for_the_sends_turn": "txt:{\"captures\":[[\"absent\",\"older_than_send\",[null],[\"older\"]],[\"completed\"],\"older\"],\"problems\":[],\"sends\":[],\"tables\":{}}"
+ }
+}

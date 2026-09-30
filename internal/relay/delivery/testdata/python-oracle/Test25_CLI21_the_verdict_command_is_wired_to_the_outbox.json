@@ -1,0 +1,9 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "1 sqlite SELECT relationship_id FROM relationships": "txt:[[\"rel-46d5b5ac690ef861\"]]\n",
+  "2 stage acknowledged completion": "txt:5468b616413a7493e1cc56af14f59472\n",
+  "3 run verdict --event 5468b616413a7493e1cc56af14f59472 --verdict verified --verdict-turn v1": "txt:0\n{\n  \"eventId\": \"5468b616413a7493e1cc56af14f59472\",\n  \"relationshipId\": \"rel-46d5b5ac690ef861\",\n  \"executionGeneration\": 1,\n  \"verdict\": \"verified\",\n  \"verdictTurnId\": \"v1\",\n  \"decidedAt\": \"0000-00-00T00:00:00.000000+00:00\",\n  \"_restoration\": {\n    \"outcome\": \"not_carried\",\n    \"basis\": \"relay-message/legacy\",\n    \"criterion\": null,\n    \"detail\": \"a verified verdict opens no correction, so no message carries a restoration block\"\n  }\n}\n",
+  "4 sqlite SELECT sync_id, relationship_id, target, target_ref, subject_kind, event_id, verdict FROM sync_outbox ORDER BY 1": "txt:[[\"36371a876b5d87d31ad41ea485dce606\", \"rel-46d5b5ac690ef861\", \"coordination_document\", \"DOC-1\", \"verdict\", \"5468b616413a7493e1cc56af14f59472\", \"verified\"]]\n"
+ }
+}

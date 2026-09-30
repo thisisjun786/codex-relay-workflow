@@ -1,0 +1,9 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "test_ack_reconcile/UnknownArchiveState.test_a_confirmed_archived_recipient_stays_blocked": "txt:{\"captures\":[false,\"recipient_archived\"],\"problems\":[],\"sends\":[],\"tables\":{}}",
+  "test_ack_reconcile/UnknownArchiveState.test_a_confirmed_unarchived_recipient_stays_deliverable": "txt:{\"captures\":[true],\"problems\":[],\"sends\":[],\"tables\":{}}",
+  "test_ack_reconcile/UnknownArchiveState.test_an_unknown_archive_observation_is_not_evidence_of_being_unarchived": "txt:{\"captures\":[\"unknown\",\"lifecycle_unknown\",false],\"problems\":[],\"sends\":[],\"tables\":{}}",
+  "test_ack_reconcile/UnknownArchiveState.test_relaxing_the_evidence_requirement_is_explicit": "txt:{\"captures\":[true],\"problems\":[],\"sends\":[],\"tables\":{}}"
+ }
+}

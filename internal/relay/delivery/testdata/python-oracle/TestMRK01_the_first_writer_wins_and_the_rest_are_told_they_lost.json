@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "markerops 1c48bd65aa4d5852": "txt:[{\"ok\": \"published\"}, {\"ok\": \"exists\"}, {\"ok\": {\"one\": 1}}]\n"
+ }
+}

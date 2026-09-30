@@ -2,17 +2,22 @@ package delivery
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 // markerOps runs one list of marker/intent operations through the real Python modules
@@ -23,25 +28,25 @@ type markerOp = map[string]any
 
 func runMarkerOps(t *testing.T, env map[string]any, ops []markerOp) (python, golang []any) {
 	t.Helper()
-	tree := t.TempDir()
+	tree := parityTree(t)
 	spec, err := json.Marshal(map[string]any{"ops": ops, "env": env})
 	mustDo(t, err)
-	root := repoRoot(t)
-	script, _ := filepath.Abs("testdata/markerops.py")
-	cmd := exec.Command("uv", "run", "--no-sync", "python", script, tree)
-	cmd.Dir = filepath.Join(root, "packages", "codex-session-relay")
 	home := t.TempDir()
-	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "xs"), "XDG_DATA_HOME="+filepath.Join(home, "data"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+home, "CODEX_SESSION_RELAY_MARKER_ROOT=", "PYTHONDONTWRITEBYTECODE=1")
-	cmd.Stdin = strings.NewReader(string(spec))
-	output, err := cmd.Output()
-	if err != nil {
-		stderr := ""
-		var exit *exec.ExitError
-		if errors.As(err, &exit) {
-			stderr = string(exit.Stderr)
+	sum := sha256.Sum256(spec)
+	output := pyAnswer(t, "markerops "+hex.EncodeToString(sum[:8]), func() ([]byte, error) {
+		root := repoRoot(t)
+		script, _ := filepath.Abs("testdata/markerops.py")
+		cmd := exec.Command("uv", "run", "--no-sync", "python", script, tree)
+		cmd.Dir = filepath.Join(root, "packages", "codex-session-relay")
+		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "xs"), "XDG_DATA_HOME="+filepath.Join(home, "data"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+home, "CODEX_SESSION_RELAY_MARKER_ROOT=", "PYTHONDONTWRITEBYTECODE=1")
+		cmd.Stdin = strings.NewReader(string(spec))
+		output, err := pythonOutput(cmd)
+		if err != nil {
+			return nil, fmt.Errorf("python marker ops: %w", err)
 		}
-		t.Fatalf("python marker ops: %v\n%s", err, stderr)
-	}
+		// A conflict names its writer's pid; requireSameOps compares it as one token.
+		return recordedPID.ReplaceAll(output, []byte("${1}<pid>${2}")), nil
+	}, pyoracle.Substitute(filepath.Join(tree, "home"), "<tree-home>"), pyoracle.Substitute(tree, "<tree>"), pyoracle.Substitute(home, "<home>"))
 	mustDo(t, json.Unmarshal(output, &python))
 	entries, err := os.ReadDir(tree)
 	mustDo(t, err)
@@ -380,6 +385,9 @@ func noneIfEmpty(s string) any {
 	}
 	return s
 }
+
+// recordedPID is a conflict's loserProcess in Python's JSON, escaped or not.
+var recordedPID = regexp.MustCompile(`(\\?"loserProcess\\?": \\?")\d+(\\?")`)
 
 // requireSameOps compares the two answer lists entry by entry, and returns Python's.
 func requireSameOps(t *testing.T, ops []markerOp, python, golang []any) []any {

@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "resolve_marker_root": "txt:[\"/<root>/xdg/codex-session-marker\", \"xdg\", \"XDG_STATE_HOME=/<root>/xdg\"]\n"
+ }
+}
