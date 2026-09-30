@@ -761,10 +761,11 @@ func insertRows(tx *sql.Tx, table sqliteTable) error {
 
 // volatile is what a live Python fixture answers differently on every run: temporary names and
 // generated identifiers (numbered by first appearance, so which ones repeat still counts), and
-// wall-clock instants, ages and device and inode numbers (masked outright).
+// wall-clock instants (ISO, or a fault occurrence's recorded_ts in epoch seconds), ages and device
+// and inode numbers (masked outright).
 var (
 	volatile = regexp.MustCompile(`relay-test-[A-Za-z0-9_]{8}|tmp[A-Za-z0-9_]{8}|[0-9a-f]{12,}`)
-	measured = regexp.MustCompile(`\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:\+00:00|Z)|\\?"(?:device|inode|logDevice|logInode|walDirectoryDevice|walDirectoryInode)\\?":\s*\d+|[0-9]{3,}:[0-9]{3,}|(?:ageSeconds|oldestStagedAgeSeconds)\\?":\s*[0-9.e+-]+`)
+	measured = regexp.MustCompile(`\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?(?:\+00:00|Z)|\\?"(?:device|inode|logDevice|logInode|walDirectoryDevice|walDirectoryInode)\\?":\s*\d+|[0-9]{3,}:[0-9]{3,}|(?:ageSeconds|oldestStagedAgeSeconds|recorded_ts)\\?":\s*[0-9.e+-]+`)
 )
 
 // canonicalVolatile renames each distinct volatile token by its first appearance and masks each
