@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "python": "txt:{\"answer\":{\"capture\":{\"Out\":\"{\\n  \\\"ok\\\": false,\\n  \\\"reason\\\": \\\"service_disabled\\\",\\n  \\\"detail\\\": \\\"this service is not enabled; supervising it would ignore the owner's intent\\\"\\n}\\n\",\"Err\":\"\",\"Code\":2},\"files\":{}},\"left\":[],\"emptied\":false}"
+ }
+}

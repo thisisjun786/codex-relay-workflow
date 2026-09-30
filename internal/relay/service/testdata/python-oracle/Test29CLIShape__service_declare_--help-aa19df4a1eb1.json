@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "python": "txt:{\"answer\":{\"Out\":\"usage: codex-session-relay service declare [-h] [--actor ACTOR]\\n                                           (--execution-policy EXECUTION_POLICY |\\n                                           --forget-execution-policy)\\n\\noptions:\\n  -h, --help            show this help message and exit\\n  --actor ACTOR\\n  --execution-policy EXECUTION_POLICY\\n                        the execution policy file this service's daemon is\\n                        launched with; it is read back and refused unless it\\n                        resolves\\n  --forget-execution-policy\\n                        drop the declaration; later launches fall back to\\n                        their own environment\\n\",\"Err\":\"\",\"Code\":0},\"left\":[],\"emptied\":false}"
+ }
+}

@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "python": "txt:{\"answer\":{\"capture\":{\"Out\":\"{\\n  \\\"error\\\": \\\"usage\\\",\\n  \\\"detail\\\": \\\"--deadline must be a finite number of seconds\\\"\\n}\\n\",\"Err\":\"\",\"Code\":4},\"files\":{\"service.json\":\"{\\n  \\\"enabled\\\": true,\\n  \\\"changedAt\\\": \\\"TIME\\\",\\n  \\\"changedBy\\\": \\\"cli\\\"\\n}\"}},\"left\":[\"d 0700 state\"],\"emptied\":false}"
+ }
+}

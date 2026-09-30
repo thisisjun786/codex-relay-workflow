@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "python": "txt:{\"answer\":{\"Out\":\"usage: codex-session-relay daemon [-h] [--max-ticks MAX_TICKS]\\n                                  [--deadline DEADLINE]\\n                                  [--deadline-monotonic DEADLINE_MONOTONIC]\\n                                  [--allow-isolated-scope]\\n                                  [--supervised-token SUPERVISED_TOKEN]\\n                                  [--supervised-lock-fd SUPERVISED_LOCK_FD]\\n                                  [--supervised-scope-fd SUPERVISED_SCOPE_FD]\\n\\noptions:\\n  -h, --help            show this help message and exit\\n  --max-ticks MAX_TICKS\\n  --deadline DEADLINE\\n  --deadline-monotonic DEADLINE_MONOTONIC\\n  --allow-isolated-scope\\n  --supervised-token SUPERVISED_TOKEN\\n  --supervised-lock-fd SUPERVISED_LOCK_FD\\n  --supervised-scope-fd SUPERVISED_SCOPE_FD\\n\",\"Err\":\"\",\"Code\":0},\"left\":[],\"emptied\":false}"
+ }
+}

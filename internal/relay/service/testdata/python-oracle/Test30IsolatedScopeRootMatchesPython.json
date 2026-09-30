@@ -1,0 +1,15 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  ".": "txt:[\"<CWD>/real\",\"isolated-<SALT>-0d49c17ee2103bfd\"]",
+  "///x/./y/": "txt:[\"/x/y\",\"isolated-<SALT>-0d49c17ee2103bfd\"]",
+  "//x": "txt:[\"//x\",\"isolated-<SALT>-0d49c17ee2103bfd\"]",
+  "/x/./y/": "txt:[\"/x/y\",\"isolated-<SALT>-0d49c17ee2103bfd\"]",
+  "a/../b": "txt:[\"<CWD>/real/a/../b\",\"isolated-<SALT>-0d49c17ee2103bfd\"]",
+  "rel/./scopes/": "txt:[\"<CWD>/real/rel/scopes\",\"isolated-<SALT>-0d49c17ee2103bfd\"]",
+  "~": "txt:[\"<HOME>\",\"isolated-<SALT>-0d49c17ee2103bfd\"]",
+  "~/": "txt:[\"<HOME>\",\"isolated-<SALT>-0d49c17ee2103bfd\"]",
+  "~/a/../s": "txt:[\"<HOME>/a/../s\",\"isolated-<SALT>-0d49c17ee2103bfd\"]",
+  "~<USER>/s": "txt:[\"<USERHOME>/s\",\"isolated-<SALT>-0d49c17ee2103bfd\"]"
+ }
+}

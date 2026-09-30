@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "python": "txt:{\"answer\":{\"capture\":{\"Out\":\"{\\n  \\\"error\\\": \\\"usage\\\",\\n  \\\"detail\\\": \\\"this command needs --socket to reach the host\\\"\\n}\\n\",\"Err\":\"\",\"Code\":4},\"files\":{}},\"left\":[],\"emptied\":false}"
+ }
+}

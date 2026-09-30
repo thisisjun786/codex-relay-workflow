@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "python": "txt:{\"answer\":{\"Out\":\"\",\"Err\":\"usage: codex-session-relay service run [-h] [--actor ACTOR]\\n                                       [--allow-isolated-scope]\\n                                       [--segment-seconds SEGMENT_SECONDS]\\n                                       [--max-segments MAX_SEGMENTS]\\n                                       [--deadline DEADLINE]\\n                                       [--deadline-monotonic DEADLINE_MONOTONIC]\\n                                       [--launch-id LAUNCH_ID]\\n                                       [--takeover-scope]\\ncodex-session-relay service run: error: argument --actor: expected one argument\\n\",\"Code\":2},\"left\":[],\"emptied\":false}"
+ }
+}

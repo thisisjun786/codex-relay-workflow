@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "python": "txt:{\"answer\":{\"Out\":\"\",\"Err\":\"usage: codex-session-relay service status [-h] [--actor ACTOR]\\ncodex-session-relay service status: error: argument --actor: expected one argument\\n\",\"Code\":2},\"left\":[],\"emptied\":false}"
+ }
+}

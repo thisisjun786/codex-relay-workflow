@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "daemon.json": "txt:{\n  \"python_compatibility_build\": \"codex-session-relay/0.2.0\",\n  \"pid\": \"<HOLDER_PID>\",\n  \"startTicks\": \"<HOLDER_TICKS>\",\n  \"bootId\": \"<BOOT_ID>\",\n  \"workerPid\": null,\n  \"token\": null,\n  \"launchId\": null,\n  \"takeover\": null,\n  \"readyAt\": null,\n  \"storeId\": \"<STORE_ID>\",\n  \"installationId\": \"<INSTALLATION_ID>\",\n  \"stateDir\": \"<HOME>/state\",\n  \"socketPath\": \"~/socket\",\n  \"scopeAuthority\": \"isolated\",\n  \"scopeRoot\": \"<HOME>/scopes\",\n  \"startedAt\": \"<TIME>\",\n  \"restarts\": 0,\n  \"consecutiveFailures\": 0,\n  \"lastExit\": null,\n  \"nextRestartAt\": null\n}"
+ }
+}

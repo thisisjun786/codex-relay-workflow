@@ -10,9 +10,9 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"reflect"
-	"strconv"
 	"testing"
 	"time"
 
@@ -20,36 +20,94 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// This real subprocess is its worker's parent, and controls waitpid. A zombie
-// remains unreaped until the test releases stdin; no elapsed-time delay decides
-// which process state the stop command observes.
-const reapController = `import json, os, select, sys
-read, write = os.pipe()
-pid = os.fork()
-if pid == 0:
-    os.close(write)
-    os.read(read, 1)
-    os._exit(0)
-os.close(read)
-fd = os.pidfd_open(pid)
-raw = open('/proc/%d/stat' % pid).read().rsplit(')', 1)[1].split()
-ticks = int(raw[19])
-os.write(write, b'x')
-os.close(write)
-assert select.select([fd], [], [], 10)[0], 'worker exit not observed'
-if sys.argv[1] == 'gone':
-    os.waitpid(pid, 0)
-print(json.dumps({'pid': pid, 'ticks': ticks}), flush=True)
-sys.stdin.read(1)
-if sys.argv[1] == 'exited':
-    os.waitpid(pid, 0)
-os.close(fd)
-`
+// helperEnv makes this test binary one of its helper processes (runHelper) in place of its tests.
+const helperEnv = "CRW_SERVICE_TEST_HELPER"
+
+// The helpers run from init, before TestMain, on the main thread: a leader thread that exits
+// must be the thread the kernel reports for the process.
+func init() {
+	if helper := os.Getenv(helperEnv); helper != "" {
+		os.Exit(runHelper(helper, os.Getenv(helperEnv+"_ARG")))
+	}
+}
+
+// runHelper is one helper process, the fixtures that were Python scripts until todo 44:
+//
+//   - "controller": the parent of a worker it controls waitpid for. A zombie remains unreaped
+//     until the test releases stdin; no elapsed-time delay decides which process state the stop
+//     command observes. arg is "gone" (reaped before it answers) or "exited" (reaped after).
+//   - "leader-gone": a worker whose leader thread has exited while another thread keeps the
+//     descriptor table the threads share, and the daemon lock (arg) in it, until stdin is
+//     written: a multithreaded service process on its way out, held there. SIGTERM is ignored,
+//     so only SIGKILL ends it. SYS_exit ends the calling thread alone.
+func runHelper(helper, arg string) int {
+	switch helper {
+	case "controller":
+		worker := exec.Command("cat")
+		release, err := worker.StdinPipe()
+		if err == nil {
+			err = worker.Start()
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		fd, err := unix.PidfdOpen(worker.Process.Pid, 0)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		ticks := StartTicks(worker.Process.Pid)
+		_ = release.Close()
+		if n, err := unix.Poll([]unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}, 10000); err != nil || n != 1 {
+			fmt.Fprintln(os.Stderr, "worker exit not observed", err)
+			return 1
+		}
+		if arg == "gone" {
+			_ = worker.Wait()
+		}
+		raw, _ := json.Marshal(map[string]any{"pid": worker.Process.Pid, "ticks": ticks})
+		fmt.Println(string(raw))
+		_, _ = os.Stdin.Read(make([]byte, 1))
+		if arg == "exited" {
+			_ = worker.Wait()
+		}
+		_ = unix.Close(fd)
+		return 0
+	case "leader-gone":
+		lock, err := os.OpenFile(arg, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o600)
+		if err == nil {
+			err = unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		signal.Ignore(unix.SIGTERM)
+		go func() {
+			_, _ = os.Stdin.Read(make([]byte, 1))
+			os.Exit(0)
+		}()
+		fmt.Println(os.Getpid())
+		_, _, _ = unix.Syscall(unix.SYS_EXIT, 0, 0, 0)
+		return 1
+	}
+	fmt.Fprintf(os.Stderr, "unknown helper %q\n", helper)
+	return 2
+}
+
+// helper starts one of this binary's helper processes.
+func helper(ctx context.Context, name, arg string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^$")
+	cmd.Env = append(os.Environ(), helperEnv+"="+name, helperEnv+"_ARG="+arg)
+	cmd.Stderr = os.Stderr
+	return cmd
+}
 
 func controlledWorker(t *testing.T, state string) (int, int64) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	cmd := exec.CommandContext(ctx, filepath.Join(testRoot, ".venv/bin/python"), "-c", reapController, state)
+	cmd := helper(ctx, "controller", state)
 	input, err := cmd.StdinPipe()
 	if err != nil {
 		cancel()
@@ -96,78 +154,92 @@ func controlledWorker(t *testing.T, state string) (int, int64) {
 	return worker.PID, worker.Ticks
 }
 
+// reapAnswer is one runtime's stop of the controlled worker: its answer, the state files and
+// the tables.
+type reapAnswer struct {
+	Capture capture           `json:"capture"`
+	Files   map[string]string `json:"files"`
+	Tables  string            `json:"tables"`
+}
+
+// reapStop enables the service with the runtime python selects, publishes a Go record naming a
+// live, independently reaped supervisor and a controlled worker in state, and stops it with
+// that runtime.
+func reapStop(t *testing.T, home, state string, python bool) reapAnswer {
+	t.Helper()
+	worker, ticks := controlledWorker(t, state)
+	// A live, independently reaped supervisor makes stop take its ordinary
+	// termination/re-read path; the worker state is already fixed before that.
+	ctx, cancel := context.WithCancel(context.Background())
+	supervisor := exec.CommandContext(ctx, "sleep", "60")
+	if err := supervisor.Start(); err != nil {
+		cancel()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		cancel()
+		if err := supervisor.Wait(); err != nil {
+			if _, ok := err.(*exec.ExitError); !ok {
+				t.Error(err)
+			}
+		}
+	})
+	handle := process(t, supervisor.Process.Pid)
+	enabled := invoke(t, home, python, "service", "enable")
+	if enabled.Code != 0 {
+		t.Fatal(enabled)
+	}
+	s, err := New(context.Background(), storeSelection(home), home+"/socket")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Scope = &ScopeRegistry{Root: home + "/scopes", Authority: "isolated"}
+	s.InstallationID = installationForBinary(t, home)
+	record := set(s.NewRecord(supervisor.Process.Pid, "controlled-run"), "workerPid", worker, "workerStartTicks", ticks)
+	if err = s.WriteRecord(record); err != nil {
+		t.Fatal(err)
+	}
+	result := invoke(t, home, python, "--socket", home+"/socket", "service", "stop")
+	answer := runtimeObject(t, result)
+	if result.Code != 0 || get(answer, "worker") != state || !handle.Wait(0) {
+		t.Fatalf("%s: %+v", state, result)
+	}
+	// daemon.json is the record s.NewRecord (Go) wrote above in both runs; either
+	// runtime's stop only adds to it, so its build is Go's own (null) on both sides.
+	actualFiles := files(t, home, testsupport.Go)
+	raw, err := os.ReadFile(home + "/state/stop.request")
+	if err != nil {
+		t.Fatal(err)
+	}
+	actualFiles["stop.request"] = normalize(string(raw))
+	raw, err = os.ReadFile(home + "/state/daemon.lock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	actualFiles["daemon.lock"] = string(raw)
+	return reapAnswer{pythonCapture(result), actualFiles, tables(t, home, writtenBy(python))}
+}
+
+// Test29D1DeterministicReapStates stops a worker that is already gone, or exited and unreaped,
+// with each runtime over the same home; Python's stop is recorded (pythonHalf).
 func Test29D1DeterministicReapStates(t *testing.T) {
 	for _, state := range []string{"gone", "exited"} {
 		t.Run(state, func(t *testing.T) {
 			home := t.TempDir()
-			var want capture
-			var wantFiles map[string]string
-			var wantTables string
-			for _, python := range []bool{true, false} {
-				t.Run(fmt.Sprint(python), func(t *testing.T) {
-					worker, ticks := controlledWorker(t, state)
-					// A live, independently reaped supervisor makes stop take its ordinary
-					// termination/re-read path; the worker state is already fixed before that.
-					ctx, cancel := context.WithCancel(context.Background())
-					supervisor := exec.CommandContext(ctx, "sleep", "60")
-					if err := supervisor.Start(); err != nil {
-						cancel()
-						t.Fatal(err)
-					}
-					t.Cleanup(func() {
-						cancel()
-						if err := supervisor.Wait(); err != nil {
-							if _, ok := err.(*exec.ExitError); !ok {
-								t.Error(err)
-							}
-						}
-					})
-					handle := process(t, supervisor.Process.Pid)
-					enabled := invoke(t, home, python, "service", "enable")
-					if enabled.Code != 0 {
-						t.Fatal(enabled)
-					}
-					s, err := New(context.Background(), storeSelection(home), home+"/socket")
-					if err != nil {
-						t.Fatal(err)
-					}
-					s.Scope = &ScopeRegistry{Root: home + "/scopes", Authority: "isolated"}
-					s.InstallationID = installationForBinary(t, home)
-					record := set(s.NewRecord(supervisor.Process.Pid, "controlled-run"), "workerPid", worker, "workerStartTicks", ticks)
-					if err = s.WriteRecord(record); err != nil {
-						t.Fatal(err)
-					}
-					result := invoke(t, home, python, "--socket", home+"/socket", "service", "stop")
-					answer := runtimeObject(t, result)
-					if result.Code != 0 || get(answer, "worker") != state || !handle.Wait(0) {
-						t.Fatalf("%s: %+v", state, result)
-					}
-					// daemon.json is the record s.NewRecord (Go) wrote above in both runs; either
-					// runtime's stop only adds to it, so its build is Go's own (null) on both sides.
-					actualFiles := files(t, home, testsupport.Go)
-					raw, err := os.ReadFile(home + "/state/stop.request")
-					if err != nil {
-						t.Fatal(err)
-					}
-					actualFiles["stop.request"] = normalize(string(raw))
-					raw, err = os.ReadFile(home + "/state/daemon.lock")
-					if err != nil {
-						t.Fatal(err)
-					}
-					actualFiles["daemon.lock"] = string(raw)
-					if python {
-						want = result
-						wantFiles = actualFiles
-						wantTables = tables(t, home, testsupport.Python)
-					} else {
-						compare(t, want, result)
-						if !reflect.DeepEqual(wantFiles, actualFiles) || wantTables != tables(t, home, testsupport.Go) {
-							t.Fatalf("persisted state for %s\nPython %v\nGo %v", state, wantFiles, actualFiles)
-						}
-					}
-				})
-				resetRuntime(t, home)
-			}
+			var want reapAnswer
+			pythonHalf(t, home, "python", true, &want, func() (any, error) {
+				var answer reapAnswer
+				// A subtest, so its processes are gone before resetRuntime.
+				t.Run("true", func(t *testing.T) { answer = reapStop(t, home, state, true) })
+				return answer, nil
+			})
+			t.Run("false", func(t *testing.T) {
+				got := reapStop(t, home, state, false)
+				compare(t, want.Capture, got.Capture)
+				if !reflect.DeepEqual(want.Files, got.Files) || want.Tables != got.Tables {
+					t.Fatalf("persisted state for %s\nPython %v\nGo %v", state, want.Files, got.Files)
+				}
+			})
 		})
 	}
 }
@@ -191,19 +263,6 @@ func Test29D1TerminationCadence(t *testing.T) {
 	}
 }
 
-// leaderGone is a worker whose leader thread has exited while another thread keeps the
-// descriptor table the threads share, and the daemon lock in it, until stdin is written: a
-// multithreaded service process on its way out, held there. SIGTERM is blocked in every thread,
-// so only SIGKILL ends it. SYS_exit (argv[2]) ends the calling thread alone.
-const leaderGone = `import ctypes, fcntl, os, signal, sys, threading
-lock = open(sys.argv[1], "a+")
-fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
-threading.Thread(target=lambda: (sys.stdin.buffer.read(1), os._exit(0))).start()
-print(os.getpid(), flush=True)
-ctypes.CDLL(None, use_errno=True).syscall(int(sys.argv[2]), 0)
-`
-
 // A zombie leader is not an exited process (decisions.md 40). Stop observes a worker's exit on
 // its pidfd, which becomes readable only after every thread has closed its descriptors, so the
 // daemon lock the remaining thread holds is free when stop probes it. The Python fence read the
@@ -221,7 +280,7 @@ func Test29D1StopWaitsForEveryThreadOfTheWorker(t *testing.T) {
 	s.Scope = &ScopeRegistry{Root: home + "/scopes", Authority: "isolated"}
 	s.InstallationID = installationForBinary(t, home)
 	lock := filepath.Join(home, "state", "daemon.lock")
-	cmd := exec.Command(filepath.Join(testRoot, ".venv/bin/python"), "-c", leaderGone, lock, strconv.Itoa(unix.SYS_EXIT))
+	cmd := helper(context.Background(), "leader-gone", lock)
 	input, err := cmd.StdinPipe()
 	if err != nil {
 		t.Fatal(err)

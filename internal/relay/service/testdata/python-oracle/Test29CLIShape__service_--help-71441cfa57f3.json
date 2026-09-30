@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "python": "txt:{\"answer\":{\"Out\":\"usage: codex-session-relay service [-h]\\n                                   {status,enable,disable,stop,declare,start,restart,run} ...\\n\\npositional arguments:\\n  {status,enable,disable,stop,declare,start,restart,run}\\n\\noptions:\\n  -h, --help            show this help message and exit\\n\",\"Err\":\"\",\"Code\":0},\"left\":[],\"emptied\":false}"
+ }
+}

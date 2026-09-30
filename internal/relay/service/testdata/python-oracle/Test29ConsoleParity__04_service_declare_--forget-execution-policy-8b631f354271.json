@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "python": "txt:{\"answer\":{\"capture\":{\"Out\":\"{\\n  \\\"ok\\\": true,\\n  \\\"reason\\\": null,\\n  \\\"forgot\\\": null,\\n  \\\"actor\\\": \\\"cli\\\",\\n  \\\"launchPolicy\\\": {\\n    \\\"variable\\\": \\\"CODEX_THREAD_BRIDGE_EXECUTION_POLICY\\\",\\n    \\\"path\\\": null,\\n    \\\"source\\\": null,\\n    \\\"record\\\": null,\\n    \\\"environment\\\": null,\\n    \\\"declaredAt\\\": null,\\n    \\\"declaredBy\\\": null,\\n    \\\"state\\\": null,\\n    \\\"digest\\\": null,\\n    \\\"persisted\\\": null,\\n    \\\"detail\\\": \\\"no execution policy is declared for this service and CODEX_THREAD_BRIDGE_EXECUTION_POLICY is not set in this process, so a daemon launched from here can read none and withholds every role-bound delivery\\\",\\n    \\\"hint\\\": null\\n  },\\n  \\\"note\\\": \\\"a running daemon keeps the policy it was launched with until it is restarted\\\"\\n}\\n\",\"Err\":\"\",\"Code\":0},\"files\":{}},\"left\":[\"d 0700 state\"],\"emptied\":false}"
+ }
+}

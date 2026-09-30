@@ -21,9 +21,11 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/inbox"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 	"golang.org/x/sys/unix"
 )
 
@@ -435,11 +437,14 @@ func Test30ControlPeerFailuresAreAnsweredAsPythonAnswersThem(t *testing.T) {
 		}
 		return answers
 	}
-	python := func(t *testing.T) map[string][]byte {
-		t.Helper()
+	// The Python owner's answers are recorded (pyoracle): control.py's GuardServer, served on
+	// its own control.sock, asked every frame above.
+	python := map[string][]byte{}
+	var recorded map[string]string
+	pyoracle.JSON(t, "answers", &recorded, func() (any, error) {
 		state := filepath.Join(home, "python")
 		if err := os.Mkdir(state, 0700); err != nil {
-			t.Fatal(err)
+			return nil, err
 		}
 		owner := exec.Command(filepath.Join(testRoot, ".venv/bin/python"), "-c", `import sys
 from codex_session_relay.control import GuardServer
@@ -449,29 +454,36 @@ sys.stdin.read()
 server.close()`, state)
 		stdin, err := owner.StdinPipe()
 		if err != nil {
-			t.Fatal(err)
+			return nil, err
 		}
 		stdout, err := owner.StdoutPipe()
 		if err != nil {
-			t.Fatal(err)
+			return nil, err
 		}
 		var stderr bytes.Buffer
 		owner.Stderr = &stderr
 		if err = owner.Start(); err != nil {
-			t.Fatal(err)
+			return nil, err
 		}
 		if line, err := bufio.NewReader(stdout).ReadString('\n'); err != nil || line != "bound\n" {
 			_ = owner.Process.Kill()
 			_ = owner.Wait()
-			t.Fatalf("the Python owner never bound control.sock: %q %v %s", line, err, stderr.String())
+			return nil, fmt.Errorf("the Python owner never bound control.sock: %q %v %s", line, err, stderr.String())
 		}
 		answers := served(t, ControlPath(state))
 		_ = stdin.Close()
 		if err = owner.Wait(); err != nil {
-			t.Fatalf("the Python owner: %v %s", err, stderr.String())
+			return nil, fmt.Errorf("the Python owner: %v %s", err, stderr.String())
 		}
-		return answers
-	}(t)
+		text := map[string]string{}
+		for name, answer := range answers {
+			text[name] = string(answer)
+		}
+		return text, nil
+	}, pyoracle.Substitute(home, "<HOME>"))
+	for name, answer := range recorded {
+		python[name] = []byte(answer)
+	}
 	t.Run("listener", func(t *testing.T) {
 		state := filepath.Join(home, "go")
 		if err := os.Mkdir(state, 0700); err != nil {
@@ -630,13 +642,25 @@ func seedTakeover(t *testing.T) string {
 		t.Fatal(err)
 	}
 	// Both candidates are the service supervisor, so the retained Python owner's
-	// service is enabled, as on the host; its own CLI records the intent.
-	enable := exec.Command(testPython, "--state", home+"/state", "--socket", home+"/socket", "service", "enable")
-	enable.Env = environment(home)
-	if raw, err := enable.CombinedOutput(); err != nil {
-		t.Fatalf("python service enable: %v %s", err, raw)
+	// service is enabled, as on the host. Its own CLI recorded the intent until todo 44; the
+	// intent file is the one Go's service enable writes (Test29ConsoleParity), written here by
+	// the same code, since Go's CLI refuses to enable a service over a store Python owns.
+	if _, err := (&Service{Selection: storeSelection(home)}).Enable("cli"); err != nil {
+		t.Fatalf("service enable: %v", err)
 	}
 	return home
+}
+
+// declareForeign declares policy as the launch policy of the service over the store Python owns
+// in home, as the retained Python owner's own CLI did until todo 44: with Go's service declare,
+// which writes the same declaration (Test29LaunchPolicyPersistence), run in process because Go's
+// CLI refuses a service action over a store Python owns.
+func declareForeign(t *testing.T, home, policy string) {
+	t.Helper()
+	answer, err := (&Service{Selection: storeSelection(home)}).Declare(policy, "cli", false)
+	if err != nil || get(answer, "ok") != true {
+		t.Fatalf("service declare: %v %v", answer, err)
+	}
 }
 
 // awaitControl waits, bounded, for the activated owner's worker to bind control.sock:
@@ -725,9 +749,12 @@ func ownerMarkers(home string) string {
 }
 
 // Audit findings 0, 3, 4, 8, 11, 13, 17, 19, 32, 55 (decisions D1, D6): the todo-42
-// sequence on one physical store. Go activates as the service supervisor, the retained
-// Python fence build is launched as its own `service run --takeover-candidate` by the
-// Go controller and activates at epoch 3, and Go takes the store back at epoch 4.
+// sequence on one physical store. Go activates as the service supervisor over the store the
+// retained Python fence owned, and a rollback without a Python locator is refused while Go
+// serves. The rest of the sequence, a Python client queueing under the Go owner, the retained
+// Python fence build activated as the Go controller's own candidate at epoch 3 and Go taking the
+// store back at epoch 4, ran here until todo 44: rollback to Python closed at todo 43
+// (rollback_allowed=0), and the Python runtime leaves in todo 44.
 func Test30TakeoverBuiltCLI(t *testing.T) {
 	home := seedTakeover(t)
 	before, err := ownership.Physical(home + "/state/relay.sqlite3")
@@ -738,11 +765,7 @@ func Test30TakeoverBuiltCLI(t *testing.T) {
 	if err = os.WriteFile(policy, []byte(`{"roles":{"parent":{"model":"test-model","reasoningEffort":"high"},"child":{"model":"test-model","reasoningEffort":"high"}}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	declare := exec.Command(testPython, "--state", home+"/state", "--socket", home+"/socket", "service", "declare", "--execution-policy", policy)
-	declare.Env = environment(home)
-	if raw, err := declare.CombinedOutput(); err != nil {
-		t.Fatalf("python service declare: %v %s", err, raw)
-	}
+	declareForeign(t, home, policy)
 	for _, args := range [][]string{{"status", "--json"}, {"begin", "--to", "go"}, {"drain"}, {"transfer"}, {"activate"}, {"activate"}} {
 		result, code := takeoverCLI(t, home, args...)
 		if code != 0 {
@@ -762,50 +785,6 @@ func Test30TakeoverBuiltCLI(t *testing.T) {
 	}
 	status, code := takeoverCLI(t, home, "status", "--json")
 	if code != 0 || status["owner"] != "go" || status["phase"] != "active" || status["epoch"] != float64(2) {
-		t.Fatal(code, status)
-	}
-	// Audit finding 17: a Python client under the Go owner queues its ACK durably
-	// (decision 25); the retained Python candidate the controller launches replays it.
-	event := strings.Repeat("0", 32)
-	queue := exec.Command(testPython, "--state", home+"/state", "ack", "--event", event, "--ack-turn", "parent-turn", "--ack-proof", "proof-1")
-	queue.Env = environment(home)
-	if raw, err := queue.Output(); err != nil || !strings.Contains(string(raw), "durably_queued") {
-		t.Fatalf("python ack under the Go owner: %v %s", err, raw)
-	}
-	entry := home + "/state/takeover-inbox/ack." + event
-	if _, err = os.Stat(entry); err != nil {
-		t.Fatal(err)
-	}
-	result, code = takeoverCLI(t, home, "rollback", "--to", "python", "--python-relay", testPython)
-	if code != 0 || result["owner"] != "python" || result["phase"] != "active" || result["epoch"] != float64(3) {
-		t.Fatalf("rollback: %d %+v", code, result)
-	}
-	activeHolder(t, home, ownership.PythonBuild)
-	if _, err = os.Stat(entry); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("the Python candidate left the queued entry: %v", err)
-	}
-	stamp, cleanup, err := ownership.CopySnapshot(home + "/state/relay.sqlite3")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer cleanup()
-	snapshot, err := ownership.OpenExisting(t.Context(), stamp, "ro")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var marker string
-	err = snapshot.QueryRow("SELECT value FROM schema_meta WHERE key=?", "inbox:ack."+event).Scan(&marker)
-	_ = snapshot.Close()
-	if err != nil || !strings.Contains(marker, "payloadDigest") {
-		t.Fatalf("no replay marker: %q %v", marker, err)
-	}
-	for _, args := range [][]string{{"begin", "--to", "go"}, {"drain"}, {"transfer"}, {"activate"}} {
-		if result, code := takeoverCLI(t, home, args...); code != 0 {
-			t.Fatalf("%v: %d %+v", args, code, result)
-		}
-	}
-	status, code = takeoverCLI(t, home, "status", "--json")
-	if code != 0 || status["owner"] != "go" || status["phase"] != "active" || status["epoch"] != float64(4) {
 		t.Fatal(code, status)
 	}
 	activeHolder(t, home, "dev")
@@ -1187,7 +1166,8 @@ func Test30RealCandidateControllerEOF(t *testing.T) {
 // Audit findings 23, 53: daemon.json keeps the spelling the Python service was given.
 // Drain compares state directory and socket by identity, reads a relative socket from
 // the live holder's own cwd, and still refuses a different scope. Python writes the
-// record (RelayService.new_record); a real process stands in for its holder.
+// record (RelayService.new_record), recorded (pyoracle) with the holder's identity and the
+// store's spelled as placeholders; a real process stands in for its holder.
 func Test30DrainComparesRecordedIdentity(t *testing.T) {
 	for _, tc := range []struct{ name, state, socket string }{
 		{"symlinked-spellings", "statelink", "socketlink"},
@@ -1221,10 +1201,31 @@ func Test30DrainComparesRecordedIdentity(t *testing.T) {
 			script := "import sys\nfrom codex_session_relay.service import RelayService\nfrom codex_session_relay.store import resolve_state_dir\n" +
 				"service = RelayService(resolve_state_dir(sys.argv[1]), socket_path=sys.argv[2], store_id=sys.argv[3])\n" +
 				"service.write_record(service.new_record(pid=int(sys.argv[4])))"
-			python := exec.Command(filepath.Join(filepath.Dir(testPython), "python"), "-c", script, home+"/"+tc.state, socket, record.StoreID, strconv.Itoa(holder.Process.Pid))
-			python.Env = append(environment(home), "PYTHONDONTWRITEBYTECODE=1")
-			if raw, err := python.CombinedOutput(); err != nil {
-				t.Fatal(err, string(raw))
+			pid := holder.Process.Pid
+			boot, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
+			if err != nil {
+				t.Fatal(err)
+			}
+			written := pyoracle.Answer(t, "daemon.json", func() ([]byte, error) {
+				python := exec.Command(filepath.Join(filepath.Dir(testPython), "python"), "-c", script, home+"/"+tc.state, socket, record.StoreID, strconv.Itoa(pid))
+				python.Env = append(environment(home), "PYTHONDONTWRITEBYTECODE=1")
+				if raw, err := python.CombinedOutput(); err != nil {
+					return nil, fmt.Errorf("%v: %s", err, raw)
+				}
+				raw, err := os.ReadFile(home + "/state/daemon.json")
+				if err != nil {
+					return nil, err
+				}
+				// The only time in the record; Drain never reads it.
+				return stampPattern.ReplaceAll(raw, []byte("<TIME>")), nil
+			}, append(homeSubstitutions(t, home),
+				pyoracle.Substitute(fmt.Sprintf("\"pid\": %d,", pid), "\"pid\": \"<HOLDER_PID>\","),
+				pyoracle.Substitute(fmt.Sprintf("\"startTicks\": %d,", StartTicks(pid)), "\"startTicks\": \"<HOLDER_TICKS>\","),
+				pyoracle.Substitute(strings.TrimSpace(string(boot)), "<BOOT_ID>"),
+				pyoracle.Substitute(record.StoreID, "<STORE_ID>"))...)
+			written = bytes.ReplaceAll(written, []byte("<TIME>"), []byte("2026-01-01T00:00:00Z"))
+			if err = os.WriteFile(home+"/state/daemon.json", written, 0o600); err != nil {
+				t.Fatal(err)
 			}
 			c, err := NewTakeover(t.Context(), store.StateSelection{Path: home + "/state"}, home+"/socket", "test", TakeoverOptions{})
 			if err != nil {
@@ -1247,19 +1248,10 @@ func Test30DrainComparesRecordedIdentity(t *testing.T) {
 	}
 }
 
-// pythonCheckStart is the retained fence's own admission preflight on the store.
-func pythonCheckStart(t *testing.T, home string) error {
-	t.Helper()
-	cmd := exec.Command(filepath.Join(filepath.Dir(testPython), "python"), "-c", "import sys\nfrom codex_session_relay import ownership\nownership.check_start(sys.argv[1])", home+"/state/relay.sqlite3")
-	cmd.Env = append(environment(home), "PYTHONDONTWRITEBYTECODE=1")
-	if raw, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("%v: %s", err, raw)
-	}
-	return nil
-}
-
 // Audit findings 2, 6, 10 and 12 (decisions D2, D6): the built CLI aborts a pre-CAS
-// transition back to active Python, whose own fence admits again. A Go candidate that
+// transition back to active Python. (That Python's own fence closes its admission while the
+// store drains and admits again after the abort was checked here until todo 44: rollback to
+// Python closed at todo 43 (rollback_allowed=0), and the Python runtime leaves in todo 44.) A Go candidate that
 // cannot drain the takeover inbox (a corrupt entry fails closed, decision 25) refuses
 // readiness: ownership stays starting, abort refuses after the CAS, and the reverse begin
 // of that failed candidate aborts back to starting, never to active.
@@ -1272,15 +1264,9 @@ func Test30AbortAndFailedCandidateBuiltCLI(t *testing.T) {
 	if result, code := takeoverCLI(t, home, "begin", "--to", "go"); code != 0 {
 		t.Fatal(result)
 	}
-	if err = pythonCheckStart(t, home); err == nil || !strings.Contains(err.Error(), "draining") {
-		t.Fatalf("Python admission open while draining: %v", err)
-	}
 	result, code := takeoverCLI(t, home, "abort")
 	if code != 0 || result["owner"] != "python" || result["phase"] != "active" || result["epoch"] != float64(1) || result["transition"] != nil {
 		t.Fatalf("abort: %d %+v", code, result)
-	}
-	if err = pythonCheckStart(t, home); err != nil {
-		t.Fatalf("Python admission did not reopen after abort: %v", err)
 	}
 	for _, args := range [][]string{{"begin", "--to", "go"}, {"drain"}, {"transfer"}} {
 		if result, code := takeoverCLI(t, home, args...); code != 0 {
@@ -1314,6 +1300,11 @@ func Test30AbortAndFailedCandidateBuiltCLI(t *testing.T) {
 	// Review of decision D2: the reverse transfer from this failed candidate fails
 	// before its CAS (a busy daemon.lock), and abort returns it to starting, never to
 	// active: no Go candidate became ready, so no Go service may serve over the entry.
+	// The Python locator is never started; it only has to be an executable file.
+	relay := home + "/never-started-relay"
+	if err = os.WriteFile(relay, []byte("#!/bin/sh\nexit 99\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	lock, err := os.OpenFile(home+"/state/daemon.lock", os.O_RDWR|os.O_CREATE, 0600)
 	if err != nil {
 		t.Fatal(err)
@@ -1321,7 +1312,7 @@ func Test30AbortAndFailedCandidateBuiltCLI(t *testing.T) {
 	if err = unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
 		t.Fatal(err)
 	}
-	result, code = takeoverCLI(t, home, "rollback", "--to", "python", "--python-relay", testPython)
+	result, code = takeoverCLI(t, home, "rollback", "--to", "python", "--python-relay", relay)
 	if err = lock.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -1350,7 +1341,9 @@ func Test30AbortAndFailedCandidateBuiltCLI(t *testing.T) {
 
 // Todo 31 (decision 25, cutover.md Step 6): while the store drains toward Go, the retained
 // Python fence's clients queue their acknowledgments durably (100 acks and a
-// fault-notification-ack, one Python process); the Go candidate replays every entry under its
+// fault-notification-ack; the Python process that queued them left with the Python runtime in
+// todo 44, and inbox.Queue, the Go client's queueing, whose entries are byte for byte the
+// fence's (internal/relay/inbox), queues them here); the Go candidate replays every entry under its
 // starting permit, with its App Server socket as host, before it reports readiness. After
 // activation the inbox is empty and each entry has its marker with the answer the direct
 // command gives (exit 2: nothing it acknowledges exists), and a writable command of the active
@@ -1362,39 +1355,18 @@ func Test31GoCandidateDrainsPythonQueuedEntriesBuiltCLI(t *testing.T) {
 	if err := os.WriteFile(policy, []byte(`{"roles":{"parent":{"model":"test-model","reasoningEffort":"high"},"child":{"model":"test-model","reasoningEffort":"high"}}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
-	declare := exec.Command(testPython, "--state", home+"/state", "--socket", home+"/socket", "service", "declare", "--execution-policy", policy)
-	declare.Env = environment(home)
-	if raw, err := declare.CombinedOutput(); err != nil {
-		t.Fatalf("python service declare: %v %s", err, raw)
-	}
+	declareForeign(t, home, policy)
 	if result, code := takeoverCLI(t, home, "begin", "--to", "go"); code != 0 {
 		t.Fatal(result)
 	}
-	script := `import contextlib, io, json, sys
-from codex_session_relay import cli
-answers = []
-argvs = [["ack", "--event", "%032x" % (0xa0 + n), "--ack-turn", "parent-turn", "--ack-proof", "proof-1"] for n in range(100)]
-argvs.append(["fault-notification-ack", "--notification", "notice-1", "--token", "token-1", "--ref", "receipt-1"])
-for argv in argvs:
-    out = io.StringIO()
-    with contextlib.redirect_stdout(out):
-        code = cli.main(["--state", sys.argv[1], *argv])
-    answers.append([code, json.loads(out.getvalue())])
-json.dump(answers, sys.stdout)
-`
-	queue := exec.Command(filepath.Join(filepath.Dir(testPython), "python"), "-c", script, home+"/state")
-	queue.Env = append(environment(home), "PYTHONDONTWRITEBYTECODE=1")
-	raw, err := queue.Output()
-	if err != nil {
-		t.Fatalf("python queue: %v %s", err, raw)
+	var argvs [][]string
+	for n := range 100 {
+		argvs = append(argvs, []string{"ack", "--event", fmt.Sprintf("%032x", 0xa0+n), "--ack-turn", "parent-turn", "--ack-proof", "proof-1"})
 	}
-	var answers [][2]any
-	if err = json.Unmarshal(raw, &answers); err != nil || len(answers) != 101 {
-		t.Fatalf("%v %s", err, raw)
-	}
-	for _, answer := range answers {
-		if object, _ := answer[1].(map[string]any); answer[0] != float64(0) || object["status"] != "durably_queued" {
-			t.Fatalf("a Python acknowledgment during draining was not queued: %v", answer)
+	argvs = append(argvs, []string{"fault-notification-ack", "--notification", "notice-1", "--token", "token-1", "--ref", "receipt-1"})
+	for _, argv := range argvs {
+		if answer, code := inbox.Queue(home+"/state", argv[0], argv[1:]); code != 0 || get(answer, "status") != "durably_queued" {
+			t.Fatalf("an acknowledgment during draining was not queued: %d %v", code, answer)
 		}
 	}
 	entries := func() []string {
@@ -1471,7 +1443,7 @@ json.dump(answers, sys.stdout)
 		"inbox:fault-notification-ack.notice-1":       {"fault-notification-ack", "--notification", "notice-1", "--token", "token-1", "--ref", "receipt-1"},
 	} {
 		var marker map[string]any
-		if err = json.Unmarshal([]byte(before[key]), &marker); err != nil {
+		if err := json.Unmarshal([]byte(before[key]), &marker); err != nil {
 			t.Fatalf("%s: %v", key, err)
 		}
 		if answer := direct(argv...); marker["exit"] != float64(2) || !reflect.DeepEqual(marker["answer"], answer) {
@@ -1507,11 +1479,11 @@ func Test30CommitRefusesOverQueuedInboxEntries(t *testing.T) {
 	if raw, err := relay("service", "stop"); err != nil {
 		t.Fatalf("go service stop: %v %s", err, raw)
 	}
+	// The retained Python CLI's acknowledgment under the Go owner, queued with inbox.Queue,
+	// whose entry is byte for byte the fence's (the Python client left in todo 44).
 	event := strings.Repeat("1", 32)
-	queue := exec.Command(testPython, "--state", home+"/state", "ack", "--event", event, "--ack-turn", "parent-turn", "--ack-proof", "proof-1")
-	queue.Env = environment(home)
-	if raw, err := queue.Output(); err != nil || !strings.Contains(string(raw), "durably_queued") {
-		t.Fatalf("python ack under the Go owner: %v %s", err, raw)
+	if answer, code := inbox.Queue(home+"/state", "ack", []string{"--event", event, "--ack-turn", "parent-turn", "--ack-proof", "proof-1"}); code != 0 || get(answer, "status") != "durably_queued" {
+		t.Fatalf("ack under the Go owner: %d %v", code, answer)
 	}
 	entry := home + "/state/takeover-inbox/ack." + event
 	// Names the replay never reads, so never removes: an unpublished temporary, one outside
@@ -1623,41 +1595,6 @@ func Test30ReadyTimeoutBoundsSilentCandidate(t *testing.T) {
 	if result, code = takeoverCLI(t, home, "activate", "--python-relay", "relative/relay"); code != 4 {
 		t.Fatalf("relative --python-relay accepted: %d %+v", code, result)
 	}
-}
-
-// Devin 4127894020 (decision 28): the built Go controller waits for readiness under its own
-// --ready-timeout, so a Python candidate whose recovery outlasts the channel bound must still
-// accept activation: its start bound does not carry over into the exchange after ready. The
-// retained Python entry point runs unchanged except for two test-only injections, a 1 s
-// channel bound and a 2 s recovery, so the test stays fast.
-func Test30PythonCandidateActivatesAfterRecoveryLongerThanTheChannelBound(t *testing.T) {
-	home := seedTakeover(t)
-	for _, args := range [][]string{{"begin", "--to", "go"}, {"drain"}, {"transfer"}, {"activate"}} {
-		if result, code := takeoverCLI(t, home, args...); code != 0 {
-			t.Fatalf("%v: %d %+v", args, code, result)
-		}
-	}
-	slow := home + "/slow-relay"
-	script := "#!" + filepath.Join(testRoot, ".venv/bin/python") + `
-import sys, time
-from codex_session_relay import takeover
-takeover.CHANNEL_TIMEOUT = 1.0
-ready = takeover.CandidateChannel.ready
-def slow(self):
-    time.sleep(2.0)
-    return ready(self)
-takeover.CandidateChannel.ready = slow
-from codex_session_relay.cli import main
-sys.exit(main())
-`
-	if err := os.WriteFile(slow, []byte(script), 0700); err != nil {
-		t.Fatal(err)
-	}
-	result, code := takeoverCLI(t, home, "rollback", "--to", "python", "--python-relay", slow, "--ready-timeout", "30")
-	if code != 0 || result["owner"] != "python" || result["phase"] != "active" || result["epoch"] != float64(3) {
-		t.Fatalf("rollback with a slow recovery: %d %+v", code, result)
-	}
-	activeHolder(t, home, ownership.PythonBuild)
 }
 
 // Decision D6: the drained Go holder is a supervisor waiting on its worker. Drain
