@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -19,10 +18,6 @@ func TestDPolicyAndLimitWholeRepliesAgainstPython(t *testing.T) {
 		t.Fatal(e)
 	}
 	t.Cleanup(func() { os.RemoveAll(home) })
-	root, e := filepath.Abs("../../..")
-	if e != nil {
-		t.Fatal(e)
-	}
 	goDir, pyDir := filepath.Join(home, "go"), filepath.Join(home, "python")
 	steps := [][]string{
 		{"fault-policy", "--product", "crw", "--fault-class", "report_omitted", "--severity", "degraded", "--threshold", "2", "--window", "120", "--reason", "observed twice"},
@@ -34,18 +29,8 @@ func TestDPolicyAndLimitWholeRepliesAgainstPython(t *testing.T) {
 	}
 	for _, args := range steps {
 		code, goReply := cliCall(t, goDir, args...)
-		cmd := exec.Command("uv", append([]string{"run", "--no-sync", "codex-session-relay", "--state", pyDir, "--json"}, args...)...)
-		cmd.Dir = root
-		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR=/dev/shm")
-		out, e := cmd.Output()
-		pyCode := 0
-		if e != nil {
-			if ex, ok := e.(*exec.ExitError); ok {
-				pyCode = ex.ExitCode()
-			} else {
-				t.Fatal(e)
-			}
-		}
+		answer := pyCLIRun(t, home, "", append([]string{"--state", pyDir, "--json"}, args...), false, pyHomeEnv(home)...)
+		out, pyCode := []byte(answer.Stdout), answer.Code
 		var pyReply map[string]any
 		if e = json.Unmarshal(out, &pyReply); e != nil {
 			t.Fatalf("python %q: %v", out, e)
@@ -54,36 +39,55 @@ func TestDPolicyAndLimitWholeRepliesAgainstPython(t *testing.T) {
 			t.Fatalf("%v: Go %d %v; Python %d %v", args, code, goReply, pyCode, pyReply)
 		}
 	}
-	journal := map[string][]store.JournalEntry{}
-	for _, dir := range []string{goDir, pyDir} {
+	checks := []struct {
+		kind, subject string
+		count         int64
+	}{{"fault_policy_set", "crw:report_omitted:degraded", 2}, {"fault_limit_set", "crw:notification", 1}, {"fault_limit_set", "crw:extension_z", 1}}
+	// journals reads each checked journal of the store in dir: every entry's detail, by kind and
+	// subject.
+	journals := func(dir string) (map[string][]string, error) {
+		details := map[string][]string{}
 		readStore(t, context.Background(), filepath.Join(dir, "relay.sqlite3"), func(ctx context.Context, s *store.Store) error {
-			for _, check := range []struct {
-				kind, subject string
-				count         int64
-			}{{"fault_policy_set", "crw:report_omitted:degraded", 2}, {"fault_limit_set", "crw:notification", 1}, {"fault_limit_set", "crw:extension_z", 1}} {
+			for _, check := range checks {
 				rows, e := s.Journal(ctx, check.kind, check.subject)
-				if e != nil || int64(len(rows)) != check.count {
-					t.Fatalf("%s journal %s: %v %v", dir, check.kind, rows, e)
+				if e != nil {
+					return e
 				}
 				key := check.kind + ":" + check.subject
-				if dir == goDir {
-					journal[key] = rows
-				} else {
-					for i, r := range rows {
-						var g, p any
-						if e = json.Unmarshal([]byte(journal[key][i].Detail), &g); e != nil {
-							t.Fatal(e)
-						}
-						if e = json.Unmarshal([]byte(r.Detail), &p); e != nil {
-							t.Fatal(e)
-						}
-						if !reflect.DeepEqual(g, p) {
-							t.Fatalf("%s journal detail: Go %v Python %v", key, g, p)
-						}
-					}
+				details[key] = []string{}
+				for _, r := range rows {
+					details[key] = append(details[key], r.Detail)
 				}
 			}
 			return nil
 		})
+		return details, nil
+	}
+	goJournal, e := journals(goDir)
+	if e != nil {
+		t.Fatal(e)
+	}
+	// Python's journals, as the store it wrote holds them after the steps.
+	var pyJournal map[string][]string
+	pyValue(t, "python journals", nil, pyRunPaths(t, home), &pyJournal, func() (any, error) { return journals(pyDir) })
+	for _, check := range checks {
+		key := check.kind + ":" + check.subject
+		for dir, rows := range map[string][]string{goDir: goJournal[key], pyDir: pyJournal[key]} {
+			if int64(len(rows)) != check.count {
+				t.Fatalf("%s journal %s: %v", dir, check.kind, rows)
+			}
+		}
+		for i, detail := range pyJournal[key] {
+			var g, p any
+			if e = json.Unmarshal([]byte(goJournal[key][i]), &g); e != nil {
+				t.Fatal(e)
+			}
+			if e = json.Unmarshal([]byte(detail), &p); e != nil {
+				t.Fatal(e)
+			}
+			if !reflect.DeepEqual(g, p) {
+				t.Fatalf("%s journal detail: Go %v Python %v", key, g, p)
+			}
+		}
 	}
 }

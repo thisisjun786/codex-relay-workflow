@@ -5,11 +5,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -164,11 +168,27 @@ func f1ReplayCLI(t *testing.T, ctx context.Context, gd, pd string, args []string
 	if e != nil {
 		t.Fatal(e)
 	}
-	py := exec.Command("uv", append([]string{"run", "--no-sync", "python", filepath.Join(root, "internal/relay/faults/testdata/f1_replay.py"), pd}, args...)...)
-	py.Dir = root
-	raw, e := py.CombinedOutput()
+	// Python's streams, exit and every table of its twin after the same command line: the
+	// recording holds the tables that changed since Python's previous answer on this twin.
+	before := f1PythonTables(t, pd)
+	delta := pyAnswer(t, "f1_replay.py "+strings.Join(args, " "), args, pyRunPaths(t, filepath.Dir(pd)), func() ([]byte, error) {
+		py := exec.Command("uv", append([]string{"run", "--no-sync", "python", filepath.Join(root, "internal/relay/faults/testdata/f1_replay.py"), pd}, args...)...)
+		py.Dir = root
+		raw, e := py.CombinedOutput()
+		if e != nil {
+			return nil, fmt.Errorf("python: %v %s", e, raw)
+		}
+		if raw, e = recordEvidenceDigests(raw); e != nil {
+			return nil, e
+		}
+		return f1TablesDelta(before, raw)
+	})
+	raw, e := f1ApplyDelta(t, pd, before, delta)
+	if e == nil {
+		raw, e = replayEvidenceDigests(raw)
+	}
 	if e != nil {
-		t.Fatalf("python: %v %s", e, raw)
+		t.Fatalf("recorded Python answer: %v", e)
 	}
 	var want struct {
 		Stdout, Stderr string
@@ -234,4 +254,131 @@ func f1ReplayCLI(t *testing.T, ctx context.Context, gd, pd string, args []string
 		t.Fatal(e)
 	}
 	return answer
+}
+
+// f1PyTwins holds, for each Python twin a running test replays commands on, every table its last
+// answer named: its rows in rowid order, each as canonical JSON.
+var f1PyTwins = struct {
+	sync.Mutex
+	tables map[string]map[string][]json.RawMessage
+}{tables: map[string]map[string][]json.RawMessage{}}
+
+// f1PythonTables is what Python's last answer on the twin pd held (nothing before its first).
+func f1PythonTables(t testing.TB, pd string) map[string][]json.RawMessage {
+	f1PyTwins.Lock()
+	defer f1PyTwins.Unlock()
+	tables, ok := f1PyTwins.tables[pd]
+	if !ok {
+		tables = map[string][]json.RawMessage{}
+		f1PyTwins.tables[pd] = tables
+		t.Cleanup(func() {
+			f1PyTwins.Lock()
+			delete(f1PyTwins.tables, pd)
+			f1PyTwins.Unlock()
+		})
+	}
+	return maps.Clone(tables)
+}
+
+// f1Delta is one recorded f1_replay.py answer: the CLI's streams and exit, and each of the twin's
+// tables that differs from the previous answer's (changed) or that it no longer has (dropped).
+type f1Delta struct {
+	Stdout  string                  `json:"stdout"`
+	Stderr  string                  `json:"stderr"`
+	Exit    int                     `json:"exit"`
+	Changed map[string]f1TableDelta `json:"changed"`
+	Dropped []string                `json:"dropped,omitempty"`
+}
+
+// f1TableDelta is a changed table: its row count and each row, by its position in rowid order,
+// that differs from the row the previous answer had there.
+type f1TableDelta struct {
+	Length int                        `json:"length"`
+	Rows   map[string]json.RawMessage `json:"rows,omitempty"`
+}
+
+// f1Canonical is value re-encoded one way (sorted keys, numbers as written), so an unchanged row
+// reads the same in every answer.
+func f1Canonical(value json.RawMessage) (json.RawMessage, error) {
+	decoder := json.NewDecoder(bytes.NewReader(value))
+	decoder.UseNumber()
+	var decoded any
+	if err := decoder.Decode(&decoded); err != nil {
+		return nil, err
+	}
+	return pyEncode(decoded)
+}
+
+// f1TablesDelta turns f1_replay.py's whole answer into the f1Delta against before.
+func f1TablesDelta(before map[string][]json.RawMessage, raw []byte) ([]byte, error) {
+	var whole struct {
+		Stdout string                       `json:"stdout"`
+		Stderr string                       `json:"stderr"`
+		Exit   int                          `json:"exit"`
+		Tables map[string][]json.RawMessage `json:"tables"`
+	}
+	if err := json.Unmarshal(raw, &whole); err != nil {
+		return nil, fmt.Errorf("%v: %s", err, raw)
+	}
+	delta := f1Delta{Stdout: whole.Stdout, Stderr: whole.Stderr, Exit: whole.Exit, Changed: map[string]f1TableDelta{}}
+	for name, rows := range whole.Tables {
+		old, had := before[name]
+		change := f1TableDelta{Length: len(rows), Rows: map[string]json.RawMessage{}}
+		for i, row := range rows {
+			canonical, err := f1Canonical(row)
+			if err != nil {
+				return nil, err
+			}
+			if i >= len(old) || !bytes.Equal(old[i], canonical) {
+				change.Rows[strconv.Itoa(i)] = canonical
+			}
+		}
+		if !had || len(rows) != len(old) || len(change.Rows) > 0 {
+			delta.Changed[name] = change
+		}
+	}
+	for name := range before {
+		if _, ok := whole.Tables[name]; !ok {
+			delta.Dropped = append(delta.Dropped, name)
+		}
+	}
+	sort.Strings(delta.Dropped)
+	return pyEncode(delta)
+}
+
+// f1ApplyDelta rebuilds f1_replay.py's whole answer from before and a recorded f1Delta, and keeps
+// its tables as the twin's latest.
+func f1ApplyDelta(t testing.TB, pd string, before map[string][]json.RawMessage, raw []byte) ([]byte, error) {
+	var delta f1Delta
+	if err := json.Unmarshal(raw, &delta); err != nil {
+		return nil, fmt.Errorf("%v: %s", err, raw)
+	}
+	tables := before
+	for name, change := range delta.Changed {
+		old := before[name]
+		rows := make([]json.RawMessage, change.Length)
+		copy(rows, old[:min(len(old), change.Length)])
+		for at, row := range change.Rows {
+			i, err := strconv.Atoi(at)
+			if err != nil || i < 0 || i >= change.Length {
+				return nil, fmt.Errorf("table %s: row %q outside its %d rows", name, at, change.Length)
+			}
+			if rows[i], err = f1Canonical(row); err != nil {
+				return nil, err
+			}
+		}
+		for i, row := range rows {
+			if row == nil {
+				return nil, fmt.Errorf("table %s: row %d is neither kept nor recorded", name, i)
+			}
+		}
+		tables[name] = rows
+	}
+	for _, name := range delta.Dropped {
+		delete(tables, name)
+	}
+	f1PyTwins.Lock()
+	f1PyTwins.tables[pd] = maps.Clone(tables)
+	f1PyTwins.Unlock()
+	return pyEncode(map[string]any{"stdout": delta.Stdout, "stderr": delta.Stderr, "exit": delta.Exit, "tables": tables})
 }

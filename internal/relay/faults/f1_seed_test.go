@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -82,18 +83,14 @@ func TestF1SeededCLIOracle(t *testing.T) {
 			}
 			pythonCopy(t, goDir, pyDir)
 			args := tc.args(pub)
-			py := exec.Command("uv", append([]string{"run", "--no-sync", "python", filepath.Join(root, "internal/relay/faults/testdata/f1_cli.py"), "--state", pyDir, "--json"}, args...)...)
-			py.Dir = root
-			py.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home+"/state", "XDG_CONFIG_HOME="+home+"/config", "CODEX_HOME="+home+"/codex", "TMPDIR=/dev/shm")
-			want, err := py.Output()
-			pyCode := 0
-			if err != nil {
-				if x, ok := err.(*exec.ExitError); ok {
-					pyCode = x.ExitCode()
-				} else {
-					t.Fatal(err)
-				}
-			}
+			var answer pyRun
+			pyValue(t, "f1_cli.py "+strings.Join(args, " "), args, pyRunPaths(t, home), &answer, func() (any, error) {
+				py := exec.Command("uv", append([]string{"run", "--no-sync", "python", filepath.Join(root, "internal/relay/faults/testdata/f1_cli.py"), "--state", pyDir, "--json"}, args...)...)
+				py.Dir = root
+				py.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home+"/state", "XDG_CONFIG_HOME="+home+"/config", "CODEX_HOME="+home+"/codex", "TMPDIR=/dev/shm")
+				return runPython(py, false)
+			})
+			want, pyCode := []byte(answer.Stdout), answer.Code
 			var got, stderr bytes.Buffer
 			goCode, handled := executeAsCLI(ctx, append([]string{"--state", goDir, "--json"}, args...), &got, &stderr)
 			if !handled || pyCode != goCode || !bytes.Equal(want, got.Bytes()) {

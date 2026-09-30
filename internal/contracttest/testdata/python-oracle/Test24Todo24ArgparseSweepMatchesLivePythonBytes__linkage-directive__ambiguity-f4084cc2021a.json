@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "python": "txt:{\"exit\":2,\"stdout\":\"\",\"stderr\":\"usage: codex-session-relay linkage-directive [-h]\\n                                             --scope-kind {initiative,project,issue}\\n                                             --scope SCOPE\\n                                             --from-task FROM_TASK\\n                                             --from-scope FROM_SCOPE\\n                                             --link LINK --digest DIGEST\\n                                             [--reference REFERENCE]\\n                                             [--purpose {midpoint_check,project_assignment,relayed_decision,resume,scope_correction,user_stop}]\\n                                             [--correlation CORRELATION]\\ncodex-session-relay linkage-directive: error: ambiguous option: --s could match --scope-kind, --scope\\n\"}\n"
+ }
+}

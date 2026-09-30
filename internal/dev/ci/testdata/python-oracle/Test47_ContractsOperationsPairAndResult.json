@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "failing operations replay": "txt:{\"code\":1,\"stderr\":\"FAIL fixtures cite OPS-99.1, which the contract does not define\",\"stdout\":\"hook: component absent; no coverage claimed\\ncontract: 79 clause ids, 49 normative\\nfixtures: 36 scenarios, 60 distinct clause citations\\n\"}"
+ }
+}

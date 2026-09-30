@@ -1,7 +1,6 @@
 package skill
 
 import (
-	"bytes"
 	"fmt"
 	"math/rand/v2"
 	"os"
@@ -37,12 +36,8 @@ for line in open(sys.argv[1], encoding="utf-8"):
 `
 	python := exec.Command(filepath.Join(repositoryRoot(), ".venv", "bin", "python"), "-c", program, input)
 	python.Env = oracleEnv("PYTHONDONTWRITEBYTECODE=1")
-	var stdout, stderr bytes.Buffer
-	python.Stdout, python.Stderr = &stdout, &stderr
-	if err := python.Run(); err != nil {
-		t.Fatalf("python: %v\n%s", err, stderr.String())
-	}
-	want := strings.Split(strings.TrimSuffix(stdout.String(), "\n"), "\n")
+	stdout := pythonOutput(t, "sorted", python)
+	want := strings.Split(strings.TrimSuffix(string(stdout), "\n"), "\n")
 	if len(want) != len(lines) {
 		t.Fatalf("python answered %d of %d cases", len(want), len(lines))
 	}

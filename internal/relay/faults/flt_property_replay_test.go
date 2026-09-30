@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // These tests use f1ReplayCLI, which executes the same command against Go and
@@ -85,8 +84,8 @@ func Test22_FLT_11_12_25_26_27_PublicationWholeOutput(t *testing.T) {
 // and 30): Python's Store.__init__ runs the DDL on every open and re-creates each missing
 // IF NOT EXISTS table in the store it owns, while Go validates the required tables and never
 // repairs a store - it refuses the command as a host error and leaves the store as it was.
-// Go's twin is then the store Python repaired, copied and stamped as Go's own
-// (testsupport.Restamp), and the same transitions compare their complete output and tables.
+// Go's twin is then the store Python repaired as Go would have it had it created it (the same
+// tables and rows), and the same transitions compare their complete output and tables.
 func Test22_FLT_17_SchemaWholeOutput(t *testing.T) {
 	ctx, gd, pd := f1ReplayStores(t)
 	missing := []string{"fault_ledger", "fault_occurrences", "fault_timeline", "fault_remediations", "fault_publications", "fault_targets", "fault_cursors"}
@@ -114,42 +113,63 @@ func Test22_FLT_17_SchemaWholeOutput(t *testing.T) {
 		}
 	}
 
-	// Python: its open re-creates every missing table in the store it owns.
-	repo := f1Root()
-	open := exec.Command(filepath.Join(repo, ".venv", "bin", "python"), "-c",
-		"import sys\nfrom codex_session_relay.store import Store\nStore(sys.argv[1]).close()", filepath.Join(pd, "relay.sqlite3"))
-	open.Dir = repo
-	if out, err := open.CombinedOutput(); err != nil {
-		t.Fatalf("Python open: %v\n%s", err, out)
+	// Python: its open re-creates every missing table in the store it owns. What that store then
+	// holds, and its WAL, are part of Python's recorded answer.
+	var repair struct {
+		Tables   map[string][]string `json:"tables"`
+		WALBytes int64               `json:"walBytes"`
 	}
-	repaired := flt17Rows(t, ctx, pd)
+	pyValue(t, "Store(path).close()", nil, pyRunPaths(t, filepath.Dir(pd)), &repair, func() (any, error) {
+		repo := f1Root()
+		open := exec.Command(filepath.Join(repo, ".venv", "bin", "python"), "-c",
+			"import sys\nfrom codex_session_relay.store import Store\nStore(sys.argv[1]).close()", filepath.Join(pd, "relay.sqlite3"))
+		open.Dir = repo
+		if out, err := open.CombinedOutput(); err != nil {
+			return nil, fmt.Errorf("Python open: %v\n%s", err, out)
+		}
+		repaired := flt17Rows(t, ctx, pd)
+		var wal int64
+		if info, err := os.Stat(filepath.Join(pd, "relay.sqlite3-wal")); err == nil {
+			wal = info.Size()
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+		return map[string]any{"tables": repaired, "walBytes": wal}, nil
+	})
 	for _, table := range missing {
-		if rows, ok := repaired[table]; !ok || len(rows) != 0 {
+		if rows, ok := repair.Tables[table]; !ok || len(rows) != 0 {
 			t.Fatalf("Python's open left %s %v", table, rows)
 		}
 	}
+	// Python's close checkpointed the repair; a reader may leave an empty WAL beside it.
+	if repair.WALBytes != 0 {
+		t.Fatalf("the repaired store is not checkpointed: %d WAL bytes", repair.WALBytes)
+	}
 
-	// Go's twin is the repaired store, as Go would have it had it created it.
-	raw, err := os.ReadFile(filepath.Join(pd, "relay.sqlite3"))
+	// Go's twin is the store Python repaired as Go would have it had it created it: the frozen
+	// fixture fenced for Go, with every table, holding the rows the seed left. It holds what
+	// Python's repaired store holds, table for table; schema_meta names each runtime's owner
+	// (f1Twins).
+	if err := os.RemoveAll(gd); err != nil {
+		t.Fatal(err)
+	}
+	f1Twin(t, gd, "go")
+	s, err := store.Open(ctx, filepath.Join(gd, "relay.sqlite3"), "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Python's close checkpointed the repair; a reader may leave an empty WAL beside it.
-	if wal, err := os.Stat(filepath.Join(pd, "relay.sqlite3-wal")); err == nil && wal.Size() != 0 {
-		t.Fatalf("the repaired store is not checkpointed: %d WAL bytes", wal.Size())
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+	if _, err = s.Q(ctx).ExecContext(ctx, f1Relationship); err != nil {
 		t.Fatal(err)
 	}
-	if err = os.RemoveAll(gd); err != nil {
+	if err = s.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err = os.MkdirAll(gd, 0o700); err != nil {
-		t.Fatal(err)
+	twin := flt17Rows(t, ctx, gd)
+	delete(twin, "schema_meta")
+	delete(repair.Tables, "schema_meta")
+	if !reflect.DeepEqual(twin, repair.Tables) {
+		t.Fatalf("Go's twin is not the store Python repaired:\nGo     %v\nPython %v", twin, repair.Tables)
 	}
-	if err = os.WriteFile(filepath.Join(gd, "relay.sqlite3"), raw, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	testsupport.Restamp(t, filepath.Join(gd, "relay.sqlite3"), "go")
 	f1ReplayCLI(t, ctx, gd, pd, target)
 	replayObservation(t, ctx, gd, pd, "report_omitted", Broken, "schema")
 	f1ReplayCLI(t, ctx, gd, pd, []string{"fault-next"})

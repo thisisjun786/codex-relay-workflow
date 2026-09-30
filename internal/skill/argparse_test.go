@@ -16,6 +16,7 @@ type argparseCase struct {
 }
 
 func TestSkillArgparseMatchesLivePython(t *testing.T) {
+	pythonOracleRoot(t)
 	// Given the built Go CLI, the three canonical Python command families, and every parser level.
 	binary := buildHookProbeCLI(t)
 	tests := map[string][]argparseCase{
@@ -131,7 +132,7 @@ func TestSkillArgparseMatchesLivePython(t *testing.T) {
 		for _, test := range cases {
 			t.Run(family+"/"+test.name, func(t *testing.T) {
 				// When the same arguments run through live Python and the built Go binary.
-				python := runArgparseCommand(t, pythonSkillCommand(family, test.args))
+				python := runPythonArgparse(t, repositoryRoot(), pythonSkillCommand(family, test.args))
 				goResult := runArgparseCommand(t, append([]string{binary, "skill", family}, test.args...))
 
 				// Then exit status, stdout, and stderr match byte for byte.
@@ -144,6 +145,7 @@ func TestSkillArgparseMatchesLivePython(t *testing.T) {
 }
 
 func TestSkillArgparseDoubleDashPassesOptionLikePositionals(t *testing.T) {
+	pythonOracleRoot(t)
 	// Given option-looking filenames containing valid inputs in an isolated working directory.
 	binary := buildHookProbeCLI(t)
 	dir := t.TempDir()
@@ -163,7 +165,7 @@ func TestSkillArgparseDoubleDashPassesOptionLikePositionals(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.family, func(t *testing.T) {
 			// When -- terminates option parsing in both implementations.
-			python := runArgparseCommandIn(t, dir, pythonSkillCommand(test.family, test.args))
+			python := runPythonArgparse(t, dir, pythonSkillCommand(test.family, test.args))
 			goResult := runArgparseCommandIn(t, dir, append([]string{binary, "skill", test.family}, test.args...))
 
 			// Then the option-looking positional reaches normal execution identically.
@@ -180,6 +182,16 @@ func pythonSkillCommand(family string, args []string) []string {
 		"hook-probe": "hook_probe.py", "parent-title": "parent_title.py", "start-policy": "start_policy.py",
 	}[family])
 	return append([]string{filepath.Join(root, ".venv", "bin", "python"), script}, args...)
+}
+
+// runPythonArgparse answers what the Python command answered from dir (recorded; see
+// python_oracle_test.go).
+func runPythonArgparse(t *testing.T, dir string, command []string) hookProbeResult {
+	t.Helper()
+	cmd := exec.Command(command[0], command[1:]...)
+	cmd.Dir = dir
+	cmd.Env = oracleEnv("PYTHONDONTWRITEBYTECODE=1", "TMPDIR=/var/tmp")
+	return hookProbeResult(pythonProcess(t, "", cmd))
 }
 
 func runArgparseCommand(t *testing.T, command []string) hookProbeResult {

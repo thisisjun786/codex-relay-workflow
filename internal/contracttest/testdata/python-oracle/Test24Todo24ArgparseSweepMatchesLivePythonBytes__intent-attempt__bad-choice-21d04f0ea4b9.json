@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "python": "txt:{\"exit\":2,\"stdout\":\"\",\"stderr\":\"usage: codex-session-relay intent-attempt [-h] [--marker-root MARKER_ROOT]\\n                                          --workspace WORKSPACE\\n                                          --assignment ASSIGNMENT\\n                                          --outcome {accepted,unknown,failed}\\n                                          [--task-id TASK_ID]\\ncodex-session-relay intent-attempt: error: argument --outcome: invalid choice: 'bad' (choose from 'accepted', 'unknown', 'failed')\\n\"}\n"
+ }
+}

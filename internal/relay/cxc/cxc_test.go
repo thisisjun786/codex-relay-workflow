@@ -2,12 +2,19 @@ package cxc
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"maps"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 type oracleCase struct {
@@ -36,6 +43,7 @@ func Test28_CXCPublicSurfaceLivePython(t *testing.T) {
 	for k := range constants {
 		keys = append(keys, k)
 	}
+	slices.Sort(keys)
 	add("constants", []any{keys}, nil, constants, nil)
 	add("provenance", nil, nil, Provenance(), nil)
 	for _, source := range append(Sources, Source{Rule: "unknown"}) {
@@ -52,7 +60,7 @@ func Test28_CXCPublicSurfaceLivePython(t *testing.T) {
 		}
 	}
 	facts := append([]any{}, values...)
-	for key := range NotVerification {
+	for _, key := range slices.Sorted(maps.Keys(NotVerification)) {
 		facts = append(facts, key)
 	}
 	for _, fact := range facts {
@@ -97,7 +105,7 @@ func Test28_CXCPublicSurfaceLivePython(t *testing.T) {
 		add("section_problems", []any{body, sections}, nil, SectionProblems(body, sections), nil)
 	}
 	activities := append([]any{}, values...)
-	for key := range SkillPointers {
+	for _, key := range slices.Sorted(maps.Keys(SkillPointers)) {
 		activities = append(activities, key)
 	}
 	for _, activity := range activities {
@@ -112,13 +120,19 @@ func Test28_CXCPublicSurfaceLivePython(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/cxc/testdata/capture.py"))
-	cmd.Dir = repo
-	cmd.Stdin = bytes.NewReader(raw)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("Python: %v\n%s", err, out)
-	}
+	// The cases are built in a fixed order (map keys sorted), so the recorded answer lines up
+	// with them; the key carries the question's digest, so a changed question finds no answer.
+	digest := sha256.Sum256(raw)
+	out := pyoracle.Answer(t, "capture.py "+hex.EncodeToString(digest[:8]), func() ([]byte, error) {
+		cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/cxc/testdata/capture.py"))
+		cmd.Dir = repo
+		cmd.Stdin = bytes.NewReader(raw)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("%v\n%s", err, out)
+		}
+		return out, nil
+	})
 	var want []any
 	if err := json.Unmarshal(out, &want); err != nil {
 		t.Fatal(err)

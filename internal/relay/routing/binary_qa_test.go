@@ -19,19 +19,22 @@ func Test23_BuiltCommandRoundTrips(t *testing.T) { binaryRoundTrips(t, "qa") }
 func Test23_PR_18_BuiltProjectKind(t *testing.T) { binaryRoundTrips(t, "project-kind") }
 func binaryRoundTrips(t *testing.T, mode string) {
 	builtBinary(t)
+	// Python answers once; each entry point replays that answer against its own state directory.
+	pythonState := filepath.Join(t.TempDir(), "state")
+	answer := oracleScript(t, "cli_capture.py", mode, pythonState)
+	if err := os.RemoveAll(pythonState); err != nil {
+		t.Fatal(err)
+	}
 	for _, alias := range []bool{false, true} {
 		t.Run(map[bool]string{false: "crw relay", true: "codex-session-relay"}[alias], func(t *testing.T) {
 			state := filepath.Join(t.TempDir(), "state")
-			raw := oracleScript(t, "cli_capture.py", mode, state)
+			raw := bytes.ReplaceAll(answer, []byte(pythonState), []byte(state))
 			var records []struct {
 				Args                   []string
 				Code                   int
 				Stdout, Stderr, Tables string
 			}
 			if err := json.Unmarshal(raw, &records); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.RemoveAll(state); err != nil {
 				t.Fatal(err)
 			}
 			for _, record := range records {

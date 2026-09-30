@@ -37,6 +37,10 @@ func TestEvaluate_passes_and_fails_each_operator_on_its_own_input(t *testing.T) 
 		{Check{Kind: "set_eq", Path: []any{"rows"}, Value: []any{"b", "a"}}, true},
 		{Check{Kind: "set_eq", Path: []any{"rows"}, Value: []any{"a"}}, false},
 		{Check{Kind: "subset", Path: []any{"rows"}, Value: []any{"a"}}, true},
+		// set(dict) is the dict's keys, as a record's field set is checked.
+		{Check{Kind: "set_eq", Path: []any{"call"}, Value: []any{"argv"}}, true},
+		{Check{Kind: "set_eq", Path: []any{"call"}, Value: []any{"argv", "stdin"}}, false},
+		{Check{Kind: "subset", Path: []any{"call"}, Value: []any{"argv"}}, true},
 		{Check{Kind: "bytes", Path: []any{"hex"}, Value: "6869"}, true},
 		{Check{Kind: "eq", Path: []any{"rows", float64(-1)}, Value: "b"}, true},
 	}

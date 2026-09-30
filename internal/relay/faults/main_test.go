@@ -37,8 +37,18 @@ func TestMain(m *testing.M) {
 	}
 	// The replay tests compare fault-sweep's facts with the live-Python oracle's, which runs
 	// from this checkout and names its package directory there.
+	relayPackageLocation = filepath.Join(f1Root(), "packages", "codex-session-relay", "src", "codex_session_relay")
+	if _, err := os.Stat(relayPackageLocation); err != nil {
+		// A checkout without the Python package (todo 44): a directory stands in for it, as
+		// Python's recorded answers name it by placeholder (pyRunPaths).
+		relayPackageLocation = filepath.Join(home, "codex_session_relay")
+		if err := os.MkdirAll(relayPackageLocation, 0o700); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	}
 	sweepInstallation = func() (Installation, error) {
-		return Installation{Package: "codex-session-relay", Version: RelayPackageVersion, Location: filepath.Join(f1Root(), "packages", "codex-session-relay", "src", "codex_session_relay")}, nil
+		return Installation{Package: "codex-session-relay", Version: RelayPackageVersion, Location: relayPackageLocation}, nil
 	}
 	code := m.Run()
 	if err := os.RemoveAll(home); err != nil {
@@ -47,6 +57,11 @@ func TestMain(m *testing.M) {
 	}
 	os.Exit(code)
 }
+
+// relayPackageLocation is where the sweep's relay package is installed: the directory of this
+// checkout's Python package, which live Python names as its own location, or a directory standing
+// in for it in a checkout without it.
+var relayPackageLocation string
 
 func testHostRecordPath() string {
 	return filepath.Join(os.Getenv("XDG_STATE_HOME"), "codex-relay-workflow", "host-record.json")

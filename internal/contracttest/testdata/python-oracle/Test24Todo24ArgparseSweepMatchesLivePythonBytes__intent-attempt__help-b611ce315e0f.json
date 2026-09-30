@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "python": "txt:{\"exit\":0,\"stdout\":\"usage: codex-session-relay intent-attempt [-h] [--marker-root MARKER_ROOT]\\n                                          --workspace WORKSPACE\\n                                          --assignment ASSIGNMENT\\n                                          --outcome {accepted,unknown,failed}\\n                                          [--task-id TASK_ID]\\n\\noptions:\\n  -h, --help            show this help message and exit\\n  --marker-root MARKER_ROOT\\n  --workspace WORKSPACE\\n  --assignment ASSIGNMENT\\n  --outcome {accepted,unknown,failed}\\n  --task-id TASK_ID\\n\",\"stderr\":\"\"}\n"
+ }
+}

@@ -132,8 +132,8 @@ func apply(actual map[string]any, value any, check Check) error {
 		}
 		passed = reflect.DeepEqual(value, other)
 	case "set_eq", "subset":
-		have, ok1 := value.([]any)
-		want, ok2 := expected.([]any)
+		have, ok1 := setOf(value)
+		want, ok2 := setOf(expected)
 		if !ok1 || !ok2 {
 			return fmt.Errorf("%s needs arrays, got %T and %T", check.Kind, value, expected)
 		}
@@ -164,6 +164,22 @@ func decodeJSONText(value any) (any, error) {
 		return nil, fmt.Errorf("decode JSON text: %w", err)
 	}
 	return decoded, nil
+}
+
+// setOf is the members Python's set(value) takes: an array's elements, an object's keys.
+func setOf(value any) ([]any, bool) {
+	switch v := value.(type) {
+	case []any:
+		return v, true
+	case map[string]any:
+		keys := make([]any, 0, len(v))
+		for key := range v {
+			keys = append(keys, key)
+		}
+		return keys, true
+	default:
+		return nil, false
+	}
 }
 
 // contains is Python's `expected in value`: substring, array element, or object key.

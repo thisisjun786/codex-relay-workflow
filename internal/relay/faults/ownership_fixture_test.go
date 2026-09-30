@@ -12,6 +12,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 // Ownership of the comparison stores.
@@ -25,6 +26,10 @@ import (
 //   - pythonCopy: a copy of a Go-seeded store after a takeover to Python (Rehome, HandOver).
 //   - seedPython: rows a test seeds into the Python store, written by Python's own writer.
 //   - readStore: a read-only look at either store, which neither fence refuses.
+//
+// Only live Python reads a Python store, and Python is live only while its answers are recorded
+// or checked (python_oracle_test.go). On replay the Python twin is neither made nor seeded, and
+// what a test reads of it after Python ran is part of Python's recorded answer.
 
 // f1Twins makes gd and pd the same empty store owned by each runtime: the frozen Python-produced
 // empty store (contract/fixtures/sqlite-ddl), written by hand and then fenced for Go in gd and for
@@ -33,20 +38,27 @@ import (
 // every other row, store_id and store_created_at included, is identical.
 func f1Twins(t *testing.T, gd, pd string) {
 	t.Helper()
+	f1Twin(t, gd, "go")
+	if pyoracle.Live() {
+		f1Twin(t, pd, "python")
+	}
+}
+
+// f1Twin is one twin of f1Twins: the frozen empty store in dir, fenced for owner.
+func f1Twin(t *testing.T, dir, owner string) {
+	t.Helper()
 	fixture, err := os.ReadFile(filepath.Join(f1Root(), "contract", "fixtures", "sqlite-ddl", "python-store.sqlite3"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for dir, owner := range map[string]string{gd: "go", pd: "python"} {
-		if err = os.MkdirAll(dir, 0700); err != nil {
-			t.Fatal(err)
-		}
-		path := filepath.Join(dir, "relay.sqlite3")
-		if err = os.WriteFile(path, fixture, 0600); err != nil {
-			t.Fatal(err)
-		}
-		testsupport.Fence(t, path, owner)
+	if err = os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
 	}
+	path := filepath.Join(dir, "relay.sqlite3")
+	if err = os.WriteFile(path, fixture, 0600); err != nil {
+		t.Fatal(err)
+	}
+	testsupport.Fence(t, path, owner)
 }
 
 // pythonCopy gives pyDir a copy of the stopped Go-owned store in goDir as Python finds it after a
@@ -56,6 +68,9 @@ func f1Twins(t *testing.T, gd, pd string) {
 // schema_meta starts from f1Twins instead.
 func pythonCopy(t *testing.T, goDir, pyDir string) {
 	t.Helper()
+	if !pyoracle.Live() {
+		return
+	}
 	raw, err := os.ReadFile(filepath.Join(goDir, "relay.sqlite3"))
 	if err != nil {
 		t.Fatal(err)
@@ -82,7 +97,7 @@ type seedStatement struct {
 // runs them on Go's store through store.Open.
 func seedPython(t *testing.T, path string, statements ...seedStatement) {
 	t.Helper()
-	if len(statements) == 0 {
+	if len(statements) == 0 || !pyoracle.Live() {
 		return
 	}
 	raw, err := json.Marshal(statements)
@@ -112,6 +127,9 @@ func seedSQL(statements ...string) []seedStatement {
 // rows under the same rowids, and sqlite_sequence last, as the inserts advance it.
 func copyRowsToPython(t *testing.T, ctx context.Context, gd, pd string) {
 	t.Helper()
+	if !pyoracle.Live() {
+		return
+	}
 	source := filepath.Join(gd, "relay.sqlite3")
 	statements := []string{"ATTACH DATABASE '" + strings.ReplaceAll(source, "'", "''") + "' AS go_twin"}
 	readStore(t, ctx, source, func(ctx context.Context, s *store.Store) error {
