@@ -6,32 +6,27 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
-// roleStep is one recorded step of testdata/gen_rolepolicy.py: the step (a small language both
-// sides execute) and Python's whole answer, with the run's directory, work root and policy
-// digest written as ${DIR}, ${ROOT} and ${DIGEST}.
+// roleStep is one step of a role-policy scenario (testdata/fixtures/rolepolicy_scenarios.json,
+// the steps the retired gen_rolepolicy.py drove the Python rolepolicy/registry/linkage/
+// delivery.authorized_settings/cmd_settings_show with): the step, in a small language this file
+// executes, with the run's directory and work root written ${DIR} and ${ROOT}. A policy step
+// carries the policy file's text as the generator wrote it (json.dumps of the policy in its
+// declaration order, which the step's own sorted copy has lost); the loaded_mismatch step carries
+// the resume response it reads.
 type roleStep struct {
-	Step   []json.RawMessage `json:"step"`
-	Result json.RawMessage   `json:"result"`
+	Step       []json.RawMessage `json:"step"`
+	PolicyText string            `json:"policyText"`
+	Response   json.RawMessage   `json:"response"`
 }
-
-var pythonRolePolicy = sync.OnceValues(func() (map[string][]roleStep, error) {
-	raw, err := os.ReadFile("testdata/python_rolepolicy.json")
-	if err != nil {
-		return nil, err
-	}
-	var out map[string][]roleStep
-	return out, json.Unmarshal(raw, &out)
-})
 
 type settingsSpec struct {
 	Cwd       string          `json:"cwd"`
@@ -149,10 +144,10 @@ func (x *roleRun) boundRole(task string) any {
 	return role
 }
 
-func (x *roleRun) step(raw []json.RawMessage, python json.RawMessage) any {
+func (x *roleRun) step(step roleStep) any {
 	t := x.t
-	op := arg[string](t, raw[0])
-	args := raw[1:]
+	op := arg[string](t, step.Step[0])
+	args := step.Step[1:]
 	parentEndpoint := func(task string) Endpoint { return Endpoint{task, "host-a", ns("/parent"), ns("cxc-parent")} }
 	switch op {
 	case "roles":
@@ -164,30 +159,17 @@ func (x *roleRun) step(raw []json.RawMessage, python json.RawMessage) any {
 		}
 		return anyStrings(roles)
 	case "policy":
-		text := string(args[0])
-		var py struct {
-			Text        string   `json:"text"`
-			DigestParts []string `json:"digestParts"`
-		}
-		if err := json.Unmarshal(python, &py); err != nil {
-			t.Fatal(err)
-		}
-		x.policy(py.Text)
-		// The digest is SHA-256 of the file's bytes; where they do not name the run's directory
-		// it must be Python's own.
-		if !strings.Contains(py.Text, "${DIR}") && strings.Join(py.DigestParts, "") != x.digest {
-			t.Fatalf("policy digest %q, python %q", x.digest, strings.Join(py.DigestParts, ""))
-		}
-		_ = text
-		var digest any
-		var parts any
+		x.policy(step.PolicyText)
+		var digest, parts any
 		if x.digest != "" {
 			digest, parts = x.digest, anyStrings([]string{x.digest[:8], x.digest[8:]})
+			if strings.Contains(step.PolicyText, "${DIR}") {
+				// The file names the run's directory, so its digest is the run's own: the golden
+				// spells both halves.
+				parts = anyStrings([]string{"${DIGEST[:8]}", "${DIGEST[8:]}"})
+			}
 		}
-		if !strings.Contains(py.Text, "${DIR}") {
-			return map[string]any{"text": py.Text, "digest": digest, "digestParts": parts}
-		}
-		return map[string]any{"text": py.Text, "digest": digest, "digestParts": anyStrings(py.DigestParts)}
+		return map[string]any{"text": step.PolicyText, "digest": digest, "digestParts": parts}
 	case "unset":
 		x.r.Policy = ResolveRolePolicy(map[string]string{})
 		x.digest = ""
@@ -279,13 +261,7 @@ func (x *roleRun) step(raw []json.RawMessage, python json.RawMessage) any {
 		}
 		return answerOf(nil, err)
 	case "loaded_mismatch":
-		var py struct {
-			Response json.RawMessage `json:"response"`
-		}
-		if err := json.Unmarshal(python, &py); err != nil {
-			t.Fatal(err)
-		}
-		response, err := decodeJSON(py.Response)
+		response, err := decodeJSON(step.Response)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -348,7 +324,7 @@ func (x *roleRun) step(raw []json.RawMessage, python json.RawMessage) any {
 	return nil
 }
 
-// normalise renders a Go answer as Python recorded it: plain JSON, with the run's directory,
+// normalise renders a Go answer as its golden holds it: plain JSON, with the run's directory,
 // work root and digest written as placeholders.
 func (x *roleRun) normalise(value any) any {
 	var b strings.Builder
@@ -396,32 +372,23 @@ func orderedToPlain(t *testing.T, value any) any {
 	return value
 }
 
-// sameRoleScenario runs a recorded scenario step by step and compares every answer whole with
-// Python's. It returns Go's answers.
+// sameRoleScenario runs a scenario step by step and compares every answer whole with the golden
+// stored under the scenario's name. It returns Go's answers.
 func sameRoleScenario(t *testing.T, name string) []any {
 	t.Helper()
-	all, err := pythonRolePolicy()
-	if err != nil {
+	var all map[string][]roleStep
+	if err := json.Unmarshal(golden.Fixture(t, "rolepolicy_scenarios.json"), &all); err != nil {
 		t.Fatal(err)
 	}
 	steps, ok := all[name]
 	if !ok {
-		t.Fatalf("no python role-policy scenario %q", name)
+		t.Fatalf("no role-policy scenario %q", name)
 	}
 	x := newRoleRun(t)
-	var out []any
-	for i, step := range steps {
-		got := x.normalise(x.step(step.Step, step.Result))
-		var want any
-		if err := json.Unmarshal(step.Result, &want); err != nil {
-			t.Fatal(err)
-		}
-		if !reflect.DeepEqual(got, want) {
-			g, _ := json.Marshal(got)
-			w, _ := json.Marshal(want)
-			t.Fatalf("%s step %d %s differs from Python\nGO %s\nPY %s\n", name, i, step.Step[0], g, w)
-		}
-		out = append(out, got)
+	out := make([]any, 0, len(steps))
+	for _, step := range steps {
+		out = append(out, x.normalise(x.step(step)))
 	}
+	golden.CheckJSON(t, name, out)
 	return out
 }

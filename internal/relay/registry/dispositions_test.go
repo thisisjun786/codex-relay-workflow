@@ -4,21 +4,19 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 // Every DSP test replays its cli-shape fixtures (contract/fixtures/cli-shape/test_dispositions__*)
-// through the Go relay CLI and compares exit code and whole stdout with what the Python CLI
-// printed for the same fixture (testdata/python_dispositions.json), then asserts the property's
-// own values on the Go answer.
+// through the Go relay CLI and compares exit code and whole stdout with the golden (which began
+// as what the Python CLI printed for the same fixture), then asserts the property's own values on
+// the Go answer.
 
 // goDisposition runs one fixture step and decodes its stdout.
 func goDisposition(t *testing.T, name, step string) map[string]any {
@@ -49,7 +47,7 @@ func firstEventDelivery(t *testing.T, name string) map[string]any {
 // DSP-1: the turn disposition for the current generation (none, sole, reviewable never chosen,
 // newest of the same outcome, contested, suppressed and staged never chosen, first_seen_at order).
 func Test25_DSP1_the_turn_disposition_for_the_current_generation(t *testing.T) {
-	sameDispositionsAsPython(t, "reported_nothing", "single_blocked", "reviewable_event", "several_reviewable",
+	sameDispositionsAsGolden(t, "reported_nothing", "single_blocked", "reviewable_event", "several_reviewable",
 		"same_outcome", "disagreeing_outcomes", "suppressed_claim_is_listed", "staged_claim_is_listed", "no_finalized_at")
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	basis := func(name string) map[string]any {
@@ -80,7 +78,7 @@ func Test25_DSP1_the_turn_disposition_for_the_current_generation(t *testing.T) {
 
 // DSP-2: earlier-generation events are counted, not listed.
 func Test25_DSP2_earlier_generations_are_counted_not_listed(t *testing.T) {
-	sameDispositionsAsPython(t, "earlier_generations_are_counted")
+	sameDispositionsAsGolden(t, "earlier_generations_are_counted")
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	child := firstChild(t, goDisposition(t, "test_earlier_generations_are_counted_and_not_listed", "0"))
 	if child["earlierGenerationEvents"] != float64(2) || len(child["events"].([]any)) != 1 {
@@ -90,7 +88,7 @@ func Test25_DSP2_earlier_generations_are_counted_not_listed(t *testing.T) {
 
 // DSP-3: the work report carries the CXC status; no report is recorded false and counted.
 func Test25_DSP3_the_work_report_separates_what_one_outcome_collapses(t *testing.T) {
-	sameDispositionsAsPython(t, "recorded_report", "no_report_says")
+	sameDispositionsAsGolden(t, "recorded_report", "no_report_says")
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	report := firstChild(t, goDisposition(t, "test_a_recorded_report_carries_the_status_that_separates_them", "0"))["events"].([]any)[0].(map[string]any)["workReport"].(map[string]any)
 	if report["recorded"] != true || report["cxcStatus"] != "NEEDS_HUMAN" || report["submissionNo"] != float64(2) {
@@ -105,7 +103,7 @@ func Test25_DSP3_the_work_report_separates_what_one_outcome_collapses(t *testing
 
 // DSP-4: the send axis word per event, with its exact detail.
 func Test25_DSP4_the_send_axis_names_what_the_store_observed(t *testing.T) {
-	sameDispositionsAsPython(t, "no_delivery_and_no_intent", "intent_without", "queued_delivery", "dispatched_delivery_says",
+	sameDispositionsAsGolden(t, "no_delivery_and_no_intent", "intent_without", "queued_delivery", "dispatched_delivery_says",
 		"inbox_only", "uncertain_send", "supersession_note", "not_folded", "staged_event_is_never", "suppressed_event", "acknowledgement_with_no_delivery")
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	for name, word := range map[string]string{
@@ -133,7 +131,7 @@ func Test25_DSP4_the_send_axis_names_what_the_store_observed(t *testing.T) {
 
 // DSP-5: every delivery state has a word and every word has a detail entry.
 func Test25_DSP5_every_delivery_state_has_a_word_with_a_detail(t *testing.T) {
-	sameDispositionsAsPython(t, "every_delivery_state", "every_word")
+	sameDispositionsAsGolden(t, "every_delivery_state", "every_word")
 	states := []string{"queued", "deferred_busy", "withheld_pre_send", "sending", "held_uncertain", "inbox_only", "dispatched", "acknowledged", "superseded"}
 	if len(observationByState) != len(states) {
 		t.Fatalf("%d states mapped, transport defines %d", len(observationByState), len(states))
@@ -151,7 +149,7 @@ func Test25_DSP5_every_delivery_state_has_a_word_with_a_detail(t *testing.T) {
 
 // DSP-6: the read selects exactly the four outcomes; the execution-only three are dispositions.
 func Test25_DSP6_the_read_selects_the_stores_four_outcomes(t *testing.T) {
-	sameDispositionsAsPython(t, "execution_only_outcomes", "selects_exactly")
+	sameDispositionsAsGolden(t, "execution_only_outcomes", "selects_exactly")
 	if strings.Join(executionOnly, ",") != "failed,interrupted,blocked_needs_input" {
 		t.Fatal(executionOnly)
 	}
@@ -164,7 +162,7 @@ func Test25_DSP6_the_read_selects_the_stores_four_outcomes(t *testing.T) {
 
 // DSP-7: the receiving axis, and the acknowledgement block's fields.
 func Test25_DSP7_the_receiving_axis_is_measured_apart(t *testing.T) {
-	sameDispositionsAsPython(t, "receiving_side_unmeasured", "host_read_acknowledgement", "unverified_acknowledgement",
+	sameDispositionsAsGolden(t, "receiving_side_unmeasured", "host_read_acknowledgement", "unverified_acknowledgement",
 		"evidence_with_no_acknowledgement", "acknowledgement_block", "no_acknowledgement_row")
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	for name, word := range map[string]string{
@@ -185,7 +183,7 @@ func Test25_DSP7_the_receiving_axis_is_measured_apart(t *testing.T) {
 
 // DSP-8: counts agree with the list they summarise.
 func Test25_DSP8_the_counts_agree_with_the_list(t *testing.T) {
-	sameDispositionsAsPython(t, "counts_cannot_disagree")
+	sameDispositionsAsGolden(t, "counts_cannot_disagree")
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	answer := goDisposition(t, "test_the_counts_cannot_disagree_with_the_list_they_summarise", "0")
 	children := answer["children"].([]any)
@@ -204,7 +202,7 @@ func Test25_DSP8_the_counts_agree_with_the_list(t *testing.T) {
 // DSP-9: an unreadable store is not an empty one: exit 2, readable false, nothing created, an
 // unrelated file left byte-untouched.
 func Test25_DSP9_an_unreadable_store_is_not_an_empty_one(t *testing.T) {
-	sameDispositionsAsPython(t, "directory_with_no_database", "not_a_relay_database", "unreadable_store_refuses", "no_unrelated_file")
+	sameDispositionsAsGolden(t, "directory_with_no_database", "not_a_relay_database", "unreadable_store_refuses", "no_unrelated_file")
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	home := t.TempDir()
 	state := filepath.Join(home, "state")
@@ -248,7 +246,7 @@ func Test25_DSP10_a_replaced_database_is_unreadable_not_empty(t *testing.T) {
 // DSP-11: --project lists live scoped children, --relationship shows any status; the selectors
 // are mutually exclusive and one is required (exit 2 on stderr, as argparse).
 func Test25_DSP11_the_selectors(t *testing.T) {
-	sameDispositionsAsPython(t, "superseded_assignment_is_not", "two_selectors")
+	sameDispositionsAsGolden(t, "superseded_assignment_is_not", "two_selectors")
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	answer := goDisposition(t, "test_a_superseded_assignment_is_not_called_merely_inactive", "0")
 	if firstChild(t, answer)["relationshipStatus"] != "archived" {
@@ -268,29 +266,14 @@ func Test25_DSP11_the_selectors(t *testing.T) {
 	}
 	var stderr bytes.Buffer
 	ExecuteAs(ctx(), "codex-session-relay", []string{"--state", dir, "dispositions-show"}, &bytes.Buffer{}, &stderr, nil)
-	want := pyoracle.Answer(t, "dispositions-show", func() ([]byte, error) {
-		root, err := filepath.Abs("../../..")
-		if err != nil {
-			return nil, err
-		}
-		oracle := exec.Command(filepath.Join(root, ".venv/bin/python"), "-m", "codex_session_relay.cli", "dispositions-show")
-		var want bytes.Buffer
-		oracle.Stderr = &want
-		if err := oracle.Run(); err == nil {
-			return nil, errors.New("Python accepted missing selector")
-		}
-		return want.Bytes(), nil
-	})
-	if stderr.String() != string(want) {
-		t.Fatalf("selector byte diff\nGo=%q\nPython=%q", stderr.String(), want)
-	}
+	golden.Check(t, "dispositions-show", stderr.Bytes())
 }
 
 // DSP-13: the correction block: none, lifecycle withhold named, withheld without a record still
 // counted, a busy deferral not withheld, paused, superseded, held, dispatched, unknown state and
 // already answered - each whole answer as Python printed it.
 func Test25_DSP13_the_correction_block(t *testing.T) {
-	sameDispositionsAsPython(t, "without_a_correction", "withheld_by_the_lifecycle", "without_a_lifecycle_record", "busy_deferral",
+	sameDispositionsAsGolden(t, "without_a_correction", "withheld_by_the_lifecycle", "without_a_lifecycle_record", "busy_deferral",
 		"paused_assignment_names", "superseded_assignment", "held_correction_names", "dispatched_correction", "is_said_so", "already_answered")
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	answer := goDisposition(t, "test_a_correction_withheld_by_the_lifecycle_is_named", "0")
