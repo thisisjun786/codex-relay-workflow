@@ -101,9 +101,6 @@ func Execute(ctx context.Context, argv []string, stdout, stderr io.Writer) int {
 // ExecuteAs is cli.main: argparse first (exit 2, usage on stderr), then Services, the
 // selection refusal, the handler, and one JSON document on stdout for every other ending.
 func ExecuteAs(ctx context.Context, argv0 string, argv []string, stdout, stderr io.Writer) (code int) {
-	if code, handled := ExecuteTakeover(ctx, argv, stdout, stderr); handled {
-		return code
-	}
 	defer func() {
 		if value := recover(); value != nil {
 			if failure, ok := value.(*evidence.PythonError); ok {
@@ -292,12 +289,6 @@ func ExecuteAs(ctx context.Context, argv0 string, argv []string, stdout, stderr 
 			return code
 		}
 		result, err := run(ctx, command, argv0, state, socket, kindModules, admitIf(drains, admit), Args{Flags: flags, Set: given, Positionals: positionals})
-		if err != nil && candidateRun(command, positionals, flags) {
-			// cli.py main: a failed candidate run returns its exit code and prints nothing
-			// on stdout; its controller reads the inherited channel, never stdout. The
-			// document goes to stderr, which a launched candidate shares with daemon.log.
-			return emit(stderr, stderr, nil, err)
-		}
 		return emit(stdout, stderr, result, err)
 	}
 	commandUsage := "usage: " + prog + " " + command.Name + commandSynopsis(flags)
@@ -352,9 +343,8 @@ func run(ctx context.Context, command *Command, argv0, state, socket string, kin
 	// cli.py main runs the lock-free check_start (ownership.check_start, with --socket) for
 	// every command that is neither read-only nor answers without the selected store, before
 	// the selection refusal, --kind-module and the handler's own refusals: another runtime's
-	// store, or one mid-transition, is refused first. The takeover candidate is checked by its
-	// handler, which holds the permit (runService).
-	if !store.ReadOnlyCommand(ctx) && !candidateRun(command, args.Positionals, args.Flags) && command.Name != "merge-evidence" {
+	// store, or one mid-transition, is refused first.
+	if !store.ReadOnlyCommand(ctx) && command.Name != "merge-evidence" {
 		if err := store.CheckStartLikeFence(ctx, services.Selection.DBPath(), socket); err != nil {
 			return nil, err
 		}

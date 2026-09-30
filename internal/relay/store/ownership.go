@@ -17,11 +17,6 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 )
 
-// RefuseLiveState is the live-state guard every Go writable opener applies, which refuses only
-// under test isolation (CRW_REFUSE_LIVE_STATE=1); the takeover controller checks it before a
-// transition whose Go candidate must open D.
-func RefuseLiveState(path string) (string, error) { return refuseLiveState(path) }
-
 func admitWrite(ctx context.Context, path string) (*ownership.Admission, error) {
 	admission, err := ownership.Admit(ctx, path)
 	if err != nil {
@@ -438,7 +433,7 @@ func bindSocket(ctx context.Context, resolved, socket string) (held *os.File, er
 		return nil, err
 	}
 	// The lock-free preflight: only a record that binds takes the exclusive gate.
-	if r, s, e := readOwnership(ctx, resolved); e != nil || !ownership.Unbound(ctx, r, s, canonical) {
+	if r, s, e := readOwnership(ctx, resolved); e != nil || !ownership.Unbound(r, s, canonical) {
 		return nil, nil
 	}
 	gate, err := ownership.LockWithin(ctx, filepath.Join(filepath.Dir(resolved), "write-gate.lock"), true, "write-gate EX for the socket binding")
@@ -455,7 +450,7 @@ func bindSocket(ctx context.Context, resolved, socket string) (held *os.File, er
 		}
 	}()
 	r, s, err := readOwnership(ctx, resolved)
-	if err != nil || !ownership.Unbound(ctx, r, s, canonical) {
+	if err != nil || !ownership.Unbound(r, s, canonical) {
 		return nil, nil // changed while this opener waited: admission decides
 	}
 	// Every other part of the record is validated before anything is written.

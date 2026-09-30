@@ -471,7 +471,8 @@ names, and onto a Python runtime it rewrites no settings. It does not move the s
 the store is owned by the Go runtime, and handing it back to the Python fence release was
 `crw relay takeover rollback --to python --python-relay <path>`, which named the Python relay by
 absolute path and never through the pointer ([cutover rollback](port/cutover.md#rollback)); since
-todo 44 no Python candidate is launched and that rollback is refused (decision 48). One does
+todo 44 no Python candidate is launched and that rollback is refused (decision 48), and refactor R1
+deleted the takeover command (decision 54). One does
 not imply the other, and a return to Python needed both; with the store's half refused, this
 revision offers no return to Python, and `crw install rollback` onto a Python runtime moves only
 the pointer. The one order fixed for the pointer is the plugin payload's, above: the payload goes

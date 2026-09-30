@@ -191,12 +191,10 @@ func Test30TornSocketBindingIsCompletedOnlyByItsSocket(t *testing.T) {
 	if now, _ := os.ReadFile(filepath.Join(dir, "takeover.json")); string(now) != string(mirror) {
 		t.Fatal("the mirror changed before the torn binding was completed")
 	}
-	candidate := ownership.WithCandidate(t.Context(), ownership.Candidate{TransitionID: "t", Epoch: 1})
 	for name, open := range map[string]func() error{
 		"socketless": func() error { return openClose(t.Context(), path, "") },
 		"another":    func() error { return openClose(t.Context(), path, other) },
 		"read-only":  func() error { return openFencedClose(WithReadOnlyCommand(t.Context()), path, app) },
-		"candidate":  func() error { return openClose(candidate, path, app) },
 		"preflight":  func() error { return ownership.CheckStart(t.Context(), path, "") },
 	} {
 		if err := open(); err == nil {

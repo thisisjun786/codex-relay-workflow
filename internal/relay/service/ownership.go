@@ -2,10 +2,12 @@ package service
 
 import (
 	"errors"
-	"golang.org/x/sys/unix"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
+	"golang.org/x/sys/unix"
 )
 
 func (s *Service) foreignMarkers(r Object) []string {
@@ -310,4 +312,12 @@ func (s *Service) Stop(actor string, timeout time.Duration) (out Object, err err
 		reason = "did_not_exit"
 	}
 	return obj("ok", supervisorDone && workerDone, "reason", reason, "detail", nil, "supervisor", outcome, "worker", worker), nil
+}
+
+// Draining reports whether the store's mirror no longer names this runtime as its active owner:
+// a supervisor or daemon loop ends when it does. The mirror is read on each call; an unreadable
+// one ends the loop too.
+func (s *Service) Draining() bool {
+	r, err := ownership.ReadRecord(s.Selection.DBPath())
+	return err != nil || r.Owner != "go" || r.Phase == "draining"
 }

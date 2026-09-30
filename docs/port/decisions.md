@@ -2735,3 +2735,37 @@ The owner chose deletion over wiring a command for it (2026-10-01).
 
 Evidence: `git grep -n 'INSERT INTO work_reports'` (no product match); the readers named above;
 `internal/relay/store/table_coverage_test.go` (every report table still has a product query).
+
+## 54. The takeover controller, its candidate and `crw relay takeover` are removed (refactor R1)
+
+Decision: the Go runtime no longer carries the ownership transition controller. Removed:
+`crw relay takeover` with every action (`status`, `begin`, `drain`, `transfer`, `activate`,
+`abort`, `rollback`, `commit`, `repair-mirror`) and its options (`--to`, `--python-relay`,
+`--ready-timeout`); the candidate's inherited activation channel and the hidden
+`service run --takeover-candidate` flag; `ownership.Controller` with its transfer backup and
+inventory; the candidate permit (`ownership.Candidate`, `WithCandidate`); the takeover-only
+export `store.RefuseLiveState`; and the `takeoverStatus` record in contract/schema/records.json.
+A command line naming `takeover` is now an unknown command (argparse's exit 2), and `service run
+--takeover-candidate` an unknown flag. A store whose mirror says `starting` is refused to every
+opener with the words a process without the candidate's permit always got ("only designated
+candidate may enter starting"). Nothing else an opener, the hook or the doctor reads changes: the
+mirror, the six schema_meta ownership rows, write-gate.lock and takeover.lock stay as every store
+has them, and `S/takeover-backups/`, which only the transfer wrote, is the operator's to delete.
+docs/port/cutover.md marks Steps 1-7, the Rollback and the Commit point historical.
+
+Not removed here, although survey B-03 names them: the `guard-evaluate` command and the doctor's
+`ownership.processes` echo of each record's `python_compatibility_build`. Removing the command
+changes the root parser's usage and choice list, and removing the echo changes the doctor's
+ownership block, in about 140 recorded Python answers (argparse sweeps, formatter and doctor
+comparisons) that wave R1 can neither keep byte-identical nor regenerate; they go in wave R3, once
+the goldens have an update mode.
+
+Why: the owner's host committed the cutover at todo 43 (owner go, epoch 8, rollback_allowed 0),
+no Python runtime or candidate remains (decision 48), and no skill, hook, wiring file or
+relay-emitted text names the takeover command. A controller whose only transitions are refused
+or already done is a second, unexercised writer of the fence.
+
+Evidence: `git grep -n 'takeover' -- plugins` (only the mirror's file name in
+crw-run/references/relay.md); internal/relay/store/ownership/admission.go (`judge`);
+internal/relay/store/ownership/protocol_test.go (the admission tests, now on a Go-created store);
+internal/relay/service/control_test.go (`Test30ForeignOwnerCLIRefusesWithoutDBChanges`).

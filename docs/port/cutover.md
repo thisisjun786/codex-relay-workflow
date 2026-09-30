@@ -316,6 +316,12 @@ the fence release Step 0 installs and the Python candidate a rollback launches, 
 in todo 44 (decision 48), so this page is the record of what ran; a host still on the Python
 runtime would run it from a revision before that.
 
+Historical since refactor R1 (decision 54): the transition controller that ran Steps 1-7, the
+Rollback and the Commit point below - `crw relay takeover` with every action, its candidate channel
+and `service run --takeover-candidate` - is removed from the Go runtime. These sections record the
+protocol as it ran; the Record, the Lock order and the durable stamp above still describe what
+every store carries, and no Go writer rewrites or deletes them.
+
 Each step names what the controller does, then its failure branch and recovery. No step deletes
 `D-wal` or `D-shm`, and no step creates an alternate empty database.
 
@@ -780,6 +786,8 @@ adapter journals it as `guard_host_error`. The fault sweep's managed readings na
 
 ## Rollback
 
+Historical (decision 54): no controller remains to run a rollback.
+
 Since todo 44 the controller launches no Python candidate (decision 48): `crw relay takeover
 rollback --to python`, and a `takeover activate` that would resume a Python activation, are
 refused before any durable edge with `store_owned_by_other`, whatever `--python-relay` names,
@@ -827,6 +835,9 @@ with row counts and a `schema_meta` dump equal across the three states except fo
 `owner_epoch` and `takeover_id`.
 
 ## Commit point
+
+Historical (decision 54): the commit ran on the owner's host at todo 43; no controller remains
+to run another.
 
 The irreversible point is an operator-authorized, durable write of
 `schema_meta.rollback_allowed = "0"` inside a SQLite transaction (`crw relay takeover commit`,

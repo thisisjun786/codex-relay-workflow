@@ -30,8 +30,7 @@ import (
 const ReplayLock = ".replay.lock"
 
 // isEntryName reports whether a directory entry name is an inbox entry's: the decision-25
-// grammar, shared with ownership.PendingInbox so that takeover commit counts exactly the
-// names a drain reads and retires. Every other name, like a '.'-name, is not an entry.
+// grammar. Every other name, like a '.'-name, is not an entry.
 func isEntryName(name string) bool {
 	return ownership.IsInboxEntry(name)
 }

@@ -276,7 +276,7 @@ func Test42InterruptedSupervisorStopsItsWorker(t *testing.T) {
 			if get(r, "pid") != nil || get(r, "workerPid") != nil || get(r, "lastExit") == nil || num(get(r, "lastExit")) < 0 || get(r, "nextRestartAt") != nil {
 				t.Fatalf("the supervisor did not record its worker's own exit: %v", r)
 			}
-			if _, err := os.Lstat(ControlPath(filepath.Join(home, "state"))); !errors.Is(err, os.ErrNotExist) {
+			if _, err := os.Lstat(controlPath(filepath.Join(home, "state"))); !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("the worker ended without closing control.sock: %v", err)
 			}
 		})

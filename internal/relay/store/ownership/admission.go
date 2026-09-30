@@ -124,24 +124,10 @@ func LexicalDir(path string) string {
 	}
 }
 
-// Candidate identifies the single controller-designated starting daemon. A
-// context permit is passed only by the inherited activation-channel entry point.
-type Candidate struct {
-	TransitionID string
-	Epoch        int64
-	Controller   Identity
-}
-type candidateKey struct{}
-
-func WithCandidate(ctx context.Context, c Candidate) context.Context {
-	return context.WithValue(ctx, candidateKey{}, c)
-}
-
 type Admission struct {
-	gate      *os.File
-	Path      string
-	Stamp     Stamp
-	candidate *Candidate
+	gate  *os.File
+	Path  string
+	Stamp Stamp
 }
 
 func Admit(ctx context.Context, path string) (_ *Admission, err error) {
@@ -175,43 +161,38 @@ func Admit(ctx context.Context, path string) (_ *Admission, err error) {
 	if err != nil {
 		return nil, err
 	}
-	candidate, err := judge(ctx, path, r, s)
-	if err != nil {
+	if err = judge(path, r, s); err != nil {
 		return nil, err
 	}
-	return &Admission{gate: gate, Path: path, Stamp: s, candidate: candidate}, nil
+	return &Admission{gate: gate, Path: path, Stamp: s}, nil
 }
 
-// judge is the ownership decision shared by admission and the start preflight: a
-// valid record, Go as the durable owner, and an active phase, or starting for the
-// candidate whose permit this context carries.
-func judge(ctx context.Context, path string, r Record, s Stamp) (*Candidate, error) {
+// judge is the ownership decision shared by admission and the start preflight: a valid
+// record, Go as the durable owner, and an active phase. A store starting under a takeover is
+// refused to every opener: no candidate exists any more (decision 54), and the refusal is
+// the one a process without the candidate's permit always got.
+func judge(path string, r Record, s Stamp) error {
 	if err := Validate(path, r, s); err != nil {
-		return nil, err
+		return err
 	}
 	if s.Owner != "go" {
-		return nil, queueable("store belongs to " + s.Owner)
+		return queueable("store belongs to " + s.Owner)
 	}
 	if r.Phase == "starting" {
-		c, ok := ctx.Value(candidateKey{}).(Candidate)
-		if !ok || r.Transition == nil || r.Controller == nil || c.TransitionID != s.TakeoverID || c.Epoch != s.Epoch || c.Controller != *r.Controller {
-			return nil, queueable("only designated candidate may enter starting")
-		}
-		return &c, nil
+		return queueable("only designated candidate may enter starting")
 	} else if r.Phase != "active" {
-		return nil, queueable("store is draining")
+		return queueable("store is draining")
 	}
-	return nil, nil
+	return nil
 }
 
 // Unbound is Python's ownership.unbound for this runtime: whether a writable open that passes
 // the canonical App Server socket binds this store to it (cutover.md Record, Socket binding).
 // The mirror names no socket and no scope, the durable socket_path is absent or already this
 // socket (the torn binding a crash between its commit and its publication leaves), Go owns
-// the store in phase active with no transition, and the opener is not the takeover
-// candidate, which never binds.
-func Unbound(ctx context.Context, r Record, s Stamp, socket string) bool {
-	if _, candidate := ctx.Value(candidateKey{}).(Candidate); candidate || socket == "" {
+// the store in phase active with no transition.
+func Unbound(r Record, s Stamp, socket string) bool {
+	if socket == "" {
 		return false
 	}
 	return r.AppServerSocket == nil && r.ScopeKey == nil && (s.SocketPath == "" || s.SocketPath == socket) &&
@@ -259,11 +240,10 @@ func checkStart(ctx context.Context, path, socket string, stamp func(context.Con
 	if err != nil {
 		return err
 	}
-	if Unbound(ctx, r, s, socket) {
+	if Unbound(r, s, socket) {
 		s.SocketPath = ""
 	}
-	_, err = judge(ctx, path, r, s)
-	return err
+	return judge(path, r, s)
 }
 
 // Check runs before a connection's first write-capable PRAGMA, including pool
@@ -306,8 +286,9 @@ func (a *Admission) Revalidate(ctx context.Context, db Queryer) error {
 	if s.Owner != a.Stamp.Owner || s.Epoch != a.Stamp.Epoch || s.TakeoverID != a.Stamp.TakeoverID {
 		return refuse("admitted ownership changed")
 	}
-	// Already admitted work may finish in draining, with its original SH held.
-	if r.Phase == "starting" && (a.candidate == nil || r.Controller == nil || *r.Controller != a.candidate.Controller) {
+	// Already admitted work may finish in draining, with its original SH held; no candidate
+	// exists to write in starting.
+	if r.Phase == "starting" {
 		return refuse("candidate changed")
 	}
 	return nil
