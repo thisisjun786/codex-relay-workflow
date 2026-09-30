@@ -56,7 +56,7 @@ jobs:
       matrix:
         # One runner each: lint; the Go suite as `make test-part` parts, which together are
         # `make test` (the contract corpus included); the static release binaries.
-        part: [lint, test-1, test-2, test-3, test-4, test-5, test-rest, dist]
+        part: [lint, test-1, test-2, test-3, test-4, test-rest, dist]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
