@@ -10,12 +10,13 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/reception"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 	"golang.org/x/sys/unix"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	stdsync "sync"
 	"testing"
@@ -58,24 +59,36 @@ func builtBinary(t *testing.T) string {
 	return binaryPath
 }
 
+// storeCapture is one call of a Python store-reception scenario: a packet-check command line or a
+// direct call of the library's ladder, and what it read.
 type storeCapture struct {
 	Argv    []string
 	Library string
 	Kwargs  json.RawMessage
 	Policy  *string
+	// Files are what the call read, as fileBytes decodes them; null removes the file.
 	Files   map[string]*string
 	Special map[string]struct {
 		Symlink string
 		FIFO    bool
 	}
-	// Database is a path in Python's capture and the store's dump in the recording.
-	Database       json.RawMessage
-	Stdout, Stderr string
-	Exit           int
-	After          map[string]*string
-	// PathDigests, in the recording only, names each packet whose content digest depends on
-	// the temporary path it carries: Python's digest, by the packet file it digests.
+	// Database is the store Python backed up before the call, as a dump of the fixture's rows.
+	Database json.RawMessage
+	// After names the files (ledgers) whose content after the call belongs to its outcome.
+	After []string `json:",omitempty"`
+	// PathDigests names each packet whose content digest depends on the temporary path it
+	// carries: the placeholder the fixture and the goldens hold for that digest, by the packet
+	// file it digests.
 	PathDigests map[string]string `json:",omitempty"`
+}
+
+// checkProcess checks what a command answered, its exit, stdout and stderr, against the goldens
+// under key.
+func checkProcess(t *testing.T, key string, code int, stdout, stderr string, options ...golden.Option) {
+	t.Helper()
+	golden.Check(t, key+" exit", []byte(strconv.Itoa(code)), options...)
+	golden.Check(t, key+" stdout", []byte(stdout), options...)
+	golden.Check(t, key+" stderr", []byte(stderr), options...)
 }
 
 func processCode(e error) int {
@@ -88,43 +101,40 @@ func processCode(e error) int {
 	}
 	return -1
 }
+
+// storeFixture is what a Python store-reception scenario left: the scenarios it ran, the rows of
+// the stores it backed up, and each packet-check call with what it read.
+type storeFixture struct {
+	Scenarios []string       `json:"scenarios"`
+	Rows      storePool      `json:"rows"`
+	Captures  []storeCapture `json:"captures"`
+}
+
+// storeReplay runs each packet-check call of a Python store-reception scenario through the built
+// binary (or, for a direct ladder call, the library) on what Python's call read, and checks its
+// exit, output and the ledgers it left against the golden.
 func storeReplay(t *testing.T, names ...string) {
 	t.Helper()
 	binary := builtBinary(t)
-	root, e := filepath.Abs("../../..")
-	if e != nil {
-		t.Fatal(e)
-	}
-	raw, e := json.Marshal(names)
-	if e != nil {
-		t.Fatal(e)
-	}
-	out := pythonAnswer(t, "store_capture.py", raw, func() ([]byte, error) {
-		keep := t.TempDir()
-		pyTmp := filepath.Join(keep, "tmp")
-		if e := os.Mkdir(pyTmp, 0o700); e != nil {
-			return nil, e
-		}
-		cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(root, "internal/relay/sync/testdata/store_capture.py"), keep, string(raw))
-		cmd.Dir = root
-		cmd.Env = append(os.Environ(), "UV_PROJECT_ENVIRONMENT="+filepath.Join(root, ".venv"), "UV_CACHE_DIR="+keep+"/uv", "TMPDIR="+pyTmp)
-		out, e := cmd.Output()
-		if e != nil {
-			var exit *exec.ExitError
-			if errors.As(e, &exit) {
-				return nil, fmt.Errorf("python store scenario %v: %v\n%s", names, e, exit.Stderr)
-			}
-			return nil, e
-		}
-		return storeCapturesRecorded(out, pyTmp)
-	}, pyoracle.SameWhen(sameUpToIdentifiers))
 	// The scenarios' temporary directories, and the files the calls read there, are this run's.
-	out, pool := openStores(t, relocated(out, "<pytmp>", t.TempDir()))
-	out = relocatedDigests(t, out)
-	var captures []storeCapture
-	if e = json.Unmarshal(out, &captures); e != nil {
+	pyDir := t.TempDir()
+	raw := relocated(readFixture(t, "store"), "<pytmp>", pyDir)
+	var fixture storeFixture
+	if e := json.Unmarshal(raw, &fixture); e != nil {
 		t.Fatal(e)
 	}
+	sameScenarios(t, fixture.Scenarios, names)
+	options := []golden.Option{golden.Substitute(pyDir, "<pytmp>")}
+	if pairs := packetDigests(t, fixture.Captures); len(pairs) > 0 {
+		if e := json.Unmarshal([]byte(strings.NewReplacer(pairs...).Replace(string(raw))), &fixture); e != nil {
+			t.Fatal(e)
+		}
+		for i := 0; i < len(pairs); i += 2 {
+			options = append(options, golden.Substitute(pairs[i+1], pairs[i]))
+		}
+	}
+	captures, pool := fixture.Captures, fixture.Rows
+	var e error
 	if len(captures) == 0 {
 		t.Fatal("scenario executed no packet-check calls")
 	}
@@ -157,9 +167,7 @@ func storeReplay(t *testing.T, names ...string) {
 			if e != nil {
 				t.Fatal(e)
 			}
-			if got := evidence.Dumps(result, false, false, true); got != c.Stdout {
-				t.Fatalf("library ladder call %d\nPython:%s\nGo:%s", index, c.Stdout, got)
-			}
+			golden.Check(t, fmt.Sprintf("%03d stdout", index), []byte(evidence.Dumps(result, false, false, true)), options...)
 			continue
 		}
 		// The Python test has finished and removed these fixture roots; the independent Go
@@ -249,7 +257,7 @@ func storeReplay(t *testing.T, names ...string) {
 				}
 				continue
 			}
-			data, e := recordedFileBytes(*encoded)
+			data, e := fileBytes(*encoded)
 			if e != nil {
 				t.Fatal(e)
 			}
@@ -323,9 +331,7 @@ func storeReplay(t *testing.T, names ...string) {
 				t.Fatalf("state directory changed: before=%v at %v after=%v at %v", namesOf(stateBefore), stateInfo.ModTime(), namesOf(after), info.ModTime())
 			}
 		}
-		if code != c.Exit || stdout.String() != c.Stdout || stderr.String() != c.Stderr {
-			t.Fatalf("call %d %v\nexit Python=%d Go=%d\nPython stdout: %s\nGo stdout: %s\nPython stderr: %s\nGo stderr: %s", index, c.Argv, c.Exit, code, c.Stdout, stdout.String(), c.Stderr, stderr.String())
-		}
+		checkProcess(t, fmt.Sprintf("%03d", index), code, stdout.String(), stderr.String(), options...)
 		if !hasDatabase {
 			if _, err := os.Stat(db); !os.IsNotExist(err) {
 				t.Fatalf("packet-check created absent store: %v", err)
@@ -361,24 +367,20 @@ func storeReplay(t *testing.T, names ...string) {
 				t.Fatal(err)
 			}
 		}
-		for path, encoded := range c.After {
+		after := map[string]*string{}
+		for _, path := range c.After {
 			data, e := os.ReadFile(path)
-			if encoded == nil {
-				if !errors.Is(e, os.ErrNotExist) {
-					t.Fatalf("ledger should be absent: %s %v", path, e)
-				}
-				continue
-			}
-			if e != nil {
+			switch {
+			case e == nil:
+				after[path] = fileContent(data)
+			case errors.Is(e, os.ErrNotExist):
+				after[path] = nil
+			default:
 				t.Fatal(e)
 			}
-			want, e := recordedFileBytes(*encoded)
-			if e != nil {
-				t.Fatal(e)
-			}
-			if !bytes.Equal(data, want) {
-				t.Fatalf("ledger bytes differ\nPython: %s\nGo: %s", want, data)
-			}
+		}
+		if len(after) > 0 {
+			golden.CheckJSON(t, fmt.Sprintf("%03d after", index), after, options...)
 		}
 	}
 }

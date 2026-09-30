@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -16,45 +14,34 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/reception"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
+// verdictFixture is what a Python verdict scenario left: the scenarios it ran, the rows of the
+// stores it backed up before each call, and each call to the verdict or outbox API (method,
+// arguments, clock, token counter, the store before the call as its dump, and its tables then).
+type verdictFixture struct {
+	Scenarios []string        `json:"scenarios"`
+	Rows      storePool       `json:"rows"`
+	Calls     json.RawMessage `json:"calls"`
+}
+
+// verdictReplay makes each call of a Python verdict scenario on a copy of the store Python held
+// before it, and checks Go's answer and every table it changed against the golden.
 func verdictReplay(t *testing.T, names ...string) {
 	t.Helper()
-	root, e := filepath.Abs("../../..")
-	if e != nil {
-		t.Fatal(e)
-	}
-	raw, e := json.Marshal(names)
-	if e != nil {
-		t.Fatal(e)
-	}
-	answer := pythonAnswer(t, "verdict_capture.py", raw, func() ([]byte, error) {
-		keep := t.TempDir()
-		pyTmp := filepath.Join(keep, "tmp")
-		if e := os.Mkdir(pyTmp, 0o700); e != nil {
-			return nil, e
-		}
-		cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(root, "internal/relay/sync/testdata/verdict_capture.py"), keep, string(raw))
-		cmd.Dir = root
-		cmd.Env = append(os.Environ(), "UV_PROJECT_ENVIRONMENT="+filepath.Join(root, ".venv"), "UV_CACHE_DIR="+keep+"/uv", "TMPDIR="+pyTmp)
-		output, e := cmd.Output()
-		if e != nil {
-			var exit *exec.ExitError
-			if errors.As(e, &exit) {
-				return nil, fmt.Errorf("python verdict scenarios: %v\n%s", e, exit.Stderr)
-			}
-			return nil, e
-		}
-		return callsWithStores(output, pyTmp)
-	}, pyoracle.SameWhen(sameUpToIdentifiers))
 	// Python's temporary directories are this run's.
-	calls, pool := openStores(t, relocated(answer, "<pytmp>", t.TempDir()))
-	var stores []struct{ Database json.RawMessage }
-	if e = json.Unmarshal(calls, &stores); e != nil {
+	pyDir := t.TempDir()
+	var fixture verdictFixture
+	if e := json.Unmarshal(relocated(readFixture(t, "verdict"), "<pytmp>", pyDir), &fixture); e != nil {
 		t.Fatal(e)
 	}
-	d := json.NewDecoder(bytes.NewReader(calls))
+	sameScenarios(t, fixture.Scenarios, names)
+	var stores []struct{ Database json.RawMessage }
+	if e := json.Unmarshal(fixture.Calls, &stores); e != nil {
+		t.Fatal(e)
+	}
+	d := json.NewDecoder(bytes.NewReader(fixture.Calls))
 	d.UseNumber()
 	value, e := decodeValue(d)
 	if e != nil {
@@ -65,10 +52,10 @@ func verdictReplay(t *testing.T, names ...string) {
 	}
 	for index, call := range value.([]any) {
 		ctx := context.Background()
-		// The capture is a copy of Python's store: it gets its own identity, and Go replays the
-		// call on it after a takeover to Go.
+		// The store is a copy of Python's: it gets its own identity, and Go replays the call on it
+		// after a takeover to Go.
 		database := filepath.Join(t.TempDir(), "relay.sqlite3")
-		restoreStore(t, pool.dump(t, stores[index].Database), database)
+		restoreStore(t, fixture.Rows.dump(t, stores[index].Database), database)
 		testsupport.Rehome(t, database)
 		testsupport.HandOver(t, database, "go")
 		s, e := store.Open(ctx, database, "")
@@ -136,34 +123,21 @@ func verdictReplay(t *testing.T, names ...string) {
 		default:
 			t.Fatal(reception.Get(call, "method"))
 		}
-		var actual, expected any
+		var actual any
 		if err == nil {
 			actual = obj("reply", got)
 		} else {
 			var refused *store.RefusedError
 			if errors.As(err, &refused) {
 				actual = obj("error", obj("reason", refused.Reason, "detail", refused.Detail))
-			} else if reception.Has(call, "runtimeError") {
+			} else {
 				actual = obj("runtimeError", err.Error())
 				if err.Error() == "transaction body: local sqlite failure" {
 					actual = obj("runtimeError", "local sqlite failure")
 				}
-			} else {
-				t.Fatal(err)
 			}
 		}
-		if reception.Has(call, "error") {
-			expected = obj("error", reception.Get(call, "error"))
-		} else if reception.Has(call, "runtimeError") {
-			expected = obj("runtimeError", reception.Get(call, "runtimeError"))
-		} else {
-			expected = obj("reply", reception.Get(call, "reply"))
-		}
-		if want, got := evidence.Dumps(expected, false, false, true), evidence.Dumps(actual, false, false, true); got != want {
-			t.Fatalf("call %d %s\nPython:%s\nGo:%s", index, reception.Get(call, "method"), want, got)
-		}
 		before, _ := evidence.Object(reception.Get(call, "before"))
-		wantChanged := reception.Get(call, "tables")
 		actualChanged := Obj{}
 		for _, table := range before {
 			rows, e := s.All(ctx, "SELECT * FROM "+table.Key)
@@ -181,9 +155,9 @@ func verdictReplay(t *testing.T, names ...string) {
 				}{table.Key, records})
 			}
 		}
-		if got, want := evidence.Dumps(actualChanged, false, false, true), evidence.Dumps(wantChanged, false, false, true); got != want {
-			t.Fatalf("call %d %s all written tables differ\nPython:%s\nGo:%s", index, reception.Get(call, "method"), want, got)
-		}
+		key := fmt.Sprintf("%03d %s", index, text(reception.Get(call, "method")))
+		golden.Check(t, key+" answer", []byte(evidence.Dumps(actual, false, false, true)), golden.Substitute(pyDir, "<pytmp>"))
+		golden.Check(t, key+" written tables", []byte(evidence.Dumps(actualChanged, false, false, true)), golden.Substitute(pyDir, "<pytmp>"))
 		if e = s.Close(); e != nil {
 			t.Fatal(e)
 		}
