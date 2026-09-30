@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"syscall"
 
@@ -143,7 +142,7 @@ func absolute(path string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		path = cwd + "/" + path
+		path = ownership.JoinCwd(cwd, path)
 	}
 	return pathlibSpelling(path), nil
 }
@@ -188,26 +187,28 @@ func DiscoverStateDir(socket string) (StateSelection, error) {
 		source = "home"
 		detail = "default under " + base
 	}
-	base, err := absoluteExpanded(base)
+	absoluteBase, err := absoluteExpanded(base)
 	if err != nil {
 		return StateSelection{}, err
 	}
 	canonical := "default"
 	legacy := "default"
+	wanted := ""
 	if socket != "" {
-		canonicalPath, err := canonicalSocket(socket)
-		if err != nil {
+		if wanted, err = canonicalSocket(socket); err != nil {
 			return StateSelection{}, err
 		}
-		canonical = socketHash(canonicalPath)
+		canonical = socketHash(wanted)
 		expanded, err := expandUser(socket)
 		if err != nil {
 			return StateSelection{}, err
 		}
 		legacy = socketHash(pathlibSpelling(expanded))
 	}
-	root := base + "/codex-session-relay"
-	chosen := StateSelection{Path: root + "/" + canonical, Source: source, Detail: detail, SocketScope: canonical}
+	// Every directory is joined as pathlib joins, never through filepath.Join, which would fold the
+	// two leading slashes pathlib keeps as a root of their own.
+	root := PathlibChild(absoluteBase, "codex-session-relay")
+	chosen := StateSelection{Path: PathlibChild(root, canonical), Source: source, Detail: detail, SocketScope: canonical}
 	found, err := discoveryExists(chosen.DBPath())
 	if err != nil {
 		return chosen, err
@@ -216,8 +217,8 @@ func DiscoverStateDir(socket string) (StateSelection, error) {
 		return chosen, nil
 	}
 	if legacy != canonical {
-		previous := filepath.Join(root, legacy)
-		found, err := discoveryExists(filepath.Join(previous, "relay.sqlite3"))
+		previous := PathlibChild(root, legacy)
+		found, err := discoveryExists(previous + "/relay.sqlite3")
 		if err != nil {
 			return chosen, err
 		}
@@ -228,37 +229,16 @@ func DiscoverStateDir(socket string) (StateSelection, error) {
 			return chosen, nil
 		}
 	}
-	dirs, err := os.ReadDir(root)
-	if err != nil {
-		// Python stores_claiming_socket and stores_without_provenance treat
-		// every listing OSError as no candidates. Resolution remains eager;
-		// explicit --db-path does not bypass malformed override errors.
-		return chosen, nil
-	}
-	wanted := ""
-	if socket != "" {
-		wanted, err = canonicalSocket(socket)
-		if err != nil {
-			return chosen, err
-		}
-	}
-	for _, dir := range dirs {
-		if !dir.IsDir() || dir.Name() == canonical {
-			continue
-		}
-		path := filepath.Join(root, dir.Name())
-		if !exists(filepath.Join(path, "relay.sqlite3")) {
-			continue
-		}
-		recorded := storeSocket(filepath.Join(path, "relay.sqlite3"))
+	// One walk answers stores_claiming_socket and stores_without_provenance: nothing between them
+	// changes what either finds.
+	for _, path := range siblingStoreDirs(root, canonical) {
+		recorded := storeSocket(path + "/relay.sqlite3")
 		if wanted != "" && recorded == wanted {
 			chosen.Ambiguous = append(chosen.Ambiguous, path)
 		} else if recorded == "" {
 			chosen.Unidentified = append(chosen.Unidentified, path)
 		}
 	}
-	sort.Strings(chosen.Ambiguous)
-	sort.Strings(chosen.Unidentified)
 	if len(chosen.Ambiguous) == 1 {
 		chosen.Path = chosen.Ambiguous[0]
 		chosen.SocketScope = filepath.Base(chosen.Path)
@@ -277,6 +257,37 @@ func DiscoverStateDir(socket string) (StateSelection, error) {
 		chosen.Detail += fmt.Sprintf("; %d stores here record no socket", len(chosen.Unidentified))
 	}
 	return chosen, nil
+}
+
+// PathlibChild is str(Path(parent) / name) for a name holding no slash: the parent as pathlib
+// spells it, with two leading slashes kept as their own root, and "." dropped.
+func PathlibChild(parent, name string) string {
+	spelled := pathlibSpelling(parent)
+	switch {
+	case spelled == ".":
+		return name
+	case strings.HasSuffix(spelled, "/"):
+		return spelled + name
+	}
+	return spelled + "/" + name
+}
+
+// PathlibParent is str(Path(path).parent): the last component dropped from the pathlib spelling,
+// a root ("/" or "//") being its own parent and a single relative component having ".".
+func PathlibParent(path string) string {
+	spelled := pathlibSpelling(path)
+	cut := strings.LastIndex(spelled, "/")
+	switch {
+	case spelled == "/" || spelled == "//":
+		return spelled
+	case cut < 0:
+		return "."
+	case cut == 0:
+		return "/"
+	case cut == 1 && strings.HasPrefix(spelled, "//"):
+		return "//"
+	}
+	return spelled[:cut]
 }
 
 // pathlib.Path.exists suppresses absence/non-directory, but propagates access

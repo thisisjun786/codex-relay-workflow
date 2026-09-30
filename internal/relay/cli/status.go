@@ -533,7 +533,12 @@ func settingsRecoveryRecord(s *store.Store, hold contract.OrderedObject, event, 
 	default:
 		actor, command, then = "operator", shSettingsShow, shHoldOperatorThen
 	}
-	directory := filepath.Dir(absolutePath(s.Path))
+	// store_directory: os.path.dirname(os.path.abspath(path)); a working directory the kernel
+	// cannot name leaves the store's own spelling of its directory.
+	directory, err := store.StoreDirectory(s.Path)
+	if err != nil {
+		directory = store.Dirname(s.Path)
+	}
 	program := relayProgram()
 	rendered := shellCommand(append(program, "--state", directory, "show", "--event", event)...)
 	if command != shShowEvent && recipient != "" {
@@ -547,14 +552,6 @@ func settingsRecoveryRecord(s *store.Store, hold contract.OrderedObject, event, 
 		{Key: "actor", Value: actor}, {Key: "reason", Value: reason}, {Key: "command", Value: rendered},
 		{Key: "then", Value: then}, {Key: "laterDeliveries", Value: later}, {Key: "refusalDetail", Value: get(hold, "detail")},
 	}
-}
-
-func absolutePath(path string) string {
-	if filepath.IsAbs(path) {
-		return filepath.Clean(path)
-	}
-	cwd, _ := os.Getwd()
-	return filepath.Join(cwd, path)
 }
 
 // relayProgram is supervisorchannel.relay_program: the absolute command that runs THIS relay.

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 )
 
 // venvPython is the worktree's interpreter, named before a test changes its working directory.
@@ -16,9 +18,9 @@ func venvPython(t *testing.T) string {
 }
 
 // pythonAt runs script with python from dir, in this test process's environment as it stands.
-func pythonAt(t *testing.T, python, dir, script string) string {
+func pythonAt(t *testing.T, python, dir, script string, args ...string) string {
 	t.Helper()
-	command := exec.Command(python, "-c", script)
+	command := exec.Command(python, append([]string{"-c", script}, args...)...)
 	command.Dir = dir
 	command.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
 	raw, err := command.CombinedOutput()
@@ -195,4 +197,176 @@ print(json.dumps([str(selected.path), selected.detail]))`
 			}
 		}
 	})
+}
+
+// PathlibChild and PathlibParent are str(Path(parent) / name) and str(Path(path).parent).
+func TestPathlibChildAndParentAreJoinAndParentOfPath(t *testing.T) {
+	inputs := []string{"//var/x", "///var/x", "//", "/", ".", "", "a", "..", "a/b/", "//x", "/x", "/a/../b"}
+	raw, err := json.Marshal(inputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want [][2]string
+	script := "import json, sys; from pathlib import Path; print(json.dumps([[str(Path(p) / 'n'), str(Path(p).parent)] for p in json.loads(sys.argv[1])]))"
+	if err = json.Unmarshal([]byte(pythonOutput(t, script, string(raw))), &want); err != nil {
+		t.Fatal(err)
+	}
+	for i, input := range inputs {
+		if got := PathlibChild(input, "n"); got != want[i][0] {
+			t.Errorf("PathlibChild(%q, n) = %q, Python %q", input, got, want[i][0])
+		}
+		if got := PathlibParent(input); got != want[i][1] {
+			t.Errorf("PathlibParent(%q) = %q, Python %q", input, got, want[i][1])
+		}
+	}
+}
+
+// Every store discovery names besides the canonical one, the legacy store it keeps, the store it
+// adopts and the stores it reports as ambiguous or unidentified, is spelled as Python's
+// discover_state_dir spells it: under an XDG_STATE_HOME of two leading slashes each keeps both, as
+// the canonical directory does.
+func TestDiscoverySpellsEveryStoreItNamesAsPythonDoes(t *testing.T) {
+	python := venvPython(t)
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+	t.Setenv("HOME", filepath.Join(root, "home"))
+	t.Setenv("CODEX_SESSION_RELAY_STATE", "")
+	create := `import sqlite3, sys
+c = sqlite3.connect(sys.argv[1])
+c.execute("CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+if sys.argv[2]:
+    c.execute("INSERT INTO schema_meta VALUES ('socket_path', ?)", (sys.argv[2],))
+c.commit()
+c.close()`
+	discover := `import json, sys
+from codex_session_relay.store import discover_state_dir, legacy_socket_scope
+if sys.argv[1] == "legacy":
+    print(legacy_socket_scope(sys.argv[2]))
+else:
+    print(json.dumps(discover_state_dir(sys.argv[2]).to_record()))`
+	store := func(dir, socket string) {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		pythonAt(t, python, root, create, filepath.Join(dir, "relay.sqlite3"), socket)
+	}
+	compare := func(t *testing.T, socket string) StateSelection {
+		t.Helper()
+		var want struct {
+			Path, DBPath, Detail, SocketScope string
+			Ambiguous, Unidentified           []string
+		}
+		if err := json.Unmarshal([]byte(pythonAt(t, python, root, discover, "discover", socket)), &want); err != nil {
+			t.Fatal(err)
+		}
+		got, err := DiscoverStateDir(socket)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Path != want.Path || got.DBPath() != want.DBPath || got.Detail != want.Detail || got.SocketScope != want.SocketScope ||
+			strings.Join(got.Ambiguous, "|") != strings.Join(want.Ambiguous, "|") || strings.Join(got.Unidentified, "|") != strings.Join(want.Unidentified, "|") {
+			t.Errorf("socket %s:\n Go     %q %q %q ambiguous %q unidentified %q\n Python %q %q %q ambiguous %q unidentified %q",
+				socket, got.Path, got.Detail, got.SocketScope, got.Ambiguous, got.Unidentified,
+				want.Path, want.Detail, want.SocketScope, want.Ambiguous, want.Unidentified)
+		}
+		return got
+	}
+	for _, xdg := range []string{"/" + filepath.Join(root, "two"), filepath.Join(root, "one")} {
+		t.Run("XDG_STATE_HOME="+xdg, func(t *testing.T) {
+			t.Setenv("XDG_STATE_HOME", xdg)
+			stores := filepath.Join(root, filepath.Base(xdg), "codex-session-relay")
+			// A relative socket's old key names a store that records no socket: discovery keeps it.
+			legacy := pythonAt(t, python, root, discover, "legacy", "a/../b.sock")
+			store(filepath.Join(stores, legacy), "")
+			if kept := compare(t, "a/../b.sock"); kept.SocketScope != legacy {
+				t.Fatalf("the legacy store was not kept: %+v", kept)
+			}
+			// Another socket reports that store as one recording no socket.
+			if other := compare(t, "/x/other.sock"); len(other.Unidentified) != 1 {
+				t.Fatalf("the store recording no socket was not reported: %+v", other)
+			}
+			// A store recording the socket is adopted, and two of them are ambiguous.
+			store(filepath.Join(stores, "adopt-a"), "/x/third.sock")
+			if adopted := compare(t, "/x/third.sock"); adopted.SocketScope != "adopt-a" {
+				t.Fatalf("the store recording this socket was not adopted: %+v", adopted)
+			}
+			store(filepath.Join(stores, "adopt-b"), "/x/third.sock")
+			if ambiguous := compare(t, "/x/third.sock"); len(ambiguous.Ambiguous) != 2 {
+				t.Fatalf("two stores recording this socket were not ambiguous: %+v", ambiguous)
+			}
+			// A link to a store directory is a directory to Path.is_dir(), which follows it.
+			outside := filepath.Join(root, filepath.Base(xdg)+"-outside")
+			store(outside, "")
+			if err := os.Symlink(outside, filepath.Join(stores, "linked")); err != nil {
+				t.Fatal(err)
+			}
+			if linked := compare(t, "/x/fourth.sock"); len(linked.Unidentified) != 2 {
+				t.Fatalf("the linked store recording no socket was not reported: %+v", linked)
+			}
+		})
+	}
+}
+
+// Abspath, Dirname and StoreDirectory are os.path.abspath, os.path.dirname and
+// assignment.store_directory, and Absolute and ownership.ScopeRoot are Path(p).absolute() and
+// Path(p).expanduser().absolute(). A relative path is read against the working directory the
+// kernel names, not $PWD's spelling through a link, and under the root it gains no second slash.
+func TestAbsolutePathsAreThePathsPythonNames(t *testing.T) {
+	python := venvPython(t)
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.MkdirAll(filepath.Join(root, "real", "wd"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Symlink(filepath.Join(root, "real"), filepath.Join(root, "alias")); err != nil {
+		t.Fatal(err)
+	}
+	inputs := []string{"relay.sqlite3", "st/relay.sqlite3", "a/../st//relay.sqlite3", "./st/", "//x/relay.sqlite3", "/x/./relay.sqlite3", "//relay.sqlite3", "/relay.sqlite3", "."}
+	raw, err := json.Marshal(inputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := `import json, os, sys
+from pathlib import Path
+from codex_session_relay.assignment import store_directory
+class Held:
+    def __init__(self, path):
+        self.path = Path(path)
+print(json.dumps([[os.path.abspath(p), os.path.dirname(os.path.abspath(p)), store_directory(Held(p)), str(Path(p).absolute()), str(Path(p).expanduser().absolute())] for p in json.loads(sys.argv[1])]))`
+	for _, cwd := range []string{filepath.Join(root, "alias", "wd"), "/"} {
+		t.Run("cwd "+cwd, func(t *testing.T) {
+			t.Chdir(cwd)
+			var want [][5]string
+			if err := json.Unmarshal([]byte(pythonAt(t, python, cwd, script, string(raw))), &want); err != nil {
+				t.Fatal(err)
+			}
+			for i, input := range inputs {
+				abspath, err := Abspath(input)
+				if err != nil {
+					t.Fatal(err)
+				}
+				directory, err := StoreDirectory(input)
+				if err != nil {
+					t.Fatal(err)
+				}
+				absolute, err := Absolute(input)
+				if err != nil {
+					t.Fatal(err)
+				}
+				scope, err := ownership.ScopeRoot(input)
+				if err != nil {
+					t.Fatal(err)
+				}
+				got := [5]string{abspath, Dirname(abspath), directory, absolute, scope}
+				if got != want[i] {
+					t.Errorf("%q: Abspath, Dirname, StoreDirectory, Absolute, ScopeRoot\n go     %q\n python %q", input, got, want[i])
+				}
+			}
+		})
+	}
 }

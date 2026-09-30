@@ -1,14 +1,18 @@
 package hook
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -123,6 +127,10 @@ print(json.dumps([str(completion.configuration_path()), str(stopadapter.host_led
 		{"HOME unset", unset, unset, ""},
 		{"a relative CODEX_HOME", filepath.Join(root, "home"), "codex", ""},
 		{"a relative override", filepath.Join(root, "home"), unset, "rel/settings.json"},
+		{"a CODEX_HOME of two leading slashes", filepath.Join(root, "home"), "/" + filepath.Join(root, "codex"), ""},
+		{"a CODEX_HOME of two leading slashes and a dot", filepath.Join(root, "home"), "/" + filepath.Join(root, ".", "codex") + "/./", ""},
+		{"the root as CODEX_HOME", filepath.Join(root, "home"), "/", ""},
+		{"a CODEX_HOME of two slashes alone", filepath.Join(root, "home"), "//", ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			for key, value := range map[string]string{"HOME": c.home, "CODEX_HOME": c.codexHome, configEnv: c.override} {
@@ -149,7 +157,7 @@ print(json.dumps([str(completion.configuration_path()), str(stopadapter.host_led
 			if err != nil || settings != want[0] {
 				t.Errorf("settings %q, python %q: %v", settings, want[0], err)
 			}
-			if host, err := abspath(filepath.Join(append([]string{codexHome()}, HostLedgerParts...)...)); err != nil || host != want[1] {
+			if host, err := hostLedger(); err != nil || host != want[1] {
 				t.Errorf("host ledger %q, python %q: %v", host, want[1], err)
 			}
 		})
@@ -188,5 +196,114 @@ print(json.dumps([s["configuration"]["configuration"], s["configuration"]["value
 				t.Errorf("configuration %v (%v), python %v (%v)", got["configuration"], got["value"], want[0], want[1])
 			}
 		})
+	}
+}
+
+// The owner's control socket is dialled in the directory each source names. A dbPath is the
+// settings' str, so a surrogate escape in it (U+DCFF) is the byte it stands for, as Python's
+// socket_guard connects to os.fsencode(str(state / "control.sock")). A directory the environment
+// selects is already the bytes it names: a literal ED B3 BF run in XDG_STATE_HOME stays those
+// bytes, as the owner that listens there spells it, and is not re-encoded to the byte 0xff.
+func TestTheControlSocketIsDialledWhereItsSourceNamesIt(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		config func(home string) (Object, string)
+	}{
+		{"a dbPath from the settings", func(home string) (Object, string) {
+			state := filepath.Join(home, "s\xff")
+			return Object{{Key: "dbPath", Value: store.FSDecode(state) + "/relay.sqlite3"}}, state
+		}},
+		{"a state directory from the environment", func(home string) (Object, string) {
+			xdg := filepath.Join(home, "x\xed\xb3\xbf")
+			t.Setenv("XDG_STATE_HOME", xdg)
+			return nil, filepath.Join(xdg, "codex-session-relay", "default")
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			home := hookHome(t, 5)
+			t.Setenv("CODEX_HOME", home)
+			t.Setenv("HOME", home)
+			t.Setenv("CODEX_SESSION_RELAY_STATE", "")
+			t.Setenv("XDG_STATE_HOME", filepath.Join(home, "xdg"))
+			pinned, state := c.config(home)
+			config := Object{{Key: "configVersion", Value: int64(1)}, {Key: "mode", Value: "observe"}, {Key: "relayExecutable", Value: filepath.Join(home, "never-run")}, {Key: "markerRoot", Value: filepath.Join(home, "markers")}, {Key: "timeoutSeconds", Value: 5.0}, {Key: "journalRoot", Value: filepath.Join(home, "journal")}}
+			writeTest(t, filepath.Join(home, ConfigName), []byte(evidence.Dumps(append(config, pinned...), false, false, true)))
+			if err := os.MkdirAll(state, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			listener, err := net.Listen("unix", filepath.Join(state, "control.sock"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer listener.Close()
+			done := make(chan error, 1)
+			go func() {
+				conn, err := listener.Accept()
+				if err == nil {
+					defer conn.Close()
+					if _, err = readFrame(conn); err == nil {
+						_, err = io.WriteString(conn, `{"decision":"release","state":"unmanaged","hook_output":{}}`+"\n")
+					}
+				}
+				done <- err
+			}()
+			var out bytes.Buffer
+			if code := runAdapter(context.Background(), nil, pipeInput(t, []byte(`{"session_id":"s","turn_id":"t"}`)), &out, time.Now(), nil); code != 0 || out.Len() != 0 {
+				t.Fatalf("code=%d stdout=%s", code, &out)
+			}
+			if rows := rowsAt(t, home); len(rows) != 1 || rows[0]["adapterOutcome"] != "guard_answered" {
+				t.Fatalf("the hook did not reach the owner listening at %q: %v", state, rows)
+			}
+			awaitHost(t, done)
+		})
+	}
+}
+
+// The status journal cell reads and names str(Path(root).expanduser()), as completion._journal_cell
+// does: ~ expanded, "." and empty components and a trailing slash dropped, exactly two leading
+// slashes kept. os.fsencode's refusal of a lone surrogate counts its position in that spelling.
+func TestTheJournalCellNamesTheRootAsPathlibSpellsIt(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", root)
+	if err = os.MkdirAll(filepath.Join(root, "d", "20260930"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeTest(t, filepath.Join(root, "d", "20260930", strings.Repeat("a", 32)+".json"), []byte("{}\n"))
+	unencodable := "\xed\xa0\x80" // U+D800 as a JSON string decodes it
+	var roots []any
+	for _, spelled := range []string{
+		root + "//a/./b" + unencodable, "/" + root + "/./a//b/" + unencodable + unencodable + "/c", "~/./a" + unencodable,
+		root + "//a/./b", root + "/c/", "/" + root + "/c", "~/./c/",
+		root + "//d/./", "/" + root + "/d", "~//d",
+	} {
+		roots = append(roots, spelled)
+	}
+	script := `import json, os, sys
+sys.path.insert(0, os.path.join(sys.argv[1], "scripts"))
+from crw_runtime import completion
+cells = []
+for root in json.loads(sys.argv[2]):
+    cell = completion._journal_cell({"journalRoot": root, "journalPolicy": "every_invocation"})
+    cells.append([cell["value"], cell["evidence"], cell.get("journalRoot")])
+print(json.dumps(cells))`
+	command := exec.Command(python(t), "-c", script, testRoot, evidence.Dumps(roots, false, false, true))
+	command.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
+	raw, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("python: %v\n%s", err, raw)
+	}
+	decoded, err := Decode(raw)
+	if err != nil {
+		t.Fatalf("%v: %s", err, raw)
+	}
+	for i, want := range decoded.([]any) {
+		expected := want.([]any)
+		got := journalCell(Object{{Key: "journalRoot", Value: roots[i]}, {Key: "journalPolicy", Value: "every_invocation"}})
+		if got["value"] != expected[0] || got["evidence"] != expected[1] || got["journalRoot"] != expected[2] {
+			t.Errorf("journal cell for %q:\n go     %q %q %q\n python %q", roots[i], got["value"], got["evidence"], got["journalRoot"], expected)
+		}
 	}
 }

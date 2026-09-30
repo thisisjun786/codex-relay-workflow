@@ -9,6 +9,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
@@ -197,32 +198,9 @@ func repr(value any) string {
 	case nil:
 		return "None"
 	case string:
-		quote := "'"
-		if strings.Contains(v, "'") && !strings.Contains(v, `"`) {
-			quote = `"`
-		}
-		var b strings.Builder
-		b.WriteString(quote)
-		for _, r := range v {
-			switch {
-			case r == '\\':
-				b.WriteString(`\\`)
-			case string(r) == quote:
-				b.WriteString(`\` + quote)
-			case r == '\n':
-				b.WriteString(`\n`)
-			case r == '\r':
-				b.WriteString(`\r`)
-			case r == '\t':
-				b.WriteString(`\t`)
-			case r < 0x20 || r == 0x7f:
-				fmt.Fprintf(&b, `\x%02x`, r)
-			default:
-				b.WriteRune(r)
-			}
-		}
-		b.WriteString(quote)
-		return b.String()
+		// settings.Repr: Python's quote choice and its escapes of every character
+		// str.isprintable() refuses, a lone surrogate included.
+		return settings.Repr(v)
 	case []string:
 		parts := make([]string, len(v))
 		for i, s := range v {

@@ -559,7 +559,7 @@ func namedJournals(ctx context.Context, ours []statusRegistration, relative []st
 			out = append(out, entry)
 			continue
 		}
-		root := text(get(rd.Value, "journalRoot"))
+		root := journalDirectory(text(get(rd.Value, "journalRoot")))
 		key := root
 		if rootFS, ok := fsencode(root); ok {
 			root = rootFS
@@ -591,7 +591,10 @@ func journalCell(cfg Object) map[string]any {
 	if root == "" {
 		return cell(noJournal, "no journal is configured, so this hook records nothing about its own invocations", map[string]any{"journalPolicy": policy})
 	}
-	// The settings' str reaches the system as os.fsencode's bytes; the cell names it as written.
+	// Python reads Path(root).expanduser() and names str() of it in every cell, so the root is
+	// pathlib's spelling of the expanded root from here on. That str reaches the system as
+	// os.fsencode's bytes, and a refusal counts its position in that spelling.
+	root = journalDirectory(root)
 	rootFS, encoded := fsencode(root)
 	if !encoded {
 		return cell(accessError, "the journal could not be opened: "+fsencodeRefusal(root), map[string]any{"journalRoot": root, "journalPolicy": policy})
@@ -632,6 +635,17 @@ func journalCell(cfg Object) map[string]any {
 	sort.Strings(days)
 	return cell(strconv.Itoa(count), "invocations this hook recorded for itself", map[string]any{"journalRoot": root, "journalPolicy": policy, "days": days})
 }
+
+// journalDirectory is str(Path(root).expanduser()): the home in place of a leading ~ (a ~ nothing
+// answers is left as written), then pathlib's spelling, which drops "." components, empty
+// components and a trailing slash and keeps exactly two leading slashes.
+func journalDirectory(root string) string {
+	if expanded, err := store.ExpandUser(root); err == nil {
+		root = expanded
+	}
+	return store.PathlibSpelling(root)
+}
+
 func journalAnswer(j map[string]any) string {
 	if j["value"] == noJournal || j["journalPolicy"] == noJournal {
 		return "no_records_kept"

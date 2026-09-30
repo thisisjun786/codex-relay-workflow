@@ -27,6 +27,7 @@ func StoreSocket(dbPath string) string { return storeSocket(dbPath) }
 
 // siblingStoreDirs is `sorted(p for p in Path(root).iterdir() if p.is_dir())` minus skip, keeping
 // only directories whose relay.sqlite3 exists. An unreadable root is no candidates, as in Python.
+// Each is spelled str(Path(root) / name), so a root under "//" keeps its two slashes.
 func siblingStoreDirs(root, skip string) []string {
 	entries, err := os.ReadDir(root)
 	if err != nil {
@@ -34,7 +35,7 @@ func siblingStoreDirs(root, skip string) []string {
 	}
 	var found []string
 	for _, entry := range entries {
-		path := filepath.Join(root, entry.Name())
+		path := PathlibChild(root, entry.Name())
 		if info, err := os.Stat(path); err != nil || !info.IsDir() || entry.Name() == skip {
 			continue
 		}

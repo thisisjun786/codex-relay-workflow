@@ -1,6 +1,11 @@
 package store
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+)
 
 // PyRepr is repr() of a str as CPython 3.14.4 prints it: its quote choice, its escapes of every
 // character str.isprintable() refuses, and a lone surrogate (an argv byte that is not UTF-8, or
@@ -22,6 +27,35 @@ func TestPyReprIsPythonsReprOfAStr(t *testing.T) {
 	} {
 		if got := PyRepr(c.text); got != c.want {
 			t.Errorf("PyRepr(%q) = %s, want %s", c.text, got, c.want)
+		}
+	}
+}
+
+// The hold's refusal names the store path as intent.registration_hold does, "the relay store path
+// " + repr(db_path) + " could not be read as a path": Python's quote choice and its escapes, not a
+// hand-made quoting. The path is under the live state directory, which Go refuses to hold.
+func TestTheHoldNamesAPathItCannotReadAsPythonReprsIt(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", filepath.Join(root, "home"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "xdg"))
+	t.Setenv("CRW_ALLOW_LIVE_STATE", "")
+	for _, name := range []string{"it's\u00a0x", `back\slash`, "l\u2028s", "b\xffyte"} {
+		directory := filepath.Join(root, "xdg", "codex-session-relay", name)
+		if err := os.MkdirAll(directory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(directory, "relay.sqlite3")
+		if err := os.WriteFile(path, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		want := "the relay store path " + pythonStoreValue(t, "import sys; print(repr(sys.argv[1]))", path) + " could not be read as a path"
+		hold, unavailable := HoldForWrite(t.Context(), path, time.Second)
+		if hold != nil {
+			_ = hold.Release()
+			t.Fatalf("held a store under the live state directory: %s", path)
+		}
+		if unavailable != want {
+			t.Errorf("%q:\n go     %s\n python %s", name, unavailable, want)
 		}
 	}
 }

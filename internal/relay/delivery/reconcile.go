@@ -607,9 +607,10 @@ func (rc *Reconciler) awaiting(ctx context.Context, kind string, outcome Obj, re
 	if correction {
 		action = correctionHeld
 	}
-	directory := filepath.Dir(rc.Store.Path)
-	if abs, err := filepath.Abs(directory); err == nil {
-		directory = abs
+	// store_directory: os.path.dirname(os.path.abspath(path)).
+	directory, err := store.StoreDirectory(rc.Store.Path)
+	if err != nil {
+		return nil, err
 	}
 	return Obj{{Key: "nextExpectedAction", Value: action}, {Key: "reason", Value: reason},
 		{Key: "recovery", Value: Obj{{Key: "actor", Value: "parent"}, {Key: "reason", Value: reason}, {Key: "command", Value: recoveryCommand(directory, eventID)}, {Key: "then", Value: parentRecoveryThen}}}}, nil

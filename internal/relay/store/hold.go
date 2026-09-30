@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
@@ -32,7 +31,7 @@ func HoldForWrite(ctx context.Context, path string, timeout time.Duration) (*Wri
 	}
 	resolved, err := refuseLiveState(path)
 	if err != nil {
-		return nil, "the relay store path " + quoteRepr(path) + " could not be read as a path"
+		return nil, "the relay store path " + pythonRepr(path) + " could not be read as a path"
 	}
 	admission, err := admitWrite(ctx, resolved)
 	if err != nil {
@@ -114,13 +113,6 @@ func sqliteMessage(err error) string {
 	return err.Error()
 }
 
-func quoteRepr(s string) string {
-	if strings.Contains(s, "'") && !strings.Contains(s, `"`) {
-		return `"` + s + `"`
-	}
-	return "'" + strings.ReplaceAll(s, "'", `\'`) + "'"
-}
-
 // ReadOnly is a mode=ro connection that never creates a store (intent.read_only_connection).
 type ReadOnly struct{ db *sql.DB }
 
@@ -163,7 +155,7 @@ func openExamined(ctx context.Context, examined string, params url.Values, timeo
 	}
 	if opened != examined {
 		_ = db.Close()
-		return nil, fmt.Errorf("the store's sidecars were examined beside %s, but SQLite opened %s, so its committed state was not read", quoteRepr(examined), quoteRepr(opened))
+		return nil, fmt.Errorf("the store's sidecars were examined beside %s, but SQLite opened %s, so its committed state was not read", pythonRepr(examined), pythonRepr(opened))
 	}
 	return &ReadOnly{db: db}, nil
 }

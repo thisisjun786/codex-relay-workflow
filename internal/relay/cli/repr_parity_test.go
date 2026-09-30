@@ -14,7 +14,11 @@ func TestAnEchoedArgumentIsPythonsReprOfIt(t *testing.T) {
 	var argvs [][]string
 	for _, text := range []string{"x\U000000a0y", "x\U00002028y", "x\U0000200by", "x\xffy", "it's"} {
 		argvs = append(argvs, []string{"--json", "intent-resolve", "--workspace", "w", "--assignment", "a", "--chosen-task", "t", "--chosen-session", "s", "--reason", "r", "--adjudicate", text})
-		if text != "x\xffy" { // Python raises binding a surrogate into SQLite before it looks
+		// Python raises UnicodeEncodeError binding a surrogate into SQLite before it looks (a host
+		// error, exit 3), where Go looks the bytes up and refuses them by name (exit 2). That
+		// difference is recorded, not fixed, in docs/port/known-defects.md ("A relay CLI argument
+		// that is not UTF-8").
+		if text != "x\xffy" {
 			argvs = append(argvs, []string{"--json", "relationship-status", "--relationship", text, "--status", "paused", "--actor", "a"})
 		}
 	}

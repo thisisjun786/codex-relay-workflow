@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 )
 
 const Schema = "managed-start/1"
@@ -157,10 +159,13 @@ func object(v any, required, optional []string, at string) (map[string]any, erro
 	}
 	return m, nil
 }
+
+// pythonTextList is repr() of a sorted list of str: each element settings.Repr, so a key holding a
+// quote, a backslash or a character str.isprintable() refuses reads as Python prints it.
 func pythonTextList(values []string) string {
 	parts := make([]string, len(values))
 	for i, value := range values {
-		parts[i] = "'" + strings.ReplaceAll(value, "'", "\\'") + "'"
+		parts[i] = settings.Repr(value)
 	}
 	return "[" + strings.Join(parts, ", ") + "]"
 }

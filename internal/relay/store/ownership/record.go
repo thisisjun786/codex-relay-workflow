@@ -274,9 +274,19 @@ func ScopeRoot(override string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		path = cwd + "/" + path
+		path = JoinCwd(cwd, path)
 	}
 	return PathlibSpelling(path), nil
+}
+
+// JoinCwd is a relative path joined to the working directory as os.path.join and pathlib join it:
+// under the root it gains no second slash, which PathlibSpelling and normpath would keep as a root
+// of two slashes.
+func JoinCwd(cwd, path string) string {
+	if strings.HasSuffix(cwd, "/") {
+		return cwd + path
+	}
+	return cwd + "/" + path
 }
 
 // ErrNoHome is pathlib's RuntimeError("Could not determine home directory."): a ~ or ~user that

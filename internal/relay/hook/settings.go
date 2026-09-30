@@ -13,8 +13,6 @@ import (
 	"strings"
 	"syscall"
 
-	"golang.org/x/sys/unix"
-
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -48,7 +46,8 @@ func configurationPath(home string, environ map[string]string, named string) (st
 			}
 			home = strings.TrimSuffix(h, "/") + "/.codex"
 		}
-		path = home + "/" + ConfigName
+		// Path(home) / CONFIG_NAME: a root home gains no second slash, and "//" keeps both.
+		path = store.PathlibChild(home, ConfigName)
 	}
 	path, err := store.ExpandUser(path)
 	if err != nil {
@@ -57,23 +56,10 @@ func configurationPath(home string, environ map[string]string, named string) (st
 	return abspath(path)
 }
 
-// abspath is os.path.abspath: a relative path joined to the working directory the kernel names
-// (os.getcwd, where os.Getwd prefers a $PWD that reaches it through a symbolic link), then
-// normpath, which folds ".." lexically and keeps exactly two leading slashes.
-func abspath(path string) (string, error) {
-	if !strings.HasPrefix(path, "/") {
-		cwd, err := unix.Getwd()
-		if err != nil {
-			return "", err
-		}
-		path = cwd + "/" + path
-	}
-	cleaned := filepath.Clean(path)
-	if strings.HasPrefix(path, "//") && !strings.HasPrefix(path, "///") {
-		cleaned = "/" + cleaned
-	}
-	return cleaned, nil
-}
+// abspath is os.path.abspath (store.Abspath): a relative path joined to the working directory the
+// kernel names (os.getcwd, where os.Getwd prefers a $PWD that reaches it through a symbolic link),
+// then normpath, which folds ".." lexically and keeps exactly two leading slashes.
+func abspath(path string) (string, error) { return store.Abspath(path) }
 
 func seconds(v any) (float64, bool) {
 	switch n := v.(type) {
@@ -261,6 +247,20 @@ func codexHome() string {
 	return defaultCodexHome()
 }
 
+// hostLedger is stopadapter.host_ledger: os.path.abspath of the Codex home, then HostLedgerParts
+// joined as pathlib joins them. A home of two leading slashes keeps both, which filepath.Join
+// would fold, and a root home gains no second slash.
+func hostLedger() (string, error) {
+	host, err := abspath(codexHome())
+	if err != nil {
+		return "", err
+	}
+	for _, part := range HostLedgerParts {
+		host = store.PathlibChild(host, part)
+	}
+	return host, nil
+}
+
 // defaultCodexHome is Path.home() / ".codex": an empty HOME is the root and an unset one the
 // passwd entry.
 func defaultCodexHome() string {
@@ -269,9 +269,15 @@ func defaultCodexHome() string {
 }
 
 // RoutingState uses the relay's selection rules, including legacy socket spellings.
-// A settings-pinned DB still routes directly to the owner of that store.
+// A settings-pinned DB still routes directly to the owner of that store. That dbPath is the
+// settings' str, so its directory reaches the system as os.fsencode's bytes (a surrogate escape
+// is the byte it stands for). A directory the environment selects is already the bytes it names:
+// encoding it again would turn a literal ED B2..B3 run in it into another directory.
 func RoutingState(config Object) (string, error) {
 	if db := text(get(config, "dbPath")); db != "" {
+		if encoded, ok := fsencode(db); ok {
+			db = encoded
+		}
 		return filepath.Dir(db), nil
 	}
 	selected, err := store.ResolveStateDir("", text(get(config, "socketPath")))

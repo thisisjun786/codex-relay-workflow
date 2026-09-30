@@ -272,10 +272,6 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 		return 0
 	}
 	dialStarted := time.Now()
-	// A state directory named by the settings' dbPath reaches the system as os.fsencode's bytes.
-	if encoded, ok := fsencode(state); ok {
-		state = encoded
-	}
 	socket := filepath.Join(state, "control.sock")
 	if pause, ok := ctx.Value(beforeDialKey{}).(func()); ok {
 		pause()
@@ -319,7 +315,7 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 	if identified.key == "" {
 		record = set(record, "acceptance", "unestablished")
 	} else {
-		host, _ := abspath(filepath.Join(append([]string{codexHome()}, HostLedgerParts...)...))
+		host, _ := hostLedger()
 		type claimResult struct {
 			acceptance string
 			where      any

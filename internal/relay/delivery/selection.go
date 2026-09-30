@@ -3,7 +3,6 @@ package delivery
 import (
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -92,25 +91,19 @@ func wrongSocketRecovery(selection store.StateSelection, recorded, wanted string
 	if pinned == "" {
 		return lines
 	}
-	expanded := pinned
-	if strings.HasPrefix(pinned, "~") {
-		home, _ := os.UserHomeDir()
-		if pinned != "~" && !strings.HasPrefix(pinned, "~/") {
-			return append(lines, "  "+stateEnv+" is set to "+store.PyRepr(pinned)+", which names a home directory that does not resolve on this host, so it is not offered as a candidate")
-		}
-		expanded = home + pinned[1:]
-	}
-	resolved, err := filepath.Abs(expanded)
+	// Path(pinned).expanduser().resolve(), as the selection package reads it: ~ and ~user are
+	// Path.home()'s and the passwd entry's, and a relative pin is resolved against the working
+	// directory the kernel names. Anything that does not resolve is said rather than dropped.
+	expanded, err := store.ExpandUser(pinned)
+	var resolved string
 	if err == nil {
-		if real, err := filepath.EvalSymlinks(resolved); err == nil {
-			resolved = real
-		}
+		resolved, err = store.ResolvePath(expanded)
 	}
-	current, _ := filepath.Abs(selection.Path)
-	if real, err := filepath.EvalSymlinks(current); err == nil {
-		current = real
+	if err != nil {
+		return append(lines, "  "+stateEnv+" is set to "+store.PyRepr(pinned)+", which names a home directory that does not resolve on this host, so it is not offered as a candidate")
 	}
-	if resolved != current {
+	selected, err := store.ResolvePath(selection.Path)
+	if err != nil || resolved != selected {
 		lines = append(lines, program()+" --state="+shellQuote(resolved)+" --socket="+shellQuote(wanted)+" doctor", "  reads the directory "+stateEnv+" names, which --state overrode on this run")
 	}
 	return lines
