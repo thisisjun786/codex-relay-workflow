@@ -21,17 +21,14 @@ var opsFiles = []string{"operations.md", "operations/check-result.example.json",
 	"operations/compatibility-record.example.json", "operations/installation-plan.example.md",
 	"operations/scenarios.md"}
 
-// opsCopy copies the operations contract and fixtures the parity rows were recorded against into
-// a scratch root. They are a snapshot (testdata/operations-contract, each file with an .in
-// suffix so the repository's link check leaves the copy alone) of the contract as it stood when
-// the Python checker's answers were recorded, so that a later edit of the live contract does not
-// invalidate a recording nobody can take again. The live contract is judged by `crw-dev ci
-// contracts` itself (Test47_ContractsPairsAndAbsentComponents, "repository").
+// opsCopy copies this checkout's operations contract and the fixtures its checker reads into a
+// scratch root. An edit of them changes what the parity rows answer: rewrite the goldens with
+// CRW_GOLDEN=update and review their diff.
 func opsCopy(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	for _, rel := range opsFiles {
-		data, err := os.ReadFile(filepath.Join(repoRoot(), "internal", "dev", "ci", "testdata", "operations-contract", rel+".in"))
+		data, err := os.ReadFile(filepath.Join(repoRoot(), opsReferences, rel))
 		if err != nil {
 			t.Fatal(err)
 		}
