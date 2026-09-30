@@ -1,0 +1,157 @@
+{
+ "env": {
+  "HOME": "/nonexistent-crw-test-home",
+  "XDG_STATE_HOME": "/nonexistent-crw-test-root"
+ },
+ "readings": {
+  "discovery-only": {
+   "discovery": {
+    "command": [
+     "relay",
+     "doctor"
+    ],
+    "ok": true,
+    "payload": {
+     "actorReachability": {
+      "socketConnect": "ok",
+      "stateDirectoryWritable": true
+     },
+     "contents": {
+      "available": true,
+      "relationships": 3
+     },
+     "ledger": {
+      "path": "/l"
+     },
+     "siblingStores": {
+      "ambiguous": false,
+      "checked": true,
+      "claimingThisSocket": [],
+      "withoutProvenance": [
+       "/s/default"
+      ]
+     },
+     "stateSelection": {
+      "path": "/s/scope",
+      "socketScope": "scope-1"
+     },
+     "store": {
+      "dbPath": "/s/scope/relay.sqlite3",
+      "storeId": "id-1"
+     }
+    }
+   },
+   "rootCandidate": {
+    "skipped": "no relay.sqlite3"
+   },
+   "selected": {
+    "ok": false,
+    "skipped": "no store is explicitly selected"
+   },
+   "selectedVia": null
+  },
+  "explicit": {
+   "discovery": {
+    "command": [
+     "relay",
+     "doctor"
+    ],
+    "ok": true,
+    "payload": {
+     "actorReachability": {
+      "socketConnect": "ok",
+      "stateDirectoryWritable": true
+     },
+     "contents": {
+      "available": true,
+      "relationships": 3
+     },
+     "ledger": {
+      "path": "/l"
+     },
+     "siblingStores": {
+      "ambiguous": false,
+      "checked": true,
+      "claimingThisSocket": [],
+      "withoutProvenance": [
+       "/s/default"
+      ]
+     },
+     "stateSelection": {
+      "path": "/s/scope",
+      "socketScope": "scope-1"
+     },
+     "store": {
+      "dbPath": "/s/scope/relay.sqlite3",
+      "storeId": "id-1"
+     }
+    }
+   },
+   "rootCandidate": {
+    "skipped": "no relay.sqlite3"
+   },
+   "selected": {
+    "command": [
+     "relay",
+     "--state",
+     "/s/other",
+     "doctor"
+    ],
+    "ok": true,
+    "payload": {
+     "stateDirectory": "/s/other"
+    }
+   },
+   "selectedVia": "flag"
+  },
+  "failed-selection": {
+   "discovery": {
+    "command": [
+     "relay",
+     "doctor"
+    ],
+    "ok": true,
+    "payload": {
+     "actorReachability": {
+      "socketConnect": "ok",
+      "stateDirectoryWritable": true
+     },
+     "contents": {
+      "available": true,
+      "relationships": 3
+     },
+     "ledger": {
+      "path": "/l"
+     },
+     "siblingStores": {
+      "ambiguous": false,
+      "checked": true,
+      "claimingThisSocket": [],
+      "withoutProvenance": [
+       "/s/default"
+      ]
+     },
+     "stateSelection": {
+      "path": "/s/scope",
+      "socketScope": "scope-1"
+     },
+     "store": {
+      "dbPath": "/s/scope/relay.sqlite3",
+      "storeId": "id-1"
+     }
+    }
+   },
+   "rootCandidate": {
+    "skipped": "no relay.sqlite3"
+   },
+   "selected": {
+    "command": [
+     "relay"
+    ],
+    "ok": false,
+    "unreadable": "boom"
+   },
+   "selectedVia": "flag"
+  }
+ }
+}

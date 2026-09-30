@@ -19,6 +19,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/scope"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/swapgate"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	expected "github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 func TestMain(m *testing.M) {
@@ -36,15 +37,7 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func same(t *testing.T, what string, got, want any) {
-	t.Helper()
-	if golden.Canon(got) != golden.Canon(want) {
-		t.Errorf("%s\n go: %s\n py: %s", what, golden.Canon(got), golden.Canon(want))
-	}
-}
-
-// The inputs the generator used, rebuilt from its answers' sources: every envelope and
-// presence is carried in the goldens by name.
+// The inputs the Python generator used, by name: every envelope and presence.
 func envelopes(t *testing.T) map[string]record.Object {
 	t.Helper()
 	out := map[string]record.Object{
@@ -105,66 +98,61 @@ func schemas() map[string]record.Object {
 	}
 }
 
-// Every cell swapgate.py fills, and the verdict it decides, is Go's answer too: the daemon cell
-// from the service reading, the in-flight cell from presence then openAttempts, the schema cell
-// over whole CREATE statements, and the verdict over every declared cell.
+// Every cell swapgate.py fills, and the verdict it decides, is the golden's (which began as
+// Python's answers): the daemon cell from the service reading, the in-flight cell from presence
+// then openAttempts, the schema cell over whole CREATE statements, and the verdict over every
+// declared cell.
 func TestCellsAndVerdictsArePythons(t *testing.T) {
-	gate := golden.Obj(golden.Section(t, "swapGate"))
+	same := func(key string, got any) { t.Helper(); expected.Check(t, key, []byte(golden.Canon(got))) }
 	envs := envelopes(t)
-	daemon := golden.Obj(record.Get(gate, "daemon"))
-	inflight := golden.Obj(record.Get(gate, "inflight"))
-	if len(daemon) != len(envs) {
-		t.Fatalf("the envelope table drifted: %d python, %d go", len(daemon), len(envs))
-	}
 	for name, envelope := range envs {
-		same(t, "daemon "+name, swapgate.DaemonCell(envelope), record.Get(daemon, name))
+		same("daemon "+name, swapgate.DaemonCell(envelope))
 		for presence, value := range presences {
-			want := golden.Obj(record.Get(golden.Obj(record.Get(inflight, name)), presence))
-			if _, raised := record.Lookup(want, "raises"); raised {
-				// Python raises out of inflight_cell here; Go answers, and never as a count.
-				got := swapgate.InflightCell(envelope, value)
+			got := swapgate.InflightCell(envelope, value)
+			same("inflight "+name+"/"+presence, got)
+			if name == "list-payload" && presence == "absent" {
+				// Python raised out of inflight_cell here; Go answers, and never as a count.
 				if record.Get(got, "readable") == true && record.Get(got, "answer") != swapgate.NoAttempts {
 					t.Errorf("inflight %s/%s: %s", name, presence, golden.Canon(got))
 				}
-				continue
 			}
-			same(t, "inflight "+name+"/"+presence, swapgate.InflightCell(envelope, value), want)
 		}
 	}
 	all := schemas()
-	schema := golden.Obj(record.Get(gate, "schema"))
-	for _, f := range schema {
-		storeName, candidateName, _ := strings.Cut(f.Key, "|")
-		same(t, "schema "+f.Key, swapgate.SchemaCell(all[storeName], all[candidateName]), f.Value)
+	for storeName, store := range all {
+		for candidateName, candidate := range all {
+			same("schema "+storeName+"|"+candidateName, swapgate.SchemaCell(store, candidate))
+		}
 	}
-	for _, raw := range golden.List(record.Get(gate, "normalised")) {
-		c := golden.Obj(raw)
-		got := swapgate.Normalised(record.Get(c, "input"))
+	inputs, err := reading.Decode(expected.Fixture(t, "normalised-inputs.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, input := range golden.List(inputs) {
+		got := swapgate.Normalised(input)
 		var value any
 		if got != nil {
 			value = *got
 		}
-		same(t, "normalised "+golden.Canon(record.Get(c, "input")), value, record.Get(c, "output"))
+		same("normalised "+golden.Canon(input), value)
 	}
-	decided := golden.List(record.Get(gate, "decide"))
-	if len(decided) != 80 {
-		t.Fatalf("%d verdicts", len(decided))
-	}
-	for _, raw := range decided {
-		c := golden.Obj(raw)
-		choice := golden.List(record.Get(c, "choice"))
-		cells := map[string]record.Object{}
-		if choice[0] != "missing" {
-			cells["daemon"] = swapgate.DaemonCell(envs[choice[0].(string)])
+	for _, daemon := range []string{"running", "stopped", "failed", "missing"} {
+		for _, inflight := range []string{"open-0", "open-2", "unavailable", "missing"} {
+			for _, schema := range []string{"same|same", "narrow|same", "unreadable|same", "absent|same", "missing"} {
+				cells := map[string]record.Object{}
+				if daemon != "missing" {
+					cells["daemon"] = swapgate.DaemonCell(envs[daemon])
+				}
+				if inflight != "missing" {
+					cells["inFlight"] = swapgate.InflightCell(envs[inflight], nil)
+				}
+				if schema != "missing" {
+					storeName, candidateName, _ := strings.Cut(schema, "|")
+					cells["storeSchema"] = swapgate.SchemaCell(all[storeName], all[candidateName])
+				}
+				same("decide "+golden.Canon([]any{daemon, inflight, schema}), swapgate.Decide(cells))
+			}
 		}
-		if choice[1] != "missing" {
-			cells["inFlight"] = swapgate.InflightCell(envs[choice[1].(string)], nil)
-		}
-		if choice[2] != "missing" {
-			storeName, candidateName, _ := strings.Cut(choice[2].(string), "|")
-			cells["storeSchema"] = swapgate.SchemaCell(all[storeName], all[candidateName])
-		}
-		same(t, "decide "+golden.Canon(choice), swapgate.Decide(cells), record.Get(c, "answer"))
 	}
 }
 

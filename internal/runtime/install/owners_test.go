@@ -5,10 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -205,19 +203,6 @@ func (h *host) goEraSettings(t *testing.T) string {
 	}
 	return readFile(t, filepath.Join(h.codex, install.SettingsName))
 }
-
-// hostPython is this host's python3, resolved, or "" when there is none.
-var hostPython = sync.OnceValue(func() string {
-	found, err := exec.LookPath("python3")
-	if err != nil {
-		return ""
-	}
-	resolved, err := filepath.EvalSymlinks(found)
-	if err != nil {
-		return ""
-	}
-	return resolved
-})
 
 // A promotion refuses a second owner on the reading it promotes on: a config.toml table that
 // starts the bridge from a path the pointer does not name, and settings owned by the plugin

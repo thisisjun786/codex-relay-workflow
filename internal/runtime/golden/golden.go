@@ -1,7 +1,7 @@
-// Package golden reads internal/runtime/testdata/goldens.json, the answers scripts/crw_runtime
-// gave (captured by internal/runtime/testdata/python_goldens.py until todo 44 removed the
-// Python runtime; the file is now frozen), for the runtime packages' tests. It is imported by
-// tests only.
+// Package golden holds what the runtime packages' tests share: the repository's paths, the
+// canonical JSON a test compares values by, and a helper process. It is imported by tests only.
+// (It once also read internal/runtime/testdata/goldens.json, the answers scripts/crw_runtime
+// gave; those expected values are now each test's goldens, internal/testsupport/golden.)
 package golden
 
 import (
@@ -13,13 +13,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"sync"
 	"testing"
 
 	"golang.org/x/sys/unix"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
-	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 )
 
@@ -32,34 +30,8 @@ func Dir() string {
 // Root is the repository root.
 func Root() string { return filepath.Join(Dir(), "..", "..", "..") }
 
-var load = sync.OnceValues(func() (record.Object, error) {
-	raw, err := os.ReadFile(filepath.Join(Dir(), "goldens.json"))
-	if err != nil {
-		return nil, err
-	}
-	value, err := reading.Decode(raw)
-	if err != nil {
-		return nil, err
-	}
-	return value.(record.Object), nil
-})
-
-// Section is one top-level section of the goldens.
-func Section(t testing.TB, name string) any {
-	t.Helper()
-	all, err := load()
-	if err != nil {
-		t.Fatalf("goldens: %v", err)
-	}
-	value, ok := record.Lookup(all, name)
-	if !ok {
-		t.Fatalf("goldens: no section %q", name)
-	}
-	return value
-}
-
-// Canon is a value's canonical JSON, for comparing a Go answer with a Python one whatever the
-// key order.
+// Canon is a value's canonical JSON, for comparing two values whatever their key order (and for
+// a golden holding one).
 func Canon(v any) string { return evidence.Dumps(v, true, true, false) }
 
 // Obj is v as an object.

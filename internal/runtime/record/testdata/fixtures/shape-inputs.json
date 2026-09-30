@@ -1,0 +1,51 @@
+{
+ "component-list": {
+  "components": {
+   "x": []
+  }
+ },
+ "components-null": {
+  "components": null
+ },
+ "fine": {
+  "components": {
+   "x": {
+    "installs": [
+     {}
+    ]
+   }
+  },
+  "pointer": {
+   "path": "/p"
+  },
+  "selected": null
+ },
+ "installs-null": {
+  "components": {
+   "x": {
+    "installs": null
+   }
+  }
+ },
+ "list": [],
+ "point-str": {
+  "components": {
+   "x": {
+    "measuredPoints": [
+     "p"
+    ]
+   }
+  }
+ },
+ "pointer-path-list": {
+  "pointer": {
+   "path": []
+  }
+ },
+ "pointer-str": {
+  "pointer": "p"
+ },
+ "selected-list": {
+  "selected": []
+ }
+}

@@ -13,6 +13,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/staging"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	expected "github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 func TestMain(m *testing.M) {
@@ -43,50 +44,45 @@ func claimOf(kind string) reading.Reading {
 }
 
 // staging.decide's whole table (5 claim readings x 3 livenesses x 3 listings x protected x
-// selected) decides the same in Go, reason for reason, except the retired RECORDED branch: a
-// populated directory without a claim is FOREIGN whatever the record selects.
+// selected) decides as the golden says, reason for reason. The golden began as Python's table,
+// except the retired RECORDED branch: a populated directory without a claim, which Python
+// recorded because the host record selected it, is FOREIGN whatever the record selects.
 func TestDecideIsPythonsTable(t *testing.T) {
-	rows := golden.List(golden.Section(t, "stagingDecisions"))
-	if len(rows) != 180 {
-		t.Fatalf("%d rows", len(rows))
-	}
-	for _, raw := range rows {
-		row := golden.Obj(raw)
-		var occupied *bool
-		if v, ok := record.Get(row, "occupied").(bool); ok {
-			occupied = &v
-		}
-		decision, reason := staging.Decide(claimOf(record.Text(row, "claim")), record.Text(row, "liveness"), occupied, record.Get(row, "protected") == true, record.Get(row, "selected") == true)
-		want, wantReason := record.Text(row, "decision"), record.Text(row, "reason")
-		if want == "RECORDED" {
-			if decision != staging.Foreign || staging.Removes(decision) {
-				t.Errorf("%s: the retired RECORDED case decided %s", golden.Canon(row), decision)
+	yes, no := true, false
+	for _, claim := range []string{"ABSENT", "UNREADABLE", "ACCESS_ERROR", "STAGING", "COMPLETE"} {
+		for _, liveness := range []string{staging.Live, staging.Dead, staging.Unknown} {
+			for _, occupied := range []*bool{nil, &yes, &no} {
+				for _, protected := range []bool{true, false} {
+					for _, selected := range []bool{true, false} {
+						decision, reason := staging.Decide(claimOf(claim), liveness, occupied, protected, selected)
+						listing := "null"
+						if occupied != nil {
+							listing = fmt.Sprint(*occupied)
+						}
+						key := fmt.Sprintf("claim=%s liveness=%s occupied=%s protected=%v selected=%v", claim, liveness, listing, protected, selected)
+						expected.Check(t, key, []byte(decision+": "+reason))
+						if claim == "ABSENT" && liveness == staging.Dead && occupied == &yes && selected && (decision != staging.Foreign || staging.Removes(decision)) {
+							t.Errorf("%s: the retired RECORDED case decided %s", key, decision)
+						}
+					}
+				}
 			}
-			continue
-		}
-		if decision != want || reason != wantReason {
-			t.Errorf("%s\n go: %s %s", golden.Canon(row), decision, reason)
 		}
 	}
 }
 
-// The claim's bytes are json.dumps(claim_payload(...), indent=2, sort_keys=True) plus a newline,
-// with the same key set.
+// The claim's bytes are json.dumps(claim_payload(...), indent=2, sort_keys=True) plus a newline
+// (the golden began as Python's), with the same key set.
 func TestClaimBytesArePythons(t *testing.T) {
-	want := golden.Obj(golden.Section(t, "claimPayload"))
-	// The retired Python installer's marker: the recorded bytes are its claim_payload's.
+	// The retired Python installer's marker: the golden bytes began as its claim_payload's.
 	payload := staging.Payload(staging.Staging, "runtime_install.py", "CRW-157", "42", 4242, "host", "2026-09-29T00:00:00Z")
-	if got := string(record.Encode(payload)); got != record.Get(want, "bytes") {
-		t.Fatalf("\n go: %q\n py: %q", got, record.Get(want, "bytes"))
-	}
+	expected.Check(t, "bytes", record.Encode(payload))
 	var keys []string
 	for _, f := range payload {
 		keys = append(keys, f.Key)
 	}
 	sort.Strings(keys)
-	if got, wanted := golden.Canon(keys), golden.Canon(record.Get(want, "keys")); got != wanted {
-		t.Fatalf("key sets differ: %s %s", got, wanted)
-	}
+	expected.Check(t, "keys", []byte(golden.Canon(keys)))
 }
 
 func write(t *testing.T, path, text string) {

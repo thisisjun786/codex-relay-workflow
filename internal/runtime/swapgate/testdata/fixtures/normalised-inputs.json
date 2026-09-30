@@ -1,0 +1,13 @@
+[
+ "CREATE TABLE a (x TEXT DEFAULT 'A  B')",
+ "CREATE   TABLE a\n\t(x TEXT)",
+ "  leading and trailing  ",
+ "CREATE TABLE \"a  b\" (x)",
+ "CREATE TABLE [a  b] (x)",
+ "CREATE TABLE `a  b` (x)",
+ "x\u00a0\u2003y",
+ "x\u001cy",
+ "unterminated 'quote  here",
+ "",
+ null
+]

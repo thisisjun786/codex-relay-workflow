@@ -1,0 +1,133 @@
+{
+ "deselect-and-restore": {
+  "deselect": {
+   "codex-session-relay": "/home/user/.local/share/crw-runtime/env-1-0be23c258476/lib/python3.13/site-packages/codex_session_relay",
+   "codex-thread-bridge": "/somewhere/else"
+  },
+  "restore_pointer": {
+   "found": {
+    "path": "/home/user/.local/share/crw-runtime/current"
+   },
+   "wrote": "/home/user/.local/share/crw-runtime/current"
+  }
+ },
+ "drop-environment": {
+  "drop_environment": "/home/user/.local/share/crw-runtime/env-1-4d296fa3657c"
+ },
+ "drop-pointer": {
+  "drop_pointer": "/home/user/.local/share/crw-runtime/current"
+ },
+ "drop-pointer-elsewhere": {
+  "drop_pointer": "/elsewhere/current"
+ },
+ "nothing": {},
+ "promote": {
+  "installs": [
+   [
+    "codex-session-relay",
+    {
+     "binaryDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "digestMatchesDefinition": true,
+     "entryPoint": "/home/user/.local/share/crw-runtime/bin-0.3.0-aaaaaaaaaaaa/bin/codex-session-relay",
+     "environment": "/home/user/.local/share/crw-runtime/bin-0.3.0-aaaaaaaaaaaa",
+     "integrity": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "location": "/home/user/.local/share/crw-runtime/bin-0.3.0-aaaaaaaaaaaa/bin",
+     "reachedVia": "crw install",
+     "source": {
+      "repositoryCommit": "1111111111111111111111111111111111111111",
+      "repositoryTree": "2222222222222222222222222222222222222222",
+      "subdirectoryTree": "2222222222222222222222222222222222222222",
+      "workingTreeClean": true
+     },
+     "target": "linux/amd64"
+    }
+   ],
+   [
+    "codex-thread-bridge",
+    {
+     "binaryDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "digestMatchesDefinition": true,
+     "entryPoint": "/home/user/.local/share/crw-runtime/bin-0.3.0-aaaaaaaaaaaa/bin/codex-thread-bridge",
+     "environment": "/home/user/.local/share/crw-runtime/bin-0.3.0-aaaaaaaaaaaa",
+     "integrity": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "location": "/home/user/.local/share/crw-runtime/bin-0.3.0-aaaaaaaaaaaa/bin",
+     "reachedVia": "crw install",
+     "source": {
+      "repositoryCommit": "1111111111111111111111111111111111111111",
+      "repositoryTree": "2222222222222222222222222222222222222222",
+      "subdirectoryTree": "2222222222222222222222222222222222222222",
+      "workingTreeClean": true
+     },
+     "target": "linux/amd64"
+    }
+   ]
+  ],
+  "pointer": {
+   "path": "/home/user/.local/share/crw-runtime/current",
+   "recordedAt": "2026-09-29T00:00:00Z",
+   "recordedBy": "CRW-157"
+  },
+  "points": [
+   [
+    "codex-session-relay",
+    {
+     "codexCli": "codex-cli 0.154.0",
+     "date": "2026-09-29T00:00:00Z",
+     "digestMatchesDefinition": true,
+     "exercised": true,
+     "host": "host",
+     "install": "/home/user/.local/share/crw-runtime/bin-0.3.0-aaaaaaaaaaaa/bin",
+     "installDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "measuredBy": "CRW-157",
+     "method": "crw doctor"
+    }
+   ]
+  ],
+  "select": {
+   "codex-session-relay": "/home/user/.local/share/crw-runtime/bin-0.3.0-aaaaaaaaaaaa/bin",
+   "codex-thread-bridge": "/home/user/.local/share/crw-runtime/bin-0.3.0-aaaaaaaaaaaa/bin"
+  }
+ },
+ "reinstall-same-location": {
+  "installs": [
+   [
+    "codex-session-relay",
+    {
+     "binaryDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "digestMatchesDefinition": true,
+     "entryPoint": "/home/user/.local/share/crw-runtime/bin-0.3.0-aaaaaaaaaaaa/bin/codex-session-relay",
+     "environment": "/home/user/.local/share/crw-runtime/bin-0.3.0-aaaaaaaaaaaa",
+     "integrity": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "location": "/home/user/.local/share/crw-runtime/bin-0.3.0-aaaaaaaaaaaa/bin",
+     "reachedVia": "again",
+     "source": {
+      "repositoryCommit": "1111111111111111111111111111111111111111",
+      "repositoryTree": "2222222222222222222222222222222222222222",
+      "subdirectoryTree": "2222222222222222222222222222222222222222",
+      "workingTreeClean": true
+     },
+     "target": "linux/amd64"
+    }
+   ],
+   [
+    "codex-session-relay",
+    {
+     "binaryDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "digestMatchesDefinition": true,
+     "entryPoint": "/home/user/.local/share/crw-runtime/bin-0.3.0-aaaaaaaaaaaa/bin/codex-session-relay",
+     "environment": "/home/user/.local/share/crw-runtime/bin-0.3.0-aaaaaaaaaaaa",
+     "integrity": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+     "location": "/home/user/.local/share/crw-runtime/bin-0.3.0-aaaaaaaaaaaa/bin",
+     "reachedVia": "third",
+     "source": {
+      "repositoryCommit": "1111111111111111111111111111111111111111",
+      "repositoryTree": "2222222222222222222222222222222222222222",
+      "subdirectoryTree": "2222222222222222222222222222222222222222",
+      "workingTreeClean": true
+     },
+     "target": "linux/amd64"
+    }
+   ]
+  ]
+ }
+}
