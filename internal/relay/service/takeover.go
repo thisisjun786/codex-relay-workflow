@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/inbox"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 	"golang.org/x/sys/unix"
@@ -43,12 +44,27 @@ func NewTakeover(ctx context.Context, selection store.StateSelection, socket, bu
 	if err != nil {
 		return nil, err
 	}
-	r, err := ownership.ReadRecord(physical.RealPath)
-	if err != nil {
+	var recorded *string // the store's own App Server socket
+	if r, err := ownership.ReadRecord(physical.RealPath); err == nil {
+		recorded = r.AppServerSocket
+	} else if stamp, e := absentMirrorStamp(ctx, physical.RealPath); e == nil {
+		// A stamp whose mirror is absent (the torn publication "initial stamp committed, mirror
+		// absent", cutover.md Record) names its socket in the stamp. The controller judges the
+		// state under its locks; only status and repair-mirror can succeed on it. A store with
+		// no socket has no scope: its controller takes no K.lock and serves only those two, and
+		// a --socket naming one disagrees with the stamp, as it does with any mirror.
+		if stamp.SocketPath == "" {
+			if socket != "" {
+				return nil, &ownership.Refused{Detail: "App Server socket disagrees"}
+			}
+			return &ownership.Controller{Path: physical.RealPath, Identity: ProcessIdentity(""), ValidateSchema: store.ValidateOwnershipSchema, ValidateInbox: inbox.Check}, nil
+		}
+		recorded = &stamp.SocketPath
+	} else {
 		return nil, err
 	}
-	if socket == "" && r.AppServerSocket != nil {
-		socket = *r.AppServerSocket
+	if socket == "" && recorded != nil {
+		socket = *recorded
 	}
 	canonical, err := store.CanonicalSocket(socket)
 	if err != nil {
@@ -63,7 +79,16 @@ func NewTakeover(ctx context.Context, selection store.StateSelection, socket, bu
 	}
 	// The existing authority, not a freshly created alternate scope, is used.
 	// A Python fence created in an isolated root must record that root's key.
-	return &ownership.Controller{Path: physical.RealPath, Socket: canonical, ScopeKey: s.Scope.Key(canonical), ScopeLock: s.Scope.path(canonical, ".lock"), Identity: ProcessIdentity(""), Runtime: &takeoverRuntime{s, build, options}, ValidateSchema: store.ValidateOwnershipSchema}, nil
+	return &ownership.Controller{Path: physical.RealPath, Socket: canonical, ScopeKey: s.Scope.Key(canonical), ScopeLock: s.Scope.path(canonical, ".lock"), Identity: ProcessIdentity(""), Runtime: &takeoverRuntime{s, build, options}, ValidateSchema: store.ValidateOwnershipSchema, ValidateInbox: inbox.Check, PrepareScope: s.Scope.Prepare}, nil
+}
+
+// absentMirrorStamp is the durable stamp of a store whose mirror is absent (ENOENT, not
+// unreadable), read without a lock.
+func absentMirrorStamp(ctx context.Context, path string) (ownership.Stamp, error) {
+	if _, err := os.Lstat(filepath.Join(filepath.Dir(path), "takeover.json")); !errors.Is(err, os.ErrNotExist) {
+		return ownership.Stamp{}, errors.Join(errors.New("the mirror is not absent"), err)
+	}
+	return ownership.SnapshotMeta(ctx, path)
 }
 
 type takeoverRuntime struct {

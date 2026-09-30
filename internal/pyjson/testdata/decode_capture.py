@@ -65,6 +65,10 @@ CASES = {
     "duplicate-then-extra": b'{"a": 1, "a": 2} x',
     "big-integer-then-duplicate": b'{"a": 1, "a": ' + b"2" * 4301 + b"}",
     "invalid-json": b"{not json",
+    "escape-ends-the-document": b'{"a": "\\u001f',
+    "escape-then-one-character": b'{"a": "\\u001fx',
+    "pair-ends-the-document": b'"\\ud800\\udc00',
+    "escape-before-the-close": b'{"a": "\\u001f"}',
     "extra": b"{} x",
 }
 

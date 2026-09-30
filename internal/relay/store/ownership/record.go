@@ -393,6 +393,30 @@ func committedTear(r Record, s Stamp) bool {
 	return r.RollbackAllowed && !s.RollbackAllowed && r.Owner == "go" && s.Owner == "go" && r.Epoch == s.Epoch && r.Phase == "active"
 }
 
+// InitialRecord is the mirror an initial stamp implies, derived only from the stamp and the
+// physical store (cutover.md Record, Torn publications): protocol 1, storeId, database,
+// appServerSocket and scopeKey from socket_path (both null without one), epoch 1, the stamped
+// owner, phase active, no transition, holder or controller, rollbackAllowed and
+// pythonCompatibilityBuild from the stamp, and relayRPCSocket S/control.sock. It is what an
+// absent-store initializer publishes after its COMMIT (Python Admission.initialize, Go
+// createAbsent), and what Controller.RepairMirror publishes when that publication was lost.
+func InitialRecord(path string, s Stamp) (Record, error) {
+	physical, err := Physical(path)
+	if err != nil {
+		return Record{}, err
+	}
+	record := Record{Protocol: Protocol, StoreID: s.StoreID, Database: physical, Epoch: 1, Owner: s.Owner, Phase: "active", RollbackAllowed: s.RollbackAllowed, PythonCompatibilityBuild: s.PythonCompatibilityBuild, RelayRPCSocket: filepath.Join(filepath.Dir(physical.RealPath), "control.sock")}
+	if s.SocketPath != "" {
+		key, err := ScopeKey(s.SocketPath)
+		if err != nil {
+			return Record{}, err
+		}
+		socket := s.SocketPath
+		record.AppServerSocket, record.ScopeKey = &socket, &key
+	}
+	return record, nil
+}
+
 // Publish implements write, fsync, close, rename, directory fsync. Fault is a
 // deterministic crash boundary seam; production callers leave it nil.
 func Publish(path string, r Record, fault func(string) error) (err error) {

@@ -9,7 +9,7 @@ These two class-A files are the Python tests of the final Python fence release (
 
 Each row names the Go test that holds the same property for the Go runtime where one exists. A row marked Python-only has no Go counterpart: the behaviour belongs to the Python fence release alone. Every case stays a Python test until todo 44 removes the Python execution path, and the Python writer it fences goes with it.
 
-Counts: test_fence.py 61 = 0 converted, 61 kept, 0 blocked. test_takeover_candidate.py 14 = 0 converted, 14 kept, 0 blocked.
+Counts: test_fence.py 62 = 0 converted, 62 kept, 0 blocked. test_takeover_candidate.py 14 = 0 converted, 14 kept, 0 blocked.
 
 ## test_fence.py (packages/codex-session-relay/tests)
 
@@ -53,6 +53,7 @@ Counts: test_fence.py 61 = 0 converted, 61 kept, 0 blocked. test_takeover_candid
 | test_inbox_version_must_be_the_integer_one | kept | inbox: inboxVersion 1.0 or true is an invalid entry and stays byte for byte. Go: internal/relay/inbox TestDrain_classifies_inbox_names_as_the_fence_does (invalid-entry byte cases). |
 | test_deterministic_ingress_rejects_are_usage_errors_without_io | kept | relative: under a go owner an over-long or non-UTF-8 event exits 4 usage and creates no takeover-inbox. Go: internal/relay/inbox TestQueue_deterministic_rejects_are_usage_errors_without_io. |
 | test_python_control_server_survives_every_per_connection_failure | kept | interleave: peer credentials failing, accept EMFILE, a null deadline and 200000-deep JSON; the one serving thread still answers the next Stop. Python-only: the Python GuardServer's thread; Go's handler rejections are internal/relay/hook Test33ControlRejectionBeforeDispatch. |
+| test_python_control_server_bounds_the_whole_request_line | kept | python-api, interleave: control.READ_TIMEOUT patched to 1 s; a request line trickled in parts, each within the bound and the whole line past it, is answered TimeoutError: timed out, and a line trickled within the bound is served. Go: internal/relay/service Test30ControlPeerFailuresAreAnsweredAsPythonAnswersThem (the trickled row). |
 | test_darwin_peer_credentials_read_local_peercred | kept | python-api: sys.platform and a fake connection patched to read the darwin xucred layout. Go reads the same layout in internal/relay/hook/peer_darwin.go; Test33PeerCredentials runs on the host platform. |
 | test_the_stop_client_authenticates_the_owner_with_its_platform_credentials | kept | relative, interleave: under a go owner the Python Stop client (stopadapter.invoke_guard) authenticates a thread-played owner on a real connection: darwin through a patched sys.platform and getsockopt answering the xucred layout, linux through the kernel's SO_PEERCRED (a forged ucred for the foreign uid). Our uid gets the owner's verdict; a foreign uid is store_owned_by_other with nothing sent. Go's client reads the same layouts in internal/relay/hook/peer_darwin.go and peer_linux.go; Test33PeerCredentials runs on the host platform. |
 | test_python_control_server_accepts_the_64_mib_frame | kept | python-api: a 20 MiB Stop fact through the Python GuardServer. Go: internal/relay/hook Test33LargeFactHookPython. |

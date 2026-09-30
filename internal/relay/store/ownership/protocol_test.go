@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/inbox"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
@@ -99,7 +100,7 @@ func Test30GroupWritableLocksKeepInodeAndMode(t *testing.T) {
 	}
 }
 func controller(path string) *ownership.Controller {
-	return &ownership.Controller{Path: path, ScopeLock: filepath.Join(filepath.Dir(path), "scope.lock"), Identity: ownership.Identity{BootID: "test-boot", PID: os.Getpid(), StartTicks: 1}, Runtime: modelRuntime{}, ValidateSchema: store.ValidateOwnershipSchema}
+	return &ownership.Controller{Path: path, ScopeLock: filepath.Join(filepath.Dir(path), "scope.lock"), Identity: ownership.Identity{BootID: "test-boot", PID: os.Getpid(), StartTicks: 1}, Runtime: modelRuntime{}, ValidateSchema: store.ValidateOwnershipSchema, ValidateInbox: inbox.Check}
 }
 func must(t *testing.T, err error) {
 	t.Helper()
@@ -360,7 +361,12 @@ func Test30BackupIncludesWALAndInventory(t *testing.T) {
 	defer writer.Close()
 	_, e = writer.Exec("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; INSERT INTO schema_meta VALUES('test:wal-only','present')")
 	must(t, e)
-	for name, value := range map[string]string{"takeover-inbox/ack.one": "queued", "receiver-ledger.json": "receiver", "transport-ledger.json": "transport"} {
+	// A queued entry is inventoried as the entry the candidate's drain will read, so it is a
+	// real one (Test30TransferInspectsTheInboxAsTheDrainReadsIt).
+	queued, e := inbox.Envelope("ack", []string{"--event", "event-1", "--ack-turn", "parent-turn", "--ack-proof", "proof-1"})
+	must(t, e)
+	must(t, inbox.Enqueue(filepath.Dir(c.Path), queued))
+	for name, value := range map[string]string{"receiver-ledger.json": "receiver", "transport-ledger.json": "transport"} {
 		path := filepath.Join(filepath.Dir(c.Path), name)
 		must(t, os.MkdirAll(filepath.Dir(path), 0700))
 		must(t, os.WriteFile(path, []byte(value), 0600))
@@ -385,6 +391,120 @@ func Test30BackupIncludesWALAndInventory(t *testing.T) {
 	if len(inventory.Files) != 3 || inventory.Tables["schema_meta"] < 7 {
 		t.Fatalf("inventory incomplete: %+v", inventory)
 	}
+}
+
+// Backlog line 40: Step 4 reads S/takeover-inbox as the candidate's drain will (inbox.readEntry
+// and validate over the names the decision-25 grammar admits), so what the transfer refuses and
+// what the drain fails closed on are the same set. A corrupt, symlinked or non-regular entry is
+// refused at Step 4, where the owner has not changed and the recovery is repair or abort
+// (cutover.md Step 4), never after Step 5 commits owner=go phase=starting, and so is a replay
+// lock the drain cannot open. Any other name outside the grammar and anything below a
+// subdirectory are nothing the drain reads, so they refuse nothing.
+func Test30TransferInspectsTheInboxAsTheDrainReadsIt(t *testing.T) {
+	valid, err := inbox.Envelope("ack", []string{"--event", "event-1", "--ack-turn", "parent-turn", "--ack-proof", "proof-1"})
+	must(t, err)
+	for _, tc := range []struct {
+		name    string
+		prepare func(t *testing.T, directory string) // an inbox that already holds valid
+		refused string                               // "" when the transfer proceeds
+	}{
+		{"a corrupt entry", func(t *testing.T, directory string) {
+			must(t, os.WriteFile(filepath.Join(directory, "ack.corrupt"), []byte("not json"), 0600))
+		}, "JSONDecodeError: Expecting value: line 1 column 1 (char 0)"},
+		{"a non-canonical entry", func(t *testing.T, directory string) {
+			must(t, os.WriteFile(filepath.Join(directory, "ack.event-2"), append(append([]byte{}, valid.Raw...), ' '), 0600))
+		}, "ValueError: invalid takeover inbox entry: ack.event-2"},
+		{"a symlinked entry", func(t *testing.T, directory string) {
+			must(t, os.Symlink(valid.ID, filepath.Join(directory, "ack.link")))
+		}, "ValueError: invalid takeover inbox entry: ack.link: symbolic link"},
+		{"a directory entry", func(t *testing.T, directory string) {
+			must(t, os.Mkdir(filepath.Join(directory, "ack.directory"), 0700))
+		}, "ValueError: invalid takeover inbox entry: ack.directory: not a regular file"},
+		// The drain opens its replay lock before any entry, without following a link and for
+		// writing: a lock it cannot open stops it as surely as a corrupt entry.
+		{"a symlinked replay lock", func(t *testing.T, directory string) {
+			must(t, removeIfPresent(filepath.Join(directory, inbox.ReplayLock)))
+			must(t, os.Symlink("elsewhere", filepath.Join(directory, inbox.ReplayLock)))
+		}, "OSError: [Errno 40] Too many levels of symbolic links: '"},
+		{"a replay lock that is a directory", func(t *testing.T, directory string) {
+			must(t, removeIfPresent(filepath.Join(directory, inbox.ReplayLock)))
+			must(t, os.Mkdir(filepath.Join(directory, inbox.ReplayLock), 0700))
+		}, "IsADirectoryError: [Errno 21] Is a directory: '"},
+		// The drain would apply and commit the entry, then fail to unlink it: after Step 5.
+		{"an inbox this user cannot write", func(t *testing.T, directory string) {
+			if os.Geteuid() == 0 {
+				t.Skip("root is refused no permission")
+			}
+			must(t, os.WriteFile(filepath.Join(directory, inbox.ReplayLock), nil, 0600))
+			must(t, os.Chmod(directory, 0500))
+			t.Cleanup(func() { _ = os.Chmod(directory, 0700) })
+		}, "PermissionError: [Errno 13] Permission denied: '"},
+		{"names the drain never reads", func(t *testing.T, directory string) {
+			must(t, os.Symlink("/nonexistent", filepath.Join(directory, "not an entry")))
+			must(t, os.Symlink(valid.ID, filepath.Join(directory, ".hidden")))
+			nested := filepath.Join(directory, "saved~")
+			must(t, os.Mkdir(nested, 0700))
+			must(t, os.Symlink("/nonexistent", filepath.Join(nested, "ack.event-1")))
+			must(t, unix.Mkfifo(filepath.Join(nested, "fifo"), 0600))
+		}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := seed(t)
+			state := filepath.Dir(c.Path)
+			must(t, c.Begin(t.Context(), "go"))
+			must(t, c.Drain(t.Context()))
+			must(t, inbox.Enqueue(state, valid))
+			directory := inbox.Directory(state)
+			tc.prepare(t, directory)
+			err := c.Transfer(t.Context())
+			if tc.refused == "" {
+				must(t, err)
+				status, e := c.Status(t.Context())
+				must(t, e)
+				raw, e := os.ReadFile(filepath.Join(state, "takeover-backups", status.TakeoverID, "inventory.json"))
+				must(t, e)
+				var inventory ownership.Inventory
+				must(t, json.Unmarshal(raw, &inventory))
+				var inboxFiles []string
+				for _, file := range inventory.Files {
+					if strings.HasPrefix(file.Path, "takeover-inbox/") {
+						inboxFiles = append(inboxFiles, file.Path)
+					}
+				}
+				if !reflect.DeepEqual(inboxFiles, []string{"takeover-inbox/" + valid.ID}) {
+					t.Fatalf("the inventory's inbox is not the drain's: %v", inboxFiles)
+				}
+				assertState(t, c, "go", "starting", 2)
+				return
+			}
+			var refusal *ownership.Refused
+			if !errors.As(err, &refusal) || !strings.Contains(refusal.Detail, tc.refused) {
+				t.Fatalf("transfer over %s: %v", tc.name, err)
+			}
+			// Refused before the ownership-transfer point: the owner has not changed.
+			assertState(t, c, "python", "draining", 1)
+			// Recovery is repair (cutover.md Step 4): without the entry, or the lock, that stops
+			// the drain, in an inbox this user may write, the transfer proceeds.
+			must(t, os.Chmod(directory, 0700))
+			entries, e := os.ReadDir(directory)
+			must(t, e)
+			for _, entry := range entries {
+				if entry.Name() != valid.ID && (entry.Name() != inbox.ReplayLock || !entry.Type().IsRegular()) {
+					must(t, os.RemoveAll(filepath.Join(directory, entry.Name())))
+				}
+			}
+			must(t, c.Transfer(t.Context()))
+			assertState(t, c, "go", "starting", 2)
+		})
+	}
+}
+
+// removeIfPresent removes path, which may already be absent.
+func removeIfPresent(path string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 func Test30DisagreementNeverRepairs(t *testing.T) {
 	for _, what := range []string{"owner", "epoch", "inode", "build", "transition", "missing-json", "missing-key", "missing-db", "rollback", "protocol", "missing-field", "missing-gate", "scope", "transition-path", "unsupported-db"} {

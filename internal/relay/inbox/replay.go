@@ -103,6 +103,75 @@ func Drain(ctx context.Context, st *store.Store, state string, apply Apply) erro
 	return nil
 }
 
+// Check reads S/takeover-inbox as Drain reads it and applies nothing: the replay lock opened as
+// the replay opens it, without taking it, then every name the replay reads, read (inbox.py
+// read_entry) and validated (_replay_entry's checks) as the replay does, and, from the first
+// entry the drain would apply, the inbox directory writable and searchable, as that entry's
+// unlink after its commit needs. Its error is the one the drain would stop with first, so the
+// takeover transfer refuses at Step 4, before ownership moves, on an inbox the candidate's
+// recovery could only fail closed on (cutover.md Step 4). A missing inbox is nothing to check.
+func Check(state string) error {
+	directory := Directory(state)
+	if _, err := os.Stat(directory); err != nil {
+		if errors.Is(err, os.ErrNotExist) || errors.Is(err, unix.ENOTDIR) || errors.Is(err, unix.ELOOP) {
+			return nil
+		}
+		return &Error{Detail: store.PythonOSError(err)}
+	}
+	if err := checkReplayLock(directory); err != nil {
+		return err
+	}
+	names, err := list(directory)
+	if err != nil {
+		return &Error{Detail: store.PythonOSError(err)}
+	}
+	retires := false
+	for _, name := range names {
+		path := filepath.Join(directory, name)
+		raw, _, ok, err := readEntry(path, name)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			continue // retired since the listing, as the replay skips it
+		}
+		if _, _, err = validate(name, raw); err != nil {
+			return err
+		}
+		if !retires {
+			// The drain commits the first valid entry, then unlinks it: in an inbox this user
+			// may not remove a name from, it stops there, past the commit, with the unlink's
+			// error for that entry.
+			if err = unix.Access(directory, unix.W_OK|unix.X_OK); err != nil {
+				return &Error{Detail: store.PythonOSError(&os.PathError{Op: "remove", Path: path, Err: err})}
+			}
+			retires = true
+		}
+	}
+	return nil
+}
+
+// checkReplayLock is lockReplay's open without its side effects: the lock file opened for
+// reading and writing without following a link, or, where there is none yet, the inbox
+// directory writable and searchable, as creating it needs. It fails as that open would (a
+// symbolic link, a directory, a file or directory this user may not write), with the drain's
+// wording, and it neither creates nor takes the lock.
+func checkReplayLock(directory string) error {
+	path := filepath.Join(directory, ReplayLock)
+	fd, err := unix.Open(path, unix.O_RDWR|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err == nil {
+		_ = unix.Close(fd)
+		return nil
+	}
+	if errors.Is(err, unix.ENOENT) {
+		err = unix.Access(directory, unix.W_OK|unix.X_OK)
+	}
+	if err != nil {
+		return &Error{Detail: store.PythonOSError(&os.PathError{Op: "open", Path: path, Err: err})}
+	}
+	return nil
+}
+
 // lockReplay opens (creating 0600, never following a link) and takes the replay lock EX within
 // the fence's bound.
 func lockReplay(ctx context.Context, path string) (*os.File, error) {

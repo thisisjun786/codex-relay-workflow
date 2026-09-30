@@ -9,16 +9,23 @@ import (
 	"io"
 	"net"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"golang.org/x/sys/unix"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 )
 
 // The control protocol is one JSON object per line with a 64 MiB transport bound.
 // A response is the complete legacy verdict, not the host's three fields.
 const maxControlBytes = 64 << 20
+
+// ControlAnswerGrace is how long before its deadline HandleControl stops waiting for the request
+// line, to answer a peer that never finished it: the owner's listener gives each connection
+// control.py's 5 s bound on the whole line (READ_TIMEOUT) plus this grace.
+const ControlAnswerGrace = 250 * time.Millisecond
 
 type responseError struct{ outcome, reading string }
 
@@ -91,6 +98,153 @@ func ControlAddress(path string) (string, func(), error) {
 		return "", nil, err
 	}
 	return fmt.Sprintf("/proc/self/fd/%d/%s", fd, filepath.Base(path)), func() { _ = unix.Close(fd) }, nil
+}
+
+// controlDepth is the container depth to which control.py's json.loads decodes a request in
+// the GuardServer's serving thread before the C scanner raises RecursionError (at 9997,
+// measured through GuardServer itself against CPython 3.13, the fence interpreter; a plain
+// thread's json.loads reaches two levels further). It is that thread's whole budget: a refusal
+// raised within four levels of it, or a NaN, Infinity or over-long integer at it, raises
+// RecursionError too (pyjson.ErrorWithBudget). The Go decoder has no bound of its own short
+// of the goroutine stack, and overflowing that is fatal to the whole owner, not to one request.
+const controlDepth = 9996
+
+// readRequest is control.py _answer's reading of the one request line: json.loads of the bytes
+// readline returned, which decodes them as json.loads decodes bytes (UTF-8, its byte order mark
+// skipped, or UTF-16 or UTF-32, a lone surrogate passed; pyjson.DecodeBytes) before it scans
+// them. A frame it cannot read as a JSON object is refused with the host detail control.py
+// answers for it, "<exception class>: <message>"; err is a transport failure only: the peer
+// went away or said nothing in time. A line cut short by end-of-file is read as it stands, as
+// readline returns it.
+func readRequest(r io.Reader) (request Object, refused string, err error) {
+	raw, err := bufio.NewReader(io.LimitReader(r, maxControlBytes+1)).ReadBytes('\n')
+	if len(raw) > maxControlBytes {
+		// Judged before the read error: the limit ends an oversized frame with io.EOF too.
+		return nil, "ValueError: guard request exceeds 64 MiB", nil
+	}
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, "", err
+	}
+	text, err := pyjson.DecodeBytes(raw)
+	if err != nil {
+		return nil, "UnicodeDecodeError: " + err.Error(), nil
+	}
+	if strings.HasPrefix(text, "\ufeff") {
+		// Only json.loads of a str refuses a leading U+FEFF as a byte order mark. From bytes,
+		// one mark was the codec's; a character U+FEFF left after it is no value.
+		return nil, "JSONDecodeError: Expecting value: line 1 column 1 (char 0)", nil
+	}
+	message, recursion := pyjson.ErrorWithBudget(text, controlDepth)
+	switch {
+	case recursion:
+		return nil, "RecursionError: " + message, nil
+	case strings.HasPrefix(message, "Exceeds the limit"):
+		// int() refuses the digits, not the JSON scanner: a ValueError, as Python raises it.
+		return nil, "ValueError: " + message, nil
+	case message != "":
+		return nil, "JSONDecodeError: " + message, nil
+	}
+	// The same bytes, each lone surrogate kept as the character Python's strings hold.
+	document, err := pyjson.DecodeBytesWTF8(raw)
+	if err != nil {
+		return nil, "UnicodeDecodeError: " + err.Error(), nil
+	}
+	value, err := decodeScanned([]byte(document))
+	if err != nil {
+		return nil, "ValueError: " + err.Error(), nil
+	}
+	request, ok := evidence.Object(value)
+	if !ok {
+		return nil, "TypeError: guard request must be an object", nil
+	}
+	return request, "", nil
+}
+
+// guardParams is control.py _answer's reading of a guard-evaluate request's params: the
+// request's own deadline, read as datetime.fromisoformat reads it (fromISOFormat) and
+// subtracted from the aware present, and the first check that fails as the host detail
+// control.py answers, in its order and words.
+func guardParams(request Object, now time.Time) (params, stop Object, deadline time.Time, refused string) {
+	value, present := evidence.Lookup(request, "params")
+	if !present {
+		return nil, nil, time.Time{}, "KeyError: 'params'"
+	}
+	params, ok := evidence.Object(value)
+	if !ok {
+		return nil, nil, time.Time{}, "TypeError: guard params must be an object"
+	}
+	if value, present = evidence.Lookup(params, "stopInput"); !present {
+		return nil, nil, time.Time{}, "KeyError: 'stopInput'"
+	}
+	if stop, ok = evidence.Object(value); !ok {
+		return nil, nil, time.Time{}, "TypeError: stop input must be an object"
+	}
+	spelled, ok := get(params, "deadline").(string)
+	if !ok {
+		return nil, nil, time.Time{}, "TypeError: guard deadline must be a string"
+	}
+	deadline, aware, err := fromISOFormat(strings.ReplaceAll(spelled, "Z", "+00:00"))
+	if err != nil {
+		return nil, nil, time.Time{}, "ValueError: " + err.Error()
+	}
+	if !aware {
+		return nil, nil, time.Time{}, "TypeError: can't subtract offset-naive and offset-aware datetimes"
+	}
+	if !deadline.After(now) {
+		return nil, nil, time.Time{}, "TimeoutError: guard request deadline expired"
+	}
+	// mode and now as well: only a string names either (null or "" asks for the default).
+	for _, key := range []string{"socketPath", "program", "mode", "now"} {
+		if value := get(params, key); value != nil {
+			if _, ok := value.(string); !ok {
+				return nil, nil, time.Time{}, "TypeError: guard " + key + " must be a string"
+			}
+		}
+	}
+	return params, stop, deadline, ""
+}
+
+// isOne is control.py's request.get("protocol") == 1 for a decoded JSON value: the integer 1,
+// a float equal to it, or true.
+func isOne(value any) bool {
+	switch v := value.(type) {
+	case int64:
+		return v == 1
+	case float64:
+		return v == 1
+	case bool:
+		return v
+	}
+	return false
+}
+
+// truthy is Python's bool() of a decoded JSON value: control.py reads noRecord so.
+func truthy(value any) bool {
+	switch v := value.(type) {
+	case nil:
+		return false
+	case bool:
+		return v
+	case int64:
+		return v != 0
+	case float64:
+		return v != 0 // NaN is true, as bool(float("nan")) is
+	case string:
+		return v != ""
+	case []any:
+		return len(v) > 0
+	}
+	if o, ok := evidence.Object(value); ok {
+		return len(o) > 0
+	}
+	return true // an integer past int64, never zero
+}
+
+// answerHost answers a request with the relay's host record, as control.py answers a request
+// it could not serve: the requester journals guard_host_error, never a refusal or silence.
+func answerHost(conn net.Conn, detail string) error {
+	_, err := io.WriteString(conn, evidence.Dumps(Object{{Key: "error", Value: "host"}, {Key: "detail", Value: detail}}, false, false, true)+"\n")
+	return err
 }
 
 // rejectControl is the protocol dispatcher's answer before any guard command runs.

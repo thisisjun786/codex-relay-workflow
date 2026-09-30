@@ -676,20 +676,11 @@ func publishAbsent(ctx context.Context, path string) error {
 	if err != nil {
 		return err
 	}
-	physical, err := ownership.Physical(path)
+	record, err := ownership.InitialRecord(path, stamp)
 	if err != nil {
 		return err
 	}
-	record := ownership.Record{Protocol: ownership.Protocol, StoreID: stamp.StoreID, Database: physical, Epoch: 1, Owner: "go", Phase: "active", RollbackAllowed: true, PythonCompatibilityBuild: ownership.PythonBuild, RelayRPCSocket: filepath.Join(filepath.Dir(physical.RealPath), "control.sock")}
-	if stamp.SocketPath != "" {
-		key, e := ownership.ScopeKey(stamp.SocketPath)
-		if e != nil {
-			return e
-		}
-		socketPath := stamp.SocketPath
-		record.AppServerSocket, record.ScopeKey = &socketPath, &key
-	}
-	return ownership.Publish(physical.RealPath, record, nil)
+	return ownership.Publish(record.Database.RealPath, record, nil)
 }
 
 func syncFile(path string) error {

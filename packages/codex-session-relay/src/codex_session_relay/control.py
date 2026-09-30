@@ -7,6 +7,7 @@ import selectors
 import socket
 import stat
 import threading
+import time
 import types
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,6 +17,34 @@ from .stopadapter import peer_uid  # the Stop client's own peer-credential reade
 
 # Decision 24: the socket frame's transport limit, the same for both runtimes.
 MAX_FRAME_BYTES = 64 << 20
+
+# The time a peer has to send its whole request line, from the moment it is served: a bound on
+# the line, not on each read, so a peer that trickles its line is answered when it is spent, as
+# the Go owner (hook.HandleControl) answers it.
+READ_TIMEOUT = 5
+
+
+def _read_request(connection, read_by):
+    """The request line as readline(MAX_FRAME_BYTES + 1) returns it, all of it by read_by.
+
+    Up to and including the first line end, or MAX_FRAME_BYTES + 1 bytes without one, or what
+    arrived before the peer closed its side; each read is given only the time that remains.
+    """
+    raw = bytearray()
+    while True:
+        remaining = read_by - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("timed out")
+        connection.settimeout(remaining)
+        chunk = connection.recv(min(65536, MAX_FRAME_BYTES + 1 - len(raw)))
+        if not chunk:
+            return bytes(raw)
+        end = chunk.find(b"\n")
+        if end >= 0:
+            return bytes(raw + chunk[:end + 1])
+        raw += chunk
+        if len(raw) > MAX_FRAME_BYTES:
+            return bytes(raw)
 
 
 def _names(requested, own) -> bool:
@@ -112,7 +141,7 @@ class GuardServer:
                     continue
                 with connection:
                     try:
-                        connection.settimeout(5)
+                        connection.settimeout(READ_TIMEOUT)
                         trusted = peer_uid(connection) == os.getuid()
                     except Exception:  # noqa: BLE001 - an unauthenticated peer is only closed
                         continue
@@ -154,8 +183,7 @@ class GuardServer:
         return resolve
 
     def _answer(self, connection):
-        with connection.makefile("rb") as stream:
-            raw = stream.readline(MAX_FRAME_BYTES + 1)
+        raw = _read_request(connection, time.monotonic() + READ_TIMEOUT)
         if len(raw) > MAX_FRAME_BYTES:
             raise ValueError("guard request exceeds 64 MiB")
         request = json.loads(raw)
@@ -182,6 +210,11 @@ class GuardServer:
             raise TypeError("guard socketPath must be a string")
         if program is not None and not isinstance(program, str):
             raise TypeError("guard program must be a string")
+        # mode and now reach the verdict and the observation it records as they are sent, so
+        # only a string names either; null, or an empty string, asks for the default.
+        for key in ("mode", "now"):
+            if params.get(key) is not None and not isinstance(params.get(key), str):
+                raise TypeError("guard " + key + " must be a string")
         root, db_path, refused = owner_paths(self.path.parent, params)
         if refused is not None:
             # Answered before anything is read or recorded, as a host error: the request asked

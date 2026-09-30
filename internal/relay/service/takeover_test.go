@@ -204,6 +204,372 @@ func Test30ControlDisconnectBeforeARequestIsNoFailure(t *testing.T) {
 		}
 	})
 }
+
+// PR #185 4128954449, the rule it cites (control.py GuardServer._serve): nothing a peer or the
+// kernel does ends or fails the owner. Every frame below is one the retained Python owner
+// answers with its host record, and the Go owner answers it with the same bytes: among them the
+// nesting edge of GuardServer's serving thread (9996 containers decode, 9997 raise, and a
+// refusal raised within four levels of the edge, or a NaN or over-long integer at it, raises
+// RecursionError on the way), a naive deadline, a mode or now that is not a string, and a peer
+// whose request line is not complete when control.py's 5 s read bound expires, whether it sent
+// nothing more or trickled the line in parts. A corpus of refusals and values at 9989 to 9997
+// open containers gets the same answers from both. Frames Python serves (one led by a UTF-8
+// byte order mark, a protocol of true or 1.0, a truthy noRecord that is not true) Go serves with
+// the same verdict. A peer that hangs up after a complete request is skipped, and a failed
+// accept is retried. Both owners still serve the next Stop afterwards, and none of it reaches
+// Go's Close, so a daemon segment whose work succeeded exits 0. (Every other reading of a frame
+// is TestControlReadsEveryFrameAsControlPyReadsIt, over control.py's _answer.)
+func Test30ControlPeerFailuresAreAnsweredAsPythonAnswersThem(t *testing.T) {
+	home, err := os.MkdirTemp("", "t30-peer-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	root := filepath.Join(home, "markers")
+	if err = os.Mkdir(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CODEX_SESSION_RELAY_MARKER_ROOT", root)
+	frame := func(params string) []byte {
+		return []byte(`{"protocol":1,"method":"guard-evaluate","params":` + params + "}\n")
+	}
+	params := func(deadline string, extra string) string {
+		return `{"markerRoot":` + strconv.Quote(root) + `,"stopInput":{},"mode":"observe","now":"2026-01-01T00:00:00Z","noRecord":true,"deadline":` + deadline + extra + `}`
+	}
+	later := strconv.Quote(time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano))
+	failures := []struct{ name, detail string }{
+		{"not json", "JSONDecodeError: Expecting value: line 1 column 1 (char 0)"},
+		{"nested past the scanner", "RecursionError: maximum recursion depth exceeded while decoding a JSON array from a unicode string"},
+		{"nested past a goroutine stack", "RecursionError: maximum recursion depth exceeded while decoding a JSON array from a unicode string"},
+		{"nested to the serving thread's edge", "TypeError: guard request must be an object"},
+		{"nested one past the serving thread's edge", "RecursionError: maximum recursion depth exceeded while decoding a JSON array from a unicode string"},
+		{"not an object", "TypeError: guard request must be an object"},
+		{"no params", "KeyError: 'params'"},
+		{"params not an object", "TypeError: guard params must be an object"},
+		{"no stop input", "KeyError: 'stopInput'"},
+		{"stop input not an object", "TypeError: stop input must be an object"},
+		{"null deadline", "TypeError: guard deadline must be a string"},
+		{"unparseable deadline", "ValueError: Invalid isoformat string: 'soon'"},
+		{"expired deadline", "TimeoutError: guard request deadline expired"},
+		{"naive deadline", "TypeError: can't subtract offset-naive and offset-aware datetimes"},
+		{"socketPath not a string", "TypeError: guard socketPath must be a string"},
+		{"program not a string", "TypeError: guard program must be a string"},
+		{"mode not a string", "TypeError: guard mode must be a string"},
+		{"now not a string", "TypeError: guard now must be a string"},
+		{"silent past the read timeout", "TimeoutError: timed out"},
+		{"trickled past the read timeout", "TimeoutError: timed out"},
+		{"a refusal at the edge", "RecursionError: maximum recursion depth exceeded while calling a Python object"},
+		{"a refusal one level inside the edge", "RecursionError: maximum recursion depth exceeded"},
+		{"a refusal two levels inside the edge", "RecursionError: maximum recursion depth exceeded"},
+		{"a refusal three levels inside the edge", "RecursionError: maximum recursion depth exceeded while calling a Python object"},
+		{"a refusal four levels inside the edge", "JSONDecodeError: Expecting ',' delimiter: line 1 column 9995 (char 9994)"},
+		{"a missing value at the edge", "RecursionError: maximum recursion depth exceeded while calling a Python object"},
+		{"a missing value one level inside the edge", "JSONDecodeError: Expecting value: line 1 column 9996 (char 9995)"},
+		{"NaN at the edge", "RecursionError: maximum recursion depth exceeded while calling a Python object"},
+		{"NaN one level inside the edge", "TypeError: guard request must be an object"},
+		{"an over-long integer at the edge", "RecursionError: maximum recursion depth exceeded while calling a Python object"},
+		{"an over-long integer one level inside the edge", "ValueError: Exceeds the limit (4300 digits) for integer string conversion: value has 4301 digits; use sys.set_int_max_str_digits() to increase the limit"},
+	}
+	nested := func(depth int, inner string, closed bool) []byte {
+		frame := strings.Repeat("[", depth) + inner
+		if closed {
+			frame += strings.Repeat("]", depth)
+		}
+		return []byte(frame + "\n")
+	}
+	frames := map[string][]byte{
+		"not json":                      []byte("not json\n"),
+		"nested past the scanner":       []byte(`{"params":` + strings.Repeat("[", 200000) + "\n"),
+		"nested past a goroutine stack": []byte(`{"params":` + strings.Repeat("[", 5000000) + "\n"),
+		// The edge is the serving thread's, measured through GuardServer: a CPython whose C
+		// stack budget or call depth differs fails here first.
+		"nested to the serving thread's edge":       []byte(strings.Repeat("[", 9996) + strings.Repeat("]", 9996) + "\n"),
+		"nested one past the serving thread's edge": []byte(strings.Repeat("[", 9997) + strings.Repeat("]", 9997) + "\n"),
+		"not an object":            []byte("[1]\n"),
+		"no params":                []byte(`{"protocol":1,"method":"guard-evaluate"}` + "\n"),
+		"params not an object":     frame("[]"),
+		"no stop input":            frame("{}"),
+		"stop input not an object": frame(`{"stopInput":[]}`),
+		"null deadline":            frame(params("null", "")),
+		"unparseable deadline":     frame(params(`"soon"`, "")),
+		"expired deadline":         frame(params(`"2020-01-01T00:00:00+00:00"`, "")),
+		"naive deadline":           frame(params(`"2999-01-01T00:00:00"`, "")),
+		// No line end: the owner waits for the rest of the line until its read timeout.
+		"silent past the read timeout": []byte(`{"protocol":1`),
+		"socketPath not a string":      frame(params(later, `,"socketPath":1`)),
+		"program not a string":         frame(params(later, `,"program":["crw"]`)),
+		// A later key replaces an earlier one in both owners, as in a Python dict.
+		"mode not a string": frame(params(later, `,"mode":5`)),
+		"now not a string":  frame(params(later, `,"now":0`)),
+		// The edge of the serving thread's budget: the calls that raise a refusal, or read a
+		// constant, draw on it too.
+		"a refusal at the edge":                          nested(9996, "1 2", false),
+		"a refusal one level inside the edge":            nested(9995, "1 2", false),
+		"a refusal two levels inside the edge":           nested(9994, "1 2", false),
+		"a refusal three levels inside the edge":         nested(9993, "1 2", false),
+		"a refusal four levels inside the edge":          nested(9992, "1 2", false),
+		"a missing value at the edge":                    nested(9996, "x", false),
+		"a missing value one level inside the edge":      nested(9995, "x", false),
+		"NaN at the edge":                                nested(9996, "NaN", true),
+		"NaN one level inside the edge":                  nested(9995, "NaN", true),
+		"an over-long integer at the edge":               nested(9996, strings.Repeat("1", 4301), true),
+		"an over-long integer one level inside the edge": nested(9995, strings.Repeat("1", 4301), true),
+	}
+	// Every kind of refusal and value the scanner meets, at 9989 to 9997 open containers; the
+	// frame's line end is whitespace after its last token.
+	edge := map[string][]byte{}
+	for depth := 9989; depth <= 9997; depth++ {
+		open, closed := strings.Repeat("[", depth-1), strings.Repeat("]", depth-1)
+		long := strings.Repeat("1", 4301)
+		for kind, request := range map[string]string{
+			"a missing value": open + "[x" + closed, "the end of the frame": open + "[",
+			"a comma": open + "[1 2" + closed, "NaN": open + "[NaN]" + closed, "Infinity": open + "[Infinity]" + closed,
+			"-Infinity": open + "[-Infinity]" + closed, "an over-long integer": open + "[" + long + "]" + closed,
+			"an over-long negative integer": open + "[-" + long + "]" + closed,
+			"a control character":           open + "[\"\x01\"]" + closed, "a bad escape": open + `["\q"]` + closed,
+			"a bad unicode escape": open + `["\uzzzz"]` + closed, "a colon": open + `{"a" 1}` + closed,
+			"a trailing comma in an array": open + "[1,]" + closed, "a trailing comma in an object": open + `{"a":1,}` + closed,
+			"a property name": open + "{1}" + closed, "an object value": open + `{"a":}` + closed,
+			"an object comma": open + `{"a":1 "b":2}` + closed, "a refusal after a close": open + "[[]x" + closed,
+			"a string": open + `["s"]` + closed, "a number": open + "[1.5e3]" + closed, "true": open + "[true]" + closed,
+			"an object": open + `{"a":1}` + closed, "an empty array": open + "[]" + closed, "extra data": open + "[]" + closed + "]x",
+		} {
+			edge[fmt.Sprintf("%s at %d", kind, depth)] = []byte(request + "\n")
+		}
+	}
+	ask := func(t *testing.T, path string, request []byte) []byte {
+		t.Helper()
+		conn, err := net.Dial("unix", path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Close()
+		if err = conn.SetDeadline(time.Now().Add(15 * time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = conn.Write(request); err != nil {
+			t.Fatal(err)
+		}
+		line, _ := bufio.NewReader(conn).ReadBytes('\n')
+		return line
+	}
+	hangUp := func(t *testing.T, path string, request []byte) {
+		t.Helper()
+		conn, err := net.Dial("unix", path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = conn.Write(request); err != nil {
+			t.Fatal(err)
+		}
+		if err = conn.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// trickle sends a request line in parts 3 s apart, each well inside a read's 5 s, the whole
+	// line past them: the bound is on the line, so the owner answers at 5 s.
+	trickle := func(t *testing.T, path string) []byte {
+		t.Helper()
+		conn, err := net.Dial("unix", path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Close()
+		if err = conn.SetDeadline(time.Now().Add(15 * time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		request := frame(params(later, ""))
+		go func() {
+			for i, part := range [][]byte{request[:10], request[10:20], request[20:]} {
+				if i > 0 {
+					time.Sleep(3 * time.Second)
+				}
+				if _, err := conn.Write(part); err != nil {
+					return // answered and closed before the line was complete
+				}
+			}
+		}()
+		line, _ := bufio.NewReader(conn).ReadBytes('\n')
+		return line
+	}
+	// Served, not refused: a frame led by a UTF-8 byte order mark (json.loads decodes bytes as
+	// utf-8-sig), a protocol control.py compares equal to 1, and a noRecord it reads as true,
+	// which downgrades hold to observe.
+	servedFrames := map[string][]byte{
+		"marked":         append([]byte("\xef\xbb\xbf"), frame(params(later, ""))...),
+		"protocol true":  []byte(`{"protocol":true,"method":"guard-evaluate","params":` + params(later, "") + "}\n"),
+		"protocol 1.0":   []byte(`{"protocol":1.0,"method":"guard-evaluate","params":` + params(later, "") + "}\n"),
+		"noRecord 1":     frame(params(later, `,"mode":"hold","noRecord":1`)),
+		"noRecord false": frame(params(later, `,"mode":"hold","noRecord":false`)),
+	}
+	// served asks every failing frame, the edge corpus and the served frames, then hangs up
+	// after a complete request, then asks a Stop the owner must still answer with a verdict.
+	served := func(t *testing.T, path string) map[string][]byte {
+		t.Helper()
+		answers := map[string][]byte{}
+		for _, failure := range failures {
+			if failure.name == "trickled past the read timeout" {
+				answers[failure.name] = trickle(t, path)
+				continue
+			}
+			answers[failure.name] = ask(t, path, frames[failure.name])
+		}
+		for name, request := range edge {
+			answers["edge "+name] = ask(t, path, request)
+		}
+		for name, request := range servedFrames {
+			answers[name] = ask(t, path, request)
+			var verdict map[string]any
+			if err := json.Unmarshal(answers[name], &verdict); err != nil || verdict["decision"] != "release" {
+				t.Errorf("the owner did not serve %s: %q %v", name, answers[name], err)
+			}
+		}
+		var verdict map[string]any
+		if json.Unmarshal(answers["noRecord 1"], &verdict) != nil || verdict["modeDowngraded"] != "hold_requires_a_recorded_observation" {
+			t.Errorf("a noRecord of 1 did not ask for no record: %q", answers["noRecord 1"])
+		}
+		hangUp(t, path, frame(params(later, "")))
+		verdict = nil
+		if err := json.Unmarshal(ask(t, path, frame(params(later, ""))), &verdict); err != nil || verdict["decision"] != "release" {
+			t.Errorf("the owner no longer serves a Stop after its failed peers: %v %v", verdict, err)
+		}
+		return answers
+	}
+	python := func(t *testing.T) map[string][]byte {
+		t.Helper()
+		state := filepath.Join(home, "python")
+		if err := os.Mkdir(state, 0700); err != nil {
+			t.Fatal(err)
+		}
+		owner := exec.Command(filepath.Join(testRoot, ".venv/bin/python"), "-c", `import sys
+from codex_session_relay.control import GuardServer
+server = GuardServer(sys.argv[1])
+print("bound", flush=True)
+sys.stdin.read()
+server.close()`, state)
+		stdin, err := owner.StdinPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		stdout, err := owner.StdoutPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var stderr bytes.Buffer
+		owner.Stderr = &stderr
+		if err = owner.Start(); err != nil {
+			t.Fatal(err)
+		}
+		if line, err := bufio.NewReader(stdout).ReadString('\n'); err != nil || line != "bound\n" {
+			_ = owner.Process.Kill()
+			_ = owner.Wait()
+			t.Fatalf("the Python owner never bound control.sock: %q %v %s", line, err, stderr.String())
+		}
+		answers := served(t, ControlPath(state))
+		_ = stdin.Close()
+		if err = owner.Wait(); err != nil {
+			t.Fatalf("the Python owner: %v %s", err, stderr.String())
+		}
+		return answers
+	}(t)
+	t.Run("listener", func(t *testing.T) {
+		state := filepath.Join(home, "go")
+		if err := os.Mkdir(state, 0700); err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
+		defer cancel()
+		server, err := ListenControl(ctx, state)
+		if err != nil {
+			t.Fatal(err)
+		}
+		answers := served(t, ControlPath(state))
+		for _, failure := range failures {
+			want := `{"error": "host", "detail": "` + failure.detail + `"}` + "\n"
+			if string(python[failure.name]) != want {
+				t.Errorf("%s: the Python owner answered %q, not %q", failure.name, python[failure.name], want)
+			}
+			if string(answers[failure.name]) != string(python[failure.name]) {
+				t.Errorf("%s: the Go owner answered %q where the Python owner answered %q", failure.name, answers[failure.name], python[failure.name])
+			}
+		}
+		for name := range edge {
+			if string(answers["edge "+name]) != string(python["edge "+name]) {
+				t.Errorf("%s: the Go owner answered %q where the Python owner answered %q", name, answers["edge "+name], python["edge "+name])
+			}
+		}
+		// The same verdict; each owner spaces its verdict line as its own serializer does.
+		for name := range servedFrames {
+			var goVerdict, pythonVerdict any
+			if json.Unmarshal(answers[name], &goVerdict) != nil || json.Unmarshal(python[name], &pythonVerdict) != nil || !reflect.DeepEqual(goVerdict, pythonVerdict) {
+				t.Errorf("%s: the Go owner answered %q where the Python owner answered %q", name, answers[name], python[name])
+			}
+		}
+		if err = server.Close(); err != nil {
+			t.Fatalf("a failed peer failed the listener: %v", err)
+		}
+	})
+	t.Run("accept", func(t *testing.T) {
+		// control.py backs off 50 ms after EMFILE, ENFILE, ENOBUFS or ENOMEM and accepts again.
+		state := filepath.Join(home, "accept")
+		if err := os.Mkdir(state, 0700); err != nil {
+			t.Fatal(err)
+		}
+		var refused []error
+		accept := acceptControl
+		acceptControl = func(listener *net.UnixListener) (net.Conn, error) {
+			if len(refused) < 2 {
+				e := &net.OpError{Op: "accept", Net: "unix", Err: os.NewSyscallError("accept4", []unix.Errno{unix.EMFILE, unix.ENOBUFS}[len(refused)])}
+				refused = append(refused, e)
+				return nil, e
+			}
+			return accept(listener)
+		}
+		defer func() { acceptControl = accept }()
+		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+		defer cancel()
+		server, err := ListenControl(ctx, state)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var verdict map[string]any
+		if err := json.Unmarshal(ask(t, ControlPath(state), frame(params(later, ""))), &verdict); err != nil || verdict["decision"] != "release" || len(refused) != 2 {
+			t.Errorf("the owner stopped accepting after %v: %v %v", refused, verdict, err)
+		}
+		if err = server.Close(); err != nil {
+			t.Fatalf("a refused accept failed the listener: %v", err)
+		}
+	})
+	t.Run("daemon", func(t *testing.T) {
+		daemon := exec.Command(testBinary, "relay", "--state", home+"/state", "--socket", home+"/socket", "daemon", "--deadline", "2", "--allow-isolated-scope")
+		daemon.Env = environment(home)
+		var stdout, stderr bytes.Buffer
+		daemon.Stdout, daemon.Stderr = &stdout, &stderr
+		if err := daemon.Start(); err != nil {
+			t.Fatal(err)
+		}
+		path := ControlPath(home + "/state")
+		for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+			if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSocket != 0 {
+				break
+			}
+			if time.Now().After(deadline) {
+				_ = daemon.Process.Kill()
+				_ = daemon.Wait()
+				t.Fatalf("the daemon never bound control.sock: %s %s", stdout.String(), stderr.String())
+			}
+		}
+		if answer := ask(t, path, frames["params not an object"]); string(answer) != string(python["params not an object"]) {
+			t.Errorf("the daemon answered %q where the Python owner answered %q", answer, python["params not an object"])
+		}
+		hangUp(t, path, frame(params(later, "")))
+		err := daemon.Wait()
+		var result map[string]any
+		if err != nil || json.Unmarshal(stdout.Bytes(), &result) != nil || result["ok"] != true {
+			t.Fatalf("daemon after failed peers: %v\n%s%s", err, stdout.String(), stderr.String())
+		}
+	})
+}
 func takeoverCLI(t *testing.T, home string, args ...string) (map[string]any, int) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 35*time.Second)

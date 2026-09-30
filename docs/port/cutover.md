@@ -174,7 +174,18 @@ committed, mirror absent** - all six keys present, `takeover_id` empty, `owner_e
 and `S/takeover.json` absent (ENOENT only; a malformed mirror still refuses as malformed).
 Every writer refuses it (non-queueable) and `doctor --json` reports its ownership `detail` as
 `takeover record missing`. No opener or writer repairs it. Recovery is an explicit controller
-action under the full lock order that publishes the mirror derived only from `schema_meta`:
+action, `crw relay takeover repair-mirror` (`takeover status` reports the state from the stamp,
+with `jsonStale` true), under the full lock order (`takeover.lock`, `daemon.lock`, the scope's
+`K.lock` when `socket_path` names one, `write-gate.lock` EX). It refuses every other state,
+unchanged, and `takeover status` answers a store whose mirror is absent but whose stamp is not
+that state with the same refusal (a stamp past epoch 1 or naming a takeover). A `--socket`
+other than the stamp's `socket_path` is refused by both, `App Server socket disagrees`, as it
+is against any mirror, including where the stamp names none. A store without `socket_path` has
+no scope and so no takeover: the controller serves it only in this torn state, and once its
+mirror is published every takeover action refuses it, `takeover status` included, with
+`takeover requires an existing App Server scope`, as it refuses any socketless store
+(`repair-mirror` itself answers with the repaired status, and `doctor --json` reports the store).
+The recovery publishes the mirror derived only from `schema_meta`:
 protocol 1, `storeId`, `database` from the physical store, `appServerSocket`/`scopeKey` from
 `socket_path` (both null when absent), epoch 1, the stamped owner, `phase=active`, null
 `transition`/`holder`/`controller`, `rollbackAllowed` and `pythonCompatibilityBuild` from the
@@ -298,12 +309,13 @@ do not cut over. Python stays in control. Writing `owner=go` would not repair th
 precondition, and a Go opener cannot infer it from the database. If step 4 stops between the
 `schema_meta` COMMIT and the `takeover.json` publication, the store is in the torn state
 **initial stamp committed, mirror absent** (Record): writers refuse, step 5's `doctor --json`
-fails loudly with `takeover record missing`, and only the explicit mirror recovery completes
-the publication. If a first opener dies after placing the gate and before creating `D`,
-`S` holds only `write-gate.lock` (and possibly a stray `S/.write-gate-*`): every writable
-opener refuses it non-queueably with `partial store: write-gate.lock without a database`
-(Go words it `ownership refused: existing database required: lstat <D>: no such file or
-directory`, reason `store_owned_by_other`, exit 2, after finding the gate unheld).
+fails loudly with `takeover record missing`, and only the explicit mirror recovery,
+`crw relay takeover repair-mirror`, completes the publication. If a first opener dies after
+placing the gate and before creating `D`, `S` holds only `write-gate.lock` (and possibly a
+stray `S/.write-gate-*`): every writable opener refuses it non-queueably with
+`partial store: write-gate.lock without a database` (Go words it `ownership refused: existing
+database required: lstat <D>: no such file or directory`, reason `store_owned_by_other`, exit 2,
+after finding the gate unheld).
 Recovery is an operator action, the only removal of a lock file this protocol allows:
 confirm that `D` and `S/takeover.json` are absent and that no process has the gate open
 (`fuser S/write-gate.lock` or `lsof` lists none), then remove `S/write-gate.lock` and any
@@ -376,6 +388,18 @@ While holding the barrier: revalidate the physical database and WAL identity aga
 integrity_check`, create a consistent backup through the SQLite backup API into
 `S/takeover-backups/<transition-id>/`, fsync the backup and its directory, and record the
 receipt/ACK, attempt, inbox, receiver-ledger and transport-ledger inventory in the manifest.
+The takeover inbox is read here as the candidate's drain will read it: first its replay lock
+`S/takeover-inbox/.replay.lock`, opened for writing without following a link (or, where there
+is none, the directory writable, as creating it needs), neither created nor taken; then the
+names the entry grammar admits directly in `S/takeover-inbox`, each opened without following a
+link and validated as the replay validates it, and, once there is an entry to apply, the
+directory writable and searchable, as that entry's unlink after its commit needs. A lock the
+drain could not open (a symbolic link, a directory, a file or inbox this user may not write), an
+entry it would fail closed on (a symbolic link, a non-regular file, bytes that are no valid
+entry), or an inbox it could not retire its first entry from (the drain would commit that entry
+and then fail its unlink) refuses the transfer with the drain's own error, while the owner has
+not changed. Any other name, and anything below a subdirectory, is no entry, is not inventoried
+and refuses nothing.
 
 Never copy only the main DB file, never require WAL truncation as a precondition, never delete
 WAL or SHM to make the store look clean.
@@ -496,7 +520,36 @@ classifies them. The legacy `guard-evaluate` CLI answers the first three with ex
 `{"error":"host","detail":...}`. The Python control server accepts frames up to decision 24's
 64 MiB, answers a request it could not evaluate with `{"error":"host","detail":...}` and keeps
 serving, closes an unauthenticated peer unanswered, and applies the CLI's selection refusals
-to an unpinned request using its `socketPath` and `program` (decision 24).
+to an unpinned request using its `socketPath` and `program` (decision 24). The Go owner's server
+(`service.ListenControl`, `hook.HandleControl`) reads a request as `control.py` reads it and
+answers failures the same way. The line is `json.loads` of its bytes: decoded as `json.loads`
+decodes bytes (UTF-8 with or without its byte order mark, UTF-16 or UTF-32 by their marks or
+NUL bytes, a lone surrogate passed and kept), then scanned to the nesting the C scanner reaches
+in `GuardServer`'s serving thread (9996 containers under CPython 3.13; the 9997th raises
+`RecursionError`). That depth is the thread's whole recursion budget, and the calls the scanner
+makes to raise a refusal or to convert a constant draw on it too: a `JSONDecodeError` other than
+`Expecting value` raised at 9993 to 9996 open containers, and an `Expecting value`, an
+over-long integer or a `NaN`, `Infinity` or `-Infinity` at 9996, raise `RecursionError`
+instead, with the message CPython gives there, and both owners answer them alike
+(`pyjson.ErrorWithBudget`, measured through `GuardServer`). The request is served when its
+`protocol` equals 1 as Python compares it (`1`, `1.0` or `true`) and its `method` is
+`guard-evaluate`; `noRecord` is read by its truth value. The deadline is `datetime.fromisoformat`
+of it as CPython 3.13 parses it (after `Z` becomes `+00:00`), subtracted from the aware present.
+A frame whose bytes do not decode, that is not a JSON object, nests too deep, lacks `params` or
+`stopInput`, carries a deadline that is not a string, does not parse, has no offset or has
+passed, or a `socketPath`, `program`, `mode` or `now` that is present, not null and not a
+string, is answered by both owners with the same host detail, `control.py`'s `<exception
+class>: <message>` (`TypeError: guard params must be an object`, `TypeError: can't subtract
+offset-naive and offset-aware datetimes`, `TimeoutError: guard request deadline expired`,
+`TypeError: guard mode must be a string`). A `mode` or `now` that is null or empty asks for the
+default; neither reaches the verdict or the observation it records unless it is a string. A peer
+has 5 s from being served to send its whole request line: the bound is on the line, each read
+given only the time that remains, so a peer that has not finished the line by then, whether it
+sent nothing more or trickled it in parts, is answered `TimeoutError: timed out` by both owners.
+Nothing a peer does ends or fails either owner (PR #185 4128954449): a peer that goes away before
+its answer is skipped, an accept the kernel refuses for want of descriptors, buffers or memory is
+retried after 50 ms, and neither reaches the daemon's exit status. The Go owner serves each
+connection concurrently; the Python owner serves one at a time.
 
 Every client sends those two selection inputs: the Go hook client (`RequestGuard`), the Stop
 adapter's pinned route (`socketPath` from its settings, `program` its `relayExecutable`) and
@@ -867,7 +920,9 @@ The applying owner's transaction reads `schema_meta['inbox:<operation-id>']`:
 Retained, never terminal: an ownership/admission refusal raised by the handler after
 the entry's transaction opened (Python `OwnershipRefused` from transaction
 revalidation, including an unreadable `takeover.json`; Go `ownership.Refused` from
-`Admission.Revalidate`), and a receipt refusal caused by a host that could not confirm
+`Admission.Revalidate`; in both, every transaction the handler opens revalidates before it
+joins the entry's, so an ownership change during one handler is retained with that entry),
+and a receipt refusal caused by a host that could not confirm
 the turn (`HostUnavailable`). The owner rolls back the handler writes, writes no
 marker, keeps the entry and goes on to the next entry, so a retained entry never
 blocks unrelated writers or daemon recovery. Any other host/storage exception rolls the

@@ -666,7 +666,16 @@ store without the socket-specific refusals (thread 4127894191). The owner decide
 where it evaluates: only under its own marker root and its own `S/relay.sqlite3`; a
 request naming another `markerRoot` or `dbPath` is a host error answered before any
 read or write, worded alike by both owners (thread 4127894432; cutover.md "When the
-other runtime owns the record"). Tests: `Test33RoutedSelectionRefusals`,
+other runtime owns the record"). The fence and the Go owner also read the request alike (the
+backlog before todo 42): a `mode` or `now` that is neither null nor a string is refused like a
+`socketPath` or `program` that is not a string (`TypeError: guard mode must be a string`), so no
+other value reaches a verdict or the observation it records; `protocol` is compared with 1 as
+Python compares it and `noRecord` read by its truth value; the 5 s read bound is on the whole
+request line, not on each read, so a peer that trickles its line is answered `TimeoutError: timed
+out` by both; and the scanner's recursion budget covers the calls that raise a refusal near its
+edge (`Test30ControlPeerFailuresAreAnsweredAsPythonAnswersThem`,
+`TestControlReadsEveryFrameAsControlPyReadsIt`, test_fence.py's
+`test_python_control_server_bounds_the_whole_request_line`). Tests: `Test33RoutedSelectionRefusals`,
 `Test33OwnerEvaluatesOnlyItsOwnLocations`, and test_fence.py's
 `test_a_routed_stop_is_refused_by_the_owner_as_the_owners_fallback_refuses_it` and
 `test_the_owner_writes_only_under_its_own_marker_root_and_reads_only_its_own_store`.
@@ -1235,7 +1244,16 @@ with the pinned Python compatibility build, under the exclusive gate: a host wit
 no Python interpreter still needs a store (IS-1). The database is built and
 stamped under a temporary name and linked into place, so it never exists
 without its ownership keys. Anything partial is refused, never repaired, and an
-existing unfenced store is initialized only by the Python fence (Step 0).
+existing unfenced store is initialized only by the Python fence (Step 0). That rule binds
+openers and writers. The one torn publication the protocol recovers, "initial stamp committed,
+mirror absent", is recovered by an explicit controller action, `crw relay takeover
+repair-mirror` (cutover.md Record). Under the full lock order it publishes the mirror
+`InitialRecord` derives from `schema_meta` and writes no key. It refuses every other state,
+including a directory holding only `write-gate.lock`. `takeover status` reports that state
+from the stamp, with `jsonStale` true, rather than failing on the missing mirror, and answers an
+absent mirror whose stamp is not that state with the repair's refusal. Both refuse a `--socket`
+the stamp does not name. A store without a socket has no takeover once repaired: every takeover
+action then refuses it as it refuses any socketless store.
 Before refusing an existing `D` that has no `write-gate.lock`, a Go writable open reads
 its `schema_meta` from a disposable copy, as the fence's `Store()` reads it before
 deciding what the store is: a `D` that cannot be read, or is not a database, fails

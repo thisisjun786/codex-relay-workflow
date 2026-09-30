@@ -1,12 +1,9 @@
 package service
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -25,6 +22,9 @@ type Control struct {
 	done     chan error
 	path     string
 }
+
+// acceptControl is the listener's accept; a test replaces it to inject the kernel's refusals.
+var acceptControl = (*net.UnixListener).Accept
 
 func ListenControl(ctx context.Context, state string) (*Control, error) {
 	info, err := os.Stat(state)
@@ -66,52 +66,63 @@ func ListenControl(ctx context.Context, state string) (*Control, error) {
 	control := &Control{listener, cancel, make(chan error, 1), path}
 	go func() {
 		var wg sync.WaitGroup
-		var handlerErr error
-		var mu sync.Mutex
-		remember := func(e error) {
-			if e != nil {
-				mu.Lock()
-				handlerErr = errors.Join(handlerErr, e)
-				mu.Unlock()
-			}
-		}
 		var acceptErr error
 		for {
-			conn, e := listener.Accept()
+			conn, e := acceptControl(listener)
 			if e != nil {
-				if !errors.Is(e, net.ErrClosed) {
-					acceptErr = e
+				if errors.Is(e, net.ErrClosed) {
+					break
 				}
+				if acceptRetried(e) {
+					// control.py: back off briefly, then accept again.
+					time.Sleep(50 * time.Millisecond)
+					continue
+				}
+				acceptErr = e
 				break
 			}
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
 				defer conn.Close()
-				defer func() {
-					if p := recover(); p != nil {
-						remember(fmt.Errorf("control handler panic: %v", p))
-					}
-				}()
-				requestCtx, stop := context.WithTimeout(serveCtx, 5*time.Second)
+				// Nothing a peer does ends or fails the owner (control.py GuardServer._serve,
+				// PR #185 4128954449). The handler answers every request it cannot serve with
+				// the host record, which the requester journals; what it still returns is a peer
+				// that went away or ran out of time before its answer, whose own adapter journals
+				// that. Neither is this listener's failure, so neither reaches Close.
+				defer func() { _ = recover() }()
+				// control.py gives the whole request line 5 s from the moment it serves the peer
+				// (READ_TIMEOUT) and answers its expiry; the handler keeps ControlAnswerGrace past
+				// it to write that answer.
+				requestCtx, stop := context.WithTimeout(serveCtx, 5*time.Second+hook.ControlAnswerGrace)
 				defer stop()
 				// The request deadline bounds malformed/idle clients too.
 				deadline, _ := requestCtx.Deadline()
-				if e := conn.SetDeadline(deadline); e != nil {
-					remember(e)
+				if conn.SetDeadline(deadline) != nil {
 					return
 				}
 				finished := context.AfterFunc(requestCtx, func() { _ = conn.Close() })
 				defer finished()
-				if e := dispatchControl(requestCtx, conn, state); e != nil && !errors.Is(e, net.ErrClosed) && !errors.Is(e, context.Canceled) {
-					remember(e)
-				}
+				_ = dispatchControl(requestCtx, conn, state)
 			}()
 		}
 		wg.Wait()
-		control.done <- errors.Join(acceptErr, handlerErr)
+		control.done <- acceptErr
 	}()
 	return control, nil
+}
+
+// acceptRetried is whether a failed accept refused one connection rather than the listener:
+// the kernel out of descriptors, buffers or memory, or a connection aborted before it was
+// accepted. control.py backs off 50 ms and accepts again; any other error ends the listener
+// and Close reports it.
+func acceptRetried(err error) bool {
+	for _, errno := range []syscall.Errno{syscall.EMFILE, syscall.ENFILE, syscall.ENOBUFS, syscall.ENOMEM, syscall.ECONNABORTED, syscall.EPROTO, syscall.EINTR, syscall.EAGAIN} {
+		if errors.Is(err, errno) {
+			return true
+		}
+	}
+	return false
 }
 func (c *Control) Close() error {
 	c.cancel()
@@ -122,28 +133,9 @@ func (c *Control) Close() error {
 	return errors.Join(err, <-c.done)
 }
 
-type framedConn struct {
-	net.Conn
-	reader io.Reader
-}
-
-func (c *framedConn) Read(p []byte) (int, error) { return c.reader.Read(p) }
+// control.sock serves guard-evaluate only, as Python's GuardServer does. Decision-25 ingress
+// is the queued command's own file publication, never a socket method. Delegate exactly to
+// todo 33, including shared state-selection refusals; the handler reads the one request line.
 func dispatchControl(ctx context.Context, conn net.Conn, state string) error {
-	raw, err := bufio.NewReader(io.LimitReader(conn, (64<<20)+1)).ReadBytes('\n')
-	// Judged before the read error: the limit ends an oversized frame with io.EOF too.
-	if len(raw) > 64<<20 {
-		return fmt.Errorf("control frame too large")
-	}
-	if errors.Is(err, io.EOF) || errors.Is(err, syscall.ECONNRESET) {
-		// The client went away before it finished a request line (a probe, or a hook that
-		// gave up): it asked nothing, so nothing failed. Python's GuardServer only closes it.
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	// control.sock serves guard-evaluate only, as Python's GuardServer does. Decision-25
-	// ingress is the queued command's own file publication, never a socket method.
-	// Delegate exactly to todo 33, including shared state-selection refusals.
-	return hook.HandleControl(ctx, &framedConn{conn, bytes.NewReader(raw)}, state)
+	return hook.HandleControl(ctx, conn, state)
 }
