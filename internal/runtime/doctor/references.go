@@ -15,9 +15,10 @@ import (
 // everything those registrations hold that could not be read or judged. The registrations are
 // every crw-*.json settings record (row 4: the Stop settings' relayExecutable, the bridge
 // record's bridgeExecutable), the cached plugin declarations
-// (row 5), the crw-stop-hook.py launcher copy (row 8), hooks.json (row 9) and config.toml's
-// mcp_servers (row 10), and the settings document each Stop command there reads when it is not
-// one of row 4's; the row numbers are the retired retention scan's (decision 59). inside
+// (row 5), hooks.json (row 9) and config.toml's mcp_servers (row 10), and the settings document
+// each Stop command there reads when it is not one of row 4's; the row numbers are the retired
+// retention scan's (decision 59), and row 8, the Python launcher copy, is retired (decision
+// 67). inside
 // answers, for a path a registration names (absolute, as written) and what it resolves to (""
 // when it could not be resolved), the path it counts as, or "" when it does not count; each
 // interpreter and script a reference is followed through is asked too. What the host starts from
@@ -49,7 +50,6 @@ func RegisteredMatching(ctx context.Context, o ScanOptions, inside func(path, re
 	}
 	s.settingsRecords() // row 4
 	s.pluginCache()     // row 5, and the settings its Stop commands read
-	s.launcherCopy()    // row 8
 	s.userHooks()       // row 9, and the settings its Stop commands read
 	s.configToml(ctx)   // row 10
 	// Row 4 read every crw-*.json record in the Codex home; a Stop command that reads another

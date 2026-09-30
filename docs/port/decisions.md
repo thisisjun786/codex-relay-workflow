@@ -3146,3 +3146,39 @@ Evidence: `internal/relay/hook/settings.go`, `adapter.go`;
 `.goreleaser.yaml`; `TestHookWritesTheGoSettingsAndRefusesASecondOwner`,
 `TestHookRewritesSettingsThatDifferOnlyByTheRetiredKeys`, `TestHookSettingsBytesArePythons`, the
 hook's settings and plugin-launch tests, and the isolated-home integration test.
+
+## 67. The doctor and `crw install remove` stop recognising the Python Stop shapes and the user-owned bridge table (refactor R1)
+
+Decision: the user-owned registration shapes that `--owner user` wrote (retired with
+runtime_install.py) keep only their generic reading. What stays: `crw install hook` still refuses
+while `hooks.json` registers the Stop hook (hook.AdapterIdentities), a promotion or a rollback still
+refuses a second owner of either surface, and the doctor still judges every `hooks.json` Stop
+command that runs the hook against the selected runtime. What goes:
+
+- the doctor and the registration reading `crw install remove` rests on no longer recognise the
+  checkout's Python adapter (`completion_hook.py`) or the Python launchers (`crw_stop_hook.py` and
+  its `<CODEX_HOME>/crw-stop-hook.py` copy) as a Stop hook; such a command is read as any other
+  command is;
+- `crw install remove` no longer reads the launcher copy (row 8 of its readings; rows 4, 5, 9 and
+  10 keep their numbers), which the relay host no longer holds (decision 59);
+- neither reads `CRW_COMPLETION_HOOK_CONFIG` any longer (decision 66);
+- the doctor judges a `hooks.json` Stop hook as `crw hook` (the name its answers give it, where
+  they said `crw-completion-hook`): started under the retired `crw-completion-hook` link, or given
+  an argument other than `--plugin-launch`, it is a conflict, since the selected runtime then runs
+  no hook; a settings path such a command names is no longer compared with the judged settings.
+  `definition.HookScript` is deleted;
+- a user-owned bridge record's `serverName` no longer makes the doctor judge that `config.toml`
+  table: the launcher stands down for a user-owned record, and a table that starts the bridge is
+  judged under any name, as before.
+
+The registration reading still reads the settings document the word after `crw hook` (or after an
+older runtime's `crw-completion-hook` link) names, because a runtime installed before decision
+66 reads it; reading it can only find more.
+
+Why: nothing writes these shapes since the Python installer's removal, the relay host holds none of
+them, and the doctor's judgement of a Stop command should be the selected runtime's reading of it.
+
+Evidence: `internal/runtime/doctor/registration.go`, `scan.go`, `references.go`;
+`internal/runtime/install/remove.go`; `TestDoctorJudgesTheStopCommandsInHooksJSON`,
+`TestDoctorJudgesTheBridgeUnderEveryTableName`, `TestRegisteredMatchingFollowsEveryRegistrationIntoTheRuntime`,
+`TestRegisteredMatchingReadsTheSettingsAStopCommandReads`, `TestRemoveRefusesARuntimeARegistrationStillNames`.

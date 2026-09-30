@@ -30,15 +30,16 @@ import (
 //   - the Stop settings (crw-completion-hook.json), through the Go hook's own acceptance check
 //     (hook.ReadSettings: a document it refuses runs no relay); then relayExecutable (the
 //     retired adapter keys run nothing, decision 66);
-//   - every Stop command of <CODEX_HOME>/hooks.json that runs a Stop adapter, which is what a
-//     user-owned registration runs (runtime_install.py hook appends it there);
+//   - every Stop command of <CODEX_HOME>/hooks.json that runs crw hook (or the retired
+//     crw-completion-hook link a runtime installed before decision 66 still carries), which is
+//     a second registration of the Stop hook beside the plugin's declaration;
 //   - the plugin-owned bridge record (crw-bridge-mcp.json), through the launcher's record
 //     contract (crw_bridge_mcp.py until todo 43, codex-thread-bridge --plugin-launch since todo
 //     34): a record it refuses starts no bridge;
 //   - config.toml's mcp_servers, read whole as codexconfig.registration_view reads it (a
 //     malformed table makes the configuration unreadable), and every table that starts the
-//     bridge: the one named codex-thread-bridge, the one a user-owned bridge record names, and
-//     any whose command runs the bridge (runtime_install._starts_this_bridge).
+//     bridge: the one named codex-thread-bridge and any whose command runs the bridge
+//     (runtime_install._starts_this_bridge).
 //
 // Each is the OPS-2.1 registration signal for its component: one that starts something other
 // than the selected runtime's entry point under the component's name, or that its consumer
@@ -71,8 +72,11 @@ func (c *componentRegistrations) unreadable(entry Object, resolves any, what, wh
 	c.add(entry, resolves, nil, why)
 }
 
+// crwHook is the Stop hook's name in a judgement: crw started with the mode argument hook.
+const crwHook = "crw hook"
+
 // crwModes are the component names crw runs for a mode argument (crw relay, crw bridge, crw hook).
-var crwModes = map[string]string{"relay": definition.Relay, "bridge": definition.Bridge, "hook": definition.HookScript}
+var crwModes = map[string]string{"relay": definition.Relay, "bridge": definition.Bridge, "hook": crwHook}
 
 // ReadRegistrations reads every registration of the relay and the bridge and judges it against
 // the runtime at target (the pointer's resolved target). env supplies HOME for the expansions a
@@ -89,23 +93,22 @@ func ReadRegistrations(ctx context.Context, codexHome, target string, env scope.
 	// The expansions a hook command's shell makes that the scan's grammar makes too; PATH is only
 	// where the grammar finds what a bare command around a hook is (a shell whose -c program it
 	// reads, a script): a hook word itself must be absolute.
-	j := judge{crw: crw, x: Expander{Vars: map[string]string{"HOME": env.Get("HOME"), "CODEX_HOME": codexHome}, Path: env.Get("PATH")}, override: env.Get(settingsEnv)}
+	j := judge{crw: crw, x: Expander{Vars: map[string]string{"HOME": env.Get("HOME"), "CODEX_HOME": codexHome}, Path: env.Get("PATH")}}
 
 	relay := out[definition.Relay]
 	stop := filepath.Join(codexHome, hook.ConfigName)
 	j.stopSettings(ctx, relay, stop)
-	j.stopHooks(relay, filepath.Join(codexHome, "hooks.json"), stop)
+	j.stopHooks(relay, filepath.Join(codexHome, "hooks.json"))
 
 	bridge := out[definition.Bridge]
-	named := j.bridgeRecord(bridge, filepath.Join(codexHome, "crw-bridge-mcp.json"))
-	j.codexConfig(bridge, filepath.Join(codexHome, "config.toml"), named)
+	j.bridgeRecord(bridge, filepath.Join(codexHome, "crw-bridge-mcp.json"))
+	j.codexConfig(bridge, filepath.Join(codexHome, "config.toml"))
 	return out
 }
 
 type judge struct {
-	crw      string   // the selected runtime's binary, resolved
-	x        Expander // what a hook command's shell expands that the scan's grammar expands too
-	override string   // $CRW_COMPLETION_HOOK_CONFIG, which a hook naming no settings reads
+	crw string   // the selected runtime's binary, resolved
+	x   Expander // what a hook command's shell expands that the scan's grammar expands too
 }
 
 // executable judges one registered command the host execs directly: path (absolute) is what
@@ -169,11 +172,11 @@ func (j judge) stopSettings(ctx context.Context, into *componentRegistrations, p
 	j.executable(into, path, "relayExecutable", relay, relay, nil, definition.Relay)
 }
 
-// stopHooks judges every Stop command of hooks.json that runs a Stop adapter. The host runs
-// each of them on every Stop, whoever the settings name as owner: for a user owner (or none,
-// which completion.owner_of reads as user) they are the registration, and for a plugin owner
-// they run beside the plugin's declared hook.
-func (j judge) stopHooks(into *componentRegistrations, path, settings string) {
+// stopHooks judges every Stop command of hooks.json that runs the Stop hook. The host runs each
+// of them on every Stop, whoever the settings name as owner: for a user owner (or none, which
+// completion.owner_of reads as user) they are the registration, and for a plugin owner they run
+// beside the plugin's declared hook.
+func (j judge) stopHooks(into *componentRegistrations, path string) {
 	read := reading.ReadJSON(path, "hooks.json", nil, jsonObject("hooks.json"))
 	switch {
 	case read.State == reading.Absent:
@@ -235,22 +238,20 @@ func (j judge) stopHooks(into *componentRegistrations, path, settings string) {
 				shape(field+".command", field+".command is "+scope.TypeName(command)+", not a string")
 				continue
 			}
-			j.stopCommand(into, path, field+".command", text, settings)
+			j.stopCommand(into, path, field+".command", text)
 		}
 	}
 }
 
 // stopCommand judges one Stop command line through the registration readings' reader
 // (readStopCommand: its allowlisted grammar, with exec, env and sh -c programs followed): each
-// command in it that runs a Stop adapter is judged, and a command whose hooks cannot all be told
-// (a word or construct outside the grammar, a script that may run the adapter itself) is
-// unreadable. The packaged launcher runs what the settings name, so it is judged through them.
-func (j judge) stopCommand(into *componentRegistrations, source, field, command, settings string) {
+// command in it that runs the Stop hook is judged, and a command whose hooks cannot all be told
+// (a word or construct outside the grammar, a script that may run the hook itself) is
+// unreadable.
+func (j judge) stopCommand(into *componentRegistrations, source, field, command string) {
 	calls, unknown := readStopCommand(argvJudge{c: Classifier{Expand: j.x}}, command)
 	for _, call := range calls {
-		if !launcherEntries[filepath.Base(call.argv[call.at].Written)] {
-			j.hookCall(into, source, field, command, call, settings)
-		}
+		j.hookCall(into, source, field, command, call)
 	}
 	if unknown != "" {
 		into.unreadable(registrationEntry(source, field, command), nil, source+" "+field, unknown+", so whether it starts the relay's hook cannot be told")
@@ -258,13 +259,15 @@ func (j judge) stopCommand(into *componentRegistrations, source, field, command,
 }
 
 // hookCall judges one call of the Go hook: its word must be the program the command executes
-// (not an argument of another), an absolute path once the grammar's expansions are made, and it
-// must read the settings this command judged.
-func (j judge) hookCall(into *componentRegistrations, source, field, command string, call stopAdapterCall, settings string) {
+// (not an argument of another), an absolute path once the grammar's expansions are made, started
+// as crw hook, and given no argument but --plugin-launch: since decision 66 crw hook reads no
+// settings path, and any other argument releases every Stop in silence. With no argument or
+// --plugin-launch it reads the Stop settings judged above.
+func (j judge) hookCall(into *componentRegistrations, source, field, command string, call stopAdapterCall) {
 	entry := registrationEntry(source, field, command)
 	word := call.argv[call.at]
 	if call.at > 0 {
-		into.conflict(entry, nil, source+" "+field+" hands "+word.Written+" to "+call.argv[0].Written+" as an argument, so the host's Stop does not run it as "+definition.HookScript)
+		into.conflict(entry, nil, source+" "+field+" hands "+word.Written+" to "+call.argv[0].Written+" as an argument, so the host's Stop does not run it as "+crwHook)
 		return
 	}
 	var args []string
@@ -282,47 +285,27 @@ func (j judge) hookCall(into *componentRegistrations, source, field, command str
 		into.unreadable(entry, nil, source+" "+field+" "+word.Written, "a bare command the host's shell looks up on the session's PATH, which this doctor does not read")
 		return
 	}
-	j.executable(into, source, field, word.Written, word.Value, args, definition.HookScript)
-	named := call.settings
-	switch {
-	case call.launcher:
-		// crw hook --plugin-launch reads the default settings, the ones judged here
-	case named.Written == "" && j.override != "":
-		if store.PathlibSpelling(j.override) != store.PathlibSpelling(settings) {
-			into.unreadable(entry, nil, source+" "+field+" settings", "the hook names no settings, so it reads $"+settingsEnv+" ("+j.override+"), not the Stop settings "+settings+" this doctor judged")
-		}
-	case named.Written == "":
-		// the hook reads its default settings, the ones judged here
-	case named.Missing != "":
-		into.unreadable(entry, nil, source+" "+field+" settings argument "+named.Written, "it needs "+named.Missing+", an expansion this doctor does not make")
-	case !filepath.IsAbs(named.Value):
-		into.unreadable(entry, nil, source+" "+field+" settings argument "+named.Written, "a relative path, which resolves in the session's workspace")
-	case store.PathlibSpelling(named.Value) != store.PathlibSpelling(settings):
-		into.unreadable(entry, nil, source+" "+field+" settings argument "+named.Written, "the hook reads "+named.Value+", not the Stop settings "+settings+" this doctor judged, so the relay it starts is not known")
+	if named := call.settings; call.crwHook && named.Written != "" && !call.launcher {
+		into.conflict(entry, nil, source+" "+field+" gives crw hook the argument "+named.Written+", and crw hook given any argument but --plugin-launch releases every Stop in silence (decision 66), so it runs no hook")
+		return
 	}
+	j.executable(into, source, field, word.Written, word.Value, args, crwHook)
 }
 
-// bridgeRecord judges the bridge record as the packaged launcher reads it, and returns the
-// server name a user-owned record gives its configuration entry.
-func (j judge) bridgeRecord(into *componentRegistrations, path string) []string {
+// bridgeRecord judges the bridge record as the packaged launcher reads it. A user-owned record
+// starts nothing (the launcher stands down for it), so only a plugin-owned one is judged.
+func (j judge) bridgeRecord(into *componentRegistrations, path string) {
 	read := reading.ReadJSON(path, "the bridge record", nil, jsonObject("the bridge record"))
 	switch {
 	case read.State == reading.Absent:
-		return nil
+		return
 	case !read.OK():
 		into.unreadable(registrationEntry(path, nil, nil), nil, "the bridge record "+path, read.Detail)
-		return nil
+		return
 	}
-	document := read.Value.(Object)
-	switch record.Get(document, "owner") {
-	case "plugin":
+	if document := read.Value.(Object); record.Get(document, "owner") == "plugin" {
 		j.pluginBridge(into, path, document)
-	case "user":
-		if name, ok := record.Get(document, "serverName").(string); ok && name != "" {
-			return []string{name}
-		}
 	}
-	return nil
 }
 
 // pluginBridge applies the launcher's record contract (pluginwiring.ReadBridgeRecord) before
@@ -408,9 +391,8 @@ func (j judge) policy(into *componentRegistrations, path string, reference any, 
 // codexConfig judges config.toml's mcp_servers: the whole table is read as
 // codexconfig.registration_view reads it, so a server entry that is not a table, a command that
 // is not a string or args that are not a list of strings makes the configuration unreadable;
-// then every table that starts the bridge is judged (named is the table a user-owned bridge
-// record names).
-func (j judge) codexConfig(into *componentRegistrations, path string, named []string) {
+// then every table that starts the bridge is judged.
+func (j judge) codexConfig(into *componentRegistrations, path string) {
 	read := reading.ReadText(path, "config.toml")
 	switch {
 	case read.State == reading.Absent:
@@ -460,15 +442,11 @@ func (j judge) codexConfig(into *componentRegistrations, path string, named []st
 			}
 		}
 	}
-	judged := map[string]bool{definition.Bridge: true}
-	for _, name := range named {
-		judged[name] = true
-	}
 	for _, name := range names {
 		table := servers[name].(map[string]any)
 		command, _ := table["command"].(string)
 		args, _ := tomlStrings(table["args"])
-		if !judged[name] && !startsTheBridge(command, args) {
+		if name != definition.Bridge && !startsTheBridge(command, args) {
 			continue
 		}
 		field := "mcp_servers." + name + ".command"

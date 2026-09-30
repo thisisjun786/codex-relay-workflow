@@ -15,7 +15,6 @@ import (
 	"github.com/BurntSushi/toml"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
-	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/definition"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/scope"
@@ -23,11 +22,11 @@ import (
 
 // surfaces names the registrations a host reads, by the row numbers the retired retention scan
 // gave them (decision 59): `crw install remove` names each registration it finds by its row
-// and this name, so both are kept as they were.
+// and this name, so both are kept as they were. Row 8, the crw-stop-hook.py launcher copy, is
+// retired (decision 67).
 var surfaces = map[int]string{
 	4:  "crw-*.json settings records",
 	5:  "cached plugin wiring command strings",
-	8:  "the crw-stop-hook.py launcher copy",
 	9:  "hooks.json command strings",
 	10: "config.toml mcp_servers commands",
 }
@@ -486,27 +485,20 @@ func (s *scan) userHooks() {
 	}
 }
 
-// adapterEntries are the basenames of the programs that read Stop settings (completion_hook.py,
-// the crw-completion-hook entry point), after which a registration names its settings.
-var adapterEntries = map[string]bool{"completion_hook.py": true, definition.HookScript: true}
+// retiredHookLink is the link a runtime installed before decision 66 carries beside crw; that
+// runtime's crw, started under it, is its Stop hook and takes its settings as the next word.
+const retiredHookLink = "crw-completion-hook"
 
-// launcherEntries are the packaged launcher and its copy, which read the default settings.
-var launcherEntries = map[string]bool{"crw_stop_hook.py": true, "crw-stop-hook.py": true}
-
-// settingsEnv is the settings override the adapter and the Go hook read when a registration
-// names no settings (completion.configuration_path, internal/relay/hook/settings.go).
-const settingsEnv = "CRW_COMPLETION_HOOK_CONFIG"
-
-// stopAdapterCall is one command of a Stop command that runs a Stop adapter, found by the word
-// naming it: the adapter's entry point (completion_hook.py, crw-completion-hook) or crw hook,
-// which take their settings as the next word, or the packaged launcher (and crw hook
-// --plugin-launch), which reads the default settings.
+// stopAdapterCall is one command of a Stop command that runs the Stop hook, found by the word
+// naming it: crw hook, or an older runtime's crw-completion-hook link; the word after it is the
+// settings a runtime installed before decision 66 reads, and --plugin-launch (or no word) the
+// default settings.
 type stopAdapterCall struct {
 	argv     []shellWord
-	at       int       // the word naming the adapter: the entry point, the launcher, or crw of crw hook
+	at       int       // the word naming the hook: the link, or crw of crw hook
 	crwHook  bool      // crw hook
-	launcher bool      // the packaged launcher or crw hook --plugin-launch
-	settings shellWord // the word after the adapter (after crw hook); Written "" when there is none
+	launcher bool      // crw hook --plugin-launch
+	settings shellWord // the word after the hook (after crw hook); Written "" when there is none
 }
 
 // stopAdapterIn is the Stop adapter one command runs, if any.
@@ -517,13 +509,13 @@ func stopAdapterIn(argv []shellWord) (stopAdapterCall, bool) {
 		next := i + 1
 		if base == "crw" && i+1 < len(argv) && argv[i+1].Value == "hook" {
 			call.crwHook, next = true, i+2
-		} else if !adapterEntries[base] && !launcherEntries[base] {
+		} else if base != retiredHookLink {
 			continue
 		}
 		if next < len(argv) {
 			call.settings = argv[next]
 		}
-		call.launcher = launcherEntries[base] || call.settings.Value == "--plugin-launch"
+		call.launcher = call.settings.Value == "--plugin-launch"
 		return call, true
 	}
 	return stopAdapterCall{}, false
@@ -561,19 +553,15 @@ func readStopCommand(j argvJudge, command string) (calls []stopAdapterCall, unkn
 	return calls, unknown
 }
 
-// settingsOf is the settings document one Stop adapter call reads: the word after the adapter's
-// entry point or after crw hook, which the adapter and the Go hook take first; with no such word,
-// $CRW_COMPLETION_HOOK_CONFIG as the reading's environment holds it, else the default settings;
-// and the default settings for the packaged launcher and crw hook --plugin-launch.
+// settingsOf is the settings document one Stop hook call reads: the default settings for crw
+// hook --plugin-launch and for a call naming none, and otherwise the word after the hook, which a
+// runtime installed before decision 66 reads (a later one reads nothing then, so reading it
+// only ever finds more).
 func (s *scan) settingsOf(source, field string, call stopAdapterCall) stopSettings {
 	named := call.settings
 	one := stopSettings{source: source, field: field, path: filepath.Join(s.o.CodexHome, "crw-completion-hook.json")}
-	switch override := s.o.Env.Get(settingsEnv); {
+	switch {
 	case call.launcher:
-	case named.Written == "" && override != "":
-		if one.path, one.problem = s.absolute(override); one.problem != "" {
-			one.problem = "$" + settingsEnv + " " + strconv.Quote(override) + " " + one.problem
-		}
 	case named.Written == "":
 	case named.Missing != "":
 		one.problem = "its settings argument " + strconv.Quote(named.Written) + " needs " + named.Missing + ", an expansion this scan does not make"
@@ -815,19 +803,6 @@ func (s *scan) daemons() map[int]bool {
 		}
 	}
 	return pids
-}
-
-// launcherCopy is row 8: <CODEX_HOME>/crw-stop-hook.py, the launcher copy the cached pre-native
-// Stop bootstrap falls back to.
-func (s *scan) launcherCopy() {
-	path := filepath.Join(s.o.CodexHome, "crw-stop-hook.py")
-	_, err := os.Lstat(path)
-	switch {
-	case err == nil:
-		s.verdict(8, path, "file", s.classifier(8, path, "file", Expander{}).Classify(path, ""))
-	case !errors.Is(err, os.ErrNotExist):
-		s.unread(path, err)
-	}
 }
 
 // configToml is row 10: every mcp_servers table, judged as Codex starts it (server).

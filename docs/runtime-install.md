@@ -447,8 +447,8 @@ one with no claim this command wrote, one whose claim cannot be read, a
 staging another run still holds, any directory a live process runs out of (its `/proc/<pid>/exe`,
 its working directory, or what its arguments run, resolving inside it, and every relay daemon a
 `daemon.json` or scope claim records alive), and any directory a registration the host reads names
-a path inside: the Stop settings, the bridge record, the cached plugin declarations, the
-`crw-stop-hook.py` copy, `hooks.json` and `config.toml`. A process it cannot rule out or a
+a path inside: the Stop settings, the bridge record, the cached plugin declarations, `hooks.json`
+and `config.toml`. A process it cannot rule out or a
 registration it cannot read or judge refuses too, and the answer names it. A process whose working
 directory cannot be read and that runs something by a relative path is one it cannot rule out,
 whatever user runs it, unless that user (not root) is provably shut out of the directory by the
@@ -499,9 +499,15 @@ readers came from, which `crw doctor retention-scan` ran until it was retired (d
 |---|---|---|
 | 4 | `<CODEX_HOME>/crw-*.json` (`crw-completion-hook.json`, `crw-bridge-mcp.json`, any other), and every settings document a Stop command below names | `relayExecutable`, `bridgeExecutable`, `interpreterPath`, `command`, each as written (the retired `adapterEntryPoint` and `adapterInterpreter` run nothing and are not read, decision 66) (the launchers run them with no shell and no expansion), and each `args` entry as an argument. A value that is not an absolute path, or not a string or a list of strings, is unreadable |
 | 5 | `<CODEX_HOME>/plugins/cache/crw/crw/*/wiring/hooks/*.json`, `wiring/mcp.json`, `.mcp.json` in every version directory (a stray file there declares nothing) | every hook command, under the grammar below, and every MCP server, as Codex starts it |
-| 8 | `<CODEX_HOME>/crw-stop-hook.py` | the file itself, whenever it exists |
 | 9 | `<CODEX_HOME>/hooks.json` | every hook command, as row 5 |
 | 10 | `<CODEX_HOME>/config.toml` `mcp_servers.*` | every MCP server, as row 5 (a relative `cwd` is unplaced) |
+
+Row 8, the `<CODEX_HOME>/crw-stop-hook.py` launcher copy, is no longer read (decision 67): the
+relay host holds none, and the Python bootstrap that fell back to it left the plugin cache with the
+pre-native payloads. A Stop command's settings are the document the word after `crw hook` (or after
+a `crw-completion-hook` link an older runtime still carries) names, which a runtime installed
+before decision 66 reads, else `<CODEX_HOME>/crw-completion-hook.json`; `CRW_COMPLETION_HOOK_CONFIG`
+is not read.
 
 A hook command, a shell script a reference reaches, and a program handed to `sh -c` are parsed with
 `mvdan.cc/sh/v3/syntax` (Bash grammar; decisions.md 37) and judged only as far as they are written

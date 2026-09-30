@@ -98,8 +98,9 @@ func hookOutcome(entries []string, field string) string {
 
 // Every registration the host reads is followed to what it runs: the Stop settings' relay
 // through the owned pointer (row 4), a cached plugin command through ${PLUGIN_ROOT} (row 5), the
-// launcher copy (row 8), a user Stop command through $HOME (row 9) and an MCP server whose command
-// holds a space (row 10), each named with its row and field when it reaches the runtime directory.
+// user Stop command through $HOME (row 9) and an MCP server whose command holds a space (row 10),
+// each named with its row and field when it reaches the runtime directory; the retired launcher
+// copy (row 8, decision 67) is not read.
 // A word the reading cannot expand ($RELAY_HOME, ${PLUGIN_ROOT} outside the cache) is unreadable,
 // never skipped, and nothing is written.
 func TestRegisteredMatchingFollowsEveryRegistrationIntoTheRuntime(t *testing.T) {
@@ -127,12 +128,16 @@ func TestRegisteredMatchingFollowsEveryRegistrationIntoTheRuntime(t *testing.T) 
 		"10:mcp_servers.spaced:" + spaced,
 		"4:relayExecutable:" + filepath.Join(h.current(), "bin", "codex-session-relay"),
 		"5:hooks.Stop[0].hooks[0].command:" + filepath.Join(cache, "wiring", "relay"),
-		"8:file:" + filepath.Join(h.codex, "crw-stop-hook.py"),
 		"9:hooks.Stop[0].hooks[0].command:" + filepath.Join(h.home, "rt", "bin", "crw"),
 	}
 	for _, w := range want {
 		if !slices.Contains(found, w) {
 			t.Errorf("not found: %s\nfound %v", w, found)
+		}
+	}
+	for _, f := range found {
+		if strings.HasPrefix(f, "8:") {
+			t.Errorf("the retired launcher copy was read: %v", found)
 		}
 	}
 	if got := rowEntries(unreadable, 9); len(got) != 2 || !listed(got, "hooks.Stop[0].hooks[1].command", "$RELAY_HOME/bin/relay", "RELAY_HOME") || !listed(got, "hooks.Stop[0].hooks[2].command", "${PLUGIN_ROOT}") {
@@ -434,10 +439,10 @@ func TestRegisteredMatchingReadsEmptyWordsAndPrograms(t *testing.T) {
 }
 
 // A Stop command's settings are read as row 4 reads a crw-*.json record: the document its
-// argument names, the one CRW_COMPLETION_HOOK_CONFIG names when it names none, and the default
-// settings for crw hook --plugin-launch whatever the variable says. A command that assigns the
-// variable itself, or names its settings through an expansion the reading does not make, leaves
-// them unknown.
+// argument names (which a runtime installed before decision 66 reads), and the default
+// settings for crw hook --plugin-launch; CRW_COMPLETION_HOOK_CONFIG is not read (decision
+// 67). A command that assigns a variable before the hook, or names its settings through an
+// expansion the reading does not make, leaves them unknown.
 func TestRegisteredMatchingReadsTheSettingsAStopCommandReads(t *testing.T) {
 	h := newHost(t)
 	dir, _ := h.goRuntime(t, "bin-0.3.0-aaaaaaaaaaaa")
@@ -458,19 +463,12 @@ func TestRegisteredMatchingReadsTheSettingsAStopCommandReads(t *testing.T) {
 			t.Errorf("hook %d: %v", i, unreadable)
 		}
 	}
-	stopHooks(t, h, crw+` hook`)
 	h.env = h.env.With("CRW_COMPLETION_HOOK_CONFIG", settings)
-	if found, unreadable := h.registrations(t, dir); !names(found) || len(unreadable) != 0 {
-		t.Errorf("the environment's settings: found %v, unreadable %v", found, unreadable)
-	}
-	h.env = h.env.With("CRW_COMPLETION_HOOK_CONFIG", "other/s.json")
-	if _, unreadable := h.registrations(t, dir); !listed(unreadable, "CRW_COMPLETION_HOOK_CONFIG", "not an absolute path") {
-		t.Errorf("a relative settings path: %v", unreadable)
-	}
-	stopHooks(t, h, crw+` hook --plugin-launch`)
-	h.env = h.env.With("CRW_COMPLETION_HOOK_CONFIG", settings)
-	if found, unreadable := h.registrations(t, dir); names(found) || len(unreadable) != 0 {
-		t.Errorf("--plugin-launch: found %v, unreadable %v", found, unreadable)
+	for _, command := range []string{crw + ` hook`, crw + ` hook --plugin-launch`} {
+		stopHooks(t, h, command)
+		if found, unreadable := h.registrations(t, dir); names(found) || len(unreadable) != 0 {
+			t.Errorf("%s: found %v, unreadable %v", command, found, unreadable)
+		}
 	}
 }
 

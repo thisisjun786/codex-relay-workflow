@@ -40,8 +40,8 @@ func listed(list []any, want any) bool {
 // Remove refuses it for every surface the host reads - the bridge record, the Stop settings'
 // relayExecutable (named inside the directory though the link resolves outside it),
 // config.toml's mcp_servers commands and their arguments,
-// hooks.json Stop commands and the settings document such a command names, and the launcher
-// copy - and when a registration cannot be read. Each refusal names the registration and
+// hooks.json Stop commands and the settings document such a command names - and when a
+// registration cannot be read. Each refusal names the registration and
 // leaves the directory and its install entries in place; once nothing names it, it is removed.
 func TestRemoveRefusesARuntimeARegistrationStillNames(t *testing.T) {
 	h := newHost(t)
@@ -59,34 +59,25 @@ func TestRemoveRefusesARuntimeARegistrationStillNames(t *testing.T) {
 	config := filepath.Join(h.codex, "config.toml")
 	hooks := filepath.Join(h.codex, "hooks.json")
 	elsewhere := filepath.Join(h.home, "other-settings.json")
-	launcher := filepath.Join(h.codex, "crw-stop-hook.py")
 	stopHooks := func(command string) string {
 		return `{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "` + command + `", "timeout": 10}]}]}}`
 	}
 	cases := []struct {
 		label, directory, file, text, source, field string
-		link                                        bool
 	}{
-		{"the plugin bridge record", old, bridgeRecord, `{"bridgeExecutable": "` + filepath.Join(old, "bin", "codex-thread-bridge") + `", "owner": "plugin", "recordVersion": 1, "serverName": "codex-thread-bridge"}`, bridgeRecord, "bridgeExecutable", false},
-		{"the Stop settings' relay", old, settings, `{"configVersion": 1, "owner": "user", "relayExecutable": "` + filepath.Join(old, "bin", "codex-session-relay") + `"}`, settings, "relayExecutable", false},
-		{"a relay named inside it that resolves outside", other, settings, `{"configVersion": 1, "owner": "user", "relayExecutable": "` + filepath.Join(other, "bin", "python3") + `"}`, settings, "relayExecutable", false},
-		{"a config.toml command", other, config, "[mcp_servers.bridge]\ncommand = \"" + filepath.Join(other, "bin", "codex-thread-bridge") + "\"\n", config, "mcp_servers.bridge", false},
-		{"a config.toml argument", old, config, "[mcp_servers.bridge]\ncommand = \"/usr/bin/env\"\nargs = [\"" + filepath.Join(old, "bin", "codex-thread-bridge") + "\"]\n", config, "mcp_servers.bridge", false},
-		{"a hooks.json Stop command", old, hooks, stopHooks(filepath.Join(old, "bin", "crw") + " hook --plugin-launch"), hooks, "hooks.Stop[0].hooks[0].command", false},
-		{"the settings a Stop command names", old, elsewhere, `{"configVersion": 1, "owner": "user", "relayExecutable": "` + filepath.Join(old, "bin", "codex-session-relay") + `"}`, elsewhere, "relayExecutable", false},
-		{"the launcher copy", old, launcher, filepath.Join(old, "LICENSE"), launcher, "file", true},
+		{"the plugin bridge record", old, bridgeRecord, `{"bridgeExecutable": "` + filepath.Join(old, "bin", "codex-thread-bridge") + `", "owner": "plugin", "recordVersion": 1, "serverName": "codex-thread-bridge"}`, bridgeRecord, "bridgeExecutable"},
+		{"the Stop settings' relay", old, settings, `{"configVersion": 1, "owner": "user", "relayExecutable": "` + filepath.Join(old, "bin", "codex-session-relay") + `"}`, settings, "relayExecutable"},
+		{"a relay named inside it that resolves outside", other, settings, `{"configVersion": 1, "owner": "user", "relayExecutable": "` + filepath.Join(other, "bin", "python3") + `"}`, settings, "relayExecutable"},
+		{"a config.toml command", other, config, "[mcp_servers.bridge]\ncommand = \"" + filepath.Join(other, "bin", "codex-thread-bridge") + "\"\n", config, "mcp_servers.bridge"},
+		{"a config.toml argument", old, config, "[mcp_servers.bridge]\ncommand = \"/usr/bin/env\"\nargs = [\"" + filepath.Join(old, "bin", "codex-thread-bridge") + "\"]\n", config, "mcp_servers.bridge"},
+		{"a hooks.json Stop command", old, hooks, stopHooks(filepath.Join(old, "bin", "crw") + " hook --plugin-launch"), hooks, "hooks.Stop[0].hooks[0].command"},
+		{"the settings a Stop command names", old, elsewhere, `{"configVersion": 1, "owner": "user", "relayExecutable": "` + filepath.Join(old, "bin", "codex-session-relay") + `"}`, elsewhere, "relayExecutable"},
 	}
 	for _, c := range cases {
 		if c.file == elsewhere {
 			write(t, hooks, stopHooks("/usr/bin/env "+filepath.Join(h.dest, "current", "bin", "crw-completion-hook")+" "+elsewhere))
 		}
-		if c.link {
-			if err := os.Symlink(c.text, c.file); err != nil {
-				t.Fatal(err)
-			}
-		} else {
-			write(t, c.file, c.text)
-		}
+		write(t, c.file, c.text)
 		refused, code := install.Remove(context.Background(), h.options(), c.directory)
 		if code != install.Refused || at(refused, "applied") != false || !strings.Contains(text(at(refused, "refused")), "names a path inside this directory") {
 			t.Fatalf("%s: exit %d\n%s", c.label, code, golden.Canon(refused))

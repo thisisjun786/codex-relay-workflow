@@ -1204,6 +1204,7 @@ relay host it has no consumer, and it was retired (decisions.md, decision 59); i
 this file at the parent of the commit that retired it.
 
 What remains of it is what `crw install remove` reads before it deletes a runtime directory: the
-registration rows 4, 5, 8, 9 and 10, under the same shell grammar, and the relay records of row 3
+registration rows 4, 5, 9 and 10 (row 8, the launcher copy, retired with decision 67), under
+the same shell grammar, and the relay records of row 3
 ([what remove reads](../runtime-install.md#what-remove-reads)). A registration `crw install remove`
 finds still names its row by the numbers this list gave.

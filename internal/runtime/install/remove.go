@@ -44,7 +44,7 @@ const processScope = "this host's process table, as this command's PID namespace
 // directory a live process runs out of (liveProcesses, and every daemon a daemon.json records
 // alive), and any directory a registration the host reads names a path inside
 // (doctor.RegisteredMatching: the Stop settings, the bridge record, config.toml's mcp_servers,
-// hooks.json, the cached plugin declarations and the launcher copy), or holds something that
+// hooks.json and the cached plugin declarations), or holds something that
 // could not be read. An answer
 // that removes names what its verdict rests on: the process table (processTable) and the relay
 // records it read (relayRecords: the scope registries and state directories of this
