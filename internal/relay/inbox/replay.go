@@ -105,10 +105,11 @@ func Drain(ctx context.Context, st *store.Store, state string, apply Apply) erro
 
 // Check reads S/takeover-inbox as Drain reads it and applies nothing: the replay lock opened as
 // the replay opens it, without taking it, then every name the replay reads, read (inbox.py
-// read_entry) and validated (_replay_entry's checks) as the replay does. Its error is the one
-// the drain would stop with first, so the takeover transfer refuses at Step 4, before ownership
-// moves, on an inbox the candidate's recovery could only fail closed on (cutover.md Step 4). A
-// missing inbox is nothing to check.
+// read_entry) and validated (_replay_entry's checks) as the replay does, and, from the first
+// entry the drain would apply, the inbox directory writable and searchable, as that entry's
+// unlink after its commit needs. Its error is the one the drain would stop with first, so the
+// takeover transfer refuses at Step 4, before ownership moves, on an inbox the candidate's
+// recovery could only fail closed on (cutover.md Step 4). A missing inbox is nothing to check.
 func Check(state string) error {
 	directory := Directory(state)
 	if _, err := os.Stat(directory); err != nil {
@@ -124,8 +125,10 @@ func Check(state string) error {
 	if err != nil {
 		return &Error{Detail: store.PythonOSError(err)}
 	}
+	retires := false
 	for _, name := range names {
-		raw, _, ok, err := readEntry(filepath.Join(directory, name), name)
+		path := filepath.Join(directory, name)
+		raw, _, ok, err := readEntry(path, name)
 		if err != nil {
 			return err
 		}
@@ -134,6 +137,15 @@ func Check(state string) error {
 		}
 		if _, _, err = validate(name, raw); err != nil {
 			return err
+		}
+		if !retires {
+			// The drain commits the first valid entry, then unlinks it: in an inbox this user
+			// may not remove a name from, it stops there, past the commit, with the unlink's
+			// error for that entry.
+			if err = unix.Access(directory, unix.W_OK|unix.X_OK); err != nil {
+				return &Error{Detail: store.PythonOSError(&os.PathError{Op: "remove", Path: path, Err: err})}
+			}
+			retires = true
 		}
 	}
 	return nil

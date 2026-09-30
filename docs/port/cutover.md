@@ -392,11 +392,14 @@ The takeover inbox is read here as the candidate's drain will read it: first its
 `S/takeover-inbox/.replay.lock`, opened for writing without following a link (or, where there
 is none, the directory writable, as creating it needs), neither created nor taken; then the
 names the entry grammar admits directly in `S/takeover-inbox`, each opened without following a
-link and validated as the replay validates it. A lock the drain could not open (a symbolic
-link, a directory, a file or inbox this user may not write) or an entry it would fail closed on
-(a symbolic link, a non-regular file, bytes that are no valid entry) refuses the transfer with
-the drain's own error, while the owner has not changed. Any other name, and anything below a
-subdirectory, is no entry, is not inventoried and refuses nothing.
+link and validated as the replay validates it, and, once there is an entry to apply, the
+directory writable and searchable, as that entry's unlink after its commit needs. A lock the
+drain could not open (a symbolic link, a directory, a file or inbox this user may not write), an
+entry it would fail closed on (a symbolic link, a non-regular file, bytes that are no valid
+entry), or an inbox it could not retire its first entry from (the drain would commit that entry
+and then fail its unlink) refuses the transfer with the drain's own error, while the owner has
+not changed. Any other name, and anything below a subdirectory, is no entry, is not inventoried
+and refuses nothing.
 
 Never copy only the main DB file, never require WAL truncation as a precondition, never delete
 WAL or SHM to make the store look clean.

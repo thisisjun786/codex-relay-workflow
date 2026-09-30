@@ -430,6 +430,15 @@ func Test30TransferInspectsTheInboxAsTheDrainReadsIt(t *testing.T) {
 			must(t, removeIfPresent(filepath.Join(directory, inbox.ReplayLock)))
 			must(t, os.Mkdir(filepath.Join(directory, inbox.ReplayLock), 0700))
 		}, "IsADirectoryError: [Errno 21] Is a directory: '"},
+		// The drain would apply and commit the entry, then fail to unlink it: after Step 5.
+		{"an inbox this user cannot write", func(t *testing.T, directory string) {
+			if os.Geteuid() == 0 {
+				t.Skip("root is refused no permission")
+			}
+			must(t, os.WriteFile(filepath.Join(directory, inbox.ReplayLock), nil, 0600))
+			must(t, os.Chmod(directory, 0500))
+			t.Cleanup(func() { _ = os.Chmod(directory, 0700) })
+		}, "PermissionError: [Errno 13] Permission denied: '"},
 		{"names the drain never reads", func(t *testing.T, directory string) {
 			must(t, os.Symlink("/nonexistent", filepath.Join(directory, "not an entry")))
 			must(t, os.Symlink(valid.ID, filepath.Join(directory, ".hidden")))
@@ -475,7 +484,8 @@ func Test30TransferInspectsTheInboxAsTheDrainReadsIt(t *testing.T) {
 			// Refused before the ownership-transfer point: the owner has not changed.
 			assertState(t, c, "python", "draining", 1)
 			// Recovery is repair (cutover.md Step 4): without the entry, or the lock, that stops
-			// the drain, the transfer proceeds.
+			// the drain, in an inbox this user may write, the transfer proceeds.
+			must(t, os.Chmod(directory, 0700))
 			entries, e := os.ReadDir(directory)
 			must(t, e)
 			for _, entry := range entries {
