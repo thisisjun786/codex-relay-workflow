@@ -41,6 +41,6 @@ json.dump({"version": unicodedata.unidata_version,
 		}
 	}
 	if differ > 0 {
-		t.Fatalf("%d code points differ; regenerate with `go generate ./internal/bridge/settings`", differ)
+		t.Fatalf("%d code points differ from CPython %s's recorded answer; the table is frozen (decision 49), so the table, not the recording, changed", differ, answer.Version)
 	}
 }

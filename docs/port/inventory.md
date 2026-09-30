@@ -20,26 +20,31 @@ differ, when a line count differs from `wc -l`, when an owning issue is missing,
   shared test support), 151 bridge, 152 store, 153 delivery/faults/routing/reporting,
   154 registry/linkage/coordination, 155 daemon/service, 156 hook, plugin wiring and skill
   scripts, 157 runtime diagnosis, 158 installer and transition, 159 dev harnesses, 160 CI scripts.
-- **disposition**: `port` (a Go equivalent is written), `retire-with-evidence` (no Go equivalent;
-  removed only when the trigger holds), `keep-as-data` (stays as data; none today).
+- **disposition**: `port` (a Go equivalent is to be written), `retire-with-evidence` (no Go
+  equivalent; removed only when the trigger holds), `keep-as-data` (stays as data; none today).
+  Todo 44 resolves every row: `ported` (the Go equivalent exists) and `retired-with-evidence` (the
+  consumer search and the trigger are recorded). A row whose file is gone moves to "Files deleted
+  with evidence"; a row still in the table is a developer tool listed in
+  `scripts/dev/ALLOWED_PYTHON.txt`, which todo 48 removes. `python3 scripts/port/check_inventory.py
+  --final` requires exactly that.
 - **consumer_search**: for retire rows, the search boundary used to find every consumer, and the
   consumers it found. A grep miss alone never retires a file.
 - **removal_trigger**: for retire rows, the observable condition after which the file may go.
 
 ## Files
 
-Total non-test lines: 2075
+Total non-test lines: 2132
 
 | path | lines | invoked | runs | owner | disposition | consumer_search | removal_trigger |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `scripts/check_operations_contract.py` | 276 | CI: scripts/ci/contracts.py:12 (operations fixtures replay) | dev/CI | CRW-160 | port | - | - |
-| `scripts/ci/gate.py` | 45 | CI: ci.yml:122 required-checks gate | dev/CI | CRW-160 | port | - | - |
-| `scripts/ci/plugin.py` | 999 | CI: ci.yml:54 | dev/CI | CRW-160 | port | - | - |
-| `scripts/ci/scope.py` | 155 | CI: ci.yml:39 path-scope selection | dev/CI | CRW-160 | port | - | - |
-| `scripts/ci/validate.py` | 145 | CI: ci.yml:53 link/metadata validation | dev/CI | CRW-160 | port | - | - |
-| `scripts/port/check_inventory.py` | 145 | dev CLI `python3 scripts/port/check_inventory.py` (this document's check, todo 1) | dev/CI | CRW-160 | retire-with-evidence | `grep -rn check_inventory` over scripts/, docs/, .github/ (consumers: this document only; no CI job runs it yet) | the Python inventory is obsolete once todo 44 (CRW-141) deletes the product Python; deleted with the remaining dev Python in todo 48 |
-| `scripts/port/check_cutover_doc.py` | 149 | dev CLI `python3 scripts/port/check_cutover_doc.py` (todo 5) | dev/CI | CRW-160 | retire-with-evidence | `grep -rn check_cutover_doc` over scripts/, docs/, .github/ (consumer: todo 5 cutover-document validation; no CI job runs it yet) | todo 48 retires the Python cutover checker with the remaining dev Python |
-| `scripts/port/check_test_map.py` | 161 | dev CLI `python3 scripts/port/check_test_map.py` (todo 3) | dev/CI | CRW-160 | retire-with-evidence | `grep -rn check_test_map` over scripts/, docs/, .github/ (consumer: todo 3 test-map validation; no CI job runs it yet) | todo 48 retires the Python test-map checker with the remaining dev Python |
+| `scripts/check_operations_contract.py` | 276 | developer tool: the Python twin of `crw-dev ci operations` (internal/dev/ci/operations.go), which CI runs through `crw-dev ci contracts`; nothing runs this copy but internal/dev/ci's parity tests when a recording is retaken (its CI runner, scripts/ci/contracts.py, left in todo 44) | dev/CI | CRW-160 | ported | `git grep -n check_operations_contract` at todo 44: internal/dev/ci (capture closures and comments), the crw-run operations scenarios page, docs | todo 48, with scripts/dev/ALLOWED_PYTHON.txt |
+| `scripts/ci/gate.py` | 45 | developer tool: the Python twin of `crw-dev ci gate`, which CI's dev-gate job runs; scripts/ci/tests/test_gate.py and internal/dev/ci's gate tests run this copy beside the Go one | dev/CI | CRW-160 | ported | `git grep -n gate.py` at todo 44: its own test, internal/dev/ci's parity tests, docs | todo 48, with scripts/dev/ALLOWED_PYTHON.txt |
+| `scripts/ci/plugin.py` | 971 | developer tool: the Python twin of `crw-dev ci plugin`, which CI's validate job runs; scripts/ci/tests/test_plugin.py and internal/dev/ci's plugin tests run this copy beside the Go one | dev/CI | CRW-160 | ported | `git grep -n plugin.py` at todo 44: its own test, internal/dev/ci's parity tests, docs | todo 48, with scripts/dev/ALLOWED_PYTHON.txt |
+| `scripts/ci/scope.py` | 155 | developer tool: the Python twin of `crw-dev ci scope`, which CI's selection job runs; scripts/ci/tests/test_scope.py and internal/dev/ci's scope tests run this copy beside the Go one | dev/CI | CRW-160 | ported | `git grep -n scope.py` at todo 44: its own test, gate.py (imports it), internal/dev/ci's parity tests, docs | todo 48, with scripts/dev/ALLOWED_PYTHON.txt |
+| `scripts/ci/validate.py` | 145 | developer tool: the Python twin of `crw-dev ci validate`, which CI's validate job runs; scripts/ci/tests/test_validate.py and internal/dev/ci's validate tests run this copy beside the Go one | dev/CI | CRW-160 | ported | `git grep -n validate.py` at todo 44: its own test, internal/dev/ci's parity tests, docs | todo 48, with scripts/dev/ALLOWED_PYTHON.txt |
+| `scripts/port/check_inventory.py` | 182 | dev CLI `python3 scripts/port/check_inventory.py` (this document's check, todo 1) | dev/CI | CRW-160 | retired-with-evidence | `grep -rn check_inventory` over scripts/, docs/, .github/ (consumers: this document only; no CI job runs it yet) | the Python inventory is obsolete once todo 44 (CRW-141) deletes the product Python; deleted with the remaining dev Python in todo 48 |
+| `scripts/port/check_cutover_doc.py` | 149 | dev CLI `python3 scripts/port/check_cutover_doc.py` (todo 5) | dev/CI | CRW-160 | retired-with-evidence | `grep -rn check_cutover_doc` over scripts/, docs/, .github/ (consumer: todo 5 cutover-document validation; no CI job runs it yet) | todo 48 retires the Python cutover checker with the remaining dev Python |
+| `scripts/port/check_test_map.py` | 209 | dev CLI `python3 scripts/port/check_test_map.py` (todo 3) | dev/CI | CRW-160 | retired-with-evidence | `grep -rn check_test_map` over scripts/, docs/, .github/ (consumer: todo 3 test-map validation; no CI job runs it yet) | todo 48 retires the Python test-map checker with the remaining dev Python |
 
 ### Files deleted with evidence
 
@@ -259,7 +264,7 @@ venv; the Go runtime has no interpreter to probe, so each is retired, not ported
 | `scripts/runtime_install.py:1637` | does the installed relay accept these settings (`-B -c <settings program>`) | not ported: `diagnose --trial`, deferred past todo 44 (retired with runtime_install.py) |
 | `scripts/runtime_install.py:1690` | does the installed relay admit this predicate (`-B -c <predicate program>`) | not ported: `diagnose --trial`, deferred past todo 44 |
 | `scripts/runtime_install.py:4434` | which environment the interpreter reports (`sys.prefix`) | todo 37 (the install entry names the environment holding bin/crw) |
-| `scripts/crw_runtime/completion.py:3458` | does the hook's interpreter word answer as a Python | todos 43/44 (kept while a record may name a Python interpreter; ported by todo 33) |
+| `scripts/crw_runtime/completion.py:3458` | does the hook's interpreter word answer as a Python | todos 43/44 (ported by todo 33 as `answersPython` in internal/relay/hook/status.go, which todo 44 keeps while a registration may name a Python interpreter: decision 50) |
 | `scripts/crw_transition/inventory.py:602` | does the candidate evaluate Python | todo 39 |
 
 Siblings of the same kind, found by the spawn grep: `scripts/runtime_install.py:528` (store
@@ -268,6 +273,9 @@ admission probes), `scripts/crw_runtime/completion.py:1031` (`_require_python`).
 version and module probes retire in todo 37; the path and admission probes belong to
 `diagnose --trial`, deferred past todo 44; `_require_python` retires with the Go `crw install
 hook` (todo 38), which never registers an interpreter.
+
+Todo 44 also removed the two Go paths that executed Python beyond that probe: the takeover's
+Python candidate (decision 48) and the bridge settings table's `go generate` program (decision 49).
 
 ## In-process edges that force one binary
 

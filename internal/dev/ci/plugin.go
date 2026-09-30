@@ -1071,40 +1071,6 @@ func sortedKeys[V any](m map[string]V) []string {
 	return keys
 }
 
-// errSkillsPathCrash stands in for the ValueError plugin.py raises (uncaught) when the root
-// link is checked against a manifest with no usable skills path.
-var errSkillsPathCrash = errors.New("skills path unusable")
-
-func (c *pluginChecker) compatibilityLinkErrors(revision string, m *pyDict) ([]string, error) {
-	listing, err := c.gitText("ls-tree", "-z", revision, "--", "skills")
-	if err != nil {
-		return nil, err
-	}
-	record, _, _ := strings.Cut(listing, "\x00")
-	if record == "" {
-		return []string{"skills: the repository root must keep a link to the packaged skills"}, nil
-	}
-	meta, _, _ := strings.Cut(record, "\t")
-	fields := strings.SplitN(meta, " ", 3)
-	if fields[0] != "120000" || fields[1] != "blob" {
-		return []string{"skills: the repository root entry must be a symlink to the packaged skills"}, nil
-	}
-	target, err := c.git("cat-file", "blob", fields[2])
-	if err != nil {
-		return nil, err
-	}
-	skillsPath, err := declaredSkillsPath(m)
-	if err != nil {
-		return nil, errSkillsPathCrash
-	}
-	expected := pluginRelative + "/" + skillsPath
-	if string(target) != expected {
-		return []string{"skills: the root link points at " + pyRepr(decodeReplace(target)) + " instead of " +
-			pyRepr(expected) + "; both installation paths must read one source"}, nil
-	}
-	return nil, nil
-}
-
 // report is the --json result, keys in sort_keys order when printed.
 type report map[string]any
 
@@ -1268,11 +1234,6 @@ func (c *pluginChecker) checkRevision(revision string) ([]string, report, error)
 	if !bytes.Equal(release["LICENSE"].data, licenseBlob) {
 		errs = append(errs, "release LICENSE: the package copy must match the repository license")
 	}
-	linkErrs, err := c.compatibilityLinkErrors(resolved, m)
-	if err != nil {
-		return nil, nil, err
-	}
-	errs = append(errs, linkErrs...)
 	working, workingErrs := directoryPayload(filepath.Join(c.root, pluginRelative))
 	errs = append(errs, workingErrs...)
 	workingManifest, err := readManifest(working, "working tree")
@@ -1306,12 +1267,6 @@ func (c *pluginChecker) checkRevision(revision string) ([]string, report, error)
 		repoLicense, _ := os.ReadFile(filepath.Join(c.root, "LICENSE"))
 		if !bytes.Equal(working["LICENSE"].data, repoLicense) {
 			errs = append(errs, "working tree LICENSE: the package copy must match the repository license")
-		}
-		if skillsPath, err := declaredSkillsPath(workingManifest); err == nil {
-			expected := pluginRelative + "/" + skillsPath
-			if target, err := os.Readlink(filepath.Join(c.root, "skills")); err != nil || target != expected {
-				errs = append(errs, "working tree skills: the repository root link must be a symlink to "+expected)
-			}
 		}
 	}
 	status, err := c.gitText("status", "--porcelain", "--ignored", "--", pluginRelative)

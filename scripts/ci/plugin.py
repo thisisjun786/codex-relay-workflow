@@ -776,25 +776,6 @@ def skills(payload, manifest, label):
     return errors, found
 
 
-def compatibility_link_errors(revision, manifest, plugin_relative):
-    """The repository root link is what keeps installations made before the move working."""
-    listing = git("ls-tree", "-z", revision, "--", "skills")
-    record = listing.split("\0")[0]
-    if not record:
-        return ["skills: the repository root must keep a link to the packaged skills"]
-    meta, _, _ = record.partition("\t")
-    mode, kind, sha = meta.split(" ", 2)
-    if mode != "120000" or kind != "blob":
-        return ["skills: the repository root entry must be a symlink to the packaged skills"]
-    target = git("cat-file", "blob", sha, binary=True)
-    expected = (plugin_relative + "/" + declared_skills_path(manifest)).encode()
-    if target != expected:
-        return ["skills: the root link points at " + repr(target.decode(errors="replace"))
-                + " instead of " + repr(expected.decode())
-                + "; both installation paths must read one source"]
-    return []
-
-
 def report_payload(payload, manifest, found, extra):
     result = {
         "digest": digest(payload),
@@ -911,7 +892,6 @@ def check_revision(revision):
     license_blob = git("show", resolved + ":LICENSE", binary=True)
     if release.get("LICENSE", ("", b""))[1] != license_blob:
         errors.append("release LICENSE: the package copy must match the repository license")
-    errors += compatibility_link_errors(resolved, manifest, plugin_relative)
     # A local marketplace installs the working tree, so it gets the same checks.
     working, working_errors = directory_payload(PLUGIN_ROOT)
     errors += working_errors
@@ -937,14 +917,6 @@ def check_revision(revision):
             errors.append("working tree marketplace: " + str(exc))
         if working.get("LICENSE", ("", b""))[1] != (ROOT / "LICENSE").read_bytes():
             errors.append("working tree LICENSE: the package copy must match the repository license")
-        link = ROOT / "skills"
-        try:
-            expected_link = plugin_relative + "/" + declared_skills_path(working_manifest)
-            if not link.is_symlink() or str(link.readlink()) != expected_link:
-                errors.append("working tree skills: the repository root link must be a symlink to "
-                              + expected_link)
-        except ValueError:
-            pass
     for line in git("status", "--porcelain", "--ignored", "--", plugin_relative).splitlines():
         if line[:2] in ("??", "!!"):
             errors.append("working tree " + line[3:].strip() + ": untracked or ignored files "

@@ -2,8 +2,9 @@
 
 [POLICY.md](../POLICY.md) owns the rules. This page maps them to commands and
 the steps needed to activate GitHub enforcement. It is developer-only: every check
-here runs from a checkout, and the Python scripts and tests it names stay until the
-Python execution path is removed. Installing and operating the runtime is
+here runs from a checkout. The Python execution path left in todo 44; the Python files it names
+are the CI checks' twins and their tests, developer tools listed in
+`scripts/dev/ALLOWED_PYTHON.txt` that todo 48 removes. Installing and operating the runtime is
 [runtime installation](runtime-install.md).
 
 ## Checks
@@ -13,8 +14,8 @@ Python execution path is removed. Installing and operating the runtime is
 | `crw-dev ci scope` | Select checks from Git evidence (the `selection` job) |
 | `crw-dev ci validate` | Skill metadata, local links and Python syntax |
 | `crw-dev ci plugin` | Plugin package shape, payload hygiene and the release digest |
-| `python3 -m unittest discover -s scripts/ci/tests -v` | Installer behavior and CI-control tests (CI runs the discovery once per Python version; see [the installer tests](#the-installer-tests)) |
-| `crw-dev ci contracts` | Run the offline contract checks whose contract is present, each built into `crw-dev`: the hook replay, the operations shape check, the component definition's Go-retained fields (licences, the bridge identity tool, the compatibility links), the start-policy self-test and the parent-title replay. No Python checker script is needed (`scripts/ci/contracts.py`, which paired each contract with its script, was deleted in todo 44) |
+| `python3 -m unittest discover -s scripts/ci/tests -v` | CI's `tests` job: the CI-control tests of the checks' Python twins, once per Python version ([the installer tests](#the-installer-tests)); developer tools until todo 48 |
+| `crw-dev ci contracts` | Run the offline contract checks whose contract is present, each built into `crw-dev`: the hook replay, the operations shape check, the component definition (licences in the checkout and the release archives, the bridge identity tool, the compatibility links the release build makes), the start-policy self-test and the parent-title replay. No Python checker script is needed (`scripts/ci/contracts.py`, which paired each contract with its script, was deleted in todo 44) |
 | `crw-dev ci operations` | The operations fixtures against their contract (the Go port of `scripts/check_operations_contract.py`, also run by `contracts`) |
 | `bash scripts/ci/secrets.sh` | Checksum-pinned Gitleaks scan of all fetched history |
 | `crw-dev ci gate` | Aggregate prerequisite results supplied by the workflow |
@@ -23,11 +24,12 @@ Python execution path is removed. Installing and operating the runtime is
 
 `crw-dev` is the development binary: `go build -tags dev -o dist/crw-dev ./cmd/crw-dev`
 (or `make crw-dev`). It builds only with the `dev` tag, so `make dist` and the release
-archives never contain it. Each `crw-dev ci` check replaces the Python script of the same
-name under `scripts/ci/` with identical exit codes and output (except `contracts`, whose Go
-side no longer runs a Python checker or refuses a contract for lacking one, and reports the
-component definition by what the Go build takes from it); the remaining scripts and their
-tests are developer tools that stay until todo 48 of the Go port.
+archives never contain it. Each `crw-dev ci` check replaced the Python script of the same
+name under `scripts/ci/` with identical exit codes and output. `contracts` has had no Python
+twin since todo 44: it runs no Python checker, refuses no contract for lacking one, and judges
+the component definition, `internal/runtime/definition`, against the checkout and the release
+configuration (decision 47). The remaining scripts and their tests are developer tools that stay
+until todo 48 of the Go port.
 
 See the [workflow](../.github/workflows/ci.yml) for exact job inputs and Python
 versions. PR validation uses GitHub's combined merge candidate; pushes to `dev`
@@ -46,12 +48,12 @@ too, so an existing unregistered component cannot hide behind a docs-only diff.
 | Change | Selected work |
 | --- | --- |
 | Named root prose files and Markdown directly under `docs/` | Validation, plugin identity, offline contracts and secrets |
-| `plugins/crw/skills/**` or the root `skills` link | Above, plus installer/CI tests on Python 3.10 and 3.13 |
+| `plugins/crw/skills/**` | Above, plus installer/CI tests on Python 3.10 and 3.13 |
 | Runtime, package, wiring, manifest, shared configuration or CI-control paths, and the relay's documents under `docs/relay/` | All checks |
-| Go product and contract corpus paths: `go.mod`, `go.sum`, `tools.go`, `Makefile`, `.goreleaser.yaml`, root `conftest.py`, `cmd/**`, `internal/**`, `contract/**`, `docs/port/**`, `scripts/port/**` | All checks |
+| Go product and contract corpus paths: `go.mod`, `go.sum`, `tools.go`, `Makefile`, `.goreleaser.yaml`, `cmd/**`, `internal/**`, `contract/**`, `docs/port/**`, `scripts/port/**` | All checks |
 | Mixed paths | Union of their coverage |
 | Empty/unavailable diff or manual dispatch | Full coverage |
-| Unmapped changed or candidate path | Full coverage; gate fails until the path is registered |
+| Unmapped changed or candidate path | Full coverage; gate fails until the path is registered. The paths todo 44 deleted (`pyproject.toml`, `uv.lock`, the root `conftest.py` and `skills` link) are unmapped again, so bringing one back needs a mapping |
 
 Skill Markdown contains executable instructions. A manifest version update paired
 with a skill edit still selects full coverage; this selector does not infer a
@@ -119,9 +121,9 @@ verbatim, so a symlink inside it is dropped and its files disappear, while an
 untracked or ignored file is published; both are rejected, along with anything
 outside `.codex-plugin/`, `skills/` and `LICENSE`, operational state and credential
 names, and a personal home path in any shipped instruction. It also requires each
-declared skill to carry `SKILL.md` and `agents/openai.yaml`, and the repository
-root link to point at the declared skills directory so the linked and packaged
-installations cannot drift apart.
+declared skill to carry `SKILL.md` and `agents/openai.yaml`. (Until todo 44 it also
+required the repository root `skills` link to point at the declared skills directory;
+the link left, and both installations read the declared directory.)
 
 An empty directory is refused for the same reason: it carries no file for any other
 rule to inspect and still reaches the cache. Shipped files must sit inside the

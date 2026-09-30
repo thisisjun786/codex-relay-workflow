@@ -83,7 +83,8 @@ first and add the plugin after it: runtime first, then payload
 A host whose runtime is still the Python one does not add or update the plugin before
 [the cutover](docs/port/cutover.md). This payload's declared commands cannot start a
 Python runtime, so every Stop would be released without a record and the bridge would
-not start.
+not start. The cutover's Python half (the fence release and its installer) left the
+repository in todo 44, so such a host runs it from a revision before that.
 
 ```sh
 codex plugin marketplace add thisisjun786/codex-relay-workflow --ref dev
@@ -131,10 +132,10 @@ no variable set: the relay commands the skills run and the Stop hook's guard ope
 todo 43 the Go build refused that directory unless `CRW_ALLOW_LIVE_STATE=1` was set; the guard
 now refuses it only under test isolation
 ([the live-state guard](docs/port/cutover.md#the-live-state-guard-test-isolation-only)). A host
-still on the Python runtime moves through [the cutover](docs/port/cutover.md) first. That runbook
-moves the store's ownership. Where the pointer move (`crw install install`, which on the relay host's first Go install
-also replaces its Python-era Stop settings, once) falls among its steps is not written yet: todo 42
-settles it.
+still on the Python runtime moves through [the cutover](docs/port/cutover.md) first, from a
+revision before todo 44 removed the Python half of it. That runbook moves the store's
+ownership; `crw install install` moves the pointer (and on the relay host's first Go install
+replaces its Python-era Stop settings, once).
 
 ### Before using the skills
 
@@ -142,7 +143,7 @@ settles it.
 | --- | --- |
 | Link the skills from a checkout | The Go toolchain `go.mod` names, and directory symlinks |
 | Install the runtime | A release archive for Linux (amd64 or arm64); darwin/arm64 is built but unvalidated |
-| Run repository checks | The Go toolchain, and Python 3.10+ for the Python checks that remain until the Python path is removed (developer-only) |
+| Run repository checks | The Go toolchain, and Python 3.10+ for `make test`'s comparison of the CI checks with their Python twins (developer tools that todo 48 removes) |
 | Plan and verify Linear work | Codex with local skill support and a connected Linear workspace you can access |
 | Use the shared workflow | Separately installed CXC and Paperthin skills referenced by the [integration guide](plugins/crw/skills/crw-plan/references/integrations.md) |
 | Delegate independent tasks | A host exposing task creation and coordination tools, or an installed bridge |
@@ -216,16 +217,10 @@ git diff --check
 ```
 
 The runtime itself is checked with `make lint test` ([CI operation](docs/CI.md) lists the
-parts CI splits that into). Until the Python execution path is removed, the Python checks
-remain and CI runs them too; they need Python 3.10+:
-
-```sh
-python3 scripts/ci/validate.py
-python3 scripts/ci/plugin.py
-python3 -m unittest discover -s scripts/ci/tests -v
-```
-
-The Python packages the runtime was ported from left the repository in todo 44.
+parts CI splits that into). The Python packages the runtime was ported from left the
+repository in todo 44; the CI checks' Python twins under `scripts/ci` are developer tools
+that `make test` and CI compare with the Go checks until todo 48 removes them
+(`scripts/dev/ALLOWED_PYTHON.txt`).
 
 When the bundled Codex skill validator is available:
 

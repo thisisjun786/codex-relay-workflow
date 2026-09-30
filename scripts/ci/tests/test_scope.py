@@ -61,11 +61,19 @@ class ScopeTests(unittest.TestCase):
     def test_runtime_manifest_and_ci_select_both(self):
         for path in ("packages/bridge/src/a.py", "scripts/runtime_install.py",
                      "plugins/crw/wiring/launch.py", "plugins/crw/.codex-plugin/plugin.json",
-                     ".github/workflows/ci.yml", "pyproject.toml", "conftest.py",
+                     ".github/workflows/ci.yml",
                      "contract/runner/core.py", "contract/fixtures/records/a.json",
                      "docs/port/test-map.md", "docs/relay/invariants.md"):
             with self.subTest(path=path):
                 self.assertEqual(scope.classify(path), "full")
+
+    def test_retired_paths_are_unregistered(self):
+        # Todo 44 deleted the Python workspace and the corpus's Python runner; a change that brings
+        # one back is unregistered until a verification mapping is added. The root skills link, deleted
+        # in the same change as this map edit, stays classified until that deletion has landed.
+        for path in ("pyproject.toml", "uv.lock", "conftest.py"):
+            with self.subTest(path=path):
+                self.assertEqual(scope.classify(path), "unknown")
 
     def test_go_product_paths_are_registered_and_select_full(self):
         paths = ("go.mod", "go.sum", "tools.go", "Makefile", ".goreleaser.yaml",

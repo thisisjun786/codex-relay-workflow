@@ -37,6 +37,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
             "credentials": release_steps.step_block("validate", "release-credentials"),
             "publish": release_steps.step_block("publish", "release-publish"),
             "go-source": release_steps.step_block("release-go", "release-go-source"),
+            "go-tree": release_steps.step_block("release-go", "release-go-tree"),
+            "snapshot-tree": release_steps.step_block("validate", "release-go-snapshot-tree"),
         }
         publish_job = release_steps.job_body("publish")
         if "needs: validate" not in publish_job or "inputs.dry_run == false" not in publish_job:
@@ -293,8 +295,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertEqual(self.remote_sha("refs/tags/v0.1.0"), self.candidate)
 
     def test_release_go_runs_after_publication_and_snapshot_stays_in_validation(self):
-        self.assertEqual(release_steps.step_ids("validate")[-2:],
-                         ["release-credentials", "release-go-snapshot"])
+        self.assertEqual(release_steps.step_ids("validate")[-3:],
+                         ["release-credentials", "release-go-snapshot-tree", "release-go-snapshot"])
         validate = release_steps.job_body("validate")
         snapshot = validate[validate.index("id: release-go-snapshot"):]
         self.assertIn("args: release --snapshot --clean", snapshot)
@@ -303,10 +305,28 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("needs: [validate, publish]", job)
         self.assertIn("if: inputs.dry_run == false", job)
         self.assertEqual(release_steps.step_ids("release-go"),
-                         ["release-go-source", "release-go-publish"])
+                         ["release-go-source", "release-go-tree", "release-go-publish"])
         publish = job[job.index("id: release-go-publish"):]
         self.assertIn("args: release --clean", publish)
         self.assertNotIn("--snapshot", publish)
+
+    def test_the_binaries_are_stamped_with_the_clean_checkouts_tree(self):
+        # Decision 34: the binaries carry HEAD's tree as their installed revision, which
+        # .goreleaser.yaml reads from SOURCE_TREE; a checkout with changes is not HEAD's tree.
+        config = (ROOT / ".goreleaser.yaml").read_text(encoding="utf-8")
+        self.assertIn("internal/runtime/record.sourceTree={{ .Env.SOURCE_TREE }}", config)
+        tree = self.git("rev-parse", "HEAD^{tree}")
+        for block in ("go-tree", "snapshot-tree"):
+            with self.subTest(block=block):
+                env_file = self.root / f"{block}.env"
+                env_file.write_text("")
+                self.assert_pass(self.run_block(block, GITHUB_ENV=str(env_file)), "clean checkout")
+                self.assertEqual(env_file.read_text(), f"SOURCE_TREE={tree}\n")
+                (self.checkout / "stray").write_text("x")
+                env_file.write_text("")
+                self.assert_refuse(self.run_block(block, GITHUB_ENV=str(env_file)), "checkout with changes")
+                self.assertEqual(env_file.read_text(), "")
+                (self.checkout / "stray").unlink()
 
     def test_release_go_refuses_a_tag_that_is_not_the_released_commit(self):
         self.git("tag", "v0.1.0", self.base)

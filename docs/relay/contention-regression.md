@@ -199,10 +199,11 @@ parallel operation.
 
 The authoritative run was `scripts/ci/packages.py` (the package check, deleted with the Python
 implementation in todo 44), and it passed before any change here: codex-session-relay 1206 tests, no empty
-collection and no skipped case. A bare `PYTHONPATH=src python3 -m pytest tests` is not
-that run and is not the baseline: it has no `codex_thread_bridge` on the path, and
-this filesystem does not honour the unreadable directory one of the scope tests depends
-on, so it reports failures that belong to the runner.
+collection and no skipped case. A bare pytest run over the package's tests with only its
+source on the path was not that run and was not the baseline: it had no
+`codex_thread_bridge` on the path, and this filesystem does not honour the unreadable
+directory one of the scope tests depended on, so it reported failures that belonged to the
+runner.
 
 ## Two things every test here was swept for, and how far the sweep actually reaches
 

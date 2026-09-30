@@ -11,7 +11,7 @@ plugin; `docs/plugin-packaging.md` describes the package and what may sit in its
 root. Start from `dev` on a short-lived branch. Use a separate worktree when another
 task owns the checkout, and preserve its uncommitted work. Read the target skill
 and linked references before editing. Shared workflow rules belong in
-`skills/crw-plan/references/integrations.md`; operation-specific guidance
+`plugins/crw/skills/crw-plan/references/integrations.md`; operation-specific guidance
 belongs with that skill.
 
 Keep each PR focused on one outcome. Explain the triggering problem, expected
@@ -45,18 +45,12 @@ git diff --check
 Changes to the runtime (`cmd/`, `internal/`, `contract/`) also need `make lint test`;
 [CI operation](docs/CI.md) lists the parts CI splits that into.
 
-Until the Python execution path is removed, the Python checks remain and CI runs them
-too. They are developer-only, need Python 3.10 or newer and no dependency installation:
-
-```sh
-python3 scripts/ci/validate.py
-python3 scripts/ci/plugin.py
-python3 -m unittest discover -s scripts/ci/tests -v
-```
-
 The Python packages the runtime was ported from left the repository in todo 44; what stays of
 them is the bridge's licence and provenance under `packages/codex-thread-bridge` and the relay's
-documents under `docs/relay`.
+documents under `docs/relay`. The CI checks keep Python twins under `scripts/ci`, developer tools
+listed in `scripts/dev/ALLOWED_PYTHON.txt` until todo 48 removes them: `make test` runs
+`internal/dev/ci`'s parity tests, which compare each twin with its `crw-dev ci` check, and CI's
+`tests` job runs the twins' own tests. Change a twin only together with its Go check.
 
 Installer tests use temporary destinations; do not point test runs at your real
 Codex skill directory. The bundled Codex skill validator, when installed, is an

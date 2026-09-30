@@ -11,8 +11,13 @@ per-class totals; exit 1 otherwise, naming each offending path on stderr.
 Todo 44 deletes the files the map classifies, so the map states the revision it is measured at
 (`Map revision: <sha>`, the last dev revision that still held every one of them) and the files are
 read there with git, not from the working tree.
+
+With --final (todo 44's acceptance) the map must also state that revision, and every destination
+must name where its property lives now: each `corpus: <domain>` a domain under contract/fixtures,
+which internal/contracttest replays, and each `go-test:` part a directory of this checkout.
 """
 
+import argparse
 import re
 import subprocess
 import sys
@@ -129,6 +134,43 @@ def total_problems(text: str, rows: list[Row], files: dict[str, int]) -> list[st
     return found
 
 
+GO_PATH: Final = re.compile(r"(?:internal|cmd)/[A-Za-z0-9_./{},-]*")
+CORPUS: Final = re.compile(r"corpus: ([A-Za-z0-9-]+)")
+
+
+def go_directory(part: str) -> str | None:
+    """The first directory a `go-test:` part names: the first internal/ or cmd/ path in it, cut at
+    its first component that is a file (`.go`) or a brace group, trailing punctuation dropped."""
+    match = GO_PATH.search(part)
+    if match is None:
+        return None
+    components = []
+    for component in match.group(0).rstrip(".,;").split("/"):
+        if not component or "{" in component or component.endswith(".go"):
+            break
+        components.append(component)
+    return "/".join(components)
+
+
+def final_problems(text: str, rows: list[Row]) -> list[str]:
+    """Name every destination that does not name where its property lives in this checkout."""
+    found: list[str] = []
+    if MAP_REVISION.search(text) is None:
+        found.append("the map states no `Map revision: <sha>`")
+    domains = {path.name for path in (ROOT / "contract" / "fixtures").iterdir() if path.is_dir()}
+    for row in rows:
+        for part in (part.strip() for part in row.destination.split(" + ")):
+            if part.startswith("corpus:"):
+                match = CORPUS.match(part)
+                if match is None or match.group(1) not in domains:
+                    found.append(f"corpus {part[:60]!r} is not a domain under contract/fixtures: {row.path}")
+            elif part.startswith("go-test:"):
+                directory = go_directory(part)
+                if not directory or not (ROOT / directory).is_dir():
+                    found.append(f"go-test {part[:60]!r} names no directory of this checkout: {row.path}")
+    return found
+
+
 def problems(text: str, rows: list[Row], files: dict[str, int]) -> list[str]:
     """Name every disagreement between the map and the files; empty when they agree."""
     listed = [row.path for row in rows]
@@ -141,13 +183,19 @@ def problems(text: str, rows: list[Row], files: dict[str, int]) -> list[str]:
     return found + total_problems(text, rows, files)
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     """Print the totals, name each problem on stderr, and exit 1 when there is any."""
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--final", action="store_true",
+                        help="also require every destination to name where its property lives")
+    args = parser.parse_args(argv)
     text = TEST_MAP.read_text(encoding="utf-8")
     rows = table_rows(text)
     revision = MAP_REVISION.search(text)
     files = test_files(revision.group(1) if revision else None)
     found = problems(text, rows, files)
+    if args.final:
+        found += final_problems(text, rows)
     for problem in found:
         print(problem, file=sys.stderr)
     for klass in CLASSES:

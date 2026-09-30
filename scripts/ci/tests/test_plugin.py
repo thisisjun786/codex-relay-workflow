@@ -435,7 +435,7 @@ class PayloadVersionTests(unittest.TestCase):
 class SyntheticRepositoryTests(unittest.TestCase):
     """The release payload must come from the revision, not from the working tree."""
 
-    def build(self, folder, files=None, link="plugins/crw/skills", commit=True):
+    def build(self, folder, files=None, link=None, commit=True):
         root = Path(folder)
         (root / "scripts/ci").mkdir(parents=True)
         shutil.copy(SCRIPT, root / "scripts/ci/plugin.py")
@@ -496,12 +496,12 @@ class SyntheticRepositoryTests(unittest.TestCase):
             self.assertEqual(result.returncode, 1)
             self.assertIn("source.path", result.stderr)
 
-    def test_compatibility_link_must_point_at_the_packaged_skills(self):
-        for link, expected in ((None, "must keep a link"), ("plugins/crw", "root link points at")):
+    def test_the_root_skills_entry_is_neither_required_nor_read(self):
+        # The root `skills` compatibility link left in todo 44: nothing installs through it.
+        for link in (None, "plugins/crw"):
             with self.subTest(link=link), tempfile.TemporaryDirectory() as folder:
                 result = self.run_in(self.build(folder, link=link))
-                self.assertEqual(result.returncode, 1)
-                self.assertIn(expected, result.stderr)
+                self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_untracked_file_in_the_plugin_root_is_refused(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -531,14 +531,6 @@ class SyntheticRepositoryTests(unittest.TestCase):
             result = self.run_in(root)
             self.assertEqual(result.returncode, 1)
             self.assertIn("crw-plan", result.stderr)
-
-    def test_root_link_target_is_compared_exactly(self):
-        # A committed link target with trailing whitespace is a broken link.
-        with tempfile.TemporaryDirectory() as folder:
-            root = self.build(folder, link="plugins/crw/skills ")
-            result = self.run_in(root)
-            self.assertEqual(result.returncode, 1)
-            self.assertIn("root link points at", result.stderr)
 
     def test_declared_license_must_match_the_repository_license(self):
         with tempfile.TemporaryDirectory() as folder:

@@ -468,14 +468,14 @@ guard.
 
 Install rollback is not takeover rollback. `crw install rollback` moves which runtime the pointer
 names, and onto a Python runtime it rewrites no settings. It does not move the store's ownership. After the cutover
-the store is owned by the Go runtime, and handing it back to the Python fence release is
-`crw relay takeover rollback --to python --python-relay <path>`, which names the Python relay by
-absolute path and never through the pointer ([cutover rollback](port/cutover.md#rollback)). One does
-not imply the other, and a return to Python needs both. The cutover runbook does not yet say in
-which order they run, or where `crw install install` falls among the forward steps; both orders are
-open items todo 42 settles
-([the backlog](port/refactor-backlog.md#deferred-review-findings)). The one order
-fixed today is the plugin payload's, above: the payload goes back before the runtime does.
+the store is owned by the Go runtime, and handing it back to the Python fence release was
+`crw relay takeover rollback --to python --python-relay <path>`, which named the Python relay by
+absolute path and never through the pointer ([cutover rollback](port/cutover.md#rollback)); since
+todo 44 no Python candidate is launched and that rollback is refused (decision 48). One does
+not imply the other, and a return to Python needed both; with the store's half refused, this
+revision offers no return to Python, and `crw install rollback` onto a Python runtime moves only
+the pointer. The one order fixed for the pointer is the plugin payload's, above: the payload goes
+back before the runtime does.
 
 ## Removing a runtime
 

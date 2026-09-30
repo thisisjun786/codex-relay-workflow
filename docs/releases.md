@@ -23,13 +23,21 @@ publication. Dry-run uses only a read token and creates no tag, release or branc
 update; it does not need a publication credential.
 
 Source-release tags identify repository commits. They are independent of the
-plugin manifest's payload version and the imported Python package versions.
-The ordinary plugin and runtime-definition checks still verify those identities.
+plugin manifest's payload version and of the component versions in the Go
+definition (`internal/runtime/definition`). The ordinary plugin and
+runtime-definition checks still verify those identities.
 
 Validation, including dry-run, also builds the static `crw` binaries with
 GoReleaser v2.18.2 (`goreleaser release --snapshot --clean`) from
 [.goreleaser.yaml](../.goreleaser.yaml). The snapshot publishes nothing; it proves
 the selected commit still produces every archive before any tag is written.
+
+Every build stamps the binaries with the git tree they are built from
+(`internal/runtime/record.sourceTree`, decision 34), which the fault sweepers read
+from the host record as the installed revision. The workflow sets `SOURCE_TREE`
+from `git rev-parse HEAD^{tree}` in a step that refuses a checkout with changes, and
+`.goreleaser.yaml` reads it, so a GoReleaser run without `SOURCE_TREE` set fails
+rather than build unstamped binaries: set it the same way for a local snapshot.
 
 ## Binary assets
 

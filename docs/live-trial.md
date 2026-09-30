@@ -77,7 +77,9 @@ checker's own start is a refusal rather than a pass.
 
     create ──▶ standby turn ──▶ register ──▶ write the start record ──▶ preflight ──▶ dispatch
 
-Each arrow carries the failure that happens when it is reversed.
+Each arrow carries the failure that happens when it is reversed. Since todo 44 the preflight is
+the checks this page lists, made by hand with the relay's own commands (`crw relay doctor`,
+`store-identity`); the Python install's preflight script that made them left with that install.
 
 **Create, then a standby turn, before anything is registered.** A task with no turn has no rollout,
 so the host cannot resolve its goal or its active turn, and the relay withholds delivery from a
@@ -257,7 +259,8 @@ readings are what catch that. Exit 0 means no judgment in the document said fals
 The start record is one JSON object under the trial root, with absolute paths throughout. The
 whole `store` block except the challenge nonce is copied from one participant's `store-identity`,
 the three `log*` fields among them: they say where that participant's write-ahead log is written,
-and the preflight sends them back as `doctor --expect-log`.
+and the preflight sends them back as `doctor --expect-log` (the Python preflight did so; by hand,
+the operator does).
 
 
     {

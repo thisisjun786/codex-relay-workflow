@@ -17,11 +17,10 @@ installer, and the package only points at what that installer left behind.
 | `plugins/crw/skills/` | The registered skills, one of the two declared components |
 | `plugins/crw/wiring/` | The declared Stop hook and MCP server, and the `crw-bridge.sh` launcher the server starts. The two Python launchers the pre-native declarations started left the package in todo 43 ([the native wiring](#the-native-wiring)) |
 | `plugins/crw/LICENSE` | The repository license, shipped with the package |
-| `skills` | A link to `plugins/crw/skills`, kept for installations made before the move |
-
-Edit the skills at `plugins/crw/skills/`; the root `skills` link is a compatibility
-path, not a second copy, and it is a Git symlink, so a checkout without symlink
-support turns it into a plain text file. The supported platform is Linux x86_64.
+Edit the skills at `plugins/crw/skills/`. Until todo 44 the repository root also kept `skills`, a
+Git symlink to that directory, for installations made before the move; nothing installed through
+it any more, and it left, so a link made through it is dangling and `crw-dev skills link` reports
+it as a CONFLICT to relink. The supported platform is Linux x86_64.
 
 What may sit in the plugin root is whatever the manifest declares, plus
 `.codex-plugin/` and `LICENSE`. Installation copies that directory verbatim,
@@ -146,8 +145,8 @@ registrations under user-owned settings evaluates each Stop once. Under settings
 both registrations evaluate it: a hook-file entry reads no owner, and cannot, because the legacy
 launchers reach `crw hook` without the flag under those same settings. The only guard there is
 that `crw install hook
---owner plugin` and runtime_install.py each refuse to register a second owner, so the state takes
-a hand edit ([decision 26](port/decisions.md)).
+--owner plugin` (and runtime_install.py, until todo 44 removed it) refuses to register a second
+owner, so the state takes a hand edit ([decision 26](port/decisions.md)).
 
 The hook command does not `exec` and ends in `; exit 0`. When the pointer names nothing, as
 mid-rollback or with `HOME` unset, the shell reports the missing program on stderr and the
@@ -261,7 +260,8 @@ not carry, and each needs a step the installation cannot take for you.
    (or `--release <tag>` in place of `--from`) with the `crw` from that release; without
    `--socket` the relay half of the install's exercise has no App Server to reach, and nothing is
    promoted. It installs under `~/.local/share/crw-runtime`, its only destination (it has no
-   `--dest`). A runtime runtime_install.py placed under another `--dest`,
+   `--dest`). A runtime the Python installer (runtime_install.py, removed in todo 44) placed under
+   another `--dest`,
    or a pointer that still names a Python `env-*` runtime, is one neither command starts: the hook
    then releases every Stop without a word, and the server exits as it starts. `crw install`
    refuses a host record whose pointer names such another link, naming the repair, and
@@ -287,10 +287,10 @@ not carry, and each needs a step the installation cannot take for you.
    launcher refuses to start the bridge when that file is gone or has changed, and the bridge reads
    it through `CODEX_THREAD_BRIDGE_EXECUTION_POLICY`. See
    [the execution policy the plugin bridge runs under](runtime-install.md#the-execution-policy-the-plugin-bridge-runs-under).
-   A host still on the Python runtime has these records from the Python fence installer instead
-   ([the Python fence installer](runtime-install.md#the-python-fence-installer)), whose
-   `register-mcp` also probed the enabled package's cached launcher before it wrote a policy
-   record. `crw install register-mcp` probes nothing: the launcher it would probe is the runtime
+   A host on the Python runtime had these records from the Python fence installer instead
+   ([the Python fence installer](runtime-install.md#the-python-fence-installer), removed in todo
+   44), whose `register-mcp` also probed the enabled package's cached launcher before it wrote a
+   policy record. `crw install register-mcp` probes nothing: the launcher it would probe is the runtime
    itself.
 3. Trust the hook. Until it is trusted nothing fires, and no command in this repository
    grants that: installing writes no trust, and a session without it runs the hook zero
@@ -311,8 +311,8 @@ records and never holds a turn.
 
 The linked installation in [README](../README.md#install) still works. Both
 installations read the same source: `crw-dev skills link` links the directory the manifest
-declares, and the repository root keeps `skills` as a link to it so links created before the
-move still resolve.
+declares (links created before the move went through the root `skills` link, which todo 44
+retired).
 
 A host carrying a manual install of the bridge or the hook beside the plugin runs two of
 everything. [Moving a manual install to the plugin install](plugin-transition.md) records how
@@ -513,11 +513,12 @@ them apart; [updating safely](#updating-safely) compares the declarations instea
 
 ### The bootstrap a cached turn may still run
 
-This subsection is pre-cutover. It describes the Python bootstrap the package declared before
-[the native wiring](#the-native-wiring), which a turn that started then may still run. The launchers
-it opens left the package in todo 43, after the cutover commit, and the subsection goes once the
-operator has removed the last copy, `<CODEX_HOME>/crw-stop-hook.py`, which waits until the retention
-scan finds no such command ([retention](port/cutover.md#retention)).
+This subsection is history from before the cutover. It describes the Python bootstrap the package
+declared before [the native wiring](#the-native-wiring), which a turn that started then could still
+run. The launchers it opens left the package in todo 43, after the cutover commit, and the
+repository in todo 44; the last copy, `<CODEX_HOME>/crw-stop-hook.py`, is the operator's to remove
+once the retention scan finds no such command ([retention](port/cutover.md#retention)). It stays as
+the record of why that bootstrap named two candidates, for a host that may still hold such a turn.
 
 That bootstrap named a file inside the version cache. Replace the package while a task still holds
 it and it names a file that no longer exists. `python3` exits **2** for a
@@ -829,9 +830,9 @@ go run -tags dev ./cmd/crw-dev ci validate   # skill metadata, local links, Pyth
 go test ./internal/runtime/install/...       # the wiring through the pointer, among the installer's tests
 ```
 
-Until they are deleted, `scripts/ci/plugin.py` and `scripts/ci/validate.py` answer the same with
-the same flags and output, and `scripts/ci/tests` holds the Python installer's wiring tests; all
-three are developer-only ([CI operation](CI.md)).
+`scripts/ci/plugin.py` and `scripts/ci/validate.py`, the checks' Python twins, answer the same
+with the same flags and output until todo 48 removes them; they are developer tools
+([CI operation](CI.md)). The Python installer's wiring tests left with it in todo 44.
 
 `crw-dev ci plugin` builds the release payload from a Git revision rather than from the
 working tree, so the bytes it validates are the ones a clone publishes. `--json`

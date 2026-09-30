@@ -260,9 +260,9 @@ func skillSources(root string) ([]string, error) {
 }
 
 // linkState is what target holds for source, without following anything but a symlink's own
-// resolution: LINKED when target is a symlink resolving to the same directory as source (a link
-// through the repository root's skills alias counts), MISSING when nothing is there, and
-// CONFLICT for anything else, a dangling link included.
+// resolution: LINKED when target is a symlink resolving to the same directory as source, MISSING
+// when nothing is there, and CONFLICT for anything else, a dangling link included (a link through
+// the repository root's skills alias, which todo 44 retired, is one).
 func linkState(target, source string) string {
 	info, err := os.Lstat(target)
 	if errors.Is(err, os.ErrNotExist) {

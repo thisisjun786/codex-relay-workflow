@@ -45,8 +45,8 @@ the install lives in, and the location is the directory the running component re
 A Go install, which `crw install` makes from a release archive, is a runtime directory
 `bin-<version>-<digest12>`: that directory is its environment, its `bin/` is its location, and it
 also records the binary's digest as `binaryDigest`, the `target` the binary was built for and the
-release it came from. An install the Python fence installer made is a virtual environment instead,
-until the Python execution path is removed, and it records the declared `requires-python`, the
+release it came from. An install the Python fence installer made (until todo 44 removed that
+installer) is a virtual environment instead, and it records the declared `requires-python`, the
 interpreter and the install mode as `editable` or `copied`. Its environment is the virtual
 environment whose interpreter runs the code, and its location is the package directory that
 interpreter actually imports, which for a copied install sits inside the environment and for an
@@ -1361,19 +1361,22 @@ owner authorization that OPS-9.3 keeps separate from merge authority. A pull req
 `main` to `dev` keeps its head and its review history; only the base moves, so earlier receipts
 naming the old base stay accurate for the moment they were written and are not rewritten.
 
-The layout is `skills/crw-*` for the skills, `packages/codex-thread-bridge/` for the bridge and
-`packages/codex-session-relay/` for the relay.
+The layout is `plugins/crw/skills/crw-*` for the skills and `cmd/` and `internal/` for the `crw`
+runtime, which carries the bridge and the relay. Until todo 44 the bridge and the relay were Python
+packages under `packages/codex-thread-bridge/` and `packages/codex-session-relay/`.
 
 ### OPS-11.2 What each package keeps
 
-Consolidating where code is reviewed does not merge the components into one thing. Each package
-keeps its own module and command names, its own `pyproject.toml` and its own tests, so it stays
-separately buildable and separately installable. Each also keeps its upstream provenance and its
-licence notice, including the MIT notice of a component that came from another author's repository,
-because a licence travels with the code rather than with the repository it lands in.
+Consolidating where code is reviewed does not merge the components into one thing. Each component
+keeps its own command name (`codex-thread-bridge`, `codex-session-relay`, the links beside `crw`)
+and its own tests; while they were Python packages each also kept its own `pyproject.toml`, so it
+stayed separately buildable and separately installable. Each keeps its upstream provenance and its
+licence notice, including the MIT notice of a component that came from another author's repository
+(`packages/codex-thread-bridge/LICENSE` and its `PROVENANCE.md`), because a licence travels with the
+code rather than with the repository it lands in.
 
-The skills and the packages own different things. `skills/` holds workflow instructions that an agent
-reads; `packages/` holds runtime code that a host executes. A rule that belongs to one does not move
+The skills and the runtime own different things. The skills hold workflow instructions that an agent
+reads; `cmd/` and `internal/` hold runtime code that a host executes. A rule that belongs to one does not move
 into the other just because they now share a commit. CXC and Paperthin stay outside this repository
 entirely and are not vendored by this decision.
 
