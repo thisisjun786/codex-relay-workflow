@@ -164,6 +164,8 @@ func VerifyFrozenDocument(ctx context.Context, reference string, raw []byte, ent
 // frozenJSONDepth is how many nested containers json.loads's C scanner reads where the fence reads
 // a frozen MANIFEST.json: the recursion budget left at that call when the installed console script
 // runs the relay (decision 44), the boundary every other Go reader of a fence JSON document keeps.
+// Within four levels of it the fence's scanner spends more than one level on an error or a
+// constant; Go does not model that band, a Python defect not carried over (known-defects.md).
 const frozenJSONDepth = 9998
 
 // frozenRecords is [Entry.from_record(record) for record in json.loads(text)["entries"]] over the

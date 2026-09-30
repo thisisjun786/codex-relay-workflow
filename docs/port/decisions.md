@@ -2277,10 +2277,17 @@ below. A digest, in the fence as in Go, is 64 lowercase hex characters and nothi
   installed `codex-session-relay` console script reaches it on CPython 3.13 that budget is 9998
   (measured at the guard's read through `cli.main`; `reception/depth.go` and `merge_evidence.go`
   keep the same boundary). A document nested deeper is a `RecursionError`, `maximum recursion
-  depth exceeded while decoding a JSON array from a unicode string` (or `object`), raised in scan
-  order with the syntax errors. Go reads with the same translation and the same depth
-  (`store.frozenJSONDepth`), and its decoder keeps each object's key positions, so a document
-  with many keys is read in time proportional to its length, as `json.loads` reads it. The
+  depth exceeded while decoding a JSON array from a unicode string` (or `object`), raised where
+  the scanner meets that container, so a syntax error it meets first is raised instead. Within
+  four levels of the budget the scanner's error paths spend more than one level: from 9995
+  containers deep the fence raises a `RecursionError` in place of each JSONDecodeError the scanner
+  raises itself, and at 9998 also in place of `Expecting value` and an over-long integer's
+  ValueError, and of NaN or an infinity, which it reads anywhere else. Go keeps the one-level
+  rule there, so it raises the JSONDecodeError or ValueError or reads the constant;
+  known-defects.md records that band and each reader's answer in it as a Python defect not
+  carried over. Go reads with the same translation and the same depth (`store.frozenJSONDepth`),
+  and its decoder keeps each object's key positions, so a document with many keys is read in
+  time proportional to its length, as `json.loads` reads it. The
   budget is what is left at the call, so code that reaches `json.loads` through C re-entries has
   less (measured: 9995 under `python -m`, 9980 inside a unittest test, 9978 under pytest). The
   fence therefore answers a document within twenty levels of the boundary differently on such a
@@ -2303,7 +2310,7 @@ below. A digest, in the fence as in Go, is 64 lowercase hex characters and nothi
   document nested too deep is the one exception here that is not an OSError, a ValueError, a
   KeyError, a TypeError or an AttributeError (`ManifestException.RuntimeError`).
 
-Each Go reader answers as the fence's reader of the same function:
+Each Go reader answers as the fence's reader of the same function, outside the band above:
 
 - the intake reads `store.VerifyFrozen`, now the detailed call without the access list, as
   `verify_frozen` is. An unreachable frozen copy is refused `manifest_unverified` and recorded.
@@ -2386,7 +2393,7 @@ Evidence: `packages/codex-session-relay/src/codex_session_relay/manifest.py:269-
 `identity.py:23-24` (`DIGEST_RE`), `guard.py:123-195` (`deliverable_state`), `guard.py:906-987`
 (`evaluate`, `_faulted`), `omitted.py:505-507,624-626` (`evidence_unreadable`);
 `internal/relay/store/frozen_detailed.go:22-162` (`VerifyFrozenDetailed`,
-`FrozenDocument`, `frozenPath`, `VerifyFrozenDocument`), `:164-266` (`frozenJSONDepth`,
+`FrozenDocument`, `frozenPath`, `VerifyFrozenDocument`), `:164-268` (`frozenJSONDepth`,
 `frozenRecords`, `ManifestException`, `RuntimeError`, `resolveFrozenPath`),
 `internal/relay/store/frozen_value.go` (`PythonEntry`,
 `PythonManifestEntries`, `PythonRevisionHash`, `PythonStr`, `PythonEqual`, the `json.loads`
