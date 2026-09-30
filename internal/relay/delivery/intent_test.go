@@ -335,7 +335,7 @@ func TestINT16_a_claim_must_correlate_with_the_intents_dispatch(t *testing.T) {
 // their string model can represent. Removing CorrelationProblem's utf8.ValidString guard
 // compiles and changes only the Go result to claim_dispatch_mismatch.
 func TestINT16_unencodable_dispatch_is_unnamed(t *testing.T) {
-	answers := sameOps(t, nil,
+	answers := sameOpsIn(t, t.TempDir(), nil,
 		markerOp{"op": "unencodable_correlation"},
 		markerOp{"op": "unencodable_selection", "assignment": AssignmentID(string([]byte{0xed, 0xa0, 0x80}))},
 	)
@@ -434,7 +434,7 @@ func TestINT19_a_malformed_fact_is_reported_by_its_field_path(t *testing.T) {
 }
 
 func TestINT20_a_counter_that_is_not_a_count_is_corruption(t *testing.T) {
-	answers := sameOps(t, nil,
+	answers := sameOpsIn(t, t.TempDir(), nil,
 		markerOp{"op": "counters", "value": map[string]any{"holdsThisTurn": 0}},
 		markerOp{"op": "counters", "value": nil},
 		markerOp{"op": "counters", "value": map[string]any{"holdsThisTurn": nil}},
@@ -518,7 +518,7 @@ func TestINT23_assignment_selection_for_a_workspace(t *testing.T) {
 // The publish path confines every marker write: a symlinked parent inside the subtree cannot
 // carry a create-once write outside the root (marker.confined; the ValueError text is Python's).
 func TestINT21_confinement_refuses_a_symlinked_parent_outside_the_root(t *testing.T) {
-	answers := sameOps(t, nil,
+	answers := sameOpsIn(t, t.TempDir(), nil,
 		markerOp{"op": "write_raw", "target": "<tree>/outside/.keep", "text": ""},
 		markerOp{"op": "write_raw", "target": "<tree>/markers/.keep", "text": ""},
 		markerOp{"op": "symlink", "to": "<tree>/outside", "link": "<tree>/markers/escape"},

@@ -278,7 +278,7 @@ func TestDEL29_the_instruction_each_side_is_given_is_the_one_that_works(t *testi
 }
 
 func TestDEL30_project_key_distinguishes_projects_for_a_shared_service(t *testing.T) {
-	tree := parityTree(t)
+	tree := t.TempDir()
 	expected := expectScenario(t, tree, "del30")
 	f := newFixture(t, tree)
 	other := f.otherAssignment()

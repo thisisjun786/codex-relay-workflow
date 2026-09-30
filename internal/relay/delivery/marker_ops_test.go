@@ -16,16 +16,14 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
-// markerOps runs one list of marker/intent operations through this package over a parityTree
-// and checks the answers, normalized as JSON, against the golden under "markerops <digest of the
-// list>". The tree is fixed because a workspace key hashes the workspace's path, and the answers
-// name assignment directories under it. The lists began as testdata/markerops.py's, run through
-// the Python modules over the same tree path.
+// runMarkerOps runs one list of marker/intent operations through this package over tree and
+// checks the answers, normalized as JSON, against the golden under "markerops <digest of the
+// list>". The lists began as testdata/markerops.py's, run through the Python modules over the same
+// tree path.
 type markerOp = map[string]any
 
-func runMarkerOps(t *testing.T, env map[string]any, ops []markerOp) []any {
+func runMarkerOps(t *testing.T, tree string, env map[string]any, ops []markerOp) []any {
 	t.Helper()
-	tree := parityTree(t)
 	spec, err := json.Marshal(map[string]any{"ops": ops, "env": env})
 	mustDo(t, err)
 	home := t.TempDir()
@@ -412,8 +410,16 @@ func reasonOf(t *testing.T, answer any) string {
 	return reason
 }
 
-// sameOps runs ops, checks their answers against the golden, and returns them.
+// sameOps runs ops over a parityTree, checks their answers against the golden, and returns them.
+// The tree is fixed because a workspace key hashes the workspace's path, and answers name
+// assignment directories under it.
 func sameOps(t *testing.T, env map[string]any, ops ...markerOp) []any {
 	t.Helper()
-	return runMarkerOps(t, env, ops)
+	return runMarkerOps(t, parityTree(t), env, ops)
+}
+
+// sameOpsIn is sameOps over tree, for op lists whose answers hold nothing derived from its path.
+func sameOpsIn(t *testing.T, tree string, env map[string]any, ops ...markerOp) []any {
+	t.Helper()
+	return runMarkerOps(t, tree, env, ops)
 }

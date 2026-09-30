@@ -43,9 +43,11 @@ var ageSeconds = regexp.MustCompile(`"((?:oldestStaged)?[aA]geSeconds)": [0-9.e-
 
 func ageless(text string) string { return ageSeconds.ReplaceAllString(text, `"$1": <age>`) }
 
-func seededSide(t *testing.T) (*cliSide, string) {
+// seededSide is a seeded side over tree/work: a parityTree where the goldens hold ids hashing the
+// artifact paths.
+func seededSide(t *testing.T, tree string) (*cliSide, string) {
 	t.Helper()
-	side := newSide(t, filepath.Join(parityTree(t), "work"))
+	side := newSide(t, filepath.Join(tree, "work"))
 	seeded := sqliteDump(t, side, "SELECT relationship_id FROM relationships")
 	side.expect("sqlite SELECT relationship_id FROM relationships", seeded)
 	rid := strings.Trim(seeded, "[]\"\n ")
@@ -61,7 +63,7 @@ func emitArgs(rid, turn, status, artifact string, extra ...string) []string {
 
 func Test25_CLI05_emit_stages_an_unconfirmed_claim_and_status_lists_nothing(t *testing.T) {
 	t.Run("completed turn offline, then status", func(t *testing.T) {
-		side, rid := seededSide(t)
+		side, rid := seededSide(t, parityTree(t))
 		mustDo(t, os.WriteFile(filepath.Join(side.work, "out.txt"), []byte("the deliverable"), 0o644))
 		emitted, code := sameCLI(t, side, emitArgs(rid, dispatchTurn, "completed", "<work>/out.txt")...)
 		if code != 0 || emitted["stage"] != "staged" || emitted["terminalProof"] != "unverified_staged" || emitted["observedTurnStatus"] != "inProgress" || emitted["receipt"].(map[string]any)["outcome"] != "ready_for_review" {
@@ -76,7 +78,7 @@ func Test25_CLI05_emit_stages_an_unconfirmed_claim_and_status_lists_nothing(t *t
 		}
 	})
 	t.Run("live inProgress turn", func(t *testing.T) {
-		side, rid := seededSide(t)
+		side, rid := seededSide(t, parityTree(t))
 		mustDo(t, os.WriteFile(filepath.Join(side.work, "out.txt"), []byte("still working"), 0o644))
 		emitted, _ := sameCLI(t, side, emitArgs(rid, dispatchTurn, "inProgress", "<work>/out.txt")...)
 		if _, queued := emitted["delivery"]; queued || emitted["stage"] != "staged" {
@@ -86,7 +88,7 @@ func Test25_CLI05_emit_stages_an_unconfirmed_claim_and_status_lists_nothing(t *t
 }
 
 func Test25_CLI07_a_later_turn_needs_a_continuation(t *testing.T) {
-	side, rid := seededSide(t)
+	side, rid := seededSide(t, parityTree(t))
 	mustDo(t, os.WriteFile(filepath.Join(side.work, "out.txt"), []byte("finished later"), 0o644))
 	refused, code := sameCLI(t, side, emitArgs(rid, "turn-loop-5", "completed", "<work>/out.txt")...)
 	if code != 2 || refused["reason"] != "unassigned_turn" {
@@ -100,7 +102,7 @@ func Test25_CLI07_a_later_turn_needs_a_continuation(t *testing.T) {
 }
 
 func Test25_CLI09_a_command_needing_the_host_says_so(t *testing.T) {
-	side, _ := seededSide(t)
+	side, _ := seededSide(t, t.TempDir())
 	result, code := sameCLI(t, side, "deliver")
 	if code != 4 || result["error"] != "usage" || !strings.Contains(result["detail"].(string), "--socket") {
 		t.Fatalf("deliver %d %v", code, result)
@@ -108,7 +110,7 @@ func Test25_CLI09_a_command_needing_the_host_says_so(t *testing.T) {
 }
 
 func Test25_CLI38_a_malformed_criteria_entry_with_restoration_is_refused(t *testing.T) {
-	side, _ := seededSide(t)
+	side, _ := seededSide(t, t.TempDir())
 	for _, criteria := range []string{"[null]", `["c1"]`} {
 		result, code := sameCLI(t, side, "verdict", "--event", strings.Repeat("e", 32), "--verdict", "needs_changes", "--verdict-turn", "v1", "--criteria", criteria, "--restoration", "c1")
 		if code != 2 || result["reason"] != "disposition_conflict" {
@@ -123,7 +125,7 @@ func Test25_CLI38_a_malformed_criteria_entry_with_restoration_is_refused(t *test
 // golden. The side stages an acknowledged completion through this package's services first, as
 // the Python test staged it through its own.
 func Test25_CLI21_the_verdict_command_is_wired_to_the_outbox(t *testing.T) {
-	side, rid := seededSide(t)
+	side, rid := seededSide(t, parityTree(t))
 	event := stageAcknowledgedCompletion(t, side, rid)
 	side.expect("stage acknowledged completion", event)
 	record, code := sameCLI(t, side, "verdict", "--event", event, "--verdict", "verified", "--verdict-turn", "v1")

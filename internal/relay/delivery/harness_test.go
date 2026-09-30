@@ -36,8 +36,9 @@ func repoRoot(t *testing.T) string {
 // the expected values are now this package's own, rewritten with CRW_GOLDEN=update. Each value is
 // checked as JSON after normalizeJSON, under "<scenario> out.<name>"; the store's non-empty
 // tables under "<scenario> tables" and the host's sends under "<scenario> sends". The tree is a
-// parityTree: an artifact's declared path is part of its revision hash, so of the event id and
-// every id derived from it, and a golden holds those ids.
+// parityTree wherever the golden holds ids derived from its paths (an artifact's declared path is
+// part of its revision hash, so of the event id and every id derived from it), and a temporary
+// directory where it holds none.
 type scenario struct {
 	t    *testing.T
 	key  string
