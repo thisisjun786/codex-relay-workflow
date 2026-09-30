@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,16 +15,21 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
-// pythonHome isolates HOME, XDG_* and CODEX_HOME for BOTH implementations in one t.TempDir,
-// so neither can reach the live relay state or ~/.codex.
+// pythonHome isolates HOME, XDG_* and CODEX_HOME for BOTH implementations in one directory of
+// the test's own, so neither can reach the live relay state or ~/.codex. The directory is a
+// fixedTree: an answer the Python relay gave there carries digests of paths under it (a socket's
+// scope key, an artifact's revision and event id), which only the same path gives again.
 func pythonHome(t *testing.T) string {
 	t.Helper()
-	if _, err := exec.LookPath("uv"); err != nil {
-		t.Fatalf("the Python reference is required: %v", err)
-	}
-	home := t.TempDir()
+	return pythonHomeAt(t, fixedTree(t, oracleKey(t, "home "+t.Name())))
+}
+
+// pythonHomeAt is pythonHome at a home the caller made.
+func pythonHomeAt(t *testing.T, home string) string {
+	t.Helper()
 	for key, dir := range map[string]string{
 		"HOME": "", "XDG_STATE_HOME": "xdg-state", "XDG_CONFIG_HOME": "xdg-config", "XDG_DATA_HOME": "xdg-data",
 		"XDG_CACHE_HOME": "xdg-cache", "CODEX_HOME": "codex-home", "CODEX_SESSION_RELAY_SCOPE_DIR": "scopes",
@@ -49,24 +55,31 @@ type run struct {
 	stderr string
 }
 
-// python runs the real Python relay CLI with this process's (isolated) environment, on the
-// selected store as its owner.
+// python is the answer the real Python relay CLI gave with this process's (isolated)
+// environment, on the selected store as its owner (recorded: see oracleRun). The store is
+// handed to Python whether or not Python runs, so the Go side meets the same store either way.
 func python(t *testing.T, dir string, argv ...string) run {
 	t.Helper()
 	ownedArgs(t, dir, argv, "python")
-	command := exec.Command("uv", append([]string{"run", "--no-sync", "--project", repositoryRoot(t), "codex-session-relay"}, argv...)...)
-	command.Dir = dir
-	var stdout, stderr bytes.Buffer
-	command.Stdout, command.Stderr = &stdout, &stderr
-	code := 0
-	if err := command.Run(); err != nil {
-		exitErr, ok := err.(*exec.ExitError)
-		if !ok {
-			t.Fatalf("python %v: %v", argv, err)
-		}
-		code = exitErr.ExitCode()
+	options := placeholders(append([]string{dir}, argv...)...)
+	if id := selectedStoreID(t, dir, argv); id != "" {
+		options = append(options, pyoracle.Substitute(id, "<store-id>"))
 	}
-	return run{code, stdout.String(), stderr.String()}
+	return oracleRun(t, oracleKey(t, "python "+oracleLabel(argv...)), func() (run, error) {
+		command := exec.Command("uv", append([]string{"run", "--no-sync", "--project", repositoryRoot(t), "codex-session-relay"}, argv...)...)
+		command.Dir = dir
+		var stdout, stderr bytes.Buffer
+		command.Stdout, command.Stderr = &stdout, &stderr
+		code := 0
+		if err := command.Run(); err != nil {
+			exitErr, ok := err.(*exec.ExitError)
+			if !ok {
+				return run{}, fmt.Errorf("python %v: %w", argv, err)
+			}
+			code = exitErr.ExitCode()
+		}
+		return run{code, stdout.String(), stderr.String()}, nil
+	}, options...)
 }
 
 // golang runs the Go relay CLI in-process, as `codex-session-relay`, on the selected store as
@@ -106,7 +119,7 @@ func withoutKey(t *testing.T, document, key string) string {
 
 func requireSame(t *testing.T, py, got run) {
 	t.Helper()
-	if py.code != got.code || py.stdout != got.stdout {
+	if py.code != got.code || identityNeutral(py.stdout) != identityNeutral(got.stdout) {
 		t.Fatalf("exit python=%d go=%d\npython:\n%s\ngo:\n%s", py.code, got.code, py.stdout, got.stdout)
 	}
 }
@@ -123,8 +136,8 @@ func decode(t *testing.T, text string) map[string]any {
 func TestDoctor_matches_python_on_a_python_created_store(t *testing.T) {
 	home := pythonHome(t)
 	state := filepath.Join(home, "state")
-	// Given: a store the real Python relay created.
-	pythonCreates(t, home, state)
+	// Given: a store as the real Python relay's absent-store initializer creates it.
+	pythonCreates(t, state)
 
 	// When: each implementation diagnoses it as its owner (the same file, restamped).
 	py := python(t, home, "--state", state, "doctor")
@@ -150,7 +163,7 @@ func TestDoctor_matches_python_on_a_store_the_other_runtime_owns(t *testing.T) {
 	home := pythonHome(t)
 	_, alias := packageBinary(t)
 	state := filepath.Join(home, "state")
-	pythonCreates(t, home, state)
+	pythonCreates(t, state)
 	// Neither run hands the store to its runtime first: each diagnoses the other's store.
 	got := binaryRun(t, alias, "--state", state, "doctor")
 	restamp(t, state, "go")
@@ -177,7 +190,7 @@ func TestDoctor_matches_python_on_a_store_the_other_runtime_owns(t *testing.T) {
 func TestDoctor_expect_inode_mismatch_refuses_with_python_reason(t *testing.T) {
 	home := pythonHome(t)
 	state := filepath.Join(home, "state")
-	pythonCreates(t, home, state)
+	pythonCreates(t, state)
 	py := python(t, home, "--state", state, "doctor", "--expect-inode", "1:2")
 	restamp(t, state, "go")
 	got := golang(t, home, "--state", state, "doctor", "--expect-inode", "1:2")
@@ -207,7 +220,7 @@ func asPythonReport(t *testing.T, stdout, pythonSawOwner string) string {
 func TestDoctor_matches_python_with_a_declared_execution_policy(t *testing.T) {
 	home := pythonHome(t)
 	state := filepath.Join(home, "state")
-	pythonCreates(t, home, state)
+	pythonCreates(t, state)
 	policy := filepath.Join(home, "policy.json")
 	write := func(path, text string) {
 		t.Helper()
@@ -320,9 +333,11 @@ func TestRegistry_kind_module_refusal_matches_python_before_register(t *testing.
 	if py.code != 4 || strings.Contains(py.stdout, "relationshipId") {
 		t.Fatalf("unexpected registration: %+v", py)
 	}
-	// Without the invalid global option the same handler still behaves as Python's.
+	// Without the invalid global option the same handler still behaves as Python's; the clock
+	// reading each run registered at is its own.
 	valid := append(append([]string{}, args[:2]...), args[4:]...)
 	py, got = python(t, home, valid...), golang(t, home, valid...)
+	py.stdout, got.stdout = clockReading.ReplaceAllString(py.stdout, `"<at>"`), clockReading.ReplaceAllString(got.stdout, `"<at>"`)
 	if py.code != got.code || py.stdout != got.stdout || py.stderr != got.stderr {
 		t.Fatalf("valid: python %+v; go %+v", py, got)
 	}
@@ -333,7 +348,8 @@ func lastLine(text string) string {
 	return lines[len(lines)-1]
 }
 
-// pythonSnippet runs `python -c script args...` in the relay's uv environment.
+// pythonSnippet runs `python -c script args...` in the relay's uv environment. Only a capture
+// closure calls it (see oracleRun).
 func pythonSnippet(dir, script string, args ...string) (string, error) {
 	_, file, _, _ := runtime.Caller(0)
 	repo := filepath.Join(filepath.Dir(file), "..", "..", "..")

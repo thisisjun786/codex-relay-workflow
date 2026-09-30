@@ -135,17 +135,17 @@ func runBuiltBinarySweep(t *testing.T, runtimeSweep, rootOnly bool) {
 			// Each width runs the oracle on the stores the previous width's Go turn left:
 			// Python takes them back first, as on a host.
 			ownedTree(t, home, "python")
-			oracle := exec.Command(filepath.Join(root, ".venv/bin/python"), "testdata/argparse_sweep.py")
-			oracle.Env = runEnv
-			oracle.Stdin = bytes.NewReader(request)
-			raw, err := oracle.CombinedOutput()
-			if err != nil {
-				t.Fatalf("oracle: %v %s", err, raw)
+			// The oracle's cases are recorded (see pythonProcess); Python ran against
+			// testdata/gh, Go runs against its Go twin (fakeGH).
+			oracle := pythonProcess(t, "argparse_sweep.py", runEnv, string(request), filepath.Join(root, ".venv/bin/python"), filepath.Join(root, "internal/relay/cli/testdata/argparse_sweep.py"))
+			if oracle.code != 0 {
+				t.Fatalf("oracle: exit %d %s%s", oracle.code, oracle.out, oracle.err)
 			}
 			var cases []sweepCase
-			if err = json.Unmarshal(raw, &cases); err != nil {
-				t.Fatalf("oracle decode: %v %s", err, raw)
+			if err := json.Unmarshal([]byte(oracle.out), &cases); err != nil {
+				t.Fatalf("oracle decode: %v %s", err, oracle.out)
 			}
+			runEnv = append(runEnv, goForgePath(t))
 			// The shared store the oracle's per-command cases used is owned by Python; Go runs
 			// the same cases on it next, after a takeover, as on a host.
 			ownedTree(t, home, "go")

@@ -7,7 +7,7 @@ import (
 // test_on_request_delivery.py ORD-1..ORD-5 here; ORD-6..ORD-9 in onrequest_adapter_test.go.
 
 func runORD(t *testing.T, mode string, goSide func(f *fixture, out map[string]any)) {
-	tree := t.TempDir()
+	tree := parityTree(t)
 	python := runPython(t, tree, "ord", mode)
 	f := newFixture(t, tree)
 	out := map[string]any{}

@@ -46,7 +46,7 @@ func Test23FaultClassFreshProcessParity(t *testing.T) {
 					testsupport.Create(t, filepath.Join(goState, "relay.sqlite3"), "", "go")
 					env := append(os.Environ(), "HOME="+t.TempDir(), "XDG_STATE_HOME="+t.TempDir())
 					wantArgs := append([]string{"-m", "codex_session_relay.cli", "--state", pyState}, tc.args...)
-					want := runParityProcess(t, env, python, wantArgs...)
+					want := pythonProcess(t, "fresh process", env, "", python, wantArgs...)
 					gotArgs := append(append([]string{}, program.lead...), "--state", goState)
 					gotArgs = append(gotArgs, tc.args...)
 					got := runParityProcess(t, env, program.path, gotArgs...)

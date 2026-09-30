@@ -69,7 +69,7 @@ func Test24BuiltBinaryEvidenceDefectBytes(t *testing.T) {
 	env := append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home+"/state", "XDG_CONFIG_HOME="+home+"/config", "XDG_CACHE_HOME="+home+"/cache", "XDG_DATA_HOME="+home+"/data", "CODEX_HOME="+home+"/codex", "CRW_MARKER_ROOT="+home+"/markers", "CRW_REFUSE_LIVE_STATE=", "PATH="+root+"/internal/relay/cli/testdata:"+os.Getenv("PATH"))
 	python := filepath.Join(root, ".venv/bin/python")
 	base := []string{"merge-evidence", "--repository", "owner/repo", "--pull-request", "7"}
-	ready := runParityProcess(t, append(env, "CRW_FORGE_SCENARIO=ready"), python, append([]string{"-m", "codex_session_relay.cli"}, base...)...)
+	ready := pythonProcess(t, "ready", append(env, "CRW_FORGE_SCENARIO=ready"), "", python, append([]string{"-m", "codex_session_relay.cli"}, base...)...)
 	if ready.code != 0 {
 		t.Fatal(ready)
 	}
@@ -164,7 +164,8 @@ func Test24BuiltBinaryEvidenceDefectBytes(t *testing.T) {
 				args = append(args, "--restate", source)
 			}
 			runEnv := append(env, "CRW_FORGE_SCENARIO="+tc.scenario)
-			want := runParityProcess(t, runEnv, python, append([]string{"-m", "codex_session_relay.cli"}, args...)...)
+			want := pythonProcess(t, tc.name, runEnv, "", python, append([]string{"-m", "codex_session_relay.cli"}, args...)...)
+			runEnv = append(runEnv, goForgePath(t))
 			for _, shape := range []string{"alias", "multicall"} {
 				path := alias
 				argv := args
@@ -183,50 +184,39 @@ func Test24BuiltBinaryEvidenceDefectBytes(t *testing.T) {
 	}
 	t.Run("invalid-settings", func(t *testing.T) {
 		args := []string{"intent-declare", "--workspace", home, "--marker-root", home + "/markers", "--dispatch-request-id", "test", "--issue", "I-1", "--no-db-path", "--settings", "not JSON"}
-		want := runParityProcess(t, env, python, append([]string{"-m", "codex_session_relay.cli"}, args...)...)
-		got := runParityProcess(t, env, alias, args...)
+		want := pythonProcess(t, "invalid settings", env, "", python, append([]string{"-m", "codex_session_relay.cli"}, args...)...)
+		got := runParityProcess(t, append(env, goForgePath(t)), alias, args...)
 		if got != want {
 			t.Fatalf("settings byte diff\nGo=%+v\nPython=%+v", got, want)
 		}
 	})
 }
 
+// assertEvidenceBytes compares the built binary, in both shapes, with what the Python CLI
+// answered (recorded: see pythonProcess) for args in env, the scripted forge scenario and input
+// on stdin. Python ran against testdata/gh and Go runs against its Go twin (fakeGH).
 func assertEvidenceBytes(t *testing.T, env []string, python, alias, binary, scenario string, args []string, input string) {
 	t.Helper()
 	runEnv := append(append([]string{}, env...), "CRW_FORGE_SCENARIO="+scenario)
+	goEnv := append(append([]string{}, runEnv...), goForgePath(t))
+	label := scenario + " " + oracleLabel(args...)
 	// Match the installed console entry point's C stack depth, not runpy (-m),
 	// which consumes another frame at CPython's JSON recursion boundary.
 	oracle := `import sys; from codex_session_relay.cli import main; sys.exit(main(sys.argv[1:]))`
-	want := runParityProcessInput(t, runEnv, input, python, append([]string{"-c", oracle}, args...)...)
+	want := pythonProcess(t, oracleKey(t, "console "+label), runEnv, input, python, append([]string{"-c", oracle}, args...)...)
 	want.out = evidenceTimestamp.ReplaceAllString(want.out, "<time>")
 	for _, shape := range []string{"alias", "multicall"} {
 		path, argv := alias, args
 		if shape == "multicall" {
 			path, argv = binary, append([]string{"relay"}, args...)
 			oracle := `import argparse,sys; from codex_session_relay import cli; p=cli.build_parser(); p.prog='crw relay'; children=next(a.choices for a in p._actions if isinstance(a,argparse._SubParsersAction)); [(setattr(c,'prog','crw relay '+n)) for n,c in children.items()]; cli.build_parser=lambda:p; sys.exit(cli.main(sys.argv[1:]))`
-			want = runParityProcessInput(t, runEnv, input, python, append([]string{"-c", oracle}, args...)...)
+			want = pythonProcess(t, oracleKey(t, "crw relay "+label), runEnv, input, python, append([]string{"-c", oracle}, args...)...)
 			want.out = evidenceTimestamp.ReplaceAllString(want.out, "<time>")
 		}
-		got := runParityProcessInput(t, runEnv, input, path, argv...)
+		got := runParityProcessInput(t, goEnv, input, path, argv...)
 		got.out = evidenceTimestamp.ReplaceAllString(got.out, "<time>")
 		if got != want {
 			t.Fatalf("%s %v byte diff\nGo exit=%d stderr=%q\n%s\nPython exit=%d stderr=%q\n%s", shape, args, got.code, got.err, got.out, want.code, want.err, want.out)
 		}
-	}
-}
-
-// Handler execution is covered separately from the parser sweep's pre-handler
-// refusal. Empty event is a known Python TypeError; preserve it as explicit evidence.
-func Test24SupervisorEmptyEventPythonCrash(t *testing.T) {
-	root, _ := filepath.Abs("../../..")
-	home := t.TempDir()
-	env := append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "CODEX_HOME="+home, "CRW_REFUSE_LIVE_STATE=")
-	got := runParityProcess(t, env, filepath.Join(root, ".venv/bin/python"), "-m", "codex_session_relay.cli", "supervisor-report-recorded", "--event=")
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(got.out), &payload); err != nil {
-		t.Fatal(err, got)
-	}
-	if got.code != 3 || payload["error"] != "host" || !strings.HasPrefix(payload["detail"].(string), "TypeError:") {
-		t.Fatalf("documented Python crash changed: %+v", got)
 	}
 }

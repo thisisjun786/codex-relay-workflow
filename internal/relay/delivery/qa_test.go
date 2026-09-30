@@ -9,7 +9,7 @@ import (
 // Todo 21 QA (happy path): emit -> deliver -> claim -> ack -> verdict on a temp state dir, every
 // row of the resulting store equal to the Python run of the same fixture.
 func TestQA_emit_deliver_claim_ack_round_trip_rows_equal_python(t *testing.T) {
-	tree := t.TempDir()
+	tree := parityTree(t)
 	python := runPython(t, tree, "qa")
 	f := newFixture(t, tree)
 	event := f.queuedEvent(regOpts{})

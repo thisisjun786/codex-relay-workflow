@@ -2,14 +2,17 @@ package delivery
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 // The twelve delivery commands through the real processes: Python's `codex-session-relay` and
@@ -33,18 +36,25 @@ type cliSide struct {
 	argv0 []string
 	dir   string
 	env   []string
+	// python marks a side whose answers are Python's, recorded: run and query read them.
+	python bool
+	asked  int
 }
 
-// newSide keeps the artifact tree at one shared path (work), because a revision hash covers the
-// declared path; each side has its own home and store.
+// newSide keeps the artifact tree at one shared path (work, a parityTree), because a revision
+// hash covers the declared path; each side has its own home and store. The Python side's store
+// is seeded only when Python answers live.
 func newSide(t *testing.T, python bool, work string) *cliSide {
 	home := t.TempDir()
-	s := &cliSide{t: t, home: home, state: filepath.Join(home, "state"), work: work}
+	s := &cliSide{t: t, home: home, state: filepath.Join(home, "state"), work: work, python: python}
 	root := repoRoot(t)
 	s.env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "xs"), "XDG_DATA_HOME="+filepath.Join(home, "xd"), "XDG_CONFIG_HOME="+filepath.Join(home, "xc"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+home, "CODEX_SESSION_RELAY_STATE=")
 	if python {
 		s.argv0 = []string{"uv", "run", "--no-sync", "codex-session-relay"}
 		s.dir = filepath.Join(root, "packages", "codex-session-relay")
+		if !pyoracle.Live() {
+			return s
+		}
 	} else {
 		s.argv0 = []string{crwBinary(t), "relay"}
 		s.dir = root
@@ -53,7 +63,38 @@ func newSide(t *testing.T, python bool, work string) *cliSide {
 	return s
 }
 
+// run is the command's stdout and exit code: live for the Go side, as recorded for the Python one.
 func (s *cliSide) run(args ...string) (string, int) {
+	if !s.python {
+		return s.exec(args...)
+	}
+	answer := s.recorded("run "+strings.Join(args, " "), func() ([]byte, error) {
+		out, code := s.exec(args...)
+		return []byte(fmt.Sprintf("%d\n%s", code, liveNeutral(out))), nil
+	})
+	code, out, _ := strings.Cut(string(answer), "\n")
+	n, err := strconv.Atoi(code)
+	mustDo(s.t, err)
+	return out, n
+}
+
+// recorded is the Python side's answer to its next question, what, under a key numbering it.
+func (s *cliSide) recorded(what string, capture func() ([]byte, error)) []byte {
+	s.t.Helper()
+	s.asked++
+	what = strings.NewReplacer(s.work, "<work>", s.home, "<home>").Replace(what)
+	return pyAnswer(s.t, fmt.Sprintf("%d %s", s.asked, what), capture, pyoracle.Substitute(s.work, "<work>"), pyoracle.Substitute(s.home, "<home>"))
+}
+
+// liveNeutral stores what a live Python run printed without the values a rerun changes: the
+// wall-clock stamps and ages every comparison masks (normal, ageless) and a conflict's pid.
+func liveNeutral(out string) string {
+	out = stamp.ReplaceAllString(out, "0000-00-00T00:00:00.000000+00:00")
+	out = ageSeconds.ReplaceAllString(out, `"$1": 0`)
+	return loserProcess.ReplaceAllString(out, `"loserProcess": "<pid>"`)
+}
+
+func (s *cliSide) exec(args ...string) (string, int) {
 	argv := append(append([]string(nil), s.argv0...), append([]string{"--state", s.state}, args...)...)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = s.dir
@@ -77,19 +118,19 @@ func (s *cliSide) normal(text string) string {
 }
 
 func TestCLI_every_delivery_command_answers_byte_for_byte_like_python(t *testing.T) {
-	work := filepath.Join(t.TempDir(), "work")
+	work := filepath.Join(parityTree(t), "work")
 	py, gosd := newSide(t, true, work), newSide(t, false, work)
 	mustDo(t, os.WriteFile(filepath.Join(work, "out.txt"), []byte("the deliverable"), 0o644))
 	realRID := func(s *cliSide) string {
-		seedOut := strings.TrimSpace(func() string {
+		if !s.python {
+			return strings.Trim(goSQLiteDump(t, filepath.Join(s.state, "relay.sqlite3"), "select relationship_id from relationships"), "[]\"\n ")
+		}
+		return strings.TrimSpace(string(s.recorded("relationship id", func() ([]byte, error) {
 			cmd := exec.Command("uv", "run", "--no-sync", "python", "-c", "import sqlite3,sys;print(sqlite3.connect(sys.argv[1]).execute('select relationship_id from relationships').fetchone()[0])", filepath.Join(s.state, "relay.sqlite3"))
 			cmd.Dir = py.dir
 			cmd.Env = s.env
-			b, err := cmd.Output()
-			mustDo(t, err)
-			return string(b)
-		}())
-		return seedOut
+			return pythonOutput(cmd)
+		})))
 	}
 	pr, gr := realRID(py), realRID(gosd)
 	if pr != gr {

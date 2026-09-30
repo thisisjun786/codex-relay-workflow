@@ -16,7 +16,7 @@ func (h *hl) sweeper() *faults.Sweeper {
 	return &faults.Sweeper{Store: h.store, MaxAttempts: h.delivery.Policy.MaxAttempts, Now: faults.WallClockISO,
 		HostRecordPath: filepath.Join(os.Getenv("XDG_STATE_HOME"), "codex-relay-workflow", "host-record.json"),
 		Installation: faults.Installation{Package: "codex-session-relay", Version: faults.RelayPackageVersion,
-			Location: filepath.Join(repoRoot(h.t), "packages", "codex-session-relay", "src", "codex_session_relay")},
+			Location: pythonPackageDir(h.t)},
 		SupersessionReason: h.delivery.SupersessionReason,
 		Current: func(ctx context.Context, event string) (bool, error) {
 			reason, err := h.delivery.SupersessionReason(ctx, event)
