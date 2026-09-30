@@ -14,7 +14,7 @@ Python execution path is removed. Installing and operating the runtime is
 | `crw-dev ci validate` | Skill metadata, local links and Python syntax |
 | `crw-dev ci plugin` | Plugin package shape, payload hygiene and the release digest |
 | `python3 -m unittest discover -s scripts/ci/tests -v` | Installer behavior and CI-control tests (CI runs them as two legs per Python version, `heavy` and `rest`; see [the installer test legs](#the-installer-test-legs)) |
-| `crw-dev ci contracts` | Run the owning hook replay and operations shape check when present; reject incomplete script/contract pairs |
+| `crw-dev ci contracts` | Run the offline contract checks whose contract is present, each built into `crw-dev`: the hook replay, the operations shape check, the component definition's Go-retained fields (licences, the bridge identity tool, the compatibility links), the start-policy self-test and the parent-title replay. No Python checker script is needed; `scripts/ci/contracts.py` still pairs each contract with its script |
 | `crw-dev ci operations` | The operations fixtures against their contract (the Go port of `scripts/check_operations_contract.py`, also run by `contracts`) |
 | `python3 scripts/ci/packages.py [--shard K/N]` | Install, test, run and build the two packages under `packages/` from the root lock file; CI runs each Python version as `--shard` legs that partition the collected tests |
 | `bash scripts/ci/secrets.sh` | Checksum-pinned Gitleaks scan of all fetched history |
@@ -25,7 +25,9 @@ Python execution path is removed. Installing and operating the runtime is
 `crw-dev` is the development binary: `go build -tags dev -o dist/crw-dev ./cmd/crw-dev`
 (or `make crw-dev`). It builds only with the `dev` tag, so `make dist` and the release
 archives never contain it. Each `crw-dev ci` check replaces the Python script of the same
-name under `scripts/ci/` with identical exit codes and output; the scripts and their tests
+name under `scripts/ci/` with identical exit codes and output (except `contracts`, whose Go
+side no longer runs a Python checker or refuses a contract for lacking one, and reports the
+component definition by what the Go build takes from it); the scripts and their tests
 stay until they are deleted before todo 48 of the Go port, and until then `validate` also
 runs `scripts/ci/contracts.py`, which `test_gate.py` pins.
 

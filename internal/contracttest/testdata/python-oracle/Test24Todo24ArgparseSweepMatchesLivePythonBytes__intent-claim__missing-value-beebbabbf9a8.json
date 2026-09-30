@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "python": "txt:{\"exit\":2,\"stdout\":\"\",\"stderr\":\"usage: codex-session-relay intent-claim [-h] [--marker-root MARKER_ROOT]\\n                                        --workspace WORKSPACE\\n                                        --assignment ASSIGNMENT\\n                                        --session SESSION\\n                                        --dispatch-request-id DISPATCH_REQUEST_ID\\n                                        [--first-turn FIRST_TURN]\\ncodex-session-relay intent-claim: error: argument --workspace: expected one argument\\n\"}\n"
+ }
+}

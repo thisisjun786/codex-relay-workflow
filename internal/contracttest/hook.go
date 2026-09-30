@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,8 +26,11 @@ import (
 // runHook drives the real binary and a control.sock peer. The peer supplies the
 // fixture's guard result, not the adapter decision or its filesystem effects.
 func runHook(t *testing.T, s Scenario) (map[string]any, error) {
-	if s.Domain != "hook" {
+	if s.Domain != "hook" && s.Domain != "records" {
 		return nil, fmt.Errorf("%w: %s/%s", ErrNotPorted, s.Domain, s.Kind)
+	}
+	if s.Kind == "status" && truthy(s.Run["document"]) {
+		return statusDocument(s)
 	}
 	relay, hasRelay := s.Given["relay"].(map[string]any)
 	steps, err := cliSteps(s.Run)
@@ -86,7 +90,11 @@ func runHook(t *testing.T, s Scenario) (map[string]any, error) {
 			return nil, err
 		}
 	}
-	if err = writeHookFiles(home, s.Given["files"]); err != nil {
+	standIns, err := hookStandIns(t)
+	if err != nil {
+		return nil, err
+	}
+	if err = writeHookFiles(home, s.Given["files"], standIns); err != nil {
 		return nil, err
 	}
 	if err = writeHookSymlinks(home, s.Given["symlinks"]); err != nil {
@@ -169,7 +177,12 @@ func runHook(t *testing.T, s Scenario) (map[string]any, error) {
 						return
 					}
 					stdin, _ := json.Marshal(params["stopInput"])
+					// The legacy relay command line the request stands for: a socketPath is the relay's
+					// global --socket option, ahead of the subcommand.
 					argv := []any{"guard-evaluate", "--marker-root", params["markerRoot"]}
+					if socket, ok := params["socketPath"].(string); ok && socket != "" {
+						argv = append([]any{"--socket", socket}, argv...)
+					}
 					if db := params["dbPath"]; db != nil { // The native route pins a DB; only expose a legacy --db-path if the fixture configured it.
 						if overrides, ok := s.Given["settings_overrides"].(map[string]any); ok && overrides["dbPath"] != nil {
 							argv = append(argv, "--db-path", legacyDB)
@@ -197,6 +210,11 @@ func runHook(t *testing.T, s Scenario) (map[string]any, error) {
 						}
 						return
 					}
+					if truthy(relay["signal"]) {
+						// A guard killed by a signal answers nothing. Natively the guard runs inside the
+						// owner, so this is the owner ending the connection with the request unanswered.
+						return
+					}
 					if number(relay["exit"]) == 2 && relay["stdout"] == "" {
 						_, _ = io.WriteString(conn, "{\"protocol\":1,\"requestRejected\":true}\n")
 						return
@@ -205,7 +223,7 @@ func runHook(t *testing.T, s Scenario) (map[string]any, error) {
 						_, _ = io.Copy(io.Discard, conn)
 						return
 					}
-					response, _ := relay["stdout"].(string)
+					response := nativeErrorRecord(relay)
 					_, _ = io.WriteString(conn, response+"\n")
 				}()
 			}
@@ -218,7 +236,7 @@ func runHook(t *testing.T, s Scenario) (map[string]any, error) {
 		workers.Wait()
 	}()
 	if s.Kind == "status" {
-		status := hook.Status(ctx, home, envMap(env), "Stop")
+		status := standIns.status(ctx, home, env)
 		return map[string]any{"exit": float64(0), "stdout": "", "stderr": "", "stdout_json": nil, "status": status, "files": expectedFiles(home, s.Expect.Files), "observed": map[string]any{}}, nil
 	}
 	outcomes := []any{}
@@ -233,13 +251,16 @@ func runHook(t *testing.T, s Scenario) (map[string]any, error) {
 			outcomes = append(outcomes, outcome)
 			continue
 		}
-		payload := step["stdin"]
+		payload, hasStdin := step["stdin"]
+		// stdin: null is a Stop whose payload cannot be read at all (the Python runner passed None
+		// to the adapter): the hook is given a descriptor that never reaches end of file.
+		stall := hasStdin && payload == nil
 		if payload == nil {
 			payload = map[string]any{"cwd": "/tmp/workspace", "hook_event_name": "Stop", "last_assistant_message": "I finished the task.", "model": "test-model", "permission_mode": "default", "session_id": "01a0b109-1ea5-7fb3-9adc-87f45ed83688", "stop_hook_active": false, "transcript_path": "/tmp/transcript.jsonl", "turn_id": "turn-1"}
 		}
 		if index, ok := step["transcript_stop"].(float64); ok {
 			root, _ := Root()
-			raw, e := os.ReadFile(filepath.Join(root, "packages/codex-session-relay/tests/fixtures/stop_event_r1.json"))
+			raw, e := os.ReadFile(filepath.Join(root, stopEventR1))
 			if e != nil {
 				return nil, e
 			}
@@ -272,6 +293,7 @@ func runHook(t *testing.T, s Scenario) (map[string]any, error) {
 		type running struct {
 			cmd      *exec.Cmd
 			out, err bytes.Buffer
+			held     []*os.File
 		}
 		processes := make([]*running, 0, count)
 		for range count {
@@ -287,6 +309,14 @@ func runHook(t *testing.T, s Scenario) (map[string]any, error) {
 			p := &running{cmd: exec.CommandContext(ctx, bin, args...)}
 			p.cmd.Env = env
 			p.cmd.Stdin = bytes.NewReader(raw)
+			if stall {
+				reader, writer, e := os.Pipe()
+				if e != nil {
+					return nil, e
+				}
+				p.cmd.Stdin = reader
+				p.held = []*os.File{reader, writer}
+			}
 			p.cmd.Stdout = &p.out
 			p.cmd.Stderr = &p.err
 			if e := p.cmd.Start(); e != nil {
@@ -299,6 +329,9 @@ func runHook(t *testing.T, s Scenario) (map[string]any, error) {
 		}
 		for _, p := range processes {
 			e := p.cmd.Wait()
+			for _, f := range p.held {
+				_ = f.Close()
+			}
 			code := 0
 			var signal any
 			if e != nil {
@@ -400,13 +433,43 @@ func runHook(t *testing.T, s Scenario) (map[string]any, error) {
 	actual["ledger_outcomes"] = ledgerOutcomes
 	actual["acceptances"] = accepts
 	actual["files"] = map[string]any{}
-	actual["observed"] = map[string]any{}
+	observed := map[string]any{}
+	for _, name := range s.Expect.Observe {
+		observed[name] = observePath(filepath.Join(home, name))
+	}
+	actual["observed"] = observed
 	if truthy(s.Run["status"]) {
-		actual["status"] = hook.Status(ctx, home, envMap(env), "Stop")
+		actual["status"] = standIns.status(ctx, home, env)
 	}
 	return actual, nil
 }
 func number(v any) float64 { n, _ := v.(float64); return n }
+
+// legacyErrorKinds are the relay's error-record exit statuses (contract/schema/relay-exit-codes.json).
+var legacyErrorKinds = map[float64]string{2: "refused", 3: "host", 4: "usage"}
+
+// nativeErrorRecord is what the owner answers for a fixture's relay stub. A stub that printed an
+// error record and exited with one of the relay's error-record statuses stood for the relay CLI,
+// which says the record's kind by its exit status; the owner has no exit status and says the kind
+// in the record's "error" field instead, so that field carries it. Any other stub is answered as
+// printed.
+func nativeErrorRecord(relay map[string]any) string {
+	response, _ := relay["stdout"].(string)
+	kind, known := legacyErrorKinds[number(relay["exit"])]
+	var record map[string]any
+	if !known || json.Unmarshal([]byte(response), &record) != nil {
+		return response
+	}
+	if _, present := record["error"]; !present || record["error"] == kind {
+		return response
+	}
+	record["error"] = kind
+	rewritten, err := json.Marshal(record)
+	if err != nil {
+		return response
+	}
+	return string(rewritten)
+}
 
 // runVerify runs `crw-dev stop-events` with a verify step's argv, as the Python runner runs
 // scripts/stop_events.py.
@@ -440,17 +503,73 @@ func runVerify(ctx context.Context, step map[string]any, env []string, expand fu
 	return map[string]any{"exit": float64(code), "stdout": out.String(), "stderr": errs.String(), "stdout_json": parsed, "timeout": false, "signal": nil}, nil
 }
 
-func writeHookFiles(home string, files any) error {
+// stopEventR1 is the captured Codex transcript whose Stops the `transcript_stop` steps replay.
+const stopEventR1 = "contract/golden/stop_event_r1.json"
+
+// hookStandInsFor are the programs a hook fixture's given files name: ${PYTHON}, an interpreter,
+// and ${ENTRY}, the Python-era completion_hook.py entry point. The fixtures observe what the
+// status reading says about them (whether the entry point is a file, whether the interpreter
+// answers the version probe), never what they do, so neither needs a Python installation.
+type hookStandInsFor struct{ bin, python, entry string }
+
+// pythonStandIn answers internal/relay/hook's status probe (`-c <version probe>`) as a supported
+// interpreter would, and refuses anything else: nothing in the corpus runs the entry point.
+const pythonStandIn = "#!/bin/sh\n" +
+	"if [ \"$1\" = -c ]; then printf 'crw-status-probe 3.13'; exit 0; fi\n" +
+	"echo 'contracttest: a stand-in interpreter answers only the status probe' >&2\n" +
+	"exit 2\n"
+
+func hookStandIns(t *testing.T) (hookStandInsFor, error) {
+	dir, err := os.MkdirTemp("", "crw-hc-standin-")
+	if err != nil {
+		return hookStandInsFor{}, err
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(dir); err != nil {
+			t.Error(err)
+		}
+	})
+	s := hookStandInsFor{bin: filepath.Join(dir, "bin"), entry: filepath.Join(dir, "scripts", "completion_hook.py")}
+	s.python = filepath.Join(s.bin, "python3")
+	for _, sub := range []string{s.bin, filepath.Dir(s.entry)} {
+		if err := os.MkdirAll(sub, 0o755); err != nil {
+			return hookStandInsFor{}, err
+		}
+	}
+	for _, name := range []string{"python3", "python"} {
+		if err := os.WriteFile(filepath.Join(s.bin, name), []byte(pythonStandIn), 0o755); err != nil {
+			return hookStandInsFor{}, err
+		}
+	}
+	entry := "# Stand-in for the retired Python completion hook entry point; never executed.\n"
+	if err := os.WriteFile(s.entry, []byte(entry), 0o644); err != nil {
+		return hookStandInsFor{}, err
+	}
+	return s, nil
+}
+
+// status is hook.Status for the scenario home. The reading resolves a bare interpreter name
+// through this process's PATH, as the host resolves it through its own, so the stand-in directory
+// leads PATH while it reads, and only then: a Python process the test itself starts must find the
+// real interpreter.
+func (s hookStandInsFor) status(ctx context.Context, home string, env []string) map[string]any {
+	previous, set := os.LookupEnv("PATH")
+	if err := os.Setenv("PATH", s.bin+string(os.PathListSeparator)+previous); err != nil {
+		panic(err)
+	}
+	defer func() {
+		if set {
+			_ = os.Setenv("PATH", previous)
+		} else {
+			_ = os.Unsetenv("PATH")
+		}
+	}()
+	return hook.Status(ctx, home, envMap(env), "Stop")
+}
+
+func writeHookFiles(home string, files any, standIns hookStandInsFor) error {
 	entries, _ := files.(map[string]any)
-	python, err := exec.LookPath("python3")
-	if err != nil {
-		return err
-	}
-	root, err := Root()
-	if err != nil {
-		return err
-	}
-	entry := filepath.Join(root, "scripts", "completion_hook.py")
+	python, entry := standIns.python, standIns.entry
 	for name, contents := range entries {
 		text, ok := contents.(string)
 		if !ok {
@@ -458,10 +577,10 @@ func writeHookFiles(home string, files any) error {
 		}
 		text = strings.NewReplacer("${HOME}", home, "${PYTHON}", python, "${ENTRY}", entry).Replace(text)
 		target := filepath.Join(home, name)
-		if err = os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return err
 		}
-		if err = os.WriteFile(target, []byte(text), 0o644); err != nil {
+		if err := os.WriteFile(target, []byte(text), 0o644); err != nil {
 			return err
 		}
 	}
@@ -509,6 +628,40 @@ func envMap(env []string) map[string]string {
 
 func shellSingleQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
+// observePath is contract/runner/files.py observe: presence, a file's bytes as hex, the
+// permission bits, a link's target and a directory's sorted entry names.
+func observePath(path string) map[string]any {
+	out := map[string]any{"exists": false, "bytes": nil, "mode": nil, "target": nil, "entries": nil}
+	info, err := os.Stat(path)
+	if err != nil {
+		if target, linkErr := os.Readlink(path); linkErr == nil {
+			out["target"] = target
+		}
+		return out
+	}
+	out["exists"] = true
+	out["mode"] = float64(info.Mode().Perm())
+	if target, err := os.Readlink(path); err == nil {
+		out["target"] = target
+	}
+	switch {
+	case info.Mode().IsRegular():
+		if raw, err := os.ReadFile(path); err == nil {
+			out["bytes"] = hex.EncodeToString(raw)
+		}
+	case info.IsDir():
+		entries, err := os.ReadDir(path)
+		if err == nil {
+			names := make([]any, len(entries))
+			for i, entry := range entries {
+				names[i] = entry.Name()
+			}
+			out["entries"] = names
+		}
+	}
+	return out
 }
 
 func expectedFiles(home string, files map[string]bool) map[string]any {
