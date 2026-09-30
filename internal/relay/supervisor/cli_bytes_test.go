@@ -11,7 +11,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 // The fixture is a real Python TheRoundtrip store, including the sent attempt,
@@ -19,15 +19,21 @@ import (
 // results through the built executable, not through an in-process emitter.
 // Sending/reading over a socket still depends on the todo-28 host adapter.
 func Test24BuiltBinaryRoundtripStoreBytes(t *testing.T) {
-	root, py := pythonSupervisorCapture(t, "TheRoundtrip.test_the_whole_record_reads_back_as_one_answer", "final")
+	root := supervisorFixture(t, "TheRoundtrip.test_the_whole_record_reads_back_as_one_answer")
 	state := filepath.Join(root, "tree", "state")
-	id := py.Tables["supervisor_messages"][0]["message_id"].(string)
-	event := py.Tables["supervisor_messages"][0]["event_id"].(string)
-	binary := testsupport.CRW(t)
-	repo, err := filepath.Abs("../../..")
+	var id, event string
+	testsupport.HandOver(t, filepath.Join(state, "relay.sqlite3"), "go")
+	s, err := store.Open(context.Background(), filepath.Join(state, "relay.sqlite3"), "")
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := s.DB.QueryRow("SELECT message_id, event_id FROM supervisor_messages ORDER BY rowid LIMIT 1").Scan(&id, &event); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	binary := testsupport.CRW(t)
 	for _, args := range [][]string{
 		{"supervisor-stage", "--event", event},
 		{"supervisor-show", "--message", id},
@@ -41,32 +47,16 @@ func Test24BuiltBinaryRoundtripStoreBytes(t *testing.T) {
 			goCmd.Env = append(os.Environ(), "HOME="+filepath.Join(root, "home"), "XDG_STATE_HOME="+filepath.Join(root, "home", "state"), "CODEX_HOME="+filepath.Join(root, "home", "codex"))
 			got, goErr := goCmd.Output()
 			goCode := commandExit24(t, goErr)
-			// Python answered next on the same store, handed to it; its answers are recorded.
-			var python struct {
-				Code   int    `json:"code"`
-				Stdout string `json:"stdout"`
-			}
-			pythonJSON(t, args[0], &python, func() (any, error) {
-				testsupport.HandOver(t, filepath.Join(state, "relay.sqlite3"), "python")
-				pyCmd := exec.Command(filepath.Join(repo, ".venv/bin/python"), append([]string{"-m", "codex_session_relay.cli", "--state", state}, args...)...)
-				pyCmd.Env = goCmd.Env
-				want, pyErr := pyCmd.Output()
-				code, err := exitCode(pyErr)
-				return map[string]any{"code": code, "stdout": string(want)}, err
-			}, pyoracle.Substitute(root, "<root>"))
-			pyCode, want := python.Code, []byte(python.Stdout)
-			if goCode != pyCode || !bytes.Equal(got, want) {
-				t.Errorf("CLI byte diff\nGo exit=%d\n%s\nPython exit=%d\n%s", goCode, got, pyCode, want)
-			}
+			golden.CheckJSON(t, "answer", map[string]any{"code": goCode, "stdout": string(got)}, treeGolden(t, root)...)
 		})
 	}
 }
 
-// A fresh packet is staged through both installed shapes. The alias must emit the exact bytes
-// live Python emits for the same program and instant. The multi-call shape must embed a command
+// A fresh packet is staged through both installed shapes. The alias must emit the golden's
+// bytes for its program and instant. The multi-call shape must embed a command
 // that a POSIX shell can execute and that reads the same event record as a direct invocation.
 func Test24BuiltBinaryEmbeddedProgramParityAndExecution(t *testing.T) {
-	root, _ := pythonSupervisorCapture(t, "TheRoundtrip.test_the_whole_record_reads_back_as_one_answer", "event")
+	root := supervisorFixture(t, "TheRoundtrip.test_the_whole_record_reads_back_as_one_answer")
 	snapshot, err := os.ReadFile(filepath.Join(root, "event.sqlite3"))
 	if err != nil {
 		t.Fatal(err)
@@ -108,36 +98,8 @@ func Test24BuiltBinaryEmbeddedProgramParityAndExecution(t *testing.T) {
 	if err = json.Unmarshal(got, &staged); err != nil {
 		t.Fatalf("alias stage exit=%d JSON=%s: %v", goCode, got, err)
 	}
-
-	repo, err := filepath.Abs("../../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	script := `import datetime,sys
-from codex_session_relay import cli,clock,supervisorchannel
-at=sys.argv[1]
-clock.SystemClock.iso=lambda self: at
-clock.SystemClock.now=lambda self: datetime.datetime.fromisoformat(at).timestamp()
-supervisorchannel.relay_program=lambda: (sys.argv[2],)
-raise SystemExit(cli.main(sys.argv[3:]))`
-	// Python stages the same event on the snapshot, handed to it, at the instant Go staged it;
-	// its answer is recorded.
-	var python struct {
-		Code   int    `json:"code"`
-		Stdout string `json:"stdout"`
-	}
-	pythonJSON(t, "supervisor-stage", &python, func() (any, error) {
-		restore("python")
-		pyCmd := exec.Command(filepath.Join(repo, ".venv/bin/python"), "-c", script, staged.Message.At, alias, "--state", state, "supervisor-stage", "--event", event)
-		pyCmd.Env = env
-		want, pyErr := pyCmd.Output()
-		code, err := exitCode(pyErr)
-		return map[string]any{"code": code, "stdout": string(want)}, err
-	}, pyoracle.Substitute(alias, "<alias>"), pyoracle.Substitute(root, "<root>"), pyoracle.Substitute(staged.Message.At, "<staged_at>"))
-	pyCode, want := python.Code, []byte(python.Stdout)
-	if goCode != pyCode || !bytes.Equal(got, want) {
-		t.Fatalf("alias stage byte diff\nGo exit=%d\n%s\nPython exit=%d\n%s", goCode, got, pyCode, want)
-	}
+	// The alias stages with the program it was run as; staged_at is the instant it staged.
+	golden.CheckJSON(t, "supervisor-stage", map[string]any{"code": goCode, "stdout": string(got)}, append([]golden.Option{golden.Substitute(alias, "<alias>"), golden.Substitute(staged.Message.At, "<staged_at>")}, treeGolden(t, root)...)...)
 
 	restore("go")
 	crwCmd := exec.Command(built, "relay", "--state", state, "supervisor-stage", "--event", event)

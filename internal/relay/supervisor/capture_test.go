@@ -6,14 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 	_ "modernc.org/sqlite"
 )
 
@@ -37,54 +36,23 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// pythonSupervisorCapture runs one Python supervisor test through testdata/capture.py, which
-// leaves its assertions and final rows in capture.json and the store's snapshots beside it, all
-// recorded (pythonTree). Of the two snapshots every run takes, setup and event, and Python's
-// final store, only those keep names ("setup", "event", "final") are kept; the snapshots
-// capture.py takes for one test alone are always kept.
-func pythonSupervisorCapture(t *testing.T, id string, keep ...string) (string, supervisorCapture) {
+// supervisorFixture restores the tree one Python supervisor test left (the former
+// testdata/capture.py): the store's snapshots it names, setup.sqlite3, event.sqlite3 or another,
+// beside tree/, and, for a test whose replay reads it, Python's final store in tree/state, with the
+// mirror its stamp implies.
+func supervisorFixture(t *testing.T, id string) string {
 	t.Helper()
 	root, err := os.MkdirTemp("", "crw-supervisor-")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(root) })
-	repo := repoRoot(t)
-	script, err := filepath.Abs("testdata/capture.py")
-	if err != nil {
-		t.Fatal(err)
+	treeFixture(t, id, root)
+	final := filepath.Join(root, "tree", "state", "relay.sqlite3")
+	if _, err := os.Stat(final); err == nil {
+		testsupport.Rehome(t, final)
 	}
-	pythonTree(t, id, root, func() ([]byte, error) {
-		home := filepath.Join(root, "home")
-		if err := os.MkdirAll(home, 0700); err != nil {
-			return nil, err
-		}
-		cmd := exec.Command("uv", "run", "--no-sync", "python", script, root, id)
-		cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
-		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "XDG_DATA_HOME="+filepath.Join(home, "data"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+home, "PYTHONPATH="+filepath.Join(repo, "packages/codex-session-relay/src")+":"+filepath.Join(repo, "packages/codex-session-relay"))
-		if output, err := cmd.CombinedOutput(); err != nil {
-			return nil, fmt.Errorf("Python capture %s: %v\n%s", id, err, output)
-		}
-		if err := os.RemoveAll(home); err != nil {
-			return nil, err
-		}
-		for _, name := range []string{"setup", "event"} {
-			if !slices.Contains(keep, name) {
-				if err := os.Remove(filepath.Join(root, name+".sqlite3")); err != nil && !os.IsNotExist(err) {
-					return nil, err
-				}
-			}
-		}
-		if slices.Contains(keep, "final") {
-			return nil, nil
-		}
-		return nil, removeStoreFiles(filepath.Join(root, "tree", "state", "relay.sqlite3"))
-	})
-	if slices.Contains(keep, "final") {
-		// The final store as a copy of Python's store: with the mirror its stamp implies.
-		testsupport.Rehome(t, filepath.Join(root, "tree", "state", "relay.sqlite3"))
-	}
-	return root, readSupervisorCapture(t, root)
+	return root
 }
 
 // removeStoreFiles deletes a store Python left and the files beside it that belong to it.
@@ -111,6 +79,21 @@ func readSupervisorCapture(t *testing.T, root string) supervisorCapture {
 	}
 	return result
 }
+
+// checkSupervisorValues compares the values a replay produced, as JSON decodes them, with the
+// golden.
+func checkSupervisorValues(t *testing.T, got []any, opts ...golden.Option) {
+	t.Helper()
+	golden.CheckJSON(t, goldenKey(t, "captures"), asJSON(t, got), opts...)
+}
+
+// checkSupervisorTables compares every populated row of every table but schema_meta and
+// sqlite_sequence, fixture rows included, with the golden.
+func checkSupervisorTables(t *testing.T, s *store.Store, opts ...golden.Option) {
+	t.Helper()
+	golden.CheckJSON(t, goldenKey(t, "tables"), asJSON(t, supervisorTables(t, s)), opts...)
+}
+
 func compareSupervisorValues(t *testing.T, got []any, python supervisorCapture) {
 	t.Helper()
 	var normalized []any
@@ -138,6 +121,33 @@ func jsonText(v any) string { b, _ := json.Marshal(v); return string(b) }
 
 // compareSupervisorTables compares every populated row in every table, including fixture rows.
 func compareSupervisorTables(t *testing.T, s *store.Store, python supervisorCapture) {
+	t.Helper()
+	got := supervisorTables(t, s)
+	for name, want := range python.Tables {
+		var normalized []map[string]any
+		if rows, ok := got[name]; ok {
+			encoded, err := json.Marshal(rows)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(encoded, &normalized); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if !reflect.DeepEqual(normalized, want) {
+			t.Errorf("table %s differs from Python:\ngo: %s\npython: %s", name, jsonText(got[name]), jsonText(want))
+		}
+	}
+	for name, rows := range got {
+		if _, ok := python.Tables[name]; !ok && len(rows) > 0 {
+			t.Errorf("unexpected Go table %s: %s", name, jsonText(rows))
+		}
+	}
+}
+
+// supervisorTables is every row of every table but schema_meta and sqlite_sequence, by table, in
+// rowid order; a table without rows is absent.
+func supervisorTables(t *testing.T, s *store.Store) map[string][]map[string]any {
 	t.Helper()
 	got := make(map[string][]map[string]any)
 	names, err := s.DB.Query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT IN ('schema_meta','sqlite_sequence') ORDER BY name")
@@ -188,30 +198,11 @@ func compareSupervisorTables(t *testing.T, s *store.Store, python supervisorCapt
 		}
 		rows.Close()
 	}
-	for name, want := range python.Tables {
-		var normalized []map[string]any
-		if rows, ok := got[name]; ok {
-			encoded, err := json.Marshal(rows)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := json.Unmarshal(encoded, &normalized); err != nil {
-				t.Fatal(err)
-			}
-		}
-		if !reflect.DeepEqual(normalized, want) {
-			t.Errorf("table %s differs from Python:\ngo: %s\npython: %s", name, jsonText(got[name]), jsonText(want))
-		}
-	}
-	for name, rows := range got {
-		if _, ok := python.Tables[name]; !ok && len(rows) > 0 {
-			t.Errorf("unexpected Go table %s: %s", name, jsonText(rows))
-		}
-	}
+	return got
 }
 func supervisorMirror(t *testing.T, id, snapshot string, body func(*Channel, *store.Store) []any) {
 	t.Helper()
-	root, python := pythonSupervisorCapture(t, id, snapshot)
+	root := supervisorFixture(t, id)
 	dbpath := filepath.Join(root, "tree", "state", "relay.sqlite3")
 	data, err := os.ReadFile(filepath.Join(root, snapshot+".sqlite3"))
 	if err != nil {
@@ -223,14 +214,10 @@ func supervisorMirror(t *testing.T, id, snapshot string, body func(*Channel, *st
 		t.Fatal(err)
 	}
 	defer s.Close()
-	repo, err := filepath.Abs("../../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	c := &Channel{Store: s, Linkage: StoreLinkage{s}, Program: filepath.Join(repo, ".venv/bin/codex-session-relay")}
+	c := &Channel{Store: s, Linkage: StoreLinkage{s}, Program: filepath.Join(repoRoot(t), ".venv/bin/codex-session-relay")}
 	got := body(c, s)
-	compareSupervisorValues(t, got, python)
-	compareSupervisorTables(t, s, python)
+	checkSupervisorValues(t, got, treeGolden(t, root)...)
+	checkSupervisorTables(t, s, treeGolden(t, root)...)
 }
 func captureRelationID(t *testing.T, c *Channel) string {
 	t.Helper()
