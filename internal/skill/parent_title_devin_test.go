@@ -3,7 +3,6 @@ package skill
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +16,7 @@ type parentTitleRun struct {
 }
 
 func TestParentTitleDevinLivePythonParity(t *testing.T) {
+	pythonOracleRoot(t)
 	base := map[string]any{
 		"role":              "parent",
 		"binding_verified":  true,
@@ -105,15 +105,5 @@ func runParentTitlePython(t *testing.T, payload []byte) parentTitleRun {
 	)
 	command.Env = oracleEnv("PYTHONDONTWRITEBYTECODE=1")
 	command.Stdin = bytes.NewReader(payload)
-	var stdout, stderr bytes.Buffer
-	command.Stdout, command.Stderr = &stdout, &stderr
-	exit := 0
-	if err := command.Run(); err != nil {
-		var exitError *exec.ExitError
-		if !errors.As(err, &exitError) {
-			t.Fatal(err)
-		}
-		exit = exitError.ExitCode()
-	}
-	return parentTitleRun{exit: exit, stdout: stdout.String(), stderr: stderr.String()}
+	return parentTitleRun(pythonProcess(t, "", command))
 }

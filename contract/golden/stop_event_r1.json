@@ -1,0 +1,124 @@
+{
+ "_comment": "Derived from an isolated Codex 0.154.0 run (CRW-212 evidence firing-r1). Only the event_msg lines that carry identity are kept; paths are placeholders. Each stop names the prefix of transcriptLines the host had written when that Stop hook ran, and the sha256 of the original raw payload and transcript snapshot it was derived from.",
+ "source": "firing-r1",
+ "codexVersion": "0.154.0",
+ "transcriptLines": [
+  "{\"ordinal\": 1, \"payload\": {\"collaboration_mode_kind\": \"default\", \"model_context_window\": 353400, \"started_at\": 1790150581, \"turn_id\": \"01a0cd4a-1bf9-78a2-b9b6-aadff8b95c1f\", \"type\": \"task_started\"}, \"timestamp\": \"2026-09-23T08:03:01.255Z\", \"type\": \"event_msg\"}",
+  "{\"ordinal\": 7, \"payload\": {\"completed_at_ms\": 1790150581392, \"item\": {\"content\": [{\"text\": \"Reply with exactly the single word DONE and nothing else. Do not run any tools.\", \"text_elements\": [], \"type\": \"text\"}], \"id\": \"01a0cd4a-1c90-7ee3-9359-19b262536bad\", \"type\": \"UserMessage\"}, \"started_at_ms\": 1790150581392, \"thread_id\": \"01a0cd4a-1bde-7ca2-bc7c-44d0ed32911c\", \"turn_id\": \"01a0cd4a-1bf9-78a2-b9b6-aadff8b95c1f\", \"type\": \"item_completed\"}, \"timestamp\": \"2026-09-23T08:03:01.392Z\", \"type\": \"event_msg\"}",
+  "{\"ordinal\": 8, \"payload\": {\"completed_at_ms\": 1790150583836, \"item\": {\"content\": [{\"text\": \"DONE\", \"type\": \"Text\"}], \"id\": \"msg_0b6d30238de7586c016ab387b7aae887d08797d413069981b2\", \"phase\": \"final_answer\", \"type\": \"AgentMessage\"}, \"started_at_ms\": 1790150583719, \"thread_id\": \"01a0cd4a-1bde-7ca2-bc7c-44d0ed32911c\", \"turn_id\": \"01a0cd4a-1bf9-78a2-b9b6-aadff8b95c1f\", \"type\": \"item_completed\"}, \"timestamp\": \"2026-09-23T08:03:03.836Z\", \"type\": \"event_msg\"}",
+  "{\"ordinal\": 13, \"payload\": {\"completed_at_ms\": 1790150583869, \"item\": {\"fragments\": [{\"hookRunId\": \"stop:0:<CODEX_HOME>/hooks.json\", \"text\": \"Reply with exactly the single word DONE and nothing else.\"}], \"id\": \"msg_01a0cd4a-263a-7912-991a-9457a866e0d1\", \"type\": \"HookPrompt\"}, \"started_at_ms\": 1790150583869, \"thread_id\": \"01a0cd4a-1bde-7ca2-bc7c-44d0ed32911c\", \"turn_id\": \"01a0cd4a-1bf9-78a2-b9b6-aadff8b95c1f\", \"type\": \"item_completed\"}, \"timestamp\": \"2026-09-23T08:03:03.869Z\", \"type\": \"event_msg\"}",
+  "{\"ordinal\": 14, \"payload\": {\"completed_at_ms\": 1790150587196, \"item\": {\"content\": [{\"text\": \"DONE\", \"type\": \"Text\"}], \"id\": \"msg_01e431829a270e2c016ab387bb097487d0b0838992185031e1\", \"phase\": \"final_answer\", \"type\": \"AgentMessage\"}, \"started_at_ms\": 1790150587074, \"thread_id\": \"01a0cd4a-1bde-7ca2-bc7c-44d0ed32911c\", \"turn_id\": \"01a0cd4a-1bf9-78a2-b9b6-aadff8b95c1f\", \"type\": \"item_completed\"}, \"timestamp\": \"2026-09-23T08:03:07.196Z\", \"type\": \"event_msg\"}",
+  "{\"ordinal\": 19, \"payload\": {\"completed_at_ms\": 1790150587250, \"item\": {\"fragments\": [{\"hookRunId\": \"stop:0:<CODEX_HOME>/hooks.json\", \"text\": \"Reply with exactly the single word DONE and nothing else.\"}], \"id\": \"msg_01a0cd4a-3371-7750-9857-63cc22f23a8b\", \"type\": \"HookPrompt\"}, \"started_at_ms\": 1790150587250, \"thread_id\": \"01a0cd4a-1bde-7ca2-bc7c-44d0ed32911c\", \"turn_id\": \"01a0cd4a-1bf9-78a2-b9b6-aadff8b95c1f\", \"type\": \"item_completed\"}, \"timestamp\": \"2026-09-23T08:03:07.250Z\", \"type\": \"event_msg\"}",
+  "{\"ordinal\": 20, \"payload\": {\"completed_at_ms\": 1790150590339, \"item\": {\"content\": [{\"text\": \"DONE\", \"type\": \"Text\"}], \"id\": \"msg_00597cfb465f40b6016ab387be2f6c87d09ecddac828d89219\", \"phase\": \"final_answer\", \"type\": \"AgentMessage\"}, \"started_at_ms\": 1790150590211, \"thread_id\": \"01a0cd4a-1bde-7ca2-bc7c-44d0ed32911c\", \"turn_id\": \"01a0cd4a-1bf9-78a2-b9b6-aadff8b95c1f\", \"type\": \"item_completed\"}, \"timestamp\": \"2026-09-23T08:03:10.339Z\", \"type\": \"event_msg\"}"
+ ],
+ "stops": [
+  {
+   "label": "A",
+   "timeNs": 1790150583863393468,
+   "rawSha256": "cd4b081a24b371dee60e20f6ad94cac9495b078d4b2bb0f29940adc2a2e901a2",
+   "transcriptSha256": "5d595c5fed4448660ec36d5d1ee772dbb7b118e3c8a006ee28f315df29bccef7",
+   "payload": {
+    "session_id": "01a0cd4a-1bde-7ca2-bc7c-44d0ed32911c",
+    "turn_id": "01a0cd4a-1bf9-78a2-b9b6-aadff8b95c1f",
+    "transcript_path": "<TRANSCRIPT>",
+    "cwd": "<CWD>",
+    "hook_event_name": "Stop",
+    "model": "gpt-6-astra",
+    "permission_mode": "bypassPermissions",
+    "stop_hook_active": false,
+    "last_assistant_message": "DONE"
+   },
+   "linesAtStop": 3
+  },
+  {
+   "label": "B",
+   "timeNs": 1790150583863440947,
+   "rawSha256": "cd4b081a24b371dee60e20f6ad94cac9495b078d4b2bb0f29940adc2a2e901a2",
+   "transcriptSha256": "5d595c5fed4448660ec36d5d1ee772dbb7b118e3c8a006ee28f315df29bccef7",
+   "payload": {
+    "session_id": "01a0cd4a-1bde-7ca2-bc7c-44d0ed32911c",
+    "turn_id": "01a0cd4a-1bf9-78a2-b9b6-aadff8b95c1f",
+    "transcript_path": "<TRANSCRIPT>",
+    "cwd": "<CWD>",
+    "hook_event_name": "Stop",
+    "model": "gpt-6-astra",
+    "permission_mode": "bypassPermissions",
+    "stop_hook_active": false,
+    "last_assistant_message": "DONE"
+   },
+   "linesAtStop": 3
+  },
+  {
+   "label": "B",
+   "timeNs": 1790150587246187895,
+   "rawSha256": "8d2417c1dc3c36e139bd89774e6f08d58a9051d2d2f344721ab370c7a1f490e8",
+   "transcriptSha256": "d6546b87edca10a89018301dcd577b1c1b87a70d74dacbf361f7c00a79cfc85b",
+   "payload": {
+    "session_id": "01a0cd4a-1bde-7ca2-bc7c-44d0ed32911c",
+    "turn_id": "01a0cd4a-1bf9-78a2-b9b6-aadff8b95c1f",
+    "transcript_path": "<TRANSCRIPT>",
+    "cwd": "<CWD>",
+    "hook_event_name": "Stop",
+    "model": "gpt-6-astra",
+    "permission_mode": "bypassPermissions",
+    "stop_hook_active": true,
+    "last_assistant_message": "DONE"
+   },
+   "linesAtStop": 5
+  },
+  {
+   "label": "A",
+   "timeNs": 1790150587246188151,
+   "rawSha256": "8d2417c1dc3c36e139bd89774e6f08d58a9051d2d2f344721ab370c7a1f490e8",
+   "transcriptSha256": "d6546b87edca10a89018301dcd577b1c1b87a70d74dacbf361f7c00a79cfc85b",
+   "payload": {
+    "session_id": "01a0cd4a-1bde-7ca2-bc7c-44d0ed32911c",
+    "turn_id": "01a0cd4a-1bf9-78a2-b9b6-aadff8b95c1f",
+    "transcript_path": "<TRANSCRIPT>",
+    "cwd": "<CWD>",
+    "hook_event_name": "Stop",
+    "model": "gpt-6-astra",
+    "permission_mode": "bypassPermissions",
+    "stop_hook_active": true,
+    "last_assistant_message": "DONE"
+   },
+   "linesAtStop": 5
+  },
+  {
+   "label": "A",
+   "timeNs": 1790150590394263983,
+   "rawSha256": "8d2417c1dc3c36e139bd89774e6f08d58a9051d2d2f344721ab370c7a1f490e8",
+   "transcriptSha256": "2788f1828052144e8cc11d968421d83ca550e64929b82b2c20714840cbfeb044",
+   "payload": {
+    "session_id": "01a0cd4a-1bde-7ca2-bc7c-44d0ed32911c",
+    "turn_id": "01a0cd4a-1bf9-78a2-b9b6-aadff8b95c1f",
+    "transcript_path": "<TRANSCRIPT>",
+    "cwd": "<CWD>",
+    "hook_event_name": "Stop",
+    "model": "gpt-6-astra",
+    "permission_mode": "bypassPermissions",
+    "stop_hook_active": true,
+    "last_assistant_message": "DONE"
+   },
+   "linesAtStop": 7
+  },
+  {
+   "label": "B",
+   "timeNs": 1790150590394265551,
+   "rawSha256": "8d2417c1dc3c36e139bd89774e6f08d58a9051d2d2f344721ab370c7a1f490e8",
+   "transcriptSha256": "2788f1828052144e8cc11d968421d83ca550e64929b82b2c20714840cbfeb044",
+   "payload": {
+    "session_id": "01a0cd4a-1bde-7ca2-bc7c-44d0ed32911c",
+    "turn_id": "01a0cd4a-1bf9-78a2-b9b6-aadff8b95c1f",
+    "transcript_path": "<TRANSCRIPT>",
+    "cwd": "<CWD>",
+    "hook_event_name": "Stop",
+    "model": "gpt-6-astra",
+    "permission_mode": "bypassPermissions",
+    "stop_hook_active": true,
+    "last_assistant_message": "DONE"
+   },
+   "linesAtStop": 7
+  }
+ ]
+}

@@ -1,0 +1,7 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "action 79": "txt:{\"code\":1,\"stderr\":\"\\nFAIL scenario S1 states its Action part in fewer than 80 characters\\n\\n1 problem(s). Nothing was modified.\\n\",\"stdout\":\"contract: 79 clause ids, 49 normative\\nfixtures: 36 scenarios, 59 distinct clause citations\\n\"}",
+  "action 80": "txt:{\"code\":0,\"stderr\":\"\",\"stdout\":\"contract: 79 clause ids, 49 normative\\nfixtures: 36 scenarios, 59 distinct clause citations\\nOK every clause cited by any fixture exists, every normative clause is cited, every scenario states all four parts, and both example records match the fields the contract declares. This is citation and shape only: it does not read any fixture for meaning.\\n\"}"
+ }
+}
