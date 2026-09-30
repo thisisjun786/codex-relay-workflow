@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -59,6 +60,17 @@ func TestSkillArgparseMatchesLivePython(t *testing.T) {
 		},
 	}
 
+	// A bare trailing -- after a command that takes no positional: argparse
+	// reports it as an unrecognized argument (exit 2), and so must Go.
+	for family, commands := range map[string][][]string{
+		"hook-probe":   {{"observe"}, {"replay"}, {"replay", "--allow-unreached"}},
+		"parent-title": {{"decide"}, {"readback"}, {"replay"}, {"replay", "--allow-unreached"}},
+		"start-policy": {{"vocabulary"}, {"selftest"}},
+	} {
+		for _, command := range commands {
+			tests[family] = append(tests[family], argparseCase{strings.Join(command, " ") + " trailing double dash", append(command, "--")})
+		}
+	}
 	for family, spec := range pythonArgparseFamilies {
 		for _, args := range [][]string{{"--unknown", "--help"}, {"--he"}, {"-hh"}, {"--help=yes"}, {"--", "--help"}} {
 			tests[family] = append(tests[family], argparseCase{"root edge", args})
