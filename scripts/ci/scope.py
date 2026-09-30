@@ -22,7 +22,7 @@ def classify(path):
     if path in DOCS or (PurePosixPath(path).parent == PurePosixPath("docs")
                         and path.endswith(".md")):
         return "docs"
-    if path.startswith("plugins/crw/skills/"):
+    if path == "skills" or path.startswith("plugins/crw/skills/"):
         return "skill"
     if path in FULL or path.startswith(PREFIXES):
         return "full"
