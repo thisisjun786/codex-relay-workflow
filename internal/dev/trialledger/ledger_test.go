@@ -435,3 +435,83 @@ func TestLedgerNamesTheStartPathAsPythonHoldsIt(t *testing.T) {
 	run(base+"/r\xffx/start.json", `"detail": "nothing exists at `+base+`/r\udcffx/start.json",`, `"path": "`+base+`/r\udcffx/start.json",`)
 	run("r\xffx", `"value": "r\udcffx"`)
 }
+
+// The trial root the start record names is opened as Python opens Path(trialRoot): os.fsencode
+// turns a surrogate escape back into the byte it stands for, so a root whose name is not UTF-8
+// (written "\udcff" in the record, as Python's json writes it) grades, and the report names its
+// ledger that way. A lone surrogate os.fsencode refuses names no directory. Each answer is what
+// trial_startup.py ledger printed for the same layout under CPython 3.14.4.
+func TestLedgerOpensTheTrialRootAsPythonEncodesIt(t *testing.T) {
+	raw, err := os.ReadFile("testdata/golden.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var golden map[string]struct {
+		Exit   int    `json:"exit"`
+		Stdout string `json:"stdout"`
+	}
+	if err := json.Unmarshal(raw, &golden); err != nil {
+		t.Fatal(err)
+	}
+	const name = "clean window after a failed preparation segment"
+	c := caseNamed(t, name)
+	parent, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, written := parent+"/b\xff", parent+"/b\\udcff" // on disk, and as a JSON string holds it
+	if err := os.MkdirAll(base+"/trial", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sub := strings.NewReplacer("${TRIAL}", written+"/trial", "${BASE}", written).Replace
+	if err := os.WriteFile(base+"/trial/start.json", []byte(sub(*c.Start)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(base+"/trial/ledger.jsonl", []byte(sub(*c.Ledger)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out, errs bytes.Buffer
+	code := Run([]string{"--start", base + "/trial/start.json"}, &out, &errs)
+	text := nowField.ReplaceAllString(strings.ReplaceAll(out.String(), written, "${BASE}"), `"now": "<now>"`)
+	if want := golden[name]; code != want.Exit || text != want.Stdout {
+		t.Fatalf("exit %d, python %d\n%s\npython\n%s%s", code, want.Exit, text, want.Stdout, errs.String())
+	}
+
+	bad := parent + "/bad"
+	if err := os.Mkdir(bad, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	record := `{"source": "live-trial-start", "recordVersion": 2, "trialRoot": "` + bad + `\ud800"}`
+	if err := os.WriteFile(bad+"/start.json", []byte(record), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if code := Run([]string{"--start", bad + "/start.json"}, &out, &errs); code != 2 || !strings.Contains(out.String(), `"refused": "the trial root is not a directory"`) || !strings.Contains(out.String(), `"trialRoot": "`+bad+`\ud800"`) {
+		t.Fatalf("exit %d\n%s", code, out.String())
+	}
+}
+
+// An operator field the report writes back as words (a segment, an actor) that nests 1000
+// containers deep is refused by name, as it is at any depth: the field's own refusal, exit 2.
+// CPython 3.14.4's recursive shown() passes the interpreter's recursion limit at 997 and answers
+// "this run raised before it could report" instead; that is a Python defect not carried over
+// (docs/port/known-defects.md), and this pins the refusal the Python comment promises.
+func TestALedgerFieldNestedPastPythonsRecursionLimitIsRefusedByName(t *testing.T) {
+	nested := strings.Repeat("[", 1000) + strings.Repeat("]", 1000)
+	for _, c := range []struct {
+		field, from, to string
+		line            float64
+	}{
+		{"segment", `"segment": "P1"}`, `"segment": ` + nested + `}`, 1},
+		{"actor", `"actor": "operator"`, `"actor": ` + nested, 2},
+	} {
+		lines := caseNamed(t, "clean window after a failed preparation segment")
+		ledger := strings.Replace(*lines.Ledger, c.from, c.to, 1)
+		lines.Ledger = &ledger
+		code, _, document := grade(t, lines)
+		detail, _ := document["detail"].(map[string]any)
+		if code != 2 || document["refused"] != "a ledger line's "+c.field+" has to be written as text" || detail["line"] != c.line || detail["found"] != nested {
+			t.Fatalf("%s 1000 deep: exit %d %v", c.field, code, document)
+		}
+	}
+}

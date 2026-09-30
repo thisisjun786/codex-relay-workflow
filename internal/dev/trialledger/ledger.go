@@ -27,6 +27,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 )
 
 const (
@@ -204,28 +205,29 @@ func loadStart(value string) (object, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	if info, err := os.Stat(root); err != nil || !info.IsDir() {
+	// Path(trialRoot) reaches the system as os.fsencode's bytes: a surrogate escape is the byte
+	// it stands for, and a root holding one nothing encodes is not a directory, as is_dir()
+	// answers its UnicodeEncodeError. Refusals name the root as the record spells it, and a path
+	// derived from it as os.fsdecode spells that.
+	rootFS, encoded := reading.FSEncode(root)
+	if info, err := os.Stat(rootFS); !encoded || err != nil || !info.IsDir() {
 		return nil, "", refuse("the trial root is not a directory", "trialRoot", root)
 	}
-	if worktree := gitWorktreeOf(root); worktree != "" {
-		return nil, "", refuse("the trial root is inside a git worktree, and operational state never lives inside a repository", "trialRoot", root, "worktree", worktree)
+	if worktree := gitWorktreeOf(rootFS); worktree != "" {
+		return nil, "", refuse("the trial root is inside a git worktree, and operational state never lives inside a repository", "trialRoot", root, "worktree", store.FSDecode(worktree))
 	}
-	if !within(start, root) {
+	if !within(start, rootFS) {
 		return nil, "", refuse("the start record itself is outside the trial root", "path", shownStart, "trialRoot", root)
 	}
 	// The ledger is a private trial record like the captures, read by path, so it is confined
 	// the same way rather than followed wherever a link points.
-	ledger := join(root, "ledger.jsonl")
-	if !within(ledger, root) {
-		return nil, "", refuse("the ledger resolves outside the trial root", "path", ledger, "trialRoot", root)
+	ledger := join(rootFS, "ledger.jsonl")
+	if !within(ledger, rootFS) {
+		return nil, "", refuse("the ledger resolves outside the trial root", "path", store.FSDecode(ledger), "trialRoot", root)
 	}
 	for _, item := range []string{start, ledger} {
 		if nested := gitWorktreeOf(item); nested != "" {
-			path, worktree := item, nested
-			if item == start {
-				path, worktree = shownStart, store.FSDecode(nested)
-			}
-			return nil, "", refuse("a private trial record is inside a git worktree", "path", path, "worktree", worktree)
+			return nil, "", refuse("a private trial record is inside a git worktree", "path", store.FSDecode(item), "worktree", store.FSDecode(nested))
 		}
 	}
 	return record, ledger, nil
@@ -302,7 +304,7 @@ type segment struct {
 func report(record object, path string) (object, error) {
 	state, _, text := readText(path)
 	if state != present {
-		return nil, refuse("the ledger could not be read", "path", path, "state", state)
+		return nil, refuse("the ledger could not be read", "path", store.FSDecode(path), "state", state)
 	}
 	var entries []entry
 	for number, line := range pySplitLines(text) {
@@ -538,7 +540,7 @@ func report(record object, path string) (object, error) {
 	}
 	clean := len(inside) == 0
 	return o(
-		"source", source, "checkerVersion", checkerVersion, "ledger", path,
+		"source", source, "checkerVersion", checkerVersion, "ledger", store.FSDecode(path),
 		"preparation", o("interventions", len(prepared), "entries", orEmpty(prepared), "segments", segments, "failedSegments", failedSegments),
 		"window", o("opensAt", opens[0].get("at"), "closesAt", closes[0].get("at"), "provenance", provenance, "corroborated", compared, "corroboration", corroboration, "dispatchedAt", dispatches[0].get("at"), "interventions", len(inside), "entries", orEmpty(inside), "windowIsClean", clean, "passed", clean),
 		"note", note,
