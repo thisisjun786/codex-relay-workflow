@@ -31,12 +31,19 @@ func admitWrite(ctx context.Context, path string) (*ownership.Admission, error) 
 // StartPreflight is ownership.check_start as cli.py main runs it before a command that opens
 // its own admitted connection (service, daemon, and the marker commands that record or
 // confirm the selected store): an absent store passes, because the writable opener creates
-// it; anything else must be Go-owned and active, or starting for the designated candidate
-// ctx carries, or it is refused before any lock, record, marker or child exists.
+// it; a partial one (a gate or a mirror without D) is refused in the words the fence's writer
+// meets it with (partialStore); anything else must be Go-owned and active, or starting for
+// the designated candidate ctx carries, or it is refused before any lock, record, marker or
+// child exists.
 // socketPath is the command's --socket as given, so the opener that completes a torn socket
 // binding is let through (cutover.md Record); one that cannot be canonicalized binds
 // nothing, and the opener reports it.
 func StartPreflight(ctx context.Context, dbPath, socketPath string) error {
+	if resolved := resolveLoosely(dbPath); !storeAbsent(resolved) {
+		if err := partialStore(resolved); err != nil {
+			return err
+		}
+	}
 	socket := ""
 	if socketPath != "" {
 		socket, _ = CanonicalSocket(socketPath)
@@ -209,6 +216,11 @@ func openFenced(ctx context.Context, path, socket string, options OpenOptions) (
 		return nil, err
 	}
 	if err = readGateless(ctx, resolved); err != nil {
+		return nil, err
+	}
+	// Whatever a creator racing this opener left has settled (awaitCreation): a gate or a
+	// mirror still without D is refused in the fence writer's words, before any lock.
+	if err = partialStore(resolved); err != nil {
 		return nil, err
 	}
 	// A binding holds the gate SH from its own EX until admission holds it SH too.

@@ -1,6 +1,7 @@
 """Owner-independent read matrix and terminal inbox replay regressions."""
 
 import json
+import shutil
 import sqlite3
 from contextlib import redirect_stdout
 from io import StringIO
@@ -374,3 +375,48 @@ def test_read_only_commands_never_write_expired_leases_under_a_foreign_owner(exp
                 server.close()
     assert code == 0, (command, answer)
     assert rows(path) == before, command
+
+
+# The read-only forms that open the selected store through Services.store.
+PARTIAL_READS = (["status"], ["show", "--event", "absent"], ["store-identity"],
+                 ["store-challenge", "--read", "absent"], ["fault-show"], ["fault-next"],
+                 ["sync-status"], ["route-show"])
+
+
+@pytest.mark.parametrize("partial,detail", [
+    ("gate", "partial store: write-gate.lock without a database"),
+    ("mirror", "missing or unsupported writer protocol"),
+    ("gate and mirror", "missing or unsupported writer protocol"),
+])
+def test_a_partial_store_is_refused_as_a_writer_refuses_it(tmp_path, partial, detail):
+    """A partial store (a write gate or a mirror without D) is refused, never read or repaired.
+
+    Decision 30: a read-only form answers exactly the refusal a writer's admission gives the
+    same state, reason store_owned_by_other with exit 2, rather than a host error that invites a
+    retry, and leaves S exactly as it found it. A reader never takes the gate.
+    """
+    source = tmp_path / "source" / "relay.sqlite3"
+    Store(source).close()
+    state = tmp_path / "state"
+    state.mkdir(mode=0o700)
+    if "gate" in partial:
+        (state / "write-gate.lock").touch(mode=0o600)
+    if "mirror" in partial:
+        shutil.copyfile(source.parent / "takeover.json", state / "takeover.json")
+
+    def snapshot():
+        return sorted(path.name for path in state.iterdir()), files(state)
+
+    def answer(argv):
+        output = StringIO()
+        with redirect_stdout(output):
+            code = cli.main(["--state", str(state), *argv])
+        return code, json.loads(output.getvalue())
+
+    before = snapshot()
+    refused = {"error": "refused", "reason": "store_owned_by_other", "detail": detail}
+    assert answer(["store-challenge", "--write"]) == (2, refused)
+    assert snapshot() == before
+    for argv in PARTIAL_READS:
+        assert answer(argv) == (2, refused), argv
+        assert snapshot() == before, argv

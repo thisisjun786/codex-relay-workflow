@@ -1065,9 +1065,16 @@ answer. `store_absent` is a literal there (as in `declarations.py`), not an
 `errors.RefusalReason` member, so `contract/schema/relay-exit-codes.json`, which
 `scripts/port/dump_contracts.py` derives from that enum, does not list it. Absent-store
 initialization happens on write or daemon opens only (decision 30). A partial store (a
-mirror or a write gate without `D`) is refused with the writer admission's own refusal,
-`store_owned_by_other`, never read, created or repaired; the Python half of that refusal is
-pending (refactor-backlog.md, audit 25). A read-only form never binds an unbound store to
+mirror or a write gate without `D`) is never read, created or repaired: every form of both
+runtimes that opens the store, read or write, answers the fence writer's refusal, reason
+`store_owned_by_other`, exit 2, detail `partial store: write-gate.lock without a database` for
+a gate alone and, beside a mirror, the refusal `check_start` meets first (the mirror's own when
+it cannot be read, else validate's `missing or unsupported writer protocol`), and Go's service
+and daemon start preflight refuses it in the same words. A reader never takes the gate. Go had
+worded all of these
+`ownership refused: existing database required: lstat <D>: ...` and the fence answered a
+read-only form with the host error `OperationalError: unable to open database file` (exit 3);
+both are corrected. A read-only form never binds an unbound store to
 its socket either: it reads `mode=ro` instead (decision 30).
 
 Argument refusals keep `cli.py` `main`'s order against the store. A read-only form refuses

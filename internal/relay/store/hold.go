@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 	"modernc.org/sqlite"
 )
@@ -268,13 +270,8 @@ func openForRead(ctx context.Context, path, socket string) (*Store, error) {
 	if storeAbsent(resolved) {
 		return nil, &RefusedError{Reason: ReasonStoreAbsent, Detail: "no relay store exists at " + pathlibSpelling(path) + "; a read-only command never creates one"}
 	}
-	if _, err = os.Lstat(resolved); errors.Is(err, os.ErrNotExist) {
-		// A partial store (a write gate or a mirror without D) is refused, never read or
-		// repaired (decision 30), in the words a writer's admission refuses it with.
-		if _, missing := ownership.Physical(resolved); missing != nil {
-			refused := &ownership.Refused{Detail: fmt.Sprintf("existing database required: %v", missing)}
-			return nil, &RefusedError{Reason: "store_owned_by_other", Detail: refused.Error(), cause: refused}
-		}
+	if err = partialStore(resolved); err != nil {
+		return nil, err
 	}
 	var refused *ownership.Refused
 	if err = checkStart(ctx, resolved); errors.As(err, &refused) {
@@ -298,6 +295,30 @@ func storeAbsent(resolved string) bool {
 		}
 	}
 	return true
+}
+
+// partialStore is the fence's refusal of a partial store, a write gate or an ownership mirror
+// beside a D that is certainly absent (lstat ENOENT), which every form refuses and none reads,
+// creates or repairs (decision 30). Its words are the fence writer's, in check_start's order:
+// the mirror is read first (ownership.mirror), and a record beside no D is refused by validate
+// (the empty stamp has no writer protocol); with no record, Admission refuses the gate it found
+// without a database. It takes no lock, so a reader never takes the gate. nil when D is present
+// or cannot be examined (the opener reports that); the caller has ruled out an absent store.
+func partialStore(resolved string) error {
+	if _, err := os.Lstat(resolved); !errors.Is(err, unix.ENOENT) {
+		return nil
+	}
+	raw, err := os.ReadFile(filepath.Join(filepath.Dir(resolved), "takeover.json"))
+	switch {
+	case errors.Is(err, unix.ENOENT):
+		return fenceRefused("partial store: write-gate.lock without a database")
+	case err != nil:
+		return fenceRefused("takeover record unreadable: " + PythonOSError(err))
+	}
+	if why := MirrorRefusal(raw); why != "" {
+		return fenceRefused(why)
+	}
+	return fenceRefused("missing or unsupported writer protocol")
 }
 
 // checkStart is ownership.check_start without a candidate: the lock-free preflight that keeps

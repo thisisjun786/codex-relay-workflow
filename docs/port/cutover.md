@@ -312,10 +312,10 @@ precondition, and a Go opener cannot infer it from the database. If step 4 stops
 fails loudly with `takeover record missing`, and only the explicit mirror recovery,
 `crw relay takeover repair-mirror`, completes the publication. If a first opener dies after
 placing the gate and before creating `D`, `S` holds only `write-gate.lock` (and possibly a
-stray `S/.write-gate-*`): every writable opener refuses it non-queueably with
-`partial store: write-gate.lock without a database` (Go words it `ownership refused: existing
-database required: lstat <D>: no such file or directory`, reason `store_owned_by_other`, exit 2,
-after finding the gate unheld).
+stray `S/.write-gate-*`): every opener of either runtime, writable or read-only, refuses it
+non-queueably with reason `store_owned_by_other`, detail `partial store: write-gate.lock without
+a database`, exit 2 (a writer once no creator holds the gate, a reader without taking it)
+(Read-only clients).
 Recovery is an operator action, the only removal of a lock file this protocol allows:
 confirm that `D` and `S/takeover.json` are absent and that no process has the gate open
 (`fuser S/write-gate.lock` or `lsof` lists none), then remove `S/write-gate.lock` and any
@@ -660,9 +660,12 @@ A read-only client never creates, initializes, binds or repairs a store. When `D
 store answers `{"error": "refused", "reason": "store_absent", "detail": "no relay
 store exists at <D>; a read-only command never creates one"}` with exit 2 and leaves `S`
 uncreated, in both runtimes alike (Record). A partial store (`takeover.json` or
-`write-gate.lock` without `D`) is refused by Go with the answer its writer admission gives
-it: reason `store_owned_by_other`, detail `ownership refused: existing database required:
-lstat <D>: no such file or directory`, exit 2, and `S` unchanged. The forms that do not open the store this way (`ack-proof`,
+`write-gate.lock` without `D`) is refused by every form of both runtimes, read or write, with
+the answer the fence's writer gives it: reason `store_owned_by_other`, exit 2, detail
+`partial store: write-gate.lock without a database` for a gate alone, and beside a mirror the
+refusal `check_start` meets first (the mirror's own when it cannot be read, else validate's
+`missing or unsupported writer protocol`). `S` is left unchanged, and a reader never takes the
+gate. The forms that do not open the store this way (`ack-proof`,
 `dispositions-show`, `doctor`, `guard-evaluate`, `intent-show`, `managed-show`,
 `merge-evidence`, `packet-check`, `reporting-derive`, `reporting-show` and
 `service status`) answer an absent store in their own shape and create nothing either. Only a writer command or a daemon initializes an absent store (decision 30).
@@ -672,9 +675,6 @@ Where a command's own argument refusal falls follows `cli.py` `main`: a read-onl
 nothing, never `store_absent`; a write form's store is opened by `_ownership_preflight` before
 its handler, so its own argument refusal comes after admission: an absent store is left
 initialized and a store another runtime owns answers `store_owned_by_other` (decision 31).
-The Python half for a partial store is pending (refactor-backlog.md, Deferred review
-findings, audit 25): until it lands, the fence answers a read-only form on a gate-only or
-mirror-only store with a host error (exit 3), creating nothing.
 
 ### The live-state guard (until todo 43)
 

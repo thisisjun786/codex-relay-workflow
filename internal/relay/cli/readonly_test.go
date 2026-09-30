@@ -302,11 +302,11 @@ func TestReadOnlyForms_never_create_an_absent_store(t *testing.T) {
 }
 
 // A partial store (a write gate or an ownership mirror without D) is refused, never read or
-// repaired (decision 30): read forms answer the refusal the writer admission gives it, with exit
-// 2 rather than a host error that invites a retry, and leave S exactly as they found it. A write
-// form meets cli.py main's check_start first (decision 31), which refuses a mirror without D in
-// validate's words, as the fence's write form does; a gate alone passes it and meets the writer
-// admission.
+// repaired (decision 30): every form, read or write, answers the refusal the fence's writer
+// admission gives the same state (partial store: write-gate.lock without a database for a gate
+// alone, validate's missing or unsupported writer protocol beside a mirror), reason
+// store_owned_by_other with exit 2 rather than a host error that invites a retry, byte for byte
+// the live fence's answer on a twin S, and leaves S exactly as it found it.
 func TestReadOnlyForms_refuse_a_partial_store_as_a_writer_does(t *testing.T) {
 	home := pythonHome(t)
 	_, alias := packageBinary(t)
@@ -316,39 +316,61 @@ func TestReadOnlyForms_refuse_a_partial_store_as_a_writer_does(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, partial := range []struct{ name, file, content string }{
-		{"gate only", "write-gate.lock", ""}, {"mirror only", "takeover.json", string(mirror)},
+	app := filepath.Join(home, "app.sock")
+	fenceProgram := filepath.Join(repositoryRoot(t), ".venv", "bin", "codex-session-relay")
+	for _, partial := range []struct {
+		name   string
+		files  map[string]string
+		detail string
+	}{
+		{"gate only", map[string]string{"write-gate.lock": ""}, "partial store: write-gate.lock without a database"},
+		{"mirror only", map[string]string{"takeover.json": string(mirror)}, "missing or unsupported writer protocol"},
+		{"gate and mirror", map[string]string{"write-gate.lock": "", "takeover.json": string(mirror)}, "missing or unsupported writer protocol"},
 	} {
-		state := filepath.Join(home, strings.ReplaceAll(partial.name, " ", "-"))
-		if err := os.MkdirAll(state, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(state, partial.file), []byte(partial.content), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		db := filepath.Join(state, "relay.sqlite3")
-		want := "{\n  \"error\": \"refused\",\n  \"reason\": \"store_owned_by_other\",\n  \"detail\": \"ownership refused: existing database required: lstat " + db + ": no such file or directory\"\n}\n"
-		for _, argv := range [][]string{
-			{"status"}, {"show", "--event", "absent"}, {"store-identity"}, {"store-challenge", "--read", "absent"},
-			{"fault-show"}, {"fault-next"}, {"sync-status"}, {"route-show"}, {"store-challenge", "--write"},
-		} {
-			before, err := storeFiles(state)
-			if err != nil {
+		states := map[string]string{}
+		for _, runtime := range []string{"go", "python"} {
+			state := filepath.Join(home, runtime+"-"+strings.ReplaceAll(partial.name, " ", "-"))
+			if err := os.MkdirAll(state, 0o700); err != nil {
 				t.Fatal(err)
 			}
-			expected := want
-			if partial.name == "mirror only" && argv[0] == "store-challenge" && argv[1] == "--write" {
-				expected = "{\n  \"error\": \"refused\",\n  \"reason\": \"store_owned_by_other\",\n  \"detail\": \"missing or unsupported writer protocol\"\n}\n"
-				if fence := pythonCLI(t, append([]string{"--state", state}, argv...))[0]; fence.code != 2 || fence.stdout != expected {
-					t.Errorf("the fence's %s %v: %+v", partial.name, argv, fence)
+			for name, content := range partial.files {
+				if err := os.WriteFile(filepath.Join(state, name), []byte(content), 0o600); err != nil {
+					t.Fatal(err)
 				}
 			}
-			got := binaryRun(t, alias, append([]string{"--state", state}, argv...)...)
-			if got.code != 2 || got.stdout != expected {
-				t.Errorf("%s %v: exit %d\n%s", partial.name, argv, got.code, got.stdout)
+			states[runtime] = state
+		}
+		want := "{\n  \"error\": \"refused\",\n  \"reason\": \"store_owned_by_other\",\n  \"detail\": \"" + partial.detail + "\"\n}\n"
+		for _, argv := range [][]string{
+			{"status"}, {"show", "--event", "absent"}, {"store-identity"}, {"store-challenge", "--read", "absent"},
+			{"fault-show"}, {"fault-next"}, {"sync-status"}, {"route-show"}, {"--socket", app, "status"},
+			{"store-challenge", "--write"}, {"--socket", app, "store-challenge", "--write"},
+			{"--socket", app, "daemon", "--allow-isolated-scope"},
+		} {
+			answers := map[string]run{}
+			for runtime, state := range states {
+				before, err := storeFiles(state)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if runtime == "go" {
+					answers[runtime] = binaryRun(t, alias, append([]string{"--state", state}, argv...)...)
+				} else {
+					answers[runtime] = fence(t, append([]string{"--state", state}, argv...)...)
+				}
+				// The fence's daemon takes its own daemon.lock in S before its store is refused.
+				if runtime == "python" && slices.Contains(argv, "daemon") {
+					continue
+				}
+				if after, err := storeFiles(state); err != nil || !maps.Equal(before, after) {
+					t.Errorf("%s %s %v changed S (%v): %v -> %v", runtime, partial.name, argv, err, before, after)
+				}
 			}
-			if after, err := storeFiles(state); err != nil || !maps.Equal(before, after) {
-				t.Errorf("%s %v changed S (%v): %v -> %v", partial.name, argv, err, before, after)
+			goAnswer, pyAnswer := answers["go"], answers["python"]
+			goAnswer.stdout = strings.NewReplacer(states["go"], "<S>", alias, "<relay>").Replace(goAnswer.stdout)
+			pyAnswer.stdout = strings.NewReplacer(states["python"], "<S>", fenceProgram, "<relay>").Replace(pyAnswer.stdout)
+			if goAnswer.code != pyAnswer.code || goAnswer.stdout != pyAnswer.stdout || goAnswer.code != 2 || goAnswer.stdout != want {
+				t.Errorf("%s %v: go exit %d\n%s\npython exit %d\n%s", partial.name, argv, goAnswer.code, goAnswer.stdout, pyAnswer.code, pyAnswer.stdout)
 			}
 		}
 	}

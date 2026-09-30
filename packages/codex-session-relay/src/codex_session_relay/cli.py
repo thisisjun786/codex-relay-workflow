@@ -218,7 +218,16 @@ class Services:
                 try:
                     check_start(self.selection.db_path)
                 except OwnershipRefused:
+                    if not present(database):
+                        # A partial store (a mirror without D) is refused as a writer's
+                        # admission refuses it, never read or repaired (decision 30).
+                        raise
                     read_only = True
+                else:
+                    if not present(database):
+                        # A write gate without D: the refusal Admission gives a writer, here
+                        # without taking the gate, which a reader never does (decision 30).
+                        raise OwnershipRefused("partial store: write-gate.lock without a database")
             try:
                 # A read-only command never binds an unbound store to its socket (decision 30).
                 self._store = Store(self.selection.db_path, socket_path=self.socket_path,
