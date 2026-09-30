@@ -80,9 +80,9 @@ type observationAnswer struct {
 	Files   map[string]string `json:"files"`
 }
 
-// Test29ObservationConsoleTables ticks the daemon of each runtime once over the same fixture on a
-// fixed clock; Python's half (its own store writer, its tick, its tables and files) is recorded
-// (pythonHalf).
+// Test29ObservationConsoleTables ticks the daemon once over the fixture on a fixed clock and checks
+// its answer, tables and files against the golden, which began as the retained Python's half (its
+// own store writer, its tick, its tables and files).
 func Test29ObservationConsoleTables(t *testing.T) {
 	invokeFixed := fixedClockRuntime(t)
 	for _, scenario := range []string{"completed", "absent", "failed", "interrupted", "staged-completed", "staged-failed"} {
@@ -114,25 +114,9 @@ func Test29ObservationConsoleTables(t *testing.T) {
 			})
 			host.Handle("thread/goal/get", func(json.RawMessage) fakehost.Reply { return fakehost.Reply{Result: map[string]any{"goal": nil}} })
 			args := []string{"--socket", host.SocketPath, "daemon", "--max-ticks", "1", "--allow-isolated-scope"}
-			var want observationAnswer
-			pythonHalf(t, home, "python", true, &want, func() (any, error) {
-				seedObservation(t, home, host.SocketPath, staged, true)
-				result := invokeFixed(home, true, args)
-				return observationAnswer{pythonCapture(result), withoutEvidenceDigests(t, home, tables(t, home, testsupport.Python)), files(t, home, testsupport.Python)}, nil
-			}, host.SocketPath)
 			seedObservation(t, home, host.SocketPath, staged, false)
 			got := invokeFixed(home, false, args)
-			gt := withoutEvidenceDigests(t, home, tables(t, home, testsupport.Go))
-			gf := files(t, home, testsupport.Go)
-			compare(t, want.Capture, got)
-			if want.Tables != gt {
-				t.Fatalf("table byte difference\nPython %s\nGo %s", want.Tables, gt)
-			}
-			for name, value := range want.Files {
-				if value != gf[name] {
-					t.Fatalf("%s\nPython %s\nGo %s", name, value, gf[name])
-				}
-			}
+			checkAnswer(t, home, "answer", observationAnswer{normalizedCapture(got), withoutEvidenceDigests(t, home, tables(t, home, testsupport.Go)), files(t, home, testsupport.Go)}, host.SocketPath)
 		})
 	}
 }
@@ -140,9 +124,8 @@ func Test29ObservationConsoleTables(t *testing.T) {
 // withoutEvidenceDigests spells each fault occurrence's evidence digest in text, a tables text of
 // home's store, as <EVIDENCE_DIGEST>, once it is proven to be the digest of that occurrence's
 // evidence (sha256 of json.dumps(evidence, sort_keys=True, separators=(",", ":"))). The evidence
-// names the installation's location and the home, so its digest changes with them: a recorded
-// Python digest names the paths it was recorded under. The evidence itself is still compared,
-// and each runtime's digest is proven the same function of it.
+// names the installation's location and the home, so its digest changes with them from run to
+// run. The evidence itself is still compared, and the digest is proven that function of it.
 func withoutEvidenceDigests(t *testing.T, home, text string) string {
 	t.Helper()
 	path := filepath.Join(home, "state", "relay.sqlite3")

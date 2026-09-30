@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 var testRoot, testBinary, testPython string
@@ -29,17 +28,10 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
-	// The executable lives in installation/codex_session_relay. When pyoracle asks the live
-	// Python (record and check), that directory is an unchanged copy of Python's package, so
-	// both runtimes derive installationId from precisely the same physical directory; on replay
-	// it holds the executable alone, and the recordings spell the ID as a placeholder.
+	// The executable lives in installation/codex_session_relay, a directory of its own, from
+	// which installationId derives (the goldens spell it as a placeholder).
 	installation := filepath.Join(home, "installation", "codex_session_relay")
-	if pyoracle.Live() {
-		err = os.CopyFS(filepath.Join(home, "installation"), os.DirFS(filepath.Join(root, "packages/codex-session-relay/src")))
-	} else {
-		err = os.MkdirAll(installation, 0o700)
-	}
-	if err != nil {
+	if err = os.MkdirAll(installation, 0o700); err != nil {
 		panic(err)
 	}
 	// A copy, not a link: the installation is the executable's own directory.

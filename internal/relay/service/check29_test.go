@@ -408,30 +408,15 @@ func stateEntries(t *testing.T, home string) []string {
 	return entries
 }
 
-// Test29D5RefusalInitializesStore: a refused daemon leaves the state each runtime's refusal
-// leaves; Python's is recorded (pythonHalf).
+// Test29D5RefusalInitializesStore: a refused daemon leaves the state its golden, which began as
+// the retained Python's, holds.
 func Test29D5RefusalInitializesStore(t *testing.T) {
 	for _, flags := range [][]string{{}, {"--allow-isolated-scope", "--supervised-token", "test-run"}, {"--allow-isolated-scope", "--supervised-token", "test-run", "--supervised-lock-fd", "99", "--supervised-scope-fd", "98"}} {
 		t.Run(strings.Join(flags, "_"), func(t *testing.T) {
 			home := t.TempDir()
 			args := append([]string{"--socket", home + "/socket", "daemon", "--max-ticks", "0"}, flags...)
-			var want d5Answer
-			pythonHalf(t, home, "python", true, &want, func() (any, error) {
-				result := invoke(t, home, true, args...)
-				entries := stateEntries(t, home)
-				return d5Answer{pythonCapture(result), entries, tables(t, home, testsupport.Python)}, nil
-			})
-			if err := os.Remove(home + "/state/relay.sqlite3"); err != nil && !errors.Is(err, os.ErrNotExist) {
-				t.Fatal(err)
-			}
 			result := invoke(t, home, false, args...)
-			entries := stateEntries(t, home)
-			compare(t, want.Capture, result)
-			if !reflect.DeepEqual(want.Entries, entries) || want.Tables != tables(t, home, testsupport.Go) {
-				a, _ := json.Marshal(want.Entries)
-				b, _ := json.Marshal(entries)
-				t.Fatalf("refusal state: Python %s Go %s; full tables equal=%v", a, b, want.Tables == tables(t, home, testsupport.Go))
-			}
+			checkAnswer(t, home, "answer", d5Answer{normalizedCapture(result), stateEntries(t, home), tables(t, home, testsupport.Go)})
 		})
 	}
 }

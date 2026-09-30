@@ -12,7 +12,6 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"reflect"
 	"testing"
 	"time"
 
@@ -217,28 +216,18 @@ func reapStop(t *testing.T, home, state string, python bool) reapAnswer {
 		t.Fatal(err)
 	}
 	actualFiles["daemon.lock"] = string(raw)
-	return reapAnswer{pythonCapture(result), actualFiles, tables(t, home, writtenBy(python))}
+	return reapAnswer{normalizedCapture(result), actualFiles, tables(t, home, writtenBy(python))}
 }
 
 // Test29D1DeterministicReapStates stops a worker that is already gone, or exited and unreaped,
-// with each runtime over the same home; Python's stop is recorded (pythonHalf).
+// and checks the answer and persisted state against the golden, which began as the retained
+// Python's stop.
 func Test29D1DeterministicReapStates(t *testing.T) {
 	for _, state := range []string{"gone", "exited"} {
 		t.Run(state, func(t *testing.T) {
 			home := t.TempDir()
-			var want reapAnswer
-			pythonHalf(t, home, "python", true, &want, func() (any, error) {
-				var answer reapAnswer
-				// A subtest, so its processes are gone before resetRuntime.
-				t.Run("true", func(t *testing.T) { answer = reapStop(t, home, state, true) })
-				return answer, nil
-			})
 			t.Run("false", func(t *testing.T) {
-				got := reapStop(t, home, state, false)
-				compare(t, want.Capture, got.Capture)
-				if !reflect.DeepEqual(want.Files, got.Files) || want.Tables != got.Tables {
-					t.Fatalf("persisted state for %s\nPython %v\nGo %v", state, want.Files, got.Files)
-				}
+				checkAnswer(t, home, "answer", reapStop(t, home, state, false))
 			})
 		})
 	}
