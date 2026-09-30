@@ -4,16 +4,11 @@ import (
 	"bytes"
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 )
 
 func TestF2CLIOracle(t *testing.T) {
-	root, e := filepath.Abs("../../..")
-	if e != nil {
-		t.Fatal(e)
-	}
 	for _, args := range [][]string{
 		{"fault-fail", "--publication", "missing", "--claim-token", "token", "--error", "failed"},
 		{"fault-fail", "--publication", "missing", "--claim-token", "token", "--error", "failed", "--ended"},
@@ -39,20 +34,8 @@ func TestF2CLIOracle(t *testing.T) {
 				t.Fatal(e)
 			}
 			defer os.RemoveAll(home)
-			py := exec.Command("uv", append([]string{"run", "--no-sync", "codex-session-relay", "--state", filepath.Join(home, "py"), "--json"}, args...)...)
-			py.Dir = root
-			py.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR=/dev/shm")
-			want, err := py.Output()
-			pyStderr := []byte(nil)
-			pyCode := 0
-			if err != nil {
-				if exit, ok := err.(*exec.ExitError); ok {
-					pyCode = exit.ExitCode()
-					pyStderr = exit.Stderr
-				} else {
-					t.Fatal(err)
-				}
-			}
+			answer := pyCLIRun(t, home, "", append([]string{"--state", filepath.Join(home, "py"), "--json"}, args...), true, pyHomeEnv(home)...)
+			want, pyStderr, pyCode := []byte(answer.Stdout), []byte(answer.Stderr), answer.Code
 			var got, stderr bytes.Buffer
 			code, handled := executeAsCLI(context.Background(), append([]string{"--state", filepath.Join(home, "go"), "--json"}, args...), &got, &stderr)
 			if !handled || code != pyCode || !bytes.Equal(got.Bytes(), want) || !bytes.Equal(stderr.Bytes(), pyStderr) {

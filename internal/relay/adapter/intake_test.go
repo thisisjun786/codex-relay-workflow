@@ -14,6 +14,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 func seedIntake(t *testing.T, path, root string) *store.Store {
@@ -169,13 +170,6 @@ func Test28_MSC_11_IntakeAdmissionUnchanged(t *testing.T) {
 				payload["revisionHash"] = revision + "\n"
 			}
 			goStore := seedIntake(t, filepath.Join(root, "go", "go.sqlite3"), work)
-			// The oracle's store has a directory of its own (one takeover.json per directory)
-			// and is seeded by Go like Go's; Python then accepts on it after a takeover.
-			pyStore := seedIntake(t, filepath.Join(root, "python", "python.sqlite3"), work)
-			if err := pyStore.Close(); err != nil {
-				t.Fatal(err)
-			}
-			testsupport.HandOver(t, pyStore.Path, "python")
 			raw, _ := json.Marshal(payload)
 			intake := store.ReceiptIntake{Store: goStore, Now: func() string { return "2023-11-14T22:13:20.000000+00:00" }, Minimum: store.BestEffortDetection}
 			_, err = intake.AcceptChildReceipt(context.Background(), raw, store.TurnReference{ThreadID: "01child-task", TurnID: "turn-dispatch-1", Status: "completed"})
@@ -227,15 +221,29 @@ func Test28_MSC_11_IntakeAdmissionUnchanged(t *testing.T) {
 				t.Fatal(err)
 			}
 			got["refusals"] = refusals
-			spec, _ := json.Marshal(map[string]any{"store": pyStore.Path, "payload": payload})
-			repo, _ := filepath.Abs("../../..")
-			cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/adapter/testdata/intake_capture.py"))
-			cmd.Dir = repo
-			cmd.Stdin = bytes.NewReader(spec)
-			out, err := cmd.CombinedOutput()
-			if err != nil {
-				t.Fatalf("oracle %v %s", err, out)
+			// The revision and the event id are digests over the test's temporary paths: the
+			// payload carries them, so the recording names them.
+			options := []pyoracle.Option{pyoracle.Substitute(revision, "<revision>"), pyoracle.Substitute(event, "<event>")}
+			if host, ok := got["host"].(string); ok {
+				if position := jsonPosition.FindString(host); position != "" {
+					options = append(options, asGoAnswers(position, "<json-error-position>"))
+				}
 			}
+			repo := pyRepo(t)
+			out := pyOutput(t, "intake_capture.py", func() *exec.Cmd {
+				// The oracle's store has a directory of its own (one takeover.json per directory)
+				// and is seeded by Go like Go's; Python then accepts on it after a takeover.
+				pyStore := seedIntake(t, filepath.Join(root, "python", "python.sqlite3"), work)
+				if err := pyStore.Close(); err != nil {
+					t.Fatal(err)
+				}
+				testsupport.HandOver(t, pyStore.Path, "python")
+				spec, _ := json.Marshal(map[string]any{"store": pyStore.Path, "payload": payload})
+				cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/adapter/testdata/intake_capture.py"))
+				cmd.Dir = repo
+				cmd.Stdin = bytes.NewReader(spec)
+				return cmd
+			}, options...)
 			var want any
 			if err := json.Unmarshal(out, &want); err != nil {
 				t.Fatal(err)

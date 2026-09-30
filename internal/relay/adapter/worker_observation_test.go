@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -99,14 +98,7 @@ func Test28_WorkerObservationMatchesPython(t *testing.T) {
 		got := map[string]any{"policy": gotPolicy, "reason": reasonValue}
 		spec := map[string]any{"state": state, "socket": socket, "scope": scope, "storeId": loc.StoreID, "installationId": installation}
 		raw, _ := json.Marshal(spec)
-		repo, _ := filepath.Abs("../../..")
-		cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/adapter/testdata/worker_capture.py"))
-		cmd.Dir = repo
-		cmd.Stdin = bytes.NewReader(raw)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("oracle %v %s", err, out)
-		}
+		out := pyDriver(t, "worker_capture.py", raw)
 		var want any
 		if err := json.Unmarshal(out, &want); err != nil {
 			t.Fatal(err)

@@ -1,8 +1,11 @@
 package pyoracle
 
 import (
+	"bytes"
+	"compress/gzip"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +20,19 @@ func inFreshDirectory(t *testing.T) {
 }
 
 // forget writes every recording made so far and drops them, as a new test process would.
+// readRecording reads a recording file as written, decompressed.
+func readRecording(path string) ([]byte, error) {
+	compressed, err := os.ReadFile(path + ".gz")
+	if err != nil {
+		return nil, err
+	}
+	reader, err := gzip.NewReader(bytes.NewReader(compressed))
+	if err != nil {
+		return nil, err
+	}
+	return io.ReadAll(reader)
+}
+
 func forget() {
 	recordingsMu.Lock()
 	defer recordingsMu.Unlock()
@@ -69,7 +85,7 @@ func TestRecord_then_replay_returns_the_answer_with_run_paths_put_back(t *testin
 		Answer(t, "binary", func() ([]byte, error) { return []byte{0xff, 0x00}, nil })
 	}
 	forget()
-	data, err := os.ReadFile(path)
+	data, err := readRecording(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +145,7 @@ func TestReplay_without_a_recording_names_the_file_and_the_key(t *testing.T) {
 
 func TestLarge_recordings_are_compressed_and_read_back(t *testing.T) {
 	inFreshDirectory(t)
-	big := strings.Repeat("row\n", compressAbove)
+	big := strings.Repeat("row\n", 256<<10)
 	var path string
 	{
 		t.Setenv(ModeEnv, "record")
@@ -192,4 +208,19 @@ func TestAn_unknown_mode_is_refused(t *testing.T) {
 		}
 	}()
 	CurrentMode()
+}
+
+func TestA_plain_json_recording_is_still_read(t *testing.T) {
+	inFreshDirectory(t)
+	t.Setenv(ModeEnv, "")
+	path := filepath.Join(Directory, fileName(t.Name()))
+	if err := os.MkdirAll(Directory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"note": "", "answers": {"k": "txt:plain"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := Answer(t, "k", nil); string(got) != "plain" {
+		t.Fatalf("read %q", got)
+	}
 }

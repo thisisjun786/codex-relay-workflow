@@ -1,13 +1,16 @@
 package adapter
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -15,6 +18,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 var suiteDirectory string
@@ -44,53 +48,317 @@ func buildSuiteBinary(root string) error {
 	return os.Symlink(suiteBinary, suiteAlias)
 }
 
-type deliverySeed struct{ Event, Work string }
+// deliverySeed is the relational seed Python's DeliveryTestCase builds: a relationship, its
+// final event queued for delivery, and the artifact that event carries. Revision is the event's
+// revision hash; it and Event are digests over the artifact's path, which lies in this run's
+// suite directory.
+type deliverySeed struct{ Event, Revision, Work string }
+
+// derived names the values of an answer that follow from the seed artifact's path: the event's
+// revision and id, and the delivery request ids named after the id's first twelve characters.
+func (seed deliverySeed) derived() []pyoracle.Option {
+	return []pyoracle.Option{pyoracle.Substitute(seed.Revision, "<seed-revision>"), pyoracle.Substitute(seed.Event, "<seed-event>"), pyoracle.Substitute("del-"+seed.Event[:12]+"-", "del-<seed-event-12>-")}
+}
+
+// seedTable is one populated table of a store, its rows in rowid order (sqliteValue).
+type seedTable struct {
+	Columns []string `json:"columns"`
+	Rows    [][]any  `json:"rows"`
+}
+
+// seedAnswer is what the Python seed left: its event, the populated tables of its store but
+// schema_meta, and the files of its tree, by path relative to the tree. The event id and the
+// revision hash appear as <seed-event> and <seed-revision>.
+type seedAnswer struct {
+	Event  string               `json:"event"`
+	Tables map[string]seedTable `json:"tables"`
+	Files  map[string]string    `json:"files"`
+}
 
 var seedOnce sync.Once
-var seeded deliverySeed
+var seedLive []byte
 var seedError error
+var seedFiles sync.Once
 
-// Python constructs the relational seed once, retaining its immutable artifact
-// path. Each scenario gets independent SQLite copies, never a shared writer.
+// Python constructs the relational seed once, retaining its immutable artifact path. Each
+// scenario gets independent SQLite copies, never a shared writer: rebuilt from the seed's rows
+// (seedAnswer) on the frozen Python-produced empty store, which is what preFenceFixture reads
+// of them.
 func copyDeliverySeed(t *testing.T, destination string) deliverySeed {
 	t.Helper()
-	seedOnce.Do(func() {
-		root := filepath.Join(suiteDirectory, "oracle-seed")
-		if err := os.Mkdir(root, 0700); err != nil {
-			seedError = err
-			return
-		}
-		repo, err := filepath.Abs("../../..")
-		if err != nil {
-			seedError = err
-			return
-		}
-		command := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/adapter/testdata/settlement_capture.py"), root, "seed")
-		command.Dir = repo
-		output, err := command.CombinedOutput()
-		if err != nil {
-			seedError = fmt.Errorf("Python seed: %w\n%s", err, output)
-			return
-		}
-		if err := json.Unmarshal(output, &seeded); err != nil {
-			seedError = err
-			return
-		}
-		seeded.Work = filepath.Join(root, "work")
-	})
-	if seedError != nil {
-		t.Fatal(seedError)
+	root := filepath.Join(suiteDirectory, "oracle-seed")
+	raw := pyoracle.Answer(t, "settlement_capture.py seed", func() ([]byte, error) {
+		seedOnce.Do(func() { seedLive, seedError = pythonDeliverySeed(root) })
+		return seedLive, seedError
+	}, pyOptions(t)...)
+	var answer seedAnswer
+	if err := decodeNumbers(raw, &answer); err != nil {
+		t.Fatal(err)
 	}
-	data, err := os.ReadFile(filepath.Join(suiteDirectory, "oracle-seed", "python.sqlite3"))
+	seedFiles.Do(func() {
+		for name, content := range answer.Files {
+			path := filepath.Join(root, filepath.FromSlash(name))
+			if _, err := os.Stat(path); err == nil {
+				continue
+			}
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+	seed := deliverySeed{Work: filepath.Join(root, "work")}
+	var err error
+	if seed.Revision, seed.Event, err = seedIdentity(answer.Tables, seed.Work); err != nil {
+		t.Fatal(err)
+	}
+	raw = bytes.ReplaceAll(bytes.ReplaceAll(raw, []byte("<seed-event>"), []byte(seed.Event)), []byte("<seed-revision>"), []byte(seed.Revision))
+	if err := decodeNumbers(raw, &answer); err != nil {
+		t.Fatal(err)
+	}
+	if answer.Event != seed.Event {
+		t.Fatalf("seed event %s, not %s", answer.Event, seed.Event)
+	}
+	path := filepath.Join(destination, "python.sqlite3")
+	if err := writeSeedStore(path, answer.Tables); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"go.sqlite3", "python.sqlite3"} {
-		if err := os.WriteFile(filepath.Join(destination, name), data, 0600); err != nil {
-			t.Fatal(err)
+	if err := os.WriteFile(filepath.Join(destination, "go.sqlite3"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	return seed
+}
+
+// pythonDeliverySeed runs the Python seed in root and answers what it left (seedAnswer).
+func pythonDeliverySeed(root string) ([]byte, error) {
+	if err := os.Mkdir(root, 0700); err != nil {
+		return nil, err
+	}
+	repo, err := filepath.Abs("../../..")
+	if err != nil {
+		return nil, err
+	}
+	command := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/adapter/testdata/settlement_capture.py"), root, "seed")
+	command.Dir = repo
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("Python seed: %w\n%s", err, output)
+	}
+	var answer seedAnswer
+	if err := json.Unmarshal(output, &answer); err != nil {
+		return nil, err
+	}
+	if answer.Tables, err = populatedTables(filepath.Join(root, "python.sqlite3")); err != nil {
+		return nil, err
+	}
+	answer.Files = map[string]string{}
+	err = filepath.WalkDir(filepath.Join(root, "work"), func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		name, err := filepath.Rel(root, path)
+		answer.Files[filepath.ToSlash(name)] = string(data)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	// Go derives both digests from the seed's artifact as Python did, or the seed is refused.
+	revision, event, err := seedIdentity(answer.Tables, filepath.Join(root, "work"))
+	if err != nil {
+		return nil, err
+	}
+	if answer.Event != event {
+		return nil, fmt.Errorf("Python's seed event is %s, Go derives %s", answer.Event, event)
+	}
+	encoded, err := encodeJSON(answer)
+	if err != nil {
+		return nil, err
+	}
+	for _, placeholder := range [][2]string{{event, "<seed-event>"}, {revision, "<seed-revision>"}} {
+		encoded = bytes.ReplaceAll(encoded, []byte(placeholder[0]), []byte(placeholder[1]))
+	}
+	return encoded, nil
+}
+
+// seedIdentity derives the seed event's revision hash and id from the one artifact under work
+// and the event row's other fields, and checks them against the event row.
+func seedIdentity(tables map[string]seedTable, work string) (string, string, error) {
+	events := tables["events"]
+	if len(events.Rows) != 1 {
+		return "", "", fmt.Errorf("the seed has %d events", len(events.Rows))
+	}
+	row := map[string]any{}
+	for i, column := range events.Columns {
+		row[column] = events.Rows[0][i]
+	}
+	entries, _, err := BuildManifest([]string{filepath.Join(work, "out.txt")}, []string{work}, false)
+	if err != nil {
+		return "", "", err
+	}
+	revision, err := RevisionHash(entries)
+	if err != nil {
+		return "", "", err
+	}
+	number := func(key string) (int, error) {
+		switch v := row[key].(type) {
+		case json.Number:
+			n, err := v.Int64()
+			return int(n), err
+		case int64:
+			return int(v), nil
+		}
+		return 0, fmt.Errorf("seed event %s is %#v", key, row[key])
+	}
+	generation, err := number("execution_generation")
+	if err != nil {
+		return "", "", err
+	}
+	attempt, err := number("attempt")
+	if err != nil {
+		return "", "", err
+	}
+	relationship, _ := row["relationship_id"].(string)
+	outcome, _ := row["outcome"].(string)
+	turn, _ := row["turn_id"].(string)
+	event, err := store.EventID(relationship, generation, revision, outcome, turn, &attempt)
+	if err != nil {
+		return "", "", err
+	}
+	for key, want := range map[string]string{"revision_hash": revision, "event_id": event} {
+		if got := row[key]; got != want && got != "<seed-"+strings.TrimSuffix(strings.TrimSuffix(key, "_hash"), "_id")+">" {
+			return "", "", fmt.Errorf("seed event %s is %v, Go derives %s", key, got, want)
 		}
 	}
-	return seeded
+	return revision, event, nil
+}
+
+// populatedTables dumps every populated table of the store at path but schema_meta, read from
+// a snapshot so the store itself is not touched.
+func populatedTables(path string) (map[string]seedTable, error) {
+	ctx := context.Background()
+	snapshot, cleanup, err := ownership.CopySnapshot(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = cleanup() }()
+	db, err := ownership.OpenExisting(ctx, snapshot, "ro")
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	names := []string{}
+	rows, err := db.QueryContext(ctx, "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name != 'schema_meta' ORDER BY name")
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, errors.Join(err, rows.Close())
+		}
+		names = append(names, name)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return nil, err
+	}
+	tables := map[string]seedTable{}
+	for _, name := range names {
+		rows, err := db.QueryContext(ctx, `SELECT * FROM `+quoted(name)+` ORDER BY rowid`)
+		if err != nil {
+			return nil, err
+		}
+		columns, err := rows.Columns()
+		if err != nil {
+			return nil, errors.Join(err, rows.Close())
+		}
+		table := seedTable{Columns: columns}
+		for rows.Next() {
+			values := make([]any, len(columns))
+			pointers := make([]any, len(columns))
+			for i := range values {
+				pointers[i] = &values[i]
+			}
+			if err := rows.Scan(pointers...); err != nil {
+				return nil, errors.Join(err, rows.Close())
+			}
+			for i, value := range values {
+				values[i] = sqliteValue(value)
+			}
+			table.Rows = append(table.Rows, values)
+		}
+		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+			return nil, err
+		}
+		if len(table.Rows) > 0 {
+			tables[name] = table
+		}
+	}
+	return tables, nil
+}
+
+// writeSeedStore writes at path the frozen Python-produced empty store holding tables' rows.
+func writeSeedStore(path string, tables map[string]seedTable) error {
+	ctx := context.Background()
+	repo, err := filepath.Abs("../../..")
+	if err != nil {
+		return err
+	}
+	frozen, err := os.ReadFile(filepath.Join(repo, "contract/fixtures/sqlite-ddl/python-store.sqlite3"))
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, frozen, 0o600); err != nil {
+		return err
+	}
+	db, err := ownership.OpenExisting(ctx, path, "rw")
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	names := make([]string, 0, len(tables))
+	for name := range tables {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		table := tables[name]
+		columns := make([]string, len(table.Columns))
+		for i, column := range table.Columns {
+			columns[i] = quoted(column)
+		}
+		insert := `INSERT INTO ` + quoted(name) + ` (` + strings.Join(columns, ",") + `) VALUES (` + strings.TrimSuffix(strings.Repeat("?,", len(columns)), ",") + `)`
+		for _, row := range table.Rows {
+			values := make([]any, len(row))
+			for i, value := range row {
+				if values[i], err = sqliteArgument(value); err != nil {
+					return errors.Join(err, tx.Rollback())
+				}
+			}
+			if _, err := tx.ExecContext(ctx, insert, values...); err != nil {
+				return errors.Join(fmt.Errorf("%s: %w", name, err), tx.Rollback())
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	_, err = db.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)")
+	return err
 }
 
 // ownerNeutral applies the runtime-identity rule to the schema_meta rows of a whole-table dump

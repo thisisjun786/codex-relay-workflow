@@ -11,6 +11,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/reception"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 type generationClock struct{}
@@ -37,13 +38,12 @@ finally:s.close()`
 	for _, testCase := range []struct{ name, raw string }{{"json-number-3", "3"}, {"string-3", `"3"`}, {"float-3", "3.0"}, {"bool-true", "true"}, {"large-int", "1180591620717411303424"}} {
 		raw := testCase.raw
 		t.Run(testCase.name, func(t *testing.T) {
-			pyDir := t.TempDir()
-			cmd := exec.Command(filepath.Join(root, ".venv/bin/python"), "-c", script, raw, pyDir)
-			cmd.Dir = root
-			wantRaw, err := cmd.Output()
-			if err != nil {
-				t.Fatal(err)
-			}
+			wantRaw := pyoracle.Answer(t, "generation "+raw, func() ([]byte, error) {
+				pyDir := t.TempDir()
+				cmd := exec.Command(filepath.Join(root, ".venv/bin/python"), "-c", script, raw, pyDir)
+				cmd.Dir = root
+				return cmd.Output()
+			})
 			var want map[string]any
 			wantDecoder := json.NewDecoder(bytes.NewReader(wantRaw))
 			wantDecoder.UseNumber()

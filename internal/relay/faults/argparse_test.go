@@ -15,23 +15,31 @@ type cliResult struct {
 	stdout, stderr string
 }
 
-func pythonFaultCLI(t *testing.T, root, home string, args ...string) cliResult {
+// pythonFaultCLI is what live Python answered to a relay command line in a disposable home: exit
+// status, both streams, and whether the --state directory existed after it ran (created).
+func pythonFaultCLI(t *testing.T, root, home string, args ...string) (answer cliResult, created bool) {
 	t.Helper()
-	cmd := exec.Command("uv", append([]string{"run", "--no-sync", "codex-session-relay"}, args...)...)
-	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR=/dev/shm")
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	err := cmd.Run()
-	code := 0
-	if err != nil {
-		if exit, ok := err.(*exec.ExitError); ok {
-			code = exit.ExitCode()
-		} else {
-			t.Fatal(err)
+	state := ""
+	for i, arg := range args {
+		if arg == "--state" && i+1 < len(args) {
+			state = args[i+1]
 		}
 	}
-	return cliResult{code, stdout.String(), stderr.String()}
+	var run pyRun
+	pyValue(t, "relay "+strings.Join(args, " "), args, pyRunPaths(t, home), &run, func() (any, error) {
+		cmd := exec.Command("uv", append([]string{"run", "--no-sync", "codex-session-relay"}, args...)...)
+		cmd.Dir = root
+		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR=/dev/shm")
+		answer, err := runPython(cmd, true)
+		if err != nil {
+			return nil, err
+		}
+		if state != "" {
+			answer.Created = !stateAbsent(t, state)
+		}
+		return answer, nil
+	})
+	return cliResult{run.Code, run.Stdout, run.Stderr}, run.Created
 }
 
 func goFaultCLI(t *testing.T, args ...string) cliResult {
@@ -98,8 +106,8 @@ func TestFaultArgparseSurfaceMatchesPython(t *testing.T) {
 			for _, tc := range cases {
 				t.Run(tc.name, func(t *testing.T) {
 					args := append([]string{"--json", command.name}, tc.args...)
-					want := pythonFaultCLI(t, root, home, append([]string{"--state", pyState}, args...)...)
-					state := oracleState(t, pyState, goState)
+					want, created := pythonFaultCLI(t, root, home, append([]string{"--state", pyState}, args...)...)
+					state := oracleState(created, pyState, goState)
 					got := goFaultCLI(t, append([]string{"--state", state}, args...)...)
 					neverCreated(t, pyState, state)
 					if got != want {
@@ -115,7 +123,8 @@ func TestFaultArgparseAmbiguousPrefixMatchesPython(t *testing.T) {
 	root, _ := filepath.Abs("../../..")
 	home := t.TempDir()
 	args := []string{"--state", filepath.Join(home, "relay"), "fault-policy", "--f", "x"}
-	if want, got := pythonFaultCLI(t, root, home, args...), goFaultCLI(t, args...); got != want {
+	want, _ := pythonFaultCLI(t, root, home, args...)
+	if got := goFaultCLI(t, args...); got != want {
 		t.Fatalf("Python: %#v\nGo: %#v", want, got)
 	}
 }
@@ -127,7 +136,7 @@ func TestFaultObserveMalformedJSONMatchesPython(t *testing.T) {
 			home := t.TempDir()
 			// Each runtime keeps its own store: neither writes a store the other owns.
 			args := []string{"--json", "fault-observe", "--observation", raw}
-			want := pythonFaultCLI(t, root, home, append([]string{"--state", filepath.Join(home, "relay")}, args...)...)
+			want, _ := pythonFaultCLI(t, root, home, append([]string{"--state", filepath.Join(home, "relay")}, args...)...)
 			if got := goFaultCLI(t, append([]string{"--state", filepath.Join(home, "go", "relay")}, args...)...); got != want {
 				t.Fatalf("Python: %#v\nGo: %#v", want, got)
 			}
@@ -139,7 +148,8 @@ func TestFaultKindModuleNestedImportErrorMatchesPython(t *testing.T) {
 	root, _ := filepath.Abs("../../..")
 	home := t.TempDir()
 	args := []string{"--state", filepath.Join(home, "relay"), "--json", "--kind-module", "codex_session_relay.not_real", "fault-attention"}
-	if want, got := pythonFaultCLI(t, root, home, args...), goFaultCLI(t, args...); got != want {
+	want, _ := pythonFaultCLI(t, root, home, args...)
+	if got := goFaultCLI(t, args...); got != want {
 		t.Fatalf("Python: %#v\nGo: %#v", want, got)
 	}
 }
