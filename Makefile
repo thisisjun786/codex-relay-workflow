@@ -19,7 +19,7 @@ TEST_TIMEOUT := -timeout 20m
 TEST_BINARY := $(CURDIR)/dist/test/crw
 TEST_ENV := CRW_TEST_BINARY=$(TEST_BINARY)
 
-.PHONY: build test test-binary test-part contract lint dist crw-dev
+.PHONY: build test test-binary test-part lint dist crw-dev
 
 build:
 	@if ! $(GO) list ./... 2>/dev/null | grep -q .; then echo "no Go packages yet: build skipped"; else $(GO) build -o $(BINARY) -trimpath -ldflags="$(LDFLAGS)" ./cmd/crw; fi
@@ -54,9 +54,6 @@ else ifneq ($(filter $(TEST_PART),1 2 3 4 5),)
 else
 	$(error TEST_PART must be 1, 2, 3, 4, 5 or rest)
 endif
-
-contract:
-	@if [ ! -d ./internal/contracttest ] || ! $(GO) list ./internal/contracttest/... 2>/dev/null | grep -q .; then echo "no Go packages yet: contract skipped"; else $(GO) test ./internal/contracttest/...; fi
 
 # The development tooling (cmd/crw-dev, internal/dev) builds only with -tags dev, so lint and
 # test cover it in a second pass; dist and goreleaser never pass the tag. The isolated-home

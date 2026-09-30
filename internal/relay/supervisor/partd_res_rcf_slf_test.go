@@ -271,10 +271,3 @@ func slfWhole(t *testing.T, id string) {
 		t.Fatalf("unknown %s", id)
 	}
 }
-
-func Test24_SLF_LivePythonWholeOutputs(t *testing.T) {
-	for n := 1; n <= 15; n++ {
-		id := "SLF-" + strconv.Itoa(n)
-		t.Run(id, func(t *testing.T) { slfWhole(t, id) })
-	}
-}

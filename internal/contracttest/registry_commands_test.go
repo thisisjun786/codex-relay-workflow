@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strings"
 	"testing"
 
@@ -35,13 +34,6 @@ func TestRegistryCommands_the_built_crw_prints_what_python_printed(t *testing.T)
 // step's stdout bytes and exit code with <dir>/python_cli.json; every command in commands must
 // be exercised by some case.
 func replayCLICases(t *testing.T, dir string, commands []string) {
-	t.Helper()
-	replayCLICasesOnly(t, dir, commands, nil)
-}
-
-// replayCLICasesOnly replays the named cases only (every case when only is nil); commands are
-// asserted covered only when every case ran.
-func replayCLICasesOnly(t *testing.T, dir string, commands, only []string) {
 	t.Helper()
 	binary, err := crwBinary()
 	if err != nil {
@@ -72,9 +64,6 @@ func replayCLICasesOnly(t *testing.T, dir string, commands, only []string) {
 	}
 	covered := map[string]bool{}
 	for name, steps := range cases {
-		if only != nil && !slices.Contains(only, name) {
-			continue
-		}
 		t.Run(name, func(t *testing.T) {
 			home := t.TempDir()
 			targetNames := map[string]string{}
@@ -142,7 +131,7 @@ func replayCLICasesOnly(t *testing.T, dir string, commands, only []string) {
 		})
 	}
 	for _, command := range commands {
-		if only == nil && !covered[command] {
+		if !covered[command] {
 			t.Errorf("no case exercises %s", command)
 		}
 	}

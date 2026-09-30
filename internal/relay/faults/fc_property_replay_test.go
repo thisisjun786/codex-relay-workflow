@@ -15,52 +15,22 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
-// Every helper called here executes Go and live Python on equivalent disposable
-// stores and compares complete replies/CLI bytes plus every fault_* row.
-
-// FC-1, FC-3, FC-4, FC-5, FC-23, FC-25, FC-26, FC-29, FC-31, FC-32:
-// publication fencing, issue ownership, adoption, extension kinds, budgets,
-// target changes, and readback convergence.
-func Test22_FC_1_3_4_5_23_25_26_29_31_32_PublicationWholeOutput(t *testing.T) {
-	testFLT252627LifecycleWholeCLI(t)
-	TestF2WholeOutput(t)
-}
-
-// FC-2, FC-6, FC-7, FC-8, FC-9, FC-10, FC-11, FC-12, FC-14, FC-16,
-// FC-17, FC-18, FC-24, FC-34, FC-38: complete sweep outputs cover rotation,
-// delivery/refusal streaks, managed readings, workspace isolation, malformed
-// observations, clearing, overtaken presence, and bounded work.
-func Test22_FC_2_6_7_8_9_10_11_12_14_16_17_18_24_34_38_SweepWholeOutput(t *testing.T) {
-	Test22_FLT_9_10_13_15_16_18_20_21_22_32_SweepWholeOutput(t)
-	Test22_OvertakenPresenceWholePythonPage(t)
-	Test22_SettingsHoldWholePythonObservation(t)
-}
-
-// FC-13, FC-19, FC-22, FC-27, FC-35, FC-36: complete record outputs cover
-// workspace identity, progress/fix transitions, policy, static kind invariants,
-// incident facts, and stored kind requirements.
-func Test22_FC_13_19_22_27_35_36_RecordWholeOutput(t *testing.T) {
-	Test22_FLT_1_IdentityWholeOutput(t)
-	Test22_FLT_2_3_4_14_RecordWholeOutput(t)
-	Test22_FLT_5_6_7_8_19_23_24_LifecycleWholeOutput(t)
-	Test22_FLT_11_12_25_26_27_PublicationWholeOutput(t)
-}
-
-// FC-15, FC-20, FC-21, FC-37: budget, attention, notifications, and paged
-// policy/limit outputs are compared with live Python.
-func Test22_FC_15_20_21_37_BudgetAttentionNotificationWholeOutput(t *testing.T) {
-	TestDPolicyAndLimitWholeRepliesAgainstPython(t)
-	TestDAttentionWholeOutputAgainstPython(t)
-	TestDNotificationLifecyclePythonWholeReplies(t)
-	TestDNotificationsPageWholeBytesAgainstPython(t)
-}
-
-// FC-28, FC-30, FC-33: complete relink replies and rows cover ordered project
-// convergence, unlink/relink, bounded batches, and pending outstanding writes.
-func Test22_FC_28_30_33_RelinkWholeOutput(t *testing.T) {
-	TestDRelinkRepointsBoundedWritesAgainstPython(t)
-	TestDRelinkOutstandingWriteSelectionAgainstPython(t)
-}
+// The FC properties of test_fault_contract.py are owned by the tests that compare Go's and
+// Python's complete replies, CLI bytes and fault_* rows (the composite tests that re-ran them
+// under one more name went in wave R1):
+//   - FC-1, 3, 4, 5, 23, 25, 26, 29, 31, 32 (publication fencing, issue ownership, adoption,
+//     extension kinds, budgets, target changes, readback): TestF1_FLT_25_26_27_LifecycleWholeCLI
+//     and TestF2WholeOutput;
+//   - FC-2, 6-12, 14, 16-18, 24, 34, 38 (sweeps): the TestF1_FLT_18_21_22 / FLT_18_21 / FLT_21 /
+//     FLT_32 sweep tests, TestF1SweepBoundsAndScopeWholeCLI, TestF1SweepReadingsWholeCLI,
+//     Test22_OvertakenPresenceWholePythonPage and Test22_SettingsHoldWholePythonObservation;
+//   - FC-13, 19, 22, 27, 35, 36 (records): Test22_FLT_1_IdentityWholeOutput,
+//     Test22_FLT_2_3_4_14_RecordWholeOutput and Test22_FLT_5_6_7_8_19_23_24_LifecycleWholeOutput;
+//   - FC-15, 20, 21, 37 (budget, attention, notifications): the TestD policy, attention,
+//     notification-lifecycle, relationship-eligibility and notifications-page tests and
+//     Test22_FN_7_BudgetAndRefundWholeOutput;
+//   - FC-28, 30, 33 (relink): TestDRelinkRepointsBoundedWritesAgainstPython and
+//     TestDRelinkOutstandingWriteSelectionAgainstPython.
 
 // FC-39: scope conflicts and moves compare complete command outputs and rows.
 func Test22_FC_39_ScopeConflictWholeOutput(t *testing.T) {

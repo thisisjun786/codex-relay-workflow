@@ -306,13 +306,10 @@ func normalizedManaged(v any) any {
 		return v
 	}
 }
+
+// MEX-1..3: the one instructed execution-cli sequence covers them all: the instructed
+// sequence, the restart from a marker (receipt 8) and the duplicate child (receipts 9 and 10).
 func Test27_MEX_1_PythonInstructedSequenceWholeOutput(t *testing.T) {
-	comparePythonExecutionCLI(t)
-}
-func Test27_MEX_2_PythonMarkerRestartWholeOutput(t *testing.T) {
-	comparePythonExecutionCLI(t)
-}
-func Test27_MEX_3_PythonDuplicateChildWholeOutput(t *testing.T) {
 	comparePythonExecutionCLI(t)
 }
 func comparePythonExecutionCLI(t *testing.T) {
