@@ -1,0 +1,169 @@
+{
+  "given": {},
+  "run": {
+    "kind": "cli",
+    "steps": [
+      {
+        "id": "nbsp",
+        "argv": [
+          "intent-resolve",
+          "--marker-root",
+          "${HOME}/markers",
+          "--workspace",
+          "${HOME}/workspace",
+          "--assignment",
+          "a",
+          "--chosen-task",
+          "t",
+          "--chosen-session",
+          "s",
+          "--reason",
+          "r",
+          "--adjudicate",
+          "x\u00a0y"
+        ]
+      },
+      {
+        "id": "line-separator",
+        "argv": [
+          "intent-resolve",
+          "--marker-root",
+          "${HOME}/markers",
+          "--workspace",
+          "${HOME}/workspace",
+          "--assignment",
+          "a",
+          "--chosen-task",
+          "t",
+          "--chosen-session",
+          "s",
+          "--reason",
+          "r",
+          "--adjudicate",
+          "x\u2028y"
+        ]
+      },
+      {
+        "id": "zero-width-space",
+        "argv": [
+          "intent-resolve",
+          "--marker-root",
+          "${HOME}/markers",
+          "--workspace",
+          "${HOME}/workspace",
+          "--assignment",
+          "a",
+          "--chosen-task",
+          "t",
+          "--chosen-session",
+          "s",
+          "--reason",
+          "r",
+          "--adjudicate",
+          "x\u200by"
+        ]
+      },
+      {
+        "id": "quote",
+        "argv": [
+          "intent-resolve",
+          "--marker-root",
+          "${HOME}/markers",
+          "--workspace",
+          "${HOME}/workspace",
+          "--assignment",
+          "a",
+          "--chosen-task",
+          "t",
+          "--chosen-session",
+          "s",
+          "--reason",
+          "r",
+          "--adjudicate",
+          "it's"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 4,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "steps",
+          "nbsp",
+          "exit"
+        ],
+        "value": 4
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "steps",
+          "nbsp",
+          "stdout_json",
+          "detail"
+        ],
+        "value": "--adjudicate takes factId=digest, not 'x\\xa0y'"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "steps",
+          "line-separator",
+          "exit"
+        ],
+        "value": 4
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "steps",
+          "line-separator",
+          "stdout_json",
+          "detail"
+        ],
+        "value": "--adjudicate takes factId=digest, not 'x\\u2028y'"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "steps",
+          "zero-width-space",
+          "exit"
+        ],
+        "value": 4
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "steps",
+          "zero-width-space",
+          "stdout_json",
+          "detail"
+        ],
+        "value": "--adjudicate takes factId=digest, not 'x\\u200by'"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "steps",
+          "quote",
+          "exit"
+        ],
+        "value": 4
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "steps",
+          "quote",
+          "stdout_json",
+          "detail"
+        ],
+        "value": "--adjudicate takes factId=digest, not \"it's\""
+      }
+    ]
+  }
+}

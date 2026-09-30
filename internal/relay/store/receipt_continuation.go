@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 )
 
 // ReasonRevisionLineageInvalid is errors.RefusalReason.REVISION_LINEAGE_INVALID.
@@ -137,32 +139,8 @@ func recordLineage(ctx context.Context, conn *sql.Conn, relationshipID string, g
 	return err
 }
 
-// PyRepr is Python's repr() of a str.
-func PyRepr(text string) string {
-	quote := "'"
-	if strings.Contains(text, "'") && !strings.Contains(text, `"`) {
-		quote = `"`
-	}
-	var b strings.Builder
-	b.WriteString(quote)
-	for _, r := range text {
-		switch {
-		case r == '\\':
-			b.WriteString(`\\`)
-		case string(r) == quote:
-			b.WriteString(`\` + quote)
-		case r == '\n':
-			b.WriteString(`\n`)
-		case r == '\r':
-			b.WriteString(`\r`)
-		case r == '\t':
-			b.WriteString(`\t`)
-		case r < 0x20 || r == 0x7f:
-			fmt.Fprintf(&b, `\x%02x`, r)
-		default:
-			b.WriteRune(r)
-		}
-	}
-	b.WriteString(quote)
-	return b.String()
-}
+// PyRepr is Python's repr() of a str: settings.Repr, so every character str.isprintable() refuses
+// (U+00A0, U+2028, U+200B, an unassigned code point) is escaped as CPython 3.14 escapes it, and a
+// lone surrogate, as an argv byte that is not UTF-8 or the WTF-8 a JSON decoder keeps, prints
+// as \udXXX rather than as U+FFFD.
+func PyRepr(text string) string { return settings.Repr(text) }

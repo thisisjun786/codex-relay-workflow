@@ -282,6 +282,35 @@ func snapshot(t *testing.T, root string) string {
 	return strings.Join(lines, "\n")
 }
 
+// The connected field quotes the relay's socketConnect as runtime_install.py does, with repr():
+// the quote repr picks for a str holding one, a backslash doubled and U+00A0 escaped.
+func TestDoctorQuotesTheSocketConnectAsPythonsRepr(t *testing.T) {
+	h := newHost(t)
+	env := h.pythonVenv(t)
+	link(t, env, h.current())
+	h.fixtureRecord(t)
+	h.settings(t, map[string]string{
+		"relayExecutable":    filepath.Join(h.current(), "bin", "codex-session-relay"),
+		"adapterEntryPoint":  filepath.Join(h.current(), "bin", "crw-completion-hook"),
+		"adapterInterpreter": filepath.Join(h.current(), "bin", "python3"),
+	}, map[string]string{"bridgeExecutable": filepath.Join(h.current(), "bin", "codex-thread-bridge")})
+	connect := "OSError: it's \\ x\U000000a0"
+	reading, err := json.Marshal(map[string]any{"stateSelection": map[string]any{"path": "/s/scope", "socketScope": "scope-1"}, "actorReachability": map[string]any{"socketConnect": connect}, "contents": map[string]any{"available": true, "openAttempts": 0}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(env, "bin", "codex-session-relay"), "#!"+filepath.Join(env, "bin", "python3")+"\n"+
+		"case \"$*\" in\n  *\"service status\"*) echo '{\"running\": false}' ;;\n  *doctor*) cat <<'EOF'\n"+string(reading)+"\nEOF\n  ;;\n  *) exit 2 ;;\nesac\n", 0o755)
+	report := h.diagnose(t)
+	if got := at(report, "scope", "socketConnect"); got != connect {
+		t.Fatalf("scope.socketConnect = %q", got)
+	}
+	want := `doctor actorReachability.socketConnect = "OSError: it's \\ x\xa0". A socket file existing on disk does not establish this.`
+	if got := at(report, "checks", "results", "connected", "evidence"); got != want {
+		t.Errorf("connected.evidence = %s\nwant                %s", got, want)
+	}
+}
+
 // On a host with only the Python install, the doctor reports selected: python-venv from the
 // pointer target's pyvenv.cfg and the record's selected map - no interpreter, module or
 // shebang probe - resolves every settings executable through the pointer to the Python it

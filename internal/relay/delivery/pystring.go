@@ -1,11 +1,12 @@
 package delivery
 
 import (
-	"fmt"
 	"math/big"
 	"strconv"
 	"strings"
 	"unicode"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // pyStrip is str.strip(): Python includes the ASCII information separators in
@@ -21,7 +22,7 @@ func pyStrip(value string) string {
 func sqliteIntString(value string) (any, error) {
 	text := strings.TrimSpace(value)
 	invalid := func() (any, error) {
-		return nil, &hostError{"ValueError", "invalid literal for int() with base 10: " + intLiteralRepr(value)}
+		return nil, &hostError{"ValueError", "invalid literal for int() with base 10: " + store.PyRepr(value)}
 	}
 	var normalized strings.Builder
 	if len(text) > 0 && (text[0] == '+' || text[0] == '-') {
@@ -53,24 +54,6 @@ func sqliteIntString(value string) (any, error) {
 		return nil, &hostError{"OverflowError", "Python int too large to convert to SQLite INTEGER"}
 	}
 	return n.Int64(), nil
-}
-
-// repr also escapes non-printing Unicode (for example a zero-width space).
-func intLiteralRepr(value string) string {
-	var out strings.Builder
-	for _, r := range pyReprValue(value) {
-		switch {
-		case unicode.IsPrint(r):
-			out.WriteRune(r)
-		case r < 0x100:
-			fmt.Fprintf(&out, `\x%02x`, r)
-		case r < 0x10000:
-			fmt.Fprintf(&out, `\u%04x`, r)
-		default:
-			fmt.Fprintf(&out, `\U%08x`, r)
-		}
-	}
-	return out.String()
 }
 
 func decimalDigit(r rune) (byte, bool) {
