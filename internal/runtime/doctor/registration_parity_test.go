@@ -15,12 +15,13 @@ import (
 )
 
 // Findings 22 and 36, against the launcher itself: for every bridge record, the doctor judges
-// the record's executable exactly when plugins/crw/wiring/crw_bridge_mcp.py gets as far as
-// exec (the selected bridge is a fake binary, so an accepted record fails there with "could not
-// start"), and refuses it exactly when the launcher exits before exec.
+// the record's executable exactly when crw_bridge_mcp.py (the launcher the package shipped until
+// todo 43, kept in internal/pluginwiring/testdata/pre-native-wiring) gets as far as exec (the
+// selected bridge is a fake binary, so an accepted record fails there with "could not start"),
+// and refuses it exactly when the launcher exits before exec.
 func TestParity_the_bridge_record_is_refused_where_the_launcher_refuses_it(t *testing.T) {
 	h, _, _ := goHost(t, true)
-	launcher := filepath.Join(golden.Root(), "plugins", "crw", "wiring", "crw_bridge_mcp.py")
+	launcher := filepath.Join(golden.Root(), "internal", "pluginwiring", "testdata", "pre-native-wiring", "crw_bridge_mcp.py")
 	policy := filepath.Join(h.home, "policy.toml")
 	write(t, policy, "roles = []\n", 0o600)
 	sum := sha256.Sum256([]byte("roles = []\n"))

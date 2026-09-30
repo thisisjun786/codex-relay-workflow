@@ -257,10 +257,10 @@ func (h *isolated) outside(answer any) []string {
 }
 
 // env is the isolated environment: the four homes, a PATH of tripwires and the Codex stub, and
-// isolation. Nothing is inherited from this process. CRW_ALLOW_LIVE_STATE is not set, and need
-// not be: the relay state `crw install` exercises is named with --state outside
-// $XDG_STATE_HOME/codex-session-relay, and a Stop hook whose relay is unreachable opens no store,
-// so the live-state guard has nothing here to refuse.
+// isolation. Nothing is inherited from this process. The store's live-state refusal, which
+// isolation names, has nothing here to refuse: the relay state `crw install` exercises is named
+// with --state outside $XDG_STATE_HOME/codex-session-relay, and a Stop hook whose relay is
+// unreachable opens no store.
 func (h *isolated) env(extra ...string) []string {
 	env := append([]string{"HOME=" + h.home, "CODEX_HOME=" + h.codex, "XDG_STATE_HOME=" + h.state, "TMPDIR=" + h.tmp,
 		"PATH=" + h.trip + ":" + h.tools}, h.isolation()...)
@@ -273,9 +273,11 @@ func (h *isolated) env(extra ...string) []string {
 // (`codex-session-relay service status`) would read this machine's live registry, and so would
 // `crw install remove`, which reads the daemon records of the registry the relay resolves
 // (doctor.RecordedDaemons) and the state directories its claims name. The marker root follows
-// $HOME already and is named here too, as testsupport.IsolateRelayState names both.
+// $HOME already and is named here too, as testsupport.IsolateRelayState names both, and so is the
+// store's live-state refusal it keeps (testsupport.RefuseLiveStateEnv), which a process started
+// with nothing inherited would otherwise lack.
 func (h *isolated) isolation() []string {
-	return []string{"CODEX_SESSION_RELAY_SCOPE_DIR=" + h.scopes, "CODEX_SESSION_RELAY_MARKER_ROOT=" + h.markers}
+	return []string{"CODEX_SESSION_RELAY_SCOPE_DIR=" + h.scopes, "CODEX_SESSION_RELAY_MARKER_ROOT=" + h.markers, testsupport.RefuseLiveStateEnv + "=1"}
 }
 
 // bareBridgeEnv is the least a host can start the MCP server with: HOME and nothing else, no
@@ -935,12 +937,14 @@ func (h *isolated) cacheReplacement(t *testing.T) {
 	h.noTripwireFired(t)
 }
 
-// legacyBootstrap is the pre-native declaration a turn cached before todo 34 still runs until
-// todo 43 retires it: a python3 bootstrap fixed with PLUGIN_ROOT naming the old version, opening
-// that version's packaged launcher and, once the cache was replaced, the copy the Python
-// installer left at <CODEX_HOME>/crw-stop-hook.py. Both reach the Go hook through the
-// installer's settings. It runs the python3 this machine's PATH names, never the tripwires, with
-// a PATH of that interpreter's directory alone.
+// legacyBootstrap is the pre-native declaration a turn cached before todo 34 may still run: a
+// python3 bootstrap fixed with PLUGIN_ROOT naming the old version, opening that version's
+// packaged launcher and, once the cache was replaced, the copy the Python installer left at
+// <CODEX_HOME>/crw-stop-hook.py. Todo 43 retired the launchers from the package, so the old
+// version is assembled from the pre-native testdata, which keeps both declarations and both
+// launchers; the host's copy stays until the operator removes it. Both reach the Go hook through
+// the installer's settings. It runs the python3 this machine's PATH names, never the tripwires,
+// with a PATH of that interpreter's directory alone.
 func (h *isolated) legacyBootstrap(t *testing.T) {
 	python, err := exec.LookPath("python3")
 	if err != nil {
@@ -949,7 +953,9 @@ func (h *isolated) legacyBootstrap(t *testing.T) {
 	preNative := filepath.Join(moduleRoot, "internal", "pluginwiring", "testdata", "pre-native-wiring")
 	old := h.replaceCache(t, "0.4.0+pre-native", map[string]string{
 		"wiring/hooks/stop-recording-completion.json": filepath.Join(preNative, "hooks", "stop-recording-completion.json"),
-		"wiring/mcp.json": filepath.Join(preNative, "mcp.json"),
+		"wiring/mcp.json":          filepath.Join(preNative, "mcp.json"),
+		"wiring/crw_stop_hook.py":  filepath.Join(preNative, "crw_stop_hook.py"),
+		"wiring/crw_bridge_mcp.py": filepath.Join(preNative, "crw_bridge_mcp.py"),
 	})
 	command := stopCommand(t, old)
 	if !strings.HasPrefix(command, "python3 -c") || !strings.Contains(command, "${PLUGIN_ROOT}/wiring/crw_stop_hook.py") {
@@ -967,7 +973,7 @@ func (h *isolated) legacyBootstrap(t *testing.T) {
 		t.Fatalf("no launcher copy: exit %d, %d rows from %d; stderr %q", got.code, len(h.rows(t)), before, got.stderr)
 	}
 	fallback := filepath.Join(h.codex, "crw-stop-hook.py")
-	writeFile(t, fallback, string(readFile(t, filepath.Join(moduleRoot, "plugins", "crw", "wiring", "crw_stop_hook.py"))), 0o644)
+	writeFile(t, fallback, string(readFile(t, filepath.Join(preNative, "crw_stop_hook.py"))), 0o644)
 	h.journaled(t, h.stop(t, command, env, "is7-legacy-fallback", "t"), "is7-legacy-fallback", "t")
 	// The Go installer places no such copy; the rest of this test runs without it.
 	if err := os.Remove(fallback); err != nil {

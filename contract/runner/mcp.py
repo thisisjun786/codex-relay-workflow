@@ -48,8 +48,10 @@ def run(case, tmp_path):
             if case["run"].get("launcher"):
                 package = tmp_path / "codex-home/plugins/cache/crw/crw/0.0.0"
                 (package / "wiring").mkdir(parents=True)
-                shutil.copyfile(ROOT / "plugins/crw/wiring/crw_bridge_mcp.py",
-                                package / "wiring/crw_bridge_mcp.py")
+                # The launcher the plugin shipped until todo 43, kept with the pre-native wiring.
+                shutil.copyfile(
+                    ROOT / "internal/pluginwiring/testdata/pre-native-wiring/crw_bridge_mcp.py",
+                    package / "wiring/crw_bridge_mcp.py")
                 home = tmp_path / "codex-home"
                 (home / "config.toml").write_text("", encoding="utf-8")
                 record = {"recordVersion": 1, "owner": "plugin",

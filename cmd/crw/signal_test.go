@@ -14,6 +14,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/staging"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // An install command asked to stop - SIGTERM from a supervisor, SIGHUP from a closing terminal,
@@ -47,7 +48,7 @@ func TestAnInstallCommandStopsWhenAsked(t *testing.T) {
 			t.Fatal(err)
 		}
 		cmd := exec.Command(crw, "install", "remove", directory)
-		cmd.Env = []string{"HOME=" + home, "XDG_STATE_HOME=" + state, "CODEX_HOME=" + filepath.Join(home, ".codex"), "PATH=" + os.Getenv("PATH")}
+		cmd.Env = []string{"HOME=" + home, "XDG_STATE_HOME=" + state, "CODEX_HOME=" + filepath.Join(home, ".codex"), "PATH=" + os.Getenv("PATH"), testsupport.RefuseLiveStateEnv + "=1"}
 		var stdout bytes.Buffer
 		cmd.Stdout = &stdout
 		if err := cmd.Start(); err != nil {

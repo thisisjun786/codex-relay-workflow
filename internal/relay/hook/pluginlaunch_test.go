@@ -317,11 +317,12 @@ func TestPluginLaunch_evaluates_settings_the_plugin_owns(t *testing.T) {
 }
 
 // pythonPluginSettingsPath is crw_stop_hook.py settings_path() under env: the path the Python
-// plugin launcher reads.
+// plugin launcher reads. The package shipped it until todo 43; the pre-native testdata keeps it,
+// byte for byte the <CODEX_HOME>/crw-stop-hook.py copy a host may still hold.
 func pythonPluginSettingsPath(t *testing.T, env []string) string {
 	t.Helper()
 	cmd := exec.Command(python(t), "-c", "import runpy,sys;sys.stdout.write(str(runpy.run_path(sys.argv[1])['settings_path']()))",
-		filepath.Join(testRoot, "plugins/crw/wiring/crw_stop_hook.py"))
+		filepath.Join(testRoot, "internal/pluginwiring/testdata/pre-native-wiring/crw_stop_hook.py"))
 	cmd.Env = env
 	out, err := cmd.Output()
 	if err != nil {

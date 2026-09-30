@@ -87,6 +87,14 @@ func packageRoot(t *testing.T) string {
 	return filepath.Join(repoRoot(t), "plugins", "crw")
 }
 
+// preNativeLauncher is one of the Python launchers the package shipped before todo 43 retired
+// them, kept beside the pre-native declarations that started them: the host's
+// <CODEX_HOME>/crw-stop-hook.py is a copy of crw_stop_hook.py, and the bridge launcher is the
+// oracle of the record contract Prepare reproduces.
+func preNativeLauncher(name string) string {
+	return filepath.Join(moduleRoot, "internal", "pluginwiring", "testdata", "pre-native-wiring", name)
+}
+
 // stopCommandIn is the one Stop command hook a declaration file registers.
 func stopCommandIn(t *testing.T, path string) (string, int) {
 	t.Helper()
@@ -287,10 +295,11 @@ func homes(t *testing.T) []string {
 	return out
 }
 
-// hookEnv is what the host hands a plugin hook: a shell with CODEX_HOME and PLUGIN_ROOT set.
+// hookEnv is what the host hands a plugin hook: a shell with CODEX_HOME and PLUGIN_ROOT set, and
+// the store's live-state refusal, as for every process a test starts (testsupport).
 func hookEnv(t *testing.T, home string) []string {
 	return []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "CODEX_HOME=" + filepath.Join(home, ".codex"),
-		"PLUGIN_ROOT=" + packageRoot(t)}
+		"PLUGIN_ROOT=" + packageRoot(t), testsupport.RefuseLiveStateEnv + "=1"}
 }
 
 const stopPayload = `{"hook_event_name": "Stop", "session_id": "s", "turn_id": "t"}`

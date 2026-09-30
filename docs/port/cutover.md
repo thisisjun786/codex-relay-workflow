@@ -16,8 +16,9 @@ Two facts shape everything below.
    Python **fence release** is a required deliverable and every pre-fence process must be
    replaced before any Go writer opens the DB.
 2. A cached hook command of the form `python3 /old/path.py` keeps being spawned by the host
-   after an upgrade (plugins/crw/wiring/crw_stop_hook.py:16-28 documents the exit-2 loop that
-   a missing script caused). Python interpreters and the tiny compatibility entry points stay
+   after an upgrade (crw_stop_hook.py:16-28 documents the exit-2 loop that a missing script
+   caused; the package shipped it until todo 43, and internal/pluginwiring/testdata/pre-native-wiring
+   keeps it). Python interpreters and the tiny compatibility entry points stay
    until the retention scan (below) reports zero references.
 
 Names used throughout:
@@ -513,7 +514,8 @@ once a drain has emptied the inbox (Commit point).
 
 The controller checks the candidate's launch preconditions before Step 1 and again before
 Step 5 and before launching it: the service intent is enabled, the launch declaration is not
-refused, and Go can open `D` (the live-state guard). The wait for readiness spans recovery and
+refused, and Go can open `D` (the live-state guard, which refuses it only under test
+isolation). The wait for readiness spans recovery and
 is bounded by the controller's `--ready-timeout` (default 600 seconds, on `takeover activate`
 and `takeover rollback`); the 20-second channel bound covers the candidate's validation of
 `start` and, separately, the activation exchange after `ready`. The candidate sets no bound of
@@ -744,21 +746,32 @@ nothing, never `store_absent`; a write form's store is opened by `_ownership_pre
 its handler, so its own argument refusal comes after admission: an absent store is left
 initialized and a store another runtime owns answers `store_owned_by_other` (decision 31).
 
-### The live-state guard (until todo 43)
+### The live-state guard (test isolation only)
 
 The Go build refuses a database under `~/.local/state/codex-session-relay` or
-`$XDG_STATE_HOME/codex-session-relay` unless `CRW_ALLOW_LIVE_STATE=1` is set. The todo-42
-runbook exports it for every step that runs a Go process against the live state: the
-controller, and through it the candidate, the supervisor and each worker, which all inherit
-the controller's or service's environment. A read the guard refuses reports the refusal,
-`store: live state requires CRW_ALLOW_LIVE_STATE=1`, instead of answering as if the store
-could not be opened. A read-only form whose store open the guard refuses, including
-`packet-check`'s store reading, answers it as a host error (exit 3). The owner's `control.sock` answers a Stop's `guard-evaluate`
-with the same host record (`{"error": "host", "detail": ...}`, as `control.py` answers a
-guard that raised), and the Stop adapter journals it as `guard_host_error`. The fault
-sweep's managed readings name it in their `unmeasured` reason
-(`store_unreadable: store: live state requires CRW_ALLOW_LIVE_STATE=1`). Removing the
-guard is a todo-43 change.
+`$XDG_STATE_HOME/codex-session-relay` only when `CRW_REFUSE_LIVE_STATE=1` is set, and nothing in
+the product sets it: the Stop hook, the relay commands the skills run and the plugin bridge open
+the live store as Codex starts them. Todo 43 removed the product guard, which refused the live
+state unless `CRW_ALLOW_LIVE_STATE=1` was set, a variable the todo-42 runbook exported for every
+Go process it ran against the live state. Nothing reads that variable any more (decisions.md 46).
+
+The refusal stays for the test suites, which must never reach the owner's live state.
+`internal/testsupport` sets `CRW_REFUSE_LIVE_STATE=1` when a test binary that links it starts,
+and `IsolateRelayState` sets it again. Every test binary that links the store links
+`testsupport`, which a test requires, and every process a test starts with the test's own
+environment inherits the variable. A process started with an environment built from nothing, as
+the host starts a hook or the bridge, refuses only where the test names the variable there, and
+the tests that start a relay, a hook or an installer that way point `HOME` at a temporary
+directory. A test that exercises the product's default clears the variable for itself.
+
+A read the guard refuses reports the refusal,
+`store: live state refused under CRW_REFUSE_LIVE_STATE=1 (test isolation)`, instead of answering
+as if the store could not be opened. A read-only form whose store open the guard refuses,
+including `packet-check`'s store reading, answers it as a host error (exit 3). The owner's
+`control.sock` answers a Stop's `guard-evaluate` with the same host record
+(`{"error": "host", "detail": ...}`, as `control.py` answers a guard that raised), and the Stop
+adapter journals it as `guard_host_error`. The fault sweep's managed readings name it in their
+`unmeasured` reason (`store_unreadable: ` followed by the refusal).
 
 ## Rollback
 
@@ -1046,7 +1059,7 @@ Limits in force today:
 |---|---:|---|
 | registered plugin hook timeout | 10 s | plugins/crw/wiring/hooks/stop-recording-completion.json:9 |
 | default guard subprocess budget | 5 s | stopadapter.py:83-85 |
-| legacy launcher deadline | `min(timeoutSeconds + 2, 9)`, 7 s by default | plugins/crw/wiring/crw_stop_hook.py:60-73, 118-122 |
+| legacy launcher deadline | `min(timeoutSeconds + 2, 9)`, 7 s by default | crw_stop_hook.py:60-73, 118-122 (the host's `<CODEX_HOME>/crw-stop-hook.py`; packaged until todo 43, kept in internal/pluginwiring/testdata/pre-native-wiring) |
 | live settings `timeoutSeconds` | 5 s | `~/.codex/crw-completion-hook.json` |
 | transcript identity scan | 0.75 s / 64 MiB | stopadapter.py:158-164 |
 
@@ -1112,10 +1125,31 @@ What "live or resumable" means here:
   is younger than the lifetime while that turn has not ended.
 
 Until then the following stay in place: the retained fence Python runtime and its interpreter
-(`~/.local/share/crw-runtime/env-*`), the `<CODEX_HOME>/crw-stop-hook.py` shim, the legacy
-`crw_stop_hook.py` and `crw_bridge_mcp.py` in the plugin package, the `guard-evaluate` CLI
-envelope and its settings keys. Replacing a `.py` file with an ELF binary at the same path is not
-the protocol.
+(`~/.local/share/crw-runtime/env-*`), the `<CODEX_HOME>/crw-stop-hook.py` shim, the `guard-evaluate`
+CLI envelope and its settings keys. Replacing a `.py` file with an ELF binary at the same path is
+not the protocol.
+
+The legacy `crw_stop_hook.py` and `crw_bridge_mcp.py` in the plugin package were retired with the
+plugin change that followed the commit point (todo 43, `chore(plugin): retire legacy Python
+launchers after cutover commit`), which also re-recorded the payload's version suffix. They are not
+on the list above because a packaged copy is reached only through the version directory a cached
+command was loaded from, and a cached Python Stop bootstrap names the pre-native directory, which
+the install that brought the native wiring (todo 34) removed; it already falls back to the shim,
+whatever a later payload ships. The one path that could still reach a later payload's copy is a
+session holding the pre-native server declaration whose bridge the host starts again from a newer
+directory, which was not measured either way; without the launcher such a start fails and the
+session goes on without the bridge tools (`required: false`, docs/plugin-packaging.md "The native
+wiring"). The repository keeps both files, byte for byte, as test data beside the pre-native
+declarations in `internal/pluginwiring/testdata/pre-native-wiring`, for the tests that replay the
+bootstrap, place the shim and compare the Go record contract with the Python one.
+
+The `<CODEX_HOME>/crw-stop-hook.py` shim is host state, not package content, so no repository
+change removes it. The operator removes it on the host, with the ownership-checked
+`install.RemoveLauncher` (it takes only a regular file carrying the launcher marker), once
+`crw doctor retention-scan` reports no reference that could still reach it: no live hold, no
+unscanned row, and no Python reference but the shim's own row 8 entry, which lists the file for as
+long as it exists. The cached bootstrap commands of row 5 are what would fall back to it, and row 7
+the resumable threads that could still run one, so the scan has to read row 7 before this holds.
 
 ## Retention scan surface
 

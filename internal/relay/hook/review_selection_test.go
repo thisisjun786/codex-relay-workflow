@@ -158,13 +158,13 @@ func Test33ReviewD8(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			home, f := prepareSelection(t, tc.fixture)
 			// These selections are the default state roots of the fixture's own HOME, which
-			// the live-state guard covers. With the guard lifted the in-process owner reads the
-			// receipt there, as the todo-42 runbook's processes do (cutover.md); with the guard
-			// in force the owner answers the refusal instead of closing without a word.
+			// the live-state guard covers under test isolation. With the refusal lifted the
+			// in-process owner reads the receipt there, as the product does (decisions.md 46);
+			// with it in force the owner answers the refusal instead of closing without a word.
 			if tc.lifted {
-				t.Setenv("CRW_ALLOW_LIVE_STATE", "1")
+				t.Setenv("CRW_REFUSE_LIVE_STATE", "")
 			} else {
-				t.Setenv("CRW_ALLOW_LIVE_STATE", "")
+				t.Setenv("CRW_REFUSE_LIVE_STATE", "1")
 			}
 			built := binary(t)
 			t.Chdir(home)
@@ -229,7 +229,7 @@ func Test33ReviewD8(t *testing.T) {
 			// gives for the same refusal and control.py gives for a guard that raised. The row
 			// is the adapters' error-record row (contract/fixtures/records, "an error record at
 			// each exit code"): the outcome and reading name it, and detail stays null there.
-			frame := "{\"error\": \"host\", \"detail\": \"store: live state requires CRW_ALLOW_LIVE_STATE=1\"}\n"
+			frame := "{\"error\": \"host\", \"detail\": \"store: live state refused under CRW_REFUSE_LIVE_STATE=1 (test isolation)\"}\n"
 			if served == nil || served.written.String() != frame {
 				t.Fatalf("owner answered %q, want %q", served.written.String(), frame)
 			}

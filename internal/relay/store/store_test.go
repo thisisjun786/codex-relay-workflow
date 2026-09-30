@@ -143,12 +143,65 @@ func TestDiscoverStateDir_adopts_legacy_noncanonical_sibling(t *testing.T) {
 		t.Fatalf("selected %+v: %v", selection, err)
 	}
 }
-func TestOpen_refuses_live_state_without_override(t *testing.T) {
+
+// The product opens a store in its live state directory with no variable set: the guard is
+// test isolation only (decisions.md 46). Both live roots are opened, the home default and
+// $XDG_STATE_HOME's, each made a temporary directory here.
+func TestOpen_opens_the_live_state_by_default(t *testing.T) {
+	for _, location := range []struct {
+		name string
+		path func(home, xdg string) string
+	}{
+		{"xdg", func(_, xdg string) string {
+			return filepath.Join(xdg, "codex-session-relay", "default", "relay.sqlite3")
+		}},
+		{"home", func(home, _ string) string {
+			return filepath.Join(home, ".local", "state", "codex-session-relay", "default", "relay.sqlite3")
+		}},
+	} {
+		t.Run(location.name, func(t *testing.T) {
+			// Given: the live state roots are temporary directories, and no refusal is set.
+			root := t.TempDir()
+			home, xdg := filepath.Join(root, "home"), filepath.Join(root, "xdg")
+			t.Setenv("HOME", home)
+			t.Setenv("XDG_STATE_HOME", xdg)
+			t.Setenv("CRW_REFUSE_LIVE_STATE", "")
+			if err := os.Unsetenv("CRW_REFUSE_LIVE_STATE"); err != nil {
+				t.Fatal(err)
+			}
+			path := location.path(home, xdg)
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			// When: a store is opened there.
+			s, err := fixtureOpen(context.Background(), path, "")
+			// Then: it is opened, and it is the store at that path.
+			if err != nil {
+				t.Fatalf("got %v", err)
+			}
+			defer s.Close()
+			var version string
+			if err := s.DB.QueryRow("SELECT value FROM schema_meta WHERE key = 'version'").Scan(&version); err != nil || version != SchemaVersion {
+				t.Fatalf("schema version %q: %v", version, err)
+			}
+			if _, err := os.Stat(path); err != nil {
+				t.Fatalf("database not at the live path: %v", err)
+			}
+		})
+	}
+}
+
+// Under test isolation (CRW_REFUSE_LIVE_STATE=1, which testsupport sets in this binary) the same
+// open is refused, before the database exists.
+func TestOpen_refuses_live_state_under_test_isolation(t *testing.T) {
 	// Given: a test-specific live state root.
 	root := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", root)
-	t.Setenv("CRW_ALLOW_LIVE_STATE", "")
+	t.Setenv("CRW_REFUSE_LIVE_STATE", "1")
 	path := filepath.Join(root, "codex-session-relay", "default", "relay.sqlite3")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	// When: opening the protected location.
 	_, err := fixtureOpen(context.Background(), path, "")
 	// Then: it refuses before creating the database.
@@ -210,7 +263,7 @@ func TestOpen_refuses_both_live_state_locations_when_xdg_state_home_is_set(t *te
 			home, xdg := filepath.Join(root, "home"), filepath.Join(root, "xdg")
 			t.Setenv("HOME", home)
 			t.Setenv("XDG_STATE_HOME", xdg)
-			t.Setenv("CRW_ALLOW_LIVE_STATE", "")
+			t.Setenv("CRW_REFUSE_LIVE_STATE", "1")
 			path := location.path(home, xdg)
 			// When: a store is opened at that live-state location.
 			_, err := fixtureOpen(context.Background(), path, "")

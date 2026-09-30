@@ -578,8 +578,9 @@ func HandleControl(ctx context.Context, conn net.Conn, ownerState string) (err e
 		}
 		// A guard that failed is answered with the relay's host record, as the CLI answers
 		// the same error and control.py answers a guard that raised, never with silence:
-		// the live-state guard's refusal (cutover.md) reaches the requester this way, which
-		// journals guard_host_error. The answered request is not a handler failure.
+		// the live-state guard's refusal under test isolation (cutover.md) reaches the
+		// requester this way, which journals guard_host_error. The answered request is not a
+		// handler failure.
 		return answerHost(conn, err.Error())
 	}
 	_, err = io.WriteString(conn, evidence.Dumps(v, true, false, true)+"\n")

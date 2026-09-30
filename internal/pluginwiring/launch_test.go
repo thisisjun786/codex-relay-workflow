@@ -15,7 +15,9 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/mcp"
 )
 
-// The oracle is plugins/crw/wiring/crw_bridge_mcp.py itself, run by the workspace interpreter.
+// The oracle is crw_bridge_mcp.py itself, run by the workspace interpreter: the launcher the
+// package shipped until todo 43, kept byte for byte in testdata/pre-native-wiring
+// (preNativeLauncher).
 // Both launchers are placed in the same cache layout under one Codex home and started with the
 // same record, environment and working directory; stderr and exit are compared byte for byte,
 // once Python's repairs are rewritten to the Go ones (goRepairs). Where Python would exec the
@@ -78,7 +80,7 @@ func newLauncherHost(t *testing.T) launcherHost {
 	if err := os.MkdirAll(filepath.Join(h.version, "wiring"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	source, err := os.ReadFile(filepath.Join(packageRoot(t), "wiring", "crw_bridge_mcp.py"))
+	source, err := os.ReadFile(preNativeLauncher("crw_bridge_mcp.py"))
 	if err != nil {
 		t.Fatal(err)
 	}

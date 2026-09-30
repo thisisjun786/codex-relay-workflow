@@ -64,7 +64,7 @@ func TestDiscoverStateDir_normalizes_legacy_spelling(t *testing.T) {
 func TestOpen_refuses_symlink_into_live_state(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("XDG_STATE_HOME", root)
-	t.Setenv("CRW_ALLOW_LIVE_STATE", "")
+	t.Setenv("CRW_REFUSE_LIVE_STATE", "1")
 	live := filepath.Join(root, "codex-session-relay")
 	if err := os.MkdirAll(live, 0700); err != nil {
 		t.Fatal(err)

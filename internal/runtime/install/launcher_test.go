@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/golden"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 )
@@ -22,14 +21,15 @@ type launcherHome struct {
 	settingsBytes             []byte
 }
 
-// newLauncherHome is a Codex home holding the launcher this checkout ships, the way the
-// placement leaves it, beside a settings document the removal must not touch.
+// newLauncherHome is a Codex home holding the launcher the package shipped until todo 43 (the
+// pre-native testdata keeps it), the way the placement left it, beside a settings document the
+// removal must not touch.
 func newLauncherHome(t *testing.T) launcherHome {
 	t.Helper()
 	h := launcherHome{codex: t.TempDir()}
 	h.launcher = filepath.Join(h.codex, install.LauncherName)
 	h.settings = filepath.Join(h.codex, install.SettingsName)
-	shipped, err := os.ReadFile(filepath.Join(golden.Root(), "plugins", "crw", "wiring", "crw_stop_hook.py"))
+	shipped, err := os.ReadFile(preNativeWiring("crw_stop_hook.py"))
 	if err != nil {
 		t.Fatal(err)
 	}

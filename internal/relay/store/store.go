@@ -28,7 +28,11 @@ var schema embed.FS
 
 const SchemaVersion = "1"
 
-var ErrLiveState = errors.New("store: live state requires CRW_ALLOW_LIVE_STATE=1")
+// ErrLiveState is the live-state guard's refusal. The guard is test isolation only: it refuses
+// a database under a live relay state directory when CRW_REFUSE_LIVE_STATE=1 is set, which
+// internal/testsupport sets in every test binary that links it and so in every process such a
+// test starts. The product sets nothing and opens the live state (decisions.md 46).
+var ErrLiveState = errors.New("store: live state refused under CRW_REFUSE_LIVE_STATE=1 (test isolation)")
 
 // UnenforcedIndex is one guard index the store could not install ({"index", "detail"}).
 type UnenforcedIndex struct{ Index, Detail string }
@@ -257,9 +261,10 @@ func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ 
 	return result, nil
 }
 
-// refuseLiveState resolves path and refuses it when it lies under a live relay state directory:
-// ~/.local/state/codex-session-relay and $XDG_STATE_HOME/codex-session-relay are both live,
-// whichever of them the environment currently selects, unless CRW_ALLOW_LIVE_STATE=1.
+// refuseLiveState resolves path and, under test isolation (CRW_REFUSE_LIVE_STATE=1), refuses it
+// when it lies under a live relay state directory: ~/.local/state/codex-session-relay and
+// $XDG_STATE_HOME/codex-session-relay are both live, whichever of them the environment currently
+// selects. Without that variable it only resolves path: the product opens the live state.
 func refuseLiveState(path string) (string, error) {
 	absolute := path
 	if !filepath.IsAbs(path) {
@@ -273,7 +278,7 @@ func refuseLiveState(path string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve database: %w", err)
 	}
-	if os.Getenv("CRW_ALLOW_LIVE_STATE") == "1" {
+	if os.Getenv("CRW_REFUSE_LIVE_STATE") != "1" {
 		return resolved, nil
 	}
 	// The home default is Path.home()'s, as discovery reads it; a home nothing answers fails closed.

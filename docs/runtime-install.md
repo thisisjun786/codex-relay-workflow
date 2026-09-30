@@ -146,15 +146,14 @@ and the pointer where it was ([what a failed update restores](#what-a-failed-upd
 Nothing here removes, moves or recreates the store: update failure and store loss are different
 accidents and the recovery for one must not cause the other.
 
-Until todo 43 removes it, the Go build refuses to open a store in the relay's default state
-directory unless `CRW_ALLOW_LIVE_STATE=1` is set
-([the live-state guard](port/cutover.md#the-live-state-guard-until-todo-43)). This run is not
-refused by it: the exercise and the swap gate read the store without opening it, through the
-relay's `doctor` and `service status` and a catalog read that takes no lock. What the guard does
-refuse is the runtime's use of that store afterwards: the relay commands the skills run, and the
-Stop hook's guard whenever it has to read the store. So on a host whose store is the live one, an
-install before todo 43 leaves a runtime that cannot serve it, and that host moves through
-[the cutover](port/cutover.md) instead.
+The exercise and the swap gate read the store without opening it, through the relay's `doctor`
+and `service status` and a catalog read that takes no lock. The runtime opens it afterwards, for
+the relay commands the skills run and for the Stop hook's guard whenever it has to read the store,
+in the relay's default state directory with no variable set. Until todo 43 the Go build refused
+that directory unless `CRW_ALLOW_LIVE_STATE=1` was set, so an install left a runtime that could
+not serve a live host's store; the guard now refuses it only under test isolation
+([the live-state guard](port/cutover.md#the-live-state-guard-test-isolation-only)). A host whose
+store the Python runtime still owns moves through [the cutover](port/cutover.md) first.
 
 ### The record is not the replacement
 
@@ -864,9 +863,12 @@ A turn that started while the package still declared the Python bootstrap goes o
 `${PLUGIN_ROOT}/wiring/crw_stop_hook.py` first, and `<CODEX_HOME>/crw-stop-hook.py` once that version
 directory is gone. `crw install` places no such launcher and leaves an existing copy exactly as it is;
 the Python installer placed it. Either launcher reads the same settings and runs the adapter they
-name, which is the Go hook once the settings are Go-era. The launcher copy, the packaged launchers
-and the Python runtime stay while any live or resumable task can still run such a command, and go
-only when the retention scan reports no reference to them ([retention](port/cutover.md#retention)).
+name, which is the Go hook once the settings are Go-era. The packaged launchers left the package in
+todo 43, after the cutover commit: the version directory such a turn names is the pre-native one,
+which the install that brought the native wiring removed, so the copy is what answers it. The copy
+and the Python runtime stay while any live or resumable task can still run such a command, and the
+operator removes them only when the retention scan reports no reference to them
+([retention](port/cutover.md#retention)).
 
 ### Who registers the hook
 
@@ -1000,8 +1002,8 @@ sequence a host actually lives through, with the state that has to survive it pu
 first install and read again after the last refusal. The Go installer's tests run that sequence
 against temporary homes: install, the same install again, an update that fails at a step and puts
 everything back, rollback and remove (`internal/runtime/install`, `lifecycle_test.go`,
-`decisions_test.go` and `restore_test.go`), and the native Stop command and both launchers through
-the pointer (`wiring_test.go`).
+`decisions_test.go` and `restore_test.go`), and the native Stop command and the launchers through
+the pointer (`wiring_test.go`; the retired Python launchers from the pre-native testdata).
 
 ### Seven questions, seven readings
 
@@ -1028,10 +1030,9 @@ half reaches this runtime only through the plugin's declared commands, so run th
 command, and the state directory wherever one is read, because none of them derives from another:
 the Codex home is where the settings the plugin reads are written, and the host record defaults to
 `$XDG_STATE_HOME/codex-relay-workflow/host-record.json`, whatever the Codex home. `<codex-home>` is
-the Codex home that process reads. Until todo 43 the Go build cannot
-serve a store in that `HOME`'s default relay state directory
-([the live-state guard](port/cutover.md#the-live-state-guard-until-todo-43)), so on a host whose
-relay store is that one, or that still runs the Python runtime, the procedure waits for
+the Codex home that process reads. The Go build serves a store in that `HOME`'s default relay
+state directory, which [the live-state guard](port/cutover.md#the-live-state-guard-test-isolation-only)
+refuses only under test isolation, so only a host that still runs the Python runtime waits for
 [the cutover](port/cutover.md).
 
 ```sh
@@ -1135,7 +1136,7 @@ a host `crw install` also serves, `<destination>` has to be `~/.local/share/crw-
 | `python3 scripts/runtime_install.py install --dest <destination> --apply` | Build, exercise and promote a Python runtime from this checkout. It needs a Python 3.11 or newer interpreter for the runtime (`--python`), and the controller needs `tomllib` (Python 3.11 or newer) to read a Codex configuration |
 | `python3 scripts/runtime_install.py diagnose --dest <destination>` | The Python diagnosis, including `--trial` |
 | `python3 scripts/runtime_install.py register-mcp --owner plugin --bridge-command <destination>/current/bin/codex-thread-bridge --apply` | The bridge record, with `--execution-policy`; before a version-2 record it probes the enabled package's cached launcher |
-| `python3 scripts/runtime_install.py hook --adapter completion --owner plugin --dest <destination> --apply` | The Python-era Stop settings, and the fallback launcher `<CODEX_HOME>/crw-stop-hook.py`, placed before them |
+| `python3 scripts/runtime_install.py hook --adapter completion --owner plugin --dest <destination> --apply` | The Python-era Stop settings, and the fallback launcher `<CODEX_HOME>/crw-stop-hook.py`, placed before them. Since todo 43 the package no longer ships the launcher, and the copy comes from `internal/pluginwiring/testdata/pre-native-wiring/crw_stop_hook.py`, the same bytes |
 | `python3 scripts/runtime_install.py hook-status` | The cell-by-cell firing reading, including `firingRecordAbsence` |
 | `python3 scripts/runtime_install.py verify-definition` | Re-derive [the one definition](#the-one-definition); CI runs it |
 
@@ -1143,8 +1144,10 @@ Two properties of a Python runtime outlive this installer, and the cutover's ret
 them. pip writes an absolute shebang into every console script, so a process started through
 `current` reports and keeps its concrete `env-*` directory after the pointer moves; and a Stop
 command fixed before the native wiring names `python3` and a `.py` launcher. Both keep `env-*`
-directories and the launchers in place until `crw doctor retention-scan` reports nothing that
-resolves to them.
+directories and the `<CODEX_HOME>/crw-stop-hook.py` copy in place until `crw doctor retention-scan`
+reports nothing that resolves to them. The packaged launchers did not wait for that: such a command
+names the pre-native version directory, not whatever the package ships now, so todo 43 retired
+them from the package after the cutover commit.
 
 ### Trial mode
 

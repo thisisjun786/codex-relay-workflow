@@ -42,7 +42,7 @@ supervision.record_report=refused
 raise SystemExit(cli.main(sys.argv[1:]))
 `
 	home := t.TempDir()
-	env := append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home+"/xdg", "XDG_CONFIG_HOME="+home+"/config", "XDG_DATA_HOME="+home+"/data", "CODEX_HOME="+home+"/codex", "CRW_ALLOW_LIVE_STATE=1", "PYTHONPATH="+filepath.Join(root, "packages/codex-session-relay/src"))
+	env := append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home+"/xdg", "XDG_CONFIG_HOME="+home+"/config", "XDG_DATA_HOME="+home+"/data", "CODEX_HOME="+home+"/codex", "CRW_REFUSE_LIVE_STATE=", "PYTHONPATH="+filepath.Join(root, "packages/codex-session-relay/src"))
 	args := []string{"--state", filepath.Join(home, "state"), "supervisor-report-recorded", "--observation", reading}
 	cmd := exec.Command(filepath.Join(root, ".venv/bin/python"), append([]string{"-c", script}, args...)...)
 	cmd.Env = env

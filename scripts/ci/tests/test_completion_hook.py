@@ -2918,9 +2918,9 @@ class AnAnswerableCauseIsNotWithheld(unittest.TestCase):
     def test_a_tilde_launcher_path_is_not_a_path_the_launcher_resolves(self):
         """Judged on the expanded spelling, read on the literal one.
 
-        The packaged launcher checks os.path.isabs on the string as WRITTEN and declines
-        silently otherwise -- plugins/crw/wiring/crw_stop_hook.py -- and complaints() rejects
-        the same spelling for the same reason. Accepting it here because its expanded form is
+        The Python launcher checks os.path.isabs on the string as WRITTEN and declines
+        silently otherwise -- crw_stop_hook.py, kept with the pre-native wiring -- and
+        complaints() rejects the same spelling for the same reason. Accepting it here because its expanded form is
         absolute answered 'startable' from a file that launcher never reaches, which is an
         undistinguished state presented as a settled one.
         """

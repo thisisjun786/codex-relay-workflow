@@ -1129,10 +1129,10 @@ their own check (delivery's fenced markers), and the takeover candidate (`servic
 (`Test31_check_start_precedes_the_selection_kind_module_and_handler_refusals` and
 `TestReadOnlyForms_refuse_a_partial_store_as_a_writer_does`, against the live fence).
 
-A read the live-state guard refuses (until todo 43) reports the refusal. The owner's
-control socket answers a guard that failed with the relay's host record, as `control.py`
-does, so a Stop journals `guard_host_error` instead of `guard_said_nothing`; the journal
-row keeps the adapters' error-record shape, with `detail` null.
+A read the live-state guard refuses (only under test isolation since todo 43, decision 46)
+reports the refusal. The owner's control socket answers a guard that failed with the relay's
+host record, as `control.py` does, so a Stop journals `guard_host_error` instead of
+`guard_said_nothing`; the journal row keeps the adapters' error-record shape, with `detail` null.
 
 `doctor --json`'s `ownership` block is `ownership.report`: all six keys and the phase
 null together, with `detail`, when either the mirror or the database cannot be read; the
@@ -1592,8 +1592,9 @@ behind still holds); a relay the deadline ended is Python's `TimeoutExpired`, wi
 and nothing it printed kept, and an answer whose output stayed open past its exit is not read.
 
 Why: runtime_install.py asked `<interpreter> -c <program>` for all three, and a Go runtime has
-no interpreter. `store.Open` refuses the live state root before todo 42 (`ErrLiveState`) and a
-plain `mode=ro` connection creates `-wal` and `-shm` beside a checkpointed store. Python's
+no interpreter. `store.Open` refused the live state root until todo 43 (`ErrLiveState`, since
+then only under test isolation, decision 46) and a plain `mode=ro` connection creates `-wal`
+and `-shm` beside a checkpointed store. Python's
 `read_only_rows` answers the swap gate through `/proc/self/fd`, which SQLite resolves to the
 file a link names, so it reads the WAL beside that file; its
 `ownership.stop_metadata` applies the same no-sidecar rule and raises on a WAL holding frames
@@ -2506,3 +2507,50 @@ Evidence: `packages/codex-session-relay/src/codex_session_relay/store.py` (`disc
 `internal/relay/store/pathlib_parity_test.go` (`TestDiscoverySpellsEveryStoreItNamesAsPythonDoes`,
 subtests `XDG_STATE_HOME=rel` and `HOME=hrel`, which compare the fence's selection, detail and
 candidates with Go's). Restoring the relative walk fails both.
+
+## 46. The live-state guard refuses only under test isolation (todo 43)
+
+Decision: the Go store refuses a database under `~/.local/state/codex-session-relay` or
+`$XDG_STATE_HOME/codex-session-relay` only when `CRW_REFUSE_LIVE_STATE=1` is set
+(`store.ErrLiveState`, `store: live state refused under CRW_REFUSE_LIVE_STATE=1 (test
+isolation)`). With no variable, as Codex starts the Stop hook, the skills' `codex-session-relay`
+and the plugin bridge, it opens the live state like any other store, and `CRW_ALLOW_LIVE_STATE`
+is no longer read anywhere. `internal/testsupport` sets `CRW_REFUSE_LIVE_STATE=1` in its `init`
+whenever it is linked into a test binary, and `IsolateRelayState` sets it again, so every Go test
+and every process a test starts (a built `crw` inherits the environment) keeps refusing. Every
+test binary that links the store links testsupport, through a blank import in `livestate_test.go`
+where nothing else links it, and a test requires that. A test that exercises the live path clears
+the variable for that command (`t.Setenv("CRW_REFUSE_LIVE_STATE", "")`, or
+`CRW_REFUSE_LIVE_STATE=` in a child's environment); a test that asserts the refusal sets it. A
+child environment a test builds from nothing carries the variable only where the test names it,
+as the isolated-home integration run, the Stop-event harness, the plugin-wiring and install hook
+runs and the install signal test do; the ones that start a relay, a hook or an installer all point
+`HOME` at a temporary directory. Where the guard refuses, the refusal is still reported as
+before: a read-only form's host error, the owner's host record to a Stop, `guard_host_error` in
+the Stop journal.
+
+Why: the production cutover is committed. The owner's host ran todo 42 through
+`takeover commit` (rollback_allowed=0), so the Go runtime owns the live store. The product guard
+refused that store unless `CRW_ALLOW_LIVE_STATE=1` was set, and Codex starts the Stop hook, the
+relay commands the skills run and the plugin bridge without it, so the guard blocked the hooks and
+the skills on the store they serve. It also kept the test suites off the owner's live state, and
+that protection stays by inverting who sets the variable: the tests set it, the product does not.
+
+Cost: a test that forgets isolation is still refused, because testsupport sets the variable before
+any TestMain runs, in every test binary that links the store. A child process a test starts with
+an environment built from nothing refuses only where the test names the variable. A developer who
+runs a built `crw` by hand against their own live state is no longer refused.
+
+Evidence: `internal/relay/store/store.go` (`ErrLiveState`, `refuseLiveState`);
+`internal/testsupport/testsupport.go` (`RefuseLiveStateEnv`, `init`, `IsolateRelayState`). Tests:
+`internal/relay/store/store_test.go` (`TestOpen_opens_the_live_state_by_default`, which opens a
+store under both live roots made temporary directories with no variable set, and
+`TestOpen_refuses_live_state_under_test_isolation`), `internal/testsupport/livestate_test.go`
+(`TestInit_sets_the_live_state_refusal_in_a_test_binary`,
+`TestIsolateRelayState_sets_the_live_state_refusal`,
+`TestEvery_test_binary_that_links_the_store_links_testsupport`, which fails for a test package
+that links the store without testsupport), and the refusal-and-live pairs
+`TestGuardEvaluate_reports_the_live_state_refusal`, `TestPacketCheck_reports_the_live_state_refusal`
+(`internal/relay/cli/readonly_test.go`) and `Test33ReviewD8`
+(`internal/relay/hook/review_selection_test.go`). Restoring the product guard fails
+`TestOpen_opens_the_live_state_by_default`.
