@@ -30,9 +30,25 @@ import (
 	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/reception"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 	_ "modernc.org/sqlite"
 )
+
+// readFixture reads the calling test's fixture of kind, testdata/fixtures/<kind>/<test>.json (or
+// .json.gz): what a Python scenario produced that the Go side starts from.
+func readFixture(t *testing.T, kind string) []byte {
+	t.Helper()
+	return golden.Fixture(t, filepath.Join(kind, t.Name()+".json"))
+}
+
+// sameScenarios fails the test when its fixture was taken from other scenarios than it names.
+func sameScenarios(t *testing.T, fixture, names []string) {
+	t.Helper()
+	if !slices.Equal(fixture, names) {
+		t.Fatalf("the fixture holds scenarios %v, not %v", fixture, names)
+	}
+}
 
 // pythonAnswer is pyoracle.AnswerInterned (these answers repeat themselves call after call) keyed
 // by the driver script and a digest of the question the test put to it, so a question that

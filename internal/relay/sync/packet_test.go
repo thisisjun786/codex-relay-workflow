@@ -5,15 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/reception"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 func decodeValue(d *json.Decoder) (any, error) {
@@ -53,45 +51,28 @@ func decodeValue(d *json.Decoder) (any, error) {
 	}
 }
 
-// retiredPacketFunctions are the Python packet library's entry points that no Go path calls: the
-// packet composer and its field constructors, and report.py's restore validator. Wave R1 removed
-// their Go ports; a recorded scenario still calls them, so its other calls are compared without
-// them.
-var retiredPacketFunctions = map[string]bool{
-	"packets.pull_request": true, "packets.locator": true, "packets.policy": true, "packets.callback": true,
-	"packets.unexamined": true, "packets.compose": true, "packets.progression_lines": true,
-	"report.child_purpose": true, "report._check_restore": true,
+// packetFixture is what a Python packet scenario asked of the packet library: the family and
+// scenarios it ran and each call it made (function, args, kwargs, and packetJSON where the call
+// read a packet's JSON text), in order. Its calls to entry points no Go path calls (the packet
+// composer and its field constructors, report.py's restore validator, whose Go ports wave R1
+// removed) are not in it.
+type packetFixture struct {
+	Family    string          `json:"family"`
+	Scenarios []string        `json:"scenarios"`
+	Calls     json.RawMessage `json:"calls"`
 }
 
 func packetReplay(t *testing.T, family string, names ...string) {
 	t.Helper()
-	root, e := filepath.Abs("../../..")
-	if e != nil {
+	var fixture packetFixture
+	if e := json.Unmarshal(readFixture(t, "packet"), &fixture); e != nil {
 		t.Fatal(e)
 	}
-	raw, e := json.Marshal(names)
-	if e != nil {
-		t.Fatal(e)
+	if fixture.Family != family {
+		t.Fatalf("the fixture holds family %s, not %s", fixture.Family, family)
 	}
-	question, e := json.Marshal([]any{family, names})
-	if e != nil {
-		t.Fatal(e)
-	}
-	stdout := pythonAnswer(t, "packet_capture.py", question, func() ([]byte, error) {
-		cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(root, "internal/relay/sync/testdata/packet_capture.py"), family, string(raw))
-		cmd.Dir = root
-		cmd.Env = append(os.Environ(), "UV_PROJECT_ENVIRONMENT="+filepath.Join(root, ".venv"), "UV_CACHE_DIR="+t.TempDir()+"/uv")
-		stdout, e := cmd.Output()
-		if e != nil {
-			var exit *exec.ExitError
-			if errors.As(e, &exit) {
-				return nil, fmt.Errorf("python scenario: %v\n%s", e, exit.Stderr)
-			}
-			return nil, e
-		}
-		return stdout, nil
-	})
-	d := json.NewDecoder(bytes.NewReader(stdout))
+	sameScenarios(t, fixture.Scenarios, names)
+	d := json.NewDecoder(bytes.NewReader(fixture.Calls))
 	d.UseNumber()
 	decoded, e := decodeValue(d)
 	if e != nil {
@@ -101,18 +82,8 @@ func packetReplay(t *testing.T, family string, names ...string) {
 	if len(calls) == 0 {
 		t.Fatal("scenario captured no public calls")
 	}
-	compared := 0
-	defer func() {
-		if compared == 0 {
-			t.Error("every call this scenario made is retired, so it compares nothing")
-		}
-	}()
 	for i, call := range calls {
 		function := text(reception.Get(call, "function"))
-		if retiredPacketFunctions[function] {
-			continue
-		}
-		compared++
 		args, _ := evidence.List(reception.Get(call, "args"))
 		kwargs, _ := evidence.Object(reception.Get(call, "kwargs"))
 		kw := func(k string) any { return reception.Get(kwargs, k) }
@@ -175,16 +146,6 @@ func packetReplay(t *testing.T, family string, names ...string) {
 		} else {
 			result = obj("result", got)
 		}
-		var expected Obj
-		if reception.Has(call, "error") {
-			expected = obj("error", reception.Get(call, "error"))
-		} else {
-			expected = obj("result", reception.Get(call, "result"))
-		}
-		want := evidence.Dumps(expected, false, false, true)
-		actual := evidence.Dumps(result, false, false, true)
-		if actual != want {
-			t.Fatalf("call %d %s\ninput: %s\nPython: %s\nGo: %s", i, function, evidence.Dumps(call, false, false, true), want, actual)
-		}
+		golden.Check(t, fmt.Sprintf("%04d %s", i, function), []byte(evidence.Dumps(result, false, false, true)))
 	}
 }
