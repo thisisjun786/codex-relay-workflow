@@ -3104,3 +3104,45 @@ Evidence: `internal/pluginwiring/record.go`, `launch.go`; `internal/runtime/inst
 `internal/runtime/doctor/registration.go`; `TestRegisterMCPWritesTheRecordAndRefusesASecondOwner`,
 `TestDoctorJudgesTheBridgeRecordAsTheLauncherAcceptsIt` and the launcher's contract tests in
 `internal/pluginwiring`.
+
+## 66. The Stop settings' adapter keys and the legacy hook entry forms are retired (refactor R1)
+
+Decision: the Stop settings keys `adapterInterpreter` and `adapterEntryPoint`, and every way of
+reaching the Go hook other than `crw hook --plugin-launch` and `crw hook` with no argument, are
+retired:
+
+- the hook's reader (`internal/relay/hook` `Complaints`) no longer requires the two keys for a
+  plugin owner nor checks them when present: a document that carries them is read as it is, so the
+  relay host's current settings stay accepted by the new build before anything rewrites them;
+- `crw install hook --owner plugin` no longer writes them, nor refuses while
+  `CRW_COMPLETION_HOOK_CONFIG` is set. Settings that differ from the document it would write only
+  by the two keys and `installedBy` are rewritten without them, answering a new outcome,
+  `config_replaced`, with `retiredFields` naming the keys dropped (a dry run answers
+  `config_would_create` with a detail saying so); any other difference is `config_differs` as
+  before. On the relay host, `crw install hook --owner plugin`, run with the flags its settings
+  were written with once a runtime carrying this change is installed, rewrites the document once;
+- `crw hook` reads no settings path argument and no `CRW_COMPLETION_HOOK_CONFIG`; given any
+  argument other than `--plugin-launch` it releases the Stop in silence, as every controlled path
+  of the hook already exits 0 with nothing on stderr;
+- `crw` no longer dispatches on the program name `crw-completion-hook`, the release build
+  (`.goreleaser.yaml`) no longer makes that link, and `crw install` no longer places it
+  (`definition.Links`); the `codex-session-relay` and `codex-thread-bridge` links stay;
+- the doctor no longer judges the two keys (the `adapterEntryPoint` and `adapterInterpreter`
+  registration entries, and the `env` interpreter contract of decision 18 as todo 38 corrected it,
+  leave its answer), `crw install remove` no longer counts them as registrations, and a move of the
+  pointer judges only `relayExecutable` of the settings; the Stop-hook status reading, which had
+  cells for them, is already deleted (decision 57).
+
+Why: the keys and the entry forms served the Python launchers (`crw_stop_hook.py` and its
+`<CODEX_HOME>/crw-stop-hook.py` copy) and the user-owned registration; the launcher left the
+package in todo 43, the user owner retired with the Python installer, and the plugin's declared
+Stop hook has run `crw hook --plugin-launch` since decision 26. The order keeps the live host
+working: the reader accepts the old document first, the writer stops writing the keys, and the
+rewrite is one command the operator runs.
+
+Evidence: `internal/relay/hook/settings.go`, `adapter.go`;
+`internal/runtime/install/settings.go`, `hook.go`; `internal/runtime/doctor/registration.go`,
+`doctor.go`, `scan.go`; `internal/runtime/definition/definition.go`; `cmd/crw/main.go`;
+`.goreleaser.yaml`; `TestHookWritesTheGoSettingsAndRefusesASecondOwner`,
+`TestHookRewritesSettingsThatDifferOnlyByTheRetiredKeys`, `TestHookSettingsBytesArePythons`, the
+hook's settings and plugin-launch tests, and the isolated-home integration test.

@@ -186,7 +186,7 @@ func shell(t *testing.T) string {
 }
 
 // compatibilityNames are the links the installer places beside bin/crw (decision 38).
-var compatibilityNames = []string{"codex-session-relay", "codex-thread-bridge", "crw-completion-hook"}
+var compatibilityNames = []string{"codex-session-relay", "codex-thread-bridge"}
 
 // pointerTo lays out, under home, a pointer `current` -> `bin-test/` whose bin/ holds crw
 // (writing it with write) and the three compatibility names as links to it, as the installer

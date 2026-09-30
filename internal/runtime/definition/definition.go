@@ -42,12 +42,13 @@ var Components = []Component{
 	},
 }
 
-// HookScript is the third compatibility link beside crw: the completion hook's entry point.
+// HookScript is the name the completion hook's entry point went by, a third link beside crw
+// until decision 66; `crw hook` is the hook now, and the doctor still names the hook by it.
 const HookScript = "crw-completion-hook"
 
 // Links are the names the installer places beside crw, each a symlink to it.
 func Links() []string {
-	return []string{Components[1].ConsoleScript, Components[0].ConsoleScript, HookScript}
+	return []string{Components[1].ConsoleScript, Components[0].ConsoleScript}
 }
 
 // Of is the component with this name.

@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
-	"golang.org/x/sys/unix"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pluginwiring"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
@@ -29,10 +28,8 @@ import (
 // selected runtime:
 //
 //   - the Stop settings (crw-completion-hook.json), through the Go hook's own acceptance check
-//     (hook.ReadSettings: a document it refuses runs no relay); then relayExecutable and, for a
-//     plugin owner, the [adapterInterpreter, adapterEntryPoint, <settings>] invocation of the
-//     Python launcher (crw_stop_hook.py, packaged until todo 43, and its
-//     <CODEX_HOME>/crw-stop-hook.py copy);
+//     (hook.ReadSettings: a document it refuses runs no relay); then relayExecutable (the
+//     retired adapter keys run nothing, decision 66);
 //   - every Stop command of <CODEX_HOME>/hooks.json that runs a Stop adapter, which is what a
 //     user-owned registration runs (runtime_install.py hook appends it there);
 //   - the plugin-owned bridge record (crw-bridge-mcp.json), through the launcher's record
@@ -152,9 +149,8 @@ func (j judge) executable(into *componentRegistrations, source, field, command, 
 // stopSettings judges the Stop settings as the Go hook reads them (hook.ReadSettings, the check
 // every Stop runs before it asks the relay anything): a document it refuses is a conflict naming
 // its complaints, because the hook then releases without running any relay; one it cannot read
-// is unreadable. An accepted document's relayExecutable is judged, and a plugin owner's adapter
-// invocation. The launcher's own gates (owner plugin, configVersion absent or 1, absolute
-// adapter paths) are all inside the hook's check.
+// is unreadable. An accepted document's relayExecutable is judged; the adapter keys a document
+// may still carry are read by nothing (decision 66).
 func (j judge) stopSettings(ctx context.Context, into *componentRegistrations, path string) {
 	document, failure, detail := hook.ReadSettings(ctx, path)
 	entry := registrationEntry(path, nil, nil)
@@ -171,84 +167,6 @@ func (j judge) stopSettings(ctx context.Context, into *componentRegistrations, p
 	}
 	relay, _ := record.Get(document, "relayExecutable").(string)
 	j.executable(into, path, "relayExecutable", relay, relay, nil, definition.Relay)
-	if record.Get(document, "owner") != "plugin" {
-		return
-	}
-	entryPoint, _ := record.Get(document, "adapterEntryPoint").(string)
-	interpreter, _ := record.Get(document, "adapterInterpreter").(string)
-	j.executable(into, path, "adapterEntryPoint", entryPoint, entryPoint, nil, definition.HookScript)
-	j.interpreter(into, path, interpreter, entryPoint)
-}
-
-// systemEnv are the spellings of the system's env program. The launcher runs its interpreter by
-// the path the settings give it, so env is recognised by that path, never by a basename: any
-// file can be named env, and a multi-call binary (/bin/env -> busybox, or coreutils) dispatches on
-// the name it is run under, which is this one.
-var systemEnv = []string{"/usr/bin/env", "/bin/env"}
-
-// interpreter judges the Stop settings' adapterInterpreter against the launcher contract of
-// decision 18 (as todo 38 corrects it): the Python launcher (crw_stop_hook.py, packaged until
-// todo 43, and its <CODEX_HOME>/crw-stop-hook.py copy) runs [adapterInterpreter, adapterEntryPoint,
-// <settings>]. That reaches the Go hook only when adapterInterpreter is the system env
-// (systemEnv, resolving to a native executable regular file), so that the entry point runs as
-// crw-completion-hook with the settings path as its one argument, and only when the entry point
-// holds no '=', which env reads as a NAME=VALUE assignment before the program (it would then run
-// the settings path). Any other interpreter (a Python interpreter, a shell, the crw binary
-// itself, another file named env) is a conflict naming the invocation it produces; one that
-// cannot be examined is unreadable.
-func (j judge) interpreter(into *componentRegistrations, source, interpreter, entryPoint string) {
-	invocation := "the packaged launcher runs [" + interpreter + ", " + entryPoint + ", <settings>]"
-	entry := registrationEntry(source, "adapterInterpreter", interpreter)
-	conflict := func(resolves any, why string) {
-		into.conflict(entry, resolves, source+" adapterInterpreter: "+invocation+", and "+why)
-	}
-	unread := func(resolves any, why string) {
-		into.unreadable(entry, resolves, source+" adapterInterpreter "+interpreter, why)
-	}
-	if !filepath.IsAbs(interpreter) {
-		conflict(nil, "the launcher declines an interpreter that is not an absolute path, so it runs nothing")
-		return
-	}
-	resolved, err := record.Resolve(interpreter)
-	if err != nil {
-		unread(nil, "the interpreter could not be resolved: "+err.Error())
-		return
-	}
-	info, err := os.Stat(resolved)
-	switch {
-	case errors.Is(err, os.ErrNotExist):
-		conflict(resolved, interpreter+" does not exist, so the launcher starts nothing")
-		return
-	case err != nil:
-		unread(resolved, "the interpreter could not be examined: "+store.PythonOSError(err))
-		return
-	case !info.Mode().IsRegular():
-		conflict(resolved, interpreter+" is not a regular file, so the launcher starts nothing")
-		return
-	}
-	if err := unix.Access(resolved, unix.X_OK); errors.Is(err, unix.EACCES) {
-		conflict(resolved, interpreter+" is not executable by this user, so the launcher starts nothing")
-		return
-	} else if err != nil {
-		unread(resolved, "whether the interpreter is executable could not be read: "+err.Error())
-		return
-	}
-	isSystemEnv := false
-	for _, spelling := range systemEnv {
-		isSystemEnv = isSystemEnv || store.PathlibSpelling(interpreter) == spelling
-	}
-	switch {
-	case resolved == j.crw:
-		conflict(resolved, interpreter+" is the selected crw binary itself, started as "+filepath.Base(interpreter)+", which reads "+entryPoint+" as its first argument instead of running the hook with the settings path")
-	case !isSystemEnv:
-		conflict(resolved, interpreter+" (resolving to "+resolved+") is not the system env ("+strings.Join(systemEnv, " or ")+"), so what it does with "+entryPoint+" is not running it as "+definition.HookScript+" with the settings path")
-	case !isNative(resolved):
-		unread(resolved, "the system env "+interpreter+" resolves to "+resolved+", which is not a native program, so what it runs could not be established")
-	case strings.ContainsRune(entryPoint, '='):
-		conflict(resolved, "env reads "+entryPoint+" as a NAME=VALUE assignment because it holds '=', and runs the settings path as the program instead")
-	default:
-		into.add(entry, resolved, true, "env runs "+entryPoint+" as "+definition.HookScript+" with the settings path")
-	}
 }
 
 // stopHooks judges every Stop command of hooks.json that runs a Stop adapter. The host runs

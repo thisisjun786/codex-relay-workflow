@@ -375,7 +375,15 @@ func (r *review) paths(group string) {
 	if group == "D2" {
 		cases = []string{"relative_arg", "relative_home", "lexical", "symlink"}
 	}
+	// The settings argument and CRW_COMPLETION_HOOK_CONFIG are retired (decision 66): the
+	// cases that read settings through either are skipped, their recorded answers consumed.
+	retired := map[string]bool{"env": true, "argv_over_env": true, "empty_arg": true, "relative_arg": true, "lexical": true, "symlink": true}
 	for _, name := range cases {
+		if retired[name] {
+			r.take("pair")
+			t.Log(name, "retired")
+			continue
+		}
 		h := r.setup(name)
 		alt := filepath.Join(h.home, "alt")
 		if err := os.Mkdir(alt, 0o700); err != nil {

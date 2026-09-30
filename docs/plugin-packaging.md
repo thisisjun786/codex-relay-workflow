@@ -139,14 +139,15 @@ version-2 record, the recorded execution policy in its environment, as the Pytho
 the recorded executable. The running bridge is therefore the process Codex started: its argv
 ends in `codex-thread-bridge` and its environment carries the policy, which is what
 [the `/proc` reading below](#updating-safely) looks for. `crw hook --plugin-launch` reads only
-`<CODEX_HOME>/crw-completion-hook.json`, never `CRW_COMPLETION_HOOK_CONFIG`, and stands down in
-silence unless those settings name the plugin as owner, so a host that holds both Stop
-registrations under user-owned settings evaluates each Stop once. Under settings the plugin owns,
-both registrations evaluate it: a hook-file entry reads no owner, and cannot, because the legacy
-launchers reach `crw hook` without the flag under those same settings. The only guard there is
-that `crw install hook
---owner plugin` (and runtime_install.py, until todo 44 removed it) refuses to register a second
-owner, so the state takes a hand edit ([decision 26](port/decisions.md)).
+`<CODEX_HOME>/crw-completion-hook.json` and stands down in silence unless those settings name the
+plugin as owner, so a host that holds both Stop registrations under user-owned settings evaluates
+each Stop once. Under settings the plugin owns, a hook-file entry that runs `crw hook` with no
+argument evaluates it too, because it reads no owner. The legacy entry forms - a settings path
+after `crw hook`, the `crw-completion-hook` name and `CRW_COMPLETION_HOOK_CONFIG` - are retired
+(decision 66): `crw hook` given any argument but `--plugin-launch` releases the Stop in silence.
+The only guard is that `crw install hook --owner plugin` (and runtime_install.py, until todo 44
+removed it) refuses to register a second owner, so the state takes a hand edit
+([decision 26](port/decisions.md)).
 
 The hook command does not `exec` and ends in `; exit 0`. When the pointer names nothing, as
 mid-rollback or with `HOME` unset, the shell reports the missing program on stderr and the

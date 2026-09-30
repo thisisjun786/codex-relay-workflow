@@ -42,16 +42,17 @@ pointer, falls among its steps is not written yet; that order is an open item to
 ## What an installation is
 
 A release archive is `crw_<version>_<os>_<arch>.tar.gz`, published with a `SHA256SUMS` beside it
-([releases](releases.md#binary-assets)). It holds `crw`, the three compatibility names
-`codex-session-relay`, `codex-thread-bridge` and `crw-completion-hook` as links to it, and the
-licences. `crw` dispatches on the name it was started under, so each name is the component it
-names.
+([releases](releases.md#binary-assets)). It holds `crw`, the two compatibility names
+`codex-session-relay` and `codex-thread-bridge` as links to it, and the licences. `crw` dispatches
+on the name it was started under, so each name is the component it names. The completion hook is
+`crw hook`; its former `crw-completion-hook` link is retired (decision 66), and a runtime
+installed before that still carries one.
 
 An installation of it is two things under the destination:
 
 | Path | What it is |
 | --- | --- |
-| `<destination>/bin-<version>-<digest12>/bin/` | The runtime: `crw` and the three links, where `<digest12>` is the start of the archive's SHA-256 |
+| `<destination>/bin-<version>-<digest12>/bin/` | The runtime: `crw` and the two links, where `<digest12>` is the start of the archive's SHA-256 |
 | `<destination>/current` | The owned pointer: a directory symlink naming the selected runtime directory |
 
 The destination is `~/.local/share/crw-runtime` and nothing else. Both of the plugin's declared
@@ -228,8 +229,8 @@ because the command strings are unchanged.
 ### One Stop settings document
 
 `crw install hook` writes one plugin-owned Stop settings document, and every runtime the pointer
-names serves it: `relayExecutable` `<destination>/current/bin/codex-session-relay` and the adapter
-keys name the runtime through the pointer, so no promotion and no rollback rewrites that document
+names serves it: `relayExecutable` `<destination>/current/bin/codex-session-relay` names the
+runtime through the pointer, so no promotion and no rollback rewrites that document
 ([decision 18](port/decisions.md)). Every move of the pointer reads it first, under the promotion
 lock, and refuses, with nothing changed, when it names through the pointer a path a Go runtime does
 not serve (`bin/crw` and its compatibility links); settings a user owns are judged with the second
@@ -496,7 +497,7 @@ readers came from, which `crw doctor retention-scan` ran until it was retired (d
 
 | # | Registration | What is read |
 |---|---|---|
-| 4 | `<CODEX_HOME>/crw-*.json` (`crw-completion-hook.json`, `crw-bridge-mcp.json`, any other), and every settings document a Stop command below names | `relayExecutable`, `bridgeExecutable`, `adapterEntryPoint`, `adapterInterpreter`, `interpreterPath`, `command`, each as written (the launchers run them with no shell and no expansion), and each `args` entry as an argument. A value that is not an absolute path, or not a string or a list of strings, is unreadable |
+| 4 | `<CODEX_HOME>/crw-*.json` (`crw-completion-hook.json`, `crw-bridge-mcp.json`, any other), and every settings document a Stop command below names | `relayExecutable`, `bridgeExecutable`, `interpreterPath`, `command`, each as written (the retired `adapterEntryPoint` and `adapterInterpreter` run nothing and are not read, decision 66) (the launchers run them with no shell and no expansion), and each `args` entry as an argument. A value that is not an absolute path, or not a string or a list of strings, is unreadable |
 | 5 | `<CODEX_HOME>/plugins/cache/crw/crw/*/wiring/hooks/*.json`, `wiring/mcp.json`, `.mcp.json` in every version directory (a stray file there declares nothing) | every hook command, under the grammar below, and every MCP server, as Codex starts it |
 | 8 | `<CODEX_HOME>/crw-stop-hook.py` | the file itself, whenever it exists |
 | 9 | `<CODEX_HOME>/hooks.json` | every hook command, as row 5 |
@@ -809,7 +810,6 @@ completion needs, and `crw install hook --owner plugin` writes the settings it r
 | Setting | Written as |
 | --- | --- |
 | `owner`, `configVersion`, `event` | `plugin`, `1`, `Stop` |
-| `adapterInterpreter`, `adapterEntryPoint` | `/usr/bin/env` and `<destination>/current/bin/crw-completion-hook`, so a cached Python launcher that runs `[adapterInterpreter, adapterEntryPoint, <settings>]` reaches the Go hook too ([decision 18](port/decisions.md)) |
 | `relayExecutable` | `<destination>/current/bin/codex-session-relay`, or `--relay-command` |
 | `mode` | `observe` (`--mode`), which classifies and records and never holds a turn |
 | `timeoutSeconds` | the adapter's own budget (`--guard-timeout`, default 5), under the registered timeout (`--timeout`, default 10, at most 10) |
@@ -824,12 +824,21 @@ host and that guard, and it exits 0 on every path, because exit 2 is the host's 
 The settings are written before anything could read them, and every precondition is checked before
 any write: the event, the budget against the registered timeout, a hook file that already registers
 this adapter for Stop (the user-owned registration, refused by name, because two registrations run
-twice on every Stop), settings already there that this command cannot act on, and
-`CRW_COMPLETION_HOOK_CONFIG`, refused while it is set, because the plugin's hook reads only the
-Codex home and never that override. Settings that already say something else are refused rather
-than overwritten, because they carry the mode: they answer `config_differs`, naming the differing
-fields; move the document aside by hand to write these flags' settings instead
-([one Stop settings document](#one-stop-settings-document)).
+twice on every Stop), and settings already there that this command cannot act on. Settings that
+already say something else are refused rather than overwritten, because they carry the mode: they
+answer `config_differs`, naming the differing fields; move the document aside by hand to write these
+flags' settings instead ([one Stop settings document](#one-stop-settings-document)).
+
+The one exception is a document written before decision 66. Those settings also recorded
+`adapterInterpreter` `/usr/bin/env` and `adapterEntryPoint` `<destination>/current/bin/crw-completion-hook`
+for the Python launchers the plugin package no longer carries. Nothing reads either key now: the Go
+hook, the doctor and every move of the pointer accept a document that still carries them, so a host
+keeps working on its current settings. A document that differs from the one this command would
+write only by those two keys and `installedBy` is rewritten without them, answering
+`config_replaced` with the keys it dropped under `retiredFields` (a `--dry-run` answers
+`config_would_create` and says so). On the relay host, run `crw install hook --owner plugin` with
+the flags the settings were written with, after the runtime carrying this change is installed, to
+rewrite the document once. Any other difference is still `config_differs`.
 The run registers nothing and leaves the hook file untouched. Written, registered and observed to
 have fired stay three separate claims.
 

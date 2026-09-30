@@ -64,7 +64,7 @@ func TestTheDestinationIsFixed(t *testing.T) {
 	if code, stdout, stderr := fixed.main(t, fixed.env, "hook", "--owner", "plugin", "--marker-root", filepath.Join(fixed.home, "markers")); code != install.OK {
 		t.Fatalf("hook on the fixed destination: exit %d\n%s%s", code, stdout, stderr)
 	}
-	if !strings.Contains(readFile(t, filepath.Join(fixed.codex, install.SettingsName)), filepath.Join(fixed.home, ".local", "share", "crw-runtime", "current", "bin", "crw-completion-hook")) {
+	if !strings.Contains(readFile(t, filepath.Join(fixed.codex, install.SettingsName)), filepath.Join(fixed.home, ".local", "share", "crw-runtime", "current", "bin", "codex-session-relay")) {
 		t.Fatal("hook did not name the fixed destination's pointer")
 	}
 }

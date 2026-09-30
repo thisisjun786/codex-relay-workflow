@@ -49,7 +49,7 @@ type ScanOptions struct {
 const scopeDirEnv = "CODEX_SESSION_RELAY_SCOPE_DIR"
 
 // settingsKeys are the keys of a crw-*.json record that name something to execute.
-var settingsKeys = []string{"relayExecutable", "bridgeExecutable", "adapterEntryPoint", "adapterInterpreter", "interpreterPath", "command", "args"}
+var settingsKeys = []string{"relayExecutable", "bridgeExecutable", "interpreterPath", "command", "args"}
 
 // scan is one reading of the host: the registrations it reads (RegisteredMatching) or the relay
 // records it keeps (RecordedDaemons). Everything it could not read

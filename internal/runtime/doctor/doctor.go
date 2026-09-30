@@ -130,7 +130,7 @@ var SettingsFiles = []struct {
 	Name string
 	Keys []string
 }{
-	{"crw-completion-hook.json", []string{"relayExecutable", "adapterEntryPoint", "adapterInterpreter"}},
+	{"crw-completion-hook.json", []string{"relayExecutable"}},
 	{"crw-bridge-mcp.json", []string{"bridgeExecutable"}},
 }
 

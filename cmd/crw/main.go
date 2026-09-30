@@ -64,8 +64,6 @@ func runAt(ctx context.Context, program string, args []string, stdout, stderr io
 		return relay(ctx, program, args, stdout, stderr)
 	case "codex-thread-bridge":
 		return bridge(ctx, program, args)
-	case "crw-completion-hook":
-		return hook.Run(ctx, args, os.Stdin, stdout, started)
 	}
 	if len(args) == 0 {
 		usage(stderr)

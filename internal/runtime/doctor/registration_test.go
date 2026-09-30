@@ -57,7 +57,7 @@ func (h *host) runRegistrationCases(t *testing.T, cases []registrationCase) {
 }
 
 // Finding 20. None of the programs that read a settings record looks a command up on PATH: the
-// hook refuses a relative relayExecutable or adapterEntryPoint, and the bridge launcher execs
+// hook refuses a relative relayExecutable, and the bridge launcher execs
 // bridgeExecutable as written. So a bare name is a conflict even when this command's own PATH
 // holds the selected runtime. Codex does look a bare config.toml command up, on the PATH the
 // server gets, which this command can read only when the table sets env.PATH; a bare Stop
@@ -71,8 +71,7 @@ func TestDoctorNeverLooksARegisteredCommandUpOnItsOwnPATH(t *testing.T) {
 	h.runRegistrationCases(t, []registrationCase{
 		{name: "a bare relayExecutable", stop: encodeJSON(t, h.stopSettings(t, map[string]any{"relayExecutable": "codex-session-relay"})), bridge: goodBridge, relay: "conflict", bridgeClass: "own",
 			want: []string{"relayExecutable must be an absolute path", "so a Stop runs no relay"}},
-		{name: "a bare adapterEntryPoint", stop: encodeJSON(t, h.stopSettings(t, map[string]any{"adapterEntryPoint": "crw-completion-hook"})), bridge: goodBridge, relay: "conflict", bridgeClass: "own",
-			want: []string{"adapterEntryPoint must be an absolute path"}},
+		{name: "a bare adapterEntryPoint, which nothing reads", stop: encodeJSON(t, h.stopSettings(t, map[string]any{"adapterEntryPoint": "crw-completion-hook"})), bridge: goodBridge, relay: "own", bridgeClass: "own"},
 		{name: "a bare bridgeExecutable", stop: goodStop, bridge: encodeJSON(t, h.bridgeRecord(map[string]any{"bridgeExecutable": "codex-thread-bridge"})), relay: "own", bridgeClass: "conflict",
 			want: []string{"must name bridgeExecutable as an absolute path", "so it starts no bridge"}},
 		{name: "a bare config.toml command", stop: goodStop, bridge: goodBridge, config: "[mcp_servers.codex-thread-bridge]\ncommand = \"codex-thread-bridge\"\n", relay: "own", bridgeClass: "unreadable",
@@ -102,7 +101,8 @@ func TestDoctorJudgesTheStopSettingsAsTheHookAcceptsThem(t *testing.T) {
 		{name: "an unknown owner", stop: stop(map[string]any{"owner": "robot"}), bridge: goodBridge, relay: "conflict", bridgeClass: "own", want: []string{"owner must be one of user, plugin"}},
 		{name: "no markerRoot or mode", stop: stop(map[string]any{"markerRoot": nil, "mode": nil}), bridge: goodBridge, relay: "conflict", bridgeClass: "own",
 			want: []string{"markerRoot must be a non-empty string", "mode must be one of observe, hold"}},
-		{name: "a plugin owner without its adapter", stop: stop(map[string]any{"adapterInterpreter": nil}), bridge: goodBridge, relay: "conflict", bridgeClass: "own", want: []string{"adapterInterpreter is required when owner is plugin"}},
+		{name: "a plugin owner without the retired adapter keys", stop: stop(map[string]any{"adapterInterpreter": nil, "adapterEntryPoint": nil}), bridge: goodBridge, relay: "own", bridgeClass: "own"},
+		{name: "a plugin owner that still names them", stop: stop(map[string]any{"adapterInterpreter": "/usr/bin/env", "adapterEntryPoint": filepath.Join(h.current(), "bin", "crw-completion-hook")}), bridge: goodBridge, relay: "own", bridgeClass: "own"},
 		{name: "configVersion true", stop: stop(map[string]any{"configVersion": true}), bridge: goodBridge, relay: "own", bridgeClass: "own"},
 	})
 }

@@ -93,10 +93,14 @@ print(json.dumps({"cells": cells, "reasons": reasons, "claim": claim[0], "row": 
 	}
 }
 
+// settingsOverride is the variable Python's configuration_path read, set as the recording was.
+const settingsOverride = "CRW_COMPLETION_HOOK_CONFIG"
+
 // The settings path and the host ledger are the ones Python names: Path.home() when no Codex
 // home is set (an empty HOME is the root, an unset one the passwd entry), and a relative path
 // made absolute against the working directory the kernel names (os.path.abspath), not the $PWD
-// spelling that reached it through a symbolic link.
+// spelling that reached it through a symbolic link. (The settings override the adapter read,
+// CRW_COMPLETION_HOOK_CONFIG, is retired, decision 66; its recorded answer is not compared.)
 func TestTheSettingsPathAndHostLedgerAreThePathsPythonNames(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -119,7 +123,6 @@ print(json.dumps([str(completion.configuration_path()), str(stopadapter.host_led
 		{"an empty HOME", "", unset, ""},
 		{"HOME unset", unset, unset, ""},
 		{"a relative CODEX_HOME", filepath.Join(root, "home"), "codex", ""},
-		{"a relative override", filepath.Join(root, "home"), unset, "rel/settings.json"},
 		{"a CODEX_HOME of two leading slashes", filepath.Join(root, "home"), "/" + filepath.Join(root, "codex"), ""},
 		{"a CODEX_HOME of two leading slashes and a dot", filepath.Join(root, "home"), "/" + filepath.Join(root, ".", "codex") + "/./", ""},
 		{"the root as CODEX_HOME", filepath.Join(root, "home"), "/", ""},
@@ -137,9 +140,9 @@ print(json.dumps([str(completion.configuration_path()), str(stopadapter.host_led
 		answers[c.name] = pyoracle.Answer(t, c.name, func() ([]byte, error) {
 			env := slices.DeleteFunc(os.Environ(), func(kv string) bool {
 				key, _, _ := strings.Cut(kv, "=")
-				return key == "HOME" || key == "CODEX_HOME" || key == configEnv || key == "PWD"
+				return key == "HOME" || key == "CODEX_HOME" || key == settingsOverride || key == "PWD"
 			})
-			for key, value := range map[string]string{"HOME": c.home, "CODEX_HOME": c.codexHome, configEnv: c.override} {
+			for key, value := range map[string]string{"HOME": c.home, "CODEX_HOME": c.codexHome, settingsOverride: c.override} {
 				if value != unset {
 					env = append(env, key+"="+value)
 				}
@@ -158,7 +161,7 @@ print(json.dumps([str(completion.configuration_path()), str(stopadapter.host_led
 	for _, c := range cases {
 		raw := answers[c.name]
 		t.Run(c.name, func(t *testing.T) {
-			for key, value := range map[string]string{"HOME": c.home, "CODEX_HOME": c.codexHome, configEnv: c.override} {
+			for key, value := range map[string]string{"HOME": c.home, "CODEX_HOME": c.codexHome, settingsOverride: c.override} {
 				if value != unset {
 					t.Setenv(key, value)
 					continue
@@ -172,7 +175,7 @@ print(json.dumps([str(completion.configuration_path()), str(stopadapter.host_led
 			if err := json.Unmarshal(raw, &want); err != nil {
 				t.Fatalf("%v: %s", err, raw)
 			}
-			settings, err := configurationPath("", nil, "")
+			settings, err := configurationPath("", nil)
 			if err != nil || settings != want[0] {
 				t.Errorf("settings %q, python %q: %v", settings, want[0], err)
 			}

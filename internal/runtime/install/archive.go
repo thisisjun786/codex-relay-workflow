@@ -227,7 +227,7 @@ func sumsFor(sumsPath, name string) (string, error) {
 // installer or the doctor reads as control data inside a runtime directory, or "" when it is
 // not. Unpacking such an entry would plant that data rather than a release file:
 //
-//   - bin/ is the installer's own: bin/crw and the three compatibility links are placed from the
+//   - bin/ is the installer's own: bin/crw and the compatibility links are placed from the
 //     archive's crw, and the doctor reads bin/crw, the links and bin/python* there;
 //   - a component beginning .crw- is installer control data at any level: the staging lock
 //     (.crw-staging-lock), the claim (.crw-staging-claim.json), the claim's .crw-lock sidecar
@@ -240,7 +240,7 @@ func sumsFor(sumsPath, name string) (string, error) {
 func reservedName(name string) string {
 	parts := strings.Split(strings.ToLower(name), "/")
 	if parts[0] == "bin" {
-		return "bin/ is where the installer places crw and its three compatibility links itself"
+		return "bin/ is where the installer places crw and its compatibility links itself"
 	}
 	for _, part := range parts {
 		switch {
@@ -253,7 +253,7 @@ func reservedName(name string) string {
 	return ""
 }
 
-// Unpack writes the verified bytes into environment: the binary into bin/crw, the three
+// Unpack writes the verified bytes into environment: the binary into bin/crw, the
 // compatibility names as symlinks to it (the archive's own entries for them are checked, never
 // trusted), and every other regular file (the licences) at its relative path. Every entry is
 // judged before anything is written: an absolute or escaping name, a name the installer or the

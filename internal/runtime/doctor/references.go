@@ -13,8 +13,8 @@ import (
 
 // RegisteredMatching is every path the host's registrations name that inside counts, and
 // everything those registrations hold that could not be read or judged. The registrations are
-// every crw-*.json settings record (row 4: the Stop settings' relayExecutable, adapterEntryPoint
-// and adapterInterpreter, the bridge record's bridgeExecutable), the cached plugin declarations
+// every crw-*.json settings record (row 4: the Stop settings' relayExecutable, the bridge
+// record's bridgeExecutable), the cached plugin declarations
 // (row 5), the crw-stop-hook.py launcher copy (row 8), hooks.json (row 9) and config.toml's
 // mcp_servers (row 10), and the settings document each Stop command there reads when it is not
 // one of row 4's; the row numbers are the retired retention scan's (decision 59). inside

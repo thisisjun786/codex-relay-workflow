@@ -99,17 +99,3 @@ func TestAUserRegistrationThroughThePointerIsASecondOwner(t *testing.T) {
 		}
 	})
 }
-
-// With adapterInterpreter /usr/bin/env, an adapterEntryPoint holding '=' is read by env as an
-// assignment, and every Stop would run nothing: `crw install hook` refuses to write such settings.
-func TestAnEntryPointEnvWouldMisreadIsRefused(t *testing.T) {
-	h := newHost(t)
-	h.dest = filepath.Join(h.home, "a=b", "crw-runtime")
-	result, code := install.Hook(context.Background(), h.options(), h.hookOptions())
-	if code != install.Usage || !strings.Contains(text(at(result, "error")), "contains '='") {
-		t.Fatalf("hook: exit %d\n%s", code, golden.Canon(result))
-	}
-	if _, err := os.Lstat(filepath.Join(h.codex, install.SettingsName)); !os.IsNotExist(err) {
-		t.Fatal("hook wrote settings env would misread")
-	}
-}

@@ -387,7 +387,7 @@ func TestContractsRuntimeDefinition(t *testing.T) {
 		}
 		return root
 	}
-	if got := goCheck(t, base(t), nil, "contracts"); got.code != 0 || !strings.Contains(got.stdout, "links codex-session-relay, codex-thread-bridge, crw-completion-hook as .goreleaser.yaml makes them") {
+	if got := goCheck(t, base(t), nil, "contracts"); got.code != 0 || !strings.Contains(got.stdout, "links codex-session-relay, codex-thread-bridge as .goreleaser.yaml makes them") {
 		t.Fatalf("clean: %+v", got)
 	}
 	edit := func(t *testing.T, root, rel, old, new string) {
@@ -409,7 +409,7 @@ func TestContractsRuntimeDefinition(t *testing.T) {
 		label, rel, old, new, fragment string
 	}{
 		{"identity tool", "contract/schema/bridge-mcp-tools.json", `"name": "get_capabilities"`, `"name": "get_abilities"`, `identity tool "get_capabilities" is not a tool contract/schema/bridge-mcp-tools.json lists`},
-		{"link", ".goreleaser.yaml", "ln -sfn crw crw-completion-hook", "ln -sfn crw crw-hook", "links [codex-session-relay codex-thread-bridge crw-hook] beside crw, the installer places"},
+		{"link", ".goreleaser.yaml", "ln -sfn crw codex-thread-bridge", "ln -sfn crw crw-bridge", "links [codex-session-relay crw-bridge] beside crw, the installer places"},
 		{"archived licence", ".goreleaser.yaml", "      - packages/codex-thread-bridge/LICENSE", "      - packages/LICENSE", `licence "packages/codex-thread-bridge/LICENSE" is not a file .goreleaser.yaml archives`},
 	} {
 		root := base(t)

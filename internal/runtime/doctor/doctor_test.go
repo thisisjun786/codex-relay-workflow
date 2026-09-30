@@ -190,27 +190,13 @@ func (h *host) diagnose(t *testing.T) record.Object {
 	return doctor.Diagnose(context.Background(), h.options())
 }
 
-// systemEnv is the system's env program, which the packaged launcher must run the Go hook through.
-func systemEnv(t *testing.T) string {
-	t.Helper()
-	for _, candidate := range []string{"/usr/bin/env", "/bin/env"} {
-		if info, err := os.Stat(candidate); err == nil && info.Mode().IsRegular() {
-			return candidate
-		}
-	}
-	t.Skip("this host has no /usr/bin/env or /bin/env")
-	return ""
-}
-
-// stopSettings is a Stop settings document the Go hook accepts, plugin-owned and run through the
-// system env, with changes applied (a nil value removes the key).
+// stopSettings is a Stop settings document the Go hook accepts, plugin-owned, with changes
+// applied (a nil value removes the key).
 func (h *host) stopSettings(t *testing.T, changes map[string]any) map[string]any {
 	t.Helper()
 	document := map[string]any{
 		"configVersion": 1, "mode": "observe", "markerRoot": filepath.Join(h.home, "markers"), "owner": "plugin",
-		"relayExecutable":    filepath.Join(h.current(), "bin", "codex-session-relay"),
-		"adapterEntryPoint":  filepath.Join(h.current(), "bin", "crw-completion-hook"),
-		"adapterInterpreter": systemEnv(t),
+		"relayExecutable": filepath.Join(h.current(), "bin", "codex-session-relay"),
 	}
 	return changed(document, changes)
 }
@@ -364,25 +350,25 @@ func TestDoctorDoesNotOwnAGoRuntimeNothingCanLaunch(t *testing.T) {
 	if err := os.Chmod(crw, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// The plugin-owned settings run crw-completion-hook as the adapter, which would make the
-	// relay conflict before it is unlaunchable; without them only the link is judged.
+	// The Stop settings run the relay through its link, which would make the relay conflict
+	// before it is unlaunchable; without them only the link is judged.
 	if err := os.Remove(filepath.Join(h.codex, "crw-completion-hook.json")); err != nil {
 		t.Fatal(err)
 	}
-	hook := filepath.Join(dir, "bin", "crw-completion-hook")
-	if err := os.Remove(hook); err != nil {
+	relayLink := filepath.Join(dir, "bin", "codex-session-relay")
+	if err := os.Remove(relayLink); err != nil {
 		t.Fatal(err)
 	}
-	write(t, filepath.Join(dir, "bin", "stale-hook"), "#!/bin/sh\n", 0o755)
-	link(t, "stale-hook", hook)
+	write(t, filepath.Join(dir, "bin", "stale-relay"), "#!/bin/sh\n", 0o755)
+	link(t, "stale-relay", relayLink)
 	report = h.diagnose(t)
-	if got := golden.Canon(at(report, "components", "codex-session-relay", "reasons")); at(report, "components", "codex-session-relay", "class") != "foreign" || !strings.Contains(got, hook+" resolves to") {
-		t.Errorf("a link that does not resolve to bin/crw: %s", golden.Canon(at(report, "components", "codex-session-relay")))
+	if got := golden.Canon(at(report, "components", "codex-thread-bridge", "reasons")); at(report, "components", "codex-thread-bridge", "class") != "foreign" || !strings.Contains(got, relayLink+" resolves to") {
+		t.Errorf("a link that does not resolve to bin/crw: %s", golden.Canon(at(report, "components", "codex-thread-bridge")))
 	}
 }
 
 // Every registration that starts a component is judged against the selected Go runtime: the
-// Stop settings' relayExecutable (and, plugin-owned, the adapter the packaged launcher runs),
+// Stop settings' relayExecutable (the retired adapter keys are read by nothing, decision 66),
 // the plugin-owned bridge record's bridgeExecutable and config.toml's codex-thread-bridge table.
 // One naming another executable (an old runtime's bridge, a Python interpreter, the right binary
 // under another name) makes its component conflict; one that cannot be read leaves it
@@ -406,7 +392,7 @@ func TestDoctorJudgesEveryRegistrationAgainstTheSelectedRuntime(t *testing.T) {
 		{"all agree", goodStop, goodBridge, "[mcp_servers.codex-thread-bridge]\ncommand = \"" + filepath.Join(dir, "bin", "crw") + "\"\nargs = [\"bridge\"]\n", "own", "own", ""},
 		{"an old runtime's bridge", goodStop, encodeJSON(t, h.bridgeRecord(map[string]any{"bridgeExecutable": stale})), "", "own", "conflict", "crw-bridge-mcp.json bridgeExecutable names " + stale},
 		{"a Python bridge in config.toml", goodStop, goodBridge, "[mcp_servers.codex-thread-bridge]\ncommand = \"" + filepath.Join(venv, "bin", "python3") + "\"\nargs = [\"-m\", \"codex_thread_bridge\"]\n", "own", "conflict", "config.toml mcp_servers.codex-thread-bridge.command names " + filepath.Join(venv, "bin", "python3")},
-		{"a Python-era adapter", encodeJSON(t, h.stopSettings(t, map[string]any{"adapterInterpreter": current("python3")})), goodBridge, "", "conflict", "own", current("python3") + " does not exist"},
+		{"a retired adapter that names nothing", encodeJSON(t, h.stopSettings(t, map[string]any{"adapterInterpreter": current("python3"), "adapterEntryPoint": current("crw-completion-hook")})), goodBridge, "", "own", "own", ""},
 		{"the relay under the bridge's name", encodeJSON(t, h.stopSettings(t, map[string]any{"relayExecutable": current("codex-thread-bridge")})), goodBridge, "", "conflict", "own", "as codex-thread-bridge rather than as codex-session-relay"},
 		{"a relay that does not exist", encodeJSON(t, h.stopSettings(t, map[string]any{"relayExecutable": filepath.Join(h.home, "gone", "codex-session-relay")})), goodBridge, "", "conflict", "own", "which does not exist, so the host starts nothing"},
 		{"unreadable Stop settings", `{"relayExecutable": `, goodBridge, "", "unreadable", "own", "the Stop settings " + stop},
@@ -432,66 +418,6 @@ func TestDoctorJudgesEveryRegistrationAgainstTheSelectedRuntime(t *testing.T) {
 			}
 			if got := at(report, "checks", "results", "installed", "value"); got != wantInstalled {
 				t.Errorf("installed = %v", got)
-			}
-		})
-	}
-}
-
-// The packaged launcher runs [adapterInterpreter, adapterEntryPoint, <settings>] (the launcher
-// contract of decision 18), which reaches the Go hook only through the system env, recognised by
-// the path it is run under and never by a basename, and only with an entry point env does not
-// read as a NAME=VALUE assignment. A Python interpreter, a shell, the crw binary itself, another
-// file named env (a native one or a script), env under another name and a missing interpreter
-// are each a conflict naming that invocation; a relative one is refused by the hook itself; an
-// entry point holding '=' is a conflict; one that cannot be examined leaves the relay unreadable.
-func TestDoctorJudgesTheLauncherInvocation(t *testing.T) {
-	h, _, _ := goHost(t, true)
-	tools := filepath.Join(h.home, "tools")
-	write(t, filepath.Join(tools, "env"), fakeCrw+"env", 0o755)
-	write(t, filepath.Join(h.home, "scripts", "env"), "#!/bin/sh\nexit 0\n", 0o755)
-	link(t, systemEnv(t), filepath.Join(tools, "myenv"))
-	link(t, "/bin/sh", filepath.Join(tools, "sh"))
-	link(t, h.dest, filepath.Join(h.home, "k=v"))
-	current := func(name string) string { return filepath.Join(h.current(), "bin", name) }
-	python := filepath.Join(h.scripted(), "bin", "python3")
-	type testCase struct {
-		name, interpreter, entry, class, want string
-		invocation                            bool
-	}
-	cases := []testCase{
-		{"the system env", systemEnv(t), "", "own", "", false},
-		{"a Python interpreter", python, "", "conflict", python + " (resolving to ", true},
-		{"a shell", filepath.Join(tools, "sh"), "", "conflict", filepath.Join(tools, "sh") + " (resolving to ", true},
-		{"crw itself", current("crw"), "", "conflict", current("crw") + " is the selected crw binary itself", true},
-		{"a native file named env that is not the system env", filepath.Join(tools, "env"), "", "conflict", filepath.Join(tools, "env") + " (resolving to " + filepath.Join(tools, "env") + ") is not the system env", true},
-		{"a script named env", filepath.Join(h.home, "scripts", "env"), "", "conflict", "is not the system env", true},
-		{"the system env under another name", filepath.Join(tools, "myenv"), "", "conflict", filepath.Join(tools, "myenv") + " (resolving to ", true},
-		{"missing", filepath.Join(h.home, "nowhere", "env"), "", "conflict", filepath.Join(h.home, "nowhere", "env") + " does not exist", true},
-		{"relative", "env", "", "conflict", "adapterInterpreter must be an absolute path", false},
-		{"an entry point env reads as an assignment", systemEnv(t), filepath.Join(h.home, "k=v", "current", "bin", "crw-completion-hook"), "conflict", "as a NAME=VALUE assignment", true},
-	}
-	if os.Geteuid() != 0 {
-		locked := filepath.Join(h.home, "locked")
-		write(t, filepath.Join(locked, "env"), fakeCrw+"env", 0o755)
-		if err := os.Chmod(locked, 0); err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
-		cases = append(cases, testCase{"behind a directory without search permission", filepath.Join(locked, "env"), "", "unreadable", filepath.Join(locked, "env"), false})
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			entry := c.entry
-			if entry == "" {
-				entry = current("crw-completion-hook")
-			}
-			write(t, filepath.Join(h.codex, "crw-completion-hook.json"), encodeJSON(t, h.stopSettings(t, map[string]any{"adapterInterpreter": c.interpreter, "adapterEntryPoint": entry})), 0o600)
-			relay := golden.Obj(at(h.diagnose(t), "components", "codex-session-relay"))
-			if record.Get(relay, "class") != c.class || !strings.Contains(golden.Canon(relay), c.want) {
-				t.Errorf("%s", golden.Canon(relay))
-			}
-			if c.invocation && !strings.Contains(golden.Canon(relay), "the packaged launcher runs ["+c.interpreter+", "+entry+", <settings>]") {
-				t.Errorf("the reason does not name the invocation: %s", golden.Canon(record.Get(relay, "reasons")))
 			}
 		})
 	}

@@ -17,18 +17,13 @@ import (
 // SettingsName is the Stop hook's settings record under the Codex home.
 const SettingsName = hook.ConfigName
 
-// SettingsOverride is the variable a plugin-owned registration refuses (completion.CONFIG_ENV).
-const SettingsOverride = "CRW_COMPLETION_HOOK_CONFIG"
+// retiredKeys are the settings keys a document may still carry that nothing reads since
+// decision 66: the adapter the retired Python launchers ran. A document that differs from the
+// one this command would write only by them, and by installedBy, is rewritten without them.
+var retiredKeys = map[string]bool{"adapterInterpreter": true, "adapterEntryPoint": true}
 
-// AdapterInterpreter is what a Go install records as adapterInterpreter. The legacy launchers
-// (crw_stop_hook.py, packaged until todo 43, and its <CODEX_HOME>/crw-stop-hook.py copy) run
-// [adapterInterpreter, adapterEntryPoint, <settings>], and /usr/bin/env executes the entry
-// point with the settings path as its one argument, which is what the Go hook reads as its
-// settings. Recording the binary itself would hand the Go hook the binary's own path as its
-// settings, and every Stop a cached launcher runs would evaluate nothing.
-const AdapterInterpreter = "/usr/bin/env"
-
-// Outcomes of writing the settings record (completion.CONFIG_*).
+// Outcomes of writing the settings record (completion.CONFIG_*), and ConfigReplaced: a document
+// that differed only by the retired keys, rewritten without them.
 const (
 	ConfigCreated            = "config_created"
 	ConfigUnchanged          = "config_unchanged"
@@ -37,6 +32,7 @@ const (
 	ConfigChangedUnderneath  = "config_changed_underneath"
 	ConfigAppliedUnverified  = "config_applied_unverified"
 	ConfigWouldNotBeReadable = "config_would_not_be_readable"
+	ConfigReplaced           = "config_replaced"
 	ConfigNotWritten         = "config_not_written"
 	ConfigUnreadable         = "config_unreadable"
 	ConfigUnreachable        = "config_unreachable"
@@ -45,7 +41,7 @@ const (
 	Interrupted = "interrupted"
 )
 
-var configSettled = map[string]bool{ConfigCreated: true, ConfigUnchanged: true, ConfigWouldCreate: true}
+var configSettled = map[string]bool{ConfigCreated: true, ConfigUnchanged: true, ConfigWouldCreate: true, ConfigReplaced: true}
 
 // HookSettings are the inputs of the plugin-owned settings document (completion.configuration
 // with owner plugin).
@@ -64,9 +60,9 @@ func settled(path string) (string, error) {
 	return filepath.Abs(expanded)
 }
 
-// Document is the settings a Go install writes for the plugin-owned Stop registration: the
-// relay and the adapter named through the owned pointer, so an update moves the pointer and
-// the settings keep naming the right runtime.
+// Document is the settings a Go install writes for the plugin-owned Stop registration: the relay
+// named through the owned pointer, so an update moves the pointer and the settings keep naming
+// the right runtime.
 func (s HookSettings) Document(defaultMarker func() (string, error)) (Object, error) {
 	relay := s.Relay
 	if relay == "" {
@@ -102,10 +98,6 @@ func (s HookSettings) Document(defaultMarker func() (string, error)) (Object, er
 	if err != nil {
 		return nil, err
 	}
-	entry, err := settled(filepath.Join(s.Destination, "current", "bin", definition.HookScript))
-	if err != nil {
-		return nil, err
-	}
 	var issue, isolation any
 	if s.Issue != "" {
 		issue = s.Issue
@@ -125,30 +117,20 @@ func (s HookSettings) Document(defaultMarker func() (string, error)) (Object, er
 		}
 		document = append(document, field("socketPath", socket))
 	}
-	return append(document, field("owner", "plugin"), field("adapterInterpreter", AdapterInterpreter), field("adapterEntryPoint", entry)), nil
+	return append(document, field("owner", "plugin")), nil
 }
 
-// Complaints are why the Go Stop hook would refuse a document, as its own reader says it, and
-// why a launcher could not run the adapter it names: with adapterInterpreter /usr/bin/env an
-// adapterEntryPoint holding '=' is read by env as a NAME=VALUE assignment, and env then executes
-// the settings path instead, so every Stop would run nothing (the doctor calls such a document a
-// conflict; this refuses to write one).
-func Complaints(document Object) []string {
-	found := hook.Complaints(document)
-	interpreter, _ := record.Get(document, "adapterInterpreter").(string)
-	entry, _ := record.Get(document, "adapterEntryPoint").(string)
-	if interpreter != "" && filepath.Base(interpreter) == "env" && strings.Contains(entry, "=") {
-		found = append(found, "adapterEntryPoint "+evidence.Repr(entry)+" contains '=', which "+interpreter+" reads as a NAME=VALUE assignment rather than the program to run, so a launcher running ["+interpreter+", adapterEntryPoint, <settings>] would execute the settings file and every Stop would reach no adapter; install under a destination whose path has no '='")
-	}
-	return found
-}
+// Complaints are why the Go Stop hook would refuse a document, as its own reader says it.
+func Complaints(document Object) []string { return hook.Complaints(document) }
 
 // writeSettings writes a settings document atomically (a temporary sibling renamed over the
 // path). It is a variable only so that a test can make the write fail.
 var writeSettings = record.AtomicWrite
 
 // settingsWrite is completion.write_configuration: decided twice, acted on once, and never
-// over settings that say something else. It is decided on a look taken before anything is read,
+// over settings that say something else - but for a document that differs only by the retired
+// keys and installedBy, which it rewrites without them (config_replaced, keeping every host fact
+// the document records). It is decided on a look taken before anything is read,
 // so a write lands only on that document: under the settings lock the document is looked at
 // again, and anything but the same document - another file renamed in, a rewrite, the same shape
 // saying another mode - answers config_changed_underneath with nothing written.
@@ -169,7 +151,11 @@ func settingsWrite(ctx context.Context, path string, wanted Object, apply bool) 
 		return append(answer, field("detail", "the settings could not be read, so nothing was written: an unreadable document is never overwritten"))
 	}
 	if !apply {
-		return append(record.Set(answer, "outcome", ConfigWouldCreate), field("detail", "would write these settings; nothing was written"))
+		detail := "would write these settings; nothing was written"
+		if outcome == ConfigReplaced {
+			detail = "would rewrite the settings at " + path + ", which differ from these only by the retired keys (" + strings.Join(retiredIn(found), ", ") + ") and installedBy, without them; nothing was written"
+		}
+		return append(record.Set(answer, "outcome", ConfigWouldCreate), field("detail", detail))
 	}
 	beforeWriteLock(path)
 	lock, err := record.LockContext(ctx, path, 0)
@@ -192,7 +178,23 @@ func settingsWrite(ctx context.Context, path string, wanted Object, apply bool) 
 	if !readBack {
 		return append(record.Set(answer, "outcome", ConfigAppliedUnverified), field("detail", "the settings were written and could not be read back as written; no hook should be relied on until they can be"))
 	}
+	if outcome == ConfigReplaced {
+		return append(answer, field("retiredFields", strs(retiredIn(found))),
+			field("detail", "the settings differed from these only by the retired keys and installedBy, and were rewritten without them; every other host fact they recorded is kept"))
+	}
 	return answer
+}
+
+// retiredIn is the retired keys a document carries, sorted.
+func retiredIn(document Object) []string {
+	var out []string
+	for _, f := range document {
+		if retiredKeys[f.Key] {
+			out = append(out, f.Key)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // readsBackAs reports whether the document at path now reads as wanted.
@@ -215,6 +217,15 @@ func settingsOutcome(path string, wanted Object) (string, Object) {
 	value, _ := found.Value.(Object)
 	if evidence.Dumps(found.Value, true, true, false) == evidence.Dumps(wanted, true, true, false) {
 		return ConfigUnchanged, value
+	}
+	if value != nil && len(retiredIn(value)) > 0 && len(retiredIn(wanted)) == 0 {
+		rest := false
+		for _, key := range asList(differing(value, wanted)) {
+			rest = rest || !retiredKeys[key.(string)] && key != "installedBy"
+		}
+		if !rest {
+			return ConfigReplaced, value
+		}
 	}
 	return ConfigDiffers, value
 }
@@ -272,14 +283,13 @@ func checkSettings(codexHome, pointerPath string) transition {
 }
 
 // strandedSettings is every path a settings document names through the pointer that a Go runtime
-// does not serve, as "<key> <path>" reasons.
+// does not serve, as "<key> <path>" reasons: the relay it runs (the retired adapter keys run
+// nothing).
 func strandedSettings(document Object, pointerPath string) []string {
 	var out []string
-	for _, key := range []string{"adapterInterpreter", "adapterEntryPoint", "relayExecutable"} {
-		value, _ := record.Get(document, key).(string)
-		if rel, through := throughPointer(value, pointerPath); through && !goProvides(rel) {
-			out = append(out, key+" "+value+" names "+rel+" through the pointer, which this runtime does not provide")
-		}
+	value, _ := record.Get(document, "relayExecutable").(string)
+	if rel, through := throughPointer(value, pointerPath); through && !goProvides(rel) {
+		out = append(out, "relayExecutable "+value+" names "+rel+" through the pointer, which this runtime does not provide")
 	}
 	return out
 }

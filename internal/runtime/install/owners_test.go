@@ -12,8 +12,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/golden"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 )
 
@@ -104,9 +106,9 @@ func (h *host) hookOptions() install.HookOptions {
 		MarkerRoot: filepath.Join(h.home, "markers"), JournalRoot: filepath.Join(h.home, "journal")}
 }
 
-// hook --owner plugin writes settings the Go hook accepts, naming the relay and the Go adapter
-// through the pointer with /usr/bin/env as the interpreter; it refuses a user-owned registration
-// in the hook file, the settings override, an over-long budget and the retired user owner.
+// hook --owner plugin writes settings the Go hook accepts, naming the relay through the pointer
+// and no adapter (decision 66); it refuses a user-owned registration in the hook file, an
+// over-long budget and the retired user owner.
 func TestHookWritesTheGoSettingsAndRefusesASecondOwner(t *testing.T) {
 	h := newHost(t)
 	result, code := install.Hook(context.Background(), h.options(), h.hookOptions())
@@ -118,7 +120,7 @@ func TestHookWritesTheGoSettingsAndRefusesASecondOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := readFile(t, path); got != string(record.Encode(document)) || !strings.Contains(got, `"adapterInterpreter": "/usr/bin/env"`) || !strings.Contains(got, filepath.Join(h.dest, "current", "bin", "crw-completion-hook")) {
+	if got := readFile(t, path); got != string(record.Encode(document)) || strings.Contains(got, "adapterInterpreter") || strings.Contains(got, "adapterEntryPoint") || !strings.Contains(got, filepath.Join(h.dest, "current", "bin", "codex-session-relay")) {
 		t.Fatalf("settings:\n%s", got)
 	}
 	if again, code := install.Hook(context.Background(), h.options(), h.hookOptions()); code != install.OK || at(again, "settings", "outcome") != install.ConfigUnchanged {
@@ -131,11 +133,6 @@ func TestHookWritesTheGoSettingsAndRefusesASecondOwner(t *testing.T) {
 		t.Fatalf("a user-owned registration: exit %d\n%s", code, golden.Canon(refused))
 	}
 	os.Remove(filepath.Join(other.codex, "hooks.json"))
-	o := other.options()
-	o.Env = append(o.Env, install.SettingsOverride+"=/elsewhere.json")
-	if _, code := install.Hook(context.Background(), o, other.hookOptions()); code != install.Usage {
-		t.Fatalf("the settings override: exit %d", code)
-	}
 	long := other.hookOptions()
 	long.GuardTimeout = 8
 	if _, code := install.Hook(context.Background(), other.options(), long); code != install.Usage {
@@ -148,6 +145,54 @@ func TestHookWritesTheGoSettingsAndRefusesASecondOwner(t *testing.T) {
 	}
 	if _, err := os.Lstat(filepath.Join(other.codex, install.SettingsName)); !os.IsNotExist(err) {
 		t.Fatal("a refusal wrote settings")
+	}
+}
+
+// A host's settings written before decision 66 carry adapterInterpreter and adapterEntryPoint
+// and another issue as installedBy: hook --owner plugin rewrites them without those keys
+// (config_replaced), a dry run saying so and writing nothing; a document differing by anything
+// else (another marker root) still answers config_differs.
+func TestHookRewritesSettingsThatDifferOnlyByTheRetiredKeys(t *testing.T) {
+	h := newHost(t)
+	path := filepath.Join(h.codex, install.SettingsName)
+	written := h.goEraSettings(t)
+	decoded, err := reading.Decode([]byte(written))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var retired record.Object
+	for _, f := range golden.Obj(decoded) {
+		if f.Key == "installedBy" {
+			f.Value = "CRW-100"
+		}
+		retired = append(retired, f)
+		if f.Key == "owner" {
+			retired = append(retired, contract.Field{Key: "adapterInterpreter", Value: "/usr/bin/env"}, contract.Field{Key: "adapterEntryPoint", Value: filepath.Join(h.dest, "current", "bin", "crw-completion-hook")})
+		}
+	}
+	old := string(record.Encode(retired))
+	write(t, path, old)
+	dry := h.hookOptions()
+	dry.DryRun = true
+	if result, code := install.Hook(context.Background(), h.options(), dry); code != install.OK || at(result, "settings", "outcome") != install.ConfigWouldCreate ||
+		!strings.Contains(text(at(result, "settings", "detail")), "only by the retired keys (adapterEntryPoint, adapterInterpreter)") || readFile(t, path) != old {
+		t.Fatalf("dry run: exit %d\n%s", code, golden.Canon(result))
+	}
+	result, code := install.Hook(context.Background(), h.options(), h.hookOptions())
+	if code != install.OK || at(result, "settings", "outcome") != install.ConfigReplaced || golden.Canon(at(result, "settings", "retiredFields")) != `["adapterEntryPoint","adapterInterpreter"]` {
+		t.Fatalf("exit %d\n%s", code, golden.Canon(result))
+	}
+	if got := readFile(t, path); got != written {
+		t.Fatalf("settings:\n%s\nwant\n%s", got, written)
+	}
+
+	moded := strings.Replace(old, filepath.Join(h.home, "markers"), filepath.Join(h.home, "other-markers"), 1)
+	if moded == old {
+		t.Fatal("the settings record no marker root")
+	}
+	write(t, path, moded)
+	if result, code := install.Hook(context.Background(), h.options(), h.hookOptions()); code == install.OK || at(result, "settings", "outcome") != install.ConfigDiffers || readFile(t, path) != moded {
+		t.Fatalf("another marker root: exit %d\n%s", code, golden.Canon(result))
 	}
 }
 

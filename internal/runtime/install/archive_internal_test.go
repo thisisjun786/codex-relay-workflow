@@ -69,7 +69,6 @@ func TestAnArchiveCannotPlantControlData(t *testing.T) {
 	links := []entry{
 		{tar.Header{Name: "codex-session-relay", Linkname: Binary, Typeflag: tar.TypeSymlink}, ""},
 		{tar.Header{Name: "codex-thread-bridge", Linkname: Binary, Typeflag: tar.TypeSymlink}, ""},
-		{tar.Header{Name: "crw-completion-hook", Linkname: Binary, Typeflag: tar.TypeSymlink}, ""},
 	}
 	release := append([]entry{
 		{tar.Header{Name: "LICENSE", Typeflag: tar.TypeReg}, "MIT\n"},
@@ -126,7 +125,6 @@ func TestAnOversizedOrShortEntryIsRefusedBeforeAnythingIsWritten(t *testing.T) {
 		{tar.Header{Name: "crw", Mode: 0o755, Typeflag: tar.TypeReg}, "\x7fELF crw"},
 		{tar.Header{Name: "codex-session-relay", Linkname: Binary, Typeflag: tar.TypeSymlink}, ""},
 		{tar.Header{Name: "codex-thread-bridge", Linkname: Binary, Typeflag: tar.TypeSymlink}, ""},
-		{tar.Header{Name: "crw-completion-hook", Linkname: Binary, Typeflag: tar.TypeSymlink}, ""},
 	}
 	for label, c := range map[string]struct {
 		raw  []byte

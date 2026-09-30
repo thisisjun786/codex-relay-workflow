@@ -10,8 +10,8 @@ import (
 )
 
 // The definition names the two components by their console scripts, each with a licence that is
-// in the checkout, and the links the installer places beside crw are those console scripts and
-// the completion hook's entry point, in that order. It carries no per-target digest, so no build
+// in the checkout, and the links the installer places beside crw are those console scripts, in
+// that order (the completion hook's entry point left them, decision 66). It carries no per-target digest, so no build
 // has to regenerate it.
 func TestDefinitionNamesTheComponentsTheInstallerPlaces(t *testing.T) {
 	if definition.Version != 1 {
@@ -32,7 +32,7 @@ func TestDefinitionNamesTheComponentsTheInstallerPlaces(t *testing.T) {
 		t.Errorf("the bridge is identified by %q", bridge.IdentityTool)
 	}
 	links := definition.Links()
-	if len(links) != 3 || links[0] != "codex-session-relay" || links[1] != "codex-thread-bridge" || links[2] != "crw-completion-hook" {
+	if len(links) != 2 || links[0] != "codex-session-relay" || links[1] != "codex-thread-bridge" {
 		t.Fatalf("links %v", links)
 	}
 }

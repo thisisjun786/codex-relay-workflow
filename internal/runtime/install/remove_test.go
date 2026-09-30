@@ -38,8 +38,8 @@ func listed(list []any, want any) bool {
 // name is still in use while a registration the host reads names a path inside it: Codex starts
 // that path afresh in each new session, so nothing shows in the process table between sessions.
 // Remove refuses it for every surface the host reads - the bridge record, the Stop settings'
-// relayExecutable, adapterEntryPoint and adapterInterpreter (named inside the directory though
-// the link resolves outside it), config.toml's mcp_servers commands and their arguments,
+// relayExecutable (named inside the directory though the link resolves outside it),
+// config.toml's mcp_servers commands and their arguments,
 // hooks.json Stop commands and the settings document such a command names, and the launcher
 // copy - and when a registration cannot be read. Each refusal names the registration and
 // leaves the directory and its install entries in place; once nothing names it, it is removed.
@@ -69,11 +69,10 @@ func TestRemoveRefusesARuntimeARegistrationStillNames(t *testing.T) {
 	}{
 		{"the plugin bridge record", old, bridgeRecord, `{"bridgeExecutable": "` + filepath.Join(old, "bin", "codex-thread-bridge") + `", "owner": "plugin", "recordVersion": 1, "serverName": "codex-thread-bridge"}`, bridgeRecord, "bridgeExecutable", false},
 		{"the Stop settings' relay", old, settings, `{"configVersion": 1, "owner": "user", "relayExecutable": "` + filepath.Join(old, "bin", "codex-session-relay") + `"}`, settings, "relayExecutable", false},
-		{"the Stop settings' adapter", old, settings, `{"adapterEntryPoint": "` + filepath.Join(old, "bin", "crw-completion-hook") + `", "adapterInterpreter": "/usr/bin/env", "configVersion": 1, "owner": "plugin"}`, settings, "adapterEntryPoint", false},
-		{"an interpreter named inside it that resolves outside", other, settings, `{"adapterEntryPoint": "/nonexistent/completion_hook.py", "adapterInterpreter": "` + filepath.Join(other, "bin", "python3") + `", "configVersion": 1, "owner": "plugin"}`, settings, "adapterInterpreter", false},
+		{"a relay named inside it that resolves outside", other, settings, `{"configVersion": 1, "owner": "user", "relayExecutable": "` + filepath.Join(other, "bin", "python3") + `"}`, settings, "relayExecutable", false},
 		{"a config.toml command", other, config, "[mcp_servers.bridge]\ncommand = \"" + filepath.Join(other, "bin", "codex-thread-bridge") + "\"\n", config, "mcp_servers.bridge", false},
 		{"a config.toml argument", old, config, "[mcp_servers.bridge]\ncommand = \"/usr/bin/env\"\nargs = [\"" + filepath.Join(old, "bin", "codex-thread-bridge") + "\"]\n", config, "mcp_servers.bridge", false},
-		{"a hooks.json Stop command", old, hooks, stopHooks(filepath.Join(old, "bin", "crw-completion-hook") + " " + settings), hooks, "hooks.Stop[0].hooks[0].command", false},
+		{"a hooks.json Stop command", old, hooks, stopHooks(filepath.Join(old, "bin", "crw") + " hook --plugin-launch"), hooks, "hooks.Stop[0].hooks[0].command", false},
 		{"the settings a Stop command names", old, elsewhere, `{"configVersion": 1, "owner": "user", "relayExecutable": "` + filepath.Join(old, "bin", "codex-session-relay") + `"}`, elsewhere, "relayExecutable", false},
 		{"the launcher copy", old, launcher, filepath.Join(old, "LICENSE"), launcher, "file", true},
 	}

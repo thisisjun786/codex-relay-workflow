@@ -44,10 +44,11 @@ func budgetComplaints(guard, registered int64) []string {
 }
 
 // Hook is `crw install hook --owner plugin`: write the settings the plugin's declared Stop hook
-// (and every legacy launcher a cached turn still runs) reads, with the relay and the Go adapter
-// named through the owned pointer and adapterInterpreter /usr/bin/env. It registers nothing:
-// the plugin package declares the registration. It places no launcher file. Settings already
-// there that say something else answer config_differs with the fields, and nothing is written.
+// reads, with the relay named through the owned pointer. It registers nothing: the plugin package
+// declares the registration. It places no launcher file. Settings already there that say
+// something else answer config_differs with the fields, and nothing is written, but for settings
+// that differ only by the retired adapter keys and installedBy, which are rewritten without them
+// (config_replaced).
 func Hook(ctx context.Context, o Options, h HookOptions) (Object, int) {
 	hookFile := filepath.Join(o.CodexHome, "hooks.json")
 	base := Object{field("command", "hook"), field("adapter", "completion"), field("owner", h.Owner), field("hookFile", hookFile)}
@@ -66,9 +67,6 @@ func Hook(ctx context.Context, o Options, h HookOptions) (Object, int) {
 		complaints = append(complaints, "this adapter implements the Stop contract and has no decision for "+event)
 	}
 	complaints = append(complaints, budgetComplaints(h.GuardTimeout, h.Timeout)...)
-	if override := o.Env.Get(SettingsOverride); override != "" {
-		complaints = append(complaints, SettingsOverride+" is set to "+override+", and a plugin-owned registration carries no settings argument: the hook rediscovers the path at every Stop from the Codex home. Unset it so the settings land where the hook looks")
-	}
 	mode := h.Mode
 	if mode == "" {
 		mode = hook.Observe

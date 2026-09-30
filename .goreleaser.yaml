@@ -32,8 +32,6 @@ builds:
           dir: "{{ dir .Path }}"
         - cmd: ln -sfn crw codex-thread-bridge
           dir: "{{ dir .Path }}"
-        - cmd: ln -sfn crw crw-completion-hook
-          dir: "{{ dir .Path }}"
 
 archives:
   - id: crw
@@ -44,8 +42,6 @@ archives:
       - src: "dist/crw_{{ .Os }}_{{ .Arch }}*/codex-session-relay"
         strip_parent: true
       - src: "dist/crw_{{ .Os }}_{{ .Arch }}*/codex-thread-bridge"
-        strip_parent: true
-      - src: "dist/crw_{{ .Os }}_{{ .Arch }}*/crw-completion-hook"
         strip_parent: true
       - LICENSE
       # MIT provenance of the ported bridge.

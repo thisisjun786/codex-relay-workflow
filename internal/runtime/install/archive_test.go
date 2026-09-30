@@ -118,7 +118,7 @@ func TestAnArchiveCarryingControlDataIsNotInstalled(t *testing.T) {
 	for _, planted := range []string{".crw-staging-lock", ".crw-staging-claim.json.crw-lock"} {
 		headers := []*tar.Header{{Name: "crw", Mode: 0o755, Size: int64(len(raw)), Typeflag: tar.TypeReg}}
 		bodies := [][]byte{raw}
-		for _, link := range []string{"codex-session-relay", "codex-thread-bridge", "crw-completion-hook"} {
+		for _, link := range []string{"codex-session-relay", "codex-thread-bridge"} {
 			headers = append(headers, &tar.Header{Name: link, Linkname: "crw", Typeflag: tar.TypeSymlink})
 			bodies = append(bodies, nil)
 		}
@@ -209,7 +209,7 @@ func TestAnOversizedOrShortEntryIsNotInstalled(t *testing.T) {
 			}
 		}
 		add(&tar.Header{Name: "crw", Mode: 0o755, Size: int64(len(raw)), Typeflag: tar.TypeReg}, raw)
-		for _, link := range []string{"codex-session-relay", "codex-thread-bridge", "crw-completion-hook"} {
+		for _, link := range []string{"codex-session-relay", "codex-thread-bridge"} {
 			add(&tar.Header{Name: link, Linkname: "crw", Typeflag: tar.TypeSymlink}, nil)
 		}
 		// The last entry's body stops where the archive ends, short of what its header declares.

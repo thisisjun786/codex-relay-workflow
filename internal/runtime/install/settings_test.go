@@ -5,6 +5,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/golden"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 )
 
@@ -38,9 +39,9 @@ func TestBridgeRecordBytesArePythons(t *testing.T) {
 	}
 }
 
-// The plugin-owned Stop settings are completion.configuration's bytes with adapterInterpreter
-// /usr/bin/env and the Go hook through the pointer as adapterEntryPoint, and both the Python
-// reader and the Go hook's own reader accept them.
+// The plugin-owned Stop settings are completion.configuration's bytes without the retired
+// adapterInterpreter and adapterEntryPoint (decision 66), and both the Python reader and the
+// Go hook's own reader accept them.
 func TestHookSettingsBytesArePythons(t *testing.T) {
 	for _, f := range golden.Obj(record.Get(golden.Obj(golden.Section(t, "settingsDocuments")), "hookSettings")) {
 		given := golden.Obj(record.Get(golden.Obj(f.Value), "inputs"))
@@ -53,7 +54,18 @@ func TestHookSettingsBytesArePythons(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got, want := string(record.Encode(document)), text(record.Get(golden.Obj(f.Value), "bytes")); got != want {
+		recorded, err := reading.Decode([]byte(text(record.Get(golden.Obj(f.Value), "bytes"))))
+		if err != nil {
+			t.Fatal(err)
+		}
+		retired := golden.Obj(recorded)
+		for _, key := range []string{"adapterInterpreter", "adapterEntryPoint"} {
+			if record.Get(retired, key) == nil {
+				t.Fatalf("%s: the recording has no %s", f.Key, key)
+			}
+			retired = record.Delete(retired, key)
+		}
+		if got, want := string(record.Encode(document)), string(record.Encode(retired)); got != want {
 			t.Errorf("%s:\n%s\nwant\n%s", f.Key, got, want)
 		}
 		if len(golden.List(record.Get(golden.Obj(f.Value), "complaints"))) != 0 || len(install.Complaints(document)) != 0 {

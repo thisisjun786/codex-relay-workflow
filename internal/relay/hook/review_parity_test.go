@@ -29,13 +29,15 @@ func Test33ReviewD7(t *testing.T)      { reviewPython(t, "D7") }
 func Test33ReviewD9Large(t *testing.T) { reviewPython(t, "D9") }
 func Test33ReviewD10(t *testing.T)     { reviewPython(t, "D10") }
 
-// The settings path follows the override variable and otherwise the Codex home, as the retired
-// status reading's configuration cell named it (completion.status; recorded).
+// The settings path is the Codex home's, as the retired status reading's configuration cell named
+// it (completion.status; recorded).
 func Test33ReviewD1Status(t *testing.T) {
 	home := t.TempDir()
-	for _, override := range []string{"", filepath.Join(home, "override.json")} {
-		env := map[string]string{"CODEX_HOME": home, configEnv: override}
-		path, err := configurationPath("", env, "")
+	// The settings override Python's status read (CRW_COMPLETION_HOOK_CONFIG) is retired, decision
+	// 66; the reading with it unset is compared.
+	for _, override := range []string{""} {
+		env := map[string]string{"CODEX_HOME": home, "CRW_COMPLETION_HOOK_CONFIG": override}
+		path, err := configurationPath("", env)
 		if err != nil {
 			t.Fatal(err)
 		}

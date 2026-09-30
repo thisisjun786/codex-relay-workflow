@@ -45,8 +45,8 @@ After publication creates the source release and advances main, the `release-go`
 job checks that the tag identifies the released commit and attaches the binaries
 to that same release. It does not create the release, edit its notes, or move
 any branch. Each archive `crw_<version>_<os>_<arch>.tar.gz` holds the `crw`
-binary, the compatibility symlinks `codex-session-relay`, `codex-thread-bridge`
-and `crw-completion-hook`, the repository `LICENSE`, and
+binary, the compatibility symlinks `codex-session-relay` and `codex-thread-bridge`
+(the `crw-completion-hook` link was retired by decision 66), the repository `LICENSE`, and
 `packages/codex-thread-bridge/LICENSE` for the bridge's MIT provenance.
 `SHA256SUMS` lists the digest of every archive. Binaries are built with
 `CGO_ENABLED=0` whatever the caller's environment says; they are not signed
