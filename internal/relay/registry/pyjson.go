@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 )
 
@@ -186,7 +187,11 @@ func writeDumps(b *strings.Builder, value any, sortKeys bool) {
 
 func writeJSONString(b *strings.Builder, s string) {
 	b.WriteByte('"')
-	for _, r := range s {
+	// A byte that is not UTF-8 is its surrogate escape and a WTF-8 surrogate its code point
+	// (settings.CodePoint), written as json.dumps writes a lone surrogate, never as U+FFFD.
+	for i := 0; i < len(s); {
+		r, size := settings.CodePoint(s, i)
+		i += size
 		switch {
 		case r == '"':
 			b.WriteString(`\"`)
@@ -318,35 +323,9 @@ func pyRepr(value any) string {
 	}
 }
 
-// pyStr is repr() of a str.
-func pyStr(s string) string {
-	quote := "'"
-	if strings.Contains(s, "'") && !strings.Contains(s, `"`) {
-		quote = `"`
-	}
-	var b strings.Builder
-	b.WriteString(quote)
-	for _, r := range s {
-		switch {
-		case r == '\\':
-			b.WriteString(`\\`)
-		case string(r) == quote:
-			b.WriteString(`\` + quote)
-		case r == '\n':
-			b.WriteString(`\n`)
-		case r == '\r':
-			b.WriteString(`\r`)
-		case r == '\t':
-			b.WriteString(`\t`)
-		case r < 0x20 || r == 0x7f:
-			fmt.Fprintf(&b, `\x%02x`, r)
-		default:
-			b.WriteRune(r)
-		}
-	}
-	b.WriteString(quote)
-	return b.String()
-}
+// pyStr is repr() of a str (settings.Repr: Python's quote, its escapes of what str.isprintable()
+// refuses, and a lone surrogate as \udXXX).
+func pyStr(s string) string { return settings.Repr(s) }
 
 // textList is settings._text_list: a list whose every member is text.
 func textList(value any) bool {

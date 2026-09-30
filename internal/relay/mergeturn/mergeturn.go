@@ -54,6 +54,11 @@ func TargetKey(repository, base string) (string, error) {
 			return "", err
 		}
 	}
+	// coordination.derive hashes the joined fields, and str.encode("utf-8") raises for one holding
+	// a surrogate escape (an argv byte that is not UTF-8) before the request reads anything.
+	if err := store.EncodeUTF8(repository + "|" + base); err != nil {
+		return "", err
+	}
 	return key("tgt", repository, base), nil
 }
 func TurnID(target, holder string, tenure int64) string {

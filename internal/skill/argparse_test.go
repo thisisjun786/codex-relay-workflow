@@ -119,6 +119,14 @@ func TestSkillArgparseMatchesLivePython(t *testing.T) {
 			}
 		}
 	}
+	// An argument argparse echoes back is repr() of the str Python holds for it: the quote repr
+	// picks, a character str.isprintable() refuses escaped, and an argv byte that is not UTF-8 as
+	// the surrogate Python decodes it to.
+	for family := range tests {
+		for _, text := range []string{"it's", "x\U000000a0y", "x\U00002028y", "x\xffy"} {
+			tests[family] = append(tests[family], argparseCase{"invalid choice repr", []string{text}}, argparseCase{"ignored explicit argument repr", []string{"--help=" + text}})
+		}
+	}
 	for family, cases := range tests {
 		for _, test := range cases {
 			t.Run(family+"/"+test.name, func(t *testing.T) {

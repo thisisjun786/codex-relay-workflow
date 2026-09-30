@@ -233,7 +233,11 @@ func Test25_DSP10_a_replaced_database_is_unreadable_not_empty(t *testing.T) {
 		return store.RowsRead{Readable: true, Detail: "the database was replaced while it was being read"}
 	}
 	project := "PROJ-CRW-163"
-	answer := plain(t, readDispositions(ctx(), store.StateSelection{Path: t.TempDir()}, &project, nil, replaced)).(map[string]any)
+	report, err := readDispositions(ctx(), store.StateSelection{Path: t.TempDir()}, &project, nil, replaced)
+	if err != nil {
+		t.Fatal(err)
+	}
+	answer := plain(t, report).(map[string]any)
 	if answer["readable"] != false || len(answer["children"].([]any)) != 0 || answer["detail"] != "the database was replaced while it was being read" {
 		t.Fatal(answer)
 	}

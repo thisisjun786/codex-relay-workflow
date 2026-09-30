@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/sys/unix"
 	"modernc.org/sqlite"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
@@ -183,7 +184,7 @@ func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ 
 		return nil, fmt.Errorf("driver identity: %w", err)
 	}
 	name := "crw-store-" + hex.EncodeToString(driverID)
-	sql.Register(name, d)
+	sql.Register(name, textGuard{d})
 	u := url.URL{Scheme: "file", Path: resolved}
 	q := u.Query()
 	q.Set("mode", "rw")
@@ -262,7 +263,7 @@ func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ 
 func refuseLiveState(path string) (string, error) {
 	absolute := path
 	if !filepath.IsAbs(path) {
-		cwd, err := os.Getwd()
+		cwd, err := unix.Getwd()
 		if err != nil {
 			return "", fmt.Errorf("absolute database path: %w", err)
 		}
@@ -275,7 +276,12 @@ func refuseLiveState(path string) (string, error) {
 	if os.Getenv("CRW_ALLOW_LIVE_STATE") == "1" {
 		return resolved, nil
 	}
-	lives := []string{filepath.Join(homeDir(), ".local", "state", "codex-session-relay")}
+	// The home default is Path.home()'s, as discovery reads it; a home nothing answers fails closed.
+	home, err := homeDir()
+	if err != nil {
+		return "", fmt.Errorf("live state: %w", err)
+	}
+	lives := []string{filepath.Join(home, ".local", "state", "codex-session-relay")}
 	if state := os.Getenv("XDG_STATE_HOME"); state != "" {
 		lives = append(lives, filepath.Join(state, "codex-session-relay"))
 	}
@@ -311,7 +317,6 @@ func randomBytes(size int) ([]byte, error) {
 	}
 	return b, nil
 }
-func homeDir() string { home, _ := os.UserHomeDir(); return home }
 
 func (s *Store) Close() error { return errors.Join(s.DB.Close(), s.admission.Close()) }
 

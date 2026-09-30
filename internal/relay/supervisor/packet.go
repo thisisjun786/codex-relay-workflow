@@ -6,11 +6,11 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
-	"path/filepath"
 	"strings"
 	"time"
 
 	py "github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // Subset ported for todo 24; todo 23 owns and extends packet composition.
@@ -64,7 +64,7 @@ func programCommand(program string, parts ...string) string {
 	return program + " " + command(parts...)
 }
 func (c *Channel) command(parts ...string) string {
-	head := []string{"--state", filepath.Dir(c.Store.Path)}
+	head := []string{"--state", store.PathlibParent(c.Store.Path)}
 	return programCommand(c.Program, append(head, parts...)...)
 }
 func reachUnmeasured() map[string]any {

@@ -185,7 +185,7 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 	if err != nil {
 		return 0
 	}
-	record := Object{{Key: "recordVersion", Value: int64(RecordVersion)}, {Key: "event", Value: "Stop"}, {Key: "at", Value: now()}, {Key: "adapterOutcome", Value: nil}, {Key: "processEnding", Value: nil}, {Key: "stdoutReading", Value: nil}, {Key: "guardState", Value: nil}, {Key: "guardDecision", Value: nil}, {Key: "guardMode", Value: nil}, {Key: "assignmentId", Value: nil}, {Key: "guardRecordedAs", Value: nil}, {Key: "held", Value: false}, {Key: "eventKey", Value: nil}, {Key: "eventIdentity", Value: nil}, {Key: "identityScanMs", Value: nil}, {Key: "acceptance", Value: nil}, {Key: "acceptedAs", Value: nil}, {Key: "guardInvoked", Value: false}, {Key: "configuration", Value: path}}
+	record := Object{{Key: "recordVersion", Value: int64(RecordVersion)}, {Key: "event", Value: "Stop"}, {Key: "at", Value: now()}, {Key: "adapterOutcome", Value: nil}, {Key: "processEnding", Value: nil}, {Key: "stdoutReading", Value: nil}, {Key: "guardState", Value: nil}, {Key: "guardDecision", Value: nil}, {Key: "guardMode", Value: nil}, {Key: "assignmentId", Value: nil}, {Key: "guardRecordedAs", Value: nil}, {Key: "held", Value: false}, {Key: "eventKey", Value: nil}, {Key: "eventIdentity", Value: nil}, {Key: "identityScanMs", Value: nil}, {Key: "acceptance", Value: nil}, {Key: "acceptedAs", Value: nil}, {Key: "guardInvoked", Value: false}, {Key: "configuration", Value: store.FSDecode(path)}}
 	claimed := ""
 	finish := func(outcome string, detail any, answer string) {
 		record = set(record, "adapterOutcome", outcome)
@@ -315,7 +315,7 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 	if identified.key == "" {
 		record = set(record, "acceptance", "unestablished")
 	} else {
-		host, _ := filepath.Abs(filepath.Join(append([]string{codexHome()}, HostLedgerParts...)...))
+		host, _ := hostLedger()
 		type claimResult struct {
 			acceptance string
 			where      any

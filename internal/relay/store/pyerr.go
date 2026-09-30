@@ -153,6 +153,9 @@ var sqliteCodeSuffix = regexp.MustCompile(` \(\d+\)( \(SQLITE_BUSY\))?$`)
 // for the sqlite3 module: the class chosen from the primary result code, and the message
 // SQLite itself reported without the driver's "errstr: " prefix and " (code)" suffix.
 func PythonSQLiteError(err error) string {
+	if encode := EncodeError(err); encode != nil {
+		return encode.HostDetail()
+	}
 	var failure *sqlite.Error
 	if !errors.As(err, &failure) {
 		return PythonOSError(err)

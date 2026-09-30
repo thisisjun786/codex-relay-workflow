@@ -82,3 +82,18 @@ func TestEmit_preservesNestedOrderAndPythonEscapes_whenObjectIsNested(t *testing
 		t.Fatalf("want %q, got %q", want, output.String())
 	}
 }
+
+// A str Python holds with a lone surrogate is written as json.dumps writes it, "\udcff": an argv
+// byte that is not UTF-8 (os.fsdecode's surrogate escape) and a WTF-8 surrogate (a "\udXXX" JSON
+// escape) alike, never as U+FFFD. The want is CPython 3.14's json.dumps(..., indent=2) of
+// [os.fsdecode(b"x\xffy"), "a\ud800b", os.fsdecode(b"\xfe\xff"), "\U0001f600"].
+func TestEmitSpellsALoneSurrogateAsJsonDumpsDoes(t *testing.T) {
+	var out bytes.Buffer
+	if err := contract.Emit(&out, []any{"x\xffy", "a\xed\xa0\x80b", "\xfe\xff", "\U0001f600"}); err != nil {
+		t.Fatal(err)
+	}
+	want := "[\n  \"x\\udcffy\",\n  \"a\\ud800b\",\n  \"\\udcfe\\udcff\",\n  \"\\ud83d\\ude00\"\n]\n"
+	if out.String() != want {
+		t.Errorf("Emit wrote\n%s\njson.dumps writes\n%s", out.String(), want)
+	}
+}

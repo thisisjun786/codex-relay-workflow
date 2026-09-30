@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/user"
 	"path/filepath"
-	"sort"
 	"strings"
 	"syscall"
+
+	"golang.org/x/sys/unix"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 )
 
 type StateSelection struct {
@@ -25,7 +27,7 @@ func canonicalSocket(path string) (string, error) {
 		return "", err
 	}
 	if !filepath.IsAbs(expanded) {
-		cwd, err := os.Getwd()
+		cwd, err := unix.Getwd()
 		if err != nil {
 			return "", err
 		}
@@ -34,29 +36,119 @@ func canonicalSocket(path string) (string, error) {
 	return resolvePath(expanded)
 }
 
-func resolvePath(path string) (string, error) { return resolvePathDepth(path, 0, true) }
+func resolvePath(path string) (string, error) { return resolvePathDepth(path, 0) }
 
-// resolveLoosely is Path.resolve() as ownership.mirror calls it (os.path.realpath with
-// strict=False): a component that cannot be examined (EACCES, ENOTDIR, an unreadable link) is
-// kept as spelled, where resolvePath fails.
+// resolveLoosely is Path.resolve() as ownership.mirror calls it (Realpath), the path as given
+// when the working directory a relative one needs cannot be read.
 func resolveLoosely(path string) string {
-	resolved, err := resolvePathDepth(path, 0, false)
+	resolved, err := Realpath(path)
 	if err != nil {
 		return path
 	}
 	return resolved
 }
 
-func resolvePathDepth(path string, depth int, strict bool) (string, error) {
-	if depth > 40 {
-		if !strict {
-			return pathlibSpelling(path), nil
+// Realpath is os.path.realpath(path) with strict=False, which Path(path).resolve() is: each
+// component is examined from the left and a symbolic link is followed where it stands, before a
+// later ".." is applied. A component that cannot be examined (EACCES, ENOENT, ENOTDIR,
+// ENAMETOOLONG, an unreadable link) is kept as spelled and the walk goes on beneath it, and a link
+// met again before it has resolved (a loop) is kept as spelled, as CPython 3.13 and 3.14 keep it.
+// The only failures are the working directory's (os.getcwd) for a relative path and an embedded
+// NUL, which Python's lstat refuses with ValueError.
+func Realpath(path string) (string, error) {
+	if strings.IndexByte(path, 0) >= 0 {
+		return "", errors.New("ValueError: embedded null byte")
+	}
+	// rest is Python's stack of unresolved parts, top last. A marker entry stands for the None
+	// realpath pushes above a link's own path: popping it records what the link resolved to.
+	type entry struct {
+		name   string
+		marker bool
+	}
+	fields := strings.Split(path, "/")
+	rest := make([]entry, 0, len(fields))
+	for i := len(fields) - 1; i >= 0; i-- {
+		rest = append(rest, entry{name: fields[i]})
+	}
+	count := len(fields)
+	resolved := "/"
+	if !strings.HasPrefix(path, "/") {
+		cwd, err := unix.Getwd()
+		if err != nil {
+			return "", err
 		}
+		resolved = cwd
+	}
+	// seen maps a link to what it resolved to; a link present but not yet done is being resolved.
+	type link struct {
+		resolved string
+		done     bool
+	}
+	seen := map[string]link{}
+	for count > 0 {
+		top := rest[len(rest)-1]
+		rest = rest[:len(rest)-1]
+		if top.marker {
+			owner := rest[len(rest)-1]
+			rest = rest[:len(rest)-1]
+			seen[owner.name] = link{resolved: resolved, done: true}
+			continue
+		}
+		count--
+		name := top.name
+		if name == "" || name == "." {
+			continue
+		}
+		if name == ".." {
+			if cut := strings.LastIndex(resolved, "/"); cut > 0 {
+				resolved = resolved[:cut]
+			} else {
+				resolved = "/"
+			}
+			continue
+		}
+		next := resolved + "/" + name
+		if resolved == "/" {
+			next = "/" + name
+		}
+		info, err := os.Lstat(next)
+		if err != nil || info.Mode()&os.ModeSymlink == 0 {
+			resolved = next
+			continue
+		}
+		if known, ok := seen[next]; ok {
+			resolved = next
+			if known.done {
+				resolved = known.resolved
+			}
+			continue
+		}
+		target, err := os.Readlink(next)
+		if err != nil {
+			resolved = next
+			continue
+		}
+		if strings.HasPrefix(target, "/") {
+			resolved = "/"
+		}
+		seen[next] = link{}
+		rest = append(rest, entry{name: next}, entry{marker: true})
+		parts := strings.Split(target, "/")
+		for i := len(parts) - 1; i >= 0; i-- {
+			rest = append(rest, entry{name: parts[i]})
+		}
+		count += len(parts)
+	}
+	return resolved, nil
+}
+
+func resolvePathDepth(path string, depth int) (string, error) {
+	if depth > 40 {
 		return "", fmt.Errorf("too many symlinks resolving %q", path)
 	}
 	absolute := path
 	if !filepath.IsAbs(path) {
-		cwd, err := os.Getwd()
+		cwd, err := unix.Getwd()
 		if err != nil {
 			return "", err
 		}
@@ -76,7 +168,7 @@ func resolvePathDepth(path string, depth int, strict bool) (string, error) {
 		}
 		candidate := filepath.Join(resolved, part)
 		info, err := os.Lstat(candidate)
-		if os.IsNotExist(err) || err != nil && !strict {
+		if os.IsNotExist(err) {
 			resolved = candidate
 			continue
 		}
@@ -88,41 +180,22 @@ func resolvePathDepth(path string, depth int, strict bool) (string, error) {
 			continue
 		}
 		target, err := os.Readlink(candidate)
-		if err != nil && !strict {
-			resolved = candidate
-			continue
-		}
 		if err != nil {
 			return "", err
 		}
 		remaining := strings.Join(parts[i+1:], string(filepath.Separator))
 		if filepath.IsAbs(target) {
-			return resolvePathDepth(target+string(filepath.Separator)+remaining, depth+1, strict)
+			return resolvePathDepth(target+string(filepath.Separator)+remaining, depth+1)
 		}
-		return resolvePathDepth(resolved+string(filepath.Separator)+target+string(filepath.Separator)+remaining, depth+1, strict)
+		return resolvePathDepth(resolved+string(filepath.Separator)+target+string(filepath.Separator)+remaining, depth+1)
 	}
 	return resolved, nil
 }
 
-// pathlibSpelling matches str(Path(value)): collapse empty and dot components,
-// but leave parent components for the OS to traverse after symlink resolution.
-func pathlibSpelling(value string) string {
-	absolute := strings.HasPrefix(value, "/")
-	parts := make([]string, 0)
-	for _, part := range strings.Split(value, "/") {
-		if part != "" && part != "." {
-			parts = append(parts, part)
-		}
-	}
-	result := strings.Join(parts, "/")
-	if absolute {
-		return "/" + result
-	}
-	if result == "" {
-		return "."
-	}
-	return result
-}
+// pathlibSpelling is str(Path(value)): empty and dot components collapse, parent components stay
+// for the OS to traverse after symlink resolution, and exactly two leading slashes stay a root of
+// their own, as ownership.PathlibSpelling spells them.
+func pathlibSpelling(value string) string { return ownership.PathlibSpelling(value) }
 func socketHash(value string) string {
 	sum := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(sum[:8])
@@ -143,66 +216,85 @@ func absoluteExpanded(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if !filepath.IsAbs(expanded) {
-		cwd, err := os.Getwd()
+	return absolute(expanded)
+}
+
+// absolute is str(Path(path).absolute()): the working directory as the kernel names it
+// (os.getcwd, where os.Getwd prefers a $PWD that reaches it through a symbolic link) prefixed to a
+// relative path, then the pathlib spelling. Nothing is resolved and no ".." is folded.
+func absolute(path string) (string, error) {
+	if !strings.HasPrefix(path, "/") {
+		cwd, err := unix.Getwd()
 		if err != nil {
 			return "", err
 		}
-		expanded = cwd + "/" + expanded
+		path = ownership.JoinCwd(cwd, path)
 	}
-	return pathlibSpelling(expanded), nil
+	return pathlibSpelling(path), nil
 }
 
-// ErrNoHome is pathlib's RuntimeError("Could not determine home directory.") for an unknown ~user.
-var ErrNoHome = errors.New("could not determine home directory")
+// ErrNoHome is pathlib's RuntimeError("Could not determine home directory."): an unknown ~user,
+// or a ~ when HOME is unset and this user has no passwd entry.
+var ErrNoHome = ownership.ErrNoHome
 
+// homeDir is Path.home() (ownership.UserHome): HOME when it is set at all, an empty HOME being
+// the root, else the passwd entry.
+func homeDir() (string, error) { return ownership.UserHome("") }
+
+// expandUser is Path(path).expanduser() for a path whose first character is ~: the home
+// ownership.UserHome names, joined to the rest as pathlib joins components.
 func expandUser(path string) (string, error) {
 	if !strings.HasPrefix(path, "~") {
 		return path, nil
 	}
 	name, suffix, _ := strings.Cut(path[1:], "/")
-	home := homeDir()
-	if name != "" {
-		user, err := user.Lookup(name)
-		if err != nil {
-			return "", fmt.Errorf("cannot determine home directory for %q: %w: %w", name, ErrNoHome, err)
+	home, err := ownership.UserHome(name)
+	if err != nil {
+		if name != "" {
+			return "", fmt.Errorf("cannot determine home directory for %q: %w", name, err)
 		}
-		home = user.HomeDir
+		return "", fmt.Errorf("HOME is not set and this user's passwd entry could not be read: %w", err)
 	}
-	if suffix == "" {
+	if suffix = strings.TrimLeft(suffix, "/"); suffix == "" {
 		return home, nil
 	}
-	return home + "/" + suffix, nil
+	return strings.TrimSuffix(home, "/") + "/" + suffix, nil
 }
 func DiscoverStateDir(socket string) (StateSelection, error) {
 	base := os.Getenv("XDG_STATE_HOME")
 	source := "xdg"
 	detail := "XDG_STATE_HOME=" + base
 	if base == "" {
-		base = filepath.Join(homeDir(), ".local", "state")
+		home, err := homeDir()
+		if err != nil {
+			return StateSelection{}, err
+		}
+		base = pathlibSpelling(strings.TrimSuffix(home, "/") + "/.local/state")
 		source = "home"
 		detail = "default under " + base
 	}
-	base, err := absoluteExpanded(base)
+	absoluteBase, err := absoluteExpanded(base)
 	if err != nil {
 		return StateSelection{}, err
 	}
 	canonical := "default"
 	legacy := "default"
+	wanted := ""
 	if socket != "" {
-		canonicalPath, err := canonicalSocket(socket)
-		if err != nil {
+		if wanted, err = canonicalSocket(socket); err != nil {
 			return StateSelection{}, err
 		}
-		canonical = socketHash(canonicalPath)
+		canonical = socketHash(wanted)
 		expanded, err := expandUser(socket)
 		if err != nil {
 			return StateSelection{}, err
 		}
 		legacy = socketHash(pathlibSpelling(expanded))
 	}
-	root := base + "/codex-session-relay"
-	chosen := StateSelection{Path: root + "/" + canonical, Source: source, Detail: detail, SocketScope: canonical}
+	// Every directory is joined as pathlib joins, never through filepath.Join, which would fold the
+	// two leading slashes pathlib keeps as a root of their own.
+	root := PathlibChild(absoluteBase, "codex-session-relay")
+	chosen := StateSelection{Path: PathlibChild(root, canonical), Source: source, Detail: detail, SocketScope: canonical}
 	found, err := discoveryExists(chosen.DBPath())
 	if err != nil {
 		return chosen, err
@@ -211,8 +303,8 @@ func DiscoverStateDir(socket string) (StateSelection, error) {
 		return chosen, nil
 	}
 	if legacy != canonical {
-		previous := filepath.Join(root, legacy)
-		found, err := discoveryExists(filepath.Join(previous, "relay.sqlite3"))
+		previous := PathlibChild(root, legacy)
+		found, err := discoveryExists(previous + "/relay.sqlite3")
 		if err != nil {
 			return chosen, err
 		}
@@ -223,37 +315,16 @@ func DiscoverStateDir(socket string) (StateSelection, error) {
 			return chosen, nil
 		}
 	}
-	dirs, err := os.ReadDir(root)
-	if err != nil {
-		// Python stores_claiming_socket and stores_without_provenance treat
-		// every listing OSError as no candidates. Resolution remains eager;
-		// explicit --db-path does not bypass malformed override errors.
-		return chosen, nil
-	}
-	wanted := ""
-	if socket != "" {
-		wanted, err = canonicalSocket(socket)
-		if err != nil {
-			return chosen, err
-		}
-	}
-	for _, dir := range dirs {
-		if !dir.IsDir() || dir.Name() == canonical {
-			continue
-		}
-		path := filepath.Join(root, dir.Name())
-		if !exists(filepath.Join(path, "relay.sqlite3")) {
-			continue
-		}
-		recorded := storeSocket(filepath.Join(path, "relay.sqlite3"))
+	// One walk answers stores_claiming_socket and stores_without_provenance: nothing between them
+	// changes what either finds.
+	for _, path := range siblingStoreDirs(root, canonical) {
+		recorded := storeSocket(path + "/relay.sqlite3")
 		if wanted != "" && recorded == wanted {
 			chosen.Ambiguous = append(chosen.Ambiguous, path)
 		} else if recorded == "" {
 			chosen.Unidentified = append(chosen.Unidentified, path)
 		}
 	}
-	sort.Strings(chosen.Ambiguous)
-	sort.Strings(chosen.Unidentified)
 	if len(chosen.Ambiguous) == 1 {
 		chosen.Path = chosen.Ambiguous[0]
 		chosen.SocketScope = filepath.Base(chosen.Path)
@@ -272,6 +343,37 @@ func DiscoverStateDir(socket string) (StateSelection, error) {
 		chosen.Detail += fmt.Sprintf("; %d stores here record no socket", len(chosen.Unidentified))
 	}
 	return chosen, nil
+}
+
+// PathlibChild is str(Path(parent) / name) for a name holding no slash: the parent as pathlib
+// spells it, with two leading slashes kept as their own root, and "." dropped.
+func PathlibChild(parent, name string) string {
+	spelled := pathlibSpelling(parent)
+	switch {
+	case spelled == ".":
+		return name
+	case strings.HasSuffix(spelled, "/"):
+		return spelled + name
+	}
+	return spelled + "/" + name
+}
+
+// PathlibParent is str(Path(path).parent): the last component dropped from the pathlib spelling,
+// a root ("/" or "//") being its own parent and a single relative component having ".".
+func PathlibParent(path string) string {
+	spelled := pathlibSpelling(path)
+	cut := strings.LastIndex(spelled, "/")
+	switch {
+	case spelled == "/" || spelled == "//":
+		return spelled
+	case cut < 0:
+		return "."
+	case cut == 0:
+		return "/"
+	case cut == 1 && strings.HasPrefix(spelled, "//"):
+		return "//"
+	}
+	return spelled[:cut]
 }
 
 // pathlib.Path.exists suppresses absence/non-directory, but propagates access

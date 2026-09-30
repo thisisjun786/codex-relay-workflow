@@ -169,7 +169,11 @@ var linkageCommands = []command{
 		}},
 	{name: "linkage-down", options: []option{{name: "scope-kind", required: true, choices: []string{scopeInitiative, scopeProject, scopeIssue}}, {name: "scope", required: true}},
 		run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
-			return withEnforcement(r, r.Down(ctx, p.text("scope-kind"), p.text("scope"))), nil
+			answer, err := r.downRaising(ctx, p.text("scope-kind"), p.text("scope"))
+			if err != nil {
+				return nil, err
+			}
+			return withEnforcement(r, answer), nil
 		}},
 	{name: "linkage-up", options: []option{{name: "task"}, {name: "issue"}, {name: "relationship"}, {name: "scope"}},
 		exclusive: []string{"task", "issue", "relationship"}, precheck: linkageUpPrecheck, run: cmdLinkageUp},
@@ -182,7 +186,11 @@ var linkageCommands = []command{
 				q.QuotedRevision = sql.NullInt64{Int64: n.Int64(), Valid: true}
 				q.RevisionOutOfRange = !n.IsInt64()
 			}
-			return r.Counterpart(ctx, p.text("from-task"), p.text("to-task"), q), nil
+			answer, err := r.counterpartRaising(ctx, p.text("from-task"), p.text("to-task"), q)
+			if err != nil {
+				return nil, err
+			}
+			return answer, nil
 		}},
 }
 
@@ -221,8 +229,12 @@ func linkageUpPrecheck(p *parsed) error {
 
 // cmdLinkageUp is cli.cmd_linkage_up after linkageUpPrecheck.
 func cmdLinkageUp(ctx context.Context, r *Registry, p parsed) (any, error) {
-	return withEnforcement(r, r.Up(ctx, UpSelector{Task: p.optional("task"), Issue: p.optional("issue"),
-		Relationship: p.optional("relationship"), Scope: p.optional("scope")})), nil
+	answer, err := r.upRaising(ctx, UpSelector{Task: p.optional("task"), Issue: p.optional("issue"),
+		Relationship: p.optional("relationship"), Scope: p.optional("scope")})
+	if err != nil {
+		return nil, err
+	}
+	return withEnforcement(r, answer), nil
 }
 
 func init() { commands = append(commands, linkageCommands...) }

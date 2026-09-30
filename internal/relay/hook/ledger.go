@@ -11,9 +11,14 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 type Slot struct{ Day, ID string }
+
+// errUnencodable is os.fsencode's UnicodeEncodeError for a journal root holding a lone surrogate
+// other than U+DC80..U+DCFF: Python's writers catch it with OSError and write nothing.
+var errUnencodable = errors.New("the journal root holds a surrogate os.fsencode cannot encode")
 
 func NewSlot() (Slot, error) {
 	raw := make([]byte, 16)
@@ -77,14 +82,19 @@ func ClaimEvent(ctx context.Context, config Object, key string, identity, stop O
 	if root == "" {
 		return "unclaimable", nil
 	}
-	directory := filepath.Join(root, LedgerDirectory)
+	rootFS, encoded := fsencode(root)
+	if !encoded {
+		return "claim_failed", nil
+	}
+	directory := filepath.Join(rootFS, LedgerDirectory)
 	if ctx.Err() != nil {
 		return "claim_failed", nil
 	}
 	if err := os.MkdirAll(directory, 0777); err != nil {
 		return "claim_failed", nil
 	}
-	document := set(base, "claimedBy", Object{{Key: "pid", Value: os.Getpid()}, {Key: "attemptRow", Value: slot.Name()}, {Key: "hostLedger", Value: nullable(host)}})
+	// The host ledger is named as Python holds a path from the environment: os.fsdecode's str.
+	document := set(base, "claimedBy", Object{{Key: "pid", Value: os.Getpid()}, {Key: "attemptRow", Value: slot.Name()}, {Key: "hostLedger", Value: nullable(store.FSDecode(host))}})
 	// claim_event likewise returns ACCEPTED after a failed write, never unlinking.
 	created, err := createOnce(ctx, filepath.Join(directory, key+".json"), document, true)
 	name := LedgerDirectory + "/" + key + ".json"
@@ -111,6 +121,10 @@ func Journal(ctx context.Context, config, record Object, slot Slot) (string, err
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
+	root, encoded := fsencode(root)
+	if !encoded {
+		return "", errUnencodable
+	}
 	directory := filepath.Join(root, slot.Day)
 	if err := os.MkdirAll(directory, 0777); err != nil {
 		return "", err
@@ -126,6 +140,10 @@ func RecordOutcome(ctx context.Context, config Object, key string, record Object
 	root := text(get(config, "journalRoot"))
 	if root == "" || key == "" {
 		return nil
+	}
+	root, encoded := fsencode(root)
+	if !encoded {
+		return errUnencodable
 	}
 	policy := get(config, "journalPolicy")
 	if !evidence.Truthy(policy) {

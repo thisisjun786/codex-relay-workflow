@@ -297,7 +297,12 @@ func (v *AssignmentView) State(ctx context.Context, rid string) (contract.Ordere
 			{Key: "registered", Value: registered}, {Key: "reviewedSetDigest", Value: reviewed}, {Key: "current", Value: current}}},
 		{Key: "projection", Value: projection},
 	}
-	directory := filepath.Dir(absolutePath(v.s().Path))
+	// store_directory: os.path.dirname(os.path.abspath(path)), which Python computes for every
+	// status and whose getcwd failure it raises.
+	directory, err := store.StoreDirectory(v.s().Path)
+	if err != nil {
+		return nil, err
+	}
 	recovery := v.parentRecovery(action, decoded, directory)
 	if recovery == nil {
 		recipient, anchor := relationship.Parent.TaskID, "completion"
@@ -890,14 +895,6 @@ func RelayProgram() []string {
 		return []string{script}
 	}
 	return []string{executable, "relay"}
-}
-
-func absolutePath(path string) string {
-	if filepath.IsAbs(path) {
-		return filepath.Clean(path)
-	}
-	cwd, _ := os.Getwd()
-	return filepath.Join(cwd, path)
 }
 
 // shellQuote is shlex.quote.

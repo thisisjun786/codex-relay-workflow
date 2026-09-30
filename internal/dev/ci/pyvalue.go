@@ -9,8 +9,9 @@ import (
 	"math/big"
 	"strconv"
 	"strings"
-	"unicode"
 	"unicode/utf8"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 )
 
 // pyDict is a decoded JSON object in Python's dict order (first occurrence, last value).
@@ -198,39 +199,9 @@ func pyEqual(a, b any) bool {
 	return false
 }
 
-// pyRepr is repr() of a str.
-func pyRepr(text string) string {
-	quote := "'"
-	if strings.Contains(text, "'") && !strings.Contains(text, `"`) {
-		quote = `"`
-	}
-	var b strings.Builder
-	b.WriteString(quote)
-	for _, r := range text {
-		switch {
-		case r == '\\':
-			b.WriteString(`\\`)
-		case string(r) == quote:
-			b.WriteString(`\` + quote)
-		case r == '\n':
-			b.WriteString(`\n`)
-		case r == '\r':
-			b.WriteString(`\r`)
-		case r == '\t':
-			b.WriteString(`\t`)
-		case r == ' ' || (r < 0x7f && r > 0x20) || (r >= 0xa0 && unicode.IsPrint(r)):
-			b.WriteRune(r)
-		case r < 0x100:
-			fmt.Fprintf(&b, `\x%02x`, r)
-		case r < 0x10000:
-			fmt.Fprintf(&b, `\u%04x`, r)
-		default:
-			fmt.Fprintf(&b, `\U%08x`, r)
-		}
-	}
-	b.WriteString(quote)
-	return b.String()
-}
+// pyRepr is repr() of a str: settings.Repr, whose printability is CPython 3.14's table rather
+// than Go's newer unicode.IsPrint, and which reads an argv byte that is not UTF-8 as its surrogate.
+func pyRepr(text string) string { return settings.Repr(text) }
 
 // utf8Subpart measures the undecodable sequence at data[i] the way CPython's UTF-8 decoder
 // does: the lead byte plus the continuation bytes that could still have completed it.

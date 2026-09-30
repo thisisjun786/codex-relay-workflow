@@ -329,7 +329,9 @@ func (r *Registry) Register(ctx context.Context, in Registration) (Relationship,
 		return Relationship{}, refuse(contract.RefusalScopeEscape, "a relationship needs at least one artifact root and one allowed recipient")
 	}
 	rid, err := store.RelationshipID(in.Parent.TaskID, in.Child.TaskID, in.IssueKey)
-	if err != nil {
+	if encode := store.EncodeError(err); encode != nil {
+		return Relationship{}, encode
+	} else if err != nil {
 		return Relationship{}, &HostError{Class: "ValueError", Detail: identityDetail(in)}
 	}
 	if err := validatedTurnID(in.DispatchTurnID); err != nil {

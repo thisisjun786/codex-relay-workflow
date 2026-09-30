@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"syscall"
 	"time"
@@ -100,7 +99,7 @@ func (m *Start) Run(ctx context.Context, raw []byte) (contract.OrderedObject, er
 		return nil, err
 	}
 	result := func(row store.ManagedStartRequestsRow) startResult {
-		r := NewStartResult(identity, row, assignment, filepath.Dir(m.Store.Path))
+		r := NewStartResult(identity, row, assignment, store.PathlibParent(m.Store.Path))
 		if row.RequestID == "" {
 			r.Revision = nil
 			r.ReservationState = nil
@@ -757,7 +756,7 @@ func (m *Start) registeredProblem(ctx context.Context, id Identity, row store.Ma
 	return "", nil
 }
 func (m *Start) packet(id Identity, row store.ManagedStartRequestsRow, req map[string]any, assignment string) string {
-	control := map[string]any{"taskId": row.ChildTaskID.String, "standbyTurnId": row.StandbyTurnID.String, "dispatchRequestId": id.DispatchRequestID, "assignmentId": assignment, "relationshipId": row.RelationshipID.String, "executionGeneration": row.ExecutionGeneration.Int64, "state": filepath.Dir(m.Store.Path), "socket": m.Socket, "workspace": id.Workspace, "markerRoot": id.MarkerRoot}
+	control := map[string]any{"taskId": row.ChildTaskID.String, "standbyTurnId": row.StandbyTurnID.String, "dispatchRequestId": id.DispatchRequestID, "assignmentId": assignment, "relationshipId": row.RelationshipID.String, "executionGeneration": row.ExecutionGeneration.Int64, "state": store.PathlibParent(m.Store.Path), "socket": m.Socket, "workspace": id.Workspace, "markerRoot": id.MarkerRoot}
 	encoded, _ := compactPythonJSON(control)
 	return "Managed assignment routing record:\n" + string(encoded) + "\nFirst publish your own intent-claim using this task, assignment and dispatch request. Publish your own per-turn disposition; continuation claims must name standbyTurnId. Do not fabricate completion, ACK or verification. Report through the registered relay. The following is the authorized business assignment:\n\n" + str(req["prompt"])
 }

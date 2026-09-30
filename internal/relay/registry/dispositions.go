@@ -207,7 +207,8 @@ func (e *DispositionsExit) ExitPayload() (contract.OrderedObject, int) {
 }
 
 // ReadDispositions is dispositions.read. Exactly one of project and relationship is set.
-func ReadDispositions(ctx context.Context, selection store.StateSelection, project, relationship *string) contract.OrderedObject {
+// A selector sqlite3 cannot bind raises its UnicodeEncodeError, as read_only_rows lets it.
+func ReadDispositions(ctx context.Context, selection store.StateSelection, project, relationship *string) (contract.OrderedObject, error) {
 	return readDispositions(ctx, selection, project, relationship, store.ReadOnlyRows)
 }
 
@@ -218,7 +219,7 @@ func optionalArg(v *string) any {
 	return *v
 }
 
-func readDispositions(ctx context.Context, selection store.StateSelection, project, relationship *string, read rowsReader) contract.OrderedObject {
+func readDispositions(ctx context.Context, selection store.StateSelection, project, relationship *string, read rowsReader) (contract.OrderedObject, error) {
 	selector := contract.OrderedObject{{Key: "relationshipId", Value: optionalArg(relationship)}}
 	if project != nil {
 		selector = contract.OrderedObject{{Key: "projectKey", Value: *project}}
@@ -250,15 +251,18 @@ func readDispositions(ctx context.Context, selection store.StateSelection, proje
 				{Key: "device", Value: nil}, {Key: "inode", Value: nil}, {Key: "links", Value: nil}}},
 			{Key: "children", Value: []any{}}, {Key: "counts", Value: dispositionCounts(nil)}, {Key: "limits", Value: DispositionReadingLimits}}
 	}
+	if answer.Raised != nil {
+		return nil, answer.Raised
+	}
 	if !answer.Readable {
 		detail := answer.Detail
 		if detail == "" {
 			detail = UnopenedDetail
 		}
-		return blank(detail)
+		return blank(detail), nil
 	}
 	if answer.Detail != "" {
-		return blank(answer.Detail)
+		return blank(answer.Detail), nil
 	}
 	var meta dispRow
 	for _, row := range rows {
@@ -268,12 +272,12 @@ func readDispositions(ctx context.Context, selection store.StateSelection, proje
 		}
 	}
 	if meta == nil {
-		return blank(NoIdentityDetail)
+		return blank(NoIdentityDetail), nil
 	}
 	derived := deriveDispositions(rows, selector)
 	return append(derived, contract.Field{Key: "store", Value: contract.OrderedObject{{Key: "storeId", Value: meta["store_id"]},
 		{Key: "dbPath", Value: selection.DBPath()}, {Key: "device", Value: int64(answer.Device)}, {Key: "inode", Value: int64(answer.Inode)},
-		{Key: "links", Value: int64(answer.Links)}}})
+		{Key: "links", Value: int64(answer.Links)}}}), nil
 }
 
 type dispChild struct {

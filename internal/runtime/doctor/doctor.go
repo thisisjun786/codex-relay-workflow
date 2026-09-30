@@ -926,9 +926,11 @@ func allOwn(classes []string) bool {
 	return true
 }
 
+// pyRepr is repr() of the socketConnect a relay reported: a str is evidence.StrRepr (Python's
+// quote choice and its escapes), anything else as scope.PyStr spells it (None, a bool, a number).
 func pyRepr(v any) string {
 	if s, ok := v.(string); ok {
-		return "'" + strings.ReplaceAll(s, "'", `\'`) + "'"
+		return evidence.StrRepr(s)
 	}
 	return scope.PyStr(v)
 }

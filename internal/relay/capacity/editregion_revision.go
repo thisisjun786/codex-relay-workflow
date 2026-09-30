@@ -324,6 +324,11 @@ func (e *EditRegions) Followup(ctx context.Context, in Followup) (contract.Order
 		return nil, refuse(contract.RefusalScopeRoleMismatch, "a follow-up records its own author as the assignee or nobody; "+
 			repr(in.RecordedBy)+" cannot accept it for "+repr(in.AssigneeTask.String)+", who accepts it themselves")
 	}
+	// followup_id hashes the trigger first, and str.encode("utf-8") raises for one holding a
+	// surrogate escape (an argv byte that is not UTF-8).
+	if err := store.EncodeUTF8(in.Trigger); err != nil {
+		return nil, err
+	}
 	identifier := FollowupID(in.Agreement, in.Trigger)
 	now := e.Now()
 	err = e.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {

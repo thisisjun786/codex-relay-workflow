@@ -14,6 +14,15 @@ import (
 
 func unreadableDetail(err error) string { return store.PythonSQLiteError(err) }
 
+// raised is the part of a reader's failure Python does not answer as unreadable: the
+// UnicodeEncodeError a str sqlite3 cannot bind raises (it catches sqlite3.Error only), or nil.
+func raised(err error) error {
+	if encode := store.EncodeError(err); encode != nil {
+		return encode
+	}
+	return nil
+}
+
 func (r *Registry) contestedRows(ctx context.Context, kind, key string, contention *[]any) error {
 	conflicts, err := r.Conflicts(ctx, kind, key)
 	if err != nil {
@@ -51,12 +60,20 @@ func drift(lid, recorded, live string) contract.OrderedObject {
 
 // Down is Linkage.down.
 func (r *Registry) Down(ctx context.Context, kind, key string) contract.OrderedObject {
+	answer, _ := r.downRaising(ctx, kind, key)
+	return answer
+}
+
+// downRaising is Linkage.down as the CLI meets it: a store that did not answer is state unreadable
+// (Python catches sqlite3.Error), and a str sqlite3 cannot bind raises its UnicodeEncodeError too, as
+// Python's does. Down answers that as unreadable, for the callers that never raise.
+func (r *Registry) downRaising(ctx context.Context, kind, key string) (contract.OrderedObject, error) {
 	answer, err := r.down(ctx, kind, key)
 	if err != nil {
 		return contract.OrderedObject{{Key: "state", Value: "unreadable"}, {Key: "readable", Value: false}, {Key: "levels", Value: []any{}},
-			{Key: "gaps", Value: []any{}}, {Key: "contention", Value: []any{}}, {Key: "detail", Value: unreadableDetail(err)}}
+			{Key: "gaps", Value: []any{}}, {Key: "contention", Value: []any{}}, {Key: "detail", Value: unreadableDetail(err)}}, raised(err)
 	}
-	return answer
+	return answer, nil
 }
 
 func (r *Registry) down(ctx context.Context, kind, key string) (contract.OrderedObject, error) {
@@ -173,12 +190,18 @@ type UpSelector struct{ Task, Issue, Relationship, Scope sql.NullString }
 
 // Up is Linkage.up.
 func (r *Registry) Up(ctx context.Context, sel UpSelector) contract.OrderedObject {
+	answer, _ := r.upRaising(ctx, sel)
+	return answer
+}
+
+// upRaising is Up as the CLI meets it (downRaising).
+func (r *Registry) upRaising(ctx context.Context, sel UpSelector) (contract.OrderedObject, error) {
 	answer, err := r.up(ctx, sel)
 	if err != nil {
 		return contract.OrderedObject{{Key: "state", Value: "unreadable"}, {Key: "readable", Value: false}, {Key: "levels", Value: []any{}},
-			{Key: "gaps", Value: []any{}}, {Key: "contention", Value: []any{}}, {Key: "detail", Value: unreadableDetail(err)}}
+			{Key: "gaps", Value: []any{}}, {Key: "contention", Value: []any{}}, {Key: "detail", Value: unreadableDetail(err)}}, raised(err)
 	}
-	return answer
+	return answer, nil
 }
 
 func nullableText(v sql.NullString) any { return nullable(v) }
@@ -369,13 +392,19 @@ type CounterpartQuery struct {
 
 // Counterpart is Linkage.counterpart.
 func (r *Registry) Counterpart(ctx context.Context, from, to string, q CounterpartQuery) contract.OrderedObject {
+	answer, _ := r.counterpartRaising(ctx, from, to, q)
+	return answer
+}
+
+// counterpartRaising is Counterpart as the CLI meets it (downRaising).
+func (r *Registry) counterpartRaising(ctx context.Context, from, to string, q CounterpartQuery) (contract.OrderedObject, error) {
 	answer, err := r.counterpart(ctx, from, to, q)
 	if err != nil {
 		return contract.OrderedObject{{Key: "state", Value: "unreadable"}, {Key: "readable", Value: false}, {Key: "link", Value: nil},
 			{Key: "from", Value: nil}, {Key: "counterpart", Value: nil}, {Key: "currentOwner", Value: nil}, {Key: "findings", Value: []any{}},
-			{Key: "detail", Value: unreadableDetail(err)}}
+			{Key: "detail", Value: unreadableDetail(err)}}, raised(err)
 	}
-	return answer
+	return answer, nil
 }
 
 func objOrNil(o contract.OrderedObject) any {

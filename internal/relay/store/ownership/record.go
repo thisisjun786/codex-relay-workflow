@@ -258,27 +258,11 @@ func ScopeRoot(override string) (string, error) {
 	path := override
 	if strings.HasPrefix(path, "~") {
 		name, rest, _ := strings.Cut(path[1:], "/")
-		var home string
-		if name == "" {
-			if value, ok := os.LookupEnv("HOME"); ok {
-				home = value
-			} else if u, err := user.LookupId(strconv.Itoa(os.Getuid())); err == nil {
-				home = u.HomeDir
-			} else {
-				return "", fmt.Errorf("could not determine home directory: %w", err)
-			}
-		} else {
-			u, err := user.Lookup(name)
-			if err != nil {
-				return "", fmt.Errorf("could not determine home directory: %w", err)
-			}
-			home = u.HomeDir
+		home, err := UserHome(name)
+		if err != nil {
+			return "", err
 		}
-		// posixpath.expanduser strips the home's trailing slashes; an empty home is '/'.
-		// pathlib then joins the remaining components to it (with_segments).
-		if home = strings.TrimRight(home, "/"); home == "" {
-			home = "/"
-		}
+		// pathlib joins the remaining components to the home (with_segments).
 		path = home
 		if rest = strings.TrimLeft(rest, "/"); rest != "" {
 			path = strings.TrimSuffix(home, "/") + "/" + rest
@@ -290,14 +274,56 @@ func ScopeRoot(override string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		path = cwd + "/" + path
+		path = JoinCwd(cwd, path)
 	}
-	return pathlibSpelling(path), nil
+	return PathlibSpelling(path), nil
 }
 
-// pathlibSpelling is PurePosixPath's normalization: empty and '.' components are
-// dropped, every '..' is kept, and exactly two leading slashes remain a distinct root.
-func pathlibSpelling(path string) string {
+// JoinCwd is a relative path joined to the working directory as os.path.join and pathlib join it:
+// under the root it gains no second slash, which PathlibSpelling and normpath would keep as a root
+// of two slashes.
+func JoinCwd(cwd, path string) string {
+	if strings.HasSuffix(cwd, "/") {
+		return cwd + path
+	}
+	return cwd + "/" + path
+}
+
+// ErrNoHome is pathlib's RuntimeError("Could not determine home directory."): a ~ or ~user that
+// nothing answers.
+var ErrNoHome = errors.New("could not determine home directory")
+
+// UserHome is the home posixpath.expanduser puts in place of a leading ~name, "" naming ~ alone:
+// HOME whenever HOME is set, else this user's passwd entry (pwd.getpwuid(os.getuid())), and for a
+// name that user's passwd entry. Trailing slashes are stripped, and a home that is nothing (an
+// empty HOME, or HOME="/") is the root. Where nothing answers, the error wraps ErrNoHome.
+func UserHome(name string) (string, error) {
+	var home string
+	if name == "" {
+		if value, ok := os.LookupEnv("HOME"); ok {
+			home = value
+		} else if u, err := user.LookupId(strconv.Itoa(os.Getuid())); err == nil {
+			home = u.HomeDir
+		} else {
+			return "", fmt.Errorf("%w: %w", ErrNoHome, err)
+		}
+	} else {
+		u, err := user.Lookup(name)
+		if err != nil {
+			return "", fmt.Errorf("%w: %w", ErrNoHome, err)
+		}
+		home = u.HomeDir
+	}
+	if home = strings.TrimRight(home, "/"); home == "" {
+		home = "/"
+	}
+	return home, nil
+}
+
+// PathlibSpelling is str(PurePosixPath(path)): empty and '.' components are dropped, every '..'
+// is kept, and exactly two leading slashes remain a distinct root (POSIX leaves "//"
+// implementation-defined) where three or more fold to one.
+func PathlibSpelling(path string) string {
 	root := ""
 	if strings.HasPrefix(path, "//") && !strings.HasPrefix(path, "///") {
 		root = "//"

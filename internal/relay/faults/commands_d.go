@@ -79,7 +79,7 @@ func dBound(ctx context.Context, raw, field string, fallback, max int) (int, err
 }
 func dProduct(p string) error {
 	if !productName.MatchString(p) {
-		return fmt.Errorf("fault_observation_malformed: product %q is not a plain identifier (letters, digits, '.', '_', '-'); a ':' '@' or '|' would let one product's key read as another's", p)
+		return fmt.Errorf("fault_observation_malformed: product %s is not a plain identifier (letters, digits, '.', '_', '-'); a ':' '@' or '|' would let one product's key read as another's", f1Repr(p))
 	}
 	return nil
 }
@@ -224,7 +224,7 @@ func dPolicies(ctx context.Context, l *Ledger, a map[string]string) (any, error)
 	}
 	after := a["--after"]
 	if after != "" && strings.TrimSpace(after) == "" {
-		return nil, fmt.Errorf("fault_observation_malformed: after is the name the last page returned, not %q", after)
+		return nil, fmt.Errorf("fault_observation_malformed: after is the name the last page returned, not %s", f1Repr(after))
 	}
 	names := classNames(after)
 	names = slices.DeleteFunc(names, func(c string) bool { return !dPythonClass(c) })
@@ -312,7 +312,7 @@ func dLimits(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
 	}
 	after := a["--after"]
 	if after != "" && strings.TrimSpace(after) == "" {
-		return nil, fmt.Errorf("fault_observation_malformed: after is the name the last page returned, not %q", after)
+		return nil, fmt.Errorf("fault_observation_malformed: after is the name the last page returned, not %s", f1Repr(after))
 	}
 	names := map[string]bool{"open_record": true, "append_comment": true, "update_record": true, "notification": true}
 	for k := range kinds {

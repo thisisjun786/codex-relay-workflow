@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -186,7 +185,7 @@ func (c *Channel) OmissionReadingsExcept(ctx context.Context, project, at string
 	}
 	readings := make([]map[string]any, 0, len(ids))
 	for _, id := range ids {
-		reading := delivery.DeriveOmission(ctx, c.Store, filepath.Dir(c.Store.Path), id, "", at, grace)
+		reading := delivery.DeriveOmission(ctx, c.Store, store.PathlibParent(c.Store.Path), id, "", at, grace)
 		if objText(reading, "reportingState") == "unreported" && objBool(reading, "owed") {
 			plain := orderedMap(reading)
 			if o := ObservationObligation(plain); o != nil && !covered[o.ID] {

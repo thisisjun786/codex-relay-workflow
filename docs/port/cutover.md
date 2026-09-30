@@ -23,7 +23,9 @@ Two facts shape everything below.
 Names used throughout:
 
 - `S`: the validated canonical relay state directory
-  (`${XDG_STATE_HOME:-~/.local/state}/codex-session-relay/<scope>/`).
+  (`${XDG_STATE_HOME:-~/.local/state}/codex-session-relay/<scope>/`). A relative
+  `XDG_STATE_HOME` or `HOME` is read against the working directory, and both runtimes ask the
+  stores under that absolute directory which socket each records (decision 45).
 - `D`: the existing database pathname inside `S`. Never a freshly computed default.
 - `K`: the existing scope key for the App Server socket (service.py:102-159 hashes the resolved
   socket pathname; Go reproduces that canonicalization, it does not substitute `$HOME`).

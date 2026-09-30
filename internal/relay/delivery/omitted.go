@@ -413,6 +413,9 @@ func observeOmissionContext(ctx context.Context, selection store.StateSelection,
 		contexts = append(contexts, c)
 		return err
 	})
+	if reading.Raised != nil {
+		return omissionContext{}, reading, reading.Raised
+	}
 	if !reading.Readable || reading.Detail != "" {
 		return omissionContext{}, reading, errors.New("store_unreadable: " + reading.Detail)
 	}
@@ -718,7 +721,7 @@ func ObserveOmission(ctx context.Context, selection store.StateSelection, root, 
 func observeOmission(ctx context.Context, selection store.StateSelection, root, workspace, assignment, session, turn, now string, grace float64, afterCurrent func()) Obj {
 	result := append(omissionBase(now), F{Key: "selectors", Value: Obj{{Key: "state", Value: selection.Path}, {Key: "markerRoot", Value: root}, {Key: "workspace", Value: workspace}, {Key: "assignment", Value: assignment}, {Key: "session", Value: session}, {Key: "turn", Value: turn}}}, F{Key: "stopObservation", Value: nil}, F{Key: "terminalObservation", Value: Obj{{Key: "source", Value: "relay_settlement"}, {Key: "status", Value: "unobserved"}}}, F{Key: "currentObservation", Value: nil}, F{Key: "turnAdmission", Value: "unmeasured"}, F{Key: "relationshipStatus", Value: nil}, F{Key: "owed", Value: false}, F{Key: "owedReason", Value: OmittedNotOwed})
 	fail := func(err error) Obj {
-		reason := strings.TrimPrefix(err.Error(), "ValueError: ")
+		reason := strings.TrimPrefix(pythonStr(err), "ValueError: ")
 		if strings.ContainsAny(reason, " /:") || !strings.Contains(reason, "_") {
 			reason = "evidence_unreadable: " + reason
 		}
@@ -889,7 +892,7 @@ func DeriveOmission(ctx context.Context, s *store.Store, stateDir, rid, turn, no
 		return omissionUnmeasured(result, "registration_unresolved")
 	}
 	if err != nil {
-		return omissionUnmeasured(result, "evidence_unreadable: "+err.Error())
+		return omissionUnmeasured(result, "evidence_unreadable: "+pythonStr(err))
 	}
 	result = set(result, "relationshipStatus", status)
 	result = set(result, "executionGeneration", generation)
@@ -949,4 +952,13 @@ func DeriveOmission(ctx context.Context, s *store.Store, stateDir, rid, turn, no
 	verdict := ClassifyOmission(factsFromContext(c, turn, &w, admission, label, now, grace))
 	result = recordOmissionTerminal(result, c, verdict)
 	return appendAnswer(result, verdict)
+}
+
+// pythonStr is str(error) for a failure an omission reading reports: a str sqlite3 or a hash could
+// not encode is its UnicodeEncodeError's own words, whatever wrapped it on the way here.
+func pythonStr(err error) string {
+	if encode := store.EncodeError(err); encode != nil {
+		return encode.Error()
+	}
+	return err.Error()
 }

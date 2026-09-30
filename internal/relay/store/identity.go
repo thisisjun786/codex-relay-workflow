@@ -24,6 +24,11 @@ func RelationshipID(parent, child, issue string) (string, error) {
 			return "", ErrInvalidIdentity
 		}
 	}
+	// str.encode("utf-8") of the joined fields raises for one holding a surrogate escape (an argv
+	// byte that is not UTF-8), before any row is read or written.
+	if err := EncodeUTF8(parent + "|" + child + "|" + issue); err != nil {
+		return "", err
+	}
 	return "rel-" + digest(parent+"|"+child+"|"+issue, 16), nil
 }
 

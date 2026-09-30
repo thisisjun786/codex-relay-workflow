@@ -72,7 +72,7 @@ func ExecuteAs(ctx context.Context, prog string, argv []string, stdout, stderr i
 	ctx = context.WithValue(ctx, numberArgsKey{}, parsed.numbers)
 	selection, err := store.ResolveStateDir(state, socket)
 	if err != nil {
-		return response(stdout, map[string]any{"error": "host", "detail": err.Error()}, 3), true
+		return response(stdout, map[string]any{"error": "host", "detail": hostText(err)}, 3), true
 	}
 	// cli.main runs its lock-free check_start before the selection refusal and before
 	// --kind-module: an acknowledgment the store's ownership refuses queueably is queued
@@ -97,7 +97,7 @@ func ExecuteAs(ctx context.Context, prog string, argv []string, stdout, stderr i
 			case errors.As(err, &refused):
 				return response(stdout, map[string]any{"error": "refused", "reason": refused.Reason, "detail": refused.Detail}, 2), true
 			}
-			return response(stdout, map[string]any{"error": "host", "detail": err.Error()}, 3), true
+			return response(stdout, map[string]any{"error": "host", "detail": hostText(err)}, 3), true
 		}
 	}
 	for _, module := range modules {
@@ -142,7 +142,7 @@ func ExecuteAs(ctx context.Context, prog string, argv []string, stdout, stderr i
 		if refused && strings.HasPrefix(reason, "fault_") {
 			return response(stdout, map[string]any{"error": "refused", "reason": reason, "detail": detail}, 2), true
 		}
-		return response(stdout, map[string]any{"error": "host", "detail": err.Error()}, 3), true
+		return response(stdout, map[string]any{"error": "host", "detail": hostText(err)}, 3), true
 	}
 	s, err := store.Open(ctx, selection.DBPath(), socket)
 	if name == "fault-notification-ack" && inbox.QueueableRefusal(err) {
@@ -156,7 +156,7 @@ func ExecuteAs(ctx context.Context, prog string, argv []string, stdout, stderr i
 		if errors.As(err, &refused) {
 			return response(stdout, map[string]any{"error": "refused", "reason": refused.Reason, "detail": refused.Detail}, 2), true
 		}
-		return response(stdout, map[string]any{"error": "host", "detail": err.Error()}, 3), true
+		return response(stdout, map[string]any{"error": "host", "detail": hostText(err)}, 3), true
 	}
 	defer s.Close()
 	l := &Ledger{Store: s, Clock: f1Clock(ctx)}
@@ -164,7 +164,7 @@ func ExecuteAs(ctx context.Context, prog string, argv []string, stdout, stderr i
 	if name == "fault-fix" || name == "fault-reverify" || name == "fault-resolve" || name == "fault-prune" {
 		alias, e := l.one(ctx, "SELECT fault_id FROM fault_aliases WHERE alias_id=?", args["--fault"])
 		if e != nil {
-			return response(stdout, map[string]any{"error": "host", "detail": e.Error()}, 3), true
+			return response(stdout, map[string]any{"error": "host", "detail": hostText(e)}, 3), true
 		}
 		if alias != nil {
 			args["--fault"] = textRow(alias, "fault_id")
@@ -350,7 +350,7 @@ func faultAnswer(name string, result any, err error) (any, int) {
 			}
 			return ordered(refusal), 2
 		}
-		return ordered(map[string]any{"error": "host", "detail": err.Error()}), 3
+		return ordered(map[string]any{"error": "host", "detail": hostText(err)}), 3
 	}
 	switch {
 	case slices.Contains(f1Names, name):
@@ -541,4 +541,13 @@ func parseObservation(value any) (Observation, error) {
 	str := func(key string) string { v, _ := m[key].(string); return v }
 	cleared, _ := m["cleared"].(bool)
 	return Observation{Product: str("product"), FaultClass: str("faultClass"), Severity: str("severity"), Signature: s, OccurrenceKey: str("occurrenceKey"), Scope: scope, Detail: str("detail"), Evidence: e, Cleared: cleared}, nil
+}
+
+// hostText is the host envelope's detail for err: a str sqlite3 or an identity hash could not
+// encode is cli.main's "UnicodeEncodeError: ...", whatever wrapped it on the way here.
+func hostText(err error) string {
+	if encode := store.EncodeError(err); encode != nil {
+		return encode.HostDetail()
+	}
+	return err.Error()
 }

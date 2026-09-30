@@ -108,7 +108,7 @@ func ledgerLocation(services Services) (contract.OrderedObject, error) {
 	return contract.OrderedObject{
 		{Key: "configured", Value: true},
 		{Key: "directory", Value: discovered.Path},
-		{Key: "path", Value: filepath.Join(discovered.Path, "operations-"+endpoint+".sqlite3")},
+		{Key: "path", Value: store.PathlibChild(discovered.Path, "operations-"+endpoint+".sqlite3")},
 		{Key: "split", Value: here != selected},
 	}, nil
 }
@@ -122,7 +122,8 @@ func siblingStores(services Services) (contract.OrderedObject, error) {
 			{Key: "withoutProvenance", Value: []any{}},
 		}, nil
 	}
-	root := filepath.Dir(services.Selection.Path)
+	// Path.parent, which keeps a root of two slashes where filepath.Dir folds it.
+	root := store.PathlibParent(services.Selection.Path)
 	skip := filepath.Base(services.Selection.Path)
 	claiming, err := store.StoresClaimingSocket(root, services.SocketPath, skip)
 	if err != nil {

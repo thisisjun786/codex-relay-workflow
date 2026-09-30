@@ -466,6 +466,30 @@ func (sw *Sweeper) facts(expected, actual, impact string, limits []any, subject 
 	return evidence("facts", "sweep", observed)
 }
 
+// HostRecordPath is faultsweep.host_record_path, for the callers that build a Sweeper:
+// $XDG_STATE_HOME/codex-relay-workflow/host-record.json, else the same under $HOME/.local/state,
+// each expanded and joined as pathlib does. HOME unset is "~", this user's passwd home; an empty
+// HOME is Path(""), so the record is looked for under the working directory, as Python looks. A ~
+// nothing answers is the RuntimeError Python raises (store.ErrNoHome).
+func HostRecordPath() (string, error) {
+	base, below := os.Getenv("XDG_STATE_HOME"), false
+	if base == "" {
+		home, set := os.LookupEnv("HOME")
+		if !set {
+			home = "~"
+		}
+		base, below = home, true
+	}
+	root, err := store.ExpandUser(base)
+	if err != nil {
+		return "", err
+	}
+	if below {
+		root = store.PathlibChild(store.PathlibChild(root, ".local"), "state")
+	}
+	return store.PathlibChild(store.PathlibChild(root, "codex-relay-workflow"), "host-record.json"), nil
+}
+
 // installation is faultsweep.installation: the revision the installer's host record
 // attributes to this copy, or why it is unknown.
 func (sw *Sweeper) installation() map[string]any {

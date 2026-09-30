@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -308,7 +307,7 @@ func ApplyQueued(ctx context.Context, st *store.Store, command string, argv []st
 	if parsing.Message != "" || parsing.Help {
 		return nil, 0, fmt.Errorf("queued %s arguments: %s", command, parsing.Message)
 	}
-	run := &cliRun{command: command, ctx: ctx, args: parsed, state: filepath.Dir(st.Path), socket: socket, store: st, clock: cliClock}
+	run := &cliRun{command: command, ctx: ctx, args: parsed, state: store.PathlibParent(st.Path), socket: socket, store: st, clock: cliClock}
 	if CommandClock != nil {
 		run.clock = CommandClock
 	}
@@ -352,6 +351,9 @@ type hostError struct{ kind, message string }
 func (h *hostError) Error() string { return h.kind + ": " + h.message }
 
 func hostDetail(err error) string {
+	if encode := store.EncodeError(err); encode != nil {
+		return encode.HostDetail()
+	}
 	var overflow *argparse.IntegerOverflow
 	if errors.As(err, &overflow) {
 		return overflow.Error()

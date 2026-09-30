@@ -111,11 +111,11 @@ func ResolveMarkerRoot(explicit string) (MarkerSelection, error) {
 		}
 		base, source, detail = expanded, "xdg", "XDG_STATE_HOME="+xdg
 	} else {
-		home, err := os.UserHomeDir()
+		home, err := store.Home()
 		if err != nil {
 			return MarkerSelection{}, err
 		}
-		base, source = filepath.Join(home, ".local", "state"), "home"
+		base, source = store.PathlibSpelling(strings.TrimSuffix(home, "/")+"/.local/state"), "home"
 		detail = "default under " + base
 	}
 	path, err := absolutePath(base + "/" + markerDirectoryName)
@@ -131,25 +131,13 @@ func absoluteUser(value string) (string, error) {
 	return absolutePath(expanded)
 }
 
-// absolutePath is Path.absolute(): the pathlib spelling, prefixed by the cwd when relative.
-func absolutePath(value string) (string, error) {
-	if !strings.HasPrefix(value, "/") {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return "", err
-		}
-		value = cwd + "/" + value
-	}
-	parts := []string{}
-	for _, part := range strings.Split(value, "/") {
-		if part != "" && part != "." {
-			parts = append(parts, part)
-		}
-	}
-	return "/" + strings.Join(parts, "/"), nil
-}
+// absolutePath is Path.absolute(): the pathlib spelling, prefixed by the kernel's working
+// directory when relative (store.Absolute).
+func absolutePath(value string) (string, error) { return store.Absolute(value) }
 
-// resolved is Path(value).expanduser().resolve(): symlinks followed, a missing tail kept.
+// resolved is Path(value).expanduser().resolve(): symlinks followed, a missing tail kept. It
+// is strict where resolve() is not: a loop or a component it cannot search is refused rather than
+// kept as spelled (docs/port/known-defects.md, Python defects not carried over).
 func resolved(value string) (string, error) {
 	expanded, err := store.ExpandUser(value)
 	if err != nil {
@@ -170,11 +158,25 @@ func WorkspaceKey(workspace string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// str.encode("utf-8") of the path, which refuses one holding a surrogate escape.
+	if err = store.EncodeUTF8(path); err != nil {
+		return "", err
+	}
 	return sha256Hex(path), nil
 }
 
 // AssignmentID is assignment_id: the hash of the dispatch request id, never the id itself.
 func AssignmentID(dispatchRequestID string) string { return sha256Hex(dispatchRequestID) }
+
+// encodedAssignmentID is assignment_id as the marker commands meet it first: an id holding a
+// surrogate escape (an argv byte that is not UTF-8) raises str.encode("utf-8")'s
+// UnicodeEncodeError before anything is compared or written.
+func encodedAssignmentID(dispatchRequestID string) (string, error) {
+	if err := store.EncodeUTF8(dispatchRequestID); err != nil {
+		return "", err
+	}
+	return AssignmentID(dispatchRequestID), nil
+}
 
 // WorkspaceDir is workspace_dir.
 func WorkspaceDir(root, workspace string) (string, error) {

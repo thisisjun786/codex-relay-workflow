@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"io"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -76,7 +75,7 @@ func (c *Channel) render(p Packet, requestID, token string) string {
 	lines = append(lines, "", "To record that this reached your thread, run from inside a turn of your own:", "  "+programCommand(c.Program, head...), "", strconv.Itoa(len(placeholders))+" words on that line are yours to replace: "+strings.Join(placeholders, " "), "Every other argument is filled in and quoted for a POSIX shell, including the", "--state that selects the store this report was staged in; --socket and --state", "are global and go BEFORE the subcommand, and --as is required.", "", "The proof is sha256(messageId|<your own turn id>). This message cannot contain", "that turn id, so quoting it back does not produce the proof - and that is all the", "proof rules out. Anyone holding the relay's store can compute it as well. A", "readback records that this attempt's deliveryToken is in your thread and that the", "turn you name is real there. Where that turn is the one this message opened, it", "records arrival and nothing you did. It never records that you read, agreed to", "or acted on anything.", "", "Full record: "+c.command("supervisor-show", "--message", p.ID()))
 	return strings.Join(lines, "\n")
 }
-func (c *Channel) StoreDirectory() string { return filepath.Dir(c.Store.Path) }
+func (c *Channel) StoreDirectory() string { return store.PathlibParent(c.Store.Path) }
 func boolInt(value bool) int {
 	if value {
 		return 1

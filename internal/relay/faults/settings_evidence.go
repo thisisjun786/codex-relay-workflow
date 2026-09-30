@@ -2,7 +2,6 @@ package faults
 
 import (
 	"context"
-	"path/filepath"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -76,7 +75,7 @@ func (sw *Sweeper) settingsEvidence(ctx context.Context, event, recipient, reque
 		source, _ := hold["source"].(string)
 		observed := map[string]any{"reason": hold["reason"], "field": hold["field"], "source": source, "kind": kind, "current": true}
 		chosen := registry.SettingsHoldRecovery(kind, reason, source, false)
-		directory, err := filepath.Abs(filepath.Dir(sw.Store.Path))
+		directory, err := store.StoreDirectory(sw.Store.Path) // store_directory
 		if err != nil {
 			return nil, "", err
 		}

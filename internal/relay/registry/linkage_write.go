@@ -28,11 +28,16 @@ var roleScopeOwner = map[string]string{scopeInitiative: "supervisor", scopeProje
 
 // peerLinkID is link_id(PEER, ...): symmetric, so both ends converge on one record.
 func peerLinkID(left, right string) string {
+	return "lnk-" + sha256Hex(strings.Join(peerLinkFields(left, right), "|"))[:32]
+}
+
+// peerLinkFields are the fields a peer link's identity hashes, the lower project first.
+func peerLinkFields(left, right string) []string {
 	low, high := left, right
 	if high < low {
 		low, high = high, low
 	}
-	return "lnk-" + sha256Hex(strings.Join([]string{linkPeer, scopeProject, low, scopeProject, high}, "|"))[:32]
+	return []string{linkPeer, scopeProject, low, scopeProject, high}
 }
 
 // LinkID is linkage.link_id.
@@ -340,6 +345,9 @@ func (r *Registry) RegisterSupervision(ctx context.Context, initiative, project 
 			return nil, err
 		}
 	}
+	if err := encodedID(kind, scopeInitiative, initiative, scopeProject, project); err != nil {
+		return nil, err
+	}
 	lid := linkID(kind, scopeInitiative, initiative, scopeProject, project)
 	now := r.now()
 	l := r.linkage()
@@ -545,6 +553,9 @@ func (r *Registry) RegisterPeer(ctx context.Context, leftProject string, leftPar
 	}
 	if leftProject == rightProject {
 		return nil, refuse(contract.RefusalScopeCycle, "project %s is not its own peer", pyStr(leftProject))
+	}
+	if err := encodedID(peerLinkFields(leftProject, rightProject)...); err != nil {
+		return nil, err
 	}
 	lid := peerLinkID(leftProject, rightProject)
 	now := r.now()
@@ -762,6 +773,9 @@ func (r *Registry) Handover(ctx context.Context, role, key, expect string, endpo
 	}
 	claimed := sortedSet(acknowledged)
 	now := r.now()
+	if err := encodedID(role, kind, key, endpoint.TaskID); err != nil {
+		return nil, err
+	}
 	newID := bindingID(role, kind, key, endpoint.TaskID)
 	l := r.linkage()
 	var refused *linkRefusal

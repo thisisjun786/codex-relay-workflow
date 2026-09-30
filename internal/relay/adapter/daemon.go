@@ -10,8 +10,6 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor"
-	"os"
-	"path/filepath"
 )
 
 func daemonFactory(ctx context.Context, services cli.Services, s *store.Store) (*daemon.Daemon, error) {
@@ -43,15 +41,11 @@ func daemonFactory(ctx context.Context, services cli.Services, s *store.Store) (
 	if err != nil {
 		return nil, errors.Join(err, a.Close())
 	}
-	stateHome := os.Getenv("XDG_STATE_HOME")
-	if stateHome == "" {
-		home, e := os.UserHomeDir()
-		if e != nil {
-			return nil, errors.Join(e, a.Close())
-		}
-		stateHome = filepath.Join(home, ".local", "state")
+	hostRecord, err := faults.HostRecordPath()
+	if err != nil {
+		return nil, errors.Join(err, a.Close())
 	}
 	d.Sweeper = &faults.Sweeper{Store: s, MaxAttempts: d.Delivery.Policy.MaxAttempts, Selection: services.Selection, Now: clock.ISO, SupersessionReason: d.Delivery.SupersessionReason,
-		Installation: installation, HostRecordPath: filepath.Join(stateHome, "codex-relay-workflow", "host-record.json")}
+		Installation: installation, HostRecordPath: hostRecord}
 	return d, nil
 }

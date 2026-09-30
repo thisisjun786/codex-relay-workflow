@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf16"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 )
 
 // jsonValue is a decoded JSON document that keeps object key order, as a Python dict does.
@@ -216,7 +218,11 @@ func pythonFloat(f float64) string {
 
 func appendPythonString(buf *strings.Builder, value string) {
 	buf.WriteByte('"')
-	for _, r := range value {
+	// A byte that is not UTF-8 is its surrogate escape and a WTF-8 surrogate its code point
+	// (settings.CodePoint), each written as json.dumps writes a lone surrogate, never as U+FFFD.
+	for i := 0; i < len(value); {
+		r, size := settings.CodePoint(value, i)
+		i += size
 		switch {
 		case r == '"' || r == '\\':
 			buf.WriteByte('\\')
@@ -231,6 +237,8 @@ func appendPythonString(buf *strings.Builder, value string) {
 			buf.WriteString(`\b`)
 		case r == '\f':
 			buf.WriteString(`\f`)
+		case r >= 0xd800 && r <= 0xdfff:
+			fmt.Fprintf(buf, "\\u%04x", r)
 		case r < 0x20 || r > 0x7e:
 			for _, unit := range utf16.Encode([]rune{r}) {
 				fmt.Fprintf(buf, "\\u%04x", unit)

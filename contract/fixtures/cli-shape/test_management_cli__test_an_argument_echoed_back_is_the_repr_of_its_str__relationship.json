@@ -1,0 +1,137 @@
+{
+  "given": {},
+  "run": {
+    "kind": "cli",
+    "steps": [
+      {
+        "id": "nbsp",
+        "argv": [
+          "relationship-status",
+          "--relationship",
+          "x\u00a0y",
+          "--status",
+          "paused",
+          "--actor",
+          "a"
+        ]
+      },
+      {
+        "id": "line-separator",
+        "argv": [
+          "relationship-status",
+          "--relationship",
+          "x\u2028y",
+          "--status",
+          "paused",
+          "--actor",
+          "a"
+        ]
+      },
+      {
+        "id": "zero-width-space",
+        "argv": [
+          "relationship-status",
+          "--relationship",
+          "x\u200by",
+          "--status",
+          "paused",
+          "--actor",
+          "a"
+        ]
+      },
+      {
+        "id": "quote",
+        "argv": [
+          "relationship-status",
+          "--relationship",
+          "it's",
+          "--status",
+          "paused",
+          "--actor",
+          "a"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 2,
+    "checks": [
+      {
+        "kind": "eq",
+        "path": [
+          "steps",
+          "nbsp",
+          "exit"
+        ],
+        "value": 2
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "steps",
+          "nbsp",
+          "stdout_json",
+          "detail"
+        ],
+        "value": "no relationship 'x\\xa0y'"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "steps",
+          "line-separator",
+          "exit"
+        ],
+        "value": 2
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "steps",
+          "line-separator",
+          "stdout_json",
+          "detail"
+        ],
+        "value": "no relationship 'x\\u2028y'"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "steps",
+          "zero-width-space",
+          "exit"
+        ],
+        "value": 2
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "steps",
+          "zero-width-space",
+          "stdout_json",
+          "detail"
+        ],
+        "value": "no relationship 'x\\u200by'"
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "steps",
+          "quote",
+          "exit"
+        ],
+        "value": 2
+      },
+      {
+        "kind": "eq",
+        "path": [
+          "steps",
+          "quote",
+          "stdout_json",
+          "detail"
+        ],
+        "value": "no relationship \"it's\""
+      }
+    ]
+  }
+}

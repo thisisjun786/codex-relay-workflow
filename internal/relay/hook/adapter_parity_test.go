@@ -16,7 +16,7 @@ func Test33AdapterBinaryPython(t *testing.T) {
 	if err = json.Unmarshal(out, &results); err != nil {
 		t.Fatalf("%v %s", err, out)
 	}
-	if len(results) != 7 {
+	if len(results) != 8 {
 		t.Fatalf("only %d QA cases", len(results))
 	}
 	for _, r := range results {

@@ -37,7 +37,7 @@ func boundedURI(path string, params url.Values, timeout time.Duration, pragmas .
 		return nil, err
 	}
 	name := "crw-read-" + hex.EncodeToString(id)
-	sql.Register(name, d)
+	sql.Register(name, textGuard{d})
 	u := url.URL{Scheme: "file", Path: path}
 	u.RawQuery = params.Encode()
 	db, err := sql.Open(name, u.String())

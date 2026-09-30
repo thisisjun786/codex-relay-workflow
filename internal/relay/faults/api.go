@@ -60,7 +60,7 @@ func RegisterClass(name string, threshold int64) error {
 	classMu.Lock()
 	defer classMu.Unlock()
 	if existing, ok := classes[name]; ok && existing != policy {
-		return fmt.Errorf("%q is already registered with different terms; pick another name", name)
+		return fmt.Errorf("%s is already registered with different terms; pick another name", f1Repr(name))
 	}
 	classes[name] = policy
 	if threshold > 0 {

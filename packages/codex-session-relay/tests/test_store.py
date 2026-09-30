@@ -368,6 +368,38 @@ class Precedence(unittest.TestCase):
                          "the store recorded for this socket must be adopted, not hidden")
         self.assertIn("adopted", chosen.detail)
 
+    def test_a_relative_state_home_still_asks_the_stores_themselves(self):
+        """A relative XDG_STATE_HOME names the same stores its absolute form does.
+
+        The walk for a store already recorded for this socket was left relative, and a relative
+        path cannot be opened as a file URI, so every store there read as recording no socket:
+        the one this socket already had was reported as unidentified, spelled relative, instead
+        of being adopted.
+        """
+        socket = "/run/relative-home.sock"
+        here = os.getcwd()
+        os.chdir(self.tmp)
+        try:
+            os.environ["XDG_STATE_HOME"] = "rel"
+            root = os.path.join(self.tmp, "rel", "codex-session-relay")
+            recorded = os.path.join(root, "adopt-a")
+            os.makedirs(recorded)
+            Store(Path(recorded) / "relay.sqlite3", socket_path=socket).close()
+            stranger = os.path.join(root, "stranger")
+            os.makedirs(stranger)
+            Store(Path(stranger) / "relay.sqlite3").close()
+
+            adopted = resolve_state_dir(None, socket)
+            other = resolve_state_dir(None, "/run/another.sock")
+        finally:
+            os.chdir(here)
+
+        self.assertEqual(str(adopted.path), recorded)
+        self.assertIn("adopted the store already recorded for this socket", adopted.detail)
+        self.assertEqual(adopted.unidentified, ())
+        self.assertEqual(list(other.unidentified), [stranger],
+                         "a store recording no socket is named as the directory it is")
+
     def test_two_stores_claiming_one_socket_are_not_silently_chosen_between(self):
         """Picking whichever sorts first operates on one set of assignments today and the
         other after a rename. Adopting nothing is wrong too, but it is visible."""

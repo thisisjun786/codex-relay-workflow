@@ -7,9 +7,7 @@ import (
 	"encoding/hex"
 	"io"
 	"os"
-	"os/user"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 
@@ -234,24 +232,17 @@ func bootID() string {
 	return strings.TrimSpace(string(raw))
 }
 
-// scopeRoot is resolve_scope_root: an override marks the registry isolated.
+// scopeRoot is resolve_scope_root: an override marks the registry isolated. It is the root the
+// owner resolves (service.ResolveScope), so the worker policy's recorded scopeRoot is compared
+// with the same spelling: Path(override).expanduser().absolute() against the working directory
+// the kernel names, or the passwd home's production root. A root nothing answers is "", which no
+// record names.
 func scopeRoot() (string, string) {
-	if override := os.Getenv("CODEX_SESSION_RELAY_SCOPE_DIR"); override != "" {
-		expanded, err := store.ExpandUser(override)
-		if err != nil {
-			expanded = override
-		}
-		if !filepath.IsAbs(expanded) {
-			cwd, _ := os.Getwd()
-			expanded = cwd + "/" + expanded
-		}
-		return store.PathlibSpelling(expanded), "isolated"
+	scope, err := service.ResolveScope()
+	if err != nil {
+		return "", ""
 	}
-	home := ""
-	if current, err := user.LookupId(strconv.Itoa(os.Geteuid())); err == nil {
-		home = current.HomeDir
-	}
-	return filepath.Join(home, ".codex-session-relay", "scopes"), "production"
+	return scope.Root, scope.Authority
 }
 
 // installationID is installation_id: this installation (the running executable's directory,

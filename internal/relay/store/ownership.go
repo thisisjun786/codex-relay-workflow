@@ -144,6 +144,9 @@ func fenceRefused(detail string) error {
 // SQLite failure the fence raises unhandled out of an ownership read (CheckStartLikeFence), and
 // whether err is one.
 func PythonHostDetail(err error) (string, bool) {
+	if encode := EncodeError(err); encode != nil {
+		return encode.HostDetail(), true
+	}
 	var host *pythonHostError
 	if errors.As(err, &host) {
 		return host.Error(), true

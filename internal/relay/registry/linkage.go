@@ -56,6 +56,11 @@ func sha256Hex(text string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// encodedID is str.encode("utf-8") of the fields an identity hashes, joined as identity.sha256_hex
+// is handed them: a field holding a surrogate escape (an argv byte that is not UTF-8) raises
+// UnicodeEncodeError where Python derives the identity, before anything is read or written.
+func encodedID(fields ...string) error { return store.EncodeUTF8(strings.Join(fields, "|")) }
+
 func bindingID(role, kind, key, task string) string {
 	return "bnd-" + sha256Hex(strings.Join([]string{role, kind, key, task}, "|"))[:32]
 }
@@ -231,6 +236,9 @@ func (l linkage) attachRefusal(ctx context.Context, x *row, project, replacing s
 // bindingPlan is linkage.binding_plan.
 func (l linkage) bindingPlan(ctx context.Context, role, key string, endpoint Endpoint, replacing string) (*bindingPlan, *linkRefusal, error) {
 	kind := roleScope[role]
+	if err := encodedID(role, kind, key, endpoint.TaskID); err != nil {
+		return nil, nil, err
+	}
 	bid := bindingID(role, kind, key, endpoint.TaskID)
 	var status, host, task string
 	err := l.q(ctx).QueryRowContext(ctx, "SELECT status, host_id, task_id FROM scope_bindings WHERE binding_id = ?", bid).Scan(&status, &host, &task)
@@ -531,6 +539,9 @@ func (r *Registry) BindScope(ctx context.Context, role, key string, endpoint End
 		}
 	}
 	l := r.linkage()
+	if err := encodedID(role, kind, key, endpoint.TaskID); err != nil {
+		return nil, err
+	}
 	bid := bindingID(role, kind, key, endpoint.TaskID)
 	now := r.now()
 	var refused *linkRefusal
