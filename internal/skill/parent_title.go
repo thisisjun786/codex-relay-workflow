@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -253,6 +254,25 @@ func startsWithSpace(s string) bool {
 	r, _ := utf8.DecodeRuneInString(s)
 	return isSpace(r)
 }
+
+// titleReadback is classify_readback. Its observed == requested is Python's ==
+// over JSON values: lists and objects compare structurally and True == 1 == 1.0
+// exactly. A NaN nested in a list or object equals itself, because json decodes
+// every NaN to one object and container equality tries identity first; a bare
+// NaN compares with float equality and is unequal to everything, itself too.
+func titleReadback(requested, observed any) string {
+	if observed == nil {
+		return "unread"
+	}
+	if number, ok := observed.(float64); ok && math.IsNaN(number) {
+		return "mismatch"
+	}
+	if evidence.Equal(observed, requested) {
+		return "verified"
+	}
+	return "mismatch"
+}
+
 func emitUnicode(w io.Writer, v any) error {
 	var encoded bytes.Buffer
 	e := json.NewEncoder(&encoded)
@@ -335,13 +355,7 @@ func runParentTitle(args []string, stdin io.Reader, stdout, stderr io.Writer) in
 				return 2
 			}
 		}
-		state := "unread"
-		if obs != nil {
-			state = "mismatch"
-			if obs == req {
-				state = "verified"
-			}
-		}
+		state := titleReadback(req, obs)
 		_ = emitUnicode(stdout, map[string]any{"readback": state})
 		if state == "verified" {
 			return 0
@@ -445,13 +459,7 @@ func replayTitles(args []string, stdout, stderr io.Writer) int {
 				fmt.Fprintln(stderr, pythonAttribute(f["input"], "get"))
 				return 1
 			}
-			state := "unread"
-			if in["observed_title"] != nil {
-				state = "mismatch"
-				if in["observed_title"] == in["requested_title"] {
-					state = "verified"
-				}
-			}
+			state := titleReadback(in["requested_title"], in["observed_title"])
 			reads[state] = true
 			got := map[string]any{"readback": state}
 			for _, key := range sortedKeys(expected) {

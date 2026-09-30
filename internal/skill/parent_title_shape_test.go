@@ -81,7 +81,51 @@ func titleShapeCases(t *testing.T) []skillShapeCase {
 	addFixture("readback", readbackFixture,
 		[]string{"input"}, []string{"expected"}, []string{"expected", "readback"},
 		[]string{"input", "requested_title"}, []string{"input", "observed_title"})
+	cases = append(cases, titleReadbackPairCases()...)
 	return append(cases, titleBracketShapeCases(t)...)
+}
+
+// titleReadbackPairCases replay readback fixtures whose two titles are both set,
+// to values the readback subcommand refuses but a fixture can hold. Python's
+// classify_readback compares them with ==: lists and objects structurally,
+// True == 1 == 1.0 exactly, a NaN nested in a container equal to itself (json
+// decodes every NaN to one object) and a bare NaN unequal to everything.
+func titleReadbackPairCases() []skillShapeCase {
+	pairs := []struct{ name, requested, observed string }{
+		{"list", `["x"]`, `["x"]`},
+		{"object", `{"a": 1}`, `{"a": 1}`},
+		{"empty-list", `[]`, `[]`},
+		{"empty-object", `{}`, `{}`},
+		{"nested", `{"a": [1, {"b": null}]}`, `{"a": [1.0, {"b": null}]}`},
+		{"list-order", `["x", "y"]`, `["y", "x"]`},
+		{"list-longer", `["x"]`, `["x", "y"]`},
+		{"object-extra-key", `{"a": 1}`, `{"a": 1, "b": 2}`},
+		{"list-object", `[]`, `{}`},
+		{"list-string", `["x"]`, `"x"`},
+		{"int-float", `1`, `1.0`},
+		{"bool-int", `true`, `1`},
+		{"false-zero-float", `false`, `0.0`},
+		{"list-bool-int", `[true]`, `[1]`},
+		{"big-int-float", `12345678901234567890`, `12345678901234567890.0`},
+		{"big-int", `12345678901234567890`, `12345678901234567890`},
+		{"inexact-float", `9007199254740993`, `9007199254740992.0`},
+		{"infinity", `Infinity`, `1e400`},
+		{"nan", `NaN`, `NaN`},
+		{"nested-nan", `[NaN]`, `[NaN]`},
+		{"object-nan", `{"a": NaN}`, `{"a": NaN}`},
+		{"string-number", `"1"`, `1`},
+	}
+	cases := make([]skillShapeCase, 0, len(pairs))
+	for _, pair := range pairs {
+		fixture := fmt.Sprintf(`{"subcommand": "readback", "input": {"requested_title": %s, "observed_title": %s}, "expected": {"readback": "verified"}}`, pair.requested, pair.observed)
+		cases = append(cases, skillShapeCase{
+			name:   "title/replay/readback-pair/" + pair.name,
+			family: "parent-title",
+			args:   []string{"replay", "--fixtures", "$TMP", "--allow-unreached"},
+			files:  map[string]any{"case.json": shapeRawFile(fixture)},
+		})
+	}
+	return cases
 }
 
 func titleBracketShapeCases(t *testing.T) []skillShapeCase {
