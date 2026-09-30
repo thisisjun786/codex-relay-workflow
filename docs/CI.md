@@ -13,7 +13,7 @@ Python execution path is removed. Installing and operating the runtime is
 | `crw-dev ci scope` | Select checks from Git evidence (the `selection` job) |
 | `crw-dev ci validate` | Skill metadata, local links and Python syntax |
 | `crw-dev ci plugin` | Plugin package shape, payload hygiene and the release digest |
-| `python3 -m unittest discover -s scripts/ci/tests -v` | Installer behavior and CI-control tests (CI runs them as two legs per Python version, `heavy` and `rest`; see [the installer test legs](#the-installer-test-legs)) |
+| `python3 -m unittest discover -s scripts/ci/tests -v` | Installer behavior and CI-control tests (CI runs the discovery once per Python version; see [the installer tests](#the-installer-tests)) |
 | `crw-dev ci contracts` | Run the offline contract checks whose contract is present, each built into `crw-dev`: the hook replay, the operations shape check, the component definition's Go-retained fields (licences, the bridge identity tool, the compatibility links), the start-policy self-test and the parent-title replay. No Python checker script is needed (`scripts/ci/contracts.py`, which paired each contract with its script, was deleted in todo 44) |
 | `crw-dev ci operations` | The operations fixtures against their contract (the Go port of `scripts/check_operations_contract.py`, also run by `contracts`) |
 | `bash scripts/ci/secrets.sh` | Checksum-pinned Gitleaks scan of all fetched history |
@@ -94,25 +94,15 @@ assertions that freeze its wording. CI concurrency cancels obsolete runs within
 the same PR or branch. An interrupted dev push is not release evidence: rerun
 that exact push run if the owner later chooses its commit for release.
 
-### The installer test legs
+### The installer tests
 
-The `tests` job runs `scripts/ci/tests` as two legs per Python version, because the run
-is at GitHub's cap of 20 concurrent jobs and a third leg would queue rather than help.
-`heavy` runs the modules the job's `HEAVY` variable names and `rest` runs every other
-module discovery would load, so a new module always runs in `rest` and a renamed heavy
-module fails its leg instead of being skipped. The split is by measured time. Each
-module was timed once with `python3 -m unittest <module>` on four CPUs of a loaded
-host (load average 6-14, Python 3.14) on 2026-09-29: `test_runtime_install` 98 s and
-`test_install_acceptance` 28 s make `heavy` 126 s, and the other fourteen modules make
-`rest` 126 s, led by `test_stop_events` 40 s, `test_trial_startup` 38 s and
-`test_plugin_wiring` 18 s (`test_hook_comparison`, 43 s, was deleted with the harness it
-tested in todo 46). Todo 44 deletes the modules that tested the Python implementation, the
-Python installers and harnesses (`test_stop_events`, `test_completion_hook`,
-`test_adapter_agreement`, `test_packages`, `test_relay_schema_shipped` and
-`test_install_acceptance` so far), so `heavy` is `test_runtime_install` alone until it goes too. Re-measure and move a module when one leg grows well past the other. `test_gate.py` and `internal/dev/ci`
-run the step's own script once per leg over a copy of the test directory, with
-`python3` replaced by a recorder, and check that together the legs run every module
-discovery would load exactly once.
+The `tests` job runs `python3 -m unittest discover -s scripts/ci/tests -v` once per Python
+version (3.10 and 3.13), so every module discovery would load runs and a new one needs no list
+entry. Until todo 44 the job split its modules into a `heavy` and a `rest` leg per version,
+because the Python installer's suites (`test_runtime_install`, `test_install_acceptance`)
+made up half its time; those suites were deleted with the installer, and what remains fits one
+leg. `test_gate.py` and `internal/dev/ci` check that the step is that one discovery and that no
+leg split is left.
 
 ## Plugin package
 

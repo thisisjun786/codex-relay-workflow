@@ -197,8 +197,8 @@ parallel operation.
 
 ## Baseline
 
-`CRW_PACKAGES_TMPDIR=/var/tmp python3 scripts/ci/packages.py` is the authoritative
-run and passed before any change here: codex-session-relay 1206 tests, no empty
+The authoritative run was `scripts/ci/packages.py` (the package check, deleted with the Python
+implementation in todo 44), and it passed before any change here: codex-session-relay 1206 tests, no empty
 collection and no skipped case. A bare `PYTHONPATH=src python3 -m pytest tests` is not
 that run and is not the baseline: it has no `codex_thread_bridge` on the path, and
 this filesystem does not honour the unreadable directory one of the scope tests depends

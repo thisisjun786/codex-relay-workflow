@@ -5,7 +5,6 @@ from pathlib import Path
 import re
 import subprocess
 import sys
-import tempfile
 import unittest
 
 SCRIPT = Path(__file__).resolve().parents[1] / "gate.py"
@@ -230,54 +229,13 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(sorted(legs), sorted(["lint", "dist", "test-rest"]
                                               + [f"test-{n}" for n in numbered]))
 
-    def installer_step(self):
-        """The tests job's run script, unindented as the runner receives it, and its HEAVY list."""
-        lines = workflow_jobs()["tests"].splitlines()
-        self.assertEqual(lines.count("        run: |"), 1, "the tests job has one script step")
-        script = []
-        for line in lines[lines.index("        run: |") + 1:]:
-            if line.strip() and not line.startswith(" " * 10):
-                break
-            script.append(line[10:])
-        heavy = re.search(r"(?m)^          HEAVY: (.+)$", workflow_jobs()["tests"])
-        self.assertIsNotNone(heavy, "the tests job names no HEAVY modules")
-        return "\n".join(script) + "\n", heavy[1]
-
-    def test_installer_test_legs_run_every_module_exactly_once(self):
-        """Each leg runs the step's own shell over a mirror of scripts/ci/tests plus a module no
-        list names yet, with python3 replaced by a recorder: together the legs run every module
-        discovery would load, each once, and the unnamed one lands in `rest`."""
-        self.assertEqual(self.matrix("tests", "part"), ["heavy", "rest"])
-        script, heavy = self.installer_step()
-        tests = WORKFLOW.parents[2] / "scripts" / "ci" / "tests"
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            mirror = root / "scripts" / "ci" / "tests"
-            mirror.mkdir(parents=True)
-            for entry in tests.iterdir():
-                if entry.is_file():
-                    (mirror / entry.name).touch()
-            (mirror / "test_zz_added_later.py").touch()
-            listed = sorted(entry.stem for entry in mirror.glob("test*.py"))
-            recorder = root / "bin" / "python3"
-            recorder.parent.mkdir()
-            recorder.write_text('#!/bin/sh\nprintf \'%s\\n\' "$PYTHONPATH" "$@"\n', encoding="utf-8")
-            recorder.chmod(0o755)
-            ran = {}
-            for part in ("heavy", "rest"):
-                env = dict(os.environ, PART=part, HEAVY=heavy,
-                           PATH=f"{recorder.parent}{os.pathsep}{os.environ.get('PATH', '')}")
-                env.pop("BASH_ENV", None)
-                # GitHub runs a `run:` block without a `shell:` as `bash -e {0}`.
-                done = subprocess.run(["bash", "-e", "-c", script], cwd=root, env=env,
-                                      capture_output=True, text=True, timeout=60)
-                self.assertEqual(done.returncode, 0, f"{part}: {done.stderr}")
-                words = done.stdout.split()
-                self.assertEqual(words[:4], ["scripts/ci/tests", "-m", "unittest", "-v"], part)
-                ran[part] = words[4:]
-                self.assertTrue(ran[part], f"the {part} leg runs no module")
-        self.assertEqual(sorted(ran["heavy"] + ran["rest"]), listed)
-        self.assertIn("test_zz_added_later", ran["rest"])
+    def test_installer_tests_run_every_module_by_discovery(self):
+        """One leg per Python version runs `unittest discover` over the whole directory, so a new
+        module always runs; there is no hand-kept module list for a module to fall out of."""
+        self.assertEqual(self.matrix("tests", "python-version"), ["3.10", "3.13"])
+        self.assertNotRegex(workflow_jobs()["tests"], r"(?m)^        part:")
+        runs = [step.get("run") for step in self.steps("tests") if "run" in step]
+        self.assertEqual(runs, ["python3 -m unittest discover -s scripts/ci/tests -v"])
 
 
 if __name__ == "__main__":
