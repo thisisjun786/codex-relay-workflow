@@ -124,15 +124,13 @@ and Stop hook name, and `crw install` has no other destination. Nothing puts its
 then has to be trusted in Codex before it fires. [Runtime installation](docs/runtime-install.md)
 covers updating, rolling back, removing and reading an installation.
 
-Until todo 43, this procedure is not yet the way a live host gets the runtime. The Go build
-refuses to open a store in the relay's default state directory unless `CRW_ALLOW_LIVE_STATE=1`
-is set ([the live-state guard](docs/port/cutover.md#the-live-state-guard-until-todo-43)). The
-install itself is not refused by it, because its exercise and its swap gate read the store
-without opening it. But the relay commands the skills run are refused there, and so is the Stop hook's guard
-whenever it has to read the store. The runtime this procedure leaves on a live host therefore
-cannot serve that host's store. Until then a live host, and any host still on the Python
-runtime, moves through [the cutover](docs/port/cutover.md). That runbook moves the store's
-ownership. Where the pointer move (`crw install install`, which on the relay host's first Go install
+The runtime this procedure leaves serves the store in the relay's default state directory with
+no variable set: the relay commands the skills run and the Stop hook's guard open it there. Until
+todo 43 the Go build refused that directory unless `CRW_ALLOW_LIVE_STATE=1` was set; the guard
+now refuses it only under test isolation
+([the live-state guard](docs/port/cutover.md#the-live-state-guard-test-isolation-only)). A host
+still on the Python runtime moves through [the cutover](docs/port/cutover.md) first. That runbook
+moves the store's ownership. Where the pointer move (`crw install install`, which on the relay host's first Go install
 also replaces its Python-era Stop settings, once) falls among its steps is not written yet: todo 42
 settles it.
 

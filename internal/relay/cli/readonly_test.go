@@ -641,12 +641,14 @@ func TestServiceAndDaemon_wait_for_a_creation_in_progress_as_the_fence_does(t *t
 	}
 }
 
-// The live-state guard stays until todo 43 (decisions D4): a read it refuses is reported,
-// never read as an unreadable store. A Stop whose receipt lives under the live state root is
-// answered with the refusal unless CRW_ALLOW_LIVE_STATE=1 is exported, and with a verdict
-// when it is. The store is Go's, so no daemon's absence refuses the Stop first: the Go CLI
-// evaluates its own store in-process, and the other runtime's it routes to that owner.
+// The live-state guard refuses only under test isolation (decisions.md 46), and a read it
+// refuses is reported, never read as an unreadable store. A Stop whose receipt lives under the
+// live state root is answered with the refusal while CRW_REFUSE_LIVE_STATE=1 is exported, and
+// with a verdict when it is not, as the product answers it. The store is Go's, so no daemon's
+// absence refuses the Stop first: the Go CLI evaluates its own store in-process, and the other
+// runtime's it routes to that owner.
 func TestGuardEvaluate_reports_the_live_state_refusal(t *testing.T) {
+	t.Setenv("CRW_REFUSE_LIVE_STATE", "1")
 	home := pythonHome(t)
 	_, alias := packageBinary(t)
 	state := filepath.Join(home, ".local", "state", "codex-session-relay", "scope")
@@ -658,11 +660,11 @@ func TestGuardEvaluate_reports_the_live_state_refusal(t *testing.T) {
 	argv := []string{"--state", state, "guard-evaluate", "--marker-root", guard.Root, "--stop-input", guard.Stop,
 		"--mode", "observe", "--now", guard.Now, "--no-record"}
 	refused := binaryRun(t, alias, argv...)
-	want := "{\n  \"error\": \"host\",\n  \"detail\": \"store: live state requires CRW_ALLOW_LIVE_STATE=1\"\n}\n"
+	want := "{\n  \"error\": \"host\",\n  \"detail\": \"store: live state refused under CRW_REFUSE_LIVE_STATE=1 (test isolation)\"\n}\n"
 	if refused.code != 3 || refused.stdout != want {
 		t.Fatalf("exit %d\n%s", refused.code, refused.stdout)
 	}
-	t.Setenv("CRW_ALLOW_LIVE_STATE", "1")
+	t.Setenv("CRW_REFUSE_LIVE_STATE", "")
 	allowed := binaryRun(t, alias, argv...)
 	if allowed.code != 0 || !strings.Contains(allowed.stdout, `"decision": `) || strings.Contains(allowed.stdout, "receipts") {
 		t.Fatalf("exit %d\n%s", allowed.code, allowed.stdout)
@@ -670,9 +672,11 @@ func TestGuardEvaluate_reports_the_live_state_refusal(t *testing.T) {
 }
 
 // packet-check reads the store read-only for the receiver's standing, and a read the live-state
-// guard refuses is reported as the refusal, never answered as if the store could not be opened
-// (cutover.md, The live-state guard). With the guard lifted it is Python's answer.
+// guard refuses under test isolation is reported as the refusal, never answered as if the store
+// could not be opened (cutover.md, The live-state guard). Without the refusal, as the product
+// runs, it is Python's answer.
 func TestPacketCheck_reports_the_live_state_refusal(t *testing.T) {
+	t.Setenv("CRW_REFUSE_LIVE_STATE", "1")
 	home := pythonHome(t)
 	_, alias := packageBinary(t)
 	root := repositoryRoot(t)
@@ -709,11 +713,11 @@ func TestPacketCheck_reports_the_live_state_refusal(t *testing.T) {
 	// the record and reads no store.
 	argv := []string{"--state", live, "packet-check", "--packet", packet, "--receiver", "01supervisor-task"}
 	refused := binaryRun(t, alias, argv...)
-	want := "{\n  \"error\": \"host\",\n  \"detail\": \"store: live state requires CRW_ALLOW_LIVE_STATE=1\"\n}\n"
+	want := "{\n  \"error\": \"host\",\n  \"detail\": \"store: live state refused under CRW_REFUSE_LIVE_STATE=1 (test isolation)\"\n}\n"
 	if refused.code != 3 || refused.stdout != want {
 		t.Fatalf("exit %d\n%s", refused.code, refused.stdout)
 	}
-	t.Setenv("CRW_ALLOW_LIVE_STATE", "1")
+	t.Setenv("CRW_REFUSE_LIVE_STATE", "")
 	allowed := binaryRun(t, alias, argv...)
 	py, err := execute("uv", append([]string{"run", "--no-sync", "--project", root, "codex-session-relay"}, argv...)...)
 	if err != nil {

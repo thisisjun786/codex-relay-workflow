@@ -71,7 +71,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='json-access-') as tmp:
         home = Path(tmp)
         env = {k: v for k, v in os.environ.items() if not k.startswith(('XDG_', 'CODEX', 'CRW_'))}
-        env.update(HOME=tmp, XDG_STATE_HOME=tmp+'/xdg', XDG_CONFIG_HOME=tmp+'/config', XDG_CACHE_HOME=tmp+'/cache', XDG_DATA_HOME=tmp+'/data', CODEX_HOME=tmp+'/codex', CRW_ALLOW_LIVE_STATE='1', PATH=str(root/'internal/relay/cli/testdata')+':'+env['PATH'], CRW_FORGE_SCENARIO='rich')
+        env.update(HOME=tmp, XDG_STATE_HOME=tmp+'/xdg', XDG_CONFIG_HOME=tmp+'/config', XDG_CACHE_HOME=tmp+'/cache', XDG_DATA_HOME=tmp+'/data', CODEX_HOME=tmp+'/codex', PATH=str(root/'internal/relay/cli/testdata')+':'+env['PATH'], CRW_FORGE_SCENARIO='rich')
         state = home/'state'
         state.mkdir()
         # Initialize once through the Python console and retain a byte-identical seed. A

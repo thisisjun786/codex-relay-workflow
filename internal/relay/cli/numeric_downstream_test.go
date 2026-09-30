@@ -19,7 +19,7 @@ func Test24NumericDownstreamBytes(t *testing.T) {
 	root, _ := filepath.Abs("../../..")
 	_, alias := packageBinary(t)
 	home := t.TempDir()
-	env := append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home+"/xdg", "XDG_CONFIG_HOME="+home+"/config", "XDG_DATA_HOME="+home+"/data", "CODEX_HOME="+home+"/codex", "CRW_ALLOW_LIVE_STATE=1", "PATH="+root+"/internal/relay/cli/testdata:"+os.Getenv("PATH"))
+	env := append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home+"/xdg", "XDG_CONFIG_HOME="+home+"/config", "XDG_DATA_HOME="+home+"/data", "CODEX_HOME="+home+"/codex", "CRW_REFUSE_LIVE_STATE=", "PATH="+root+"/internal/relay/cli/testdata:"+os.Getenv("PATH"))
 	python := filepath.Join(root, ".venv/bin/python")
 	setup := runParityProcess(t, env, python, "testdata/numeric_downstream.py", home)
 	if setup.code != 0 {

@@ -295,10 +295,11 @@ func homes(t *testing.T) []string {
 	return out
 }
 
-// hookEnv is what the host hands a plugin hook: a shell with CODEX_HOME and PLUGIN_ROOT set.
+// hookEnv is what the host hands a plugin hook: a shell with CODEX_HOME and PLUGIN_ROOT set, and
+// the store's live-state refusal, as for every process a test starts (testsupport).
 func hookEnv(t *testing.T, home string) []string {
 	return []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "CODEX_HOME=" + filepath.Join(home, ".codex"),
-		"PLUGIN_ROOT=" + packageRoot(t)}
+		"PLUGIN_ROOT=" + packageRoot(t), testsupport.RefuseLiveStateEnv + "=1"}
 }
 
 const stopPayload = `{"hook_event_name": "Stop", "session_id": "s", "turn_id": "t"}`

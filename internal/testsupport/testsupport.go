@@ -16,6 +16,24 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 )
 
+// RefuseLiveStateEnv is the variable under which the Go store refuses a database below a live
+// relay state directory (store.ErrLiveState). The product never sets it and opens the live state;
+// this package sets it to "1" in every test binary that links it, before any TestMain runs, so a
+// test that forgets isolation is still refused, and every process such a test starts inherits it
+// (decisions.md 46). A test that exercises the product's default clears it for itself.
+const RefuseLiveStateEnv = "CRW_REFUSE_LIVE_STATE"
+
+func init() {
+	if testing.Testing() {
+		if err := RefuseLiveState(); err != nil {
+			panic("testsupport: " + err.Error())
+		}
+	}
+}
+
+// RefuseLiveState sets RefuseLiveStateEnv=1 in this process's environment.
+func RefuseLiveState() error { return os.Setenv(RefuseLiveStateEnv, "1") }
+
 // Fixture identities match the registry on purpose: the child thread is the registered child
 // task id and the turn is the bound dispatch turn.
 const (
@@ -121,7 +139,8 @@ func NewTree(t *testing.T) *Tree {
 	}
 }
 
-// IsolateRelayState points every relay-owned home and state root at one temporary tree.
+// IsolateRelayState points every relay-owned home and state root at one temporary tree and
+// keeps the live-state refusal (RefuseLiveStateEnv) in force for the process and its children.
 // TestMain callers must invoke the returned cleanup after m.Run.
 func IsolateRelayState() (func() error, error) {
 	originalHome, err := os.UserHomeDir()
@@ -150,7 +169,7 @@ func IsolateRelayState() (func() error, error) {
 			return nil, err
 		}
 	}
-	if err := os.Unsetenv("CRW_ALLOW_LIVE_STATE"); err != nil {
+	if err := RefuseLiveState(); err != nil {
 		_ = os.RemoveAll(root)
 		return nil, err
 	}

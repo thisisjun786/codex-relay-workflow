@@ -264,8 +264,8 @@ func packetCommand(ctx context.Context, services cli.Services, args map[string]s
 	reader := reception.Reader{Policy: *policy}
 	connection, openError := store.OpenReadOnly(ctx, services.Selection.DBPath(), time.Second)
 	if errors.Is(openError, store.ErrLiveState) {
-		// The live-state guard (until todo 43) is a refusal to report, never a store that
-		// merely could not be opened read-only.
+		// The live-state guard (test isolation, CRW_REFUSE_LIVE_STATE=1) is a refusal to
+		// report, never a store that merely could not be opened read-only.
 		return nil, openError
 	}
 	if openError == nil {

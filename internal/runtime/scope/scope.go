@@ -4,8 +4,7 @@
 //
 // Every relay reading is a SUBPROCESS of the relay executable the caller selected - the Python
 // console script until the cutover, the Go binary after it - because which store a selection
-// resolves to is that relay's rule, and the Go store refuses in-process opens of the live
-// state root before todo 42 (store.ErrLiveState). The relay's doctor constructs no store.
+// resolves to is that relay's rule. The relay's doctor constructs no store.
 package scope
 
 import (

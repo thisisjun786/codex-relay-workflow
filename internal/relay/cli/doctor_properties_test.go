@@ -620,8 +620,9 @@ func withHome(t *testing.T, home string) {
 		t.Fatalf("%s is not a test directory", home)
 	}
 	// This HOME is a t.TempDir, and its default state root is exactly what these properties
-	// are about, so the store's live-state guard is lifted for it and nothing else.
-	t.Setenv("CRW_ALLOW_LIVE_STATE", "1")
+	// are about, so the store's test-isolation refusal of the live state is lifted for it and
+	// nothing else.
+	t.Setenv("CRW_REFUSE_LIVE_STATE", "")
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_STATE_HOME", "")
 	os.Unsetenv("XDG_STATE_HOME")

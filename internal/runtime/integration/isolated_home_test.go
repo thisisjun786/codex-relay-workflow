@@ -257,10 +257,10 @@ func (h *isolated) outside(answer any) []string {
 }
 
 // env is the isolated environment: the four homes, a PATH of tripwires and the Codex stub, and
-// isolation. Nothing is inherited from this process. CRW_ALLOW_LIVE_STATE is not set, and need
-// not be: the relay state `crw install` exercises is named with --state outside
-// $XDG_STATE_HOME/codex-session-relay, and a Stop hook whose relay is unreachable opens no store,
-// so the live-state guard has nothing here to refuse.
+// isolation. Nothing is inherited from this process. The store's live-state refusal, which
+// isolation names, has nothing here to refuse: the relay state `crw install` exercises is named
+// with --state outside $XDG_STATE_HOME/codex-session-relay, and a Stop hook whose relay is
+// unreachable opens no store.
 func (h *isolated) env(extra ...string) []string {
 	env := append([]string{"HOME=" + h.home, "CODEX_HOME=" + h.codex, "XDG_STATE_HOME=" + h.state, "TMPDIR=" + h.tmp,
 		"PATH=" + h.trip + ":" + h.tools}, h.isolation()...)
@@ -273,9 +273,11 @@ func (h *isolated) env(extra ...string) []string {
 // (`codex-session-relay service status`) would read this machine's live registry, and so would
 // `crw install remove`, which reads the daemon records of the registry the relay resolves
 // (doctor.RecordedDaemons) and the state directories its claims name. The marker root follows
-// $HOME already and is named here too, as testsupport.IsolateRelayState names both.
+// $HOME already and is named here too, as testsupport.IsolateRelayState names both, and so is the
+// store's live-state refusal it keeps (testsupport.RefuseLiveStateEnv), which a process started
+// with nothing inherited would otherwise lack.
 func (h *isolated) isolation() []string {
-	return []string{"CODEX_SESSION_RELAY_SCOPE_DIR=" + h.scopes, "CODEX_SESSION_RELAY_MARKER_ROOT=" + h.markers}
+	return []string{"CODEX_SESSION_RELAY_SCOPE_DIR=" + h.scopes, "CODEX_SESSION_RELAY_MARKER_ROOT=" + h.markers, testsupport.RefuseLiveStateEnv + "=1"}
 }
 
 // bareBridgeEnv is the least a host can start the MCP server with: HOME and nothing else, no

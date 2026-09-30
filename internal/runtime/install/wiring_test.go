@@ -17,6 +17,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/scope"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 func wiring(parts ...string) string {
@@ -91,9 +92,10 @@ func journalRows(t *testing.T, root string) []map[string]any {
 }
 
 // launcherEnv is what a hook process of the cached plugin receives: HOME, CODEX_HOME, the plugin
-// root and a PATH with python3, and nothing that names a settings file or a policy.
+// root and a PATH with python3, and nothing that names a settings file or a policy. The store's
+// live-state refusal is named too, as for every process a test starts (testsupport).
 func (h *host) launcherEnv(pluginRoot string) []string {
-	return []string{"HOME=" + h.home, "CODEX_HOME=" + h.codex, "PLUGIN_ROOT=" + pluginRoot, "PATH=" + os.Getenv("PATH"), "PYTHONDONTWRITEBYTECODE=1"}
+	return []string{"HOME=" + h.home, "CODEX_HOME=" + h.codex, "PLUGIN_ROOT=" + pluginRoot, "PATH=" + os.Getenv("PATH"), "PYTHONDONTWRITEBYTECODE=1", testsupport.RefuseLiveStateEnv + "=1"}
 }
 
 // stopPayloadFor is a Stop payload for session and turn whose transcript is absent under h's home.
