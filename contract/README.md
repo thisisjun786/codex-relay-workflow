@@ -112,6 +112,28 @@ Filesystem `observed` paths expose mode, symlink target and sorted directory ent
 `sql` exposes rows and DDL through `sqlite_master`. A failed check always includes the
 scenario ID.
 
+## The Go runner (`internal/contracttest`)
+
+`CRW_CONTRACT_STRICT=1 go test ./internal/contracttest/...` replays every domain with no
+Python on the machine. Its `records` runners drive the built `crw hook`, which asks the
+owner over its control socket instead of starting a relay subprocess, with a guard peer
+standing in for the owner. `agreement` runs it under the checkout settings document and
+under the plugin-owned one, each in its own home, and requires the same printed answer and
+the same journal record apart from the six volatile fields `runner/files.py` excludes.
+`release` reads the named step's shell block from `.github/workflows/release.yml` with the
+same grammar as `scripts/ci/tests/release_steps.py` and runs it with bash in a fresh clone,
+beside copies of the fake `gh` and `git` in `internal/contracttest/testdata/release`.
+`${PYTHON}` and `${ENTRY}` expand to stand-ins that answer the status probe and exist;
+no fixture executes them.
+
+Seven `test_adapter_agreement` scenarios expect what only the Python subprocess adapter
+could answer: a signalled guard, a guard exit status of 7 or 9, and an exec error naming
+`relayExecutable`. The native hook has no guard process (decisions 22 and 32), so
+`nativeDivergences` in `internal/contracttest/records.go` holds those checks, and only
+those, to the native answer, each with its reason, and fails when a fixture stops making
+the check it replaces. When the Python corpus run leaves the repository, those fixtures
+should be rewritten to the native values and the table removed.
+
 ## Check examples
 
 Each entry below is a complete `expect.checks` element; `path` addresses the observed

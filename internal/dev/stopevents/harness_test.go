@@ -27,7 +27,7 @@ import (
 )
 
 // The records these tests judge are written by the real `crw hook`, built once per test binary,
-// answering Stops from the isolated Codex 0.154.0 run recorded in testdata/stop_event_r1.json:
+// answering Stops from the isolated Codex 0.154.0 run recorded in contract/golden/stop_event_r1.json:
 // three Stops of one turn, the second and third with byte-identical payloads. A guard peer on the
 // host's control.sock stands in for the relay and answers every request it is asked.
 
@@ -64,9 +64,13 @@ func repositoryRoot() string {
 	return root
 }
 
-// stopEventsScript is the Python judge these tests' recordings were taken from, named before any
-// test changes the working directory.
-var stopEventsScript = filepath.Join(repositoryRoot(), "scripts", "stop_events.py")
+// stopEventsScript is the Python judge these tests' recordings were taken from, and
+// stopEventsFixture the Stop events they answer, both named before any test changes the working
+// directory.
+var (
+	stopEventsScript  = filepath.Join(repositoryRoot(), "scripts", "stop_events.py")
+	stopEventsFixture = filepath.Join(repositoryRoot(), "contract", "golden", "stop_event_r1.json")
+)
 
 // cpython314 is python3 when it is CPython 3.14, the interpreter the judge's parity is claimed
 // against (docs/live-trial.md), or "" when there is no such interpreter to compare with.
@@ -125,7 +129,7 @@ type stopFixture struct {
 
 func loadFixture(t *testing.T) stopFixture {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("testdata", "stop_event_r1.json"))
+	raw, err := os.ReadFile(stopEventsFixture)
 	if err != nil {
 		t.Fatal(err)
 	}

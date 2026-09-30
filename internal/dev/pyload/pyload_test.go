@@ -59,8 +59,9 @@ func corpus(t *testing.T) map[string][]byte {
 		t.Fatal(err)
 	}
 	docs := map[string][]byte{}
-	// internal/dev/pyload/testdata holds copies of the relay package's test fixtures, which leave
-	// the repository with the Python implementation (todo 44).
+	// internal/dev/pyload/testdata holds copies of the relay package's merge-turn fixtures, which
+	// leave the repository with the Python implementation (todo 44); its Stop event fixture is
+	// contract/golden/stop_event_r1.json.
 	for _, dir := range []string{"internal/relay/hook/testdata", "internal/dev/trialledger/testdata", "contract", "internal/dev/pyload/testdata"} {
 		err := filepath.WalkDir(filepath.Join(root, dir), func(path string, d os.DirEntry, err error) error {
 			if err == nil && d.IsDir() && d.Name() == "python-oracle" {
