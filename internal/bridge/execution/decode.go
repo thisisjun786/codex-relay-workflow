@@ -131,8 +131,9 @@ func (b *builder) value() (any, error) {
 	return json.Number(rest[:end]), nil
 }
 
-// str reads one string token, escapes decoded as encoding/json decodes them (a lone surrogate
-// escape is U+FFFD, decision 21).
+// str reads one string token as json.loads decodes it (pyjson.Unquote): a lone surrogate escape
+// ("\udcff") is that code point, held as WTF-8, so a refusal names it as repr() does and two
+// names escaped as different surrogates stay two names.
 func (b *builder) str() (string, error) {
 	start := b.i
 	for b.i++; b.i < len(b.s) && b.s[b.i] != '"'; b.i++ {
@@ -141,8 +142,8 @@ func (b *builder) str() (string, error) {
 		}
 	}
 	b.i++
-	var out string
-	if err := json.Unmarshal([]byte(b.s[start:b.i]), &out); err != nil {
+	out, err := pyjson.Unquote(b.s[start:b.i])
+	if err != nil {
 		return "", &syntaxError{err.Error()}
 	}
 	return out, nil

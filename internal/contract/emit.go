@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf16"
+	"unicode/utf8"
 )
 
 // Field is one entry in a Python insertion-ordered JSON object.
@@ -116,9 +117,15 @@ func indent(buf *bytes.Buffer, depth int) {
 	}
 }
 
+// appendString writes value as json.dumps writes the str Python holds for it: a byte that is not
+// UTF-8 is its surrogate escape (an argv or environment byte, os.fsdecode's U+DC80..U+DCFF) and a
+// WTF-8 surrogate is that code point (a "\udXXX" JSON escape), each written as its \u escape,
+// never as U+FFFD.
 func appendString(buf *bytes.Buffer, value string) {
 	buf.WriteByte('"')
-	for _, r := range value {
+	for i := 0; i < len(value); {
+		r, size := codePoint(value, i)
+		i += size
 		switch {
 		case r == '"' || r == '\\':
 			buf.WriteByte('\\')
@@ -133,6 +140,8 @@ func appendString(buf *bytes.Buffer, value string) {
 			buf.WriteString(`\b`)
 		case r == '\f':
 			buf.WriteString(`\f`)
+		case r >= 0xd800 && r <= 0xdfff:
+			fmt.Fprintf(buf, "\\u%04x", r)
 		case r < 0x20 || r > 0x7e:
 			for _, unit := range utf16.Encode([]rune{r}) {
 				fmt.Fprintf(buf, "\\u%04x", unit)
@@ -142,4 +151,17 @@ func appendString(buf *bytes.Buffer, value string) {
 		}
 	}
 	buf.WriteByte('"')
+}
+
+// codePoint is the code point of the Python str value holds at byte i, and its width: a WTF-8
+// surrogate (ED A0..BF xx) is one code point, and a byte that is not UTF-8 is its surrogate escape.
+func codePoint(value string, i int) (rune, int) {
+	if i+2 < len(value) && value[i] == 0xed && value[i+1] >= 0xa0 && value[i+1] <= 0xbf && value[i+2] >= 0x80 && value[i+2] <= 0xbf {
+		return 0xd000 | rune(value[i+1]&0x3f)<<6 | rune(value[i+2]&0x3f), 3
+	}
+	r, size := utf8.DecodeRuneInString(value[i:])
+	if r == utf8.RuneError && size == 1 {
+		return 0xdc00 + rune(value[i]), 1
+	}
+	return r, size
 }

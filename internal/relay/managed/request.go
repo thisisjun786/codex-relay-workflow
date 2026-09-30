@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -13,6 +14,10 @@ import (
 	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
+	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 const Schema = "managed-start/1"
@@ -22,6 +27,16 @@ const maxRequestBytes = 256000
 func ParseRequest(raw []byte) (map[string]any, error) {
 	if len(raw) > maxRequestBytes {
 		return nil, fmt.Errorf("managed request exceeds the byte limit")
+	}
+	// parse_request measures json.dumps(raw, ensure_ascii=False).encode("utf-8") before it judges
+	// any field, and that encode raises for a lone surrogate escape ("\udcff") json.loads kept.
+	if value, err := hook.Decode(raw); err == nil {
+		var dumped strings.Builder
+		if dumpsUnescaped(&dumped, value) {
+			if err := store.EncodeUTF8(dumped.String()); err != nil {
+				return nil, err
+			}
+		}
 	}
 	var v any
 	if err := json.Unmarshal(raw, &v); err != nil {
@@ -180,4 +195,77 @@ func OperationIDs(requestID string) (string, string) {
 	sum := sha256.Sum256([]byte(requestID))
 	digest := hex.EncodeToString(sum[:])
 	return "managed-create-" + digest, "managed-business-" + digest
+}
+
+// dumpsUnescaped writes value as json.dumps(value, ensure_ascii=False) spells it, code point for
+// code point, with a lone surrogate (held as WTF-8) left as the character it is, so EncodeUTF8 of
+// the text names the position the fence's encode names. It answers false for a value json.dumps
+// refuses before anything is encoded (a non-finite float, which allow_nan=False raises for).
+func dumpsUnescaped(b *strings.Builder, value any) bool {
+	switch v := value.(type) {
+	case contract.OrderedObject:
+		b.WriteByte('{')
+		for i, field := range v {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			dumpsString(b, field.Key)
+			b.WriteString(": ")
+			if !dumpsUnescaped(b, field.Value) {
+				return false
+			}
+		}
+		b.WriteByte('}')
+	case []any:
+		b.WriteByte('[')
+		for i, item := range v {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			if !dumpsUnescaped(b, item) {
+				return false
+			}
+		}
+		b.WriteByte(']')
+	case string:
+		dumpsString(b, v)
+	case float64:
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return false
+		}
+		b.WriteString(evidence.Float(v))
+	case nil:
+		b.WriteString("null")
+	default: // bool, int64, json.Number
+		fmt.Fprint(b, v)
+	}
+	return true
+}
+
+// dumpsString is json.dumps's ensure_ascii=False spelling of a str: the quote, the backslash and
+// the control characters escaped, every other character as itself.
+func dumpsString(b *strings.Builder, s string) {
+	b.WriteByte('"')
+	for i := 0; i < len(s); i++ {
+		switch c := s[i]; {
+		case c == '"' || c == '\\':
+			b.WriteByte('\\')
+			b.WriteByte(c)
+		case c == '\n':
+			b.WriteString(`\n`)
+		case c == '\r':
+			b.WriteString(`\r`)
+		case c == '\t':
+			b.WriteString(`\t`)
+		case c == '\b':
+			b.WriteString(`\b`)
+		case c == '\f':
+			b.WriteString(`\f`)
+		case c < 0x20:
+			fmt.Fprintf(b, `\u%04x`, c)
+		default:
+			b.WriteByte(c)
+		}
+	}
+	b.WriteByte('"')
 }

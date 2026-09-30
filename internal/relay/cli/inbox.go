@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -204,7 +203,7 @@ func (l *lazyHost) RecipientFingerprint(thread string) (string, error) {
 // directory it lives in. A bare ownership refusal (the store's admission changed under the
 // drain) answers as a refused admission does.
 func drainInbox(ctx context.Context, st *store.Store, socket string) error {
-	return store.AsOwnershipRefusal(inbox.Drain(ctx, st, filepath.Dir(st.Path), replayQueued(socket)))
+	return store.AsOwnershipRefusal(inbox.Drain(ctx, st, store.PathlibParent(st.Path), replayQueued(socket)))
 }
 
 // drainsBeforeHandler reports whether a writable command admits its store and drains the inbox

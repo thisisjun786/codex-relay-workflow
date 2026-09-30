@@ -2178,3 +2178,32 @@ the go subtest and after-active 3 of 3 times each. Restoring the previous `daemo
 go-interrupted-together 15 of 20 times. Under the load that failed the previous build 39 of 50
 times, the final build passed every run: the takeover test 50 of 50,
 `Test42InterruptedSupervisorStopsItsWorker` 50 of 50, and go-interrupted-together 200 more.
+
+## 45. Discovery asks the stores under the absolute state root, in both runtimes
+
+Decision: the retained Python fence's `discover_state_dir` walks the stores beside the canonical
+directory under `(base / "codex-session-relay").absolute()`, the directory its own selection
+names, where it walked `base / "codex-session-relay"` as spelled. Go's `DiscoverStateDir` already
+walked the absolute root. Under a relative `XDG_STATE_HOME`, or a relative `HOME` with no
+`XDG_STATE_HOME`, both runtimes now adopt the one store that records the requested socket, report
+two such stores as ambiguous, and name a store that records no socket by its absolute path. An
+absolute root, which every measured host uses, is walked as before.
+
+Why: `store_socket` opens a store through `Path(db_path).as_uri()`, which raises ValueError for a
+relative path, and it answers that as a store recording no socket. Under a relative root every
+store beside the canonical directory therefore read as unidentified: the fence never adopted the
+store a socket already had, reported it under a relative spelling beside the absolute canonical
+path, and selected the canonical directory, while Go adopted the recorded store. The two runtimes
+chose different stores for one socket, which the single-writer cutover cannot allow.
+
+Cost: none on a host whose state root is absolute. Where a fence has already created a canonical
+store beside a store it failed to adopt, the canonical store keeps answering first in both
+runtimes, as it does for any existing canonical store.
+
+Evidence: `packages/codex-session-relay/src/codex_session_relay/store.py` (`discover_state_dir`),
+`internal/relay/store/state.go` (`DiscoverStateDir`). Tests:
+`packages/codex-session-relay/tests/test_store.py`
+(`Precedence.test_a_relative_state_home_still_asks_the_stores_themselves`) and
+`internal/relay/store/pathlib_parity_test.go` (`TestDiscoverySpellsEveryStoreItNamesAsPythonDoes`,
+subtests `XDG_STATE_HOME=rel` and `HOME=hrel`, which compare the fence's selection, detail and
+candidates with Go's). Restoring the relative walk fails both.

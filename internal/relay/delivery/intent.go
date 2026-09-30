@@ -819,7 +819,10 @@ func DeclareIntent(root string, d IntentDeclaration) (Obj, error) {
 	if !Named(d.DispatchRequestID) {
 		return nil, registrationError(UnboundGeneration, "an intent needs an exact dispatch request id")
 	}
-	assignment := AssignmentID(d.DispatchRequestID)
+	assignment, err := encodedAssignmentID(d.DispatchRequestID)
+	if err != nil {
+		return nil, err
+	}
 	directory, err := assignmentDirectory(root, d.Workspace, assignment)
 	if err != nil {
 		return nil, err
@@ -925,7 +928,9 @@ func RegisterRelationship(ctx context.Context, root, workspace string, assignmen
 	if !Named(relationshipID) {
 		return nil, registrationError(UnregisteredRelationship, "a registration needs an exact relationship id")
 	}
-	if AssignmentID(dispatchRequestID) != assignment {
+	if hashed, err := encodedAssignmentID(dispatchRequestID); err != nil {
+		return nil, err
+	} else if hashed != assignment {
 		return nil, registrationError(RelationshipConflict, "relationship "+relationshipID+" was dispatched under a different request id, so it does not belong to assignment "+pyStr(assignment))
 	}
 	directory, err := assignmentDirectory(root, workspace, assignment)
@@ -988,7 +993,9 @@ func PublishClaim(root, workspace string, assignment, sessionID any, dispatchReq
 	if err != nil {
 		return nil, err
 	}
-	if AssignmentID(dispatchRequestID) != assignment {
+	if hashed, err := encodedAssignmentID(dispatchRequestID); err != nil {
+		return nil, err
+	} else if hashed != assignment {
 		return nil, registrationError(RelationshipConflict, "this claim names dispatch request id "+dispatchRequestID+", which does not hash to assignment "+pyStr(assignment)+", so it claims a different assignment")
 	}
 	directory, err := assignmentDirectory(root, workspace, assignment)

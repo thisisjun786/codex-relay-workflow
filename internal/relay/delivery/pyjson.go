@@ -9,6 +9,7 @@ import (
 	"strings"
 	"unicode/utf16"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 )
 
@@ -141,9 +142,14 @@ func pyFloat(f float64) string {
 	return mantissa + "e" + exponent[:1] + digits
 }
 
+// writeString writes s as json.dumps writes the str Python holds for it: a byte that is not
+// UTF-8 is its surrogate escape and a WTF-8 surrogate its code point (settings.CodePoint), each
+// written as its \u escape rather than as U+FFFD.
 func writeString(b *strings.Builder, s string) {
 	b.WriteByte('"')
-	for _, r := range s {
+	for i := 0; i < len(s); {
+		r, size := settings.CodePoint(s, i)
+		i += size
 		switch {
 		case r == '"' || r == '\\':
 			b.WriteByte('\\')
@@ -158,6 +164,8 @@ func writeString(b *strings.Builder, s string) {
 			b.WriteString(`\b`)
 		case r == '\f':
 			b.WriteString(`\f`)
+		case r >= 0xd800 && r <= 0xdfff:
+			fmt.Fprintf(b, "\\u%04x", r)
 		case r < 0x20 || r > 0x7e:
 			for _, u := range utf16.Encode([]rune{r}) {
 				fmt.Fprintf(b, "\\u%04x", u)

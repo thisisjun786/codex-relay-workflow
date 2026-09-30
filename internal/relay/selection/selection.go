@@ -105,16 +105,18 @@ func wrongSocketRecovery(services Services, recorded, wanted string) []any {
 	if pinned == "" {
 		return lines
 	}
+	// Path(pinned).expanduser().resolve(), which keeps a component it cannot examine or a link
+	// loop as spelled (store.Realpath): only an unknown ~user is said rather than offered.
 	expanded, err := store.ExpandUser(pinned)
 	var resolved string
 	if err == nil {
-		resolved, err = store.ResolvePath(expanded)
+		resolved, err = store.Realpath(expanded)
 	}
 	if err != nil {
 		return append(lines, "  "+store.StateEnv+" is set to "+store.PythonRepr(pinned)+", which names a home directory that does not"+
 			" resolve on this host, so it is not offered as a candidate")
 	}
-	selected, err := store.ResolvePath(services.Selection.Path)
+	selected, err := store.Realpath(services.Selection.Path)
 	if err != nil || resolved != selected {
 		lines = append(lines,
 			services.Program+" --state="+shellQuote(resolved)+" --socket="+shellQuote(wanted)+" doctor",

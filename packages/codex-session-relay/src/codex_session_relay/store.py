@@ -1717,7 +1717,14 @@ def discover_state_dir(socket_path=None) -> StateSelection:
     # a canonical database here would hide it for good, because afterwards even the old
     # spelling finds the new one. So before creating anything, ask the stores themselves.
     # Only reached when no canonical database exists yet, which is the one moment it matters.
-    claims = stores_claiming_socket(base / "codex-session-relay", socket_path, skip=scope)
+    #
+    # Walked as the absolute directory the selection itself names. A relative XDG_STATE_HOME
+    # (or HOME) left the walk relative: store_socket cannot open a relative path as a file URI,
+    # so every sibling read as recording no socket. The store this socket already had was then
+    # reported as unidentified, under a relative spelling beside an absolute path, instead of
+    # being adopted.
+    root = (base / "codex-session-relay").absolute()
+    claims = stores_claiming_socket(root, socket_path, skip=scope)
     if len(claims) == 1:
         adopted = Path(claims[0])
         return StateSelection(
@@ -1744,7 +1751,7 @@ def discover_state_dir(socket_path=None) -> StateSelection:
     # would. Reporting them through doctor alone was not enough, because ordinary commands do
     # not run doctor. Only when we would CREATE: an existing canonical store has already
     # answered the question and returned above.
-    unidentified = stores_without_provenance(base / "codex-session-relay", skip=scope)
+    unidentified = stores_without_provenance(root, skip=scope)
     if unidentified:
         return StateSelection(
             chosen, source,

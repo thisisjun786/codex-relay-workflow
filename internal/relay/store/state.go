@@ -36,24 +36,114 @@ func canonicalSocket(path string) (string, error) {
 	return resolvePath(expanded)
 }
 
-func resolvePath(path string) (string, error) { return resolvePathDepth(path, 0, true) }
+func resolvePath(path string) (string, error) { return resolvePathDepth(path, 0) }
 
-// resolveLoosely is Path.resolve() as ownership.mirror calls it (os.path.realpath with
-// strict=False): a component that cannot be examined (EACCES, ENOTDIR, an unreadable link) is
-// kept as spelled, where resolvePath fails.
+// resolveLoosely is Path.resolve() as ownership.mirror calls it (Realpath), the path as given
+// when the working directory a relative one needs cannot be read.
 func resolveLoosely(path string) string {
-	resolved, err := resolvePathDepth(path, 0, false)
+	resolved, err := Realpath(path)
 	if err != nil {
 		return path
 	}
 	return resolved
 }
 
-func resolvePathDepth(path string, depth int, strict bool) (string, error) {
-	if depth > 40 {
-		if !strict {
-			return pathlibSpelling(path), nil
+// Realpath is os.path.realpath(path) with strict=False, which Path(path).resolve() is: each
+// component is examined from the left and a symbolic link is followed where it stands, before a
+// later ".." is applied. A component that cannot be examined (EACCES, ENOENT, ENOTDIR,
+// ENAMETOOLONG, an unreadable link) is kept as spelled and the walk goes on beneath it, and a link
+// met again before it has resolved (a loop) is kept as spelled, as CPython 3.13 and 3.14 keep it.
+// The only failures are the working directory's (os.getcwd) for a relative path and an embedded
+// NUL, which Python's lstat refuses with ValueError.
+func Realpath(path string) (string, error) {
+	if strings.IndexByte(path, 0) >= 0 {
+		return "", errors.New("ValueError: embedded null byte")
+	}
+	// rest is Python's stack of unresolved parts, top last. A marker entry stands for the None
+	// realpath pushes above a link's own path: popping it records what the link resolved to.
+	type entry struct {
+		name   string
+		marker bool
+	}
+	fields := strings.Split(path, "/")
+	rest := make([]entry, 0, len(fields))
+	for i := len(fields) - 1; i >= 0; i-- {
+		rest = append(rest, entry{name: fields[i]})
+	}
+	count := len(fields)
+	resolved := "/"
+	if !strings.HasPrefix(path, "/") {
+		cwd, err := unix.Getwd()
+		if err != nil {
+			return "", err
 		}
+		resolved = cwd
+	}
+	// seen maps a link to what it resolved to; a link present but not yet done is being resolved.
+	type link struct {
+		resolved string
+		done     bool
+	}
+	seen := map[string]link{}
+	for count > 0 {
+		top := rest[len(rest)-1]
+		rest = rest[:len(rest)-1]
+		if top.marker {
+			owner := rest[len(rest)-1]
+			rest = rest[:len(rest)-1]
+			seen[owner.name] = link{resolved: resolved, done: true}
+			continue
+		}
+		count--
+		name := top.name
+		if name == "" || name == "." {
+			continue
+		}
+		if name == ".." {
+			if cut := strings.LastIndex(resolved, "/"); cut > 0 {
+				resolved = resolved[:cut]
+			} else {
+				resolved = "/"
+			}
+			continue
+		}
+		next := resolved + "/" + name
+		if resolved == "/" {
+			next = "/" + name
+		}
+		info, err := os.Lstat(next)
+		if err != nil || info.Mode()&os.ModeSymlink == 0 {
+			resolved = next
+			continue
+		}
+		if known, ok := seen[next]; ok {
+			resolved = next
+			if known.done {
+				resolved = known.resolved
+			}
+			continue
+		}
+		target, err := os.Readlink(next)
+		if err != nil {
+			resolved = next
+			continue
+		}
+		if strings.HasPrefix(target, "/") {
+			resolved = "/"
+		}
+		seen[next] = link{}
+		rest = append(rest, entry{name: next}, entry{marker: true})
+		parts := strings.Split(target, "/")
+		for i := len(parts) - 1; i >= 0; i-- {
+			rest = append(rest, entry{name: parts[i]})
+		}
+		count += len(parts)
+	}
+	return resolved, nil
+}
+
+func resolvePathDepth(path string, depth int) (string, error) {
+	if depth > 40 {
 		return "", fmt.Errorf("too many symlinks resolving %q", path)
 	}
 	absolute := path
@@ -78,7 +168,7 @@ func resolvePathDepth(path string, depth int, strict bool) (string, error) {
 		}
 		candidate := filepath.Join(resolved, part)
 		info, err := os.Lstat(candidate)
-		if os.IsNotExist(err) || err != nil && !strict {
+		if os.IsNotExist(err) {
 			resolved = candidate
 			continue
 		}
@@ -90,18 +180,14 @@ func resolvePathDepth(path string, depth int, strict bool) (string, error) {
 			continue
 		}
 		target, err := os.Readlink(candidate)
-		if err != nil && !strict {
-			resolved = candidate
-			continue
-		}
 		if err != nil {
 			return "", err
 		}
 		remaining := strings.Join(parts[i+1:], string(filepath.Separator))
 		if filepath.IsAbs(target) {
-			return resolvePathDepth(target+string(filepath.Separator)+remaining, depth+1, strict)
+			return resolvePathDepth(target+string(filepath.Separator)+remaining, depth+1)
 		}
-		return resolvePathDepth(resolved+string(filepath.Separator)+target+string(filepath.Separator)+remaining, depth+1, strict)
+		return resolvePathDepth(resolved+string(filepath.Separator)+target+string(filepath.Separator)+remaining, depth+1)
 	}
 	return resolved, nil
 }

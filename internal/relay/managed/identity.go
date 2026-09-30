@@ -47,7 +47,7 @@ func RequestIdentity(ctx context.Context, request map[string]any, s *store.Store
 		roots = append(roots, resolved)
 	}
 	if stateSelector == "" {
-		stateSelector = filepath.Dir(s.Path)
+		stateSelector = store.PathlibParent(s.Path)
 	}
 	selectors := map[string]any{
 		"original": map[string]any{"state": stateSelector, "socket": socket, "markerRoot": markerRoot},

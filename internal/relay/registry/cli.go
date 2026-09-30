@@ -152,7 +152,10 @@ func cmdDispositionsShow(ctx context.Context, selection store.StateSelection, p 
 		v := p.text("relationship")
 		relationship = &v
 	}
-	report := ReadDispositions(ctx, selection, project, relationship)
+	report, err := ReadDispositions(ctx, selection, project, relationship)
+	if err != nil {
+		return nil, err
+	}
 	if readable, _ := getField(report, "readable"); readable != true {
 		return nil, &DispositionsExit{report}
 	}
@@ -349,6 +352,8 @@ func emit(stdout, stderr io.Writer, result any, err error) int {
 	case err == nil:
 	case errors.As(err, &payload):
 		result, code = payload.ExitPayload()
+	case store.EncodeError(err) != nil:
+		result, code = contract.OrderedObject{{Key: "error", Value: "host"}, {Key: "detail", Value: store.EncodeError(err).HostDetail()}}, contract.ExitHost
 	case errors.As(err, &refused):
 		var reason any
 		if refused.Reason != "" {

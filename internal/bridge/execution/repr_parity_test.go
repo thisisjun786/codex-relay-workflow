@@ -10,9 +10,9 @@ import (
 
 // A policy refusal quotes a name from the file as Python's f"{name!r}" does: its quote choice,
 // a backslash doubled, and every character str.isprintable() refuses (U+00A0, U+2028, U+200B)
-// escaped. Each want is ExecutionPolicy.from_bytes's ExecutionPolicyError for the same bytes. A
-// name escaped as a lone surrogate is left out: this decoder reads it as U+FFFD where json.loads
-// keeps it, a difference docs/port/known-defects.md records ("two JSON readers").
+// escaped. A name escaped as a lone surrogate is that code point, as json.loads keeps it, so it
+// is quoted as '\udcff' and two names escaped as different surrogates stay two names. Each want
+// is ExecutionPolicy.from_bytes's ExecutionPolicyError for the same bytes.
 func TestAPolicyRefusalQuotesANameAsPythonReprsIt(t *testing.T) {
 	root, err := filepath.Abs("../../..")
 	if err != nil {
@@ -24,6 +24,10 @@ func TestAPolicyRefusalQuotesANameAsPythonReprsIt(t *testing.T) {
 		`{"roles": {"a\\b": {}}}`,
 		`{"roles": {"l\u2028s\u200b": {}}}`,
 		`{"allowed": {}, "a\\b\u00a0": 1, "a\\b\u00a0": 2}`,
+		`{"roles": {"s\udcff": {}}}`,
+		`{"roles": {"s\udcff": {}, "s\udcfe": {}}}`,
+		`{"roles": {"\ud800x\udfff": {}}}`,
+		`{"allowed": {}, "\udcff": 1, "\udcff": 2}`,
 	}
 	raw, err := json.Marshal(documents)
 	if err != nil {

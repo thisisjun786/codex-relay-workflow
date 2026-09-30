@@ -101,7 +101,7 @@ func Test33PR181StatusSymlinkPython(t *testing.T) {
 			if err = json.Unmarshal(raw, &expected); err != nil {
 				t.Fatal(err)
 			}
-			got := readStatusSettings(context.Background(), path)
+			got := readStatusSettings(context.Background(), path, true)
 			if got.State != expected["state"] {
 				t.Fatalf("Go %s Python %s", got.State, raw)
 			}

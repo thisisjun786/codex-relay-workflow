@@ -224,7 +224,9 @@ func TestPathlibChildAndParentAreJoinAndParentOfPath(t *testing.T) {
 // Every store discovery names besides the canonical one, the legacy store it keeps, the store it
 // adopts and the stores it reports as ambiguous or unidentified, is spelled as Python's
 // discover_state_dir spells it: under an XDG_STATE_HOME of two leading slashes each keeps both, as
-// the canonical directory does.
+// the canonical directory does. Under a relative XDG_STATE_HOME or HOME the stores are asked
+// through the absolute directory the selection names, so a store recording this socket is adopted
+// and one recording none is named absolute, in both runtimes.
 func TestDiscoverySpellsEveryStoreItNamesAsPythonDoes(t *testing.T) {
 	python := venvPython(t)
 	root, err := filepath.EvalSymlinks(t.TempDir())
@@ -274,10 +276,15 @@ else:
 		}
 		return got
 	}
-	for _, xdg := range []string{"/" + filepath.Join(root, "two"), filepath.Join(root, "one")} {
-		t.Run("XDG_STATE_HOME="+xdg, func(t *testing.T) {
-			t.Setenv("XDG_STATE_HOME", xdg)
-			stores := filepath.Join(root, filepath.Base(xdg), "codex-session-relay")
+	for _, base := range []struct{ xdg, home, stores string }{
+		{"/" + filepath.Join(root, "two"), "", "two"}, {filepath.Join(root, "one"), "", "one"}, {"rel", "", "rel"}, {"", "hrel", "hrel/.local/state"},
+	} {
+		t.Run("XDG_STATE_HOME="+base.xdg+",HOME="+base.home, func(t *testing.T) {
+			t.Setenv("XDG_STATE_HOME", base.xdg)
+			if base.home != "" {
+				t.Setenv("HOME", base.home)
+			}
+			stores := filepath.Join(root, base.stores, "codex-session-relay")
 			// A relative socket's old key names a store that records no socket: discovery keeps it.
 			legacy := pythonAt(t, python, root, discover, "legacy", "a/../b.sock")
 			store(filepath.Join(stores, legacy), "")
@@ -298,7 +305,7 @@ else:
 				t.Fatalf("two stores recording this socket were not ambiguous: %+v", ambiguous)
 			}
 			// A link to a store directory is a directory to Path.is_dir(), which follows it.
-			outside := filepath.Join(root, filepath.Base(xdg)+"-outside")
+			outside := filepath.Join(root, filepath.Base(base.stores)+"-outside")
 			store(outside, "")
 			if err := os.Symlink(outside, filepath.Join(stores, "linked")); err != nil {
 				t.Fatal(err)
@@ -368,5 +375,63 @@ print(json.dumps([[os.path.abspath(p), os.path.dirname(os.path.abspath(p)), stor
 				}
 			}
 		})
+	}
+}
+
+// Realpath is os.path.realpath without strict, which Path.resolve() is: a component that cannot
+// be examined (under a directory this user may not search, beneath a file, too long) is kept as
+// spelled and the walk goes on, a link loop is kept where it is met, a ".." after a link applies
+// to the link's target, and a relative path is read against the physical working directory.
+func TestRealpathIsPathResolve(t *testing.T) {
+	python := venvPython(t)
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{"locked/inner", "real/wd", "real/deep/er"} {
+		if err = os.MkdirAll(filepath.Join(root, dir), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = os.WriteFile(filepath.Join(root, "file"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for link, target := range map[string]string{
+		"loopa": "loopb", "loopb": "loopa", "self": "self", "alias": filepath.Join(root, "real"),
+		"up": "real/deep/er/..", "dangling": "nowhere/x", "chain": "alias/deep", "abs-loop": filepath.Join(root, "abs-loop", "x"),
+		"real/wd/back": "../..", "into-locked": "locked/inner",
+	} {
+		if err = os.Symlink(target, filepath.Join(root, link)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = os.Chmod(filepath.Join(root, "locked"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(filepath.Join(root, "locked"), 0o700) })
+	wd := filepath.Join(root, "alias", "wd")
+	t.Chdir(wd)
+	inputs := []string{
+		root + "/locked/inner/st", root + "/into-locked/st", root + "/loopa/st", "loopa", "../../loopb/x/..", root + "/self/a/../b",
+		root + "/abs-loop/y", root + "/alias/wd/../deep", root + "/up/x", root + "/dangling/y", root + "/chain/er/../../wd",
+		root + "/file/x/y", root + "/real/wd/back/alias/wd", "st", ".", "", "..", "/", "//x/./y//", "/" + strings.Repeat("n", 300) + "/x",
+		root + "/alias/../file",
+	}
+	raw, err := json.Marshal(inputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want []string
+	if err = json.Unmarshal([]byte(pythonAt(t, python, wd, "import json, os, sys; print(json.dumps([os.path.realpath(p) for p in json.loads(sys.argv[1])]))", string(raw))), &want); err != nil {
+		t.Fatal(err)
+	}
+	for i, input := range inputs {
+		got, err := Realpath(input)
+		if err != nil || got != want[i] {
+			t.Errorf("Realpath(%q) = %q, %v; Python's os.path.realpath is %q", input, got, err, want[i])
+		}
+	}
+	if _, err = Realpath("a\x00b"); err == nil {
+		t.Error("Realpath accepted an embedded NUL, which Python's lstat refuses with ValueError")
 	}
 }

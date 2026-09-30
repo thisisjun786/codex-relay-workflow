@@ -91,6 +91,10 @@ func RegionID(repository, baseRevision, p, kind, key string) (string, error) {
 	if err := exact(baseRevision, "a base revision"); err != nil {
 		return "", err
 	}
+	// coordination.derive's str.encode("utf-8") raises for a field holding a surrogate escape.
+	if err := store.EncodeUTF8(strings.Join([]string{repository, baseRevision, p, kind, key}, "|")); err != nil {
+		return "", err
+	}
 	return derive("rgn", repository, baseRevision, p, kind, key), nil
 }
 

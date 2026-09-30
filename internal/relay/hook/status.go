@@ -125,7 +125,7 @@ func Status(ctx context.Context, home string, environ map[string]string, event s
 			reading.Path = absolute[0]
 			configurationSource = "the registered command"
 		}
-		reading = readStatusSettings(ctx, reading.Path)
+		reading = readStatusSettings(ctx, reading.Path, len(absolute) > 0)
 		failed = reading.State
 		if reading.Value != nil {
 			failed = ""
@@ -229,8 +229,11 @@ func readRegistrations(path, event string) (map[string]any, []statusRegistration
 	if err != nil || infoUnreadable(path) {
 		return cell(unreadable, "the hook file could not be read", map[string]any{"hookFile": path}), nil, false
 	}
-	var doc map[string]any
-	if json.Unmarshal(raw, &doc) != nil {
+	// Decoded as json.loads decodes it, so a string keeps a lone surrogate escape ("\udcff") as
+	// the code point Python holds, which fsencode then opens as the byte it stands for.
+	value, err := Decode(raw)
+	doc, isObject := plainJSON(value).(map[string]any)
+	if err != nil || !isObject && value != nil {
 		return cell(unreadable, "the hook file could not be read", map[string]any{"hookFile": path}), nil, false
 	}
 	hooksObj, ok := doc["hooks"].(map[string]any)
@@ -285,14 +288,22 @@ func readRegistrations(path, event string) (map[string]any, []statusRegistration
 	return cell(strconv.Itoa(len(ids)), "hooks registered for "+event+" in the user hook file", map[string]any{"hookFile": path, "identities": ids, "thisAdapter": ownOut}), ours, true
 }
 
-func readStatusSettings(ctx context.Context, path string) settingsReading {
+// readStatusSettings reads the settings at path. A path taken from JSON (a registration in the
+// hook file) holds a str as Python does, and reaches the system as os.fsencode's bytes, as
+// read_configuration opens it; a path from the environment is already the bytes it names. The
+// reading names the path as given either way.
+func readStatusSettings(ctx context.Context, path string, fromJSON bool) settingsReading {
 	out := settingsReading{Path: path}
-	info, err := os.Lstat(path)
-	if strings.IndexByte(path, 0) >= 0 {
+	system, encoded := path, true
+	if fromJSON {
+		system, encoded = fsencode(path)
+	}
+	if !encoded || strings.IndexByte(path, 0) >= 0 {
 		out.State = "config_unreadable"
 		out.Detail = "the configuration at " + path + " could not be opened"
 		return out
 	}
+	info, err := os.Lstat(system)
 	if errors.Is(err, os.ErrNotExist) {
 		out.State = "config_absent"
 		out.Detail = "no configuration at " + path
@@ -304,7 +315,7 @@ func readStatusSettings(ctx context.Context, path string) settingsReading {
 		return out
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
-		info, err = os.Stat(path)
+		info, err = os.Stat(system)
 		if errors.Is(err, os.ErrNotExist) {
 			out.State, out.Detail = "config_unreadable", "a symbolic link whose target does not exist"
 			return out
@@ -323,7 +334,7 @@ func readStatusSettings(ctx context.Context, path string) settingsReading {
 		out.Detail = "the configuration at " + path + " is not a regular file"
 		return out
 	}
-	raw, err := readRegular(ctx, path, 1<<20)
+	raw, err := readRegular(ctx, system, 1<<20)
 	if err != nil {
 		out.State = "config_unreachable"
 		out.Detail = "the configuration at " + path + " could not be read: " + err.Error()
@@ -348,8 +359,16 @@ func readStatusSettings(ctx context.Context, path string) settingsReading {
 	return out
 }
 
+// presenceCell answers what is at a path the settings or the hook file name (or PATH's directory
+// joined to such a name), which holds a str as Python does and reaches the system as os.fsencode's
+// bytes; the cell names the path as given. A str os.fsencode refuses names nothing, as Python's
+// lstat refuses it.
 func presenceCell(path, what string, directory bool) map[string]any {
-	info, err := os.Lstat(path)
+	system, encoded := fsencode(path)
+	if !encoded {
+		return cell(accessError, "whether anything exists at this path could not be established: "+fsencodeRefusal(path), map[string]any{"path": path})
+	}
+	info, err := os.Lstat(system)
 	if errors.Is(err, os.ErrNotExist) {
 		return cell(absent, "nothing exists at "+path, map[string]any{"path": path})
 	}
@@ -357,7 +376,7 @@ func presenceCell(path, what string, directory bool) map[string]any {
 		return cell(accessError, "whether anything exists at this path could not be established: "+err.Error(), map[string]any{"path": path})
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
-		info, err = os.Stat(path)
+		info, err = os.Stat(system)
 		if errors.Is(err, os.ErrNotExist) {
 			return cell(unreadable, "a symbolic link whose target does not exist", map[string]any{"path": path})
 		}
@@ -384,7 +403,8 @@ func offersGuard(ctx context.Context, path string, timeout time.Duration) map[st
 	}
 	c, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	cmd := exec.CommandContext(c, path, "guard-evaluate", "--help")
+	system, _ := fsencode(path) // presenceCell found it, so it encodes
+	cmd := exec.CommandContext(c, system, "guard-evaluate", "--help")
 	out, err := cmd.CombinedOutput()
 	if c.Err() != nil {
 		return cell(notRead, "the runtime did not answer --help within "+fmt.Sprint(timeout.Seconds())+"s")
@@ -499,7 +519,8 @@ func answersPython(ctx context.Context, path, label string) map[string]any {
 	c, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	source := "import sys;sys.stdout.write('crw-status-probe %d.%d' % (sys.version_info[0],sys.version_info[1]))"
-	cmd := exec.CommandContext(c, path, "-c", source)
+	system, _ := fsencode(path) // presenceCell found it, so it encodes
+	cmd := exec.CommandContext(c, system, "-c", source)
 	out, err := cmd.Output()
 	ran := path + " -c <version-and-nonce probe>"
 	if c.Err() != nil {
@@ -546,7 +567,7 @@ func namedJournals(ctx context.Context, ours []statusRegistration, relative []st
 			continue
 		}
 		path := settle(expandHome(r.Settings))
-		rd := readStatusSettings(ctx, path)
+		rd := readStatusSettings(ctx, path, true)
 		detail := rd.Detail
 		if rd.State == "config_unreadable" && strings.Contains(detail, "could not be decoded:") {
 			detail = "the configuration could not be decoded"
@@ -688,12 +709,15 @@ func budgetCell(cfg Object, ours []statusRegistration) map[string]any {
 func shellSplit(s string) ([]string, bool) {
 	var out []string
 	var b strings.Builder
-	quote := rune(0)
+	quote := byte(0)
 	escaped := false
 	word := false
-	for _, r := range s {
+	// Byte by byte: every character the split acts on is ASCII, and every other byte is copied as
+	// it is, so a word keeps a str's lone surrogate (WTF-8) and any other byte it holds.
+	for i := 0; i < len(s); i++ {
+		r := s[i]
 		if escaped {
-			b.WriteRune(r)
+			b.WriteByte(r)
 			escaped = false
 			word = true
 			continue
@@ -713,7 +737,7 @@ func shellSplit(s string) ([]string, bool) {
 					word = false
 				}
 			default:
-				b.WriteRune(r)
+				b.WriteByte(r)
 				word = true
 			}
 		} else if r == quote {
@@ -721,7 +745,7 @@ func shellSplit(s string) ([]string, bool) {
 		} else if r == '\\' && quote == '"' {
 			escaped = true
 		} else {
-			b.WriteRune(r)
+			b.WriteByte(r)
 		}
 	}
 	if quote != 0 || escaped {
@@ -743,8 +767,11 @@ func uniqueSources(paths []string) []string {
 		}
 		seen[p] = true
 		key := p
-		if info, e := os.Stat(p); e == nil {
-			key = fmt.Sprintf("%d:%d", statDev(info), statIno(info))
+		// A registration's settings path is a str from the hook file: os.fsencode's bytes.
+		if system, encoded := fsencode(p); encoded {
+			if info, e := os.Stat(system); e == nil {
+				key = fmt.Sprintf("%d:%d", statDev(info), statIno(info))
+			}
 		}
 		if ids[key] {
 			continue
@@ -919,4 +946,29 @@ func AdapterIdentities(path, event string) ([]string, bool) {
 		identities = append(identities, registration.Identity)
 	}
 	return identities, readable
+}
+
+// plainJSON is a Decode value as encoding/json would have produced it for the hook file's
+// readers: objects as maps and every number a float64, with each str kept as Decode holds it.
+func plainJSON(value any) any {
+	switch v := value.(type) {
+	case Object:
+		out := make(map[string]any, len(v))
+		for _, field := range v {
+			out[field.Key] = plainJSON(field.Value)
+		}
+		return out
+	case []any:
+		out := make([]any, len(v))
+		for i, item := range v {
+			out[i] = plainJSON(item)
+		}
+		return out
+	case int64:
+		return float64(v)
+	case json.Number:
+		f, _ := v.Float64()
+		return f
+	}
+	return value
 }

@@ -12,7 +12,8 @@ const StateEnv = "CODEX_SESSION_RELAY_STATE"
 // CanonicalSocket is canonical_socket: expanded, absolute and fully resolved.
 func CanonicalSocket(path string) (string, error) { return canonicalSocket(path) }
 
-// ResolvePath is Path.resolve() (non-strict): symlinks followed, a missing tail kept.
+// ResolvePath follows every symbolic link and keeps a missing tail, but fails on a component it
+// cannot examine or a loop, where Path.resolve() keeps them (Realpath).
 func ResolvePath(path string) (string, error) { return resolvePath(path) }
 
 // ResolveLoosely is Path.resolve() as ownership.mirror and the Stop client call it (strict=False):

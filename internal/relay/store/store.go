@@ -184,7 +184,7 @@ func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ 
 		return nil, fmt.Errorf("driver identity: %w", err)
 	}
 	name := "crw-store-" + hex.EncodeToString(driverID)
-	sql.Register(name, d)
+	sql.Register(name, textGuard{d})
 	u := url.URL{Scheme: "file", Path: resolved}
 	q := u.Query()
 	q.Set("mode", "rw")

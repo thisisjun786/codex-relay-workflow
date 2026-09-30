@@ -307,3 +307,51 @@ print(json.dumps(cells))`
 		}
 	}
 }
+
+// hook status opens the paths a registration names as completion.status does: the hook file's
+// strings keep a surrogate escape ("\udcff") as json.loads does, and the settings path and the
+// adapter target reach the system as os.fsencode's bytes, so a settings file and an adapter under
+// a name that is not UTF-8 are found and read, and each cell names the path as the str it is.
+func TestStatusOpensARegistrationsPathsAsPythonEncodesThem(t *testing.T) {
+	home := t.TempDir()
+	adapter := filepath.Join(home, "a\xff", entryPointName)
+	writeTest(t, adapter, []byte("# adapter"))
+	writeTest(t, filepath.Join(home, "s\xff.json"), []byte(`{"configVersion": 1, "mode": "observe", "relayExecutable": "/x/r", "markerRoot": "/x/m", "timeoutSeconds": 5}`))
+	spelled := func(name string) string { return strings.ReplaceAll(filepath.Join(home, name), "\xff", `\udcff`) }
+	hooks := `{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "python3 ` + spelled("a\xff/"+entryPointName) + " " + spelled("s\xff.json") + `", "timeout": 10}]}]}}`
+	writeTest(t, filepath.Join(home, "hooks.json"), []byte(hooks))
+	t.Setenv("HOME", home)
+	script := `import json, os, sys
+sys.path.insert(0, os.path.join(sys.argv[1], "scripts"))
+from crw_runtime import completion
+s = completion.status(environ={"CODEX_HOME": sys.argv[2]})
+named = s["configuration"]["namedSettings"]
+print(json.dumps([s["configuration"]["value"], s["configuration"]["configuration"], s["registeredCommandTarget"]["value"],
+    s["registeredCommandTarget"]["probes"][0]["path"], [[n["settings"], n["settingsState"], n["usable"]] for n in named]]))`
+	command := exec.Command(python(t), "-c", script, testRoot, home)
+	command.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
+	out, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("python: %v\n%s", err, out)
+	}
+	decoded, err := Decode(out) // keeps Python's surrogate escapes as the code points they are
+	if err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	want := evidence.Dumps(decoded, false, false, true)
+	status := Status(context.Background(), home, map[string]string{"CODEX_HOME": home}, "Stop")
+	configuration := status["configuration"].(map[string]any)
+	target := status["registeredCommandTarget"].(map[string]any)
+	named := []any{}
+	for _, n := range configuration["namedSettings"].([]any) {
+		entry := n.(map[string]any)
+		named = append(named, []any{entry["settings"], entry["settingsState"], entry["usable"]})
+	}
+	got := evidence.Dumps([]any{configuration["value"], configuration["configuration"], target["value"], target["probes"].([]any)[0].(map[string]any)["path"], named}, false, false, true)
+	if got != want {
+		t.Errorf("status:\n go     %s\n python %s", got, want)
+	}
+	if !strings.Contains(want, `"PRESENT"`) {
+		t.Fatalf("the fixture did not reach a present configuration in Python: %s", want)
+	}
+}

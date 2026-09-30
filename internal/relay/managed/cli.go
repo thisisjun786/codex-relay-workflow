@@ -59,6 +59,9 @@ func runShow(ctx context.Context, services cli.Services, args cli.Args) (any, er
 		}
 		return nil
 	})
+	if read.Raised != nil {
+		return nil, read.Raised
+	}
 	var request any
 	if row != nil {
 		request = row

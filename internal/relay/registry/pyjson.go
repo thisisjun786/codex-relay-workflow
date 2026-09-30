@@ -187,7 +187,11 @@ func writeDumps(b *strings.Builder, value any, sortKeys bool) {
 
 func writeJSONString(b *strings.Builder, s string) {
 	b.WriteByte('"')
-	for _, r := range s {
+	// A byte that is not UTF-8 is its surrogate escape and a WTF-8 surrogate its code point
+	// (settings.CodePoint), written as json.dumps writes a lone surrogate, never as U+FFFD.
+	for i := 0; i < len(s); {
+		r, size := settings.CodePoint(s, i)
+		i += size
 		switch {
 		case r == '"':
 			b.WriteString(`\"`)

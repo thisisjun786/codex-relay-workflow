@@ -70,3 +70,35 @@ func Test27_MST_5_SelectorSpellingAndInputFingerprint(t *testing.T) {
 		t.Fatalf("input identity: %+v %+v", first, other)
 	}
 }
+
+// Without a state selector the fingerprint's original state is Python's str(store.path.parent),
+// which keeps a root of two leading slashes: a store opened as //<dir>/relay.sqlite3 is
+// fingerprinted exactly as one given the selector //<dir>, never as /<dir>.
+func TestTheDefaultStateSelectorIsTheStoresPathlibParent(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	s, err := store.Open(ctx, "/"+filepath.Join(dir, "relay.sqlite3"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	request, err := ParseRequest(requestFixture(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ledger := map[string]any{"realPath": filepath.Join(dir, "ledger"), "device": 1, "inode": 2}
+	root, socket := filepath.Join(dir, "markers"), filepath.Join(dir, "socket")
+	fingerprint := func(selector string) string {
+		identity, err := RequestIdentity(ctx, request, s, socket, root, selector, ledger)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return identity.Fingerprint
+	}
+	if fingerprint("") != fingerprint("/"+dir) {
+		t.Errorf("the default state selector is not str(Path(%q).parent), %q", s.Path, "/"+dir)
+	}
+	if fingerprint("") == fingerprint(dir) {
+		t.Errorf("the default state selector folded the two leading slashes of %q", s.Path)
+	}
+}

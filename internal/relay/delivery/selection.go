@@ -91,18 +91,19 @@ func wrongSocketRecovery(selection store.StateSelection, recorded, wanted string
 	if pinned == "" {
 		return lines
 	}
-	// Path(pinned).expanduser().resolve(), as the selection package reads it: ~ and ~user are
-	// Path.home()'s and the passwd entry's, and a relative pin is resolved against the working
-	// directory the kernel names. Anything that does not resolve is said rather than dropped.
+	// Path(pinned).expanduser().resolve(): ~ and ~user are Path.home()'s and the passwd entry's,
+	// and the pin is resolved as os.path.realpath does without strict (store.Realpath), against
+	// the working directory the kernel names, keeping a component it cannot examine or a link
+	// loop as spelled. Only what raises there (an unknown ~user) is said rather than offered.
 	expanded, err := store.ExpandUser(pinned)
 	var resolved string
 	if err == nil {
-		resolved, err = store.ResolvePath(expanded)
+		resolved, err = store.Realpath(expanded)
 	}
 	if err != nil {
 		return append(lines, "  "+stateEnv+" is set to "+store.PyRepr(pinned)+", which names a home directory that does not resolve on this host, so it is not offered as a candidate")
 	}
-	selected, err := store.ResolvePath(selection.Path)
+	selected, err := store.Realpath(selection.Path)
 	if err != nil || resolved != selected {
 		lines = append(lines, program()+" --state="+shellQuote(resolved)+" --socket="+shellQuote(wanted)+" doctor", "  reads the directory "+stateEnv+" names, which --state overrode on this run")
 	}

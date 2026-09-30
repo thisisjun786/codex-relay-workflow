@@ -156,11 +156,25 @@ func WorkspaceKey(workspace string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// str.encode("utf-8") of the path, which refuses one holding a surrogate escape.
+	if err = store.EncodeUTF8(path); err != nil {
+		return "", err
+	}
 	return sha256Hex(path), nil
 }
 
 // AssignmentID is assignment_id: the hash of the dispatch request id, never the id itself.
 func AssignmentID(dispatchRequestID string) string { return sha256Hex(dispatchRequestID) }
+
+// encodedAssignmentID is assignment_id as the marker commands meet it first: an id holding a
+// surrogate escape (an argv byte that is not UTF-8) raises str.encode("utf-8")'s
+// UnicodeEncodeError before anything is compared or written.
+func encodedAssignmentID(dispatchRequestID string) (string, error) {
+	if err := store.EncodeUTF8(dispatchRequestID); err != nil {
+		return "", err
+	}
+	return AssignmentID(dispatchRequestID), nil
+}
 
 // WorkspaceDir is workspace_dir.
 func WorkspaceDir(root, workspace string) (string, error) {

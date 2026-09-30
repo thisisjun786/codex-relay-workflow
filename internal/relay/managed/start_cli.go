@@ -41,6 +41,10 @@ func runStart(ctx context.Context, services cli.Services, args cli.Args) (any, e
 			return nil, &cli.UsageError{Detail: err.Error(), Code: contract.ExitUsage}
 		}
 	} else {
+		// args.request.encode("utf-8"): an argv byte that is not UTF-8 is a surrogate escape there.
+		if err := store.EncodeUTF8(input); err != nil {
+			return nil, &cli.UsageError{Detail: err.Error(), Code: contract.ExitUsage}
+		}
 		raw = []byte(input)
 	}
 	request, err := ParseRequest(raw)

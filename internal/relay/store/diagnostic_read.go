@@ -65,6 +65,9 @@ type RowsRead struct {
 	Inode    uint64
 	Links    uint64
 	Detail   string
+	// Raised is what read_only_rows does not answer as a reading: the UnicodeEncodeError a
+	// parameter sqlite3 cannot bind raises (it catches sqlite3.Error only), for the caller to raise.
+	Raised error
 }
 
 // ReadOnlyRows is read_only_rows: an answer without creating or migrating a store, whose
@@ -98,6 +101,9 @@ func ReadOnlyRows(ctx context.Context, selection StateSelection, query string, a
 	var refusal refusedRead
 	if errors.As(readErr, &refusal) {
 		return RowsRead{Detail: string(refusal)}
+	}
+	if encode := EncodeError(readErr); encode != nil {
+		return RowsRead{Raised: encode}
 	}
 	if readErr != nil {
 		// Ask why before reporting what: a store still moved out from under the read fails the

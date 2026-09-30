@@ -440,6 +440,10 @@ func emit(stdout, stderr io.Writer, result any, err error) int {
 	code := contract.ExitOk
 	switch {
 	case err == nil:
+	case store.EncodeError(err) != nil:
+		// A str sqlite3 or an identity hash cannot encode, raised through whatever wrapped it.
+		result = contract.OrderedObject{{Key: "error", Value: "host"}, {Key: "detail", Value: store.EncodeError(err).HostDetail()}}
+		code = contract.ExitHost
 	case errors.As(err, &refused):
 		result = contract.OrderedObject{{Key: "error", Value: "refused"}, {Key: "reason", Value: nullableText(refused.Reason)}, {Key: "detail", Value: refused.Detail}}
 		code = contract.ExitRefused
