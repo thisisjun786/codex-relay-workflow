@@ -81,7 +81,7 @@ func listTree(t *testing.T, root string) string {
 // it. A readable legacy D still goes to Go's admission, which refuses it without a gate:
 // Python's fence initializes it and Go never does (decisions.md 30).
 func TestOpen_reads_a_gateless_store_before_refusing_it_as_python_does(t *testing.T) {
-	t.Setenv("CRW_ALLOW_LIVE_STATE", "")
+	t.Setenv("CRW_REFUSE_LIVE_STATE", "1")
 	for _, c := range []struct {
 		name  string
 		write func(t *testing.T, path string)

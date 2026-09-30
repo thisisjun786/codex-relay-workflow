@@ -58,7 +58,7 @@ func Test24BuiltBinaryEvidenceDefectBytes(t *testing.T) {
 			root, _ := filepath.Abs("../../..")
 			binary, alias := packageBinary(t)
 			home := t.TempDir()
-			env := append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home+"/state", "XDG_CONFIG_HOME="+home+"/config", "XDG_CACHE_HOME="+home+"/cache", "XDG_DATA_HOME="+home+"/data", "CODEX_HOME="+home+"/codex", "CRW_MARKER_ROOT="+home+"/markers", "CRW_ALLOW_LIVE_STATE=1", "PATH="+root+"/internal/relay/cli/testdata:"+os.Getenv("PATH"))
+			env := append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home+"/state", "XDG_CONFIG_HOME="+home+"/config", "XDG_CACHE_HOME="+home+"/cache", "XDG_DATA_HOME="+home+"/data", "CODEX_HOME="+home+"/codex", "CRW_MARKER_ROOT="+home+"/markers", "CRW_REFUSE_LIVE_STATE=", "PATH="+root+"/internal/relay/cli/testdata:"+os.Getenv("PATH"))
 			assertEvidenceBytes(t, env, filepath.Join(root, ".venv/bin/python"), alias, binary, "rich", []string{"merge-evidence", "--repository", "owner/repo", "--pull-request", "7", "--page-size", "1", "--page-budget", "2"}, "")
 		})
 		return
@@ -66,7 +66,7 @@ func Test24BuiltBinaryEvidenceDefectBytes(t *testing.T) {
 	root, _ := filepath.Abs("../../..")
 	binary, alias := packageBinary(t)
 	home := t.TempDir()
-	env := append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home+"/state", "XDG_CONFIG_HOME="+home+"/config", "XDG_CACHE_HOME="+home+"/cache", "XDG_DATA_HOME="+home+"/data", "CODEX_HOME="+home+"/codex", "CRW_MARKER_ROOT="+home+"/markers", "CRW_ALLOW_LIVE_STATE=1", "PATH="+root+"/internal/relay/cli/testdata:"+os.Getenv("PATH"))
+	env := append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home+"/state", "XDG_CONFIG_HOME="+home+"/config", "XDG_CACHE_HOME="+home+"/cache", "XDG_DATA_HOME="+home+"/data", "CODEX_HOME="+home+"/codex", "CRW_MARKER_ROOT="+home+"/markers", "CRW_REFUSE_LIVE_STATE=", "PATH="+root+"/internal/relay/cli/testdata:"+os.Getenv("PATH"))
 	python := filepath.Join(root, ".venv/bin/python")
 	base := []string{"merge-evidence", "--repository", "owner/repo", "--pull-request", "7"}
 	ready := runParityProcess(t, append(env, "CRW_FORGE_SCENARIO=ready"), python, append([]string{"-m", "codex_session_relay.cli"}, base...)...)
@@ -220,7 +220,7 @@ func assertEvidenceBytes(t *testing.T, env []string, python, alias, binary, scen
 func Test24SupervisorEmptyEventPythonCrash(t *testing.T) {
 	root, _ := filepath.Abs("../../..")
 	home := t.TempDir()
-	env := append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "CODEX_HOME="+home, "CRW_ALLOW_LIVE_STATE=1")
+	env := append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "CODEX_HOME="+home, "CRW_REFUSE_LIVE_STATE=")
 	got := runParityProcess(t, env, filepath.Join(root, ".venv/bin/python"), "-m", "codex_session_relay.cli", "supervisor-report-recorded", "--event=")
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(got.out), &payload); err != nil {

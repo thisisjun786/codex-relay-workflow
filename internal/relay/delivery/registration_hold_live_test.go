@@ -35,7 +35,7 @@ func Test21_RegistrationHold_refuses_resolved_live_state(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "xdg"))
-	t.Setenv("CRW_ALLOW_LIVE_STATE", "")
+	t.Setenv("CRW_REFUSE_LIVE_STATE", "1")
 	called := false
 	err = store.RegistrationHold(context.Background(), alias, func(conn *sql.Conn, why string) error {
 		called = true

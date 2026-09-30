@@ -224,7 +224,7 @@ func (h *host) run(settings string, payload []byte) string {
 		h.t.Fatal(err)
 	}
 	cmd := exec.Command(bin, "hook", settings)
-	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + h.root, "CODEX_HOME=" + h.codex, "XDG_STATE_HOME=" + h.root + "/xdg", "CODEX_SESSION_RELAY_STATE=" + h.state, "TMPDIR=" + os.TempDir()}
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + h.root, "CODEX_HOME=" + h.codex, "XDG_STATE_HOME=" + h.root + "/xdg", "CODEX_SESSION_RELAY_STATE=" + h.state, "TMPDIR=" + os.TempDir(), testsupport.RefuseLiveStateEnv + "=1"}
 	cmd.Stdin = bytes.NewReader(payload)
 	var out bytes.Buffer
 	cmd.Stdout = &out
