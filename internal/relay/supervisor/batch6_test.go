@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
+
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -216,13 +218,13 @@ func Test24_SCH_51_HandoverAtTransportStartCancelsClaim(t *testing.T) {
 	o, stage := f.staged(t)
 	id := stage["messageId"].(string)
 	f.c.beforeTransport = func() {
-		if err := f.s.ArchiveScopeBinding(f.ctx, "b-supervisor", "archived", "b-successor", f.at); err != nil {
+		if err := storeseed.ArchiveScopeBinding(f.ctx, f.s, "b-supervisor", "archived", "b-successor", f.at); err != nil {
 			t.Fatal(err)
 		}
-		if err := f.s.InsertScopeBinding(f.ctx, store.ScopeBindingsRow{BindingID: "b-successor", Role: "supervisor", ScopeKind: "initiative", ScopeKey: "INI-1", TaskID: "successor", HostID: "host", Status: "active", Revision: 2, CreatedAt: "t2", UpdatedAt: "t2"}); err != nil {
+		if err := storeseed.InsertScopeBinding(f.ctx, f.s, store.ScopeBindingsRow{BindingID: "b-successor", Role: "supervisor", ScopeKind: "initiative", ScopeKey: "INI-1", TaskID: "successor", HostID: "host", Status: "active", Revision: 2, CreatedAt: "t2", UpdatedAt: "t2"}); err != nil {
 			t.Fatal(err)
 		}
-		if err := f.s.RepointScopeLink(f.ctx, "lnk-project", "active", "parent", "successor", f.at); err != nil {
+		if err := storeseed.RepointScopeLink(f.ctx, f.s, "lnk-project", "active", "parent", "successor", f.at); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -2,11 +2,12 @@ package supervisor
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -24,16 +25,16 @@ func Test24_SCH_1_StoreLiveHierarchy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = s.RecordRelationshipScope(ctx, "r", "PRJ-1", "t"); err != nil {
+	if err = storeseed.RecordRelationshipScope(ctx, s, "r", "PRJ-1", "t"); err != nil {
 		t.Fatal(err)
 	}
 	for _, b := range []store.ScopeBindingsRow{{BindingID: "b-child", Role: "child", ScopeKind: "issue", ScopeKey: "CRW-1", TaskID: "child", HostID: "host", Status: "active", Revision: 1, CreatedAt: "t", UpdatedAt: "t"}, {BindingID: "b-parent", Role: "parent", ScopeKind: "project", ScopeKey: "PRJ-1", TaskID: "parent", HostID: "host", Status: "active", Revision: 1, CreatedAt: "t", UpdatedAt: "t"}, {BindingID: "b-supervisor", Role: "supervisor", ScopeKind: "initiative", ScopeKey: "INI-1", TaskID: "supervisor", HostID: "host", Status: "active", Revision: 1, CreatedAt: "t", UpdatedAt: "t"}} {
-		if err = s.InsertScopeBinding(ctx, b); err != nil {
+		if err = storeseed.InsertScopeBinding(ctx, s, b); err != nil {
 			t.Fatal(err)
 		}
 	}
 	for _, l := range []store.ScopeLinksRow{{LinkID: "lnk-issue", LinkKind: "execution", UpperKind: "project", UpperKey: "PRJ-1", UpperTaskID: "parent", LowerKind: "issue", LowerKey: "CRW-1", LowerTaskID: "child", Status: "active", Revision: 1, CreatedAt: "t", UpdatedAt: "t"}, {LinkID: "lnk-project", LinkKind: "execution", UpperKind: "initiative", UpperKey: "INI-1", UpperTaskID: "supervisor", LowerKind: "project", LowerKey: "PRJ-1", LowerTaskID: "parent", Status: "active", Revision: 1, CreatedAt: "t", UpdatedAt: "t"}} {
-		if err = s.InsertScopeLink(ctx, l); err != nil {
+		if err = storeseed.InsertScopeLink(ctx, s, l); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -43,13 +44,13 @@ func Test24_SCH_1_StoreLiveHierarchy(t *testing.T) {
 		t.Fatalf("resolution %+v: %v", got, err)
 	}
 	// Retained write refusals do not stop a live hierarchy.
-	if err = s.RecordLinkageConflict(ctx, store.LinkageConflictsRow{At: "t", ScopeKind: "project", ScopeKey: "PRJ-1", Reason: "role_already_bound", Incumbent: "parent", Challenger: "other"}); err != nil {
+	if err = storeseed.RecordLinkageConflict(ctx, s, store.LinkageConflictsRow{At: "t", ScopeKind: "project", ScopeKey: "PRJ-1", Reason: "role_already_bound", Incumbent: "parent", Challenger: "other"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = c.Resolve(ctx, "r"); err != nil {
 		t.Fatalf("historical refusal blocked hierarchy: %v", err)
 	}
-	if err = s.SetScopeLinkStatus(ctx, "lnk-project", "archived", "t2"); err != nil {
+	if err = storeseed.SetScopeLinkStatus(ctx, s, "lnk-project", "archived", "t2"); err != nil {
 		t.Fatal(err)
 	}
 	_, err = c.Resolve(ctx, "r")
@@ -57,24 +58,19 @@ func Test24_SCH_1_StoreLiveHierarchy(t *testing.T) {
 	if !errors.As(err, &refusal) || refusal.Reason != "unregistered_scope" || !strings.Contains(refusal.Detail, "nobody to report to") {
 		t.Fatalf("gap: %v", err)
 	}
-	if err = s.SetScopeLinkStatus(ctx, "lnk-project", "active", "t3"); err != nil {
+	if err = storeseed.SetScopeLinkStatus(ctx, s, "lnk-project", "active", "t3"); err != nil {
 		t.Fatal(err)
 	}
 	// A successor without a repointed edge is drift, not permission to send to the old owner.
-	if err = s.ArchiveScopeBinding(ctx, "b-supervisor", "archived", "b-successor", "t4"); err != nil {
+	if err = storeseed.ArchiveScopeBinding(ctx, s, "b-supervisor", "archived", "b-successor", "t4"); err != nil {
 		t.Fatal(err)
 	}
 	b := store.ScopeBindingsRow{BindingID: "b-successor", Role: "supervisor", ScopeKind: "initiative", ScopeKey: "INI-1", TaskID: "successor", HostID: "host", Status: "active", Revision: 2, CreatedAt: "t4", UpdatedAt: "t4"}
-	if err = s.InsertScopeBinding(ctx, b); err != nil {
+	if err = storeseed.InsertScopeBinding(ctx, s, b); err != nil {
 		t.Fatal(err)
 	}
 	_, err = c.Resolve(ctx, "r")
 	if !errors.As(err, &refusal) || refusal.Reason != "relation_owner_drift" {
 		t.Fatalf("drift: %v", err)
-	}
-	// A genuinely missing row must not be mistaken for an unreadable store.
-	_, err = s.ScopeOwner(ctx, "initiative", "missing")
-	if !errors.Is(err, sql.ErrNoRows) {
-		t.Fatalf("missing owner: %v", err)
 	}
 }

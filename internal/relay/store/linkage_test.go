@@ -47,79 +47,8 @@ func TestScopeOwners_lists_every_live_owner_newest_first_and_owner_takes_the_new
 	}
 }
 
-func TestRivalOwner_excludes_the_caller_and_the_owner_being_replaced(t *testing.T) {
-	// Given: task-a owns the scope.
-	s := recordStore(t)
-	ctx := context.Background()
-	must(t, s.InsertScopeBinding(ctx, binding("bnd-a", "task-a", "P", 1, "active")))
-	// When/Then: task-b sees task-a as a rival, unless task-a is the one its handover replaces.
-	rival, err := s.RivalOwner(ctx, "project", "P", "parent", "task-b", sql.NullString{})
-	if err != nil || rival.TaskID != "task-a" || rival.Status != "active" {
-		t.Fatalf("rival=%v err=%v", rival, err)
-	}
-	if _, err := s.RivalOwner(ctx, "project", "P", "parent", "task-b", text("task-a")); !errors.Is(err, sql.ErrNoRows) {
-		t.Fatalf("replaced owner counted as rival: %v", err)
-	}
-	if _, err := s.RivalOwner(ctx, "project", "P", "parent", "task-a", sql.NullString{}); !errors.Is(err, sql.ErrNoRows) {
-		t.Fatalf("the caller counted as its own rival: %v", err)
-	}
-}
-
-func TestBindingsForTask_lists_live_bindings_before_archived_ones(t *testing.T) {
-	// Given: one task with an archived binding at a higher revision than its live one.
-	s := recordStore(t)
-	ctx := context.Background()
-	must(t, s.InsertScopeBinding(ctx, binding("bnd-old", "task-a", "P1", 5, "archived")))
-	must(t, s.InsertScopeBinding(ctx, binding("bnd-live", "task-a", "P2", 1, "active")))
-	// When: the task's bindings are read.
-	rows, err := s.BindingsForTask(ctx, "task-a")
-	must(t, err)
-	// Then: the live one comes first regardless of revision.
-	if len(rows) != 2 || rows[0].BindingID != "bnd-live" {
-		t.Fatalf("rows=%v", rows)
-	}
-}
-
-func TestScopeBindingUpdates_move_status_and_endpoint_as_python_writes_them(t *testing.T) {
-	// Given: an active binding.
-	s := recordStore(t)
-	ctx := context.Background()
-	must(t, s.InsertScopeBinding(ctx, binding("bnd-a", "task-a", "P", 1, "active")))
-	// When: its status is set to the value it already has, then it is reactivated paused elsewhere.
-	must(t, s.SetScopeBindingStatus(ctx, "bnd-a", "active", "t-same"))
-	unchanged, err := s.ScopeBinding(ctx, "bnd-a")
-	must(t, err)
-	must(t, s.ReactivateScopeBinding(ctx, "bnd-a", "paused", "t-back", "host-2", text("/cwd"), text("cxc")))
-	moved, err := s.ScopeBinding(ctx, "bnd-a")
-	must(t, err)
-	// Then: an unchanged status is not rewritten, and a reactivation carries the new endpoint.
-	if unchanged.UpdatedAt != "t" {
-		t.Fatalf("same-status update rewrote updated_at: %q", unchanged.UpdatedAt)
-	}
-	if moved.Status != "paused" || moved.HostID != "host-2" || moved.CWD.String != "/cwd" || moved.CXCSession.String != "cxc" || moved.UpdatedAt != "t-back" {
-		t.Fatalf("reactivated=%+v", moved)
-	}
-}
-
 func link(id, kind, upperKey, lowerKey string, revision int64) ScopeLinksRow {
 	return ScopeLinksRow{LinkID: id, LinkKind: kind, UpperKind: "project", UpperKey: upperKey, UpperTaskID: "tu", LowerKind: "project", LowerKey: lowerKey, LowerTaskID: "tl", Status: "active", Revision: revision, CreatedAt: "t", UpdatedAt: "t"}
-}
-
-func TestJoiningLinks_finds_live_links_in_either_direction(t *testing.T) {
-	// Given: a peer link A->B, a reference B->A at a higher revision, and a cancelled link.
-	s := recordStore(t)
-	ctx := context.Background()
-	must(t, s.InsertScopeLink(ctx, link("lnk-1", "peer", "A", "B", 1)))
-	must(t, s.InsertScopeLink(ctx, link("lnk-2", "reference", "B", "A", 2)))
-	must(t, s.InsertScopeLink(ctx, link("lnk-3", "execution", "A", "B", 3)))
-	must(t, s.SetScopeLinkStatus(ctx, "lnk-3", "cancelled", "t2"))
-	// When: the links joining A and B are read.
-	rows, err := s.JoiningLinks(ctx, "project", "A", "project", "B")
-	must(t, err)
-	// Then: both live links, newest revision first, and never the cancelled one.
-	if len(rows) != 2 || rows[0].LinkID != "lnk-2" || rows[1].LinkID != "lnk-1" {
-		t.Fatalf("rows=%v", rows)
-	}
 }
 
 func TestExecutionLinks_read_only_live_execution_edges(t *testing.T) {
@@ -136,48 +65,6 @@ func TestExecutionLinks_read_only_live_execution_edges(t *testing.T) {
 	// Then: only the execution edge appears.
 	if len(below) != 1 || below[0].LinkID != "lnk-1" || len(above) != 1 || above[0].LinkID != "lnk-1" {
 		t.Fatalf("below=%v above=%v", below, above)
-	}
-}
-
-func TestRepointScopeLink_reactivates_repoints_and_counts_a_revision(t *testing.T) {
-	// Given: an archived edge superseded by another.
-	s := recordStore(t)
-	ctx := context.Background()
-	must(t, s.InsertScopeLink(ctx, link("lnk-1", "execution", "P", "I", 1)))
-	_, err := s.DB.ExecContext(ctx, "UPDATE scope_links SET status='archived', superseded_by='lnk-x' WHERE link_id='lnk-1'")
-	must(t, err)
-	// When: it is repointed at a new child.
-	must(t, s.RepointScopeLink(ctx, "lnk-1", "active", "child-2", "parent-2", "t2"))
-	row, err := s.ScopeLink(ctx, "lnk-1")
-	must(t, err)
-	// Then: live again, with the new tasks, one revision later, superseded_by cleared.
-	if row.Status != "active" || row.LowerTaskID != "child-2" || row.UpperTaskID != "parent-2" || row.Revision != 2 || row.SupersededBy.Valid {
-		t.Fatalf("row=%+v", row)
-	}
-}
-
-func TestScopeDirectives_are_recorded_undecided_and_settled_once_read_in_order(t *testing.T) {
-	// Given: two directives on one scope, recorded out of id order.
-	s := recordStore(t)
-	ctx := context.Background()
-	for _, d := range []ScopeDirectivesRow{
-		{DirectiveID: "dir-b", ScopeKind: "project", ScopeKey: "P", FromTaskID: "sup", FromScopeKey: "I", LinkID: "lnk", LinkKind: "execution", Digest: "d1", Revision: 1, RecordedAt: "t1"},
-		{DirectiveID: "dir-a", ScopeKind: "project", ScopeKey: "P", FromTaskID: "sup", FromScopeKey: "I", LinkID: "lnk", LinkKind: "execution", Digest: "d2", Revision: 1, RecordedAt: "t2"},
-	} {
-		must(t, s.InsertScopeDirective(ctx, d))
-	}
-	// When: the first is settled.
-	must(t, s.SettleScopeDirective(ctx, "dir-b", "chosen", "parent", "t3"))
-	all, err := s.ScopeDirectives(ctx, "project", "P")
-	must(t, err)
-	open, err := s.UndecidedDirectives(ctx, "project", "P")
-	must(t, err)
-	// Then: listings keep recording order, and only the unsettled one is undecided.
-	if len(all) != 2 || all[0].DirectiveID != "dir-b" || all[0].Disposition.String != "chosen" || all[0].DecidedBy.String != "parent" {
-		t.Fatalf("all=%v", all)
-	}
-	if len(open) != 1 || open[0].DirectiveID != "dir-a" || open[0].Disposition.Valid {
-		t.Fatalf("undecided=%v", open)
 	}
 }
 

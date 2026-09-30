@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
+
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -191,10 +193,10 @@ func Test24_SCH_9_Capture(t *testing.T) {
 		id := stage["messageId"].(string)
 		original := "bnd-24179d1961baacd1886d337c38c3eceb"
 		successor := "bnd-45b86b6a2f3d253ae34532a3df0ec31f"
-		if err := s.ArchiveScopeBinding(ctx, original, "archived", successor, captureTime); err != nil {
+		if err := storeseed.ArchiveScopeBinding(ctx, s, original, "archived", successor, captureTime); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.InsertScopeBinding(ctx, store.ScopeBindingsRow{BindingID: successor, Role: "supervisor", ScopeKind: "initiative", ScopeKey: "INI-1", TaskID: "01new-supervisor", HostID: "host-a", Status: "active", Revision: 2, CreatedAt: captureTime, UpdatedAt: captureTime, CWD: sql.NullString{String: "/new", Valid: true}, CXCSession: sql.NullString{String: "cxc-new", Valid: true}, HandoverNote: sql.NullString{String: "the initiative changed hands", Valid: true}, Supersedes: sql.NullString{String: original, Valid: true}}); err != nil {
+		if err := storeseed.InsertScopeBinding(ctx, s, store.ScopeBindingsRow{BindingID: successor, Role: "supervisor", ScopeKind: "initiative", ScopeKey: "INI-1", TaskID: "01new-supervisor", HostID: "host-a", Status: "active", Revision: 2, CreatedAt: captureTime, UpdatedAt: captureTime, CWD: sql.NullString{String: "/new", Valid: true}, CXCSession: sql.NullString{String: "cxc-new", Valid: true}, HandoverNote: sql.NullString{String: "the initiative changed hands", Valid: true}, Supersedes: sql.NullString{String: original, Valid: true}}); err != nil {
 			t.Fatal(err)
 		}
 		for _, entry := range []struct{ kind, detail string }{
@@ -205,7 +207,7 @@ func Test24_SCH_9_Capture(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if err := s.RepointScopeLink(ctx, "lnk-6fa68afd8cc27a8e7780d400a52f73c2", "active", "01parent-task", "01new-supervisor", captureTime); err != nil {
+		if err := storeseed.RepointScopeLink(ctx, s, "lnk-6fa68afd8cc27a8e7780d400a52f73c2", "active", "01parent-task", "01new-supervisor", captureTime); err != nil {
 			t.Fatal(err)
 		}
 		_, err = c.Attempt(ctx, id, &captureHost4{sendHost: sendHost{status: "idle"}}, 1700000000)

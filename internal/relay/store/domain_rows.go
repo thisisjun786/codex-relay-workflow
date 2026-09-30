@@ -6,132 +6,6 @@ import "database/sql"
 // column order exactly, NOT NULL columns as plain values and nullable ones as sql.Null*, so a
 // row read back from a Python-written store keeps NULL apart from an empty value.
 
-// AssignmentMarksRow is one assignment_marks row, every column in DDL order.
-type AssignmentMarksRow struct {
-	RelationshipID      string
-	Mark                string
-	EventID             string
-	ExecutionGeneration int64
-	RevisionHash        string
-	Evidence            string
-	Actor               string
-	MarkedAt            string
-}
-
-const assignmentMarksColumns = "relationship_id, mark, event_id, execution_generation, revision_hash, evidence, actor, marked_at"
-
-func scanAssignmentMarks(row scanner) (AssignmentMarksRow, error) {
-	var r AssignmentMarksRow
-	err := row.Scan(&r.RelationshipID, &r.Mark, &r.EventID, &r.ExecutionGeneration, &r.RevisionHash, &r.Evidence, &r.Actor, &r.MarkedAt)
-	return r, err
-}
-
-// AttemptSettingsViolationsRow is one attempt_settings_violations row, every column in DDL order.
-type AttemptSettingsViolationsRow struct {
-	RequestID  string
-	EventID    string
-	Findings   string
-	ObservedAt string
-}
-
-const attemptSettingsViolationsColumns = "request_id, event_id, findings, observed_at"
-
-func scanAttemptSettingsViolations(row scanner) (AttemptSettingsViolationsRow, error) {
-	var r AttemptSettingsViolationsRow
-	err := row.Scan(&r.RequestID, &r.EventID, &r.Findings, &r.ObservedAt)
-	return r, err
-}
-
-// AuthorizedSettingsRow is one authorized_settings row, every column in DDL order.
-type AuthorizedSettingsRow struct {
-	TaskID     string
-	Settings   string
-	Source     string
-	RecordedAt string
-}
-
-const authorizedSettingsColumns = "task_id, settings, source, recorded_at"
-
-func scanAuthorizedSettings(row scanner) (AuthorizedSettingsRow, error) {
-	var r AuthorizedSettingsRow
-	err := row.Scan(&r.TaskID, &r.Settings, &r.Source, &r.RecordedAt)
-	return r, err
-}
-
-// CanonicalCriteriaRow is one canonical_criteria row, every column in DDL order.
-type CanonicalCriteriaRow struct {
-	RelationshipID string
-	CriterionID    string
-	Title          string
-	Required       int64
-	SourceRef      sql.NullString
-	SetDigest      string
-	RecordedAt     string
-}
-
-const canonicalCriteriaColumns = "relationship_id, criterion_id, title, required, source_ref, set_digest, recorded_at"
-
-func scanCanonicalCriteria(row scanner) (CanonicalCriteriaRow, error) {
-	var r CanonicalCriteriaRow
-	err := row.Scan(&r.RelationshipID, &r.CriterionID, &r.Title, &r.Required, &r.SourceRef, &r.SetDigest, &r.RecordedAt)
-	return r, err
-}
-
-// ClaimContextRow is one claim_context row, every column in DDL order.
-type ClaimContextRow struct {
-	EventID   string
-	SetDigest sql.NullString
-	BoundAt   string
-}
-
-const claimContextColumns = "event_id, set_digest, bound_at"
-
-func scanClaimContext(row scanner) (ClaimContextRow, error) {
-	var r ClaimContextRow
-	err := row.Scan(&r.EventID, &r.SetDigest, &r.BoundAt)
-	return r, err
-}
-
-// CoordinationConflictsRow is one coordination_conflicts row, every column in DDL order.
-type CoordinationConflictsRow struct {
-	ID         int64
-	At         string
-	Domain     string
-	Subject    string
-	Reason     string
-	Incumbent  string
-	Challenger string
-	Detail     sql.NullString
-}
-
-const coordinationConflictsColumns = "id, at, domain, subject, reason, incumbent, challenger, detail"
-
-func scanCoordinationConflicts(row scanner) (CoordinationConflictsRow, error) {
-	var r CoordinationConflictsRow
-	err := row.Scan(&r.ID, &r.At, &r.Domain, &r.Subject, &r.Reason, &r.Incumbent, &r.Challenger, &r.Detail)
-	return r, err
-}
-
-// DeliveryIntentRow is one delivery_intent row, every column in DDL order.
-type DeliveryIntentRow struct {
-	EventID         string
-	RelationshipID  string
-	Kind            string
-	RecipientTaskID string
-	Attempts        int64
-	NextRetryAt     sql.NullFloat64
-	LastError       sql.NullString
-	NotedAt         string
-}
-
-const deliveryIntentColumns = "event_id, relationship_id, kind, recipient_task_id, attempts, next_retry_at, last_error, noted_at"
-
-func scanDeliveryIntent(row scanner) (DeliveryIntentRow, error) {
-	var r DeliveryIntentRow
-	err := row.Scan(&r.EventID, &r.RelationshipID, &r.Kind, &r.RecipientTaskID, &r.Attempts, &r.NextRetryAt, &r.LastError, &r.NotedAt)
-	return r, err
-}
-
 // EditAgreementsRow is one edit_agreements row, every column in DDL order.
 type EditAgreementsRow struct {
 	AgreementID     string
@@ -159,14 +33,6 @@ type EditAgreementsRow struct {
 	ClosedAt        sql.NullString
 }
 
-const editAgreementsColumns = "agreement_id, region_id, repository, base_revision, left_project, right_project, peer_link_id, proposer_task_id, issue_key, constraint_text, left_condition, right_condition, left_accepted_at, right_accepted_at, next_owner, state, tenure, supersedes, superseded_by, close_reason, proposed_at, updated_at, closed_at"
-
-func scanEditAgreements(row scanner) (EditAgreementsRow, error) {
-	var r EditAgreementsRow
-	err := row.Scan(&r.AgreementID, &r.RegionID, &r.Repository, &r.BaseRevision, &r.LeftProject, &r.RightProject, &r.PeerLinkID, &r.ProposerTaskID, &r.IssueKey, &r.ConstraintText, &r.LeftCondition, &r.RightCondition, &r.LeftAcceptedAt, &r.RightAcceptedAt, &r.NextOwner, &r.State, &r.Tenure, &r.Supersedes, &r.SupersededBy, &r.CloseReason, &r.ProposedAt, &r.UpdatedAt, &r.ClosedAt)
-	return r, err
-}
-
 // EditFollowupsRow is one edit_followups row, every column in DDL order.
 type EditFollowupsRow struct {
 	FollowupID      string
@@ -184,14 +50,6 @@ type EditFollowupsRow struct {
 	UpdatedAt       string
 }
 
-const editFollowupsColumns = "followup_id, agreement_id, trigger_text, acceptance_text, issue_ref, assignee_task_id, assignee_project, accepted_at, state, close_reason, recorded_by, recorded_at, updated_at"
-
-func scanEditFollowups(row scanner) (EditFollowupsRow, error) {
-	var r EditFollowupsRow
-	err := row.Scan(&r.FollowupID, &r.AgreementID, &r.TriggerText, &r.AcceptanceText, &r.IssueRef, &r.AssigneeTaskID, &r.AssigneeProject, &r.AcceptedAt, &r.State, &r.CloseReason, &r.RecordedBy, &r.RecordedAt, &r.UpdatedAt)
-	return r, err
-}
-
 // EditReaffirmationsRow is one edit_reaffirmations row, every column in DDL order.
 type EditReaffirmationsRow struct {
 	AgreementID            string
@@ -204,14 +62,6 @@ type EditReaffirmationsRow struct {
 	LeftConditionRevision  sql.NullString
 	RightConditionRevision sql.NullString
 	RecordedAt             string
-}
-
-const editReaffirmationsColumns = "agreement_id, predecessor_id, actor, actor_project, from_revision, to_revision, constraint_revision, left_condition_revision, right_condition_revision, recorded_at"
-
-func scanEditReaffirmations(row scanner) (EditReaffirmationsRow, error) {
-	var r EditReaffirmationsRow
-	err := row.Scan(&r.AgreementID, &r.PredecessorID, &r.Actor, &r.ActorProject, &r.FromRevision, &r.ToRevision, &r.ConstraintRevision, &r.LeftConditionRevision, &r.RightConditionRevision, &r.RecordedAt)
-	return r, err
 }
 
 // EditRegionsRow is one edit_regions row, every column in DDL order.
@@ -227,14 +77,6 @@ type EditRegionsRow struct {
 	RecordedAt     string
 }
 
-const editRegionsColumns = "region_id, repository, base_revision, path, region_kind, region_key, region_class, regenerate_from, recorded_at"
-
-func scanEditRegions(row scanner) (EditRegionsRow, error) {
-	var r EditRegionsRow
-	err := row.Scan(&r.RegionID, &r.Repository, &r.BaseRevision, &r.Path, &r.RegionKind, &r.RegionKey, &r.RegionClass, &r.RegenerateFrom, &r.RecordedAt)
-	return r, err
-}
-
 // EditRevisionMarksRow is one edit_revision_marks row, every column in DDL order.
 type EditRevisionMarksRow struct {
 	MarkID       string
@@ -243,14 +85,6 @@ type EditRevisionMarksRow struct {
 	ToRevision   string
 	Actor        string
 	RecordedAt   string
-}
-
-const editRevisionMarksColumns = "mark_id, repository, from_revision, to_revision, actor, recorded_at"
-
-func scanEditRevisionMarks(row scanner) (EditRevisionMarksRow, error) {
-	var r EditRevisionMarksRow
-	err := row.Scan(&r.MarkID, &r.Repository, &r.FromRevision, &r.ToRevision, &r.Actor, &r.RecordedAt)
-	return r, err
 }
 
 // ExecutionLimitsRow is one execution_limits row, every column in DDL order.
@@ -322,380 +156,6 @@ func scanExecutionUsage(row scanner) (ExecutionUsageRow, error) {
 	return r, err
 }
 
-// FaultAdoptionsRow is one fault_adoptions row, every column in DDL order.
-type FaultAdoptionsRow struct {
-	FaultID     string
-	ExternalRef string
-	Scope       string
-	State       string
-	CreatedAt   string
-	UpdatedAt   string
-}
-
-const faultAdoptionsColumns = "fault_id, external_ref, scope, state, created_at, updated_at"
-
-func scanFaultAdoptions(row scanner) (FaultAdoptionsRow, error) {
-	var r FaultAdoptionsRow
-	err := row.Scan(&r.FaultID, &r.ExternalRef, &r.Scope, &r.State, &r.CreatedAt, &r.UpdatedAt)
-	return r, err
-}
-
-// FaultAliasesRow is one fault_aliases row, every column in DDL order.
-type FaultAliasesRow struct {
-	AliasID   string
-	FaultID   string
-	CreatedAt string
-}
-
-const faultAliasesColumns = "alias_id, fault_id, created_at"
-
-func scanFaultAliases(row scanner) (FaultAliasesRow, error) {
-	var r FaultAliasesRow
-	err := row.Scan(&r.AliasID, &r.FaultID, &r.CreatedAt)
-	return r, err
-}
-
-// FaultBudgetUsesRow is one fault_budget_uses row, every column in DDL order.
-type FaultBudgetUsesRow struct {
-	UseID   int64
-	Product string
-	Kind    string
-	Ref     string
-	UsedAt  string
-	UsedTS  float64
-}
-
-const faultBudgetUsesColumns = "use_id, product, kind, ref, used_at, used_ts"
-
-func scanFaultBudgetUses(row scanner) (FaultBudgetUsesRow, error) {
-	var r FaultBudgetUsesRow
-	err := row.Scan(&r.UseID, &r.Product, &r.Kind, &r.Ref, &r.UsedAt, &r.UsedTS)
-	return r, err
-}
-
-// FaultCursorsRow is one fault_cursors row, every column in DDL order.
-type FaultCursorsRow struct {
-	Source    string
-	Position  sql.NullString
-	Pages     int64
-	UpdatedAt string
-}
-
-const faultCursorsColumns = "source, position, pages, updated_at"
-
-func scanFaultCursors(row scanner) (FaultCursorsRow, error) {
-	var r FaultCursorsRow
-	err := row.Scan(&r.Source, &r.Position, &r.Pages, &r.UpdatedAt)
-	return r, err
-}
-
-// FaultLedgerRow is one fault_ledger row, every column in DDL order.
-type FaultLedgerRow struct {
-	FaultID         string
-	Product         string
-	FaultClass      string
-	Component       string
-	Severity        string
-	Signature       string
-	Scope           string
-	ScopeKey        string
-	State           string
-	Cycle           int64
-	Episode         int64
-	OccurrenceCount int64
-	ReopenCount     int64
-	Detail          sql.NullString
-	Suppression     sql.NullString
-	ExternalRef     sql.NullString
-	FirstSeenAt     string
-	LastSeenAt      string
-	ClearedAt       sql.NullString
-	PublishedAt     sql.NullString
-	ResolvedAt      sql.NullString
-	UpdatedAt       string
-}
-
-const faultLedgerColumns = "fault_id, product, fault_class, component, severity, signature, scope, scope_key, state, cycle, episode, occurrence_count, reopen_count, detail, suppression, external_ref, first_seen_at, last_seen_at, cleared_at, published_at, resolved_at, updated_at"
-
-func scanFaultLedger(row scanner) (FaultLedgerRow, error) {
-	var r FaultLedgerRow
-	err := row.Scan(&r.FaultID, &r.Product, &r.FaultClass, &r.Component, &r.Severity, &r.Signature, &r.Scope, &r.ScopeKey, &r.State, &r.Cycle, &r.Episode, &r.OccurrenceCount, &r.ReopenCount, &r.Detail, &r.Suppression, &r.ExternalRef, &r.FirstSeenAt, &r.LastSeenAt, &r.ClearedAt, &r.PublishedAt, &r.ResolvedAt, &r.UpdatedAt)
-	return r, err
-}
-
-// FaultLimitsRow is one fault_limits row, every column in DDL order.
-type FaultLimitsRow struct {
-	Product       string
-	Kind          string
-	MaxCount      int64
-	WindowSeconds float64
-	UpdatedAt     string
-}
-
-const faultLimitsColumns = "product, kind, max_count, window_seconds, updated_at"
-
-func scanFaultLimits(row scanner) (FaultLimitsRow, error) {
-	var r FaultLimitsRow
-	err := row.Scan(&r.Product, &r.Kind, &r.MaxCount, &r.WindowSeconds, &r.UpdatedAt)
-	return r, err
-}
-
-// FaultLinksRow is one fault_links row, every column in DDL order.
-type FaultLinksRow struct {
-	FaultID            string
-	ExternalRef        string
-	ProjectRef         sql.NullString
-	ObservedProjectRef sql.NullString
-	State              string
-	Revision           int64
-	UpdatedAt          string
-}
-
-const faultLinksColumns = "fault_id, external_ref, project_ref, observed_project_ref, state, revision, updated_at"
-
-func scanFaultLinks(row scanner) (FaultLinksRow, error) {
-	var r FaultLinksRow
-	err := row.Scan(&r.FaultID, &r.ExternalRef, &r.ProjectRef, &r.ObservedProjectRef, &r.State, &r.Revision, &r.UpdatedAt)
-	return r, err
-}
-
-// FaultNotificationsRow is one fault_notifications row, every column in DDL order.
-type FaultNotificationsRow struct {
-	NotificationID string
-	FaultID        string
-	Product        string
-	Kind           string
-	Reason         sql.NullString
-	Cycle          int64
-	Ref            sql.NullString
-	State          string
-	Token          sql.NullString
-	Owner          sql.NullString
-	LeaseUntil     sql.NullFloat64
-	Attempts       int64
-	LastError      sql.NullString
-	CreatedAt      string
-	UpdatedAt      string
-	DeliveredAt    sql.NullString
-	AckRef         sql.NullString
-	ExaminedSeq    sql.NullInt64
-}
-
-const faultNotificationsColumns = "notification_id, fault_id, product, kind, reason, cycle, ref, state, token, owner, lease_until, attempts, last_error, created_at, updated_at, delivered_at, ack_ref, examined_seq"
-
-func scanFaultNotifications(row scanner) (FaultNotificationsRow, error) {
-	var r FaultNotificationsRow
-	err := row.Scan(&r.NotificationID, &r.FaultID, &r.Product, &r.Kind, &r.Reason, &r.Cycle, &r.Ref, &r.State, &r.Token, &r.Owner, &r.LeaseUntil, &r.Attempts, &r.LastError, &r.CreatedAt, &r.UpdatedAt, &r.DeliveredAt, &r.AckRef, &r.ExaminedSeq)
-	return r, err
-}
-
-// FaultOccurrencesRow is one fault_occurrences row, every column in DDL order.
-type FaultOccurrencesRow struct {
-	OccurrenceID   string
-	FaultID        string
-	Episode        int64
-	OccurrenceKey  string
-	Severity       string
-	Cleared        int64
-	Detail         sql.NullString
-	Evidence       string
-	EvidenceDigest string
-	Truncated      int64
-	ObservedAt     sql.NullString
-	RecordedAt     string
-	RecordedTS     float64
-}
-
-const faultOccurrencesColumns = "occurrence_id, fault_id, episode, occurrence_key, severity, cleared, detail, evidence, evidence_digest, truncated, observed_at, recorded_at, recorded_ts"
-
-func scanFaultOccurrences(row scanner) (FaultOccurrencesRow, error) {
-	var r FaultOccurrencesRow
-	err := row.Scan(&r.OccurrenceID, &r.FaultID, &r.Episode, &r.OccurrenceKey, &r.Severity, &r.Cleared, &r.Detail, &r.Evidence, &r.EvidenceDigest, &r.Truncated, &r.ObservedAt, &r.RecordedAt, &r.RecordedTS)
-	return r, err
-}
-
-// FaultOvertakenDeliveriesRow is one fault_overtaken_deliveries row, every column in DDL order.
-type FaultOvertakenDeliveriesRow struct {
-	EventID string
-	Reason  string
-	NotedAt string
-}
-
-const faultOvertakenDeliveriesColumns = "event_id, reason, noted_at"
-
-func scanFaultOvertakenDeliveries(row scanner) (FaultOvertakenDeliveriesRow, error) {
-	var r FaultOvertakenDeliveriesRow
-	err := row.Scan(&r.EventID, &r.Reason, &r.NotedAt)
-	return r, err
-}
-
-// FaultPoliciesRow is one fault_policies row, every column in DDL order.
-type FaultPoliciesRow struct {
-	Product       string
-	FaultClass    string
-	Severity      string
-	Threshold     sql.NullInt64
-	WindowSeconds sql.NullFloat64
-	Reason        string
-	UpdatedAt     string
-}
-
-const faultPoliciesColumns = "product, fault_class, severity, threshold, window_seconds, reason, updated_at"
-
-func scanFaultPolicies(row scanner) (FaultPoliciesRow, error) {
-	var r FaultPoliciesRow
-	err := row.Scan(&r.Product, &r.FaultClass, &r.Severity, &r.Threshold, &r.WindowSeconds, &r.Reason, &r.UpdatedAt)
-	return r, err
-}
-
-// FaultPublicationAttemptsRow is one fault_publication_attempts row, every column in DDL order.
-type FaultPublicationAttemptsRow struct {
-	AttemptID     int64
-	PublicationID string
-	Attempt       int64
-	Owner         string
-	Takeover      int64
-	ClaimedAt     string
-	ClaimedTS     float64
-	IssuedAt      sql.NullString
-	IssuedTS      sql.NullFloat64
-	Outcome       sql.NullString
-	Error         sql.NullString
-	Ended         int64
-	EndedAt       sql.NullString
-}
-
-const faultPublicationAttemptsColumns = "attempt_id, publication_id, attempt, owner, takeover, claimed_at, claimed_ts, issued_at, issued_ts, outcome, error, ended, ended_at"
-
-func scanFaultPublicationAttempts(row scanner) (FaultPublicationAttemptsRow, error) {
-	var r FaultPublicationAttemptsRow
-	err := row.Scan(&r.AttemptID, &r.PublicationID, &r.Attempt, &r.Owner, &r.Takeover, &r.ClaimedAt, &r.ClaimedTS, &r.IssuedAt, &r.IssuedTS, &r.Outcome, &r.Error, &r.Ended, &r.EndedAt)
-	return r, err
-}
-
-// FaultPublicationPayloadsRow is one fault_publication_payloads row, every column in DDL order.
-type FaultPublicationPayloadsRow struct {
-	PublicationID string
-	ProjectRef    sql.NullString
-	Payload       sql.NullString
-	HoldReason    sql.NullString
-	UpdatedAt     string
-	TargetMode    sql.NullString
-}
-
-const faultPublicationPayloadsColumns = "publication_id, project_ref, payload, hold_reason, updated_at, target_mode"
-
-func scanFaultPublicationPayloads(row scanner) (FaultPublicationPayloadsRow, error) {
-	var r FaultPublicationPayloadsRow
-	err := row.Scan(&r.PublicationID, &r.ProjectRef, &r.Payload, &r.HoldReason, &r.UpdatedAt, &r.TargetMode)
-	return r, err
-}
-
-// FaultPublicationsRow is one fault_publications row, every column in DDL order.
-type FaultPublicationsRow struct {
-	PublicationID  string
-	FaultID        string
-	Kind           string
-	TriggerKey     string
-	Cycle          int64
-	TrackerRef     sql.NullString
-	ExternalRef    sql.NullString
-	Summary        string
-	IdentityDigest string
-	State          string
-	Attempts       int64
-	NextAttemptAt  sql.NullFloat64
-	ClaimToken     sql.NullString
-	LeaseOwner     sql.NullString
-	LeaseUntil     sql.NullFloat64
-	IssuedAt       sql.NullString
-	LastError      sql.NullString
-	ExternalResult sql.NullString
-	CreatedAt      string
-	UpdatedAt      string
-	ConfirmedAt    sql.NullString
-}
-
-const faultPublicationsColumns = "publication_id, fault_id, kind, trigger_key, cycle, tracker_ref, external_ref, summary, identity_digest, state, attempts, next_attempt_at, claim_token, lease_owner, lease_until, issued_at, last_error, external_result, created_at, updated_at, confirmed_at"
-
-func scanFaultPublications(row scanner) (FaultPublicationsRow, error) {
-	var r FaultPublicationsRow
-	err := row.Scan(&r.PublicationID, &r.FaultID, &r.Kind, &r.TriggerKey, &r.Cycle, &r.TrackerRef, &r.ExternalRef, &r.Summary, &r.IdentityDigest, &r.State, &r.Attempts, &r.NextAttemptAt, &r.ClaimToken, &r.LeaseOwner, &r.LeaseUntil, &r.IssuedAt, &r.LastError, &r.ExternalResult, &r.CreatedAt, &r.UpdatedAt, &r.ConfirmedAt)
-	return r, err
-}
-
-// FaultRemediationsRow is one fault_remediations row, every column in DDL order.
-type FaultRemediationsRow struct {
-	RemediationID string
-	FaultID       string
-	Cycle         int64
-	Kind          string
-	Ref           string
-	Method        sql.NullString
-	Outcome       sql.NullString
-	Detail        sql.NullString
-	RecordedAt    string
-}
-
-const faultRemediationsColumns = "remediation_id, fault_id, cycle, kind, ref, method, outcome, detail, recorded_at"
-
-func scanFaultRemediations(row scanner) (FaultRemediationsRow, error) {
-	var r FaultRemediationsRow
-	err := row.Scan(&r.RemediationID, &r.FaultID, &r.Cycle, &r.Kind, &r.Ref, &r.Method, &r.Outcome, &r.Detail, &r.RecordedAt)
-	return r, err
-}
-
-// FaultTargetProjectsRow is one fault_target_projects row, every column in DDL order.
-type FaultTargetProjectsRow struct {
-	ScopeKey   string
-	Product    string
-	ProjectRef sql.NullString
-	RecordedAt string
-}
-
-const faultTargetProjectsColumns = "scope_key, product, project_ref, recorded_at"
-
-func scanFaultTargetProjects(row scanner) (FaultTargetProjectsRow, error) {
-	var r FaultTargetProjectsRow
-	err := row.Scan(&r.ScopeKey, &r.Product, &r.ProjectRef, &r.RecordedAt)
-	return r, err
-}
-
-// FaultTargetsRow is one fault_targets row, every column in DDL order.
-type FaultTargetsRow struct {
-	ScopeKey   string
-	TrackerRef string
-	RecordedAt string
-}
-
-const faultTargetsColumns = "scope_key, tracker_ref, recorded_at"
-
-func scanFaultTargets(row scanner) (FaultTargetsRow, error) {
-	var r FaultTargetsRow
-	err := row.Scan(&r.ScopeKey, &r.TrackerRef, &r.RecordedAt)
-	return r, err
-}
-
-// FaultTimelineRow is one fault_timeline row, every column in DDL order.
-type FaultTimelineRow struct {
-	Seq        int64
-	FaultID    string
-	Cycle      int64
-	Kind       string
-	RefID      sql.NullString
-	Detail     sql.NullString
-	RecordedAt string
-	RecordedTS float64
-}
-
-const faultTimelineColumns = "seq, fault_id, cycle, kind, ref_id, detail, recorded_at, recorded_ts"
-
-func scanFaultTimeline(row scanner) (FaultTimelineRow, error) {
-	var r FaultTimelineRow
-	err := row.Scan(&r.Seq, &r.FaultID, &r.Cycle, &r.Kind, &r.RefID, &r.Detail, &r.RecordedAt, &r.RecordedTS)
-	return r, err
-}
-
 // IncidentRoutesRow is one incident_routes row, every column in DDL order.
 type IncidentRoutesRow struct {
 	FaultID         string
@@ -714,14 +174,6 @@ type IncidentRoutesRow struct {
 	CheckedSeq      int64
 	CreatedAt       string
 	UpdatedAt       string
-}
-
-const incidentRoutesColumns = "fault_id, product_key, workspace, disposition, stage, target, origin, claimed_severity, goal, classification, superseded_by, reported, detail, checked_seq, created_at, updated_at"
-
-func scanIncidentRoutes(row scanner) (IncidentRoutesRow, error) {
-	var r IncidentRoutesRow
-	err := row.Scan(&r.FaultID, &r.ProductKey, &r.Workspace, &r.Disposition, &r.Stage, &r.Target, &r.Origin, &r.ClaimedSeverity, &r.Goal, &r.Classification, &r.SupersededBy, &r.Reported, &r.Detail, &r.CheckedSeq, &r.CreatedAt, &r.UpdatedAt)
-	return r, err
 }
 
 // LinkageConflictsRow is one linkage_conflicts row, every column in DDL order.
@@ -855,25 +307,6 @@ func scanMergeTurns(row scanner) (MergeTurnsRow, error) {
 	return r, err
 }
 
-// PollObservationsRow is one poll_observations row, every column in DDL order.
-type PollObservationsRow struct {
-	RelationshipID      string
-	ExecutionGeneration int64
-	TurnID              string
-	LastStatus          sql.NullString
-	LastPolledAt        sql.NullString
-	LastAttemptAt       string
-	LastError           sql.NullString
-}
-
-const pollObservationsColumns = "relationship_id, execution_generation, turn_id, last_status, last_polled_at, last_attempt_at, last_error"
-
-func scanPollObservations(row scanner) (PollObservationsRow, error) {
-	var r PollObservationsRow
-	err := row.Scan(&r.RelationshipID, &r.ExecutionGeneration, &r.TurnID, &r.LastStatus, &r.LastPolledAt, &r.LastAttemptAt, &r.LastError)
-	return r, err
-}
-
 // ProductBindingsRow is one product_bindings row, every column in DDL order.
 type ProductBindingsRow struct {
 	ProductKey string
@@ -904,43 +337,6 @@ const productRegistryColumns = "product_key, record, recorded_at"
 func scanProductRegistry(row scanner) (ProductRegistryRow, error) {
 	var r ProductRegistryRow
 	err := row.Scan(&r.ProductKey, &r.Record, &r.RecordedAt)
-	return r, err
-}
-
-// RecipientLifecycleRow is one recipient_lifecycle row, every column in DDL order.
-type RecipientLifecycleRow struct {
-	TaskID         string
-	RuntimeStatus  sql.NullString
-	Archived       sql.NullInt64
-	GoalStatus     sql.NullString
-	CanAcceptInput sql.NullInt64
-	Deliverable    string
-	WithholdReason sql.NullString
-	Detail         sql.NullString
-	ObservedAt     string
-}
-
-const recipientLifecycleColumns = "task_id, runtime_status, archived, goal_status, can_accept_input, deliverable, withhold_reason, detail, observed_at"
-
-func scanRecipientLifecycle(row scanner) (RecipientLifecycleRow, error) {
-	var r RecipientLifecycleRow
-	err := row.Scan(&r.TaskID, &r.RuntimeStatus, &r.Archived, &r.GoalStatus, &r.CanAcceptInput, &r.Deliverable, &r.WithholdReason, &r.Detail, &r.ObservedAt)
-	return r, err
-}
-
-// RecipientRateRow is one recipient_rate row, every column in DDL order.
-type RecipientRateRow struct {
-	RecipientTaskID string
-	WindowStart     float64
-	Sends           int64
-	LastSendAt      sql.NullFloat64
-}
-
-const recipientRateColumns = "recipient_task_id, window_start, sends, last_send_at"
-
-func scanRecipientRate(row scanner) (RecipientRateRow, error) {
-	var r RecipientRateRow
-	err := row.Scan(&r.RecipientTaskID, &r.WindowStart, &r.Sends, &r.LastSendAt)
 	return r, err
 }
 
@@ -996,22 +392,6 @@ func scanRouteIncidents(row scanner) (RouteIncidentsRow, error) {
 	return r, err
 }
 
-// RoutingPolicyRow is one routing_policy row, every column in DDL order.
-type RoutingPolicyRow struct {
-	PolicyKey  string
-	Record     string
-	Basis      string
-	RecordedAt string
-}
-
-const routingPolicyColumns = "policy_key, record, basis, recorded_at"
-
-func scanRoutingPolicy(row scanner) (RoutingPolicyRow, error) {
-	var r RoutingPolicyRow
-	err := row.Scan(&r.PolicyKey, &r.Record, &r.Basis, &r.RecordedAt)
-	return r, err
-}
-
 // ScopeBindingsRow is one scope_bindings row, every column in DDL order.
 type ScopeBindingsRow struct {
 	BindingID    string
@@ -1036,32 +416,6 @@ const scopeBindingsColumns = "binding_id, role, scope_kind, scope_key, task_id, 
 func scanScopeBindings(row scanner) (ScopeBindingsRow, error) {
 	var r ScopeBindingsRow
 	err := row.Scan(&r.BindingID, &r.Role, &r.ScopeKind, &r.ScopeKey, &r.TaskID, &r.HostID, &r.CWD, &r.CXCSession, &r.Status, &r.Revision, &r.Supersedes, &r.SupersededBy, &r.HandoverNote, &r.CreatedAt, &r.UpdatedAt)
-	return r, err
-}
-
-// ScopeDirectivesRow is one scope_directives row, every column in DDL order.
-type ScopeDirectivesRow struct {
-	DirectiveID  string
-	ScopeKind    string
-	ScopeKey     string
-	FromTaskID   string
-	FromScopeKey string
-	LinkID       string
-	LinkKind     string
-	Digest       string
-	Reference    sql.NullString
-	Revision     int64
-	Disposition  sql.NullString
-	DecidedBy    sql.NullString
-	DecidedAt    sql.NullString
-	RecordedAt   string
-}
-
-const scopeDirectivesColumns = "directive_id, scope_kind, scope_key, from_task_id, from_scope_key, link_id, link_kind, digest, reference, revision, disposition, decided_by, decided_at, recorded_at"
-
-func scanScopeDirectives(row scanner) (ScopeDirectivesRow, error) {
-	var r ScopeDirectivesRow
-	err := row.Scan(&r.DirectiveID, &r.ScopeKind, &r.ScopeKey, &r.FromTaskID, &r.FromScopeKey, &r.LinkID, &r.LinkKind, &r.Digest, &r.Reference, &r.Revision, &r.Disposition, &r.DecidedBy, &r.DecidedAt, &r.RecordedAt)
 	return r, err
 }
 
@@ -1236,42 +590,5 @@ const turnDeclarationsColumns = "assignment_id, session_id, turn_id, outcome, de
 func scanTurnDeclarations(row scanner) (TurnDeclarationsRow, error) {
 	var r TurnDeclarationsRow
 	err := row.Scan(&r.AssignmentID, &r.SessionID, &r.TurnID, &r.Outcome, &r.DeclaredAt, &r.RecordedAt)
-	return r, err
-}
-
-// VerdictContextRow is one verdict_context row, every column in DDL order.
-type VerdictContextRow struct {
-	EventID      string
-	SetDigest    sql.NullString
-	Coverage     string
-	Findings     sql.NullString
-	Reason       sql.NullString
-	Currency     string
-	HeadEventID  sql.NullString
-	HeadRevision sql.NullString
-	AckEvidence  string
-	RecordedAt   string
-}
-
-const verdictContextColumns = "event_id, set_digest, coverage, findings, reason, currency, head_event_id, head_revision, ack_evidence, recorded_at"
-
-func scanVerdictContext(row scanner) (VerdictContextRow, error) {
-	var r VerdictContextRow
-	err := row.Scan(&r.EventID, &r.SetDigest, &r.Coverage, &r.Findings, &r.Reason, &r.Currency, &r.HeadEventID, &r.HeadRevision, &r.AckEvidence, &r.RecordedAt)
-	return r, err
-}
-
-// VerificationModeRow is one verification_mode row, every column in DDL order.
-type VerificationModeRow struct {
-	RelationshipID string
-	Mode           string
-	RecordedAt     string
-}
-
-const verificationModeColumns = "relationship_id, mode, recorded_at"
-
-func scanVerificationMode(row scanner) (VerificationModeRow, error) {
-	var r VerificationModeRow
-	err := row.Scan(&r.RelationshipID, &r.Mode, &r.RecordedAt)
 	return r, err
 }

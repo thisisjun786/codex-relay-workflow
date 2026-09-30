@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 )
@@ -285,7 +287,7 @@ func Test24_SCH_66_CancelledClaimDoesNotSpendBudget(t *testing.T) {
 	_, stage := f.staged(t)
 	id := stage["messageId"].(string)
 	f.c.beforeTransport = func() {
-		if err := f.s.ArchiveScopeBinding(f.ctx, "b-supervisor", "archived", "successor", f.at); err != nil {
+		if err := storeseed.ArchiveScopeBinding(f.ctx, f.s, "b-supervisor", "archived", "successor", f.at); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -458,7 +460,7 @@ func Test24_SCH_56_ArchivedAtTransportDoesNotSend(t *testing.T) {
 	_, stage := f.staged(t)
 	id := stage["messageId"].(string)
 	f.c.beforeTransport = func() {
-		if err := f.s.ArchiveScopeBinding(f.ctx, "b-supervisor", "archived", "none", f.at); err != nil {
+		if err := storeseed.ArchiveScopeBinding(f.ctx, f.s, "b-supervisor", "archived", "none", f.at); err != nil {
 			t.Fatal(err)
 		}
 	}

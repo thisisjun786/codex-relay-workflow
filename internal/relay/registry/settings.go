@@ -1,9 +1,6 @@
 package registry
 
 import (
-	"context"
-	"database/sql"
-	"errors"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -549,36 +546,3 @@ var TransportSettingsRefusals = []string{SettingsNotPreserved, SettingUnobservab
 
 // IsPreSendSettingsRefusal reports whether a resume refusal code withholds before any send.
 func IsPreSendSettingsRefusal(code string) bool { return contains(TransportSettingsRefusals, code) }
-
-// RecordSettingsViolation is DeliveryService.record_settings_violation: a dispatch that already
-// reached a turn is annotated, never reclassified; the delivery row is not touched.
-func (r *Registry) RecordSettingsViolation(ctx context.Context, requestID, eventID string, findings []any) (contract.OrderedObject, error) {
-	now := r.now()
-	err := r.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
-		if err := r.Store.RecordSettingsViolation(ctx, store.AttemptSettingsViolationsRow{RequestID: requestID, EventID: eventID,
-			Findings: pyDumps(findings, false), ObservedAt: now}); err != nil {
-			return err
-		}
-		return journal(ctx, r.Store, "dispatch_settings_violation", eventID, contract.OrderedObject{{Key: "requestId", Value: requestID}, {Key: "findings", Value: findings}}, now)
-	})
-	if err != nil {
-		return nil, err
-	}
-	return contract.OrderedObject{{Key: "requestId", Value: requestID}, {Key: "eventId", Value: eventID}, {Key: "findings", Value: findings}}, nil
-}
-
-// SettingsViolation is DeliveryService.settings_violation; nil for an unknown request.
-func (r *Registry) SettingsViolation(ctx context.Context, requestID string) (contract.OrderedObject, error) {
-	row, err := r.Store.SettingsViolation(ctx, requestID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	findings, err := decodeJSON([]byte(row.Findings))
-	if err != nil {
-		return nil, err
-	}
-	return contract.OrderedObject{{Key: "findings", Value: findings}, {Key: "observedAt", Value: row.ObservedAt}}, nil
-}

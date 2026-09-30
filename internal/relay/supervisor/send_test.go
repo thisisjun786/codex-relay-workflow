@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
+
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 )
 
@@ -156,7 +158,7 @@ func Test24_SCH_9_StagedHandoverHasNoAttempt(t *testing.T) {
 	f := fixture24(t)
 	f.c.Settings = &delivery.TaskSettings{}
 	_, staged := f.staged(t)
-	if err := f.s.ArchiveScopeBinding(f.ctx, "b-supervisor", "archived", "b-next", f.at); err != nil {
+	if err := storeseed.ArchiveScopeBinding(f.ctx, f.s, "b-supervisor", "archived", "b-next", f.at); err != nil {
 		t.Fatal(err)
 	}
 	_, err := f.s.DB.ExecContext(f.ctx, "INSERT INTO scope_bindings(binding_id,role,scope_kind,scope_key,task_id,host_id,status,revision,created_at,updated_at) VALUES ('b-next','supervisor','initiative','INI-1','next','host','active',2,'t','t')")

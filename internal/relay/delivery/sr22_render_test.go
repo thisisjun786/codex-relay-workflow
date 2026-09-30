@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
+
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
@@ -67,7 +69,7 @@ func Test24_SR_22_CompletionContextWholeMessageBytes(t *testing.T) {
 			if name == "project" {
 				row, err := s.One(context.Background(), "SELECT relationship_id FROM deliveries WHERE event_id = ?", captured.EventID)
 				mustDo(t, err)
-				mustDo(t, s.RecordRelationshipScope(context.Background(), row.Get("relationship_id").(string), "PRJ-1", "t"))
+				mustDo(t, storeseed.RecordRelationshipScope(context.Background(), s, row.Get("relationship_id").(string), "PRJ-1", "t"))
 			}
 			row, err := d.Get(context.Background(), captured.EventID)
 			mustDo(t, err)

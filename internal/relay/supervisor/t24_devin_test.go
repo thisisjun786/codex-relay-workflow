@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
+
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
@@ -110,7 +112,7 @@ func addForeignRelationship(t *testing.T, f *stageFixture) {
 	if _, err := f.s.DB.ExecContext(f.ctx, `INSERT INTO relationships (relationship_id,issue_key,status,parent_task_id,parent_host_id,child_task_id,child_host_id,execution_generation,artifact_roots,allowed_recipients,created_at,updated_at) VALUES ('rel-foreign','BETA-1','active','parent-b','host','child-b','host',1,'[]','[]','2023-11-14T22:13:20.000000+00:00','2023-11-14T22:13:20.000000+00:00')`); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.s.RecordRelationshipScope(f.ctx, "rel-foreign", "BETA", "t"); err != nil {
+	if err := storeseed.RecordRelationshipScope(f.ctx, f.s, "rel-foreign", "BETA", "t"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -326,13 +328,13 @@ func Test24DevinStageStandingOrderMatchesLivePython(t *testing.T) {
 
 func moveDevinSupervisor(t *testing.T, f *stageFixture) {
 	t.Helper()
-	if err := f.s.ArchiveScopeBinding(f.ctx, "b-supervisor", "archived", "b-successor", f.at); err != nil {
+	if err := storeseed.ArchiveScopeBinding(f.ctx, f.s, "b-supervisor", "archived", "b-successor", f.at); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.s.InsertScopeBinding(f.ctx, store.ScopeBindingsRow{BindingID: "b-successor", Role: "supervisor", ScopeKind: "initiative", ScopeKey: "INI-1", TaskID: "successor", HostID: "host", Status: "active", Revision: 2, CreatedAt: "t2", UpdatedAt: "t2"}); err != nil {
+	if err := storeseed.InsertScopeBinding(f.ctx, f.s, store.ScopeBindingsRow{BindingID: "b-successor", Role: "supervisor", ScopeKind: "initiative", ScopeKey: "INI-1", TaskID: "successor", HostID: "host", Status: "active", Revision: 2, CreatedAt: "t2", UpdatedAt: "t2"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.s.RepointScopeLink(f.ctx, "lnk-project", "active", "parent", "successor", f.at); err != nil {
+	if err := storeseed.RepointScopeLink(f.ctx, f.s, "lnk-project", "active", "parent", "successor", f.at); err != nil {
 		t.Fatal(err)
 	}
 }

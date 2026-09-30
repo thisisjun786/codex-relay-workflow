@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
+
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 )
 
@@ -36,7 +38,7 @@ func Test24_SCH_11_SeparateQueues(t *testing.T) {
 func Test24_SCH_12_EligibleOldestFirst(t *testing.T) {
 	f := fixture24(t)
 	_, stage := f.staged(t)
-	rows, err := f.c.Eligible(f.ctx, 1_700_000_001, 4)
+	rows, err := storeseed.EligibleSupervisorMessages(f.ctx, f.c.Store, 1_700_000_001, 4)
 	if err != nil || len(rows) != 1 || rows[0].MessageID != stage["messageId"] {
 		t.Fatalf("eligible %v %v", rows, err)
 	}

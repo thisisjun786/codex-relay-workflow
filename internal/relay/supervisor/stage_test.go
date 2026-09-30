@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
+
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -43,16 +45,16 @@ func fixture24(t *testing.T) *stageFixture {
 			t.Fatal(err)
 		}
 	}
-	if err = s.RecordRelationshipScope(ctx, "rel-1", "PRJ-1", "t"); err != nil {
+	if err = storeseed.RecordRelationshipScope(ctx, s, "rel-1", "PRJ-1", "t"); err != nil {
 		t.Fatal(err)
 	}
 	for _, b := range []store.ScopeBindingsRow{{BindingID: "b-child", Role: "child", ScopeKind: "issue", ScopeKey: "REL-1", TaskID: "child", HostID: "host", Status: "active", Revision: 1, CreatedAt: "t", UpdatedAt: "t"}, {BindingID: "b-parent", Role: "parent", ScopeKind: "project", ScopeKey: "PRJ-1", TaskID: "parent", HostID: "host", Status: "active", Revision: 1, CreatedAt: "t", UpdatedAt: "t"}, {BindingID: "b-supervisor", Role: "supervisor", ScopeKind: "initiative", ScopeKey: "INI-1", TaskID: "supervisor", HostID: "host", Status: "active", Revision: 1, CreatedAt: "t", UpdatedAt: "t"}} {
-		if err = s.InsertScopeBinding(ctx, b); err != nil {
+		if err = storeseed.InsertScopeBinding(ctx, s, b); err != nil {
 			t.Fatal(err)
 		}
 	}
 	for _, l := range []store.ScopeLinksRow{{LinkID: "lnk-issue", LinkKind: "execution", UpperKind: "project", UpperKey: "PRJ-1", UpperTaskID: "parent", LowerKind: "issue", LowerKey: "REL-1", LowerTaskID: "child", Status: "active", Revision: 1, CreatedAt: "t", UpdatedAt: "t"}, {LinkID: "lnk-project", LinkKind: "execution", UpperKind: "initiative", UpperKey: "INI-1", UpperTaskID: "supervisor", LowerKind: "project", LowerKey: "PRJ-1", LowerTaskID: "parent", Status: "active", Revision: 1, CreatedAt: "t", UpdatedAt: "t"}} {
-		if err = s.InsertScopeLink(ctx, l); err != nil {
+		if err = storeseed.InsertScopeLink(ctx, s, l); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -331,11 +333,11 @@ func Test24_SCH_5_PacketPurposeAndEvidence(t *testing.T) {
 func Test24_SCH_9_HandoverRefusesStaleStaging(t *testing.T) {
 	f := fixture24(t)
 	o, _ := f.staged(t)
-	if err := f.s.ArchiveScopeBinding(f.ctx, "b-supervisor", "archived", "b-next", f.at); err != nil {
+	if err := storeseed.ArchiveScopeBinding(f.ctx, f.s, "b-supervisor", "archived", "b-next", f.at); err != nil {
 		t.Fatal(err)
 	}
 	b := store.ScopeBindingsRow{BindingID: "b-next", Role: "supervisor", ScopeKind: "initiative", ScopeKey: "INI-1", TaskID: "next", HostID: "host", Status: "active", Revision: 2, CreatedAt: "t2", UpdatedAt: "t2"}
-	if err := f.s.InsertScopeBinding(f.ctx, b); err != nil {
+	if err := storeseed.InsertScopeBinding(f.ctx, f.s, b); err != nil {
 		t.Fatal(err)
 	}
 	_, err := f.c.Stage(f.ctx, o, "", f.at)

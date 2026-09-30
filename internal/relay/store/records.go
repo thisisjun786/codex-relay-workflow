@@ -149,60 +149,6 @@ func (s *Store) Generation(ctx context.Context, relationshipID string, number in
 	return row, nil
 }
 
-type Event struct {
-	ID             string
-	RelationshipID string
-	Generation     int64
-	RevisionHash   string
-	Outcome        string
-	Producer       string
-	TurnThreadID   string
-	TurnID         string
-	TurnStatus     string
-	Receipt        string
-	PathBinding    sql.NullString
-	Stage          string
-}
-
-func (s *Store) Event(ctx context.Context, id string) (Event, error) {
-	var row Event
-	err := s.q(ctx).QueryRowContext(ctx, `SELECT event_id, relationship_id, execution_generation, revision_hash,
- outcome, producer, turn_thread_id, turn_id, turn_status, receipt, path_binding_mode, stage
- FROM events WHERE event_id=?`, id).Scan(&row.ID, &row.RelationshipID, &row.Generation,
-		&row.RevisionHash, &row.Outcome, &row.Producer, &row.TurnThreadID,
-		&row.TurnID, &row.TurnStatus, &row.Receipt, &row.PathBinding, &row.Stage)
-	if err != nil {
-		return Event{}, fmt.Errorf("event %q: %w", id, err)
-	}
-	return row, nil
-}
-
-type Delivery struct {
-	EventID           string
-	RelationshipID    string
-	Kind              string
-	RecipientTaskID   string
-	RecipientThreadID string
-	State             string
-	AttemptCount      int64
-	HoldReason        sql.NullString
-	CreatedAt         string
-	UpdatedAt         string
-}
-
-func (s *Store) Delivery(ctx context.Context, eventID string) (Delivery, error) {
-	var row Delivery
-	err := s.q(ctx).QueryRowContext(ctx, `SELECT event_id, relationship_id, kind, recipient_task_id,
- recipient_thread_id, state, attempt_count, hold_reason, created_at, updated_at
- FROM deliveries WHERE event_id=?`, eventID).Scan(&row.EventID, &row.RelationshipID,
-		&row.Kind, &row.RecipientTaskID, &row.RecipientThreadID, &row.State,
-		&row.AttemptCount, &row.HoldReason, &row.CreatedAt, &row.UpdatedAt)
-	if err != nil {
-		return Delivery{}, fmt.Errorf("delivery %q: %w", eventID, err)
-	}
-	return row, nil
-}
-
 type Attempt struct {
 	RequestID     string
 	EventID       string
@@ -278,14 +224,6 @@ func (s *Store) Journal(ctx context.Context, kind, subject string) ([]JournalEnt
 		return nil, fmt.Errorf("journal rows: %w", err)
 	}
 	return entries, nil
-}
-
-func (s *Store) AppendJournal(ctx context.Context, entry JournalEntry) error {
-	return s.Transaction(ctx, func(ctx context.Context, conn *sql.Conn) error {
-		_, err := conn.ExecContext(ctx, `INSERT INTO journal (at, kind, subject, detail)
-   VALUES (?,?,?,?)`, entry.At, entry.Kind, entry.Subject, entry.Detail)
-		return err
-	})
 }
 
 // Q exposes the ctx-aware querier to domain packages: the open transaction's connection when ctx

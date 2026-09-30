@@ -2658,3 +2658,28 @@ contract/fixtures/hook/`test_completion_hook__test_a_recorded_interpreter_that_i
 `...__test_a_valid_answer_survives_a_wrapper_that_replaces_the_exit_status.json`,
 `...__test_every_probe_that_ran_a_program_says_so_not_only_the_one_that_worked.json`; the
 exec sites listed by `git grep -n 'exec.Command' -- 'cmd/*.go' 'internal/*.go' ':!*_test.go'`.
+
+## 51. The store keeps only the typed row queries the product runs (refactor R1)
+
+Decision: `internal/relay/store` no longer carries the typed row layer nothing in the product
+calls: about 150 exported `*Store` methods and the row types, scanners and column lists only
+they used (the fault-ledger, managed-sidecar, edit-region, linkage, record and receipt readers
+and writers the domain packages replaced with their own SQL), together with the registry's and
+the supervisor channel's test-only wrappers over them (`Registry.RecordSettingsViolation`,
+`Registry.SettingsViolation`, `Channel.Eligible`). Every table keeps its schema and its rows;
+only unused Go goes. The store tests that seed rows or read back what a live writer stored keep
+the queries they need in `internal/relay/store/rowqueries_test.go`, and other packages' tests
+seed through `internal/testsupport/storeseed`, which no product package imports.
+`TestEverySchemaTable_has_a_go_query_referencing_it` now searches the product's SQL under
+`internal/` (not the store package alone), so the store no longer has to hold a query for a table
+another package owns. One table has no query in either runtime and is listed as stored-only:
+`attempt_settings_violations` (Python's `DeliveryService.record_settings_violation` and
+`settings_violation` had only test callers, and so did their Go copies).
+
+Why: the layer was ported table by table before the domain packages existed and was kept alive
+only by that test and by tests of itself; a second implementation of a query that the product
+runs elsewhere tests nothing the product does.
+
+Evidence: `internal/relay/store/table_coverage_test.go` (`storedOnly`, `productionSQL`);
+`internal/relay/store/python_parity_test.go` (a table without a typed store query is dumped but
+not compared; the recorded Python runs are unchanged); `internal/testsupport/storeseed`.

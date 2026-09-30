@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
+
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
@@ -45,10 +47,10 @@ func handoverSet3(t *testing.T, s *store.Store) {
 	t.Helper()
 	ctx := context.Background()
 	original, successor := "bnd-24179d1961baacd1886d337c38c3eceb", "bnd-b5f442e2faff9adf98768ffc7139b265"
-	if err := s.ArchiveScopeBinding(ctx, original, "archived", successor, captureTime); err != nil {
+	if err := storeseed.ArchiveScopeBinding(ctx, s, original, "archived", successor, captureTime); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.InsertScopeBinding(ctx, store.ScopeBindingsRow{BindingID: successor, Role: "supervisor", ScopeKind: "initiative", ScopeKey: "INI-1", TaskID: "01successor-supervisor", HostID: "host-a", Status: "active", Revision: 2, CreatedAt: captureTime, UpdatedAt: captureTime, CWD: sql.NullString{String: "/successor", Valid: true}, CXCSession: sql.NullString{String: "cxc-next", Valid: true}, HandoverNote: sql.NullString{String: "the initiative changed hands", Valid: true}, Supersedes: sql.NullString{String: original, Valid: true}}); err != nil {
+	if err := storeseed.InsertScopeBinding(ctx, s, store.ScopeBindingsRow{BindingID: successor, Role: "supervisor", ScopeKind: "initiative", ScopeKey: "INI-1", TaskID: "01successor-supervisor", HostID: "host-a", Status: "active", Revision: 2, CreatedAt: captureTime, UpdatedAt: captureTime, CWD: sql.NullString{String: "/successor", Valid: true}, CXCSession: sql.NullString{String: "cxc-next", Valid: true}, HandoverNote: sql.NullString{String: "the initiative changed hands", Valid: true}, Supersedes: sql.NullString{String: original, Valid: true}}); err != nil {
 		t.Fatal(err)
 	}
 	for _, entry := range []struct{ kind, detail string }{{"scope_bound", `{"role": "supervisor", "scopeKind": "initiative", "scopeKey": "INI-1", "taskId": "01successor-supervisor", "revision": 2}`}, {"scope_handover", `{"scopeKey": "INI-1", "from": "01supervisor-task", "to": "01successor-supervisor", "actor": "a test", "acknowledged": []}`}} {
@@ -56,7 +58,7 @@ func handoverSet3(t *testing.T, s *store.Store) {
 			t.Fatal(err)
 		}
 	}
-	if err := s.RepointScopeLink(ctx, "lnk-6fa68afd8cc27a8e7780d400a52f73c2", "active", "01parent-task", "01successor-supervisor", captureTime); err != nil {
+	if err := storeseed.RepointScopeLink(ctx, s, "lnk-6fa68afd8cc27a8e7780d400a52f73c2", "active", "01parent-task", "01successor-supervisor", captureTime); err != nil {
 		t.Fatal(err)
 	}
 }

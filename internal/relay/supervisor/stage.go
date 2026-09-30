@@ -286,9 +286,6 @@ func (c *Channel) Get(ctx context.Context, id string) (store.SupervisorMessagesR
 	}
 	return row, err
 }
-func (c *Channel) Eligible(ctx context.Context, now float64, limit int) ([]store.SupervisorMessagesRow, error) {
-	return c.Store.ClaimableSupervisorMessages(ctx, [3]string{"queued", "deferred_busy", "withheld_pre_send"}, now, limit)
-}
 func (c *Channel) StageStanding(ctx context.Context, projectKey, at string) (map[string]any, error) {
 	return c.StageStandingWithObservations(ctx, projectKey, nil, at)
 }

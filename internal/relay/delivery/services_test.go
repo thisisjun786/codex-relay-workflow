@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
+
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -43,5 +45,5 @@ func TestVCU13_the_cli_closes_what_it_opened_and_builds_nothing_to_close(t *test
 	s, err := store.Open(ctx, filepath.Join(state, "relay.sqlite3"), "")
 	mustDo(t, err)
 	defer s.Close()
-	mustDo(t, s.AppendJournal(ctx, store.JournalEntry{At: "t", Kind: "probe", Subject: "s", Detail: "{}"}))
+	mustDo(t, storeseed.AppendJournal(ctx, s, store.JournalEntry{At: "t", Kind: "probe", Subject: "s", Detail: "{}"}))
 }

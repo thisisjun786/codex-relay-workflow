@@ -168,45 +168,6 @@ func Test25_SPR10_every_settings_refusal_is_a_pre_send_refusal(t *testing.T) {
 	}
 }
 
-// SPR-12 (store half): a post-dispatch violation is annotated, never reclassified: the delivery
-// row stays dispatched, the findings are readable afterwards (an unknown request reads none), and
-// the annotation is one journal line beside it.
-func Test25_SPR12_a_post_dispatch_violation_annotates_without_reclassifying(t *testing.T) {
-	r := newRegistry(t)
-	if _, err := r.Store.DB.ExecContext(ctx(), "INSERT INTO deliveries (event_id,relationship_id,kind,recipient_task_id,recipient_thread_id,state,attempt_count,created_at,updated_at)"+
-		" VALUES ('e1','rel-x','completion_event',?,?,'dispatched',1,'t','t')", parent, parent); err != nil {
-		t.Fatal(err)
-	}
-	findings := []any{contractObject{{Key: "code", Value: SettingsNotPreserved}, {Key: "field", Value: "sandbox"},
-		{Key: "expected", Value: contractObject{{Key: "type", Value: "workspaceWrite"}}}, {Key: "returned", Value: contractObject{{Key: "type", Value: "dangerFullAccess"}}}}}
-	if _, err := r.RecordSettingsViolation(ctx(), "del-000000000000-a1", "e1", findings); err != nil {
-		t.Fatal(err)
-	}
-	var state string
-	if err := r.Store.DB.QueryRowContext(ctx(), "SELECT state FROM deliveries WHERE event_id='e1'").Scan(&state); err != nil || state != "dispatched" {
-		t.Fatal(state, err)
-	}
-	stored, err := r.SettingsViolation(ctx(), "del-000000000000-a1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := plain(t, stored).(map[string]any)
-	if obj(got["findings"].([]any)[0])["code"] != SettingsNotPreserved || got["observedAt"] != fakeISO {
-		t.Fatal(got)
-	}
-	if none, err := r.SettingsViolation(ctx(), "del-never-seen-a1"); err != nil || none != nil {
-		t.Fatal(none, err)
-	}
-	var detail string
-	if err := r.Store.DB.QueryRowContext(ctx(), "SELECT detail FROM journal WHERE kind='dispatch_settings_violation' AND subject='e1'").Scan(&detail); err != nil {
-		t.Fatal(err)
-	}
-	want := `{"requestId": "del-000000000000-a1", "findings": [{"code": "settings_not_preserved", "field": "sandbox", "expected": {"type": "workspaceWrite"}, "returned": {"type": "dangerFullAccess"}}]}`
-	if detail != want {
-		t.Fatalf("journal detail %s", detail)
-	}
-}
-
 // CLI-35: every recorded field a send transforms or constrains, mutated in the stored row, makes
 // the recipient not deliverable (settings-show deliverable false, and the gate refuses it); a
 // constraint mutant is refused naming the field and the value. Python derives the field set

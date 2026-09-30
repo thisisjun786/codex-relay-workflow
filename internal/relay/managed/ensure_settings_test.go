@@ -3,8 +3,10 @@ package managed
 import (
 	"context"
 	"errors"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
 )
 
 func Test27_MRS_5_EnsureSettingsKeepsEqualAndRefusesDrift(t *testing.T) {
@@ -24,7 +26,7 @@ func Test27_MRS_5_EnsureSettingsKeepsEqualAndRefusesDrift(t *testing.T) {
 	if !errors.As(err, &refused) || refused.Reason != "relationship_conflict" {
 		t.Fatal(err)
 	}
-	record, err := r.Store.AuthorizedSettings(ctx, "parent")
+	record, err := storeseed.ReadAuthorizedSettings(ctx, r.Store, "parent")
 	if err != nil || record.Source != "creation_result" {
 		t.Fatal(record, err)
 	}
