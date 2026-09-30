@@ -135,7 +135,9 @@ func absoluteUser(value string) (string, error) {
 // directory when relative (store.Absolute).
 func absolutePath(value string) (string, error) { return store.Absolute(value) }
 
-// resolved is Path(value).expanduser().resolve(): symlinks followed, a missing tail kept.
+// resolved is Path(value).expanduser().resolve(): symlinks followed, a missing tail kept. It
+// is strict where resolve() is not: a loop or a component it cannot search is refused rather than
+// kept as spelled (docs/port/known-defects.md, Python defects not carried over).
 func resolved(value string) (string, error) {
 	expanded, err := store.ExpandUser(value)
 	if err != nil {

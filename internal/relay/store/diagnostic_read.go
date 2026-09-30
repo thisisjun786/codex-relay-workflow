@@ -26,6 +26,9 @@ type NonceReading struct {
 	LogInode  uint64
 	LogName   string
 	Detail    string
+	// Raised is what nonce_lookup does not answer as a reading: the UnicodeEncodeError a nonce
+	// sqlite3 cannot bind raises (it catches sqlite3.Error only), for the caller to raise.
+	Raised error
 }
 
 type ReadResult struct {
@@ -158,6 +161,9 @@ func NonceLookup(ctx context.Context, selection StateSelection, nonce string) No
 		}
 		return conn.scanRow(ctx, "SELECT written_by,written_at FROM store_challenge WHERE nonce=?", []any{nonce}, &actor, &at)
 	}()
+	if encode := EncodeError(readErr); encode != nil {
+		return NonceReading{Nonce: nonce, Raised: encode}
+	}
 	found := readErr == nil
 	var refusal refusedRead
 	switch {

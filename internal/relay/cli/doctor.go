@@ -106,7 +106,9 @@ func runDoctor(ctx context.Context, services Services, args Args) (any, error) {
 	issueKey, _ := args.String("issue")
 	var issue contract.OrderedObject
 	if issueKey != "" {
-		issue = issueReading(ctx, services, loc, probed.Access, issueKey)
+		if issue, err = issueReading(ctx, services, loc, probed.Access, issueKey); err != nil {
+			return nil, err
+		}
 		add("issue", issue)
 	}
 	expectations := store.CompareExpectations{}
@@ -117,6 +119,9 @@ func runDoctor(ctx context.Context, services Services, args Args) (any, error) {
 	var nonceValue any
 	if nonce != "" {
 		reading := store.NonceLookup(ctx, services.Selection, nonce)
+		if reading.Raised != nil {
+			return nil, reading.Raised
+		}
 		expectations.Nonce = &reading
 		nonceValue = nonceRecord(reading)
 	}
@@ -374,8 +379,9 @@ func sqlValue(v any) any {
 	return v
 }
 
-// issueReading is _issue_reading.
-func issueReading(ctx context.Context, services Services, loc store.Location, access store.ProbeAccess, key string) contract.OrderedObject {
+// issueReading is _issue_reading. Its error is the UnicodeEncodeError read_only_rows lets
+// escape for a key sqlite3 cannot bind, which cli.main answers as a host error.
+func issueReading(ctx context.Context, services Services, loc store.Location, access store.ProbeAccess, key string) (contract.OrderedObject, error) {
 	blank := func(readable bool, storeID any, agreement, detail string) contract.OrderedObject {
 		return contract.OrderedObject{
 			{Key: "key", Value: key}, {Key: "readable", Value: readable}, {Key: "holds", Value: nil},
@@ -384,7 +390,7 @@ func issueReading(ctx context.Context, services Services, loc store.Location, ac
 		}
 	}
 	if !access.DBReadable {
-		return blank(false, nil, "unknown", "the database is not readable from this process")
+		return blank(false, nil, "unknown", "the database is not readable from this process"), nil
 	}
 	var storeID, relationship, child any
 	rows := 0
@@ -399,12 +405,15 @@ func issueReading(ctx context.Context, services Services, loc store.Location, ac
 			"           AND superseded_by IS NULL"+
 			"         ORDER BY created_at LIMIT 1) AS child_task_id",
 		[]any{key, key}, func(r store.RowScanner) error { rows++; return r.Scan(&storeID, &relationship, &child) })
+	if read.Raised != nil {
+		return nil, read.Raised
+	}
 	if !read.Readable || read.Detail != "" || rows == 0 {
 		detail := read.Detail
 		if detail == "" {
 			detail = "the store could not be read"
 		}
-		return blank(false, nil, "unknown", detail)
+		return blank(false, nil, "unknown", detail), nil
 	}
 	storeID, relationship, child = sqlValue(storeID), sqlValue(relationship), sqlValue(child)
 	agreement := "same"
@@ -423,13 +432,13 @@ func issueReading(ctx context.Context, services Services, loc store.Location, ac
 		}
 	}
 	if agreement != "same" {
-		return blank(true, storeID, agreement, "the rows did not come from the store this process measured")
+		return blank(true, storeID, agreement, "the rows did not come from the store this process measured"), nil
 	}
 	return contract.OrderedObject{
 		{Key: "key", Value: key}, {Key: "readable", Value: true}, {Key: "holds", Value: relationship != nil},
 		{Key: "responsibleChild", Value: child}, {Key: "responsibleRelationship", Value: relationship},
 		{Key: "storeId", Value: storeID}, {Key: "storeAgreement", Value: "same"}, {Key: "detail", Value: nil},
-	}
+	}, nil
 }
 
 // settingsJSON is _settings_json: a JSON document, or @path to a file holding one.

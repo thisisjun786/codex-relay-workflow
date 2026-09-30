@@ -9,7 +9,9 @@ import (
 // StateEnv is STATE_ENV: the environment override for the state directory.
 const StateEnv = "CODEX_SESSION_RELAY_STATE"
 
-// CanonicalSocket is canonical_socket: expanded, absolute and fully resolved.
+// CanonicalSocket is canonical_socket: expanded, absolute and fully resolved. It resolves strictly
+// (ResolvePath), refusing a loop or a component it cannot search where canonical_socket's
+// Path.resolve() keeps them (docs/port/known-defects.md, Python defects not carried over).
 func CanonicalSocket(path string) (string, error) { return canonicalSocket(path) }
 
 // ResolvePath follows every symbolic link and keeps a missing tail, but fails on a component it

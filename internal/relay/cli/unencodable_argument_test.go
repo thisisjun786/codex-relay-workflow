@@ -51,6 +51,10 @@ func TestAnArgumentThatIsNotUTF8IsRefusedWherePythonEncodesIt(t *testing.T) {
 		{"--json", "fault-resolve", "--fault", "f\xff"},
 		{"--json", "sync-retry", "--sync", "s\xff"},
 		{"--json", "merge-turn-ready", "--turn", "t\xff", "--actor", "a", "--ready"},
+		// doctor's read-only lookups let the error escape (read_only_rows and nonce_lookup
+		// catch sqlite3.Error only), once a store the lines above opened holds their tables.
+		{"--json", "doctor", "--issue", "x\xffy"},
+		{"--json", "doctor", "--expect-nonce", "x\xffy"},
 		// Linkage identities hash their fields first; its readers let the error escape.
 		{"--json", "linkage-bind", "--role", "parent", "--scope", "s\xff", "--task", "t", "--host", "h"},
 		{"--json", "linkage-handover", "--role", "supervisor", "--scope", "v", "--expect-task", "v", "--task", "x\xffy", "--host", "v", "--evidence", "v", "--actor", "v"},
