@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "test_host_lost_turn/TheAdapterLooksBackOnlyToTheSend.test_the_thread_reads_tell_the_message_from_agent_output": "txt:{\"captures\":[false,true,false,[\"t2\",\"hookPrompt\"],false,null,true],\"problems\":[],\"sends\":[],\"tables\":{}}"
- }
-}

@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "test_host_lost_turn/EverySettlementIsACompareAndSet.test_a_typed_item_leaves_the_fingerprint_and_readback_working": "txt:{\"captures\":[\"ed54fd8e0d6c07ef42cb2c133f0117732996a7c41feca624558ef8c6db680c07\",true,false],\"problems\":[],\"sends\":[],\"tables\":{}}"
- }
-}

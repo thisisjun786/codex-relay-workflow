@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "deliverable_state": "txt:[\"raised\", \"RecursionError: maximum recursion depth exceeded while decoding a JSON object from a unicode string\"]\n"
- }
-}

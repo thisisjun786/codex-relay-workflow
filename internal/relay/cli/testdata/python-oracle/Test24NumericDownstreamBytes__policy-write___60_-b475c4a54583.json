@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "python": "txt:{\"code\":0,\"stdout\":\"{\\n  \\\"product\\\": \\\"crw\\\",\\n  \\\"faultClass\\\": \\\"report_omitted\\\",\\n  \\\"severity\\\": \\\"degraded\\\",\\n  \\\"threshold\\\": 100,\\n  \\\"window\\\": 60.0,\\n  \\\"reason\\\": \\\"needs review\\\",\\n  \\\"previous\\\": null\\n}\\n\",\"stderr\":\"\"}"
- }
-}

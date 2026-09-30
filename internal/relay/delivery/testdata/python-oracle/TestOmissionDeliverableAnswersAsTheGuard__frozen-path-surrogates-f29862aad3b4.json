@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "deliverable_state": "txt:[\"changed\", null, \"UnicodeEncodeError: 'utf-8' codec can't encode characters in position 8-9: surrogates not allowed\"]\n"
- }
-}

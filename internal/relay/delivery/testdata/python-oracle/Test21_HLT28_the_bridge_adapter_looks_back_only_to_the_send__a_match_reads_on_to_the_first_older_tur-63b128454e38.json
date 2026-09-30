@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "test_host_lost_turn/TheAdapterLooksBackOnlyToTheSend.test_a_match_reads_on_to_the_first_turn_older_than_the_send": "txt:{\"captures\":[[\"present\",\"wanted\",2],[\"before\"],2],\"problems\":[],\"sends\":[],\"tables\":{}}"
- }
-}

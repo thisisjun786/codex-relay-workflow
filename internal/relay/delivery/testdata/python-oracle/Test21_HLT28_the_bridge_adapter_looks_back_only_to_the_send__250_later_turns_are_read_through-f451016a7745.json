@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "test_host_lost_turn/TheAdapterLooksBackOnlyToTheSend.test_a_long_history_after_the_send_is_read_through_to_the_send": "txt:{\"captures\":[[\"absent\",\"older_than_send\",251],6],\"problems\":[],\"sends\":[],\"tables\":{}}"
- }
-}

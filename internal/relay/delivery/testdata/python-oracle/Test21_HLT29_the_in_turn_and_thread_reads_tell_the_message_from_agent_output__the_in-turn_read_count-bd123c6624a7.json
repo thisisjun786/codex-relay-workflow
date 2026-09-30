@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "test_host_lost_turn/TheAdapterLooksBackOnlyToTheSend.test_the_in_turn_read_counts_only_that_turns_user_message": "txt:{\"captures\":[false,true],\"problems\":[],\"sends\":[],\"tables\":{}}"
- }
-}

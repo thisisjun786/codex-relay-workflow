@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "usage": "txt:{\"code\":4,\"payload\":{\"detail\":\"a repository is written owner/name, not '--x'\",\"error\":\"usage\"},\"stdout\":\"{\\n  \\\"error\\\": \\\"usage\\\",\\n  \\\"detail\\\": \\\"a repository is written owner/name, not '--x'\\\"\\n}\\n\",\"stderr\":\"\"}"
- }
-}

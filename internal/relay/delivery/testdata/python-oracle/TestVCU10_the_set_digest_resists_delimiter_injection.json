@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "from codex_session_relay.criteria import set_digest; print(set_digest([{'id': 'a', 'title': 'b|c', 'required': True}]), set_digest([{'id': 'a|b', 'title': 'c', 'required': True}]))": "txt:ad8400b774c4975277208e3a2b35523e86d25da423ac104c3a1608c515b80975 0eb83059bfb8b0f1abc7d154fd37df825249961cadb72980627ffa822b576b96\n"
- }
-}

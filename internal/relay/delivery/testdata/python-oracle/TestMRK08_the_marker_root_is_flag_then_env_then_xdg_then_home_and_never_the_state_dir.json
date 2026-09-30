@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "markerops 932a9e35131c45e1": "txt:[{\"ok\": {\"path\": \"/explicit/x\", \"source\": \"flag\", \"detail\": \"--marker-root /explicit/./x/\", \"precedence\": [\"flag\", \"env\", \"xdg\", \"home\"]}}, {\"ok\": null}, {\"ok\": {\"path\": \"/from-env\", \"source\": \"env\", \"detail\": \"CODEX_SESSION_RELAY_MARKER_ROOT=/from-env\", \"precedence\": [\"flag\", \"env\", \"xdg\", \"home\"]}}, {\"ok\": null}, {\"ok\": null}, {\"ok\": {\"path\": \"<tree>/xdg/codex-session-marker\", \"source\": \"xdg\", \"detail\": \"XDG_STATE_HOME=<tree>/xdg\", \"precedence\": [\"flag\", \"env\", \"xdg\", \"home\"]}}, {\"ok\": null}, {\"ok\": {\"path\": \"<tree-home>/.local/state/codex-session-marker\", \"source\": \"home\", \"detail\": \"default under <tree-home>/.local/state\", \"precedence\": [\"flag\", \"env\", \"xdg\", \"home\"]}}]\n"
- }
-}

@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "cli.main x2 [\"--state\" \"<path>\" \"--json\" \"store-identity\"]": "txt:[{\"code\":2,\"stdout\":\"{\\n  \\\"error\\\": \\\"refused\\\",\\n  \\\"reason\\\": \\\"store_absent\\\",\\n  \\\"detail\\\": \\\"no relay store exists at /<tmp0>/001/st/relay.sqlite3; a read-only command never creates one\\\"\\n}\\n\",\"stderr\":\"\"},{\"code\":2,\"stdout\":\"{\\n  \\\"error\\\": \\\"refused\\\",\\n  \\\"reason\\\": \\\"store_absent\\\",\\n  \\\"detail\\\": \\\"no relay store exists at <tmp0>/001/real/wd/st/relay.sqlite3; a read-only command never creates one\\\"\\n}\\n\",\"stderr\":\"\"}]"
- }
-}

@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "codex-session-relay [\"--state\" \"<path>\" \"--json\" \"--kind-module\" \"codex_session_relay.not_real\" \"status\"]": "txt:{\"code\":4,\"stdout\":\"{\\n  \\\"error\\\": \\\"usage\\\",\\n  \\\"detail\\\": \\\"--kind-module 'codex_session_relay.not_real' could not be imported: No module named 'codex_session_relay.not_real'\\\"\\n}\\n\",\"stderr\":\"\"}"
- }
-}

@@ -1,7 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "1 sqlite SELECT relationship_id FROM relationships": "txt:[[\"rel-46d5b5ac690ef861\"]]\n",
-  "2 run deliver": "txt:4\n{\n  \"error\": \"usage\",\n  \"detail\": \"this command needs --socket to reach the host\"\n}\n"
- }
-}

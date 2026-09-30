@@ -1,7 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "python [\"--kind-module\" \"does_not_exist\" \"ack-proof\" \"--event\" \"<id>\" \"--turn\" \"turn-1\"]": "txt:{\"code\":4,\"stdout\":\"{\\n  \\\"error\\\": \\\"usage\\\",\\n  \\\"detail\\\": \\\"--kind-module 'does_not_exist' could not be imported: No module named 'does_not_exist'\\\"\\n}\\n\",\"stderr\":\"\"}",
-  "python [\"ack-proof\" \"--event\" \"<id>\" \"--turn\" \"turn-1\"]": "txt:{\"code\":0,\"stdout\":\"{\\n  \\\"eventId\\\": \\\"<id0>\\\",\\n  \\\"turnId\\\": \\\"turn-1\\\",\\n  \\\"ackProof\\\": \\\"351770a8e0241f932e68981652c6a760e693229f152b334c14123470337a7e41\\\"\\n}\\n\",\"stderr\":\"\"}"
- }
-}

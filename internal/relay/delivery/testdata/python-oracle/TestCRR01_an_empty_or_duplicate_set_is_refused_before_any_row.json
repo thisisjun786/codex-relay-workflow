@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "crr refused": "txt:{\"out\": {\"r\": [{\"reason\": \"criteria_unregistered\", \"detail\": \"a criteria set needs at least one criterion\"}, {\"reason\": \"criteria_unregistered\", \"detail\": \"each criterion needs a non-empty id and title\"}, {\"reason\": \"criteria_unregistered\", \"detail\": \"each criterion is an object with an id and a title\"}, {\"reason\": \"criteria_unregistered\", \"detail\": \"duplicate criterion id 'c1'\"}], \"mode\": \"legacy\"}, \"tables\": {}, \"sends\": []}"
- }
-}

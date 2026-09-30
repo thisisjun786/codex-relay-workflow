@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "classify {\"admission\":\"bootstrap\",\"executionReport\":false,\"grace\":0,\"label\":\"undeclared_turn_end\",\"laterAdmitted\":false,\"now\":\"2026-01-01T00:10:00+00:00\",\"receipted\":false,\"settlements\":[{\"at\":\"2026-01-01T00:00:00+00:00\",\"status\":\"completed\"}],\"witness\":true}": "txt:{\"owed\":false,\"owedReason\":\"not_an_omission\",\"reason\":\"bootstrap\",\"reportingState\":\"unmeasured\"}\n"
- }
-}

@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "markerops ebe9b4e4c4c5ed0f": "txt:[{\"ok\": {\"assignmentId\": \"a61e89c315cd93edde6ca5f614051623fe70986a592a1f89b164101434c78171\", \"assignmentDir\": \"<tree>/markers/e9f3757da28df22a88de9f334bf50069c365ac6a96d75b53b0f0850baad1d161/a61e89c315cd93edde6ca5f614051623fe70986a592a1f89b164101434c78171\", \"outcome\": \"published\", \"declaredAt\": \"2026-01-01T00:00:00+00:00\"}}, {\"reason\": \"outcome_inconsistent\", \"detail\": \"a disposition outcome is one of in_progress, blocked_needs_input, interrupted, failed, ready_for_review, not 'done'\"}, {\"ok\": {\"assignmentId\": \"a61e89c315cd93edde6ca5f614051623fe70986a592a1f89b164101434c78171\", \"sessionId\": \"01child-session\", \"turnId\": \"turn-1\", \"outcome\": \"interrupted\", \"published\": \"published\"}}, {\"ok\": {\"assignmentId\": \"a61e89c315cd93edde6ca5f614051623fe70986a592a1f89b164101434c78171\", \"sessionId\": \"01child-session\", \"turnId\": \"turn-1\", \"outcome\": \"interrupted\", \"published\": \"unchanged\"}}, {\"ok\": {\"assignmentId\": \"a61e89c315cd93edde6ca5f614051623fe70986a592a1f89b164101434c78171\", \"sessionId\": \"01child-session\", \"turnId\": \"turn-1\", \"outcome\": \"failed\", \"published\": \"conflict\"}}]\n"
- }
-}

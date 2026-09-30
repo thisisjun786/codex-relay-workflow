@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "resolve_marker_root": "txt:[\"/<root>/m\", \"flag\", \"--marker-root /<root>/m\"]\n"
- }
-}

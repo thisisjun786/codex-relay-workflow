@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "deliverable_state": "txt:[\"changed\", null, \"JSONDecodeError: Expecting value: line 1 column 1 (char 0)\"]\n"
- }
-}

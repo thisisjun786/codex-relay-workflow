@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "python": "txt:{\"code\":2,\"stdout\":\"{\\n  \\\"error\\\": \\\"refused\\\",\\n  \\\"reason\\\": \\\"unknown_generation\\\",\\n  \\\"detail\\\": \\\"generation 9999999999999999999999999 was never opened on this relationship\\\"\\n}\\n\",\"stderr\":\"\"}"
- }
-}

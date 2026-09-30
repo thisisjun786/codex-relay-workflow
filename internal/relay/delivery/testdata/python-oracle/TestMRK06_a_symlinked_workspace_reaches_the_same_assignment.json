@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "markerops 679be2c0365803a8": "txt:[{\"ok\": null}, {\"ok\": \"796eae0b3d6451f9658354acdd06c7789a465be429fedd6fa16468022392a0f8\"}, {\"ok\": \"796eae0b3d6451f9658354acdd06c7789a465be429fedd6fa16468022392a0f8\"}]\n"
- }
-}

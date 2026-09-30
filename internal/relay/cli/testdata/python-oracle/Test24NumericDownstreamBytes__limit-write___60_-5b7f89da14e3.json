@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "python": "txt:{\"code\":0,\"stdout\":\"{\\n  \\\"product\\\": \\\"crw\\\",\\n  \\\"kind\\\": \\\"notification\\\",\\n  \\\"maxCount\\\": 10000,\\n  \\\"window\\\": 60.0\\n}\\n\",\"stderr\":\"\"}"
- }
-}

@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "classify {\"admission\":\"admitted\",\"executionReport\":false,\"grace\":0,\"label\":\"declared_ready_receipted\",\"laterAdmitted\":false,\"now\":\"2026-01-01T00:10:00+00:00\",\"receipted\":false,\"settlements\":[],\"witness\":true}": "txt:{\"owed\":false,\"owedReason\":\"not_an_omission\",\"reason\":\"declared_ready_receipted\",\"reportingState\":\"reported\"}\n"
- }
-}

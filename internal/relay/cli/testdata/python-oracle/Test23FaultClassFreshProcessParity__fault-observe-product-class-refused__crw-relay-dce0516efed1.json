@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "fresh process": "txt:{\"code\":2,\"stdout\":\"{\\n  \\\"error\\\": \\\"refused\\\",\\n  \\\"reason\\\": \\\"fault_class_unregistered\\\",\\n  \\\"detail\\\": \\\"'completion_mismatch' is not a registered fault class, so nothing declares what would clear it\\\"\\n}\\n\",\"stderr\":\"\"}"
- }
-}

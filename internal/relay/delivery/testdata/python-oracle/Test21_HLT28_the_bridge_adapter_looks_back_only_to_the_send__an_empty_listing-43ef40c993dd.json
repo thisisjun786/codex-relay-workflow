@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "test_host_lost_turn/TheAdapterLooksBackOnlyToTheSend.test_an_empty_listing_is_not_evidence": "txt:{\"captures\":[],\"problems\":[],\"sends\":[],\"tables\":{}}"
- }
-}

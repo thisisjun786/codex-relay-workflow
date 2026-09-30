@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "markerops 3a25147414e0b045": "txt:[{\"ok\": \"published\"}, {\"ok\": {\"found\": {\"outcome\": \"interrupted\", \"sessionId\": \"sess\", \"turnId\": \"turn-1\", \"factId\": \"dispositions/sess/turn-1\"}, \"readable\": true}}, {\"ok\": {\"found\": null, \"readable\": true}}, {\"ok\": {\"found\": null, \"readable\": true}}, {\"ok\": {\"found\": null, \"readable\": true}}]\n"
- }
-}

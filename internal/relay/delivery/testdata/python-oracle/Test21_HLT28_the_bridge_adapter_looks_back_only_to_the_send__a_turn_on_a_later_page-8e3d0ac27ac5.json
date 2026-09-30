@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "test_host_lost_turn/TheAdapterLooksBackOnlyToTheSend.test_a_turn_on_a_later_page_is_found": "txt:{\"captures\":[[\"present\",\"wanted\",\"inProgress\"]],\"problems\":[],\"sends\":[],\"tables\":{}}"
- }
-}

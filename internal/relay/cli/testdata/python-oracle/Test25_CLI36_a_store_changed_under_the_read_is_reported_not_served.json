@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "python -c [\"<path>\"]": "txt:{\"code\":0,\"stdout\":\"{\\\"available\\\": false, \\\"participants\\\": {}, \\\"detail\\\": \\\"the store changed under this command: identity 'another-store-entirely' was measured, settings were read from '<store-id>'\\\"}\\n\",\"stderr\":\"\"}"
- }
-}

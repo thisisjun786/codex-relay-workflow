@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "test_unknown_send_lost/AListedTurnStartIsReadAsAHostTime.test_a_listing_reads_each_start_as_a_host_time": "txt:{\"captures\":[[\"absent\",\"listing_end\",[\"newer\",\"listed\"],[]],[],[\"listed\"],[\"absent\",\"older_than_send\",[\"newer\"],[\"listed\"]],[\"listed\"],[\"listed\"],[\"absent\",\"older_than_send\",[\"newer\"],[\"listed\"]],[\"listed\"],[\"listed\"],[\"absent\",\"older_than_send\",[\"newer\"],[\"listed\"]],[\"listed\"],[\"listed\"],[\"absent\",\"listing_end\",[\"newer\",\"listed\"],[]],[],[],[\"absent\",\"listing_end\",[\"newer\",\"listed\"],[]],[],[],[\"absent\",\"listing_end\",[\"newer\",\"listed\"],[]],[],[],[\"absent\",\"listing_end\",[\"newer\",\"listed\"],[]],[],[],[\"absent\",\"listing_end\",[\"newer\",\"listed\"],[]],[],[],[\"absent\",\"listing_end\",[\"newer\",\"listed\"],[]],[],[],[\"absent\",\"listing_end\",[\"newer\",\"listed\"],[]],[],[]],\"problems\":[],\"sends\":[],\"tables\":{}}"
- }
-}

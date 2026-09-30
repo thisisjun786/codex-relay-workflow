@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "markerops 1ef3430fb586fdaf": "txt:[{\"ok\": null}, {\"ok\": null}, {\"ok\": null}, {\"error\": \"ValueError: refusing to write outside the marker root: <tree>/outside/x is not under <tree>/markers\"}, {\"ok\": false}]\n"
- }
-}

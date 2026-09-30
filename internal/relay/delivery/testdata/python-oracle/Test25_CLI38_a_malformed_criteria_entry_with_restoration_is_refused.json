@@ -1,8 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "1 sqlite SELECT relationship_id FROM relationships": "txt:[[\"rel-46d5b5ac690ef861\"]]\n",
-  "2 run verdict --event eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --verdict needs_changes --verdict-turn v1 --criteria [null] --restoration c1": "txt:2\n{\n  \"error\": \"refused\",\n  \"reason\": \"disposition_conflict\",\n  \"detail\": \"each finding is an object\"\n}\n",
-  "3 run verdict --event eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee --verdict needs_changes --verdict-turn v1 --criteria [\"c1\"] --restoration c1": "txt:2\n{\n  \"error\": \"refused\",\n  \"reason\": \"disposition_conflict\",\n  \"detail\": \"each finding is an object\"\n}\n"
- }
-}

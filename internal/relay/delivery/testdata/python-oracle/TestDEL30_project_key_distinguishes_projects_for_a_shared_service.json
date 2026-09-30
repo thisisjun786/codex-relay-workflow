@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "del30": "txt:{\"out\":{\"mine\":\"/parent\",\"other\":\"/other\"},\"sends\":[]}"
- }
-}

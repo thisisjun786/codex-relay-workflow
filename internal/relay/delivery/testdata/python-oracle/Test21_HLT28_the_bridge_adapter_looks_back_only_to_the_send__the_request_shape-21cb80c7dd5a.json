@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "test_host_lost_turn/TheAdapterLooksBackOnlyToTheSend.test_it_asks_for_the_newest_turns_first_without_their_items": "txt:{\"captures\":[{\"threadId\":\"thread\",\"limit\":2,\"itemsView\":\"notLoaded\",\"sortDirection\":\"desc\"}],\"problems\":[],\"sends\":[],\"tables\":{}}"
- }
-}

@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "wrong_socket_recovery": "txt:[\"PROG --state=<root>/selected --socket=/r.sock doctor\", \"  reads this store under the socket it actually records\", \"env -u CODEX_SESSION_RELAY_STATE PROG --socket=/w.sock doctor\", \"  discovers by socket alone, ignoring any pinned directory\", \"PROG --state=<user-home>/crw-test-absent-001 --socket=/w.sock doctor\", \"  reads the directory CODEX_SESSION_RELAY_STATE names, which --state overrode on this run\"]\n"
- }
-}

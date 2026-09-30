@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "python": "txt:{\"code\":4,\"stdout\":\"{\\n  \\\"error\\\": \\\"usage\\\",\\n  \\\"detail\\\": \\\"this command needs --socket to reach the host\\\"\\n}\\n\",\"stderr\":\"\"}"
- }
-}
