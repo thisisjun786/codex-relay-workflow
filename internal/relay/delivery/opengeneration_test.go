@@ -11,7 +11,7 @@ import (
 // than open another. Compared with registry.open_generation_in over the same fixture: the three
 // answers and every table row.
 func Test21_OpenGenerationIn_replays_a_dispatch_request_rather_than_opening_another(t *testing.T) {
-	tree := t.TempDir()
+	tree := parityTree(t)
 	python := runPython(t, tree, "ogi")
 	f := newFixture(t, tree)
 	f.queuedEvent(regOpts{})

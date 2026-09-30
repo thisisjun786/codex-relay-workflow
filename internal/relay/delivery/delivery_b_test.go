@@ -9,7 +9,7 @@ import (
 // test_delivery.py properties DEL-11..DEL-20.
 
 func TestDEL11_each_retry_opens_a_new_attempt_and_never_replays_the_first_request(t *testing.T) {
-	tree := t.TempDir()
+	tree := parityTree(t)
 	python := runPython(t, tree, "del11")
 	f := newFixture(t, tree)
 	event := f.queuedEvent(regOpts{})
@@ -36,7 +36,7 @@ func TestDEL11_each_retry_opens_a_new_attempt_and_never_replays_the_first_reques
 
 func TestDEL12_a_dispatched_or_uncertain_delivery_is_never_claimed_again(t *testing.T) {
 	t.Run("dispatched", func(t *testing.T) {
-		tree := t.TempDir()
+		tree := parityTree(t)
 		python := runPython(t, tree, "del12", "dispatched")
 		f := newFixture(t, tree)
 		event := f.queuedEvent(regOpts{})
@@ -48,7 +48,7 @@ func TestDEL12_a_dispatched_or_uncertain_delivery_is_never_claimed_again(t *test
 		requireSameTables(t, f, python)
 	})
 	t.Run("held_uncertain after 5 clock advances", func(t *testing.T) {
-		tree := t.TempDir()
+		tree := parityTree(t)
 		python := runPython(t, tree, "del12", "uncertain")
 		f := newFixture(t, tree)
 		event := f.queuedEvent(regOpts{})
@@ -70,7 +70,7 @@ func TestDEL12_a_dispatched_or_uncertain_delivery_is_never_claimed_again(t *test
 
 func TestDEL13_flood_bounds_cap_attempts_and_pace_sends(t *testing.T) {
 	t.Run("direct pre-send failures -> attempt_cap", func(t *testing.T) {
-		tree := t.TempDir()
+		tree := parityTree(t)
 		python := runPython(t, tree, "del13", "direct")
 		f := newFixture(t, tree)
 		event := f.queuedEvent(regOpts{})
@@ -91,7 +91,7 @@ func TestDEL13_flood_bounds_cap_attempts_and_pace_sends(t *testing.T) {
 		requireSameTables(t, f, python)
 	})
 	t.Run("reconciled pre-send failures -> attempt_cap", func(t *testing.T) {
-		tree := t.TempDir()
+		tree := parityTree(t)
 		python := runPython(t, tree, "del13", "reconciled")
 		f := newFixture(t, tree)
 		event := f.queuedEvent(regOpts{})
@@ -117,7 +117,7 @@ func TestDEL13_flood_bounds_cap_attempts_and_pace_sends(t *testing.T) {
 		requireSameTables(t, f, python)
 	})
 	t.Run("min interval", func(t *testing.T) {
-		tree := t.TempDir()
+		tree := parityTree(t)
 		python := runPython(t, tree, "del13", "interval")
 		f := newFixture(t, tree)
 		event := f.queuedEvent(regOpts{})
@@ -130,7 +130,7 @@ func TestDEL13_flood_bounds_cap_attempts_and_pace_sends(t *testing.T) {
 		requireSameTables(t, f, python)
 	})
 	t.Run("hourly cap", func(t *testing.T) {
-		tree := t.TempDir()
+		tree := parityTree(t)
 		python := runPython(t, tree, "del13", "hourly")
 		f := newFixture(t, tree)
 		event := f.queuedEvent(regOpts{})
@@ -160,7 +160,7 @@ func TestDEL14_host_lifecycle_withholds_are_deferrals_not_holds(t *testing.T) {
 		{"idle", RecipientArchived, func(th *fakeThread, _ *fakeHost) { th.archived = boolp(true); th.status = "idle" }},
 	} {
 		t.Run(tc.mode, func(t *testing.T) {
-			tree := t.TempDir()
+			tree := parityTree(t)
 			python := runPython(t, tree, "del14", tc.mode)
 			f := newFixture(t, tree)
 			event := f.queuedEvent(regOpts{})
@@ -179,7 +179,7 @@ func TestDEL14_host_lifecycle_withholds_are_deferrals_not_holds(t *testing.T) {
 }
 
 func TestDEL15_an_unreadable_lifecycle_withholds_rather_than_guessing(t *testing.T) {
-	tree := t.TempDir()
+	tree := parityTree(t)
 	python := runPython(t, tree, "del14", "unreadable")
 	f := newFixture(t, tree)
 	event := f.queuedEvent(regOpts{})
@@ -197,7 +197,7 @@ func TestDEL15_an_unreadable_lifecycle_withholds_rather_than_guessing(t *testing
 func TestDEL16_a_later_good_observation_releases_the_withheld_delivery(t *testing.T) {
 	for _, mode := range []string{"paused", "archived"} {
 		t.Run(mode, func(t *testing.T) {
-			tree := t.TempDir()
+			tree := parityTree(t)
 			python := runPython(t, tree, "del16", mode)
 			f := newFixture(t, tree)
 			event := f.queuedEvent(regOpts{})
@@ -226,7 +226,7 @@ func TestDEL16_a_later_good_observation_releases_the_withheld_delivery(t *testin
 func TestDEL17_a_deactivation_between_precheck_and_claim_blocks_the_send(t *testing.T) {
 	for _, mode := range []string{"paused", "archived", "supersede", "before"} {
 		t.Run(mode, func(t *testing.T) {
-			tree := t.TempDir()
+			tree := parityTree(t)
 			python := runPython(t, tree, "del17", mode)
 			f := newFixture(t, tree)
 			event := f.queuedEvent(regOpts{})
@@ -260,7 +260,7 @@ func TestDEL17_a_deactivation_between_precheck_and_claim_blocks_the_send(t *test
 func TestDEL18_a_deactivated_assignment_is_withheld_with_a_returned_record(t *testing.T) {
 	for _, status := range []string{"cancelled", "paused", "archived"} {
 		t.Run(status, func(t *testing.T) {
-			tree := t.TempDir()
+			tree := parityTree(t)
 			python := runPython(t, tree, "del18", status)
 			f := newFixture(t, tree)
 			event := f.queuedEvent(regOpts{})
@@ -305,7 +305,7 @@ func TestDEL19_a_stopped_assignment_reads_nothing_from_the_host(t *testing.T) {
 
 func TestDEL20_resuming_delivers_the_same_event_once_and_an_active_one_is_untouched(t *testing.T) {
 	t.Run("resume", func(t *testing.T) {
-		tree := t.TempDir()
+		tree := parityTree(t)
 		python := runPython(t, tree, "del20", "resume")
 		f := newFixture(t, tree)
 		event := f.queuedEvent(regOpts{})
@@ -321,7 +321,7 @@ func TestDEL20_resuming_delivers_the_same_event_once_and_an_active_one_is_untouc
 		requireSameTables(t, f, python)
 	})
 	t.Run("active", func(t *testing.T) {
-		tree := t.TempDir()
+		tree := parityTree(t)
 		python := runPython(t, tree, "del20", "active")
 		f := newFixture(t, tree)
 		event := f.queuedEvent(regOpts{})

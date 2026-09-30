@@ -92,7 +92,7 @@ func (v *vcu) head() Obj {
 
 // run executes one Python scenario of vcu.py and its Go twin, then compares out["r"] and the store.
 func runVCU(t *testing.T, mode string, goSide func(v *vcu) any, wantReason string) {
-	tree := t.TempDir()
+	tree := parityTree(t)
 	python := runPython(t, tree, "vcu", mode)
 	v := newVCU(t, tree)
 	got := goSide(v)
@@ -177,7 +177,7 @@ func TestVCU03_needs_changes_on_a_stale_event_is_refused_unverified_is_recorded(
 }
 
 func TestVCU04_a_replay_returns_the_historical_verdict(t *testing.T) {
-	tree := t.TempDir()
+	tree := parityTree(t)
 	python := runPython(t, tree, "vcu", "replay")
 	v := newVCU(t, tree)
 	e := v.acknowledged("")

@@ -3,6 +3,7 @@ package delivery
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -57,14 +58,17 @@ func Test28LifecycleContainerComparisonsMatchPython(t *testing.T) {
 		oracleCases = append(oracleCases, map[string]any{"runtime": host.runtime, "accepts": host.accepts, "goal": host.goal})
 	}
 	input, _ := json.Marshal(oracleCases)
-	repo, _ := filepath.Abs("../../..")
-	cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/delivery/testdata/lifecycle_shape.py"))
-	cmd.Dir = repo
-	cmd.Stdin = bytes.NewReader(input)
-	want, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("Python lifecycle oracle: %v\n%s", err, want)
-	}
+	want := pyAnswer(t, "lifecycle_shape "+string(input), func() ([]byte, error) {
+		repo, _ := filepath.Abs("../../..")
+		cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/delivery/testdata/lifecycle_shape.py"))
+		cmd.Dir = repo
+		cmd.Stdin = bytes.NewReader(input)
+		out, err := pythonCombined(cmd)
+		if err != nil {
+			return nil, fmt.Errorf("Python lifecycle oracle: %w", err)
+		}
+		return out, nil
+	})
 	actual, _ := json.Marshal(got)
 	if !bytes.Equal(actual, bytes.TrimSpace(want)) {
 		t.Fatalf("Go %s Python %s", actual, want)

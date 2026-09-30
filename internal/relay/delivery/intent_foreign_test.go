@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 // intent-register --db-path naming a store the other runtime owns, as a completed takeover
@@ -18,13 +19,15 @@ import (
 // The commands are the marker-only forms (--no-db-path, --db-path), which cli.py's
 // _reads_no_selected_store exempts from the check_start preflight, so the hold itself answers.
 func TestCLI_intent_register_refuses_a_store_the_other_runtime_owns_like_python(t *testing.T) {
-	work := filepath.Join(t.TempDir(), "work")
+	work := filepath.Join(parityTree(t), "work")
 	py, gosd := newSide(t, true, work), newSide(t, false, work)
 	rid := regexp.MustCompile(`rel-[0-9a-f]{16}`).FindString(sqliteDump(t, py, "SELECT relationship_id FROM relationships"))
 	if rid == "" {
 		t.Fatal("no seeded relationship")
 	}
-	testsupport.HandOver(t, filepath.Join(py.state, "relay.sqlite3"), "go")
+	if pyoracle.Live() {
+		testsupport.HandOver(t, filepath.Join(py.state, "relay.sqlite3"), "go")
+	}
 	testsupport.HandOver(t, filepath.Join(gosd.state, "relay.sqlite3"), "python")
 	assignment := AssignmentID("dispatch-1")
 	cases := [][]string{

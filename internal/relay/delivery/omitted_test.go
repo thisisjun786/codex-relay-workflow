@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 func omissionPython(t *testing.T, facts map[string]any) map[string]any {
@@ -15,16 +17,15 @@ func omissionPython(t *testing.T, facts map[string]any) map[string]any {
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo, _ := filepath.Abs("../../..")
-	script, _ := filepath.Abs("testdata/omitted_classify.py")
-	cmd := exec.Command("uv", "run", "--no-sync", "python", script, string(raw))
-	cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
 	home := t.TempDir()
-	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "CODEX_HOME="+home, "TMPDIR="+os.TempDir(), "PYTHONPATH="+filepath.Join(repo, "packages/codex-session-relay/src"))
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("python: %v %s", err, out)
-	}
+	out := pyAnswer(t, "classify "+string(raw), func() ([]byte, error) {
+		repo, _ := filepath.Abs("../../..")
+		script, _ := filepath.Abs("testdata/omitted_classify.py")
+		cmd := exec.Command("uv", "run", "--no-sync", "python", script, string(raw))
+		cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
+		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "CODEX_HOME="+home, "TMPDIR="+os.TempDir(), "PYTHONPATH="+filepath.Join(repo, "packages/codex-session-relay/src"))
+		return pythonCombined(cmd)
+	}, pyoracle.Substitute(home, "<home>"))
 	var result map[string]any
 	if err = json.Unmarshal(out, &result); err != nil {
 		t.Fatal(err)

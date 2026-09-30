@@ -58,7 +58,7 @@ func (f *fixture) item(event string) Obj {
 }
 
 func runSUP(t *testing.T, mode string, goSide func(f *fixture, out map[string]any)) {
-	tree := t.TempDir()
+	tree := parityTree(t)
 	python := runPython(t, tree, "sup", mode)
 	f := newFixture(t, tree)
 	out := map[string]any{}
@@ -165,7 +165,7 @@ func TestSUP03_a_final_successor_annotates_its_predecessor(t *testing.T) {
 }
 
 func TestSUP04_a_re_emitted_final_receipt_still_reports_its_stage(t *testing.T) {
-	tree := t.TempDir()
+	tree := parityTree(t)
 	python := runPython(t, tree, "sup", "reemit")
 	f := newFixture(t, tree)
 	rid := f.register(regOpts{})

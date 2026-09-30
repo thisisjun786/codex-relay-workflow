@@ -1,12 +1,15 @@
 package delivery
 
 import (
+	"database/sql"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 // The eight intent-* marker commands through the real processes: Python's codex-session-relay
@@ -18,7 +21,7 @@ import (
 var loserProcess = regexp.MustCompile(`"loserProcess": "\d+"`)
 
 func TestCLI_every_intent_command_answers_byte_for_byte_like_python(t *testing.T) {
-	work := filepath.Join(t.TempDir(), "work")
+	work := filepath.Join(parityTree(t), "work")
 	py, gosd := newSide(t, true, work), newSide(t, false, work)
 	rid := regexp.MustCompile(`rel-[0-9a-f]{16}`).FindString(sqliteDump(t, py, "SELECT relationship_id FROM relationships"))
 	if rid == "" || !strings.Contains(sqliteDump(t, gosd, "SELECT relationship_id FROM relationships"), rid) {
@@ -71,13 +74,14 @@ func TestCLI_every_intent_command_answers_byte_for_byte_like_python(t *testing.T
 	}
 	for i, args := range cases {
 		if args[0] == "!sql" {
-			for _, side := range []*cliSide{py, gosd} {
-				cmd := execUV(side, "python", "-c", "import sqlite3,sys;c=sqlite3.connect(sys.argv[1]);c.execute(sys.argv[2]);c.commit()", filepath.Join(side.state, "relay.sqlite3"), args[1])
+			if pyoracle.Live() {
+				cmd := execUV(py, "python", "-c", "import sqlite3,sys;c=sqlite3.connect(sys.argv[1]);c.execute(sys.argv[2]);c.commit()", filepath.Join(py.state, "relay.sqlite3"), args[1])
 				out, err := cmd.CombinedOutput()
 				if err != nil {
 					t.Fatalf("%v: %s", err, out)
 				}
 			}
+			goSQLiteExec(t, filepath.Join(gosd.state, "relay.sqlite3"), args[1])
 			continue
 		}
 		expand := func(s *cliSide) []string {
@@ -121,10 +125,52 @@ func execUV(s *cliSide, args ...string) *exec.Cmd {
 	return cmd
 }
 
+// sqliteDump is json.dumps([list(r) for r in rows]) of what query selects from the side's store:
+// the Python side's as recorded, the Go side's read here.
 func sqliteDump(t *testing.T, s *cliSide, query string) string {
 	t.Helper()
-	cmd := execUV(s, "python", "-c", "import sqlite3,sys,json;print(json.dumps([list(r) for r in sqlite3.connect(sys.argv[1]).execute(sys.argv[2])]))", filepath.Join(s.state, "relay.sqlite3"), query)
-	out, err := cmd.Output()
+	if !s.python {
+		return goSQLiteDump(t, filepath.Join(s.state, "relay.sqlite3"), query)
+	}
+	return string(s.recorded("sqlite "+query, func() ([]byte, error) {
+		cmd := execUV(s, "python", "-c", "import sqlite3,sys,json;print(json.dumps([list(r) for r in sqlite3.connect(sys.argv[1]).execute(sys.argv[2])]))", filepath.Join(s.state, "relay.sqlite3"), query)
+		out, err := pythonOutput(cmd)
+		return []byte(liveNeutral(string(out))), err
+	}))
+}
+
+// goSQLiteDump is what the Python one-liner sqliteDump runs prints, for a store read directly.
+func goSQLiteDump(t *testing.T, path, query string) string {
+	t.Helper()
+	db, err := sql.Open("sqlite", path)
 	mustDo(t, err)
-	return string(out)
+	defer func() { mustDo(t, db.Close()) }()
+	rows, err := db.Query(query)
+	mustDo(t, err)
+	defer func() { _ = rows.Close() }()
+	columns, err := rows.Columns()
+	mustDo(t, err)
+	out := []any{}
+	for rows.Next() {
+		values := make([]any, len(columns))
+		pointers := make([]any, len(columns))
+		for i := range values {
+			pointers[i] = &values[i]
+		}
+		mustDo(t, rows.Scan(pointers...))
+		out = append(out, values)
+	}
+	mustDo(t, rows.Err())
+	return dumps(out) + "\n"
+}
+
+// goSQLiteExec runs one statement on a store directly and commits it.
+func goSQLiteExec(t *testing.T, path, statement string) {
+	t.Helper()
+	db, err := sql.Open("sqlite", path)
+	mustDo(t, err)
+	_, err = db.Exec(statement)
+	closeErr := db.Close()
+	mustDo(t, err)
+	mustDo(t, closeErr)
 }

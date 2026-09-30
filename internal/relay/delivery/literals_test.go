@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/faults"
@@ -12,8 +11,10 @@ import (
 )
 
 // Every reason, hold, state and next-action word this package emits that is NOT a member of the
-// frozen errors.RefusalReason enum (contract/schema/relay-exit-codes.json). Each stays exact:
-// the test asserts the Python source spells it as a quoted literal in the named module.
+// frozen errors.RefusalReason enum (contract/schema/relay-exit-codes.json), keyed by the Python
+// module that spelled it as a quoted literal when this table was checked against that source.
+// The Python source leaves the repository (todo 44), so the table is now the committed record of
+// the vocabulary: the Go constants below are checked against it.
 var literalWords = map[string][]string{
 	"cli.py":               {"state_directory_serves_another_socket", "ambiguous_state_directory", "unidentified_state_directory"},
 	"ack.py":               {"delivery_unconfirmed", "delivery_state_changed", "ack_predates_attempt", "already_settled", "replaced", "changed", "withheld", "verified", "unverified_turn", "host_read", "unrecorded", "revision_mismatch", "proceed", "already_claimed"},
@@ -54,16 +55,11 @@ func TestLiteralReasons_outside_the_frozen_enum_are_spelled_as_python_spells_the
 	for _, r := range refusalEnum(t, schema) {
 		enum[r] = true
 	}
-	src := filepath.Join(repoRoot(t), "packages", "codex-session-relay", "src", "codex_session_relay")
+	vocabulary := map[string]bool{}
 	checked := 0
-	for file, words := range literalWords {
-		raw, err := os.ReadFile(filepath.Join(src, strings.Split(file, "#")[0]))
-		mustDo(t, err)
-		text := string(raw)
+	for _, words := range literalWords {
 		for _, w := range words {
-			if !strings.Contains(text, `"`+w+`"`) && !strings.Contains(text, `'`+w+`'`) {
-				t.Errorf("%s does not spell %q as a literal", file, w)
-			}
+			vocabulary[w] = true
 			checked++
 		}
 	}
@@ -89,6 +85,9 @@ func TestLiteralReasons_outside_the_frozen_enum_are_spelled_as_python_spells_the
 		if pair[0] != pair[1] {
 			t.Errorf("constant %q != %q", pair[0], pair[1])
 		}
+		if !vocabulary[pair[1]] {
+			t.Errorf("constant %q is not in the committed vocabulary", pair[1])
+		}
 	}
 	// Every refusal reason the package raises IS an enum member (or one of the cli.py literals).
 	for _, r := range []string{NotClaimable, RecipientNotAuthorized, ScopeEscape, RelationshipNotActive, UnregisteredRelationship, UnknownGeneration, RelationUnreadable, RelationOwnerDrift, DuplicateScopeOwner, LinkConflict, UnregisteredScope,
@@ -100,7 +99,7 @@ func TestLiteralReasons_outside_the_frozen_enum_are_spelled_as_python_spells_the
 		}
 	}
 	if checked < 145 {
-		t.Fatalf("only %d literals checked", checked)
+		t.Fatalf("only %d literals in the vocabulary", checked)
 	}
 }
 

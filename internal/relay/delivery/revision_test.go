@@ -62,7 +62,7 @@ func (v *vcu) headOf(g int64) Obj {
 }
 
 func runRVR(t *testing.T, mode string, goSide func(v *vcu, out map[string]any), args ...string) {
-	tree := t.TempDir()
+	tree := parityTree(t)
 	python := runPython(t, tree, "rvr", append([]string{mode}, args...)...)
 	v := newVCU(t, tree)
 	out := map[string]any{}

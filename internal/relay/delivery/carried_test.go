@@ -1,7 +1,10 @@
 package delivery
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -9,7 +12,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // Carried from todo 25A: test_cli.py CLI-5, CLI-7, CLI-9, CLI-21, CLI-38 (the emit/deliver/ack/
@@ -47,7 +50,7 @@ func ageless(text string) string { return ageSeconds.ReplaceAllString(text, `"$1
 
 func seededSides(t *testing.T) (*cliSide, *cliSide, string) {
 	t.Helper()
-	work := filepath.Join(t.TempDir(), "work")
+	work := filepath.Join(parityTree(t), "work")
 	py, gosd := newSide(t, true, work), newSide(t, false, work)
 	rid := strings.Trim(sqliteDump(t, py, "SELECT relationship_id FROM relationships"), "[]\"\n ")
 	if !strings.HasPrefix(rid, "rel-") || !strings.Contains(sqliteDump(t, gosd, "SELECT relationship_id FROM relationships"), rid) {
@@ -121,13 +124,11 @@ func Test25_CLI38_a_malformed_criteria_entry_with_restoration_is_refused(t *test
 // CLI-21: the CLI's verdict carries its sync outbox obligation. The Go `verdict` command wires
 // VerdictSync before it rules (there is no lazily built service to forget it on); this proves
 // the wiring through the real command: the same sync_outbox row as Python's for one verdict.
+// Each side stages the same acknowledged completion on its own store: Python through its real
+// services (recorded with the rest of its answers), Go through this package's.
 func Test25_CLI21_the_verdict_command_is_wired_to_the_outbox(t *testing.T) {
 	py, gosd, rid := seededSides(t)
-	event := ""
-	for _, side := range []*cliSide{py, gosd} {
-		// The same acknowledged completion on both sides, through the real Python services, and
-		// the coordination-document target the outbox answers to.
-		script := `
+	script := `
 import sys
 from pathlib import Path
 from codex_session_relay import identity
@@ -164,20 +165,15 @@ store.db.commit() if store.db.in_transaction else None
 store.close()
 print(event)
 `
-		// Python writes this fixture on Go's side too: Go's store is Python's for that step, after
-		// a takeover, and Go's again after another.
-		path := filepath.Join(side.state, "relay.sqlite3")
-		if side == gosd {
-			testsupport.HandOver(t, path, "python")
-		}
-		out, err := execUV(side, "python", "-c", script, side.state, side.work, rid).CombinedOutput()
+	event := strings.TrimSpace(string(py.recorded("stage acknowledged completion", func() ([]byte, error) {
+		out, err := execUV(py, "python", "-c", script, py.state, py.work, rid).CombinedOutput()
 		if err != nil {
-			t.Fatalf("%v\n%s", err, out)
+			return nil, fmt.Errorf("%w\n%s", err, out)
 		}
-		if side == gosd {
-			testsupport.HandOver(t, path, "go")
-		}
-		event = strings.TrimSpace(string(out))
+		return out, nil
+	})))
+	if staged := stageAcknowledgedCompletion(t, gosd, rid); staged != event {
+		t.Fatalf("the two sides staged different events: python %s go %s", event, staged)
 	}
 	record, code := sameCLI(t, py, gosd, "verdict", "--event", event, "--verdict", "verified", "--verdict-turn", "v1")
 	if code != 0 || record["verdict"] != "verified" {
@@ -188,6 +184,46 @@ print(event)
 	if pr != gr || !strings.Contains(pr, event) {
 		t.Fatalf("sync_outbox differs or is empty\npython: %s\ngo:     %s", pr, gr)
 	}
+}
+
+// stageAcknowledgedCompletion is the CLI-21 script's fixture on the Go side's store, through this
+// package's services: both tasks' settings, one accepted completion of work/out.txt, its delivery
+// attempted and acknowledged, and the coordination-document sync target. It returns the event.
+func stageAcknowledgedCompletion(t *testing.T, side *cliSide, rid string) string {
+	t.Helper()
+	ctx := context.Background()
+	s, err := store.Open(ctx, filepath.Join(side.state, "relay.sqlite3"), "")
+	mustDo(t, err)
+	defer func() { mustDo(t, s.Close()) }()
+	clock := NewFakeClock()
+	f := &fixture{t: t, ctx: ctx, tree: filepath.Dir(side.work), root: side.work, clock: clock, store: s, host: newFakeHost(clock)}
+	f.intake = store.ReceiptIntake{Store: s, Now: clock.ISO, Minimum: store.BestEffortDetection}
+	f.delivery = NewService(s, clock)
+	f.host.addThread(parent)
+	f.host.addThread(child)
+	now := clock.ISO()
+	for _, task := range []struct{ id, cwd string }{{parent, "/parent"}, {child, side.work}} {
+		mustDo(t, s.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
+			if _, err := execSQL(ctx, s, "INSERT INTO authorized_settings (task_id, settings, source, recorded_at) VALUES (?,?,?,?) ON CONFLICT(task_id) DO UPDATE SET settings = excluded.settings, source = excluded.source, recorded_at = excluded.recorded_at", task.id, taskSettings(task.cwd), "creation_result", now); err != nil {
+				return err
+			}
+			return journal(ctx, s, "settings_recorded", task.id, Obj{{Key: "source", Value: "creation_result"}}, now)
+		}))
+	}
+	payload := f.readyPayload(rid, 1, []string{f.artifact("out.txt", "the deliverable")}, 1, assigned("completed"))
+	_, err = f.accept(payload, store.AcceptOptions{})
+	mustDo(t, err)
+	event := str(payload, "eventId")
+	_, err = f.delivery.Enqueue(ctx, event, "", "")
+	mustDo(t, err)
+	f.mustAttempt(event, nil)
+	clock.Advance(5)
+	turn := f.host.startTurn(parent, "ack-turn", "inProgress", "")
+	_, err = NewAck(f.delivery).Acknowledge(ctx, event, turn.TurnID, AckProof(event, turn.TurnID), true, nil, f.host)
+	mustDo(t, err)
+	_, err = execSQL(ctx, s, "INSERT INTO sync_targets (relationship_id, target, target_ref, recorded_at) VALUES (?,?,?,?)", rid, "coordination_document", "DOC-1", clock.ISO())
+	mustDo(t, err)
+	return event
 }
 
 // ---------------------------------------------------------------- test_registration_contention.py

@@ -1,12 +1,26 @@
 """Capture SR-22's observable completion messages through Python production rendering.
 
-argv: <sqlite snapshot>. The baseline fixture has a relationship and project scope. The
-other cases remove only the project scope or present a delivery row naming an absent relation.
+argv: <sqlite snapshot> [<fixture tree>]. The baseline fixture has a relationship and project
+scope. The other cases remove only the project scope or present a delivery row naming an absent
+relation. A fixture tree, when given, is the fixture's directory instead of a random temporary one,
+so the artifact paths (and the revision and event id derived from them) are the same on every run.
 """
 import json
 import sqlite3
 import sys
+import tempfile
 from pathlib import Path
+
+if len(sys.argv) > 2:
+    _real_mkdtemp = tempfile.mkdtemp
+
+    def _fixture_mkdtemp(*args, **kwargs):
+        caller = sys._getframe(1).f_globals.get("__name__", "")
+        if caller == "__main__" or caller.split(".")[0] == "tests":
+            return sys.argv[2]
+        return _real_mkdtemp(*args, **kwargs)
+
+    tempfile.mkdtemp = _fixture_mkdtemp
 
 from codex_session_relay import report
 from tests.support import DeliveryTestCase

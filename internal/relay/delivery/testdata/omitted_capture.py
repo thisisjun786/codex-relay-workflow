@@ -28,13 +28,21 @@ os.makedirs(tree, exist_ok=True)
 _real_mkdtemp = tempfile.mkdtemp
 
 
-def under_tree(*args, **kwargs):
-    # Only the Python tests' own fixture directories go under the tree. The relay package's
-    # scratch directories (the ownership fence's schema_meta snapshot) stay where they were.
+_fixture_count = [0]
+
+
+def under_tree(suffix=None, prefix=None, dir=None):
+    # Only the Python tests' own fixture directories go under the tree, named in creation order
+    # (not at random) so a rerun captures the same paths and the Go test's recording replays. The
+    # relay package's scratch directories (the ownership fence's schema_meta snapshot) stay where
+    # they were.
     caller = sys._getframe(1).f_globals.get("__name__", "")
     if caller == "__main__" or caller.split(".")[0] == "tests":
-        kwargs["dir"] = tree
-    return _real_mkdtemp(*args, **kwargs)
+        path = os.path.join(tree, "%s%d%s" % (prefix or "tmp", _fixture_count[0], suffix or ""))
+        _fixture_count[0] += 1
+        os.mkdir(path, 0o700)
+        return path
+    return _real_mkdtemp(suffix, prefix, dir)
 
 
 tempfile.mkdtemp = under_tree
