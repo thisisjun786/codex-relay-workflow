@@ -9,8 +9,8 @@ import subprocess
 import sys
 
 DOCS = {"README.md", "CONTRIBUTING.md", "POLICY.md", "SECURITY.md", "AGENTS.md", "LICENSE"}
-FULL = {".gitignore", ".gitleaks.toml", "pyproject.toml", "uv.lock", "plugins/crw/LICENSE",
-        "go.mod", "go.sum", "tools.go", "Makefile", ".goreleaser.yaml", "conftest.py", "plugins/skill_assets.go"}
+FULL = {".gitignore", ".gitleaks.toml", "plugins/crw/LICENSE",
+        "go.mod", "go.sum", "tools.go", "Makefile", ".goreleaser.yaml", "plugins/skill_assets.go"}
 PREFIXES = ("scripts/", "packages/", "plugins/crw/wiring/", "plugins/crw/.codex-plugin/",
             ".agents/", ".github/", "cmd/", "internal/", "contract/", "docs/port/", "docs/relay/")
 REASONS = {"paths", "empty", "base-unavailable", "dispatch"}
@@ -22,7 +22,7 @@ def classify(path):
     if path in DOCS or (PurePosixPath(path).parent == PurePosixPath("docs")
                         and path.endswith(".md")):
         return "docs"
-    if path == "skills" or path.startswith("plugins/crw/skills/"):
+    if path.startswith("plugins/crw/skills/"):
         return "skill"
     if path in FULL or path.startswith(PREFIXES):
         return "full"

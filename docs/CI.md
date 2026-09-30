@@ -48,12 +48,12 @@ too, so an existing unregistered component cannot hide behind a docs-only diff.
 | Change | Selected work |
 | --- | --- |
 | Named root prose files and Markdown directly under `docs/` | Validation, plugin identity, offline contracts and secrets |
-| `plugins/crw/skills/**` (and the root `skills` path, the compatibility link todo 44 retired) | Above, plus installer/CI tests on Python 3.10 and 3.13 |
+| `plugins/crw/skills/**` | Above, plus installer/CI tests on Python 3.10 and 3.13 |
 | Runtime, package, wiring, manifest, shared configuration or CI-control paths, and the relay's documents under `docs/relay/` | All checks |
-| Go product and contract corpus paths: `go.mod`, `go.sum`, `tools.go`, `Makefile`, `.goreleaser.yaml`, root `conftest.py`, `cmd/**`, `internal/**`, `contract/**`, `docs/port/**`, `scripts/port/**` | All checks |
+| Go product and contract corpus paths: `go.mod`, `go.sum`, `tools.go`, `Makefile`, `.goreleaser.yaml`, `cmd/**`, `internal/**`, `contract/**`, `docs/port/**`, `scripts/port/**` | All checks |
 | Mixed paths | Union of their coverage |
 | Empty/unavailable diff or manual dispatch | Full coverage |
-| Unmapped changed or candidate path | Full coverage; gate fails until the path is registered |
+| Unmapped changed or candidate path | Full coverage; gate fails until the path is registered. The paths todo 44 deleted (`pyproject.toml`, `uv.lock`, the root `conftest.py` and `skills` link) are unmapped again, so bringing one back needs a mapping |
 
 Skill Markdown contains executable instructions. A manifest version update paired
 with a skill edit still selects full coverage; this selector does not infer a

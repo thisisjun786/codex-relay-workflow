@@ -96,11 +96,20 @@ func Test47_SCOPE_1_SelectionFollowsPathClass(t *testing.T) {
 	t.Run("full paths", func(t *testing.T) {
 		for _, path := range []string{"packages/bridge/src/a.py", "scripts/runtime_install.py",
 			"plugins/crw/wiring/launch.py", "plugins/crw/.codex-plugin/plugin.json",
-			".github/workflows/ci.yml", "pyproject.toml", "conftest.py",
+			".github/workflows/ci.yml",
 			"contract/runner/core.py", "contract/fixtures/records/a.json", "docs/port/test-map.md",
 			"docs/relay/invariants.md"} {
 			if got := Classify(path); got != "full" {
 				t.Errorf("Classify(%q) = %q, want full", path, got)
+			}
+		}
+	})
+	t.Run("retired paths", func(t *testing.T) {
+		// Todo 44 deleted the Python workspace, the corpus's Python runner and the root skills link;
+		// a change that brings one back is unregistered until a verification mapping is added.
+		for _, path := range []string{"pyproject.toml", "uv.lock", "conftest.py", "skills"} {
+			if got := Classify(path); got != "unknown" {
+				t.Errorf("Classify(%q) = %q, want unknown", path, got)
 			}
 		}
 	})
