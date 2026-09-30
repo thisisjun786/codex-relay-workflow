@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
+
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -44,14 +46,14 @@ func Test24_SCH_39_AttemptedReportIsNeverReaddressed(t *testing.T) {
 	f, h, id, _ := delivered24(t)
 	_ = h
 	o := f.obligation(t)
-	if err := f.s.ArchiveScopeBinding(f.ctx, "b-supervisor", "archived", "b-successor", f.at); err != nil {
+	if err := storeseed.ArchiveScopeBinding(f.ctx, f.s, "b-supervisor", "archived", "b-successor", f.at); err != nil {
 		t.Fatal(err)
 	}
 	b := store.ScopeBindingsRow{BindingID: "b-successor", Role: "supervisor", ScopeKind: "initiative", ScopeKey: "INI-1", TaskID: "successor", HostID: "host", Status: "active", Revision: 2, CreatedAt: "t2", UpdatedAt: "t2"}
-	if err := f.s.InsertScopeBinding(f.ctx, b); err != nil {
+	if err := storeseed.InsertScopeBinding(f.ctx, f.s, b); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.s.RepointScopeLink(f.ctx, "lnk-project", "active", "parent", "successor", f.at); err != nil {
+	if err := storeseed.RepointScopeLink(f.ctx, f.s, "lnk-project", "active", "parent", "successor", f.at); err != nil {
 		t.Fatal(err)
 	}
 	_, err := f.c.Stage(f.ctx, o, "", f.at)

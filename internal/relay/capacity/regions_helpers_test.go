@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
+
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -64,7 +66,7 @@ func newRegionEnv(t *testing.T) *regionEnv {
 // peer writes register_peer's link row and journal entry.
 func (e *regionEnv) peer(left, leftTask, right, rightTask string) string {
 	id := "lnk-" + sha256Hex("peer|project|" + left + "|project|" + right)[:32]
-	if err := e.store.InsertScopeLink(ctx(), store.ScopeLinksRow{LinkID: id, LinkKind: "peer", UpperKind: "project", UpperKey: left,
+	if err := storeseed.InsertScopeLink(ctx(), e.store, store.ScopeLinksRow{LinkID: id, LinkKind: "peer", UpperKind: "project", UpperKey: left,
 		UpperTaskID: leftTask, LowerKind: "project", LowerKey: right, LowerTaskID: rightTask, Status: "active", Revision: 1,
 		CreatedAt: e.clock.iso(), UpdatedAt: e.clock.iso()}); err != nil {
 		e.t.Fatal(err)

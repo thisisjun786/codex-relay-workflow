@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
+
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -75,7 +77,7 @@ func newEnv(t *testing.T) *env {
 	// linkage.register_supervision's link row (todo 26 ports the method itself).
 	for _, p := range [][2]string{{projectA, alpha}, {projectB, beta}} {
 		sum := sha256.Sum256([]byte("execution|initiative|INIT-1|project|" + p[0]))
-		if err := s.InsertScopeLink(ctx, store.ScopeLinksRow{
+		if err := storeseed.InsertScopeLink(ctx, s, store.ScopeLinksRow{
 			LinkID: "lnk-" + hex.EncodeToString(sum[:])[:32], LinkKind: "execution", UpperKind: "initiative", UpperKey: "INIT-1",
 			UpperTaskID: supervisor, LowerKind: "project", LowerKey: p[0], LowerTaskID: p[1], Status: "active", Revision: 1,
 			CreatedAt: c.iso(), UpdatedAt: c.iso(),

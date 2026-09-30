@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
+
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 )
 
@@ -80,14 +82,14 @@ func Test24_SCH_45_ReaddressConverges(t *testing.T) {
 	f := fixture24(t)
 	o, stage := f.staged(t)
 	id := stage["messageId"].(string)
-	if err := f.s.ArchiveScopeBinding(f.ctx, "b-supervisor", "archived", "b-successor", f.at); err != nil {
+	if err := storeseed.ArchiveScopeBinding(f.ctx, f.s, "b-supervisor", "archived", "b-successor", f.at); err != nil {
 		t.Fatal(err)
 	}
 	_, err := f.s.DB.ExecContext(f.ctx, "INSERT INTO scope_bindings(binding_id,role,scope_kind,scope_key,task_id,host_id,status,revision,created_at,updated_at) VALUES ('b-successor','supervisor','initiative','INI-1','successor','host','active',2,'t','t')")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.s.RepointScopeLink(f.ctx, "lnk-project", "active", "parent", "successor", f.at); err != nil {
+	if err := storeseed.RepointScopeLink(f.ctx, f.s, "lnk-project", "active", "parent", "successor", f.at); err != nil {
 		t.Fatal(err)
 	}
 	moved, err := f.c.Stage(f.ctx, o, "", f.at)

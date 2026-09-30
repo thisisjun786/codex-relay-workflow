@@ -513,14 +513,6 @@ func (d *Service) supersedeIn(ctx context.Context, eventID, reason string) error
 	return d.annotateIn(ctx, eventID, reason)
 }
 
-// MarkSuperseded is mark_superseded: withdraw what the recipient cannot be acting on yet.
-func (d *Service) MarkSuperseded(ctx context.Context, eventID, reason string) error {
-	if reason == "" {
-		reason = SupersededHold
-	}
-	return d.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error { return d.supersedeIn(ctx, eventID, reason) })
-}
-
 func (d *Service) suppressIfSuperseded(ctx context.Context, eventID string) (string, error) {
 	var reason string
 	err := d.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
@@ -935,16 +927,6 @@ func (d *Service) reschedule(ctx context.Context, eventID, state string, when fl
 		_, err := execSQL(ctx, d.Store, "UPDATE deliveries SET state = ?, next_eligible_at = ?, updated_at = ? WHERE event_id = ? AND state IN (?,?,?) AND attempt_count = ?", state, when, d.Clock.ISO(), eventID, Queued, DeferredBusy, WithheldPreSend, attempts)
 		return err
 	})
-}
-
-// Reschedule is _reschedule (tests reach it as Python's do).
-func (d *Service) Reschedule(ctx context.Context, eventID, state string, when float64, attempts int64) error {
-	return d.reschedule(ctx, eventID, state, when, attempts)
-}
-
-// DeferBusy is _defer_busy: a busy recipient is left alone and retried later.
-func (d *Service) DeferBusy(ctx context.Context, eventID string, row Row, now float64) error {
-	return d.deferBusy(ctx, eventID, row, now)
 }
 
 func (d *Service) deferBusy(ctx context.Context, eventID string, row Row, now float64) error {

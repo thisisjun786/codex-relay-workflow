@@ -69,7 +69,7 @@ func TestLiteralReasons_outside_the_frozen_enum_are_spelled_as_python_spells_the
 		{LifecycleUnknown, "lifecycle_unknown"}, {RecipientArchived, "recipient_archived"}, {DeliveryUnconfirmed, "delivery_unconfirmed"},
 		{AckPredatesAttempt, "ack_predates_attempt"}, {PresendWithheld, "delivery_presend_withheld"}, {SettingsNoted, "delivery_settings_noted"},
 		{Sole, "sole_revision"}, {Chain, "declared_chain"}, {TurnFound, "turn_found"}, {ApprovalDiffersFromRecord, "approval_policy_differs_from_record"},
-		{TurnPredatesSend, "turn_predates_send"}, {SettingsDifferAfterLoad, "settings_differ_after_load"},
+		{TurnPredatesSend, "turn_predates_send"},
 		{RelationshipRegistered, "relationship_registered"}, {IdentityBound, "identity_bound"}, {AmbiguousIdentity, "ambiguous_identity"}, {IntentExpired, "intent_expired"},
 		{CreationUnknown, "creation_unknown"}, {CreationAccepted, "creation_accepted"}, {IntentDeclared, "intent_declared"}, {Bound, "bound"}, {Unchanged, "unchanged"}, {Conflict, "conflict"},
 		{DispatchCurrent, "current"}, {DispatchStale, "stale"}, {DispatchAbsent, "absent"}, {declarationsCapability, "declarations/1"}, {declRecorded, "recorded"},

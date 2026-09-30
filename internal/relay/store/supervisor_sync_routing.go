@@ -27,20 +27,6 @@ func (s *Store) SupervisorMessage(ctx context.Context, messageID string) (Superv
 	return queryRow(ctx, s, scanSupervisorMessages, "SELECT "+supervisorMessagesColumns+" FROM supervisor_messages WHERE message_id = ?", messageID)
 }
 
-// SupervisorMessageFor is supervisorchannel.py:1457: the message staged for one obligation.
-func (s *Store) SupervisorMessageFor(ctx context.Context, obligationKind, obligationID string) (SupervisorMessagesRow, error) {
-	return queryRow(ctx, s, scanSupervisorMessages, "SELECT "+supervisorMessagesColumns+" FROM supervisor_messages WHERE obligation_kind = ? AND obligation_id = ?", obligationKind, obligationID)
-}
-
-// ClaimableSupervisorMessages is supervisorchannel.py:1927: eligible rows in staging order.
-// states are the three claimable states (queued, deferred_busy, withheld_pre_send).
-func (s *Store) ClaimableSupervisorMessages(ctx context.Context, states [3]string, now float64, limit int) ([]SupervisorMessagesRow, error) {
-	return queryRows(ctx, s, scanSupervisorMessages, "SELECT "+supervisorMessagesColumns+" FROM supervisor_messages"+
-		" WHERE state IN (?,?,?) AND hold_reason IS NULL"+
-		"   AND (next_eligible_at IS NULL OR next_eligible_at <= ?)"+
-		" ORDER BY staged_at, message_id LIMIT ?", states[0], states[1], states[2], now, limit)
-}
-
 // SettleSupervisorMessage is supervisorchannel.py:2571: the message moves only while the claim
 // that sent it still holds it. It reports whether it moved.
 func (s *Store) SettleSupervisorMessage(ctx context.Context, messageID, state string, nextEligible sql.NullFloat64, hold sql.NullString, at, sending string, attemptNo int64, owner sql.NullString) (bool, error) {
@@ -48,16 +34,6 @@ func (s *Store) SettleSupervisorMessage(ctx context.Context, messageID, state st
 		" hold_reason = ?, lease_owner = NULL, lease_until = NULL, updated_at = ?"+
 		" WHERE message_id = ? AND state = ? AND attempt_count = ?"+
 		"   AND lease_owner IS ?", state, nextEligible, hold, at, messageID, sending, attemptNo, owner)
-}
-
-// InsertSupervisorAttempt is supervisorchannel.py:2518: retry_safe 0 and no turn until settled.
-func (s *Store) InsertSupervisorAttempt(ctx context.Context, a SupervisorAttemptsRow) error {
-	_, err := s.exec(ctx, "INSERT INTO supervisor_attempts (request_id, message_id, attempt_no, message,"+
-		" state, send_attempted, retry_safe, turn_id, record, sent_at, observed_at,"+
-		" delivery_token) VALUES (?,?,?,?,?,?,0,NULL,?,?,?,?)",
-		a.RequestID, a.MessageID, a.AttemptNo, a.Message, a.State, a.SendAttempted, a.Record,
-		a.SentAt, a.ObservedAt, a.DeliveryToken)
-	return err
 }
 
 // StartSupervisorTransport is supervisorchannel.py:2266.
@@ -82,11 +58,6 @@ func (s *Store) SupervisorAttempts(ctx context.Context, messageID string) ([]Sup
 func (s *Store) LatestSupervisorAttempt(ctx context.Context, messageID string) (SupervisorAttemptsRow, error) {
 	return queryRow(ctx, s, scanSupervisorAttempts, "SELECT "+supervisorAttemptsColumns+" FROM supervisor_attempts WHERE message_id = ? ORDER BY attempt_no DESC"+
 		" LIMIT 1", messageID)
-}
-
-// SupervisorAttemptMessage is supervisorchannel.py:2487: which message a request id belongs to.
-func (s *Store) SupervisorAttemptMessage(ctx context.Context, requestID string) (string, error) {
-	return queryRow(ctx, s, scanString, "SELECT message_id FROM supervisor_attempts WHERE request_id = ?", requestID)
 }
 
 // RecordSupervisorReadback is supervisorchannel.py:2939: the latest readback replaces the prior.
@@ -130,11 +101,6 @@ func (s *Store) EnqueueSync(ctx context.Context, o SyncOutboxRow) (bool, error) 
 		o.SyncID, o.RelationshipID, o.IssueKey, o.Target, o.TargetRef, o.SubjectKind, o.EventID,
 		o.ExecutionGeneration, o.RevisionHash, o.Verdict, o.IdentityDigest, o.Summary, o.State,
 		o.CreatedAt, o.UpdatedAt)
-}
-
-// SyncJob is sync.py:467 SyncOutbox.get.
-func (s *Store) SyncJob(ctx context.Context, syncID string) (SyncOutboxRow, error) {
-	return queryRow(ctx, s, scanSyncOutbox, "SELECT "+syncOutboxColumns+" FROM sync_outbox WHERE sync_id = ?", syncID)
 }
 
 // NextSyncJobs is sync.py:480 SyncOutbox.next; states are pending, written, claimed. An empty
@@ -203,11 +169,6 @@ func (s *Store) RegisterProduct(ctx context.Context, productKey, record, at stri
 	return err
 }
 
-// ProductRegistry is routing.py:113 ProductRouter.registry (with the key columns).
-func (s *Store) ProductRegistry(ctx context.Context, productKey string) (ProductRegistryRow, error) {
-	return queryRow(ctx, s, scanProductRegistry, "SELECT "+productRegistryColumns+" FROM product_registry WHERE product_key = ?", productKey)
-}
-
 // ProductRegistries is routing.py:119.
 func (s *Store) ProductRegistries(ctx context.Context) ([]ProductRegistryRow, error) {
 	return queryRows(ctx, s, scanProductRegistry, "SELECT "+productRegistryColumns+" FROM product_registry ORDER BY product_key")
@@ -235,11 +196,6 @@ func (s *Store) SetRoutingPolicy(ctx context.Context, policyKey, record, basis, 
 		"   record = excluded.record, basis = excluded.basis,"+
 		"   recorded_at = excluded.recorded_at", policyKey, record, basis, at)
 	return err
-}
-
-// RoutingPolicy is routing.py:188 (with the key columns).
-func (s *Store) RoutingPolicy(ctx context.Context, policyKey string) (RoutingPolicyRow, error) {
-	return queryRow(ctx, s, scanRoutingPolicy, "SELECT "+routingPolicyColumns+" FROM routing_policy WHERE policy_key = ?", policyKey)
 }
 
 // UpsertIncidentRoute is routes.py:135 upsert. replaceGoal is Python's goal-is-not-KEEP: when
@@ -277,11 +233,6 @@ func boolInt(value bool) int64 {
 		return 1
 	}
 	return 0
-}
-
-// IncidentRoute is routes.py:50 get.
-func (s *Store) IncidentRoute(ctx context.Context, faultID string) (IncidentRoutesRow, error) {
-	return queryRow(ctx, s, scanIncidentRoutes, "SELECT "+incidentRoutesColumns+" FROM incident_routes WHERE fault_id = ?", faultID)
 }
 
 // SetIncidentTarget is routes.py:159 set_target.

@@ -341,15 +341,6 @@ func (c *Criteria) writeMode(ctx context.Context, rid, mode, now string) error {
 	return err
 }
 
-// SetMode is set_mode.
-func (c *Criteria) SetMode(ctx context.Context, rid, mode string) (Obj, error) {
-	if mode != Managed && mode != Legacy {
-		return nil, refuse(DispositionConflict, "unknown verification mode %s", store.PyRepr(mode))
-	}
-	err := c.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error { return c.writeMode(ctx, rid, mode, c.Clock.ISO()) })
-	return Obj{{Key: "relationshipId", Value: rid}, {Key: "mode", Value: mode}}, err
-}
-
 // Get is get: the registered set, or nil.
 func (c *Criteria) Get(ctx context.Context, rid string) (Obj, error) {
 	rows, err := all(ctx, c.Store, "SELECT * FROM canonical_criteria WHERE relationship_id = ? ORDER BY criterion_id", rid)

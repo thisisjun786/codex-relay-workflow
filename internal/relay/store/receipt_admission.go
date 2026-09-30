@@ -84,19 +84,3 @@ func (in ReceiptIntake) DaemonObservation(ctx context.Context, relationshipID st
 	claim := ReceiptClaim{EventID: event, RelationshipID: relationshipID, Generation: generation.Number, RevisionHash: NoDeliverable, Outcome: ObservationOutcome(turn.Status), Producer: ProducerDaemon, Turn: turn, manifest: null, document: document}
 	return in.storeEvent(ctx, claim, sql.NullString{}, nil)
 }
-
-// RecordObservation is record_observation: the daemon's (thread, turn, terminal status) key
-// deduplicates its own stream, and the per-assignment settlement is recorded beside it.
-func (in ReceiptIntake) RecordObservation(ctx context.Context, turn TurnReference, classification ObservationOutcome, relationshipID sql.NullString) error {
-	now := in.Now()
-	return in.Store.Transaction(ctx, func(ctx context.Context, conn *sql.Conn) error {
-		if _, err := conn.ExecContext(ctx, `INSERT OR IGNORE INTO observations (thread_id,turn_id,terminal_status,relationship_id,classification,event_id,observed_at) VALUES (?,?,?,?,?,NULL,?)`, turn.ThreadID, turn.TurnID, turn.Status, relationshipID, string(classification), now); err != nil {
-			return fmt.Errorf("record observation: %w", err)
-		}
-		if !relationshipID.Valid {
-			return nil
-		}
-		_, err := conn.ExecContext(ctx, `INSERT OR IGNORE INTO assignment_settlements (relationship_id,thread_id,turn_id,terminal_status,settled_at) VALUES (?,?,?,?,?)`, relationshipID, turn.ThreadID, turn.TurnID, turn.Status, now)
-		return err
-	})
-}

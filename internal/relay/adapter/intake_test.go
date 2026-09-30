@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
+
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
@@ -31,7 +33,7 @@ func seedIntake(t *testing.T, path, root string) *store.Store {
 	roots, _ := json.Marshal([]string{root})
 	relationship := store.Relationship{ID: "rel-1", IssueKey: "REL-1", Status: store.StatusActive, ParentTaskID: "01parent-task", ChildTaskID: "01child-task", Generation: 1, ArtifactRoots: string(roots), AllowedRecipients: `["01parent-task"]`, CreatedAt: "2023-11-14T22:13:20.000000+00:00", UpdatedAt: "2023-11-14T22:13:20.000000+00:00"}
 	generation := store.Generation{RelationshipID: "rel-1", Number: 1, DispatchRequestID: "dispatch-1", AnchorState: store.AnchorBound, DispatchTurnID: sql.NullString{String: "turn-dispatch-1", Valid: true}, OpenedAt: relationship.CreatedAt, BoundAt: sql.NullString{String: relationship.CreatedAt, Valid: true}}
-	if err := s.RecordRelationship(context.Background(), relationship, generation, "host-a", "host-a"); err != nil {
+	if err := storeseed.RecordRelationship(context.Background(), s, relationship, generation, "host-a", "host-a"); err != nil {
 		t.Fatal(err)
 	}
 	return s
@@ -172,7 +174,7 @@ func Test28_MSC_11_IntakeAdmissionUnchanged(t *testing.T) {
 			goStore := seedIntake(t, filepath.Join(root, "go", "go.sqlite3"), work)
 			raw, _ := json.Marshal(payload)
 			intake := store.ReceiptIntake{Store: goStore, Now: func() string { return "2023-11-14T22:13:20.000000+00:00" }, Minimum: store.BestEffortDetection}
-			_, err = intake.AcceptChildReceipt(context.Background(), raw, store.TurnReference{ThreadID: "01child-task", TurnID: "turn-dispatch-1", Status: "completed"})
+			_, err = intake.AcceptChildReceiptWith(context.Background(), raw, store.TurnReference{ThreadID: "01child-task", TurnID: "turn-dispatch-1", Status: "completed"}, store.AcceptOptions{})
 			got := map[string]any{"accepted": err == nil}
 			if err == nil {
 				got["event"] = event

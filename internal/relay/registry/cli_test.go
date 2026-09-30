@@ -357,15 +357,3 @@ func Test25_CLI6_a_refusal_exits_two_with_a_machine_readable_reason(t *testing.T
 		}
 	}
 }
-
-// CLI-8 (value half): the ACK proof a caller computes is sha256("E|T") hex, the value
-// 'codex-session-relay ack-proof' prints. The ack-proof and ack commands are todo 21's surface.
-func Test25_CLI8_the_ack_proof_is_sha256_of_event_and_turn(t *testing.T) {
-	got, err := store.AckProof("0123456789abcdef0123456789abcdef", "turn-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != "351770a8e0241f932e68981652c6a760e693229f152b334c14123470337a7e41" {
-		t.Fatalf("ack proof %s", got)
-	}
-}

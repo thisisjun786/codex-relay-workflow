@@ -68,16 +68,6 @@ func olderTurns(turns []TurnInfo, cutoff float64) []string {
 	return out
 }
 
-// FindInListing is find_in_listing over pages already read.
-func FindInListing(pages []ListingPage, turnID string, sentAt float64) (TurnPresence, error) {
-	next := 0
-	return FindInListingPaged(func() (ListingPage, error) {
-		page := pages[next]
-		next++
-		return page, nil
-	}, len(pages), turnID, sentAt)
-}
-
 // FindInListingPaged is find_in_listing over a lazy listing: read yields the next page, at most
 // bound pages are read, and nothing past the answer is read. turnID "" lists the turns since a
 // send with no turn id; a listed turn without an id is never taken for it.

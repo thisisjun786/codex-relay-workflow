@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
+
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 )
 
@@ -77,7 +79,7 @@ func Test24_SCH_23_HeldOrStrandedOlderDoesNotBlock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	eligible, err := f.c.Eligible(f.ctx, 1_700_000_000, 4)
+	eligible, err := storeseed.EligibleSupervisorMessages(f.ctx, f.c.Store, 1_700_000_000, 4)
 	if err != nil || len(eligible) != 0 {
 		t.Fatalf("held eligible: %v %v", eligible, err)
 	}

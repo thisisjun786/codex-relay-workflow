@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
+
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 )
 
@@ -93,7 +95,7 @@ func Test24_SCH_33_ClaimRechecksHierarchy(t *testing.T) {
 	f.c.Settings = &delivery.TaskSettings{}
 	_, stage := f.staged(t)
 	id := stage["messageId"].(string)
-	if err := f.s.ArchiveScopeBinding(f.ctx, "b-supervisor", "archived", "b-next", f.at); err != nil {
+	if err := storeseed.ArchiveScopeBinding(f.ctx, f.s, "b-supervisor", "archived", "b-next", f.at); err != nil {
 		t.Fatal(err)
 	}
 	_, err := f.c.Attempt(f.ctx, id, &sendHost{status: "idle"}, 1_700_000_000)

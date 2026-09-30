@@ -297,3 +297,10 @@ func TestOpen_does_not_write_host_state_when_record_queries_run(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func requireReason(t *testing.T, err error, reason string) {
+	t.Helper()
+	if RefusalReason(err) != reason {
+		t.Fatalf("expected %s, got %v", reason, err)
+	}
+}

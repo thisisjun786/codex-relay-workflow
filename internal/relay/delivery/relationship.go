@@ -27,9 +27,6 @@ type Endpoint struct {
 	Cwd            any
 }
 
-// Active is status active and not superseded.
-func (r Relationship) Active() bool { return r.Status == "active" && r.SupersededBy == nil }
-
 func (r Relationship) generation(number int64) Row {
 	for _, g := range r.Generations {
 		if g.I("execution_generation") == number {

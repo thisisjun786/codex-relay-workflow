@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
+
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor"
@@ -45,16 +47,16 @@ func seedSupervisorCLI(t *testing.T, state, socket string) string {
 			t.Fatal(err)
 		}
 	}
-	if err := s.RecordRelationshipScope(ctx, "rel-1", "PRJ-1", "t"); err != nil {
+	if err := storeseed.RecordRelationshipScope(ctx, s, "rel-1", "PRJ-1", "t"); err != nil {
 		t.Fatal(err)
 	}
 	for _, b := range []store.ScopeBindingsRow{{BindingID: "b-child", Role: "child", ScopeKind: "issue", ScopeKey: "REL-1", TaskID: "child", HostID: "host", Status: "active", Revision: 1, CreatedAt: "t", UpdatedAt: "t"}, {BindingID: "b-parent", Role: "parent", ScopeKind: "project", ScopeKey: "PRJ-1", TaskID: "parent", HostID: "host", Status: "active", Revision: 1, CreatedAt: "t", UpdatedAt: "t"}, {BindingID: "b-supervisor", Role: "supervisor", ScopeKind: "initiative", ScopeKey: "INI-1", TaskID: "supervisor", HostID: "host", Status: "active", Revision: 1, CreatedAt: "t", UpdatedAt: "t"}} {
-		if err := s.InsertScopeBinding(ctx, b); err != nil {
+		if err := storeseed.InsertScopeBinding(ctx, s, b); err != nil {
 			t.Fatal(err)
 		}
 	}
 	for _, l := range []store.ScopeLinksRow{{LinkID: "lnk-issue", LinkKind: "execution", UpperKind: "project", UpperKey: "PRJ-1", UpperTaskID: "parent", LowerKind: "issue", LowerKey: "REL-1", LowerTaskID: "child", Status: "active", Revision: 1, CreatedAt: "t", UpdatedAt: "t"}, {LinkID: "lnk-project", LinkKind: "execution", UpperKind: "initiative", UpperKey: "INI-1", UpperTaskID: "supervisor", LowerKind: "project", LowerKey: "PRJ-1", LowerTaskID: "parent", Status: "active", Revision: 1, CreatedAt: "t", UpdatedAt: "t"}} {
-		if err := s.InsertScopeLink(ctx, l); err != nil {
+		if err := storeseed.InsertScopeLink(ctx, s, l); err != nil {
 			t.Fatal(err)
 		}
 	}

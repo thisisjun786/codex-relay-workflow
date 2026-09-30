@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"math/big"
 	"regexp"
-	"strconv"
 	"strings"
 )
 
@@ -75,42 +74,11 @@ func (*IntegerOverflow) Error() string {
 	return "OverflowError: Python int too large to convert to SQLite INTEGER"
 }
 
-// Outcomes are every outcome a completion receipt may carry (identity.OUTCOMES).
-var Outcomes = []string{"ready_for_review", "failed", "interrupted", "blocked_needs_input"}
-
-// RenderAttempt is identity.render_attempt: an explicit nil test, so zero renders as "0" and
-// is never quietly treated as the literal "null".
-func RenderAttempt(attempt *int) string {
-	if attempt == nil {
-		return "null"
-	}
-	return strconv.Itoa(*attempt)
-}
-
 func RequestID(event string, number int) (string, error) {
 	if !regexp.MustCompile(`^[0-9a-f]{32}$`).MatchString(event) || number < 1 {
 		return "", ErrInvalidIdentity
 	}
 	return fmt.Sprintf("del-%s-a%d", event[:12], number), nil
-}
-
-func ParseRequestID(request string) (string, int, error) {
-	match := regexp.MustCompile(`^del-([0-9a-f]{12})-a([0-9]+)$`).FindStringSubmatch(request)
-	if match == nil {
-		return "", 0, ErrInvalidIdentity
-	}
-	number, err := strconv.Atoi(match[2])
-	if err != nil {
-		return "", 0, fmt.Errorf("parse attempt: %w", err)
-	}
-	return match[1], number, nil
-}
-
-func AckProof(event, turn string) (string, error) {
-	if !regexp.MustCompile(`^[0-9a-f]{32}$`).MatchString(event) || strings.TrimSpace(turn) == "" {
-		return "", ErrInvalidIdentity
-	}
-	return digest(event+"|"+turn, 64), nil
 }
 
 func RevisionRequestEventID(relationship, event, turn string) (string, error) {

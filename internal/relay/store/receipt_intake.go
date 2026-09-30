@@ -36,11 +36,6 @@ type StoredReceipt struct {
 	PathBinding sql.NullString
 }
 
-// AcceptChildReceipt is accept_child_receipt: every refusal is recorded for an operator.
-func (in ReceiptIntake) AcceptChildReceipt(ctx context.Context, payload []byte, observation TurnReference) (StoredReceipt, error) {
-	return in.AcceptChildReceiptWith(ctx, payload, observation, AcceptOptions{})
-}
-
 // AcceptOptions carries what accept_child_receipt takes beside the payload: a continuation
 // admission (JSON, nil for none) and the revision a re-emission declares it supersedes.
 type AcceptOptions struct {
@@ -253,17 +248,4 @@ func (in ReceiptIntake) storeEvent(ctx context.Context, claim ReceiptClaim, bind
 		return recordLineage(ctx, conn, claim.RelationshipID, claim.Generation, claim.EventID, claim.RevisionHash, supersedes, now)
 	})
 	return result, err
-}
-
-// Deliverable is intake.deliverable: only a final event may be handed to a parent.
-func (s *Store) Deliverable(ctx context.Context, eventID string) (bool, error) {
-	var stage string
-	err := s.q(ctx).QueryRowContext(ctx, `SELECT stage FROM events WHERE event_id=?`, eventID).Scan(&stage)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("deliverable %q: %w", eventID, err)
-	}
-	return stage == StageFinal, nil
 }

@@ -13,7 +13,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -148,14 +150,24 @@ func slfSettings(record map[string]any, free bool) delivery.TaskSettings {
 	return delivery.TaskSettings{Data: slfObj(record).(delivery.Obj), SettingsFreeResume: free}
 }
 func slfCheck(record, answer map[string]any, free bool) map[string]any {
-	rpc, findings, _ := delivery.VerifyResume(slfSettings(record, free), slfObj(answer), "idle")
-	if findings == nil {
-		findings = []any{}
+	// The guarded send's check as the bridge adapter runs it: registry's recorded-settings
+	// predicate, and a settings-free resume that finds a difference names it
+	// settings_differ_after_load.
+	settings := slfSettings(record, free)
+	transmitted := !settings.SettingsFreeResume
+	findings := []any{}
+	for _, finding := range (registry.TaskSettings{Data: settings.Data}).Mismatches(slfObj(answer), transmitted, false, transmitted) {
+		findings = append(findings, finding)
 	}
 	code := any(nil)
-	for _, f := range rpc {
-		if f.Key == "code" {
-			code = f.Value
+	if len(findings) > 0 {
+		for _, f := range findings[0].(contract.OrderedObject) {
+			if f.Key == "code" {
+				code = f.Value
+			}
+		}
+		if !transmitted && code == registry.SettingsNotPreserved {
+			code = registry.SettingsDifferAfterLoad
 		}
 	}
 	return map[string]any{"code": code, "findings": findings}

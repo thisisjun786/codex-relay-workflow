@@ -4,7 +4,8 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
+	"io/fs"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -33,24 +34,35 @@ func schemaTables(t *testing.T) []string {
 	return tables
 }
 
-// productionSQL is every string literal in the package's non-test Go files: the query text the
-// store runs, with the concatenated parts of one query kept as separate literals.
+// productionSQL is every string literal in the product's non-test Go files under internal/: the
+// query text the store and the domain packages run, with the concatenated parts of one query kept
+// as separate literals. The development tooling and the test support packages are not product.
 func productionSQL(t *testing.T, skip string) []string {
 	t.Helper()
-	files, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatal(err)
-	}
+	root := filepath.Join("..", "..")
 	var literals []string
 	fset := token.NewFileSet()
-	for _, file := range files {
-		name := file.Name()
-		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		parsed, err := parser.ParseFile(fset, name, nil, 0)
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
-			t.Fatal(err)
+			return err
+		}
+		if entry.IsDir() {
+			switch rel, _ := filepath.Rel(root, path); rel {
+			case "dev", "testsupport", "contracttest":
+				return filepath.SkipDir
+			}
+			if entry.Name() == "testdata" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			return nil
+		}
+		parsed, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			return err
 		}
 		ast.Inspect(parsed, func(node ast.Node) bool {
 			literal, ok := node.(*ast.BasicLit)
@@ -63,15 +75,28 @@ func productionSQL(t *testing.T, skip string) []string {
 			}
 			return true
 		})
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 	return literals
 }
 
-// unreferencedTables names the schema tables no production query reads or writes. A reference is
-// the table named after FROM, INTO, UPDATE or JOIN in a query literal.
+// storedOnly are schema tables no runtime queries; they stay in the frozen schema for the rows a
+// store may already hold. attempt_settings_violations: Python's DeliveryService.
+// record_settings_violation and settings_violation had only test callers, and so did their Go
+// copies, which R1 removed (decision 51).
+var storedOnly = map[string]bool{"attempt_settings_violations": true}
+
+// unreferencedTables names the schema tables no production query reads or writes, storedOnly
+// aside. A reference is the table named after FROM, INTO, UPDATE or JOIN in a query literal.
 func unreferencedTables(tables, literals []string) []string {
 	var missing []string
 	for _, table := range tables {
+		if storedOnly[table] {
+			continue
+		}
 		reference := regexp.MustCompile(`(?i)\b(FROM|INTO|UPDATE|JOIN)\s+` + table + `\b`)
 		found := false
 		for _, literal := range literals {
@@ -99,11 +124,19 @@ func TestEverySchemaTable_has_a_go_query_referencing_it(t *testing.T) {
 	if len(tables) != created || created == 0 {
 		t.Fatalf("parsed %d tables from the schema; an opened store holds %d", len(tables), created)
 	}
-	// When: every production query literal is searched for each table.
+	// When: every production query literal under internal/ is searched for each table.
 	missing := unreferencedTables(tables, productionSQL(t, "\x00"))
-	// Then: no table is left without a Go query.
+	// Then: no table is left without a Go query, and no stored-only table has gained one.
 	if len(missing) != 0 {
 		t.Fatalf("%d tables have no Go query: %v", len(missing), missing)
+	}
+	for table := range storedOnly {
+		reference := regexp.MustCompile(`(?i)\b(FROM|INTO|UPDATE|JOIN)\s+` + table + `\b`)
+		for _, literal := range productionSQL(t, "\x00") {
+			if reference.MatchString(literal) {
+				t.Fatalf("%s is queried again; remove it from storedOnly", table)
+			}
+		}
 	}
 }
 

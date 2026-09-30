@@ -31,32 +31,6 @@ type NonceReading struct {
 	Raised error
 }
 
-type ReadResult struct {
-	Readable bool
-	Rows     []Challenge
-	Device   uint64
-	Inode    uint64
-	Links    uint64
-	Detail   string
-}
-
-// ReadChallengeRows is read_only_rows over store_challenge.
-func ReadChallengeRows(ctx context.Context, selection StateSelection) ReadResult {
-	var rows []Challenge
-	read := ReadOnlyRows(ctx, selection, "SELECT nonce,written_by,written_at FROM store_challenge ORDER BY nonce", nil, func(r RowScanner) error {
-		var row Challenge
-		if err := r.Scan(&row.Nonce, &row.WrittenBy, &row.WrittenAt); err != nil {
-			return err
-		}
-		rows = append(rows, row)
-		return nil
-	})
-	if !read.Readable || read.Detail != "" {
-		rows = nil
-	}
-	return ReadResult{Readable: read.Readable, Rows: rows, Device: read.Device, Inode: read.Inode, Links: read.Links, Detail: read.Detail}
-}
-
 // RowScanner is the one row ReadOnlyRows hands its callback.
 type RowScanner interface{ Scan(dest ...any) error }
 

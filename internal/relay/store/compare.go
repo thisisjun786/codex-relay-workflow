@@ -192,11 +192,3 @@ func measured(device, inode uint64) string {
 	}
 	return part(device) + ":" + part(inode)
 }
-
-func (l Location) PhysicalIdentity() string {
-	return strconv.FormatUint(l.Device, 10) + ":" + strconv.FormatUint(l.Inode, 10)
-}
-
-func (l Location) LogLocation() string {
-	return fmt.Sprintf("%d:%d:%s", l.LogDevice, l.LogInode, l.LogName)
-}

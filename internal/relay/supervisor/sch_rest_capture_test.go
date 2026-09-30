@@ -5,11 +5,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
 )
 
 func Test24_SCH_29_Capture(t *testing.T) {
@@ -160,10 +162,10 @@ func restHandover33(t *testing.T, s *store.Store) {
 	t.Helper()
 	ctx := context.Background()
 	original, successor := "bnd-24179d1961baacd1886d337c38c3eceb", "bnd-45b86b6a2f3d253ae34532a3df0ec31f"
-	if err := s.ArchiveScopeBinding(ctx, original, "archived", successor, captureTime); err != nil {
+	if err := storeseed.ArchiveScopeBinding(ctx, s, original, "archived", successor, captureTime); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.InsertScopeBinding(ctx, store.ScopeBindingsRow{BindingID: successor, Role: "supervisor", ScopeKind: "initiative", ScopeKey: "INI-1", TaskID: "01new-supervisor", HostID: "host-a", Status: "active", Revision: 2, CreatedAt: captureTime, UpdatedAt: captureTime, CWD: sql.NullString{String: "/new", Valid: true}, CXCSession: sql.NullString{String: "cxc-new", Valid: true}, HandoverNote: sql.NullString{String: "the initiative changed hands mid-send", Valid: true}, Supersedes: sql.NullString{String: original, Valid: true}}); err != nil {
+	if err := storeseed.InsertScopeBinding(ctx, s, store.ScopeBindingsRow{BindingID: successor, Role: "supervisor", ScopeKind: "initiative", ScopeKey: "INI-1", TaskID: "01new-supervisor", HostID: "host-a", Status: "active", Revision: 2, CreatedAt: captureTime, UpdatedAt: captureTime, CWD: sql.NullString{String: "/new", Valid: true}, CXCSession: sql.NullString{String: "cxc-new", Valid: true}, HandoverNote: sql.NullString{String: "the initiative changed hands mid-send", Valid: true}, Supersedes: sql.NullString{String: original, Valid: true}}); err != nil {
 		t.Fatal(err)
 	}
 	for _, entry := range []struct{ kind, detail string }{{"scope_bound", `{"role": "supervisor", "scopeKind": "initiative", "scopeKey": "INI-1", "taskId": "01new-supervisor", "revision": 2}`}, {"scope_handover", `{"scopeKey": "INI-1", "from": "01supervisor-task", "to": "01new-supervisor", "actor": "a test", "acknowledged": []}`}} {
@@ -171,7 +173,7 @@ func restHandover33(t *testing.T, s *store.Store) {
 			t.Fatal(err)
 		}
 	}
-	if err := s.RepointScopeLink(ctx, "lnk-6fa68afd8cc27a8e7780d400a52f73c2", "active", "01parent-task", "01new-supervisor", captureTime); err != nil {
+	if err := storeseed.RepointScopeLink(ctx, s, "lnk-6fa68afd8cc27a8e7780d400a52f73c2", "active", "01parent-task", "01new-supervisor", captureTime); err != nil {
 		t.Fatal(err)
 	}
 }

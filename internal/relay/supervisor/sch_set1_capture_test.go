@@ -3,12 +3,14 @@ package supervisor
 import (
 	"context"
 	"encoding/json"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -129,7 +131,7 @@ func Test24_SCH_12_Capture(t *testing.T) {
 		if _, err := c.Stage(ctx, o, "", delivery.ISOOf(1700000005)); err != nil {
 			t.Fatal(err)
 		}
-		rows, err := c.Eligible(ctx, 1700000005, 100)
+		rows, err := storeseed.EligibleSupervisorMessages(ctx, c.Store, 1700000005, 100)
 		if err != nil {
 			t.Fatal(err)
 		}
