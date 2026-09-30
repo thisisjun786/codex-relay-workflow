@@ -4,8 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 )
 
 func TestComposing_python_properties(t *testing.T) {
@@ -91,6 +95,54 @@ func TestComposing_python_properties(t *testing.T) {
 			t.Fatalf("nested transaction after a failed composition: %v", nested)
 		}
 	})
+}
+
+// store.py transaction() revalidates admission before it decides to join a composing() scope,
+// so every joined transaction rereads takeover.json and schema_meta. A mirror that changes
+// inside the scope into one admission refuses fails the joined transaction with that refusal,
+// and the whole composition rolls back: nothing is committed under a record admission refuses.
+// A composition that sees no change commits as before.
+func TestComposedJoinRevalidatesAdmission(t *testing.T) {
+	s := recordStore(t)
+	ctx := context.Background()
+	mirror := filepath.Join(filepath.Dir(s.Path), "takeover.json")
+	original, err := os.ReadFile(mirror)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = s.Compose(ctx, func(composed context.Context, _ *sql.Conn) error {
+		if err := s.AppendJournal(composed, JournalEntry{At: "t", Kind: "before", Subject: "s", Detail: "d"}); err != nil {
+			return err
+		}
+		// An external edit admission refuses: the mirror no longer reads as a record.
+		if err := os.WriteFile(mirror, []byte("{"), 0600); err != nil {
+			return err
+		}
+		return s.AppendJournal(composed, JournalEntry{At: "t", Kind: "after", Subject: "s", Detail: "d"})
+	})
+	if restore := os.WriteFile(mirror, original, 0600); restore != nil {
+		t.Fatal(restore)
+	}
+	var refused *ownership.Refused
+	if !errors.As(err, &refused) {
+		t.Fatalf("a joined transaction under a mirror admission refuses: %v", err)
+	}
+	if count := durableCount(t, s.Path, `SELECT count(*) FROM journal WHERE kind IN ('before','after')`); count != 0 {
+		t.Fatalf("the composition committed %d rows under a refused mirror", count)
+	}
+	// Unchanged admission: the joined transactions revalidate and the composition commits.
+	err = s.Compose(ctx, func(composed context.Context, _ *sql.Conn) error {
+		if err := s.AppendJournal(composed, JournalEntry{At: "t", Kind: "before", Subject: "s", Detail: "d"}); err != nil {
+			return err
+		}
+		return s.AppendJournal(composed, JournalEntry{At: "t", Kind: "after", Subject: "s", Detail: "d"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count := durableCount(t, s.Path, `SELECT count(*) FROM journal WHERE kind IN ('before','after')`); count != 2 {
+		t.Fatalf("the admitted composition committed %d rows", count)
+	}
 }
 
 // durableCount reads through its own connection, so it sees only what has been committed.

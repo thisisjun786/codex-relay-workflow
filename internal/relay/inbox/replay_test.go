@@ -296,6 +296,57 @@ func TestDrain_retained_failures_keep_the_entry_without_blocking(t *testing.T) {
 	}
 }
 
+// The transaction a handler opens inside the drain's composition revalidates admission, as
+// store.py transaction() does before it joins (test_ownership_or_host_failure_during_replay_
+// retains_the_entry, ownership). An ownership change that handler's own transaction sees, here
+// takeover.json unreadable for that one transaction, is the retained ownership refusal: the
+// handler's writes roll back, no marker, the entry kept, and the entry after it still applied.
+func TestDrain_a_handler_transaction_revalidates_admission(t *testing.T) {
+	st, state := goStore(t)
+	first := mustEnvelope(t, "ack", cases["ack"]...)
+	later := mustEnvelope(t, "ack", "--event", "event-2", "--ack-turn", "t", "--ack-proof", "p")
+	publish(t, state, first)
+	publish(t, state, later)
+	mirror := filepath.Join(state, "takeover.json")
+	original, err := os.ReadFile(mirror)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := &recorder{}
+	apply := func(ctx context.Context, st *store.Store, command string, argv []string) (any, int, error) {
+		answer, code, err := r.apply(ctx, st, command, argv)
+		if err != nil || len(r.calls) != 1 {
+			return answer, code, err
+		}
+		if err = os.WriteFile(mirror, []byte("{"), 0600); err != nil {
+			return nil, 0, err
+		}
+		err = st.Transaction(ctx, func(context.Context, *sql.Conn) error { return nil })
+		if restore := os.WriteFile(mirror, original, 0600); restore != nil {
+			return nil, 0, restore
+		}
+		if err != nil {
+			return nil, 0, err
+		}
+		return answer, code, nil
+	}
+	if err := Drain(t.Context(), st, state, apply); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := meta(t, st, "inbox:"+first.ID); ok {
+		t.Fatal("a handler whose transaction admission refused committed its marker")
+	}
+	if _, ok := meta(t, st, "inbox:"+later.ID); !ok {
+		t.Fatal("the retained entry blocked the one after it")
+	}
+	if got := names(t, Directory(state)); !slices.Equal(got, []string{ReplayLock, first.ID}) {
+		t.Fatalf("%v", got)
+	}
+	if got := metaPrefix(t, st, "test:applied:"); len(got) != 1 {
+		t.Fatalf("the refused handler's writes survived: %v", got)
+	}
+}
+
 type hostUnavailable struct{}
 
 func (hostUnavailable) Error() string               { return "listing not exhausted" }

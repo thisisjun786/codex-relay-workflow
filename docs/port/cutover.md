@@ -876,7 +876,9 @@ The applying owner's transaction reads `schema_meta['inbox:<operation-id>']`:
 Retained, never terminal: an ownership/admission refusal raised by the handler after
 the entry's transaction opened (Python `OwnershipRefused` from transaction
 revalidation, including an unreadable `takeover.json`; Go `ownership.Refused` from
-`Admission.Revalidate`), and a receipt refusal caused by a host that could not confirm
+`Admission.Revalidate`; in both, every transaction the handler opens revalidates before it
+joins the entry's, so an ownership change during one handler is retained with that entry),
+and a receipt refusal caused by a host that could not confirm
 the turn (`HostUnavailable`). The owner rolls back the handler writes, writes no
 marker, keeps the entry and goes on to the next entry, so a retained entry never
 blocks unrelated writers or daemon recovery. Any other host/storage exception rolls the
