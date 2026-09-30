@@ -725,6 +725,7 @@ func observeHook(args []string, stdout, stderr io.Writer) int {
 	}
 	needle := []byte("{\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\"")
 	schemas := map[string]map[string]any{}
+	titles := []string{}
 	for at := 0; ; {
 		n := bytes.Index(raw[at:], needle)
 		if n < 0 {
@@ -746,6 +747,9 @@ func observeHook(args []string, stdout, stderr io.Writer) int {
 			value, _ := orderedPlain(decoded).(map[string]any)
 			title, _ := value["title"].(string)
 			if strings.Contains(title, ".command.") {
+				if _, seen := schemas[title]; !seen {
+					titles = append(titles, title)
+				}
 				schemas[title] = value
 			}
 		}
@@ -755,7 +759,7 @@ func observeHook(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "No embedded hook schemas found in %s.\n", binary)
 		return 3
 	}
-	events, err := probeCapabilityMatrix(schemas)
+	events, err := probeCapabilityMatrix(titles, schemas)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
@@ -771,7 +775,10 @@ func observeHook(args []string, stdout, stderr io.Writer) int {
 		}
 		report["registration"] = registration
 	}
-	_ = emitUnicode(stdout, report)
+	// print(json.dumps(report, indent=2, sort_keys=True)): non-ASCII escaped and
+	// floats spelled as Python spells them (1.0, 1e+19, Infinity), which
+	// encoding/json does not do.
+	fmt.Fprintln(stdout, evidence.DumpsIndent(report, 2, true, true))
 	return 0
 }
 func sortedKeys(m map[string]any) []string {
