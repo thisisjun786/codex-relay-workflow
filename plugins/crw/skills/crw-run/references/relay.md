@@ -118,7 +118,7 @@ of the later one quietly winning.
 
 For new assignments, prefer the relay's `managed-start` entry when that installed version exposes
 it. It owns pre-creation reservation, standby creation, registration and business dispatch as one
-recoverable operation; see the [request and recovery contract](../../../../../packages/codex-session-relay/README.md#recoverable-managed-start).
+recoverable operation; see the [request and recovery contract](../../../../../docs/relay/README.md#recoverable-managed-start).
 Use the same request id, exact request contents and state/socket/marker paths when recovering.
 A refused or incomplete result is not permission to create a replacement. `admitted` means
 dispatch only: the child's claim, actual hook firing, receipt and parent judgment still need
@@ -160,7 +160,7 @@ issue reservation and retained bridge receipts. The lower-level calls remain sep
 `doctor --require-worker-policy` alone neither runs admission nor prevents raw task creation.
 The managed entry rechecks authorization after resume, but an external UI change can race its
 last read and turn start. Do not describe that observation as an atomic host permission guard.
-The source package's [exact-turn reporting observation](../../../../../packages/codex-session-relay/README.md#exact-turn-reporting-observation)
+The source package's [exact-turn reporting observation](../../../../../docs/relay/README.md#exact-turn-reporting-observation)
 is a separate manual diagnosis: `reporting-show` reads one named turn offline. A Stop observation
 alone is not a terminal assignment, and missing or unreadable evidence stays unknown rather than
 success. The command does not wake a parent, write a queue, or publish a report. Source presence
@@ -1070,11 +1070,11 @@ correction; `sync-status` and `sync-retry` manage the queue, and
 
 ## Not owned here
 
-The wire and record protocol, the invariants, and the package internals live with the package's
-own documents. Read them when changing the relay, not when running an assignment.
+The wire and record protocol, the invariants, and the relay internals live with the relay's
+own documents, under `docs/relay/`. Read them when changing the relay, not when running an assignment.
 
 The message form both relations share is one of them. `relay-envelope/1` is defined in the
-package's own `docs/envelope.md`, with the workflow rule in
+relay's own `docs/relay/envelope.md`, with the workflow rule in
 [the message both relations are read by](../../crw-plan/references/integrations.md#the-message-both-relations-are-read-by).
 Two facts from it decide what a run may claim, so they are repeated here and nowhere else: the
 a report upward is transported and read back and nothing further is measured on that relation -
@@ -1226,11 +1226,11 @@ it, restate in the new instruction whatever of the old one still applies, run
 `linkage-settle --directive <id> --disposition superseded --actor <your task id>`, then record
 the new one. Settle only an instruction that is really replaced: settling is a decision the parent
 reads. A report the hierarchy is holding shows in `supervisor-standing` as a `report_held` gap
-with its reason; the package's `docs/linkage.md` ("Where an instruction stands") has the full
+with its reason; the relay's `docs/relay/linkage.md` ("Where an instruction stands") has the full
 relation table.
 
 The packet a parent and a child exchange sits on that same envelope and adds what the
-occasion requires: `relay-packet/1`, in the package's own `docs/packets.md`, with the
+occasion requires: `relay-packet/1`, in the relay's own `docs/relay/packets.md`, with the
 workflow rule in [the typed form these fields travel in](task-packet.md#the-typed-form-these-fields-travel-in).
 One command reads it, and the receiver runs it against its own store reading.
 

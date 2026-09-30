@@ -54,8 +54,9 @@ python3 scripts/ci/plugin.py
 python3 -m unittest discover -s scripts/ci/tests -v
 ```
 
-The Python packages under `packages/` are no longer built or tested: the Go port under
-`cmd/` and `internal/` is the product, and todo 44 removes their source. Do not change them.
+The Python packages the runtime was ported from left the repository in todo 44; what stays of
+them is the bridge's licence and provenance under `packages/codex-thread-bridge` and the relay's
+documents under `docs/relay`.
 
 Installer tests use temporary destinations; do not point test runs at your real
 Codex skill directory. The bundled Codex skill validator, when installed, is an

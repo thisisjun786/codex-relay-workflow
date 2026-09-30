@@ -788,8 +788,8 @@ project has at most one execution supervisor whichever initiative asks, every ot
 holds a reference that must agree who the parent is, conflicting instructions are retained with
 their origin rather than collapsed, and a replacement owner is refused unless it restates both
 the outgoing owner and the unfinished work it is taking on. The scope of that claim is the
-package's own suite under `packages/codex-session-relay/tests/test_linkage*.py`, and the
-records are described in `packages/codex-session-relay/docs/linkage.md`.
+relay's linkage tests (`internal/relay/linkage` and `internal/relay/registry`, which carry the
+Python suite's `test_linkage*.py`), and the records are described in `docs/relay/linkage.md`.
 
 What the relay still does NOT carry is any peer MESSAGE. A registered peer link is a record, not
 a channel: delivery, acknowledgement and shared merge order between parents remain proposed

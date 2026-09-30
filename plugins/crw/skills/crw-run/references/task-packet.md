@@ -353,8 +353,8 @@ it does not, and the classes a missing loop falls into.
 ### The typed form these fields travel in
 
 The sections above say what an assignment, a correction and a return have to contain. What
-makes that checkable rather than habitual is `relay-packet/1`, defined in the package's own
-`docs/packets.md` and read there rather than restated here, exactly as `relay-envelope/1`
+makes that checkable rather than habitual is `relay-packet/1`, defined in the relay's own
+`docs/relay/packets.md` and read there rather than restated here, exactly as `relay-envelope/1`
 is. It sits on that same identification region and adds
 the part the envelope deliberately does not know: which typed data a particular occasion
 cannot do without.

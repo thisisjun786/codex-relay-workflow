@@ -12,7 +12,7 @@ DOCS = {"README.md", "CONTRIBUTING.md", "POLICY.md", "SECURITY.md", "AGENTS.md",
 FULL = {".gitignore", ".gitleaks.toml", "pyproject.toml", "uv.lock", "plugins/crw/LICENSE",
         "go.mod", "go.sum", "tools.go", "Makefile", ".goreleaser.yaml", "conftest.py", "plugins/skill_assets.go"}
 PREFIXES = ("scripts/", "packages/", "plugins/crw/wiring/", "plugins/crw/.codex-plugin/",
-            ".agents/", ".github/", "cmd/", "internal/", "contract/", "docs/port/")
+            ".agents/", ".github/", "cmd/", "internal/", "contract/", "docs/port/", "docs/relay/")
 REASONS = {"paths", "empty", "base-unavailable", "dispatch"}
 FIELDS = {"version", "event", "base", "head", "base_ref", "ref", "changed", "unknown",
           "unsafe", "reason", "selected"}

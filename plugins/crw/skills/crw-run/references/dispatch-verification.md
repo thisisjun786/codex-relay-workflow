@@ -123,8 +123,8 @@ an unarmed child.
 The classes are derived in the order this file gives them. What cannot change afterwards is
 read first - a prompt with no invocation is L0 whatever happens later, and a recorded refusal
 is L2 the same way - and the negative readings are consulted only after that, with L6 as the
-answer when nothing distinguishes them yet. The details live with the package, in its own
-`docs/packets.md`, and are read there when changing the relay rather than when running an
+answer when nothing distinguishes them yet. The details live with the relay, in its own
+`docs/relay/packets.md`, and are read there when changing the relay rather than when running an
 assignment.
 
 ## Recorded cases
