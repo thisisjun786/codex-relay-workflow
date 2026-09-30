@@ -25,7 +25,7 @@ func call(args []string, input string) (int, string, string) {
 // The shipped fixtures keep changing, so the replays over them are held to what the fixtures
 // themselves say rather than to a recorded Python answer: every decision fixture matches, every
 // documented trace has a fixture, every return site is reached, and every title fixture replays.
-// The Python parity of replay is kept over the frozen inputs (python_oracle_test.go).
+// The goldens of replay are kept over the frozen inputs (frozen_inputs_test.go).
 func TestSkillReplaysEveryShippedFixture(t *testing.T) {
 	count := func(name string) int {
 		paths, err := fs.Glob(bundledSkillFiles, defaultFixture(name)+"/*.json")

@@ -1,8 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "as_shipped | self-check": "txt:[[],6]\n",
-  "reason_dropped | self-check": "txt:[[\"the compared and the required key sets differ on reason\"],0]\n",
-  "receiptDetail_dropped | self-check": "txt:[[\"the compared and the required key sets differ on receiptDetail\"],0]\n"
- }
-}

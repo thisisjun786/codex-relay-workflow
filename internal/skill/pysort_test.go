@@ -3,47 +3,25 @@ package skill
 import (
 	"fmt"
 	"math/rand/v2"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 )
 
-// TestPySortedMatchesLivePython runs the same JSON lists through CPython's
-// sorted() and through pySorted, and compares the sorted lists as json.dumps
-// spells them (so 1, 1.0 and true stay distinct and a stable sort must keep
-// them in Python's order), or the TypeError each raises. NaN makes the result
-// depend on the exact sequence of comparisons, and the long structured lists
-// reach the merge stack, merge_lo, merge_hi and galloping.
+// TestPySortedMatchesLivePython sorts JSON lists with pySorted and holds the sorted lists, as
+// json.dumps spells them (so 1, 1.0 and true stay distinct and a stable sort must keep them in
+// Python's order), or the TypeError each raises, to the golden, first taken as what CPython's
+// sorted() answered: line n of the golden is case n's answer. NaN makes the result depend on the
+// exact sequence of comparisons, and the long structured lists reach the merge stack, merge_lo,
+// merge_hi and galloping.
 func TestPySortedMatchesLivePython(t *testing.T) {
 	// Given lists of numbers with NaN, strings, lists, and unorderable mixtures.
 	lines := pySortCases(rand.New(rand.NewPCG(42, 1024)))
-	dir := t.TempDir()
-	input := filepath.Join(dir, "cases.jsonl")
-	if err := os.WriteFile(input, []byte(strings.Join(lines, "\n")+"\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	program := `import json, sys
-for line in open(sys.argv[1], encoding="utf-8"):
-    items = json.loads(line)
-    try:
-        print(json.dumps(sorted(items)))
-    except TypeError as error:
-        print("TypeError: " + str(error))
-`
-	python := exec.Command(filepath.Join(repositoryRoot(), ".venv", "bin", "python"), "-c", program, input)
-	python.Env = oracleEnv("PYTHONDONTWRITEBYTECODE=1")
-	stdout := pythonOutput(t, "sorted", python)
-	want := strings.Split(strings.TrimSuffix(string(stdout), "\n"), "\n")
-	if len(want) != len(lines) {
-		t.Fatalf("python answered %d of %d cases", len(want), len(lines))
-	}
-	failures, errors := 0, 0
+	errors := 0
+	var sortedLines strings.Builder
 	for i, line := range lines {
-		// When Go sorts the same decoded values.
+		// When Go sorts the decoded values.
 		decoded, err := pythonLoads([]byte(line))
 		if err != nil {
 			t.Fatalf("case %d does not decode: %v", i, err)
@@ -56,17 +34,10 @@ for line in open(sys.argv[1], encoding="utf-8"):
 		} else {
 			got = evidence.Dumps(sorted, false, false, true)
 		}
-		// Then the order, or the TypeError, is Python's.
-		if got != want[i] {
-			failures++
-			if failures <= 5 {
-				t.Errorf("case %d differs\ninput:  %s\npython: %s\ngo:     %s", i, line, want[i], got)
-			}
-		}
+		sortedLines.WriteString(got + "\n")
 	}
-	if failures > 0 {
-		t.Fatalf("%d of %d cases differ", failures, len(lines))
-	}
+	// Then each order, or TypeError, is the golden's.
+	checkSkillValue(t, "sorted", []byte(sortedLines.String()))
 	if errors == 0 || errors == len(lines) {
 		t.Fatalf("the corpus should both sort and raise; %d of %d raised", errors, len(lines))
 	}

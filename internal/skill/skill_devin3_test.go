@@ -19,25 +19,20 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
-func runSkillPair(t *testing.T, binary, family string, args []string, stdin []byte) (skillProcessResult, skillProcessResult) {
+// runSkill answers what `crw skill <family> args...` answered for stdin, and holds that answer,
+// each UNREACHED line reduced to its function, to the golden kept under its arguments (first
+// taken as the Python script's answer; decision 29a left Python's traceback frames out).
+func runSkill(t *testing.T, binary, family string, args []string, stdin []byte) skillProcessResult {
 	t.Helper()
-	command := pythonSkillCommand(family, args)
-	python := exec.Command(command[0], command[1:]...)
-	python.Env = oracleEnv("PYTHONDONTWRITEBYTECODE=1")
-	python.Stdin = bytes.NewReader(stdin)
-	gocli := exec.Command(binary, append([]string{"skill", family}, args...)...)
-	gocli.Env = oracleEnv("TMPDIR=/var/tmp")
-	gocli.Stdin = bytes.NewReader(stdin)
-	return pythonProcess(t, "", python), captureSkillProcess(t, gocli)
-}
-
-func requireSkillPairParity(t *testing.T, python, gocli skillProcessResult) {
-	t.Helper()
-	if !skillProcessParity(python, gocli) {
-		t.Fatalf("live Python mismatch (decision 29a)\npython exit=%d stdout=%q stderr=%q\ngo exit=%d stdout=%q stderr=%q", python.exit, python.stdout, python.stderr, gocli.exit, gocli.stdout, gocli.stderr)
-	}
+	command := exec.Command(binary, append([]string{"skill", family}, args...)...)
+	command.Env = oracleEnv("TMPDIR=/var/tmp")
+	command.Stdin = bytes.NewReader(stdin)
+	answer := captureSkillProcess(t, command)
+	checkSkillAnswer(t, "", "", append([]string{"skill", family}, args...), normalizedAnswer(answer))
+	return answer
 }
 
 func devin3Observation(t *testing.T, mutate func(o map[string]any, current, older map[string]any)) []byte {
@@ -72,7 +67,7 @@ func hashed(s string) string {
 }
 
 func TestHookProbeRoundThreeSelectionLivePython(t *testing.T) {
-	pythonOracleRoot(t)
+	goldenRoot(t)
 	binary := recordedCRW(t)
 	cases := []struct {
 		name, state string
@@ -107,22 +102,21 @@ func TestHookProbeRoundThreeSelectionLivePython(t *testing.T) {
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			// Given the observation, when both real commands decide it, then the bytes agree.
+			// Given the observation, when the real command decides it, then the bytes are the golden's.
 			path := filepath.Join(t.TempDir(), "observation.json")
 			if err := os.WriteFile(path, devin3Observation(t, test.mutate), 0600); err != nil {
 				t.Fatal(err)
 			}
-			python := runHookProbePython(t, "decide", path)
-			if python.exit != 0 || !strings.Contains(python.stdout, `"observation": "`+test.state+`"`) {
-				t.Fatalf("Python oracle did not observe %s: %+v", test.state, python)
+			answer := runHookProbeGo(t, binary, "decide", path)
+			if answer.exit != 0 || !strings.Contains(answer.stdout, `"observation": "`+test.state+`"`) {
+				t.Fatalf("decide did not observe %s: %+v", test.state, answer)
 			}
-			requireHookProbeParity(t, python, runHookProbeGo(t, binary, "decide", path))
 		})
 	}
 }
 
 func TestSkillUnreadableInputsLivePython(t *testing.T) {
-	pythonOracleRoot(t)
+	goldenRoot(t)
 	binary := recordedCRW(t)
 	dir := t.TempDir()
 	write := func(name string, content []byte) string {
@@ -159,18 +153,16 @@ func TestSkillUnreadableInputsLivePython(t *testing.T) {
 			if r.stdin != "" {
 				stdin, _ = os.ReadFile(r.stdin)
 			}
-			// Given unreadable input, when both commands read it, then exit, stdout and the final stderr line agree.
-			python, gocli := runSkillPair(t, binary, r.family, r.args, stdin)
-			if python.exit == 0 {
-				t.Fatalf("Python accepted unreadable input: %+v", python)
+			// Given unreadable input, when the command reads it, then it refuses it as the golden holds.
+			if answer := runSkill(t, binary, r.family, r.args, stdin); answer.exit == 0 {
+				t.Fatalf("unreadable input accepted: %+v", answer)
 			}
-			requireSkillPairParity(t, python, gocli)
 		})
 	}
 }
 
 func TestSkillReplayUnreadableFixturesLivePython(t *testing.T) {
-	pythonOracleRoot(t)
+	goldenRoot(t)
 	binary := recordedCRW(t)
 	copyDir := func(t *testing.T, from string) string {
 		t.Helper()
@@ -222,40 +214,27 @@ func TestSkillReplayUnreadableFixturesLivePython(t *testing.T) {
 			if test.fixtures == "host" {
 				args = []string{"replay", "--host-fixtures", dir}
 			}
-			// When both real commands replay it, every other path at the frozen inputs.
-			python, gocli := runSkillPair(t, binary, test.family, frozenReplayArgs(inputs, test.family, args), nil)
-			// Then neither passes, and both fail identically.
-			if python.exit == 0 {
-				t.Fatalf("Python passed a bad fixture: %+v", python)
+			// When the real command replays it, every other path at the frozen inputs.
+			answer := runSkill(t, binary, test.family, frozenReplayArgs(inputs, test.family, args), nil)
+			// Then it fails, as the golden holds.
+			if answer.exit == 0 {
+				t.Fatalf("a bad fixture passed: %+v", answer)
 			}
-			requireSkillPairParity(t, python, gocli)
 		})
 	}
 }
 
 // 4124181621: the printed self-check is computed by a real oracle self-check.
 func TestHookOracleSelfCheckLivePython(t *testing.T) {
-	pythonOracleRoot(t)
-	root := repositoryRoot()
-	script := filepath.Join(root, "plugins", "crw", "skills", "crw-run", "scripts", "hook_probe.py")
-	pythonSelfCheck := func(t *testing.T, compared []string) string {
-		t.Helper()
-		keys, _ := json.Marshal(compared)
-		code := fmt.Sprintf(`import importlib.util,json
-s=importlib.util.spec_from_file_location("hook_probe",%q);m=importlib.util.module_from_spec(s);s.loader.exec_module(m)
-m.COMPARED_KEYS=tuple(json.loads(%q))
-print(json.dumps(m._oracle_self_check(),separators=(",",":")))`, script, string(keys))
-		command := exec.Command(filepath.Join(root, ".venv", "bin", "python"), "-c", code)
-		command.Env = oracleEnv("PYTHONDONTWRITEBYTECODE=1")
-		return strings.TrimSpace(string(pythonOutput(t, "self-check", command)))
-	}
+	goldenRoot(t)
 	without := func(key string) []string {
 		return slices.DeleteFunc(slices.Clone(hookComparedKeys), func(k string) bool { return k == key })
 	}
 	cases := map[string][]string{"as shipped": hookComparedKeys, "reason dropped": without("reason"), "receiptDetail dropped": without("receiptDetail")}
 	for name, compared := range cases {
 		t.Run(name, func(t *testing.T) {
-			// Given a compared-key set, when both self-checks run, then failures and the proven count agree.
+			// Given a compared-key set, when the self-check runs, then its failures and proven count
+			// are the golden's (first taken as the reference's _oracle_self_check).
 			failures, proven, err := hookOracleSelfCheckWith(compared, hookOracleRequiredKeys)
 			if err != nil {
 				t.Fatal(err)
@@ -264,9 +243,7 @@ print(json.dumps(m._oracle_self_check(),separators=(",",":")))`, script, string(
 				failures = []string{}
 			}
 			got, _ := json.Marshal([]any{failures, proven})
-			if want := pythonSelfCheck(t, compared); string(got) != want {
-				t.Fatalf("self-check drifted from Python\nGo:     %s\nPython: %s", got, want)
-			}
+			checkSkillValue(t, "self-check", got)
 		})
 	}
 	t.Run("an unenforced key is rejected per key", func(t *testing.T) {
@@ -287,10 +264,9 @@ print(json.dumps(m._oracle_self_check(),separators=(",",":")))`, script, string(
 	})
 }
 
-// 4124181823: every return site the Go replay records is a site Python's tracer reaches, per fixture.
+// 4124181823: every return site the Go replay records is a site Python's tracer reached, per
+// fixture observation.
 func TestHookReplayReachMatchesPythonTracer(t *testing.T) {
-	root := repositoryRoot()
-	scripts := filepath.Join(root, "plugins", "crw", "skills", "crw-run", "scripts")
 	fixtures := t.TempDir()
 	if output, err := exec.Command("cp", "-r", filepath.Join(pythonInputs(t), "decisions")+"/.", fixtures).CombinedOutput(); err != nil {
 		t.Fatalf("%v %s", err, output)
@@ -312,27 +288,6 @@ func TestHookReplayReachMatchesPythonTracer(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(fixtures, name+".json"), []byte(`{"observation":`+string(observation)+`}`), 0600); err != nil {
 			t.Fatal(err)
 		}
-	}
-	code := fmt.Sprintf(`import importlib.util,json,sys
-s=importlib.util.spec_from_file_location("hook_probe",%q);m=importlib.util.module_from_spec(s);s.loader.exec_module(m)
-sites=m.return_sites();order={}
-for fn,line in sites: order.setdefault(fn,[]).append(line)
-ordinal={(fn,l):"%%s:%%d"%%(fn,i+1) for fn,ls in order.items() for i,l in enumerate(sorted(ls))}
-out={}
-for path in m.load_fixtures(%q):
-    f=json.loads(path.read_text(encoding="utf-8"));steps=f.get("steps")
-    for i,o in enumerate([st.get("observation") for st in steps] if steps else [f.get("observation")]):
-        r=set();sys.settrace(m._trace_returns(r))
-        try: m.decide(o or {})
-        finally: sys.settrace(None)
-        out["%%s#%%d"%%(path.name,i)]=sorted(ordinal[k] for k in r)
-print(json.dumps(out,sort_keys=True))`, filepath.Join(scripts, "hook_probe.py"), fixtures)
-	command := exec.Command(filepath.Join(root, ".venv", "bin", "python"), "-c", code)
-	command.Env = oracleEnv("PYTHONDONTWRITEBYTECODE=1")
-	output := pythonOutput(t, "reached return sites per fixture observation", command)
-	var python map[string][]string
-	if err := json.Unmarshal(output, &python); err != nil {
-		t.Fatal(err)
 	}
 	paths, _ := filepath.Glob(filepath.Join(fixtures, "*.json"))
 	got := map[string][]string{}
@@ -369,15 +324,16 @@ print(json.dumps(out,sort_keys=True))`, filepath.Join(scripts, "hook_probe.py"),
 			got[fmt.Sprintf("%s#%d", filepath.Base(path), i)] = keys
 		}
 	}
-	if len(got) != len(python) || len(got) < 150 {
-		t.Fatalf("observation count Go=%d Python=%d", len(got), len(python))
+	encoded, err := golden.Encode(got)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for key, want := range python {
-		// Given one fixture observation, then Go records exactly the return sites Python's tracer saw.
-		if !reflect.DeepEqual(got[key], want) {
-			t.Errorf("%s\nGo:     %v\nPython: %v", key, got[key], want)
-		}
+	if len(got) < 150 {
+		t.Fatalf("%d fixture observations", len(got))
 	}
+	// Given each fixture observation, then Go records exactly the return sites the golden holds
+	// (first taken as the sites Python's tracer saw).
+	checkSkillValue(t, "reached return sites per fixture observation", encoded)
 }
 
 // 4124181982: parentReasons, parentMatches and parentReadback are the denominators title replay

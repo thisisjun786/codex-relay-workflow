@@ -1,22 +1,13 @@
 package skill
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"os/exec"
-	"path/filepath"
 	"testing"
 )
 
-type parentTitleRun struct {
-	exit   int
-	stdout string
-	stderr string
-}
-
 func TestParentTitleDevinLivePythonParity(t *testing.T) {
-	pythonOracleRoot(t)
+	goldenRoot(t)
 	base := map[string]any{
 		"role":              "parent",
 		"binding_verified":  true,
@@ -74,11 +65,8 @@ func TestParentTitleDevinLivePythonParity(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			python := runParentTitlePython(t, payload)
 			goExit, goOut, goErr := call([]string{"parent-title", "decide"}, string(payload))
-			if python.exit != goExit || python.stdout != goOut || python.stderr != goErr {
-				t.Fatalf("live Python mismatch\npython exit=%d stdout=%q stderr=%q\ngo exit=%d stdout=%q stderr=%q", python.exit, python.stdout, python.stderr, goExit, goOut, goErr)
-			}
+			checkSkillAnswer(t, "", "", []string{"skill", "parent-title", "decide"}, skillProcessResult{goExit, goOut, goErr})
 		})
 	}
 }
@@ -93,17 +81,4 @@ func parentTitleRequest(base map[string]any, observed string, extra ...any) map[
 		request[extra[index].(string)] = extra[index+1]
 	}
 	return request
-}
-
-func runParentTitlePython(t *testing.T, payload []byte) parentTitleRun {
-	t.Helper()
-	root := repositoryRoot()
-	command := exec.Command(
-		filepath.Join(root, ".venv", "bin", "python"),
-		filepath.Join(root, "plugins", "crw", "skills", "crw-run", "scripts", "parent_title.py"),
-		"decide",
-	)
-	command.Env = oracleEnv("PYTHONDONTWRITEBYTECODE=1")
-	command.Stdin = bytes.NewReader(payload)
-	return parentTitleRun(pythonProcess(t, "", command))
 }

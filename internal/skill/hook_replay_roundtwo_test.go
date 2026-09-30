@@ -27,11 +27,10 @@ func TestHookProbeUnreadableFixtureLivePython(t *testing.T) {
 		t.Fatalf("chmod 000 did not prevent reads: %v", err)
 	}
 	args := []string{"replay", "--fixtures", dir, "--allow-unreached"}
-	// When both real commands replay that unreadable fixture.
-	python := runHookProbePython(t, args...)
-	if python.exit != 3 || !strings.Contains(python.stderr, "Permission denied") {
-		t.Fatalf("Python permission oracle: %+v", python)
+	// When the real command replays that unreadable fixture.
+	answer := runHookProbeGo(t, binary, args...)
+	// Then it may not silently skip the unreadable record.
+	if answer.exit != 3 || !strings.Contains(answer.stderr, "Permission denied") {
+		t.Fatalf("replay of an unreadable fixture: %+v", answer)
 	}
-	// Then neither may silently skip the unreadable record.
-	requireHookProbeParity(t, python, runHookProbeGo(t, binary, args...))
 }
