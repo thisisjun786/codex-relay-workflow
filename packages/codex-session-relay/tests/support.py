@@ -423,3 +423,30 @@ class FakeTarget:
                 "the test set no tip for " + repr(base_ref) + " of " + repr(repository))
         return {"sha": self.tips[(repository, base_ref)], "source": "fake",
                 "reference": "refs/heads/" + base_ref, "repository": repository}
+
+
+def registry_entries(root):
+    """The names in a scope-registry root, from its listing alone: nothing there is opened."""
+    try:
+        return frozenset(os.listdir(root))
+    except FileNotFoundError:
+        return frozenset()
+
+
+@contextmanager
+def production_registry_untouched(root):
+    """Fail the enclosed code when it leaves a new entry in the scope registry at `root`.
+
+    The production authority's root is read from the passwd database (production_scope_root),
+    never from $HOME, so moving HOME does not isolate it: a RelayService built without scope=
+    while CODEX_SESSION_RELAY_SCOPE_DIR is unset claims its socket there, in the owner's real
+    registry. Only the listing is compared, before and after; nothing is written there.
+    """
+    before = registry_entries(root)
+    yield
+    added = sorted(registry_entries(root) - before)
+    if added:
+        raise AssertionError(
+            f"left {added} in the production scope registry {root}: give the service a"
+            " temporary registry (scope=ScopeRegistry(tmp_path / 'scopes', PRODUCTION)) or set"
+            " CODEX_SESSION_RELAY_SCOPE_DIR")

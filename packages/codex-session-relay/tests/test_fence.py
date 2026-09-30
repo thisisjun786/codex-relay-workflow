@@ -24,8 +24,11 @@ import pytest
 from codex_session_relay import cli, inbox, ownership, stopadapter
 from codex_session_relay.errors import RefusalReason, RelayError
 from codex_session_relay.intent import registration_hold
-from codex_session_relay.service import RelayService
+from codex_session_relay import service as service_module
+from codex_session_relay.service import PRODUCTION, RelayService, ScopeRegistry
 from codex_session_relay.store import Store, probe, resolve_state_dir
+
+from .support import production_registry_untouched, registry_entries
 
 
 @pytest.fixture
@@ -416,9 +419,10 @@ def test_intent_register_explicit_database_ignores_an_unrelated_foreign_selectio
     assert files(selected.parent) == before
 
 
-def test_service_start_refuses_draining_without_launch(database):
+def test_service_start_refuses_draining_without_launch(database, tmp_path):
     stamp(database, phase="draining")
-    service = RelayService(resolve_state_dir(database.parent))
+    service = RelayService(resolve_state_dir(database.parent),
+                           scope=ScopeRegistry(tmp_path / "scopes", PRODUCTION))
     with mock.patch.object(service, "default_launcher") as launch:
         result = service.start()
     assert result["reason"] == "store_owned_by_other"
@@ -525,8 +529,9 @@ def test_probe_foreign_owner_never_takes_write_transaction(database):
     assert files(database.parent) == before
 
 
-def test_supervisor_stops_replacing_workers_at_draining(database):
-    service = RelayService(resolve_state_dir(database.parent))
+def test_supervisor_stops_replacing_workers_at_draining(database, tmp_path):
+    service = RelayService(resolve_state_dir(database.parent),
+                           scope=ScopeRegistry(tmp_path / "scopes", PRODUCTION))
     service.enable(actor="test")
     launches = []
 
@@ -1571,7 +1576,10 @@ def test_service_preflights_let_the_completing_opener_through_a_torn_binding(dat
     with sqlite3.connect(database) as db:
         db.execute("INSERT INTO schema_meta VALUES ('socket_path', ?)", (app,))
     db.close()
-    service = RelayService(resolve_state_dir(database.parent), socket_path=app)
+    # The production authority (so the record's scopeKey is the unsalted one a real launch
+    # records) over a temporary root: never the owner's real registry (conftest.py).
+    scope = ScopeRegistry(tmp_path / "scopes", PRODUCTION)
+    service = RelayService(resolve_state_dir(database.parent), socket_path=app, scope=scope)
     with mock.patch.object(service, "default_launcher"):
         assert service.start().get("reason") != "store_owned_by_other"
     service.enable(actor="test")
@@ -1589,10 +1597,55 @@ def test_service_preflights_let_the_completing_opener_through_a_torn_binding(dat
 
     result = service.supervise(spawn=spawn, max_segments=2, sleeper=lambda _: None)
     assert result["segments"] == [0, 0] and len(launches) == 2
+    assert registry_entries(scope.root) == {f"{scope.key(app)}.json", f"{scope.key(app)}.lock"}
     # Without the socket, the same preflight refuses the torn record.
     with pytest.raises(Exception, match="scope without socket"):
-        RelayService(resolve_state_dir(database.parent)).supervise(
+        RelayService(resolve_state_dir(database.parent), scope=scope).supervise(
             spawn=spawn, max_segments=1, sleeper=lambda _: None)
+
+
+def test_the_registry_guard_fails_a_service_that_claims_in_the_production_registry(
+        database, tmp_path, monkeypatch):
+    """conftest.py's guard, around every test, fails one that leaves a new entry in the
+    production scope registry (support.production_registry_untouched).
+
+    A RelayService built without scope= while CODEX_SESSION_RELAY_SCOPE_DIR is unset resolves
+    the production authority, whose root is the passwd entry's home (production_scope_root),
+    which HOME does not move, and supervising claims the socket there: the torn-binding test
+    above did so on every run until it was given a temporary registry. Here
+    production_scope_root names a scratch directory, so that unfixed construction claims there,
+    the guard fails it, and the real registry is never written. The fixed construction, a
+    temporary registry of the production authority, claims the same key there instead.
+    """
+    production = tmp_path / "production-scopes"
+    monkeypatch.setattr(service_module, "production_scope_root", lambda: production)
+    monkeypatch.delenv("CODEX_SESSION_RELAY_SCOPE_DIR", raising=False)
+    app = str(tmp_path / "app.sock")
+    key = ScopeRegistry(production, PRODUCTION).key(app)
+
+    class Worker:
+        pid = os.getpid()
+
+        def wait(self):
+            return 0
+
+    def supervised(service):
+        service.enable(actor="test")
+        return service.supervise(spawn=lambda **_: Worker(), max_segments=1,
+                                 sleeper=lambda _: None)["segments"]
+
+    with pytest.raises(AssertionError, match="^left .* in the production scope registry "):
+        with production_registry_untouched(service_module.production_scope_root()):
+            assert supervised(RelayService(resolve_state_dir(database.parent),
+                                           socket_path=app)) == [0]
+    assert registry_entries(production) == {f"{key}.json", f"{key}.lock"}
+    fresh = tmp_path / "fresh" / "relay.sqlite3"
+    Store(fresh).close()
+    scopes = tmp_path / "scopes"
+    with production_registry_untouched(production):
+        assert supervised(RelayService(resolve_state_dir(fresh.parent), socket_path=app,
+                                       scope=ScopeRegistry(scopes, PRODUCTION))) == [0]
+    assert registry_entries(scopes) == {f"{key}.json", f"{key}.lock"}
 
 
 def test_python_never_binds_a_store_it_does_not_own_or_that_is_mid_transition(database, tmp_path):
