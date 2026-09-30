@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"syscall"
 	"time"
 
 	"github.com/coder/websocket"
@@ -199,9 +201,20 @@ func (c *Client) Close() error {
 	go func() { done <- closeFrame(ws) }()
 	select {
 	case err := <-done:
+		if peerEnded(err) {
+			return nil
+		}
 		return err
 	case <-time.After(2 * time.Second):
 		_ = ws.CloseNow()
 		return fmt.Errorf("appserver close exceeded 2s: %w", context.DeadlineExceeded)
 	}
+}
+
+// peerEnded is a close handshake the peer ended by dropping the connection rather than answering
+// the close frame, which codex-cli 0.154.0's App Server does: the connection is closed, and
+// Python's websockets close() does not raise for it either.
+func peerEnded(err error) bool {
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, net.ErrClosed) ||
+		errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE)
 }
