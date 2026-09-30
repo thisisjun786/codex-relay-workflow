@@ -242,9 +242,8 @@ func unquote(text string, double bool) string {
 }
 
 // argvJudge decides what each command of a program runs. cwd is where a relative word resolves,
-// "" when that is unknown (a hook runs in the session's workspace). report receives each
-// Python reference (e.Python) and each word or construct that cannot be judged (KindUnreadable),
-// with the word it concerns. seen, when set, receives every command judged, with what its
+// "" when that is unknown (a hook runs in the session's workspace). report receives each word or
+// construct that cannot be judged (KindUnreadable), with the word it concerns. seen, when set, receives every command judged, with what its
 // first word runs.
 type argvJudge struct {
 	c      Classifier
@@ -298,10 +297,9 @@ func setOf(words string) map[string]bool {
 }
 
 // argv judges one command: argv[0] is what runs, found as a shell (shell) or exec finds it.
-// The builtins exit, true and : run nothing; exec runs the command after it; a Python program
-// is a reference whatever its arguments; sh, bash and dash run their -c program or the script
-// they read; env runs the command after its options; anything else runs what it is, and each
-// of its arguments is judged as something it may run (argument).
+// The builtins exit, true and : run nothing; exec runs the command after it; sh, bash and dash
+// run their -c program or the script they read; env runs the command after its options; anything
+// else runs what it is, and each of its arguments is judged as something it may run (argument).
 func (j argvJudge) argv(argv []shellWord, shell bool) {
 	if len(argv) == 0 {
 		return
@@ -336,11 +334,6 @@ func (j argvJudge) argv(argv []shellWord, shell bool) {
 	}
 	names := []string{filepath.Base(head.Value), filepath.Base(e.Resolves)}
 	switch {
-	case e.Python:
-		j.report(head.Written, e)
-		for _, w := range argv[1:] {
-			j.argument(w, true)
-		}
 	case e.Kind == KindUnreadable:
 		j.report(head.Written, e)
 	case e.Kind == KindOther:
@@ -355,7 +348,7 @@ func (j argvJudge) argv(argv []shellWord, shell bool) {
 		j.env(argv[1:])
 	default:
 		for _, w := range argv[1:] {
-			j.argument(w, false)
+			j.argument(w)
 		}
 	}
 }
@@ -388,33 +381,27 @@ func (j argvJudge) command(w shellWord) (Executable, bool) {
 }
 
 // path is where a literal word naming a file resolves. A relative one with no known working
-// directory is a Python reference when it names Python and, unless quiet, unreadable.
+// directory is, unless quiet, unreadable.
 func (j argvJudge) path(w shellWord, quiet bool) (string, bool) {
 	switch {
 	case filepath.IsAbs(w.Value):
 		return w.Value, true
 	case j.cwd != "":
 		return filepath.Join(j.cwd, w.Value), true
-	case strings.HasSuffix(w.Value, ".py"):
-		j.report(w.Written, Executable{Value: w.Written, Kind: KindPythonScript, Python: true, Detail: "names a Python file by a relative path"})
-	case PythonName(w.Value):
-		j.report(w.Written, Executable{Value: w.Written, Kind: KindPythonInterpreter, Python: true, Detail: "names a Python interpreter by a relative path"})
 	case !quiet:
 		j.unreadable(w.Written, "a relative path, which resolves in whatever directory the program runs in, not the scan's")
 	}
 	return "", false
 }
 
-// lookup finds a bare name on PATH as the shell, exec or a runner does. A Python name PATH does
-// not settle is a reference, and a PATH whose relative or empty directory comes first leaves
-// the name unreadable; both return "" and true. A name no directory holds returns "", false.
+// lookup finds a bare name on PATH as the shell, exec or a runner does. A PATH whose relative or
+// empty directory comes first leaves the name unreadable, and returns "" and true. A name no
+// directory holds returns "", false.
 func (j argvJudge) lookup(w shellWord) (string, bool) {
 	found, err := lookPath(w.Value, j.c.Expand.Path)
 	switch {
 	case err == nil:
 		return found, true
-	case PythonName(w.Value):
-		j.report(w.Written, Executable{Value: w.Written, Kind: KindPythonInterpreter, Python: true, Detail: "names a Python interpreter"})
 	case errors.Is(err, errRelativePath):
 		j.unreadable(w.Written, "names a program looked up on a PATH ("+j.c.Expand.Path+") whose relative or empty directory comes first, so what it names depends on the working directory")
 	default:
@@ -427,14 +414,12 @@ func (j argvJudge) lookup(w shellWord) (string, bool) {
 const programText = " \t\n;&|<>()$`\\\"'*?[]{}~#!"
 
 // argument judges a word a program receives as something it may run: sudo, xargs, flock,
-// timeout and uv run their arguments, and a wrapper passes "$@" on. A word naming a Python
-// program is a reference. Under a program that is not Python, one that names a shell, a
+// timeout and uv run their arguments, and a wrapper passes "$@" on. One that names a shell, a
 // script this scan cannot read or an executable it cannot place, holds program text, or needs
-// an expansion the scan does not make is unreadable; a program already judged Python
-// (python) is reported and nothing about its arguments is unreadable. A positional parameter
-// is the program's own arguments, judged where the program is run; an option is skipped, the
-// value of --opt=VALUE judged.
-func (j argvJudge) argument(w shellWord, python bool) {
+// an expansion the scan does not make is unreadable. A positional parameter is the program's own
+// arguments, judged where the program is run; an option is skipped, the value of --opt=VALUE
+// judged.
+func (j argvJudge) argument(w shellWord) {
 	if w.Missing == "" && strings.HasPrefix(w.Value, "-") {
 		_, value, ok := strings.Cut(w.Value, "=")
 		if !ok {
@@ -448,25 +433,19 @@ func (j argvJudge) argument(w shellWord, python bool) {
 	case w.Positional:
 		return
 	case w.Missing != "":
-		if strings.HasSuffix(w.Written, ".py") || PythonName(w.Written) {
-			j.report(w.Written, Executable{Value: w.Written, Kind: KindPythonScript, Python: true, Detail: "names Python through " + w.Missing + ", an expansion this scan does not make"})
-		} else if !python {
-			j.unreadable(w.Written, "an argument that needs "+w.Missing+", an expansion this scan does not make, given to a program that may run it")
-		}
+		j.unreadable(w.Written, "an argument that needs "+w.Missing+", an expansion this scan does not make, given to a program that may run it")
 		return
-	case !python && assignment(text):
+	case assignment(text):
 		j.unreadable(w.Written, "an assignment a program such as env or sudo makes, which changes what the command it runs finds")
 		return
-	case !python && strings.ContainsAny(text, programText):
+	case strings.ContainsAny(text, programText):
 		j.unreadable(w.Written, "program text given to a program this scan does not model, which may hand it to a shell")
 		return
-	case strings.Contains(text, "/") || strings.HasSuffix(text, ".py"):
+	case strings.Contains(text, "/"):
 		var ok bool
-		if path, ok = j.path(w, python); !ok {
+		if path, ok = j.path(w, false); !ok {
 			return
 		}
-	case python:
-		return
 	default:
 		if path, _ = j.lookup(w); path == "" {
 			return // judged, or no program of that name
@@ -476,9 +455,8 @@ func (j argvJudge) argument(w shellWord, python bool) {
 	e.Value = w.Written
 	names := []string{filepath.Base(text), filepath.Base(e.Resolves)}
 	switch {
-	case e.Python || (e.Kind == KindUnreadable && !python):
+	case e.Kind == KindUnreadable:
 		j.report(w.Written, e)
-	case python:
 	case e.Kind == KindOther && executable(e.Resolves):
 		j.unreadable(w.Written, e.Detail+", given to a program that may run it")
 	case e.Kind == KindNative && (modelledShells[names[0]] || modelledShells[names[1]] || otherShells[names[0]] || otherShells[names[1]]):
@@ -543,13 +521,13 @@ func (j argvJudge) shell(name string, args []shellWord) {
 		if path, ok := j.path(operands[0], false); ok {
 			e := j.c.sourced(path, j.depth+1)
 			e.Value = operands[0].Written
-			if e.Python || e.Kind == KindUnreadable {
+			if e.Kind == KindUnreadable {
 				j.report(operands[0].Written, e)
 			}
 		}
 	}
 	for _, w := range operands[1:] {
-		j.argument(w, false)
+		j.argument(w)
 	}
 }
 

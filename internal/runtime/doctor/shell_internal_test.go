@@ -160,8 +160,8 @@ func TestAFailureReadingOneProgramIsUnreadableNotTheEndOfTheScan(t *testing.T) {
 		}
 	}}
 	judge.program("exit 0; env")
-	judge.program("python3 -m relay")
-	if len(reports) != 2 || !strings.Contains(reports[0], "exit 0; env: unreadable: this scan's reading of it failed (boom)") || !strings.HasPrefix(reports[1], "python3: python-interpreter") {
+	judge.program("crw-no-such-command -m relay")
+	if len(reports) != 2 || !strings.Contains(reports[0], "exit 0; env: unreadable: this scan's reading of it failed (boom)") || !strings.HasPrefix(reports[1], "crw-no-such-command: unreadable") {
 		t.Fatalf("reports %v", reports)
 	}
 }

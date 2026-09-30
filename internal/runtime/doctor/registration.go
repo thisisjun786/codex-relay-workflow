@@ -237,7 +237,6 @@ func (j judge) interpreter(into *componentRegistrations, source, interpreter, en
 		unread(resolved, "whether the interpreter is executable could not be read: "+err.Error())
 		return
 	}
-	e := Classify(interpreter, "", "")
 	isSystemEnv := false
 	for _, spelling := range systemEnv {
 		isSystemEnv = isSystemEnv || store.PathlibSpelling(interpreter) == spelling
@@ -245,8 +244,6 @@ func (j judge) interpreter(into *componentRegistrations, source, interpreter, en
 	switch {
 	case resolved == j.crw:
 		conflict(resolved, interpreter+" is the selected crw binary itself, started as "+filepath.Base(interpreter)+", which reads "+entryPoint+" as its first argument instead of running the hook with the settings path")
-	case e.Python:
-		conflict(resolved, interpreter+" is a Python interpreter ("+e.Detail+"), which runs "+entryPoint+" as a Python program rather than the selected runtime's hook")
 	case !isSystemEnv:
 		conflict(resolved, interpreter+" (resolving to "+resolved+") is not the system env ("+strings.Join(systemEnv, " or ")+"), so what it does with "+entryPoint+" is not running it as "+definition.HookScript+" with the settings path")
 	case !isNative(resolved):
@@ -257,12 +254,6 @@ func (j judge) interpreter(into *componentRegistrations, source, interpreter, en
 		into.add(entry, resolved, true, "env runs "+entryPoint+" as "+definition.HookScript+" with the settings path")
 	}
 }
-
-// pythonStopAdapter is the checkout's Python Stop adapter (completion.ENTRY_POINT_NAME). A Stop
-// command may also run the Go hook (crw-completion-hook, or crw hook), which hookWord judges, or
-// the packaged launcher, which runs what the settings name and stands down unless the plugin owns
-// them, so it is judged through the settings rather than here.
-const pythonStopAdapter = "completion_hook.py"
 
 // stopHooks judges every Stop command of hooks.json that runs a Stop adapter. The host runs
 // each of them on every Stop, whoever the settings name as owner: for a user owner (or none,
@@ -343,11 +334,7 @@ func (j judge) stopHooks(into *componentRegistrations, path, settings string) {
 func (j judge) stopCommand(into *componentRegistrations, source, field, command, settings string) {
 	calls, unknown := readStopCommand(argvJudge{c: Classifier{Expand: j.x}}, command)
 	for _, call := range calls {
-		switch base := filepath.Base(call.argv[call.at].Written); {
-		case launcherEntries[base]:
-		case base == pythonStopAdapter:
-			into.conflict(registrationEntry(source, field, command), nil, source+" "+field+" runs the checkout's Python Stop adapter "+call.argv[call.at].Written+" (through "+call.argv[0].Written+"), not the selected runtime's "+definition.HookScript)
-		default:
+		if !launcherEntries[filepath.Base(call.argv[call.at].Written)] {
 			j.hookCall(into, source, field, command, call, settings)
 		}
 	}
@@ -631,9 +618,9 @@ func (j judge) codexConfig(into *componentRegistrations, path string, named []st
 	}
 }
 
-// startsTheBridge is runtime_install._starts_this_bridge widened to what a Go or Python host may
-// register under any table name: the bridge's console script as the command or as an argument
-// (an interpreter running it), crw bridge, or python -m codex_thread_bridge.
+// startsTheBridge is runtime_install._starts_this_bridge widened to what a host may register
+// under any table name: the bridge's console script as the command or as an argument (an
+// interpreter running it), or crw bridge.
 func startsTheBridge(command string, args []string) bool {
 	switch base := filepath.Base(command); {
 	case base == definition.Bridge:
@@ -641,11 +628,8 @@ func startsTheBridge(command string, args []string) bool {
 	case base == "crw" && len(args) > 0 && args[0] == "bridge":
 		return true
 	}
-	for i, arg := range args {
+	for _, arg := range args {
 		if filepath.Base(arg) == definition.Bridge {
-			return true
-		}
-		if arg == "-m" && i+1 < len(args) && (args[i+1] == "codex_thread_bridge" || strings.HasPrefix(args[i+1], "codex_thread_bridge.")) {
 			return true
 		}
 	}

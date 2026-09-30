@@ -221,7 +221,7 @@ the pointer is the new runtime.
 
 A registered command and the runtime it reaches are separate claims, and `crw doctor` reports them
 separately: the pointer's state and target, which kind of runtime the target is (`go-binary`,
-`python-venv`), and whether the record selects what the pointer names (`runtime.agrees`). A
+or `unknown`), and whether the record selects what the pointer names (`runtime.agrees`). A
 `current` repointed by hand at another directory is caught by that comparison rather than passing
 because the command strings are unchanged.
 
@@ -449,9 +449,12 @@ a path inside: the Stop settings, the bridge record, the cached plugin declarati
 registration it cannot read or judge refuses too, and the answer names it. A process whose working
 directory cannot be read and that runs something by a relative path is one it cannot rule out,
 whatever user runs it, unless that user (not root) is provably shut out of the directory by the
-permissions of the directory or a parent. So on a host where a root agent runs a relative script
-(every Azure VM's WALinuxAgent, for example) `remove` refuses, names the process, and gives the
-manual recovery below.
+permissions of the directory or a parent. What counts as running something is the program and,
+for a shell (`sh`, `bash`, `dash` and the like), the script it reads; a runtime directory holds no
+Python, so an interpreter's script operand is not followed (decision 62). So on a host where a
+root agent runs a relative shell script `remove` refuses, names the process, and gives the manual
+recovery below; a root Python agent run relative (every Azure VM's WALinuxAgent) does not
+refuse it.
 
 The process reading is this host's process table, in this command's PID namespace, and every answer
 that rests on it says so under `processTable`: a process in a container sharing the directory, or on
@@ -973,7 +976,7 @@ hook's journal, and the cause is one of these, read in order:
 | Cause | How to tell |
 | --- | --- |
 | The hook is not trusted | Codex has not been asked to trust this declaration since the command text last changed; nothing fires until it is |
-| The pointer names no runtime that reads `--plugin-launch` | `crw doctor`: `runtime.state`, `runtime.kind` (`python-venv` has no `bin/crw`), and a Go build older than decision 26 ([the native wiring](plugin-packaging.md#the-native-wiring)) |
+| The pointer names no runtime that reads `--plugin-launch` | `crw doctor`: `runtime.state`, `runtime.kind` (anything but `go-binary` has no `bin/crw`), and a Go build older than decision 26 ([the native wiring](plugin-packaging.md#the-native-wiring)) |
 | No usable settings | `crw doctor`: `settings.crw-completion-hook.json.state`; the hook releases in silence without settings, with settings it cannot read, and with settings another owner holds |
 | Journalling is off | `journalPolicy` is `no_journal`, or `faults_only` and nothing faulted |
 | A different journal | the settings name another `journalRoot` than the one you read |

@@ -504,14 +504,13 @@ var readExe = os.Readlink
 // answer as the kernel does when ptrace access is refused).
 var readCwd = os.Readlink
 
-// interpreter is whether a program reads its first operand as a script: a Python, or a shell.
-func interpreter(word string) (python, shell bool) {
-	base := filepath.Base(word)
-	switch base {
+// shell is whether a program reads its first operand as a script: a shell.
+func shell(word string) bool {
+	switch filepath.Base(word) {
 	case "sh", "bash", "dash", "zsh", "ksh", "mksh", "ash", "busybox":
-		return false, true
+		return true
 	}
-	return doctor.PythonName(base), false
+	return false
 }
 
 // argvOperands is what a command line runs as its program and reads as its script, spelled as
@@ -519,11 +518,9 @@ func interpreter(word string) (python, shell bool) {
 // argv[0], unless the process's executable was read (exe), which settles what it runs, and never a
 // word holding whitespace, which is a process title a program wrote over its argv (sshd, nginx)
 // rather than a path; through env (its options and NAME=VALUE assignments skipped) the command env
-// runs; and for an interpreter - a Python or a shell, known by argv[0] or by the executable - the
-// script operand, the first word after its options, unless -c (an inline program) or, for a Python,
-// -m (a module found on sys.path, whose first entry is the working directory, which is judged on
-// its own) ends them. A bare program name is found on PATH, not against the working directory, so
-// it is not returned.
+// runs; and for a shell, known by argv[0] or by the executable, the script operand, the first word
+// after its options, unless -c (an inline program) ends them. A bare program name is found on
+// PATH, not against the working directory, so it is not returned.
 func argvOperands(words []string, exe string, exeRead bool) []string {
 	var out []string
 	first := true
@@ -532,10 +529,8 @@ func argvOperands(words []string, exe string, exeRead bool) []string {
 		if strings.Contains(program, "/") && !strings.ContainsAny(program, " \t\n") && !(first && exeRead) {
 			out = append(out, program)
 		}
-		if first && exeRead {
-			if python, shell := interpreter(exe); python || shell {
-				program = exe
-			}
+		if first && exeRead && shell(exe) {
+			program = exe
 		}
 		first = false
 		rest := words[1:]
@@ -553,8 +548,7 @@ func argvOperands(words []string, exe string, exeRead bool) []string {
 			words = rest[min(i, len(rest)):]
 			continue
 		}
-		python, shell := interpreter(program)
-		if !python && !shell {
+		if !shell(program) {
 			return out
 		}
 		for i := 0; i < len(rest); i++ {
@@ -568,17 +562,17 @@ func argvOperands(words []string, exe string, exeRead bool) []string {
 			case word == "-" || word == "":
 				return out
 			case strings.HasPrefix(word, "--"):
-				if word == "--check-hash-based-pycs" || word == "--rcfile" || word == "--init-file" {
+				if word == "--rcfile" || word == "--init-file" {
 					i++
 				}
-			case strings.HasPrefix(word, "-") || (shell && strings.HasPrefix(word, "+")):
+			case strings.HasPrefix(word, "-") || strings.HasPrefix(word, "+"):
 				flags := word[1:]
 			letters:
 				for j, flag := range flags {
 					switch {
-					case flag == 'c' || (python && flag == 'm'):
+					case flag == 'c':
 						return out
-					case (python && (flag == 'W' || flag == 'X')) || (shell && flag == 'o'):
+					case flag == 'o':
 						// The option's value is the rest of this word, or the next word.
 						if j == len(flags)-1 {
 							i++

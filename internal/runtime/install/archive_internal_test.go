@@ -58,10 +58,10 @@ func cut(t *testing.T, entries []entry, last *tar.Header, body string) []byte {
 }
 
 // Every name the installer or the doctor reads as control data inside a runtime directory - bin/
-// (where the installer places crw and its links, and the doctor reads them and bin/python*), a
-// component beginning .crw- (the staging lock, the claim, the claim's lock sidecar and its
-// atomic-write temporaries), one ending .crw-lock (any file's lock sidecar) and pyvenv.cfg (a
-// Python venv to the doctor) at any level and in any case - refuses the whole archive, and the
+// (where the installer places crw and its links, and the doctor reads them), a component
+// beginning .crw- (the staging lock, the claim, the claim's lock sidecar and its atomic-write
+// temporaries) and one ending .crw-lock (any file's lock sidecar), at any level and in any case -
+// refuses the whole archive, and the
 // refusal comes before anything is written: an entry ahead of it in the archive is not
 // unpacked either, and not even bin/ is created. The release layout itself unpacks.
 func TestAnArchiveCannotPlantControlData(t *testing.T) {
@@ -86,10 +86,7 @@ func TestAnArchiveCannotPlantControlData(t *testing.T) {
 		{tar.Header{Name: ".crw-anything/LICENSE", Typeflag: tar.TypeReg}, "x"},
 		{tar.Header{Name: ".crw-anything/", Typeflag: tar.TypeDir}, ""},
 		{tar.Header{Name: "LICENSE.crw-lock", Typeflag: tar.TypeReg}, "1"},
-		{tar.Header{Name: "pyvenv.cfg", Typeflag: tar.TypeReg}, "home = /usr/bin\n"},
-		{tar.Header{Name: "PyVenv.CFG", Typeflag: tar.TypeReg}, "home = /usr/bin\n"},
-		{tar.Header{Name: "lib/python3.12/pyvenv.cfg", Typeflag: tar.TypeReg}, "home = /usr/bin\n"},
-		{tar.Header{Name: "pyvenv.cfg/x", Typeflag: tar.TypeReg}, "x"},
+		{tar.Header{Name: "LICENSE.CRW-LOCK", Typeflag: tar.TypeReg}, "1"},
 		{tar.Header{Name: "bin", Typeflag: tar.TypeDir}, ""},
 		{tar.Header{Name: "bin/crw", Mode: 0o755, Typeflag: tar.TypeReg}, binary},
 		{tar.Header{Name: "bin/python3", Mode: 0o755, Typeflag: tar.TypeReg}, binary},

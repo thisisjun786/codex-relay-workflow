@@ -3013,3 +3013,36 @@ Evidence: `internal/runtime/install/{rollback.go,settings.go,target.go,install.g
 `TestARollbackRefusesARuntimeThatCannotBeLaunched` (a recorded directory without bin/crw),
 `TestAFailedPromotionPutsBackEverythingItChanged`, `TestAUserRegistrationThroughThePointerIsASecondOwner`;
 docs/runtime-install.md "One Stop settings document" and "Rolling back".
+
+## 62. The doctor and `crw install remove` no longer tell Python apart (refactor R1)
+
+Decision: `internal/runtime/doctor` classifies an executable without asking whether it is Python.
+The kinds `python-interpreter`, `python-script` and `python-venv` are gone, with what decided them
+(a `python*`/`pypy*` name, the `.PyRuntime` section or `libpython` in an ELF image, `pyvenv.cfg`,
+a `.py` name, the `'''exec'` launcher pip and uv write), and the `python` member of every
+executable `crw doctor` and `crw install status` report under `settings` is removed. A Python
+interpreter is a native binary like any other: a script it runs is judged as a script run by an
+interpreter this reading does not read (unreadable), and a directory is `go-binary` or
+`unknown`, never `python-venv` (`crw doctor`'s `selected`, `runtime.kind` and
+`runtime.recordSelectsKind`, and each runtime's `kind` in `crw install status`). `crw doctor` no
+longer reports a pointer on a venv as "a Python install, which this command does not classify";
+it reports it as selecting no runtime it can classify, and a component's `recordedInstall` is
+`go` for any entry at its location (a Python entry there is read as the install, and its missing
+`binaryDigest` leaves the component unreadable). The doctor's registration judgement no longer
+names a Python interpreter or the checkout's `completion_hook.py` as such (each is a conflict as
+any other program is), and a `python -m codex_thread_bridge` table is not recognised as starting
+the bridge. `crw install remove` follows the script operand of a shell only: a Python
+interpreter's operand and its `-m`, `-c`, `-W` and `-X` options are no longer read, so a root
+Python agent run from a hidden working directory (the Azure WALinuxAgent) no longer makes remove
+refuse. A release archive may carry `pyvenv.cfg`, which nothing reads any more.
+
+Why: no Python runtime is left on the relay host, rollback and the settings transition no
+longer act on one (decision 61), and the retention scan that reported Python references is
+retired (decision 59). A Go runtime directory holds no Python program, so reading Python
+interpreters' operands found nothing that could run out of one.
+
+Evidence: `internal/runtime/doctor/{executable.go,shell.go,scan.go,doctor.go,registration.go}`,
+`internal/runtime/install/remove.go` (`shell`, `argvOperands`);
+`TestClassifyJudgesAScriptByWhatItRuns`, `TestAScriptIsJudgedByTheInterpreterItsHashBangResolvesTo`,
+`TestLiveProcessesRuleOutOnlyWhatTheyRead` (a Python program run relative),
+`TestRegisteredMatchingJudgesOnlyWhatItsGrammarReads`, `TestDoctorJudgesTheStopCommandsInHooksJSON`.

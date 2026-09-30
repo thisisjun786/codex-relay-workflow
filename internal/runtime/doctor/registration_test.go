@@ -185,12 +185,12 @@ func TestDoctorReadsTheCodexConfigurationWhole(t *testing.T) {
 // Finding 24. Codex starts every mcp_servers table, and register-mcp --name lets the operator
 // name the bridge's table anything, recording that name as a user-owned record's serverName.
 // So every table that starts the bridge is judged (its command or an argument is the bridge's
-// console script, crw bridge, python -m codex_thread_bridge), and the table a user-owned record
+// console script, crw bridge), and the table a user-owned record
 // names whatever it starts: one starting another bridge is a conflict.
 func TestDoctorJudgesTheBridgeUnderEveryTableName(t *testing.T) {
 	h, dir, _ := goHost(t, true)
 	goodStop := encodeJSON(t, h.stopSettings(t, nil))
-	venv := filepath.Join(h.dest, "env-1-0be23c258476")
+	venv := h.scripted()
 	old, _ := h.goRuntime(t, "bin-0.2.0-oooooooooooo")
 	userRecord := func(name string) string {
 		return encodeJSON(t, map[string]any{"recordVersion": 1, "owner": "user", "serverName": name, "bridgeExecutable": filepath.Join(venv, "bin", "codex-thread-bridge")})
@@ -209,8 +209,6 @@ func TestDoctorJudgesTheBridgeUnderEveryTableName(t *testing.T) {
 			relay: "own", bridgeClass: "conflict", want: []string{"mcp_servers.named.command names /bin/sh"}},
 		{name: "an old runtime's bridge under another name", stop: goodStop, bridge: encodeJSON(t, h.bridgeRecord(nil)), config: table("anything", filepath.Join(old, "bin", "codex-thread-bridge")),
 			relay: "own", bridgeClass: "conflict", want: []string{"mcp_servers.anything.command names " + filepath.Join(old, "bin", "codex-thread-bridge")}},
-		{name: "a Python module bridge under another name", stop: goodStop, bridge: encodeJSON(t, h.bridgeRecord(nil)), config: table("py", filepath.Join(venv, "bin", "python3"), "-m", "codex_thread_bridge"),
-			relay: "own", bridgeClass: "conflict", want: []string{"mcp_servers.py.command names " + filepath.Join(venv, "bin", "python3")}},
 		{name: "the selected crw bridge under another name", stop: goodStop, bridge: userRecord("crw"), config: table("crw", filepath.Join(dir, "bin", "crw"), "bridge"),
 			relay: "own", bridgeClass: "own"},
 		{name: "a table that starts no bridge", stop: goodStop, bridge: encodeJSON(t, h.bridgeRecord(nil)), config: table("other", "/bin/sh", "-c", "true"),
@@ -225,8 +223,8 @@ func TestDoctorJudgesTheBridgeUnderEveryTableName(t *testing.T) {
 // Finding 25. For a user owner (or none, which reads as user) the registration the host runs is
 // the Stop command in <CODEX_HOME>/hooks.json, so each one that runs a Stop adapter is judged as
 // the relay's registration: the selected crw-completion-hook (or crw hook) reading these
-// settings agrees; an old runtime's hook, the checkout's Python adapter, the hook handed to an
-// interpreter or reading other settings do not; a hooks.json that cannot be read, a bare hook and
+// settings agrees; an old runtime's hook, the checkout's Python adapter handed to an interpreter,
+// the hook handed to an interpreter or reading other settings do not; a hooks.json that cannot be read, a bare hook and
 // an expansion this command does not make are unreadable.
 func TestDoctorJudgesTheStopCommandsInHooksJSON(t *testing.T) {
 	h, dir, _ := goHost(t, true)
@@ -235,7 +233,7 @@ func TestDoctorJudgesTheStopCommandsInHooksJSON(t *testing.T) {
 	userStop := encodeJSON(t, h.stopSettings(t, map[string]any{"owner": "user", "adapterInterpreter": nil, "adapterEntryPoint": nil}))
 	noOwner := encodeJSON(t, h.stopSettings(t, map[string]any{"owner": nil, "adapterInterpreter": nil, "adapterEntryPoint": nil}))
 	old, _ := h.goRuntime(t, "bin-0.2.0-oooooooooooo")
-	venv := filepath.Join(h.dest, "env-1-0be23c258476")
+	venv := h.scripted()
 	hooks := func(command string) string {
 		return encodeJSON(t, map[string]any{"hooks": map[string]any{"Stop": []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": command, "timeout": 10}}}}}})
 	}
@@ -251,7 +249,7 @@ func TestDoctorJudgesTheStopCommandsInHooksJSON(t *testing.T) {
 		{name: "an old runtime's hook", stop: userStop, bridge: goodBridge, hooks: hooks(filepath.Join(old, "bin", "crw-completion-hook") + " " + settings), relay: "conflict", bridgeClass: "own",
 			want: []string{"names " + filepath.Join(old, "bin", "crw-completion-hook") + ", which resolves to " + filepath.Join(old, "bin", "crw")}},
 		{name: "the checkout's Python adapter", stop: noOwner, bridge: goodBridge, hooks: hooks(filepath.Join(venv, "bin", "python3") + " /checkout/scripts/completion_hook.py " + settings), relay: "conflict", bridgeClass: "own",
-			want: []string{"runs the checkout's Python Stop adapter /checkout/scripts/completion_hook.py"}},
+			want: []string{"hands /checkout/scripts/completion_hook.py to " + filepath.Join(venv, "bin", "python3") + " as an argument"}},
 		{name: "the hook handed to an interpreter", stop: userStop, bridge: goodBridge, hooks: hooks("/usr/bin/python3 " + filepath.Join(current, "crw-completion-hook") + " " + settings), relay: "conflict", bridgeClass: "own",
 			want: []string{"to /usr/bin/python3 as an argument"}},
 		{name: "a hook reading other settings", stop: userStop, bridge: goodBridge, hooks: hooks(filepath.Join(current, "crw-completion-hook") + " " + filepath.Join(h.home, "other.json")), relay: "unreadable", bridgeClass: "own",

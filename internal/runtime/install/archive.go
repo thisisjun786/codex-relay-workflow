@@ -233,12 +233,9 @@ func sumsFor(sumsPath, name string) (string, error) {
 //     (.crw-staging-lock), the claim (.crw-staging-claim.json), the claim's .crw-lock sidecar
 //     and the claim's atomic-write temporaries (.crw-write-*);
 //   - a component ending .crw-lock is the O_EXCL lock sidecar of the file beside it
-//     (decision 33), which a writer of that file would wait on and read as another run;
-//   - pyvenv.cfg at any level makes the doctor read the directory holding it, and every path
-//     under it, as a Python virtual environment (RuntimeKind, venvRoot), which is what a
-//     rollback and the Stop settings transition act on.
+//     (decision 33), which a writer of that file would wait on and read as another run.
 //
-// Names are compared case-insensitively, because a case-insensitive filesystem makes PYVENV.CFG
+// Names are compared case-insensitively, because a case-insensitive filesystem makes .CRW-LOCK
 // the same file.
 func reservedName(name string) string {
 	parts := strings.Split(strings.ToLower(name), "/")
@@ -251,8 +248,6 @@ func reservedName(name string) string {
 			return "a name beginning .crw- is the installer's staging lock, claim, claim lock or claim write"
 		case strings.HasSuffix(part, ".crw-lock"):
 			return "a name ending .crw-lock is the lock sidecar of the file beside it"
-		case part == "pyvenv.cfg":
-			return "pyvenv.cfg makes the doctor read the directory holding it as a Python virtual environment"
 		}
 	}
 	return ""

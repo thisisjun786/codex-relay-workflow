@@ -106,18 +106,16 @@ func TestReleaseAssetsAreFetchedAndVerified(t *testing.T) {
 	}
 }
 
-// A verified archive that carries pyvenv.cfg (which would make the doctor, and a rollback to this
-// runtime, read it as a Python venv and put the Python-era Stop settings back over a runtime
-// with no python3) or the claim's lock sidecar (which would stall settling the claim behind a
-// run that does not exist) is refused at the unpack: nothing is promoted, the directory is
-// released and the host record lists no install of it.
+// A verified archive that carries the claim's lock sidecar (which would stall settling the claim
+// behind a run that does not exist) or a staging lock is refused at the unpack: nothing is
+// promoted, the directory is released and the host record lists no install of it.
 func TestAnArchiveCarryingControlDataIsNotInstalled(t *testing.T) {
 	raw, err := binary()
 	if err != nil {
 		t.Fatal(err)
 	}
 	name := "crw_0.9.9_" + runtime.GOOS + "_" + runtime.GOARCH + ".tar.gz"
-	for _, planted := range []string{"pyvenv.cfg", ".crw-staging-claim.json.crw-lock"} {
+	for _, planted := range []string{".crw-staging-lock", ".crw-staging-claim.json.crw-lock"} {
 		headers := []*tar.Header{{Name: "crw", Mode: 0o755, Size: int64(len(raw)), Typeflag: tar.TypeReg}}
 		bodies := [][]byte{raw}
 		for _, link := range []string{"codex-session-relay", "codex-thread-bridge", "crw-completion-hook"} {

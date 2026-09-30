@@ -223,7 +223,7 @@ func (s *scan) settingsRecord(path string) {
 			// directory (argvJudge.path); a file neither native nor #! is not this reading's to judge.
 			j := s.judge(4, path, name, "", s.expander(""))
 			if key == "args" {
-				j.argument(literal(text), false)
+				j.argument(literal(text))
 			} else if target, ok := j.path(literal(text), false); ok {
 				e := j.c.classify(target, "", 0)
 				if e.Kind == KindOther {
@@ -553,7 +553,7 @@ func readStopCommand(j argvJudge, command string) (calls []stopAdapterCall, unkn
 			calls = append(calls, call)
 			return
 		}
-		if command.Kind == KindScript || command.Kind == KindPythonScript {
+		if command.Kind == KindScript {
 			unknown = "it runs " + strconv.Quote(argv[0].Written) + ", a script that may run the adapter with settings of its own"
 		}
 	}
@@ -757,10 +757,9 @@ func (s *scan) alive(pid int, ticks any, boot any) (bool, error) {
 	return true, nil
 }
 
-// process is what an alive pid is running: its executable and argv, and whether that is
-// Python. An exe or cmdline that cannot be read, of a process still there, is an error: what
-// it runs is unknown.
-func (s *scan) process(pid int) (Executable, []any, error) {
+// readable is whether what an alive pid runs can be read: its executable and its command line.
+// One that cannot be, of a process still there, is an error: what it runs is unknown.
+func (s *scan) readable(pid int) error {
 	base := filepath.Join(s.o.Proc, strconv.Itoa(pid))
 	gone := func(err error) error {
 		if _, statErr := s.procStat(pid); errors.Is(statErr, errGone) {
@@ -768,31 +767,13 @@ func (s *scan) process(pid int) (Executable, []any, error) {
 		}
 		return err
 	}
-	exe, err := os.Readlink(filepath.Join(base, "exe"))
-	if err != nil {
-		return Executable{}, nil, gone(err)
+	if _, err := os.Readlink(filepath.Join(base, "exe")); err != nil {
+		return gone(err)
 	}
-	raw, cmdErr := os.ReadFile(filepath.Join(base, "cmdline"))
-	var argv []any
-	var python bool
-	for i, word := range strings.Split(strings.TrimRight(string(raw), "\x00"), "\x00") {
-		if word == "" {
-			continue
-		}
-		argv = append(argv, word)
-		if (i == 0 && PythonName(word)) || strings.HasSuffix(word, ".py") {
-			python = true
-		}
+	if _, err := os.ReadFile(filepath.Join(base, "cmdline")); err != nil {
+		return gone(err)
 	}
-	e := Executable{Value: exe, Resolves: exe, Kind: KindNative, Detail: "the process's executable"}
-	if PythonName(exe) || python || pythonImage(filepath.Join(base, "exe")) {
-		e.Kind, e.Python, e.Detail = KindPythonInterpreter, true, "a process running a Python interpreter or a .py program"
-		return e, argv, nil
-	}
-	if cmdErr != nil {
-		return e, argv, gone(cmdErr)
-	}
-	return e, argv, nil
+	return nil
 }
 
 // daemons reads daemon.json in every state directory and every scope registry claim, and
@@ -828,7 +809,7 @@ func (s *scan) daemons() map[int]bool {
 				continue
 			}
 			pids[pid] = true
-			if _, _, err := s.process(pid); err != nil && !errors.Is(err, errGone) {
+			if err := s.readable(pid); err != nil && !errors.Is(err, errGone) {
 				s.unreadable = append(s.unreadable, one.path+": row 3 "+key[0]+" "+strconv.Itoa(pid)+": what the process runs could not be read: "+store.PythonOSError(err))
 			}
 		}
@@ -836,7 +817,7 @@ func (s *scan) daemons() map[int]bool {
 	return pids
 }
 
-// launcherCopy is row 8: <CODEX_HOME>/crw-stop-hook.py, the launcher copy the cached Python
+// launcherCopy is row 8: <CODEX_HOME>/crw-stop-hook.py, the launcher copy the cached pre-native
 // Stop bootstrap falls back to.
 func (s *scan) launcherCopy() {
 	path := filepath.Join(s.o.CodexHome, "crw-stop-hook.py")

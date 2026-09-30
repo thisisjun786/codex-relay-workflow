@@ -207,14 +207,15 @@ func TestRegisteredMatchingListsWhatItCannotRead(t *testing.T) {
 }
 
 // A hook command is judged only as far as it is written in the grammar the reading reads: the
-// native Stop command and the pre-native python3 -c bootstrap are read, and every construct whose
-// meaning would have to be emulated is unreadable rather than guessed at: a function shadowing a
+// native Stop command is read, the pre-native python3 -c bootstrap hands its interpreter program
+// text and a ${PLUGIN_ROOT} word outside the cache, and every construct whose meaning would have
+// to be emulated is unreadable rather than guessed at: a function shadowing a
 // PATH program, a PATH assignment in any form, a glob or brace pattern, a runner handing a shell
 // or program text on, a file with no #!, a relative command or script, and a PATH whose relative
 // directory comes first.
 func TestRegisteredMatchingJudgesOnlyWhatItsGrammarReads(t *testing.T) {
 	h := newHost(t)
-	env := h.pythonVenv(t)
+	env := h.scriptedRuntime(t)
 	dir, _ := h.goRuntime(t, "bin-0.3.0-aaaaaaaaaaaa")
 	link(t, dir, h.current())
 	bin := filepath.Join(h.home, "bin")
@@ -223,11 +224,11 @@ func TestRegisteredMatchingJudgesOnlyWhatItsGrammarReads(t *testing.T) {
 	link(t, "/bin/sh", filepath.Join(bin, "python3"))
 	write(t, filepath.Join(bin, "no-hash-bang"), "python3 -m codex_session_relay hook\n", 0o755)
 	odd := filepath.Join(h.home, "odd\ndir", "relay")
-	link(t, filepath.Join(env, "bin", "codex-session-relay"), odd)
+	link(t, filepath.Join(bin, "codex-session-relay"), odd)
 	h.env = scope.Env{"HOME=" + h.home, "XDG_STATE_HOME=" + h.state, "CODEX_HOME=" + h.codex, "PATH=" + bin + ":/usr/bin:/bin"}
 	cases := []struct{ command, want string }{
 		{`"$HOME/.local/share/crw-runtime/current/bin/crw" hook --plugin-launch; exit 0`, "clean"},
-		{"python3 -c \"\nimport os, sys\nraise SystemExit(0)\n\" \"${PLUGIN_ROOT}/wiring/crw_stop_hook.py\"", "clean"},
+		{"python3 -c \"\nimport os, sys\nraise SystemExit(0)\n\" \"${PLUGIN_ROOT}/wiring/crw_stop_hook.py\"", "unreadable"},
 		{`codex-session-relay hook`, "clean"},
 		{`codex-session-relay() { command codex-session-relay hook stop; }; codex-session-relay`, "unreadable"},
 		{`python3() { :; }; env python3 -m codex_session_relay hook`, "unreadable"},
@@ -236,7 +237,7 @@ func TestRegisteredMatchingJudgesOnlyWhatItsGrammarReads(t *testing.T) {
 		{`env PATH=` + env + `/bin codex-session-relay hook stop`, "unreadable"},
 		{`export PATH=` + env + `/bin; codex-session-relay hook stop`, "unreadable"},
 		{`PATH=` + env + `/bin; codex-session-relay hook stop`, "unreadable"},
-		{filepath.Join(h.dest, "env-1-*", "bin", "codex-session-relay") + ` hook`, "unreadable"},
+		{filepath.Join(h.dest, "bin-*", "bin", "codex-session-relay") + ` hook`, "unreadable"},
 		{env + `/bin/{codex-session-relay,x} hook`, "unreadable"},
 		{`runner -c 1 sh -c 'python3 -m codex_session_relay hook'`, "unreadable"},
 		{`runner /tmp/x -c 'python3 -m codex_session_relay hook'`, "unreadable"},
