@@ -576,19 +576,21 @@ cutover's fence. The retention scan does not read
 
 ## The one definition
 
-`scripts/crw_runtime/components.json` is the single compatibility definition OPS-1.1 requires: the
-two components, their console-script names (the compatibility names beside `crw`), version,
-licence, retained upstream provenance and the tool that identifies each one. The Go side,
-`internal/runtime/definition`, carries only what a Go install needs, and a test keeps it equal to
-the committed file. Release digests are not in it: they live in the release's `SHA256SUMS` and in
-the host record ([decision 35](port/decisions.md)).
+`internal/runtime/definition` is the single compatibility definition OPS-1.1 requires: the two
+components, their console-script names (the compatibility names beside `crw`), version, licence
+and the tool that identifies the bridge. `crw-dev ci contracts` checks it against what it names
+outside itself: each licence is in the checkout and among the files the release archives carry,
+the identity tool is a tool the bridge's contract lists, and the links the installer places are
+the ones the release build makes. Release digests are not in it: they live in the release's
+`SHA256SUMS` and in the host record ([decision 35](port/decisions.md)). A host record still
+states `definitionVersion` 1 (decision 34).
 
-The file stays `definitionVersion` 1 and keeps its Python-shaped fields, `packageLocation`,
-`requiresPython`, the package trees and `sourceDigest`, while the Python fence installer reads it;
-`runtime_install.py verify-definition` re-derives every one of them in CI, so editing anything under
-`packages/` means recording the derived trees again. The upstream revision is not derivable from
-this checkout, because the import brought source rather than history, so it is required to appear
-in [packages/README.md](../packages/README.md), the provenance narrative OPS-1.5 says is retained
+Until todo 44 the definition was a file, `scripts/crw_runtime/components.json`, which kept the
+Python packages' trees and source digests for the Python installer to re-derive; it left with its
+last Python reader, and the Go package, which had carried the fields a Go install uses, became
+the only copy (decision 47). The ported bridge's upstream provenance, which the file recorded
+because the import brought source rather than history, is kept in
+[packages/README.md](../packages/README.md), the provenance narrative OPS-1.5 says is retained
 rather than replaced.
 
 What the definition does not carry is as important. Installed locations, entry points, host names

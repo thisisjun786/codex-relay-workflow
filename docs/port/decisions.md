@@ -1063,7 +1063,7 @@ claimed for good on the owner's store; that is corrected in the fence and in Go 
 read-only command never creates one"}`, exit 2, byte for byte the fence's `Services.store`
 answer. `store_absent` is a literal there (as in `declarations.py`), not an
 `errors.RefusalReason` member, so `contract/schema/relay-exit-codes.json`, which
-`scripts/port/dump_contracts.py` derives from that enum, does not list it. Absent-store
+`scripts/port/dump_contracts.py` derived from that enum (until todo 44), does not list it. Absent-store
 initialization happens on write or daemon opens only (decision 30). A partial store (a
 mirror or a write gate without `D`) is never read, created or repaired: every form of both
 runtimes that opens the store, read or write, answers the fence writer's refusal, reason
@@ -1545,6 +1545,10 @@ records its Go install entry's location and revision; internal/relay/faults) and
 parity tag, `TestParity_python_faultsweep_reads_a_go_install_entry`.
 
 ## 35. The components definition stays definitionVersion 1, without per-target digests
+
+(Superseded in part by decision 47: todo 44 deleted `scripts/crw_runtime/components.json`, and
+`internal/runtime/definition` is the one definition. The absence of per-target digests and
+`definition.Digest` stand.)
 
 Decision: scripts/crw_runtime/components.json keeps `definitionVersion` 1 and every field it has
 while the Python installer and scripts/trial_startup.py read it (until todos 44 and 48).
@@ -2554,3 +2558,35 @@ that links the store without testsupport), and the refusal-and-live pairs
 (`internal/relay/cli/readonly_test.go`) and `Test33ReviewD8`
 (`internal/relay/hook/review_selection_test.go`). Restoring the product guard fails
 `TestOpen_opens_the_live_state_by_default`.
+
+## 47. The Go definition is the one compatibility definition; components.json is deleted (todo 44)
+
+Decision: `scripts/crw_runtime/components.json` is deleted with the rest of `scripts/crw_runtime`,
+and `internal/runtime/definition` is the one compatibility definition (OPS-1.1). It keeps what Go
+reads: each component's name, console-script name (the links beside `crw`), version (the bridge's
+`--version` and the relay's fault-sweep facts are tested against it), licence path and identity
+tool. `upstream` and `exerciseCommand` are dropped from it, because nothing in Go read them except
+the check that compared them with the file: the bridge's upstream provenance stays in
+`packages/README.md` until `packages/codex-thread-bridge/PROVENANCE.md` takes it (todo 44, C6).
+`definition.Version` stays 1: it is what a host record states (decision 34), not the version of a
+file. No `definitionVersion` 2 file is written, which supersedes the plan's "move components.json
+to internal/runtime/definition/components.json (v2)". `crw-dev ci contracts`' `runtime` check
+now judges the Go definition against what it names outside itself: each licence file exists and
+is among the files `.goreleaser.yaml` archives, the identity tool is a tool
+`contract/schema/bridge-mcp-tools.json` lists, and `definition.Links()` equals the names the
+release build links to `crw` (`ln -sfn crw <name>`). Its contract, for "present exactly when its
+contract is", is `internal/runtime/definition/definition.go`.
+
+Why: a second copy has to be kept equal to the first, and after todo 44 nothing but that equality
+test and the check read the file. Every Python-shaped field in it (module locations, package
+trees, source digests, `requiresPython`, `exerciseScript`) described the Python packages todo 44
+deletes, and a `v2` file holding only the Go fields would restate the Go slice while adding a
+parser for it. The release configuration and the bridge's tool contract are independent sources,
+so checking against them catches a drift the equality test could not: a link the installer
+expects that the release no longer makes, or a licence the archive no longer ships.
+
+Evidence: `internal/runtime/definition/definition.go` (`Components`, `Links`, `Version`);
+`TestDefinitionNamesTheComponentsTheInstallerPlaces`; `internal/dev/ci/contracts.go`
+(`runtimeCheck`, `releaseLinks`, `releaseArchiveFiles`) and `TestContractsRuntimeDefinition`
+(a changed link, an unarchived licence, a missing licence, tool contract or release configuration
+each fail it); `internal/bridge/mcp/version_test.go`, `internal/relay/faults/version_test.go`.
