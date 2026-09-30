@@ -1,7 +1,7 @@
 # Three-level linkage
 
 Relay-owned records, not contract records. The five schemas under
-`src/codex_session_relay/schema/` are byte copies of the frozen cross-session communication
+`contract/schema/` (`src/codex_session_relay/schema/` until todo 44) are byte copies of the frozen cross-session communication
 contract and none of them describes anything on this page. Nothing here is validated against
 them, and nothing here changed them.
 

@@ -1,7 +1,7 @@
 # Coordination between parents
 
 Relay-owned records, like the linkage tables and for the same reason: the five schemas under
-`src/codex_session_relay/schema/` are byte copies of a frozen contract, none of them
+`contract/schema/` (`src/codex_session_relay/schema/` until todo 44) are byte copies of a frozen contract, none of them
 describes anything on this page, and nothing here changed them.
 
 Three concerns, three modules, one shared foundation. A merge turn is keyed by a target and

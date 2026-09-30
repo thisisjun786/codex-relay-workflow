@@ -2,8 +2,8 @@
 
 Derived from the frozen cross-session communication contract, bundle revision
 `c37d332e2daba95c9ef47adf00a82bc9c6a539ab62538f0ad857561e470d2989`. This document is portable: it
-carries no task identifiers, host paths or private history. The five JSON schemas ship under
-`src/codex_session_relay/schema/`.
+carries no task identifiers, host paths or private history. The five JSON schemas are kept under
+`contract/schema/` (they shipped under `src/codex_session_relay/schema/` until todo 44).
 
 **Status: planned.** The protocol below is frozen and real. Its implementation is not yet written.
 
