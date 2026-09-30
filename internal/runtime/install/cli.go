@@ -13,7 +13,6 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
-	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/scope"
 )
@@ -304,7 +303,7 @@ func notUTF8(values []namedValue) string {
 // character and name a file that does not exist. The execution policy path is the one path
 // recorded surrogate-escaped, as runtime_install.py records it.
 func notUTF8Detail(name, value string) string {
-	return name + " holds a byte that is not UTF-8 (" + store.PythonRepr(reading.FSDecode(value)) + "), and crw install records only paths it can spell as UTF-8, so nothing was read or written; use a path whose name is UTF-8"
+	return name + " holds a byte that is not UTF-8 (" + store.PythonRepr(store.FSDecode(value)) + "), and crw install records only paths it can spell as UTF-8, so nothing was read or written; use a path whose name is UTF-8"
 }
 
 func absolute(path string) (string, error) {

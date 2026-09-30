@@ -534,7 +534,7 @@ func executionPolicyReading(value string) (Object, string) {
 	summary := policy.Summary()
 	// Recorded as os.fsdecode spells it: a byte that is not UTF-8 is its surrogate escape, which
 	// the record carries as "\udcXX" and each launcher fs-encodes back to the byte.
-	return Object{field("path", reading.FSDecode(candidate)), field("digest", summary["digest"]), field("mode", summary["mode"]), field("roles", ordered(summary["roles"])),
+	return Object{field("path", store.FSDecode(candidate)), field("digest", summary["digest"]), field("mode", summary["mode"]), field("roles", ordered(summary["roles"])),
 		field("parsedWith", "this crw binary's bridge policy parser; the installed runtime parses the file again at every start and decides for itself")}, ""
 }
 

@@ -99,7 +99,7 @@ func Payload(state, writtenBy string, issue, run any, pid int, host, writtenAt s
 func Shape(v any) error {
 	claim, ok := v.(record.Object)
 	if !ok {
-		return reading.Fail("TypeError", "a staging claim is an object, found "+typeName(v))
+		return reading.Fail("TypeError", "a staging claim is an object, found "+evidence.TypeName(v))
 	}
 	writer := record.Get(claim, "writtenBy")
 	if writer != WrittenByGo {
@@ -133,22 +133,6 @@ func repr(v any) string {
 		return strconv.FormatInt(value, 10)
 	}
 	return evidence.Dumps(v, false, false, false)
-}
-
-func typeName(v any) string {
-	switch v.(type) {
-	case nil:
-		return "NoneType"
-	case []any:
-		return "list"
-	case string:
-		return "str"
-	case bool:
-		return "bool"
-	case float64:
-		return "float"
-	}
-	return "int"
 }
 
 // ReadClaim is staging.read_claim: absent, present, unreadable and unreachable stay four

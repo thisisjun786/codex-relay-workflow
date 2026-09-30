@@ -9,7 +9,6 @@ import (
 	"regexp"
 	"strings"
 	"syscall"
-	"unicode"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/mcp"
@@ -139,10 +138,8 @@ func equalsInt(v any, n int64) bool {
 	return false
 }
 
-func isSpace(r rune) bool { return unicode.IsSpace(r) || r >= 0x1c && r <= 0x1f }
-
 // pyStrip is str.strip() with no arguments.
-func pyStrip(s string) string { return strings.TrimFunc(s, isSpace) }
+func pyStrip(s string) string { return store.PythonStrip(s) }
 
 // inherited is crw_bridge_mcp.py inherited(): stripped, and empty reads as unset.
 func inherited(env map[string]string, name string) (string, bool) {
@@ -332,26 +329,8 @@ func Bridge(program string, args []string) int {
 	if !errors.As(err, &refused) {
 		refused = &refusal{err.Error()}
 	}
-	fmt.Fprintln(os.Stderr, stderrText("crw bridge launcher: "+refused.message))
+	fmt.Fprintln(os.Stderr, settings.StderrText("crw bridge launcher: "+refused.message))
 	return 2
-}
-
-// stderrText is text as Python's sys.stderr writes it (errors="backslashreplace"): a lone
-// surrogate, which UTF-8 cannot carry, as its escape, and every other character as it stands. A
-// record path or policy path that holds one reaches the refusal unescaped, as Python's str() of it
-// does, and only the stream escapes it.
-func stderrText(text string) string {
-	var b strings.Builder
-	for i := 0; i < len(text); {
-		r, size := settings.CodePoint(text, i)
-		if r >= 0xd800 && r <= 0xdfff {
-			fmt.Fprintf(&b, "\\u%04x", r)
-		} else {
-			b.WriteString(text[i : i+size])
-		}
-		i += size
-	}
-	return b.String()
 }
 
 // environ is the process environment entries with environment's values for the two policy
