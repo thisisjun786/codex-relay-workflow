@@ -551,8 +551,9 @@ recorded, else the selected store. The request is sent only once the peer is est
 user's direct socket in a directory no group or other user may write, and within one 5 s budget.
 The owner's answer is the command's, with the exit status its error record carries (`refused` 2,
 `host` 3, `usage` 4). An owner that does not answer in time is `{"error": "host", "detail": "the
-owner did not answer guard-evaluate within 5s"}` and one that says nothing readable is `{"error":
-"host", "detail": "the owner closed control.sock without a readable guard-evaluate answer"}`,
+owner did not answer guard-evaluate within 5s"}` and one that says nothing readable (no bytes,
+bytes that are not JSON, or the JSON value `null`) is `{"error": "host", "detail": "the owner
+closed control.sock without a readable guard-evaluate answer"}`,
 both exit 3; a failure after the request was sent is a host error too, never a refusal or a
 second evaluation. When the socket cannot be reached or trusted, the CLI evaluates in-process only
 where `takeover.json` is absent or names its own runtime as owner, after the read-only Stop path

@@ -185,11 +185,14 @@ func TestGuardEvaluate_routes_to_the_owners_control_socket_as_the_fence_does(t *
 		}
 	}
 
-	// An owner that answers nothing readable, and one whose error record the fence cannot look
-	// up (an unhashable kind), after the request was sent: host errors, never a refusal.
+	// An owner that answers nothing readable (nothing, not JSON, or null), and one whose error
+	// record the fence cannot look up (an unhashable kind), after the request was sent: host
+	// errors, never a refusal.
 	for _, owner := range []struct{ name, reply, detail string }{
 		{"an owner that answers nothing", "", "the owner closed control.sock without a readable guard-evaluate answer"},
 		{"an owner that answers bytes that are not JSON", "\xff not json\n", "the owner closed control.sock without a readable guard-evaluate answer"},
+		// The fence reads a JSON null as no answer at all (socket_guard's `if value is None`).
+		{"an owner that answers null", "null\n", "the owner closed control.sock without a readable guard-evaluate answer"},
 		{"an owner whose error kind is a list", "{\"error\": [\"refused\"]}\n", "TypeError: unhashable type: 'list'"},
 	} {
 		closed := fakeOwner(t, filepath.Join(python, "control.sock"), owner.reply)
