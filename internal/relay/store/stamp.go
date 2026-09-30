@@ -221,6 +221,15 @@ func stampRefusal(meta map[string]string) error {
 		}
 		return fenceRefused("the relay store belongs to another runtime")
 	}
+	// The rest of the stamp is judged as the writable open judges it (ownership.StampFromMeta),
+	// so a preflight never passes a store that no write could then use.
+	if _, err := ownership.StampFromMeta(meta); err != nil {
+		var refused *ownership.Refused
+		if errors.As(err, &refused) {
+			return fenceRefused(refused.Detail)
+		}
+		return fenceRefused(err.Error())
+	}
 	return nil
 }
 
