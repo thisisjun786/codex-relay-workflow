@@ -12,7 +12,7 @@ import (
 func TestDEL21_a_deactivation_is_reported_during_a_backoff_and_never_shortens_it(t *testing.T) {
 	t.Run("reported while a busy backoff runs, never shortened", func(t *testing.T) {
 		tree := parityTree(t)
-		python := runPython(t, tree, "del21", "running")
+		expected := expectScenario(t, tree, "del21", "running")
 		f := newFixture(t, tree)
 		event := f.queuedEvent(regOpts{})
 		f.host.threads[parent].status = "active"
@@ -22,16 +22,16 @@ func TestDEL21_a_deactivation_is_reported_during_a_backoff_and_never_shortens_it
 		deferred := f.row(event).F("next_eligible_at")
 		f.setStatus("cancelled")
 		record := f.mustAttempt(event, nil)
-		requireSameJSON(t, "record", record, python.Out["record"])
+		expected.same("record", record)
 		if str(record, "withheldReason") != RelationshipNotActive || f.row(event).F("next_eligible_at") < deferred {
 			t.Fatalf("record %v", record)
 		}
-		requireSameJSON(t, "after", f.row(event).F("next_eligible_at"), python.Out["after"])
-		requireSameTables(t, f, python)
+		expected.same("after", f.row(event).F("next_eligible_at"))
+		expected.tables(f)
 	})
 	t.Run("a backoff extended after the row was read still wins", func(t *testing.T) {
 		tree := parityTree(t)
-		python := runPython(t, tree, "del21", "extended")
+		expected := expectScenario(t, tree, "del21", "extended")
 		f := newFixture(t, tree)
 		event := f.queuedEvent(regOpts{})
 		f.setStatus("cancelled")
@@ -42,17 +42,17 @@ func TestDEL21_a_deactivation_is_reported_during_a_backoff_and_never_shortens_it
 		mustDo(t, err)
 		record, err := f.delivery.WithholdInactive(f.ctx, event, stale, f.clock.Now(), 0)
 		mustDo(t, err)
-		requireSameJSON(t, "record", record, python.Out["record"])
+		expected.same("record", record)
 		if f.row(event).F("next_eligible_at") != far {
 			t.Fatal("the later deadline survives")
 		}
-		requireSameTables(t, f, python)
+		expected.tables(f)
 	})
 }
 
 func TestDEL22_a_superseded_relationship_is_left_to_the_supersession_path(t *testing.T) {
 	tree := parityTree(t)
-	python := runPython(t, tree, "del22", "superseded")
+	expected := expectScenario(t, tree, "del22", "superseded")
 	f := newFixture(t, tree)
 	event := f.queuedEvent(regOpts{})
 	f.supersede("rel-bbbbbbbbbbbbbbbb")
@@ -62,12 +62,12 @@ func TestDEL22_a_superseded_relationship_is_left_to_the_supersession_path(t *tes
 	if f.one("SELECT * FROM journal WHERE kind = ?", "delivery_withheld_inactive") != nil {
 		t.Fatal("never tagged relationship_not_active")
 	}
-	requireSameTables(t, f, python)
+	expected.tables(f)
 }
 
 func TestDEL23_a_resume_racing_the_withhold_leaves_the_delivery_alone(t *testing.T) {
 	tree := parityTree(t)
-	python := runPython(t, tree, "del22", "race")
+	expected := expectScenario(t, tree, "del22", "race")
 	f := newFixture(t, tree)
 	event := f.queuedEvent(regOpts{})
 	stale, err := LoadRelationship(f.ctx, f.store, f.rid)
@@ -75,16 +75,17 @@ func TestDEL23_a_resume_racing_the_withhold_leaves_the_delivery_alone(t *testing
 	stale.Status = "paused"
 	record, err := f.delivery.WithholdInactive(f.ctx, event, stale, f.clock.Now(), 0)
 	mustDo(t, err)
-	if record != nil || python.Out["record"] != nil || f.row(event).S("state") != Queued || f.one("SELECT * FROM journal WHERE kind = ?", "delivery_withheld_inactive") != nil {
+	expected.same("record", record)
+	if record != nil || f.row(event).S("state") != Queued || f.one("SELECT * FROM journal WHERE kind = ?", "delivery_withheld_inactive") != nil {
 		t.Fatal("a stale reading holds nothing and journals nothing")
 	}
-	requireSameTables(t, f, python)
+	expected.tables(f)
 }
 
 func TestDEL24_guarded_transitions_prevent_duplicate_sends(t *testing.T) {
 	t.Run("a stale busy observation cannot overwrite a dispatch", func(t *testing.T) {
 		tree := parityTree(t)
-		python := runPython(t, tree, "del24", "busy")
+		expected := expectScenario(t, tree, "del24", "busy")
 		f := newFixture(t, tree)
 		event := f.queuedEvent(regOpts{})
 		f.mustAttempt(event, nil)
@@ -101,32 +102,32 @@ func TestDEL24_guarded_transitions_prevent_duplicate_sends(t *testing.T) {
 		if again := f.mustAttempt(event, at(f.clock.Now())); again != nil || len(f.host.sends) != 1 {
 			t.Fatal("sent once")
 		}
-		requireSameTables(t, f, python)
+		expected.tables(f)
 	})
 	t.Run("reconciling an older attempt cannot reopen a dispatch", func(t *testing.T) {
 		tree := parityTree(t)
-		python := runPython(t, tree, "del24", "reconcile")
+		expected := expectScenario(t, tree, "del24", "reconcile")
 		f := newFixture(t, tree)
 		event := f.queuedEvent(regOpts{})
 		f.host.script = []string{"busy"}
 		first := f.mustAttempt(event, nil)
 		f.clock.Advance(3600)
 		second := f.mustAttempt(event, at(f.clock.Now()))
-		requireSameJSON(t, "second", second, python.Out["second"])
+		expected.same("second", second)
 		outcome, err := NewReconciler(f.delivery).ReconcileAttempt(f.ctx, str(first, "requestId"), f.host, nil)
 		mustDo(t, err)
-		requireSameJSON(t, "reconciled", outcome, python.Out["reconciled"])
+		expected.same("reconciled", outcome)
 		f.clock.Advance(100000)
 		if again := f.mustAttempt(event, at(f.clock.Now())); again != nil || f.row(event).S("state") != Dispatched || len(f.host.sends) != 2 {
 			t.Fatal("the older attempt reopened the delivery")
 		}
-		requireSameTables(t, f, python)
+		expected.tables(f)
 	})
 }
 
 func TestDEL25_receipt_recovery_keeps_the_dispatch_turn_and_its_provenance(t *testing.T) {
 	tree := parityTree(t)
-	python := runPython(t, tree, "del25")
+	expected := expectScenario(t, tree, "del25")
 	f := newFixture(t, tree)
 	event := f.queuedEvent(regOpts{})
 	f.host.script = []string{"in_progress"}
@@ -136,13 +137,13 @@ func TestDEL25_receipt_recovery_keeps_the_dispatch_turn_and_its_provenance(t *te
 	f.host.ledger[request] = Obj{{Key: "requestId", Value: request}, {Key: "status", Value: "accepted"}, {Key: "resumed", Value: Obj{{Key: "approvalPolicy", Value: "never"}}}, {Key: "turnId", Value: turn.TurnID}}
 	outcome, err := NewReconciler(f.delivery).ReconcileAttempt(f.ctx, request, f.host, nil)
 	mustDo(t, err)
-	requireSameJSON(t, "record", record, python.Out["record"])
-	requireSameJSON(t, "reconciled", outcome, python.Out["reconciled"])
+	expected.same("record", record)
+	expected.same("reconciled", outcome)
 	row := f.row(event)
 	if row.S("state") != Dispatched || row.S("dispatch_turn_id") != turn.TurnID || row.S("dispatch_evidence") != "transport_accepted" {
 		t.Fatalf("row %v", row)
 	}
-	requireSameTables(t, f, python)
+	expected.tables(f)
 }
 
 func TestDEL26_a_later_turn_needs_an_explicit_continuation_admission(t *testing.T) {
@@ -156,7 +157,7 @@ func TestDEL26_a_later_turn_needs_an_explicit_continuation_admission(t *testing.
 	} {
 		t.Run(tc.mode, func(t *testing.T) {
 			tree := parityTree(t)
-			python := runPython(t, tree, "del26", tc.mode)
+			expected := expectScenario(t, tree, "del26", tc.mode)
 			f := newFixture(t, tree)
 			rid := f.register(regOpts{})
 			turn := turnRef{child, "turn-loop-3", "completed"}
@@ -181,46 +182,32 @@ func TestDEL26_a_later_turn_needs_an_explicit_continuation_admission(t *testing.
 				mustDo(t, err)
 				stored, err = f.accept(payload, store.AcceptOptions{})
 			}
-			want := python.Out["result"].(map[string]any)
 			if tc.reason != "" {
 				requireReason(t, err, tc.reason)
-				requireSameJSON(t, "refusal", refusalOf(err), want)
+				expected.same("result", refusalOf(err))
 				if !strings.Contains(Detail(err), tc.detail) {
 					t.Fatalf("detail %q", Detail(err))
 				}
 			} else {
 				mustDo(t, err)
-				ok := want["ok"].(map[string]any)
-				if tc.mode == "replay" && (!stored.Duplicate || ok["_duplicate"] != true) {
+				if tc.mode == "replay" && !stored.Duplicate {
 					t.Fatal("a replay is a duplicate")
 				}
-				requireSameJSON(t, "stored record", loadsObj(stored.Record), withoutUnderscored(ok))
+				expected.same("stored record", loadsObj(stored.Record))
 			}
-			requireSameTables(t, f, python)
+			expected.tables(f)
 		})
 	}
 }
 
-func withoutUnderscored(m map[string]any) map[string]any {
-	out := map[string]any{}
-	for k, v := range m {
-		if !strings.HasPrefix(k, "_") {
-			out[k] = v
-		}
-	}
-	return out
-}
-
 func TestDEL27_the_completion_message_is_a_verification_request_with_the_ack_instruction(t *testing.T) {
 	tree := parityTree(t)
-	python := runPythonOut(t, tree, "del27", "completion")
+	expected := expectScenario(t, tree, "del27", "completion")
 	f := newFixture(t, tree)
 	event := f.queuedEvent(regOpts{})
 	message, err := f.delivery.PreviewMessage(f.ctx, event)
 	mustDo(t, err)
-	if message != python.Out["message"] {
-		t.Fatalf("message differs from Python:\n%s\n--\n%v", message, python.Out["message"])
-	}
+	expected.same("message", message)
 	receipt, _ := f.delivery.Receipt(f.ctx, event)
 	manifest, _ := get(receipt, "manifest")
 	entry := manifest.([]any)[0].(Obj)
@@ -252,15 +239,13 @@ func revisionFixture(t *testing.T, tree string) (*fixture, *Ack, string, string,
 
 func TestDEL28_the_revision_message_asks_for_no_acknowledgement_and_says_what_to_change(t *testing.T) {
 	tree := parityTree(t)
-	python := runPythonOut(t, tree, "del27", "revision")
+	expected := expectScenario(t, tree, "del27", "revision")
 	f, _, source, revision, acked, verdict := revisionFixture(t, tree)
-	requireSameJSON(t, "ack", acked, python.Out["ack"])
-	requireSameJSON(t, "verdict", verdict, python.Out["verdict"])
+	expected.same("ack", acked)
+	expected.same("verdict", verdict)
 	message, err := f.delivery.PreviewMessage(f.ctx, revision)
 	mustDo(t, err)
-	if message != python.Out["message"] {
-		t.Fatalf("message differs from Python:\n%s\n--\n%v", message, python.Out["message"])
-	}
+	expected.same("message", message)
 	for _, want := range []string{"revision request", "nothing to acknowledge", "emit --relationship", "the manifest omits the migration script", source, "--generation 2"} {
 		if !strings.Contains(message, want) {
 			t.Fatalf("message lacks %q", want)
@@ -275,25 +260,26 @@ func TestDEL28_the_revision_message_asks_for_no_acknowledgement_and_says_what_to
 
 func TestDEL29_the_instruction_each_side_is_given_is_the_one_that_works(t *testing.T) {
 	tree := parityTree(t)
-	python := runPython(t, tree, "del27", "revision")
+	expected := expectScenario(t, tree, "del27", "revision")
 	f, ack, source, revision, _, _ := revisionFixture(t, tree)
 	if f.one("SELECT 1 AS x FROM acks WHERE event_id = ?", source) == nil {
 		t.Fatal("the parent's acknowledgement landed")
 	}
 	_, err := ack.Acknowledge(f.ctx, revision, "child-turn", AckProof(revision, "child-turn"), true, nil, f.host)
 	requireReason(t, err, WrongDeliveryKind)
-	requireSameJSON(t, "child ack refusal", refusalOf(err), python.Out["childAck"])
+	expected.same("childAck", refusalOf(err))
 	r, err := LoadRelationship(f.ctx, f.store, f.rid)
 	mustDo(t, err)
-	if r.Generation != 2 || python.Out["generation"] != float64(2) {
+	expected.same("generation", r.Generation)
+	if r.Generation != 2 {
 		t.Fatal("the child's emit goes to generation 2")
 	}
-	requireSameTables(t, f, python)
+	expected.tables(f)
 }
 
 func TestDEL30_project_key_distinguishes_projects_for_a_shared_service(t *testing.T) {
 	tree := parityTree(t)
-	python := runPythonOut(t, tree, "del30")
+	expected := expectScenario(t, tree, "del30")
 	f := newFixture(t, tree)
 	other := f.otherAssignment()
 	mine := f.register(regOpts{issue: "REL-3", dispatchRequest: "dispatch-3"})
@@ -301,7 +287,9 @@ func TestDEL30_project_key_distinguishes_projects_for_a_shared_service(t *testin
 	mustDo(t, err)
 	b, err := LoadRelationship(f.ctx, f.store, other)
 	mustDo(t, err)
-	if ProjectKey(a) != python.Out["mine"] || ProjectKey(b) != python.Out["other"] || ProjectKey(b) != "/other" || ProjectKey(a) == ProjectKey(b) {
+	expected.same("mine", ProjectKey(a))
+	expected.same("other", ProjectKey(b))
+	if ProjectKey(b) != "/other" || ProjectKey(a) == ProjectKey(b) {
 		t.Fatalf("project keys %q %q", ProjectKey(a), ProjectKey(b))
 	}
 }

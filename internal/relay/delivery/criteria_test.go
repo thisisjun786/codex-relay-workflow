@@ -30,15 +30,13 @@ func withID(id string, o Obj) Obj { return append(Obj{{Key: "id", Value: id}}, o
 
 func runCRR(t *testing.T, mode string, goSide func(f *fixture, c *Criteria, out map[string]any)) {
 	tree := parityTree(t)
-	python := runPython(t, tree, "crr", mode)
+	expected := expectScenario(t, tree, "crr", mode)
 	f := newFixture(t, tree)
 	c := &Criteria{Store: f.store, Clock: f.clock}
 	out := map[string]any{}
 	goSide(f, c, out)
-	for k, want := range python.Out {
-		requireSameJSON(t, mode+"."+k, out[k], want)
-	}
-	requireSameTables(t, f, python)
+	expected.out(out)
+	expected.tables(f)
 }
 
 func TestCRR01_an_empty_or_duplicate_set_is_refused_before_any_row(t *testing.T) {

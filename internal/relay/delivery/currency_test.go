@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 // test_verification_currency.py VCU-1..VCU-13 (VCU-5 is python-internal: an inspect.signature
@@ -90,17 +91,18 @@ func (v *vcu) head() Obj {
 	return h
 }
 
-// run executes one Python scenario of vcu.py and its Go twin, then compares out["r"] and the store.
+// runVCU runs the Go side of vcu.py's scenario mode and checks out["r"] and the store against the
+// golden.
 func runVCU(t *testing.T, mode string, goSide func(v *vcu) any, wantReason string) {
 	tree := parityTree(t)
-	python := runPython(t, tree, "vcu", mode)
+	expected := expectScenario(t, tree, "vcu", mode)
 	v := newVCU(t, tree)
 	got := goSide(v)
-	requireSameJSON(t, mode, got, python.Out["r"])
+	expected.same("r", got)
 	if m, ok := got.(map[string]any); ok && wantReason != "" && m["reason"] != wantReason {
 		t.Fatalf("%s: want %s, got %v", mode, wantReason, m)
 	}
-	requireSameTables(t, v.fixture, python)
+	expected.tables(v.fixture)
 }
 
 func TestVCU01_a_verified_verdict_needs_the_current_head(t *testing.T) {
@@ -178,18 +180,18 @@ func TestVCU03_needs_changes_on_a_stale_event_is_refused_unverified_is_recorded(
 
 func TestVCU04_a_replay_returns_the_historical_verdict(t *testing.T) {
 	tree := parityTree(t)
-	python := runPython(t, tree, "vcu", "replay")
+	expected := expectScenario(t, tree, "vcu", "replay")
 	v := newVCU(t, tree)
 	e := v.acknowledged("")
 	first := v.verdict(e, "needs_changes", "v1", []any{finding("c1", "needs_changes", "fix it")}, nil, nil)
 	again := v.verdict(e, "verified", "v2", nil, nil, nil)
-	requireSameJSON(t, "first", first, python.Out["first"])
-	requireSameJSON(t, "replay", again, python.Out["r"])
+	expected.same("first", first)
+	expected.same("r", again)
 	rec := again["ok"].(Obj)
 	if v, _ := get(rec, "_replay"); v != true || str(rec, "verdict") != "needs_changes" || str(rec, "verdictTurnId") != "v1" {
 		t.Fatalf("replay %v", rec)
 	}
-	requireSameTables(t, v.fixture, python)
+	expected.tables(v.fixture)
 }
 
 func TestVCU06_head_revision_lineage_evidence(t *testing.T) {
@@ -326,8 +328,8 @@ func TestVCU09_criteria_currency_binds_the_review(t *testing.T) {
 func TestVCU10_the_set_digest_resists_delimiter_injection(t *testing.T) {
 	a := SetDigest([]Criterion{{"a", "b|c", true}})
 	b := SetDigest([]Criterion{{"a|b", "c", true}})
-	python := pythonValue(t, "from codex_session_relay.criteria import set_digest; print(set_digest([{'id': 'a', 'title': 'b|c', 'required': True}]), set_digest([{'id': 'a|b', 'title': 'c', 'required': True}]))")
-	if a == b || python != a+" "+b {
-		t.Fatalf("go %s %s python %s", a, b, python)
+	golden.Check(t, "set digests", []byte(a+" "+b))
+	if a == b {
+		t.Fatalf("the digests collide: %s", a)
 	}
 }
