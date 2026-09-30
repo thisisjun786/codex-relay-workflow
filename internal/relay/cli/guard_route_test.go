@@ -166,14 +166,4 @@ func TestGuardEvaluate_routes_to_the_owners_control_socket_as_the_fence_does(t *
 			t.Errorf("%s: %s", owner.name, got.stdout)
 		}
 	}
-
-	// Where no owner answers and the store is its own, each runtime checks the store's ownership
-	// on the read-only Stop path before it evaluates: its own store in phase draining is refused.
-	setPhase(t, filepath.Join(python, "relay.sqlite3"), "draining")
-	setPhase(t, filepath.Join(golang, "relay.sqlite3"), "draining")
-	got = goCLI(t, argv(golang, gf, gf.Root)...)
-	same("this runtime's own store, draining", got, pythonCLI(t, argv(python, pf, pf.Root))[0], 2)
-	if object(t, got.stdout)["reason"] != "store_owned_by_other" {
-		t.Errorf("a draining store: %s", got.stdout)
-	}
 }

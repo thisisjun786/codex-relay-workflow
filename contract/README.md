@@ -11,9 +11,8 @@ Use exactly `contract/fixtures/<domain>/<source-test-file-stem>__<test-function-
 ## Grammar
 
 Raw wire bytes belong under `contract/golden/`, not the executable scenario tree.
-The Decision 25 takeover inbox entries in `golden/takeover-inbox/` are consumed
-byte-for-byte by `test_fence.py::test_decision25_envelope_golden` and retained for
-the Go inbox port; they are envelopes, not `given`/`run`/`expect` scenarios.
+The Decision 25 takeover inbox entries that `golden/takeover-inbox/` held were deleted with the Go
+inbox in refactor R1 (docs/port/decisions.md, decision 55).
 
 A scenario is `{"given": {...}, "run": {...}, "expect": {"exit": 0, "checks": [...]}}`. `given` builds only temporary, case-local resources. A `run` is an ordered invocation (CLI argv with optional stdin, hook entrypoint or API, MCP tool name and JSON arguments, appserver request/notification, ledger method/params, SQLite query). Multiple invocations are an array of steps, with references to earlier JSON results, for create/bind/read, replay and idempotence. A step may declare an environment override, process cwd, transcript, file tree, seeded SQL, fake host scripted responses, git repository and an ephemeral unix socket. All paths are rooted in the test temp directory except explicit repository artifacts. External programs are driven as real processes, and real SQLite, git, MCP stdio and App Server sockets are used for their respective domains. No fixture contains executable Python, an arbitrary callable, or a test name to invoke instead of the behavior.
 

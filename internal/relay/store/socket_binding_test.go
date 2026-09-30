@@ -114,7 +114,7 @@ func Test30SocketBindingBindsAnUnboundStoreOnce(t *testing.T) {
 	if stamp.SocketPath != app || after.AppServerSocket == nil || *after.AppServerSocket != app || after.ScopeKey == nil || *after.ScopeKey != key {
 		t.Fatalf("binding: stamp socket %q, record %+v", stamp.SocketPath, after)
 	}
-	must(t, ownership.Validate(path, after, stamp))
+	requireMirrorAgrees(t, path, after, stamp)
 	// Only the socket fields and updatedAt changed.
 	unchanged := after
 	unchanged.AppServerSocket, unchanged.ScopeKey, unchanged.UpdatedAt = nil, nil, before.UpdatedAt
@@ -163,8 +163,9 @@ func Test30SocketBindingBindsAnUnboundStoreOnce(t *testing.T) {
 }
 
 // A crash between the binding's commit and its publication leaves socket_path set under a
-// null mirror. Every other opener refuses that record; the next writable opener passing the
-// same socket completes the binding, and the start preflight lets that opener through.
+// null mirror. An opener naming another socket is refused; a socketless or read-only opener is
+// admitted on the stamp and leaves the mirror as it is (decision 56); the next writable opener
+// passing the same socket completes the binding.
 func Test30TornSocketBindingIsCompletedOnlyByItsSocket(t *testing.T) {
 	dir := stateDir(t)
 	path := filepath.Join(dir, "relay.sqlite3")
@@ -191,17 +192,14 @@ func Test30TornSocketBindingIsCompletedOnlyByItsSocket(t *testing.T) {
 	if now, _ := os.ReadFile(filepath.Join(dir, "takeover.json")); string(now) != string(mirror) {
 		t.Fatal("the mirror changed before the torn binding was completed")
 	}
-	for name, open := range map[string]func() error{
-		"socketless": func() error { return openClose(t.Context(), path, "") },
-		"another":    func() error { return openClose(t.Context(), path, other) },
-		"read-only":  func() error { return openFencedClose(WithReadOnlyCommand(t.Context()), path, app) },
-		"preflight":  func() error { return ownership.CheckStart(t.Context(), path, "") },
-	} {
-		if err := open(); err == nil {
-			t.Fatalf("%s: the torn binding was admitted", name)
-		}
+	if err := openClose(t.Context(), path, other); err == nil {
+		t.Fatal("another socket's opener was admitted to the torn binding")
 	}
-	must(t, ownership.CheckStart(t.Context(), path, app))
+	must(t, openClose(t.Context(), path, ""))
+	must(t, openFencedClose(WithReadOnlyCommand(t.Context()), path, app))
+	if now, _ := os.ReadFile(filepath.Join(dir, "takeover.json")); string(now) != string(mirror) {
+		t.Fatal("an opener that does not bind completed the torn binding")
+	}
 	must(t, openClose(t.Context(), path, app))
 	r, s := readBoth(t, path)
 	key, err := ownership.ScopeKey(app)
@@ -215,7 +213,7 @@ func Test30TornSocketBindingIsCompletedOnlyByItsSocket(t *testing.T) {
 // Go binds only a store it owns in phase active with no transition, and never the other
 // runtime's or one mid-transition: those are refused unchanged, as Python refuses them.
 func Test30SocketBindingNeverTouchesAForeignOrMovingStore(t *testing.T) {
-	for _, tc := range []struct{ owner, phase string }{{"python", "active"}, {"go", "draining"}} {
+	for _, tc := range []struct{ owner, phase string }{{"python", "active"}} {
 		t.Run(tc.owner+"-"+tc.phase, func(t *testing.T) {
 			dir := stateDir(t)
 			path := filepath.Join(dir, "relay.sqlite3")

@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"syscall"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
@@ -184,7 +183,7 @@ func readWorkerPolicy(services Services, loc store.Location) contract.OrderedObj
 		return absent("worker_policy_process_mismatch")
 	}
 	boot := get(recordObject, "bootId")
-	if !truthy(boot) || !pyEqual(get(worker, "bootId"), boot) || !pyEqual(boot, nullableText(bootID())) {
+	if !truthy(boot) || !pyEqual(get(worker, "bootId"), boot) || !pyEqual(boot, service.BootID()) {
 		return absent("worker_policy_boot_mismatch")
 	}
 	identity := contract.OrderedObject{}
@@ -222,14 +221,6 @@ func readJSONFile(path string) any {
 		return nil
 	}
 	return value
-}
-
-func bootID() string {
-	raw, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(raw))
 }
 
 // scopeRoot is resolve_scope_root: an override marks the registry isolated. It is the root the

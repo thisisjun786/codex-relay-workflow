@@ -357,6 +357,9 @@ func (s *Service) AuthorityCheck(allow bool) Object {
 	}
 	return obj("ok", true, "reason", nil)
 }
+
+// BootID is this boot's /proc/sys/kernel/random/boot_id, trimmed, or nil where it cannot be read:
+// the one reader of it, for the service records and the worker-policy checks.
 func BootID() any {
 	raw, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
 	if err != nil {

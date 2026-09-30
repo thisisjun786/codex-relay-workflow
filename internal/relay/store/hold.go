@@ -12,7 +12,6 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 	"modernc.org/sqlite"
 )
 
@@ -188,13 +187,14 @@ func openForRead(ctx context.Context, path, socket string) (*Store, error) {
 	if err = partialStore(resolved); err != nil {
 		return nil, err
 	}
-	var refused *ownership.Refused
-	if err = checkStart(ctx, resolved); errors.As(err, &refused) {
+	// Another runtime's store is read without its write gate (stampInPlace, which never takes a
+	// lock); one this runtime may write is opened as a writer opens it.
+	if meta, fenced, err := stampInPlace(ctx, resolved); err == nil && fenced && stampRefusal(meta) != nil {
 		return OpenReadOnlyStore(ctx, path)
 	}
 	s, err := openFenced(ctx, path, socket, OpenOptions{BusyTimeout: 30 * time.Second})
 	var denied *RefusedError
-	if err != nil && (errors.As(err, &denied) || errors.As(err, &refused)) {
+	if err != nil && errors.As(err, &denied) {
 		return OpenReadOnlyStore(ctx, path)
 	}
 	return s, err
@@ -268,34 +268,6 @@ func gateHeld(resolved string) bool {
 		return false
 	}
 	return errors.Is(unix.Flock(fd, unix.LOCK_SH|unix.LOCK_NB), unix.EWOULDBLOCK)
-}
-
-// checkStart is ownership.check_start without a candidate: the lock-free preflight that keeps
-// a reader from taking the write gate of a store this runtime may not write. It returns an
-// *ownership.Refused for another owner, a draining or starting store, or a record that does
-// not validate, including a legacy store this runtime never adopts; nil when admission may
-// proceed. Other failures (an unreadable file) are left to the admitted opener.
-func checkStart(ctx context.Context, resolved string) error {
-	r, err := ownership.ReadRecord(resolved)
-	if err != nil {
-		return err
-	}
-	s, err := ownership.SnapshotMeta(ctx, resolved)
-	if err != nil {
-		return err
-	}
-	if err = ownership.Validate(resolved, r, s); err != nil {
-		return err
-	}
-	switch {
-	case s.Owner != "go":
-		return &ownership.Refused{Detail: "store belongs to " + s.Owner}
-	case r.Phase == "starting":
-		return &ownership.Refused{Detail: "only designated candidate may enter starting"}
-	case r.Phase != "active":
-		return &ownership.Refused{Detail: "store is draining"}
-	}
-	return nil
 }
 
 // OpenReadOnlyStore is Store(path, read_only=True): mode=ro with query_only=ON on every

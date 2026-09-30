@@ -180,19 +180,6 @@ func OwnershipMetadata(ctx context.Context, dbPath string) (map[string]string, e
 	return meta, nil
 }
 
-// stopMetadata is ownership.stop_metadata: schema_meta read in place for the read-only Stop path
-// (OpenStopRead), with no copy and no SQLite sidecar; an absent database or one without
-// schema_meta has none.
-func stopMetadata(ctx context.Context, dbPath string) (map[string]string, error) {
-	return metadataBy(ctx, dbPath, func(resolved string) (queryer, func() error, error) {
-		ro, err := OpenStopRead(ctx, resolved, 0)
-		if err != nil {
-			return nil, nil, err
-		}
-		return ro, ro.Close, nil
-	})
-}
-
 // readMetadata is OwnershipMetadata with the underlying OS or SQLite error. D is named as
 // ownership.metadata names it, Path.resolve()'s loose resolution: a component that cannot be
 // resolved (a link loop among them) is kept as spelled, and the stat that follows finds it

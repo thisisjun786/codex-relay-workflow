@@ -1,5 +1,6 @@
-// Package ownership implements the fenced, never time-based, writer protocol.
-// schema_meta is authoritative; takeover.json is only an admission mirror.
+// Package ownership holds the store's ownership stamp and mirror and the lock files beside it.
+// schema_meta is authoritative; takeover.json mirrors it for the readers that read no database
+// (decision 56).
 package ownership
 
 import (
@@ -25,22 +26,21 @@ import (
 )
 
 const Protocol = 1
-const PythonBuild = "codex-session-relay/0.2.0"
+
+// CompatibilityBuild is the build every store's stamp and mirror name
+// (python_compatibility_build, pythonCompatibilityBuild): the fence release both runtimes
+// pinned. It never changes, since an older runtime admits a store only with it.
+const CompatibilityBuild = "codex-session-relay/0.2.0"
 
 var Keys = []string{"writer_protocol", "owner", "owner_epoch", "takeover_id", "rollback_allowed", "python_compatibility_build"}
 
-// Refused is an ownership refusal. Queueable marks the three the fence answers a queueable
-// command's refusal by publishing it in the takeover inbox instead (ownership.py
-// OwnershipRefused.queueable, decision 25): another runtime owns the store, it is draining, or
-// it is starting and this process is not the designated candidate.
+// Refused is an ownership refusal.
 type Refused struct {
-	Detail    string
-	Queueable bool
+	Detail string
 }
 
 func (e *Refused) Error() string              { return "ownership refused: " + e.Detail }
 func refuse(format string, args ...any) error { return &Refused{Detail: fmt.Sprintf(format, args...)} }
-func queueable(detail string) error           { return &Refused{Detail: detail, Queueable: true} }
 
 type Database struct {
 	RealPath           string `json:"realPath"`
@@ -63,31 +63,31 @@ type Transition struct {
 	TargetEpoch int64  `json:"targetEpoch"`
 }
 type Record struct {
-	Protocol                 int         `json:"protocol"`
-	StoreID                  string      `json:"storeId"`
-	Database                 Database    `json:"database"`
-	AppServerSocket          *string     `json:"appServerSocket"`
-	ScopeKey                 *string     `json:"scopeKey"`
-	Epoch                    int64       `json:"epoch"`
-	Owner                    string      `json:"owner"`
-	Phase                    string      `json:"phase"`
-	Transition               *Transition `json:"transition"`
-	Holder                   *Identity   `json:"holder"`
-	Controller               *Identity   `json:"controller"`
-	RollbackAllowed          bool        `json:"rollbackAllowed"`
-	PythonCompatibilityBuild string      `json:"pythonCompatibilityBuild"`
-	RelayRPCSocket           string      `json:"relayRPCSocket"`
-	UpdatedAt                string      `json:"updatedAt"`
+	Protocol           int         `json:"protocol"`
+	StoreID            string      `json:"storeId"`
+	Database           Database    `json:"database"`
+	AppServerSocket    *string     `json:"appServerSocket"`
+	ScopeKey           *string     `json:"scopeKey"`
+	Epoch              int64       `json:"epoch"`
+	Owner              string      `json:"owner"`
+	Phase              string      `json:"phase"`
+	Transition         *Transition `json:"transition"`
+	Holder             *Identity   `json:"holder"`
+	Controller         *Identity   `json:"controller"`
+	RollbackAllowed    bool        `json:"rollbackAllowed"`
+	CompatibilityBuild string      `json:"pythonCompatibilityBuild"`
+	RelayRPCSocket     string      `json:"relayRPCSocket"`
+	UpdatedAt          string      `json:"updatedAt"`
 }
 type Stamp struct {
-	Protocol                 int    `json:"protocol"`
-	StoreID                  string `json:"storeId"`
-	Owner                    string `json:"owner"`
-	Epoch                    int64  `json:"epoch"`
-	TakeoverID               string `json:"takeoverId"`
-	RollbackAllowed          bool   `json:"rollbackAllowed"`
-	PythonCompatibilityBuild string `json:"pythonCompatibilityBuild"`
-	SocketPath               string `json:"socketPath"`
+	Protocol           int    `json:"protocol"`
+	StoreID            string `json:"storeId"`
+	Owner              string `json:"owner"`
+	Epoch              int64  `json:"epoch"`
+	TakeoverID         string `json:"takeoverId"`
+	RollbackAllowed    bool   `json:"rollbackAllowed"`
+	CompatibilityBuild string `json:"pythonCompatibilityBuild"`
+	SocketPath         string `json:"socketPath"`
 }
 
 type Queryer interface {
@@ -167,7 +167,7 @@ func ReadRecord(path string) (Record, error) {
 	if string(fields["rollbackAllowed"]) != "true" && string(fields["rollbackAllowed"]) != "false" {
 		return r, refuse("invalid rollbackAllowed")
 	}
-	if r.Protocol != Protocol || r.Epoch < 1 || !owner(r.Owner) || r.StoreID == "" || r.PythonCompatibilityBuild != PythonBuild {
+	if r.Protocol != Protocol || r.Epoch < 1 || !owner(r.Owner) || r.StoreID == "" || r.CompatibilityBuild != CompatibilityBuild {
 		return r, refuse("unsupported or incomplete mirror")
 	}
 	if r.Phase != "active" && r.Phase != "draining" && r.Phase != "starting" {
@@ -215,7 +215,7 @@ func ReadStamp(ctx context.Context, db Queryer) (Stamp, error) {
 	if err != nil || epoch < 1 || strconv.FormatInt(epoch, 10) != meta["owner_epoch"] {
 		return Stamp{}, refuse("invalid durable epoch")
 	}
-	if meta["writer_protocol"] != "1" || !owner(meta["owner"]) || meta["store_id"] == "" || meta["version"] != "1" || meta["python_compatibility_build"] != PythonBuild || (meta["rollback_allowed"] != "0" && meta["rollback_allowed"] != "1") {
+	if meta["writer_protocol"] != "1" || !owner(meta["owner"]) || meta["store_id"] == "" || meta["version"] != "1" || meta["python_compatibility_build"] != CompatibilityBuild || (meta["rollback_allowed"] != "0" && meta["rollback_allowed"] != "1") {
 		return Stamp{}, refuse("unsupported durable ownership/schema")
 	}
 	return Stamp{Protocol, meta["store_id"], meta["owner"], epoch, meta["takeover_id"], meta["rollback_allowed"] == "1", meta["python_compatibility_build"], meta["socket_path"]}, nil
@@ -245,21 +245,31 @@ func OpenExisting(ctx context.Context, path, mode string) (*sql.DB, error) {
 // ScopeKey is the scope-registry key of a canonical socket path, hashed as given (service.py
 // canonical_scope_key, as ownership.py scope_key calls it; ScopeRegistry.key resolves first):
 // the first 16 hex digits of its SHA-256, namespaced as isolated-<salt>- when
-// CODEX_SESSION_RELAY_SCOPE_DIR overrides the registry root. Validate judges the recorded
-// appServerSocket with it as recorded, never resolved again.
+// CODEX_SESSION_RELAY_SCOPE_DIR overrides the registry root. The socket binding records it in
+// the mirror beside the socket it binds.
 func ScopeKey(socket string) (string, error) {
-	hash := sha256.Sum256([]byte(socket))
-	key := fmt.Sprintf("%x", hash[:8])
 	override := os.Getenv("CODEX_SESSION_RELAY_SCOPE_DIR")
 	if override == "" {
-		return key, nil
+		return ScopeKeyIn(socket, "", false), nil
 	}
 	root, err := ScopeRoot(override)
 	if err != nil {
 		return "", err
 	}
+	return ScopeKeyIn(socket, root, true), nil
+}
+
+// ScopeKeyIn is the key of socket, hashed as given, in the production registry or in the
+// isolated one rooted at root: the one derivation of a scope key, whose bytes name the scope
+// files on disk and the mirror's scopeKey.
+func ScopeKeyIn(socket, root string, isolated bool) string {
+	hash := sha256.Sum256([]byte(socket))
+	key := fmt.Sprintf("%x", hash[:8])
+	if !isolated {
+		return key
+	}
 	salt := sha256.Sum256([]byte(root))
-	return fmt.Sprintf("isolated-%x-%s", salt[:4], key), nil
+	return fmt.Sprintf("isolated-%x-%s", salt[:4], key)
 }
 
 // noHome is str() of pathlib's RuntimeError for a ~ or ~user expanduser cannot resolve.
@@ -270,16 +280,10 @@ const noHome = "Could not determine home directory."
 // scope registry or a new scope key (the daemon and service commands, a binding, an
 // initialization). Its text is the fence's host envelope detail for it,
 // f"{type(error).__name__}: {error}" (exit 3), so a caller that answers it unchanged answers
-// as the fence does. Validate refuses it instead (NoAuthorityDetail).
+// as the fence does.
 //
 //lint:ignore ST1005 the fence's caller-visible host detail, kept byte-identical
 var ErrNoHome = errors.New("RuntimeError: " + noHome)
-
-// NoAuthorityDetail is the refusal Validate and ownership.py validate give a bound record when
-// this process's scope-registry authority gives no key for its socket (ErrNoHome): the
-// recorded key cannot be judged, so a writer is refused as under another authority, reason
-// store_owned_by_other, and a read-only form still reads the store.
-const NoAuthorityDetail = "scope key cannot be judged: " + noHome
 
 // ScopeRoot is str(Path(override).expanduser().absolute()) (service.py
 // resolve_scope_root), the spelling both runtimes salt isolated keys with and name
@@ -370,73 +374,19 @@ func PathlibSpelling(path string) string {
 	return root + strings.Join(parts, "/")
 }
 
-func Validate(path string, r Record, s Stamp) error {
-	if r.AppServerSocket == nil {
-		if r.ScopeKey != nil || s.SocketPath != "" {
-			return refuse("scope without socket")
-		}
-	} else {
-		socket := *r.AppServerSocket
-		if !filepath.IsAbs(socket) || filepath.Clean(socket) != socket || r.ScopeKey == nil || socket != s.SocketPath {
-			return refuse("invalid socket/scope identity")
-		}
-		key, err := ScopeKey(socket)
-		if errors.Is(err, ErrNoHome) {
-			return refuse("%s", NoAuthorityDetail)
-		}
-		if err != nil {
-			return err
-		}
-		if *r.ScopeKey != key {
-			return refuse("scope key disagrees with lock authority")
-		}
-	}
-	physical, err := Physical(path)
-	if err != nil {
-		return err
-	}
-	if r.Database != physical || r.StoreID != s.StoreID || r.Protocol != s.Protocol || r.PythonCompatibilityBuild != s.PythonCompatibilityBuild {
-		return refuse("physical store or compatibility identity disagrees")
-	}
-	if r.Owner != s.Owner || r.Epoch != s.Epoch || (r.RollbackAllowed != s.RollbackAllowed && !committedTear(r, s)) {
-		return refuse("mirror disagrees with durable ownership")
-	}
-	if r.Transition != nil {
-		t := r.Transition
-		if r.Phase == "draining" {
-			if t.From != s.Owner || t.TargetEpoch != s.Epoch+1 {
-				return refuse("drain transition disagrees")
-			}
-		} else if t.ID != s.TakeoverID || t.To != s.Owner || t.TargetEpoch != s.Epoch {
-			return refuse("installed transition disagrees")
-		}
-	} else if s.TakeoverID != "" {
-		return refuse("installed transition missing")
-	}
-	return nil
-}
-
-// committedTear is the one rollbackAllowed disagreement every admitted Go writer
-// accepts: takeover commit's durable 1->0 write before its mirror publication. The DB
-// is authoritative, owner and epoch are unchanged, and the flag never returns to 1;
-// only the controller republishes the mirror (cutover.md Commit point).
-func committedTear(r Record, s Stamp) bool {
-	return r.RollbackAllowed && !s.RollbackAllowed && r.Owner == "go" && s.Owner == "go" && r.Epoch == s.Epoch && r.Phase == "active"
-}
-
 // InitialRecord is the mirror an initial stamp implies, derived only from the stamp and the
 // physical store (cutover.md Record, Torn publications): protocol 1, storeId, database,
-// appServerSocket and scopeKey from socket_path (both null without one), epoch 1, the stamped
-// owner, phase active, no transition, holder or controller, rollbackAllowed and
-// pythonCompatibilityBuild from the stamp, and relayRPCSocket S/control.sock. It is what an
-// absent-store initializer publishes after its COMMIT (Python Admission.initialize, Go
-// createAbsent), and what Controller.RepairMirror publishes when that publication was lost.
+// appServerSocket and scopeKey from socket_path (both null without one), the stamped epoch (1
+// for a new store) and owner, phase active, no transition, holder or controller,
+// rollbackAllowed and pythonCompatibilityBuild from the stamp, and relayRPCSocket
+// S/control.sock. It is what an absent-store initializer publishes after its COMMIT (Python
+// Admission.initialize, Go createAbsent).
 func InitialRecord(path string, s Stamp) (Record, error) {
 	physical, err := Physical(path)
 	if err != nil {
 		return Record{}, err
 	}
-	record := Record{Protocol: Protocol, StoreID: s.StoreID, Database: physical, Epoch: 1, Owner: s.Owner, Phase: "active", RollbackAllowed: s.RollbackAllowed, PythonCompatibilityBuild: s.PythonCompatibilityBuild, RelayRPCSocket: filepath.Join(filepath.Dir(physical.RealPath), "control.sock")}
+	record := Record{Protocol: Protocol, StoreID: s.StoreID, Database: physical, Epoch: s.Epoch, Owner: s.Owner, Phase: "active", RollbackAllowed: s.RollbackAllowed, CompatibilityBuild: s.CompatibilityBuild, RelayRPCSocket: filepath.Join(filepath.Dir(physical.RealPath), "control.sock")}
 	if s.SocketPath != "" {
 		key, err := ScopeKey(s.SocketPath)
 		if err != nil {
@@ -506,9 +456,9 @@ func syncDir(path string) error {
 	return errors.Join(f.Sync(), f.Close())
 }
 
-// SnapshotMeta reads a disposable copy including WAL; a refused admission must
-// not create -shm or change any byte beside the original DB. A concurrent writer
-// can make the copy inconsistent: that refuses, never repairs the source.
+// SnapshotMeta reads the durable stamp from a disposable copy including WAL, creating no -shm
+// and changing no byte beside the original DB (a service start's record; test fixtures). A
+// concurrent writer can make the copy inconsistent: that refuses, never repairs the source.
 func SnapshotMeta(ctx context.Context, path string) (Stamp, error) {
 	dst, cleanup, err := CopySnapshot(path)
 	if err != nil {

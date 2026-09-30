@@ -3,8 +3,12 @@ package store
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"net/url"
+	"path/filepath"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 )
 
 // RegistrationTimeout is intent.SQLITE_TIMEOUT: the lock wait a registration hold, or a read-only
@@ -15,7 +19,8 @@ const RegistrationTimeout = 2 * time.Second
 // across a check and the marker publication that depends on it, and never committed. Like the
 // fence release, it stats the store first, so a store or directory that does not exist is
 // answered in str(OSError)'s words, then goes through the store's write admission
-// (refuseLiveState, then the ownership fence) before any connection is made. It opens mode=rw
+// (refuseLiveState, then the write gate held SH) before any connection is made, and the stamp
+// is judged on the hold's own connection (decision 56). It opens mode=rw
 // and never rwc, so an absent store stays absent, and ends in ROLLBACK so it records nothing.
 //
 // run receives the held connection; why is "" when the hold was taken, else the refusal text
@@ -33,13 +38,13 @@ func RegistrationHold(ctx context.Context, dbPath string, run func(conn *sql.Con
 	if absolute, err = refuseLiveState(absolute); err != nil {
 		return run(nil, "the relay store could not be opened for writing: "+err.Error())
 	}
-	admission, err := admitWrite(ctx, absolute)
+	gate, err := ownership.Lock(filepath.Join(filepath.Dir(absolute), "write-gate.lock"), false, false)
 	if err != nil {
 		// The fence does not yield its Admission's OwnershipRefused as an unheld hold:
 		// register_relationship raises it, so the caller answers store_owned_by_other.
-		return err
+		return ownershipRefusal(&ownership.Refused{Detail: fmt.Sprintf("write gate: %v", err)})
 	}
-	defer admission.Close()
+	defer gate.Close()
 	u := url.URL{Scheme: "file", Path: absolute}
 	db, err := boundedDB(u.Path, "rw", RegistrationTimeout)
 	if err != nil {
@@ -51,8 +56,9 @@ func RegistrationHold(ctx context.Context, dbPath string, run func(conn *sql.Con
 		return run(nil, "the relay store could not be opened for writing: "+PythonSQLiteMessage(err))
 	}
 	defer conn.Close()
-	if err = admission.Revalidate(ctx, conn); err != nil {
-		return run(nil, "the relay store could not be opened for writing: "+err.Error())
+	if _, err = stampOn(ctx, conn); err != nil {
+		// The stamp's refusal is raised as the fence's admission raised it.
+		return err
 	}
 	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 		return run(nil, "the relay store's write lock could not be taken: "+PythonSQLiteMessage(err))

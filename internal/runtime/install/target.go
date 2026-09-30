@@ -165,7 +165,7 @@ func fenceProblems(rec Object, environment string) (problems, unread []string) {
 	if info, err := os.Stat(filepath.Join(location, "stopadapter.py")); err != nil || !info.Mode().IsRegular() {
 		problems = append(problems, location+" carries no stopadapter.py, so the console script has no Python Stop adapter to import")
 	}
-	declared := "BUILD = " + `"` + ownership.PythonBuild + `"`
+	declared := "BUILD = " + `"` + ownership.CompatibilityBuild + `"`
 	text, err := readLimited(filepath.Join(location, "ownership.py"), 1<<20)
 	switch {
 	case errors.Is(err, os.ErrNotExist):

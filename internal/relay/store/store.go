@@ -19,8 +19,6 @@ import (
 
 	"golang.org/x/sys/unix"
 	"modernc.org/sqlite"
-
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 )
 
 //go:embed relay-sqlite.sql
@@ -46,7 +44,8 @@ type Store struct {
 	// faultHook runs inside every opened transaction after its body and before COMMIT
 	// (store.py fault_hook). Tests use it to die at that point; nil in production.
 	faultHook func()
-	admission *ownership.Admission
+	// gate is write-gate.lock, held SH while a writable store is open (holdGate).
+	gate *os.File
 	// readOnly is Store(read_only=True): mode=ro, query_only=ON, deferred BEGIN.
 	readOnly bool
 }
@@ -60,8 +59,9 @@ type OpenOptions struct {
 	BusyTimeout   time.Duration
 	OnConnect     func()
 	BusyRetryHook func()
-	// admission is installed only by the fenced opener, before connection hooks.
-	admission *ownership.Admission
+	// verify is the fenced opener's check of a writable store, run on the opened database
+	// before the schema script; it returns the write gate the store holds (verifyWritable).
+	verify func(context.Context, *sql.DB) (*os.File, error)
 }
 
 func Open(ctx context.Context, path, socketPath string) (*Store, error) {
@@ -79,8 +79,7 @@ func Open(ctx context.Context, path, socketPath string) (*Store, error) {
 type admittedKey struct{}
 
 // Admitted is the one writable store a relay command admitted before its handler ran (cli.main's
-// _ownership_preflight opens services.store once, the takeover inbox is replayed on it, and the
-// handler uses that same store). Hold places the store in the slot; the first writable Open of
+// _ownership_preflight opens services.store once, and the handler uses that same store). Hold places the store in the slot; the first writable Open of
 // the same database with the same socket under the slot's context is handed it instead of
 // opening another, and that caller then owns and closes it.
 type Admitted struct {
@@ -140,11 +139,6 @@ func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ 
 		if options.OnConnect != nil {
 			options.OnConnect()
 		}
-		if options.admission != nil {
-			if err := options.admission.Check(ctx); err != nil {
-				return err
-			}
-		}
 		// Python's sqlite3.connect installs its timeout before executing journal_mode.
 		// Do the same: journal_mode may need a lock even before the schema is read.
 		pragmas := []string{fmt.Sprintf("PRAGMA busy_timeout=%d", options.BusyTimeout.Milliseconds()), "PRAGMA journal_mode=WAL", "PRAGMA synchronous=FULL", "PRAGMA foreign_keys=ON"}
@@ -183,12 +177,6 @@ func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ 
 		}
 		return nil
 	})
-	driverID, err := randomBytes(8)
-	if err != nil {
-		return nil, fmt.Errorf("driver identity: %w", err)
-	}
-	name := "crw-store-" + hex.EncodeToString(driverID)
-	sql.Register(name, textGuard{d})
 	u := url.URL{Scheme: "file", Path: resolved}
 	q := u.Query()
 	q.Set("mode", "rw")
@@ -197,10 +185,7 @@ func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ 
 	// from sqlite3.connect(timeout=30); the hook repeats it for explicit parity.
 	q.Set("_busy_timeout", fmt.Sprint(options.BusyTimeout.Milliseconds()))
 	u.RawQuery = q.Encode()
-	db, err := sql.Open(name, u.String())
-	if err != nil {
-		return nil, fmt.Errorf("open database: %w", err)
-	}
+	db := sql.OpenDB(dsnConnector{textGuard{d}, u.String()})
 	db.SetMaxOpenConns(1)
 	defer func() {
 		if err != nil {
@@ -209,6 +194,17 @@ func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ 
 	}()
 	if err = db.PingContext(ctx); err != nil {
 		return nil, fmt.Errorf("connect database: %w", err)
+	}
+	var gate *os.File
+	if options.verify != nil {
+		if gate, err = options.verify(ctx, db); err != nil {
+			return nil, err
+		}
+		defer func() {
+			if err != nil {
+				err = errors.Join(err, gate.Close())
+			}
+		}()
 	}
 	ddl, err := schema.ReadFile("relay-sqlite.sql")
 	if err != nil {
@@ -221,7 +217,7 @@ func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ 
 	if _, err = db.ExecContext(ctx, sections[0]); err != nil {
 		return nil, fmt.Errorf("initialize schema: %w", err)
 	}
-	result := &Store{DB: db, Path: pathlibSpelling(path)}
+	result := &Store{DB: db, Path: pathlibSpelling(path), gate: gate}
 	guards := strings.SplitN(sections[1], seedMarker, 2)
 	if len(guards) != 2 {
 		return nil, errors.New("embedded schema lacks seed marker")
@@ -323,7 +319,14 @@ func randomBytes(size int) ([]byte, error) {
 	return b, nil
 }
 
-func (s *Store) Close() error { return errors.Join(s.DB.Close(), s.admission.Close()) }
+func (s *Store) Close() error {
+	err := s.DB.Close()
+	if s.gate != nil {
+		err = errors.Join(err, s.gate.Close())
+		s.gate = nil
+	}
+	return err
+}
 
 // Location distinguishes the database inode from the directory entry containing its WAL.
 type Location struct {
@@ -394,3 +397,14 @@ func SchemaStatements() (string, []string, error) {
 	}
 	return sections[0], statements, nil
 }
+
+// dsnConnector opens every connection of one *sql.DB through its own driver and DSN (sql.OpenDB),
+// so an open registers nothing in database/sql's process-wide driver table: a registration can
+// never be removed, and a long-running process opens stores again and again.
+type dsnConnector struct {
+	driver driver.Driver
+	dsn    string
+}
+
+func (c dsnConnector) Connect(context.Context) (driver.Conn, error) { return c.driver.Open(c.dsn) }
+func (c dsnConnector) Driver() driver.Driver                        { return c.driver }

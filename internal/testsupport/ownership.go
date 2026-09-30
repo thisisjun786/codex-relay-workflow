@@ -41,10 +41,8 @@ import (
 // store that is in use: each takes the write gate exclusively, which every admitted writer of
 // either runtime holds shared.
 
-// PythonCompatibilityBuild is the pinned fence build both runtimes stamp and require. It stays
-// an alias of ownership.PythonBuild because internal/relay/cli/doctor.go, a product file, still
-// imports it from this package.
-const PythonCompatibilityBuild = ownership.PythonBuild
+// PythonCompatibilityBuild is the pinned fence build every store's stamp and mirror name.
+const PythonCompatibilityBuild = ownership.CompatibilityBuild
 
 // RuntimeOwner is what OwnerNeutral reports for a schema_meta owner that is its writer's own.
 const RuntimeOwner = "<runtime owner>"
@@ -216,7 +214,7 @@ func admitted(ctx context.Context, path string) (ownership.Record, ownership.Sta
 	if err != nil {
 		return record, stamp, err
 	}
-	return record, stamp, ownership.Validate(path, record, stamp)
+	return record, stamp, validate(path, record, stamp)
 }
 
 // stopped takes the controller lock and the write gate exclusively, creating either 0600 when
@@ -258,8 +256,8 @@ func initialRecord(physical ownership.Database, stamp ownership.Stamp) (ownershi
 	record := ownership.Record{
 		Protocol: ownership.Protocol, StoreID: stamp.StoreID, Database: physical,
 		Epoch: stamp.Epoch, Owner: stamp.Owner, Phase: "active", RollbackAllowed: stamp.RollbackAllowed,
-		PythonCompatibilityBuild: stamp.PythonCompatibilityBuild,
-		RelayRPCSocket:           filepath.Join(filepath.Dir(physical.RealPath), "control.sock"),
+		CompatibilityBuild: stamp.CompatibilityBuild,
+		RelayRPCSocket:     filepath.Join(filepath.Dir(physical.RealPath), "control.sock"),
 	}
 	if stamp.SocketPath != "" {
 		socket := stamp.SocketPath
@@ -322,7 +320,7 @@ func fence(ctx context.Context, dbPath, owner string) (err error) {
 	if err != nil {
 		return err
 	}
-	for _, pair := range [][2]string{{"writer_protocol", "1"}, {"owner", owner}, {"owner_epoch", "1"}, {"takeover_id", ""}, {"rollback_allowed", "1"}, {"python_compatibility_build", ownership.PythonBuild}} {
+	for _, pair := range [][2]string{{"writer_protocol", "1"}, {"owner", owner}, {"owner_epoch", "1"}, {"takeover_id", ""}, {"rollback_allowed", "1"}, {"python_compatibility_build", ownership.CompatibilityBuild}} {
 		if _, err = tx.ExecContext(ctx, "INSERT INTO schema_meta VALUES (?, ?)", pair[0], pair[1]); err != nil {
 			return errors.Join(err, tx.Rollback())
 		}
@@ -669,4 +667,51 @@ func execAll(ctx context.Context, db *sql.DB, statements ...struct {
 	}
 	_, err = db.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)")
 	return err
+}
+
+// validate is the mirror-against-stamp agreement the fence's admission required before refactor
+// R1 (decision 56): the product no longer judges the mirror, and these fixtures still only
+// produce states it held consistent.
+func validate(path string, r ownership.Record, s ownership.Stamp) error {
+	if r.AppServerSocket == nil {
+		if r.ScopeKey != nil || s.SocketPath != "" {
+			return errors.New("scope without socket")
+		}
+	} else {
+		socket := *r.AppServerSocket
+		if !filepath.IsAbs(socket) || filepath.Clean(socket) != socket || r.ScopeKey == nil || socket != s.SocketPath {
+			return errors.New("invalid socket/scope identity")
+		}
+		key, err := ownership.ScopeKey(socket)
+		if err != nil {
+			return err
+		}
+		if *r.ScopeKey != key {
+			return errors.New("scope key disagrees with lock authority")
+		}
+	}
+	physical, err := ownership.Physical(path)
+	if err != nil {
+		return err
+	}
+	if r.Database != physical || r.StoreID != s.StoreID || r.Protocol != s.Protocol || r.CompatibilityBuild != s.CompatibilityBuild {
+		return errors.New("physical store or compatibility identity disagrees")
+	}
+	committedTear := r.RollbackAllowed && !s.RollbackAllowed && r.Owner == "go" && s.Owner == "go" && r.Epoch == s.Epoch && r.Phase == "active"
+	if r.Owner != s.Owner || r.Epoch != s.Epoch || (r.RollbackAllowed != s.RollbackAllowed && !committedTear) {
+		return errors.New("mirror disagrees with durable ownership")
+	}
+	if r.Transition != nil {
+		t := r.Transition
+		if r.Phase == "draining" {
+			if t.From != s.Owner || t.TargetEpoch != s.Epoch+1 {
+				return errors.New("drain transition disagrees")
+			}
+		} else if t.ID != s.TakeoverID || t.To != s.Owner || t.TargetEpoch != s.Epoch {
+			return errors.New("installed transition disagrees")
+		}
+	} else if s.TakeoverID != "" {
+		return errors.New("installed transition missing")
+	}
+	return nil
 }

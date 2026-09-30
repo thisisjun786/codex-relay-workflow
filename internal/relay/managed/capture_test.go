@@ -357,12 +357,12 @@ func comparePythonExecutionCLI(t *testing.T) {
 	for _, i := range []int{0, 6} {
 		goBuild := obj(obj(obj(got[i])["stdout"])["ownership"])["runtime_build"]
 		pythonBuild := obj(obj(obj(want.Receipts[i])["stdout"])["ownership"])["runtime_build"]
-		if goBuild != goRuntimeBuild() || goBuild == ownership.PythonBuild || pythonBuild != ownership.PythonBuild {
-			t.Errorf("step %d doctor runtime_build: Go %v (want %q), Python %v (want %q)", i, goBuild, goRuntimeBuild(), pythonBuild, ownership.PythonBuild)
+		if goBuild != goRuntimeBuild() || goBuild == ownership.CompatibilityBuild || pythonBuild != ownership.CompatibilityBuild {
+			t.Errorf("step %d doctor runtime_build: Go %v (want %q), Python %v (want %q)", i, goBuild, goRuntimeBuild(), pythonBuild, ownership.CompatibilityBuild)
 		}
 	}
 	for i, expected := range want.Receipts {
-		g, p := normalizedExecution(t, testsupport.Go, got[i], goRuntimeBuild()), normalizedExecution(t, testsupport.Python, expected, ownership.PythonBuild)
+		g, p := normalizedExecution(t, testsupport.Go, got[i], goRuntimeBuild()), normalizedExecution(t, testsupport.Python, expected, ownership.CompatibilityBuild)
 		if !reflect.DeepEqual(g, p) {
 			t.Errorf("step %d Go=%v Python=%v", i, g, p)
 		}

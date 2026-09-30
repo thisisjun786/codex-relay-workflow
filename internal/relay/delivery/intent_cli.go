@@ -486,7 +486,7 @@ func expandedStore(dbPath any) (string, error) {
 // Store()): only an ownership refusal refuses. An OS or SQLite failure refuses nothing here; it
 // is the record the command answers with after its marker write.
 func intentStoreFence(ctx context.Context, path string) error {
-	err := store.CheckStartLikeFence(ctx, path, "")
+	err := store.CheckStartLikeFence(ctx, path)
 	var refused *store.RefusedError
 	if errors.As(err, &refused) {
 		return refused
