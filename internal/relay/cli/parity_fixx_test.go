@@ -99,15 +99,21 @@ func Test24FixXBytes(t *testing.T) {
 			if err := os.RemoveAll(state); err != nil {
 				t.Fatal(err)
 			}
-			want := runParityProcess(t, env, python, append([]string{"-m", "codex_session_relay.cli"}, args...)...)
-			_, pyErr := os.Stat(filepath.Join(state, "relay.sqlite3"))
-			if pyErr != nil && !os.IsNotExist(pyErr) {
-				t.Fatal(pyErr)
+			// Python's answer and whether it left a store (recorded: see pythonProcess).
+			want := pythonProcess(t, oracleKey(t, oracleLabel(args...)), env, "", python, append([]string{"-c", `import os, sys
+from codex_session_relay.cli import main
+code = main(sys.argv[2:])
+print("store" if os.path.exists(sys.argv[1]) else "none", file=sys.stderr)
+sys.exit(code)`, filepath.Join(state, "relay.sqlite3")}, args...)...)
+			var pyErr error
+			if lines := strings.Split(strings.TrimSuffix(want.err, "\n"), "\n"); lines[len(lines)-1] != "store" {
+				pyErr = os.ErrNotExist
 			}
+			want.err = strings.TrimSuffix(strings.TrimSuffix(want.err, "store\n"), "none\n")
 			if err := os.RemoveAll(state); err != nil {
 				t.Fatal(err)
 			}
-			got := runParityProcess(t, env, invocation.path, append(append([]string{}, invocation.prefix...), args...)...)
+			got := runParityProcess(t, append(env, goForgePath(t)), invocation.path, append(append([]string{}, invocation.prefix...), args...)...)
 			_, goErr := os.Stat(filepath.Join(state, "relay.sqlite3"))
 			if goErr != nil && !os.IsNotExist(goErr) {
 				t.Fatal(goErr)

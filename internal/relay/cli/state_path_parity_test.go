@@ -47,7 +47,7 @@ func TestDoctorKeepsTwoLeadingSlashesInEveryDirectoryItNames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HOME", filepath.Join(root, "home"))
+	t.Setenv("HOME", filepath.Join(root, "user-home"))
 	t.Setenv("CODEX_HOME", filepath.Join(root, "codex"))
 	t.Setenv("CODEX_SESSION_RELAY_STATE", "")
 	t.Setenv("XDG_STATE_HOME", "/"+filepath.Join(root, "xdg"))

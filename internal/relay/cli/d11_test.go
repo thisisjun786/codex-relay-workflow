@@ -7,10 +7,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 func TestD11SupervisorReportRecordedRefusalMatchesPythonCLI(t *testing.T) {
@@ -41,19 +41,34 @@ def refused(*a,**kw): raise DeliveryRefused(RefusalReason.CONTRADICTORY_OBSERVAT
 supervision.record_report=refused
 raise SystemExit(cli.main(sys.argv[1:]))
 `
-	home := t.TempDir()
-	env := append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home+"/xdg", "XDG_CONFIG_HOME="+home+"/config", "XDG_DATA_HOME="+home+"/data", "CODEX_HOME="+home+"/codex", "CRW_REFUSE_LIVE_STATE=", "PYTHONPATH="+filepath.Join(root, "packages/codex-session-relay/src"))
-	args := []string{"--state", filepath.Join(home, "state"), "supervisor-report-recorded", "--observation", reading}
-	cmd := exec.Command(filepath.Join(root, ".venv/bin/python"), append([]string{"-c", script}, args...)...)
-	cmd.Env = env
-	var pyOut, pyErr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &pyOut, &pyErr
-	pyCode := 0
-	if err := cmd.Run(); err != nil {
-		pyCode = err.(*exec.ExitError).ExitCode()
+	// Each runtime answers over a home and store of its own; Python's answer is recorded (see
+	// askPython), and a path it names is spelled with the Go run's home.
+	environment := func(home string) []string {
+		return append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home+"/xdg", "XDG_CONFIG_HOME="+home+"/config", "XDG_DATA_HOME="+home+"/data", "CODEX_HOME="+home+"/codex", "CRW_REFUSE_LIVE_STATE=", "PYTHONPATH="+filepath.Join(root, "packages/codex-session-relay/src"))
 	}
-	// Python ran first on this store; Go runs on it after a takeover, as on a host.
-	testsupport.HandOver(t, filepath.Join(home, "state/relay.sqlite3"), "go")
+	arguments := func(home string) []string {
+		return []string{"--state", filepath.Join(home, "state"), "supervisor-report-recorded", "--observation", reading}
+	}
+	pyHome, home := t.TempDir(), t.TempDir()
+	var python pythonAnswer
+	askPython(t, "supervisor-report-recorded", &python, func() (any, error) {
+		cmd := exec.Command(filepath.Join(root, ".venv/bin/python"), append([]string{"-c", script}, arguments(pyHome)...)...)
+		cmd.Env = environment(pyHome)
+		var pyOut, pyErr bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &pyOut, &pyErr
+		pyCode := 0
+		if err := cmd.Run(); err != nil {
+			exit, ok := err.(*exec.ExitError)
+			if !ok {
+				return nil, err
+			}
+			pyCode = exit.ExitCode()
+		}
+		return pythonAnswer{pyCode, pyOut.String(), pyErr.String()}, nil
+	}, pyHome, reading)
+	pyCode := python.Code
+	pyOut, pyErr := strings.ReplaceAll(python.Stdout, pyHome, home), strings.ReplaceAll(python.Stderr, pyHome, home)
+	env, args := environment(home), arguments(home)
 	rawArgs, _ := json.Marshal(args)
 	for _, invocation := range []struct{ name, argv0 string }{{"codex-session-relay", "codex-session-relay"}, {"crw relay", "crw relay"}} {
 		t.Run(invocation.name, func(t *testing.T) {
@@ -63,10 +78,14 @@ raise SystemExit(cli.main(sys.argv[1:]))
 			cmd.Stdout, cmd.Stderr = &out, &stderr
 			code := 0
 			if err := cmd.Run(); err != nil {
-				code = err.(*exec.ExitError).ExitCode()
+				exit, ok := err.(*exec.ExitError)
+				if !ok {
+					t.Fatal(err)
+				}
+				code = exit.ExitCode()
 			}
-			if code != pyCode || out.String() != pyOut.String() || stderr.String() != pyErr.String() {
-				t.Fatalf("byte diff\nGo exit=%d stdout=%q stderr=%q\nPython exit=%d stdout=%q stderr=%q", code, out.String(), stderr.String(), pyCode, pyOut.String(), pyErr.String())
+			if code != pyCode || out.String() != pyOut || stderr.String() != pyErr {
+				t.Fatalf("byte diff\nGo exit=%d stdout=%q stderr=%q\nPython exit=%d stdout=%q stderr=%q", code, out.String(), stderr.String(), pyCode, pyOut, pyErr)
 			}
 		})
 	}

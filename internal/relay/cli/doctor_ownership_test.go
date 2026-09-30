@@ -119,7 +119,7 @@ func TestDoctor_ownership_block_matches_python_on_a_broken_store(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			state := filepath.Join(home, strings.ReplaceAll(c.name, " ", "-"))
-			pythonCreates(t, home, state)
+			pythonCreates(t, state)
 			c.break_(t, state)
 			// Both runtimes diagnose the very same broken store: no handover (which refuses a
 			// broken record) runs between them.

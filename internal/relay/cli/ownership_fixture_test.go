@@ -9,6 +9,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
@@ -37,6 +38,16 @@ func ownedBy(t *testing.T, path, runtime string) {
 // error, an ambiguous or unresolvable selection) leaves every store as it is.
 func ownedArgs(t *testing.T, dir string, args []string, runtime string) {
 	t.Helper()
+	if path := selectedDB(t, dir, args); path != "" {
+		ownedBy(t, path, runtime)
+	}
+}
+
+// selectedDB is the database an invocation run in dir ("" for this process's directory)
+// selects, by flag, environment or discovery; "" when it selects none (help, a usage error, an
+// ambiguous or unresolvable selection).
+func selectedDB(t *testing.T, dir string, args []string) string {
+	t.Helper()
 	if dir != "" {
 		previous, err := os.Getwd()
 		if err != nil {
@@ -56,7 +67,7 @@ func ownedArgs(t *testing.T, dir string, args []string, runtime string) {
 	}
 	r := argparse.Parse("", args)
 	if r.Message != "" || r.Help || len(r.Remaining) == 0 {
-		return
+		return ""
 	}
 	state, socket := "", ""
 	if v := r.Values["state"]; len(v) > 0 {
@@ -67,9 +78,26 @@ func ownedArgs(t *testing.T, dir string, args []string, runtime string) {
 	}
 	s, e := store.ResolveStateDir(state, socket)
 	if e != nil {
-		return
+		return ""
 	}
-	ownedBy(t, s.DBPath(), runtime)
+	return s.DBPath()
+}
+
+// selectedStoreID is the store id of the fenced store an invocation selects, "" for none.
+func selectedStoreID(t *testing.T, dir string, args []string) string {
+	t.Helper()
+	path := selectedDB(t, dir, args)
+	if path == "" {
+		return ""
+	}
+	if info, err := os.Stat(path); err != nil || info.Size() == 0 {
+		return ""
+	}
+	stamp, err := ownership.SnapshotMeta(t.Context(), path)
+	if err != nil {
+		return ""
+	}
+	return stamp.StoreID
 }
 
 // ownedTree hands every store under root to runtime: the stores an oracle run left there.

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"os"
 	"os/exec"
@@ -22,8 +23,16 @@ type pythonCLIResult struct {
 	Stderr  string         `json:"stderr"`
 }
 
+// pythonCLI39 is what testdata/python_cli39.py answered (recorded: see askPython).
 func pythonCLI39(t *testing.T, scenario, restate string) pythonCLIResult {
 	t.Helper()
+	var result pythonCLIResult
+	askPython(t, scenario+" "+restate, &result, func() (any, error) { return livePythonCLI39(t, scenario, restate) })
+	return result
+}
+
+// livePythonCLI39 runs testdata/python_cli39.py. Only a capture closure calls it.
+func livePythonCLI39(t *testing.T, scenario, restate string) (pythonCLIResult, error) {
 	repo, _ := filepath.Abs("../../..")
 	script, _ := filepath.Abs("testdata/python_cli39.py")
 	args := []string{"run", "--no-sync", "python", script, scenario}
@@ -38,13 +47,13 @@ func pythonCLI39(t *testing.T, scenario, restate string) pythonCLIResult {
 	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "CODEX_HOME="+home, "TMPDIR="+os.TempDir())
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("python %s: %v %s", scenario, err, out)
+		return pythonCLIResult{}, fmt.Errorf("python %s: %v %s", scenario, err, out)
 	}
 	var result pythonCLIResult
-	if json.Unmarshal(out, &result) != nil {
-		t.Fatal(string(out))
+	if err = json.Unmarshal(out, &result); err != nil {
+		return result, fmt.Errorf("%v: %s", err, out)
 	}
-	return result
+	return result, nil
 }
 func goCLI39(t *testing.T, scenario, restate string) (int, map[string]any, string, string) {
 	t.Helper()
@@ -122,14 +131,25 @@ func compareCLI39(t *testing.T, scenario string, restate bool) {
 		goRecord["headSha"] = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 		raw, _ := json.Marshal(goRecord)
 		_ = os.WriteFile(goFile, raw, 0600)
-		py := pythonCLI39(t, "ready", "")
 		pyFile = filepath.Join(t.TempDir(), "py.json")
-		pyRecord := py.Payload["handoff"].(map[string]any)
-		pyRecord["headSha"] = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-		raw, _ = json.Marshal(pyRecord)
-		_ = os.WriteFile(pyFile, raw, 0600)
 	}
-	py := pythonCLI39(t, scenario, pyFile)
+	// Python restates the handoff of its own ready answer (recorded with it: see askPython).
+	var py pythonCLIResult
+	askPython(t, scenario, &py, func() (any, error) {
+		if restate {
+			ready, err := livePythonCLI39(t, "ready", "")
+			if err != nil {
+				return nil, err
+			}
+			pyRecord := ready.Payload["handoff"].(map[string]any)
+			pyRecord["headSha"] = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+			raw, _ := json.Marshal(pyRecord)
+			if err = os.WriteFile(pyFile, raw, 0600); err != nil {
+				return nil, err
+			}
+		}
+		return livePythonCLI39(t, scenario, pyFile)
+	}, pyFile)
 	code, goPayload, _, _ := goCLI39(t, scenario, goFile)
 	normalizeCLI39(py.Payload)
 	normalizeCLI39(goPayload)

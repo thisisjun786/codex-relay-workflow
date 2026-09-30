@@ -3,8 +3,10 @@ package cli_test
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -16,6 +18,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 // plain renders an ordered answer the way the CLI prints it and decodes it back.
@@ -30,9 +33,11 @@ func plain(v any) any {
 }
 
 // test_cli.py properties of todo 25 part A that read doctor and status (CLI-1..4, 10, 12,
-// 17..20, 24..34, 36, 37). Each drives the real Python relay CLI and this build's CLI on the
-// same isolated state, compares the whole stdout (doctor minus the documented runtime block)
-// and exit code, then asserts the property's own fields on Python's answer.
+// 17..20, 24..34, 36, 37). Each compares this build's CLI with the answer the real Python relay
+// CLI gave on the same isolated state (recorded: see oracleRun), the whole stdout (doctor minus
+// the documented runtime block, and each store file's own identity) and exit code, then asserts
+// the property's own fields on the answer. The state is written by this build only, so it is
+// the same whether or not Python runs beside it.
 
 const (
 	parentTask = "01parent-task"
@@ -41,14 +46,17 @@ const (
 	issueKey   = "REL-1"
 )
 
-var timestamp = regexp.MustCompile(`\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}\+00:00`)
+// timestamp is a wall-clock instant a command wrote: to the microsecond, or to the second (a
+// challenge's writtenAt), which a recorded answer read at another instant.
+var timestamp = regexp.MustCompile(`\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{6}\+00:00|Z)`)
 
 var runtimeBuild = regexp.MustCompile(`"runtime_build": "[^"]*"`)
 
 // both runs argv through Python and Go and requires the same exit and stdout. Doctor's runtime
 // block (Go only, documented) is removed and its ownership.runtime_build normalised; timestamps
 // written by the commands themselves are normalised, because the two runs happen at different
-// instants.
+// instants, and so is the store file's own identity (identityNeutral), because a recorded
+// answer was read from another file with the same rows. It returns Go's answer.
 func both(t *testing.T, dir string, argv ...string) map[string]any {
 	t.Helper()
 	return sameAnswer(t, argv, python(t, dir, argv...), golang(t, dir, argv...))
@@ -75,14 +83,14 @@ func sameAnswer(t *testing.T, argv []string, py, got run) map[string]any {
 	goOut = runtimeBuild.ReplaceAllString(goOut, `"runtime_build": "<build>"`)
 	// Each runtime reads the store as its owner (ownedArgs hands it over first), so the
 	// ownership block's owner, epoch and takeover differ by that handover alone.
-	pyOut, goOut = ownerNeutralBlock(pyOut), ownerNeutralBlock(goOut)
+	pyOut, goOut = identityNeutral(ownerNeutralBlock(pyOut)), identityNeutral(ownerNeutralBlock(goOut))
 	if py.code != got.code || pyOut != goOut {
 		t.Fatalf("%v\nexit python=%d go=%d\npython:\n%s\ngo:\n%s\ngo stderr: %s", argv, py.code, got.code, pyOut, goOut, got.stderr)
 	}
-	if py.stdout == "" {
+	if got.stdout == "" {
 		return nil
 	}
-	return decode(t, py.stdout)
+	return decode(t, got.stdout)
 }
 
 var handedOver = regexp.MustCompile(`\n    "(owner|owner_epoch|takeover_id)": "[^"]*",`)
@@ -113,7 +121,7 @@ func settingsJSON(cwd string, sandbox string) string {
 	return `{"sandbox": ` + sandbox + `, "approvalPolicy": "never", "cwd": "` + cwd + `", "runtimeWorkspaceRoots": ["` + cwd + `"], "model": "anthropic/claude-opus-5", "reasoningEffort": "xhigh", "environments": [{"environmentId": "local", "cwd": "` + cwd + `", "runtimeWorkspaceRoots": ["` + cwd + `"]}]}`
 }
 
-// register records an assignment through the Python CLI (the state both sides then read).
+// register records an assignment through this build's CLI (the state both sides then read).
 func register(t *testing.T, home, state string, extra ...string) map[string]any {
 	t.Helper()
 	root := filepath.Join(home, "work")
@@ -123,28 +131,38 @@ func register(t *testing.T, home, state string, extra ...string) map[string]any 
 	argv := append([]string{"--state", state, "register", "--parent-task", parentTask, "--parent-host", hostID,
 		"--child-task", childTask, "--child-host", hostID, "--issue", issueKey, "--artifact-root", root,
 		"--allowed-recipient", parentTask, "--dispatch-request-id", "dispatch-1", "--dispatch-turn-id", "turn-dispatch-1"}, extra...)
-	done := python(t, home, argv...)
+	done := golang(t, home, argv...)
 	if done.code != 0 {
 		t.Fatalf("register: %+v", done)
 	}
 	return decode(t, done.stdout)
 }
 
-func sqlite(t *testing.T, home, db, statement string) {
+// sqlite stages rows by hand, as the Python tests do with sqlite3.
+func sqlite(t *testing.T, _, db, statement string) {
 	t.Helper()
-	script := "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.executescript(sys.argv[2]); c.commit(); c.close()"
-	runPython(t, home, script, db, statement)
+	connection, err := sql.Open("sqlite", "file:"+db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	if _, err = connection.Exec(statement); err != nil {
+		t.Fatal(err)
+	}
 }
 
-// runPython runs a Python snippet in the relay's environment (for staging rows by hand, as the
-// Python tests do with sqlite3 or Store()).
-func runPython(t *testing.T, dir string, script string, args ...string) string {
+// runPython is what a Python snippet printed in the relay's environment (recorded under a key
+// of its own: see oracleRun).
+func runPython(t *testing.T, dir string, script string, args []string, options ...pyoracle.Option) string {
 	t.Helper()
-	out, err := pythonSnippet(dir, script, args...)
-	if err != nil {
-		t.Fatalf("python snippet: %v\n%s", err, out)
-	}
-	return out
+	answer := oracleRun(t, oracleKey(t, "python -c "+oracleLabel(args...)), func() (run, error) {
+		out, err := pythonSnippet(dir, script, args...)
+		if err != nil {
+			return run{}, fmt.Errorf("python snippet: %v\n%s", err, out)
+		}
+		return run{stdout: out}, nil
+	}, append(placeholders(append([]string{dir}, args...)...), options...)...)
+	return answer.stdout
 }
 
 func pythonJSON(t *testing.T, text string) map[string]any {
@@ -288,11 +306,11 @@ func Test25_CLI18_doctor_names_the_rule_that_chose_the_directory(t *testing.T) {
 	}
 }
 
-// challenge writes a store challenge through Python only: nonces are random, so the two
-// implementations cannot be compared on this write, and the doctor comparison reads it back.
+// challenge writes a store challenge through one implementation only: nonces are random, so the
+// two cannot be compared on this write, and the doctor comparison reads it back.
 func challenge(t *testing.T, home, state string) string {
 	t.Helper()
-	done := python(t, home, "--state", state, "store-challenge", "--write", "--actor", "parent")
+	done := golang(t, home, "--state", state, "store-challenge", "--write", "--actor", "parent")
 	if done.code != 0 {
 		t.Fatal(done)
 	}
@@ -302,7 +320,7 @@ func challenge(t *testing.T, home, state string) string {
 func identity(t *testing.T, home, state string) map[string]any {
 	t.Helper()
 	if _, err := os.Stat(filepath.Join(state, "relay.sqlite3")); errors.Is(err, os.ErrNotExist) {
-		pythonCreates(t, home, state) // a read-only form never creates a store
+		pythonCreates(t, state) // a read-only form never creates a store
 	}
 	return obj(both(t, home, "--state", state, "store-identity")["store"])
 }
@@ -409,7 +427,7 @@ func Test25_CLI20_doctor_reports_that_state_and_the_ledger_have_split(t *testing
 	}
 }
 
-// staged registers an assignment named name through Python and stages one ready_for_review
+// staged registers an assignment named name through this build and stages one ready_for_review
 // claim for it (emit), returning the relationship and event ids.
 func staged(t *testing.T, home, state, name string) (string, string) {
 	t.Helper()
@@ -418,7 +436,7 @@ func staged(t *testing.T, home, state, name string) (string, string) {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	reg := python(t, home, "--state", state, "register", "--parent-task", parent, "--parent-host", hostID, "--child-task", child, "--child-host", hostID,
+	reg := golang(t, home, "--state", state, "register", "--parent-task", parent, "--parent-host", hostID, "--child-task", child, "--child-host", hostID,
 		"--issue", "REL-"+name, "--artifact-root", root, "--allowed-recipient", parent, "--dispatch-request-id", "dispatch-"+name, "--dispatch-turn-id", "turn-"+name)
 	if reg.code != 0 {
 		t.Fatal(reg)
@@ -428,7 +446,7 @@ func staged(t *testing.T, home, state, name string) (string, string) {
 	if err := os.WriteFile(path, []byte(name+" still going"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	emitted := python(t, home, "--state", state, "emit", "--relationship", rid, "--generation", "1", "--outcome", "ready_for_review",
+	emitted := golang(t, home, "--state", state, "emit", "--relationship", rid, "--generation", "1", "--outcome", "ready_for_review",
 		"--turn-thread", child, "--turn-id", "turn-"+name, "--turn-status", "completed", "--artifact", path)
 	if emitted.code != 0 {
 		t.Fatal(emitted)
@@ -447,7 +465,7 @@ func statusBoth(t *testing.T, home string, argv ...string) map[string]any {
 	if py.code != got.code || norm(py.stdout) != norm(got.stdout) {
 		t.Fatalf("%v\nexit python=%d go=%d\npython:\n%s\ngo:\n%s", argv, py.code, got.code, py.stdout, got.stdout)
 	}
-	return decode(t, py.stdout)
+	return decode(t, got.stdout)
 }
 
 func keys(m map[string]any) []string {
@@ -552,17 +570,16 @@ func Test25_CLI26_a_readiness_refusal_keeps_the_whole_diagnosis(t *testing.T) {
 }
 
 // pythonStore creates a Python store at dir recording socket ("" for none), as the Python tests
-// do with Store(path, socket_path=...).close().
+// do with Store(path, socket_path=...).close(): the Python-created store testsupport.Create
+// makes, owned by Python.
 func pythonStore(t *testing.T, home, dir, socket string) {
 	t.Helper()
-	arg := "None"
-	if socket != "" {
-		arg = "sys.argv[2]"
+	for _, directory := range []string{home, dir} {
+		if err := os.MkdirAll(directory, 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := os.MkdirAll(home, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	runPython(t, home, "import sys; from pathlib import Path; from codex_session_relay.store import Store; Store(Path(sys.argv[1]) / 'relay.sqlite3', socket_path="+arg+").close()", dir, socket)
+	testsupport.Create(t, filepath.Join(dir, "relay.sqlite3"), socket, "python")
 }
 
 // recoverBoth runs argv in env through both implementations and compares the whole refusal.
@@ -587,7 +604,7 @@ func recoverBoth(t *testing.T, dir string, argv ...string) map[string]any {
 	if strings.Contains(pyOut, "codex-session-relay --") || strings.Contains(goOut, "codex-session-relay --") {
 		t.Fatalf("a recovery line was not rendered with the running program:\n%s\n%s", py.stdout, got.stdout)
 	}
-	return decode(t, py.stdout)
+	return decode(t, got.stdout)
 }
 
 func commands(recover []any) []string {
@@ -616,7 +633,7 @@ func contested(t *testing.T, name string) (home, root, socket string) {
 // the Python tests' run_in_home does, for the rest of the test.
 func withHome(t *testing.T, home string) {
 	t.Helper()
-	if !strings.HasPrefix(home, os.TempDir()) {
+	if !strings.HasPrefix(home, os.TempDir()) && !strings.HasPrefix(home, fixedRoot+"/") {
 		t.Fatalf("%s is not a test directory", home)
 	}
 	// This HOME is a t.TempDir, and its default state root is exactly what these properties
@@ -682,7 +699,7 @@ func Test25_CLI28_a_store_for_another_socket_or_none_is_refused(t *testing.T) {
 // optionValues is option_values: a shell round trip with --opt=value split back apart.
 func optionValues(t *testing.T, command string) []string {
 	t.Helper()
-	out := runPython(t, os.Getenv("HOME"), "import json,shlex,sys; print(json.dumps(shlex.split(sys.argv[1])))", command)
+	out := runPython(t, os.Getenv("HOME"), "import json,shlex,sys; print(json.dumps(shlex.split(sys.argv[1])))", []string{command})
 	var words []string
 	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &words); err != nil {
 		t.Fatal(err, out)
@@ -732,7 +749,7 @@ func Test25_CLI29_recovery_lines_are_runnable_and_safe_to_paste(t *testing.T) {
 	pythonHome(t)
 	qhome := filepath.Join(os.Getenv("HOME"), "quoted-home")
 	qroot := filepath.Join(qhome, ".local", "state", "codex-session-relay")
-	qsocket := filepath.Join(os.Getenv("HOME"), "sock$(touch /tmp/pwned);x.sock")
+	qsocket := filepath.Join(os.Getenv("HOME"), "sock$(touch pwned);x.sock")
 	for _, d := range []string{"aaaa555555555555", "bbbb555555555555"} {
 		pythonStore(t, qhome, filepath.Join(qroot, d), qsocket)
 	}
@@ -782,7 +799,7 @@ func Test25_CLI29_recovery_lines_are_runnable_and_safe_to_paste(t *testing.T) {
 // optionArgv is the argv a printed line runs, minus its program word(s).
 func optionArgv(t *testing.T, line string) []string {
 	t.Helper()
-	out := runPython(t, os.Getenv("HOME"), "import json,shlex,sys; print(json.dumps(shlex.split(sys.argv[1])))", line)
+	out := runPython(t, os.Getenv("HOME"), "import json,shlex,sys; print(json.dumps(shlex.split(sys.argv[1])))", []string{line})
 	var words []string
 	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &words); err != nil {
 		t.Fatal(err)
@@ -909,7 +926,7 @@ func Test25_CLI32_participants_reach_one_store_by_three_routes(t *testing.T) {
 		}
 	}
 	other := filepath.Join(home, "other")
-	pythonCreates(t, home, other)
+	pythonCreates(t, other)
 	elsewhere := both(t, home, "--state", other, "doctor", "--expect-store", byFlag["storeId"].(string))
 	if receipt(elsewhere)["storeId"] == byFlag["storeId"] || elsewhere["sameStore"] == "proven" {
 		t.Fatal(elsewhere["sameStore"])
@@ -1012,7 +1029,7 @@ class S: pass
 s = S(); s.selection = resolve_state_dir(sys.argv[1])
 report = probe(s.selection)
 moved = dict(report, store=dict(report["store"], storeId="another-store-entirely"))
-print(json.dumps(_access_receipt(s, moved)["recordedSandbox"]))`, state))
+print(json.dumps(_access_receipt(s, moved)["recordedSandbox"]))`, []string{state}, pyoracle.Substitute(store.Probe(ctx, selection).Store.StoreID, "<store-id>")))
 	if swapped["available"] != false || len(obj(swapped["participants"])) != 0 || swapped["detail"] != pySwapped["detail"] ||
 		!strings.Contains(swapped["detail"].(string), "changed under this command") {
 		t.Fatalf("go %v\npython %v", swapped, pySwapped)
