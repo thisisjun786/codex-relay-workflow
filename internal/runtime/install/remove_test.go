@@ -108,8 +108,12 @@ func TestRemoveRefusesARuntimeARegistrationStillNames(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Registrations reaching the selected runtime through the pointer name neither directory.
-	write(t, config, "[mcp_servers.codex-thread-bridge]\ncommand = \""+filepath.Join(h.dest, "current", "bin", "codex-thread-bridge")+"\"\n")
+	// Registrations reaching the selected runtime through the pointer name neither directory, and
+	// another program's registrations the reading cannot judge (todo 43's host held three) do not
+	// hold a removal back (decision 68).
+	write(t, config, "[mcp_servers.codex-thread-bridge]\ncommand = \""+filepath.Join(h.dest, "current", "bin", "codex-thread-bridge")+"\"\n"+
+		"\n[mcp_servers.gemini_notebook]\ncommand = \"ssh\"\nargs = [\"host\", \"sh -c 'notebook serve'\"]\n")
+	write(t, hooks, `{"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "herdr-session-start --json"}]}]}}`)
 	for _, directory := range []string{old, other} {
 		if removed, code := install.Remove(context.Background(), h.options(), directory); code != install.OK || at(removed, "removed") != true {
 			t.Fatalf("once nothing names %s: exit %d\n%s", directory, code, golden.Canon(removed))

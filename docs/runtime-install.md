@@ -449,7 +449,8 @@ its working directory, or what its arguments run, resolving inside it, and every
 `daemon.json` or scope claim records alive), and any directory a registration the host reads names
 a path inside: the Stop settings, the bridge record, the cached plugin declarations, `hooks.json`
 and `config.toml`. A process it cannot rule out or a
-registration it cannot read or judge refuses too, and the answer names it. A process whose working
+CRW registration it cannot read or judge refuses too, and the answer names it; another program's
+entry in `hooks.json` or `config.toml` that it cannot judge does not ([what remove reads](#what-remove-reads)). A process whose working
 directory cannot be read and that runs something by a relative path is one it cannot rule out,
 whatever user runs it, unless that user (not root) is provably shut out of the directory by the
 permissions of the directory or a parent. What counts as running something is the program and,
@@ -501,6 +502,17 @@ readers came from, which `crw doctor retention-scan` ran until it was retired (d
 | 5 | `<CODEX_HOME>/plugins/cache/crw/crw/*/wiring/hooks/*.json`, `wiring/mcp.json`, `.mcp.json` in every version directory (a stray file there declares nothing) | every hook command, under the grammar below, and every MCP server, as Codex starts it |
 | 9 | `<CODEX_HOME>/hooks.json` | every hook command, as row 5 |
 | 10 | `<CODEX_HOME>/config.toml` `mcp_servers.*` | every MCP server, as row 5 (a relative `cwd` is unplaced) |
+
+`hooks.json` and `config.toml` hold other programs' registrations too, so what the reading cannot
+judge of one entry there (a hook command, an MCP server) holds a removal back only when the entry
+is CRW's: when a word it names or runs, a path it classifies, or where that path resolves is
+`crw`, `codex-session-relay`, `codex-thread-bridge` or `crw-completion-hook`, or lies in the
+destination (spelled from `$HOME`, `${HOME}` or `~` too). Another tool's `SessionStart` hook
+running an interpreter's script, or a server started over `ssh` or by `node`, leaves a CRW runtime
+unused and no longer refuses a removal (decision 68); on the relay host three such entries did
+until todo 43 ran the removal against an edited copy of the Codex home. What any entry names inside
+the directory is still found, a file that cannot be read or parsed still refuses, and the CRW
+files (rows 4 and 5) refuse on anything they hold that cannot be judged.
 
 Row 8, the `<CODEX_HOME>/crw-stop-hook.py` launcher copy, is no longer read (decision 67): the
 relay host holds none, and the Python bootstrap that fell back to it left the plugin cache with the

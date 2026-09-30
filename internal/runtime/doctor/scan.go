@@ -15,6 +15,7 @@ import (
 	"github.com/BurntSushi/toml"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/definition"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/scope"
@@ -42,6 +43,10 @@ type ScanOptions struct {
 	// ScopeRegistry is the relay's production scope registry (a seam for tests); "" is
 	// <home>/.codex-session-relay/scopes, home taken from the passwd entry as the relay takes it.
 	ScopeRegistry string
+	// Foreign keeps what another program's registration in hooks.json or config.toml could not be
+	// read or judged, which RegisteredMatching otherwise drops (shared; a seam for the tests of the
+	// grammar, which read such registrations).
+	Foreign bool
 }
 
 // scopeDirEnv overrides the relay's scope registry (the relay's service.ScopeEnv).
@@ -69,6 +74,11 @@ type scan struct {
 	// observe, when set, receives every path the registration rows classify, with the row,
 	// source and field naming it (RegisteredMatching).
 	observe func(row int, source, field, path string, e Executable)
+	// destination is the destination resolved, when that differs from how it is spelled.
+	destination string
+	// ours is set while one registration of rows 9 and 10 is judged, once anything it names is
+	// CRW's (crwWord, crwPath); see shared.
+	ours bool
 }
 
 // stopSettings is the settings document one Stop registration reads: path, or why it cannot be
@@ -106,12 +116,18 @@ func (s *scan) expander(pluginRoot string) Expander {
 	return Expander{Vars: vars, Path: s.o.Env.Get("PATH")}
 }
 
-// judge is an argvJudge whose reports are filed under one row, source and field.
+// judge is an argvJudge whose reports are filed under one row, source and field. Every word it
+// reports or runs is also asked whether it is CRW's (shared).
 func (s *scan) judge(row int, source, field, cwd string, x Expander) argvJudge {
 	c := s.classifier(row, source, field, x)
 	return argvJudge{c: c, cwd: cwd, report: func(word string, e Executable) {
+		s.ours = s.ours || s.crwWord(word)
 		e.Value = word
 		s.verdict(row, source, field, e)
+	}, seen: func(argv []shellWord, _ Executable) {
+		for _, w := range argv {
+			s.ours = s.ours || s.crwWord(w.Written) || s.crwWord(w.Value)
+		}
 	}}
 }
 
@@ -119,10 +135,72 @@ func (s *scan) judge(row int, source, field, cwd string, x Expander) argvJudge {
 // classifies to observe when the reading has one.
 func (s *scan) classifier(row int, source, field string, x Expander) Classifier {
 	c := Classifier{Pointer: s.pointer, Expand: x}
-	if s.observe != nil {
-		c.Observe = func(path string, e Executable) { s.observe(row, source, field, path, e) }
+	c.Observe = func(path string, e Executable) {
+		s.ours = s.ours || s.crwPath(path) || s.crwPath(e.Resolves)
+		if s.observe != nil {
+			s.observe(row, source, field, path, e)
+		}
 	}
 	return c
+}
+
+// crwNames are the programs a CRW runtime holds: crw, its compatibility links, and the link a
+// runtime installed before decision 66 still carries.
+var crwNames = map[string]bool{"crw": true, definition.Relay: true, definition.Bridge: true, retiredHookLink: true}
+
+// crwPath is whether a path is in the destination, as written or resolved.
+func (s *scan) crwPath(path string) bool {
+	if path == "" {
+		return false
+	}
+	for _, root := range []string{s.o.Destination, s.destination} {
+		if root != "" && (path == root || strings.HasPrefix(path, root+"/")) {
+			return true
+		}
+	}
+	return crwNames[filepath.Base(path)]
+}
+
+// crwWord is whether a word as a registration writes it names a CRW program: one of crwNames, or
+// a path in the destination, spelled from HOME as $HOME, ${HOME} or ~ too, since a word this
+// reading cannot expand is judged by its spelling.
+func (s *scan) crwWord(word string) bool {
+	if word == "" {
+		return false
+	}
+	if crwNames[filepath.Base(word)] || strings.Contains(word, s.o.Destination) || s.destination != "" && strings.Contains(word, s.destination) {
+		return true
+	}
+	if home := s.o.Env.Get("HOME"); home != "" && strings.HasPrefix(s.o.Destination, home+"/") {
+		rest := strings.TrimPrefix(s.o.Destination, home)
+		for _, spelling := range []string{"$HOME", "${HOME}", "~"} {
+			if strings.Contains(word, spelling+rest) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// shared judges one registration of the host-wide surfaces other programs share, hooks.json
+// (row 9) and config.toml's mcp_servers (row 10), and keeps what it could not read or judge only
+// when the registration is CRW's: when a word it names or runs, a path it classifies, or where
+// that path resolves is a CRW program or lies in the destination. Another program's registration
+// that this reading cannot judge (a hook running an interpreter's script, a server started over
+// ssh) leaves a CRW runtime unused, so it never holds a removal back (decision 68). What
+// it finds inside the directory is kept whoever registered it.
+func (s *scan) shared(judge func()) {
+	if s.o.Foreign {
+		judge()
+		return
+	}
+	mark, stops := len(s.unreadable), len(s.stopSettings)
+	s.ours = false
+	judge()
+	if !s.ours {
+		s.unreadable, s.stopSettings = s.unreadable[:mark], s.stopSettings[:stops]
+	}
+	s.ours = false
 }
 
 // absolute is a path the relay or the hook reads from its environment, made as they make it
@@ -343,17 +421,24 @@ func (s *scan) hookCommands(row int, path string, document Object, pluginRoot st
 				case timed && !isNumber:
 					bad(field, "the hook's timeout is "+scope.TypeName(timeout)+", not a number", stop)
 				}
-				j := s.judge(row, path, field, "", s.expander(pluginRoot))
-				if !stop {
-					j.program(command)
-					continue
+				judge := func() {
+					j := s.judge(row, path, field, "", s.expander(pluginRoot))
+					if !stop {
+						j.program(command)
+						return
+					}
+					calls, unknown := readStopCommand(j, command)
+					for _, call := range calls {
+						s.stopSettings = append(s.stopSettings, s.settingsOf(path, field, call))
+					}
+					if unknown != "" {
+						s.stopSettings = append(s.stopSettings, stopSettings{source: path, field: field, problem: unknown})
+					}
 				}
-				calls, unknown := readStopCommand(j, command)
-				for _, call := range calls {
-					s.stopSettings = append(s.stopSettings, s.settingsOf(path, field, call))
-				}
-				if unknown != "" {
-					s.stopSettings = append(s.stopSettings, stopSettings{source: path, field: field, problem: unknown})
+				if row == 9 {
+					s.shared(judge)
+				} else {
+					judge() // row 5, the CRW plugin's own cache
 				}
 			}
 		}
@@ -426,9 +511,19 @@ func (s *scan) server(row int, source, field string, get func(string) any, versi
 	for _, arg := range args {
 		argv = append(argv, literal(arg))
 	}
-	j := s.judge(row, source, field, cwd, x)
-	defer j.recovered(strings.Join(append([]string{command}, args...), " "))
-	j.argv(argv, false)
+	judge := func() {
+		for _, w := range argv {
+			s.ours = s.ours || s.crwWord(w.Value)
+		}
+		j := s.judge(row, source, field, cwd, x)
+		defer j.recovered(strings.Join(append([]string{command}, args...), " "))
+		j.argv(argv, false)
+	}
+	if row == 10 {
+		s.shared(judge)
+	} else {
+		judge() // row 5, the CRW plugin's own cache
+	}
 }
 
 // pluginCache is row 5: every cached version's hook and MCP declarations. Codex loads only a

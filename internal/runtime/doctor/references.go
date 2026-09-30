@@ -12,14 +12,13 @@ import (
 )
 
 // RegisteredMatching is every path the host's registrations name that inside counts, and
-// everything those registrations hold that could not be read or judged. The registrations are
-// every crw-*.json settings record (row 4: the Stop settings' relayExecutable, the bridge
-// record's bridgeExecutable), the cached plugin declarations
-// (row 5), hooks.json (row 9) and config.toml's mcp_servers (row 10), and the settings document
-// each Stop command there reads when it is not one of row 4's; the row numbers are the retired
-// retention scan's (decision 59), and row 8, the Python launcher copy, is retired (decision
-// 67). inside
-// answers, for a path a registration names (absolute, as written) and what it resolves to (""
+// everything CRW's registrations hold that could not be read or judged (in hooks.json and
+// config.toml, only an entry that is CRW's counts, decision 68). The registrations are every
+// crw-*.json settings record (row 4: the Stop settings' relayExecutable, the bridge record's
+// bridgeExecutable), the cached plugin declarations (row 5), hooks.json (row 9) and config.toml's
+// mcp_servers (row 10), and the settings document each Stop command there reads when it is not
+// one of row 4's; the row numbers are the retired retention scan's (decision 59), and row 8,
+// the Python launcher copy, is retired (decision 67). inside answers, for a path a registration names (absolute, as written) and what it resolves to (""
 // when it could not be resolved), the path it counts as, or "" when it does not count; each
 // interpreter and script a reference is followed through is asked too. What the host starts from
 // one of these is started afresh by each new session, so no process table shows it between
@@ -33,6 +32,9 @@ func RegisteredMatching(ctx context.Context, o ScanOptions, inside func(path, re
 	}
 	seen := map[string]bool{}
 	s := &scan{o: o, pointer: pointer.Path(o.Destination)}
+	if resolved, err := filepath.EvalSymlinks(o.Destination); err == nil && resolved != o.Destination {
+		s.destination = resolved
+	}
 	s.observe = func(row int, source, field, path string, e Executable) {
 		names := inside(path, e.Resolves)
 		if names == "" {

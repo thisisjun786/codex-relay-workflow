@@ -3182,3 +3182,31 @@ Evidence: `internal/runtime/doctor/registration.go`, `scan.go`, `references.go`;
 `internal/runtime/install/remove.go`; `TestDoctorJudgesTheStopCommandsInHooksJSON`,
 `TestDoctorJudgesTheBridgeUnderEveryTableName`, `TestRegisteredMatchingFollowsEveryRegistrationIntoTheRuntime`,
 `TestRegisteredMatchingReadsTheSettingsAStopCommandReads`, `TestRemoveRefusesARuntimeARegistrationStillNames`.
+
+## 68. `crw install remove` holds a removal back only for what CRW registered in hooks.json and config.toml (refactor R1)
+
+Decision: in the registration reading `crw install remove` (and the reclaim of an abandoned staging)
+rests on, `doctor.RegisteredMatching`, an entry of `<CODEX_HOME>/hooks.json` (row 9, a hook command
+of any event) or of `config.toml`'s `mcp_servers` (row 10) is CRW's when a word it names or runs, a
+path the reading classifies for it, or where that path resolves is one of CRW's programs (`crw`,
+`codex-session-relay`, `codex-thread-bridge`, the retired `crw-completion-hook`) or lies in the
+destination, spelled literally, resolved, or from `$HOME`, `${HOME}` or `~`. What the reading could
+not read or judge of an entry that is not CRW's (and the Stop settings such an entry would leave
+unknown) is dropped rather than listed under `unreadable`, so it no longer refuses a removal. The
+rest is unchanged: a path any entry names inside the directory is still found and refuses; a
+`hooks.json` or `config.toml` that cannot be read or parsed, or holds a malformed entry, still
+refuses; the CRW files, the `crw-*.json` records (row 4) and the CRW plugin's cache (row 5), still
+refuse on anything they hold that cannot be judged. `doctor.ScanOptions.Foreign` keeps the dropped
+entries, for the tests of the reading's grammar.
+
+Why: todo 43's removal of the Python runtime directories refused on three registrations that were
+not CRW's and that the reading could not judge (another tool's `SessionStart` hook running
+`python3`, a `gemini_notebook` server started over `ssh`, an `oracle` server run by `node`), and
+succeeded only once `--codex-home` named an edited copy of the Codex home. Such an entry cannot
+start a runtime it never names: the risk accepted is a foreign script that starts a CRW runtime by
+a path it computes itself, which the reading could not have established either.
+
+Evidence: `internal/runtime/doctor/scan.go` (`shared`, `crwWord`, `crwPath`), `references.go`;
+`TestRegisteredMatchingHoldsARemovalBackOnlyForCRWsRegistrations`,
+`TestRemoveRefusesARuntimeARegistrationStillNames` (fails with the narrowing disabled);
+docs/runtime-install.md "What remove reads".

@@ -23,7 +23,14 @@ import (
 // counts nothing.
 func (h *host) registrations(t *testing.T, dir string) ([]string, []string) {
 	t.Helper()
-	found, unreadable := doctor.RegisteredMatching(context.Background(), doctor.ScanOptions{Env: h.env}, func(path, resolves string) string {
+	return h.registrationsAs(t, dir, true)
+}
+
+// registrationsAs is registrations with foreign as ScanOptions.Foreign: the grammar's tests keep
+// what another program's registration could not be read or judged, crw install remove does not.
+func (h *host) registrationsAs(t *testing.T, dir string, foreign bool) ([]string, []string) {
+	t.Helper()
+	found, unreadable := doctor.RegisteredMatching(context.Background(), doctor.ScanOptions{Env: h.env, Foreign: foreign}, func(path, resolves string) string {
 		switch {
 		case dir == "":
 		case record.Within(filepath.Clean(path), dir):
@@ -369,6 +376,55 @@ func TestRegisteredMatchingJudgesAnMCPServerAsCodexStartsIt(t *testing.T) {
 	}
 	if !slices.ContainsFunc(found, func(f string) bool { return strings.HasPrefix(f, "5:mcpServers.bridge:") }) || len(rowEntries(unreadable, 5)) != 0 {
 		t.Errorf("the bridge launcher: found %v, unreadable %v", found, unreadable)
+	}
+}
+
+// crw install remove reads hooks.json and config.toml, which other programs register in too, and
+// holds a removal back only for what CRW registered there (decision 68): a registration none
+// of whose words is a CRW program or a path in the destination - another tool's SessionStart hook
+// running an interpreter's script, a server started over ssh with a shell program, one run by
+// node - is not CRW's, so what the reading cannot judge of it is dropped, while a CRW hook or
+// server it cannot judge (an expansion it does not make, a login shell's program) is still listed.
+// A registration that names a path in the directory (an interpreter handed its crw) is found.
+func TestRegisteredMatchingHoldsARemovalBackOnlyForCRWsRegistrations(t *testing.T) {
+	h := newHost(t)
+	dir, _ := h.goRuntime(t, "bin-0.3.0-aaaaaaaaaaaa")
+	link(t, dir, h.current())
+	bin := filepath.Join(h.home, "bin")
+	for _, name := range []string{"python3", "ssh", "node"} {
+		write(t, filepath.Join(bin, name), fakeCrw+name, 0o755)
+	}
+	script := filepath.Join(h.home, "tools", "session-start")
+	write(t, script, "echo started\n", 0o755)
+	h.env = scope.Env{"HOME=" + h.home, "XDG_STATE_HOME=" + h.state, "CODEX_HOME=" + h.codex, "PATH=" + bin + ":/usr/bin:/bin"}
+	write(t, filepath.Join(h.codex, "hooks.json"), `{"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "python3 `+script+`"}]}], `+
+		`"Stop": [{"hooks": [{"type": "command", "command": "\"$RUNTIME/bin/crw\" hook"}, {"type": "command", "command": "python3 `+filepath.Join(dir, "bin", "crw")+`"}]}]}}`, 0o600)
+	write(t, filepath.Join(h.codex, "config.toml"), strings.Join([]string{
+		"[mcp_servers.gemini_notebook]\ncommand = \"ssh\"\nargs = [\"host\", \"sh -c 'notebook serve'\"]\n",
+		"[mcp_servers.oracle]\ncommand = \"node\"\nargs = [\"" + script + "\"]\n",
+		"[mcp_servers.bridge]\ncommand = \"bash\"\nargs = [\"-lc\", \"codex-thread-bridge\"]\n",
+	}, "\n"), 0o600)
+	judged := func(entries []string) []string {
+		var out []string
+		for _, field := range []string{"hooks.SessionStart[0].hooks[0].command", "hooks.Stop[0].hooks[0].command", "hooks.Stop[0].hooks[1].command",
+			"mcp_servers.gemini_notebook", "mcp_servers.oracle", "mcp_servers.bridge"} {
+			if listed(entries, " "+field+" ") || listed(entries, " "+field+": ") {
+				out = append(out, field)
+			}
+		}
+		return out
+	}
+	_, every := h.registrationsAs(t, dir, true)
+	if got := judged(every); !slices.Equal(got, []string{"hooks.SessionStart[0].hooks[0].command", "hooks.Stop[0].hooks[0].command",
+		"mcp_servers.gemini_notebook", "mcp_servers.oracle", "mcp_servers.bridge"}) {
+		t.Fatalf("the grammar leaves %v unreadable\n%v", got, every)
+	}
+	found, unreadable := h.registrationsAs(t, dir, false)
+	if got := judged(unreadable); !slices.Equal(got, []string{"hooks.Stop[0].hooks[0].command", "mcp_servers.bridge"}) {
+		t.Fatalf("remove holds back on %v\n%v", got, unreadable)
+	}
+	if !slices.Contains(found, "9:hooks.Stop[0].hooks[1].command:"+filepath.Join(dir, "bin", "crw")) {
+		t.Fatalf("found %v", found)
 	}
 }
 
