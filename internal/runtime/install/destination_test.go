@@ -69,6 +69,27 @@ func TestTheDestinationIsFixed(t *testing.T) {
 	}
 }
 
+// --owner defaults to plugin, the only owner, and hook takes no --adapter or --event, whose only
+// values were completion and Stop (decision 69); the answer still names all three.
+func TestHookAndRegisterMCPNeedNoSingleValueSwitch(t *testing.T) {
+	h := newHost(t)
+	code, stdout, stderr := h.main(t, h.env, "hook", "--marker-root", filepath.Join(h.home, "markers"))
+	if code != install.OK || !strings.Contains(stdout, `"owner": "plugin"`) || !strings.Contains(stdout, `"adapter": "completion"`) || !strings.Contains(stdout, `"event": "Stop"`) {
+		t.Fatalf("hook: exit %d\n%s%s", code, stdout, stderr)
+	}
+	if code, stdout, stderr := h.main(t, h.env, "register-mcp"); code != install.OK || !strings.Contains(stdout, `"owner": "plugin"`) {
+		t.Fatalf("register-mcp: exit %d\n%s%s", code, stdout, stderr)
+	}
+	for _, flag := range []string{"--adapter=completion", "--event=Stop"} {
+		if code, _, stderr := h.main(t, h.env, "hook", flag); code != install.Usage || !strings.Contains(stderr, strings.Split(flag, "=")[0][1:]) {
+			t.Fatalf("%s: exit %d %s", flag, code, stderr)
+		}
+	}
+	if code, stdout, _ := h.main(t, h.env, "hook", "--owner", "user"); code != install.Usage || !strings.Contains(stdout, "only --owner plugin is supported") {
+		t.Fatalf("--owner user: exit %d\n%s", code, stdout)
+	}
+}
+
 // A path holding a byte that is not UTF-8 - from HOME, CODEX_HOME, XDG_STATE_HOME or a path flag
 // - is refused as a usage error naming where it came from, never recorded with a replacement
 // character; a relative XDG_STATE_HOME is refused as well, never read against the working

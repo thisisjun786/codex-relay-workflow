@@ -23,9 +23,9 @@ const (
 
 // HookOptions are `crw install hook`'s inputs.
 type HookOptions struct {
-	Owner, Event, Relay, MarkerRoot, Database, Socket, JournalRoot, Mode, Isolation string
-	GuardTimeout, Timeout                                                           int64
-	DryRun                                                                          bool
+	Owner, Relay, MarkerRoot, Database, Socket, JournalRoot, Mode, Isolation string
+	GuardTimeout, Timeout                                                    int64
+	DryRun                                                                   bool
 }
 
 // budgetComplaints is completion.budget_complaints: the adapter's own budget against the
@@ -58,15 +58,10 @@ func Hook(ctx context.Context, o Options, h HookOptions) (Object, int) {
 	if h.Owner != OwnerPlugin {
 		return usage([]string{"only --owner plugin is supported: the user-owned registration (a hooks.json entry running completion_hook.py) is retired with runtime_install.py"})
 	}
-	event := h.Event
-	if event == "" {
-		event = "Stop"
-	}
-	var complaints []string
-	if event != "Stop" {
-		complaints = append(complaints, "this adapter implements the Stop contract and has no decision for "+event)
-	}
-	complaints = append(complaints, budgetComplaints(h.GuardTimeout, h.Timeout)...)
+	// The adapter is the completion hook and its event Stop, the only ones there are (decision
+	// 69); the answer still names both.
+	const event = "Stop"
+	complaints := budgetComplaints(h.GuardTimeout, h.Timeout)
 	mode := h.Mode
 	if mode == "" {
 		mode = hook.Observe

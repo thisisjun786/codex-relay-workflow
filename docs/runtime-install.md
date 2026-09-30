@@ -20,8 +20,8 @@ follows is about what is read before anything moves and what is put back when it
 | `crw install install`, `crw install update` | Verify a release archive, install it as a new runtime directory, exercise it and move the owned pointer to it | OPS-2.4 |
 | `crw install rollback [<dir>]` | Point the owned pointer back at the runtime the last promotion replaced, or at a runtime directory the host record lists | OPS-2.4 |
 | `crw install remove <dir>` | Delete one runtime directory nothing selects, points at or runs out of | OPS-2.4 |
-| `crw install register-mcp --owner plugin` | Write the bridge record the plugin's declared server reads | OPS-2.2 |
-| `crw install hook --owner plugin` | Write the Stop settings the plugin's declared hook reads | OPS-6.3 |
+| `crw install register-mcp [--owner plugin]` | Write the bridge record the plugin's declared server reads | OPS-2.2 |
+| `crw install hook [--owner plugin]` | Write the Stop settings the plugin's declared hook reads | OPS-6.3 |
 | `crw install status`, `crw doctor` | Read the installation, classify it and report the six check results; write nothing | OPS-2.1, OPS-2.2, OPS-6.1 |
 | `crw-dev skills link --check` or `--apply` | Skill links into Codex, from a checkout | OPS-2.3 |
 
@@ -840,7 +840,7 @@ fixes the rules and the relay's `guard-evaluate` implements them; `crw hook` is 
 host and that guard, and it exits 0 on every path, because exit 2 is the host's blocking code.
 
 The settings are written before anything could read them, and every precondition is checked before
-any write: the event, the budget against the registered timeout, a hook file that already registers
+any write: the budget against the registered timeout, a hook file that already registers
 this adapter for Stop (the user-owned registration, refused by name, because two registrations run
 twice on every Stop), and settings already there that this command cannot act on. Settings that
 already say something else are refused rather than overwritten, because they carry the mode: they

@@ -26,7 +26,6 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
@@ -359,12 +358,4 @@ func Create(directory string, issue, run any) (*Held, error) {
 		return held, err
 	}
 	return held, nil
-}
-
-// Claim is the claim document as a report shows it.
-func Claim(claim reading.Reading) any {
-	if value, ok := claim.Value.(contract.OrderedObject); ok {
-		return value
-	}
-	return nil
 }

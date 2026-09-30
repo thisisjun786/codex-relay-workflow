@@ -3210,3 +3210,18 @@ Evidence: `internal/runtime/doctor/scan.go` (`shared`, `crwWord`, `crwPath`), `r
 `TestRegisteredMatchingHoldsARemovalBackOnlyForCRWsRegistrations`,
 `TestRemoveRefusesARuntimeARegistrationStillNames` (fails with the narrowing disabled);
 docs/runtime-install.md "What remove reads".
+
+## 69. `crw install hook` drops `--adapter` and `--event`; `--owner` defaults to plugin (refactor R1)
+
+Decision: `crw install hook` no longer takes `--adapter` (whose one value was `completion`) or
+`--event` (whose one value was `Stop`); either is now an unknown flag (exit 2). `--owner` of
+`crw install hook` and `crw install register-mcp` defaults to `plugin`, the only owner either
+accepts, so `--owner plugin` may be left out and `--owner user` is refused as before. The answers
+are unchanged: `hook` still names `adapter` `completion`, `event` `Stop` and `owner`. The no-op
+`--json` of `crw doctor` stays accepted. `record.Path` and `staging.Claim`, which nothing called,
+are deleted.
+
+Why: a switch with one allowed value only adds a way to fail; no skill, document or wiring file
+passes `--adapter` or `--event`, and every one that passes `--owner` passes `plugin`.
+
+Evidence: `internal/runtime/install/cli.go`, `hook.go`; `TestHookAndRegisterMCPNeedNoSingleValueSwitch`.
