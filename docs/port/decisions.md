@@ -3225,3 +3225,32 @@ Why: a switch with one allowed value only adds a way to fail; no skill, document
 passes `--adapter` or `--event`, and every one that passes `--owner` passes `plugin`.
 
 Evidence: `internal/runtime/install/cli.go`, `hook.go`; `TestHookAndRegisterMCPNeedNoSingleValueSwitch`.
+
+## 70. The Stop hook's final row is bounded by the 5 s deadline, not a shortened budget
+
+Decision: a `timeoutSeconds` below 5 still shortens every wait of the native Stop hook (the
+input, the identity scan, the dial and the guard allocation, decision 32), but no longer the
+final journal row and ledger outcome that record how the invocation ended. That bookkeeping is
+bounded by the unshortened absolute deadline, 5 s after process entry. With the default budget
+(5 s, which `crw install hook` writes) the two deadlines are the same and nothing changes.
+
+Why: the bookkeeping reserve inside a shortened budget is at most 100 ms. A guard that used its
+whole allocation expires at the reserve's start, and a host that leaves the process unscheduled
+past the reserve made the journal refuse the write (`ctx.Err()` before the create-once open) or
+`bounded` return before it, so the invocation left no row at all: the contract corpus's
+guard-timeout fixtures (`test_completion_hook__test_a_guard_that_never_answers_is_killed_and_the_turn_ends`,
+`test_adapter_agreement__test_a_runtime_past_its_budget_times_out_in_both__packaged`, both with a
+1 s budget) failed twice on loaded CI runners with `rows` empty. Python journals after a guard
+timeout without a deadline; decision 32's rule applies: time the process spent unscheduled says
+nothing about the host or the owner, so it must not remove the record. The row's content does not
+change, and the hook still prints nothing and exits 0 on this path.
+
+Cost: settings with a budget below 5 s and a journal on a hung filesystem hold the hook until
+5 s after entry instead of the shortened budget, still inside the host's 10 s.
+
+Evidence: internal/relay/hook/adapter.go (`bookkeeping`, used by `finish`, `recordFault` and the
+decision-22 pre-scan row); `Test33StalledPastTheBudgetKeepsTheTimedOutRow` in
+internal/relay/hook/stall_test.go stops the process from the guard request until 1.5 s later and
+fails without the change (no row). With every hook process of the two fixtures stopped for a
+random 50-450 ms, the pre-change binary failed 17 of 50 runs with exactly the CI signature and the
+changed one none of 50.
