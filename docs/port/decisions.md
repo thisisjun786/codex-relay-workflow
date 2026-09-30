@@ -3084,3 +3084,23 @@ Why: only a Python selection took that branch, and no promotion leaves one any m
 
 Evidence: `internal/runtime/definition/definition.go`, `internal/runtime/install/install.go`
 `outgoingOf`; `TestOutgoingIsWrittenOnlyByAPromotion`, `TestAPromotionRecordsTheRuntimeThePointerLeaves`.
+
+## 65. One reader of the bridge record for the launcher, the installer and the doctor (refactor R1)
+
+Decision: the bridge record's contract is read once, in `internal/pluginwiring` (`ReadBridgeRecord`,
+`ReadPolicyReference`, `ReadPolicyPath`, `PolicyDigest`), by the launcher (`Prepare`), the
+installer's record checks (`bridgeComplaints`, `policyComplaints`, `policyFileComplaints`,
+`executionPolicyReading`) and the doctor's judgement (`pluginBridge`, `policy`). Each keeps the
+order it checks in and its own words. Two readings of the installer and the doctor move to the
+launcher's: the installer reads `recordVersion` by Python's `==` as the launcher and the doctor
+already did (`true` and `1.0` are version 1, where it named them malformed), and a policy file
+whose descriptor cannot be examined (fstat failing) reads as not a regular file in all three,
+where the launcher named the error and the doctor left it unreadable.
+
+Why: the three copies had drifted only in those two corners, and the launcher is the reader
+whose answer decides whether a bridge starts.
+
+Evidence: `internal/pluginwiring/record.go`, `launch.go`; `internal/runtime/install/mcp.go`;
+`internal/runtime/doctor/registration.go`; `TestRegisterMCPWritesTheRecordAndRefusesASecondOwner`,
+`TestDoctorJudgesTheBridgeRecordAsTheLauncherAcceptsIt` and the launcher's contract tests in
+`internal/pluginwiring`.

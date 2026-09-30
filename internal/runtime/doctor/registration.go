@@ -2,13 +2,8 @@ package doctor
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -19,6 +14,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"golang.org/x/sys/unix"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pluginwiring"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -411,49 +407,38 @@ func (j judge) bridgeRecord(into *componentRegistrations, path string) []string 
 	return nil
 }
 
-// pluginBridge applies crw_bridge_mcp.py's record contract before judging what it execs: a
-// record the launcher refuses (it exits 2 before exec) starts no bridge, which is a conflict.
+// pluginBridge applies the launcher's record contract (pluginwiring.ReadBridgeRecord) before
+// judging what it execs: a record the launcher refuses (it exits 2 before exec) starts no bridge,
+// which is a conflict.
 func (j judge) pluginBridge(into *componentRegistrations, path string, document Object) {
 	refuse := func(field any, why string) {
 		into.conflict(registrationEntry(path, field, nil), nil, "the packaged bridge launcher refuses "+path+": "+why+", so it starts no bridge")
 	}
-	version := record.Get(document, "recordVersion")
-	number, integral := pyInteger(version)
-	if !integral || number != 1 && number != 2 {
-		refuse("recordVersion", "it is version "+evidence.Repr(version)+", and the launcher reads versions 1 and 2")
+	read := pluginwiring.ReadBridgeRecord(document)
+	if read.Version == 0 {
+		refuse("recordVersion", "it is version "+evidence.Repr(read.VersionValue)+", and the launcher reads versions 1 and 2")
 		return
 	}
-	if name := record.Get(document, "serverName"); name != nil && name != definition.Bridge {
-		refuse("serverName", "it names the server "+evidence.Repr(name)+", and the package declares '"+definition.Bridge+"'")
+	if read.ServerName != nil && read.ServerName != definition.Bridge {
+		refuse("serverName", "it names the server "+evidence.Repr(read.ServerName)+", and the package declares '"+definition.Bridge+"'")
 		return
 	}
-	executable, isString := record.Get(document, "bridgeExecutable").(string)
-	if !isString || !filepath.IsAbs(executable) {
-		refuse("bridgeExecutable", "it must name bridgeExecutable as an absolute path, found "+evidence.Repr(record.Get(document, "bridgeExecutable")))
+	if !read.IsString || !filepath.IsAbs(read.Executable) {
+		refuse("bridgeExecutable", "it must name bridgeExecutable as an absolute path, found "+evidence.Repr(read.ExecutableValue))
 		return
 	}
-	var args []string
-	if raw := record.Get(document, "args"); raw != nil {
-		list, ok := raw.([]any)
-		for _, word := range list {
-			text, isString := word.(string)
-			ok = ok && isString
-			args = append(args, text)
-		}
-		if !ok {
-			refuse("args", "it must list args as strings, found "+evidence.Repr(raw))
-			return
-		}
+	if !read.ArgsOK {
+		refuse("args", "it must list args as strings, found "+evidence.Repr(read.ArgsValue))
+		return
 	}
-	_, hasPolicy := record.Lookup(document, "executionPolicy")
 	switch {
-	case number == 1 && hasPolicy:
+	case read.Version == 1 && read.HasPolicy:
 		refuse("executionPolicy", "it is version 1 and names an execution policy, which only a version 2 record carries")
 		return
-	case number == 2 && !j.policy(into, path, record.Get(document, "executionPolicy"), refuse):
+	case read.Version == 2 && !j.policy(into, path, read.Policy, refuse):
 		return
 	}
-	j.executable(into, path, "bridgeExecutable", executable, executable, args, definition.Bridge)
+	j.executable(into, path, "bridgeExecutable", read.Executable, read.Executable, read.Args, definition.Bridge)
 }
 
 // policy is the launcher's policy_environment for a version-2 record, minus the two variables it
@@ -463,84 +448,43 @@ func (j judge) pluginBridge(into *componentRegistrations, path string, document 
 // hash to it. A policy that does not exist, is not a regular file or changed is refused; one this
 // command could not open or read for another reason is unreadable.
 func (j judge) policy(into *componentRegistrations, path string, reference any, refuse func(field any, why string)) bool {
-	object, ok := reference.(Object)
-	_, hasPath := record.Lookup(object, "path")
-	_, hasDigest := record.Lookup(object, "digest")
-	if !ok || len(object) != 2 || !hasPath || !hasDigest {
+	policy := pluginwiring.ReadPolicyReference(reference)
+	if !policy.Shaped {
 		refuse("executionPolicy", "it is version 2 and must name executionPolicy as an object with exactly digest and path")
 		return false
 	}
-	file, _ := record.Get(object, "path").(string)
-	if file == "" || file != strings.TrimSpace(file) || strings.IndexFunc(file, func(r rune) bool { return r < 32 || r == 127 }) >= 0 || !filepath.IsAbs(file) {
-		refuse("executionPolicy.path", "it must name the execution policy as an absolute path with no surrounding whitespace or control characters, found "+evidence.Repr(record.Get(object, "path")))
+	file := policy.File.Text
+	if !policy.File.OK() {
+		refuse("executionPolicy.path", "it must name the execution policy as an absolute path with no surrounding whitespace or control characters, found "+evidence.Repr(policy.File.Value))
 		return false
 	}
-	digest, _ := record.Get(object, "digest").(string)
-	if !sha256Hex.MatchString(digest) {
+	if !policy.DigestOK {
 		refuse("executionPolicy.digest", "it must name the execution policy digest as 64 lowercase hexadecimal characters")
 		return false
 	}
 	entry := registrationEntry(path, "executionPolicy.path", file)
 	// The launcher opens os.fsencode(path): a surrogate escape U+DC80..U+DCFF is the byte it
 	// stands for, and any other surrogate is a path it refuses.
-	name, encodable := reading.FSEncode(file)
-	if !encodable {
+	actual, encodable, err := pluginwiring.PolicyDigest(file)
+	var opening *os.PathError
+	switch {
+	case !encodable:
 		refuse("executionPolicy.path", "it names an execution policy path this system cannot encode, found "+evidence.Repr(file))
 		return false
-	}
-	handle, err := os.OpenFile(name, os.O_RDONLY|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
-			refuse("executionPolicy.path", "the execution policy "+file+" does not exist")
-		} else {
-			into.unreadable(entry, nil, "the execution policy "+file+" the bridge record "+path+" names", store.PythonOSError(err))
-		}
+	case errors.As(err, &opening) && (errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOTDIR)):
+		refuse("executionPolicy.path", "the execution policy "+file+" does not exist")
 		return false
-	}
-	defer handle.Close()
-	info, err := handle.Stat()
-	if err == nil && !info.Mode().IsRegular() {
+	case errors.Is(err, pluginwiring.ErrNotRegular):
 		refuse("executionPolicy.path", "the execution policy "+file+" is not a regular file")
 		return false
-	}
-	sum := sha256.New()
-	if err == nil {
-		_, err = io.Copy(sum, handle)
-	}
-	if err != nil {
+	case err != nil:
 		into.unreadable(entry, nil, "the execution policy "+file+" the bridge record "+path+" names", store.PythonOSError(err))
 		return false
-	}
-	if actual := hex.EncodeToString(sum.Sum(nil)); actual != digest {
-		refuse("executionPolicy.digest", "the execution policy at "+file+" now hashes to "+actual+", and the record was written when it hashed to "+digest)
+	case actual != policy.Digest:
+		refuse("executionPolicy.digest", "the execution policy at "+file+" now hashes to "+actual+", and the record was written when it hashed to "+policy.Digest)
 		return false
 	}
 	return true
-}
-
-// pyInteger is the integer a decoded JSON value equals under Python's ==, which is how the
-// launchers compare recordVersion and configVersion: true is 1 and 1.0 is 1.
-func pyInteger(v any) (int64, bool) {
-	switch n := v.(type) {
-	case bool:
-		if n {
-			return 1, true
-		}
-		return 0, true
-	case int64:
-		return n, true
-	case int:
-		return int64(n), true
-	case float64:
-		if n == math.Trunc(n) && math.Abs(n) < 1<<53 {
-			return int64(n), true
-		}
-	case json.Number:
-		if i, err := n.Int64(); err == nil {
-			return i, true
-		}
-	}
-	return 0, false
 }
 
 // codexConfig judges config.toml's mcp_servers: the whole table is read as
