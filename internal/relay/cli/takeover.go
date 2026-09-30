@@ -49,7 +49,7 @@ func ExecuteTakeover(ctx context.Context, argv []string, stdout, stderr io.Write
 	}
 	args := argv[index+1:]
 	if len(args) == 0 {
-		return fail(&UsageError{"takeover requires status, begin, drain, transfer, activate, abort, rollback, or commit", 4})
+		return fail(&UsageError{"takeover requires status, begin, drain, transfer, activate, abort, rollback, commit, or repair-mirror", 4})
 	}
 	action := args[0]
 	flags := flag.NewFlagSet("takeover "+action, flag.ContinueOnError)
@@ -85,7 +85,7 @@ func ExecuteTakeover(ctx context.Context, argv []string, stdout, stderr io.Write
 		return fail(err)
 	}
 	switch action {
-	case "status", "begin", "drain", "transfer", "activate", "abort", "rollback", "commit":
+	case "status", "begin", "drain", "transfer", "activate", "abort", "rollback", "commit", "repair-mirror":
 	default:
 		return fail(&UsageError{"unknown takeover action: " + action, 4})
 	}
@@ -121,6 +121,8 @@ func ExecuteTakeover(ctx context.Context, argv []string, stdout, stderr io.Write
 		err = c.Rollback(bounded)
 	case "commit":
 		err = c.Commit(bounded)
+	case "repair-mirror":
+		err = c.RepairMirror(bounded)
 	}
 	if err != nil {
 		return fail(takeoverError(err))

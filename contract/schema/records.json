@@ -139,7 +139,8 @@
         "--python-relay PATH",
         "--ready-timeout SECONDS"
       ],
-      "commit": []
+      "commit": [],
+      "repair-mirror": []
     }
   }
 }

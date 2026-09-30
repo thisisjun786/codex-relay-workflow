@@ -38,6 +38,10 @@ type Controller struct {
 	// ValidateInbox reads the state directory's takeover inbox as the candidate's drain will
 	// (internal/relay/inbox Check), returning the error that drain would stop on.
 	ValidateInbox func(state string) error
+	// PrepareScope makes the scope registry ScopeLock lives in, as the service does before it
+	// claims a scope. RepairMirror runs it: a store torn at its first initialization may sit on
+	// a host where no service has made the registry yet. Nil leaves the registry as it is.
+	PrepareScope func() error
 	// Fault is nil outside tests; errors model controller death at durable edges.
 	Fault func(step, point string) error
 }
@@ -118,9 +122,89 @@ func (c *Controller) read(ctx context.Context) (Record, Stamp, bool, error) {
 func (c *Controller) Status(ctx context.Context) (Status, error) {
 	r, s, stale, err := c.read(ctx)
 	if err != nil {
-		return Status{}, err
+		// The torn publication "initial stamp committed, mirror absent" is reported, not
+		// refused: the durable half is authoritative, and the mirror RepairMirror publishes
+		// from it is what the status shows, stale until it is published.
+		var e error
+		if r, s, e = c.torn(ctx); e != nil {
+			return Status{}, err
+		}
+		stale = true
 	}
 	return Status{Protocol, s.StoreID, r.Database, s.Owner, s.Epoch, s.TakeoverID, r.Phase, stale, s.RollbackAllowed, s.PythonCompatibilityBuild, r.Transition, r.Holder}, nil
+}
+
+// torn reads the torn publication "initial stamp committed, mirror absent" (cutover.md Record,
+// Torn publications): S/takeover.json absent (ENOENT only: a malformed mirror is not absent),
+// and schema_meta holding the six keys as an initializer commits them, at owner_epoch 1 with
+// an empty takeover_id. It answers the mirror that stamp implies (InitialRecord), validated as
+// admission validates it, or the refusal naming what differs.
+func (c *Controller) torn(ctx context.Context) (Record, Stamp, error) {
+	if _, err := os.Lstat(filepath.Join(filepath.Dir(c.Path), "takeover.json")); err == nil {
+		return Record{}, Stamp{}, refuse("the takeover record exists; repair-mirror publishes only the mirror of an initial stamp whose mirror is absent")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return Record{}, Stamp{}, refuse("read mirror: %v", err)
+	}
+	s, err := SnapshotMeta(ctx, c.Path)
+	if err != nil {
+		return Record{}, Stamp{}, err
+	}
+	if s.Epoch != 1 || s.TakeoverID != "" {
+		return Record{}, s, refuse("the durable stamp is past its initial publication (owner_epoch %d, takeover_id %q); repair-mirror publishes only the mirror of an initial stamp", s.Epoch, s.TakeoverID)
+	}
+	if s.SocketPath != c.Socket {
+		return Record{}, s, refuse("App Server socket disagrees")
+	}
+	r, err := InitialRecord(c.Path, s)
+	if err != nil {
+		return Record{}, s, err
+	}
+	if c.ScopeKey != "" && (r.ScopeKey == nil || *r.ScopeKey != c.ScopeKey) {
+		return Record{}, s, refuse("scope identity disagrees")
+	}
+	if err = Validate(c.Path, r, s); err != nil {
+		return Record{}, s, err
+	}
+	return r, s, nil
+}
+
+// RepairMirror is the explicit recovery of the torn publication "initial stamp committed,
+// mirror absent" (cutover.md Record, Torn publications; Step 0.4), the one state no opener or
+// writer repairs. Under the full lock order (takeover.lock, then daemon.lock, the scope's K.lock
+// when the stamp names a socket, and write-gate EX) it requires exactly that state and
+// publishes the mirror derived only from schema_meta. It never writes schema_meta, and every
+// other state, a partial store holding only its write gate included (decision D0), is refused
+// and left as it is.
+func (c *Controller) RepairMirror(ctx context.Context) (err error) {
+	l, err := Lock(filepath.Join(filepath.Dir(c.Path), "takeover.lock"), true, true)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, l.Close()) }()
+	if err = c.fault("repair-mirror", "locked"); err != nil {
+		return err
+	}
+	if c.ScopeLock != "" && c.PrepareScope != nil {
+		if err = c.PrepareScope(); err != nil {
+			return err
+		}
+	}
+	release, err := c.exclude(c.ScopeLock)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, release()) }()
+	if err = c.fault("repair-mirror", "barrier"); err != nil {
+		return err
+	}
+	r, _, err := c.torn(ctx)
+	if err != nil {
+		return err
+	}
+	if r.AppServerSocket != nil && c.ScopeLock == "" {
+		return refuse("scope lock is required")
+	}
+	return c.publish("repair-mirror", r)
 }
 func (c *Controller) serialized(ctx context.Context, step string, run func(Record, Stamp) error) (err error) {
 	l, err := Lock(filepath.Join(filepath.Dir(c.Path), "takeover.lock"), true, true)
@@ -254,6 +338,15 @@ func (c *Controller) Drain(ctx context.Context) error {
 // Barrier excludes inherited daemon/scope descriptions and every admitted CLI
 // connection. All locks are released in reverse order, never unlinked.
 func (c *Controller) barrier() (func() error, error) {
+	if c.ScopeLock == "" {
+		return nil, refuse("scope lock is required")
+	}
+	return c.exclude(c.ScopeLock)
+}
+
+// exclude takes daemon.lock, the scope's K.lock and write-gate EX in the lock order. A store
+// that names no App Server socket has no scope, so scopeLock is "" and no K.lock is taken.
+func (c *Controller) exclude(scopeLock string) (func() error, error) {
 	var held []*os.File
 	closeAll := func() error {
 		var err error
@@ -262,10 +355,10 @@ func (c *Controller) barrier() (func() error, error) {
 		}
 		return err
 	}
-	if c.ScopeLock == "" {
-		return nil, refuse("scope lock is required")
-	}
-	for _, path := range []string{filepath.Join(filepath.Dir(c.Path), "daemon.lock"), c.ScopeLock, filepath.Join(filepath.Dir(c.Path), "write-gate.lock")} {
+	for _, path := range []string{filepath.Join(filepath.Dir(c.Path), "daemon.lock"), scopeLock, filepath.Join(filepath.Dir(c.Path), "write-gate.lock")} {
+		if path == "" {
+			continue
+		}
 		// Existing service locks predate the 0600 fence and carry whatever mode the
 		// creating runtime's umask gave them (0664 under umask 002). They are trusted by
 		// owner and owner-only directory, and opened without changing their inode.

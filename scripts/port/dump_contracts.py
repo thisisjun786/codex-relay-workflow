@@ -463,7 +463,7 @@ def contracts(parser: dict[str, JSONValue], tools: dict[str, JSONValue],
                                            "abort": [], "rollback": ["--to python",
                                                                      "--python-relay PATH",
                                                                      "--ready-timeout SECONDS"],
-                                           "commit": []}},
+                                           "commit": [], "repair-mirror": []}},
         },
     }
     rendered = {name: json.dumps(value, indent=2, ensure_ascii=False) + "\n"

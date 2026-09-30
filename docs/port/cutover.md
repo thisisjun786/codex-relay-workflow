@@ -174,7 +174,10 @@ committed, mirror absent** - all six keys present, `takeover_id` empty, `owner_e
 and `S/takeover.json` absent (ENOENT only; a malformed mirror still refuses as malformed).
 Every writer refuses it (non-queueable) and `doctor --json` reports its ownership `detail` as
 `takeover record missing`. No opener or writer repairs it. Recovery is an explicit controller
-action under the full lock order that publishes the mirror derived only from `schema_meta`:
+action, `crw relay takeover repair-mirror` (`takeover status` reports the state from the stamp,
+with `jsonStale` true), under the full lock order (`takeover.lock`, `daemon.lock`, the scope's
+`K.lock` when `socket_path` names one, `write-gate.lock` EX). It refuses every other state,
+unchanged, and publishes the mirror derived only from `schema_meta`:
 protocol 1, `storeId`, `database` from the physical store, `appServerSocket`/`scopeKey` from
 `socket_path` (both null when absent), epoch 1, the stamped owner, `phase=active`, null
 `transition`/`holder`/`controller`, `rollbackAllowed` and `pythonCompatibilityBuild` from the
@@ -298,12 +301,13 @@ do not cut over. Python stays in control. Writing `owner=go` would not repair th
 precondition, and a Go opener cannot infer it from the database. If step 4 stops between the
 `schema_meta` COMMIT and the `takeover.json` publication, the store is in the torn state
 **initial stamp committed, mirror absent** (Record): writers refuse, step 5's `doctor --json`
-fails loudly with `takeover record missing`, and only the explicit mirror recovery completes
-the publication. If a first opener dies after placing the gate and before creating `D`,
-`S` holds only `write-gate.lock` (and possibly a stray `S/.write-gate-*`): every writable
-opener refuses it non-queueably with `partial store: write-gate.lock without a database`
-(Go words it `ownership refused: existing database required: lstat <D>: no such file or
-directory`, reason `store_owned_by_other`, exit 2, after finding the gate unheld).
+fails loudly with `takeover record missing`, and only the explicit mirror recovery,
+`crw relay takeover repair-mirror`, completes the publication. If a first opener dies after
+placing the gate and before creating `D`, `S` holds only `write-gate.lock` (and possibly a
+stray `S/.write-gate-*`): every writable opener refuses it non-queueably with
+`partial store: write-gate.lock without a database` (Go words it `ownership refused: existing
+database required: lstat <D>: no such file or directory`, reason `store_owned_by_other`, exit 2,
+after finding the gate unheld).
 Recovery is an operator action, the only removal of a lock file this protocol allows:
 confirm that `D` and `S/takeover.json` are absent and that no process has the gate open
 (`fuser S/write-gate.lock` or `lsof` lists none), then remove `S/write-gate.lock` and any
