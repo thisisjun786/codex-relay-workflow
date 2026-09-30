@@ -5,12 +5,14 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
 // FLT-33: each static-registry replacement path compares the complete CLI
 // output and exit status with Python's live --kind-module behavior.
 func Test22_FLT_33_KindModuleWholeOutput(t *testing.T) {
+	goldenParent(t)
 	for _, module := range []string{"json", "os.path", "codex_session_relay.projects", "no_such_module_crw205"} {
 		t.Run(module, func(t *testing.T) {
 			home, err := os.MkdirTemp("/dev/shm", "flt33-")
@@ -24,6 +26,8 @@ func Test22_FLT_33_KindModuleWholeOutput(t *testing.T) {
 			args[3] = filepath.Join(home, "go")
 			var gotOut, gotErr bytes.Buffer
 			gotCode, handled := executeAsCLI(context.Background(), args, &gotOut, &gotErr)
+			question := append([]string{"--kind-module", module}, args[4:]...)
+			checkGolden(t, "relay "+strings.Join(question, " "), question, runPathsOf(t, home), cliGolden{Code: gotCode, Stdout: gotOut.String(), Stderr: gotErr.String()})
 			if !handled || gotCode != wantCode || !bytes.Equal(gotOut.Bytes(), wantOut) || !bytes.Equal(gotErr.Bytes(), wantErr) {
 				t.Fatalf("Python %d stdout=%q stderr=%q; Go %d stdout=%q stderr=%q", wantCode, wantOut, wantErr, gotCode, gotOut.Bytes(), gotErr.Bytes())
 			}

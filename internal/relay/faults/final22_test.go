@@ -8,6 +8,7 @@ import (
 )
 
 func Test22_FaultTargetRelinkWholeOutput(t *testing.T) {
+	goldenParent(t)
 	for _, outstanding := range []bool{false, true} {
 		t.Run(fmt.Sprintf("outstanding_%t", outstanding), func(t *testing.T) {
 			ctx, gd, pd := f1ReplayStores(t)
@@ -49,6 +50,7 @@ func Test22_FaultTargetRelinkWholeOutput(t *testing.T) {
 }
 
 func Test22_FaultTargetUnchangedWholeOutput(t *testing.T) {
+	goldenParent(t)
 	for _, mode := range []string{"legacy", "team", "team+project"} {
 		t.Run(mode, func(t *testing.T) {
 			ctx, gd, pd := f1ReplayStores(t)
@@ -125,6 +127,7 @@ func Test22_PruneDirectAliasWholeOutput(t *testing.T) {
 }
 
 func Test22_FaultTargetValidationWholeOutput(t *testing.T) {
+	goldenParent(t)
 	for _, field := range []string{"product", "team", "workspace", "project", "project-ref"} {
 		for _, value := range []string{"", " ", "a:b"} {
 			t.Run(field+"/"+value, func(t *testing.T) {
@@ -137,6 +140,7 @@ func Test22_FaultTargetValidationWholeOutput(t *testing.T) {
 }
 
 func Test22_FC_17_ReadingsBoundaryWholeOutput(t *testing.T) {
+	goldenParent(t)
 	reading := func(turn, state string) any {
 		return map[string]any{"schema": "reporting-observation/1", "relationshipId": "rel", "selectors": map[string]any{"turn": turn}, "reportingState": state}
 	}

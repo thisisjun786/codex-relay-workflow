@@ -124,6 +124,7 @@ func Test22_FC_36_UnloadedKindStoredLimitWholeOutput(t *testing.T) {
 }
 
 func Test22_FC_9_ManagedReadingsWholeOutput(t *testing.T) {
+	goldenParent(t)
 	for _, variant := range []string{"unreported", "error", "none", "unnamed", "past_generation", "paged", "real_unreported", "real_absent", "real_reported", "real_unwitnessed", "real_bad_stop", "real_ready"} {
 		t.Run(variant, func(t *testing.T) {
 			ctx, gd, pd := f1ReplayStores(t)
@@ -248,6 +249,7 @@ func (f fcObserver) Observe(ctx context.Context, r ManagedReadingRequest) (any, 
 }
 
 func Test22_FC_26_PreIssueSavepointWholeOutput(t *testing.T) {
+	goldenParent(t)
 	for _, variant := range []string{"cancel", "write", "hold", "invalid", "accept"} {
 		t.Run(variant, func(t *testing.T) {
 			ctx, gd, pd := f1ReplayStores(t)
@@ -364,6 +366,7 @@ func fcComparePath(t *testing.T, ctx context.Context, s *store.Store, pd, action
 	if err = json.Unmarshal(gotRaw, &got); err != nil {
 		t.Fatal(err)
 	}
+	checkGoldenEvidence(t, "replies, calls and tables: "+action+" "+variant, []string{action, variant}, runPathsOf(t, filepath.Dir(pd)), got)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("whole-output comparison diff: %s\nGo: %s\nPython: %s", noticeDifference("capture", want, got), gotRaw, raw)
 	}

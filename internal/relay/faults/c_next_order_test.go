@@ -26,6 +26,7 @@ func TestFaultNextOfferablePublicationOrderMatchesPython(t *testing.T) {
 	want, _ := pythonFaultCLI(t, root, home, args...)
 	var stdout, stderr bytes.Buffer
 	gotCode, handled := executeAsCLI(context.Background(), []string{"--state", goDir, "--json", "fault-next"}, &stdout, &stderr)
+	checkGolden(t, "relay --json fault-next", []string{"--json", "fault-next"}, runPathsOf(t, home), cliGolden{Code: gotCode, Stdout: stdout.String(), Stderr: stderr.String()})
 	if !handled || gotCode != want.code || stdout.String() != want.stdout || stderr.String() != want.stderr {
 		t.Fatalf("Python: %#v\nGo: code=%d stdout=%q stderr=%q", want, gotCode, stdout.String(), stderr.String())
 	}

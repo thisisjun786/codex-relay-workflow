@@ -12,6 +12,7 @@ import (
 // The independent Python process, not a duplicated Go expectation, defines the CLI bytes.
 // FLT-30: all Part D handlers are reachable; FLT-34: listing and refusal bytes.
 func TestDCLIOracle(t *testing.T) {
+	goldenParent(t)
 	cases := [][]string{
 		{"fault-policy", "--product", "crw", "--limit", "1"},
 		{"fault-limit", "--product", "crw", "--limit", "1"},
@@ -48,6 +49,7 @@ func TestDCLIOracle(t *testing.T) {
 				t.Fatal("unhandled")
 			}
 			neverCreated(t, pythonDir, goDir)
+			checkGolden(t, "relay "+strings.Join(args, " "), args, runPathsOf(t, home), cliGolden{Code: goCode, Stdout: got.String(), Created: created(t, goDir)})
 			if pyCode != goCode || !bytes.Equal(want, got.Bytes()) {
 				t.Errorf("python (%d): %s\ngo (%d): %s\nstderr: %s", pyCode, want, goCode, got.String(), stderr.String())
 			}

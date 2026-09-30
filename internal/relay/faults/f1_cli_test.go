@@ -11,6 +11,7 @@ import (
 )
 
 func TestF1ClaimCLIOracle(t *testing.T) {
+	goldenParent(t)
 	root, err := filepath.Abs("../../..")
 	if err != nil {
 		t.Fatal(err)
@@ -54,6 +55,7 @@ func TestF1ClaimCLIOracle(t *testing.T) {
 				if !handled {
 					t.Fatal("unhandled")
 				}
+				checkGolden(t, "relay "+strings.Join(args, " "), args, runPathsOf(t, home), cliGolden{Code: exit, Stdout: got.String()})
 				if pyExit != exit || !bytes.Equal(want, got.Bytes()) {
 					t.Errorf("%s: python %d %s, Go %d %s; stderr %s", strings.Join(args, " "), pyExit, want, exit, got.String(), stderr.String())
 				}

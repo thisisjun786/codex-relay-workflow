@@ -8,6 +8,7 @@ import (
 // These scenarios replay the complete CLI output and every SQLite table against
 // the live Python package. They cover the three review findings on Record.
 func TestRecordReviewFindingsWholeOutput(t *testing.T) {
+	goldenParent(t)
 	t.Run("resolved recurrence queues reopen update", func(t *testing.T) {
 		ctx, gd, pd := f1ReplayStores(t)
 		invoke := func(args ...string) map[string]any { return f1ReplayCLI(t, ctx, gd, pd, args) }

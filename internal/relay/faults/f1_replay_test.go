@@ -23,6 +23,7 @@ import (
 // Every replay compares CLI bytes and every SQLite table, including refused
 // transitions that commit cancellation/repointing before returning the refusal.
 func TestF1ReplayWholeCLI(t *testing.T) {
+	goldenParent(t)
 	type replay struct {
 		name, state, kind string
 		sql               []string
@@ -219,6 +220,7 @@ func f1ReplayCLI(t *testing.T, ctx context.Context, gd, pd string, args []string
 	if e != nil {
 		t.Fatal(e)
 	}
+	goTables := map[string]any{}
 	for _, name := range names {
 		key := text(name, "name")
 		rows, e := s.All(ctx, "SELECT * FROM "+key+" ORDER BY rowid")
@@ -245,10 +247,13 @@ func f1ReplayCLI(t *testing.T, ctx context.Context, gd, pd string, args []string
 			// Each runtime's store names its own owner: the one runtime-identity difference.
 			got, want.Tables[key] = ownerNeutralRows(t, testsupport.Go, got), ownerNeutralRows(t, testsupport.Python, want.Tables[key])
 		}
+		goTables[key] = got
 		if !reflect.DeepEqual(got, want.Tables[key]) {
 			t.Errorf("whole-output comparison diff: %s\nGo %s\nPython %v", noticeDifference(key, want.Tables[key], got), raw, want.Tables[key])
 		}
 	}
+	goDelta := f1GoldenDelta(t, gd, code, stdout.String(), stderr.String(), goTables)
+	checkGolden(t, "relay "+strings.Join(args, " "), args, runPathsOf(t, filepath.Dir(gd)), json.RawMessage(goDelta))
 	var answer map[string]any
 	if e = json.Unmarshal(stdout.Bytes(), &answer); e != nil {
 		t.Fatal(e)
@@ -381,4 +386,27 @@ func f1ApplyDelta(t testing.TB, pd string, before map[string][]json.RawMessage, 
 	f1PyTwins.tables[pd] = maps.Clone(tables)
 	f1PyTwins.Unlock()
 	return pyEncode(map[string]any{"stdout": delta.Stdout, "stderr": delta.Stderr, "exit": delta.Exit, "tables": tables})
+}
+
+// f1GoldenDelta is Go's whole answer to one command line on the twin gd - its streams, exit and
+// every table, evidence digests as their occurrences' placeholders - as the rows that changed
+// since Go's previous answer on gd (f1Delta), which the replay keeps as gd's latest.
+func f1GoldenDelta(t *testing.T, gd string, code int, stdout, stderr string, tables map[string]any) []byte {
+	t.Helper()
+	raw, err := json.Marshal(map[string]any{"stdout": stdout, "stderr": stderr, "exit": code, "tables": tables})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if raw, err = evidencePlaceholders(raw); err != nil {
+		t.Fatal(err)
+	}
+	before := f1PythonTables(t, gd)
+	delta, err := f1TablesDelta(before, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f1ApplyDelta(t, gd, before, delta); err != nil {
+		t.Fatal(err)
+	}
+	return delta
 }

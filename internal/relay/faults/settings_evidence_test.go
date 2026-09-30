@@ -18,6 +18,7 @@ import (
 // A real withheld delivery and its settled settings refusal: compare the complete
 // derived observation against the Python faultsweep source, including its recovery.
 func Test22_SettingsHoldWholePythonObservation(t *testing.T) {
+	goldenParent(t)
 	for _, held := range []bool{true, false} {
 		t.Run(fmt.Sprint(held), func(t *testing.T) { testSettingsHoldWholePythonObservation(t, held) })
 	}
@@ -109,10 +110,11 @@ finally: faultsweep.installation=old;s.close()`
 	if len(goObservations) != len(pyObservations) {
 		t.Fatalf("Go %d observations, Python %d", len(goObservations), len(pyObservations))
 	}
+	fields := [][2]string{{"Product", "product"}, {"FaultClass", "faultClass"}, {"Signature", "signature"}, {"OccurrenceKey", "occurrenceKey"}, {"Scope", "scope"}, {"Detail", "detail"}, {"Evidence", "evidence"}, {"Cleared", "cleared"}}
 	for i, raw := range goObservations {
 		g := raw.(map[string]any)
 		p := pyObservations[i].(map[string]any)
-		for _, pair := range [][2]string{{"Product", "product"}, {"FaultClass", "faultClass"}, {"Signature", "signature"}, {"OccurrenceKey", "occurrenceKey"}, {"Scope", "scope"}, {"Detail", "detail"}, {"Evidence", "evidence"}, {"Cleared", "cleared"}} {
+		for _, pair := range fields {
 			if pair[0] == "Evidence" {
 				ge := g[pair[0]].([]any)
 				pe := p[pair[1]].([]any)
@@ -137,4 +139,14 @@ finally: faultsweep.installation=old;s.close()`
 			}
 		}
 	}
+	normalized := []any{}
+	for _, raw := range goObservations {
+		g := raw.(map[string]any)
+		entry := map[string]any{}
+		for _, pair := range fields {
+			entry[pair[1]] = g[pair[0]]
+		}
+		normalized = append(normalized, entry)
+	}
+	checkGolden(t, "observations", nil, runPathsOf(t, home), normalized)
 }

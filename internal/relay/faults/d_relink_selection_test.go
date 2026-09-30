@@ -73,6 +73,7 @@ func TestDRelinkOutstandingWriteSelectionAgainstPython(t *testing.T) {
 		return reply
 	}
 	gotCode, got := cliCall(t, goDir, "fault-relink", "--limit", "1")
+	checkGolden(t, "relay fault-relink --limit 1", nil, runPathsOf(t, home), map[string]any{"code": gotCode, "reply": got})
 	want := py()
 	if gotCode != 0 || !reflect.DeepEqual(got, want) || got["relinked"] != float64(0) {
 		t.Fatalf("outstanding: Go %d %v Python %v", gotCode, got, want)
@@ -88,6 +89,7 @@ func TestDRelinkOutstandingWriteSelectionAgainstPython(t *testing.T) {
 	s.Close()
 	seedPython(t, filepath.Join(pyDir, "relay.sqlite3"), seedSQL(settle)...)
 	gotCode, got = cliCall(t, goDir, "fault-relink", "--limit", "1")
+	checkGolden(t, "relay fault-relink --limit 1", nil, runPathsOf(t, home), map[string]any{"code": gotCode, "reply": got})
 	want = py()
 	if gotCode != 0 || !reflect.DeepEqual(got, want) || got["relinked"] != float64(1) {
 		t.Fatalf("settled: Go %d %v Python %v", gotCode, got, want)
@@ -121,6 +123,7 @@ func TestDRelinkOutstandingWriteSelectionAgainstPython(t *testing.T) {
 		return out
 	}
 	goWrite := read(goDir)
+	checkGolden(t, "store after relink", nil, runPathsOf(t, home), goWrite)
 	// What the store Python wrote holds after its relinks.
 	var pyWrite relinked
 	pyValue(t, "python store after relink", nil, pyRunPaths(t, home), &pyWrite, func() (any, error) { return read(pyDir), nil })

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -29,6 +30,7 @@ func TestDPolicyAndLimitWholeRepliesAgainstPython(t *testing.T) {
 	}
 	for _, args := range steps {
 		code, goReply := cliCall(t, goDir, args...)
+		checkGolden(t, "relay "+strings.Join(args, " "), args, runPathsOf(t, home), map[string]any{"code": code, "reply": goReply})
 		answer := pyCLIRun(t, home, "", append([]string{"--state", pyDir, "--json"}, args...), false, pyHomeEnv(home)...)
 		out, pyCode := []byte(answer.Stdout), answer.Code
 		var pyReply map[string]any
@@ -67,6 +69,19 @@ func TestDPolicyAndLimitWholeRepliesAgainstPython(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
+	// Each journal's details, compared as the values they encode.
+	decoded := map[string][]any{}
+	for key, details := range goJournal {
+		decoded[key] = []any{}
+		for _, detail := range details {
+			var value any
+			if e = json.Unmarshal([]byte(detail), &value); e != nil {
+				t.Fatal(e)
+			}
+			decoded[key] = append(decoded[key], value)
+		}
+	}
+	checkGolden(t, "journals", nil, runPathsOf(t, home), decoded)
 	// Python's journals, as the store it wrote holds them after the steps.
 	var pyJournal map[string][]string
 	pyValue(t, "python journals", nil, pyRunPaths(t, home), &pyJournal, func() (any, error) { return journals(pyDir) })

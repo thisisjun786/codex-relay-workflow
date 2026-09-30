@@ -5,10 +5,12 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
 func TestCSeededCLIOracle(t *testing.T) {
+	goldenParent(t)
 	home, err := os.MkdirTemp("/dev/shm", "fault-c-seed-")
 	if err != nil {
 		t.Fatal(err)
@@ -34,6 +36,7 @@ func TestCSeededCLIOracle(t *testing.T) {
 			if !handled {
 				t.Fatal("unhandled")
 			}
+			checkGolden(t, "relay "+strings.Join(args, " "), args, runPathsOf(t, home), cliGolden{Code: goCode, Stdout: got.String()})
 			if pyCode != goCode || !bytes.Equal(want, got.Bytes()) {
 				t.Errorf("python (%d): %s\ngo (%d): %s\nstderr: %s", pyCode, want, goCode, got.String(), stderr.String())
 			}
