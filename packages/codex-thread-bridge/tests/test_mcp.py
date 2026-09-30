@@ -67,16 +67,18 @@ async def test_a_configured_policy_that_cannot_be_used_stops_the_server(fake_ser
 
 # Started the way Codex Desktop starts it
 #
-# Codex Desktop spawns this server through the crw plugin's launcher, with the App Server's bare
-# environment: no CODEX_HOME and no execution-policy variable. These start it the same way: the
-# repository's own launcher, copied to where an installation puts it under a temporary Codex home
-# and started from the package root the declaration names, so it has to find its record from its
-# own location. HOME is somewhere else, so a launcher that fell back to the user's home would find
+# Codex Desktop spawned this server through the crw plugin's Python launcher, with the App
+# Server's bare environment: no CODEX_HOME and no execution-policy variable. These start it the
+# same way: the launcher the plugin shipped until todo 43, which the repository keeps with the
+# pre-native wiring (internal/pluginwiring/testdata/pre-native-wiring), copied to where an
+# installation puts it under a temporary Codex home and started from the package root the
+# declaration names, so it has to find its record from its own location. HOME is somewhere else, so a launcher that fell back to the user's home would find
 # no record rather than a real one. The launcher is outside this package, so a run of this suite
 # without the repository around it skips here -- and scripts/ci/packages.py fails any skipped
 # case, so the repository's own run never skips.
 
-LAUNCHER = Path(__file__).resolve().parents[3] / "plugins" / "crw" / "wiring" / "crw_bridge_mcp.py"
+LAUNCHER = (Path(__file__).resolve().parents[3] / "internal" / "pluginwiring" / "testdata"
+            / "pre-native-wiring" / "crw_bridge_mcp.py")
 CHILD = {"model": "anthropic/claude-opus-5-5", "reasoningEffort": "xhigh"}
 ROLE_POLICY = {"roles": {"child": CHILD,
                          "parent": {"model": "devin/swe-2", "reasoningEffort": "max"}}}

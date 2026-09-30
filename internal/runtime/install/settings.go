@@ -28,7 +28,7 @@ const SettingsName = hook.ConfigName
 const SettingsOverride = "CRW_COMPLETION_HOOK_CONFIG"
 
 // AdapterInterpreter is what a Go install records as adapterInterpreter. The legacy launchers
-// (plugins/crw/wiring/crw_stop_hook.py, its <CODEX_HOME>/crw-stop-hook.py copy) run
+// (crw_stop_hook.py, packaged until todo 43, and its <CODEX_HOME>/crw-stop-hook.py copy) run
 // [adapterInterpreter, adapterEntryPoint, <settings>], and /usr/bin/env executes the entry
 // point with the settings path as its one argument, which is what the Go hook reads as its
 // settings. Recording the binary itself would hand the Go hook the binary's own path as its

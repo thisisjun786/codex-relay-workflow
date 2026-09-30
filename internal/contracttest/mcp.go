@@ -26,10 +26,10 @@ import (
 // started as `crw bridge --socket <fake> --state-dir <case>/state` and driven over stdio by a
 // real MCP client, against a fake App Server on a real unix socket.
 //
-// run.launcher starts it the way the plugin launcher does (plugins/crw/wiring/crw_bridge_mcp.py,
-// replaced by a native launcher in todo 34): from the installed package directory with only
-// HOME and PATH, the policy handed over through the two variables the launcher sets from its
-// record. The launcher itself is not under test here; the bridge's behaviour under that bare
+// run.launcher starts it the way the plugin launcher does (crw_bridge_mcp.py, replaced by a native
+// launcher in todo 34 and retired from the package in todo 43): from the installed package
+// directory with only HOME and PATH, the policy handed over through the two variables the
+// launcher sets from its record. The launcher itself is not under test here; the bridge's behaviour under that bare
 // environment is.
 func runMCP(t *testing.T, scenario Scenario) (map[string]any, error) {
 	t.Helper()
