@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 type rclAnswer struct {
@@ -64,7 +65,18 @@ func compareRCLBytes(t *testing.T, argv func(string) []string, normalize func(ra
 		t.Fatal(err)
 	}
 	home := t.TempDir()
-	python := runRCL(t, true, binary, home, argv)
+	// Python answered first in this home; its answer is recorded (pythonJSON).
+	var recorded struct {
+		Code    int    `json:"code"`
+		Stdout  string `json:"stdout"`
+		Stderr  string `json:"stderr"`
+		Created bool   `json:"created"`
+	}
+	pythonJSON(t, "rcl", &recorded, func() (any, error) {
+		answer := runRCL(t, true, binary, home, argv)
+		return map[string]any{"code": answer.code, "stdout": string(answer.stdout), "stderr": string(answer.stderr), "created": answer.created}, nil
+	}, pyoracle.Substitute(home, "<home>"))
+	python := rclAnswer{code: recorded.Code, stdout: []byte(recorded.Stdout), stderr: []byte(recorded.Stderr), created: recorded.Created}
 	golang := runRCL(t, false, binary, home, argv)
 	goOut, pyOut := normalize(golang.stdout, false), normalize(python.stdout, true)
 	if golang.code != python.code || !bytes.Equal(goOut, pyOut) || !bytes.Equal(golang.stderr, python.stderr) || golang.created != python.created {

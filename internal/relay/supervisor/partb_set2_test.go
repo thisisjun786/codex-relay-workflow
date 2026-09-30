@@ -29,13 +29,17 @@ func pythonSet2(t *testing.T, id string) (map[string]any, *store.Store) {
 		t.Fatal(err)
 	}
 	root := t.TempDir()
-	cmd := exec.Command("uv", "run", "--no-sync", "python", script, id, root)
-	cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
-	cmd.Env = append(os.Environ(), "HOME="+root, "XDG_STATE_HOME="+root, "XDG_DATA_HOME="+root, "XDG_CONFIG_HOME="+root, "CODEX_HOME="+root, "TMPDIR="+os.TempDir())
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("Python %s: %v: %s", id, err, output)
-	}
+	// The store Python's fixture left is recorded with the answer (pythonTree).
+	output := pythonTree(t, id, root, func() ([]byte, error) {
+		cmd := exec.Command("uv", "run", "--no-sync", "python", script, id, root)
+		cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
+		cmd.Env = append(os.Environ(), "HOME="+root, "XDG_STATE_HOME="+root, "XDG_DATA_HOME="+root, "XDG_CONFIG_HOME="+root, "CODEX_HOME="+root, "TMPDIR="+os.TempDir())
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("Python %s: %v: %s", id, err, output)
+		}
+		return output, nil
+	})
 	var want map[string]any
 	if err := json.Unmarshal(output, &want); err != nil {
 		t.Fatal(err)
@@ -722,13 +726,16 @@ func Test24_RC_14_LegacyWholeMessage(t *testing.T) {
 	}
 	root := t.TempDir()
 	db := filepath.Join(root, "relay.sqlite3")
-	cmd := exec.Command("uv", "run", "--no-sync", "python", script, "RC-14-legacy", root)
-	cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
-	cmd.Env = append(os.Environ(), "HOME="+root, "XDG_STATE_HOME="+root, "XDG_DATA_HOME="+root, "XDG_CONFIG_HOME="+root, "CODEX_HOME="+root, "TMPDIR="+os.TempDir())
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("Python: %v: %s", err, output)
-	}
+	output := pythonTree(t, "RC-14-legacy", root, func() ([]byte, error) {
+		cmd := exec.Command("uv", "run", "--no-sync", "python", script, "RC-14-legacy", root)
+		cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
+		cmd.Env = append(os.Environ(), "HOME="+root, "XDG_STATE_HOME="+root, "XDG_DATA_HOME="+root, "XDG_CONFIG_HOME="+root, "CODEX_HOME="+root, "TMPDIR="+os.TempDir())
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("Python: %v: %s", err, output)
+		}
+		return output, nil
+	})
 	var want struct {
 		Message string `json:"message"`
 		Version string `json:"version"`

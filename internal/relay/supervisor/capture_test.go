@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sync"
 	"testing"
 
@@ -23,7 +24,6 @@ type supervisorCapture struct {
 }
 
 var (
-	supervisorCaptures   sync.Map
 	supervisorBinaryOnce sync.Once
 	supervisorBinaryPath string
 	supervisorBinaryDir  string
@@ -41,7 +41,6 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, err)
 		code = 1
 	}
-	supervisorCaptures.Range(func(_, value any) bool { _ = os.RemoveAll(value.(string)); return true })
 	if supervisorBinaryDir != "" {
 		if err := os.RemoveAll(supervisorBinaryDir); err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -51,36 +50,64 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// pythonSupervisorCapture executes each Python test at most once per test binary.
-func pythonSupervisorCapture(t *testing.T, id string) (string, supervisorCapture) {
+// pythonSupervisorCapture runs one Python supervisor test through testdata/capture.py, which
+// leaves its assertions and final rows in capture.json and the store's snapshots beside it, all
+// recorded (pythonTree). Of the two snapshots every run takes, setup and event, and Python's
+// final store, only those keep names ("setup", "event", "final") are kept; the snapshots
+// capture.py takes for one test alone are always kept.
+func pythonSupervisorCapture(t *testing.T, id string, keep ...string) (string, supervisorCapture) {
 	t.Helper()
-	if v, ok := supervisorCaptures.Load(id); ok {
-		return v.(string), readSupervisorCapture(t, v.(string))
-	}
 	root, err := os.MkdirTemp("", "crw-supervisor-")
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo, err := filepath.Abs("../../..")
-	if err != nil {
-		t.Fatal(err)
-	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	repo := repoRoot(t)
 	script, err := filepath.Abs("testdata/capture.py")
 	if err != nil {
 		t.Fatal(err)
 	}
-	home := filepath.Join(root, "home")
-	if err := os.MkdirAll(home, 0700); err != nil {
-		t.Fatal(err)
+	pythonTree(t, id, root, func() ([]byte, error) {
+		home := filepath.Join(root, "home")
+		if err := os.MkdirAll(home, 0700); err != nil {
+			return nil, err
+		}
+		cmd := exec.Command("uv", "run", "--no-sync", "python", script, root, id)
+		cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
+		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "XDG_DATA_HOME="+filepath.Join(home, "data"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+home, "PYTHONPATH="+filepath.Join(repo, "packages/codex-session-relay/src")+":"+filepath.Join(repo, "packages/codex-session-relay"))
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return nil, fmt.Errorf("Python capture %s: %v\n%s", id, err, output)
+		}
+		if err := os.RemoveAll(home); err != nil {
+			return nil, err
+		}
+		for _, name := range []string{"setup", "event"} {
+			if !slices.Contains(keep, name) {
+				if err := os.Remove(filepath.Join(root, name+".sqlite3")); err != nil && !os.IsNotExist(err) {
+					return nil, err
+				}
+			}
+		}
+		if slices.Contains(keep, "final") {
+			return nil, nil
+		}
+		return nil, removeStoreFiles(filepath.Join(root, "tree", "state", "relay.sqlite3"))
+	})
+	if slices.Contains(keep, "final") {
+		// The final store as a copy of Python's store: with the mirror its stamp implies.
+		testsupport.Rehome(t, filepath.Join(root, "tree", "state", "relay.sqlite3"))
 	}
-	cmd := exec.Command("uv", "run", "--no-sync", "python", script, root, id)
-	cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
-	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "XDG_DATA_HOME="+filepath.Join(home, "data"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+home, "PYTHONPATH="+filepath.Join(repo, "packages/codex-session-relay/src")+":"+filepath.Join(repo, "packages/codex-session-relay"))
-	if output, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("Python capture %s: %v\n%s", id, err, output)
-	}
-	supervisorCaptures.Store(id, root)
 	return root, readSupervisorCapture(t, root)
+}
+
+// removeStoreFiles deletes a store Python left and the files beside it that belong to it.
+func removeStoreFiles(path string) error {
+	for _, name := range []string{path, path + "-wal", path + "-shm", filepath.Join(filepath.Dir(path), "takeover.json")} {
+		if err := os.Remove(name); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
 }
 func readSupervisorCapture(t *testing.T, root string) supervisorCapture {
 	t.Helper()
@@ -197,7 +224,7 @@ func compareSupervisorTables(t *testing.T, s *store.Store, python supervisorCapt
 }
 func supervisorMirror(t *testing.T, id, snapshot string, body func(*Channel, *store.Store) []any) {
 	t.Helper()
-	root, python := pythonSupervisorCapture(t, id)
+	root, python := pythonSupervisorCapture(t, id, snapshot)
 	dbpath := filepath.Join(root, "tree", "state", "relay.sqlite3")
 	data, err := os.ReadFile(filepath.Join(root, snapshot+".sqlite3"))
 	if err != nil {

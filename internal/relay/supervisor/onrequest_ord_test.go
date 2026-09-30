@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,28 +25,34 @@ type ordChannelCapture struct {
 	Tables    map[string][]map[string]any `json:"tables"`
 }
 
+// captureORDChannel runs one OnRequestSupervisor scenario through
+// testdata/onrequest_ord_capture.py, whose answer and staged.sqlite3 snapshot are recorded
+// (pythonTree).
 func captureORDChannel(t *testing.T, mode string) (string, ordChannelCapture) {
 	t.Helper()
-	repo, err := filepath.Abs("../../..")
-	if err != nil {
-		t.Fatal(err)
-	}
+	repo := repoRoot(t)
 	root := t.TempDir()
 	script, err := filepath.Abs("testdata/onrequest_ord_capture.py")
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("uv", "run", "--no-sync", "python", script, mode, root)
-	cmd.Dir = filepath.Join(repo, "packages", "codex-session-relay")
-	home := filepath.Join(root, "home")
-	if err := os.MkdirAll(home, 0700); err != nil {
-		t.Fatal(err)
-	}
-	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "XDG_DATA_HOME="+filepath.Join(home, "data"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+os.TempDir(), "PYTHONPATH="+filepath.Join(repo, "packages", "codex-session-relay"))
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("Python ORD %s: %v\n%s", mode, err, out)
-	}
+	out := pythonTree(t, mode, root, func() ([]byte, error) {
+		cmd := exec.Command("uv", "run", "--no-sync", "python", script, mode, root)
+		cmd.Dir = filepath.Join(repo, "packages", "codex-session-relay")
+		home := filepath.Join(root, "home")
+		if err := os.MkdirAll(home, 0700); err != nil {
+			return nil, err
+		}
+		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "XDG_DATA_HOME="+filepath.Join(home, "data"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+os.TempDir(), "PYTHONPATH="+filepath.Join(repo, "packages", "codex-session-relay"))
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("Python ORD %s: %v\n%s", mode, err, out)
+		}
+		if err := os.RemoveAll(home); err != nil {
+			return nil, err
+		}
+		return out, removeStoreFiles(filepath.Join(root, "tree", "state", "relay.sqlite3"))
+	})
 	var captured ordChannelCapture
 	if err := json.Unmarshal(out, &captured); err != nil {
 		t.Fatal(err)

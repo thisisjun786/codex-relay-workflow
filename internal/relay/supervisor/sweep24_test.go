@@ -3,6 +3,7 @@ package supervisor
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,17 +12,13 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 // sweepPython runs body against a VACUUM copy of f's store. body sees store, clock,
 // channel (state_directory = f.root/state, relay_program pinned) and appends to `out`.
 func sweepPython(t *testing.T, f *stageFixture, body string, args ...string) supervisorCapture {
 	t.Helper()
-	copyPath := filepath.Join(t.TempDir(), "relay.sqlite3")
-	if _, err := f.s.DB.ExecContext(f.ctx, "VACUUM INTO ?", copyPath); err != nil {
-		t.Fatal(err)
-	}
-	ownCopied(t, copyPath, "python")
 	repo, err := filepath.Abs("../../..")
 	if err != nil {
 		t.Fatal(err)
@@ -52,14 +49,23 @@ for row in store.all("SELECT name FROM sqlite_master WHERE type='table' AND name
 print(json.dumps({'captures':out,'problems':[],'tables':tables},sort_keys=True,default=str))
 store.close()
 `
-	cmd := exec.Command(filepath.Join(repo, ".venv/bin/python"), append([]string{"-c", script, copyPath, filepath.Join(f.root, "state")}, args...)...)
-	home := t.TempDir()
-	cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
-	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "XDG_DATA_HOME="+home, "XDG_CONFIG_HOME="+home, "CODEX_HOME="+home, "TMPDIR=/dev/shm", "PYTHONPATH="+filepath.Join(repo, "packages/codex-session-relay/src"))
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("live Python: %v\n%s", err, out)
-	}
+	// Python answers on a copy it owns of the store as it stands (recorded, pythonOutput).
+	out := pythonOutput(t, pyKey(t, "sweep"), func() ([]byte, error) {
+		copyPath := filepath.Join(t.TempDir(), "relay.sqlite3")
+		if _, err := f.s.DB.ExecContext(f.ctx, "VACUUM INTO ?", copyPath); err != nil {
+			return nil, err
+		}
+		ownCopied(t, copyPath, "python")
+		cmd := exec.Command(filepath.Join(repo, ".venv/bin/python"), append([]string{"-c", script, copyPath, filepath.Join(f.root, "state")}, args...)...)
+		home := t.TempDir()
+		cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
+		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "XDG_DATA_HOME="+home, "XDG_CONFIG_HOME="+home, "CODEX_HOME="+home, "TMPDIR=/dev/shm", "PYTHONPATH="+filepath.Join(repo, "packages/codex-session-relay/src"))
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("live Python: %v\n%s", err, out)
+		}
+		return out, nil
+	}, pyoracle.Substitute(f.root, "<fixture>"))
 	var capture supervisorCapture
 	if err := json.Unmarshal(out, &capture); err != nil {
 		t.Fatalf("live Python JSON: %v\n%s", err, out)
@@ -322,15 +328,18 @@ func TestSweep24_ProjectCLIUsesGraceAndDeduplicatesCallerReading(t *testing.T) {
 			goFixture, reading, project := snapshotFixture(t, tc.variant)
 			pythonRoot := t.TempDir()
 			pythonState := filepath.Join(pythonRoot, "state")
-			if err := os.MkdirAll(pythonState, 0700); err != nil {
-				t.Fatal(err)
+			// Python's copy of the store is taken before Go answers, and only when Python is asked.
+			if pyoracle.Live() {
+				if err := os.MkdirAll(pythonState, 0700); err != nil {
+					t.Fatal(err)
+				}
+				rawDB, _ := os.ReadFile(goFixture.s.Path)
+				pythonDB := filepath.Join(pythonState, "relay.sqlite3")
+				if err := os.WriteFile(pythonDB, rawDB, 0600); err != nil {
+					t.Fatal(err)
+				}
+				ownCopied(t, pythonDB, "python")
 			}
-			rawDB, _ := os.ReadFile(goFixture.s.Path)
-			pythonDB := filepath.Join(pythonState, "relay.sqlite3")
-			if err := os.WriteFile(pythonDB, rawDB, 0600); err != nil {
-				t.Fatal(err)
-			}
-			ownCopied(t, pythonDB, "python")
 			var args []string
 			if tc.caller {
 				path := filepath.Join(t.TempDir(), "reading.json")
@@ -349,24 +358,27 @@ func TestSweep24_ProjectCLIUsesGraceAndDeduplicatesCallerReading(t *testing.T) {
 			if goErr != nil {
 				t.Fatalf("Go CLI: %v\n%s", goErr, goOut)
 			}
-			repo, _ := filepath.Abs("../../..")
-			pyArgs := []string{"--state", filepath.Join(pythonRoot, "state"), "supervisor-stage", "--project", project}
-			if tc.caller {
-				path := filepath.Join(t.TempDir(), "python-reading.json")
-				pythonReading := copyReading(t, reading)
-				pythonReading["selectors"].(map[string]any)["state"] = pythonState
-				raw, _ := json.Marshal(pythonReading)
-				if err := os.WriteFile(path, raw, 0600); err != nil {
-					t.Fatal(err)
+			pyOut := pythonOutput(t, "supervisor-stage", func() ([]byte, error) {
+				repo, _ := filepath.Abs("../../..")
+				pyArgs := []string{"--state", filepath.Join(pythonRoot, "state"), "supervisor-stage", "--project", project}
+				if tc.caller {
+					path := filepath.Join(pythonRoot, "python-reading.json")
+					pythonReading := copyReading(t, reading)
+					pythonReading["selectors"].(map[string]any)["state"] = pythonState
+					raw, _ := json.Marshal(pythonReading)
+					if err := os.WriteFile(path, raw, 0600); err != nil {
+						return nil, err
+					}
+					pyArgs = append(pyArgs, "--observation", path)
 				}
-				pyArgs = append(pyArgs, "--observation", path)
-			}
-			pyCmd := exec.Command(filepath.Join(repo, ".venv/bin/codex-session-relay"), pyArgs...)
-			pyCmd.Env = append(os.Environ(), "HOME="+pythonRoot, "XDG_STATE_HOME="+pythonRoot, "CODEX_HOME="+pythonRoot, "PYTHONPATH="+filepath.Join(repo, "packages/codex-session-relay/src"))
-			pyOut, pyErr := pyCmd.CombinedOutput()
-			if pyErr != nil {
-				t.Fatalf("Python CLI: %v\n%s", pyErr, pyOut)
-			}
+				pyCmd := exec.Command(filepath.Join(repo, ".venv/bin/codex-session-relay"), pyArgs...)
+				pyCmd.Env = append(os.Environ(), "HOME="+pythonRoot, "XDG_STATE_HOME="+pythonRoot, "CODEX_HOME="+pythonRoot, "PYTHONPATH="+filepath.Join(repo, "packages/codex-session-relay/src"))
+				pyOut, pyErr := pyCmd.CombinedOutput()
+				if pyErr != nil {
+					return nil, fmt.Errorf("Python CLI: %v\n%s", pyErr, pyOut)
+				}
+				return pyOut, nil
+			}, pyoracle.Substitute(pythonRoot, "<python root>"), pyoracle.Substitute(goFixture.root, "<fixture>"))
 			var goAnswer, pyAnswer map[string]any
 			if json.Unmarshal(goOut, &goAnswer) != nil || json.Unmarshal(pyOut, &pyAnswer) != nil {
 				t.Fatalf("CLI JSON\nGo: %s\nPython: %s", goOut, pyOut)

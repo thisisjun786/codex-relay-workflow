@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 func pythonReportCapture(t *testing.T, id string) map[string]any {
@@ -24,13 +25,16 @@ func pythonReportCapture(t *testing.T, id string) map[string]any {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("uv", "run", "--no-sync", "python", script, id, filepath.Join(root, "capture"))
-	cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
-	cmd.Env = append(os.Environ(), "HOME="+root, "XDG_STATE_HOME="+root, "XDG_DATA_HOME="+root, "XDG_CONFIG_HOME="+root, "CODEX_HOME="+root, "TMPDIR="+os.TempDir())
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("Python %s: %v: %s", id, err, output)
-	}
+	output := pythonOutput(t, id, func() ([]byte, error) {
+		cmd := exec.Command("uv", "run", "--no-sync", "python", script, id, filepath.Join(root, "capture"))
+		cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
+		cmd.Env = append(os.Environ(), "HOME="+root, "XDG_STATE_HOME="+root, "XDG_DATA_HOME="+root, "XDG_CONFIG_HOME="+root, "CODEX_HOME="+root, "TMPDIR="+os.TempDir())
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("Python %s: %v: %s", id, err, output)
+		}
+		return output, nil
+	}, pyoracle.Substitute(root, "<root>"))
 	var result map[string]any
 	if err = json.Unmarshal(output, &result); err != nil {
 		t.Fatal(err)

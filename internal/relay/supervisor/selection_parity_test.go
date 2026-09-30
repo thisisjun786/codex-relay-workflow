@@ -3,25 +3,42 @@ package supervisor
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strconv"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
+
+// selectionPython is what testdata/selection_capture.py answers, run on a copy Python owns of
+// the fixture's store as it stands (pythonCopy), recorded (pythonOutput). The first argument
+// names the answer's kind; the arguments follow the store's path on the driver's command line.
+func selectionPython(t *testing.T, f *stageFixture, what string, args ...string) []byte {
+	t.Helper()
+	return pythonOutput(t, pyKey(t, what), func() ([]byte, error) {
+		root := repoRoot(t)
+		script, err := filepath.Abs("testdata/selection_capture.py")
+		if err != nil {
+			return nil, err
+		}
+		cmd := exec.Command("uv", append([]string{"run", "--no-sync", "python", script, pythonCopy(t, f)}, args...)...)
+		cmd.Dir = filepath.Join(root, "packages/codex-session-relay")
+		home := t.TempDir()
+		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "CODEX_HOME="+home, "TMPDIR="+os.TempDir())
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("Python %s: %v %s", what, err, output)
+		}
+		return output, nil
+	}, pyoracle.Substitute(f.root, "<fixture>"))
+}
 
 func compareSelectionPython(t *testing.T, f *stageFixture, o Obligation, recipient string, now *float64) {
 	t.Helper()
-	root, err := filepath.Abs("../../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	script, err := filepath.Abs("testdata/selection_capture.py")
-	if err != nil {
-		t.Fatal(err)
-	}
-	db := pythonCopy(t, f)
 	raw, err := json.Marshal(o)
 	if err != nil {
 		t.Fatal(err)
@@ -34,14 +51,7 @@ func compareSelectionPython(t *testing.T, f *stageFixture, o Obligation, recipie
 	if now != nil {
 		nowArg = strconv.FormatFloat(*now, 'f', 6, 64)
 	}
-	cmd := exec.Command("uv", "run", "--no-sync", "python", script, db, string(raw), recipientArg, nowArg)
-	cmd.Dir = filepath.Join(root, "packages/codex-session-relay")
-	home := t.TempDir()
-	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "CODEX_HOME="+home, "TMPDIR="+os.TempDir())
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("python select: %v %s", err, output)
-	}
+	output := selectionPython(t, f, "select", string(raw), recipientArg, nowArg)
 	var want map[string]any
 	if err = json.Unmarshal(output, &want); err != nil {
 		t.Fatal(err)

@@ -1,7 +1,6 @@
 package evidence
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -10,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 const head = "c68be165ae8ee4a645f3266eae3e9c543a851382"
@@ -243,7 +242,9 @@ func Test24_SEV_10_DirectiveCLIContract(t *testing.T) {
 }
 
 // Replay pointer parsing through the registry's real CLI, including the complete
-// refusal, rather than just comparing the shared message-id hash.
+// refusal, rather than just comparing the shared message-id hash. Go sets up and runs every
+// command on its own store; Python's answer to the same sequence, run on its own store with the
+// recordedAt Go stamped, is recorded (internal/testsupport/pyoracle).
 func sevDirectiveBytes(t *testing.T, correlationOnly bool) {
 	t.Helper()
 	repo, err := filepath.Abs("../../..")
@@ -258,11 +259,9 @@ func sevDirectiveBytes(t *testing.T, correlationOnly bool) {
 		t.Fatalf("build: %v %s", err, out)
 	}
 	env := append(os.Environ(), "HOME="+root, "XDG_STATE_HOME="+root, "CODEX_HOME="+root)
-	state := filepath.Join(root, "state")
-	python := filepath.Join(repo, ".venv/bin/python")
-	setup := exec.Command(python, "-c", `import sys
-from codex_session_relay import cli
-raise SystemExit(cli.main(sys.argv[1:]))`, "--state", state, "linkage-supervise", "--initiative", "INI-1", "--project", "PRJ-1", "--supervisor-task", "supervisor", "--supervisor-host", "host", "--parent-task", "parent", "--parent-host", "host")
+	supervise := []string{"linkage-supervise", "--initiative", "INI-1", "--project", "PRJ-1", "--supervisor-task", "supervisor", "--supervisor-host", "host", "--parent-task", "parent", "--parent-host", "host"}
+	goState := filepath.Join(root, "go-state")
+	setup := exec.Command(binary, append([]string{"relay", "--state", goState}, supervise...)...)
 	setup.Env = env
 	raw, err := setup.Output()
 	if err != nil {
@@ -276,7 +275,7 @@ raise SystemExit(cli.main(sys.argv[1:]))`, "--state", state, "linkage-supervise"
 	if !ok {
 		t.Fatalf("link missing: %s", raw)
 	}
-	base := []string{"--state", state, "linkage-directive", "--scope-kind", "project", "--scope", "PRJ-1", "--from-task", "supervisor", "--from-scope", "INI-1", "--link", link, "--digest", "digest"}
+	base := []string{"linkage-directive", "--scope-kind", "project", "--scope", "PRJ-1", "--from-task", "supervisor", "--from-scope", "INI-1", "--link", link, "--digest", "digest"}
 	cases := [][]string{{"--correlation", "msg-1"}}
 	if !correlationOnly {
 		good, err := MessageID(SupervisorToParent, link, "project_assignment", "digest")
@@ -289,25 +288,37 @@ raise SystemExit(cli.main(sys.argv[1:]))`, "--state", state, "linkage-supervise"
 		}
 		cases = [][]string{{"--reference", "relay-envelope/1|supervisor_to_parent|project_assignment|" + other + "|-"}, {"--reference", "relay-envelope/1|supervisor_to_parent|project_assignment|" + good + "|msg-1"}, {"--purpose", "project_assignment", "--correlation", "-"}}
 	}
-	for index, extra := range cases {
+	code := func(err error) int {
+		if err == nil {
+			return 0
+		}
+		if e, ok := err.(*exec.ExitError); ok {
+			return e.ExitCode()
+		}
+		t.Fatal(err)
+		return -1
+	}
+	// Python's store, set up by Python's own linkage-supervise, only when Python is asked.
+	python := filepath.Join(repo, ".venv/bin/python")
+	pythonState := filepath.Join(root, "state")
+	pythonReady := false
+	pythonSetup := func() error {
+		if pythonReady {
+			return nil
+		}
+		setup := exec.Command(python, append([]string{"-c", `import sys
+from codex_session_relay import cli
+raise SystemExit(cli.main(sys.argv[1:]))`, "--state", pythonState}, supervise...)...)
+		setup.Env = env
+		if raw, err := setup.Output(); err != nil {
+			return fmt.Errorf("Python setup: %v %s", err, raw)
+		}
+		pythonReady = true
+		return nil
+	}
+	for _, extra := range cases {
 		args := append(append([]string{}, base...), extra...)
-		// Go runs on its own copy of Python's store as it is before this command, taken with
-		// SQLite backup so WAL state, if any, is included. The copy gets its own identity and is
-		// Go's after a takeover; Python's store is left to Python, which runs next on it.
-		goState := filepath.Join(root, fmt.Sprintf("go-state-%d", index))
-		if err := os.MkdirAll(goState, 0700); err != nil {
-			t.Fatal(err)
-		}
-		goDB := filepath.Join(goState, "relay.sqlite3")
-		backup := exec.Command(python, "-c", "import sqlite3,sys; a=sqlite3.connect(sys.argv[1]); b=sqlite3.connect(sys.argv[2]); a.backup(b); b.close(); a.close()", filepath.Join(state, "relay.sqlite3"), goDB)
-		backup.Env = env
-		if out, err := backup.CombinedOutput(); err != nil {
-			t.Fatalf("backup: %v %s", err, out)
-		}
-		testsupport.Rehome(t, goDB)
-		testsupport.HandOver(t, goDB, "go")
-		goArgs := append([]string{"relay", "--state", goState}, args[2:]...)
-		goCmd := exec.Command(binary, goArgs...)
+		goCmd := exec.Command(binary, append([]string{"relay", "--state", goState}, args...)...)
 		goCmd.Env = env
 		got, goErr := goCmd.CombinedOutput()
 		var reply map[string]any
@@ -315,24 +326,32 @@ raise SystemExit(cli.main(sys.argv[1:]))`, "--state", state, "linkage-supervise"
 			t.Fatal(err)
 		}
 		at, _ := reply["recordedAt"].(string)
-		pyCmd := exec.Command(python, append([]string{"-c", `import sys
+		var want struct {
+			Code   int    `json:"code"`
+			Output string `json:"output"`
+		}
+		pyoracle.JSON(t, strings.Join(extra, " "), &want, func() (any, error) {
+			if err := pythonSetup(); err != nil {
+				return nil, err
+			}
+			pyCmd := exec.Command(python, append([]string{"-c", `import sys
 from codex_session_relay import cli,clock
 clock.SystemClock.iso=lambda self: sys.argv[1]
-raise SystemExit(cli.main(sys.argv[2:]))`, at}, args...)...)
-		pyCmd.Env = env
-		want, pyErr := pyCmd.CombinedOutput()
-		code := func(err error) int {
-			if err == nil {
-				return 0
+raise SystemExit(cli.main(sys.argv[2:]))`, at, "--state", pythonState}, args...)...)
+			pyCmd.Env = env
+			out, pyErr := pyCmd.CombinedOutput()
+			exit := 0
+			if pyErr != nil {
+				e, ok := pyErr.(*exec.ExitError)
+				if !ok {
+					return nil, pyErr
+				}
+				exit = e.ExitCode()
 			}
-			if e, ok := err.(*exec.ExitError); ok {
-				return e.ExitCode()
-			}
-			t.Fatal(err)
-			return -1
-		}
-		if code(goErr) != code(pyErr) || !bytes.Equal(got, want) {
-			t.Errorf("directive CLI byte diff %v\nGo(%d): %s\nPython(%d): %s", extra, code(goErr), got, code(pyErr), want)
+			return map[string]any{"code": exit, "output": string(out)}, nil
+		}, pyoracle.Substitute(at, "<recordedAt>"))
+		if code(goErr) != want.Code || string(got) != want.Output {
+			t.Errorf("directive CLI byte diff %v\nGo(%d): %s\nPython(%d): %s", extra, code(goErr), got, want.Code, want.Output)
 		}
 	}
 }
