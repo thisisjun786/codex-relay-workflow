@@ -542,7 +542,9 @@ Three read-only commands, each answering a different question:
   a claim about a host.
 - `crw doctor retention-scan` enumerates [the fixed retention surface](port/cutover.md#retention-scan-surface)
   and reports every reference that resolves to a Python interpreter or a `.py` path, with its source.
-  It is the reading the retention rule waits on.
+  It is the reading the retention rule waits on. Its row 7 asks the App Server at `--socket` (by
+  default `crw bridge`'s, under the Codex home) for threads with read-only calls, and stays unscanned
+  when none answers.
 
 None of them takes a lock across the whole reading, so a host changing underneath is described in
 pieces.
@@ -855,8 +857,9 @@ command's text needs the hook trusted again, and Codex asks for it; until then n
 update of the runtime changes no declaration, because the command names the pointer, and so needs no
 new trust ([plugin packaging](plugin-packaging.md#why-the-hook-resolves-the-pointer)).
 
-A hook command is fixed when a turn starts, and every Stop of that turn reuses it. A turn that
-started while the package still declared the Python bootstrap goes on running it:
+A hook command is fixed when a turn starts, and every Stop of that turn reuses it; the next turn
+resolves the declaration installed then ([the turn-command cache](plugin-packaging.md#the-turn-command-cache)).
+A turn that started while the package still declared the Python bootstrap goes on running it:
 `${PLUGIN_ROOT}/wiring/crw_stop_hook.py` first, and `<CODEX_HOME>/crw-stop-hook.py` once that version
 directory is gone. `crw install` places no such launcher and leaves an existing copy exactly as it is;
 the Python installer placed it. Either launcher reads the same settings and runs the adapter they

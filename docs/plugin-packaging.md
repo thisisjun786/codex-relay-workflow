@@ -461,12 +461,39 @@ the old directory as history, so the row speaks of the root a turn is given, not
 None of the six tried to read the removed directory in the forty minutes that followed, so what such
 a read does was not observed.
 
+### The turn-command cache
+
+Measured on codex-cli 0.154.0 on 2026-09-30, in an isolated Codex home against a local stub model
+provider, with `codex app-server` driven over stdio. A probe plugin's Stop hook wrote which
+declaration ran: its own command text, the `${PLUGIN_ROOT}` it was given and whether that directory
+still existed. `codex plugin add` then replaced it with a version whose command text and version
+differed, which removed the old version directory. Hook trust came from the per-thread config
+override `bypass_hook_trust` on `thread/start` and `thread/resume`; `--dangerously-bypass-hook-trust`
+on the App Server's command line left the hook untrusted. The evidence is kept with the task record,
+outside this repository.
+
+| Turn | Declaration its Stop ran |
+| --- | --- |
+| Started before the replacement, ended after it | The old one. `PLUGIN_ROOT` named the removed directory: the command's shell still ran, and what it named inside that directory was missing |
+| The next turn of the same thread, still loaded in the same App Server | The new one |
+| The thread unsubscribed and resumed in that process, or resumed in a new App Server process | The new one |
+| A new thread, in that process or a new one | The new one |
+
+So the turn-command cache lives for one turn. A hook command is resolved from the version installed
+when a turn starts and held until that turn ends; a thread staying loaded, an idle interval and the
+App Server's own lifetime do not extend it. A thread can still run a hook command from a replaced
+version only while a turn that started before the replacement is running. Read through another App
+Server process, such a turn is `interrupted` with no `completedAt`, as is a turn whose process died,
+while a user's interrupt records a `completedAt`. Row 7 of the
+[retention scan](port/cutover.md#retention-scan-surface) applies this rule.
+
 ### Why the hook resolves the pointer
 
 A hook command is fixed when a turn starts, with the plugin root already resolved into it, and
-the whole turn reuses that string, including every Stop re-fire. Replace the package while a task
-still holds that command and anything it names inside the version cache is gone; nothing measured
-shows a later turn of the same task resolving it afresh. So the native command names nothing in
+the whole turn reuses that string, including every Stop re-fire. Replace the package while a turn
+still holds that command and anything it names inside the version cache is gone until that turn
+ends; the task's next turn resolves the declaration afresh
+([the turn-command cache](#the-turn-command-cache)). So the native command names nothing in
 the cache. `"$HOME/.local/share/crw-runtime/current/bin/crw" hook --plugin-launch; exit 0` resolves
 the runtime through the pointer when the Stop fires, and a cache replacement, before a turn or
 during one, changes nothing it reaches. When the pointer names nothing the shell reports the
@@ -538,18 +565,17 @@ therefore failures, and the declaration treats them as failures.
 
 | Task holding the old package reference | Stop | MCP bridge | Skill reads |
 | --- | --- | --- | --- |
-| Existing task, including an idle interval between turns | The native command names no cache path, so a replacement does not reach it. A turn still holding the Python bootstrap falls back to the launcher copy if one was placed; a quiet turn does not establish package-reference reload | At the first measured replacement, started again by the host from the new directory under the record as it stood then; at the second, left running from the removed directory, while a thread that resumed was given one from the new directory. Both measured on the host | The next turn is given the new root: measured |
+| Existing task, including an idle interval between turns | The native command names no cache path, so a replacement does not reach it. A turn still holding the Python bootstrap falls back to the launcher copy if one was placed. The next turn is given the declaration installed then, loaded or resumed: measured in an isolated home ([the turn-command cache](#the-turn-command-cache)) | At the first measured replacement, started again by the host from the new directory under the record as it stood then; at the second, left running from the removed directory, while a thread that resumed was given one from the new directory. Both measured on the host | The next turn is given the new root: measured |
 | Existing task during a turn, removed cache | The same for the native command. For the Python bootstrap, fallback invocation measured after removal; on the host, a turn begun before the second replacement recorded its Stop once after it | As above; which running bridge belonged to a thread in mid-turn was not mapped. What a tool call in flight across a restart sees was not measured | The turn keeps the removed root until it ends: measured. A read against it was not observed |
 | Fresh task created after update | Invocation measured from the updated installation | Verify the new task's actual MCP call | Verify the new task's actual skill read |
 
 The native Stop command needs no protection from a replacement, and the fallback protects the
-Python bootstrap a cached turn may still hold. Nothing measured shows a later turn resolving the Stop
-command afresh: a task can remain alive across many turns, and for that command an idle interval is
-not a session reload. The other two references were measured to behave differently. The skills root
-is renewed when the next turn starts. The bridge is either started again by the host at the
-replacement, under whatever the record says then, or left running from the removed directory with
-the policy it started under while a thread loaded again gets one from the new directory; both
-happened on the host.
+Python bootstrap a cached turn may still hold. That turn is the only holder: the Stop command, like
+the skills root, is renewed when the next turn starts, whether the thread stayed loaded or was
+resumed ([the turn-command cache](#the-turn-command-cache)). The bridge was measured to behave
+differently. It is either started again by the host at the replacement, under whatever the record
+says then, or left running from the removed directory with the policy it started under while a
+thread loaded again gets one from the new directory; both happened on the host.
 
 ### Updating safely
 
