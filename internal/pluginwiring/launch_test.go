@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/mcp"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
@@ -54,12 +55,12 @@ func inGo(python string) string {
 
 // bridgeEntry is the built crw under the name the launcher execs it by, codex-thread-bridge.
 var bridgeEntry = sync.OnceValues(func() (string, error) {
-	built, err := crwBinary()
+	built, err := testsupport.CRWPath()
 	if err != nil {
 		return "", err
 	}
-	entry := filepath.Join(filepath.Dir(built), declaredServer)
-	return entry, os.Symlink(filepath.Base(built), entry)
+	entry := filepath.Join(linkDir, declaredServer)
+	return entry, os.Symlink(built, entry)
 })
 
 func workspacePython(t *testing.T) string {

@@ -26,33 +26,14 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
-// The records these tests judge are written by the real `crw hook`, built once per test binary,
+// The records these tests judge are written by the real `crw hook` (testsupport.CRW),
 // answering Stops from the isolated Codex 0.154.0 run recorded in contract/golden/stop_event_r1.json:
 // three Stops of one turn, the second and third with byte-identical payloads. A guard peer on the
 // host's control.sock stands in for the relay and answers every request it is asked.
 
-var (
-	buildDir  string
-	crwBinary = sync.OnceValues(func() (string, error) {
-		out := filepath.Join(buildDir, "crw")
-		build := exec.Command("go", "build", "-buildvcs=false", "-o", out, "./cmd/crw")
-		build.Dir = repositoryRoot()
-		if output, err := build.CombinedOutput(); err != nil {
-			return "", fmt.Errorf("go build ./cmd/crw: %w\n%s", err, output)
-		}
-		return out, nil
-	})
-)
-
 func TestMain(m *testing.M) {
-	dir, err := os.MkdirTemp("", "crw-stopevents-")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	buildDir = dir
 	code := m.Run()
-	if err := testsupport.RemoveTempTree(dir); err != nil {
+	if err := testsupport.RemoveCRW(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		code = 1
 	}
@@ -264,7 +245,7 @@ func (h *host) at(document stopFixture, index int) []byte {
 // registration's settings stand at that path while it runs.
 func (h *host) run(settings string, payload []byte) string {
 	h.t.Helper()
-	bin, err := crwBinary()
+	bin, err := testsupport.CRWPath()
 	if err != nil {
 		h.t.Fatal(err)
 	}

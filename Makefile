@@ -14,14 +14,21 @@ STATICCHECK := $(GO) run honnef.co/go/tools/cmd/staticcheck
 # recorded answers, and the budget stays until the suite is measured again (CRW-241). In CI each
 # leg's job timeout still bounds a hang.
 TEST_TIMEOUT := -timeout 20m
+# The one crw every package's tests run (internal/testsupport CRW): built once per `make test`
+# or part, release-shaped (-trimpath), instead of once or more in each package that runs it.
+TEST_BINARY := $(CURDIR)/dist/test/crw
+TEST_ENV := CRW_TEST_BINARY=$(TEST_BINARY)
 
-.PHONY: build test test-part contract lint dist crw-dev
+.PHONY: build test test-binary test-part contract lint dist crw-dev
 
 build:
 	@if ! $(GO) list ./... 2>/dev/null | grep -q .; then echo "no Go packages yet: build skipped"; else $(GO) build -o $(BINARY) -trimpath -ldflags="$(LDFLAGS)" ./cmd/crw; fi
 
-test:
-	@if ! $(GO) list ./... 2>/dev/null | grep -q .; then echo "no Go packages yet: test skipped"; else $(GO) test $(TEST_TIMEOUT) ./... && $(GO) test $(TEST_TIMEOUT) -tags dev ./cmd/crw-dev/... ./internal/dev/...; fi
+test: test-binary
+	$(TEST_ENV) $(GO) test $(TEST_TIMEOUT) ./... && $(TEST_ENV) $(GO) test $(TEST_TIMEOUT) -tags dev ./cmd/crw-dev/... ./internal/dev/...
+
+test-binary:
+	$(GO) build -trimpath -o $(TEST_BINARY) ./cmd/crw
 
 # CI runs `make test` as parallel parts, one runner each (.github/workflows/ci.yml).
 # Parts 1-5 name the slowest packages; `rest` is every other package plus the dev-tagged
@@ -36,14 +43,14 @@ TEST_PART_4 := ./internal/relay/supervisor ./internal/relay/service ./internal/r
 TEST_PART_5 := ./internal/relay/hook ./internal/relay/linkage ./internal/relay/evidence
 TEST_PARTS := $(TEST_PART_1) $(TEST_PART_2) $(TEST_PART_3) $(TEST_PART_4) $(TEST_PART_5)
 
-test-part:
+test-part: test-binary
 ifeq ($(TEST_PART),rest)
 	@set -e; named="$$($(GO) list $(TEST_PARTS))"; \
 	rest="$$($(GO) list ./... | grep -vxF "$$named")"; \
-	$(GO) test $(TEST_TIMEOUT) $$rest; \
-	$(GO) test $(TEST_TIMEOUT) -tags dev ./cmd/crw-dev/... ./internal/dev/...
+	$(TEST_ENV) $(GO) test $(TEST_TIMEOUT) $$rest; \
+	$(TEST_ENV) $(GO) test $(TEST_TIMEOUT) -tags dev ./cmd/crw-dev/... ./internal/dev/...
 else ifneq ($(filter $(TEST_PART),1 2 3 4 5),)
-	$(GO) test $(TEST_TIMEOUT) $(TEST_PART_$(TEST_PART))
+	$(TEST_ENV) $(GO) test $(TEST_TIMEOUT) $(TEST_PART_$(TEST_PART))
 else
 	$(error TEST_PART must be 1, 2, 3, 4, 5 or rest)
 endif

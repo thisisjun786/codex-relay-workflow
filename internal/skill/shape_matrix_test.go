@@ -35,7 +35,7 @@ func TestSkillJSONShapeLivePython(t *testing.T) {
 	t.Setenv("PYTHONDONTWRITEBYTECODE", "1")
 	t.Setenv("TZ", "Pacific/Honolulu")
 	root := repositoryRoot()
-	binary := buildHookProbeCLI(t)
+	binary := recordedCRW(t)
 	inputs := pythonInputs(t)
 	cases := append(hookShapeCases(t, inputs), titleShapeCases(t)...)
 	cases = append(cases, hostShapeCases()...)

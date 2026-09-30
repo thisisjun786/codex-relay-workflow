@@ -15,6 +15,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
@@ -33,14 +34,9 @@ func builtBinary(t *testing.T) string {
 			binaryError = err
 			return
 		}
+		// A copy beside its codex-session-relay link, as an installation lays them out.
 		testBinary = filepath.Join(dir, "crw")
-		cmd := exec.Command("go", "build", "-o", testBinary, "./cmd/crw")
-		cmd.Dir = root
-		var out bytes.Buffer
-		cmd.Stdout = &out
-		cmd.Stderr = &out
-		if err = cmd.Run(); err != nil {
-			binaryError = err
+		if binaryError = testsupport.CopyCRW(testBinary); binaryError != nil {
 			return
 		}
 		binaryError = os.Symlink(testBinary, filepath.Join(dir, "codex-session-relay"))
@@ -75,7 +71,8 @@ func builtBinary(t *testing.T) string {
 			return
 		}
 		clockBinary = filepath.Join(dir, "clock", "crw")
-		cmd = exec.Command("go", "build", "-overlay", overlayPath, "-o", clockBinary, "./cmd/crw")
+		var out bytes.Buffer
+		cmd := exec.Command("go", "build", "-overlay", overlayPath, "-o", clockBinary, "./cmd/crw")
 		cmd.Dir = root
 		cmd.Stdout = &out
 		cmd.Stderr = &out

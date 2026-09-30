@@ -18,6 +18,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
@@ -62,7 +63,7 @@ func TestMain(m *testing.M) {
 			code = 1
 		}
 	}
-	if err := os.RemoveAll(home); err != nil {
+	if err := errors.Join(os.RemoveAll(home), testsupport.RemoveCRW()); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		code = 1
 	}

@@ -11,16 +11,12 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 func Test24_SCH_24_RealBinaryNeedsSocketBeforeAnyWrite(t *testing.T) {
 	root := t.TempDir()
-	binary := filepath.Join(root, "crw")
-	build := exec.Command("go", "build", "-o", binary, "./cmd/crw")
-	build.Dir = filepath.Join("..", "..", "..")
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build: %v %s", err, output)
-	}
+	binary := testsupport.CRW(t)
 	state := filepath.Join(root, "state")
 	for _, argv := range [][]string{{"supervisor-send", "--message", "m"}, {"supervisor-read", "--message", "m", "--turn", "t", "--proof", "p", "--as", "recipient"}} {
 		args := append([]string{"relay", "--state", state}, argv...)

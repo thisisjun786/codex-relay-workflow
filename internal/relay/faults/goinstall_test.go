@@ -11,6 +11,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	hostrecord "github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // The Go installer's entry (internal/runtime/hostrecord.GoInstall) is found by the sweeper that a
@@ -56,17 +57,13 @@ func Test37_SweeperReadsTheGoInstallEntry(t *testing.T) {
 // A released crw's fault-sweep (backlog before todo 42) names the running binary's own
 // installation, as the daemon's sweeper does (decision 34): the fact it records carries the
 // directory crw install recorded for this binary and the revision stamped there. The binary is
-// built with -trimpath, as make build and goreleaser build it, where a location derived from the
-// Go source file is a module path that names no directory and matches no install entry.
+// the release-shaped one testsupport.CRW gives (-trimpath, as make build and goreleaser build it),
+// copied into the installation, where a location derived from the Go source file is a module path
+// that names no directory and matches no install entry.
 func Test37_FaultSweepCLIRecordsTheRunningBinarysInstallEntry(t *testing.T) {
 	root := t.TempDir()
 	environment := filepath.Join(root, "bin-0.3.0-aaaaaaaaaaaa")
-	crw := filepath.Join(environment, "bin", "crw")
-	build := exec.Command("go", "build", "-trimpath", "-o", crw, "./cmd/crw")
-	build.Dir = f1Root()
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build: %v\n%s", err, output)
-	}
+	crw := testsupport.CRWAt(t, filepath.Join(environment, "bin", "crw"))
 	stateHome := filepath.Join(root, "state-home")
 	path := filepath.Join(stateHome, "codex-relay-workflow", hostrecord.Name)
 	digest := strings.Repeat("a", 64)

@@ -12,12 +12,7 @@ func TestHookRegistrationLivePython(t *testing.T) {
 	pythonOracleRoot(t)
 	t.Setenv("PYTHONDONTWRITEBYTECODE", "1")
 	root := repositoryRoot()
-	crw := filepath.Join(t.TempDir(), "crw")
-	build := exec.Command("go", "build", "-o", crw, "./cmd/crw")
-	build.Dir = root
-	if result := captureSkillProcess(t, build); result.exit != 0 {
-		t.Fatalf("build failed: %+v", result)
-	}
+	crw := recordedCRW(t)
 	for _, name := range []string{"declared and trusted", "no registration", "sanitized"} {
 		t.Run(name, func(t *testing.T) {
 			// Given a schema-bearing binary and independent declaration/trust records.

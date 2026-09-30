@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // Runner executes one scenario and returns its observation (see evaluate.go for its shape).
@@ -47,13 +49,13 @@ var runners = map[RunKind]Runner{
 // registered in internal/relay/cli); until then every scenario in it is skipped and counted.
 var ported = map[string]bool{"hook": true, "records": true, "sqlite-ddl": true, "appserver": true, "ledger-fingerprint": true, "git": true, "mcp-tools": true, "cli-shape": true}
 
-// crwBinary is the crw under test: CRW_TEST_BINARY, or ./cmd/crw built once per package run
-// into buildDir, which TestMain creates and removes. crwDevBinary is the development binary the
-// hook corpus's `verify` steps run (`crw-dev stop-events`): CRW_TEST_DEV_BINARY, or ./cmd/crw-dev
-// built with -tags dev once. TestMain builds both before it isolates HOME.
+// crwBinary is the crw under test (testsupport.CRW: CRW_TEST_BINARY, or ./cmd/crw built once).
+// crwDevBinary is the development binary the hook corpus's `verify` steps run (`crw-dev
+// stop-events`): CRW_TEST_DEV_BINARY, or ./cmd/crw-dev built with -tags dev once into buildDir,
+// which TestMain creates and removes. TestMain builds both before it isolates HOME.
 var (
 	buildDir     string
-	crwBinary    = sync.OnceValues(func() (string, error) { return build("CRW_TEST_BINARY", "crw", "./cmd/crw") })
+	crwBinary    = testsupport.CRWPath
 	crwDevBinary = sync.OnceValues(func() (string, error) {
 		return build("CRW_TEST_DEV_BINARY", "crw-dev", "-tags", "dev", "./cmd/crw-dev")
 	})

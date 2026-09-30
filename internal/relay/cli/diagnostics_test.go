@@ -2,6 +2,7 @@ package cli_test
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -60,11 +61,9 @@ func packageBinary(t *testing.T) (string, string) {
 		if binaryErr != nil {
 			return
 		}
+		// A copy beside its alias, as an installation lays them out.
 		binaryPath = filepath.Join(binaryDir, "crw")
-		cmd := exec.Command("go", "build", "-o", binaryPath, "./cmd/crw")
-		cmd.Dir = repositoryRoot(t)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			binaryErr = fmt.Errorf("build: %w: %s", err, out)
+		if binaryErr = testsupport.CopyCRW(binaryPath); binaryErr != nil {
 			return
 		}
 		binaryAlias = filepath.Join(binaryDir, "codex-session-relay")
@@ -87,7 +86,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	code := m.Run()
-	if err := cleanup(); err != nil {
+	if err := errors.Join(cleanup(), testsupport.RemoveCRW()); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		code = 1
 	}

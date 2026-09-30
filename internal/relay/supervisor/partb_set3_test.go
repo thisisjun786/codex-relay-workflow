@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
@@ -513,7 +514,7 @@ func commandExit24(t *testing.T, err error) int {
 }
 
 func Test24_SupervisorEmptyStringTruthinessMatchesLivePython(t *testing.T) {
-	binary := supervisorBinary(t)
+	binary := testsupport.CRW(t)
 	observation := filepath.Join(t.TempDir(), "empty-observation.json")
 	if err := os.WriteFile(observation, []byte("{}\n"), 0600); err != nil {
 		t.Fatal(err)
@@ -568,18 +569,18 @@ func Test24_SupervisorEmptyStringTruthinessMatchesLivePython(t *testing.T) {
 
 func Test24_SR_18_RealBinarySelectWholeOutput(t *testing.T) {
 	f := fixture24(t)
-	supervisorBinaryPython(t, f, supervisorBinary(t), "supervisor-select", "--event", "event-1")
+	supervisorBinaryPython(t, f, testsupport.CRW(t), "supervisor-select", "--event", "event-1")
 }
 func Test24_SR_18_RealBinaryRecordWholeOutput(t *testing.T) {
 	f := fixture24(t)
-	binary := supervisorBinary(t)
+	binary := testsupport.CRW(t)
 	supervisorBinaryPython(t, f, binary, "supervisor-report-recorded", "--event", "event-1", "--message", "m-1")
 	supervisorBinaryPython(t, f, binary, "supervisor-report-recorded", "--event", "event-1", "--message", "m-1")
 	supervisorBinaryPython(t, f, binary, "supervisor-select", "--event", "event-1")
 }
 func Test24_SR_19_RealBinaryOmissionWholeOutput(t *testing.T) {
 	f := fixture24(t)
-	binary := supervisorBinary(t)
+	binary := testsupport.CRW(t)
 	reading := filepath.Join(f.root, "omission.json")
 	data := `{"schema":"reporting-observation/1","reportingState":"unreported","reason":"terminal_without_report","relationshipId":"rel-1","executionGeneration":1,"selectors":{"turn":"turn-7"}}`
 	if err := os.WriteFile(reading, []byte(data), 0600); err != nil {
@@ -598,7 +599,7 @@ func Test24_SR_19_StandingLiveBinaryWholeOutput(t *testing.T) {
 	if err := os.WriteFile(reading, []byte(data), 0600); err != nil {
 		t.Fatal(err)
 	}
-	supervisorBinaryPython(t, f, supervisorBinary(t), "supervisor-standing", "--project", "PRJ-1", "--observation", reading)
+	supervisorBinaryPython(t, f, testsupport.CRW(t), "supervisor-standing", "--project", "PRJ-1", "--observation", reading)
 }
 func Test24_SR_19_StandingUnregisteredBinaryWholeOutput(t *testing.T) {
 	f := fixture24(t)
@@ -610,11 +611,11 @@ func Test24_SR_19_StandingUnregisteredBinaryWholeOutput(t *testing.T) {
 	if err := os.WriteFile(reading, []byte(data), 0600); err != nil {
 		t.Fatal(err)
 	}
-	supervisorBinaryPython(t, f, supervisorBinary(t), "supervisor-standing", "--project", "PRJ-1", "--observation", reading)
+	supervisorBinaryPython(t, f, testsupport.CRW(t), "supervisor-standing", "--project", "PRJ-1", "--observation", reading)
 }
 func Test24_SR_20_UsageWholeOutput(t *testing.T) {
 	f := fixture24(t)
-	binary := supervisorBinary(t)
+	binary := testsupport.CRW(t)
 	if _, err := f.s.DB.Exec("UPDATE events SET outcome='failed' WHERE event_id='event-1'"); err != nil {
 		t.Fatal(err)
 	}

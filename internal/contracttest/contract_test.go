@@ -42,7 +42,7 @@ func TestMain(m *testing.M) {
 		}
 	}
 	code := m.Run()
-	if err := testsupport.RemoveTempTree(dir); err != nil {
+	if err := errors.Join(testsupport.RemoveTempTree(dir), testsupport.RemoveCRW()); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		code = 1
 	}

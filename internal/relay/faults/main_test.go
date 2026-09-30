@@ -1,11 +1,14 @@
 package faults
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // Fence the entire package, including in-process CLI tests and child oracles.
@@ -51,7 +54,7 @@ func TestMain(m *testing.M) {
 		return Installation{Package: "codex-session-relay", Version: RelayPackageVersion, Location: relayPackageLocation}, nil
 	}
 	code := m.Run()
-	if err := os.RemoveAll(home); err != nil {
+	if err := errors.Join(os.RemoveAll(home), testsupport.RemoveCRW()); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		code = 1
 	}

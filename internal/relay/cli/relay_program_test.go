@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // relay_program() names the console script installed beside the relay's interpreter, else the
@@ -34,12 +35,8 @@ func TestRelayProgram_is_the_resolved_executable_and_relay(t *testing.T) {
 func TestRelayProgram_renders_both_installation_shapes_through_the_binary(t *testing.T) {
 	found := pythonScenario(t, "test_a_closed_channel_is_queryable_rather_than_hidden")
 	bin := filepath.Join(t.TempDir(), "bin")
-	crw := filepath.Join(bin, "crw")
-	build := exec.Command("go", "build", "-o", crw, "./cmd/crw")
-	build.Dir = repositoryRoot(t)
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build: %v\n%s", err, output)
-	}
+	// A copy: whether a link sits beside the binary is read from where it runs.
+	crw := testsupport.CRWAt(t, filepath.Join(bin, "crw"))
 	command := func() string {
 		t.Helper()
 		output, err := exec.Command(crw, "relay", "--state", found.State, "status").Output()

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
@@ -204,12 +205,7 @@ func sevDirectiveBytes(t *testing.T, correlationOnly bool) {
 		t.Fatal(err)
 	}
 	root := t.TempDir()
-	binary := filepath.Join(root, "crw")
-	build := exec.Command("go", "build", "-o", binary, "./cmd/crw")
-	build.Dir = repo
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build: %v %s", err, out)
-	}
+	binary := testsupport.CRW(t)
 	env := append(os.Environ(), "HOME="+root, "XDG_STATE_HOME="+root, "CODEX_HOME="+root)
 	supervise := []string{"linkage-supervise", "--initiative", "INI-1", "--project", "PRJ-1", "--supervisor-task", "supervisor", "--supervisor-host", "host", "--parent-task", "parent", "--parent-host", "host"}
 	goState := filepath.Join(root, "go-state")

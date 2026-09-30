@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
@@ -394,16 +395,6 @@ func Test24_SCH_27_Capture(t *testing.T) {
 		return []any{first["verified"], second["recorded"], second["verified"], n}
 	})
 }
-func set1Binary(t *testing.T) string {
-	t.Helper()
-	binary := filepath.Join(t.TempDir(), "crw")
-	cmd := exec.Command("go", "build", "-o", binary, "./cmd/crw")
-	cmd.Dir = "../../.."
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("build crw: %v %s", err, out)
-	}
-	return binary
-}
 func set1Command(t *testing.T, binary string, args ...string) (int, map[string]any, string) {
 	t.Helper()
 	cmd := exec.Command(binary, append([]string{"relay"}, args...)...)
@@ -430,7 +421,7 @@ func Test24_SCH_24_NoHostCapture(t *testing.T) {
 		{"read", "TheHostRequiredCommandsRefuseWithoutOne.test_a_readback_with_no_host_refuses_instead_of_recording_an_unverified_one", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			binary := set1Binary(t)
+			binary := testsupport.CRW(t)
 			captureTokens21(t)
 			supervisorMirror(t, tc.id, "event", func(c *Channel, s *store.Store) []any {
 				ctx := context.Background()
@@ -483,7 +474,7 @@ func Test24_SCH_24_NoHostCapture(t *testing.T) {
 	}
 }
 func Test24_SCH_25_CommandClassificationCapture(t *testing.T) {
-	binary := set1Binary(t)
+	binary := testsupport.CRW(t)
 	supervisorMirror(t, "TheHostRequiredCommandsRefuseWithoutOne.test_both_are_declared_host_required_as_well_as_enforced", "setup", func(c *Channel, s *store.Store) []any {
 		code, answer, text := set1Command(t, binary, "--state", t.TempDir(), "doctor")
 		if code != 0 {
@@ -502,7 +493,7 @@ func Test24_SCH_25_CommandClassificationCapture(t *testing.T) {
 	})
 }
 func Test24_SCH_26_StageShapeCapture(t *testing.T) {
-	binary := set1Binary(t)
+	binary := testsupport.CRW(t)
 	for _, tc := range []struct {
 		name, id string
 		replay   func(*testing.T, string) []any

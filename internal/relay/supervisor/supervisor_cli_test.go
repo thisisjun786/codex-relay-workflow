@@ -2,39 +2,16 @@ package supervisor
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
-func supervisorBinary(t *testing.T) string {
-	t.Helper()
-	supervisorBinaryOnce.Do(func() {
-		root, err := filepath.Abs("../../..")
-		if err != nil {
-			supervisorBinaryErr = err
-			return
-		}
-		supervisorBinaryDir, supervisorBinaryErr = os.MkdirTemp("", "crw-supervisor-binary-")
-		if supervisorBinaryErr != nil {
-			return
-		}
-		supervisorBinaryPath = filepath.Join(supervisorBinaryDir, "crw")
-		cmd := exec.Command("go", "build", "-o", supervisorBinaryPath, "./cmd/crw")
-		cmd.Dir = root
-		if out, err := cmd.CombinedOutput(); err != nil {
-			supervisorBinaryErr = fmt.Errorf("build: %w: %s", err, out)
-		}
-	})
-	if supervisorBinaryErr != nil {
-		t.Fatal(supervisorBinaryErr)
-	}
-	return supervisorBinaryPath
-}
 func supervisorCLI(t *testing.T, binary, state string, args ...string) (int, map[string]any) {
 	t.Helper()
 	cmd := exec.Command(binary, append([]string{"relay", "--state", state}, args...)...)
@@ -56,7 +33,7 @@ func supervisorCLI(t *testing.T, binary, state string, args ...string) (int, map
 	return code, payload
 }
 func Test24_SR_20_RealBinaryUsageExitFour(t *testing.T) {
-	binary := supervisorBinary(t)
+	binary := testsupport.CRW(t)
 	state := filepath.Join(t.TempDir(), "state")
 	reading := filepath.Join(filepath.Dir(state), "reported.json")
 	if err := os.WriteFile(reading, []byte(`{"schema":"reporting-observation/1","reportingState":"reported","relationshipId":"rel-1","selectors":{"turn":"turn-7"}}`), 0600); err != nil {
@@ -80,7 +57,7 @@ func Test24_SR_20_RealBinaryUsageExitFour(t *testing.T) {
 	}
 }
 func Test24_SR_19_RealBinaryOmissionConverges(t *testing.T) {
-	binary := supervisorBinary(t)
+	binary := testsupport.CRW(t)
 	state := filepath.Join(t.TempDir(), "state")
 	reading := filepath.Join(filepath.Dir(state), "unreported.json")
 	data := `{"schema":"reporting-observation/1","reportingState":"unreported","reason":"terminal_without_report","relationshipId":"rel-0123456789abcdef","executionGeneration":1,"selectors":{"turn":"turn-7"}}`
@@ -94,7 +71,7 @@ func Test24_SR_19_RealBinaryOmissionConverges(t *testing.T) {
 	}
 }
 func Test24_SR_21_DoctorActorReachability(t *testing.T) {
-	binary := supervisorBinary(t)
+	binary := testsupport.CRW(t)
 	state := filepath.Join(t.TempDir(), "absent-state")
 	code, payload := supervisorCLI(t, binary, state, "doctor")
 	if code != 0 {

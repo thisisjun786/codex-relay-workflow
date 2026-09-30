@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
@@ -105,7 +106,7 @@ func Test24_ObligationHTMLBuiltBinaryBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	binary := supervisorBinary(t)
+	binary := testsupport.CRW(t)
 	alias := filepath.Join(t.TempDir(), "codex-session-relay")
 	if err := os.Symlink(binary, alias); err != nil {
 		t.Fatal(err)

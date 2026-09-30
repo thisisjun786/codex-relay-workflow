@@ -7,9 +7,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -27,8 +27,6 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
-var buildDir string
-
 func TestMain(m *testing.M) {
 	golden.Helper()
 	cleanup, err := testsupport.IsolateRelayState()
@@ -36,30 +34,20 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	buildDir, err = os.MkdirTemp("", "crw-install-tests-")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
 	code := m.Run()
-	_ = os.RemoveAll(buildDir)
-	if err := cleanup(); err != nil {
+	if err := errors.Join(cleanup(), testsupport.RemoveCRW()); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		code = 1
 	}
 	os.Exit(code)
 }
 
-// binary is the crw this package's tests install: the real multi-call binary, built once.
+// binary is the crw this package's tests install: the real multi-call binary
+// (testsupport.CRW), read once.
 var binary = sync.OnceValues(func() ([]byte, error) {
-	if built := os.Getenv("CRW_TEST_CRW"); built != "" { // a test rerun in a child process
-		return os.ReadFile(built)
-	}
-	path := filepath.Join(buildDir, "crw")
-	cmd := exec.Command("go", "build", "-trimpath", "-o", path, "./cmd/crw")
-	cmd.Dir = golden.Root()
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return nil, fmt.Errorf("build: %w\n%s", err, out)
+	path, err := testsupport.CRWPath()
+	if err != nil {
+		return nil, err
 	}
 	return os.ReadFile(path)
 })
@@ -128,12 +116,35 @@ func (h *host) options() install.Options {
 // digest), and a SHA256SUMS beside it.
 func archive(t *testing.T, version, extra string) string {
 	t.Helper()
+	dir := t.TempDir()
+	name := "crw_" + version + "_" + runtime.GOOS + "_" + runtime.GOARCH + ".tar.gz"
+	compressed := archiveBytes(t, version, extra)
+	path := filepath.Join(dir, name)
+	write(t, path, string(compressed))
+	sum := sha256.Sum256(compressed)
+	write(t, filepath.Join(dir, install.SumsName), hex.EncodeToString(sum[:])+"  "+name+"\n")
+	return path
+}
+
+// archives holds each archive's bytes by version and extra. The tests install a few archives
+// over and over, and compressing the whole binary again for each call was most of this
+// package's time; the bytes, and so every digest, are the same either way.
+var archives = struct {
+	sync.Mutex
+	bytes map[[2]string][]byte
+}{bytes: map[[2]string][]byte{}}
+
+func archiveBytes(t *testing.T, version, extra string) []byte {
+	t.Helper()
+	archives.Lock()
+	defer archives.Unlock()
+	if cached, found := archives.bytes[[2]string{version, extra}]; found {
+		return cached
+	}
 	raw, err := binary()
 	if err != nil {
 		t.Fatal(err)
 	}
-	dir := t.TempDir()
-	name := "crw_" + version + "_" + runtime.GOOS + "_" + runtime.GOARCH + ".tar.gz"
 	var buf bytes.Buffer
 	compressed := gzip.NewWriter(&buf)
 	w := tar.NewWriter(compressed)
@@ -158,11 +169,8 @@ func archive(t *testing.T, version, extra string) string {
 	if err := compressed.Close(); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(dir, name)
-	write(t, path, buf.String())
-	sum := sha256.Sum256(buf.Bytes())
-	write(t, filepath.Join(dir, install.SumsName), hex.EncodeToString(sum[:])+"  "+name+"\n")
-	return path
+	archives.bytes[[2]string{version, extra}] = buf.Bytes()
+	return buf.Bytes()
 }
 
 func archiveDigest(t *testing.T, path string) string {

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // Test30FirstOpenerProcess is a child process, not a test: a writable first opener of
@@ -309,8 +310,8 @@ var (
 	relayErr   error
 )
 
-// relayCLI is the Go relay CLI built from this checkout and spelled codex-session-relay, built
-// once per test binary under the isolation root, with the environment the binary started with.
+// relayCLI is the Go relay CLI of this checkout (testsupport.CRW) spelled codex-session-relay,
+// linked once per test binary under the isolation root.
 func relayCLI(t *testing.T) string {
 	t.Helper()
 	relayOnce.Do(func() {
@@ -318,14 +319,12 @@ func relayCLI(t *testing.T) string {
 		if relayErr = os.MkdirAll(dir, 0o700); relayErr != nil {
 			return
 		}
-		build := exec.Command("go", "build", "-o", filepath.Join(dir, "crw"), "./cmd/crw")
-		build.Dir, build.Env = repositoryRoot(t), hostEnviron
-		if out, err := build.CombinedOutput(); err != nil {
-			relayErr = fmt.Errorf("go build ./cmd/crw: %w\n%s", err, out)
+		var built string
+		if built, relayErr = testsupport.CRWPath(); relayErr != nil {
 			return
 		}
 		relayAlias = filepath.Join(dir, "codex-session-relay")
-		relayErr = os.Symlink(filepath.Join(dir, "crw"), relayAlias)
+		relayErr = os.Symlink(built, relayAlias)
 	})
 	if relayErr != nil {
 		t.Fatal(relayErr)
