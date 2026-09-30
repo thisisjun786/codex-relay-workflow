@@ -39,8 +39,8 @@ def normalize(value: Any, home: pathlib.Path, path=()) -> Any:
     return value
 
 
-def run(label, name, response):
-    home = tree / name / label
+def run(label, name, response, base=tree):
+    home = base / name / label
     home.mkdir(parents=True)
     env = dict(os.environ, HOME=str(home), CODEX_HOME=str(home), XDG_STATE_HOME=str(home / 'xdg'),
                CODEX_SESSION_RELAY_STATE=str(home / 'state'))
@@ -111,14 +111,20 @@ def run(label, name, response):
     return dict(outputs=outputs, rows=rows, files=files)
 
 results = []
-for name, response in [('hold', hold), ('release', release), ('duplicate', release),
-                       ('malformed', release), ('missing', release), ('unreadable', release), ('timeout', release)]:
-    py, go = run('python', name, response), run('go', name, response)
+# The last case runs under a directory whose name is the byte 0xff, not UTF-8: Python holds every
+# path under it surrogate-escaped (\udcff), hands the system os.fsencode's bytes, and records the
+# escape. CODEX_HOME, the settings path, journalRoot, the payload's transcript_path and the host
+# ledger all name it.
+for name, response, base in [('hold', hold, tree), ('release', release, tree), ('duplicate', release, tree),
+                             ('malformed', release, tree), ('missing', release, tree), ('unreadable', release, tree),
+                             ('timeout', release, tree), ('hold', hold, tree / os.fsdecode(b'not-utf8-\xff'))]:
+    py, go = run('python', name, response, base), run('go', name, response, base)
     if name == 'timeout':
         # Decision 24: native cancellation has no process group. Diagnostic prose
         # is intentionally different; all machine-consumed outcome fields agree.
         py['rows'][0].pop('detail')
         go['rows'][0].pop('detail')
     assert py == go, (name, py, go)
-    results.append(dict(scenario=name, python=py, go=go, equal=True))
+    results.append(dict(scenario=name if base == tree else name + ' under a directory that is not UTF-8',
+                        python=py, go=go, equal=True))
 print(json.dumps(results))

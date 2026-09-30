@@ -16,6 +16,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 const (
@@ -74,8 +76,7 @@ func Status(ctx context.Context, home string, environ map[string]string, event s
 		if environ == nil {
 			home = codexHome()
 		} else {
-			h, _ := os.UserHomeDir()
-			home = filepath.Join(h, ".codex")
+			home = defaultCodexHome()
 		}
 	}
 	home = expandHome(home)
@@ -560,6 +561,9 @@ func namedJournals(ctx context.Context, ours []statusRegistration, relative []st
 		}
 		root := text(get(rd.Value, "journalRoot"))
 		key := root
+		if rootFS, ok := fsencode(root); ok {
+			root = rootFS
+		}
 		if info, e := os.Stat(root); e == nil {
 			key = fmt.Sprintf("%d:%d", statDev(info), statIno(info))
 		}
@@ -587,10 +591,15 @@ func journalCell(cfg Object) map[string]any {
 	if root == "" {
 		return cell(noJournal, "no journal is configured, so this hook records nothing about its own invocations", map[string]any{"journalPolicy": policy})
 	}
+	// The settings' str reaches the system as os.fsencode's bytes; the cell names it as written.
+	rootFS, encoded := fsencode(root)
+	if !encoded {
+		return cell(accessError, "the journal could not be opened: "+fsencodeRefusal(root), map[string]any{"journalRoot": root, "journalPolicy": policy})
+	}
 	if strings.IndexByte(root, 0) >= 0 {
 		return cell(accessError, "the journal could not be opened: embedded null byte", map[string]any{"journalRoot": root, "journalPolicy": policy})
 	}
-	info, err := os.Lstat(root)
+	info, err := os.Lstat(rootFS)
 	if errors.Is(err, os.ErrNotExist) {
 		return cell(absent, "the journal directory does not exist, so this hook has recorded no invocation into it", map[string]any{"journalRoot": root, "journalPolicy": policy})
 	}
@@ -599,7 +608,7 @@ func journalCell(cfg Object) map[string]any {
 	}
 	days := []string{}
 	count := 0
-	entries, e := os.ReadDir(root)
+	entries, e := os.ReadDir(rootFS)
 	if e != nil {
 		return cell(accessError, "the journal could not be listed: "+e.Error(), map[string]any{"journalRoot": root, "journalPolicy": policy})
 	}
@@ -610,7 +619,7 @@ func journalCell(cfg Object) map[string]any {
 			continue
 		}
 		days = append(days, d.Name())
-		rows, e := os.ReadDir(filepath.Join(root, d.Name()))
+		rows, e := os.ReadDir(filepath.Join(rootFS, d.Name()))
 		if e != nil {
 			return cell(accessError, "a journal day could not be listed", map[string]any{"journalRoot": root, "journalPolicy": policy, "days": days})
 		}
@@ -743,18 +752,21 @@ func statIno(i fs.FileInfo) uint64 {
 	}
 	return 0
 }
+
+// settle is completion._settled: os.path.abspath of the expanded path.
 func settle(p string) string {
 	p = expandHome(p)
-	a, e := filepath.Abs(p)
-	if e == nil {
+	if a, e := abspath(p); e == nil {
 		return a
 	}
 	return p
 }
+
+// expandHome is Path(p).expanduser() (store.ExpandUser: an empty HOME is the root, an unset one
+// the passwd entry, ~user that user's home); a ~ nothing answers is left as written.
 func expandHome(p string) string {
-	if p == "~" || strings.HasPrefix(p, "~/") {
-		h, _ := os.UserHomeDir()
-		return filepath.Join(h, strings.TrimPrefix(p, "~/"))
+	if expanded, err := store.ExpandUser(p); err == nil {
+		return expanded
 	}
 	return p
 }

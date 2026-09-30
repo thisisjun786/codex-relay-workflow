@@ -13,6 +13,8 @@ import (
 	"strings"
 	"syscall"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -40,11 +42,11 @@ func configurationPath(home string, environ map[string]string, named string) (st
 			home = env("CODEX_HOME")
 		}
 		if home == "" {
-			h, err := os.UserHomeDir()
+			h, err := store.Home()
 			if err != nil {
 				return "", err
 			}
-			home = filepath.Join(h, ".codex")
+			home = strings.TrimSuffix(h, "/") + "/.codex"
 		}
 		path = home + "/" + ConfigName
 	}
@@ -52,12 +54,25 @@ func configurationPath(home string, environ map[string]string, named string) (st
 	if err != nil {
 		return "", err
 	}
-	absolute, err := filepath.Abs(path)
-	// posixpath.abspath preserves exactly two leading slashes; filepath.Abs does not.
-	if strings.HasPrefix(path, "//") && !strings.HasPrefix(path, "///") {
-		absolute = "/" + absolute
+	return abspath(path)
+}
+
+// abspath is os.path.abspath: a relative path joined to the working directory the kernel names
+// (os.getcwd, where os.Getwd prefers a $PWD that reaches it through a symbolic link), then
+// normpath, which folds ".." lexically and keeps exactly two leading slashes.
+func abspath(path string) (string, error) {
+	if !strings.HasPrefix(path, "/") {
+		cwd, err := unix.Getwd()
+		if err != nil {
+			return "", err
+		}
+		path = cwd + "/" + path
 	}
-	return absolute, err
+	cleaned := filepath.Clean(path)
+	if strings.HasPrefix(path, "//") && !strings.HasPrefix(path, "///") {
+		cleaned = "/" + cleaned
+	}
+	return cleaned, nil
 }
 
 func seconds(v any) (float64, bool) {
@@ -243,8 +258,14 @@ func codexHome() string {
 		}
 		return h
 	}
-	h, _ := os.UserHomeDir()
-	return filepath.Join(h, ".codex")
+	return defaultCodexHome()
+}
+
+// defaultCodexHome is Path.home() / ".codex": an empty HOME is the root and an unset one the
+// passwd entry.
+func defaultCodexHome() string {
+	h, _ := store.Home()
+	return strings.TrimSuffix(h, "/") + "/.codex"
 }
 
 // RoutingState uses the relay's selection rules, including legacy socket spellings.

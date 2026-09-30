@@ -91,6 +91,12 @@ func EventIdentity(ctx context.Context, stop Object) (string, Object) {
 	if !filepath.IsAbs(path) {
 		return refuse("transcript_path_relative")
 	}
+	// The payload's str reaches the system as os.fsencode's bytes: a surrogate escape is the byte
+	// it stands for, and one nothing encodes is the ValueError Python counts as unreachable.
+	path, encoded := fsencode(path)
+	if !encoded {
+		return refuse("transcript_unreachable")
+	}
 	info, err := os.Stat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return refuse("transcript_absent")
