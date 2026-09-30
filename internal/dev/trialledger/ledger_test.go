@@ -8,19 +8,22 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/pyload"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
-// The goldens were captured once from the Python ledger, `python3 scripts/trial_startup.py ledger
-// --start <start.json>` under CPython 3.14.4 (the relay host's interpreter), over the cases in
-// testdata/cases.json materialized as materialize does here; the same grader reproduced every
-// ledger-grade.json on the relay host byte for byte. fromisoformat.json is
-// datetime.datetime.fromisoformat's answer to each string, from the same interpreter.
+// The goldens (testdata/golden, internal/testsupport/golden) were first captured from the Python
+// ledger, `python3 scripts/trial_startup.py ledger --start <start.json>` under CPython 3.14.4
+// (the relay host's interpreter), over the cases in testdata/cases.json materialized as
+// materialize does here; the same grader reproduced every ledger-grade.json on the relay host
+// byte for byte. TestFromISOFormatIsCPythons's golden was first datetime.datetime.fromisoformat's
+// answer to each string of testdata/fixtures/fromisoformat-inputs.json, from the same interpreter.
 
 type ledgerCase struct {
 	Name   string   `json:"name"`
@@ -148,36 +151,32 @@ func grade(t *testing.T, c ledgerCase) (int, string, map[string]any) {
 	return code, text, document
 }
 
-// TestLedgerGradesAsThePythonLedgerDid: every case's exit status and document are the Python
-// ledger's, byte for byte, refusals included.
+// TestLedgerGradesAsThePythonLedgerDid: every case's exit status and document are the golden's
+// (first the Python ledger's), byte for byte, refusals included.
 func TestLedgerGradesAsThePythonLedgerDid(t *testing.T) {
-	raw, err := os.ReadFile("testdata/golden.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var golden map[string]struct {
-		Exit   int    `json:"exit"`
-		Stdout string `json:"stdout"`
-	}
-	if err := json.Unmarshal(raw, &golden); err != nil {
-		t.Fatal(err)
-	}
 	cases := loadCases(t)
-	if len(cases) != len(golden) {
-		t.Fatalf("%d cases, %d goldens", len(cases), len(golden))
-	}
+	graded := map[string]gradeAnswer{}
 	for _, c := range cases {
 		t.Run(c.Name, func(t *testing.T) {
-			want, ok := golden[c.Name]
-			if !ok {
-				t.Fatal("no golden")
-			}
 			code, text, _ := grade(t, c)
-			if code != want.Exit || text != want.Stdout {
-				t.Fatalf("exit %d, want %d\n--- got\n%s\n--- want\n%s", code, want.Exit, text, want.Stdout)
-			}
+			graded[c.Name] = gradeAnswer{code, text}
 		})
 	}
+	// The goldens are kept in one file for the whole table, one key per case.
+	for _, c := range cases {
+		answer, ok := graded[c.Name]
+		if !ok {
+			continue
+		}
+		golden.Check(t, c.Name+" exit", []byte(strconv.Itoa(answer.exit)))
+		golden.Check(t, c.Name+" stdout", []byte(answer.stdout))
+	}
+}
+
+// gradeAnswer is one case's exit status and report, as grade normalizes it.
+type gradeAnswer struct {
+	exit   int
+	stdout string
 }
 
 func caseNamed(t *testing.T, name string) ledgerCase {
@@ -312,19 +311,17 @@ func TestTSU30_AFinishedTrialIsGradableWithoutAnInstallation(t *testing.T) {
 	}
 }
 
-// fromISOFormat accepts, places and refuses every string as CPython's datetime.fromisoformat.
+// fromISOFormat accepts, places and refuses every string as the golden holds, first CPython's
+// datetime.fromisoformat's answers: line n is repr() of input n and its answer, ["OK", the UTC
+// time, aware] or ["ERR", the message].
 func TestFromISOFormatIsCPythons(t *testing.T) {
-	raw, err := os.ReadFile("testdata/fromisoformat.json")
+	inputs, err := hook.Decode(golden.Fixture(t, "fromisoformat-inputs.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	rows, err := hook.Decode(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, row := range rows.([]any) {
-		pair := row.([]any)
-		input, want := pair[0].(string), pair[1].([]any)
+	var answers strings.Builder
+	for _, item := range inputs.([]any) {
+		input := item.(string)
 		at, aware, err := fromISOFormat(input)
 		var got []any
 		if err != nil {
@@ -332,31 +329,19 @@ func TestFromISOFormatIsCPythons(t *testing.T) {
 		} else {
 			got = []any{"OK", at.UTC().Format("2006-01-02T15:04:05.000000"), aware}
 		}
-		if !evidence.Equal(got, want) {
-			t.Errorf("%s: %v, want %v", evidence.StrRepr(input), got, want)
-		}
+		answers.WriteString(evidence.StrRepr(input) + " " + evidence.Dumps(got, false, false, true) + "\n")
 	}
+	golden.Check(t, "answers", []byte(answers.String()))
 }
 
 // A start record or a ledger line reads as deep as CPython 3.14's json nests (past
-// encoding/json's 10000) and grades as the same trial without the nesting; one container past
+// encoding/json's 10000) and grades as the same trial does without the nesting; one container past
 // the interpreter's edge, the RecursionError neither reader catches is the run that raised before
 // it could report, with the message and not the class as its detail. An integer longer than
 // int() converts is the ValueError it is, not a JSONDecodeError.
 func TestLedgerReadsRecordsAsDeepAsPython(t *testing.T) {
-	raw, err := os.ReadFile("testdata/golden.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var golden map[string]struct {
-		Exit   int    `json:"exit"`
-		Stdout string `json:"stdout"`
-	}
-	if err := json.Unmarshal(raw, &golden); err != nil {
-		t.Fatal(err)
-	}
 	const name = "clean window after a failed preparation segment"
-	want := golden[name]
+	wantExit, wantText, _ := grade(t, caseNamed(t, name))
 	nestedIn := func(where, value string) ledgerCase {
 		c := caseNamed(t, name)
 		if where == "start" {
@@ -372,7 +357,7 @@ func TestLedgerReadsRecordsAsDeepAsPython(t *testing.T) {
 	for _, where := range []string{"start", "ledger"} {
 		for _, depth := range []int{20000, pyload.Nesting - 1} {
 			code, text, _ := grade(t, nestedIn(where, arrays(depth)))
-			if code != want.Exit || text != want.Stdout {
+			if code != wantExit || text != wantText {
 				t.Fatalf("%s %d deep: exit %d\n%s", where, depth, code, text)
 			}
 		}
@@ -439,22 +424,13 @@ func TestLedgerNamesTheStartPathAsPythonHoldsIt(t *testing.T) {
 // The trial root the start record names is opened as Python opens Path(trialRoot): os.fsencode
 // turns a surrogate escape back into the byte it stands for, so a root whose name is not UTF-8
 // (written "\udcff" in the record, as Python's json writes it) grades, and the report names its
-// ledger that way. A lone surrogate os.fsencode refuses names no directory. Each answer is what
-// trial_startup.py ledger printed for the same layout under CPython 3.14.4.
+// ledger that way: the report is the one the same case grades to under a UTF-8 root (which
+// trial_startup.py ledger printed for the same layout under CPython 3.14.4). A lone surrogate
+// os.fsencode refuses names no directory.
 func TestLedgerOpensTheTrialRootAsPythonEncodesIt(t *testing.T) {
-	raw, err := os.ReadFile("testdata/golden.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var golden map[string]struct {
-		Exit   int    `json:"exit"`
-		Stdout string `json:"stdout"`
-	}
-	if err := json.Unmarshal(raw, &golden); err != nil {
-		t.Fatal(err)
-	}
 	const name = "clean window after a failed preparation segment"
 	c := caseNamed(t, name)
+	wantExit, wantText, _ := grade(t, c)
 	parent, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -473,8 +449,8 @@ func TestLedgerOpensTheTrialRootAsPythonEncodesIt(t *testing.T) {
 	var out, errs bytes.Buffer
 	code := Run([]string{"--start", base + "/trial/start.json"}, &out, &errs)
 	text := nowField.ReplaceAllString(strings.ReplaceAll(out.String(), written, "${BASE}"), `"now": "<now>"`)
-	if want := golden[name]; code != want.Exit || text != want.Stdout {
-		t.Fatalf("exit %d, python %d\n%s\npython\n%s%s", code, want.Exit, text, want.Stdout, errs.String())
+	if code != wantExit || text != wantText {
+		t.Fatalf("exit %d, under a UTF-8 root %d\n%s\nunder a UTF-8 root\n%s%s", code, wantExit, text, wantText, errs.String())
 	}
 
 	bad := parent + "/bad"
