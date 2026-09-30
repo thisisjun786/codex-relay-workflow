@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -19,6 +18,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
@@ -292,7 +292,8 @@ func runHookProbe(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, e)
 			return 1
 		}
-		_ = emitUnicode(stdout, got)
+		// print(json.dumps(decide(...), indent=2, sort_keys=True)), as observe prints.
+		fmt.Fprintln(stdout, evidence.DumpsIndent(got, 2, true, true))
 		return 0
 	case "replay":
 		return replayHook(args[1:], stdout, stderr)
@@ -449,11 +450,7 @@ func replayHook(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "%d/%d fixtures matched\n", checked-failed, checked)
 	traceIDs, e := replayTraceIDs(contractFS, contractPath)
 	if e != nil {
-		if errors.Is(e, fs.ErrNotExist) {
-			fmt.Fprintf(stderr, "Probe failed: [Errno 2] No such file or directory: '%s'. Nothing was written.\n", contractLabel)
-		} else {
-			fmt.Fprintf(stderr, "Probe failed: %s. Nothing was written.\n", e)
-		}
+		fmt.Fprintf(stderr, "Probe failed: %s. Nothing was written.\n", probeFileError(e, pythonPath(contractLabel)))
 		return 3
 	}
 	missingTraces := replayMissingTraces(paths, traceIDs)
@@ -570,15 +567,19 @@ func checkHookOneKeys(label string, observation, expectedValue any, out io.Write
 	return true, nil
 }
 
+// probeFileError is str(OSError) for a read of the path Python holds as name
+// (its bytes as argv or the directory listing gave them): the filename is
+// repr(os.fsdecode(name)), so a quote, a control or a byte outside UTF-8 is
+// spelled as Python spells it.
 func probeFileError(err error, name string) string {
 	if errors.Is(err, fs.ErrPermission) {
-		return fmt.Sprintf("[Errno 13] Permission denied: '%s'", name)
+		return "[Errno 13] Permission denied: " + store.PathRepr(name)
 	}
 	if errors.Is(err, fs.ErrNotExist) {
-		return fmt.Sprintf("[Errno 2] No such file or directory: '%s'", name)
+		return "[Errno 2] No such file or directory: " + store.PathRepr(name)
 	}
 	if errors.Is(err, syscall.EISDIR) {
-		return fmt.Sprintf("[Errno 21] Is a directory: '%s'", name)
+		return "[Errno 21] Is a directory: " + store.PathRepr(name)
 	}
 	return err.Error()
 }
@@ -724,38 +725,44 @@ func observeHook(args []string, stdout, stderr io.Writer) int {
 		return 3
 	}
 	needle := []byte("{\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\"")
-	schemas := map[string]map[string]any{}
+	schemas := map[string]contract.OrderedObject{}
+	titles := []string{}
 	for at := 0; ; {
 		n := bytes.Index(raw[at:], needle)
 		if n < 0 {
 			break
 		}
 		start := at + n
+		at = start + 1
 		window := raw[start:]
 		if len(window) > 1<<16 {
 			window = window[:1<<16]
 		}
-		var schemaRaw json.RawMessage
-		dec := json.NewDecoder(bytes.NewReader(window))
-		if dec.Decode(&schemaRaw) == nil {
-			decoded, err := hook.Decode(schemaRaw)
-			if err != nil {
-				at = start + 1
-				continue
-			}
-			value, _ := orderedPlain(decoded).(map[string]any)
-			title, _ := value["title"].(string)
-			if strings.Contains(title, ".command.") {
-				schemas[title] = value
-			}
+		// extract_schemas: decoder.raw_decode(chunk.decode("utf-8", "replace")) reads
+		// the first value in the window, NaN and Infinity included, and a ValueError
+		// skips it.
+		text, ok := pyjson.RawDecodePrefix(pyjson.DecodeReplace(window))
+		if !ok {
+			continue
 		}
-		at = start + 1
+		decoded, err := hook.Decode([]byte(text))
+		if err != nil {
+			continue
+		}
+		value, _ := decoded.(contract.OrderedObject)
+		title, _ := objGet(value, "title").(string)
+		if strings.Contains(title, ".command.") {
+			if _, seen := schemas[title]; !seen {
+				titles = append(titles, title)
+			}
+			schemas[title] = value
+		}
 	}
 	if len(schemas) == 0 {
 		fmt.Fprintf(stderr, "No embedded hook schemas found in %s.\n", binary)
 		return 3
 	}
-	events, err := probeCapabilityMatrix(schemas)
+	events, err := probeCapabilityMatrix(titles, schemas)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
@@ -771,7 +778,10 @@ func observeHook(args []string, stdout, stderr io.Writer) int {
 		}
 		report["registration"] = registration
 	}
-	_ = emitUnicode(stdout, report)
+	// print(json.dumps(report, indent=2, sort_keys=True)): non-ASCII escaped and
+	// floats spelled as Python spells them (1.0, 1e+19, Infinity), which
+	// encoding/json does not do.
+	fmt.Fprintln(stdout, evidence.DumpsIndent(report, 2, true, true))
 	return 0
 }
 func sortedKeys(m map[string]any) []string {

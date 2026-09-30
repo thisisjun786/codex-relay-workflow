@@ -114,5 +114,35 @@ func hookShapeCases(t *testing.T) []skillShapeCase {
 		observation["now"] = "2026-01-01T00:31:00Z"
 		add("unbound-expiry/"+stamp, observation)
 	}
+	return append(cases, hookDecideSpellingCases()...)
+}
+
+// hookDecideSpellingCases echo input values into decide's printed JSON:
+// record.turnId, record.sessionId, record.at and the receipt fields. Python
+// prints them with json.dumps(indent=2, sort_keys=True), so non-ASCII text is
+// escaped and each number keeps Python's spelling (1.0, 1e+19, NaN). The
+// observations are raw JSON because Go's encoder cannot write 1.0 or NaN.
+func hookDecideSpellingCases() []skillShapeCase {
+	observations := []struct{ name, observation string }{
+		{"non-ascii-ids", `{"stop_input": {"turn_id": "té", "session_id": "sé"}}`},
+		{"astral-ids", `{"stop_input": {"turn_id": "😀", "session_id": "\ud83d\ude00"}}`},
+		{"lone-surrogate-id", `{"stop_input": {"turn_id": "\ud800", "session_id": "\udfff"}}`},
+		{"control-characters", `{"stop_input": {"turn_id": "a\u0001\b\f\u007f\u2028", "session_id": "</script>&'"}}`},
+		{"integral-floats", `{"stop_input": {"turn_id": 1.0, "session_id": 1e19}, "now": 2.0}`},
+		{"float-spellings", `{"stop_input": {"turn_id": -0.0, "session_id": 1e-7}, "now": 1.5e300}`},
+		{"non-finite", `{"stop_input": {"turn_id": NaN, "session_id": Infinity}, "now": -Infinity}`},
+		{"big-ints", `{"stop_input": {"turn_id": 12345678901234567890, "session_id": -12345678901234567890}, "now": 1e400}`},
+		{"nested-ids", `{"stop_input": {"turn_id": {"b": 1.0, "a": ["é", 2]}, "session_id": [{"z": null, "y": true}]}}`},
+		{"receipt-echo", `{"stop_input": {"turn_id": "t", "session_id": "s"}, "receipt": {"evidence": "ré", "detail": 2.50}}`},
+	}
+	cases := make([]skillShapeCase, 0, len(observations))
+	for _, o := range observations {
+		cases = append(cases, skillShapeCase{
+			name:   "hook/spelling/" + o.name,
+			family: "hook-probe",
+			args:   []string{"decide", "$TMP/observation.json"},
+			files:  map[string]any{"observation.json": shapeRawFile(`{"observation": ` + o.observation + `}`)},
+		})
+	}
 	return cases
 }

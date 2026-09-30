@@ -17,6 +17,18 @@ type skillShapeCase struct {
 	files        map[string]any
 }
 
+// shapeRawFile is a case file written byte for byte, for JSON that Go's encoder
+// cannot spell: NaN, Infinity, 1.0, or several documents in one file.
+type shapeRawFile string
+
+// shapeDirectory is a case path made a directory, which read_text refuses with
+// IsADirectoryError.
+type shapeDirectory struct{}
+
+// shapeUnreadableFile is a shapeRawFile whose mode is then 000, which
+// read_text refuses with PermissionError.
+type shapeUnreadableFile string
+
 // One process-level matrix owns all JSON-shape surfaces, with Python as the oracle.
 func TestSkillJSONShapeLivePython(t *testing.T) {
 	t.Setenv("PYTHONDONTWRITEBYTECODE", "1")
@@ -26,6 +38,7 @@ func TestSkillJSONShapeLivePython(t *testing.T) {
 	cases := append(hookShapeCases(t), titleShapeCases(t)...)
 	cases = append(cases, hostShapeCases()...)
 	cases = append(cases, observeShapeCases(t)...)
+	cases = append(cases, osErrorShapeCases()...)
 	t.Logf("JSON shape matrix: %d cases", len(cases))
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
@@ -36,12 +49,33 @@ func TestSkillJSONShapeLivePython(t *testing.T) {
 				if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 					t.Fatal(err)
 				}
-				raw, err := json.MarshalIndent(value, "", "  ")
-				if err != nil {
-					t.Fatal(err)
+				if _, ok := value.(shapeDirectory); ok {
+					if err := os.MkdirAll(path, 0700); err != nil {
+						t.Fatal(err)
+					}
+					continue
+				}
+				raw, err := []byte(nil), error(nil)
+				switch text := value.(type) {
+				case shapeRawFile:
+					raw = []byte(text)
+				case shapeUnreadableFile:
+					raw = []byte(text)
+				default:
+					if raw, err = json.MarshalIndent(value, "", "  "); err != nil {
+						t.Fatal(err)
+					}
 				}
 				if err := os.WriteFile(path, raw, 0600); err != nil {
 					t.Fatal(err)
+				}
+				if _, ok := value.(shapeUnreadableFile); ok {
+					if err := os.Chmod(path, 0); err != nil {
+						t.Fatal(err)
+					}
+					if _, err := os.ReadFile(path); !os.IsPermission(err) {
+						t.Fatalf("mode 000 did not refuse reads of %q: %v", name, err)
+					}
 				}
 			}
 			args := make([]string, len(test.args))

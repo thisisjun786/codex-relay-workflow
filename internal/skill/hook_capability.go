@@ -1,26 +1,31 @@
 package skill
 
 import (
-	"fmt"
-	"sort"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 )
 
+// probeSorted is sorted(value or []): Python's '<' in CPython's comparison
+// order, so numbers sort by value and an unorderable pair raises TypeError.
 func probeSorted(value any) ([]any, error) {
 	items, err := hostList(value)
 	if err != nil {
 		return nil, err
 	}
-	if items == nil {
-		items = []any{}
-	}
-	sort.SliceStable(items, func(i, j int) bool { return fmt.Sprint(items[i]) < fmt.Sprint(items[j]) })
-	return items, nil
+	return pySorted(items)
 }
 
-func probeCapabilityMatrix(schemas map[string]map[string]any) (map[string]any, error) {
+// probeCapabilityMatrix is capability_matrix. It reduces the schemas in the
+// order the binary first embeds each title, and walks each schema's
+// definitions in the order the schema spells them, as Python's dicts keep
+// both, so the first schema or definition that cannot be read is the one that
+// raises.
+func probeCapabilityMatrix(titles []string, schemas map[string]contract.OrderedObject) (map[string]any, error) {
 	events := map[string]any{}
-	for title, schema := range schemas {
+	for _, title := range titles {
+		ordered := schemas[title]
+		schema, _ := orderedPlain(ordered).(map[string]any)
 		name, kind, _ := strings.Cut(title, ".command.")
 		entry, _ := events[name].(map[string]any)
 		if entry == nil {
@@ -59,7 +64,10 @@ func probeCapabilityMatrix(schemas map[string]map[string]any) (map[string]any, e
 				decision = defs["PreToolUseDecisionWire"]
 			}
 			additional := false
-			for _, v := range defs {
+			// definitions.values(): a falsy definitions is {} and has none.
+			definitionsOrdered, _ := objGet(ordered, "definitions").(contract.OrderedObject)
+			for _, field := range definitionsOrdered {
+				v := defs[field.Key]
 				definition, ok := v.(map[string]any)
 				if !ok {
 					return nil, pythonAttribute(v, "get")

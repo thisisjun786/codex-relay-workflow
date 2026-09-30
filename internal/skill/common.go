@@ -1,14 +1,15 @@
 package skill
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
-	"reflect"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/plugins"
 )
 
@@ -40,28 +41,29 @@ func invalidOption(w io.Writer, prog, opt string) int {
 	fmt.Fprintf(w, "%s: error: unrecognized arguments: %s\n", prog, opt)
 	return 2
 }
-func jsonEqual(a, b any) bool { return reflect.DeepEqual(normalizeJSON(a), normalizeJSON(b)) }
-func normalizeJSON(v any) any {
-	raw, _ := json.Marshal(v)
-	var out any
-	_ = json.Unmarshal(raw, &out)
-	return out
-}
-func pyRepr(v any) string {
-	switch x := v.(type) {
-	case nil:
-		return "None"
-	case string:
-		return "'" + strings.ReplaceAll(strings.ReplaceAll(x, "\\", "\\\\"), "'", "\\'") + "'"
-	default:
-		raw, _ := json.Marshal(x)
-		s := string(raw)
-		s = strings.ReplaceAll(s, "true", "True")
-		s = strings.ReplaceAll(s, "false", "False")
-		s = strings.ReplaceAll(s, "null", "None")
-		return s
+
+// argvRepr is repr() of a command-line argument as sys.argv holds it: os.fsdecode makes each
+// byte outside a well-formed UTF-8 sequence, the three of an encoded surrogate included, the
+// lone surrogate U+DC00+byte, and repr() escapes it.
+func argvRepr(arg string) string { return evidence.StrRepr(store.FSDecode(arg)) }
+
+// stderrText is text as Python's sys.stderr writes it, which always uses
+// errors="backslashreplace": a lone surrogate, held as WTF-8, is written as its \uXXXX escape
+// and everything else as it is.
+func stderrText(text string) string {
+	var b strings.Builder
+	for i := 0; i < len(text); {
+		r, size := settings.CodePoint(text, i)
+		if r >= 0xd800 && r <= 0xdfff {
+			fmt.Fprintf(&b, "\\u%04x", r)
+		} else {
+			b.WriteString(text[i : i+size])
+		}
+		i += size
 	}
+	return b.String()
 }
+
 func readFileOrStdin(path string, stdin io.Reader) ([]byte, error) {
 	if path == "" {
 		return io.ReadAll(stdin)
