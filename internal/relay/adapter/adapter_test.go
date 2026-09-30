@@ -376,6 +376,12 @@ func Test28HostDecodedValueParity(t *testing.T) {
 	capture(t, scenario{store: true, answers: []map[string]any{{"rawResponse": map[string]any{"data": []any{map[string]any{"id": "01child-task"}, "junk"}, "nextCursor": nil}}}, actions: [][]any{{"archive", "01child-task", nil}}})
 	capture(t, scenario{store: true, answers: []map[string]any{{"rawResponse": map[string]any{"data": []any{"junk", map[string]any{"id": "01child-task"}}, "nextCursor": nil}}}, actions: [][]any{{"archive", "01child-task", nil}}})
 	capture(t, scenario{answers: []map[string]any{{"rawResponse": map[string]any{"data": []any{json.Number("7"), map[string]any{"turnId": "t", "item": map[string]any{"text": "needle"}}}, "nextCursor": nil}}}, actions: [][]any{{"find", "01child-task", "needle", 10}}})
+	// A thread whose status is not an object stops the guarded send after thread/read in both
+	// runtimes: the fence's (state.get("thread") or {}).get("status", {}).get("type") raises,
+	// and the send settles outcome_unknown instead of resuming on a status nobody could read.
+	for _, thread := range []any{map[string]any{"status": nil}, map[string]any{}, nil, map[string]any{"status": "idle"}, map[string]any{"status": map[string]any{"type": nil}}} {
+		capture(t, scenario{settings: authorized(), answers: []map[string]any{{"thread": thread}, resume(), {"turn": map[string]any{"id": "fake-turn-1"}}}, actions: [][]any{{"send", "del-800000000000-a1", "thread-1", "hi"}, {"operation", "del-800000000000-a1"}}})
+	}
 }
 func Test28_BAD_3_ThreadGoalAndAbsentOperation(t *testing.T) {
 	capture(t, scenario{answers: []map[string]any{{"thread": map[string]any{"status": map[string]any{"type": "idle"}, "canAcceptDirectInput": false}}, {"goal": nil}, {"goal": map[string]any{"status": "budgetLimited"}}}, actions: [][]any{{"thread", "01child-task"}, {"goal", "01child-task"}, {"goal", "01child-task"}, {"operation", "del-aaaaaaaaaaaa-a1"}}})
