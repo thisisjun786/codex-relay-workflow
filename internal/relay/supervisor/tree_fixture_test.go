@@ -58,6 +58,15 @@ func treeFixture(t testing.TB, key, root string, placeholders ...[2]string) {
 	restoreTreeFixture(t, key, root, false, placeholders)
 }
 
+// treeFixtureRevisions is treeFixture for a tree whose receipts carry a revision hash that is the
+// hash of the receipt's manifest. The manifest names files under root, so the hash is stored as a
+// placeholder per event and derived again from the restored manifest. It returns the golden
+// options that write each derived hash, and its 12-digit prefix, back as its placeholder.
+func treeFixtureRevisions(t testing.TB, key, root string, placeholders ...[2]string) []golden.Option {
+	t.Helper()
+	return restoreTreeFixture(t, key, root, true, placeholders)
+}
+
 func restoreTreeFixture(t testing.TB, key, root string, revisions bool, placeholders [][2]string) []golden.Option {
 	t.Helper()
 	text := treeFixtureText(t, key)
@@ -179,6 +188,7 @@ func asJSON(t testing.TB, value any) any {
 
 // The tree fixture helpers, for this package's external tests (package supervisor_test).
 var (
-	TreeFixture = treeFixture
-	TreeGolden  = treeGolden
+	TreeFixture          = treeFixture
+	TreeFixtureRevisions = treeFixtureRevisions
+	TreeGolden           = treeGolden
 )
