@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 const opsReferences = "plugins/crw/skills/crw-run/references"
@@ -62,33 +62,31 @@ func editOps(t *testing.T, root, rel string, edit func(string) string) {
 	}
 }
 
-// recordedPython is what capture's Python command answered under key for this test, replayed
-// from the test's recording (internal/testsupport/pyoracle): CRW_PYTHON_ORACLE=record or check
-// runs capture again, which only a checkout that still has the Python scripts can do. root, the
-// scratch directory the command ran in, is stored as $ROOT and the checkout as $REPO.
-func recordedPython(t *testing.T, key, root string, capture func() result) result {
+// checkResult holds a command's result to the golden kept under key: root, the scratch directory
+// the command ran in, is stored as $ROOT and the checkout as $REPO.
+func checkResult(t *testing.T, key, root string, r result) {
 	t.Helper()
-	var answer struct {
-		Code   int    `json:"code"`
-		Stdout string `json:"stdout"`
-		Stderr string `json:"stderr"`
-	}
-	pyoracle.JSON(t, key, &answer, func() (any, error) {
-		r := capture()
-		return map[string]any{"code": r.code, "stdout": r.stdout, "stderr": r.stderr}, nil
-	}, pyoracle.Substitute(root, "$ROOT"), pyoracle.Substitute(repoRoot(), "$REPO"))
-	return result{answer.Code, answer.Stdout, answer.Stderr}
+	golden.CheckJSON(t, key, map[string]any{"code": r.code, "stdout": r.stdout, "stderr": r.stderr},
+		golden.Substitute(root, "$ROOT"), golden.Substitute(repoRoot(), "$REPO"))
 }
 
-// opsParity requires `crw-dev ci operations` to answer what scripts/check_operations_contract.py
-// answered for the same root.
+// failLines is stderr reduced to the checker's own FAIL lines.
+func failLines(stderr string) string {
+	var fails []string
+	for _, line := range strings.Split(stderr, "\n") {
+		if strings.HasPrefix(line, "FAIL ") {
+			fails = append(fails, line)
+		}
+	}
+	return strings.Join(fails, "\n")
+}
+
+// opsParity requires `crw-dev ci operations` to answer the golden kept under label for root
+// (first taken as what scripts/check_operations_contract.py answered for the same root).
 func opsParity(t *testing.T, label, root string) result {
 	t.Helper()
-	py := recordedPython(t, label, root, func() result {
-		return runCommand(t, root, nil, "python3", filepath.Join(repoRoot(), "scripts", "check_operations_contract.py"), "--root", root)
-	})
 	got := goCheck(t, root, nil, "operations", "--root", root)
-	sameResult(t, label, py, got)
+	checkResult(t, label, root, got)
 	return got
 }
 
@@ -194,7 +192,7 @@ func goShapedRecord(point string) string {
 `
 }
 
-// Both twins accept a Go-shaped record.
+// A Go-shaped record is accepted.
 func TestOperationsGoShapedCompatibilityRecordParity(t *testing.T) {
 	root := opsCopy(t)
 	editOps(t, root, "operations/compatibility-record.example.json", func(string) string { return goShapedRecord("") })
@@ -205,7 +203,7 @@ func TestOperationsGoShapedCompatibilityRecordParity(t *testing.T) {
 
 // OPS-1.3: a point takes the kind of the install it covers. Its own shape cannot choose the
 // lighter schema, and a Go point has to name one of the component's Go installs and the digest
-// of that binary; both twins refuse the rest alike.
+// of that binary; the rest is refused.
 func TestOperationsMeasuredPointCoversAnInstallOfItsKindParity(t *testing.T) {
 	bin := "/example/home/.local/share/crw-runtime/bin-0.5.0-aaaaaaaaaaaa/bin"
 	rest := `"codexCli": "codex-cli 0.154.0", "appServer": "{}", "host": "example-host", "date": "2026-01-01", "measuredBy": "<issue-id>", "method": "doctor"`
@@ -267,14 +265,6 @@ func contractsRepo(t *testing.T, present ...string) *fixtureRepo {
 	return r
 }
 
-// runPythonContracts copied scripts/ci/contracts.py into root and ran it there (live Python). It
-// runs only when a recording is taken, which needs a checkout from before todo 44 deleted it.
-func runPythonContracts(t *testing.T, root string) result {
-	t.Helper()
-	(&fixtureRepo{t, root}).write("scripts/ci/contracts.py", readRepo(t, "scripts/ci/contracts.py"))
-	return runCommand(t, root, nil, "python3", "scripts/ci/contracts.py")
-}
-
 // contractInputs are the files the five checks read, as this checkout has them.
 var contractInputs = []string{
 	"plugins/crw/skills/crw-run/references/hook-contract.md",
@@ -314,14 +304,14 @@ func copyTree(t *testing.T, root, rel string) {
 
 // Every check is built into crw-dev: a component is present exactly when its contract is, and no
 // checker script has to sit beside it. scripts/ci/contracts.py, the Python twin (deleted in todo
-// 44; its answers are recorded), refused a contract whose checker script was missing (and the
-// reverse); Go has no script to pair.
+// 44), refused a contract whose checker script was missing (and the reverse); Go has no script to
+// pair.
 func Test47_ContractsPairsAndAbsentComponents(t *testing.T) {
-	// No component present: every check reports it claims no coverage, as the Python twin did.
+	// No component present: every check reports it claims no coverage, as the golden holds (first
+	// taken as the Python twin's answer).
 	r := contractsRepo(t)
 	got := goCheck(t, r.root, nil, "contracts")
-	py := recordedPython(t, "all absent", r.root, func() result { return runPythonContracts(t, r.root) })
-	sameResult(t, "all absent", py, got)
+	checkResult(t, "all absent", r.root, got)
 	if got.code != 0 || strings.Count(got.stdout, "component absent; no coverage claimed") != len(contractChecks) {
 		t.Errorf("all absent: %+v", got)
 	}
@@ -443,48 +433,23 @@ func Test47_ContractsOperationsPairAndResult(t *testing.T) {
 		t.Errorf("operations script without contract: %+v", got)
 	}
 
-	// A failing operations replay fails contracts in both implementations. Python ended in a
-	// CalledProcessError traceback, so only the exit, stdout and the checker's own FAIL lines compare.
+	// A failing operations replay fails contracts. The Python twin ended in a CalledProcessError
+	// traceback, so the golden (first taken as its answer) holds the exit, stdout and the
+	// checker's own FAIL lines.
 	root := opsCopy(t)
 	editOps(t, root, "operations/scenarios.md", func(s string) string { return strings.Replace(s, "OPS-2.3", "OPS-99.1", 1) })
 	fr := &fixtureRepo{t, root}
 	fr.git("init", "-q")
-	pyFail := recordedPython(t, "failing operations replay", root, func() result {
-		fr.write("scripts/check_operations_contract.py", readRepo(t, "scripts/check_operations_contract.py"))
-		py := runPythonContracts(t, root)
-		var fails []string
-		for _, line := range strings.Split(py.stderr, "\n") {
-			if strings.HasPrefix(line, "FAIL ") {
-				fails = append(fails, line)
-			}
-		}
-		return result{py.code, py.stdout, strings.Join(fails, "\n")}
-	})
 	goFail := goCheck(t, root, nil, "contracts")
-	if pyFail.code != goFail.code {
-		t.Errorf("failing operations replay: python exit %d, go exit %d\ngo stderr: %s", pyFail.code, goFail.code, goFail.stderr)
-	}
 	expectEqual(t, "failing replay exit", goFail.code, 1)
 	const line = "FAIL fixtures cite OPS-99.1, which the contract does not define"
-	for label, r := range map[string]result{"python": pyFail, "go": goFail} {
-		if !strings.Contains(r.stderr, line) {
-			t.Errorf("%s stderr lacks %q: %s", label, line, r.stderr)
-		}
+	if !strings.Contains(goFail.stderr, line) {
+		t.Errorf("stderr lacks %q: %s", line, goFail.stderr)
 	}
-	expectEqual(t, "replay stdout", goFail.stdout, pyFail.stdout)
+	checkResult(t, "failing operations replay", root, result{goFail.code, goFail.stdout, failLines(goFail.stderr)})
 }
 
-// readRepo is a file of this checkout.
-func readRepo(t *testing.T, rel string) string {
-	t.Helper()
-	data, err := os.ReadFile(filepath.Join(repoRoot(), rel))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(data)
-}
-
-// The Action part needs at least 80 non-space characters: 79 fails and 80 passes, in both.
+// The Action part needs at least 80 non-space characters: 79 fails and 80 passes.
 func Test47_OperationsActionMinimum(t *testing.T) {
 	for _, n := range []int{79, 80} {
 		root := opsCopy(t)

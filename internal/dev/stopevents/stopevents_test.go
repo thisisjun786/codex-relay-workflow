@@ -16,6 +16,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/pyload"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 // One test per reader property of the per-event judge (SEV-5..SEV-14). SEV-1..4, the writer's
@@ -559,8 +560,9 @@ func TestSEV08_LedgerIntegrity(t *testing.T) {
 	// Python reads a root or a Codex home at Path(arg).expanduser(), and Path() spells the path
 	// before expanduser looks at it: "//" and "." collapse ("..", and exactly two leading
 	// separators, stay), so "./~" is "~", ".//~/x" is "~/x" and "~//x" is "~/x", each HOME's.
-	// Every row is what scripts/stop_events.py printed for the same argv, HOME and working
-	// directory under CPython 3.14, replayed from its recording (pythonReading).
+	// Every row's exit status and output is the golden's, first taken as what
+	// scripts/stop_events.py printed for the same argv, HOME and working directory under
+	// CPython 3.14.
 	t.Run("a path is spelled as Path() spells it before its ~ is expanded", func(t *testing.T) {
 		h, _ := oneEvent(t)
 		// What a reading that took "./~" for a directory named ~ would read instead.
@@ -591,16 +593,16 @@ func TestSEV08_LedgerIntegrity(t *testing.T) {
 			{h.codex, homed("codex"), 0, h.journal, []string{h.ledger}},
 			{"", homed("~//" + missing), 0, h.journal, []string{missingLedger, h.ledger}},
 		}
-		// Python's answers are read before the working directory changes: the recording is found
-		// relative to this package's directory.
+		// The goldens are checked back in this package's directory, where they are found.
 		type reading struct {
 			code   int
 			stdout string
 		}
-		python := make([]reading, len(rows))
-		for row, c := range rows {
-			python[row].code, python[row].stdout = pythonReading(t, fmt.Sprintf("row %d", row), h, missing, c.home, c.args)
+		pkg, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
 		}
+		readings := make([]reading, len(rows))
 		t.Chdir(h.root)
 		for row, c := range rows {
 			t.Setenv("HOME", c.home)
@@ -621,10 +623,12 @@ func TestSEV08_LedgerIntegrity(t *testing.T) {
 			if code != c.code || root != c.root || !slices.Equal(ledgers, c.ledgers) {
 				t.Errorf("HOME=%s %v: exit %d, root %v, host ledgers %v (reader fault %v); want %d, %s, %v", c.home, c.args, code, root, ledgers, answer["readerFault"], c.code, c.root, c.ledgers)
 			}
-			pyCode, pyOut := python[row].code, python[row].stdout
-			if pyCode != code || pyOut != out.String() {
-				t.Errorf("HOME=%s %v: Python exits %d and prints\n%s\nthe judge exits %d and prints\n%s%s", c.home, c.args, pyCode, pyOut, code, out.String(), errs.String())
-			}
+			readings[row] = reading{code, out.String()}
+		}
+		t.Chdir(pkg)
+		for row, r := range readings {
+			golden.CheckJSON(t, fmt.Sprintf("row %d", row), map[string]any{"code": r.code, "stdout": r.stdout},
+				golden.Substitute(h.root, "$ROOT"), golden.Substitute(missing, "$MISSING"))
 		}
 	})
 	t.Run("an entry in the ledger this reader does not know", func(t *testing.T) {

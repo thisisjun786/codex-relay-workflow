@@ -6,7 +6,6 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -23,7 +22,6 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 // The records these tests judge are written by the real `crw hook` (testsupport.CRW),
@@ -45,60 +43,9 @@ func repositoryRoot() string {
 	return root
 }
 
-// stopEventsScript is the Python judge these tests' recordings were taken from, and
-// stopEventsFixture the Stop events they answer, both named before any test changes the working
-// directory.
-var (
-	stopEventsScript  = filepath.Join(repositoryRoot(), "scripts", "stop_events.py")
-	stopEventsFixture = filepath.Join(repositoryRoot(), "contract", "golden", "stop_event_r1.json")
-)
-
-// cpython314 is python3 when it is CPython 3.14, the interpreter the judge's parity is claimed
-// against (docs/live-trial.md), or "" when there is no such interpreter to compare with.
-func cpython314() string {
-	python, err := exec.LookPath("python3")
-	if err != nil {
-		return ""
-	}
-	out, err := exec.Command(python, "-c", "import sys; print(sys.implementation.name, *sys.version_info[:2])").Output()
-	if err != nil || strings.TrimSpace(string(out)) != "cpython 3 14" {
-		return ""
-	}
-	return python
-}
-
-// pythonReading is the exit status and output scripts/stop_events.py gave for args, run in h's
-// root under HOME=home by CPython 3.14. It is replayed from this test's recording
-// (internal/testsupport/pyoracle); CRW_PYTHON_ORACLE=record or check runs the script again, and
-// only on a checkout that still has it and an interpreter that is CPython 3.14. missing is the
-// run-specific name a row reads as an absent directory.
-func pythonReading(t *testing.T, key string, h *host, missing, home string, args []string) (int, string) {
-	t.Helper()
-	var answer struct {
-		Code   int    `json:"code"`
-		Stdout string `json:"stdout"`
-	}
-	pyoracle.JSON(t, key, &answer, func() (any, error) {
-		python := cpython314()
-		if python == "" {
-			return nil, errors.New("python3 is not CPython 3.14, the interpreter the judge's parity is claimed against")
-		}
-		cmd := exec.Command(python, append([]string{stopEventsScript}, args...)...)
-		cmd.Dir, cmd.Env = h.root, []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home, "PYTHONDONTWRITEBYTECODE=1"}
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout, cmd.Stderr = &stdout, &stderr
-		code := 0
-		if err := cmd.Run(); err != nil {
-			var exit *exec.ExitError
-			if !errors.As(err, &exit) {
-				return nil, err
-			}
-			code = exit.ExitCode()
-		}
-		return map[string]any{"code": code, "stdout": stdout.String()}, nil
-	}, pyoracle.Substitute(h.root, "$ROOT"), pyoracle.Substitute(missing, "$MISSING"))
-	return answer.Code, answer.Stdout
-}
+// stopEventsFixture is the Stop events these tests answer, named before any test changes the
+// working directory.
+var stopEventsFixture = filepath.Join(repositoryRoot(), "contract", "golden", "stop_event_r1.json")
 
 type stopFixture struct {
 	TranscriptLines []string `json:"transcriptLines"`
