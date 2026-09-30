@@ -7,12 +7,17 @@ packages/*/tests and scripts/ci/tests, each path appears once, every class is A,
 every C row names its coupling and every drop names its reason, and the stated totals agree
 with both the rows and the files (119 files, 6,041 tests when this map was written). Prints
 per-class totals; exit 1 otherwise, naming each offending path on stderr.
+
+Todo 44 deletes the files the map classifies, so the map states the revision it is measured at
+(`Map revision: <sha>`, the last dev revision that still held every one of them) and the files are
+read there with git, not from the working tree.
 """
 
 import re
+import subprocess
 import sys
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Final
 
 ROOT: Final = Path(__file__).resolve().parents[2]
@@ -24,6 +29,7 @@ DESTINATION: Final = re.compile(r"(corpus|go-test|inventory-check|drop): \S.*")
 EMPTY: Final = frozenset({"", "-"})
 STATED: Final = re.compile(r"^(Files|Tests): (\d+)$", re.MULTILINE)
 STATED_CLASS: Final = re.compile(r"^Class ([ABC]): files=(\d+) tests=(\d+)$", re.MULTILINE)
+MAP_REVISION: Final = re.compile(r"^Map revision: `?([0-9a-f]{40})`?$", re.MULTILINE)
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,12 +43,33 @@ class Row:
     coupling: str
 
 
-def test_files() -> dict[str, int]:
-    """Every test_*.py the suites collect, with its `grep -c 'def test_'` count."""
-    paths = [*ROOT.glob("packages/*/tests/test_*.py"), *ROOT.glob("scripts/ci/tests/test_*.py")]
-    return {path.relative_to(ROOT).as_posix():
-            sum(b"def test_" in line for line in path.read_bytes().split(b"\n"))
-            for path in paths}
+def count(data: bytes) -> int:
+    """`grep -c 'def test_'` of one file's bytes."""
+    return sum(b"def test_" in line for line in data.split(b"\n"))
+
+
+def collected(path: str) -> bool:
+    """Whether a repository path is a test_*.py the suites collected (the globs below)."""
+    parts = PurePosixPath(path).parts
+    return (parts[-1].startswith("test_") and parts[-1].endswith(".py")
+            and (len(parts) == 4 and parts[0] == "packages" and parts[2] == "tests"
+                 or parts[:-1] == ("scripts", "ci", "tests")))
+
+
+def git(*args: str) -> bytes:
+    """One git command's stdout in this checkout."""
+    return subprocess.run(["git", *args], cwd=ROOT, check=True, capture_output=True).stdout
+
+
+def test_files(revision: str | None = None) -> dict[str, int]:
+    """Every test_*.py the suites collect, with its `grep -c 'def test_'` count: in the working
+    tree, or at revision when the map names one."""
+    if revision is None:
+        paths = [*ROOT.glob("packages/*/tests/test_*.py"), *ROOT.glob("scripts/ci/tests/test_*.py")]
+        return {path.relative_to(ROOT).as_posix(): count(path.read_bytes()) for path in paths}
+    listed = git("ls-tree", "-r", "--name-only", "-z", revision, "--", "packages", "scripts/ci/tests")
+    names = sorted(name for name in listed.decode().split("\0") if name and collected(name))
+    return {name: count(git("show", f"{revision}:{name}")) for name in names}
 
 
 def cells(line: str) -> list[str]:
@@ -118,7 +145,8 @@ def main() -> int:
     """Print the totals, name each problem on stderr, and exit 1 when there is any."""
     text = TEST_MAP.read_text(encoding="utf-8")
     rows = table_rows(text)
-    files = test_files()
+    revision = MAP_REVISION.search(text)
+    files = test_files(revision.group(1) if revision else None)
     found = problems(text, rows, files)
     for problem in found:
         print(problem, file=sys.stderr)

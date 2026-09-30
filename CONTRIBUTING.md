@@ -52,23 +52,10 @@ too. They are developer-only, need Python 3.10 or newer and no dependency instal
 python3 scripts/ci/validate.py
 python3 scripts/ci/plugin.py
 python3 -m unittest discover -s scripts/ci/tests -v
-python3 scripts/ci/contracts.py
 ```
 
-Changes under `packages/` also need [uv](https://docs.astral.sh/uv/) and Python 3.11
-or newer, because that is what those packages require:
-
-```sh
-python3 scripts/ci/packages.py
-```
-
-It locks, installs and tests both packages from this checkout, then builds both
-wheels. The bridge's worktree tests create repositories under the pytest temporary
-directory, so the check refuses to run when the system temporary directory is itself
-inside a Git checkout; set `CRW_PACKAGES_TMPDIR` to a clean path if yours is.
-Any edit under `packages/`, a README included, changes the package trees that
-`runtime_install.py verify-definition` re-derives in CI, so record the derived values
-in `scripts/crw_runtime/components.json` in the same change.
+The Python packages under `packages/` are no longer built or tested: the Go port under
+`cmd/` and `internal/` is the product, and todo 44 removes their source. Do not change them.
 
 Installer tests use temporary destinations; do not point test runs at your real
 Codex skill directory. The bundled Codex skill validator, when installed, is an

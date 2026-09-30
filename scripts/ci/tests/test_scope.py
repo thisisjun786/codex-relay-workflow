@@ -49,14 +49,14 @@ class ScopeTests(unittest.TestCase):
         self.write("docs/releases.md", "release procedure\n")
         self.commit()
         result = self.select()
-        self.assertEqual(result["selected"], {"tests": False, "packages": False})
+        self.assertEqual(result["selected"], {"tests": False})
         self.assertEqual(result["reason"], "paths")
         self.assertEqual(result["changed"], ["docs/releases.md"])
 
     def test_skill_keeps_instruction_tests(self):
         self.write("plugins/crw/skills/crw-run/SKILL.md", "instructions\n")
         self.commit()
-        self.assertEqual(self.select()["selected"], {"tests": True, "packages": False})
+        self.assertEqual(self.select()["selected"], {"tests": True})
 
     def test_runtime_manifest_and_ci_select_both(self):
         for path in ("packages/bridge/src/a.py", "scripts/runtime_install.py",
@@ -78,7 +78,7 @@ class ScopeTests(unittest.TestCase):
         result = self.select()
         self.assertEqual(result["unknown"], [])
         self.assertEqual(result["changed"], sorted(paths))
-        self.assertEqual(result["selected"], {"tests": True, "packages": True})
+        self.assertEqual(result["selected"], {"tests": True})
         scope.validate_selection(result)
 
     def test_unregistered_go_lookalike_stays_unknown(self):
@@ -90,7 +90,7 @@ class ScopeTests(unittest.TestCase):
         self.write("plugins/crw/skills/crw-run/SKILL.md", "instructions\n")
         self.write("plugins/crw/.codex-plugin/plugin.json", "{}\n")
         self.commit()
-        self.assertEqual(self.select()["selected"], {"tests": True, "packages": True})
+        self.assertEqual(self.select()["selected"], {"tests": True})
 
     def test_unknown_candidate_path_is_not_hidden_by_docs_diff(self):
         self.write("new-component/source.py", "pass\n")
@@ -100,7 +100,7 @@ class ScopeTests(unittest.TestCase):
         self.commit()
         result = self.select()
         self.assertEqual(result["unknown"], ["new-component/source.py"])
-        self.assertEqual(result["selected"], {"tests": True, "packages": True})
+        self.assertEqual(result["selected"], {"tests": True})
 
     def test_rename_out_of_source_does_not_become_prose(self):
         self.write("packages/bridge/guide.md", "same\n")
@@ -111,25 +111,25 @@ class ScopeTests(unittest.TestCase):
         self.commit()
         result = self.select()
         self.assertEqual(result["changed"], ["docs/guide.md", "packages/bridge/guide.md"])
-        self.assertTrue(result["selected"]["packages"])
+        self.assertTrue(result["selected"]["tests"])
 
     def test_prose_type_or_mode_change_selects_full(self):
         (self.root / "README.md").chmod(0o755)
         self.commit()
-        self.assertTrue(self.select()["selected"]["packages"])
+        self.assertTrue(self.select()["selected"]["tests"])
 
     def test_prose_symlink_is_not_a_docs_exemption(self):
         (self.root / "README.md").unlink()
         (self.root / "README.md").symlink_to("LICENSE")
         self.commit()
-        self.assertTrue(self.select()["selected"]["packages"])
+        self.assertTrue(self.select()["selected"]["tests"])
 
     def test_empty_unavailable_and_dispatch_choose_full(self):
         for args in ({}, {"base": "0" * 40}, {"base": "absent"},
                      {"event": "workflow_dispatch", "ref": "refs/heads/dev"}):
             with self.subTest(args=args):
                 self.assertEqual(self.select(**args)["selected"],
-                                 {"tests": True, "packages": True})
+                                 {"tests": True})
 
     def test_invalid_events_and_main_pr_refuse(self):
         for args in ({"base_ref": "main"}, {"base_ref": ""},
@@ -156,7 +156,7 @@ class ScopeTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         values = dict(line.split("=", 1) for line in output.read_text().splitlines())
         self.assertEqual(values["tests"], "false")
-        self.assertEqual(values["packages"], "false")
+        self.assertNotIn("packages", values)
         self.assertEqual(json.loads(values["scope"]), json.loads(proc.stdout))
 
 

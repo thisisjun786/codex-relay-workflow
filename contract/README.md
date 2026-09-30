@@ -1,6 +1,8 @@
 # CRW Python/Go contract scenarios
 
-A fixture is written and green against the real Python implementation **before** its Go domain is implemented. The Go runner consumes the same JSON, not a translated or generated expectation. Neither corpus runner writes fixtures. The frozen external contracts live in `schema/`; this task does not alter them.
+Each fixture was written and green against the real Python implementation **before** its Go domain was implemented. The Go runner consumes the same JSON, not a translated or generated expectation, and does not write fixtures. The frozen external contracts live in `schema/`; this task does not alter them.
+
+Until todo 44 a Python runner (`contract/runner`, discovered through a root `conftest.py`) replayed the corpus against the Python implementation. Both left with that implementation: the Go runner, `internal/contracttest`, is the only executor now. The grammar below is the one both runners read; where it names Python behaviour (`stop`, `agreement`, the relay module), that is what the fixtures recorded.
 
 ## Identity and ownership
 
@@ -37,8 +39,8 @@ Live-interleaving cases remain Python tests until an equivalent Go package test 
 
 ## Implemented runner families
 
-`contract.runner` owns dispatch and assertions; the root `conftest.py` only re-exports discovery.
-Every step runs in a case-local temporary directory. Examples below are abbreviated; real
+The Python runner (`contract.runner`, deleted in todo 44) owned dispatch and assertions; the root
+`conftest.py` only re-exported discovery. Every step runs in a case-local temporary directory. Examples below are abbreviated; real
 fixtures use the identity filename rule above.
 
 - `cli`: `{"run":{"kind":"cli","argv":["dispositions-show"]},"expect":{"exit":2}}` spawns the relay module with `--state <tmp>/state`. `steps` is an ordered list with optional `id`, `stdin`, `env`, `cwd`, and `timeout`; `{"$step":"register","path":["stdout_json","id"]}` resolves a prior result. `given.files` creates text files and `${HOME}` expands to the case root. `given.sql_seed` opens the real relay Store and executes test-owned SQL only for tests that seed SQL themselves (`given.sql` is for a complete standalone database). `expect.queries` maps labels to SQL queries and exposes result tuples under `sql`.
@@ -119,7 +121,8 @@ Python on the machine. Its `records` runners drive the built `crw hook`, which a
 owner over its control socket instead of starting a relay subprocess, with a guard peer
 standing in for the owner. `agreement` runs it under the checkout settings document and
 under the plugin-owned one, each in its own home, and requires the same printed answer and
-the same journal record apart from the six volatile fields `runner/files.py` excludes.
+the same journal record apart from the six volatile fields the Python runner's `runner/files.py`
+excluded.
 `release` reads the named step's shell block from `.github/workflows/release.yml` with the
 same grammar as `scripts/ci/tests/release_steps.py` and runs it with bash in a fresh clone,
 beside copies of the fake `gh` and `git` in `internal/contracttest/testdata/release`.
@@ -132,7 +135,8 @@ could answer: a signalled guard, a guard exit status of 7 or 9, and an exec erro
 `nativeDivergences` in `internal/contracttest/records.go` holds those checks, and only
 those, to the native answer, each with its reason, and fails when a fixture stops making
 the check it replaces. When the Python corpus run leaves the repository, those fixtures
-should be rewritten to the native values and the table removed.
+should be rewritten to the native values and the table removed; the Python corpus run left
+with todo 44, so nothing else holds those checks to the Python answer any more.
 
 ## Check examples
 

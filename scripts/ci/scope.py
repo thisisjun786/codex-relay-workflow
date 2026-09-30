@@ -43,7 +43,7 @@ def context(event, base_ref, ref):
 def selected(changed, unknown, unsafe, reason):
     kinds = {classify(path) for path in changed}
     full = reason != "paths" or bool(unknown or unsafe) or "full" in kinds
-    return {"tests": full or "skill" in kinds, "packages": full}
+    return {"tests": full or "skill" in kinds}
 
 
 def validate_selection(value):
@@ -73,7 +73,7 @@ def validate_selection(value):
     if not set(value["unsafe"]).issubset(value["changed"]):
         raise ValueError("Unsafe paths must belong to the diff")
     jobs = value["selected"]
-    if not isinstance(jobs, dict) or set(jobs) != {"tests", "packages"} or any(type(v) is not bool for v in jobs.values()):
+    if not isinstance(jobs, dict) or set(jobs) != {"tests"} or any(type(v) is not bool for v in jobs.values()):
         raise ValueError("Selection outputs must be booleans")
     if jobs != selected(value["changed"], value["unknown"], value["unsafe"], value["reason"]):
         raise ValueError("Selected jobs disagree with path evidence")

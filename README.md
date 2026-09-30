@@ -141,7 +141,6 @@ settles it.
 | Link the skills from a checkout | The Go toolchain `go.mod` names, and directory symlinks |
 | Install the runtime | A release archive for Linux (amd64 or arm64); darwin/arm64 is built but unvalidated |
 | Run repository checks | The Go toolchain, and Python 3.10+ for the Python checks that remain until the Python path is removed (developer-only) |
-| Work on the Python packages (developer-only) | Python 3.11+ and [uv](https://docs.astral.sh/uv/) |
 | Plan and verify Linear work | Codex with local skill support and a connected Linear workspace you can access |
 | Use the shared workflow | Separately installed CXC and Paperthin skills referenced by the [integration guide](plugins/crw/skills/crw-plan/references/integrations.md) |
 | Delegate independent tasks | A host exposing task creation and coordination tools, or an installed bridge |
@@ -222,14 +221,9 @@ remain and CI runs them too; they need Python 3.10+:
 python3 scripts/ci/validate.py
 python3 scripts/ci/plugin.py
 python3 -m unittest discover -s scripts/ci/tests -v
-python3 scripts/ci/contracts.py
 ```
 
-Changing either Python package additionally needs Python 3.11+ and uv:
-
-```sh
-python3 scripts/ci/packages.py
-```
+The Python packages under `packages/` are no longer built or tested; todo 44 removes them.
 
 When the bundled Codex skill validator is available:
 

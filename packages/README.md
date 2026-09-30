@@ -15,10 +15,9 @@ unchanged by the import. Each package keeps its own `pyproject.toml`, tests and
 and the relay's optional bridge dependency resolves to `codex-thread-bridge` in this
 checkout rather than to an index.
 
-```sh
-uv sync --locked --all-packages
-python3 ../scripts/ci/packages.py
-```
+Until todo 44 CI installed both from that lock and ran their suites (`scripts/ci/packages.py`);
+the Go port under `cmd/` and `internal/` replaced them as the product, and todo 44 removes
+their source.
 
 Having the source here does not install, upgrade or activate anything. An installed
 bridge or relay, an MCP registration and a running service each remain separate
@@ -55,7 +54,7 @@ exception type, message and every frame from inside the operation.
 Two bridge files were deliberately not imported. Its `uv.lock` is superseded by the
 workspace lock at the repository root, where a member lock has no effect. Its
 `.github/workflows/ci.yml` would have been an inert nested workflow; its steps were
-folded into this repository's `packages` job instead.
+folded into this repository's `packages` job instead (removed in todo 44).
 
 Git history, virtual environments, build output, SQLite databases and their
 write-ahead logs, operational state directories, logs and private task records were

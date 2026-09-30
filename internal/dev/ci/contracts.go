@@ -22,8 +22,8 @@ func isLetterOrDigit(r rune) bool {
 
 // contractCheck pairs a contract with the Go check that replays it. Every check is built into
 // crw-dev, so a component is present exactly when its contract is: no checker script has to sit
-// beside it (scripts/ci/contracts.py, the Python twin, still pairs each contract with its script
-// while those scripts exist).
+// beside it (scripts/ci/contracts.py, the Python twin deleted in todo 44, paired each contract
+// with its script).
 type contractCheck struct {
 	name, contract string
 	check          func(root string, stdout, stderr io.Writer) int
@@ -35,7 +35,7 @@ const (
 	bridgeToolSchema = "contract/schema/bridge-mcp-tools.json"
 )
 
-// contractChecks is scripts/ci/contracts.py's CHECKS, in the same order.
+// contractChecks is what scripts/ci/contracts.py's CHECKS was until todo 44, in the same order.
 var contractChecks = []contractCheck{
 	{name: "hook", contract: skillRun + "/references/hook-contract.md", check: hookContractCheck},
 	{name: "operations", contract: skillRun + "/references/operations.md", check: operationsCheck},
