@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"math/big"
 	"path"
 	"slices"
 	"strings"
@@ -91,44 +90,31 @@ func hostTruthy(value any) bool {
 	}
 }
 
+// hostSorted is sorted(value or []). Sorting needs only '<', so a list or an
+// object in the list is refused only where '<' refuses it; hashing waits for
+// the set() calls in hostFieldProblems.
 func hostSorted(value any) ([]any, error) {
 	items, err := hostList(value)
 	if err != nil {
 		return nil, err
 	}
-	for _, item := range items {
-		if _, ok := item.([]any); ok {
-			return nil, &evidence.PythonError{Class: "TypeError", Detail: "unhashable type: 'list'"}
-		}
-		if _, ok := item.(map[string]any); ok {
-			return nil, &evidence.PythonError{Class: "TypeError", Detail: "unhashable type: 'dict'"}
-		}
-	}
-	slices.SortStableFunc(items, func(a, b any) int {
-		x, y := hostNumber(a), hostNumber(b)
-		if x != nil && y != nil {
-			return x.Cmp(y)
-		}
-		return strings.Compare(fmt.Sprint(a), fmt.Sprint(b))
-	})
-	return items, nil
+	return pySorted(items)
 }
 
-func hostNumber(value any) *big.Rat {
-	switch v := value.(type) {
-	case bool:
-		if v {
-			return new(big.Rat).SetInt64(1)
+// hostHashable is set(values) reaching its first element that cannot be hashed.
+func hostHashable(values []any) error {
+	for _, value := range values {
+		switch value.(type) {
+		case []any, map[string]any:
+			return &evidence.PythonError{Class: "TypeError", Detail: "unhashable type: '" + evidence.TypeName(value) + "'"}
 		}
-		return new(big.Rat)
-	case int64:
-		return new(big.Rat).SetInt64(v)
-	case *big.Int:
-		return new(big.Rat).SetInt(v)
-	case float64:
-		return new(big.Rat).SetFloat64(v)
 	}
 	return nil
+}
+
+// hostSetDifference is sorted(set(left) - set(right)) for lists hostHashable passed.
+func hostSetDifference(left, right []any) ([]any, error) {
+	return pySorted(hostValueDifference(left, right))
 }
 
 func hostPythonString(value any) string {
@@ -186,7 +172,22 @@ func hostFieldProblems(record, capability map[string]any, paired string) ([]stri
 		return []string{paired + " declares no required Stop input"}, nil
 	}
 	if !evidence.Equal(deliveredValues, declaredValues) {
-		return []string{fmt.Sprintf("delivered Stop fields disagree with %s (missing %s, unexpected %s)", paired, hostPythonListRepr(hostValueDifference(declaredValues, deliveredValues)), hostPythonListRepr(hostValueDifference(deliveredValues, declaredValues)))}, nil
+		// sorted(set(declared) - set(delivered)) hashes declared, then delivered.
+		if err := hostHashable(declaredValues); err != nil {
+			return nil, err
+		}
+		if err := hostHashable(deliveredValues); err != nil {
+			return nil, err
+		}
+		missing, err := hostSetDifference(declaredValues, deliveredValues)
+		if err != nil {
+			return nil, err
+		}
+		unexpected, err := hostSetDifference(deliveredValues, declaredValues)
+		if err != nil {
+			return nil, err
+		}
+		return []string{fmt.Sprintf("delivered Stop fields disagree with %s (missing %s, unexpected %s)", paired, hostPythonListRepr(missing), hostPythonListRepr(unexpected))}, nil
 	}
 	types, ok := input["types"].(map[string]any)
 	if !ok {
@@ -198,7 +199,19 @@ func hostFieldProblems(record, capability map[string]any, paired string) ([]stri
 		fieldValues[i] = field
 	}
 	if !evidence.Equal(fieldValues, deliveredValues) {
-		return []string{fmt.Sprintf("the recorded Stop field types do not cover the fields it delivered (missing %s, unexpected %s)", hostPythonListRepr(hostValueDifference(deliveredValues, fieldValues)), hostPythonListRepr(hostValueDifference(fieldValues, deliveredValues)))}, nil
+		// sorted(set(delivered) - set(types)) hashes delivered; the type names are strings.
+		if err := hostHashable(deliveredValues); err != nil {
+			return nil, err
+		}
+		absent, err := hostSetDifference(deliveredValues, fieldValues)
+		if err != nil {
+			return nil, err
+		}
+		extra, err := hostSetDifference(fieldValues, deliveredValues)
+		if err != nil {
+			return nil, err
+		}
+		return []string{fmt.Sprintf("the recorded Stop field types do not cover the fields it delivered (missing %s, unexpected %s)", hostPythonListRepr(absent), hostPythonListRepr(extra))}, nil
 	}
 	unnamed := []string{}
 	for _, name := range fields {

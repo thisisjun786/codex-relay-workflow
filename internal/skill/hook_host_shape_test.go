@@ -83,6 +83,54 @@ func hostShapeCases() []skillShapeCase {
 		record["stopInput"].(map[string]any)["fields"] = test.delivered
 		cases = append(cases, hostShapeCase("paired-fields/"+test.name, files))
 	}
+	return append(cases, hostSortShapeCases()...)
+}
+
+// hostSortShapeCases pair Stop field lists whose elements Python sorts with '<'
+// and then compares, building sets only where the lists or the recorded types
+// disagree: a list element is unhashable only there, and an unorderable pair
+// raises the TypeError of the first comparison CPython's sort makes.
+func hostSortShapeCases() []skillShapeCase {
+	absent := struct{}{}
+	nested := []any{[]any{"b"}, []any{"a"}}
+	cases := []skillShapeCase{}
+	for _, test := range []struct {
+		name                string
+		declared, delivered []any
+		types               any
+	}{
+		{"equal-nested-lists/types-absent", nested, []any{[]any{"a"}, []any{"b"}}, absent},
+		{"equal-nested-lists/types-list", nested, nested, []any{"cwd"}},
+		{"equal-nested-lists/types-null", nested, nested, nil},
+		{"equal-object/types-absent", []any{map[string]any{"a": 1}}, []any{map[string]any{"a": 1}}, absent},
+		{"equal-object/types-list", []any{map[string]any{"a": 1}}, []any{map[string]any{"a": 1}}, []any{}},
+		{"equal-nested-lists/types-object", nested, nested, map[string]any{"cwd": "str"}},
+		{"unequal-nested-lists", []any{[]any{"a"}}, []any{[]any{"b"}}, absent},
+		{"unequal-declared-list-delivered-object", []any{[]any{"a"}}, []any{map[string]any{"a": 1}}, absent},
+		{"unequal-declared-object-delivered-list", []any{map[string]any{"a": 1}}, []any{[]any{"a"}}, absent},
+		{"unequal-delivered-list", []any{"cwd"}, []any{[]any{"cwd"}}, absent},
+		{"two-objects", []any{map[string]any{"a": 1}, map[string]any{"b": 2}}, []any{"cwd"}, absent},
+		{"list-and-string", []any{[]any{"a"}, "b"}, []any{"cwd"}, absent},
+		{"number-and-string", []any{1, "a"}, []any{"cwd"}, absent},
+		{"string-and-number", []any{"cwd"}, []any{"b", 1}, absent},
+		{"lists-of-number-and-string", []any{[]any{1}, []any{"a"}}, []any{"cwd"}, absent},
+		{"nulls", []any{nil, nil}, []any{"cwd"}, absent},
+		{"null-and-string", []any{"cwd"}, []any{"cwd", nil}, absent},
+		{"numbers", []any{json.Number("2.5"), 10, 1}, []any{1, 10, json.Number("2.5")}, map[string]any{"cwd": "str"}},
+		{"bool-and-numbers", []any{true, 0, 2}, []any{"cwd"}, absent},
+	} {
+		files := hostShapeSeed()
+		capability := files["host/host-capability-codex-0.154.0.json"].(map[string]any)
+		capability["events"].(map[string]any)["stop"].(map[string]any)["input"].(map[string]any)["required"] = test.declared
+		stop := files["host/host-observation-codex-0.154.0.json"].(map[string]any)["stopInput"].(map[string]any)
+		stop["fields"] = test.delivered
+		if test.types == absent {
+			delete(stop, "types")
+		} else {
+			stop["types"] = test.types
+		}
+		cases = append(cases, hostShapeCase("paired-fields/sort/"+test.name, files))
+	}
 	return cases
 }
 
