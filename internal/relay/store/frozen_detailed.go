@@ -265,4 +265,4 @@ func interpretedErrno(err error) bool {
 // resolveFrozenPath is Path.resolve() (os.path.realpath, strict=False) of a pathlib spelling: a
 // symlink is followed before the '..' after it, and a component that cannot be examined is kept
 // as spelled, so a missing or inaccessible suffix reaches the pinned walk, which names it.
-func resolveFrozenPath(path string) (string, error) { return resolvePathDepth(path, 0, false) }
+func resolveFrozenPath(path string) (string, error) { return Realpath(path) }
