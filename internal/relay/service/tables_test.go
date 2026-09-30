@@ -9,13 +9,27 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 // Compare every table/column/value, including persisted JSON bytes. SQLite page
 // layout, freelists and WAL checkpoints are not logical table contents.
 // writer is the runtime that ran against home, so the one runtime-identity row, schema_meta's
-// owner, must be its own.
+// owner, must be its own. Go reads the tables (goTables); while pyoracle asks the live Python,
+// Python's sqlite3 reads them too and must read the same.
 func tables(t *testing.T, home string, writer testsupport.Runtime) string {
+	t.Helper()
+	got := goTables(t, home, writer)
+	if pyoracle.Live() {
+		if want := pythonTables(t, home, writer); want != got {
+			t.Fatalf("Go's table reader differs from Python's\nPython %s\nGo %s", want, got)
+		}
+	}
+	return got
+}
+
+// pythonTables is the table snapshot Python's sqlite3 reads.
+func pythonTables(t *testing.T, home string, writer testsupport.Runtime) string {
 	t.Helper()
 	path := filepath.Join(home, "state", "relay.sqlite3")
 	if _, err := os.Stat(path); os.IsNotExist(err) {
@@ -39,31 +53,28 @@ with closing(sqlite3.connect(sys.argv[1])) as db:
 	if err = json.Unmarshal(raw, &data); err != nil {
 		t.Fatal(err)
 	}
-	for _, row := range data["schema_meta"] {
-		if row[0] == "store_id" {
-			row[1] = "RANDOM_STORE_ID"
-		}
-		if key, ok := row[0].(string); ok {
-			row[1] = testsupport.OwnerNeutral(t, writer, key, row[1])
-		}
-	}
-	raw, err = json.MarshalIndent(data, "", "  ")
-	if err != nil {
-		t.Fatal(err)
-	}
-	return normalize(string(raw))
+	return tableText(t, data, writer)
 }
+
+// tickAnswer is one runtime's console answer and its tables.
+type tickAnswer struct {
+	Capture capture `json:"capture"`
+	Tables  string  `json:"tables"`
+}
+
 func Test29EmptyTickTableParity(t *testing.T) {
 	home := t.TempDir()
 	args := []string{"--socket", home + "/socket", "daemon", "--max-ticks", "1", "--allow-isolated-scope"}
-	want := invoke(t, home, true, args...)
-	before := tables(t, home, testsupport.Python)
-	resetRuntime(t, home)
+	var want tickAnswer
+	pythonHalf(t, home, "python", true, &want, func() (any, error) {
+		result := invoke(t, home, true, args...)
+		return tickAnswer{pythonCapture(result), tables(t, home, testsupport.Python)}, nil
+	})
 	got := invoke(t, home, false, args...)
 	after := tables(t, home, testsupport.Go)
-	compare(t, want, got)
-	if before != after {
-		t.Fatalf("tables\nPython %s\nGo %s", before, after)
+	compare(t, want.Capture, got)
+	if want.Tables != after {
+		t.Fatalf("tables\nPython %s\nGo %s", want.Tables, after)
 	}
 }
 func Test29LaunchPolicyPersistence(t *testing.T) {
@@ -74,21 +85,25 @@ func Test29LaunchPolicyPersistence(t *testing.T) {
 		t.Fatal(err)
 	}
 	steps := [][]string{{"service", "declare", "--execution-policy", policy}, {"service", "status"}, {"service", "declare", "--forget-execution-policy"}}
-	var want []capture
-	var wantFiles []map[string]string
-	for _, args := range steps {
-		result := invoke(t, home, true, args...)
-		if result.Code != 0 {
-			t.Fatalf("policy setup refused: %+v", result)
+	var want []consoleAnswer
+	pythonHalf(t, home, "python", true, &want, func() (any, error) {
+		var answers []consoleAnswer
+		for _, args := range steps {
+			result := invoke(t, home, true, args...)
+			if result.Code != 0 {
+				t.Fatalf("policy setup refused: %+v", result)
+			}
+			answers = append(answers, consoleAnswer{pythonCapture(result), files(t, home, testsupport.Python)})
 		}
-		want = append(want, result)
-		wantFiles = append(wantFiles, files(t, home, testsupport.Python))
+		return answers, nil
+	})
+	if len(want) != len(steps) {
+		t.Fatalf("%d recorded Python steps", len(want))
 	}
-	resetRuntime(t, home)
 	for i, args := range steps {
 		got := invoke(t, home, false, args...)
-		compare(t, want[i], got)
-		wf, _ := json.Marshal(wantFiles[i])
+		compare(t, want[i].Capture, got)
+		wf, _ := json.Marshal(want[i].Files)
 		gf, _ := json.Marshal(files(t, home, testsupport.Go))
 		if string(wf) != string(gf) {
 			t.Fatalf("%s\nPython %s\nGo %s", strings.Join(args, " "), wf, gf)

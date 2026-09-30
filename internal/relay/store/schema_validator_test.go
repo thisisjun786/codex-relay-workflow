@@ -10,7 +10,8 @@ import (
 )
 
 // The frozen record schemas, validated by the repository's own jsonschema Draft7Validator run
-// in an isolated Python, as test_schema_conformance.py does. No new Go module is involved.
+// in an isolated Python, as test_schema_conformance.py does, and recorded. No new Go module is
+// involved.
 var recordSchemas = []string{"relationship", "completion-receipt", "delivery-attempt", "acknowledgement", "verification-verdict"}
 
 type schemaCase struct {
@@ -57,7 +58,17 @@ func validateAgainstSchemas(t *testing.T, cases []schemaCase) (map[string][]stri
 		t.Fatal(err)
 	}
 	script := "import sys; sys.stdin = open(" + pythonLiteral(stdin) + ")\n" + draft7Script
-	out := pythonStoreValue(t, script, filepath.Join(repositoryRoot(t), "contract", "schema"), strings.Join(recordSchemas, ","))
+	// The validator's verdicts are recorded (pythonOracle) under the instances they judged, each
+	// value a rerun changes spelled by its length alone (maskNoise): an event id and a revision
+	// hash are digests of this run's temporary paths, and the validator judges only their form.
+	dir := repositoryRoot(t)
+	isolated := isolatedEnv(t)
+	args := []string{filepath.Join(dir, "contract", "schema"), strings.Join(recordSchemas, ",")}
+	judged := maskNoise(string(input))
+	parts := append([]string{"store-value", dir, script, judged}, keptEnvironment()...)
+	out := strings.TrimSpace(string(pythonOracle(t, append(parts, args...), func() ([]byte, error) {
+		return runPythonStore(t, isolated, dir, script, args...)
+	})))
 	var verdicts []schemaVerdict
 	if err := json.Unmarshal([]byte(out), &verdicts); err != nil || len(verdicts) != len(cases) {
 		t.Fatalf("validator output %q: %v", out, err)

@@ -1,7 +1,7 @@
 package doctor_test
 
 import (
-	"io"
+	"encoding/binary"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -120,27 +120,68 @@ func TestAShellWrapperIsJudgedAtEveryCommandItRuns(t *testing.T) {
 	}
 }
 
-// realPython is a copy of the host's Python interpreter under name in dir: a native image whose
-// name says nothing.
+// realPython is a Python interpreter image under name in dir, a native image whose name says
+// nothing: a minimal ELF file carrying the .PyRuntime section every CPython executable carries,
+// which is what the scan finds a Python image by (pythonImage). It is written rather than copied
+// from the host so that the scan's judgement does not depend on which python3, if any, this host's
+// PATH names; hostPython copies the real one where there is one.
 func realPython(t *testing.T, dir, name string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	mkdir(t, dir)
+	if err := os.WriteFile(path, pythonRuntimeELF(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// pythonRuntimeELF is a 64-bit little-endian ELF header with three section headers: the null
+// section, the section-name table, and an empty .PyRuntime.
+func pythonRuntimeELF() []byte {
+	names := []byte("\x00.shstrtab\x00.PyRuntime\x00")
+	const header, entry = 64, 64
+	shoff := uint64(header + (len(names)+7)/8*8)
+	out := make([]byte, int(shoff)+3*entry)
+	copy(out, []byte{0x7f, 'E', 'L', 'F', 2, 1, 1})
+	le := binary.LittleEndian
+	le.PutUint16(out[16:], 2)  // ET_EXEC
+	le.PutUint16(out[18:], 62) // EM_X86_64
+	le.PutUint32(out[20:], 1)  // EV_CURRENT
+	le.PutUint64(out[40:], shoff)
+	le.PutUint16(out[52:], header)
+	le.PutUint16(out[54:], 56) // program header entry size
+	le.PutUint16(out[58:], entry)
+	le.PutUint16(out[60:], 3) // sections
+	le.PutUint16(out[62:], 1) // the section-name table's index
+	copy(out[header:], names)
+	section := func(i int, name, kind uint32, offset, size uint64) {
+		at := out[int(shoff)+i*entry:]
+		le.PutUint32(at[0:], name)
+		le.PutUint32(at[4:], kind)
+		le.PutUint64(at[24:], offset)
+		le.PutUint64(at[32:], size)
+		le.PutUint64(at[48:], 1) // alignment
+	}
+	section(1, 1, 3, header, uint64(len(names))) // .shstrtab, SHT_STRTAB
+	section(2, 11, 1, header, 0)                 // .PyRuntime, SHT_PROGBITS
+	return out
+}
+
+// hostPython is a copy of the host's python3 under name in dir, or "" when PATH names no native
+// interpreter image to copy.
+func hostPython(t *testing.T, dir, name string) string {
 	t.Helper()
 	found, err := exec.LookPath("python3")
 	if err != nil {
-		t.Skip("no python3 on PATH to copy")
+		return ""
 	}
-	source, err := os.Open(found)
-	if err != nil {
-		t.Fatal(err)
+	raw, err := os.ReadFile(found)
+	if err != nil || !strings.HasPrefix(string(raw), "\x7fELF") {
+		return ""
 	}
-	defer source.Close()
 	path := filepath.Join(dir, name)
 	mkdir(t, dir)
-	target, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o755)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer target.Close()
-	if _, err := io.Copy(target, source); err != nil {
+	if err := os.WriteFile(path, raw, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	return path
@@ -189,7 +230,12 @@ func TestAScriptIsJudgedByTheInterpreterItsHashBangResolvesTo(t *testing.T) {
 		}
 	}
 	threaded := realPython(t, filepath.Join(root, "threaded"), "python3.13t")
-	for _, path := range []string{image, threaded, filepath.Join(root, "missing", "python3.13t"), filepath.Join(root, "missing", "python3.12-dbg")} {
+	paths := []string{image, threaded, filepath.Join(root, "missing", "python3.13t"), filepath.Join(root, "missing", "python3.12-dbg")}
+	// The real interpreter carries what the written image does, wherever this host has one.
+	if host := hostPython(t, filepath.Join(root, "host"), "interp"); host != "" {
+		paths = append(paths, host)
+	}
+	for _, path := range paths {
 		if e := classifier.Classify(path, ""); !e.Python {
 			t.Errorf("%s: kind %s (%s), not Python", path, e.Kind, e.Detail)
 		}

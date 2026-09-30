@@ -9,10 +9,12 @@ import (
 	"io"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 func controlPair(t *testing.T) (net.Conn, net.Conn) {
@@ -112,12 +114,11 @@ func Test33UntrustedPeerReleases(t *testing.T) {
 				t.Fatal(rows)
 			}
 			// Existing Python reader accepts the ordinary failure shape; no new
-			// prescan exception, fake verdict, or broadened reader vocabulary.
-			cmd := exec.Command(python(t), "-c", `import json,sys;sys.path.insert(0,sys.argv[1]);from crw_runtime import completion;from pathlib import Path;r=json.loads(next(Path(sys.argv[2]).glob('*/*.json')).read_text());assert completion._row_shape(r);print(json.dumps({'rowReadable':True}))`, filepath.Join(testRoot, "scripts"), filepath.Join(home, "journal"))
-			out, err := cmd.CombinedOutput()
-			if err != nil {
-				t.Fatalf("reader %v %s", err, out)
-			}
+			// prescan exception, fake verdict, or broadened reader vocabulary. Its answer is
+			// recorded (pyoracle).
+			out := pyoracle.Answer(t, "row_shape", func() ([]byte, error) {
+				return pythonScript(t, nil, nil, "-c", `import json,sys;sys.path.insert(0,sys.argv[1]);from crw_runtime import completion;from pathlib import Path;r=json.loads(next(Path(sys.argv[2]).glob('*/*.json')).read_text());assert completion._row_shape(r);print(json.dumps({'rowReadable':True}))`, filepath.Join(testRoot, "scripts"), filepath.Join(home, "journal"))
+			})
 			var read map[string]any
 			if err := json.Unmarshal(out, &read); err != nil || read["rowReadable"] != true {
 				t.Fatal(err, string(out))
@@ -126,26 +127,47 @@ func Test33UntrustedPeerReleases(t *testing.T) {
 	}
 }
 
+// Under a umask of 002 the Python store creates its state directory owner-only (0700) and keeps
+// an existing one's mode (0775); the Go store does the same. Python's answer is recorded
+// (pyoracle).
 func Test33PythonStateDirectoryMode(t *testing.T) {
-	cmd := exec.Command(python(t), "-c", `import contextlib,json,os,sys;from pathlib import Path;from codex_session_relay.store import Store
+	out := pyoracle.Answer(t, "modes", func() ([]byte, error) {
+		return pythonScript(t, nil, nil, "-c", `import contextlib,json,os,sys;from pathlib import Path;from codex_session_relay.store import Store
 home=Path(sys.argv[1]);os.umask(0o002)
 for name,preexisting in [('new',False),('existing',True)]:
  p=home/name
  if preexisting:p.mkdir(mode=0o777)
  with contextlib.closing(Store(str(p/'relay.sqlite3'))):pass
  print(json.dumps({'case':name,'mode':p.stat().st_mode & 0o777}))`, t.TempDir())
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("%v %s", err, out)
-	}
+	})
 	lines := bytes.Split(bytes.TrimSpace(out), []byte{'\n'})
+	if len(lines) != 2 {
+		t.Fatal(string(out))
+	}
+	home := t.TempDir()
+	previous := syscall.Umask(0o002)
+	defer syscall.Umask(previous)
 	for i, mode := range []float64{0700, 0775} {
 		var row map[string]any
-		if len(lines) != 2 {
-			t.Fatal(string(out))
-		}
 		if err := json.Unmarshal(lines[i], &row); err != nil || row["mode"] != mode {
 			t.Fatal(err, row)
+		}
+		directory := filepath.Join(home, row["case"].(string))
+		if row["case"] == "existing" {
+			if err := os.Mkdir(directory, 0o777); err != nil {
+				t.Fatal(err)
+			}
+		}
+		s, err := fixtureStore(context.Background(), filepath.Join(directory, "relay.sqlite3"), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = s.Close(); err != nil {
+			t.Fatal(err)
+		}
+		info, err := os.Stat(directory)
+		if err != nil || float64(info.Mode().Perm()) != mode {
+			t.Fatalf("Go store's %s state directory: %v %v, Python's %o", row["case"], info.Mode(), err, int(mode))
 		}
 	}
 	t.Logf("%s", out)

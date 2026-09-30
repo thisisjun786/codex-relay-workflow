@@ -13,8 +13,12 @@ from codex_session_relay.registry import Registry
 from codex_session_relay.receipts import ReceiptIntake
 from codex_session_relay.store import Store
 
-binary, home, selected = sys.argv[1:]
+binary, home, selected = sys.argv[1:4]
 home = pathlib.Path(home)
+# prepare <case>: lay the case's fixture out under <home>/<case> and print Python's answer (the
+# envelope, the observation record it wrote and removed, the mode), recorded by the Go test
+# (internal/testsupport/pyoracle), which runs the native CLI itself.
+PREPARE = selected == 'prepare'
 os.environ.update(HOME=str(home), CODEX_HOME=str(home), XDG_STATE_HOME=str(home / 'xdg'))
 now = '2026-01-01T00:06:00+00:00'
 cases = ['unmanaged', 'unclaimed', 'uncorrelated', 'unbound', 'other', 'unregistered',
@@ -28,7 +32,9 @@ cases = ['unmanaged', 'unclaimed', 'uncorrelated', 'unbound', 'other', 'unregist
 # left where the guard reads a frozen MANIFEST.json is 9998: the outer object and 9997 nested
 # lists are read, and one list more is a RecursionError deliverable_state does not catch.
 depths = {'frozen_at_depth': 9997, 'frozen_past_depth': 9998}
-if selected != 'all':
+if PREPARE:
+    cases = [sys.argv[4]]
+elif selected != 'all':
     cases = selected.split(',')
 
 
@@ -142,6 +148,11 @@ for name in cases:
         p = directory / (record + '.json'); expected_record = p.read_bytes(); p.unlink()
     if expected['decision'] == 'block':
         (directory / 'hook/child/turn/hold.json').unlink()
+    if PREPARE:
+        print(json.dumps(dict(stdout=json.dumps(expected, indent=2) + '\n', mode=mode, noRecord=name == 'no_record',
+                              record=str((directory / (record + '.json')).relative_to(base)) if record else None,
+                              recordText=expected_record.decode() if expected_record is not None else None)))
+        sys.exit()
     argv = [binary, 'relay', '--state', str(base / 'state'), 'guard-evaluate', '--marker-root', str(root),
             '--stop-input', str(stop_path), '--mode', mode, '--now', now]
     if name == 'no_record':

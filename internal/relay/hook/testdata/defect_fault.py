@@ -21,7 +21,16 @@ with tempfile.TemporaryDirectory(prefix='d2-python-') as temp:
     with mock.patch.object(stopadapter, 'invoke_guard', side_effect=RuntimeError('injected guard fault')):
         assert stopadapter.run(json.dumps(payload).encode(), codex_home=home, settings=settings) is None
     [py_path] = list((home / 'journal').glob('[0-9]*/*.json'))
-    py = json.loads(py_path.read_text()); go = json.loads(native_path.read_text())
+    py = json.loads(py_path.read_text())
+    if str(native_path) == '-':
+        # Python's row alone, aligned as below, recorded by the Go test (pyoracle).
+        assert completion._row_shape(py)
+        py['configuration'] = '<SETTINGS>'
+        for field in ['at', 'elapsedMs', 'identityScanMs']:
+            py.pop(field)
+        sys.stdout.buffer.write(completion._record_bytes(py))
+        sys.exit()
+    go = json.loads(native_path.read_text())
     assert completion._row_shape(py) and completion._row_shape(go)
     # Align only generated path/time values; every remaining byte is compared.
     for row in [py, go]:

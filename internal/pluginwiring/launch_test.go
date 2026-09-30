@@ -1,9 +1,11 @@
 package pluginwiring
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -13,11 +15,13 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/mcp"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 // The oracle is crw_bridge_mcp.py itself, run by the workspace interpreter: the launcher the
 // package shipped until todo 43, kept byte for byte in testdata/pre-native-wiring
-// (preNativeLauncher).
+// (preNativeLauncher). What it did is recorded (pyoracle) and replayed unless
+// CRW_PYTHON_ORACLE asks for the live interpreter.
 // Both launchers are placed in the same cache layout under one Codex home and started with the
 // same record, environment and working directory; stderr and exit are compared byte for byte,
 // once Python's repairs are rewritten to the Go ones (goRepairs). Where Python would exec the
@@ -129,8 +133,77 @@ func (h launcherHost) env(extra ...string) []string {
 	return append([]string{"PATH=" + os.Getenv("PATH"), "HOME=" + filepath.Join(h.root, "home"), "CODEX_HOME=" + h.codexHome}, extra...)
 }
 
+// python is what the Python launcher did under env. Its answer is recorded (pyoracle) with the
+// host's root spelled <ROOT> in both streams, replaced before the streams' lengths are written, so
+// a root of another length reads back whole.
 func (h launcherHost) python(t *testing.T, env []string, args ...string) outcome {
-	return run(t, h.version, env, "", append([]string{workspacePython(t), "./wiring/" + launcherName}, args...)...)
+	t.Helper()
+	raw := pyoracle.Answer(t, strings.Join(append([]string{"launch"}, args...), " "), func() ([]byte, error) {
+		o := run(t, h.version, env, "", append([]string{workspacePython(t), "./wiring/" + launcherName}, args...)...)
+		o.stdout, o.stderr = strings.ReplaceAll(o.stdout, h.root, rootMark), strings.ReplaceAll(o.stderr, h.root, rootMark)
+		return encodeOutcome(o), nil
+	}, pyoracle.SameWhen(samePositions))
+	o, err := decodeOutcome(raw)
+	if err != nil {
+		t.Fatalf("recorded launcher outcome: %v", err)
+	}
+	o.stdout, o.stderr = strings.ReplaceAll(o.stdout, rootMark, h.root), strings.ReplaceAll(o.stderr, rootMark, h.root)
+	return o
+}
+
+// rootMark stands for the launcher host's root in a recorded outcome.
+const rootMark = "<ROOT>"
+
+// position is the character offset a UnicodeEncodeError names. Where the string it counts in
+// begins with the host's root, the offset moves with the root's length, so a live answer is
+// compared with its recording apart from it (no test reads the offset).
+var position = regexp.MustCompile(`in position [0-9]+`)
+
+func samePositions(recorded, live []byte) bool {
+	return bytes.Equal(position.ReplaceAll(recorded, []byte("in position N")), position.ReplaceAll(live, []byte("in position N")))
+}
+
+// encodeOutcome writes an exit and both streams, each stream preceded by its length, so a stream
+// that is not UTF-8 is kept byte for byte.
+func encodeOutcome(o outcome) []byte {
+	return []byte(fmt.Sprintf("exit %d\nstdout %d\n%sstderr %d\n%s", o.code, len(o.stdout), o.stdout, len(o.stderr), o.stderr))
+}
+
+func decodeOutcome(raw []byte) (outcome, error) {
+	var o outcome
+	text := string(raw)
+	field := func(name string) (int, error) {
+		line, rest, ok := strings.Cut(text, "\n")
+		value, found := strings.CutPrefix(line, name+" ")
+		if !ok || !found {
+			return 0, fmt.Errorf("no %s line in %q", name, text)
+		}
+		text = rest
+		return strconv.Atoi(value)
+	}
+	stream := func(name string) (string, error) {
+		n, err := field(name)
+		if err != nil || n > len(text) {
+			return "", fmt.Errorf("%s: %v (length %d of %d)", name, err, n, len(text))
+		}
+		value := text[:n]
+		text = text[n:]
+		return value, nil
+	}
+	var err error
+	if o.code, err = field("exit"); err != nil {
+		return o, err
+	}
+	if o.stdout, err = stream("stdout"); err != nil {
+		return o, err
+	}
+	if o.stderr, err = stream("stderr"); err != nil {
+		return o, err
+	}
+	if text != "" {
+		return o, fmt.Errorf("trailing %q", text)
+	}
+	return o, nil
 }
 
 // goLaunch starts the Go launcher as wiring/crw-bridge.sh execs it: codex-thread-bridge --plugin-launch.

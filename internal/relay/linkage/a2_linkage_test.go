@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 // Part A2: test_linkage_peer.py, test_linkage_queries.py, test_linkage_recovery.py.
@@ -471,6 +473,9 @@ var snapshots = []string{
 // refuses one missing a table of the frozen schema (docs/port/decisions.md 14), and the DDL runs
 // over an older store only in the retained Python fence. So that reopen is Python's, on the store
 // it owns for it (testsupport.HandOver), and Go goes on with the result after a takeover back.
+// What Python's reopen adds is the linkage tables' DDL and nothing else (no row, no schema_meta
+// value), so that DDL is recorded (pyoracle) and, on replay, executed over the Go-owned store in
+// place of the Python reopen.
 func (w *world) reopenWithoutNewTables() {
 	w.t.Helper()
 	for _, table := range newTables {
@@ -486,17 +491,24 @@ func (w *world) reopenWithoutNewTables() {
 	} else if !errors.As(err, &refused) || refused.Detail != "required table missing: "+newTables[0] {
 		w.t.Fatalf("Go's refusal of a store missing the linkage tables: %v", err)
 	}
-	testsupport.HandOver(w.t, w.path, "python")
-	repo, err := filepath.Abs(filepath.Join("..", "..", ".."))
-	if err != nil {
-		w.t.Fatal(err)
+	var ddl []string
+	pyoracle.JSON(w.t, "python reopen ddl", &ddl, func() (any, error) {
+		testsupport.HandOver(w.t, w.path, "python")
+		repo, err := filepath.Abs(filepath.Join("..", "..", ".."))
+		if err != nil {
+			return nil, err
+		}
+		reopen := exec.Command(filepath.Join(repo, ".venv", "bin", "python"), "-c",
+			"import sys\nfrom codex_session_relay.store import Store\nStore(sys.argv[1]).close()", w.path)
+		if out, err := reopen.CombinedOutput(); err != nil {
+			return nil, fmt.Errorf("Python reopen: %v\n%s", err, out)
+		}
+		testsupport.HandOver(w.t, w.path, "go")
+		return w.linkageDDL(), nil
+	})
+	if !pyoracle.Live() {
+		w.runDDL(ddl)
 	}
-	reopen := exec.Command(filepath.Join(repo, ".venv", "bin", "python"), "-c",
-		"import sys\nfrom codex_session_relay.store import Store\nStore(sys.argv[1]).close()", w.path)
-	if out, err := reopen.CombinedOutput(); err != nil {
-		w.t.Fatalf("Python reopen: %v\n%s", err, out)
-	}
-	testsupport.HandOver(w.t, w.path, "go")
 	s, err := store.Open(context.Background(), w.path, "")
 	if err != nil {
 		w.t.Fatal(err)
@@ -504,6 +516,53 @@ func (w *world) reopenWithoutNewTables() {
 	w.t.Cleanup(func() { _ = s.Close() })
 	w.s = s
 	w.r = &registry.Registry{Store: s, Now: w.r.Now, Policy: w.r.Policy}
+}
+
+// linkageDDL is the CREATE statement of every table and index the linkage tables hold, in the
+// order the store's schema lists them.
+func (w *world) linkageDDL() []string {
+	w.t.Helper()
+	db, err := ownership.OpenExisting(context.Background(), w.path, "ro")
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	defer db.Close()
+	rows, err := db.Query("SELECT sql FROM sqlite_master WHERE sql IS NOT NULL AND tbl_name IN (?, ?, ?, ?, ?) ORDER BY rowid",
+		newTables[0], newTables[1], newTables[2], newTables[3], newTables[4])
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	defer rows.Close()
+	var ddl []string
+	for rows.Next() {
+		var statement string
+		if err = rows.Scan(&statement); err != nil {
+			w.t.Fatal(err)
+		}
+		ddl = append(ddl, statement)
+	}
+	if err = rows.Err(); err != nil {
+		w.t.Fatal(err)
+	}
+	return ddl
+}
+
+// runDDL executes the recorded statements over the closed store, as Python's reopen did.
+func (w *world) runDDL(ddl []string) {
+	w.t.Helper()
+	if len(ddl) == 0 {
+		w.t.Fatal("no recorded linkage DDL")
+	}
+	db, err := ownership.OpenExisting(context.Background(), w.path, "rw")
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	defer db.Close()
+	for _, statement := range ddl {
+		if _, err = db.Exec(statement); err != nil {
+			w.t.Fatalf("%v: %s", err, statement)
+		}
+	}
 }
 
 // Test26_LRC1: an existing two-level store keeps every row across the linkage schema, and a

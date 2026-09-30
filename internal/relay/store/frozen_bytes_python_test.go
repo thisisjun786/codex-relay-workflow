@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -51,12 +52,15 @@ func Test28FrozenByteCountExactPythonParity(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(ref, "MANIFEST.json"), []byte(manifest), 0600); err != nil {
 				t.Fatal(err)
 			}
-			cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/store/testdata/frozen_detailed.py"), ref)
-			cmd.Dir = repo
-			want, err := cmd.CombinedOutput()
-			if err != nil {
-				t.Fatalf("Python: %v\n%s", err, want)
-			}
+			want := pythonOracle(t, []string{"frozen-detailed", ref}, func() ([]byte, error) {
+				cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/store/testdata/frozen_detailed.py"), ref)
+				cmd.Dir = repo
+				want, err := cmd.CombinedOutput()
+				if err != nil {
+					return nil, fmt.Errorf("Python: %v\n%s", err, want)
+				}
+				return want, nil
+			})
 			result, problems, unreadable, goErr := VerifyFrozenDetailed(ref, nil)
 			got := map[string]any{}
 			if goErr != nil {

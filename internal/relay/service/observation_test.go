@@ -2,8 +2,11 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -11,6 +14,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
@@ -67,6 +71,18 @@ finally:
 		t.Fatalf("seed: %v %s", err, raw)
 	}
 }
+
+// observationAnswer is one runtime's daemon tick over the seeded store: its answer, its tables and
+// its state files.
+type observationAnswer struct {
+	Capture capture           `json:"capture"`
+	Tables  string            `json:"tables"`
+	Files   map[string]string `json:"files"`
+}
+
+// Test29ObservationConsoleTables ticks the daemon of each runtime once over the same fixture on a
+// fixed clock; Python's half (its own store writer, its tick, its tables and files) is recorded
+// (pythonHalf).
 func Test29ObservationConsoleTables(t *testing.T) {
 	invokeFixed := fixedClockRuntime(t)
 	for _, scenario := range []string{"completed", "absent", "failed", "interrupted", "staged-completed", "staged-failed"} {
@@ -98,24 +114,73 @@ func Test29ObservationConsoleTables(t *testing.T) {
 			})
 			host.Handle("thread/goal/get", func(json.RawMessage) fakehost.Reply { return fakehost.Reply{Result: map[string]any{"goal": nil}} })
 			args := []string{"--socket", host.SocketPath, "daemon", "--max-ticks", "1", "--allow-isolated-scope"}
-			seedObservation(t, home, host.SocketPath, staged, true)
-			want := invokeFixed(home, true, args)
-			wt := tables(t, home, testsupport.Python)
-			wf := files(t, home, testsupport.Python)
-			resetRuntime(t, home)
+			var want observationAnswer
+			pythonHalf(t, home, "python", true, &want, func() (any, error) {
+				seedObservation(t, home, host.SocketPath, staged, true)
+				result := invokeFixed(home, true, args)
+				return observationAnswer{pythonCapture(result), withoutEvidenceDigests(t, home, tables(t, home, testsupport.Python)), files(t, home, testsupport.Python)}, nil
+			}, host.SocketPath)
 			seedObservation(t, home, host.SocketPath, staged, false)
 			got := invokeFixed(home, false, args)
-			gt := tables(t, home, testsupport.Go)
+			gt := withoutEvidenceDigests(t, home, tables(t, home, testsupport.Go))
 			gf := files(t, home, testsupport.Go)
-			compare(t, want, got)
-			if wt != gt {
-				t.Fatalf("table byte difference\nPython %s\nGo %s", wt, gt)
+			compare(t, want.Capture, got)
+			if want.Tables != gt {
+				t.Fatalf("table byte difference\nPython %s\nGo %s", want.Tables, gt)
 			}
-			for name, value := range wf {
+			for name, value := range want.Files {
 				if value != gf[name] {
 					t.Fatalf("%s\nPython %s\nGo %s", name, value, gf[name])
 				}
 			}
 		})
 	}
+}
+
+// withoutEvidenceDigests spells each fault occurrence's evidence digest in text, a tables text of
+// home's store, as <EVIDENCE_DIGEST>, once it is proven to be the digest of that occurrence's
+// evidence (sha256 of json.dumps(evidence, sort_keys=True, separators=(",", ":"))). The evidence
+// names the installation's location and the home, so its digest changes with them: a recorded
+// Python digest names the paths it was recorded under. The evidence itself is still compared,
+// and each runtime's digest is proven the same function of it.
+func withoutEvidenceDigests(t *testing.T, home, text string) string {
+	t.Helper()
+	path := filepath.Join(home, "state", "relay.sqlite3")
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return text
+	}
+	db, err := ownership.OpenExisting(context.Background(), path, "rw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	rows, err := db.Query("SELECT evidence, evidence_digest FROM fault_occurrences")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var evidence, digest string
+		if err = rows.Scan(&evidence, &digest); err != nil {
+			t.Fatal(err)
+		}
+		decoder := json.NewDecoder(strings.NewReader(evidence))
+		decoder.UseNumber()
+		var value any
+		if err = decoder.Decode(&value); err != nil {
+			t.Fatalf("occurrence evidence %q: %v", evidence, err)
+		}
+		compact, err := marshalText(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if sum := sha256.Sum256(compact); hex.EncodeToString(sum[:]) != digest {
+			t.Fatalf("evidence digest %s is not the digest of its evidence %s", digest, compact)
+		}
+		text = strings.ReplaceAll(text, `"`+digest+`"`, `"<EVIDENCE_DIGEST>"`)
+	}
+	if err = rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return text
 }

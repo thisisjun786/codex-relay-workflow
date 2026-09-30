@@ -3,13 +3,16 @@ package hook
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"maps"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 type gatedAnswer struct {
@@ -29,10 +32,7 @@ func (w *gatedAnswer) WriteString(s string) (int, error) { return w.Write([]byte
 func Test33AnsweredDeadlinePython(t *testing.T) {
 	home := hookHome(t, 5)
 	t.Setenv("CODEX_HOME", home)
-	cmd := exec.Command(python(t), "testdata/late_verdict.py", "setup", home)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("%v %s", err, out)
-	}
+	lateVerdictFixture(t, home)
 	payload, err := os.ReadFile(filepath.Join(home, "stop.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -85,13 +85,36 @@ func Test33AnsweredDeadlinePython(t *testing.T) {
 			t.Error("Run returned before the accepted block was written")
 		}
 	})
-	// Compare the actual output with Python's block from the same real guard
-	// fixture. Reservations and observation files remain real, not mocked.
-	cmd = exec.Command(python(t), "testdata/answered_deadline.py", home)
-	cmd.Stdin = bytes.NewBufferString(output)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("Python comparison: %v\n%s", err, out)
-	} else {
-		t.Logf("%s", out)
+	// Compare the actual output with Python's block from the same real guard fixture:
+	// answered_deadline.py python, run where this hook ran, answers its stdout and the hold and
+	// observation files its guard published, recorded (pyoracle). Reservations and observation
+	// files remain real, not mocked.
+	paths, err := filepath.Glob(filepath.Join(home, "markers", "*", "*", "hook", "s", "t", "*.json"))
+	if err != nil || len(paths) != 2 {
+		t.Fatal(paths, err)
+	}
+	files := map[string]string{}
+	for _, path := range paths {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		files[filepath.Base(path)] = string(raw)
+	}
+	if _, ok := files["hold.json"]; !ok {
+		t.Fatal(paths)
+	}
+	raw := pyoracle.Answer(t, "python", func() ([]byte, error) {
+		return pythonScript(t, nil, []byte(output), "testdata/answered_deadline.py", home, "python")
+	}, pyoracle.Substitute(home, "<HOME>"))
+	var python struct {
+		Stdout string            `json:"stdout"`
+		Files  map[string]string `json:"files"`
+	}
+	if err := json.Unmarshal(raw, &python); err != nil {
+		t.Fatalf("%v: %s", err, raw)
+	}
+	if output == "" || python.Stdout != output || !maps.Equal(python.Files, files) {
+		t.Fatalf("go %q %v\npython %q %v", output, files, python.Stdout, python.Files)
 	}
 }

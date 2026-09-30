@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 // Every DSP test replays its cli-shape fixtures (contract/fixtures/cli-shape/test_dispositions__*)
@@ -266,18 +268,21 @@ func Test25_DSP11_the_selectors(t *testing.T) {
 	}
 	var stderr bytes.Buffer
 	ExecuteAs(ctx(), "codex-session-relay", []string{"--state", dir, "dispositions-show"}, &bytes.Buffer{}, &stderr, nil)
-	root, err := filepath.Abs("../../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	oracle := exec.Command(filepath.Join(root, ".venv/bin/python"), "-m", "codex_session_relay.cli", "dispositions-show")
-	var want bytes.Buffer
-	oracle.Stderr = &want
-	if err := oracle.Run(); err == nil {
-		t.Fatal("Python accepted missing selector")
-	}
-	if stderr.String() != want.String() {
-		t.Fatalf("selector byte diff\nGo=%q\nPython=%q", stderr.String(), want.String())
+	want := pyoracle.Answer(t, "dispositions-show", func() ([]byte, error) {
+		root, err := filepath.Abs("../../..")
+		if err != nil {
+			return nil, err
+		}
+		oracle := exec.Command(filepath.Join(root, ".venv/bin/python"), "-m", "codex_session_relay.cli", "dispositions-show")
+		var want bytes.Buffer
+		oracle.Stderr = &want
+		if err := oracle.Run(); err == nil {
+			return nil, errors.New("Python accepted missing selector")
+		}
+		return want.Bytes(), nil
+	})
+	if stderr.String() != string(want) {
+		t.Fatalf("selector byte diff\nGo=%q\nPython=%q", stderr.String(), want)
 	}
 }
 

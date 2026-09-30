@@ -3,6 +3,7 @@ package argparse
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"math"
 	"math/big"
 	"os/exec"
@@ -10,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 // Accepted values are compared as typed numbers, not just successful parses.
@@ -27,12 +30,15 @@ for kind in (int,float):
    print(str(value) if kind is int else struct.pack('>d',value).hex() if value==value else 'nan')
   except ValueError: print('invalid')
 `
-	cmd := exec.Command(filepath.Join(root, ".venv/bin/python"), "-c", script)
-	cmd.Stdin = bytes.NewReader(request)
-	want, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("oracle: %v %s", err, want)
-	}
+	want := pyoracle.Answer(t, "numbers", func() ([]byte, error) {
+		cmd := exec.Command(filepath.Join(root, ".venv/bin/python"), "-c", script)
+		cmd.Stdin = bytes.NewReader(request)
+		want, err := cmd.CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("oracle: %v %s", err, want)
+		}
+		return want, nil
+	})
 	var got strings.Builder
 	for _, kind := range []string{"int", "float"} {
 		for _, value := range values {

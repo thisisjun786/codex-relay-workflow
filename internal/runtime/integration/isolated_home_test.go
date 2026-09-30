@@ -944,11 +944,17 @@ func (h *isolated) cacheReplacement(t *testing.T) {
 // version is assembled from the pre-native testdata, which keeps both declarations and both
 // launchers; the host's copy stays until the operator removes it. Both reach the Go hook through
 // the installer's settings. It runs the python3 this machine's PATH names, never the tripwires,
-// with a PATH of that interpreter's directory alone.
+// with a PATH of that interpreter's directory alone, and is skipped where there is no python3
+// that runs: that is the host's interpreter running a launcher kept as testdata, not the Python
+// implementation that leaves the repository in todo 44, and it is not replaced by a recording
+// because what it checks is the Go hook journaling the Stop the bootstrap reaches it with.
 func (h *isolated) legacyBootstrap(t *testing.T) {
 	python, err := exec.LookPath("python3")
 	if err != nil {
 		t.Skip("no python3 on PATH to run the pre-native bootstrap")
+	}
+	if err := exec.Command(python, "-c", "pass").Run(); err != nil {
+		t.Skipf("the python3 on PATH does not run (%v), so nothing runs the pre-native bootstrap", err)
 	}
 	preNative := filepath.Join(moduleRoot, "internal", "pluginwiring", "testdata", "pre-native-wiring")
 	old := h.replaceCache(t, "0.4.0+pre-native", map[string]string{

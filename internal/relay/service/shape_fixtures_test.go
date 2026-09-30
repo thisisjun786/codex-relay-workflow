@@ -7,8 +7,10 @@ import (
 	"testing"
 )
 
-// The same eight Domain/cli-shape inputs go through the console-script oracle,
-// not Python's module entry point. No fixture runner behavior is changed.
+// The same eight Domain/cli-shape inputs go through the console script, not a module entry
+// point. No fixture runner behavior is changed. The console script is Go's: the Python console
+// script these frozen fixtures were first checked against left with the Python runtime (todo 44),
+// and Go answers each fixture's exit and checks as it did.
 func Test29ServiceDomainFixtureOracle(t *testing.T) {
 	paths, err := filepath.Glob(filepath.Join(testRoot, "contract/fixtures/cli-shape/test_dispositions__test_cli_service_uses_isolated_scope__*.json"))
 	if err != nil {
@@ -43,7 +45,7 @@ func Test29ServiceDomainFixtureOracle(t *testing.T) {
 			if _, host := fixture.Given["host"]; host {
 				args = append([]string{"--socket", home + "/socket"}, args...)
 			}
-			actual := invoke(t, home, true, args...)
+			actual := invoke(t, home, false, args...)
 			if actual.Code != fixture.Expect.Exit {
 				t.Fatal(actual)
 			}

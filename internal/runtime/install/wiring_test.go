@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -40,6 +41,23 @@ func preNativePayload(t *testing.T) string {
 	write(t, filepath.Join(dir, "wiring", "crw_stop_hook.py"), readFile(t, preNativeWiring("crw_stop_hook.py")))
 	return dir
 }
+
+// runnablePython3 is the python3 on PATH when it runs, or "" when there is none or it does not
+// run. The pre-native launchers are Python scripts that a turn or session which cached the
+// pre-native declaration still runs, with this host's own interpreter, until the retention scan
+// clears them; the tests that start them are skipped on a host without one. They are not the
+// Python implementation (which leaves the repository in todo 44) but the host's interpreter
+// running a launcher kept as testdata.
+var runnablePython3 = sync.OnceValue(func() string {
+	found, err := exec.LookPath("python3")
+	if err != nil {
+		return ""
+	}
+	if err := exec.Command(found, "-c", "pass").Run(); err != nil {
+		return ""
+	}
+	return found
+})
 
 // stopCommandIn is the Stop command a declaration file registers, as Codex caches it.
 func stopCommandIn(t *testing.T, path string) string {
@@ -155,8 +173,8 @@ func TestTheNativeStopCommandJournalsTheStopThroughThePointer(t *testing.T) {
 // /usr/bin/env that reaches the Go hook through the pointer with the settings path as its
 // argument, and the hook journals the Stop.
 func TestLegacyStopLaunchersReachTheGoHook(t *testing.T) {
-	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skip("python3 runs the legacy launchers")
+	if runnablePython3() == "" {
+		t.Skip("no python3 that runs on PATH: the legacy launchers are Python scripts the host's interpreter runs")
 	}
 	h := newHost(t)
 	h.mustInstall(t, "install", archive(t, "0.9.0", ""))
@@ -240,8 +258,8 @@ var bridgeLaunchers = []bridgeLauncher{
 func TestTheWiringLaunchersStartTheGoBridgeUnderTheRecordedPolicy(t *testing.T) {
 	for _, launcher := range bridgeLaunchers {
 		t.Run(launcher.name, func(t *testing.T) {
-			if _, err := exec.LookPath("python3"); launcher.python && err != nil {
-				t.Skip("python3 runs the packaged bridge launcher")
+			if launcher.python && runnablePython3() == "" {
+				t.Skip("no python3 that runs on PATH: the legacy bridge launcher is a Python script the host's interpreter runs")
 			}
 			h := newHost(t)
 			h.mustInstall(t, "install", archive(t, "0.9.0", ""))

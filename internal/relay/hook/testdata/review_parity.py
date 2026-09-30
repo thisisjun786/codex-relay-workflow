@@ -16,8 +16,15 @@ import time
 
 from typing import Any
 
-BINARY, root_arg, base_arg, GROUP = sys.argv[1:]
+BINARY, root_arg, base_arg, GROUP = sys.argv[1:5]
 ROOT, BASE = Path(root_arg), Path(base_arg)
+# Python's side alone, recorded by the Go test (internal/testsupport/pyoracle): each pair's
+# Python answer and snapshot, each Python CLI outcome, in order; the native side is not run.
+PYTHON_ONLY = sys.argv[5:] == ['python']
+RECORDED = []
+ANSWER = sys.stdout
+if PYTHON_ONLY:
+    sys.stdout = sys.stderr
 sys.path.insert(0, str(ROOT / 'scripts'))
 completion = importlib.import_module('crw_runtime.completion')
 
@@ -134,6 +141,9 @@ def pair(home, cfg, payload, env, args=(), mask=0o022, directories=False, respon
     pyout = invoke('python', home, payload, env, args, mask)
     expected = snapshot(home, directories)
     clear(home)
+    if PYTHON_ONLY:
+        RECORDED.append(dict(kind='pair', stdout=pyout.decode(), snapshot=json.loads(expected)))
+        return json.loads(expected)
     with peer(Path(cfg['dbPath']).parent / 'control.sock', response):
         goout = invoke('go', home, payload, env, args, mask)
     actual = snapshot(home, directories)
@@ -165,7 +175,7 @@ def paths(group):
         if name == 'relative_arg': expected = str(path)
         if name == 'symlink': expected = str(home / 'link.json')
         assert result['row']['value']['configuration'] == expected, result
-        if group == 'D2':
+        if group == 'D2' and not PYTHON_ONLY:
             clear(home)
             invoke('go', home, payload, env, args)  # no socket: decision-22 reader path
             [p] = (home / 'journal').glob('*/*.json')
@@ -193,6 +203,9 @@ def constants():
         args = ['guard-evaluate', '--marker-root', str(home / 'markers'), '--now', '2026-01-01T00:00:00Z', '--no-record']
         raw = json.dumps(dict(session_id=value, turn_id=value, extra=[value])).encode()
         py = subprocess.run([sys.executable, '-m', 'codex_session_relay.cli', *args], input=raw, env=env, capture_output=True, timeout=10)
+        if PYTHON_ONLY:
+            RECORDED.append(dict(kind='cli', code=py.returncode, stdout=py.stdout.decode(), stderr=py.stderr.decode()))
+            continue
         go = subprocess.run([BINARY, 'relay', *args], input=raw, env=env, capture_output=True, timeout=10)
         assert (py.returncode, py.stdout, py.stderr) == (go.returncode, go.stdout, go.stderr), (py, go)
         print(name, 'all loaders equal')
@@ -221,6 +234,9 @@ def dial_errors():
         source = 'import sys,runpy;sys.path.insert(0,sys.argv[1]);from crw_runtime import completion;from unittest.mock import patch;import errno,os\nsys.argv=["completion_hook.py"]\nwith patch.object(completion.subprocess,"Popen",side_effect=OSError(' + str(number) + ',os.strerror(' + str(number) + '),' + repr(str(sock)) + ')):\n runpy.run_module("completion_hook",run_name="__main__")'
         invoke('python', home, payload, env, extra=source)
         expected = snapshot(home); clear(home)
+        if PYTHON_ONLY:
+            RECORDED.append(dict(kind='snapshot', snapshot=json.loads(expected)))
+            continue
         invoke('go', home, payload, env)
         actual = snapshot(home); assert expected == actual, (expected, actual)
         out = subprocess.run([sys.executable, str(ROOT / 'scripts/stop_events.py'), '--journal-root', str(home / 'journal')], capture_output=True, timeout=10)
@@ -236,12 +252,15 @@ def utf8():
         # Strict UTF-8 stdin is the Python relay's supported environment.
         env['PYTHONIOENCODING'] = 'utf-8:strict'
         py = subprocess.run([sys.executable, '-m', 'codex_session_relay.cli', *args], input=raw, env=env, capture_output=True, timeout=10)
+        assert py.returncode == 3
+        if PYTHON_ONLY:
+            RECORDED.append(dict(kind='cli', code=py.returncode, stdout=py.stdout.decode(), stderr=py.stderr.decode()))
+            continue
         go = subprocess.run([BINARY, 'relay', *args], input=raw, env=env, capture_output=True, timeout=10)
         assert (py.returncode, py.stdout, py.stderr) == (go.returncode, go.stdout, go.stderr), (py, go)
-        assert py.returncode == 3
     # Settings environment must never affect guard-evaluate's independent inputs.
     env['CRW_COMPLETION_HOOK_CONFIG'] = str(home / 'missing')
-    for command in [[sys.executable, '-m', 'codex_session_relay.cli'], [BINARY, 'relay']]:
+    for command in [[sys.executable, '-m', 'codex_session_relay.cli']] + ([] if PYTHON_ONLY else [[BINARY, 'relay']]):
         out = subprocess.run([*command, *args, '--now', '2026-01-01T00:00:00Z'], input=b'{}', env=env, capture_output=True, timeout=10)
         assert out.returncode == 0 and json.loads(out.stdout)['state'] == 'unmanaged'
     print('stdin host errors equal; guard ignores hook settings')
@@ -279,3 +298,5 @@ elif GROUP == 'D13':
     assert completion.stop_events([home / 'journal']) == original
     print('timeout reader result is unchanged after replacing only detail')
 else: raise AssertionError(GROUP)
+if PYTHON_ONLY:
+    ANSWER.write(json.dumps(RECORDED))

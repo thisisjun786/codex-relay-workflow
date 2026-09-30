@@ -4,32 +4,22 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
-func reviewPython(t *testing.T, id string) {
-	t.Helper()
-	home := hookHome(t, 5)
-	built := binary(t) // built before the timeout starts, which is for the comparison
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, python(t), "testdata/review_parity.py", built, testRoot, home, id)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("%s %v\n%s", id, err, out)
-	}
-	t.Logf("%s", out)
-}
 func Test33ReviewD1(t *testing.T)      { reviewPython(t, "D1") }
 func Test33ReviewD2(t *testing.T)      { reviewPython(t, "D2") }
 func Test33ReviewD3(t *testing.T)      { reviewPython(t, "D3") }
@@ -46,13 +36,11 @@ func Test33ReviewD1Status(t *testing.T) {
 		got := Status(context.Background(), "", env, "Stop")["configuration"].(map[string]any)
 		script := `import json,sys;sys.path.insert(0,sys.argv[1]);from crw_runtime import completion;e=json.loads(sys.argv[2]);s=completion.status(environ=e);print(json.dumps({'configuration':s['configuration']['configuration'],'value':s['configuration']['value']}))`
 		raw, _ := json.Marshal(env)
-		cmd := exec.Command(python(t), "-c", script, filepath.Join(testRoot, "scripts"), string(raw))
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("%v %s", err, out)
-		}
+		out := pyoracle.Answer(t, "override="+strconv.FormatBool(override != ""), func() ([]byte, error) {
+			return pythonScript(t, nil, nil, "-c", script, filepath.Join(testRoot, "scripts"), string(raw))
+		}, pyoracle.Substitute(home, "<HOME>"))
 		var want map[string]any
-		if err = json.Unmarshal(out, &want); err != nil {
+		if err := json.Unmarshal(out, &want); err != nil {
 			t.Fatal(err)
 		}
 		if got["configuration"] != want["configuration"] || got["value"] != want["value"] {
@@ -73,11 +61,9 @@ func Test33ReviewD3Keys(t *testing.T) {
 			}
 			v := value.([]any)
 			key := EventKey(v[0], v[1], v[2], v[3])
-			cmd := exec.Command(python(t), "-c", `import json,sys;from codex_session_relay.stopadapter import event_key;v=json.loads(sys.argv[1]);print(event_key(*v));print(json.dumps(v,separators=(',',':')))`, raw)
-			out, err := cmd.CombinedOutput()
-			if err != nil {
-				t.Fatalf("%v %s", err, out)
-			}
+			out := pyoracle.Answer(t, raw, func() ([]byte, error) {
+				return pythonScript(t, nil, nil, "-c", `import json,sys;from codex_session_relay.stopadapter import event_key;v=json.loads(sys.argv[1]);print(event_key(*v));print(json.dumps(v,separators=(',',':')))`, raw)
+			})
 			want := key + "\n" + evidence.Dumps(v, true, false, true) + "\n"
 			if string(out) != want {
 				t.Fatalf("%s != %s", out, want)
@@ -89,10 +75,11 @@ func Test33ReviewD3Keys(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		cmd := exec.Command(python(t), "-c", `import json,sys;print(json.dumps(json.loads(sys.argv[1]),separators=(',',':')))`, raw)
-		out, err := cmd.CombinedOutput()
-		if err != nil || string(out) != evidence.Dumps(v, true, false, true)+"\n" {
-			t.Fatalf("%v %s %v", err, out, v)
+		out := pyoracle.Answer(t, raw, func() ([]byte, error) {
+			return pythonScript(t, nil, nil, "-c", `import json,sys;print(json.dumps(json.loads(sys.argv[1]),separators=(',',':')))`, raw)
+		})
+		if string(out) != evidence.Dumps(v, true, false, true)+"\n" {
+			t.Fatalf("%s %v", out, v)
 		}
 	}
 }
@@ -101,13 +88,12 @@ func Test33ReviewD4Complaints(t *testing.T) {
 	base := Object{{Key: "configVersion", Value: int64(1)}, {Key: "relayExecutable", Value: "/relay"}, {Key: "markerRoot", Value: "/markers"}, {Key: "mode", Value: "observe"}, {Key: "owner", Value: "plugin"}, {Key: "adapterInterpreter", Value: "/python"}, {Key: "adapterEntryPoint", Value: "/entry"}}
 	for _, budget := range []any{int64(7), 7.0001, int64(8), int64(9), true, math.NaN(), math.Inf(1), math.Inf(-1), json.Number("999999999999999999999999")} {
 		cfg := set(append(Object{}, base...), "timeoutSeconds", budget)
-		cmd := exec.Command(python(t), "-c", `import json,sys;sys.path.insert(0,sys.argv[1]);from crw_runtime.completion import complaints;print(json.dumps(complaints(json.loads(sys.argv[2]))))`, filepath.Join(testRoot, "scripts"), evidence.Dumps(cfg, false, false, true))
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("%v %s", err, out)
-		}
+		settings := evidence.Dumps(cfg, false, false, true)
+		out := pyoracle.Answer(t, settings, func() ([]byte, error) {
+			return pythonScript(t, nil, nil, "-c", `import json,sys;sys.path.insert(0,sys.argv[1]);from crw_runtime.completion import complaints;print(json.dumps(complaints(json.loads(sys.argv[2]))))`, filepath.Join(testRoot, "scripts"), settings)
+		})
 		var want []string
-		if err = json.Unmarshal(out, &want); err != nil {
+		if err := json.Unmarshal(out, &want); err != nil {
 			t.Fatal(err)
 		}
 		if got := Complaints(cfg); !reflect.DeepEqual(got, want) {
@@ -154,10 +140,27 @@ func Test33ReviewD9Late(t *testing.T) {
 	if len(rows) != 1 || rows[0]["adapterOutcome"] != "stdin_unreadable" {
 		t.Fatal(rows)
 	}
+	// Signal exactly when the Python entry point starts its stdin read, then supply the same
+	// delayed bytes. Python reaches invoke_guard; Go does not. The outcome of the row Python
+	// journals is recorded (pyoracle).
+	outcomes := pyoracle.Answer(t, "python_outcomes", func() ([]byte, error) {
+		return pythonLateStdin(t, home)
+	})
+	if string(outcomes) != `["guard_answered"]` {
+		t.Fatalf("Python journaled %s", outcomes)
+	}
+}
+
+// pythonLateStdin runs Python's completion_hook in home with its stdin arriving 300ms after it
+// starts reading, and answers the adapterOutcome of each row it journaled.
+func pythonLateStdin(t *testing.T, home string) ([]byte, error) {
+	before := map[string]bool{}
+	paths, _ := filepath.Glob(filepath.Join(home, "journal", "[0-9]*", "*.json"))
+	for _, path := range paths {
+		before[path] = true
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	// Signal exactly when the Python entry point starts its stdin read, then
-	// supply the same delayed bytes. Python reaches invoke_guard; Go does not.
 	cmd := exec.CommandContext(ctx, python(t), "-c", `import sys,runpy,os
 sys.path.insert(0,sys.argv[1])
 from crw_runtime import completion
@@ -174,41 +177,50 @@ with patch.object(completion,'invoke_guard',return_value={'ending':'exited','cod
 	cmd.Env = hookEnv(home)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		t.Fatal(err)
+		return nil, err
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		t.Fatal(err)
+		return nil, err
 	}
 	if err = cmd.Start(); err != nil {
-		t.Fatal(err)
+		return nil, err
 	}
 	var signal [1]byte
 	if _, err = io.ReadFull(stderr, signal[:]); err != nil || signal[0] != 'R' {
-		t.Fatal(err, signal)
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return nil, fmt.Errorf("the Python entry point did not start reading: %v %q", err, signal)
 	}
-	pyTimer := time.NewTimer(300 * time.Millisecond)
-	defer pyTimer.Stop()
-	<-pyTimer.C
+	timer := time.NewTimer(300 * time.Millisecond)
+	defer timer.Stop()
+	<-timer.C
 	if _, err = io.WriteString(stdin, `{}`); err != nil {
-		t.Fatal(err)
+		return nil, err
 	}
 	if err = stdin.Close(); err != nil {
-		t.Fatal(err)
+		return nil, err
 	}
 	if err = cmd.Wait(); err != nil {
-		t.Fatal(err)
+		return nil, err
 	}
-	rows = rowsAt(t, home)
-	answered := 0
-	for _, row := range rows {
-		if row["adapterOutcome"] == "guard_answered" {
-			answered++
+	outcomes := []any{}
+	paths, _ = filepath.Glob(filepath.Join(home, "journal", "[0-9]*", "*.json"))
+	for _, path := range paths {
+		if before[path] {
+			continue
 		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		var row map[string]any
+		if err = json.Unmarshal(raw, &row); err != nil {
+			return nil, err
+		}
+		outcomes = append(outcomes, row["adapterOutcome"])
 	}
-	if len(rows) != 2 || answered != 1 {
-		t.Fatal(rows)
-	}
+	return json.Marshal(outcomes)
 }
 
 type signalledReader struct {
