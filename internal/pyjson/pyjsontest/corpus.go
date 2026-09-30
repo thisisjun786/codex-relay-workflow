@@ -296,8 +296,13 @@ func stringsIn(value any) []string {
 			docs = append(docs, stringsIn(item)...)
 		}
 	case map[string]any:
-		for _, item := range v {
-			docs = append(docs, stringsIn(item)...)
+		keys := make([]string, 0, len(v))
+		for key := range v {
+			keys = append(keys, key)
+		}
+		slices.Sort(keys)
+		for _, key := range keys {
+			docs = append(docs, stringsIn(v[key])...)
 		}
 	}
 	return docs

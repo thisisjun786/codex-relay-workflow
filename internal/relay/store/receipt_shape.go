@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 var lowerDigest = regexp.MustCompile(`^[0-9a-f]{64}$`)
@@ -41,26 +43,26 @@ type ReceiptClaim struct {
 	Producer       string
 	Turn           TurnReference
 	ManifestRef    *string
-	manifest       jsonValue
-	document       jsonValue
+	manifest       any
+	document       any
 }
 
 var receiptFields = []string{"eventId", "relationshipId", "executionGeneration", "attempt", "revisionHash", "outcome", "producer", "turnRef", "criteria", "emittedAt", "manifest", "manifestRef"}
 var requiredReceiptFields = []string{"emittedAt", "eventId", "executionGeneration", "outcome", "producer", "relationshipId", "revisionHash", "turnRef"}
 
 // pythonStr is str(value) for the scalars a regex check can see.
-func pythonStr(v jsonValue) string {
-	if text, ok := v.text(); ok {
+func pythonStr(v any) string {
+	if text, ok := v.(string); ok {
 		return text
 	}
-	if number, ok := v.integer(); ok {
+	if number, ok := jsonInteger(v); ok {
 		return strconv.FormatInt(number, 10)
 	}
 	return ""
 }
 
-func nonBlank(v jsonValue) (string, bool) {
-	text, ok := v.text()
+func nonBlank(v any) (string, bool) {
+	text, ok := v.(string)
 	return text, ok && strings.TrimSpace(text) != ""
 }
 
@@ -68,13 +70,14 @@ func nonBlank(v jsonValue) (string, bool) {
 // becomes a malformed_receipt refusal rather than a crash.
 func ParseReceipt(data []byte) (ReceiptClaim, error) {
 	document, err := decodeOrdered(data)
-	if err != nil || document.kind != jsonObject {
+	object, isObject := document.(pyjson.Object)
+	if err != nil || !isObject {
 		return ReceiptClaim{}, refuse(ReasonMalformedReceipt, "a receipt is a JSON object")
 	}
 	var unknown, missing []string
-	for _, f := range document.object {
-		if !slices.Contains(receiptFields, f.key) {
-			unknown = append(unknown, f.key)
+	for _, f := range object {
+		if !slices.Contains(receiptFields, f.Key) {
+			unknown = append(unknown, f.Key)
 		}
 	}
 	if len(unknown) > 0 {
@@ -82,21 +85,21 @@ func ParseReceipt(data []byte) (ReceiptClaim, error) {
 		return ReceiptClaim{}, refuse(ReasonMalformedReceipt, "unknown fields %q", unknown)
 	}
 	for _, key := range requiredReceiptFields {
-		if _, ok := document.field(key); !ok {
+		if _, ok := object.Lookup(key); !ok {
 			missing = append(missing, key)
 		}
 	}
 	if len(missing) > 0 {
 		return ReceiptClaim{}, refuse(ReasonMalformedReceipt, "missing fields %q", missing)
 	}
-	get := func(key string) jsonValue { v, _ := document.field(key); return v }
+	get := object.Get
 	claim := ReceiptClaim{document: document, manifest: get("manifest")}
 	claim.EventID = pythonStr(get("eventId"))
 	if !eventDigest.MatchString(claim.EventID) {
 		return ReceiptClaim{}, refuse(ReasonMalformedReceipt, "eventId must be 32 lowercase hex characters")
 	}
 	var ok bool
-	if claim.RelationshipID, ok = get("relationshipId").text(); !ok || claim.RelationshipID == "" {
+	if claim.RelationshipID, ok = get("relationshipId").(string); !ok || claim.RelationshipID == "" {
 		return ReceiptClaim{}, refuse(ReasonMalformedReceipt, "relationshipId must be a string")
 	}
 	generation := receiptInteger(get("executionGeneration"))
@@ -111,17 +114,17 @@ func ParseReceipt(data []byte) (ReceiptClaim, error) {
 	if claim.RevisionHash = pythonStr(get("revisionHash")); !lowerDigest.MatchString(claim.RevisionHash) {
 		return ReceiptClaim{}, refuse(ReasonMalformedReceipt, "revisionHash must be 64 lowercase hex characters")
 	}
-	outcome, _ := get("outcome").text()
+	outcome, _ := get("outcome").(string)
 	if claim.Outcome = ObservationOutcome(outcome); !slices.Contains(receiptOutcomes, claim.Outcome) {
 		return ReceiptClaim{}, refuse(ReasonMalformedReceipt, "unknown outcome %q", outcome)
 	}
-	if claim.Producer, _ = get("producer").text(); claim.Producer != ProducerChild && claim.Producer != ProducerDaemon {
+	if claim.Producer, _ = get("producer").(string); claim.Producer != ProducerChild && claim.Producer != ProducerDaemon {
 		return ReceiptClaim{}, refuse(ReasonMalformedReceipt, "unknown producer %q", claim.Producer)
 	}
 	if _, ok := nonBlank(get("emittedAt")); !ok {
 		return ReceiptClaim{}, refuse(ReasonMalformedReceipt, "emittedAt must be a timestamp")
 	}
-	if attempt, present := document.field("attempt"); present && !attempt.isNull() {
+	if attempt, present := object.Lookup("attempt"); present && attempt != nil {
 		n := receiptInteger(attempt)
 		if n == nil || n.Sign() < 1 {
 			return ReceiptClaim{}, refuse(ReasonMalformedReceipt, "attempt must be a positive integer or null")
@@ -132,7 +135,7 @@ func ParseReceipt(data []byte) (ReceiptClaim, error) {
 			claim.bigAttempt = n
 		}
 	}
-	if reference, present := document.field("manifestRef"); present && !reference.isNull() {
+	if reference, present := object.Lookup("manifestRef"); present && reference != nil {
 		text, ok := nonBlank(reference)
 		if !ok {
 			return ReceiptClaim{}, refuse(ReasonMalformedReceipt, "manifestRef must be a path")
@@ -147,8 +150,8 @@ func ParseReceipt(data []byte) (ReceiptClaim, error) {
 	return claim, nil
 }
 
-func receiptInteger(v jsonValue) *big.Int {
-	n, ok := v.scalar.(json.Number)
+func receiptInteger(v any) *big.Int {
+	n, ok := v.(json.Number)
 	if !ok || strings.ContainsAny(string(n), ".eE") {
 		return nil
 	}
@@ -156,13 +159,14 @@ func receiptInteger(v jsonValue) *big.Int {
 	return value
 }
 
-func parseTurnRef(turn jsonValue) (TurnReference, error) {
-	if turn.kind != jsonObject {
+func parseTurnRef(turn any) (TurnReference, error) {
+	object, isObject := turn.(pyjson.Object)
+	if !isObject {
 		return TurnReference{}, refuse(ReasonMalformedReceipt, "turnRef must be an object")
 	}
-	keys := make([]string, 0, len(turn.object))
-	for _, f := range turn.object {
-		keys = append(keys, f.key)
+	keys := make([]string, 0, len(object))
+	for _, f := range object {
+		keys = append(keys, f.Key)
 	}
 	slices.Sort(keys)
 	if !slices.Equal(keys, []string{"threadId", "turnId", "turnStatus"}) {
@@ -170,16 +174,13 @@ func parseTurnRef(turn jsonValue) (TurnReference, error) {
 	}
 	var ref TurnReference
 	var ok bool
-	thread, _ := turn.field("threadId")
-	if ref.ThreadID, ok = nonBlank(thread); !ok {
+	if ref.ThreadID, ok = nonBlank(object.Get("threadId")); !ok {
 		return TurnReference{}, refuse(ReasonMalformedReceipt, "turnRef.threadId must be a non-empty string")
 	}
-	id, _ := turn.field("turnId")
-	if ref.TurnID, ok = nonBlank(id); !ok {
+	if ref.TurnID, ok = nonBlank(object.Get("turnId")); !ok {
 		return TurnReference{}, refuse(ReasonMalformedReceipt, "turnRef.turnId must be a non-empty string")
 	}
-	status, _ := turn.field("turnStatus")
-	ref.Status, _ = status.text()
+	ref.Status, _ = object.Get("turnStatus").(string)
 	if !slices.Contains([]string{"completed", "interrupted", "failed", "inProgress"}, ref.Status) {
 		return TurnReference{}, refuse(ReasonMalformedReceipt, "unknown turnStatus %q", ref.Status)
 	}
@@ -187,23 +188,24 @@ func parseTurnRef(turn jsonValue) (TurnReference, error) {
 }
 
 // validateManifest is ReceiptIntake._validate_manifest.
-func validateManifest(records []jsonValue) ([]ManifestEntry, error) {
+func validateManifest(records []any) ([]ManifestEntry, error) {
 	entries := make([]ManifestEntry, 0, len(records))
 	for index, record := range records {
-		if record.kind != jsonObject {
+		object, isObject := record.(pyjson.Object)
+		if !isObject {
 			return nil, refuse(ReasonMalformedReceipt, "manifest[%d] must be an object", index)
 		}
-		for _, f := range record.object {
-			if f.key != "path" && f.key != "sha256" && f.key != "bytes" {
+		for _, f := range object {
+			if f.Key != "path" && f.Key != "sha256" && f.Key != "bytes" {
 				return nil, refuse(ReasonMalformedReceipt, "manifest[%d] has unknown fields", index)
 			}
 		}
-		pathValue, hasPath := record.field("path")
-		digestValue, hasDigest := record.field("sha256")
+		pathValue, hasPath := object.Lookup("path")
+		digestValue, hasDigest := object.Lookup("sha256")
 		if !hasPath || !hasDigest {
 			return nil, refuse(ReasonMalformedReceipt, "manifest[%d] is missing path or sha256", index)
 		}
-		declared, ok := pathValue.text()
+		declared, ok := pathValue.(string)
 		if !ok || !strings.HasPrefix(declared, "/") {
 			return nil, refuse(ReasonMalformedReceipt, "manifest[%d].path must be an absolute path", index)
 		}
@@ -211,8 +213,8 @@ func validateManifest(records []jsonValue) ([]ManifestEntry, error) {
 		if !lowerDigest.MatchString(entry.SHA256) {
 			return nil, refuse(ReasonMalformedReceipt, "manifest[%d].sha256 must be 64 lowercase hex characters", index)
 		}
-		if size, present := record.field("bytes"); present && !size.isNull() {
-			count, ok := size.integer()
+		if size, present := object.Lookup("bytes"); present && size != nil {
+			count, ok := jsonInteger(size)
 			if !ok || count < 0 {
 				return nil, refuse(ReasonMalformedReceipt, "manifest[%d].bytes must be a non-negative integer or null", index)
 			}

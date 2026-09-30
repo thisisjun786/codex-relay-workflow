@@ -1,17 +1,15 @@
 package managed
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -92,58 +90,10 @@ func canonicalMarkerPath(name string) (string, error) {
 		prefix = parent
 	}
 }
+
+// compactPythonJSON is the request fingerprint's canonical text: sorted keys and compact
+// separators, every scalar as encoding/json's json.Marshal writes it with its HTML escapes put
+// back (pyjson Marshal, UnescapeHTML), the bytes every stored fingerprint was taken over.
 func compactPythonJSON(value any) ([]byte, error) {
-	var buffer bytes.Buffer
-	var encode func(any) error
-	encode = func(v any) error {
-		switch x := v.(type) {
-		case map[string]any:
-			buffer.WriteByte('{')
-			keys := make([]string, 0, len(x))
-			for k := range x {
-				keys = append(keys, k)
-			}
-			sort.Strings(keys)
-			for i, key := range keys {
-				if i > 0 {
-					buffer.WriteByte(',')
-				}
-				name, _ := json.Marshal(key)
-				name = bytes.ReplaceAll(name, []byte(`\u003c`), []byte("<"))
-				name = bytes.ReplaceAll(name, []byte(`\u003e`), []byte(">"))
-				name = bytes.ReplaceAll(name, []byte(`\u0026`), []byte("&"))
-				buffer.Write(name)
-				buffer.WriteByte(':')
-				if err := encode(x[key]); err != nil {
-					return err
-				}
-			}
-			buffer.WriteByte('}')
-		case []any:
-			buffer.WriteByte('[')
-			for i, item := range x {
-				if i > 0 {
-					buffer.WriteByte(',')
-				}
-				if err := encode(item); err != nil {
-					return err
-				}
-			}
-			buffer.WriteByte(']')
-		default:
-			data, err := json.Marshal(x)
-			if err != nil {
-				return err
-			}
-			data = bytes.ReplaceAll(data, []byte(`\u003c`), []byte("<"))
-			data = bytes.ReplaceAll(data, []byte(`\u003e`), []byte(">"))
-			data = bytes.ReplaceAll(data, []byte(`\u0026`), []byte("&"))
-			buffer.Write(data)
-		}
-		return nil
-	}
-	if err := encode(value); err != nil {
-		return nil, err
-	}
-	return buffer.Bytes(), nil
+	return pyjson.Encode(value, pyjson.Options{Compact: true, SortKeys: true, Marshal: true, UnescapeHTML: true})
 }

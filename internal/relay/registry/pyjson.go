@@ -1,18 +1,16 @@
 package registry
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math"
-	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 // Decoded JSON keeps Python's shapes: an object is a contract.OrderedObject (a dict keeps its
@@ -22,66 +20,14 @@ import (
 //lint:ignore ST1005 json/decoder.py:340 caller-visible message kept byte-identical to Python
 var errTrailing = errors.New("Extra data")
 
-// decodeJSON is json.loads for one document.
+// decodeJSON is json.loads as the registry reads a stored document: encoding/json's reading
+// (pyjson.Loads), a refusal in its words and "Extra data" for what follows the value.
 func decodeJSON(data []byte) (any, error) {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	value, err := decodeValue(decoder)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+	value, err := pyjson.Loads(string(data), pyjson.LoadOptions{})
+	if pyjson.ErrTrailing(err) {
 		return nil, errTrailing
 	}
-	return value, nil
-}
-
-func decodeValue(decoder *json.Decoder) (any, error) {
-	token, err := decoder.Token()
-	if err != nil {
-		return nil, err
-	}
-	switch t := token.(type) {
-	case json.Delim:
-		if t == '[' {
-			list := []any{}
-			for decoder.More() {
-				item, err := decodeValue(decoder)
-				if err != nil {
-					return nil, err
-				}
-				list = append(list, item)
-			}
-			_, err := decoder.Token()
-			return list, err
-		}
-		object := contract.OrderedObject{}
-		for decoder.More() {
-			key, err := decoder.Token()
-			if err != nil {
-				return nil, err
-			}
-			value, err := decodeValue(decoder)
-			if err != nil {
-				return nil, err
-			}
-			// A repeated key keeps its first position and takes the last value, as a dict does.
-			object = setField(object, key.(string), value)
-		}
-		_, err := decoder.Token()
-		return object, err
-	case json.Number:
-		if strings.ContainsAny(string(t), ".eE") {
-			f, err := t.Float64()
-			if err != nil && !math.IsInf(f, 0) {
-				return nil, err
-			}
-			return f, nil
-		}
-		return t, nil
-	default:
-		return t, nil
-	}
+	return value, err
 }
 
 func setField(object contract.OrderedObject, key string, value any) contract.OrderedObject {
@@ -117,138 +63,8 @@ func copyObject(object contract.OrderedObject) contract.OrderedObject {
 	return append(contract.OrderedObject{}, object...)
 }
 
-// pyDumps is json.dumps(value) with the default separators, ensure_ascii and optional sort_keys.
-func pyDumps(value any, sortKeys bool) string {
-	var b strings.Builder
-	writeDumps(&b, value, sortKeys)
-	return b.String()
-}
-
-func writeDumps(b *strings.Builder, value any, sortKeys bool) {
-	switch v := value.(type) {
-	case contract.OrderedObject:
-		fields := v
-		if sortKeys {
-			fields = copyObject(v)
-			slices.SortStableFunc(fields, func(x, y contract.Field) int { return strings.Compare(x.Key, y.Key) })
-		}
-		b.WriteByte('{')
-		for i, field := range fields {
-			if i > 0 {
-				b.WriteString(", ")
-			}
-			writeJSONString(b, field.Key)
-			b.WriteString(": ")
-			writeDumps(b, field.Value, sortKeys)
-		}
-		b.WriteByte('}')
-	case []any:
-		b.WriteByte('[')
-		for i, item := range v {
-			if i > 0 {
-				b.WriteString(", ")
-			}
-			writeDumps(b, item, sortKeys)
-		}
-		b.WriteByte(']')
-	case []string:
-		items := make([]any, len(v))
-		for i, s := range v {
-			items[i] = s
-		}
-		writeDumps(b, items, sortKeys)
-	case string:
-		writeJSONString(b, v)
-	case bool:
-		b.WriteString(strconv.FormatBool(v))
-	case nil:
-		b.WriteString("null")
-	case json.Number:
-		b.WriteString(v.String())
-	case float64:
-		switch {
-		case math.IsNaN(v):
-			b.WriteString("NaN")
-		case math.IsInf(v, 1):
-			b.WriteString("Infinity")
-		case math.IsInf(v, -1):
-			b.WriteString("-Infinity")
-		default:
-			b.WriteString(pyFloat(v))
-		}
-	case int:
-		b.WriteString(strconv.Itoa(v))
-	case int64:
-		b.WriteString(strconv.FormatInt(v, 10))
-	default:
-		fmt.Fprintf(b, "%v", v)
-	}
-}
-
-func writeJSONString(b *strings.Builder, s string) {
-	b.WriteByte('"')
-	// A byte that is not UTF-8 is its surrogate escape and a WTF-8 surrogate its code point
-	// (settings.CodePoint), written as json.dumps writes a lone surrogate, never as U+FFFD.
-	for i := 0; i < len(s); {
-		r, size := settings.CodePoint(s, i)
-		i += size
-		switch {
-		case r == '"':
-			b.WriteString(`\"`)
-		case r == '\\':
-			b.WriteString(`\\`)
-		case r == '\n':
-			b.WriteString(`\n`)
-		case r == '\r':
-			b.WriteString(`\r`)
-		case r == '\t':
-			b.WriteString(`\t`)
-		case r == '\b':
-			b.WriteString(`\b`)
-		case r == '\f':
-			b.WriteString(`\f`)
-		case r < 0x20 || r > 0x7e:
-			if r > 0xffff {
-				r -= 0x10000
-				fmt.Fprintf(b, `\u%04x\u%04x`, 0xd800+(r>>10), 0xdc00+(r&0x3ff))
-			} else {
-				fmt.Fprintf(b, `\u%04x`, r)
-			}
-		default:
-			b.WriteRune(r)
-		}
-	}
-	b.WriteByte('"')
-}
-
-// pyFloat is float.__repr__: fixed notation for exponents in [-4, 16), shortest round trip.
-func pyFloat(v float64) string {
-	if v == 0 {
-		if math.Signbit(v) {
-			return "-0.0"
-		}
-		return "0.0"
-	}
-	exponent := math.Floor(math.Log10(math.Abs(v)))
-	shortest := strconv.FormatFloat(v, 'e', -1, 64)
-	if mantissa, exp, found := strings.Cut(shortest, "e"); found {
-		if n, err := strconv.Atoi(exp); err == nil {
-			exponent = float64(n)
-		}
-		_ = mantissa
-	}
-	if exponent >= -4 && exponent < 16 {
-		text := strconv.FormatFloat(v, 'f', -1, 64)
-		if !strings.Contains(text, ".") {
-			text += ".0"
-		}
-		return text
-	}
-	return shortest
-}
-
 // canonical is settings._canonical: json.dumps(value, sort_keys=True), where 0 and false differ.
-func canonical(value any) string { return pyDumps(value, true) }
+func canonical(value any) string { return pyjson.Dumps(value, pyjson.Options{SortKeys: true}) }
 
 // pyTypeName is type(value).__name__ for a decoded JSON value.
 func pyTypeName(value any) string {
@@ -295,7 +111,7 @@ func pyRepr(value any) string {
 		case math.IsInf(v, -1):
 			return "-inf"
 		}
-		return pyFloat(v)
+		return pyjson.Float(v)
 	case int:
 		return strconv.Itoa(v)
 	case int64:

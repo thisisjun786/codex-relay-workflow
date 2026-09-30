@@ -11,6 +11,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
@@ -212,7 +213,7 @@ func (x *roleRun) step(step roleStep) any {
 		return answerOf(x.r.RecordSettings(ctx(), task, x.build(args[1]), source, role, citation))
 	case "raw_settings":
 		if _, err := x.r.Store.DB.ExecContext(ctx(), "INSERT OR REPLACE INTO authorized_settings (task_id, settings, source, recorded_at) VALUES (?,?,?,?)",
-			arg[string](t, args[0]), pyDumps(x.build(args[1]), false), "test-raw", fakeISO); err != nil {
+			arg[string](t, args[0]), pyjson.Dumps(x.build(args[1]), pyjson.Options{}), "test-raw", fakeISO); err != nil {
 			t.Fatal(err)
 		}
 		return nil

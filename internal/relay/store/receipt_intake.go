@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"math/big"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 // Receipt stages (receipts.py STAGED/FINAL/SUPPRESSED).
@@ -50,15 +52,16 @@ func (in ReceiptIntake) AcceptChildReceiptWith(ctx context.Context, payload []by
 		var refused *RefusedError
 		errors.As(err, &refused)
 		refusal := Refusal{At: in.Now(), Reason: reason, Detail: sql.NullString{String: refused.Detail, Valid: true}, Payload: sql.NullString{String: string(payload), Valid: true}}
-		if document, decodeErr := decodeOrdered(payload); decodeErr == nil && document.kind == jsonObject {
-			if rid, ok := document.field("relationshipId"); ok {
-				refusal.RelationshipID = sql.NullString{String: pythonStr(rid), Valid: !rid.isNull()}
+		document, decodeErr := decodeOrdered(payload)
+		if object, isObject := document.(pyjson.Object); decodeErr == nil && isObject {
+			if rid, ok := object.Lookup("relationshipId"); ok {
+				refusal.RelationshipID = sql.NullString{String: pythonStr(rid), Valid: rid != nil}
 			}
-			if event, ok := document.field("eventId"); ok {
-				refusal.EventID = sql.NullString{String: pythonStr(event), Valid: !event.isNull()}
+			if event, ok := object.Lookup("eventId"); ok {
+				refusal.EventID = sql.NullString{String: pythonStr(event), Valid: event != nil}
 			}
-			if dumped, dumpErr := pythonDumps(document); dumpErr == nil {
-				refusal.Payload.String = dumped
+			if dumped, dumpErr := pyjson.Encode(document, receiptRecord); dumpErr == nil {
+				refusal.Payload.String = string(dumped)
 			}
 		}
 		if recordErr := in.Store.RecordRefusal(ctx, refusal); recordErr != nil {
@@ -135,7 +138,7 @@ func (in ReceiptIntake) accept(ctx context.Context, payload []byte, observation 
 // manifest over real bytes; an execution-only one carries no manifest and the sentinel.
 func (in ReceiptIntake) checkDeliverable(claim ReceiptClaim, relationship Relationship) (sql.NullString, error) {
 	if claim.Outcome != ReadyForReview {
-		if !claim.manifest.isNull() && !(claim.manifest.kind == jsonArray && len(claim.manifest.array) == 0) {
+		if manifest, isList := claim.manifest.([]any); claim.manifest != nil && !(isList && len(manifest) == 0) {
 			return sql.NullString{}, refuse(ReasonManifestForbidden, "an execution-only receipt (%s) carries no manifest, for any producer", claim.Outcome)
 		}
 		if claim.RevisionHash != NoDeliverable {
@@ -143,13 +146,14 @@ func (in ReceiptIntake) checkDeliverable(claim ReceiptClaim, relationship Relati
 		}
 		return sql.NullString{}, nil
 	}
-	if claim.manifest.kind != jsonArray || len(claim.manifest.array) == 0 {
+	manifest, isList := claim.manifest.([]any)
+	if !isList || len(manifest) == 0 {
 		return sql.NullString{}, refuse(ReasonManifestRequired, "a reviewable receipt carries the manifest it hashed")
 	}
 	if claim.RevisionHash == NoDeliverable {
 		return sql.NullString{}, refuse(ReasonOutcomeInconsistent, "a reviewable receipt cannot carry the no-deliverable sentinel")
 	}
-	entries, err := validateManifest(claim.manifest.array)
+	entries, err := validateManifest(manifest)
 	if err != nil {
 		return sql.NullString{}, err
 	}
@@ -208,10 +212,11 @@ func (in ReceiptIntake) requireMinimum(mode PathBinding) (PathBinding, error) {
 // storeEvent is _store_event: re-observing one revision is one fact seen twice.
 func (in ReceiptIntake) storeEvent(ctx context.Context, claim ReceiptClaim, binding sql.NullString, supersedes *string) (StoredReceipt, error) {
 	now := in.Now()
-	record, err := pythonDumps(claim.document)
+	encoded, err := pyjson.Encode(claim.document, receiptRecord)
 	if err != nil {
 		return StoredReceipt{}, fmt.Errorf("serialize receipt: %w", err)
 	}
+	record := string(encoded)
 	stage := StageFinal
 	if claim.Turn.Status == "inProgress" {
 		stage = StageStaged

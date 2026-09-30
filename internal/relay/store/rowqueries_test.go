@@ -3,11 +3,11 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 // Typed row queries the product no longer carries (it reads and writes these tables with its
@@ -444,34 +444,35 @@ func (s *Store) RelationshipRecord(ctx context.Context, id string) (string, erro
 	if err != nil {
 		return "", fmt.Errorf("allowed recipients: %w", err)
 	}
-	scope := []jsonField{{"artifactRoots", roots}, {"allowedRecipients", recipients}}
+	scope := pyjson.Object{{Key: "artifactRoots", Value: roots}, {Key: "allowedRecipients", Value: recipients}}
 	if r.scopeRef.Valid {
-		scope = append(scope, jsonField{"scopeRef", jText(r.scopeRef.String)})
+		scope = append(scope, pyjson.Field{Key: "scopeRef", Value: r.scopeRef.String})
 	}
-	record := []jsonField{
-		{"relationshipId", jText(id)},
-		{"parent", endpoint(r.parent, r.parentHost, r.parentCwd)},
-		{"child", endpoint(r.child, r.childHost, r.childCwd)},
-		{"issueKey", jText(r.issue)},
-		{"status", jText(r.status)},
-		{"createdAt", jText(r.created)},
-		{"executionGeneration", jInt(r.generation)},
-		{"generations", jsonValue{kind: jsonArray, array: generations}},
-		{"authorizedScope", jsonValue{kind: jsonObject, object: scope}},
+	record := pyjson.Object{
+		{Key: "relationshipId", Value: id},
+		{Key: "parent", Value: endpoint(r.parent, r.parentHost, r.parentCwd)},
+		{Key: "child", Value: endpoint(r.child, r.childHost, r.childCwd)},
+		{Key: "issueKey", Value: r.issue},
+		{Key: "status", Value: r.status},
+		{Key: "createdAt", Value: r.created},
+		{Key: "executionGeneration", Value: r.generation},
+		{Key: "generations", Value: generations},
+		{Key: "authorizedScope", Value: scope},
 	}
 	if r.supersedes.Valid {
-		record = append(record, jsonField{"supersedes", jText(r.supersedes.String)})
+		record = append(record, pyjson.Field{Key: "supersedes", Value: r.supersedes.String})
 	}
-	return pythonDumps(jsonValue{kind: jsonObject, object: record})
+	encoded, err := pyjson.Encode(record, receiptRecord)
+	return string(encoded), err
 }
 
-func (s *Store) generationRecords(ctx context.Context, id string) (_ []jsonValue, err error) {
+func (s *Store) generationRecords(ctx context.Context, id string) (_ []any, err error) {
 	rows, err := s.q(ctx).QueryContext(ctx, `SELECT execution_generation,dispatch_request_id,anchor_state,dispatch_turn_id,opened_at,bound_at,reason FROM generations WHERE relationship_id=? ORDER BY execution_generation`, id)
 	if err != nil {
 		return nil, fmt.Errorf("generations of %q: %w", id, err)
 	}
 	defer func() { err = errors.Join(err, rows.Close()) }()
-	var generations []jsonValue
+	generations := []any{}
 	for rows.Next() {
 		var number int64
 		var request, anchor, opened string
@@ -479,34 +480,28 @@ func (s *Store) generationRecords(ctx context.Context, id string) (_ []jsonValue
 		if err := rows.Scan(&number, &request, &anchor, &turn, &opened, &bound, &reason); err != nil {
 			return nil, fmt.Errorf("generation row: %w", err)
 		}
-		generations = append(generations, jsonValue{kind: jsonObject, object: []jsonField{
-			{"executionGeneration", jInt(number)},
-			{"dispatchRequestId", jText(request)},
-			{"anchorState", jText(anchor)},
-			{"dispatchTurnId", jNullable(turn)},
-			{"openedAt", jText(opened)},
-			{"boundAt", jNullable(bound)},
-			{"reason", jNullable(reason)},
-		}})
+		generations = append(generations, pyjson.Object{
+			{Key: "executionGeneration", Value: number},
+			{Key: "dispatchRequestId", Value: request},
+			{Key: "anchorState", Value: anchor},
+			{Key: "dispatchTurnId", Value: jNullable(turn)},
+			{Key: "openedAt", Value: opened},
+			{Key: "boundAt", Value: jNullable(bound)},
+			{Key: "reason", Value: jNullable(reason)},
+		})
 	}
 	return generations, rows.Err()
 }
 
-func endpoint(task, host string, cwd sql.NullString) jsonValue {
-	return jsonValue{kind: jsonObject, object: []jsonField{{"taskId", jText(task)}, {"hostId", jText(host)}, {"cwd", jNullable(cwd)}}}
+func endpoint(task, host string, cwd sql.NullString) pyjson.Object {
+	return pyjson.Object{{Key: "taskId", Value: task}, {Key: "hostId", Value: host}, {Key: "cwd", Value: jNullable(cwd)}}
 }
 
-func jText(text string) jsonValue { return jsonValue{kind: jsonScalar, scalar: text} }
-
-func jInt(number int64) jsonValue {
-	return jsonValue{kind: jsonScalar, scalar: json.Number(strconv.FormatInt(number, 10))}
-}
-
-func jNullable(value sql.NullString) jsonValue {
+func jNullable(value sql.NullString) any {
 	if !value.Valid {
-		return jsonValue{kind: jsonScalar}
+		return nil
 	}
-	return jText(value.String)
+	return value.String
 }
 
 // SupervisorMessageFor is supervisorchannel.py:1457: the message staged for one obligation.

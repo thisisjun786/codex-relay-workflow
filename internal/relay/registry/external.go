@@ -3,11 +3,10 @@ package registry
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"math/big"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 // External relay commands: a package this one cannot import (because it imports this one)
@@ -61,8 +60,5 @@ func PayloadExit(payload contract.OrderedObject, code int) error {
 // DecodeJSON is json.loads into Python-shaped values (objects ordered, integers exact); the
 // error text is JSONDecodeError's.
 func DecodeJSON(raw string) (any, error) {
-	if message := store.PythonJSONError(raw); message != "" {
-		return nil, errors.New(message)
-	}
-	return decodeJSON([]byte(raw))
+	return pyjson.Loads(raw, pyjson.LoadOptions{Python: true})
 }

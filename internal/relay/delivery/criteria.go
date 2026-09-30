@@ -5,11 +5,11 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"fmt"
 	"slices"
 	"sort"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -48,69 +48,11 @@ func criteriaObjs(cs []Criterion) []any {
 	return out
 }
 
-// jsonCompact is json.dumps(..., sort_keys=True, separators=(",", ":"), ensure_ascii=False).
+// jsonCompact is json.dumps(..., sort_keys=True, separators=(",", ":"), ensure_ascii=False), a
+// string read as Go's range reads it (a byte that is not UTF-8 is U+FFFD): the bytes the set digest
+// has always hashed.
 func jsonCompact(v any) string {
-	var b strings.Builder
-	var write func(any)
-	write = func(v any) {
-		switch t := v.(type) {
-		case Obj:
-			sorted := append(Obj(nil), t...)
-			sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Key < sorted[j].Key })
-			b.WriteByte('{')
-			for i, f := range sorted {
-				if i > 0 {
-					b.WriteByte(',')
-				}
-				writeRawString(&b, f.Key)
-				b.WriteByte(':')
-				write(f.Value)
-			}
-			b.WriteByte('}')
-		case []any:
-			b.WriteByte('[')
-			for i, x := range t {
-				if i > 0 {
-					b.WriteByte(',')
-				}
-				write(x)
-			}
-			b.WriteByte(']')
-		case string:
-			writeRawString(&b, t)
-		default:
-			b.WriteString(dumps(v))
-		}
-	}
-	write(v)
-	return b.String()
-}
-
-// writeRawString is a JSON string with ensure_ascii=False: only quote, backslash and controls escape.
-func writeRawString(b *strings.Builder, s string) {
-	b.WriteByte('"')
-	for _, r := range s {
-		switch {
-		case r == '"' || r == '\\':
-			b.WriteByte('\\')
-			b.WriteRune(r)
-		case r == '\n':
-			b.WriteString(`\n`)
-		case r == '\r':
-			b.WriteString(`\r`)
-		case r == '\t':
-			b.WriteString(`\t`)
-		case r == '\b':
-			b.WriteString(`\b`)
-		case r == '\f':
-			b.WriteString(`\f`)
-		case r < 0x20:
-			fmt.Fprintf(b, `\u%04x`, r)
-		default:
-			b.WriteRune(r)
-		}
-	}
-	b.WriteByte('"')
+	return pyjson.Dumps(v, pyjson.Options{Compact: true, SortKeys: true, Unicode: true, Bytes: pyjson.ReplacedAll})
 }
 
 // SetDigest is criteria.set_digest: canonical JSON, so no delimiter can collide two sets.

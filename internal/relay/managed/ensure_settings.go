@@ -6,9 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
-	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -51,64 +50,9 @@ func EnsureSettings(ctx context.Context, s *store.Store, task string, settings m
 	return result, err
 }
 
-// settingsJSON is Python json.dumps(sort_keys=True) for the stored settings text.
+// settingsJSON is Python json.dumps(sort_keys=True) for the stored settings text, every scalar as
+// encoding/json's json.Marshal writes it (pyjson Marshal): the stored authorized_settings bytes.
 func settingsJSON(v any) (string, error) {
-	var b strings.Builder
-	var write func(any) error
-	write = func(value any) error {
-		switch x := value.(type) {
-		case map[string]any:
-			b.WriteByte('{')
-			keys := make([]string, 0, len(x))
-			for key := range x {
-				keys = append(keys, key)
-			}
-			sort.Strings(keys)
-			for i, key := range keys {
-				if i > 0 {
-					b.WriteString(", ")
-				}
-				k, _ := json.Marshal(key)
-				b.Write(k)
-				b.WriteString(": ")
-				if err := write(x[key]); err != nil {
-					return err
-				}
-			}
-			b.WriteByte('}')
-		case []string:
-			b.WriteByte('[')
-			for i, item := range x {
-				if i > 0 {
-					b.WriteString(", ")
-				}
-				if err := write(item); err != nil {
-					return err
-				}
-			}
-			b.WriteByte(']')
-		case []any:
-			b.WriteByte('[')
-			for i, item := range x {
-				if i > 0 {
-					b.WriteString(", ")
-				}
-				if err := write(item); err != nil {
-					return err
-				}
-			}
-			b.WriteByte(']')
-		default:
-			raw, err := json.Marshal(x)
-			if err != nil {
-				return err
-			}
-			b.Write(raw)
-		}
-		return nil
-	}
-	if err := write(v); err != nil {
-		return "", err
-	}
-	return b.String(), nil
+	data, err := pyjson.Encode(v, pyjson.Options{SortKeys: true, Marshal: true})
+	return string(data), err
 }

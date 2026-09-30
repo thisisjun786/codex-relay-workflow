@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
@@ -30,7 +31,7 @@ func gateAnswers(t *testing.T) map[string]any {
 		r := newRegistry(t)
 		if c.Value != nil {
 			if _, err := r.Store.DB.ExecContext(ctx(), "INSERT INTO authorized_settings (task_id, settings, source, recorded_at) VALUES (?,?,?,?)",
-				parent, pyDumps(c.Value, false), "raw", "t"); err != nil {
+				parent, pyjson.Dumps(c.Value, pyjson.Options{}), "raw", "t"); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -137,7 +138,7 @@ func Test25_CLI35_every_field_a_send_transforms_or_constrains_is_covered(t *test
 		r := newRegistry(t)
 		row := setField(copyObject(settingsFixture("/parent")), field, value)
 		if _, err := r.Store.DB.ExecContext(ctx(), "INSERT INTO authorized_settings (task_id, settings, source, recorded_at) VALUES (?,?,?,?)",
-			parent, pyDumps(row, false), "raw", "t"); err != nil {
+			parent, pyjson.Dumps(row, pyjson.Options{}), "raw", "t"); err != nil {
 			t.Fatal(err)
 		}
 		shown, err := r.SettingsShow(ctx(), parent)

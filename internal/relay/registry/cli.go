@@ -13,6 +13,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/pyerr"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -362,10 +363,7 @@ func settingsJSON(raw string) (contract.OrderedObject, error) {
 	if !store.ValidUTF8(data) {
 		return nil, &HostError{Class: "UnicodeDecodeError", Detail: "'utf-8' codec can't decode the settings"}
 	}
-	if message := store.PythonJSONError(string(data)); message != "" {
-		return nil, &HostError{Class: "JSONDecodeError", Detail: message}
-	}
-	decoded, err := decodeJSON(data)
+	decoded, err := pyjson.Loads(string(data), pyjson.LoadOptions{Python: true})
 	if err != nil {
 		return nil, &HostError{Class: "JSONDecodeError", Detail: err.Error()}
 	}

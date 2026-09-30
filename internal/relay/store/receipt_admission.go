@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 const boundExplicitPrefix = "explicit_admission_bound:"
@@ -66,21 +68,19 @@ func (in ReceiptIntake) DaemonObservation(ctx context.Context, relationshipID st
 	if err != nil {
 		return StoredReceipt{}, err
 	}
-	str := func(text string) jsonValue { return jsonValue{kind: jsonScalar, scalar: text} }
-	null := jsonValue{kind: jsonScalar}
-	turnRef := jsonValue{kind: jsonObject, object: []jsonField{{"threadId", str(turn.ThreadID)}, {"turnId", str(turn.TurnID)}, {"turnStatus", str(turn.Status)}}}
-	document := jsonValue{kind: jsonObject, object: []jsonField{
-		{"relationshipId", str(relationshipID)},
-		{"executionGeneration", jsonValue{kind: jsonScalar, scalar: json.Number(strconv.FormatInt(generation.Number, 10))}},
-		{"attempt", null},
-		{"revisionHash", str(NoDeliverable)},
-		{"outcome", str(turn.Status)},
-		{"producer", str(ProducerDaemon)},
-		{"turnRef", turnRef},
-		{"manifest", null},
-		{"emittedAt", str(in.Now())},
-		{"eventId", str(event)},
-	}}
-	claim := ReceiptClaim{EventID: event, RelationshipID: relationshipID, Generation: generation.Number, RevisionHash: NoDeliverable, Outcome: ObservationOutcome(turn.Status), Producer: ProducerDaemon, Turn: turn, manifest: null, document: document}
+	turnRef := pyjson.Object{{Key: "threadId", Value: turn.ThreadID}, {Key: "turnId", Value: turn.TurnID}, {Key: "turnStatus", Value: turn.Status}}
+	document := pyjson.Object{
+		{Key: "relationshipId", Value: relationshipID},
+		{Key: "executionGeneration", Value: json.Number(strconv.FormatInt(generation.Number, 10))},
+		{Key: "attempt", Value: nil},
+		{Key: "revisionHash", Value: NoDeliverable},
+		{Key: "outcome", Value: turn.Status},
+		{Key: "producer", Value: ProducerDaemon},
+		{Key: "turnRef", Value: turnRef},
+		{Key: "manifest", Value: nil},
+		{Key: "emittedAt", Value: in.Now()},
+		{Key: "eventId", Value: event},
+	}
+	claim := ReceiptClaim{EventID: event, RelationshipID: relationshipID, Generation: generation.Number, RevisionHash: NoDeliverable, Outcome: ObservationOutcome(turn.Status), Producer: ProducerDaemon, Turn: turn, manifest: nil, document: document}
 	return in.storeEvent(ctx, claim, sql.NullString{}, nil)
 }

@@ -3,6 +3,8 @@ package delivery
 import (
 	"fmt"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 // Message kinds (delivery.py).
@@ -31,7 +33,7 @@ func pyStr(v any) string {
 	case int64:
 		return fmt.Sprint(t)
 	case float64:
-		return pyFloat(t)
+		return pyjson.Dumps(t, pyjson.Options{}) // NaN and the infinities spelled as JSON spells them
 	}
 	return pyReprValue(v)
 }

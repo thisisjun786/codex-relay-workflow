@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"unicode/utf8"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -201,38 +202,7 @@ func FactDigest(payload Obj) string {
 
 // canonical is _canonical: json.dumps(sort_keys=True, separators=(",", ":")), ASCII escaped.
 func canonical(value any) string {
-	var b strings.Builder
-	writeCanonical(&b, value)
-	return b.String()
-}
-
-func writeCanonical(b *strings.Builder, value any) {
-	switch v := value.(type) {
-	case Obj:
-		fields := append(Obj(nil), v...)
-		sort.SliceStable(fields, func(i, j int) bool { return fields[i].Key < fields[j].Key })
-		b.WriteByte('{')
-		for i, f := range fields {
-			if i > 0 {
-				b.WriteByte(',')
-			}
-			writeString(b, f.Key)
-			b.WriteByte(':')
-			writeCanonical(b, f.Value)
-		}
-		b.WriteByte('}')
-	case []any:
-		b.WriteByte('[')
-		for i, item := range v {
-			if i > 0 {
-				b.WriteByte(',')
-			}
-			writeCanonical(b, item)
-		}
-		b.WriteByte(']')
-	default:
-		writeJSON(b, v, true)
-	}
+	return pyjson.Dumps(value, pyjson.Options{Compact: true, SortKeys: true})
 }
 
 // fsyncDirectory is _fsync_directory: best effort, the link already decided who won.
