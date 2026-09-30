@@ -59,8 +59,7 @@ var oracleEnvironment = []string{"HOME", "XDG_STATE_HOME", "XDG_CONFIG_HOME", "X
 func oracleEnvironmentNow() []string {
 	out := make([]string, 0, len(oracleEnvironment))
 	for _, name := range oracleEnvironment {
-		value, ok := os.LookupEnv(name)
-		out = append(out, name+"="+strconv.FormatBool(ok)+":"+value)
+		out = append(out, spelledVariable(name))
 	}
 	if wd, err := os.Getwd(); err == nil {
 		out = append(out, "cwd="+wd)
@@ -68,12 +67,25 @@ func oracleEnvironmentNow() []string {
 	return out
 }
 
+// spelledVariable spells one variable of a question's environment, set or not. TMPDIR is spelled
+// <TMPDIR> whether it is unset or names the temporary root the test binary started with: either
+// way it is that root, which differs from host to host (a runner leaves TMPDIR unset). A TMPDIR a
+// test points elsewhere is spelled as it stands, and the substitutions name it.
+func spelledVariable(name string) string {
+	value, ok := os.LookupEnv(name)
+	if name == "TMPDIR" && (!ok || value == "" || filepath.Clean(value) == oracleTemp) {
+		return "TMPDIR=<TMPDIR>"
+	}
+	return name + "=" + strconv.FormatBool(ok) + ":" + value
+}
+
 var trailingDigits = regexp.MustCompile(`[0-9]+$`)
 
 // oracleSubstitutions are the run-specific strings the question may carry, each with the
-// placeholder that stands for it in a recording: the checkout, the passwd home, and every
-// directory directly under the temporary root that the question, the working directory or the
-// environment names (a t.TempDir's parent or the isolation root), longest first.
+// placeholder that stands for it in a recording: the checkout, the passwd home, every directory
+// directly under the temporary root that the question, the working directory or the environment
+// names (a t.TempDir's parent or the isolation root), and the temporary root itself, longest
+// first.
 func oracleSubstitutions(parts []string) [][2]string {
 	var subs [][2]string
 	seen := map[string]bool{}
@@ -118,6 +130,9 @@ func oracleSubstitutions(parts []string) [][2]string {
 	}
 	if oraclePasswdHome != "" && oraclePasswdHome != "/" {
 		add(oraclePasswdHome, "<PASSWD-HOME>")
+	}
+	if oracleTemp != "/" {
+		add(oracleTemp, "<TMPDIR>")
 	}
 	sort.SliceStable(subs, func(i, j int) bool { return len(subs[i][0]) > len(subs[j][0]) })
 	return subs

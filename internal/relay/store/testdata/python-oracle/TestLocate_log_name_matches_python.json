@@ -1,6 +1,6 @@
 {
  "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
  "answers": {
-  "python 22671c397e421fa30e45": "txt:relay.sqlite3\n"
+  "python db0a4d4dd7b8c3c50aef": "txt:relay.sqlite3\n"
  }
 }

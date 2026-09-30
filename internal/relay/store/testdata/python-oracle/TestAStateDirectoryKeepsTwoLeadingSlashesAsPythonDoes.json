@@ -1,6 +1,6 @@
 {
  "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
  "answers": {
-  "python 6597dfb538b09499ad71": "txt:{\"Flag\": \"/<TMP:TestAStateDirectoryKeepsTwoLeadingSlashesAsPythonDoes>/001/st\", \"Env\": \"/<TMP:TestAStateDirectoryKeepsTwoLeadingSlashesAsPythonDoes>/001/st\", \"Discovered\": \"/<TMP:TestAStateDirectoryKeepsTwoLeadingSlashesAsPythonDoes>/001/xdg/codex-session-relay/default\", \"Detail\": \"XDG_STATE_HOME=/<TMP:TestAStateDirectoryKeepsTwoLeadingSlashesAsPythonDoes>/001/xdg\"}\n"
+  "python 0e338f440120c77053a3": "txt:{\"Flag\": \"/<TMP:TestAStateDirectoryKeepsTwoLeadingSlashesAsPythonDoes>/001/st\", \"Env\": \"/<TMP:TestAStateDirectoryKeepsTwoLeadingSlashesAsPythonDoes>/001/st\", \"Discovered\": \"/<TMP:TestAStateDirectoryKeepsTwoLeadingSlashesAsPythonDoes>/001/xdg/codex-session-relay/default\", \"Detail\": \"XDG_STATE_HOME=/<TMP:TestAStateDirectoryKeepsTwoLeadingSlashesAsPythonDoes>/001/xdg\"}\n"
  }
 }

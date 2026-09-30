@@ -1,6 +1,6 @@
 {
  "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
  "answers": {
-  "python 4f20a6075cff83d3e053": "txt:PermissionError: [Errno 13] Permission denied: '<TMP:TestOpen_reads_a_gateless_store_before_refusing_it_as_python_doe>/001/relay.sqlite3'\n"
+  "python 2d152ad7617d53579048": "txt:PermissionError: [Errno 13] Permission denied: '<TMP:TestOpen_reads_a_gateless_store_before_refusing_it_as_python_doe>/001/relay.sqlite3'\n"
  }
 }

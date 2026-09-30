@@ -1,7 +1,7 @@
 {
  "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
  "answers": {
-  "python 5c359a0135ea9bf09a74": "txt:[\"/<TMP:TestHomeIsPathlibsHome>/001/user-home/.local/state/codex-session-relay/default\", \"default under /<TMP:TestHomeIsPathlibsHome>/001/user-home/.local/state\"]\n",
-  "python efcaae647b9a73b361b4": "txt:[\"/<TMP:TestHomeIsPathlibsHome>/001/user-home\", \"/<TMP:TestHomeIsPathlibsHome>/001/user-home/x\", \"/<TMP:TestHomeIsPathlibsHome>/001/user-home/x\"]\n"
+  "python 34d8fdee4b1b0a631e75": "txt:[\"/<TMP:TestHomeIsPathlibsHome>/001/user-home/.local/state/codex-session-relay/default\", \"default under /<TMP:TestHomeIsPathlibsHome>/001/user-home/.local/state\"]\n",
+  "python 433b3fa67fa9e9ac46eb": "txt:[\"/<TMP:TestHomeIsPathlibsHome>/001/user-home\", \"/<TMP:TestHomeIsPathlibsHome>/001/user-home/x\", \"/<TMP:TestHomeIsPathlibsHome>/001/user-home/x\"]\n"
  }
 }

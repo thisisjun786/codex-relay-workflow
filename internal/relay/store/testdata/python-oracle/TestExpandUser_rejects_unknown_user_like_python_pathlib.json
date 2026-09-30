@@ -1,6 +1,6 @@
 {
  "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
  "answers": {
-  "python 33d46a5414be5a7a506d": "txt:RuntimeError: Could not determine home directory.\n"
+  "python bba75a25ce8a0f5cdcaa": "txt:RuntimeError: Could not determine home directory.\n"
  }
 }

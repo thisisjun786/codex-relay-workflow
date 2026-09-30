@@ -1,6 +1,6 @@
 {
  "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
  "answers": {
-  "python a0069a9505929ff5af41": "txt:{\"Flag\": \"<TMP:TestARelativeStateDirectoryIsReadAgainstThePhysicalWorkingDirect>/001/real/wd/st\", \"Env\": \"<TMP:TestARelativeStateDirectoryIsReadAgainstThePhysicalWorkingDirect>/001/real/wd/st\", \"Discovered\": \"<TMP:TestARelativeStateDirectoryIsReadAgainstThePhysicalWorkingDirect>/001/real/wd/xdg/codex-session-relay/default\"}\n"
+  "python cc8d03efb7302c1b39ff": "txt:{\"Flag\": \"<TMP:TestARelativeStateDirectoryIsReadAgainstThePhysicalWorkingDirect>/001/real/wd/st\", \"Env\": \"<TMP:TestARelativeStateDirectoryIsReadAgainstThePhysicalWorkingDirect>/001/real/wd/st\", \"Discovered\": \"<TMP:TestARelativeStateDirectoryIsReadAgainstThePhysicalWorkingDirect>/001/real/wd/xdg/codex-session-relay/default\"}\n"
  }
 }

@@ -255,6 +255,7 @@ func TestRetentionScanClearsARunningTurnNewerThanThePayload(t *testing.T) {
 // Python (the pre-native bootstrap) is a reference naming that version, even after it started.
 func TestRetentionScanReportsATurnGivenAPythonVersion(t *testing.T) {
 	h := newHost(t)
+	h.pythonFirstOnPath(t)
 	dir, _ := h.goRuntime(t, "bin-0.4.1-aaaaaaaaaaaa")
 	link(t, dir, h.current())
 	cache, _ := h.cacheVersion(t, "0.4.0+test", filepath.Join(golden.Root(), "internal", "pluginwiring", "testdata", "pre-native-wiring"))

@@ -56,6 +56,18 @@ func python(t *testing.T, script string, args ...string) string {
 	return strings.TrimSpace(string(output))
 }
 
+// scopeKey is the scope key of fixedSocket as this process's environment derives it: namespaced by
+// CODEX_SESSION_RELAY_SCOPE_DIR when that overrides the registry root. A recording spells it
+// <SCOPE-KEY>, since the override differs from host to host.
+func scopeKey(t *testing.T) string {
+	t.Helper()
+	key, err := ownership.ScopeKey(fixedSocket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return key
+}
+
 // pythonCreated is what the Python initializer left creating an absent store at root/python: its
 // schema_meta rows but store_id and store_created_at, and its comparableMirror, recorded
 // (pyoracle).
@@ -75,7 +87,7 @@ func pythonCreated(t *testing.T, root string) (map[string]string, map[string]any
 		delete(created, "store_id")
 		delete(created, "store_created_at")
 		return map[string]any{"meta": created, "mirror": comparableMirror(mirror(t, real))}, nil
-	}, pyoracle.Substitute(root, "<ROOT>"))
+	}, pyoracle.Substitute(root, "<ROOT>"), pyoracle.Substitute(scopeKey(t), "<SCOPE-KEY>"))
 	return answer.Meta, answer.Mirror
 }
 

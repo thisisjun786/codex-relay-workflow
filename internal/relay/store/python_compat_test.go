@@ -61,8 +61,7 @@ var storeEnvironment = []string{"HOME", "XDG_STATE_HOME", "CODEX_SESSION_RELAY_S
 func keptEnvironment() []string {
 	out := make([]string, 0, len(storeEnvironment))
 	for _, key := range storeEnvironment {
-		value, ok := os.LookupEnv(key)
-		out = append(out, fmt.Sprintf("%s=%t:%s", key, ok, value))
+		out = append(out, spelledVariable(key))
 	}
 	return out
 }

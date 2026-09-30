@@ -1,7 +1,7 @@
 {
  "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
  "answers": {
-  "python 3fd038f80af4810c85b9": "txt:[\"/.local/state/codex-session-relay/default\", \"default under /.local/state\"]\n",
-  "python 653b09fb65b2148a0e50": "txt:[\"/\", \"/x\", \"/x\"]\n"
+  "python 834e5b8b168839541e8a": "txt:[\"/\", \"/x\", \"/x\"]\n",
+  "python e035d257ccb825fc5c09": "txt:[\"/.local/state/codex-session-relay/default\", \"default under /.local/state\"]\n"
  }
 }

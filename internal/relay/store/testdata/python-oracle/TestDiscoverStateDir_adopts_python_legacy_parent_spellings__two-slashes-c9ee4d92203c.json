@@ -1,6 +1,6 @@
 {
  "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
  "answers": {
-  "python a7f74f6bab959eb499cf": "txt:[\"/<TMP:TestDiscoverStateDir_adopts_python_legacy_parent_spellings>/001/sock/app.sock\", \"3b1421d023046670\"]\n"
+  "python 087eaeb64f2961c20e0e": "txt:[\"/<TMP:TestDiscoverStateDir_adopts_python_legacy_parent_spellings>/001/sock/app.sock\", \"ad0248ac2685eeca\"]\n"
  }
 }

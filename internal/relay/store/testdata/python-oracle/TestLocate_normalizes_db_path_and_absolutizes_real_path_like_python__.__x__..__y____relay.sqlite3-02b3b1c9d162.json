@@ -1,6 +1,6 @@
 {
  "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
  "answers": {
-  "python b90c7c4d762df0a3613d": "txt:[\"<TMP:TestLocate_normalizes_db_path_and_absolutizes_real_path_like_pyt>/001/x/../y/relay.sqlite3\", \"<TMP:TestLocate_normalizes_db_path_and_absolutizes_real_path_like_pyt>/001/y/relay.sqlite3\"]\n"
+  "python ce8b89a6b0166fc4fa02": "txt:[\"<TMP:TestLocate_normalizes_db_path_and_absolutizes_real_path_like_pyt>/001/x/../y/relay.sqlite3\", \"<TMP:TestLocate_normalizes_db_path_and_absolutizes_real_path_like_pyt>/001/y/relay.sqlite3\"]\n"
  }
 }

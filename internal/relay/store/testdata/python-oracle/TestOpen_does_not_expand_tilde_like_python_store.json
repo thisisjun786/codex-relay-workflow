@@ -1,6 +1,6 @@
 {
  "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
  "answers": {
-  "python b14c361e5d5d69297e9f": "txt:<TMP:TestOpen_does_not_expand_tilde_like_python_store>/001/~/pst/relay.sqlite3\n"
+  "python 79cb9a978d6dd3b34069": "txt:<TMP:TestOpen_does_not_expand_tilde_like_python_store>/001/~/pst/relay.sqlite3\n"
  }
 }
