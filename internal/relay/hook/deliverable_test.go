@@ -83,6 +83,14 @@ func TestDeliverableStateAnswersAsTheGuard(t *testing.T) {
 			moved(t, artifact)
 			write(t, filepath.Join(reference, "MANIFEST.json"), "not json")
 		}},
+		// The fence reads a frozen MANIFEST.json whole, so a copy past the hook's 4 MiB bound on
+		// other evidence is read under the deadline alone, as decision 24's native reads are.
+		{name: "frozen-past-the-evidence-bound", stage: func(t *testing.T, artifact, reference, blob string) {
+			moved(t, artifact)
+			path, _ := json.Marshal(artifact)
+			padding := strings.Repeat("x", maxInputBytes+1<<20)
+			write(t, filepath.Join(reference, "MANIFEST.json"), `{"entries": [{"path": `+string(path)+`, "sha256": "`+filepath.Base(blob)+`", "bytes": 19}], "padding": "`+padding+`"}`)
+		}},
 		{name: "frozen-not-utf8", stage: func(t *testing.T, artifact, reference, _ string) {
 			moved(t, artifact)
 			write(t, filepath.Join(reference, "MANIFEST.json"), "{\"entries\": [\xff]}")

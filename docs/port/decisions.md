@@ -2321,8 +2321,9 @@ Each Go reader answers as the fence's reader of the same function:
   except clauses do not name it, and out of `lookup_receipt`: the Stop hook's evaluation faults
   (`guard_faulted`, released and recorded, the fault `RecursionError: ...`), and the omission
   reader, which catches RuntimeError, is `unmeasured` with `evidence_unreadable: <its words>`
-  (`delivery.omissionReceiptFailure`). The
-  hook reads what follows the document's read with the store's reader
+  (`delivery.omissionReceiptFailure`). The hook reads the document whole under its deadline, as
+  the fence and the store's readers do, without the 4 MiB bound it keeps for other evidence
+  (decision 24's native reads). It reads what follows the document's read with the store's reader
   (`store.VerifyFrozenDocument`), and it reads the stored receipt's own records the same way
   (`store.PythonManifestEntries`, `store.PythonRevisionHash`), so a stored byte count of `"19"` is
   a size that disagrees, not 19;
@@ -2347,7 +2348,9 @@ missing. `FreezeManifest` refused symlinked and relative destinations too (`syml
 copy was a changed deliverable, and it read every failed live hash as unreadable where the fence
 reads a vanished artifact as changed. The Stop hook named a blocked frozen copy "no
 MANIFEST.json" and merged a JSONDecodeError into the live problems. It also resolved blobs
-strictly, so a blocked blob directory surfaced Go's `lstat` text. It read a byte count through
+strictly, so a blocked blob directory surfaced Go's `lstat` text, and it read the frozen
+document with the 4 MiB bound it keeps for other evidence, so a larger copy was unverifiable
+where the fence and Go's other readers read it. It read a byte count through
 `evidence.IntOf`, which takes the string `"19"` as 19, and refused a path or digest of another
 type with words of its own. A first repair decoded a frozen byte count as a JSON number, which
 also took `"19"`, and returned Go's decoder errors for a list, a NaN or a non-str path.
@@ -2390,8 +2393,9 @@ Evidence: `packages/codex-session-relay/src/codex_session_relay/manifest.py:269-
 decoder), `internal/relay/store/manifest.go:84-176` (`FreezeManifest`, `ReadFrozenBlob`,
 `VerifyFrozen`), `receipt_intake.go:186` (`verifyBytes`), `ownership.go:120` (`PythonHostDetail`),
 `internal/relay/delivery/omitted.go:660-720` (`omissionDeliverable`, `omissionReceiptFailure`),
-`internal/relay/hook/receipt.go:150-305` (`DeliverableState`, `raisedState`, `verifyEntries`,
-`verifyFrozen`), `internal/relay/hook/guard.go:110-120` (the fault). Tests: `internal/testsupport/frozen.go` (`FrozenManifests`, 29 frozen documents
+`internal/relay/hook/receipt.go:150-306` (`DeliverableState`, `raisedState`, `verifyEntries`,
+`verifyFrozen`), `settings.go:158-199` (`unbounded`, `readRegular`),
+`internal/relay/hook/guard.go:110-120` (the fault). Tests: `internal/testsupport/frozen.go` (`FrozenManifests`, 29 frozen documents
 no freeze writes, staged for every reader below: among them a digest ending in a newline, a
 value nested 9997, 9998 and 100000 levels beside a good record, and corrupt documents with CRLF
 and CR line ends); `internal/relay/adapter/scope_test.go`
@@ -2405,7 +2409,8 @@ copies, and a receipt whose `sha256` or `revisionHash` ends in a newline, with t
 and the recorded refusals compared), `internal/relay/delivery/omitted_deliverable_test.go` and
 `internal/relay/hook/deliverable_test.go` (every case against the fence's `deliverable_state`,
 an exception it lets out included, the hook's also with stored records whose bytes, path or
-digest is another type), `internal/relay/delivery/omitted_capture_test.go`
+digest is another type and with a frozen copy past its 4 MiB evidence bound),
+`internal/relay/delivery/omitted_capture_test.go`
 (`Test24_OMI_7b_WholeOutput`, the whole omission reading of a copy nested too deep),
 `internal/relay/hook/guard_test.go` (`Test33GuardFrozenCopyAtTheDecoderDepth`, the whole Stop
 verdict, bytes and recorded observation, at and past the depth),

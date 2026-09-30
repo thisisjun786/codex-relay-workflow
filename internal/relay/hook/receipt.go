@@ -271,8 +271,9 @@ func verifyEntries(ctx context.Context, entries []store.PythonEntry, roots []str
 }
 
 // verifyFrozen is manifest.verify_frozen_detailed as guard.deliverable_state reads it, under the
-// hook's deadline and read bound: the problems, the subset that were failures to read, or what it
-// raised instead of answering, which raisedState answers as deliverable_state does. A raised
+// hook's deadline: the problems, the subset that were failures to read, or what it raised instead
+// of answering, which raisedState answers as deliverable_state does. The document is read whole,
+// as the fence reads it, so the evidence bound (maxInputBytes) does not apply to it. A raised
 // exception is the whole answer: the fence's exception leaves before any live problem or
 // unreadable live file is weighed. The document is the path pathlib spells
 // (store.FrozenDocument), and what follows its read is the store's own reading of a frozen copy
@@ -292,7 +293,7 @@ func verifyFrozen(ctx context.Context, reference string, entries []store.PythonE
 		}
 		return []string{message}, nil, nil
 	}
-	raw, err := readRegular(ctx, document, maxInputBytes)
+	raw, err := readRegular(ctx, document, unbounded)
 	if err != nil {
 		// Reached and not read: the fence raises the OSError, a comparison that did not happen.
 		return nil, nil, &frozenAnswer{"unverifiable", store.PythonOSError(err)}
