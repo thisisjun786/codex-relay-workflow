@@ -14,14 +14,14 @@ func Test24FixXBytes(t *testing.T) {
 		root, _ := filepath.Abs("../../..")
 		binary, alias := packageBinary(t)
 		home := t.TempDir()
-		env := append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home+"/xdg", "XDG_CONFIG_HOME="+home+"/config", "XDG_CACHE_HOME="+home+"/cache", "XDG_DATA_HOME="+home+"/data", "CODEX_HOME="+home+"/codex", "CRW_ALLOW_LIVE_STATE=1", "PATH="+root+"/internal/relay/cli/testdata:"+os.Getenv("PATH"), `CRW_FORGE_RULES_JSON=[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":{"z":1,"a":false}}]}}]`)
+		env := append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home+"/xdg", "XDG_CONFIG_HOME="+home+"/config", "XDG_CACHE_HOME="+home+"/cache", "XDG_DATA_HOME="+home+"/data", "CODEX_HOME="+home+"/codex", "CRW_REFUSE_LIVE_STATE=", "PATH="+root+"/internal/relay/cli/testdata:"+os.Getenv("PATH"), `CRW_FORGE_RULES_JSON=[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":{"z":1,"a":false}}]}}]`)
 		assertEvidenceBytes(t, env, filepath.Join(root, ".venv/bin/python"), alias, binary, "ready", []string{"merge-evidence", "--repository", "owner/repo", "--pull-request", "7"}, "")
 		return
 	}
 	root, _ := filepath.Abs("../../..")
 	binary, alias := packageBinary(t)
 	home := t.TempDir()
-	env := append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home+"/xdg", "XDG_CONFIG_HOME="+home+"/config", "XDG_CACHE_HOME="+home+"/cache", "XDG_DATA_HOME="+home+"/data", "CODEX_HOME="+home+"/codex", "CRW_ALLOW_LIVE_STATE=1", "PATH="+root+"/internal/relay/cli/testdata:"+os.Getenv("PATH"))
+	env := append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home+"/xdg", "XDG_CONFIG_HOME="+home+"/config", "XDG_CACHE_HOME="+home+"/cache", "XDG_DATA_HOME="+home+"/data", "CODEX_HOME="+home+"/codex", "CRW_REFUSE_LIVE_STATE=", "PATH="+root+"/internal/relay/cli/testdata:"+os.Getenv("PATH"))
 	python := filepath.Join(root, ".venv/bin/python")
 	base := []string{"merge-evidence", "--repository", "owner/repo", "--pull-request", "7"}
 	rule := func(parameters string) string {

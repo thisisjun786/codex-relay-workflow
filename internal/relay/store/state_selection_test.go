@@ -236,7 +236,8 @@ func TestStateSelection_python_discovery_properties(t *testing.T) {
 }
 
 // makeStoreIn seeds a discovery fixture store at base/name. Open's live-state guard stays
-// active, so the seed temporarily designates another isolated root under root.
+// active under test isolation, so the seed temporarily designates another isolated root under
+// root.
 func makeStoreIn(t *testing.T, root, base, name, socket string) {
 	t.Helper()
 	previous := os.Getenv("XDG_STATE_HOME")

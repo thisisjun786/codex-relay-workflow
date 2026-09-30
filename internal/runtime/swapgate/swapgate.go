@@ -375,9 +375,9 @@ func StoreSchema(ctx context.Context, state, socket string) Object {
 }
 
 // readCatalog asks SchemaObjectsQuery of the database at path without creating anything beside
-// it and without store.Open (which refuses the live state root before todo 42 and would run the
-// schema script). It reads under the Stop path's no-sidecar rule (store.OpenInPlace): the path
-// resolved as SQLite resolves it, so a symlinked relay.sqlite3 is read with the -wal and -shm
+// it and without store.Open (which would run the schema script, and refuses the live state root
+// under test isolation). It reads under the Stop path's no-sidecar rule (store.OpenInPlace): the
+// path resolved as SQLite resolves it, so a symlinked relay.sqlite3 is read with the -wal and -shm
 // beside the file it names; mode=ro when a WAL connection left both, immutable=1 when no -wal
 // holds a frame, and no read at all when a -wal holds frames beside no usable -shm, whose commits
 // an immutable read would miss. It takes no lock and writes nothing.

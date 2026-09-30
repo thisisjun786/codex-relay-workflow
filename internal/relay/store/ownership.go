@@ -17,8 +17,9 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 )
 
-// RefuseLiveState is the live-state guard every Go writable opener applies; the
-// takeover controller checks it before a transition whose Go candidate must open D.
+// RefuseLiveState is the live-state guard every Go writable opener applies, which refuses only
+// under test isolation (CRW_REFUSE_LIVE_STATE=1); the takeover controller checks it before a
+// transition whose Go candidate must open D.
 func RefuseLiveState(path string) (string, error) { return refuseLiveState(path) }
 
 func admitWrite(ctx context.Context, path string) (*ownership.Admission, error) {

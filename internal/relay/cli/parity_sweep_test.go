@@ -79,12 +79,12 @@ func runBuiltBinarySweep(t *testing.T, runtimeSweep, rootOnly bool) {
 	env := []string{}
 	for _, s := range os.Environ() {
 		name, _, _ := strings.Cut(s, "=")
-		if name == "HOME" || name == "CODEX_HOME" || strings.HasPrefix(name, "CODEX_SESSION_RELAY_") || name == "COLUMNS" || strings.HasPrefix(name, "XDG_") || strings.HasPrefix(name, "CRW_TEST_") || name == "CRW_ALLOW_LIVE_STATE" {
+		if name == "HOME" || name == "CODEX_HOME" || strings.HasPrefix(name, "CODEX_SESSION_RELAY_") || name == "COLUMNS" || strings.HasPrefix(name, "XDG_") || strings.HasPrefix(name, "CRW_TEST_") || name == "CRW_REFUSE_LIVE_STATE" {
 			continue
 		}
 		env = append(env, s)
 	}
-	env = append(env, "HOME="+home, "XDG_STATE_HOME="+home+"/state", "XDG_CONFIG_HOME="+home+"/config", "XDG_DATA_HOME="+home+"/data", "XDG_CACHE_HOME="+home+"/cache", "CODEX_HOME="+home+"/codex", "CRW_ALLOW_LIVE_STATE=1")
+	env = append(env, "HOME="+home, "XDG_STATE_HOME="+home+"/state", "XDG_CONFIG_HOME="+home+"/config", "XDG_DATA_HOME="+home+"/data", "XDG_CACHE_HOME="+home+"/cache", "CODEX_HOME="+home+"/codex")
 	var names []string
 	for name := range argparse.Specs {
 		if name != "" && cli.Registered(name) {

@@ -146,15 +146,14 @@ and the pointer where it was ([what a failed update restores](#what-a-failed-upd
 Nothing here removes, moves or recreates the store: update failure and store loss are different
 accidents and the recovery for one must not cause the other.
 
-Until todo 43 removes it, the Go build refuses to open a store in the relay's default state
-directory unless `CRW_ALLOW_LIVE_STATE=1` is set
-([the live-state guard](port/cutover.md#the-live-state-guard-until-todo-43)). This run is not
-refused by it: the exercise and the swap gate read the store without opening it, through the
-relay's `doctor` and `service status` and a catalog read that takes no lock. What the guard does
-refuse is the runtime's use of that store afterwards: the relay commands the skills run, and the
-Stop hook's guard whenever it has to read the store. So on a host whose store is the live one, an
-install before todo 43 leaves a runtime that cannot serve it, and that host moves through
-[the cutover](port/cutover.md) instead.
+The exercise and the swap gate read the store without opening it, through the relay's `doctor`
+and `service status` and a catalog read that takes no lock. The runtime opens it afterwards, for
+the relay commands the skills run and for the Stop hook's guard whenever it has to read the store,
+in the relay's default state directory with no variable set. Until todo 43 the Go build refused
+that directory unless `CRW_ALLOW_LIVE_STATE=1` was set, so an install left a runtime that could
+not serve a live host's store; the guard now refuses it only under test isolation
+([the live-state guard](port/cutover.md#the-live-state-guard-test-isolation-only)). A host whose
+store the Python runtime still owns moves through [the cutover](port/cutover.md) first.
 
 ### The record is not the replacement
 
@@ -1025,10 +1024,9 @@ half reaches this runtime only through the plugin's declared commands, so run th
 command, and the state directory wherever one is read, because none of them derives from another:
 the Codex home is where the settings the plugin reads are written, and the host record defaults to
 `$XDG_STATE_HOME/codex-relay-workflow/host-record.json`, whatever the Codex home. `<codex-home>` is
-the Codex home that process reads. Until todo 43 the Go build cannot
-serve a store in that `HOME`'s default relay state directory
-([the live-state guard](port/cutover.md#the-live-state-guard-until-todo-43)), so on a host whose
-relay store is that one, or that still runs the Python runtime, the procedure waits for
+the Codex home that process reads. The Go build serves a store in that `HOME`'s default relay
+state directory, which [the live-state guard](port/cutover.md#the-live-state-guard-test-isolation-only)
+refuses only under test isolation, so only a host that still runs the Python runtime waits for
 [the cutover](port/cutover.md).
 
 ```sh

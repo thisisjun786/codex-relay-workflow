@@ -33,12 +33,13 @@ func TestPyReprIsPythonsReprOfAStr(t *testing.T) {
 
 // The hold's refusal names the store path as intent.registration_hold does, "the relay store path
 // " + repr(db_path) + " could not be read as a path": Python's quote choice and its escapes, not a
-// hand-made quoting. The path is under the live state directory, which Go refuses to hold.
+// hand-made quoting. The path is under the live state directory, which Go refuses to hold under
+// test isolation.
 func TestTheHoldNamesAPathItCannotReadAsPythonReprsIt(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("HOME", filepath.Join(root, "home"))
 	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "xdg"))
-	t.Setenv("CRW_ALLOW_LIVE_STATE", "")
+	t.Setenv("CRW_REFUSE_LIVE_STATE", "1")
 	for _, name := range []string{"it's\u00a0x", `back\slash`, "l\u2028s", "b\xffyte"} {
 		directory := filepath.Join(root, "xdg", "codex-session-relay", name)
 		if err := os.MkdirAll(directory, 0o700); err != nil {
