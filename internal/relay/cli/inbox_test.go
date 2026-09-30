@@ -583,6 +583,78 @@ func Test31_a_queueable_refusal_queues_before_the_selection_and_kind_module_refu
 	}
 }
 
+// cli.py main runs check_start for every command that is neither read-only nor answers without
+// the selected store, before the selection refusal, --kind-module and the handler (backlog before
+// todo 42, decision 31). On a store the other runtime owns, a write form therefore answers the
+// ownership refusal, byte for byte in both runtimes, whether its --kind-module cannot be imported,
+// it names no --socket (daemon and managed-start refuse that in their handler), or its --socket
+// is not the one the store recorded. Under its own owner each runtime still answers the
+// mismatched socket with the selection refusal. The Go side is the built binary, which registers
+// every command family (sync-target included).
+func Test31_check_start_precedes_the_selection_kind_module_and_handler_refusals(t *testing.T) {
+	home := pythonHome(t)
+	_, alias := packageBinary(t)
+	bound := filepath.Join(home, "bound.sock")
+	other := filepath.Join(home, "other.sock")
+	statePython := ownerOnlyState(t, home, "python-owned")
+	stateGo := ownerOnlyState(t, home, "go-owned")
+	if got := pythonCLI(t, []string{"--state", statePython, "--socket", bound, "store-challenge", "--write"})[0]; got.code != 0 {
+		t.Fatalf("%+v", got)
+	}
+	if got := goCLI(t, "--state", stateGo, "--socket", bound, "store-challenge", "--write"); got.code != 0 {
+		t.Fatalf("%+v", got)
+	}
+	markers := filepath.Join(home, "markers")
+	commands := [][]string{
+		{"relationship-status", "--relationship", "r-1", "--status", "paused", "--actor", "a"},
+		{"fault-target", "--product", "crw", "--team", "team"},
+		{"store-challenge", "--write"},
+		{"sync-target", "--relationship", "r-1", "--target-ref", "ISSUE-1"},
+		{"merge-turn-request", "--repository", "repo", "--base-ref", "main", "--project", "P", "--task", "task", "--host", "host", "--head", "abc"},
+		{"slot-reserve", "--kind", "k", "--subject", "s", "--parent-task", "parent", "--project", "P", "--actor", "a"},
+		{"region-propose", "--repository", "repo", "--revision", "rev", "--path", "p", "--kind", "file", "--left-project", "L", "--right-project", "R", "--peer-link", "link", "--task", "t", "--constraint", "c"},
+		{"daemon", "--max-ticks", "0"},
+		{"managed-start", "--request", "{}", "--marker-root", markers},
+		{"service", "start"},
+		{"service", "stop"},
+	}
+	scenarios := []struct {
+		name    string
+		globals []string
+	}{
+		{"an unimportable --kind-module", []string{"--socket", bound, "--kind-module", "nosuch"}},
+		{"no --socket", nil},
+		{"a --socket the store did not record", []string{"--socket", other}},
+	}
+	var fence [][]string
+	for _, scenario := range scenarios {
+		for _, command := range commands {
+			fence = append(fence, append(append([]string{"--state", stateGo}, scenario.globals...), command...))
+		}
+	}
+	own := []string{"--socket", other, "store-challenge", "--write"}
+	fence = append(fence, append([]string{"--state", statePython}, own...))
+	want := pythonCLI(t, fence...)
+	i := 0
+	for _, scenario := range scenarios {
+		for _, command := range commands {
+			ran := binaryRun(t, alias, append(append([]string{"--state", statePython}, scenario.globals...), command...)...)
+			got := answer{ran.code, ran.stdout}
+			if got != want[i] || got.code != 2 || object(t, got.stdout)["reason"] != "store_owned_by_other" {
+				t.Errorf("%s, %q:\n go     %d %s\n python %d %s", scenario.name, command, got.code, got.stdout, want[i].code, want[i].stdout)
+			}
+			i++
+		}
+	}
+	refused := binaryRun(t, alias, append([]string{"--state", stateGo}, own...)...)
+	if python := want[i]; refused.code != 2 || python.code != 2 || object(t, refused.stdout)["reason"] != "state_directory_serves_another_socket" || object(t, python.stdout)["reason"] != "state_directory_serves_another_socket" {
+		t.Fatalf("own owner:\n go     %+v\n python %+v", refused, python)
+	}
+	if _, err := os.Stat(markers); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a refused managed-start wrote its marker root: %v", err)
+	}
+}
+
 // Every writable command drains before its handler reads its own arguments (cli.main:
 // _ownership_preflight opens the store, inbox.replay, then the handler), including the ones
 // whose handler refuses its arguments before it would reach the store: a corrupt entry fails

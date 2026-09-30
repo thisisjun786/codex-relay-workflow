@@ -8,11 +8,14 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // The store-selection refusals every delivery command prints before its handler (cli.py
 // _selection_refusal): ambiguous, unidentified and wrong-socket, byte for byte with Python's
-// once the program name each side prints for itself is replaced by one token.
+// once the program name each side prints for itself is replaced by one token. Each runtime is
+// asked on a store it owns: on the other runtime's, check_start refuses first (decision 31).
 func TestCLI_store_selection_refusals_match_python(t *testing.T) {
 	root := repoRoot(t)
 	for _, tc := range []struct {
@@ -46,6 +49,9 @@ func TestCLI_store_selection_refusals_match_python(t *testing.T) {
 					py.Dir = filepath.Join(root, "packages", "codex-session-relay")
 					py.Env = env
 					mustDo(t, py.Run())
+					if !python {
+						testsupport.HandOver(t, filepath.Join(state, "relay.sqlite3"), "go")
+					}
 					args = append([]string{"--state", state}, args...)
 				}
 				var cmd *exec.Cmd
@@ -87,7 +93,8 @@ func exitCode(err error) int {
 
 // Both installed entry points produce recovery commands through the built binary. The alias
 // bytes equal live Python when Python is invoked under that same alias path; the multi-call
-// command names the actual crw executable and runs successfully when pasted into a shell.
+// command names the actual crw executable and runs successfully when pasted into a shell. Each
+// runtime answers the store while it owns it: on the other runtime's, check_start refuses first.
 func TestCLI_selection_recovery_program_parity_and_execution(t *testing.T) {
 	root := repoRoot(t)
 	home := t.TempDir()
@@ -107,6 +114,8 @@ func TestCLI_selection_recovery_program_parity_and_execution(t *testing.T) {
 	alias := filepath.Join(filepath.Dir(built), "codex-session-relay")
 	mustDo(t, os.Symlink(built, alias))
 	args := []string{"--state", state, "--socket", wanted, "claim", "--event", "e"}
+	db := filepath.Join(state, "relay.sqlite3")
+	testsupport.HandOver(t, db, "go")
 	goAlias := exec.Command(alias, args...)
 	goAlias.Env = env
 	got, gotErr := goAlias.Output()
@@ -117,6 +126,7 @@ func TestCLI_selection_recovery_program_parity_and_execution(t *testing.T) {
 from codex_session_relay import cli
 sys.argv=[sys.argv[1],*sys.argv[2:]]
 raise SystemExit(cli.main())`
+	testsupport.HandOver(t, db, "python")
 	python := exec.Command(filepath.Join(root, ".venv", "bin", "python"), append([]string{"-c", pyScript, alias}, args...)...)
 	python.Dir = filepath.Join(root, "packages", "codex-session-relay")
 	python.Env = env
@@ -125,6 +135,7 @@ raise SystemExit(cli.main())`
 		t.Fatalf("alias recovery differs from Python\nGo exit=%d\n%s\nPython exit=%d\n%s", exitCode(gotErr), got, exitCode(wantErr), want)
 	}
 
+	testsupport.HandOver(t, db, "go")
 	multi := exec.Command(built, append([]string{"relay"}, args...)...)
 	multi.Env = env
 	out, multiErr := multi.Output()

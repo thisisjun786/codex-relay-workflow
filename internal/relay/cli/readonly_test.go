@@ -308,8 +308,11 @@ func TestReadOnlyForms_never_create_an_absent_store(t *testing.T) {
 }
 
 // A partial store (a write gate or an ownership mirror without D) is refused, never read or
-// repaired (decision 30): read forms answer the refusal a write form answers, with exit 2
-// rather than a host error that invites a retry, and leave S exactly as they found it.
+// repaired (decision 30): read forms answer the refusal the writer admission gives it, with exit
+// 2 rather than a host error that invites a retry, and leave S exactly as they found it. A write
+// form meets cli.py main's check_start first (decision 31), which refuses a mirror without D in
+// validate's words, as the fence's write form does; a gate alone passes it and meets the writer
+// admission.
 func TestReadOnlyForms_refuse_a_partial_store_as_a_writer_does(t *testing.T) {
 	home := pythonHome(t)
 	_, alias := packageBinary(t)
@@ -339,8 +342,15 @@ func TestReadOnlyForms_refuse_a_partial_store_as_a_writer_does(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			expected := want
+			if partial.name == "mirror only" && argv[0] == "store-challenge" && argv[1] == "--write" {
+				expected = "{\n  \"error\": \"refused\",\n  \"reason\": \"store_owned_by_other\",\n  \"detail\": \"missing or unsupported writer protocol\"\n}\n"
+				if fence := pythonCLI(t, append([]string{"--state", state}, argv...))[0]; fence.code != 2 || fence.stdout != expected {
+					t.Errorf("the fence's %s %v: %+v", partial.name, argv, fence)
+				}
+			}
 			got := binaryRun(t, alias, append([]string{"--state", state}, argv...)...)
-			if got.code != 2 || got.stdout != want {
+			if got.code != 2 || got.stdout != expected {
 				t.Errorf("%s %v: exit %d\n%s", partial.name, argv, got.code, got.stdout)
 			}
 			if after, err := storeFiles(state); err != nil || !maps.Equal(before, after) {

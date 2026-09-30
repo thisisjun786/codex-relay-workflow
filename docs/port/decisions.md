@@ -1069,8 +1069,21 @@ without exactly one selector and `linkage-up --scope` without `--task` answer
 arguments (`register`'s unreadable settings, `settings-record --exception` beside
 `--clear-exception`) leaves an absent store initialized, and a store another runtime owns
 answers the ownership refusal instead. Go's relay-registry dispatch (`registry.run`) opens a
-write form's store before the command's `precheck` and a read-only form's after it; the
-`--kind-module` refusal still precedes a write form's store in Go (refactor-backlog.md).
+write form's store before the command's `precheck` and a read-only form's after it. Before
+either, `cli.py` `main` runs `ownership.check_start` for every command that is neither read-only
+nor answers without the selected store (`_reads_no_selected_store`), and so does the Go relay
+dispatch (`store.CheckStartLikeFence`, with the command's `--socket`): after the command's own
+argument parse, and before the selection refusal, `--kind-module` and the handler's own
+refusals. A store the other runtime owns, or one mid-transition, therefore answers
+`store_owned_by_other` in both runtimes, byte for byte, where the command's `--kind-module`
+cannot be imported, where `daemon` or `managed-start` names no `--socket`, and where its
+`--socket` is not the one the store recorded, and a write form on a mirror without `D` is
+refused in `validate`'s words (`missing or unsupported writer protocol`), as the fence's is,
+where a read form still answers the writer admission's refusal above. The intent commands keep
+their own check (delivery's fenced markers), and the takeover candidate (`service run
+--takeover-candidate`) is checked by its handler, which holds the permit
+(`Test31_check_start_precedes_the_selection_kind_module_and_handler_refusals` and
+`TestReadOnlyForms_refuse_a_partial_store_as_a_writer_does`, against the live fence).
 
 A read the live-state guard refuses (until todo 43) reports the refusal. The owner's
 control socket answers a guard that failed with the relay's host record, as `control.py`
