@@ -12,11 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/golden"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
-	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/staging"
 )
 
 const policyText = `{"allowed": [{"model": "gpt-5", "efforts": ["high"]}]}`
@@ -175,78 +173,6 @@ var hostPython = sync.OnceValue(func() string {
 	}
 	return resolved
 })
-
-// pythonLib is the lib/python<X.Y> directory of the venv pythonVenv lays out. Nothing imports
-// from it any more (the fence source it held is placeholder bytes since todo 44), so it is fixed.
-const pythonLib = "python3.13"
-
-func sitePackages(env string) string { return filepath.Join(env, "lib", pythonLib, "site-packages") }
-
-func executable(t *testing.T, path, text string) {
-	t.Helper()
-	write(t, path, text)
-	if err := os.Chmod(path, 0o755); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// pythonVenv lays out a Python install as runtime_install.py left it for the fence release: a
-// venv whose bin/python3 is this host's interpreter, the codex-session-relay package files the
-// Go install reads in site-packages (placeholder bytes, with ownership.py declaring the fence's
-// BUILD and a stopadapter.py present, which is all fenceProblems reads; nothing runs them since
-// the Python Stop adapter's own tests left in todo 44), the crw-completion-hook console script
-// pip writes for codex_session_relay.stopadapter:main, a COMPLETE claim, and install entries for
-// both components inside it. Its relay and bridge scripts run this build's crw, so the gate can
-// ask the relay when the venv is the selected runtime.
-func (h *host) pythonVenv(t *testing.T) string {
-	t.Helper()
-	env := filepath.Join(h.dest, "env-1-0be23c258476")
-	python := hostPython()
-	if python == "" {
-		python = "/bin/sh"
-	}
-	write(t, filepath.Join(env, "pyvenv.cfg"), "home = "+filepath.Dir(python)+"\ninclude-system-site-packages = false\n")
-	if err := os.MkdirAll(filepath.Join(env, "bin"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(python, filepath.Join(env, "bin", "python3")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink("python3", filepath.Join(env, "bin", "python")); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := binary(); err != nil {
-		t.Fatal(err)
-	}
-	crw := filepath.Join(buildDir, "crw")
-	executable(t, filepath.Join(env, "bin", "codex-session-relay"), "#!/bin/sh\nexec '"+crw+"' relay \"$@\"\n")
-	executable(t, filepath.Join(env, "bin", "codex-thread-bridge"), "#!/bin/sh\nexec '"+crw+"' bridge \"$@\"\n")
-	executable(t, filepath.Join(env, "bin", "crw-completion-hook"), "#!"+filepath.Join(env, "bin", "python3")+"\n# -*- coding: utf-8 -*-\nimport re\nimport sys\nfrom codex_session_relay.stopadapter import main\nif __name__ == \"__main__\":\n    sys.argv[0] = re.sub(r'(-script\\.pyw|\\.exe)?$', '', sys.argv[0])\n    sys.exit(main())\n")
-	for name, text := range map[string]string{
-		"__init__.py":    "",
-		"errors.py":      "# placeholder: the fence release's errors module\n",
-		"ownership.py":   "# placeholder: the fence release's ownership module\nBUILD = \"" + ownership.CompatibilityBuild + "\"\n",
-		"stopadapter.py": "# placeholder: the fence release's Python Stop adapter\ndef main():\n    return 0\n",
-	} {
-		write(t, filepath.Join(sitePackages(env), "codex_session_relay", name), text)
-	}
-	claim := staging.Payload(staging.Complete, staging.WrittenByPython, "CRW-116", "1", 1, "host", "2026-09-25T00:40:21Z")
-	write(t, staging.ClaimPath(env), string(record.Encode(claim)))
-	var delta record.Delta
-	for _, c := range []struct{ name, module string }{{"codex-session-relay", "codex_session_relay"}, {"codex-thread-bridge", "codex_thread_bridge"}} {
-		location := filepath.Join(sitePackages(env), c.module)
-		if err := os.MkdirAll(location, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		delta.Installs = append(delta.Installs, record.Named{Component: c.name, Entry: record.Object{
-			{Key: "entryPoint", Value: filepath.Join(env, "bin", c.name)}, {Key: "environment", Value: env}, {Key: "installMode", Value: "copied"},
-			{Key: "interpreterPath", Value: filepath.Join(env, "bin", "python")}, {Key: "location", Value: location}}})
-	}
-	if _, err := record.Update(h.record, 1, delta); err != nil {
-		t.Fatal(err)
-	}
-	return env
-}
 
 // A promotion refuses a second owner on the reading it promotes on: a config.toml table that
 // starts the bridge from a path the pointer does not name, and settings owned by the plugin

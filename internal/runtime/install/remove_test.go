@@ -45,13 +45,13 @@ func listed(list []any, want any) bool {
 // leaves the directory and its install entries in place; once nothing names it, it is removed.
 func TestRemoveRefusesARuntimeARegistrationStillNames(t *testing.T) {
 	h := newHost(t)
-	first, second := archive(t, "0.9.0", ""), archive(t, "0.9.1", "")
-	old := runtimeDir(h, "0.9.0", first, t)
-	h.mustInstall(t, "install", first)
+	earliest, first, second := archive(t, "0.8.0", ""), archive(t, "0.9.0", ""), archive(t, "0.9.1", "")
+	other, old := runtimeDir(h, "0.8.0", earliest, t), runtimeDir(h, "0.9.0", first, t)
+	h.mustInstall(t, "install", earliest)
+	h.mustInstall(t, "update", first)
 	h.mustInstall(t, "update", second)
-	venv := h.pythonVenv(t) // its bin/python3 is a link to the base interpreter, outside it
-	write(t, filepath.Join(venv, "bin", "codex-thread-bridge"), "#!"+filepath.Join(venv, "bin", "python3")+"\n")
-	if err := os.Chmod(filepath.Join(venv, "bin", "codex-thread-bridge"), 0o755); err != nil {
+	// A link inside the other runtime that resolves outside it.
+	if err := os.Symlink("/bin/sh", filepath.Join(other, "bin", "python3")); err != nil {
 		t.Fatal(err)
 	}
 	settings := filepath.Join(h.codex, install.SettingsName)
@@ -70,8 +70,8 @@ func TestRemoveRefusesARuntimeARegistrationStillNames(t *testing.T) {
 		{"the plugin bridge record", old, bridgeRecord, `{"bridgeExecutable": "` + filepath.Join(old, "bin", "codex-thread-bridge") + `", "owner": "plugin", "recordVersion": 1, "serverName": "codex-thread-bridge"}`, bridgeRecord, "bridgeExecutable", false},
 		{"the Stop settings' relay", old, settings, `{"configVersion": 1, "owner": "user", "relayExecutable": "` + filepath.Join(old, "bin", "codex-session-relay") + `"}`, settings, "relayExecutable", false},
 		{"the Stop settings' adapter", old, settings, `{"adapterEntryPoint": "` + filepath.Join(old, "bin", "crw-completion-hook") + `", "adapterInterpreter": "/usr/bin/env", "configVersion": 1, "owner": "plugin"}`, settings, "adapterEntryPoint", false},
-		{"a venv's interpreter named inside it", venv, settings, `{"adapterEntryPoint": "/nonexistent/completion_hook.py", "adapterInterpreter": "` + filepath.Join(venv, "bin", "python3") + `", "configVersion": 1, "owner": "plugin"}`, settings, "adapterInterpreter", false},
-		{"a config.toml command", venv, config, "[mcp_servers.bridge]\ncommand = \"" + filepath.Join(venv, "bin", "codex-thread-bridge") + "\"\n", config, "mcp_servers.bridge", false},
+		{"an interpreter named inside it that resolves outside", other, settings, `{"adapterEntryPoint": "/nonexistent/completion_hook.py", "adapterInterpreter": "` + filepath.Join(other, "bin", "python3") + `", "configVersion": 1, "owner": "plugin"}`, settings, "adapterInterpreter", false},
+		{"a config.toml command", other, config, "[mcp_servers.bridge]\ncommand = \"" + filepath.Join(other, "bin", "codex-thread-bridge") + "\"\n", config, "mcp_servers.bridge", false},
 		{"a config.toml argument", old, config, "[mcp_servers.bridge]\ncommand = \"/usr/bin/env\"\nargs = [\"" + filepath.Join(old, "bin", "codex-thread-bridge") + "\"]\n", config, "mcp_servers.bridge", false},
 		{"a hooks.json Stop command", old, hooks, stopHooks(filepath.Join(old, "bin", "crw-completion-hook") + " " + settings), hooks, "hooks.Stop[0].hooks[0].command", false},
 		{"the settings a Stop command names", old, elsewhere, `{"configVersion": 1, "owner": "user", "relayExecutable": "` + filepath.Join(old, "bin", "codex-session-relay") + `"}`, elsewhere, "relayExecutable", false},
@@ -120,7 +120,7 @@ func TestRemoveRefusesARuntimeARegistrationStillNames(t *testing.T) {
 
 	// Registrations reaching the selected runtime through the pointer name neither directory.
 	write(t, config, "[mcp_servers.codex-thread-bridge]\ncommand = \""+filepath.Join(h.dest, "current", "bin", "codex-thread-bridge")+"\"\n")
-	for _, directory := range []string{old, venv} {
+	for _, directory := range []string{old, other} {
 		if removed, code := install.Remove(context.Background(), h.options(), directory); code != install.OK || at(removed, "removed") != true {
 			t.Fatalf("once nothing names %s: exit %d\n%s", directory, code, golden.Canon(removed))
 		}

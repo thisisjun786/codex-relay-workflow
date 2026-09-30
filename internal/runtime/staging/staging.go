@@ -10,11 +10,11 @@
 //
 // A Go install creates its bin-<version>-<digest12> directory with an exclusive mkdir, claims
 // it STAGING, unpacks into it and settles the claim COMPLETE only after the promotion that puts
-// it into service, exactly as runtime_install.py does with its env-* directories: a run killed
-// anywhere before that leaves a STAGING claim whose lock is free, which the next run reclaims
-// (or, when the record already selects it, resumes). The RECORDED decision of staging.py (a directory
-// made before claims existed) is not ported: every Python env-* directory on the one host that
-// predates claims now carries one.
+// it into service: a run killed anywhere before that leaves a STAGING claim whose lock is free,
+// which the next run reclaims (or, when the record already selects it, resumes). The RECORDED
+// decision of staging.py (a directory made before claims existed) is not ported. A claim the
+// retired Python installer wrote (writtenBy runtime_install.py) is somebody else's file here
+// (decision 63).
 package staging
 
 import (
@@ -22,7 +22,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -43,12 +42,9 @@ const (
 // ClaimVersion is the only claimVersion a claim may declare.
 const ClaimVersion = 1
 
-// The markers that make a claim THIS command's: the Python installer's, and the Go
-// installer's. Any other writtenBy is somebody else's file at that path.
-const (
-	WrittenByPython = "runtime_install.py"
-	WrittenByGo     = "crw install"
-)
+// WrittenByGo is the marker that makes a claim THIS command's. Any other writtenBy is somebody
+// else's file at that path.
+const WrittenByGo = "crw install"
 
 // What a claim says about the run that wrote it.
 const (
@@ -107,8 +103,8 @@ func Shape(v any) error {
 		return reading.Fail("TypeError", "a staging claim is an object, found "+typeName(v))
 	}
 	writer := record.Get(claim, "writtenBy")
-	if writer != WrittenByPython && writer != WrittenByGo {
-		return reading.Fail("ValueError", "this claim was not written by "+WrittenByPython+" or "+WrittenByGo+", it names "+repr(writer))
+	if writer != WrittenByGo {
+		return reading.Fail("ValueError", "this claim was not written by "+WrittenByGo+", it names "+repr(writer))
 	}
 	version := record.Get(claim, "claimVersion")
 	if n, ok := version.(int64); !ok || n != ClaimVersion {
@@ -164,11 +160,7 @@ func ReadClaim(directory string) reading.Reading {
 
 // WriteClaim is staging.write_claim: the claim's bytes under the claim's .crw-lock, replaced
 // by rename (which is why it is not the lock file). A directory that is gone is not created again
-// around a claim (the lock would otherwise make it): the answer is os.ErrNotExist. A claim in a
-// directory runtime_install.py claimed - a Python env-* one, or one whose claim it wrote - is
-// written in its shape, writtenBy runtime_install.py, because runtime_install.py reads only its
-// own claims and takes any other for somebody else's directory: every claim it must read stays
-// one it can.
+// around a claim (the lock would otherwise make it): the answer is os.ErrNotExist.
 func WriteClaim(directory string, payload record.Object) error {
 	info, err := os.Stat(directory)
 	if err != nil {
@@ -183,21 +175,7 @@ func WriteClaim(directory string, payload record.Object) error {
 		return err
 	}
 	defer lock.Release()
-	if PythonClaimed(directory) {
-		payload = record.Set(append(record.Object{}, payload...), "writtenBy", WrittenByPython)
-	}
 	return record.AtomicWrite(target, record.Encode(payload))
-}
-
-// PythonClaimed is whether runtime_install.py claimed directory: a Python env-* directory, or
-// one whose readable claim it wrote.
-func PythonClaimed(directory string) bool {
-	if strings.HasPrefix(filepath.Base(directory), "env-") {
-		return true
-	}
-	claim := ReadClaim(directory)
-	value, ok := claim.Value.(record.Object)
-	return claim.OK() && ok && record.Get(value, "writtenBy") == WrittenByPython
 }
 
 // NewPayload is a claim written now by the Go installer.

@@ -52,7 +52,7 @@ func rollbackTarget(rec Object, named string) ([]contract.Field, string, string)
 		if named != "" {
 			found := installsAt(rec, c.Name, named)
 			if len(found) == 0 {
-				return nil, "", "the host record lists no install of " + c.Name + " whose runtime directory is " + named + ", so it is not a runtime this host installed; name the runtime directory itself (an env-* or bin-* directory under the destination)"
+				return nil, "", "the host record lists no install of " + c.Name + " whose runtime directory is " + named + ", so it is not a runtime this host installed; name the runtime directory itself (a bin-* directory under the destination)"
 			}
 			install = found[len(found)-1]
 		} else {
@@ -178,7 +178,7 @@ func Rollback(ctx context.Context, o Options, named string) (Object, int) {
 		if ctx.Err() != nil {
 			return append(base, field("environment", candidate), field("refused", interrupted(err)), field("note", "nothing was written.")), Refused
 		}
-		return append(base, field("environment", candidate), field("refused", "another run is deciding what to do with this runtime directory ("+err.Error()+"): runtime_install.py and crw install hold "+candidate+record.LockSuffix+" while they decide about it, and one left by a run that died is removed once it is "+record.StaleLock.String()+" old"), field("note", "nothing was written.")), Refused
+		return append(base, field("environment", candidate), field("refused", "another run is deciding what to do with this runtime directory ("+err.Error()+"): crw install holds "+candidate+record.LockSuffix+" while it decides about it, and one left by a run that died is removed once it is "+record.StaleLock.String()+" old"), field("note", "nothing was written.")), Refused
 	}
 	defer lock.Release()
 	exclusive, err := record.PromoteContext(ctx, o.RecordPath, 0)

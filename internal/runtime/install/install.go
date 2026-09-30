@@ -201,7 +201,7 @@ func Install(ctx context.Context, o Options, command string, source Source) (Obj
 
 // insideARuntime is why a destination cannot hold a candidate, or "": it is spelled through the
 // owned pointer, it resolves inside the pointer's target, or it (or an ancestor, as written or
-// resolved) is itself a runtime directory - an env-* or bin-* directory carrying a staging claim.
+// resolved) is itself a runtime directory - a bin-* directory carrying a staging claim.
 func insideARuntime(dest, pointerPath string) string {
 	if record.Within(filepath.Clean(dest), filepath.Clean(pointerPath)) {
 		return "the destination " + dest + " is spelled through the owned pointer " + pointerPath + ", so a candidate built there would live inside the runtime the pointer names"
@@ -467,7 +467,7 @@ func settleInService(o Options, environment, why string) Object {
 	if liveness, _ := staging.OwnerLiveness(environment); liveness != staging.Dead {
 		return nil
 	}
-	err := staging.WriteClaim(environment, completePayload(environment, o.Issue))
+	err := staging.WriteClaim(environment, completePayload(o.Issue))
 	says, _ := claimSays(environment)
 	var detail any
 	if err != nil {
@@ -1124,7 +1124,7 @@ func restoreSelection(o Options, previous Object, wrote []contract.Field, outgoi
 // the record says now, read under the promotion lock with a short timeout.
 func settleClaim(o Options, environment, issue string) Object {
 	path := staging.ClaimPath(environment)
-	err := staging.WriteClaim(environment, completePayload(environment, issue))
+	err := staging.WriteClaim(environment, completePayload(issue))
 	var busy *record.Busy
 	contended := errors.As(err, &busy)
 	left := staging.ReadClaim(environment)

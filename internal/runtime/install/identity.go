@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	"golang.org/x/sys/unix"
 
@@ -193,7 +192,7 @@ func deleteTombstone(tombstone string) error {
 
 // unclaimedTombstone is why the tombstone at path is not one this command may finish, or "": an
 // empty one may go (its deletion reached the claim), and one that carries a readable claim of
-// crw install's or runtime_install.py's whose staging lock nobody holds may; anything else is
+// crw install's whose staging lock nobody holds may; anything else is
 // somebody's directory of that name and is left alone. Whether a process runs out of it or a
 // registration names it is the caller's question (runningOrRegistered).
 func unclaimedTombstone(path string) string {
@@ -207,7 +206,7 @@ func unclaimedTombstone(path string) string {
 	claim := staging.ReadClaim(path)
 	switch {
 	case claim.State == reading.Absent:
-		return path + " carries no claim of crw install's or runtime_install.py's, so it is not a removal this command began: it is somebody's directory of that name and is left alone"
+		return path + " carries no claim of crw install's, so it is not a removal this command began: it is somebody's directory of that name and is left alone"
 	case !claim.OK():
 		return "the claim in " + path + " could not be read, so whether it is an interrupted removal of this command's was not established: " + claim.Detail
 	}
@@ -247,16 +246,8 @@ func landedAt(pointerPath, environment string) (bool, string) {
 	return true, ""
 }
 
-// completePayload is the COMPLETE claim that settles environment's STAGING one, in the writer's
-// own shape: a claim runtime_install.py wrote (a venv's) is settled as runtime_install.py would
-// write it, so that runtime_install.py still reads the directory as its own (its staging.shape
-// accepts only its own marker); any other is crw install's.
-func completePayload(environment string, issue any) record.Object {
-	claim := staging.ReadClaim(environment)
-	if value, ok := claim.Value.(record.Object); ok && claim.OK() && record.Get(value, "writtenBy") == staging.WrittenByPython {
-		host, _ := os.Hostname()
-		return staging.Payload(staging.Complete, staging.WrittenByPython, issue, strconv.Itoa(os.Getpid()), os.Getpid(), host, time.Now().UTC().Format("2006-01-02T15:04:05Z"))
-	}
+// completePayload is the COMPLETE claim that settles environment's STAGING one.
+func completePayload(issue any) record.Object {
 	return staging.NewPayload(staging.Complete, issue, strconv.Itoa(os.Getpid()))
 }
 

@@ -74,7 +74,8 @@ func TestDecideIsPythonsTable(t *testing.T) {
 // with the same key set.
 func TestClaimBytesArePythons(t *testing.T) {
 	want := golden.Obj(golden.Section(t, "claimPayload"))
-	payload := staging.Payload(staging.Staging, staging.WrittenByPython, "CRW-157", "42", 4242, "host", "2026-09-29T00:00:00Z")
+	// The retired Python installer's marker: the recorded bytes are its claim_payload's.
+	payload := staging.Payload(staging.Staging, "runtime_install.py", "CRW-157", "42", 4242, "host", "2026-09-29T00:00:00Z")
 	if got := string(record.Encode(payload)); got != record.Get(want, "bytes") {
 		t.Fatalf("\n go: %q\n py: %q", got, record.Get(want, "bytes"))
 	}
@@ -98,7 +99,8 @@ func write(t *testing.T, path, text string) {
 	}
 }
 
-// Only a claim this command wrote is a claim: anything else at that path is somebody's file.
+// Only a claim this command wrote is a claim: anything else at that path, the retired Python
+// installer's included, is somebody's file.
 func TestReadClaimKeepsFourAnswersAndOwnership(t *testing.T) {
 	dir := t.TempDir()
 	valid := func(writer string) string {
@@ -107,7 +109,7 @@ func TestReadClaimKeepsFourAnswersAndOwnership(t *testing.T) {
 	for _, c := range []struct {
 		name, text, state string
 	}{
-		{"python", valid(staging.WrittenByPython), reading.Present},
+		{"python", valid("runtime_install.py"), reading.Unreadable},
 		{"go", valid(staging.WrittenByGo), reading.Present},
 		{"broken", "{ not json", reading.Unreadable},
 		{"halfway", `{"claimVersion": 1, "state": "HALFWAY", "writtenBy": "runtime_install.py"}`, reading.Unreadable},

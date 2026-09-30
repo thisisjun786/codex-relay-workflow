@@ -23,10 +23,10 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/staging"
 )
 
-// runtimeDirectory is whether name is one of the installers' runtime directories: a Python
-// env-<definition>-<digest> or a Go bin-<version>-<digest>.
+// runtimeDirectory is whether name is one of the installer's runtime directories,
+// bin-<version>-<digest>.
 func runtimeDirectory(name string) bool {
-	return strings.HasPrefix(name, "env-") || strings.HasPrefix(name, "bin-")
+	return strings.HasPrefix(name, "bin-")
 }
 
 // processScope is what a process-table reading can see, stated in every answer that rests on
@@ -39,13 +39,13 @@ const processScope = "this host's process table, as this command's PID namespace
 // destination and judged by file identity (runtimeDir), so an alias of the destination - a
 // symlink, a bind mount, a case-folded spelling - cannot pass a check its canonical spelling
 // fails. It refuses a directory the record selects, one the owned pointer names (or might - an
-// unread pointer is not a pointer aimed elsewhere), one with no claim this command (or
-// runtime_install.py) wrote, an unreadable claim, a staging another run still holds, any
+// unread pointer is not a pointer aimed elsewhere), one with no claim this command wrote, an
+// unreadable claim, a staging another run still holds, any
 // directory a live process runs out of (liveProcesses, and every daemon a daemon.json records
 // alive), and any directory a registration the host reads names a path inside
 // (doctor.RegisteredMatching: the Stop settings, the bridge record, config.toml's mcp_servers,
 // hooks.json, the cached plugin declarations and the launcher copy), or holds something that
-// could not be read. It accepts a Python env-* directory and a Go bin-* one alike. An answer
+// could not be read. An answer
 // that removes names what its verdict rests on: the process table (processTable) and the relay
 // records it read (relayRecords: the scope registries and state directories of this
 // environment's relay, doctor.RecordedDaemons).
@@ -83,7 +83,7 @@ func Remove(ctx context.Context, o Options, named string) (Object, int) {
 		original = name
 	}
 	if !runtimeDirectory(original) || !reading.SameDirectory(filepath.Dir(spelled), o.Dest) {
-		return refuse(spelled + " is not an env-* or bin-* runtime directory (or the tombstone of one) directly under the destination " + o.Dest + ", so it is not one this command installs")
+		return refuse(spelled + " is not a bin-* runtime directory (or the tombstone of one) directly under the destination " + o.Dest + ", so it is not one this command installs")
 	}
 	directory := filepath.Join(o.Dest, original)
 	base = append(base, field("directory", directory))
@@ -137,7 +137,7 @@ func Remove(ctx context.Context, o Options, named string) (Object, int) {
 	claim := staging.ReadClaim(directory)
 	switch {
 	case claim.State == reading.Absent:
-		return refuse("this directory carries no claim written by crw install or runtime_install.py, so it is somebody else's and is left alone")
+		return refuse("this directory carries no claim written by crw install, so it is somebody else's and is left alone")
 	case !claim.OK():
 		return refuse("the claim in this directory could not be read, so who owns it was not established: "+claim.Detail, "claim", claim.Refusal())
 	}
@@ -217,7 +217,7 @@ func tombstoneInUse(ctx context.Context, o Options, grave string) (*use, Object)
 
 // finishRemoval finishes a removal a killed or failed run left as a tombstone: the tombstone is
 // deleted, its claim last, once it is established as this command's (it carries a readable claim
-// of crw install's or runtime_install.py's whose staging lock nobody holds, or it is empty), no
+// of crw install's whose staging lock nobody holds, or it is empty), no
 // live process runs out of it and no registration names it, and when nothing is
 // under the runtime's name any more, what the host record still lists under that name (its
 // install entries, an outgoing selection naming it) is dropped first. A runtime installed again

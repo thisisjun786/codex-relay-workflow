@@ -126,8 +126,8 @@ func TestAHeldPromotionLockRefusesAndReleasesTheCandidate(t *testing.T) {
 }
 
 // Remove refuses a directory a live process runs out of, one with no claim of this command's,
-// one whose staging another run still holds, and anything that is not a runtime directory
-// directly under the destination; it accepts a Python env-* claim.
+// one whose staging another run still holds, and anything that is not a bin-* runtime directory
+// directly under the destination, a Python env-* one the retired installer made included.
 func TestRemoveRefusesWhatMayStillBeInUse(t *testing.T) {
 	h := newHost(t)
 	first, second := archive(t, "0.9.0", ""), archive(t, "0.9.1", "")
@@ -195,9 +195,10 @@ func TestRemoveRefusesWhatMayStillBeInUse(t *testing.T) {
 		}
 	}
 
-	venv := h.pythonVenv(t)
-	if removed, code := install.Remove(context.Background(), h.options(), venv); code != install.OK || len(golden.List(at(removed, "droppedInstallEntries"))) != 1 {
-		t.Fatalf("a settled Python venv: exit %d\n%s", code, golden.Canon(removed))
+	venv := filepath.Join(h.dest, "env-1-0be23c258476")
+	write(t, staging.ClaimPath(venv), string(record.Encode(staging.NewPayload(staging.Complete, nil, nil))))
+	if refused, code := install.Remove(context.Background(), h.options(), venv); code != install.Refused || !strings.Contains(text(at(refused, "refused")), "is not a bin-* runtime directory") {
+		t.Fatalf("a Python venv: exit %d\n%s", code, golden.Canon(refused))
 	}
 	if removed, code := install.Remove(context.Background(), h.options(), old); code != install.OK {
 		t.Fatalf("the settled old runtime once nothing runs from it: exit %d\n%s", code, golden.Canon(removed))

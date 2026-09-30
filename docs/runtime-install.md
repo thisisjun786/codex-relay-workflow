@@ -254,8 +254,9 @@ replaced: an advisory lock belongs to an inode rather than to a name, so a lock 
 replaced by rename would sit on an unlinked inode while the next reader found the new one free. The
 claim, `.crw-staging-claim.json`, answers what that run said it was doing, and it is rewritten when
 the staging settles. Removing anything needs positive proof of ownership, so the claim has to carry
-this command's marker (`crw install`, or `runtime_install.py` for a Python runtime directory), its
-claim version and a state from the declared set. Readable JSON at that path is not proof.
+this command's marker (`crw install`), its claim version and a state from the declared set.
+Readable JSON at that path is not proof, and neither is a claim the retired Python installer wrote
+(`runtime_install.py`), which is somebody else's file here (decision 63).
 
 | Observed | Answer |
 | --- | --- |
@@ -436,11 +437,12 @@ goes back before the runtime does.
 
 ## Removing a runtime
 
-`crw install remove <dir>` deletes one `bin-*` or `env-*` runtime directory directly under the
-destination, and only when nothing may still be using it. The directory is judged by file identity,
+`crw install remove <dir>` deletes one `bin-*` runtime directory directly under the destination,
+and only when nothing may still be using it; a Python `env-*` directory the retired installer made
+is not one it takes (decision 63). The directory is judged by file identity,
 so naming it through a symlink, a bind mount or another spelling of the destination passes no check
 its own name fails. It refuses a directory the record selects, one the pointer names or might name,
-one with no claim this command or the Python installer wrote, one whose claim cannot be read, a
+one with no claim this command wrote, one whose claim cannot be read, a
 staging another run still holds, any directory a live process runs out of (its `/proc/<pid>/exe`,
 its working directory, or what its arguments run, resolving inside it, and every relay daemon a
 `daemon.json` or scope claim records alive), and any directory a registration the host reads names

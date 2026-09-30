@@ -3046,3 +3046,24 @@ Evidence: `internal/runtime/doctor/{executable.go,shell.go,scan.go,doctor.go,reg
 `TestClassifyJudgesAScriptByWhatItRuns`, `TestAScriptIsJudgedByTheInterpreterItsHashBangResolvesTo`,
 `TestLiveProcessesRuleOutOnlyWhatTheyRead` (a Python program run relative),
 `TestRegisteredMatchingJudgesOnlyWhatItsGrammarReads`, `TestDoctorJudgesTheStopCommandsInHooksJSON`.
+
+## 63. A claim the Python installer wrote, and an `env-*` directory, are no longer `crw install`'s (refactor R1)
+
+Decision: a staging claim is this command's only when it says `writtenBy` `crw install`; one the
+retired Python installer wrote (`runtime_install.py`) reads as somebody else's file, like any
+other writer's ("this claim was not written by crw install, it names 'runtime_install.py'",
+where it named both writers). `staging.WriteClaim` no longer rewrites a claim into the Python
+installer's shape for an `env-*` directory or a claim that writer made, and settling a claim
+always writes `crw install`'s. `crw install remove`, `crw install status`, the tombstones and
+the destination check take only `bin-*` runtime directories: an `env-*` directory is refused as
+"not a bin-* runtime directory (or the tombstone of one)" and no longer listed among the runtimes
+`crw install status` reports.
+
+Why: the claims were written in the Python installer's shape so that `runtime_install.py`, which
+reads only its own marker, would still read its venvs as its own. It left with todo 44, the relay
+host has no `env-*` directory (2026-10-01), and `crw install rollback` no longer points at one
+(decision 61).
+
+Evidence: `internal/runtime/staging/staging.go`, `internal/runtime/install/{identity.go,remove.go}`;
+`TestReadClaimKeepsFourAnswersAndOwnership`, `TestRemoveRefusesWhatMayStillBeInUse`,
+`TestRemoveRefusesARuntimeARegistrationStillNames`.

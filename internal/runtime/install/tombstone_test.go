@@ -14,7 +14,7 @@ import (
 )
 
 // A directory named like a tombstone is finished only when it is one this command began: it
-// carries a readable installer claim (crw install's or runtime_install.py's) whose staging lock
+// carries a readable claim of crw install's whose staging lock
 // nobody holds, or it is empty. Somebody's directory of that name, holding files and no claim, is
 // left alone by remove (of the name, of the tombstone, and when clearing the way for a newer
 // runtime's removal), by the reclaim of an abandoned staging, and status says it is not ours.
