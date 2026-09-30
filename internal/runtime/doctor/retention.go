@@ -60,6 +60,9 @@ type RetentionOptions struct {
 	// ScopeRegistry is the relay's production scope registry (a seam for tests); "" is
 	// <home>/.codex-session-relay/scopes, home taken from the passwd entry as the relay takes it.
 	ScopeRegistry string
+	// Socket is the App Server socket row 7 lists threads through; "" is DefaultSocket of the
+	// Codex home.
+	Socket string
 }
 
 // scopeDirEnv overrides the relay's scope registry (the relay's service.ScopeEnv).
@@ -100,6 +103,10 @@ type scan struct {
 	// seen, when set, receives every command the registration rows judge, those a shell script
 	// they run holds included, with the row, source and field naming it (PluginLaunches).
 	seen func(row int, source, field string, argv []shellWord, command Executable)
+	// versions are the cached plugin versions row 5 read, and cacheListed whether it could list
+	// them all (an absent cache lists none); row 7 places each running turn against them.
+	versions    []cachedVersion
+	cacheListed bool
 }
 
 // stopTimeout is one configured Stop hook timeout, in seconds, and where it is configured.
@@ -210,8 +217,10 @@ func (s *scan) absolute(value string) (string, string) {
 // RetentionScan is `crw doctor retention-scan --json`: every reference to a Python interpreter,
 // venv or .py path that a live or resumable task could still spawn, found by resolving each
 // executable reference (through the owned pointer and every link) and classifying what it
-// resolves to, never by matching text; and every live hold (a Stop-event claim without an
-// outcome, a recent journal row). It writes nothing.
+// resolves to, never by matching text; every live hold (a Stop-event claim without an outcome,
+// a recent journal row); and every thread the App Server lists whose running turn may still
+// hold a hook command from a replaced or Python plugin version (row 7). It writes nothing, and
+// asks the App Server only read-only methods.
 func RetentionScan(ctx context.Context, o RetentionOptions) Object {
 	if o.CodexHome == "" {
 		o.CodexHome = CodexHome(o.Env)
@@ -228,6 +237,9 @@ func RetentionScan(ctx context.Context, o RetentionOptions) Object {
 	if o.Proc == "" {
 		o.Proc = "/proc"
 	}
+	if o.Socket == "" {
+		o.Socket = DefaultSocket(o.CodexHome)
+	}
 	s := &scan{o: o, pointer: pointer.Path(o.Destination)}
 	s.settingsRecords()       // row 4, and the settings timeout row 2 needs
 	s.pluginCache()           // row 5, before row 2 so its hook timeouts count
@@ -237,10 +249,10 @@ func RetentionScan(ctx context.Context, o RetentionOptions) Object {
 	s.stateDirectories()      // rows 3 and 6
 	daemonPids := s.daemons() // row 3
 	s.lockHolders(daemonPids) // row 6
-	s.surface(7, false, 0, "Codex threads are listed through the App Server (crw bridge list_threads) and judged against the host's turn-command cache lifetime, which todo 43 records on codex-cli 0.154.0; this command reads neither, so the scan is incomplete until todo 43 adds this row")
-	s.launcherCopy()  // row 8
-	s.configToml(ctx) // row 10
-	s.pointerTarget() // row 11
+	s.threads(ctx)            // row 7, after row 5 has read the cached versions
+	s.launcherCopy()          // row 8
+	s.configToml(ctx)         // row 10
+	s.pointerTarget()         // row 11
 	byRow := func(list []any) func(i, j int) bool {
 		return func(i, j int) bool {
 			return record.Get(list[i].(Object), "row").(int64) < record.Get(list[j].(Object), "row").(int64)
@@ -263,6 +275,7 @@ func RetentionScan(ctx context.Context, o RetentionOptions) Object {
 		{Key: "codexHome", Value: o.CodexHome},
 		{Key: "stateRoot", Value: o.StateRoot},
 		{Key: "pointer", Value: s.pointer},
+		{Key: "appServerSocket", Value: o.Socket},
 		{Key: "longestHookTimeoutSeconds", Value: longest},
 		{Key: "pythonReferences", Value: nonNil(s.references)},
 		{Key: "liveHolds", Value: nonNil(s.holds)},
@@ -585,6 +598,7 @@ func (s *scan) pluginCache() {
 	root := filepath.Join(s.o.CodexHome, "plugins", "cache", "crw", "crw")
 	versions, err := os.ReadDir(root)
 	if errors.Is(err, os.ErrNotExist) {
+		s.cacheListed = true
 		s.surface(5, true, 0, "no cached plugin version exists at "+root)
 		return
 	}
@@ -593,6 +607,7 @@ func (s *scan) pluginCache() {
 		s.surface(5, false, 0, "the plugin cache could not be listed")
 		return
 	}
+	s.cacheListed = true
 	count, incomplete := 0, false
 	for _, version := range versions {
 		base := filepath.Join(root, version.Name())
@@ -600,9 +615,11 @@ func (s *scan) pluginCache() {
 			if err != nil && !errors.Is(err, os.ErrNotExist) {
 				s.unread(base, err)
 				incomplete = true
+				s.versions = append(s.versions, cachedVersion{dir: base}) // undated: row 7 cannot place a turn
 			}
 			continue
 		}
+		references, unread := len(s.references), len(s.unreadable)
 		directory := filepath.Join(base, "wiring", "hooks")
 		hooks, err := listNamed(directory, func(name string) bool { return strings.HasSuffix(name, ".json") })
 		if err != nil {
@@ -614,6 +631,16 @@ func (s *scan) pluginCache() {
 				count += s.hookCommands(5, path, document, base)
 			}
 		}
+		// What row 7 places a running turn against: when this version was installed, and whether
+		// the hook commands a turn is given from it are Python or could not all be judged.
+		version := cachedVersion{dir: base, python: len(s.references) > references, unjudged: len(s.unreadable) > unread}
+		if version.installed, err = installedAt(base); err != nil {
+			s.unread(base, err)
+			incomplete = true
+		} else {
+			version.dated = true
+		}
+		s.versions = append(s.versions, version)
 		for _, path := range []string{filepath.Join(base, "wiring", "mcp.json"), filepath.Join(base, ".mcp.json")} {
 			if document, ok := s.readJSON(path, "a cached MCP declaration"); ok {
 				declared, present := record.Lookup(document, "mcpServers")

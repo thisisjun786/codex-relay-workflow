@@ -52,8 +52,8 @@ func claim(t *testing.T, h *host, key string, outcome bool) string {
 // relayExecutable, on a host whose pointer selects a Go runtime and whose other records are
 // clean. Exactly those two are reported (the claim as a live hold, the executable as a Python
 // reference); everything else - a claim with its outcome, an old journal row, settings that
-// resolve through the pointer to the Go binary - is not, and the one row this command cannot
-// read (resumable Codex threads) keeps the scan from being clear.
+// resolve through the pointer to the Go binary - is not, and row 7 (resumable Codex threads),
+// for which no App Server answers in this fixture, keeps the scan from being clear.
 func TestRetentionScanReportsExactlyTheSeededReferences(t *testing.T) {
 	h := newHost(t)
 	env := h.pythonVenv(t)

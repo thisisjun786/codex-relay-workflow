@@ -64,6 +64,7 @@ func retentionScan(ctx context.Context, env scope.Env, args []string, stdout, st
 	codexHome := flags.String("codex-home", "", "the Codex home (default $CODEX_HOME or ~/.codex)")
 	destination := flags.String("dest", "", "the runtime destination (default ~/.local/share/crw-runtime)")
 	stateRoot := flags.String("state-root", "", "the relay state root (default $XDG_STATE_HOME/codex-session-relay)")
+	socket := flags.String("socket", "", "the App Server socket row 7 lists threads through (default: crw bridge's, <codex home>/app-server-control/app-server-control.sock)")
 	if err := flags.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return 0
@@ -74,7 +75,7 @@ func retentionScan(ctx context.Context, env scope.Env, args []string, stdout, st
 		fmt.Fprintf(stderr, "crw doctor retention-scan: unknown argument %q\n", flags.Arg(0))
 		return usageExit
 	}
-	return emit(stdout, RetentionScan(ctx, RetentionOptions{Env: env, CodexHome: *codexHome, Destination: *destination, StateRoot: *stateRoot}))
+	return emit(stdout, RetentionScan(ctx, RetentionOptions{Env: env, CodexHome: *codexHome, Destination: *destination, StateRoot: *stateRoot, Socket: *socket}))
 }
 
 // declaredSchema is what a candidate binary answers the swap gate with: the schema objects
