@@ -8,8 +8,13 @@ the stated total equals the sum, every row names an owning issue among CRW-150..
 retire-with-evidence row carries its consumer search and removal trigger. A file that is gone
 is listed once, under "Files deleted with evidence", with its consumer search and what removed
 it, and never in the table of files that exist. Exit 1 otherwise, naming each offending path.
+
+With --final (todo 44's acceptance) every row must also be resolved: `ported` or
+`retired-with-evidence`, and every file still in the table must be a developer tool listed in
+scripts/dev/ALLOWED_PYTHON.txt.
 """
 
+import argparse
 import re
 import sys
 from dataclasses import dataclass
@@ -21,7 +26,11 @@ INVENTORY: Final = ROOT / "docs" / "port" / "inventory.md"
 SEARCHED: Final = ("packages", "scripts", "plugins")
 COLUMNS: Final = ("path", "lines", "invoked", "runs", "owner", "disposition",
                   "consumer_search", "removal_trigger")
-DISPOSITIONS: Final = frozenset({"port", "retire-with-evidence", "keep-as-data"})
+DISPOSITIONS: Final = frozenset({"port", "retire-with-evidence", "keep-as-data", "ported",
+                                  "retired-with-evidence"})
+RESOLVED: Final = frozenset({"ported", "retired-with-evidence"})
+RETIRED: Final = frozenset({"retire-with-evidence", "retired-with-evidence"})
+ALLOWED: Final = ROOT / "scripts" / "dev" / "ALLOWED_PYTHON.txt"
 OWNER: Final = re.compile(r"CRW-1(5[0-9]|6[01])")
 TOTAL: Final = re.compile(r"^Total non-test lines: (\d+)$", re.MULTILINE)
 EMPTY: Final = frozenset({"", "-"})
@@ -118,7 +127,7 @@ def problems(rows: list[Row], files: dict[str, int], stated_total: int | None) -
             found.append(f"owner {row.owner!r} is not one of CRW-150..161: {row.path}")
         if row.disposition not in DISPOSITIONS:
             found.append(f"disposition {row.disposition!r} unknown: {row.path}")
-        if row.disposition == "retire-with-evidence" and (
+        if row.disposition in RETIRED and (
                 row.consumer_search in EMPTY or row.removal_trigger in EMPTY):
             found.append(f"retire row lacks consumer_search or removal_trigger: {row.path}")
     actual_total = sum(files.values())
@@ -127,14 +136,42 @@ def problems(rows: list[Row], files: dict[str, int], stated_total: int | None) -
     return found
 
 
-def main() -> int:
+def allowed_python() -> set[str]:
+    """The paths scripts/dev/ALLOWED_PYTHON.txt lists (comments and blank lines aside)."""
+    lines = ALLOWED.read_text(encoding="utf-8").splitlines()
+    return {line.strip() for line in lines if line.strip() and not line.startswith("#")}
+
+
+def final_problems(rows: list[Row]) -> list[str]:
+    """Name every row todo 44 leaves unresolved or unlisted."""
+    found: list[str] = []
+    try:
+        allowed = allowed_python()
+    except OSError as exc:
+        return [f"{ALLOWED.relative_to(ROOT)}: {exc.strerror}"]
+    for row in rows:
+        if row.disposition not in RESOLVED:
+            found.append(f"disposition {row.disposition!r} is not resolved (ported or "
+                         f"retired-with-evidence): {row.path}")
+        if row.path not in allowed:
+            found.append(f"present but not in {ALLOWED.relative_to(ROOT)}: {row.path}")
+    return found
+
+
+def main(argv: list[str] | None = None) -> int:
     """Print the counts, name each problem on stderr, and exit 1 when there is any."""
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--final", action="store_true",
+                        help="also require every row resolved and every present file allow-listed")
+    args = parser.parse_args(argv)
     text = INVENTORY.read_text(encoding="utf-8")
     rows = table_rows(text)
     files = python_files()
     total = TOTAL.search(text)
     found = problems(rows, files, int(total.group(1)) if total else None)
     found += deleted_problems(text, [row.path for row in rows])
+    if args.final:
+        found += final_problems(rows)
     for problem in found:
         print(problem, file=sys.stderr)
     print(f"rows={len(rows)} files={len(files)} lines={sum(files.values())}")
