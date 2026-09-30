@@ -43,12 +43,17 @@ class _Args:
         self.allow_isolated_scope = True
 
 
-def build_services(case, **kwargs):
-    """A Services container over a temporary state directory and its own scope registry."""
+def build_services(case, scopes=None, **kwargs):
+    """A Services container over a temporary state directory and its own scope registry.
+
+    `scopes` names that registry's root when the caller already bound a store under it: a store
+    is validated under the authority that bound it (cutover.md Record).
+    """
     directory = tempfile.mkdtemp(prefix="relay-cadence-")
     case.addCleanup(shutil.rmtree, directory, ignore_errors=True)
-    scopes = tempfile.mkdtemp(prefix="relay-cadence-scopes-")
-    case.addCleanup(shutil.rmtree, scopes, ignore_errors=True)
+    if scopes is None:
+        scopes = tempfile.mkdtemp(prefix="relay-cadence-scopes-")
+        case.addCleanup(shutil.rmtree, scopes, ignore_errors=True)
     previous = os.environ.get("CODEX_SESSION_RELAY_SCOPE_DIR")
     os.environ["CODEX_SESSION_RELAY_SCOPE_DIR"] = scopes
     case.addCleanup(

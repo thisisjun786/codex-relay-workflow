@@ -64,6 +64,9 @@ func fenceRefusal(resolved string, meta map[string]string, raw []byte) string {
 	if _, isBool := record["rollbackAllowed"].(bool); !epochIsInt || !isBool {
 		return "mistyped ownership record"
 	}
+	if why, judged := fenceScopeRefusal(record, meta); !judged || why != "" {
+		return why
+	}
 	phase, _ := record["phase"].(string)
 	if phase != "active" && phase != "draining" && phase != "starting" {
 		return "invalid takeover phase"
@@ -118,6 +121,36 @@ func fenceRefusal(resolved string, meta map[string]string, raw []byte) string {
 		return "the relay store is draining"
 	}
 	return ""
+}
+
+// fenceScopeRefusal is validate's scope identity, in its order: the mirror's appServerSocket is
+// null exactly when schema_meta records no socket_path (and then so is scopeKey), else an
+// absolute, normalized string equal to socket_path beside a non-empty scopeKey, which must be the
+// key this process's own scope-registry authority gives that socket (ownership.ScopeKey, Python's
+// scope_key). judged is false when that key cannot be computed here.
+func fenceScopeRefusal(record map[string]any, meta map[string]string) (why string, judged bool) {
+	recorded, hasSocket := meta["socket_path"]
+	switch socket := record["appServerSocket"].(type) {
+	case nil:
+		if record["scopeKey"] != nil || recorded != "" {
+			return "scope without socket", true
+		}
+		return "", true
+	case string:
+		key, isString := record["scopeKey"].(string)
+		if !strings.HasPrefix(socket, "/") || pythonNormpath(socket) != socket || !isString || key == "" || !hasSocket || socket != recorded {
+			return "invalid socket/scope identity", true
+		}
+		authority, err := ownership.ScopeKey(socket)
+		if err != nil {
+			return "", false
+		}
+		if key != authority {
+			return "scope key disagrees with lock authority", true
+		}
+		return "", true
+	}
+	return "invalid socket/scope identity", true
 }
 
 // pyInt is a JSON number json.loads reads as an int (no fraction, no exponent), with its value.

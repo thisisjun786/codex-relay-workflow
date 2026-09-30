@@ -193,8 +193,9 @@ func AsOwnershipRefusal(err error) error {
 	return err
 }
 
-// fenceWords is the fence's wording of the three ownership decisions Go's judge words its
-// own way, or "" for any other refusal.
+// fenceWords is the fence's wording of the ownership decisions both runtimes make that Go's
+// judge words its own way (the three the fence answers queueably, and validate's lock-authority
+// check, which Go words alike but under Refused's prefix), or "" for any other refusal.
 func fenceWords(detail string) string {
 	switch {
 	case strings.HasPrefix(detail, "store belongs to "):
@@ -203,6 +204,8 @@ func fenceWords(detail string) string {
 		return "only the designated candidate may enter starting"
 	case detail == "store is draining":
 		return "the relay store is draining"
+	case detail == "scope key disagrees with lock authority":
+		return detail
 	}
 	return ""
 }

@@ -147,7 +147,7 @@ func ownershipPreflight(ctx context.Context, dbPath string) string {
 	if why := fenceRefusal(resolved, meta, raw); why != "" {
 		return refused + why
 	}
-	// Refusals validate does not make (the socket and scope identity) keep Go's words.
+	// Refusals validate does not make keep Go's words, but for a decision the fence words too.
 	if words := fenceWords(denied.Detail); words != "" {
 		return refused + words
 	}

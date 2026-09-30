@@ -123,10 +123,14 @@ subject. Otherwise `appServerSocket` is absolute, normalized and equal to
 `schema_meta.socket_path`, and `scopeKey` is the non-empty scope-registry key the binding
 process recorded for it (including the `isolated-<salt>-` namespace of an overridden registry
 root). Both runtimes refuse a record that breaks this (`scope without socket`,
-`invalid socket/scope identity`) at admission and at every revalidation. Go also refuses a
-`scopeKey` that is not the key the validating process would lock
-(`scope key disagrees with lock authority`); Python checks only that it is a non-empty string
-until the refactor-backlog item `[todo36][audit 20/24/46]` lands.
+`invalid socket/scope identity`) at admission and at every revalidation, and both refuse a
+`scopeKey` that is not the key the validating process's own scope-registry authority (its
+`CODEX_SESSION_RELAY_SCOPE_DIR`, or the production root) gives the socket
+(`scope key disagrees with lock authority`), right after the socket identity and before the
+owner is judged: a writer under another authority is refused whoever owns the store, while a
+read-only form still reads it. Every launch on one host shares the production authority, so
+before todo 42 confirm that no launch environment (the service, the hooks, crw-run shells) sets
+`CODEX_SESSION_RELAY_SCOPE_DIR`.
 
 Socket binding. A writable open that passes an App Server socket `K` (canonicalized) to an
 unbound store owned by the opening runtime, in `phase=active` with `transition` null, binds

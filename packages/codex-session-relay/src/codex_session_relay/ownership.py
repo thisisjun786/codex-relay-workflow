@@ -156,9 +156,10 @@ def validate(path, meta, record, *, admitted_epoch=None, candidate=None):
     if type(record["epoch"]) is not int or type(record["rollbackAllowed"]) is not bool:
         raise OwnershipRefused("mistyped ownership record")
     # The scope identity both halves record (Go record.go Validate): the mirror's socket is the
-    # store's schema_meta socket_path, or null exactly when the store records none. The scope
-    # key's equality with this process's own lock authority is not re-derived here: it depends
-    # on the validating process's CODEX_SESSION_RELAY_SCOPE_DIR (refactor-backlog, audit 20).
+    # store's schema_meta socket_path, or null exactly when the store records none, and its
+    # scopeKey is the key this process's own scope-registry authority (its
+    # CODEX_SESSION_RELAY_SCOPE_DIR, or the production root) gives that socket. A process under
+    # another authority would lock another scope for the same App Server, so it is refused.
     socket_path = record["appServerSocket"]
     if socket_path is None:
         if record["scopeKey"] is not None or meta.get("socket_path"):
@@ -168,6 +169,8 @@ def validate(path, meta, record, *, admitted_epoch=None, candidate=None):
             or not isinstance(record["scopeKey"], str) or not record["scopeKey"]
             or socket_path != meta.get("socket_path")):
         raise OwnershipRefused("invalid socket/scope identity")
+    elif record["scopeKey"] != scope_key(socket_path):
+        raise OwnershipRefused("scope key disagrees with lock authority")
     if record["phase"] not in ("active", "draining", "starting"):
         raise OwnershipRefused("invalid takeover phase")
     if record["relayRPCSocket"] != str(Path(path).resolve().parent / "control.sock"):

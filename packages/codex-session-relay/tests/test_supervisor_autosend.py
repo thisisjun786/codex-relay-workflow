@@ -13,6 +13,9 @@ signature.
 
 import json
 import os
+import shutil
+import tempfile
+from unittest import mock
 
 from codex_session_relay import cxc, supervision
 from codex_session_relay import report as report_module
@@ -206,12 +209,22 @@ class TheDaemonCommandRunsThePass(DaemonChannelCase):
 
     STORE_SOCKET = "/nonexistent-for-this-test"
 
+    def setUp(self):
+        # The fixture binds its store to STORE_SOCKET under the isolated scope authority the
+        # daemon command then runs under (build_services), as one launch binds and validates
+        # its store under one authority (cutover.md Record).
+        self.scopes = tempfile.mkdtemp(prefix="relay-autosend-scopes-")
+        self.addCleanup(shutil.rmtree, self.scopes, ignore_errors=True)
+        self.enterContext(mock.patch.dict(os.environ,
+                                          {"CODEX_SESSION_RELAY_SCOPE_DIR": self.scopes}))
+        super().setUp()
+
     def test_the_daemon_command_sends_what_a_silent_parent_owes(self):
         from .test_daemon_cadence import _Args, build_services
         from codex_session_relay.cli import cmd_daemon
 
         self.completed()
-        services, _args = build_services(self, max_ticks=1)
+        services, _args = build_services(self, max_ticks=1, scopes=self.scopes)
         args = _Args(os.path.dirname(str(self.store.path)),
                      socket="/nonexistent-for-this-test", max_ticks=1)
         services = type(services)(args)

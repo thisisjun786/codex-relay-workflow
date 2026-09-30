@@ -265,3 +265,67 @@ func TestDoctor_reports_a_stamp_without_its_mirror_as_the_fence_does(t *testing.
 		}
 	}
 }
+
+// The mirror's scopeKey is the key the validating process's own scope-registry authority gives
+// its socket (cutover.md Record, record.go Validate, ownership.py validate). A store each
+// runtime bound under one CODEX_SESSION_RELAY_SCOPE_DIR is refused to a writer of either
+// runtime under another, with the same answer and nothing changed, before its owner is judged
+// (so the other runtime's store too); a reader still reads it, and under the binding authority
+// its owner writes it again.
+func TestScopeKey_from_another_lock_authority_is_refused_as_the_fence_refuses_it(t *testing.T) {
+	home := pythonHome(t)
+	_, alias := packageBinary(t)
+	app := filepath.Join(home, "app.sock")
+	states := map[string]string{"go": filepath.Join(home, "go"), "python": filepath.Join(home, "python")}
+	fenceProgram := filepath.Join(repositoryRoot(t), ".venv", "bin", "codex-session-relay")
+	relay := func(runtime, state string, argv ...string) run {
+		argv = append([]string{"--state", state}, argv...)
+		if runtime == "go" {
+			return binaryRun(t, alias, argv...)
+		}
+		return fence(t, argv...)
+	}
+	bound := map[string]string{}
+	for creator, state := range states {
+		if created := relay(creator, state, "--socket", app, "store-challenge", "--write"); created.code != 0 {
+			t.Fatalf("%s creates the bound store: %+v", creator, created)
+		}
+		r, _ := records(t, state)
+		if r.ScopeKey == nil || !strings.HasPrefix(*r.ScopeKey, "isolated-") || r.Owner != creator {
+			t.Fatalf("%s: %+v", creator, r)
+		}
+		bound[creator] = *r.ScopeKey
+	}
+	if bound["go"] != bound["python"] {
+		t.Fatalf("the runtimes bound one socket under one authority to different keys: %v", bound)
+	}
+	scopes := os.Getenv("CODEX_SESSION_RELAY_SCOPE_DIR")
+	t.Setenv("CODEX_SESSION_RELAY_SCOPE_DIR", filepath.Join(home, "other-scopes"))
+	want := "{\n  \"error\": \"refused\",\n  \"reason\": \"store_owned_by_other\",\n  \"detail\": \"scope key disagrees with lock authority\"\n}\n"
+	for _, runtime := range []string{"go", "python"} {
+		for creator, state := range states {
+			for _, argv := range [][]string{{"--socket", app, "store-challenge", "--write"}, {"store-challenge", "--write"}} {
+				before, err := storeFiles(state)
+				if err != nil {
+					t.Fatal(err)
+				}
+				answer := relay(runtime, state, argv...)
+				if answer.code != 2 || answer.stdout != want {
+					t.Errorf("%s %v on the %s-owned store: exit %d\n%s", runtime, argv, creator, answer.code, strings.ReplaceAll(answer.stdout, fenceProgram, "<relay>"))
+				}
+				if after, err := storeFiles(state); err != nil || !maps.Equal(before, after) {
+					t.Errorf("%s %v changed the %s-owned store (%v)", runtime, argv, creator, err)
+				}
+			}
+			if read := relay(runtime, state, "store-identity"); read.code != 0 {
+				t.Errorf("%s reader of the %s-owned store: %+v", runtime, creator, read)
+			}
+		}
+	}
+	t.Setenv("CODEX_SESSION_RELAY_SCOPE_DIR", scopes)
+	for creator, state := range states {
+		if answer := relay(creator, state, "--socket", app, "store-challenge", "--write"); answer.code != 0 {
+			t.Errorf("%s under the binding authority: %+v", creator, answer)
+		}
+	}
+}

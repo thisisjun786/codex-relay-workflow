@@ -1701,6 +1701,47 @@ def test_a_drifted_scope_identity_refuses_like_go(tmp_path, drift, refusal):
         ownership.check_start(path)
 
 
+def test_a_scope_key_from_another_lock_authority_is_refused_like_go(tmp_path, monkeypatch, capsys):
+    """Go record.go Validate: the mirror's scopeKey is the key this process's own scope-registry
+    authority gives its socket, or the store is refused (cutover.md Record). A store bound under
+    one CODEX_SESSION_RELAY_SCOPE_DIR is refused to a writer under another, non-queueably and
+    before its owner is judged; a reader still reads it, and the binding authority still writes.
+    """
+    path = tmp_path / "state" / "relay.sqlite3"
+    socket_path = str(tmp_path / "app.sock")
+    monkeypatch.setenv("CODEX_SESSION_RELAY_SCOPE_DIR", str(tmp_path / "bound"))
+    Store(path, socket_path=socket_path).close()
+    bound = ownership.mirror(path)["scopeKey"]
+    assert bound == ownership.scope_key(socket_path) and bound.startswith("isolated-")
+    before = files(path.parent)
+    monkeypatch.setenv("CODEX_SESSION_RELAY_SCOPE_DIR", str(tmp_path / "other"))
+    assert ownership.scope_key(socket_path) != bound
+    for opener in (lambda: Store(path, socket_path=socket_path), lambda: Store(path),
+                   lambda: ownership.check_start(path)):
+        with pytest.raises(ownership.OwnershipRefused) as refused:
+            opener()
+        assert refused.value.detail == "scope key disagrees with lock authority"
+        assert not refused.value.queueable
+    for argv in (["--socket", socket_path, "store-challenge", "--write"],
+                 ["store-challenge", "--write"]):
+        assert cli.main(["--state", str(path.parent), *argv]) == 2
+        assert json.loads(capsys.readouterr().out) == {
+            "error": "refused", "reason": "store_owned_by_other",
+            "detail": "scope key disagrees with lock authority"}
+    assert files(path.parent) == before
+    # Another runtime's store under another authority: the scope is judged before the owner.
+    stamp(path, owner="go")
+    with pytest.raises(ownership.OwnershipRefused) as refused:
+        ownership.check_start(path)
+    assert refused.value.detail == "scope key disagrees with lock authority"
+    stamp(path, owner="python")
+    assert cli.main(["--state", str(path.parent), "store-identity"]) == 0
+    assert json.loads(capsys.readouterr().out)["store"]["storeId"] == ownership.metadata(path)["store_id"]
+    monkeypatch.setenv("CODEX_SESSION_RELAY_SCOPE_DIR", str(tmp_path / "bound"))
+    Store(path, socket_path=socket_path).close()
+    assert ownership.mirror(path)["scopeKey"] == bound
+
+
 def test_a_gate_without_a_database_is_partial_and_never_initialized(tmp_path):
     state = tmp_path / "state"
     state.mkdir(mode=0o700)
