@@ -71,11 +71,9 @@ func runBuiltBinarySweep(t *testing.T, runtimeSweep, rootOnly bool) {
 	t.Helper()
 	root, _ := filepath.Abs("../../..")
 	binary, alias := packageBinary(t)
-	home, err := os.MkdirTemp("", "crw-parity-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.RemoveAll(home) })
+	// A fixed tree: an intent-* case's answer names its workspace key, a digest of the case home's
+	// path, which a recorded answer can only share with this run when the path is the same.
+	home := fixedTree(t, t.Name())
 	env := []string{}
 	for _, s := range os.Environ() {
 		name, _, _ := strings.Cut(s, "=")
