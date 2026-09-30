@@ -1924,6 +1924,18 @@ caller's own context error instead of the transport-shutdown message. The receip
 and fields are the ones Python writes; what changes is that which one a send gets no longer
 depends on scheduling.
 
+`managed-start` sends on the command's own context, as every other relay command does. The
+first SIGINT cancels that context (cmd/crw `cancelOn`), so an interrupted start ends through
+this path: nothing more is sent, the send it interrupted keeps `outcome_unknown`, and the
+command closes its adapter and store and answers exit 3 `{"error": "host", "detail": "context
+canceled"}`. Python installs no handler there: `KeyboardInterrupt` ends `cmd_managed_start`,
+`cli.main`'s `finally` closes the transport, whose drain cancels the send and saves the same
+`outcome_unknown` receipt, and the process dies of the interrupt without a stdout document.
+The stored outcome and the retry by request id are the same in both runtimes; only the
+interrupted process's own ending differs. Before this, the Go start ran on
+`context.Background`: the first interrupt was ignored until the host answered, and a second
+one killed the process before its adapter or store was closed.
+
 Why: Python's `_guarded_send` takes a cancellation at the `await` it is suspended in. Its
 answer or error is never read and no later request is made, whether the answer arrived
 before or after the cancel. The Go worker only learned of the cancellation when the
@@ -1946,7 +1958,10 @@ guard, `turn/start`) twice. In the first run the caller's cancellation propagate
 In the second, `heldCaller` holds it back until the worker has finished. Both runs are
 compared with the live Python oracle, where each answer also arrives after the cancel. With
 the transport change reverted, the held run fails every time: `failed`, `not_attempted`,
-`accepted`, and an extra `thread/resume`.
+`accepted`, and an extra `thread/resume`. `Test28_ManagedStartEndsOnTheFirstInterrupt` in
+internal/relay/adapter/managed_test.go interrupts the built CLI's `managed-start` while the
+business `turn/start` is unanswered; with `managedStart` back on `context.Background` the
+process outlives the interrupt.
 
 ## 40. A stopped process has exited when its pidfd says so, in both runtimes
 

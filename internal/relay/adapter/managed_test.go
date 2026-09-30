@@ -3,12 +3,16 @@ package adapter
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
@@ -145,5 +149,162 @@ func Test28_ManagedSixMethodsRealSocket(t *testing.T) {
 	}
 	if !bytes.Equal(built, out) {
 		t.Fatalf("built managed receipt %s Python %s", built, out)
+	}
+}
+
+// An interrupt reaches a running managed-start (backlog before todo 42): the built CLI's first
+// SIGINT cancels the command's context (cmd/crw cancelOn), and managed-start hands that context
+// to the host, so a business turn/start the host has not answered ends through decision 39's
+// caller cancellation: nothing more is sent, the bridge ledger keeps an outcome_unknown receipt
+// (Python's CancelledError receipt, bridge_adapter.py), and the process exits through its own
+// cleanup with the cancellation as its host error. A context the command dropped left the first
+// interrupt ignored until the host answered.
+func Test28_ManagedStartEndsOnTheFirstInterrupt(t *testing.T) {
+	root := t.TempDir()
+	state := filepath.Join(root, "state")
+	scope := filepath.Join(root, "scopes")
+	t.Setenv("CODEX_SESSION_RELAY_SCOPE_DIR", scope)
+	workspace := filepath.Join(root, "work")
+	marker := filepath.Join(root, "markers")
+	if err := os.Mkdir(workspace, 0700); err != nil {
+		t.Fatal(err)
+	}
+	policyRaw := []byte(`{"roles":{"parent":{"model":"gpt-5.4","reasoningEffort":"medium"},"child":{"model":"gpt-5.4","reasoningEffort":"medium"}}}`)
+	policyPath := filepath.Join(root, "policy.json")
+	if err := os.WriteFile(policyPath, policyRaw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(execution.EnvPolicy, policyPath)
+	registry.ResetRolePolicySnapshot()
+	t.Cleanup(registry.ResetRolePolicySnapshot)
+	settings := map[string]any{"sandbox": map[string]any{"type": "readOnly", "networkAccess": false}, "approvalPolicy": "never", "cwd": workspace, "runtimeWorkspaceRoots": []any{workspace}, "model": "gpt-5.4", "reasoningEffort": "medium", "environments": []any{map[string]any{"environmentId": "local", "cwd": workspace, "runtimeWorkspaceRoots": []any{workspace}}}}
+	request := map[string]any{"schema": managed.Schema, "requestId": "managed-interrupted", "issueKey": "REL-MANAGED", "parent": map[string]any{"taskId": "parent", "hostId": "host", "settings": settings}, "child": map[string]any{"hostId": "host", "title": "Verify", "settings": settings}, "artifactRoots": []any{workspace}, "allowedRecipients": []any{"parent"}, "criteria": []any{map[string]any{"id": "c1", "title": "preserve replay identity", "required": true}}, "criteriaSource": "issue:REL-MANAGED", "baselineRevision": "baseline", "scopeRef": "issue:REL-MANAGED", "prompt": "business-secret"}
+	host := fakehost.Start(t)
+	response := func() map[string]any {
+		r := map[string]any{}
+		for k, v := range settings {
+			if k != "environments" {
+				r[k] = v
+			}
+		}
+		r["thread"] = map[string]any{"id": "managed-child", "environments": settings["environments"]}
+		return r
+	}
+	// The standby turn is answered; the business turn/start reaches the host and its answer
+	// is held back (abandoned once the connection closes).
+	var mu sync.Mutex
+	turns := 0
+	host.Respond("thread/start", fakehost.Reply{Result: response()})
+	host.Respond("thread/name/set", fakehost.Reply{Result: map[string]any{}})
+	host.Handle("turn/start", func(json.RawMessage) fakehost.Reply {
+		mu.Lock()
+		defer mu.Unlock()
+		turns++
+		if turns > 1 {
+			return fakehost.Reply{Result: map[string]any{"turn": map[string]any{"id": "business"}}, Delay: time.Hour}
+		}
+		return fakehost.Reply{Result: map[string]any{"turn": map[string]any{"id": "standby"}}}
+	})
+	host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{"status": map[string]any{"type": "idle"}, "canAcceptDirectInput": true, "model": "gpt-5.4", "reasoningEffort": "medium", "cwd": workspace}}})
+	host.Respond("thread/resume", fakehost.Reply{Result: response()})
+	host.Respond("thread/goal/get", fakehost.Reply{Result: map[string]any{"goal": nil}})
+	host.Respond("thread/turns/list", fakehost.Reply{Result: map[string]any{"data": []any{map[string]any{"id": "standby", "status": "completed"}}, "nextCursor": nil}})
+	host.Handle("thread/list", func(raw json.RawMessage) fakehost.Reply {
+		var params map[string]any
+		if err := json.Unmarshal(raw, &params); err != nil {
+			t.Error(err)
+		}
+		data := []any{}
+		if params["archived"] != true {
+			data = append(data, map[string]any{"id": "managed-child"})
+		}
+		return fakehost.Reply{Result: map[string]any{"data": data, "nextCursor": nil}}
+	})
+	s, err := store.Open(context.Background(), filepath.Join(state, "relay.sqlite3"), host.SocketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	publishWorker(t, state, host.SocketPath, scope, filepath.Dir(suiteBinary))
+	raw, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	cmd := exec.Command(suiteBinary, "relay", "--state", state, "--socket", host.SocketPath, "managed-start", "--request", string(raw), "--marker-root", marker)
+	cmd.Env = append(os.Environ(), "CODEX_SESSION_RELAY_SCOPE_DIR="+scope)
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	exited := make(chan error, 1)
+	go func() { exited <- cmd.Wait() }()
+	business := make(chan error, 1)
+	reached, stopWaiting := context.WithTimeout(context.Background(), 30*time.Second)
+	defer stopWaiting()
+	go func() { business <- host.WaitCount(reached, "turn/start", 2) }()
+	select {
+	case err := <-business:
+		if err != nil {
+			_ = cmd.Process.Kill()
+			<-exited
+			t.Fatalf("the business turn/start never reached the host: %v %s %s", err, &stdout, &stderr)
+		}
+	case err := <-exited:
+		t.Fatalf("managed-start ended before its business turn/start: %v %s %s", err, &stdout, &stderr)
+	}
+	sentBefore := len(host.Requests())
+	if err := cmd.Process.Signal(os.Interrupt); err != nil {
+		t.Fatal(err)
+	}
+	var waited error
+	select {
+	case waited = <-exited:
+	case <-time.After(10 * time.Second):
+		_ = cmd.Process.Kill()
+		<-exited
+		t.Fatalf("managed-start outlived its first interrupt while turn/start was held: %s %s", &stdout, &stderr)
+	}
+	var exit *exec.ExitError
+	if !errors.As(waited, &exit) || exit.ExitCode() != contract.ExitHost || stdout.String() != "{\n  \"error\": \"host\",\n  \"detail\": \"context canceled\"\n}\n" {
+		t.Fatalf("interrupted managed-start: %v stdout %q stderr %q", waited, &stdout, &stderr)
+	}
+	if after := host.Requests(); len(after) != sentBefore {
+		t.Fatalf("sent after the interrupt: %+v", after[sentBefore:])
+	}
+	ledgers, err := filepath.Glob(filepath.Join(state, "operations-*.sqlite3"))
+	if err != nil || len(ledgers) != 1 {
+		t.Fatalf("ledgers %v %v", ledgers, err)
+	}
+	db, err := sql.Open("sqlite", ledgers[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	rows, err := db.Query("SELECT receipt FROM operations ORDER BY rowid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var statuses []any
+	for rows.Next() {
+		var receipt string
+		if err := rows.Scan(&receipt); err != nil {
+			t.Fatal(err)
+		}
+		var decoded map[string]any
+		if err := json.Unmarshal([]byte(receipt), &decoded); err != nil {
+			t.Fatal(err)
+		}
+		statuses = append(statuses, decoded["status"])
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	// The child's creation, then the business send the interrupt claimed.
+	if !reflect.DeepEqual(statuses, []any{"accepted", "outcome_unknown"}) {
+		t.Fatalf("ledger receipts %v", statuses)
 	}
 }

@@ -16,8 +16,10 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
-func managedStart(services cli.Services, args cli.Args, raw []byte) (out any, err error) {
-	ctx := context.Background()
+// managedStart is managed.HostStart: readiness, the store, the engine and every host call run
+// on the command's ctx, so an interrupt ends a start through the adapter's caller
+// cancellation (decision 39) instead of being ignored until the host answers.
+func managedStart(ctx context.Context, services cli.Services, args cli.Args, raw []byte) (out any, err error) {
 	request, err := managed.ParseRequest(raw)
 	if err != nil {
 		return nil, err
