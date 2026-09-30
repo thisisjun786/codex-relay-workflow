@@ -323,13 +323,9 @@ func partialStore(resolved string) error {
 
 // creating is whether a first opener is creating the store at resolved right now: D and the
 // mirror are certainly absent (lstat ENOENT; a mirror link naming no file reads as no mirror,
-// as partialStore reads it) and another opener holds the gate EX, as a creator holds the gate
-// it placed (placeGate, ownership.py _create_gate) until the store is whole. The gate is probed
-// once without waiting, a shared lock released at once, as ownership.py _creating probes it; a
-// gate that cannot be opened or locked is nobody's creation, and so is one that is not a
-// regular file, which no creator places. The open does not wait either (O_NONBLOCK): a FIFO
-// opened read-only would wait for a writer. A writer-side preflight lets such a store through
-// to its admitted open, which waits for the creation (awaitCreation); a reader never probes the
+// as partialStore reads it) and another opener holds the gate EX (gateHeld), as a creator holds
+// the gate it placed (placeGate, ownership.py _create_gate) until the store is whole. A
+// writer-side preflight waits for such a creator (StartPreflight); a reader never probes the
 // gate.
 func creating(resolved string) bool {
 	if _, err := os.Lstat(resolved); !errors.Is(err, unix.ENOENT) {
@@ -338,6 +334,15 @@ func creating(resolved string) bool {
 	if _, err := os.Stat(filepath.Join(filepath.Dir(resolved), "takeover.json")); !errors.Is(err, unix.ENOENT) {
 		return false
 	}
+	return gateHeld(resolved)
+}
+
+// gateHeld is whether another opener holds the gate beside resolved EX, probed once without
+// waiting: a shared lock released at once, as ownership.py _creating probes it. A gate that
+// cannot be opened or locked is held by nobody, and so is one that is not a regular file,
+// which no creator places. The open does not wait either (O_NONBLOCK): a FIFO opened read-only
+// would wait for a writer.
+func gateHeld(resolved string) bool {
 	fd, err := unix.Open(filepath.Join(filepath.Dir(resolved), "write-gate.lock"), unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
 	if err != nil {
 		return false

@@ -2,6 +2,7 @@ package cli_test
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -17,6 +18,9 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // matrixPython runs testdata/readonly_matrix.py with the real Python relay package and its
@@ -500,16 +504,51 @@ func TestReadOnlyForms_refuse_a_partial_store_as_a_writer_does(t *testing.T) {
 }
 
 // A gate another opener holds EX beside no D and no mirror is a first opener still creating the
-// store (decision 30), not a partial store: the start preflight of a service command lets it
-// through in both runtimes, as check_start does, and a socketed daemon's admitted open waits
-// for the creation instead of refusing it. When the holder lets the gate go with D still absent
-// (a creator that died), the store is partial: the waiting daemon refuses it in the fence
-// writer's words, and so does the next service command, before it touches S. Alike in both.
+// store (decision 30), not a partial store, and no store to act on yet either: the start
+// preflight of a service command or a socketed daemon waits for it in both runtimes, polling
+// within the creation bound (store.CreationWait, ownership.py CREATION_WAIT_SECONDS), then
+// judges the store again from the start, before it touches S or the scope registry. A holder
+// that keeps the gate past the bound is refused in one wording and exit by both. One that lets
+// the gate go with D still absent (a creator that died) leaves a partial store: the waiting
+// commands refuse it in the fence writer's words, and so does the next one. Alike in both.
 func TestServiceAndDaemon_wait_for_a_creation_in_progress_as_the_fence_does(t *testing.T) {
 	home := pythonHome(t)
 	_, alias := packageBinary(t)
-	programs := map[string]string{"go": alias, "python": filepath.Join(repositoryRoot(t), ".venv", "bin", "codex-session-relay")}
+	root := repositoryRoot(t)
+	programs := map[string]string{"go": alias, "python": filepath.Join(root, ".venv", "bin", "codex-session-relay")}
 	partial := "{\n  \"error\": \"refused\",\n  \"reason\": \"store_owned_by_other\",\n  \"detail\": \"partial store: write-gate.lock without a database\"\n}\n"
+	expired := "{\n  \"error\": \"refused\",\n  \"reason\": \"store_owned_by_other\",\n  \"detail\": \"store creation in progress: write-gate.lock still held after 0.5s; retry\"\n}\n"
+	// Each runtime's bound, lowered to half a second for one command: Go's in this process,
+	// the fence's module constant in its own.
+	bound := store.CreationWait
+	t.Cleanup(func() { store.CreationWait = bound })
+	shortened := map[string]func(argv ...string) run{
+		"go": func(argv ...string) run {
+			store.CreationWait = 500 * time.Millisecond
+			defer func() { store.CreationWait = bound }()
+			var stdout, stderr bytes.Buffer
+			code := cli.ExecuteAs(context.Background(), "codex-session-relay", argv, &stdout, &stderr)
+			return run{code, stdout.String(), stderr.String()}
+		},
+		"python": func(argv ...string) run {
+			script := "import sys\nfrom codex_session_relay import cli, ownership\nownership.CREATION_WAIT_SECONDS = 0.5\nsys.exit(cli.main(sys.argv[1:]))\n"
+			answer, err := execute(filepath.Join(root, ".venv", "bin", "python"), append([]string{"-c", script}, argv...)...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return answer
+		},
+	}
+	scopes := filepath.Join(home, "scopes")
+	untouched := func(runtime, what, state string, before map[string][32]byte) {
+		t.Helper()
+		if after, err := storeFiles(state); err != nil || !maps.Equal(before, after) {
+			t.Errorf("%s %s changed S (%v): %v -> %v", runtime, what, err, before, after)
+		}
+		if claims, err := os.ReadDir(scopes); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s %s touched the scope registry: %v %v", runtime, what, claims, err)
+		}
+	}
 	for _, runtime := range []string{"go", "python"} {
 		program := programs[runtime]
 		state := filepath.Join(home, runtime)
@@ -524,54 +563,81 @@ func TestServiceAndDaemon_wait_for_a_creation_in_progress_as_the_fence_does(t *t
 		if err = syscall.Flock(int(gate.Fd()), syscall.LOCK_EX); err != nil {
 			t.Fatal(err)
 		}
-		disabled, err := execute(program, "--state", state, "--socket", app, "service", "disable")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if disabled.code != 0 || !strings.Contains(disabled.stdout, `"ok": true`) {
-			t.Errorf("%s service disable during a creation: exit %d\n%s", runtime, disabled.code, disabled.stdout)
-		}
-		daemon := exec.Command(program, "--state", state, "--socket", app, "daemon", "--allow-isolated-scope", "--max-ticks", "0")
-		daemon.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
-		var stdout bytes.Buffer
-		daemon.Stdout = &stdout
-		if err = daemon.Start(); err != nil {
-			t.Fatal(err)
-		}
-		done := make(chan struct{})
-		go func() {
-			_ = daemon.Wait()
-			close(done)
-		}()
-		select {
-		case <-done:
-			t.Errorf("%s daemon did not wait for the creation: exit %d\n%s", runtime, daemon.ProcessState.ExitCode(), stdout.String())
-		case <-time.After(time.Second):
-		}
-		if err = gate.Close(); err != nil {
-			t.Fatal(err)
-		}
-		select {
-		case <-done:
-		case <-time.After(60 * time.Second):
-			_ = daemon.Process.Kill()
-			<-done
-			t.Fatalf("%s daemon still waiting after the gate was let go", runtime)
-		}
-		if code := daemon.ProcessState.ExitCode(); code != 2 || stdout.String() != partial {
-			t.Errorf("%s daemon once its creator died: exit %d\n%s", runtime, code, stdout.String())
-		}
 		before, err := storeFiles(state)
 		if err != nil {
 			t.Fatal(err)
 		}
+		forms := [][]string{{"service", "disable"}, {"daemon", "--allow-isolated-scope", "--max-ticks", "0"}}
+		// A creator that never finishes: refused once the bound has passed, nothing written.
+		for _, argv := range forms {
+			started := time.Now()
+			answer := shortened[runtime](append([]string{"--state", state, "--socket", app}, argv...)...)
+			if waited := time.Since(started); answer.code != 2 || answer.stdout != expired || waited < 500*time.Millisecond {
+				t.Errorf("%s %v past the creation bound (after %s): exit %d\n%s%s", runtime, argv, waited, answer.code, answer.stdout, answer.stderr)
+			}
+			untouched(runtime, fmt.Sprint(argv), state, before)
+		}
+		// service status and the read-only forms never probe the gate: they answer at once, well
+		// inside the default bound, whatever they answer.
+		for _, argv := range [][]string{{"service", "status"}, {"status"}} {
+			started := time.Now()
+			answer, err := execute(program, append([]string{"--state", state, "--socket", app}, argv...)...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if waited := time.Since(started); waited > 10*time.Second {
+				t.Errorf("%s %v waited %s beside a held gate: exit %d\n%s", runtime, argv, waited, answer.code, answer.stdout)
+			}
+			untouched(runtime, fmt.Sprint(argv), state, before)
+		}
+		// A creator that dies while they wait: the gate it leaves is a partial store.
+		type pending struct {
+			argv []string
+			done chan run
+		}
+		var waiting []pending
+		for _, argv := range forms {
+			p := pending{argv, make(chan run, 1)}
+			go func() {
+				answer, err := execute(program, append([]string{"--state", state, "--socket", app}, p.argv...)...)
+				if err != nil {
+					answer = run{-1, "", err.Error()}
+				}
+				p.done <- answer
+			}()
+			waiting = append(waiting, p)
+		}
+		time.Sleep(time.Second)
+		for _, p := range waiting {
+			select {
+			case answer := <-p.done:
+				t.Errorf("%s %v did not wait for the creation: exit %d\n%s", runtime, p.argv, answer.code, answer.stdout)
+				p.done <- answer
+			default:
+			}
+		}
+		if err = gate.Close(); err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range waiting {
+			select {
+			case answer := <-p.done:
+				if answer.code != 2 || answer.stdout != partial {
+					t.Errorf("%s %v once its creator died: exit %d\n%s%s", runtime, p.argv, answer.code, answer.stdout, answer.stderr)
+				}
+			case <-time.After(60 * time.Second):
+				t.Fatalf("%s %v still waiting after the gate was let go", runtime, p.argv)
+			}
+		}
+		untouched(runtime, "waiting on a creator that died", state, before)
 		again, err := execute(program, "--state", state, "--socket", app, "service", "disable")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if after, err := storeFiles(state); again.code != 2 || again.stdout != partial || err != nil || !maps.Equal(before, after) {
-			t.Errorf("%s service disable on an abandoned gate: exit %d (%v)\n%s", runtime, again.code, err, again.stdout)
+		if again.code != 2 || again.stdout != partial {
+			t.Errorf("%s service disable on an abandoned gate: exit %d\n%s", runtime, again.code, again.stdout)
 		}
+		untouched(runtime, "service disable on an abandoned gate", state, before)
 	}
 }
 

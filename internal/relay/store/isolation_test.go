@@ -11,6 +11,10 @@ import (
 
 var isolationRoot string
 
+// hostEnviron is the environment this test binary started with, before TestMain isolated the
+// relay's state from it: a `go build` (relayCLI) keeps the host's Go build and module caches.
+var hostEnviron []string
+
 func TestMain(m *testing.M) {
 	// SIGKILL children inherit the parent's isolation and cannot run cleanup.
 	if os.Getenv("CRW_CRASH_DB") != "" {
@@ -22,6 +26,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	isolationRoot = root
+	hostEnviron = os.Environ()
 	for _, key := range []string{"HOME", "XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "CODEX_HOME", "CODEX_SESSION_RELAY_STATE", "CODEX_SESSION_RELAY_SCOPE_DIR"} {
 		if err := os.Setenv(key, filepath.Join(root, key)); err != nil {
 			panic(err)

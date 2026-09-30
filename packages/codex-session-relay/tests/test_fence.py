@@ -1679,9 +1679,12 @@ def test_socket_binding_waits_for_other_writers_within_the_declared_bound(databa
 
 # A writable first opener of argv[1] that stops at argv[2] ("before-first-lock", or
 # "after-gate-placed": write-gate.lock linked into place and still held EX, no D yet), prints
-# "paused", and goes on after a line on stdin.
+# "paused", and goes on after a line on stdin. With argv[3] it stamps the store it creates for
+# that owner, both halves, before it publishes the mirror and while it still holds the gate EX:
+# a first opener of the other runtime, as the fence sees one.
 PAUSABLE_CREATOR = """
-import fcntl, os, sys
+import fcntl, os, sqlite3, sys
+from codex_session_relay import ownership
 from codex_session_relay.store import Store
 pause, paused = sys.argv[2], []
 def wait():
@@ -1689,7 +1692,7 @@ def wait():
         paused.append(True)
         print('paused', flush=True)
         sys.stdin.readline()
-real_flock, real_link = fcntl.flock, os.link
+real_flock, real_link, real_publish = fcntl.flock, os.link, ownership._publish
 def flock(fd, operation):
     if pause == 'before-first-lock':
         wait()
@@ -1698,14 +1701,23 @@ def link(source, target, **options):
     real_link(source, target, **options)
     if pause == 'after-gate-placed' and os.path.basename(target) == 'write-gate.lock':
         wait()
-fcntl.flock, os.link = flock, link
+def publish(directory, record):
+    if len(sys.argv) > 3:
+        db = sqlite3.connect(sys.argv[1])
+        with db:
+            db.execute("UPDATE schema_meta SET value=? WHERE key='owner'", (sys.argv[3],))
+        db.close()
+        record = {**record, 'owner': sys.argv[3]}
+    return real_publish(directory, record)
+fcntl.flock, os.link, ownership._publish = flock, link, publish
 Store(sys.argv[1]).close()
 print('created', flush=True)
 """
 
 
-def pausable_creator(path, pause):
-    return subprocess.Popen([sys.executable, "-u", "-c", PAUSABLE_CREATOR, str(path), pause],
+def pausable_creator(path, pause, owner=None):
+    return subprocess.Popen([sys.executable, "-u", "-c", PAUSABLE_CREATOR, str(path), pause,
+                             *([owner] if owner else [])],
                             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 
@@ -1742,45 +1754,66 @@ Store(sys.argv[1]).close()
     assert sorted(name.name for name in path.parent.iterdir() if name.name.startswith(".write-gate")) == []
 
 
+def relay_command(path, app, *argv):
+    """The fence's console script on the store at `path`, with the App Server socket `app`."""
+    return [str(Path(sys.executable).parent / "codex-session-relay"), "--state", str(path.parent),
+            "--socket", app, *argv]
+
+
+RELAY_DAEMON = ("daemon", "--allow-isolated-scope", "--max-ticks", "0")
+
+
+def finished_early(processes, seconds=1):
+    """The argv of each relay_command process that exits within `seconds`, none if all wait."""
+    try:
+        processes[0].wait(timeout=seconds)
+    except subprocess.TimeoutExpired:
+        pass
+    return [process.args[5:] for process in processes if process.poll() is not None]
+
+
 def test_service_and_daemon_wait_for_a_first_opener_still_creating_the_store(tmp_path, monkeypatch,
                                                                           capsys):
-    """refuse_partial lets a gate its creator holds through (Go StartPreflight's creating).
+    """refuse_partial waits for a gate its creator holds (Go StartPreflight's creating).
 
     A first opener places the gate already held EX and creates D after it, so in that window S
-    holds a gate and no D. That is no partial store: a service command goes on as check_start
-    lets it, and a socketed daemon's admitted open waits for the creation, then runs on the
-    store it created. Once no process holds it, the same gate beside no D is partial again, and
-    a service command and the daemon refuse it before they touch S.
+    holds a gate and no D. That is no partial store, and no store to act on yet: a service
+    command and a socketed daemon wait in refuse_partial until the creator no longer holds the
+    gate EX, then judge the store it left from the start and go on on the fence's own store.
+    Once no process holds it, the same gate beside no D is partial again, and a service command
+    and the daemon refuse it before they touch S.
     """
     monkeypatch.setenv("CODEX_SESSION_RELAY_SCOPE_DIR", str(tmp_path / "scopes"))
-    path = tmp_path / "state" / "relay.sqlite3"
     app = str(tmp_path / "app.sock")
-    daemon = [str(Path(sys.executable).parent / "codex-session-relay"), "--state", str(path.parent),
-              "--socket", app, "daemon", "--allow-isolated-scope", "--max-ticks", "0"]
-    creator = pausable_creator(path, "after-gate-placed")
-    waiting = None
+    # Each form meets its own creator in its own S, so neither meets the other's daemon.lock.
+    forms = {"service": ("service", "disable"), "daemon": RELAY_DAEMON}
+    paths = {name: tmp_path / name / "relay.sqlite3" for name in forms}
+    creators, waiting = [], []
     try:
-        assert line(creator) == b"paused\n"
-        assert not path.exists() and (path.parent / "write-gate.lock").exists()
-        ownership.refuse_partial(path)
-        assert cli.main(["--state", str(path.parent), "--socket", app, "service", "disable"]) == 0
-        assert json.loads(capsys.readouterr().out)["ok"] is True
-        waiting = subprocess.Popen(daemon, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        with pytest.raises(subprocess.TimeoutExpired):
-            waiting.wait(timeout=1)  # its admitted open waits on the gate the creator holds
-        creator.stdin.write(b"go\n")
-        creator.stdin.flush()
-        assert line(creator) == b"created\n", creator.stderr.read()
-        out, err = waiting.communicate(timeout=60)
-        assert waiting.returncode == 0, (out, err)
-        assert json.loads(out)["ok"] is True
-        assert creator.wait(timeout=30) == 0
+        for name, argv in forms.items():
+            creators.append(pausable_creator(paths[name], "after-gate-placed"))
+            assert line(creators[-1]) == b"paused\n"
+            assert not paths[name].exists() and (paths[name].parent / "write-gate.lock").exists()
+            waiting.append(subprocess.Popen(relay_command(paths[name], app, *argv),
+                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE))
+        assert finished_early(waiting) == []  # each waits on the gate its creator holds
+        for creator in creators:
+            creator.stdin.write(b"go\n")
+            creator.stdin.flush()
+            assert line(creator) == b"created\n", creator.stderr.read()
+        for process in waiting:
+            out, err = process.communicate(timeout=60)
+            assert process.returncode == 0, (process.args, out, err)
+            assert json.loads(out)["ok"] is True
+        for creator in creators:
+            assert creator.wait(timeout=30) == 0
     finally:
-        for process in (creator, waiting):
-            if process is not None and process.poll() is None:
+        for process in (*creators, *waiting):
+            if process.poll() is None:
                 process.kill()
                 process.wait()
-    assert ownership.metadata(path)["owner"] == "python"
+    assert all(ownership.metadata(path)["owner"] == "python" for path in paths.values())
+    assert (paths["service"].parent / "service.json").exists()
     # A creator that died after placing its gate leaves a gate nobody holds: partial.
     abandoned = tmp_path / "abandoned" / "relay.sqlite3"
     creator = pausable_creator(abandoned, "after-gate-placed")
@@ -1795,10 +1828,106 @@ def test_service_and_daemon_wait_for_a_first_opener_still_creating_the_store(tmp
         ownership.refuse_partial(abandoned)
     refused = {"error": "refused", "reason": "store_owned_by_other",
                "detail": "partial store: write-gate.lock without a database"}
-    for argv in (["service", "disable"], ["daemon", "--allow-isolated-scope", "--max-ticks", "0"]):
+    for argv in (["service", "disable"], list(RELAY_DAEMON)):
         assert cli.main(["--state", str(abandoned.parent), "--socket", app, *argv]) == 2
         assert json.loads(capsys.readouterr().out) == refused
         assert sorted(name.name for name in abandoned.parent.iterdir()) == before
+
+
+def test_service_forms_wait_for_a_foreign_creator_and_refuse_its_store(tmp_path, monkeypatch):
+    """A service form never acts on a store another runtime is still creating (PR #202 review).
+
+    enable, disable and declare change S and hold no admitted open after their preflight, so
+    letting a live creator through had them write service.json for a store that turned out to be
+    the other runtime's. They wait for the creator instead, then judge the store it left from the
+    start: check_start refuses it in validate's words, and nothing lands in S or the scope
+    registry. A socketed daemon waits and refuses the same way, before its daemon.lock and claim.
+    """
+    scopes = tmp_path / "scopes"
+    monkeypatch.setenv("CODEX_SESSION_RELAY_SCOPE_DIR", str(scopes))
+    path = tmp_path / "state" / "relay.sqlite3"
+    app = str(tmp_path / "app.sock")
+    creator = pausable_creator(path, "after-gate-placed", owner="go")
+    waiting = []
+    try:
+        assert line(creator) == b"paused\n"
+        for argv in (("service", "enable"), ("service", "disable"),
+                     ("service", "declare", "--forget-execution-policy"), RELAY_DAEMON):
+            waiting.append(subprocess.Popen(relay_command(path, app, *argv),
+                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE))
+        assert finished_early(waiting) == []
+        creator.stdin.write(b"go\n")
+        creator.stdin.flush()
+        assert line(creator) == b"created\n", creator.stderr.read()
+        refused = {"error": "refused", "reason": "store_owned_by_other",
+                   "detail": "the relay store belongs to another runtime"}
+        for process in waiting:
+            out, err = process.communicate(timeout=60)
+            assert (process.returncode, json.loads(out)) == (2, refused), (process.args, out, err)
+        assert creator.wait(timeout=30) == 0
+    finally:
+        for process in (creator, *waiting):
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+    assert ownership.metadata(path)["owner"] == "go" and ownership.mirror(path)["owner"] == "go"
+    assert {name.name for name in path.parent.iterdir()} <= {
+        "relay.sqlite3", "relay.sqlite3-wal", "relay.sqlite3-shm", "takeover.json", "write-gate.lock"}
+    assert not scopes.exists()
+
+
+def test_a_creator_that_keeps_its_gate_past_the_bound_is_refused(tmp_path, monkeypatch, capsys):
+    """The wait is bounded by CREATION_WAIT_SECONDS (Go's store.CreationWait), then refused.
+
+    The refusal is a domain one, store_owned_by_other, exit 2, in the words Go gives it, and S and
+    the scope registry are left as the creator has them. A read-only form never waits: service
+    status answers at once.
+    """
+    scopes = tmp_path / "scopes"
+    monkeypatch.setenv("CODEX_SESSION_RELAY_SCOPE_DIR", str(scopes))
+    monkeypatch.setattr(ownership, "CREATION_WAIT_SECONDS", 0.3)
+    path = tmp_path / "state" / "relay.sqlite3"
+    app = str(tmp_path / "app.sock")
+    creator = pausable_creator(path, "after-gate-placed")
+    detail = "store creation in progress: write-gate.lock still held after 0.3s; retry"
+    try:
+        assert line(creator) == b"paused\n"
+        before = files(path.parent)
+        with pytest.raises(ownership.OwnershipRefused, match=f"^store_owned_by_other: {re.escape(detail)}$"):
+            ownership.refuse_partial(path)
+        for argv in (["service", "disable"], ["service", "enable"], list(RELAY_DAEMON)):
+            assert cli.main(["--state", str(path.parent), "--socket", app, *argv]) == 2
+            assert json.loads(capsys.readouterr().out) == {
+                "error": "refused", "reason": "store_owned_by_other", "detail": detail}
+            assert files(path.parent) == before
+        assert not scopes.exists()
+        status = subprocess.run(relay_command(path, app, "service", "status"), capture_output=True,
+                                timeout=5)
+        assert status.returncode == 0, status
+    finally:
+        creator.kill()
+        creator.wait()
+
+
+def test_a_creator_that_dies_during_the_wait_leaves_a_partial_store(tmp_path):
+    """A creator that lets its gate go with no D gave up: what it leaves is a partial store."""
+    path = tmp_path / "state" / "relay.sqlite3"
+    creator = pausable_creator(path, "after-gate-placed")
+    try:
+        assert line(creator) == b"paused\n"
+        with concurrent.futures.ThreadPoolExecutor(1) as pool:
+            verdict = pool.submit(ownership.refuse_partial, path)
+            with pytest.raises(concurrent.futures.TimeoutError):
+                verdict.result(timeout=0.5)
+            creator.kill()
+            creator.wait()
+            with pytest.raises(ownership.OwnershipRefused, match="^store_owned_by_other: partial "
+                               "store: write-gate.lock without a database$"):
+                verdict.result(timeout=30)
+    finally:
+        if creator.poll() is None:
+            creator.kill()
+            creator.wait()
 
 
 def test_a_creation_completed_before_the_probe_is_left_to_check_start(tmp_path, monkeypatch):

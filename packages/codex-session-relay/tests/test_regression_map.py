@@ -1401,6 +1401,10 @@ UNACCOUNTED_FAULT_OCCURRENCES = (
     # real probe runs; the creator's store and its transactions run unpatched.
     ("test_fence.py", "test_a_creation_completed_before_the_probe_is_left_to_check_start",
      "calls setattr"),
+    # Lowers ownership.CREATION_WAIT_SECONDS so a creator that keeps its gate is refused quickly;
+    # no store or DB hook is involved.
+    ("test_fence.py", "test_a_creator_that_keeps_its_gate_past_the_bound_is_refused",
+     "calls setattr"),
     # Lowers ownership.LOCK_WAIT_SECONDS so a held .replay.lock expires quickly; no DB hook.
     ("test_fence.py", "test_a_held_replay_lock_bounds_the_writer_wait_as_a_host_error",
      "calls setattr"),

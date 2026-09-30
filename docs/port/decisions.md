@@ -1075,14 +1075,19 @@ gate's answer, gate or none; the fence's writer, which had initialized a store o
 it too. The `service` forms but `status`, and `daemon` given `--socket`, refuse it in the same
 words before they write anything into `S` or the scope registry: Go in its start preflight
 (`store.StartPreflight`), the fence in `main` ahead of `check_start` (`ownership.refuse_partial`),
-since `check_start` passes a store whose mirror reads as no record as unfenced. Both let one
-gate beside no `D` and no mirror through: a gate another opener holds EX, a first opener still
-creating the store, found by probing the gate once without waiting; the admitted open then
-waits for the creation, as racing first openers do. A `daemon` without `--socket` meets
-`check_start` alone before it asks for its socket, in `main` and in Go's `runDaemon`
-(`store.CheckStartLikeFence`): beside a mirror, or on the other runtime's, a draining or a
-starting store, it is refused in the fence's words, and otherwise answers the usage error
-(exit 4). A reader never takes the gate. Both
+since `check_start` passes a store whose mirror reads as no record as unfenced. A gate beside
+no `D` and no mirror that another opener holds EX is a first opener still creating the store,
+found by probing the gate without waiting. Both wait for it, polling every 10 ms without
+blocking, within the 30 s creation bound (`ownership.CREATION_WAIT_SECONDS`,
+`store.CreationWait`), then judge the store again from the start: the other runtime's store is
+refused in validate's words, a gate let go with no `D` is partial, and a creator still holding
+the gate at the bound is refused with reason `store_owned_by_other`, detail `store creation in
+progress: write-gate.lock still held after 30s; retry`, exit 2. `S` and the scope registry are
+untouched either way, and `service status` and the read-only forms never wait. A `daemon`
+without `--socket` meets `check_start` alone before it asks for its socket, in `main` and in
+Go's `runDaemon` (`store.CheckStartLikeFence`): beside a mirror, or on the other runtime's, a
+draining or a starting store, it is refused in the fence's words, and otherwise answers the
+usage error (exit 4). A reader never takes the gate. Both
 runtimes judge absence beside the `D` every opener opens, `Path.resolve()`'s, so a `D` link
 naming no file is no `D`: alone it is an absent store (`store_absent` to a read-only form, and
 created through the link by a writer, a service form or a daemon), beside a gate a partial one.
@@ -1094,8 +1099,11 @@ gate), let `service enable`, `disable`, `stop` and `declare` act on a gate alone
 daemon write `daemon.lock`, `daemon.json` and a released scope claim before refusing one; its
 writer created a store over a `takeover.json` link naming no file, and its service forms and
 daemon acted on one. Both start preflights also refused a gate its creator still held, and
-Go's socketless daemon asked for its `--socket` before `check_start`. All are corrected. A read-only form never binds an unbound store to
-its socket either: it reads `mode=ro` instead (decision 30).
+Go's socketless daemon asked for its `--socket` before `check_start`. The first repair of that
+refusal let such a gate through to the admitted open, which a service form never reaches:
+`service enable`, `disable` and `declare` then wrote `daemon.lock` and `service.json` for a
+store the creator went on to stamp for the other runtime (PR #202 review). All are corrected.
+A read-only form never binds an unbound store to its socket either: it reads `mode=ro` instead (decision 30).
 
 Argument refusals keep `cli.py` `main`'s order against the store. A read-only form refuses
 its own arguments where its handler does, before the lazy `Services.store`: `merge-turn-show`

@@ -2,6 +2,7 @@ package store
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -9,7 +10,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -217,23 +220,52 @@ func Test30ConcurrentFirstOpenersNeverSeeAPartialStore(t *testing.T) {
 }
 
 // A first opener places the gate already held EX and creates D after it, so in that window S
-// holds a gate and no D. The start preflight of a service command or a daemon lets it through
-// (creating), as check_start and ownership.py refuse_partial do, rather than refusing it as a
-// partial store; the admitted open then waits for the creation (awaitCreation). Once the
-// creation is done the preflight judges the created store: its runtime's own passes, the other
-// runtime's is refused. A creator that died after placing its gate leaves a gate nobody holds,
-// which the same preflight refuses as a partial store. A reader never probes the gate.
-func Test31StartPreflightLetsACreationThroughAndRefusesAnAbandonedGate(t *testing.T) {
+// holds a gate and no D. The start preflight of a service command or a daemon takes that for no
+// partial store, and no longer lets it through at once either (PR #202 review: a service form
+// changes S with no admitted open after it, so it acted on a store the other runtime was still
+// creating): it waits, within CreationWait and without blocking, until the creator no longer
+// holds the gate EX, then judges the store again from the start, as ownership.py refuse_partial
+// does. Its runtime's own store passes, the other runtime's is refused, and a creator that
+// keeps the gate past the bound is refused as a creation still in progress. A creator that died
+// after placing its gate leaves a gate nobody holds, which the same preflight refuses as a
+// partial store, at once or once it has waited. A reader never probes the gate.
+func Test31StartPreflightWaitsForACreationAndRefusesAnAbandonedGate(t *testing.T) {
 	partial := "partial store: write-gate.lock without a database"
-	detail := func(err error) string {
-		var refused *RefusedError
-		if !errors.As(err, &refused) || refused.Reason != "store_owned_by_other" {
-			t.Fatalf("not an ownership refusal: %#v", err)
-		}
-		return refused.Detail
-	}
+	bound := CreationWait
+	t.Cleanup(func() { CreationWait = bound })
 	for _, creator := range []string{"go", "python"} {
 		t.Run(creator, func(t *testing.T) {
+			detail := func(err error) string {
+				t.Helper()
+				var refused *RefusedError
+				if !errors.As(err, &refused) || refused.Reason != "store_owned_by_other" {
+					t.Fatalf("not an ownership refusal: %#v", err)
+				}
+				return refused.Detail
+			}
+			preflight := func(path string) <-chan error {
+				verdict := make(chan error, 1)
+				go func() { verdict <- StartPreflight(t.Context(), path, "") }()
+				return verdict
+			}
+			waiting := func(verdict <-chan error) {
+				t.Helper()
+				select {
+				case err := <-verdict:
+					t.Fatalf("the preflight did not wait for the creator: %v", err)
+				case <-time.After(500 * time.Millisecond):
+				}
+			}
+			settled := func(verdict <-chan error) error {
+				t.Helper()
+				select {
+				case err := <-verdict:
+					return err
+				case <-time.After(60 * time.Second):
+					t.Fatal("the preflight is still waiting after the creator let the gate go")
+					return nil
+				}
+			}
 			path := filepath.Join(stateDir(t), "state", "relay.sqlite3")
 			first := startOpener(t, creator, path, true)
 			if line := first.next(t); line != "paused" {
@@ -242,18 +274,22 @@ func Test31StartPreflightLetsACreationThroughAndRefusesAnAbandonedGate(t *testin
 			if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("D exists before the creation: %v", err)
 			}
-			if err := StartPreflight(t.Context(), path, ""); err != nil {
-				t.Fatalf("a store being created was refused: %v", err)
+			CreationWait = 200 * time.Millisecond
+			if got := detail(StartPreflight(t.Context(), path, "")); got != "store creation in progress: write-gate.lock still held after 0.2s; retry" {
+				t.Fatalf("a creator holding the gate past the bound: %q", got)
 			}
+			CreationWait = bound
 			if _, err := openForRead(t.Context(), path, ""); detail(err) != partial {
 				t.Fatalf("a reader during the creation: %v", err)
 			}
+			verdict := preflight(path)
+			waiting(verdict)
 			_, err := io.WriteString(first.stdin, "go\n")
 			must(t, err)
 			if answer := first.answer(t); answer != "admitted" {
 				t.Fatalf("creator: %s", answer)
 			}
-			err = StartPreflight(t.Context(), path, "")
+			err = settled(verdict)
 			if creator == "go" && err != nil || creator == "python" && detail(err) != "the relay store belongs to another runtime" {
 				t.Fatalf("the created %s store: %v", creator, err)
 			}
@@ -267,6 +303,183 @@ func Test31StartPreflightLetsACreationThroughAndRefusesAnAbandonedGate(t *testin
 			if got := detail(StartPreflight(t.Context(), abandoned, "")); got != partial {
 				t.Fatalf("a gate its dead creator left: %q", got)
 			}
+			dying := filepath.Join(stateDir(t), "state", "relay.sqlite3")
+			gaveUp := startOpener(t, creator, dying, true)
+			if line := gaveUp.next(t); line != "paused" {
+				t.Fatalf("creator: %s", line)
+			}
+			verdict = preflight(dying)
+			waiting(verdict)
+			must(t, gaveUp.command.Process.Kill())
+			<-gaveUp.done
+			if got := detail(settled(verdict)); got != partial {
+				t.Fatalf("a creator that died while the preflight waited: %q", got)
+			}
 		})
+	}
+}
+
+var (
+	relayOnce  sync.Once
+	relayAlias string
+	relayErr   error
+)
+
+// relayCLI is the Go relay CLI built from this checkout and spelled codex-session-relay, built
+// once per test binary under the isolation root, with the environment the binary started with.
+func relayCLI(t *testing.T) string {
+	t.Helper()
+	relayOnce.Do(func() {
+		dir := filepath.Join(isolationRoot, "relay-cli")
+		if relayErr = os.MkdirAll(dir, 0o700); relayErr != nil {
+			return
+		}
+		build := exec.Command("go", "build", "-o", filepath.Join(dir, "crw"), "./cmd/crw")
+		build.Dir, build.Env = repositoryRoot(t), hostEnviron
+		if out, err := build.CombinedOutput(); err != nil {
+			relayErr = fmt.Errorf("go build ./cmd/crw: %w\n%s", err, out)
+			return
+		}
+		relayAlias = filepath.Join(dir, "codex-session-relay")
+		relayErr = os.Symlink(filepath.Join(dir, "crw"), relayAlias)
+	})
+	if relayErr != nil {
+		t.Fatal(relayErr)
+	}
+	return relayAlias
+}
+
+type relayAnswer struct {
+	code           int
+	stdout, stderr string
+}
+
+// relayStart starts one runtime's relay CLI with argv and its scope registry at scopes, and
+// delivers its answer once it exits.
+func relayStart(t *testing.T, program, scopes string, argv ...string) <-chan relayAnswer {
+	t.Helper()
+	command := exec.Command(program, argv...)
+	command.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1", "CODEX_SESSION_RELAY_SCOPE_DIR="+scopes)
+	var stdout, stderr bytes.Buffer
+	command.Stdout, command.Stderr = &stdout, &stderr
+	must(t, command.Start())
+	answer, done := make(chan relayAnswer, 1), make(chan struct{})
+	go func() {
+		defer close(done)
+		code, err := 0, command.Wait()
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			code = exit.ExitCode()
+		} else if err != nil {
+			code = -1
+		}
+		answer <- relayAnswer{code, stdout.String(), stderr.String()}
+	}()
+	t.Cleanup(func() {
+		_ = command.Process.Kill()
+		<-done
+	})
+	return answer
+}
+
+// PR #202 review, both directions: while one runtime's first opener is creating the store (its
+// gate held EX, no D yet), the other runtime's service forms and socketed daemon wait for it in
+// their start preflight, then judge the store it leaves, a store of the creator's runtime, and
+// refuse it in the fence's words before anything lands in S or the scope registry: no
+// service.json, daemon.lock or daemon.json, no scope claim. The runtime's own creation lets the
+// same command go on once it is done. Each answer is the same bytes in both runtimes. Each form
+// meets its own creator in its own S and scope registry, so no form's lock meets another's.
+func Test31ServiceFormsWaitForACreatorAndJudgeTheStoreItLeaves(t *testing.T) {
+	relays := map[string]string{"go": relayCLI(t), "python": filepath.Join(repositoryRoot(t), ".venv", "bin", "codex-session-relay")}
+	foreign := "{\n  \"error\": \"refused\",\n  \"reason\": \"store_owned_by_other\",\n  \"detail\": \"the relay store belongs to another runtime\"\n}\n"
+	type pending struct {
+		form          []string
+		state, scopes string
+		creator       *firstOpener
+		answer        <-chan relayAnswer
+	}
+	for _, creator := range []string{"go", "python"} {
+		for _, actor := range []string{"go", "python"} {
+			t.Run(actor+"-acts-while-"+creator+"-creates", func(t *testing.T) {
+				forms := [][]string{{"service", "disable"}, {"service", "enable"}, {"service", "declare", "--forget-execution-policy"},
+					{"daemon", "--allow-isolated-scope", "--max-ticks", "0"}}
+				if actor == creator {
+					forms = forms[:1]
+				}
+				var cases []pending
+				for _, form := range forms {
+					home := stateDir(t)
+					c := pending{form: form, state: filepath.Join(home, "state"), scopes: filepath.Join(home, "scopes")}
+					c.creator = startOpener(t, creator, filepath.Join(c.state, "relay.sqlite3"), true)
+					if line := c.creator.next(t); line != "paused" {
+						t.Fatalf("creator: %s", line)
+					}
+					c.answer = relayStart(t, relays[actor], c.scopes, append([]string{"--state", c.state, "--socket", filepath.Join(home, "app.sock")}, form...)...)
+					cases = append(cases, c)
+				}
+				time.Sleep(time.Second)
+				for _, c := range cases {
+					select {
+					case answer := <-c.answer:
+						entries, _ := os.ReadDir(c.state)
+						var names []string
+						for _, entry := range entries {
+							names = append(names, entry.Name())
+						}
+						t.Errorf("%s %v did not wait for the %s creation (S now holds %v): exit %d\n%s%s", actor, c.form, creator, names, answer.code, answer.stdout, answer.stderr)
+					default:
+					}
+				}
+				if t.Failed() {
+					return
+				}
+				for _, c := range cases {
+					_, err := io.WriteString(c.creator.stdin, "go\n")
+					must(t, err)
+				}
+				for _, c := range cases {
+					if answer := c.creator.answer(t); answer != "admitted" {
+						t.Fatalf("creator: %s", answer)
+					}
+					var answer relayAnswer
+					select {
+					case answer = <-c.answer:
+					case <-time.After(60 * time.Second):
+						t.Fatalf("%s %v still waiting after the creation", actor, c.form)
+					}
+					if actor == creator && (answer.code != 0 || !strings.Contains(answer.stdout, `"ok": true`)) ||
+						actor != creator && (answer.code != 2 || answer.stdout != foreign) {
+						t.Errorf("%s %v on a store %s created: exit %d\n%s%s", actor, c.form, creator, answer.code, answer.stdout, answer.stderr)
+					}
+					stamp, err := ownership.SnapshotMeta(t.Context(), filepath.Join(c.state, "relay.sqlite3"))
+					must(t, err)
+					if stamp.Owner != creator {
+						t.Fatalf("stamp %+v, created by %s", stamp, creator)
+					}
+					entries, err := os.ReadDir(c.state)
+					must(t, err)
+					var names []string
+					for _, entry := range entries {
+						names = append(names, entry.Name())
+					}
+					if actor == creator {
+						if !slices.Contains(names, "service.json") {
+							t.Errorf("%s %v on its own store wrote no intent: %v", actor, c.form, names)
+						}
+						continue
+					}
+					for _, name := range names {
+						switch name {
+						case "relay.sqlite3", "relay.sqlite3-wal", "relay.sqlite3-shm", "takeover.json", "write-gate.lock":
+						default:
+							t.Errorf("%s %v wrote %s into S of a store %s created: %v", actor, c.form, name, creator, names)
+						}
+					}
+					if claims, err := os.ReadDir(c.scopes); !errors.Is(err, os.ErrNotExist) {
+						t.Errorf("%s %v touched the scope registry: %v %v", actor, c.form, claims, err)
+					}
+				}
+			})
+		}
 	}
 }

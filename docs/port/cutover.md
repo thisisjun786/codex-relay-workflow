@@ -299,7 +299,10 @@ Details that matter:
   a Go writer still refuses it at once, with the refusal the fence's lock-free `check_start`
   gives that record (a draining store: queueable, so a Go `emit`, `ack` or
   `fault-notification-ack` is durably queued, Wire format), and a read-only form never waits
-  (it reads `mode=ro`). Go's inbox replay (`internal/relay/inbox`) uses the same bound.
+  (it reads `mode=ro`). Go's inbox replay (`internal/relay/inbox`) uses the same bound. The
+  start preflight of a service form or a socketed daemon waits within the same 30 s for a
+  creator that holds the gate EX beside no `D` and no mirror, polling without taking the gate;
+  past the bound it is a domain refusal, not a host error (Step 0 recovery).
 - All of them are `flock` locks (`fcntl.flock` today at daemon.py:95-144, receiver.py:660-672,
   managed.py:311-333, service.py:192-205 and 946-962). Go uses `golang.org/x/sys/unix.Flock` on
   the same permanent files. `FcntlFlock`, POSIX record locks and `lockf`-style libraries live in
@@ -348,10 +351,20 @@ either runtime, writable or read-only, refuses it non-queueably with reason
 writer once no creator holds the gate, a reader without taking it), and so do the service
 commands and a daemon before they write anything into `S` or the scope registry (Read-only
 clients). A live creator is told apart by its lock: while another opener holds the gate EX
-beside no `D` and no mirror, the start preflight of a service command or a daemon (which probes
-the gate once, without waiting) lets it through in both runtimes, and the daemon's admitted
-open waits for the creation and judges what it left; only a gate nobody holds is refused there.
-The probe opens the gate without waiting too (`O_NONBLOCK`), and a gate that is not a regular
+beside no `D` and no mirror, the start preflight of a service command or a daemon
+(`ownership.refuse_partial`, `store.StartPreflight`) waits for it in both runtimes rather than
+letting it through: `service enable`, `disable` and `declare` change `S` with no admitted open
+after the preflight, so a store the creator stamps for the other runtime must be refused before
+they write. The preflight probes the gate without blocking every 10 ms until no opener holds it
+EX, for at most 30 s (`CREATION_WAIT_SECONDS`, `store.CreationWait`), then judges the store
+again from the start: an absent store passes, the store the creator left is judged by
+`check_start` (the other runtime's is refused, reason `store_owned_by_other`, detail `the relay
+store belongs to another runtime`, exit 2), and a gate let go with no `D` is the partial store
+above. A creator still holding the gate at the bound is refused non-queueably with reason
+`store_owned_by_other`, detail `store creation in progress: write-gate.lock still held after 30s;
+retry`, exit 2, in both runtimes. `S` and the scope registry are unchanged in every case.
+`service status` and the read-only forms never probe the gate and never wait.
+Each probe opens the gate without waiting too (`O_NONBLOCK`), and a gate that is not a regular
 file (a FIFO, whose read-only open would wait for a writer) is nobody's creation: refused at
 once as the partial store it is. A probe that finds the gate unheld is followed by a second
 look, in Go's order: a creation completed between the first look and the probe leaves a `D`,
@@ -711,9 +724,10 @@ never takes the gate. The `service` forms but `status`, and a `daemon` given `--
 it the same way before they write `daemon.lock`, `daemon.json`, `service.json` or a scope
 claim: `check_start` passes a store whose mirror reads as no record as unfenced, so the fence's
 `main` refuses it ahead of `check_start` (`ownership.refuse_partial`), as Go's
-`store.StartPreflight` does. The one gate beside no `D` and no mirror they let through is one
-another opener holds EX, a first opener still creating the store: probed once without waiting,
-it is left to the admitted open, which waits for the creation (Step 0 recovery). A `daemon`
+`store.StartPreflight` does. A gate beside no `D` and no mirror that another opener holds EX is
+a first opener still creating the store: they wait for it, within the 30 s creation bound, and
+then judge the store it left from the start, so the other runtime's is refused before anything
+lands in `S` (Step 0 recovery). A `daemon`
 without `--socket` meets `check_start` alone and then asks for its socket, in both runtimes:
 beside a mirror it is refused in `check_start`'s words, and a gate alone, or a mirror link
 naming no file, answers the usage error (exit 4). Absence is judged beside the `D` every
