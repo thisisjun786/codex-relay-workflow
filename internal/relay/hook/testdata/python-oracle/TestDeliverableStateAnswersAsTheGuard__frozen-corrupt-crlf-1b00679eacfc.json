@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "deliverable_state": "txt:[\"changed\", null, \"JSONDecodeError: Illegal trailing comma before end of array: line 2 column 308 (char 321)\"]\n"
+ }
+}

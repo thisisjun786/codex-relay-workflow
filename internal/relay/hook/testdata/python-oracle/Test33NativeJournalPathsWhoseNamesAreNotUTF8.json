@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "native_prescan_unreachable": "txt:[true, true, false, false, false, true, false]\n"
+ }
+}

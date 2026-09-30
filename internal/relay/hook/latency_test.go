@@ -1,5 +1,3 @@
-//go:build parity
-
 package hook
 
 import (
@@ -12,8 +10,9 @@ import (
 	"time"
 )
 
-// Wall-time acceptance is gated separately from the parity matrix because shared
-// hosted runners cannot promise a 150ms scheduling window to a runnable process.
+// Wall-time acceptance is gated behind CRW_HOOK_LATENCY=1 because shared hosted runners cannot
+// promise a 150ms scheduling window to a runnable process. It needs no Python, so it lives in the
+// default build (it was parity-tagged until todo 44).
 func Test33LatencyAcceptance(t *testing.T) {
 	if os.Getenv("CRW_HOOK_LATENCY") != "1" {
 		t.Skip("set CRW_HOOK_LATENCY=1 on an idle host")

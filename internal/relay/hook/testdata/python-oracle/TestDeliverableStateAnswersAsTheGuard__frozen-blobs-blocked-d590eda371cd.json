@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "deliverable_state": "txt:[\"unverifiable\", null, \"<BASE>/work/deliver.txt: frozen bytes unreadable for 4e91f19b0807540ba324ae0b1e7ca915b52b1839d3d67ac6f1599d24569d48ae: scope_escape: cannot open component 'files' of '<BASE>/frozen/files/4e91f19b0807540ba324ae0b1e7ca915b52b1839d3d67ac6f1599d24569d48ae': EACCES\"]\n"
+ }
+}

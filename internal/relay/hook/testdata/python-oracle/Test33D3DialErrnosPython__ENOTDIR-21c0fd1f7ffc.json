@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "ENOTDIR": "txt:{\"errno\": \"ENOTDIR\", \"detail\": \"the configured runtime could not be run: [Errno 20] Not a directory: '<HOME>/state/control.sock'\"}\n"
+ }
+}

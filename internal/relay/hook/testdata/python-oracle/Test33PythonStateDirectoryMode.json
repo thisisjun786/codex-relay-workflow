@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "modes": "txt:{\"case\": \"new\", \"mode\": 448}\n{\"case\": \"existing\", \"mode\": 509}\n"
+ }
+}

@@ -10,7 +10,7 @@ import sys
 import threading
 from typing import Any
 
-binary, tree, source = sys.argv[1:]
+binary, tree, source = sys.argv[1:4]
 tree, source = pathlib.Path(tree), pathlib.Path(source)
 adapter = source / 'packages/codex-session-relay/src/codex_session_relay/stopadapter.py'
 fixture = json.loads((source / 'packages/codex-session-relay/tests/fixtures/stop_event_r1.json').read_text())
@@ -110,6 +110,7 @@ def run(label, name, response, base=tree):
             assert p.stat().st_mode & 0o777 == 0o600
     return dict(outputs=outputs, rows=rows, files=files)
 
+PYTHON_ONLY = sys.argv[4:] == ['python']  # Python's side alone, recorded by the Go test (pyoracle)
 results = []
 # The last case runs under a directory whose name is the byte 0xff, not UTF-8: Python holds every
 # path under it surrogate-escaped (\udcff), hands the system os.fsencode's bytes, and records the
@@ -118,6 +119,12 @@ results = []
 for name, response, base in [('hold', hold, tree), ('release', release, tree), ('duplicate', release, tree),
                              ('malformed', release, tree), ('missing', release, tree), ('unreadable', release, tree),
                              ('timeout', release, tree), ('hold', hold, tree / os.fsdecode(b'not-utf8-\xff'))]:
+    if PYTHON_ONLY:
+        py = run('python', name, response, base)
+        if name == 'timeout':
+            py['rows'][0].pop('detail')
+        results.append(dict(scenario=name if base == tree else name + ' under a directory that is not UTF-8', python=py))
+        continue
     py, go = run('python', name, response, base), run('go', name, response, base)
     if name == 'timeout':
         # Decision 24: native cancellation has no process group. Diagnostic prose

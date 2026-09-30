@@ -1,0 +1,12 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "0": "txt:{\"code\":4,\"stdout\":\"{\\n  \\\"error\\\": \\\"usage\\\",\\n  \\\"detail\\\": \\\"the Stop payload file could not be read: [Errno 2] No such file or directory: '<HOME>/absent'\\\"\\n}\\n\",\"stderr\":\"\"}",
+  "1": "txt:{\"code\":4,\"stdout\":\"{\\n  \\\"error\\\": \\\"usage\\\",\\n  \\\"detail\\\": \\\"the Stop payload file could not be read: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte\\\"\\n}\\n\",\"stderr\":\"\"}",
+  "2": "txt:{\"code\":4,\"stdout\":\"{\\n  \\\"error\\\": \\\"usage\\\",\\n  \\\"detail\\\": \\\"the Stop payload must be a JSON object\\\"\\n}\\n\",\"stderr\":\"\"}",
+  "3": "txt:{\"code\":4,\"stdout\":\"{\\n  \\\"error\\\": \\\"usage\\\",\\n  \\\"detail\\\": \\\"the Stop payload is not JSON: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)\\\"\\n}\\n\",\"stderr\":\"\"}",
+  "4": "txt:{\"code\":4,\"stdout\":\"{\\n  \\\"error\\\": \\\"usage\\\",\\n  \\\"detail\\\": \\\"--mode hold cannot be combined with --no-record: a hold that publishes no observation cannot be released, counted against the bounds, or audited\\\"\\n}\\n\",\"stderr\":\"\"}",
+  "5": "txt:{\"code\":4,\"stdout\":\"{\\n  \\\"error\\\": \\\"usage\\\",\\n  \\\"detail\\\": \\\"the Stop payload is not JSON: Expecting value: line 1 column 1 (char 0)\\\"\\n}\\n\",\"stderr\":\"\"}",
+  "6": "txt:{\"code\":4,\"stdout\":\"{\\n  \\\"error\\\": \\\"usage\\\",\\n  \\\"detail\\\": \\\"the Stop payload must be a JSON object\\\"\\n}\\n\",\"stderr\":\"\"}"
+ }
+}

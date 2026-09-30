@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "event_identity": "txt:[\"9bfb06d5eef25af2f70e4ed7c39787170f8e15eddb53a14ff2fbd77a6ed55bf4\", {\"established\": true, \"reason\": null, \"answerItem\": \"msg_01e431829a270e2c016ab387bb097487d0b0838992185031e1\", \"transcriptPath\": \"<HOME>/transcript.jsonl\", \"scannedBytes\": 2184, \"scannedLines\": 6}]\n"
+ }
+}

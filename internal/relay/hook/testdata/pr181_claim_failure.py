@@ -54,6 +54,10 @@ with tempfile.TemporaryDirectory(prefix='claim-py-') as temp:
         first = stopadapter.run(json.dumps(payload).encode(), codex_home=home, settings=settings)
         second = stopadapter.run(json.dumps(payload).encode(), codex_home=home, settings=settings)
     assert first == json.dumps(verdict['hook_output']) and second is None and invoke.call_count == 1
+    if sys.argv[5:] == ['python']:
+        # Python's side alone, recorded by the Go test (internal/testsupport/pyoracle).
+        print(json.dumps({'first_stdout': first, 'files': snapshot(home)}))
+        sys.exit()
     python, go = snapshot(home), snapshot(native)
     assert python == go, (python, go)
     print(json.dumps({'role': role, 'errno': number, 'first_stdout': first, 'second_stdout': '', 'exit': 0, 'equal': True, 'files': python}))

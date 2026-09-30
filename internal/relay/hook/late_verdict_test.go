@@ -3,16 +3,18 @@ package hook
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 // An event-driven deadline: expiration happens at the exact journal write,
@@ -37,10 +39,7 @@ func Test33LateVerdictPython(t *testing.T) {
 		t.Run(edge, func(t *testing.T) {
 			home := hookHome(t, 5)
 			t.Setenv("CODEX_HOME", home)
-			setup := exec.Command(python(t), "testdata/late_verdict.py", "setup", home)
-			if out, err := setup.CombinedOutput(); err != nil {
-				t.Fatalf("setup: %v %s", err, out)
-			}
+			lateVerdictFixture(t, home)
 			payload, err := os.ReadFile(filepath.Join(home, "stop.json"))
 			if err != nil {
 				t.Fatal(err)
@@ -106,19 +105,103 @@ func Test33LateVerdictPython(t *testing.T) {
 			if err != nil || !bytes.Equal(before, after) {
 				t.Fatalf("relay DB changed: %v", err)
 			}
-			raw, err := json.Marshal(map[string]any{"stdout": answers, "exit": 0})
-			if err != nil {
-				t.Fatal(err)
+			actual := lateVerdictSnapshot(t, home)
+			if edge == "guard_timeout" {
+				// Native cancellation diagnostic (decision 24), not a Python process group.
+				rows, _ := evidence.List(get(actual, "rows"))
+				rows[0] = withoutKeys(object(rows[0]), "detail")
 			}
-			writeTest(t, filepath.Join(home, "result.json"), raw)
+			// Python's adapter, the console module and the script, through the same edge in a
+			// home of its own (late_verdict.py compare -): its answers and snapshot are recorded
+			// (pyoracle).
 			for _, module := range []string{"console", "script"} {
-				cmd := exec.Command(python(t), "testdata/late_verdict.py", "compare", home, edge, module, testRoot)
-				out, err := cmd.CombinedOutput()
+				raw := pyoracle.Answer(t, module, func() ([]byte, error) {
+					out, err := pythonScript(t, nil, nil, "testdata/late_verdict.py", "compare", "-", edge, module, testRoot)
+					if err != nil {
+						return nil, err
+					}
+					return []byte(canonicalJSON(t, out)), nil
+				})
+				want, err := decodeObject(raw)
 				if err != nil {
-					t.Fatalf("%s: %v\n%s", module, err, out)
+					t.Fatalf("%v: %s", err, raw)
 				}
-				t.Logf("%s", out)
+				if g, w := evidence.Dumps(answers, false, true, true), evidence.Dumps(get(want, "stdout"), false, true, true); g != w {
+					t.Fatalf("%s: go %s python %s", module, g, w)
+				}
+				if g, w := evidence.Dumps(actual, false, true, true), evidence.Dumps(get(want, "snapshot"), false, true, true); g != w {
+					t.Fatalf("%s:\n go     %s\n python %s", module, g, w)
+				}
 			}
 		})
 	}
+}
+
+// lateVerdictFixture lays late_verdict.py setup's fixture out under home: the published
+// markers, an empty store, the settings and the Stop. Python lays it out; it is recorded
+// (pythonFixture).
+func lateVerdictFixture(t *testing.T, home string) *fixtureNames {
+	t.Helper()
+	_, names := pythonFixture(t, "setup", home, func() ([]byte, error) {
+		return pythonScript(t, nil, nil, "testdata/late_verdict.py", "setup", home)
+	}, nil)
+	return names
+}
+
+// lateVerdictSnapshot is late_verdict.py snapshot(): the journal rows (by guard state) and the
+// guard's hold and observation records, without times, with home spelled <HOME>.
+func lateVerdictSnapshot(t *testing.T, home string) Object {
+	t.Helper()
+	var normalize func(any) any
+	normalize = func(v any) any {
+		switch value := v.(type) {
+		case Object:
+			out := Object{}
+			for _, field := range value {
+				if !slices.Contains([]string{"at", "elapsedMs", "guardElapsedMs", "identityScanMs"}, field.Key) {
+					out = append(out, Field{Key: field.Key, Value: normalize(field.Value)})
+				}
+			}
+			return out
+		case []any:
+			out := make([]any, len(value))
+			for i, item := range value {
+				out[i] = normalize(item)
+			}
+			return out
+		case string:
+			return strings.ReplaceAll(value, home, "<HOME>")
+		}
+		return v
+	}
+	read := func(path string) any {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		value, err := Decode(raw)
+		if err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+		return normalize(value)
+	}
+	paths, _ := filepath.Glob(filepath.Join(home, "journal", "*", "*.json"))
+	rows := []any{}
+	for _, path := range paths {
+		rows = append(rows, read(path))
+	}
+	slices.SortStableFunc(rows, func(a, b any) int {
+		state := func(v any) string { s, _ := get(object(v), "guardState").(string); return s }
+		return strings.Compare(state(a), state(b))
+	})
+	records := Object{}
+	paths, _ = filepath.Glob(filepath.Join(home, "markers", "*", "*", "hook", "s", "t", "*.json"))
+	for _, path := range paths {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		records = append(records, Field{Key: filepath.Base(path), Value: Object{{Key: "value", Value: read(path)}, {Key: "mode", Value: int64(info.Mode().Perm())}}})
+	}
+	return Object{{Key: "rows", Value: rows}, {Key: "records", Value: records}}
 }

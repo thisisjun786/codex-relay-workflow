@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "python_row": "txt:{\"acceptance\": \"accepted\", \"acceptedAs\": \"accepted/69231d4d5a9088d93bd5b3f6e26f77b4d89c4a504da3ff881eaa9b5b5fb59df8.json\", \"adapterOutcome\": \"adapter_faulted\", \"assignmentId\": null, \"configuration\": \"<SETTINGS>\", \"event\": \"Stop\", \"eventIdentity\": {\"answerItem\": \"item\", \"established\": true, \"reason\": null, \"scannedBytes\": 241, \"scannedLines\": 3, \"transcriptPath\": \"<HOME>/transcript.jsonl\"}, \"eventKey\": \"69231d4d5a9088d93bd5b3f6e26f77b4d89c4a504da3ff881eaa9b5b5fb59df8\", \"fault\": \"RuntimeError: injected guard fault\", \"guardDecision\": null, \"guardInvoked\": true, \"guardMode\": \"observe\", \"guardRecordedAs\": null, \"guardState\": null, \"held\": false, \"processEnding\": null, \"recordVersion\": 2, \"sessionId\": \"s\", \"stdoutReading\": null, \"stopHookActive\": false, \"turnId\": \"t\"}\n"
+ }
+}

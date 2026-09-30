@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "settings_path": "txt:<HOME>/crw-completion-hook.json"
+ }
+}

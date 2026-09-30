@@ -4,9 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 func Test33NativeRegistrationPATH(t *testing.T) {
@@ -45,10 +46,21 @@ func Test33NativeRegistrationPATH(t *testing.T) {
 	}
 }
 
+// A registration that runs the adapter through a bare launcher name found on PATH (a link to a
+// Python interpreter) is probed as that launcher: the interpreter cell resolves the word to the
+// launcher's own path, not the interpreter it links to, as completion._interpreter_cell does.
+// Go's probe runs a stand-in that answers its interpreter question as Python 3.13 does; the
+// Python cell, whose question is a nonce only a real interpreter answers, is recorded
+// (pyoracle) from a launcher linked to the workspace interpreter.
 func Test33PythonBareLauncherUnchanged(t *testing.T) {
 	home := t.TempDir()
 	launcher := filepath.Join(home, "python-launcher")
-	if err := os.Symlink(python(t), launcher); err != nil {
+	standIn := filepath.Join(home, "stand-in-python")
+	writeTest(t, standIn, []byte("#!/bin/sh\nprintf 'crw-status-probe 3.13'\n"))
+	if err := os.Chmod(standIn, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(standIn, launcher); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", home)
@@ -61,11 +73,20 @@ func Test33PythonBareLauncherUnchanged(t *testing.T) {
 	if len(registrations) != 1 || registrations[0].Native || target["value"] != present || interp["value"] != present {
 		t.Fatal(registrations, target, interp)
 	}
-	cmd := exec.Command(python(t), "-c", `import json,sys;sys.path.insert(0,sys.argv[1]);from crw_runtime import completion;c=sys.argv[2];print(json.dumps(completion._interpreter_cell([{'identity':'test','command':c,'target':sys.argv[3]}])))`, filepath.Join(testRoot, "scripts"), command, entry)
-	raw, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("%v %s", err, raw)
-	}
+	raw := pyoracle.Answer(t, "interpreter_cell", func() ([]byte, error) {
+		// The launcher links to the real interpreter while Python asks it.
+		if err := os.Remove(launcher); err != nil {
+			return nil, err
+		}
+		if err := os.Symlink(python(t), launcher); err != nil {
+			return nil, err
+		}
+		defer func() {
+			_ = os.Remove(launcher)
+			_ = os.Symlink(standIn, launcher)
+		}()
+		return pythonScript(t, nil, nil, "-c", `import json,sys;sys.path.insert(0,sys.argv[1]);from crw_runtime import completion;c=sys.argv[2];print(json.dumps(completion._interpreter_cell([{'identity':'test','command':c,'target':sys.argv[3]}])))`, filepath.Join(testRoot, "scripts"), command, entry)
+	}, pyoracle.Substitute(home, "<HOME>"))
 	var expected map[string]any
 	if err := json.Unmarshal(raw, &expected); err != nil {
 		t.Fatal(err)

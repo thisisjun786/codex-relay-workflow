@@ -10,6 +10,7 @@ import (
 
 func Test33StatusKeepsRegistrationSettingsDistinct(t *testing.T) {
 	home := t.TempDir()
+	standInPython3(t)
 	entry := filepath.Join(home, entryPointName)
 	if err := os.WriteFile(entry, []byte("# adapter"), 0o600); err != nil {
 		t.Fatal(err)
@@ -65,4 +66,16 @@ func writeStatusJSON(t *testing.T, path string, value any) {
 	if err = os.WriteFile(path, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// standInPython3 puts first on PATH a python3 that answers status's interpreter question as
+// Python 3.13 does, so a registration naming python3 is startable whatever interpreter this host
+// has (the Python runtime left the repository in todo 44; a registered python3 is still probed).
+func standInPython3(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "python3"), []byte("#!/bin/sh\nprintf 'crw-status-probe 3.13'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }

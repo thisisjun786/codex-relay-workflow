@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -16,6 +18,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 // A path the settings or the Stop payload name reaches the system as os.fsencode's bytes: a
@@ -23,7 +26,7 @@ import (
 // (U+D800) is the ValueError Python's adapter and status catch. Each answer is Python's own
 // function over the same str: the status cell (completion._journal_cell), the transcript scan
 // (stopadapter.event_identity), the claim (stopadapter.claim_event) and the journal row
-// (stopadapter.journal).
+// (stopadapter.journal). Python's answers are recorded (pyoracle) in this file's tests.
 func TestAPathFromJSONReachesTheSystemAsPythonEncodesIt(t *testing.T) {
 	root := t.TempDir()
 	journal := filepath.Join(root, "j\xff") // a directory whose name is not UTF-8
@@ -50,12 +53,10 @@ reasons = [stopadapter.event_identity(dict(stop, transcript_path=path))[1]["reas
 claim = stopadapter.claim_event({"journalRoot": unencodable}, "k" * 64, {"answerItem": "i"}, stop, ("20260930", "b" * 32))
 row = stopadapter.journal({"journalRoot": unencodable}, {"adapterOutcome": "guard_answered"}, ("20260930", "c" * 32))
 print(json.dumps({"cells": cells, "reasons": reasons, "claim": claim[0], "row": row}))`
-	command := exec.Command(python(t), "-c", script, testRoot, journal)
-	command.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
-	raw, err := command.CombinedOutput()
-	if err != nil {
-		t.Fatalf("python: %v\n%s", err, raw)
-	}
+	raw := fromRootPositions(pyoracle.Answer(t, "answers", func() ([]byte, error) {
+		out, err := pythonScript(t, append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1"), nil, "-c", script, testRoot, journal)
+		return toRootPositions(out, root), err
+	}, pyoracle.Substitute(root, "<ROOT>")), root)
 	decoded, err := Decode(raw) // keeps each "\udcXX" a lone surrogate, as Python's json does
 	if err != nil {
 		t.Fatalf("%v: %s", err, raw)
@@ -115,14 +116,13 @@ func TestTheSettingsPathAndHostLedgerAreThePathsPythonNames(t *testing.T) {
 		t.Fatal(err)
 	}
 	alias := filepath.Join(root, "alias", "wd")
-	t.Chdir(alias)
 	script := `import json, os, sys
 sys.path.insert(0, os.path.join(sys.argv[1], "scripts"))
 from crw_runtime import completion
 from codex_session_relay import stopadapter
 print(json.dumps([str(completion.configuration_path()), str(stopadapter.host_ledger())]))`
 	unset := "(unset)"
-	for _, c := range []struct{ name, home, codexHome, override string }{
+	cases := []struct{ name, home, codexHome, override string }{
 		{"an empty HOME", "", unset, ""},
 		{"HOME unset", unset, unset, ""},
 		{"a relative CODEX_HOME", filepath.Join(root, "home"), "codex", ""},
@@ -131,7 +131,39 @@ print(json.dumps([str(completion.configuration_path()), str(stopadapter.host_led
 		{"a CODEX_HOME of two leading slashes and a dot", filepath.Join(root, "home"), "/" + filepath.Join(root, ".", "codex") + "/./", ""},
 		{"the root as CODEX_HOME", filepath.Join(root, "home"), "/", ""},
 		{"a CODEX_HOME of two slashes alone", filepath.Join(root, "home"), "//", ""},
-	} {
+	}
+	// Python's answers are asked for (and recorded, pyoracle) before the chdir below, which
+	// pyoracle's package-relative recordings do not follow; Python runs in alias itself. The
+	// passwd entry's home, which an unset HOME names, is recorded as <PASSWD_HOME>.
+	substitutions := []pyoracle.Option{pyoracle.Substitute(filepath.Join(root, "home"), "<ROOT_HOME>"), pyoracle.Substitute(root, "<ROOT>")}
+	if account, err := user.Current(); err == nil && account.HomeDir != "/" {
+		substitutions = append(substitutions, pyoracle.Substitute(account.HomeDir, "<PASSWD_HOME>"))
+	}
+	answers := map[string][]byte{}
+	for _, c := range cases {
+		answers[c.name] = pyoracle.Answer(t, c.name, func() ([]byte, error) {
+			env := slices.DeleteFunc(os.Environ(), func(kv string) bool {
+				key, _, _ := strings.Cut(kv, "=")
+				return key == "HOME" || key == "CODEX_HOME" || key == configEnv || key == "PWD"
+			})
+			for key, value := range map[string]string{"HOME": c.home, "CODEX_HOME": c.codexHome, configEnv: c.override} {
+				if value != unset {
+					env = append(env, key+"="+value)
+				}
+			}
+			command := exec.Command(python(t), "-c", script, testRoot)
+			command.Dir = alias
+			command.Env = append(env, "PYTHONDONTWRITEBYTECODE=1", "PWD="+alias)
+			raw, err := command.CombinedOutput()
+			if err != nil {
+				return nil, fmt.Errorf("python: %v\n%s", err, raw)
+			}
+			return raw, nil
+		}, substitutions...)
+	}
+	t.Chdir(alias)
+	for _, c := range cases {
+		raw := answers[c.name]
 		t.Run(c.name, func(t *testing.T) {
 			for key, value := range map[string]string{"HOME": c.home, "CODEX_HOME": c.codexHome, configEnv: c.override} {
 				if value != unset {
@@ -143,14 +175,8 @@ print(json.dumps([str(completion.configuration_path()), str(stopadapter.host_led
 					t.Fatal(err)
 				}
 			}
-			command := exec.Command(python(t), "-c", script, testRoot)
-			command.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
-			raw, err := command.CombinedOutput()
-			if err != nil {
-				t.Fatalf("python: %v\n%s", err, raw)
-			}
 			var want []string
-			if err = json.Unmarshal(raw, &want); err != nil {
+			if err := json.Unmarshal(raw, &want); err != nil {
 				t.Fatalf("%v: %s", err, raw)
 			}
 			settings, err := configurationPath("", nil, "")
@@ -181,14 +207,11 @@ print(json.dumps([s["configuration"]["configuration"], s["configuration"]["value
 			writeStatusJSON(t, filepath.Join(home, "hooks.json"), map[string]any{"hooks": map[string]any{"Stop": []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": "python3 " + entry + " " + settings, "timeout": 10}}}}}})
 			env := map[string]string{"CODEX_HOME": home}
 			raw, _ := json.Marshal(env)
-			command := exec.Command(python(t), "-c", script, testRoot, string(raw))
-			command.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
-			out, err := command.CombinedOutput()
-			if err != nil {
-				t.Fatalf("python: %v\n%s", err, out)
-			}
+			out := pyoracle.Answer(t, "status", func() ([]byte, error) {
+				return pythonScript(t, append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1"), nil, "-c", script, testRoot, string(raw))
+			}, pyoracle.Substitute(home, "<HOME>"))
 			var want []any
-			if err = json.Unmarshal(out, &want); err != nil {
+			if err := json.Unmarshal(out, &want); err != nil {
 				t.Fatalf("%v: %s", err, out)
 			}
 			got := Status(context.Background(), "", env, "Stop")["configuration"].(map[string]any)
@@ -289,12 +312,10 @@ for root in json.loads(sys.argv[2]):
     cell = completion._journal_cell({"journalRoot": root, "journalPolicy": "every_invocation"})
     cells.append([cell["value"], cell["evidence"], cell.get("journalRoot")])
 print(json.dumps(cells))`
-	command := exec.Command(python(t), "-c", script, testRoot, evidence.Dumps(roots, false, false, true))
-	command.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
-	raw, err := command.CombinedOutput()
-	if err != nil {
-		t.Fatalf("python: %v\n%s", err, raw)
-	}
+	raw := fromRootPositions(pyoracle.Answer(t, "cells", func() ([]byte, error) {
+		out, err := pythonScript(t, append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1"), nil, "-c", script, testRoot, evidence.Dumps(roots, false, false, true))
+		return toRootPositions(out, root), err
+	}, pyoracle.Substitute(root, "<ROOT>")), root)
 	decoded, err := Decode(raw)
 	if err != nil {
 		t.Fatalf("%v: %s", err, raw)
@@ -328,12 +349,9 @@ s = completion.status(environ={"CODEX_HOME": sys.argv[2]})
 named = s["configuration"]["namedSettings"]
 print(json.dumps([s["configuration"]["value"], s["configuration"]["configuration"], s["registeredCommandTarget"]["value"],
     s["registeredCommandTarget"]["probes"][0]["path"], [[n["settings"], n["settingsState"], n["usable"]] for n in named]]))`
-	command := exec.Command(python(t), "-c", script, testRoot, home)
-	command.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
-	out, err := command.CombinedOutput()
-	if err != nil {
-		t.Fatalf("python: %v\n%s", err, out)
-	}
+	out := pyoracle.Answer(t, "status", func() ([]byte, error) {
+		return pythonScript(t, append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1"), nil, "-c", script, testRoot, home)
+	}, pyoracle.Substitute(home, "<HOME>"))
 	decoded, err := Decode(out) // keeps Python's surrogate escapes as the code points they are
 	if err != nil {
 		t.Fatalf("%v: %s", err, out)

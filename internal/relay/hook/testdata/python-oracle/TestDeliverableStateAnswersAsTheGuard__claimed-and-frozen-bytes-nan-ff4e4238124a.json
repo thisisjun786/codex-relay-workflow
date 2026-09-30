@@ -1,0 +1,6 @@
+{
+ "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
+ "answers": {
+  "deliverable_state": "txt:[\"changed\", null, \"<BASE>/work/deliver.txt: size 19 but the manifest claims nan; <BASE>/work/deliver.txt: caller claims nan bytes but the frozen copy records nan; <BASE>/work/deliver.txt: frozen bytes are 19, not the claimed nan\"]\n"
+ }
+}
