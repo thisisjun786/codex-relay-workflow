@@ -48,8 +48,9 @@ func TestSendBudget_the_readers_agree_on_a_relationships_own_hour(t *testing.T) 
 		t.Fatalf("relationship a's hour is %d, %v; want 12", got, err)
 	}
 
+	was := clockNow
 	clockNow = func() float64 { return now }
-	t.Cleanup(func() { clockNow = func() float64 { return 0 } })
+	t.Cleanup(func() { clockNow = was })
 	snap, err := snapshot(ctx, s, "")
 	if err != nil {
 		t.Fatal(err)
