@@ -822,19 +822,22 @@ value a packet or a coordinator typed.
   generation that is open now. `anchorPending: true` means no anchor is bound yet; a receipt in
   that generation is refused `unbound_generation` and nothing can be claimed against it.
 - A managed start's routing record carries `standbyTurnId`, which is the FIRST generation's anchor
-  and no other generation's. A correction (`needs_changes`) opens a new generation anchored to the
-  turn its revision request was dispatched into, so a claim there names that turn, and naming the
-  first generation's anchor is refused.
+  and no other generation's. The routing text's instruction to name it in a continuation claim
+  holds for that generation only: a correction (`needs_changes`) opens a new generation anchored
+  to the turn its revision request was dispatched into, so a claim there names that turn, and
+  naming the first generation's anchor is refused.
 - The `unassigned_turn` refusal prints `(anchor '<id>')`.
 
 `assignment-show` and `assignment-find` do not report the anchor.
 
-**What the relay checks.** Two things. The thread must be the relationship's registered child, and
-that check is absolute: a turn of any other task is refused whatever its claim says, and the refusal
-suggests no claim. The anchor the claim names must be the one bound for that generation; a claim
-naming another anchor is refused and the refusal names the right one. The actor and the reason are
-stored with the admission as `<actor>: <reason> | corroboration=not_corroborated`. The relay does
-not verify them, and it does not check that the turn follows the anchor in time; host ordering can
+**What the relay checks.** The thread must be the relationship's registered child, and that check is
+absolute: a turn of any other task is refused whatever its claim says, and the refusal suggests no
+claim. The anchor turn and a turn already admitted for the generation are accepted without looking
+at a claim. For any other turn the anchor the claim names must be the one bound for that
+generation; a claim naming another anchor is refused and the refusal names the right one. A claim
+that is accepted is stored with the admission as
+`<actor>: <reason> | corroboration=not_corroborated`. The relay does not verify the actor or the
+reason, and it does not check that the turn follows the anchor in time; host ordering can
 corroborate or contradict a claim and never admits a turn on its own. Knowing the anchor is
 therefore not proof of continuity, since the refusal prints it: the claim is the child's statement
 of fact and the admission records that it was made. A turn admitted once needs no claim again within

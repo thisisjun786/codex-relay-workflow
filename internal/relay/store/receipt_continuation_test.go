@@ -72,9 +72,7 @@ func TestContinuationRequired_marks_only_the_refusal_a_claim_would_cure(t *testi
 		unbound := f.register(registerOptions{issue: "REL-2"})
 		payload := f.readyPayload(unbound, []string{f.artifact("out.txt", "finished later")}, 1, later)
 		_, err := f.acceptPayload(payload)
-		if err == nil {
-			t.Fatal("a turn of a generation with no bound anchor was accepted")
-		}
+		requireReason(t, err, ReasonUnboundGeneration)
 		var need *ContinuationRequired
 		if errors.As(err, &need) {
 			t.Fatalf("a generation with no anchor was told to claim one: %v", err)

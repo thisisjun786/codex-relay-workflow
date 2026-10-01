@@ -235,12 +235,13 @@ Execution:
   `observation.anchors.<relationship id>.turnId` for the generation that is open now, the
   managed routing record's `standbyTurnId` is the first generation's anchor and no other
   generation's (a correction opens a new generation anchored to the turn its revision request
-  arrived in), and the `unassigned_turn` refusal names the anchor it expects.
-  `assignment-show` and `assignment-find` do not report it. The relay checks that the turn
-  belongs to your own task and that the claim names the anchor bound for that generation; it
-  records your actor and reason without verifying them, so the claim is a statement you answer
-  for, and a turn of another task is refused whatever it claims. A turn admitted once needs no
-  claim again within that generation.
+  arrived in, and the routing text's instruction to name `standbyTurnId` does not carry over to
+  it), and the `unassigned_turn` refusal names the anchor it expects. `assignment-show` and
+  `assignment-find` do not report it. The relay first checks that the turn belongs to your own
+  task, so a turn of another task is refused whatever it claims. When it then admits a turn that
+  was not admitted before, it checks that the claim names the anchor bound for that generation
+  and records your actor and reason without verifying them, so the claim is a statement you
+  answer for. A turn admitted once needs no claim again within that generation.
 - [Only when a relay holds this assignment:] if you cannot emit because of the assignment's
   own state rather than your artifact, whether the issue lookup finds no assignment, the
   lookup is refused `store_absent` because no store exists there yet, or the
