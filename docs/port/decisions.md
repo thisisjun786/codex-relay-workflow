@@ -4434,3 +4434,31 @@ Consumer check: no skill, doc or product code reads a relay command's help or us
 Evidence: cmd/crw/main_test.go; internal/relay/routing/cli_test.go; internal/relay/faults/
 argparse_test.go; internal/relay/service/parity_test.go; internal/relay/supervisor/rcl_test.go;
 internal/relay/dispatch/dispatch.go; internal/relay/capacity/cli.go.
+
+## Decision R3F-5. The last Python class names in the relay's returned host errors go; the stored ones stay (refactor R3, final sweep)
+
+Decision: two host errors the relay only returns stop carrying a Python exception class.
+`managed-start` answers a socket it cannot resolve with `the relay socket cannot be resolved:
+<Go's error>` and a build that registers no host adapter with `this build registers no host
+adapter, so it cannot start a managed task`, where both read `HostUnavailable: ...` (the second
+named `bridge_adapter.py` and todo 28). `packet-check` answers a launch declaration whose
+execution policy path holds a NUL byte with `the launch declaration's execution policy path holds
+a NUL byte`, where it read `ValueError: embedded null byte`. Both stay host errors (exit 3,
+`error: host`). `Test27_MST_9_AStartThisBuildCannotMakeIsAHostError` holds the first two.
+
+Kept, because the text is stored: `dispatch.HostError` (`<Class>: <Detail>`) is now raised only
+by the delivery domain's lifecycle integer reading (`lifecycle.go`, `pystring.go`: `int()` and
+SQLite's binding) and its marker path checks (`marker.go`: `AssignmentDir`, `confined`), whose
+text the supervisor journals as an attempt's fault label (`supervisor_attempt_faulted`, decision
+R3D-1); its comment says so. `service.ErrEmbeddedNUL` keeps its words for the service launch it
+also fails.
+
+Documented rather than replaced: `dispatch.Execute` recovers an `*evidence.PythonError` panic as
+the command's host error. The readers of stored packets, readings and forge values raise it as
+the Python relay's expressions raised, and the callers that store its text recover it themselves;
+turning those accessors into error returns would touch every reader of a stored document.
+
+Consumer check: no skill, doc or contract fixture reads these details; no golden held them.
+
+Evidence: internal/relay/managed/{start_cli.go,start_cli_test.go}; internal/relay/sync/policy.go;
+internal/relay/dispatch/{answer.go,dispatch.go}.

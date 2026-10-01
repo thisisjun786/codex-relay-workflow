@@ -17,8 +17,8 @@ import (
 // adapter's caller cancellation (decision 39).
 var HostStart func(context.Context, dispatch.Services, dispatch.Args, []byte) (any, error)
 
-// runStart performs input validation before acquiring the store. The production
-// host adapter is todo 28: never authorize a host effect without its ledger.
+// runStart performs input validation before acquiring the store, and never authorizes a host
+// effect without the host adapter's ledger.
 func runStart(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
 	if services.SocketPath == "" || services.Selection.Source != "flag" {
 		return nil, &dispatch.UsageError{Detail: "managed-start requires explicit --state and --socket", Code: contract.ExitUsage}
@@ -55,13 +55,13 @@ func runStart(ctx context.Context, services dispatch.Services, args dispatch.Arg
 			{Key: "reason", Value: "worker_policy_unreadable"},
 		}, Code: contract.ExitRefused}
 	}
-	// The bridge transport and observed ledger are todo 28's dependency. Do not
-	// open (or create) a relay store before that boundary can be authenticated.
+	// The bridge transport and the observed ledger are the host adapter's. Do not open (or
+	// create) a relay store before that boundary can be authenticated.
 	if _, err := store.CanonicalSocket(services.SocketPath); err != nil {
-		return nil, &dispatch.HostError{Class: "HostUnavailable", Detail: err.Error()}
+		return nil, dispatch.Host("the relay socket cannot be resolved: " + err.Error())
 	}
 	if HostStart != nil {
 		return HostStart(ctx, services, args, raw)
 	}
-	return nil, &dispatch.HostError{Class: "HostUnavailable", Detail: "the relay host adapter (bridge_adapter.py) is not ported to Go yet (todo 28)"}
+	return nil, dispatch.Host("this build registers no host adapter, so it cannot start a managed task")
 }

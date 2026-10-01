@@ -114,6 +114,13 @@ const parserExit = 2 // the exit status of a command line the parser cannot read
 // name is the program the usage lines name, and Services.Program spells the recovery commands
 // with it). The root options come before the command, the command's own after it.
 func Execute(ctx context.Context, argv0 string, argv []string, stdout, stderr io.Writer) (code int) {
+	// The readers of stored packets, readings and forge values (evidence's accessors, delivery's
+	// report rendering) fail as the Python relay's expressions raised, by panicking with an
+	// *evidence.PythonError ("KeyError: 'x'"), and the callers that store the text recover it
+	// (the supervisor's RecoverPython, the hook's fault, the evidence collector). One that reaches
+	// a command line is its host error, in those words. Turning the accessors into error returns
+	// would touch every reader of a stored document, so the panic stays; any other panic is a bug
+	// and is not recovered.
 	defer func() {
 		if value := recover(); value != nil {
 			failure, ok := value.(*evidence.PythonError)
