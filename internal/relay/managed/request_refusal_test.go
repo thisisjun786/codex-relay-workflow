@@ -7,14 +7,11 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
-// A managed request's missing and unknown fields are named as Python's f"{sorted(keys)}" names
-// them: repr() of each str, so a key holding a quote, a backslash or a character str.isprintable()
-// refuses (U+00A0, U+2028, U+200B) reads as the same bytes in both runtimes. A request holding a
-// lone surrogate escape anywhere is refused before any field is judged, as parse_request's
-// json.dumps(raw, ensure_ascii=False).encode("utf-8") refuses it, at the position that encode
-// names in the text json.dumps writes. Each refusal's text is the golden; it began as what
-// Python's parse_request said.
-func TestAnUnknownRequestFieldIsNamedAsPythonReprsIt(t *testing.T) {
+// A managed request's missing and unknown fields are named, each quoted, so a key holding a
+// quote, a backslash or a character that does not print reads unambiguously. A request holding a
+// lone surrogate escape anywhere is refused before any field is judged. Each refusal's text is the
+// golden.
+func TestAnUnknownRequestFieldIsNamed(t *testing.T) {
 	var documents []string
 	for _, key := range []string{"it's", `a\b`, "x\u00a0y", "x\u2028y", "x\u200by", `say "it's"`} {
 		raw, err := json.Marshal(map[string]any{key: 1, "b'": 2})

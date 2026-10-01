@@ -106,7 +106,7 @@ func checkStamp(ctx context.Context, dbPath string, strict bool) error {
 	case errors.Is(err, unix.ENOENT):
 		raw = nil
 	case err != nil:
-		return fenceRefused("takeover record unreadable: " + PythonOSError(err))
+		return fenceRefused("takeover record unreadable: " + err.Error())
 	default:
 		if why := MirrorRefusal(raw); why != "" {
 			return fenceRefused(why)
@@ -123,7 +123,7 @@ func checkStamp(ctx context.Context, dbPath string, strict bool) error {
 		if !strict && errors.Is(err, ErrWALWithoutIndex) {
 			return nil
 		}
-		return &pythonHostError{cause: err}
+		return &hostError{cause: err}
 	}
 	fenced := raw != nil
 	for _, key := range ownership.Keys {
@@ -141,15 +141,15 @@ func fenceRefused(detail string) error {
 	return &RefusedError{Reason: "store_owned_by_other", Detail: detail, cause: refused}
 }
 
-// PythonHostDetail is the host envelope detail, f"{type(error).__name__}: {error}", of an OS or
-// SQLite failure the fence raises unhandled out of an ownership read (CheckStartLikeFence), or of
-// the exception it raises for a frozen copy it could not read as a manifest, and whether err is
-// one of them.
+// PythonHostDetail is the host envelope detail of an OS or SQLite failure the store raises
+// unhandled out of an open or an ownership read (CheckStartLikeFence), in Go's words, or of the
+// exception it raises for a frozen copy it could not read as a manifest, and whether err is one
+// of them.
 func PythonHostDetail(err error) (string, bool) {
 	if encode := EncodeError(err); encode != nil {
 		return encode.HostDetail(), true
 	}
-	var host *pythonHostError
+	var host *hostError
 	if errors.As(err, &host) {
 		return host.Error(), true
 	}
@@ -197,8 +197,7 @@ func openFenced(ctx context.Context, path, socket string, options OpenOptions) (
 // readGateless is the first look at an existing store with no write gate (a store no runtime
 // ever fenced, or one whose gate was removed): D's schema_meta is read from a disposable copy
 // before anything decides what the store is, so a D that cannot be read as a database fails
-// with that error in Python's f"{type(error).__name__}: {error}" (the host envelope), rather
-// than as an unfenced store. A readable D goes on to the writable open, which refuses a store
+// with that error as the command's host error, rather than as an unfenced store. A readable D goes on to the writable open, which refuses a store
 // with no gate: Go never initializes one (decision 30). A store with a gate, every store a
 // runtime created, is never copied.
 func readGateless(ctx context.Context, resolved string) error {
@@ -206,7 +205,7 @@ func readGateless(ctx context.Context, resolved string) error {
 		return nil
 	}
 	if _, err := readMetadata(ctx, resolved); err != nil {
-		return &pythonHostError{cause: err}
+		return &hostError{cause: err}
 	}
 	return nil
 }

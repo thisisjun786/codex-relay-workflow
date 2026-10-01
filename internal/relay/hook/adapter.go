@@ -521,9 +521,8 @@ func ownsGuard(ctx context.Context, state, configuredDB string) bool {
 // Nothing a peer sends fails the owner (control.py GuardServer._serve, PR #185 4128954449): a
 // request it cannot serve, a guard that failed and a handler panic are all answered with the
 // host record, and the answered request is no handler failure. So is a request line that has
-// not arrived whole by ControlAnswerGrace before ctx's deadline, however it was sent: control.py
-// answers the expiry of its bound on the whole line "TimeoutError: timed out", and the grace is
-// the time kept to write that answer. The error it returns is a transport failure only: the
+// not arrived whole by ControlAnswerGrace before ctx's deadline, however it was sent: the bound
+// is on the whole line, and the grace is the time kept to answer its expiry. The error it returns is a transport failure only: the
 // peer went away before an answer.
 func HandleControl(ctx context.Context, conn net.Conn, ownerState string) (err error) {
 	defer conn.Close()
@@ -544,7 +543,7 @@ func HandleControl(ctx context.Context, conn net.Conn, ownerState string) (err e
 	}
 	request, refused, err := readRequest(conn)
 	if errors.Is(err, os.ErrDeadlineExceeded) {
-		return answerHost(conn, "TimeoutError: timed out")
+		return answerHost(conn, "guard request line not received in time")
 	}
 	if err != nil {
 		return err
@@ -552,7 +551,7 @@ func HandleControl(ctx context.Context, conn net.Conn, ownerState string) (err e
 	if refused != "" {
 		return answerHost(conn, refused)
 	}
-	if get(request, "method") != "guard-evaluate" || !isOne(get(request, "protocol")) {
+	if get(request, "method") != "guard-evaluate" || get(request, "protocol") != int64(1) {
 		return rejectControl(conn)
 	}
 	params, stop, at, refused := guardParams(request, time.Now())
@@ -577,7 +576,7 @@ func HandleControl(ctx context.Context, conn net.Conn, ownerState string) (err e
 		// owner to evaluate somewhere it does not, which is no Stop refusal (control.py owner_paths).
 		return answerHost(conn, refused)
 	}
-	v, err := evaluateOwner(ctx, stop, GuardOptions{Root: root, Now: text(get(params, "now")), Mode: text(get(params, "mode")), DBPath: db, NoRecord: pyvalue.Truthy(get(params, "noRecord")), DefaultDBPath: ownerFallback(ownerState, text(get(params, "socketPath")), text(get(params, "program")))})
+	v, err := evaluateOwner(ctx, stop, GuardOptions{Root: root, Now: text(get(params, "now")), Mode: text(get(params, "mode")), DBPath: db, NoRecord: get(params, "noRecord") == true, DefaultDBPath: ownerFallback(ownerState, text(get(params, "socketPath")), text(get(params, "program")))})
 	if err != nil {
 		if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 			// The requester's deadline has passed: nobody is left to read an answer.
