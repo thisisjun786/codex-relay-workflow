@@ -86,7 +86,7 @@ func ResolveLaunchPolicyAt(state, environment string) Object {
 		return set(answer, "source", "unreadable_record", "detail", get(record, "unreadable"), "hint", "declare the file again with service declare --execution-policy, or drop the record with service declare --forget-execution-policy. A launch does not fall back to this process's environment to cover an unreadable record")
 	}
 	if declared != "" && stated != "" && canonicalPolicyPath(declared) != canonicalPolicyPath(stated) {
-		return set(answer, "source", "conflict", "detail", "this service declares "+pyvalue.StrRepr(declared)+" and "+execution.EnvPolicy+" in this process names "+pyvalue.StrRepr(stated), "hint", "two files are not a preference: unset the variable to launch on the declaration, or declare that other file")
+		return set(answer, "source", "conflict", "detail", fmt.Sprintf("this service declares %q and %s in this process names %q", declared, execution.EnvPolicy, stated), "hint", "two files are not a preference: unset the variable to launch on the declaration, or declare that other file")
 	}
 	path := declared
 	if declared != "" {

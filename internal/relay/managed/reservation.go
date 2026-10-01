@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -35,10 +34,10 @@ func (r Reservation) Reserve(ctx context.Context, in Identity) (out store.Manage
 		current, e := r.get(ctx, in.RequestID)
 		if e == nil {
 			if current.RequestFingerprint != in.Fingerprint || current.IssueKey != in.IssueKey || current.Workspace != in.Workspace || current.MarkerRoot != in.MarkerRoot || current.SocketIdentity != in.SocketIdentity || current.CreateRequestID != in.CreateRequestID || current.DispatchRequestID != in.DispatchRequestID || current.FingerprintVersion != in.Version {
-				return refusal("relationship_conflict", fmt.Sprintf("request %s already retained request_fingerprint %s, not %s", pyvalue.StrRepr(in.RequestID), pyvalue.StrRepr(current.RequestFingerprint), pyvalue.StrRepr(in.Fingerprint)))
+				return refusal("relationship_conflict", fmt.Sprintf("request %q already retained request_fingerprint %q, not %q", in.RequestID, current.RequestFingerprint, in.Fingerprint))
 			}
 			if current.State == "released" {
-				return refusal("relationship_conflict", fmt.Sprintf("request %s was released and cannot be reused", pyvalue.StrRepr(in.RequestID)))
+				return refusal("relationship_conflict", fmt.Sprintf("request %q was released and cannot be reused", in.RequestID))
 			}
 			out = current
 			return nil
@@ -51,11 +50,11 @@ func (r Reservation) Reserve(ctx context.Context, in Identity) (out store.Manage
 			return e
 		}
 		if live != nil {
-			return refusal("duplicate_assignment", fmt.Sprintf("issue %s is already assigned under %s (%s); a reservation cannot take it", pyvalue.StrRepr(in.IssueKey), pyvalue.StrRepr(fmt.Sprint(live.Get("relationship_id"))), live.Get("status")))
+			return refusal("duplicate_assignment", fmt.Sprintf("issue %q is already assigned under %q (%s); a reservation cannot take it", in.IssueKey, fmt.Sprint(live.Get("relationship_id")), live.Get("status")))
 		}
 		other, e := r.Store.PendingManagedStart(ctx, in.IssueKey)
 		if e == nil {
-			return refusal("duplicate_assignment", fmt.Sprintf("issue %s is already held by request %s (%s)", pyvalue.StrRepr(in.IssueKey), pyvalue.StrRepr(other.RequestID), other.State))
+			return refusal("duplicate_assignment", fmt.Sprintf("issue %q is already held by request %q (%s)", in.IssueKey, other.RequestID, other.State))
 		}
 		if !errors.Is(e, sql.ErrNoRows) {
 			return e
@@ -101,7 +100,7 @@ func (r Reservation) Arm(ctx context.Context, id, fp string, revision int64) (ou
 func (r Reservation) Release(ctx context.Context, id, fp string, revision any, reason string) (out store.ManagedStartRequestsRow, err error) {
 	for _, field := range []struct{ name, value string }{{"request_id", id}, {"request_fingerprint", fp}} {
 		if strings.TrimSpace(field.value) == "" {
-			return out, refusal("malformed_receipt", field.name+" must be a non-empty string, not "+pyvalue.StrRepr(field.value))
+			return out, refusal("malformed_receipt", fmt.Sprintf("%s must be a non-empty string, not %q", field.name, field.value))
 		}
 	}
 	n := argparse.IntegerValue(revision)
@@ -109,12 +108,12 @@ func (r Reservation) Release(ctx context.Context, id, fp string, revision any, r
 		return out, refusal("malformed_receipt", "revision must be a non-negative integer, not "+n.String())
 	}
 	if strings.TrimSpace(reason) == "" {
-		return out, refusal("malformed_receipt", "reason must be a non-empty string, not "+pyvalue.StrRepr(reason))
+		return out, refusal("malformed_receipt", fmt.Sprintf("reason must be a non-empty string, not %q", reason))
 	}
 	err = r.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
 		row, e := r.get(ctx, id)
 		if errors.Is(e, sql.ErrNoRows) {
-			return refusal("unregistered_relationship", "no managed request "+pyvalue.StrRepr(id))
+			return refusal("unregistered_relationship", fmt.Sprintf("no managed request %q", id))
 		}
 		if e != nil {
 			return e
@@ -123,7 +122,7 @@ func (r Reservation) Release(ctx context.Context, id, fp string, revision any, r
 			return refusal("relationship_conflict", "managed request fingerprint changed")
 		}
 		if row.State != "reserved" || !n.IsInt64() || row.Revision != n.Int64() {
-			return refusal("relationship_conflict", fmt.Sprintf("request %s is %s at revision %d; only a reserved row at revision %s can be released", pyvalue.StrRepr(id), pyvalue.StrRepr(row.State), row.Revision, n.String()))
+			return refusal("relationship_conflict", fmt.Sprintf("request %q is %q at revision %d; only a reserved row at revision %s can be released", id, row.State, row.Revision, n.String()))
 		}
 		changed, e := r.Store.ReleaseManagedStart(ctx, id, n.Int64(), reason, r.now())
 		if e != nil {

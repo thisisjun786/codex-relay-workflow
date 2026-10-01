@@ -3428,3 +3428,82 @@ Evidence: internal/relay/hook/control.go (`controlDepth`, `requestValues`, `read
 `guardParams`), internal/relay/hook/adapter.go (`HandleControl`), internal/relay/hook/route.go
 (`nesting`); internal/relay/hook/control_request_test.go; internal/relay/service/control_test.go;
 docs/port/cutover.md (the control server paragraph).
+
+## Decision R3S-3. What the store side keeps of the Python emulation, because it is stored, hashed or journalled (refactor R3)
+
+Decision: wave R3 leaves these readings and wordings of the relay store, service, managed,
+adapter, daemon, linkage, selection and hook packages as they are, each because a byte it
+produces is stored, hashed or journalled (the brief's items 1 and 2), or because it is the hook
+protocol's:
+
+- The Stop hook's reading of its stdin (`hook.Decode`, `hookValues`: `json.loads`' refusals and
+  their `JSONDecodeError` text, `NaN`, the infinities and lone surrogate escapes accepted). The
+  values feed the EventKey and every journal row the hook writes (`sessionId`, `turnId`,
+  `eventIdentity`), and the refusal text is the stored `stdin_not_json` detail the contract corpus
+  pins (`test_adapter_agreement__test_every_payload_failure_is_the_same_failure_in_both__not_json__*`).
+  Codex sends neither a constant nor a lone surrogate, so refusing them would change no real
+  journal row, but it would change the stored row and key of such a payload, and it deletes no
+  code: the readings are options of the shared `internal/pyjson`. The owner keeps accepting what a
+  hook forwards for the same reason (decision R3S-2).
+- The hook's errno names (`hook/errno.go`) and `store.PythonOSErrorText`/`store.PathRepr` in the
+  journal's `guard_unreachable` detail, which `hook.NativePrescanUnreachable` parses back; the
+  guard's verdict texts (receipt details, `fault`s, selection refusals), which the hook journals;
+  and the frozen manifest's Python value model (`store/frozen_value.go`, `frozen_detailed.go`:
+  `PythonManifestEntries`, `PythonRevisionHash`, the `ManifestException` classes), whose entries
+  feed the manifest revision hash and whose exception texts reach a guard's journalled answer and
+  the omission reader (decision 44).
+- pathlib's spelling of paths (`store.PathlibSpelling`, `PathlibChild`, `PathlibParent`,
+  `ownership.PathlibSpelling`, `pythonNormpath`, `ScopeRoot`): it names the state directory, the
+  store's `Path` and the scope root, which feed the state-dir key, the scope key and the managed
+  request fingerprint (`managed/identity.go`), are stored in the ownership mirror and the scope
+  records, and decide which declared paths a scope accepts.
+- The bridge adapter's Python-shaped host-reply errors (`adapter/shape.go`, `pythonError`,
+  `pythonConnectionError`, `cursor.go`): their class and message are written into delivery
+  receipts (`transport.go`, the ledger's `error`; `delivery.errorLabel` in the delivery receipt
+  and its observations), and `pythonError` decides whether a failed listing is recorded.
+- `repr()` quoting (`pyvalue.StrRepr`, `pyvalue.Repr`) in the store's artifact, scope and
+  continuation refusals, which the guard journals and the receipt intake stores (the `refusals`
+  table's `detail`), in the receipt intake's `unassigned_turn` refusals (`adapter/cli.go`) and in
+  the selection refusals the guard answers with; `json.dumps` spacing in the worker policy record,
+  the scope record and the daemon's journal rows, which are stored.
+- Readers of stored documents keep their leniency and their refusal texts: the launch
+  declaration (`launch-policy.json`, `service/policy.go`, read to the depth CPython read it), the
+  service and worker records, receipts and continuation claims, and the ownership mirror.
+
+Consumer check: for each item the writer was followed to where its bytes land (SQLite `journal`
+and receipt rows, the bridge ledger, the Stop journal, the mirror and scope records, a hash);
+none is display-only.
+
+Evidence: internal/relay/hook/{value.go,errno.go,adapter.go,journal_row.go}; internal/relay/store/
+{pyerr.go,frozen_value.go,frozen_detailed.go,state.go,pyloads.go,scope.go};
+internal/relay/store/ownership/record.go; internal/relay/managed/{identity.go,start.go};
+internal/relay/adapter/{shape.go,transport.go,cursor.go}; internal/relay/service/{policy.go,
+record.go,worker.go}; internal/relay/daemon/observe.go.
+
+## Decision R3S-4. Values in the store side's display-only refusals are quoted with Go's %q (refactor R3)
+
+Decision: the managed reservation's refusals (`managed-start`'s reservation, `managed-release`:
+`relationship_conflict`, `duplicate_assignment`, `malformed_receipt`, `unregistered_relationship`),
+the managed request's key check (`missing [...], unknown [...]`), the launch policy's `conflict`
+detail and the registration hold's unreadable store path quote the values they name with Go's
+`%q` (`"req-1"`, `["a" "b"]`) instead of Python's `repr()` (`'req-1'`, `['a', 'b']`). A
+managed request holding a lone surrogate escape is still refused before any field is judged, now
+as `managed request holds a lone surrogate escape`: the reconstruction of `json.dumps(raw,
+ensure_ascii=False)` that named the position `str.encode` would name (`dumpsUnescaped`,
+`dumpsString`, 75 lines) is gone. The request's fingerprint, taken over the values an accepted
+request holds, is unchanged. Reasons, exit codes and fields are unchanged.
+
+Consumer check: these refusals are returned to the command that asked and printed; none is
+written to SQLite, a record or a journal (`Reservation.Reserve` and `Release` return their
+refusal to `managed-start` and `managed-release`, which print it; the request check is a usage
+error; the launch policy resolution is not persisted; the registration hold's refusal is
+delivery's printed `unregistered_relationship`), and no skill, doc or fixture matches their
+prose.
+
+Kept: the `repr()` quoting decision R3S-3 lists, where the text is stored or journalled.
+
+Evidence: internal/relay/managed/{reservation.go,request.go (`loneSurrogate`)}; internal/relay/
+service/policy.go (`ResolveLaunchPolicyAt`); internal/relay/store/registration_hold.go;
+`TestAnUnknownRequestFieldIsNamed` (internal/relay/managed/request_refusal_test.go, which was
+`TestAnUnknownRequestFieldIsNamedAsPythonReprsIt`); the goldens of
+internal/relay/{managed,service,sync}.
