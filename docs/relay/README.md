@@ -412,11 +412,10 @@ child, completion event or terminal settlement. Existing final receipts and ackn
 are retained. Until recovery, legacy continuations remain unmeasured; this is an explicit
 compatibility boundary, not automatic migration.
 
-Admission history is read in bounded raw rowid pages. The cursor retains a finite
-insertion boundary and advances only past a consumed prefix. Settled and foreign
-rows use scan slots but cannot become this assignment's candidates; large shared
-stores can therefore increase observation latency, without increasing per-tick
-row materialization. Admission writers preserve existing rowids and never delete
+Admission history is read for pending turns only. Each tick one query finds the admitted turns of the active
+relationships that have no settlement, and the observation pass reads those (CRW-258). Settled and foreign rows
+are never candidates, so a large shared store no longer slows observation: there is no raw rowid page and no
+cursor to walk. Admission writers preserve existing rowids and never delete
 rows. Historical terminal turns remain observable, but opening a new generation
 supersedes all prior outcomes, including failures; observing an old failure does
 not send it as a current-generation report or establish acceptance.

@@ -902,25 +902,35 @@ Absence of a delivery row is deliberately NOT treated as evidence that delivery 
 receipt emitted with `--no-enqueue` and an event stranded by an old generation look exactly
 the same from outside, and neither should be sent.
 
-**The current generation is always reachable.** Observation reads are capped per tick. Within
-that cap the tick serves a rotating subset of relationships rather than promising every one
-of them a read, because that promise stops being possible once the relationship count passes
-the budget. Each served relationship gets its current anchor first and then a rotating slice
-of the rest, from a cursor persisted in the database so a restart resumes the rotation.
+**Every pending turn is reached, and staged claims are served first.** A turn is pending while the relay still
+has something to learn by reading it: a staged claim waits on it, or its assignment has no settlement for it (a
+generation's anchor, or an admitted turn). The daemon finds every pending turn of every active assignment with
+four queries on the stored rows and reads nothing else, so an assignment with nothing pending costs no host read,
+no load and no write, and is visited again the tick a staged claim, an admitted turn or a new generation gives it
+something. Observation reads are capped per tick (`max_turn_reads_per_tick`, 32) and a pass is bounded in time
+(`max_observe_seconds`, 10, measured on a monotonic clock).
 
-| | anchor revisit | full backlog coverage |
-|---|---|---|
-| share of two or more | every service round | `ceil(R / served) * ceil(N / (share - 1))` ticks |
-| share of one | every two service rounds | `ceil(R / served) * 2N` ticks |
+- A turn waits since the later of when it became pending and when it was last read, so a read, even a failed one,
+  puts it behind every older turn and a new turn starts behind the old ones. The order is read from
+  `poll_observations`, so a restart resumes it and no cursor is kept.
+- Turns a staged claim waits on (group A) are read before all others (group B), but one read of B goes first, so
+  staged claims cannot hold the others out. Inside a group the assignments that have waited longest deal one turn
+  each, round after round, and no assignment gets more than its share of a group in a tick:
+  `max(min_relationship_share, max_turn_reads_per_tick / assignments needing a read)`, so one assignment with many
+  pending turns cannot dilute another and a lone one may take the whole budget.
+- The first read of each group is always made. After that the pass stops once it has run `max_observe_seconds` and
+  says so in the tick's notes, so a host that does not answer costs a tick at most that limit plus the read in flight
+  (or its two first reads, if they alone take longer), where it used to cost the whole budget of reads.
+- A staged claim whose turn ended normally is finalized by the next tick, however many assignments are idle, when the
+  staged turns number at most the cap less one, no assignment has more than its share of them, and the host answers
+  within the bound. Beyond that staged turns are read in turn, an assignment's own at most its share a tick.
 
-A candidate with nothing left to learn is dropped before the budget rather than after it,
-which is what the old prefix got wrong: past eight generations the slice was permanently the
-first eight, every one already observed, and the generation actually running was never
-selected again.
-
-An observation is also no longer treated as the end of a turn. A receipt written just after
-the completion was seen still has to be resolved, so a turn is skipped only when it has been
-observed and has no unresolved staged claim.
+Before CRW-258 the daemon served `max_turn_reads_per_tick / min_relationship_share` assignments a tick (four, at 8 and
+2) from a persisted cursor over every active assignment, idle or not, and read the admitted turns of all of them
+through a global rowid page. A staged claim then waited a whole rotation: 6 ticks for 24 assignments, 12 for 50. The
+current anchor is no longer read first; it is one pending turn among its assignment's, read when it has waited
+longest, so no pending turn waits for ever. The old `relationships`, `admitted:<id>`, `ring:<id>` and `alt:<id>`
+cursor rows are no longer read or written and are left in the table.
 
 Status: implemented.
 

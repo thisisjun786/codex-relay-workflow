@@ -252,20 +252,22 @@ default), which gives the parent, or the child it steers, the chance to answer f
 reading that owes nothing raises no obligation and is not a gap.
 
 How soon an omission is owed depends on when the relay settles the turn, and that is not the
-grace. A turn that ended with no receipt has no staged event to find it by, so the daemon reaches
-it through its scan of admitted turns, which reads at most `share - 1` rows of
-`generation_turns` - the whole table, every relationship's rows - on each visit to one
-relationship. With `max_turn_reads_per_tick` 8 and `min_relationship_share` 2 that is four
-relationships a tick and one row a visit, and an admission written after a pass fixed its last
-row waits for the next pass. Measured on the live host on 2026-09-23, with 27 rows and 20 active
-relationships (about 100 seconds a row): two turns that ended at about 16:56 UTC settled at 17:36
-and 17:38, one that ended at about 17:05 settled at 18:24, and its omission was owed at 18:29 -
-about 83 minutes after the turn ended, of which the grace is 5. A turn that carried a receipt
-settled within 90 seconds, because its staged event puts it in the ring directly. The scan belongs
-to the observation pass and not to this channel; making it cheaper - reading one relationship's
-own admissions through an index, or serving eligible admissions before rotating - is the named
-follow-up "supervisor omission latency", and until then an omission's wake is bounded by that scan
-rather than by its grace.
+grace. A turn that ended with no receipt has no staged event to find it by, so the daemon reaches it as an
+unsettled admitted turn of its relationship. Since CRW-258 the observation pass finds every such turn of every active
+relationship with one query and reads each in turn, longest-waiting first, up to `max_turn_reads_per_tick` (32) a
+tick, so the turn is read by the tick after its admission is stored and a relationship with nothing pending costs
+nothing. Before it the scan read at most `share - 1` rows of `generation_turns` - the whole table, every
+relationship's rows - on each visit to one relationship; with `max_turn_reads_per_tick` 8 and
+`min_relationship_share` 2 that was four relationships a tick and one row a visit, and an admission written after a
+pass fixed its last row waited for the next pass. Measured then on the live host on 2026-09-23, with 27 rows and 20
+active relationships (about 100 seconds a row): two turns that ended at about 16:56 UTC settled at 17:36 and 17:38,
+one that ended at about 17:05 settled at 18:24, and its omission was owed at 18:29 - about 83 minutes after the turn
+ended, of which the grace is 5. A turn that carried a receipt settled within 90 seconds, because its staged event
+puts it in the ring directly. The scan belongs to the observation pass and not to this channel; the follow-up that
+was named "supervisor omission latency" (reading one relationship's own admissions through an index) is the
+census query of that pass. The 2026-09-23 figures describe the old scan and were not re-measured on the new one;
+an omission's wake is now bounded by the grace plus the next tick while the pending turns fit the per-tick cap and the
+host answers within the pass's time bound.
 
 The readers still read different sources, and where the marker and the store disagree about
 the assignment itself each answers from its own. A marker that never received
