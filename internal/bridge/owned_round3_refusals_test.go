@@ -13,7 +13,7 @@ import (
 
 // Every refusal a caller can provoke at an argument boundary, byte for byte with its golden,
 // which began as the Python bridge's refusal.
-func Test_round3_argument_refusals_read_exactly_as_python(t *testing.T) {
+func Test_round3_argument_refusals_read_as_their_goldens(t *testing.T) {
 	b, host := testBridge(t)
 	cwd := t.TempDir()
 	host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{"id": "thread-1", "status": map[string]any{"type": "idle"}}}})

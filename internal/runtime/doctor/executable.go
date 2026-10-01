@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 )
 
@@ -124,7 +123,7 @@ func (c Classifier) classify(value, base string, depth int) (e Executable) {
 		e.Kind, e.Detail = KindMissing, "nothing exists at "+resolved
 		return e
 	case err != nil:
-		e.Kind, e.Detail = KindUnreadable, "what the reference resolves to could not be read: "+store.PythonOSError(err)
+		e.Kind, e.Detail = KindUnreadable, "what the reference resolves to could not be read: "+err.Error()
 		return e
 	case info.IsDir():
 		if isNative(filepath.Join(resolved, "bin", "crw")) {
@@ -139,7 +138,7 @@ func (c Classifier) classify(value, base string, depth int) (e Executable) {
 	}
 	head, err := readHead(resolved)
 	if err != nil {
-		e.Kind, e.Detail = KindUnreadable, "the file could not be read: "+store.PythonOSError(err)
+		e.Kind, e.Detail = KindUnreadable, "the file could not be read: "+err.Error()
 		return e
 	}
 	if native(head) {
@@ -211,7 +210,7 @@ func (c Classifier) wrapper(e *Executable, path, interpreter string, depth int) 
 		e.Kind, e.Detail = KindUnreadable, nestedTooDeep
 		return
 	case err != nil:
-		e.Kind, e.Detail = KindUnreadable, "the shell script could not be read: "+store.PythonOSError(err)
+		e.Kind, e.Detail = KindUnreadable, "the shell script could not be read: "+err.Error()
 		return
 	case len(body) > wrapperLimit:
 		e.Kind, e.Detail = KindUnreadable, "a shell script larger than "+strconv.Itoa(wrapperLimit)+" bytes, which this scan does not read through"

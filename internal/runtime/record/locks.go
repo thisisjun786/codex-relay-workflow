@@ -11,8 +11,6 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
-
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // LockSuffix names the read-modify-write sidecar beside a target (hostrecord.Locked).
@@ -206,7 +204,7 @@ func Probe(path string) (string, string) {
 		return NoFile, "no lock file exists at " + path
 	}
 	if err != nil {
-		return Unknown, "the lock file could not be opened to test it: " + store.PythonOSError(err)
+		return Unknown, "the lock file could not be opened to test it: " + err.Error()
 	}
 	defer handle.Close()
 	if err := unix.Flock(int(handle.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {

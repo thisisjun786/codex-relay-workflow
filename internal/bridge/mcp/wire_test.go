@@ -7,7 +7,6 @@ import (
 	"io"
 	"path/filepath"
 	"reflect"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -59,239 +58,69 @@ func (w *wire) next(t *testing.T) map[string]json.RawMessage {
 	return frame
 }
 
-// Python's replies, captured from `python -m codex_thread_bridge.server` (mcp 1.30.0) on the
-// same requests. Only the initialize result's fields outside capabilities are left out:
-// serverInfo.version (the bridge version here, the mcp library version there; decisions.md 20).
-func Test_protocol_replies_outside_tools_call_are_pythons_bytes(t *testing.T) {
-	w := startWire(t)
-	var initialize struct {
-		Capabilities json.RawMessage `json:"capabilities"`
-	}
-	if err := json.Unmarshal(w.next(t)["result"], &initialize); err != nil {
-		t.Fatal(err)
-	}
-	if got, want := string(initialize.Capabilities), `{"experimental":{},"prompts":{"listChanged":false},"resources":{"subscribe":false,"listChanged":false},"tools":{"listChanged":false}}`; got != want {
-		t.Errorf("initialize capabilities\n got %s\nwant %s", got, want)
-	}
-	w.send(t, `{"jsonrpc":"2.0","method":"notifications/initialized"}`)
-	for _, tc := range []struct{ request, member, want string }{
-		{`{"jsonrpc":"2.0","id":2,"method":"prompts/list"}`, "result", `{"prompts":[]}`},
-		{`{"jsonrpc":"2.0","id":3,"method":"resources/list"}`, "result", `{"resources":[]}`},
-		{`{"jsonrpc":"2.0","id":4,"method":"resources/templates/list"}`, "result", `{"resourceTemplates":[]}`},
-		{`{"jsonrpc":"2.0","id":5,"method":"logging/setLevel","params":{"level":"info"}}`, "error", `{"code":-32601,"message":"Method not found"}`},
-		{`{"jsonrpc":"2.0","id":6,"method":"completion/complete","params":{"ref":{"type":"ref/prompt","name":"x"},"argument":{"name":"a","value":"b"}}}`, "error", `{"code":-32601,"message":"Method not found"}`},
-		{`{"jsonrpc":"2.0","id":7,"method":"prompts/get","params":{"name":"x"}}`, "error", `{"code":0,"message":"Unknown prompt: x"}`},
-		{`{"jsonrpc":"2.0","id":8,"method":"resources/read","params":{"uri":"file:///nope"}}`, "error", `{"code":0,"message":"Unknown resource: file:///nope"}`},
-	} {
-		w.send(t, tc.request)
-		frame := w.next(t)
-		if got := string(frame[tc.member]); got != tc.want {
-			t.Errorf("%s\n got %s: %s\nwant %s: %s", tc.request, tc.member, frame[tc.member], tc.member, tc.want)
-		}
-	}
-	// tools/list carries its tools and nothing else at the top level.
-	w.send(t, `{"jsonrpc":"2.0","id":9,"method":"tools/list"}`)
-	var listed map[string]json.RawMessage
-	if err := json.Unmarshal(w.next(t)["result"], &listed); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := listed["tools"]; !ok || len(listed) != 1 {
-		keys := []string{}
-		for key := range listed {
-			keys = append(keys, key)
-		}
-		t.Errorf("tools/list result members %v, want only tools", keys)
-	}
-}
-
-// An unknown method, answered as `python -m codex_thread_bridge.server` (mcp 1.30.0) answers
-// it, bytes captured from its stdout. The low-level server validates every request against the
-// ClientRequest union first, so a request (an id is present) naming any method outside it --
-// unknown, server-to-client, or a notification's method -- fails that validation, while an
-// unknown notification is dropped without a reply.
-func Test_an_unknown_method_is_answered_as_python_answers_it(t *testing.T) {
+// The protocol outside tools/call is the SDK's: a request for a method the server has no handler
+// for is answered with an error under its id, a notification nobody handles gets nothing, and the
+// server answers the next request.
+func Test_a_method_without_a_handler_is_answered_and_the_session_goes_on(t *testing.T) {
 	w := startWire(t)
 	w.next(t) // initialize
 	w.send(t, `{"jsonrpc":"2.0","method":"notifications/initialized"}`)
-	for _, tc := range []struct{ request, want string }{
-		{`{"jsonrpc":"2.0","id":2,"method":"no/such"}`, `{"jsonrpc":"2.0","id":2,"error":{"code":-32602,"message":"Invalid request parameters","data":""}}`},
-		{`{"jsonrpc":"2.0","id":"s-3","method":"no/such","params":{"a":1}}`, `{"jsonrpc":"2.0","id":"s-3","error":{"code":-32602,"message":"Invalid request parameters","data":""}}`},
-		{`{"jsonrpc":"2.0","id":10,"method":"no/such","params":null}`, `{"jsonrpc":"2.0","id":10,"error":{"code":-32602,"message":"Invalid request parameters","data":""}}`},
-		{`{"jsonrpc":"2.0","id":12,"method":"server/discover"}`, `{"jsonrpc":"2.0","id":12,"error":{"code":-32602,"message":"Invalid request parameters","data":""}}`},
-		{`{"jsonrpc":"2.0","id":13,"method":"subscriptions/listen","params":{}}`, `{"jsonrpc":"2.0","id":13,"error":{"code":-32602,"message":"Invalid request parameters","data":""}}`},
-		{`{"jsonrpc":"2.0","id":17,"method":"sampling/createMessage","params":{}}`, `{"jsonrpc":"2.0","id":17,"error":{"code":-32602,"message":"Invalid request parameters","data":""}}`},
-		{`{"jsonrpc":"2.0","id":18,"method":"notifications/initialized"}`, `{"jsonrpc":"2.0","id":18,"error":{"code":-32602,"message":"Invalid request parameters","data":""}}`},
-		// A known method with no handler keeps the bare "Method not found".
-		{`{"jsonrpc":"2.0","id":14,"method":"tasks/get","params":{"taskId":"x"}}`, `{"jsonrpc":"2.0","id":14,"error":{"code":-32601,"message":"Method not found"}}`},
-	} {
-		w.send(t, tc.request)
-		if got := w.lines.Scan() && w.lines.Text() == tc.want; !got {
-			t.Errorf("%s\n got %s\nwant %s", tc.request, w.lines.Text(), tc.want)
+	for _, id := range []string{"2", `"s-3"`} {
+		w.send(t, `{"jsonrpc":"2.0","id":`+id+`,"method":"no/such","params":{}}`)
+		frame := w.next(t)
+		if string(frame["id"]) != id || frame["error"] == nil {
+			t.Errorf("no/such under id %s: %v", id, frame)
 		}
 	}
-	// An unknown notification gets nothing: the next frame is the ping's answer.
-	w.send(t, `{"jsonrpc":"2.0","method":"no/such"}`)
 	w.send(t, `{"jsonrpc":"2.0","method":"notifications/no-such","params":{"a":1}}`)
 	w.send(t, `{"jsonrpc":"2.0","id":20,"method":"ping"}`)
-	if frame := w.next(t); string(frame["id"]) != "20" {
-		t.Errorf("an unknown notification was answered: %v", frame)
-	}
-	// An unknown request whose params are not an object gets no response, only the log
-	// notification Python's exception handler sends (JSON-equal; Python writes "jsonrpc" last).
-	for _, request := range []string{`{"jsonrpc":"2.0","id":15,"method":"no/such","params":[]}`, `{"jsonrpc":"2.0","id":11,"method":"no/such","params":"x"}`} {
-		w.send(t, request)
-		frame := w.next(t)
-		want := map[string]json.RawMessage{"jsonrpc": json.RawMessage(`"2.0"`), "method": json.RawMessage(`"notifications/message"`), "params": json.RawMessage(`{"level":"error","logger":"mcp.server.exception_handler","data":"Internal Server Error"}`)}
-		if len(frame) != len(want) || string(frame["jsonrpc"]) != string(want["jsonrpc"]) || string(frame["method"]) != string(want["method"]) || string(frame["params"]) != string(want["params"]) {
-			t.Errorf("%s\n got %v", request, frame)
-		}
-	}
-	w.send(t, `{"jsonrpc":"2.0","id":21,"method":"ping"}`)
-	if frame := w.next(t); string(frame["id"]) != "21" {
-		t.Errorf("a response followed the log notification: %v", frame)
+	if frame := w.next(t); string(frame["id"]) != "20" || frame["result"] == nil {
+		t.Errorf("an unknown notification was answered, or the ping was not: %v", frame)
 	}
 }
 
-// wireSend is one entry of the fixture wire-sends.json: a line to send, named. The lines a Go
-// server writes before answering the ping that follows are the golden, which began as what
-// `python -m codex_thread_bridge.server` (mcp 1.30.0) wrote.
-type wireSend struct {
-	Case string `json:"case"`
-	Send string `json:"send"`
-}
-
-func wireLine(t *testing.T, name string) string {
-	t.Helper()
-	var cases []wireSend
-	if err := json.Unmarshal(golden.Fixture(t, "wire-sends.json"), &cases); err != nil {
-		t.Fatal(err)
-	}
-	for _, c := range cases {
-		if c.Case == name {
-			return c.Send
-		}
-	}
-	t.Fatalf("no case %q", name)
-	return ""
-}
-
-// goldenFrames is the golden list of frames under key, or frames themselves when updating.
-func goldenFrames(t *testing.T, key string, frames []string) []string {
-	t.Helper()
-	raw := golden.Want(t, key, func() []byte {
-		encoded, err := golden.Encode(frames)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return encoded
-	})
-	var want []string
-	if err := json.Unmarshal(raw, &want); err != nil {
-		t.Fatalf("golden %q: %v", key, err)
-	}
-	return want
-}
-
-// framesBefore sends line and then a ping, and returns every line written before its answer.
-func (w *wire) framesBefore(t *testing.T, line string, ping int) []string {
-	t.Helper()
-	w.send(t, line)
-	w.send(t, fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"ping"}`, ping))
-	var frames []string
-	for {
-		if !w.lines.Scan() {
-			t.Fatalf("stdout ended: %v", w.lines.Err())
-		}
-		var frame struct {
-			ID json.RawMessage `json:"id"`
-		}
-		if err := json.Unmarshal(w.lines.Bytes(), &frame); err != nil {
-			t.Fatalf("non-JSON frame %q", w.lines.Text())
-		}
-		if string(frame.ID) == strconv.Itoa(ping) {
-			return frames
-		}
-		frames = append(frames, w.lines.Text())
-	}
-}
-
-// matchesPython replays the named cases on one Go server. A response must be the golden's
-// bytes; a notification need only be JSON-equal, as the golden began as Python's frames and
-// Python writes its "jsonrpc" member last.
-func matchesPython(t *testing.T, names ...string) {
+// tools/list is the frozen listing: "tools" its only member, the tools in registration order,
+// no idempotentHint in their annotations, and '<', '>' and '&' written as themselves. The reply
+// is the golden, JSON-equal (the SDK decides member order inside each tool).
+func Test_tools_list_is_the_frozen_listing(t *testing.T) {
 	w := startWire(t)
 	w.next(t) // initialize
 	w.send(t, `{"jsonrpc":"2.0","method":"notifications/initialized"}`)
-	for i, name := range names {
-		send := wireLine(t, name)
-		got := w.framesBefore(t, send, 900+i)
-		frames := goldenFrames(t, name, got)
-		if len(got) != len(frames) {
-			t.Errorf("%s: %s\n got %d frames %q\nwant %d frames %q", name, send, len(got), got, len(frames), frames)
-			continue
-		}
-		for j, want := range frames {
-			var decodedGot, decodedWant map[string]any
-			if err := json.Unmarshal([]byte(got[j]), &decodedGot); err != nil {
-				t.Fatal(err)
-			}
-			if err := json.Unmarshal([]byte(want), &decodedWant); err != nil {
-				t.Fatal(err)
-			}
-			_, response := decodedWant["id"]
-			if response && got[j] != want || !reflect.DeepEqual(decodedGot, decodedWant) {
-				t.Errorf("%s: %s\n got %s\nwant %s", name, send, got[j], want)
-			}
-		}
-	}
-}
-
-func Test_an_unknown_notification_with_non_object_params_logs_as_python_does(t *testing.T) {
-	matchesPython(t, "unknown-notification-array-params", "unknown-notification-string-params")
-}
-
-func Test_a_known_notification_with_array_params_logs_as_python_does(t *testing.T) {
-	matchesPython(t, "initialized-array-params", "cancelled-array-params")
-}
-
-func Test_a_known_request_with_non_object_params_logs_and_gets_no_reply_as_in_python(t *testing.T) {
-	matchesPython(t, "ping-array-params", "tools-list-array-params", "ping-string-params")
-}
-
-func Test_tools_call_with_a_numeric_name_is_refused_as_python_refuses_it(t *testing.T) {
-	matchesPython(t, "tools-call-numeric-name", "tools-call-missing-name", "tools-call-array-arguments")
-}
-
-// tools/list is the golden reply (which began as Python's), JSON-equal (the SDK decides member
-// order inside each tool), and writes '<', '>' and '&' as Python does: unescaped. The reply is
-// read directly because the SDK may answer a following ping first.
-func Test_tools_list_writes_angle_brackets_unescaped_as_python_does(t *testing.T) {
-	send := wireLine(t, "tools-list")
-	w := startWire(t)
-	w.next(t) // initialize
-	w.send(t, `{"jsonrpc":"2.0","method":"notifications/initialized"}`)
-	w.send(t, send)
+	w.send(t, `{"jsonrpc":"2.0","id":2,"method":"tools/list"}`)
 	if !w.lines.Scan() {
 		t.Fatalf("stdout ended: %v", w.lines.Err())
 	}
 	got := w.lines.Text()
+	var frame struct {
+		Result map[string][]map[string]any `json:"result"`
+	}
+	if err := json.Unmarshal([]byte(got), &frame); err != nil || len(frame.Result) != 1 {
+		t.Fatalf("tools/list result %s: %v", got, err)
+	}
+	var names []any
+	for _, tool := range frame.Result["tools"] {
+		names = append(names, tool["name"])
+		if annotations, _ := tool["annotations"].(map[string]any); annotations["idempotentHint"] != nil {
+			t.Errorf("%s carries idempotentHint", tool["name"])
+		}
+	}
+	if fmt.Sprint(names) != fmt.Sprint(order) {
+		t.Errorf("tools listed as %v, registered as %v", names, order)
+	}
+	for _, escape := range []string{`\u003c`, `\u003e`, `\u0026`} {
+		if strings.Contains(got, escape) {
+			t.Errorf("tools/list writes %s for the character itself", escape)
+		}
+	}
 	var decodedGot, decodedWant any
 	if err := json.Unmarshal([]byte(got), &decodedGot); err != nil {
 		t.Fatal(err)
 	}
-	want := goldenFrames(t, "tools-list", []string{got})
-	if len(want) != 1 {
-		t.Fatalf("golden tools-list: %d frames", len(want))
-	}
-	if err := json.Unmarshal([]byte(want[0]), &decodedWant); err != nil {
+	want := golden.Want(t, "tools-list", func() []byte { return []byte(got) })
+	if err := json.Unmarshal(want, &decodedWant); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(decodedGot, decodedWant) {
-		t.Errorf("tools/list differs from the golden\n got %s\nwant %s", got, want[0])
-	}
-	for _, escape := range []string{`\u003c`, `\u003e`, `\u0026`} {
-		if strings.Contains(got, escape) {
-			t.Errorf("tools/list writes %s where Python writes the character", escape)
-		}
+		t.Errorf("tools/list differs from the golden\n got %s\nwant %s", got, want)
 	}
 }

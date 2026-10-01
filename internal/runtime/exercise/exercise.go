@@ -21,7 +21,6 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/scope"
@@ -52,7 +51,7 @@ func Relay(ctx context.Context, executable, socket, state string, env scope.Env)
 		{Key: "component", Value: "codex-session-relay"},
 		{Key: "command", Value: record.Get(doctor, "command")},
 		{Key: "exercised", Value: connect == "ok"},
-		{Key: "detail", Value: "actorReachability.socketConnect = " + pyvalue.Repr(connect) + "; a real connect is what makes this an exercise rather than a file read"},
+		{Key: "detail", Value: "actorReachability.socketConnect = " + reading.Show(connect) + "; a real connect is what makes this an exercise rather than a file read"},
 	}
 }
 
@@ -171,7 +170,7 @@ func ArgvIn(ctx context.Context, dir string, argv []string, env scope.Env) Bridg
 	// goroutine exists, so it is not what bounds the session.
 	cmd.WaitDelay = WaitDelay
 	if err := cmd.Start(); err != nil {
-		result.Err = errors.New(store.PythonOSError(err))
+		result.Err = err
 		return result
 	}
 	stopClosing := context.AfterFunc(run, func() { _ = stdout.Close() })

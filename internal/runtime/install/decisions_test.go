@@ -215,7 +215,7 @@ func TestTheCommandLine(t *testing.T) {
 		want string
 	}{
 		{nil, install.Usage, "required: command"},
-		{[]string{"unpack"}, install.Usage, "invalid choice: 'unpack'"},
+		{[]string{"unpack"}, install.Usage, `invalid choice: "unpack"`},
 		{[]string{"remove"}, install.Usage, "required: directory"},
 		{[]string{"status", "extra"}, install.Usage, "unrecognized arguments: extra"},
 		{[]string{"install", "--from", filepath.Join(h.home, "crw.tar.gz")}, install.Refused, `"refused"`},

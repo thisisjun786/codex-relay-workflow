@@ -10,7 +10,6 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/pointer"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
@@ -199,7 +198,7 @@ func unclaimedTombstone(path string) string {
 	entries, err := os.ReadDir(path)
 	switch {
 	case err != nil:
-		return path + " could not be listed, so whether it is an interrupted removal of this command's was not established: " + store.PythonOSError(err)
+		return path + " could not be listed, so whether it is an interrupted removal of this command's was not established: " + err.Error()
 	case len(entries) == 0:
 		return ""
 	}
@@ -223,11 +222,11 @@ func unclaimedTombstone(path string) string {
 func landedAt(pointerPath, environment string) (bool, string) {
 	reached, err := os.Stat(pointerPath)
 	if err != nil {
-		return false, "the pointer does not resolve: " + store.PythonOSError(err)
+		return false, "the pointer does not resolve: " + err.Error()
 	}
 	wanted, err := os.Stat(environment)
 	if err != nil {
-		return false, "the runtime the pointer was placed at could not be read: " + store.PythonOSError(err)
+		return false, "the runtime the pointer was placed at could not be read: " + err.Error()
 	}
 	if !os.SameFile(reached, wanted) {
 		return false, "the pointer resolves to a directory other than " + environment
@@ -236,7 +235,7 @@ func landedAt(pointerPath, environment string) (bool, string) {
 	info, err := os.Stat(crw)
 	switch {
 	case err != nil:
-		return false, crw + " could not be read through the pointer: " + store.PythonOSError(err)
+		return false, crw + " could not be read through the pointer: " + err.Error()
 	case !info.Mode().IsRegular():
 		return false, crw + " is not a regular file"
 	}

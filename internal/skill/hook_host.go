@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 )
 
 func recordTag(name string) [2]string {
@@ -66,35 +65,34 @@ func hostList(value any) ([]any, error) {
 		}
 		return items, nil
 	default:
-		return nil, pythonNotIterable(value, false)
+		return nil, notList(value)
 	}
 }
 
-// hostSorted is sorted(value or []). Sorting needs only '<', so a list or an
-// object in the list is refused only where '<' refuses it; hashing waits for
-// the set() calls in hostFieldProblems.
+// hostSorted is the values a field lists (its characters for a string, its keys for an
+// object), sorted.
 func hostSorted(value any) ([]any, error) {
 	items, err := hostList(value)
 	if err != nil {
 		return nil, err
 	}
-	return pySorted(items)
+	return sortValues(items)
 }
 
-// hostHashable is set(values) reaching its first element that cannot be hashed.
-func hostHashable(values []any) error {
+// hostNames refuses a list of field names holding an array or an object, which names no field.
+func hostNames(values []any) error {
 	for _, value := range values {
 		switch value.(type) {
 		case []any, map[string]any:
-			return &evidence.PythonError{Class: "TypeError", Detail: "unhashable type: '" + pyvalue.TypeName(value) + "'"}
+			return fmt.Errorf("a list of field names holds %s", kindOf(value))
 		}
 	}
 	return nil
 }
 
-// hostSetDifference is sorted(set(left) - set(right)) for lists hostHashable passed.
+// hostSetDifference is the values of left that right does not hold, sorted.
 func hostSetDifference(left, right []any) ([]any, error) {
-	return pySorted(hostValueDifference(left, right))
+	return sortValues(hostValueDifference(left, right))
 }
 
 func hostFieldProblems(record, capability map[string]any, paired string) ([]string, error) {
@@ -112,11 +110,10 @@ func hostFieldProblems(record, capability map[string]any, paired string) ([]stri
 		return []string{paired + " declares no required Stop input"}, nil
 	}
 	if !pyvalue.ItemEqual(deliveredValues, declaredValues) {
-		// sorted(set(declared) - set(delivered)) hashes declared, then delivered.
-		if err := hostHashable(declaredValues); err != nil {
+		if err := hostNames(declaredValues); err != nil {
 			return nil, err
 		}
-		if err := hostHashable(deliveredValues); err != nil {
+		if err := hostNames(deliveredValues); err != nil {
 			return nil, err
 		}
 		missing, err := hostSetDifference(declaredValues, deliveredValues)
@@ -127,7 +124,7 @@ func hostFieldProblems(record, capability map[string]any, paired string) ([]stri
 		if err != nil {
 			return nil, err
 		}
-		return []string{fmt.Sprintf("delivered Stop fields disagree with %s (missing %s, unexpected %s)", paired, pyvalue.Repr(missing), pyvalue.Repr(unexpected))}, nil
+		return []string{fmt.Sprintf("delivered Stop fields disagree with %s (missing %s, unexpected %s)", paired, show(missing), show(unexpected))}, nil
 	}
 	types, ok := input["types"].(map[string]any)
 	if !ok {
@@ -139,8 +136,7 @@ func hostFieldProblems(record, capability map[string]any, paired string) ([]stri
 		fieldValues[i] = field
 	}
 	if !pyvalue.ItemEqual(fieldValues, deliveredValues) {
-		// sorted(set(delivered) - set(types)) hashes delivered; the type names are strings.
-		if err := hostHashable(deliveredValues); err != nil {
+		if err := hostNames(deliveredValues); err != nil {
 			return nil, err
 		}
 		absent, err := hostSetDifference(deliveredValues, fieldValues)
@@ -151,7 +147,7 @@ func hostFieldProblems(record, capability map[string]any, paired string) ([]stri
 		if err != nil {
 			return nil, err
 		}
-		return []string{fmt.Sprintf("the recorded Stop field types do not cover the fields it delivered (missing %s, unexpected %s)", pyvalue.Repr(absent), pyvalue.Repr(extra))}, nil
+		return []string{fmt.Sprintf("the recorded Stop field types do not cover the fields it delivered (missing %s, unexpected %s)", show(absent), show(extra))}, nil
 	}
 	unnamed := []string{}
 	for _, name := range fields {
@@ -190,7 +186,7 @@ func replayHostObservations(hostFS fs.FS, dir string, contractFS fs.FS, contract
 	if err != nil {
 		return 0, nil, err
 	}
-	// Python preserves the packet's table order when reporting missing rows.
+	// Missing rows are reported in the packet's table order.
 	contract, err := fs.ReadFile(contractFS, contractPath)
 	if err != nil {
 		return 0, nil, err
@@ -210,18 +206,18 @@ func replayHostObservations(hostFS fs.FS, dir string, contractFS fs.FS, contract
 	problems := []string{}
 	for _, filename := range paths {
 		name := path.Base(filename)
-		value, err := pythonReadJSON(hostFS, filename, "/"+filename)
+		value, err := readJSON(hostFS, filename, "/"+filename)
 		if err != nil {
-			var osError *probeOSError
-			if errors.As(err, &osError) {
+			var failure *readFailure
+			if errors.As(err, &failure) {
 				return checked, nil, err
 			}
-			problems = append(problems, name+": unreadable ("+pythonValueDetail(err)+")")
+			problems = append(problems, name+": unreadable ("+err.Error()+")")
 			continue
 		}
 		record, recordOK := orderedPlain(value).(map[string]any)
 		if !recordOK {
-			return checked, nil, pythonAttribute(value, "get")
+			return checked, nil, fmt.Errorf("%s: %w", name, notObject(value))
 		}
 		checked++
 		pairedName := pyvalue.Str(record["capabilityRecord"])
@@ -238,17 +234,17 @@ func replayHostObservations(hostFS fs.FS, dir string, contractFS fs.FS, contract
 		case recordTag(pairedName) != own:
 			problems = append(problems, name+": names "+pairedName+", which is not the capability record for the same host and version")
 		case !versionString || !slices.Contains(strings.FieldsFunc(version, isSpace), own[1]):
-			problems = append(problems, fmt.Sprintf("%s: the version it records, %s, does not state %s, the version its own name carries", name, pyvalue.Repr(record["version"]), own[1]))
+			problems = append(problems, fmt.Sprintf("%s: the version it records, %s, does not state %s, the version its own name carries", name, show(record["version"]), own[1]))
 		case statErr != nil || !info.Mode().IsRegular():
 			problems = append(problems, name+": names a capability record that is not beside it")
 		default:
-			value, err := pythonReadJSON(hostFS, pairedPath, "/"+pairedPath)
+			value, err := readJSON(hostFS, pairedPath, "/"+pairedPath)
 			if err != nil {
 				return checked, nil, err
 			}
 			capability, capabilityOK := orderedPlain(value).(map[string]any)
 			if !capabilityOK {
-				return checked, nil, pythonAttribute(value, "get")
+				return checked, nil, fmt.Errorf("%s: %w", pairedName, notObject(value))
 			}
 			fieldProblems, fieldErr := hostFieldProblems(record, capability, pairedName)
 			if fieldErr != nil {

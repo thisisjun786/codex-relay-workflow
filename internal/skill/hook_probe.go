@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
@@ -14,16 +14,13 @@ import (
 	"slices"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 func asObject(v any) hook.Object { o, _ := v.(contract.OrderedObject); return o }
@@ -254,7 +251,7 @@ func probeDecide(v any) (map[string]any, error) { return probeDecideTrace(v, nil
 func probeDecideTrace(v any, reached *hookReplayReach) (map[string]any, error) {
 	o := asObject(v)
 	if o == nil {
-		return nil, pythonAttribute(v, "get")
+		return nil, notObject(v)
 	}
 	o, malformed := probeMalformed(o, reached)
 	marker := cleanMarker(asObject(objGet(o, "marker")))
@@ -267,21 +264,24 @@ func probeDecideTrace(v any, reached *hookReplayReach) (map[string]any, error) {
 	return probeDecision(o, marker, malformed, reached)
 }
 func runHookProbe(args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 {
-		return argparseMissing(stderr, "crw skill hook-probe", "command")
+	name, code, ok := hookProbe.command(args, stdout, stderr)
+	if !ok {
+		return code
 	}
-	switch args[0] {
+	switch name {
 	case "decide":
-		if len(args) != 2 {
-			return argparseMissing(stderr, "crw skill hook-probe decide", "observation")
+		line := newCommandLine("hook-probe", "decide", "Apply the contract's Stop decision to one observation and print the hook output.").takes("observation", 1, 1)
+		positionals, code := line.parse(args[1:], stdout, stderr)
+		if code >= 0 {
+			return code
 		}
-		v, e := pythonReadJSONFile(args[1])
+		v, e := readJSONFile(positionals[0])
 		if e != nil {
 			return reportProbeFailure(stderr, e)
 		}
 		root := asObject(v)
 		if root == nil {
-			fmt.Fprintln(stderr, pythonAttribute(v, "get"))
+			fmt.Fprintln(stderr, notObject(v))
 			return 1
 		}
 		payload := objGet(root, "observation")
@@ -293,56 +293,39 @@ func runHookProbe(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, e)
 			return 1
 		}
-		// print(json.dumps(decide(...), indent=2, sort_keys=True)), as observe prints.
 		fmt.Fprintln(stdout, pyjson.Dumps(got, pyjson.Options{Indent: 2, SortKeys: true}))
 		return 0
 	case "replay":
 		return replayHook(args[1:], stdout, stderr)
-	case "observe":
-		return observeHook(args[1:], stdout, stderr)
 	default:
-		return invalidChoice(stderr, "crw skill hook-probe", "command", args[0], "observe", "decide", "replay")
+		return observeHook(args[1:], stdout, stderr)
 	}
 }
 func replayHook(args []string, stdout, stderr io.Writer) int {
-	fixtures := defaultFixture("decisions")
-	contractPath := defaultContract("hook-contract.md")
-	contractLabel := contractPath
-	hosts := defaultFixture("host")
-	fixturesFS, contractFS, hostsFS := bundledSkillFiles, bundledSkillFiles, bundledSkillFiles
-	allow := false
-	reached := newHookReplayReach()
-	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "--fixtures":
-			i++
-			if i >= len(args) {
-				return argparseValue(stderr, "crw skill hook-probe replay", "--fixtures")
-			}
-			fixtures = args[i]
-			fixturesFS, fixtures = explicitSkillFS(fixtures)
-		case "--contract":
-			i++
-			if i >= len(args) {
-				return argparseValue(stderr, "crw skill hook-probe replay", "--contract")
-			}
-			contractPath = args[i]
-			contractLabel = contractPath
-			contractFS, contractPath = explicitSkillFS(contractPath)
-		case "--host-fixtures":
-			i++
-			if i >= len(args) {
-				return argparseValue(stderr, "crw skill hook-probe replay", "--host-fixtures")
-			}
-			hosts = args[i]
-			hostsFS, hosts = explicitSkillFS(hosts)
-		case "--allow-unreached":
-			allow = true
-		default:
-			return invalidOption(stderr, "crw skill hook-probe replay", args[i])
-		}
+	line := newCommandLine("hook-probe", "replay", "Check every fixture against its recorded expectation.")
+	fixtures := line.String("fixtures", "", "the decision fixtures to replay (default: the ones built into crw)")
+	contractLabel := line.String("contract", "", "the contract whose documented traces must each have a fixture (default: the one built into crw)")
+	hosts := line.String("host-fixtures", "", "the recorded host observations to hold to their capability record (default: the ones built into crw)")
+	allow := line.Bool("allow-unreached", false, "report unreached return sites and incomplete documented-trace coverage without failing; for deliberate subset runs only. Fixture mismatches are never waived.")
+	if _, code := line.parse(args, stdout, stderr); code >= 0 {
+		return code
 	}
-	paths, globErr := fs.Glob(fixturesFS, filepath.ToSlash(filepath.Join(fixtures, "*.json")))
+	fixturesFS, fixturesDir := fs.FS(bundledSkillFiles), defaultFixture("decisions")
+	if *fixtures != "" {
+		fixturesFS, fixturesDir = explicitSkillFS(*fixtures)
+	}
+	contractFS, contractPath := fs.FS(bundledSkillFiles), defaultContract("hook-contract.md")
+	if *contractLabel != "" {
+		contractFS, contractPath = explicitSkillFS(*contractLabel)
+	} else {
+		*contractLabel = contractPath
+	}
+	hostsFS, hostsDir := fs.FS(bundledSkillFiles), defaultFixture("host")
+	if *hosts != "" {
+		hostsFS, hostsDir = explicitSkillFS(*hosts)
+	}
+	reached := newHookReplayReach()
+	paths, globErr := fs.Glob(fixturesFS, filepath.ToSlash(filepath.Join(fixturesDir, "*.json")))
 	if globErr != nil {
 		fmt.Fprintf(stderr, "Probe failed: %s. Nothing was written.\n", globErr)
 		return 3
@@ -374,21 +357,21 @@ func replayHook(args []string, stdout, stderr io.Writer) int {
 	checked, failed := 0, 0
 	var skipped []string
 	for _, p := range paths {
-		// json.loads(path.read_text()): an OSError reaches main (exit 3); a
-		// UnicodeDecodeError or JSONDecodeError is uncaught (exit 1).
-		v, e := pythonReadJSON(fixturesFS, p, "/"+p)
+		// A fixture that cannot be read stops the replay (exit 3); one that does not decode,
+		// or is not shaped as a fixture, exits 1.
+		v, e := readJSON(fixturesFS, p, "/"+p)
 		if e != nil {
 			return reportProbeFailure(stderr, e)
 		}
 		f := asObject(v)
 		if f == nil {
-			fmt.Fprintln(stderr, pythonAttribute(v, "get"))
+			fmt.Fprintln(stderr, notObject(v))
 			return 1
 		}
 		if value := objGet(f, "steps"); pyvalue.Truthy(value) {
 			steps, err := hostList(orderedPlain(value))
 			if err != nil {
-				fmt.Fprintln(stderr, pythonNotIterable(value, false))
+				fmt.Fprintln(stderr, err)
 				return 1
 			}
 			if original, ok := value.([]any); ok {
@@ -399,7 +382,7 @@ func replayHook(args []string, stdout, stderr io.Writer) int {
 			for i, s := range steps {
 				step := asObject(s)
 				if step == nil {
-					fmt.Fprintln(stderr, pythonAttribute(s, "get"))
+					fmt.Fprintln(stderr, notObject(s))
 					return 1
 				}
 				matched, err := checkHookOneTrace(fmt.Sprintf("%s step %d", filepath.Base(p), i+1), objGet(step, "observation"), objGet(step, "expected"), &report, reached)
@@ -421,7 +404,7 @@ func replayHook(args []string, stdout, stderr io.Writer) int {
 		expectedValue := objGet(f, "expected")
 		if pyvalue.Truthy(expectedValue) {
 			if _, err := hostList(orderedPlain(expectedValue)); err != nil {
-				fmt.Fprintln(stderr, pythonNotIterable(expectedValue, true))
+				fmt.Fprintln(stderr, err)
 				return 1
 			}
 		}
@@ -451,13 +434,13 @@ func replayHook(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "%d/%d fixtures matched\n", checked-failed, checked)
 	traceIDs, e := replayTraceIDs(contractFS, contractPath)
 	if e != nil {
-		fmt.Fprintf(stderr, "Probe failed: %s. Nothing was written.\n", probeFileError(e, pythonPath(contractLabel)))
+		fmt.Fprintf(stderr, "Probe failed: %s. Nothing was written.\n", fileError(e, *contractLabel))
 		return 3
 	}
 	missingTraces := replayMissingTraces(paths, traceIDs)
 	if len(missingTraces) > 0 {
 		fmt.Fprintln(stdout, "DOCUMENTED WITHOUT A FIXTURE: "+strings.Join(missingTraces, ", "))
-		if allow {
+		if *allow {
 			fmt.Fprintln(stdout, "WAIVED: --allow-unreached was passed, so incomplete documented-trace coverage did not fail this run.")
 		} else {
 			fmt.Fprintln(stdout, "The contract advertises these traces and nothing exercises them.")
@@ -483,13 +466,13 @@ func replayHook(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "  UNREACHED %s#%d  %s\n", site.function, site.ordinal, site.label)
 	}
 	if len(missingReturns) > 0 {
-		if allow {
+		if *allow {
 			fmt.Fprintln(stdout, "WAIVED: --allow-unreached was passed, so unreached return sites did not fail this run. Fixture mismatches are never waived.")
 		} else {
 			fmt.Fprintln(stdout, "A return site no fixture executes is an untested decision path. Add a fixture for it, or pass --allow-unreached for a deliberate subset run.")
 		}
 	}
-	hostChecked, hostProblems, hostErr := replayHostObservations(hostsFS, hosts, contractFS, contractPath)
+	hostChecked, hostProblems, hostErr := replayHostObservations(hostsFS, hostsDir, contractFS, contractPath)
 	if hostErr != nil {
 		return reportProbeFailure(stderr, hostErr)
 	}
@@ -505,10 +488,10 @@ func replayHook(args []string, stdout, stderr io.Writer) int {
 	if failed > 0 {
 		return 1
 	}
-	if len(missingReturns) > 0 && !allow {
+	if len(missingReturns) > 0 && !*allow {
 		return 1
 	}
-	if len(missingTraces) > 0 && !allow {
+	if len(missingTraces) > 0 && !*allow {
 		return 1
 	}
 	return 0
@@ -529,17 +512,14 @@ func checkHookOneKeys(label string, observation, expectedValue any, out io.Write
 	}
 	expected := asObject(expectedValue)
 	if expected == nil {
-		if _, err := hostList(orderedPlain(expectedValue)); err != nil {
-			return false, pythonNotIterable(expectedValue, true)
-		}
-		return false, pythonAttribute(expectedValue, "get")
+		return false, notObject(expectedValue)
 	}
 	mismatch := map[string]any{}
 	for _, f := range expected {
 		if f.Key == "record" {
 			want := asObject(f.Value)
 			if pyvalue.Truthy(f.Value) && want == nil {
-				return false, pythonAttribute(f.Value, "items")
+				return false, notObject(f.Value)
 			}
 			record, _ := got["record"].(map[string]any)
 			for _, field := range want {
@@ -563,117 +543,6 @@ func checkHookOneKeys(label string, observation, expectedValue any, out io.Write
 	return true, nil
 }
 
-// probeFileError is str(OSError) for a read of the path Python holds as name
-// (its bytes as argv or the directory listing gave them): the filename is
-// repr(os.fsdecode(name)), so a quote, a control or a byte outside UTF-8 is
-// spelled as Python spells it.
-func probeFileError(err error, name string) string {
-	if errors.Is(err, fs.ErrPermission) {
-		return "[Errno 13] Permission denied: " + store.PathRepr(name)
-	}
-	if errors.Is(err, fs.ErrNotExist) {
-		return "[Errno 2] No such file or directory: " + store.PathRepr(name)
-	}
-	if errors.Is(err, syscall.EISDIR) {
-		return "[Errno 21] Is a directory: " + store.PathRepr(name)
-	}
-	return err.Error()
-}
-
-// pythonOSErrorLine is the final traceback line of an uncaught OSError.
-func pythonOSErrorLine(err error, name string) string {
-	class := "OSError"
-	switch {
-	case errors.Is(err, fs.ErrPermission):
-		class = "PermissionError"
-	case errors.Is(err, fs.ErrNotExist):
-		class = "FileNotFoundError"
-	case errors.Is(err, syscall.EISDIR):
-		class = "IsADirectoryError"
-	}
-	return class + ": " + probeFileError(err, name)
-}
-
-// probeOSError is an OSError that escapes to hook_probe.main, which prints
-// "Probe failed: <exc>. Nothing was written." and exits 3.
-type probeOSError struct{ detail string }
-
-func (e *probeOSError) Error() string { return e.detail }
-
-// pythonPath is str(pathlib.Path(p)): repeated and trailing separators and "."
-// components go, ".." stays.
-func pythonPath(p string) string {
-	if p == "" {
-		return "."
-	}
-	var kept []string
-	for _, part := range strings.Split(p, "/") {
-		if part != "" && part != "." {
-			kept = append(kept, part)
-		}
-	}
-	out := strings.Join(kept, "/")
-	if strings.HasPrefix(p, "/") {
-		out = "/" + out
-	}
-	if out == "" {
-		return "."
-	}
-	return out
-}
-
-// pythonReadJSON is json.loads(path.read_text(encoding="utf-8")): an OSError
-// (reported under label), a UnicodeDecodeError or JSONDecodeError (both
-// ValueError), or the decoded value.
-func pythonReadJSON(fsys fs.FS, name, label string) (any, error) {
-	raw, err := fs.ReadFile(fsys, name)
-	if err != nil {
-		return nil, &probeOSError{probeFileError(err, label)}
-	}
-	return pythonLoads(raw)
-}
-
-// pythonReadJSONFile is pythonReadJSON for a path the operator named.
-func pythonReadJSONFile(path string) (any, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return nil, &probeOSError{probeFileError(err, pythonPath(path))}
-	}
-	return pythonLoads(raw)
-}
-
-// pythonLoads is json.loads over UTF-8 text, with Python's exception class.
-func pythonLoads(raw []byte) (any, error) {
-	if _, err := store.DecodeUTF8(raw); err != nil {
-		return nil, &evidence.PythonError{Class: "UnicodeDecodeError", Detail: err.Error()}
-	}
-	value, err := hook.Decode(raw)
-	if err != nil {
-		return nil, &evidence.PythonError{Class: "json.decoder.JSONDecodeError", Detail: err.Error()}
-	}
-	return value, nil
-}
-
-// pythonValueDetail is str(exc) for a ValueError raised by pythonLoads.
-func pythonValueDetail(err error) string {
-	var failure *evidence.PythonError
-	if errors.As(err, &failure) {
-		return failure.Detail
-	}
-	return err.Error()
-}
-
-// reportProbeFailure prints an escaped exception the way hook_probe.main does.
-func reportProbeFailure(stderr io.Writer, err error) int {
-	var osError *probeOSError
-	if errors.As(err, &osError) {
-		fmt.Fprintf(stderr, "Probe failed: %s. Nothing was written.\n", osError.detail)
-		return 3
-	}
-	fmt.Fprintln(stderr, err)
-	return 1
-}
-
 func markHookReplay(reached *hookReplayReach, function string, ordinal int) {
 	if reached != nil {
 		reached.Reach(function, ordinal)
@@ -681,32 +550,20 @@ func markHookReplay(reached *hookReplayReach, function string, ordinal int) {
 }
 
 func observeHook(args []string, stdout, stderr io.Writer) int {
-	binary := ""
-	codexHome := os.Getenv("CODEX_HOME")
+	line := newCommandLine("hook-probe", "observe", "Report the hook input and output schemas the installed Codex binary embeds, and which events this host registers. It opens nothing for writing and starts no session.")
+	binaryFlag := line.String("binary", "", "the Codex binary (default: codex on PATH)")
+	codexHomeFlag := line.String("codex-home", "", "the Codex home whose registrations are read (default: $CODEX_HOME, else ~/.codex)")
+	sanitize := line.Bool("sanitize", false, "omit host paths and registrations so the output is shareable")
+	if _, code := line.parse(args, stdout, stderr); code >= 0 {
+		return code
+	}
+	binary, codexHome := *binaryFlag, *codexHomeFlag
+	if codexHome == "" {
+		codexHome = os.Getenv("CODEX_HOME")
+	}
 	if codexHome == "" {
 		h, _ := os.UserHomeDir()
 		codexHome = filepath.Join(h, ".codex")
-	}
-	sanitize := false
-	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "--binary":
-			i++
-			if i >= len(args) {
-				return argparseValue(stderr, "crw skill hook-probe observe", "--binary")
-			}
-			binary = args[i]
-		case "--codex-home":
-			i++
-			if i >= len(args) {
-				return argparseValue(stderr, "crw skill hook-probe observe", "--codex-home")
-			}
-			codexHome = args[i]
-		case "--sanitize":
-			sanitize = true
-		default:
-			return invalidOption(stderr, "crw skill hook-probe observe", args[i])
-		}
 	}
 	if binary == "" {
 		binary, _ = exec.LookPath("codex")
@@ -734,14 +591,13 @@ func observeHook(args []string, stdout, stderr io.Writer) int {
 		if len(window) > 1<<16 {
 			window = window[:1<<16]
 		}
-		// extract_schemas: decoder.raw_decode(chunk.decode("utf-8", "replace")) reads
-		// the first value in the window, NaN and Infinity included, and a ValueError
-		// skips it.
-		text, ok := pyjson.RawDecodePrefix(pyjson.DecodeReplace(window))
-		if !ok {
+		// The first JSON value in the window is the schema; a window that does not start one
+		// is skipped.
+		var first json.RawMessage
+		if json.NewDecoder(strings.NewReader(strings.ToValidUTF8(string(window), "\ufffd"))).Decode(&first) != nil {
 			continue
 		}
-		decoded, err := hook.Decode([]byte(text))
+		decoded, err := decodeJSON(first)
 		if err != nil {
 			continue
 		}
@@ -764,7 +620,7 @@ func observeHook(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	report := map[string]any{"binary": binary, "events": events, "registration": nil}
-	if sanitize {
+	if *sanitize {
 		report["binary"] = "<codex-binary>"
 	} else {
 		registration, err := hookRegistrations(codexHome, events)
@@ -774,9 +630,6 @@ func observeHook(args []string, stdout, stderr io.Writer) int {
 		}
 		report["registration"] = registration
 	}
-	// print(json.dumps(report, indent=2, sort_keys=True)): non-ASCII escaped and
-	// floats spelled as Python spells them (1.0, 1e+19, Infinity), which
-	// encoding/json does not do.
 	fmt.Fprintln(stdout, pyjson.Dumps(report, pyjson.Options{Indent: 2, SortKeys: true}))
 	return 0
 }

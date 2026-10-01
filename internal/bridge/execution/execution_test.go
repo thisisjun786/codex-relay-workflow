@@ -15,7 +15,7 @@ func TestPolicy_whenPythonPolicyFileIsLoaded(t *testing.T) {
 		{"test_a_role_pair_the_allowlist_omits_is_refused_at_startup_not_at_creation", func(t *testing.T) {
 			_, err := load(t, doc{"allowed": []any{doc{"model": supersededParent[0], "efforts": []any{supersededParent[1]}}}, "roles": doc{"parent": doc{"model": parentModel, "reasoningEffort": parentEffort}}})
 			message := policyError(t, err).Error()
-			for _, want := range []string{"'parent'", parentModel, parentEffort} {
+			for _, want := range []string{`"parent"`, parentModel, parentEffort} {
 				if !strings.Contains(message, want) {
 					t.Fatalf("%q lacks %q", message, want)
 				}
@@ -78,11 +78,11 @@ func TestPolicy_whenPythonPolicyFileIsLoaded(t *testing.T) {
 		{"test_a_repeated_key_is_refused_rather_than_silently_overwritten", func(t *testing.T) {
 			dir := t.TempDir()
 			rows := []struct{ body, want string }{
-				{`{"allowed": [{"model": "a", "efforts": ["x"]}], "allowed": [{"model": "b", "efforts": ["y"]}]}`, "duplicate key 'allowed'"},
-				{`{"allowed": [{"model": "a", "efforts": ["x"], "model": "b"}]}`, "duplicate key 'model'"},
+				{`{"allowed": [{"model": "a", "efforts": ["x"]}], "allowed": [{"model": "b", "efforts": ["y"]}]}`, `duplicate key "allowed"`},
+				{`{"allowed": [{"model": "a", "efforts": ["x"], "model": "b"}]}`, `duplicate key "model"`},
 				// The empty key is a key: object_pairs_hook refuses it repeated, at any depth.
-				{`{"":1,"":2,"roles":{"parent":{"model":"m","reasoningEffort":"high"}}}`, "duplicate key '' in the execution policy"},
-				{`{"roles":{"parent":{"":1,"model":"m","":2,"reasoningEffort":"high"}}}`, "duplicate key '' in the execution policy"},
+				{`{"":1,"":2,"roles":{"parent":{"model":"m","reasoningEffort":"high"}}}`, `duplicate key "" in the execution policy`},
+				{`{"roles":{"parent":{"":1,"model":"m","":2,"reasoningEffort":"high"}}}`, `duplicate key "" in the execution policy`},
 				// json.loads(bytes) strips one BOM with utf-8-sig and checks for another only on
 				// str input, so a second one is the scanner's "Expecting value" at char 0.
 				{"\xef\xbb\xbf\xef\xbb\xbf{}", "is not valid JSON: Expecting value: line 1 column 1 (char 0)"},
@@ -182,7 +182,7 @@ func TestPolicy_whenPythonPolicyFileIsLoaded(t *testing.T) {
 			if err != nil || string(marshal(t, fromBytes.Summary())) != string(marshal(t, fromFile.Summary())) {
 				t.Fatal(err)
 			}
-			if err := second(FromBytes([]byte(`{"allowed": [], "allowed": []}`), "somewhere")); !strings.Contains(policyError(t, err).Error(), "duplicate key 'allowed'") {
+			if err := second(FromBytes([]byte(`{"allowed": [], "allowed": []}`), "somewhere")); !strings.Contains(policyError(t, err).Error(), `duplicate key "allowed"`) {
 				t.Fatal(err)
 			}
 			if err := second(FromBytes([]byte("{ not json"), "somewhere")); !strings.Contains(policyError(t, err).Error(), "somewhere is not valid JSON") {

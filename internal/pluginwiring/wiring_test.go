@@ -464,11 +464,11 @@ func TestDeclaredCommands_reach_the_real_crw_binary(t *testing.T) {
 	}
 }
 
-// The bridge a plugin launch leaves running is the process the Python launcher's execve left:
-// the same pid Codex started, argv[0] ending in codex-thread-bridge with no plugin-launch flag,
+// The bridge a plugin launch leaves running is the process an execve leaves: the same pid Codex
+// started, argv[0] ending in codex-thread-bridge with no plugin-launch flag,
 // the recorded policy in its own environment (what /proc/<pid>/environ shows an operator), and
 // its executable the runtime's crw.
-func TestBridgeLauncher_leaves_a_bridge_process_as_the_python_launcher_did(t *testing.T) {
+func TestBridgeLauncher_leaves_the_bridge_in_the_process_codex_started(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("reads /proc")
 	}

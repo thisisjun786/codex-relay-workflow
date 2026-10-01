@@ -13,8 +13,6 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/pyload"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
@@ -24,8 +22,7 @@ import (
 // ledger, `python3 scripts/trial_startup.py ledger --start <start.json>` under CPython 3.14.4
 // (the relay host's interpreter), over the cases in testdata/cases.json materialized as
 // materialize does here; the same grader reproduced every ledger-grade.json on the relay host
-// byte for byte. TestFromISOFormatIsCPythons's golden was first datetime.datetime.fromisoformat's
-// answer to each string of testdata/fixtures/fromisoformat-inputs.json, from the same interpreter.
+// byte for byte.
 
 type ledgerCase struct {
 	Name   string   `json:"name"`
@@ -66,7 +63,7 @@ func loadCases(t *testing.T) []ledgerCase {
 func fsEncode(s string) []byte {
 	var b []byte
 	for i := 0; i < len(s); {
-		if surrogateAt(s, i) {
+		if s[i] == 0xed && i+2 < len(s) && s[i+1] >= 0xa0 { // a lone surrogate, held as WTF-8
 			r := rune(s[i]&0x0f)<<12 | rune(s[i+1]&0x3f)<<6 | rune(s[i+2]&0x3f)
 			if r >= 0xdc80 && r <= 0xdcff {
 				b = append(b, byte(r-0xdc00))
@@ -313,35 +310,33 @@ func TestTSU30_AFinishedTrialIsGradableWithoutAnInstallation(t *testing.T) {
 	}
 }
 
-// fromISOFormat accepts, places and refuses every string as the golden holds, first CPython's
-// datetime.fromisoformat's answers: line n is repr() of input n and its answer, ["OK", the UTC
-// time, aware] or ["ERR", the message].
-func TestFromISOFormatIsCPythons(t *testing.T) {
-	inputs, err := hook.Decode(golden.Fixture(t, "fromisoformat-inputs.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var answers strings.Builder
-	for _, item := range inputs.([]any) {
-		input := item.(string)
-		at, aware, err := fromISOFormat(input)
-		var got []any
-		if err != nil {
-			got = []any{"ERR", err.Error()}
-		} else {
-			got = []any{"OK", at.UTC().Format("2006-01-02T15:04:05.000000"), aware}
+// A ledger time is an RFC 3339 date and time; one that names no offset is a time and not a
+// moment, and anything else is refused.
+func TestParseMomentReadsRFC3339(t *testing.T) {
+	for _, c := range []struct {
+		text, utc    string
+		aware, valid bool
+	}{
+		{"2026-09-23T11:58:17+00:00", "2026-09-23T11:58:17.000000", true, true},
+		{"2026-09-23T11:58:17.5+09:00", "2026-09-23T02:58:17.500000", true, true},
+		{"2026-09-23T11:58:17.123456Z", "2026-09-23T11:58:17.123456", true, true},
+		{"2026-09-23T11:58:17", "", false, true},
+		{"2026-09-23T11:58", "", false, true},
+		{"2026-09-23", "", false, true},
+		{"2026-09-23T25:00:00+00:00", "", false, false},
+		{"yesterday", "", false, false},
+	} {
+		at, aware, err := parseMoment(c.text)
+		if (err == nil) != c.valid || aware != c.aware || (aware && at.UTC().Format("2006-01-02T15:04:05.000000") != c.utc) {
+			t.Errorf("%q: %v %v %v", c.text, at, aware, err)
 		}
-		answers.WriteString(pyvalue.StrRepr(input) + " " + pyjson.Dumps(got, pyjson.Options{}) + "\n")
 	}
-	golden.Check(t, "answers", []byte(answers.String()))
 }
 
-// A start record or a ledger line reads as deep as CPython 3.14's json nests (past
-// encoding/json's 10000) and grades as the same trial does without the nesting; one container past
-// the interpreter's edge, the RecursionError neither reader catches is the run that raised before
-// it could report, with the message and not the class as its detail. An integer longer than
-// int() converts is the ValueError it is, not a JSONDecodeError.
-func TestLedgerReadsRecordsAsDeepAsPython(t *testing.T) {
+// A start record or a ledger line reads as deep as a Python writer could have written one (past
+// encoding/json's 10000) and grades as the same trial does without the nesting; one container
+// deeper it is a record that could not be read. An integer past int64 reads as a number.
+func TestLedgerReadsRecordsAsDeepAsAWriterWrote(t *testing.T) {
 	const name = "clean window after a failed preparation segment"
 	wantExit, wantText, _ := grade(t, caseNamed(t, name))
 	nestedIn := func(where, value string) ledgerCase {
@@ -357,30 +352,32 @@ func TestLedgerReadsRecordsAsDeepAsPython(t *testing.T) {
 	}
 	arrays := func(depth int) string { return strings.Repeat("[", depth) + strings.Repeat("]", depth) }
 	for _, where := range []string{"start", "ledger"} {
-		for _, depth := range []int{20000, pyload.Nesting - 1} {
+		for _, depth := range []int{20000, pyload.MaxNesting - 1} {
 			code, text, _ := grade(t, nestedIn(where, arrays(depth)))
 			if code != wantExit || text != wantText {
 				t.Fatalf("%s %d deep: exit %d\n%s", where, depth, code, text)
 			}
 		}
-		code, _, document := grade(t, nestedIn(where, arrays(pyload.Nesting)))
-		detail, _ := document["detail"].(map[string]any)
-		if code != 2 || document["refused"] != "this run raised before it could report" || detail["exception"] != "RecursionError" ||
-			detail["detail"] != "maximum recursion depth exceeded while decoding a JSON array from a unicode string" || detail["raisedAt"] != nil {
-			t.Fatalf("%s past the edge: exit %d %v", where, code, document)
-		}
 	}
-	code, _, document := grade(t, nestedIn("start", "1"+strings.Repeat("0", 4300)))
+	code, _, document := grade(t, nestedIn("start", arrays(pyload.MaxNesting)))
 	detail, _ := document["detail"].(map[string]any)
-	if code != 2 || detail["detail"] != "could not read the start record (ValueError: Exceeds the limit (4300 digits) for integer string conversion: value has 4301 digits; use sys.set_int_max_str_digits() to increase the limit)" {
-		t.Fatalf("exit %d %v", code, document)
+	if code != 2 || document["refused"] != "the start record could not be read" ||
+		detail["detail"] != "could not read the start record (the record nests deeper than 57900 containers)" {
+		t.Fatalf("start past the edge: exit %d %v", code, document)
+	}
+	code, _, document = grade(t, nestedIn("ledger", arrays(pyload.MaxNesting)))
+	detail, _ = document["detail"].(map[string]any)
+	if code != 2 || document["refused"] != "a ledger line is not JSON" || detail["detail"] != "the record nests deeper than 57900 containers" {
+		t.Fatalf("ledger past the edge: exit %d %v", code, document)
+	}
+	if code, text, _ := grade(t, nestedIn("start", "1"+strings.Repeat("0", 4300))); code != wantExit || text != wantText {
+		t.Fatalf("a 4301-digit integer: exit %d\n%s", code, text)
 	}
 }
 
-// The start record's path comes from the command line, which Python holds surrogateescaped: a
-// refusal names it that way (a byte that is not UTF-8 is written \udcXX), and an OSError's text
-// as repr() of it, escaping every character str.isprintable refuses. Each line is what
-// trial_startup.py ledger printed for the same bytes under CPython 3.14.4.
+// The start record's path comes from the command line: a refusal names it as the report writes
+// a path it read from the system (a byte that is not UTF-8 is written \udcXX), in the path field
+// and in the system's error the detail quotes.
 func TestLedgerNamesTheStartPathAsPythonHoldsIt(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root is never refused a directory's search permission")
@@ -409,14 +406,14 @@ func TestLedgerNamesTheStartPathAsPythonHoldsIt(t *testing.T) {
 			}
 		}
 	}
-	for _, c := range []struct{ name, held, repr string }{
-		{"a\u00a0b", `a\u00a0b`, `a\\xa0b`},
-		{"a\u2028b", `a\u2028b`, `a\\u2028b`},
-		{"a\xffb", `a\udcffb`, `a\\udcffb`},
-		{"a\xed\xa0\x80b", `a\udced\udca0\udc80b`, `a\\udced\\udca0\\udc80b`},
+	for _, c := range []struct{ name, held string }{
+		{"a\u00a0b", `a\u00a0b`},
+		{"a\u2028b", `a\u2028b`},
+		{"a\xffb", `a\udcffb`},
+		{"a\xed\xa0\x80b", `a\udced\udca0\udc80b`},
 	} {
 		run(locked+"/"+c.name+"/start.json",
-			`"detail": "whether anything exists at this path could not be established (PermissionError: [Errno 13] Permission denied: '`+locked+"/"+c.repr+`/start.json')",`,
+			`"detail": "whether anything exists at this path could not be established (lstat `+locked+"/"+c.held+`/start.json: permission denied)",`,
 			`"path": "`+locked+"/"+c.held+`/start.json",`)
 	}
 	run(base+"/r\xffx/start.json", `"detail": "nothing exists at `+base+`/r\udcffx/start.json",`, `"path": "`+base+`/r\udcffx/start.json",`)

@@ -86,10 +86,10 @@ func hostShapeCases() []skillShapeCase {
 	return append(cases, hostSortShapeCases()...)
 }
 
-// hostSortShapeCases pair Stop field lists whose elements Python sorts with '<'
-// and then compares, building sets only where the lists or the recorded types
-// disagree: a list element is unhashable only there, and an unorderable pair
-// raises the TypeError of the first comparison CPython's sort makes.
+// hostSortShapeCases pair Stop field lists whose elements are sorted and then
+// compared: a list or object element is refused as a field name only where the
+// lists or the recorded types disagree, and a pair that cannot be ordered is
+// refused by the sort.
 func hostSortShapeCases() []skillShapeCase {
 	absent := struct{}{}
 	nested := []any{[]any{"b"}, []any{"a"}}

@@ -300,7 +300,7 @@ func TestTheCommandLinksThisCheckoutIntoTheCodexHome(t *testing.T) {
 }
 
 func TestATildeDestinationIsExpandedWhereverItComesFrom(t *testing.T) {
-	// install.py runs expanduser on the destination it ends up with, so a CODEX_HOME holding a
+	// A ~ is expanded on the destination link ends up with, so a CODEX_HOME holding a
 	// literal ~ (quoted, or set by something other than a shell) names the user's home, not a
 	// directory called ~ inside the checkout. --check writes nothing, so a wrong destination shows
 	// in its MISSING lines before the one --apply below could write there.
@@ -327,8 +327,8 @@ func TestATildeDestinationIsExpandedWhereverItComesFrom(t *testing.T) {
 	}{
 		{"~/codex", nil, filepath.Join(home, "codex", "skills")},
 		{"~", nil, filepath.Join(home, "skills")},
-		{"~/../sibling/codex", nil, home + "/../sibling/codex/skills"}, // ".." kept, as Path.absolute() keeps it
-		{"~//codex", nil, filepath.Join(home, "codex", "skills")},      // Path() collapses "//" before expanduser
+		{"~/../sibling/codex", nil, home + "/../sibling/codex/skills"}, // ".." kept: the filesystem resolves it
+		{"~//codex", nil, filepath.Join(home, "codex", "skills")},      // a repeated separator is one
 		{"~someone/codex", nil, filepath.Join(other, "codex", "skills")},
 		{"", nil, filepath.Join(home, ".codex", "skills")},
 		{"~/ignored", []string{"--dest", "~/explicit"}, filepath.Join(home, "explicit")},

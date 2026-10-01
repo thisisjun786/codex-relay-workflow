@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/definition"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/pointer"
@@ -223,7 +222,7 @@ func Rollback(ctx context.Context, o Options, named string) (Object, int) {
 		// bookkeeping, as resuming does.
 		settle = true
 	case readable:
-		return nothing(environment + " carries a claim that says " + pyvalue.Repr(says) + ", and no selection of the host record proves a promotion put it in service, so it is not a runtime whose install finished")
+		return nothing(environment + " carries a claim that says " + reading.Show(says) + ", and no selection of the host record proves a promotion put it in service, so it is not a runtime whose install finished")
 	default:
 		return nothing(environment + " carries no readable claim of this command's (" + staging.ReadClaim(environment).State + "), so it is not a runtime whose install finished")
 	}

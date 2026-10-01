@@ -4,9 +4,10 @@
 // could not be asked at all, and present means it was read. Collapsing any pair of them turns a
 // permission problem into a malformed record or a misconfigured path into a clean host.
 //
-// Only the four states and the refusal shape are ported. Python's exception lattice and its
-// traceback locator are not: a Go refusal names the Python exception class a caller reading the
-// report would have seen (so "exception" keeps its meaning), and raisedAt is always null.
+// A refusal's "exception" names the class of failure in the vocabulary the reports have always
+// used (FileNotFoundError, PermissionError, OSError, UnicodeDecodeError, JSONDecodeError,
+// TypeError, ValueError, ...), so a reader branching on it keeps its meaning; its "detail" is in
+// Go's words, and raisedAt is always null.
 package reading
 
 import (
@@ -15,10 +16,10 @@ import (
 	"os"
 	"strings"
 	"syscall"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // The four answers a reading gives.
@@ -89,19 +90,22 @@ func (f *Failure) Error() string { return f.Class + ": " + f.Message }
 // Fail is a shape rejection of the given Python class.
 func Fail(class, message string) error { return &Failure{Class: class, Message: message} }
 
-// classOf is type(error).__name__ and str(error) for an error a read produced.
+// errnoClass is the exception a refusal names for a failed system call.
+var errnoClass = map[syscall.Errno]string{
+	syscall.ENOENT: "FileNotFoundError", syscall.EACCES: "PermissionError", syscall.EPERM: "PermissionError",
+	syscall.EEXIST: "FileExistsError", syscall.ENOTDIR: "NotADirectoryError", syscall.EISDIR: "IsADirectoryError",
+	syscall.EINTR: "InterruptedError", syscall.EAGAIN: "BlockingIOError",
+}
+
+// classOf is the exception a refusal names for err, and the error's own text.
 func classOf(err error) (class, said string) {
 	var failure *Failure
 	if errors.As(err, &failure) {
 		return failure.Class, failure.Message
 	}
-	text := store.PythonOSError(err)
-	if name, rest, ok := strings.Cut(text, ": "); ok && strings.HasSuffix(name, "Error") && !strings.ContainsAny(name, " /") {
-		return name, rest
-	}
 	var errno syscall.Errno
-	if errors.As(err, &errno) {
-		return "OSError", text
+	if errors.As(err, &errno) && errnoClass[errno] != "" {
+		return errnoClass[errno], err.Error()
 	}
 	return "OSError", err.Error()
 }
@@ -112,8 +116,8 @@ func isOS(err error) bool {
 	return !errors.As(err, &failure)
 }
 
-// failed is reading.failure: an OSError established nothing; the rest read something and
-// could not make sense of it.
+// failed is a reading that ended in err: a failed system call established nothing (an access
+// error); the rest read something and could not make sense of it.
 func failed(err error, source, what, detail string) Reading {
 	class, said := classOf(err)
 	state := Unreadable
@@ -123,7 +127,7 @@ func failed(err error, source, what, detail string) Reading {
 	if detail == "" {
 		detail = "could not read " + what
 	}
-	return Reading{State: state, Exception: class, Source: source, Detail: detail + " (" + class + ": " + said + ")"}
+	return Reading{State: state, Exception: class, Source: source, Detail: detail + " (" + said + ")"}
 }
 
 // Kind names a non-regular file type the way reading._kind does.
@@ -148,7 +152,7 @@ func Kind(mode os.FileMode) string {
 // for established absence.
 func Observe(path, what string) *Reading {
 	if strings.ContainsRune(path, 0) {
-		// A NUL-bearing string cannot name a path at all (Python's ValueError).
+		// A NUL-bearing string cannot name a path at all.
 		r := failed(&Failure{Class: "ValueError", Message: "embedded null byte"}, path, what, "this path cannot name a file")
 		return &r
 	}
@@ -210,26 +214,19 @@ func identityOf(file *os.File) *Identity {
 	return &Identity{Dev: uint64(sys.Dev), Ino: sys.Ino}
 }
 
-// universalNewlines is what Python's text mode does before json.loads sees the text.
-func universalNewlines(text string) string {
-	return strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
-}
+// errNotUTF8 is the refusal of bytes that are not UTF-8 text.
+var errNotUTF8 = &Failure{Class: "UnicodeDecodeError", Message: "not UTF-8 text"}
 
-// Decode is json.loads over bytes read in text mode: strict UTF-8, universal newlines, then
-// Python's JSON language (object order, NaN and the infinities, a repeated key keeping its last
-// value). The error is a *Failure naming the Python exception.
+// Decode reads a record's bytes: strict UTF-8, then JSON as the Python and Go writers of these
+// records wrote it (objects in order, NaN and the infinities, a lone surrogate escape, a
+// repeated key keeping its last value). The error is a *Failure.
 func Decode(raw []byte) (any, error) {
-	text, err := store.DecodeUTF8(raw)
-	if err != nil {
-		return nil, &Failure{Class: "UnicodeDecodeError", Message: err.Error()}
+	if !utf8.Valid(raw) {
+		return nil, errNotUTF8
 	}
-	text = universalNewlines(text)
-	if message := store.PythonJSONError(text); message != "" {
-		return nil, &Failure{Class: "JSONDecodeError", Message: message}
-	}
-	value, err := pyjson.Loads(text, pyjson.LoadOptions{Constants: true, Surrogates: true, RawSurrogates: true, Numbers: pyjson.Int64Numbers})
+	value, err := pyjson.Loads(string(raw), pyjson.LoadOptions{Constants: true, Surrogates: true, Numbers: pyjson.Int64Numbers})
 	if err != nil {
-		return nil, &Failure{Class: "ValueError", Message: err.Error()}
+		return nil, &Failure{Class: "JSONDecodeError", Message: err.Error()}
 	}
 	return value, nil
 }
@@ -284,11 +281,11 @@ func ReadText(path, what string) Reading {
 	if err != nil {
 		return failed(err, path, what, "")
 	}
-	text, err := store.DecodeUTF8(raw)
-	if err != nil {
-		return failed(&Failure{Class: "UnicodeDecodeError", Message: err.Error()}, path, what, "")
+	if !utf8.Valid(raw) {
+		return failed(errNotUTF8, path, what, "")
 	}
-	return Reading{Value: universalNewlines(text), State: Present, Source: path}
+	text := strings.ReplaceAll(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\r", "\n")
+	return Reading{Value: text, State: Present, Source: path}
 }
 
 // SameDirectory is reading.same_directory: whether two spellings name the same object, asked

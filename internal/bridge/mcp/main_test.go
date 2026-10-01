@@ -189,18 +189,18 @@ func Test_with_no_socket_the_server_still_lists_its_tools_and_explains_the_failu
 	if strings.Join(names, ",") != strings.Join(order, ",") || len(again.Tools) != 12 {
 		t.Fatalf("listed %v then %d tools", names, len(again.Tools))
 	}
-	// And create_thread answered, as Python does, with a receipt that says nothing was attempted
-	// and why, while a read tool answered with an error result naming the missing socket
+	// And create_thread answered with a receipt that says nothing was attempted and why, while a
+	// read tool answered with an error result naming the missing socket
 	receipt := structured(t, created)
-	if created.IsError || receipt["status"] != "not_attempted" || receipt["retrySafe"] != true || receipt["error"] != "FileNotFoundError: [Errno 2] No such file or directory" {
+	if said, _ := receipt["error"].(string); created.IsError || receipt["status"] != "not_attempted" || receipt["retrySafe"] != true || !strings.HasSuffix(said, "absent.sock: connect: no such file or directory") {
 		t.Fatalf("create_thread %v", receipt)
 	}
-	if !capabilities.IsError || capabilities.Content[0].(*sdk.TextContent).Text != "Error executing tool get_capabilities: [Errno 2] No such file or directory" {
+	if text := capabilities.Content[0].(*sdk.TextContent).Text; !capabilities.IsError || !strings.HasPrefix(text, "Error executing tool get_capabilities: ") || !strings.HasSuffix(text, "absent.sock: connect: no such file or directory") {
 		t.Fatalf("get_capabilities %v", capabilities.Content)
 	}
 	// And stderr explains both
 	log := s.stderr.String()
-	if !strings.Contains(log, "tool=create_thread status=not_attempted") || !strings.Contains(log, "tool=get_capabilities") || !strings.Contains(log, "No such file or directory") {
+	if !strings.Contains(log, "tool=create_thread status=not_attempted") || !strings.Contains(log, "tool=get_capabilities") || !strings.Contains(log, "no such file or directory") {
 		t.Fatalf("stderr does not explain the failure:\n%s", log)
 	}
 }
@@ -251,8 +251,7 @@ func Test_an_unusable_policy_stops_the_server_before_any_ledger_exists(t *testin
 	var stdout, stderr bytes.Buffer
 	state := filepath.Join(home, "ledger")
 	code := Main(context.Background(), []string{"--socket", filepath.Join(home, "absent.sock"), "--state-dir", state}, env, io.NopCloser(strings.NewReader("")), nopWriteCloser{&stdout}, &stderr)
-	// Byte for byte what `python -m codex_thread_bridge.server` writes for the same file.
-	want := "execution_policy_unreadable: cannot read " + policy + ": [Errno 2] No such file or directory: '" + policy + "'\n"
+	want := "execution_policy_unreadable: cannot read " + policy + ": open " + policy + ": no such file or directory\n"
 	if code != 1 || stdout.Len() != 0 || stderr.String() != want {
 		t.Fatalf("exit %d stdout %q stderr %q", code, stdout.String(), stderr.String())
 	}

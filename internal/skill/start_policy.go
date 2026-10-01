@@ -6,8 +6,7 @@ import (
 	"io/fs"
 	"regexp"
 	"strings"
-
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"unicode/utf8"
 )
 
 var cell = regexp.MustCompile("`([^`]+)`")
@@ -216,8 +215,21 @@ func StartPolicySelftest(contract []byte, stdout, stderr io.Writer) int {
 }
 
 func runStartPolicy(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	if len(args) == 0 {
-		return argparseMissing(stderr, "crw skill start-policy", "mode")
+	name, code, ok := startPolicy.command(args, stdout, stderr)
+	if !ok {
+		return code
+	}
+	line := newCommandLine("start-policy", name, map[string]string{
+		"vocabulary": "Print the declared values and the legal pairings.",
+		"check":      "Check a record's two closed-vocabulary fields; the record is the file named, or stdin.",
+		"selftest":   "Check the vocabulary and the recorded negative cases.",
+	}[name])
+	if name == "check" {
+		line.takes("record", 0, 1)
+	}
+	positionals, code := line.parse(args[1:], stdout, stderr)
+	if code >= 0 {
+		return code
 	}
 	raw, e := fs.ReadFile(bundledSkillFiles, defaultContract("start-policy.md"))
 	if e != nil {
@@ -230,33 +242,27 @@ func runStartPolicy(args []string, stdin io.Reader, stdout, stderr io.Writer) in
 		return 2
 	}
 	var out []string
-	ok := true
-	switch args[0] {
+	ok = true
+	switch name {
 	case "vocabulary":
 		showVocabulary(v, &out)
 	case "check":
 		path := ""
-		if len(args) > 2 {
-			return invalidOption(stderr, "crw skill start-policy check", strings.Join(args[2:], " "))
-		}
-		if len(args) == 2 {
-			path = args[1]
+		if len(positionals) == 1 {
+			path = positionals[0]
 		}
 		data, e := readFileOrStdin(path, stdin)
 		if e != nil {
-			fmt.Fprintln(stderr, pythonOSErrorLine(e, pythonPath(path)))
+			fmt.Fprintln(stderr, e)
 			return 1
 		}
-		text, e := store.DecodeUTF8(data)
-		if e != nil {
-			fmt.Fprintln(stderr, "UnicodeDecodeError: "+e.Error())
+		if !utf8.Valid(data) {
+			fmt.Fprintln(stderr, "The record is "+errNotUTF8.Error())
 			return 1
 		}
-		ok = checkPolicy(readPolicy(strings.Split(text, "\n")), v, &out)
-	case "selftest":
-		ok = startPolicySelftest(v, &out)
+		ok = checkPolicy(readPolicy(strings.Split(string(data), "\n")), v, &out)
 	default:
-		return invalidChoice(stderr, "crw skill start-policy", "mode", args[0], "vocabulary", "check", "selftest")
+		ok = startPolicySelftest(v, &out)
 	}
 	fmt.Fprintln(stdout, strings.TrimRight(strings.Join(out, "\n"), "\n"))
 	if ok {

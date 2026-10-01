@@ -14,7 +14,6 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/definition"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/pointer"
@@ -118,13 +117,13 @@ func Remove(ctx context.Context, o Options, named string) (Object, int) {
 		}
 		return finishRemoval(ctx, o, base, directory, grave)
 	case err != nil:
-		return refuse("whether " + directory + " exists could not be established: " + store.PythonOSError(err))
+		return refuse("whether " + directory + " exists could not be established: " + err.Error())
 	case !info.IsDir():
 		return refuse(directory + " is not a directory, so it is not a runtime this command installed")
 	}
 	d, err := identify(o.Dest, original)
 	if err != nil {
-		return refuse("the destination " + o.Dest + " could not be read: " + store.PythonOSError(err))
+		return refuse("the destination " + o.Dest + " could not be read: " + err.Error())
 	}
 	loaded := record.Load(o.RecordPath, definition.Version)
 	if !loaded.Usable() {
@@ -156,21 +155,21 @@ func Remove(ctx context.Context, o Options, named string) (Object, int) {
 			return refuse("an earlier removal of this name left "+grave+", and it cannot be finished: "+u.detail, u.extra()...)
 		}
 		if err := deleteTombstone(grave); err != nil {
-			return refuse("an earlier removal of this name left " + grave + ", which could not be deleted: " + store.PythonOSError(err))
+			return refuse("an earlier removal of this name left " + grave + ", which could not be deleted: " + err.Error())
 		}
 	}
 	if err := ctx.Err(); err != nil {
 		return refuse(interrupted(err))
 	}
 	if err := os.Rename(directory, grave); err != nil {
-		return refuse("the directory could not be set aside as " + grave + ": " + store.PythonOSError(err))
+		return refuse("the directory could not be set aside as " + grave + ": " + err.Error())
 	}
 	dropped, clearedOutgoing, why := dropInstalls(o.RecordPath, d)
 	if why != "" {
 		if err := os.Rename(grave, directory); err != nil {
 			return Object{
 				field("command", "remove"), field("applied", true), field("directory", directory), field("removed", false), field("tombstone", grave),
-				field("detail", why+"; and the directory could not be renamed back from "+grave+": "+store.PythonOSError(err)), field("residualPaths", []any{grave}),
+				field("detail", why+"; and the directory could not be renamed back from "+grave+": "+err.Error()), field("residualPaths", []any{grave}),
 				field("recoveryRequires", "rename "+grave+" back to "+directory+" by hand (nothing uses it, and the host record still lists it), or run crw install remove "+grave+" to finish removing it"),
 				field("note", "the host record was not changed."),
 			}, Incomplete
@@ -181,7 +180,7 @@ func Remove(ctx context.Context, o Options, named string) (Object, int) {
 		return Object{
 			field("command", "remove"), field("applied", true), field("directory", directory), field("removed", false), field("tombstone", grave),
 			field("claim", claimValue), field("droppedInstallEntries", strs(dropped)), field("clearedOutgoing", clearedOutgoing),
-			field("detail", "the directory was set aside as "+grave+" and could not be deleted completely: "+store.PythonOSError(err)), field("residualPaths", []any{grave}),
+			field("detail", "the directory was set aside as "+grave+" and could not be deleted completely: "+err.Error()), field("residualPaths", []any{grave}),
 			field("recoveryRequires", "run crw install remove "+grave+" once whatever stopped the deletion is cleared: it finishes the removal. Nothing uses the directory (every check passed), and its install entries are already dropped from the host record"),
 			field("processTable", processScope), field("relayRecords", relayRecords),
 			field("note", "the host record no longer lists this directory's installs, and nothing is left under its name. Its measured points stay in the host record as history."),
@@ -248,7 +247,7 @@ func finishRemoval(ctx context.Context, o Options, base Object, directory, grave
 	if err := deleteTombstone(grave); err != nil {
 		return append(append(Object{}, base...), field("applied", true), field("removed", false), field("tombstone", grave),
 			field("droppedInstallEntries", strs(dropped)), field("clearedOutgoing", clearedOutgoing),
-			field("detail", "the tombstone could not be deleted completely: "+store.PythonOSError(err)), field("residualPaths", []any{grave}),
+			field("detail", "the tombstone could not be deleted completely: "+err.Error()), field("residualPaths", []any{grave}),
 			field("recoveryRequires", "run crw install remove "+grave+" again once whatever stopped the deletion is cleared")), Incomplete
 	}
 	return Object{
@@ -435,7 +434,7 @@ func dropInstalls(recordPath string, d *runtimeDir) ([]string, bool, string) {
 		return []string{}, false, ""
 	}
 	if err := record.Save(recordPath, rec); err != nil {
-		return nil, false, "the host record could not be written to drop this directory's install entries: " + store.PythonOSError(err)
+		return nil, false, "the host record could not be written to drop this directory's install entries: " + err.Error()
 	}
 	if dropped == nil {
 		dropped = []string{}
@@ -641,7 +640,7 @@ func liveProcesses(proc string, d *runtimeDir) (found, unruled []any, err error)
 		case vanished(err):
 			continue
 		case err != nil:
-			unknown(nil, "whose process it is could not be read: "+store.PythonOSError(err))
+			unknown(nil, "whose process it is could not be read: "+err.Error())
 			continue
 		}
 		var hits []string
@@ -652,12 +651,12 @@ func liveProcesses(proc string, d *runtimeDir) (found, unruled []any, err error)
 		case vanished(exeErr) || vanished(cmdErr):
 			continue
 		case exeErr != nil && !denied(exeErr) && uid == me:
-			unknown(int64(uid), "it runs as this user and its executable could not be read ("+store.PythonOSError(exeErr)+"), so what it runs is unknown")
+			unknown(int64(uid), "it runs as this user and its executable could not be read ("+exeErr.Error()+"), so what it runs is unknown")
 			continue
 		case cmdErr != nil:
-			why := "its command line could not be read (" + store.PythonOSError(cmdErr) + "; a procfs mounted hidepid hides another user's)"
+			why := "its command line could not be read (" + cmdErr.Error() + "; a procfs mounted hidepid hides another user's)"
 			if exeErr != nil {
-				why += ", nor its executable (" + store.PythonOSError(exeErr) + ")"
+				why += ", nor its executable (" + exeErr.Error() + ")"
 			}
 			unknown(int64(uid), why+", so what it runs is unknown")
 			continue
@@ -667,7 +666,7 @@ func liveProcesses(proc string, d *runtimeDir) (found, unruled []any, err error)
 				hits = append(hits, exe)
 			}
 		case !strings.Contains(words[0], "/") && runtimeNames()[words[0]]:
-			unknown(int64(uid), "its executable could not be read ("+store.PythonOSError(exeErr)+") and its command line starts "+words[0]+" by a bare name, which may be this runtime's, so what it runs is unknown")
+			unknown(int64(uid), "its executable could not be read ("+exeErr.Error()+") and its command line starts "+words[0]+" by a bare name, which may be this runtime's, so what it runs is unknown")
 			continue
 		}
 		cwd, cwdErr := readCwd(filepath.Join(base, "cwd"))
@@ -676,7 +675,7 @@ func liveProcesses(proc string, d *runtimeDir) (found, unruled []any, err error)
 		case vanished(cwdErr):
 			continue
 		case cwdErr != nil && !denied(cwdErr) && uid == me:
-			unknown(int64(uid), "it runs as this user and its working directory could not be read ("+store.PythonOSError(cwdErr)+"), so what it runs and where is unknown")
+			unknown(int64(uid), "it runs as this user and its working directory could not be read ("+cwdErr.Error()+"), so what it runs and where is unknown")
 			continue
 		case cwdErr == nil && inside(cwd):
 			hits = append(hits, cwd)
@@ -695,7 +694,7 @@ func liveProcesses(proc string, d *runtimeDir) (found, unruled []any, err error)
 			}
 		}
 		if unresolved != "" && len(hits) == 0 {
-			why := "its command line runs " + unresolved + " relative to its working directory, which could not be read (" + store.PythonOSError(cwdErr) + ")"
+			why := "its command line runs " + unresolved + " relative to its working directory, which could not be read (" + cwdErr.Error() + ")"
 			if uid == me || !denied(cwdErr) {
 				unknown(int64(uid), why+", so what it runs is unknown")
 				continue
@@ -739,7 +738,7 @@ func liveProcesses(proc string, d *runtimeDir) (found, unruled []any, err error)
 func closedTo(base string, d *runtimeDir) (bool, string) {
 	raw, err := os.ReadFile(filepath.Join(base, "status"))
 	if err != nil {
-		return false, "its credentials could not be read (" + store.PythonOSError(err) + ")"
+		return false, "its credentials could not be read (" + err.Error() + ")"
 	}
 	c, err := parseCredentials(string(raw))
 	if err != nil {
@@ -754,7 +753,7 @@ func closedTo(base string, d *runtimeDir) (bool, string) {
 	}
 	resolved, err := filepath.EvalSymlinks(d.path)
 	if err != nil {
-		return false, "where this directory lies could not be resolved to judge who may enter it (" + store.PythonOSError(err) + ")"
+		return false, "where this directory lies could not be resolved to judge who may enter it (" + err.Error() + ")"
 	}
 	for p := resolved; ; p = filepath.Dir(p) {
 		if closes(p, c) {

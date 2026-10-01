@@ -42,7 +42,7 @@ func runHookProbeGo(t *testing.T, binary string, args ...string) hookProbeResult
 	return result
 }
 
-func TestHookProbeReplayFailuresMatchLivePython(t *testing.T) {
+func TestHookProbeReplayFailures(t *testing.T) {
 	goldenRoot(t)
 	binary := recordedCRW(t)
 	root := repositoryRoot()
@@ -83,7 +83,7 @@ func TestHookProbeReplayFailuresMatchLivePython(t *testing.T) {
 		missing := filepath.Join(root, ".omo", "evidence", "missing-hook-contract.md")
 		args := []string{"replay", "--fixtures", decisions, "--contract", missing, "--host-fixtures", host}
 		answer := runHookProbeGo(t, binary, args...)
-		if answer.exit != 3 || !strings.Contains(answer.stderr, "No such file or directory") {
+		if answer.exit != 3 || !strings.Contains(answer.stderr, "no such file or directory") {
 			t.Fatalf("replay did not reject missing contract: %+v", answer)
 		}
 	})
@@ -106,7 +106,7 @@ func TestHookProbeReplayFailuresMatchLivePython(t *testing.T) {
 
 }
 
-func TestHookProbeMalformedSelectionAndCountersMatchLivePython(t *testing.T) {
+func TestHookProbeMalformedSelectionAndCounters(t *testing.T) {
 	goldenRoot(t)
 	binary := recordedCRW(t)
 	decisions := diskSkillPath(defaultFixture("decisions"))

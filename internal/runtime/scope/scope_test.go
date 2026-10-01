@@ -26,7 +26,7 @@ func TestMain(m *testing.M) {
 
 // service_state keeps its four answers apart with the invocation first: a command that did
 // not run is never a stopped daemon. Each answer is the golden, which began as Python's.
-func TestServiceStateIsPythons(t *testing.T) {
+func TestServiceStateReadings(t *testing.T) {
 	for _, name := range []string{"running", "stopped", "failed", "stderr", "bare-failure", "no-payload", "list-payload", "string-running",
 		"open-0", "open-2", "open-bool", "open-str", "unavailable", "no-contents"} {
 		expected.Check(t, name, []byte(golden.Canon(scope.ServiceState(envelopeOf(t, name)))))
@@ -124,7 +124,7 @@ func TestRelayRunsTheSelectedExecutable(t *testing.T) {
 		t.Fatalf("a failing command: %s", golden.Canon(failed))
 	}
 	missing := scope.Relay(ctx, []string{"doctor"}, filepath.Join(dir, "missing"), "", "", env, false, 0)
-	if record.Get(missing, "ok") != false || !strings.HasPrefix(record.Text(missing, "unreadable"), "FileNotFoundError: [Errno 2] No such file or directory") {
+	if record.Get(missing, "ok") != false || !strings.HasSuffix(record.Text(missing, "unreadable"), "missing: no such file or directory") {
 		t.Fatalf("a missing executable: %s", golden.Canon(missing))
 	}
 	if err := os.WriteFile(relay, []byte("#!/bin/sh\necho not json\n"), 0o755); err != nil {
@@ -160,10 +160,9 @@ func TestFilesystemCandidatesListEveryStoreFile(t *testing.T) {
 	}
 }
 
-// A relay the deadline ended is subprocess.run's TimeoutExpired, as scope.relay reports it:
-// no exit status, and nothing the process printed before it hung kept as its answer, so the
-// service state names the timeout. A relay a signal ended exits -N, as Popen.returncode is.
-func TestARelayTheDeadlineEndedIsTimeoutExpired(t *testing.T) {
+// A relay the deadline ended has no exit status, and nothing the process printed before it hung
+// is kept as its answer, so the service state names the timeout. A relay a signal ended exits -N.
+func TestARelayTheDeadlineEndedIsUnreadable(t *testing.T) {
 	dir := t.TempDir()
 	relay := filepath.Join(dir, "relay")
 	if err := os.WriteFile(relay, []byte("#!/bin/sh\nprintf '%s\\n' '{\"running\": false}'\nexec sleep 20\n"), 0o755); err != nil {
@@ -172,7 +171,7 @@ func TestARelayTheDeadlineEndedIsTimeoutExpired(t *testing.T) {
 	ctx := context.Background()
 	env := scope.Env(os.Environ())
 	got := scope.Relay(ctx, []string{"service", "status"}, relay, "", "", env, false, time.Second)
-	said := "TimeoutExpired: Command '['" + relay + "', 'service', 'status']' timed out after 1 seconds"
+	said := `the relay command ["` + relay + `", "service", "status"] did not finish within 1s`
 	want := record.Object{{Key: "ok", Value: false}, {Key: "command", Value: []any{relay, "service", "status"}}, {Key: "unreadable", Value: said}}
 	if golden.Canon(got) != golden.Canon(want) {
 		t.Fatalf("a relay the deadline ended\n go: %s\n py: %s", golden.Canon(got), golden.Canon(want))
@@ -205,7 +204,7 @@ func TestARelayThatLeavesItsOutputOpenIsBounded(t *testing.T) {
 		timeout    time.Duration
 		said       string
 	}{
-		{"hangs", "exec sleep 20\n", time.Second, "TimeoutExpired: "},
+		{"hangs", "exec sleep 20\n", time.Second, "the relay command "},
 		{"exits", "printf '%s\\n' '{\"running\": false}'\nexit 0\n", 20 * time.Second, "the relay exited, but a process it left behind kept its output open 1s past that"},
 	} {
 		pidFile := filepath.Join(dir, c.name+".pid")
@@ -273,15 +272,15 @@ func TestStoresSeenComparesPathsByValue(t *testing.T) {
 	}
 }
 
-// A siblingStores that is not an object carries no conflict inventory. Python's sibling_reading
-// raises on it; Go says it could not be read, never that the inventory was checked.
+// A siblingStores that is not an object carries no conflict inventory: it could not be read,
+// never that the inventory was checked.
 func TestSiblingStoresThatIsNotAnObjectIsNotChecked(t *testing.T) {
 	for _, c := range []struct {
 		value any
 		kind  string
-	}{{[]any{"x"}, "list"}, {"unavailable", "str"}, {false, "bool"}, {int64(0), "int"}, {[]any{}, "list"}, {1.5, "float"}} {
+	}{{[]any{"x"}, "an array"}, {"unavailable", "a string"}, {false, "a boolean"}, {int64(0), "a number"}, {[]any{}, "an array"}, {1.5, "a number"}} {
 		payload := record.Object{{Key: "siblingStores", Value: c.value}}
-		want := "not readable: siblingStores is a " + c.kind + ", not an object, so the conflict inventory could not be read from it"
+		want := "not readable: siblingStores is " + c.kind + ", not an object, so the conflict inventory could not be read from it"
 		if got := scope.SiblingReading(payload); got != want {
 			t.Errorf("%s: %q", golden.Canon(c.value), got)
 		}

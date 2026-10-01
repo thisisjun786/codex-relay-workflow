@@ -6,17 +6,14 @@ import (
 	"io"
 )
 
+const skillUsage = "usage: crw skill {hook-probe,parent-title,start-policy} ..."
+
 // Run dispatches `crw skill` commands.
 func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: crw skill [-h] {hook-probe,parent-title,start-policy} ...")
-		fmt.Fprintln(stderr, "crw skill: error: the following arguments are required: command")
-		return 2
-	}
-	if parsed, code, handled := precheckPythonArgs(args, stdout, stderr); handled {
-		return code
-	} else {
-		args = parsed
+		fmt.Fprintln(stderr, skillUsage)
+		fmt.Fprintln(stderr, "crw skill: error: a command is required")
+		return usageExit
 	}
 	switch args[0] {
 	case "hook-probe":
@@ -26,10 +23,11 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "start-policy":
 		return runStartPolicy(args[1:], stdin, stdout, stderr)
 	case "-h", "--help":
-		fmt.Fprintln(stdout, "usage: crw skill [-h] {hook-probe,parent-title,start-policy} ...")
+		fmt.Fprintln(stdout, skillUsage)
 		return 0
 	default:
-		fmt.Fprintf(stderr, "crw skill: error: argument command: invalid choice: %q (choose from 'hook-probe', 'parent-title', 'start-policy')\n", args[0])
-		return 2
+		fmt.Fprintln(stderr, skillUsage)
+		fmt.Fprintf(stderr, "crw skill: error: invalid command %q (choose from hook-probe, parent-title, start-policy)\n", args[0])
+		return usageExit
 	}
 }

@@ -4,21 +4,18 @@ import (
 	"strings"
 )
 
-// The input schemas FastMCP derives from server.py's tool signatures, declared field by field.
-// Each helper reproduces the pydantic rendering of one Python annotation: a required str, an
-// optional str (anyOf string|null, default null), a Literal, a dict, a list and a defaulted
-// scalar. Field order is the signature order, which is also the order of "required".
+// The tools' input schemas, frozen in contract/schema/bridge-mcp-tools.json and declared here
+// field by field: a required string, an optional string (anyOf string|null, default null), an
+// enum, an object, a list and a defaulted scalar, each titled as the frozen schema titles it.
+// Field order is the frozen order, which is also the order of "required".
 
 type field struct {
 	name     string
 	schema   map[string]any
 	required bool
-	// plain is true when the Python annotation is exactly str. FastMCP pre-parses a JSON-shaped
-	// string for every other annotation (func_metadata.pre_parse_json), so only these keep it.
-	plain bool
 }
 
-// title is pydantic's default field title: words split on "_", each capitalised.
+// title is a field's title in the frozen schema: words split on "_", each capitalised.
 func title(name string) string {
 	words := strings.Split(name, "_")
 	for i, word := range words {
@@ -30,24 +27,24 @@ func title(name string) string {
 }
 
 func required(name string) field {
-	return field{name, map[string]any{"title": title(name), "type": "string"}, true, true}
+	return field{name, map[string]any{"title": title(name), "type": "string"}, true}
 }
 
 func optional(name string) field {
-	return field{name, map[string]any{"anyOf": []any{map[string]any{"type": "string"}, map[string]any{"type": "null"}}, "default": nil, "title": title(name)}, false, false}
+	return field{name, map[string]any{"anyOf": []any{map[string]any{"type": "string"}, map[string]any{"type": "null"}}, "default": nil, "title": title(name)}, false}
 }
 
 var sandboxes = []any{"read-only", "workspace-write", "danger-full-access"}
 
 func object(name string) field {
-	return field{name, map[string]any{"additionalProperties": true, "title": title(name), "type": "object"}, true, false}
+	return field{name, map[string]any{"additionalProperties": true, "title": title(name), "type": "object"}, true}
 }
 
 func defaulted(name, kind string, value any) field {
-	return field{name, map[string]any{"default": value, "title": title(name), "type": kind}, false, kind == "string"}
+	return field{name, map[string]any{"default": value, "title": title(name), "type": kind}, false}
 }
 
-// inputSchema is the object schema FastMCP lists for one tool.
+// inputSchema is the object schema tools/list gives one tool.
 func inputSchema(tool string, fields []field) map[string]any {
 	properties := map[string]any{}
 	requiredNames := []any{}
@@ -64,27 +61,27 @@ func inputSchema(tool string, fields []field) map[string]any {
 	return schema
 }
 
-// outputSchema is FastMCP's rendering of a dict[str, Any] return annotation.
+// outputSchema is every tool's output schema: an object of any members.
 func outputSchema(tool string) map[string]any {
 	return map[string]any{"additionalProperties": true, "title": tool + "DictOutput", "type": "object"}
 }
 
-// signatures lists every tool's parameters in server.py order.
+// signatures lists every tool's parameters in the frozen order.
 var signatures = map[string][]field{
 	"get_capabilities": {},
 	"create_thread": {
 		required("request_id"), required("cwd"), required("model"), required("reasoning_effort"),
 		optional("prompt"), optional("title"),
-		{"sandbox", map[string]any{"default": "read-only", "enum": sandboxes, "title": "Sandbox", "type": "string"}, false, false},
+		{"sandbox", map[string]any{"default": "read-only", "enum": sandboxes, "title": "Sandbox", "type": "string"}, false},
 		optional("app_server_project_id"),
-		{"runtime_workspace_roots", map[string]any{"anyOf": []any{map[string]any{"items": map[string]any{"type": "string"}, "type": "array"}, map[string]any{"type": "null"}}, "default": nil, "title": "Runtime Workspace Roots"}, false, false},
-		{"expected_sandbox_policy", map[string]any{"anyOf": []any{map[string]any{"additionalProperties": true, "type": "object"}, map[string]any{"type": "null"}}, "default": nil, "title": "Expected Sandbox Policy"}, false, false},
+		{"runtime_workspace_roots", map[string]any{"anyOf": []any{map[string]any{"items": map[string]any{"type": "string"}, "type": "array"}, map[string]any{"type": "null"}}, "default": nil, "title": "Runtime Workspace Roots"}, false},
+		{"expected_sandbox_policy", map[string]any{"anyOf": []any{map[string]any{"additionalProperties": true, "type": "object"}, map[string]any{"type": "null"}}, "default": nil, "title": "Expected Sandbox Policy"}, false},
 		optional("policy_exception"), optional("role"),
 	},
 	"create_worktree_thread": {
 		required("request_id"), required("source_repository"), required("starting_revision"), required("destination"),
-		{"worktree_mode", map[string]any{"const": "bridge-managed-retained", "title": "Worktree Mode", "type": "string"}, true, false},
-		{"sandbox", map[string]any{"enum": sandboxes, "title": "Sandbox", "type": "string"}, true, false},
+		{"worktree_mode", map[string]any{"const": "bridge-managed-retained", "title": "Worktree Mode", "type": "string"}, true},
+		{"sandbox", map[string]any{"enum": sandboxes, "title": "Sandbox", "type": "string"}, true},
 		object("expected_sandbox_policy"),
 		required("model"), required("reasoning_effort"),
 		optional("prompt"), optional("title"), optional("app_server_project_id"), optional("policy_exception"), optional("role"),
@@ -103,14 +100,14 @@ var signatures = map[string][]field{
 	"get_operation":   {required("request_id")},
 }
 
-// order is server.py's registration order, which is the order tools/list reports.
+// order is the registration order, which is the order tools/list reports.
 var order = []string{
 	"get_capabilities", "create_thread", "create_worktree_thread", "send_message_to_thread",
 	"list_threads", "read_thread", "wait_thread", "get_goal", "get_active_turn", "steer_thread",
 	"pause_goal", "get_operation",
 }
 
-// readOnly names the tools registered with server.py READ; the rest carry WRITE.
+// readOnly names the tools annotated read-only; the rest carry the write annotations.
 var readOnly = map[string]bool{
 	"get_capabilities": true, "list_threads": true, "read_thread": true, "wait_thread": true,
 	"get_goal": true, "get_active_turn": true, "get_operation": true,
