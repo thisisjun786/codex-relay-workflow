@@ -1,9 +1,26 @@
-// Package pyvalue is Python's repr(), str(), type().__name__, bool() and == over the values
-// internal/pyjson reads and the relay builds (nil, bool, str, int as int, int64, *big.Int or an
-// integer json.Number, float as float64 or a json.Number with a fraction or an exponent, list as
-// []any, []string or []map[string]any, dict as pyjson.Object or map[string]any), and the small
-// helpers every package spelled for itself: str.strip(), os.fsdecode and os.fsencode, and the
-// hex SHA-256 of a str. A str's repr is StrRepr, the one repr of text.
+// Package pyvalue is Python's repr(), str(), type().__name__, bool(), ==, int() and float() over
+// the values internal/pyjson reads and the relay builds (nil, bool, str, int as int, int64,
+// *big.Int or an integer json.Number, float as float64 or a json.Number with a fraction or an
+// exponent, list as []any, []string or []map[string]any, dict as pyjson.Object or
+// map[string]any), and the small helpers every package spelled for itself: str.strip(),
+// os.fsdecode and os.fsencode, and the hex SHA-256 of a str. A str's repr is StrRepr, the one
+// repr of text.
+//
+// It keeps what the Python relay stored, hashed or decided by:
+//
+//   - stored and hashed text: Repr, StrRepr, Str and TypeName in the messages a store, a journal
+//     or a record keeps (the refusals table's detail, the coordination and linkage conflicts, the
+//     sync outbox's last_error, delivery_intent.last_error, the Stop journal's guard answers, the
+//     supervisor's held records and fault labels, a fault's evidence) and in the bytes the fault
+//     ids, notice ids and evidence digests are taken over (SHA256Hex);
+//   - stored paths: FSDecode and FSEncode, the surrogate-escape spelling a byte that is not
+//     UTF-8 has in a record the Python writers wrote;
+//   - decisions over stored fields: Truthy, Equal and ItemEqual, where a verdict reads a field
+//     as Python's truth and equality read it;
+//   - numbers read from text: ParseInt and ParseFloat, Python's int() and float(), where a
+//     reader still reads a host's, a forge's or a caller's number that way.
+//
+// A message that is only shown names a value with quote.Value, not with Repr (refactor R3).
 package pyvalue
 
 import (

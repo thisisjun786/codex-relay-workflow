@@ -9,7 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 )
 
@@ -62,7 +62,7 @@ func cFault(ctx context.Context, l *Ledger, id string) (row, error) {
 		return nil, e
 	}
 	if r == nil {
-		return nil, fmt.Errorf("fault_unknown: no fault %s", pyvalue.Quote(id))
+		return nil, fmt.Errorf("fault_unknown: no fault %s", quote.Value(id))
 	}
 	return r, nil
 }

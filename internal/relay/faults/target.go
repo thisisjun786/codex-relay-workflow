@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 )
 
 // SetTarget records the tracker and project for a product's scope. Existing
@@ -17,7 +17,7 @@ func (l *Ledger) SetTarget(ctx context.Context, product, project, team, projectR
 
 func (l *Ledger) SetWorkspaceTarget(ctx context.Context, product, workspace, project, team, projectRef string) (map[string]any, error) {
 	if !productName.MatchString(product) {
-		return nil, fmt.Errorf("fault_observation_malformed: product %s is not a plain identifier (letters, digits, '.', '_', '-'); a ':' '@' or '|' would let one product's key read as another's", pyvalue.Quote(product))
+		return nil, fmt.Errorf("fault_observation_malformed: product %s is not a plain identifier (letters, digits, '.', '_', '-'); a ':' '@' or '|' would let one product's key read as another's", quote.Value(product))
 	}
 	for _, field := range []struct{ name, value string }{{"workspace", workspace}, {"project", project}, {"project_ref", projectRef}, {"team", team}} {
 		if (field.value != "" || field.name == "team") && strings.TrimSpace(field.value) == "" {
@@ -40,7 +40,7 @@ func (l *Ledger) SetWorkspaceTarget(ctx context.Context, product, workspace, pro
 			return err
 		}
 		if other != nil {
-			return fmt.Errorf("fault_scope_conflict: scope key %s is already carried by product %s; one product's issues are never filed through another's key", pyvalue.Quote(key), pyvalue.Quote(text(other, "product")))
+			return fmt.Errorf("fault_scope_conflict: scope key %s is already carried by product %s; one product's issues are never filed through another's key", quote.Value(key), quote.Value(text(other, "product")))
 		}
 		current, err := l.one(ctx, "SELECT t.tracker_ref,p.product,p.project_ref FROM fault_targets t LEFT JOIN fault_target_projects p ON p.scope_key = t.scope_key WHERE t.scope_key = ?", key)
 		if err != nil {

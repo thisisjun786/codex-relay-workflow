@@ -347,14 +347,14 @@ func cmdIntentDisposition(c *cliRun) (any, error) {
 	switch {
 	case !began:
 		// Held: a store that cannot be locked is only the answer, and the publication goes ahead.
-		if err := body(c.ctx, nil, "", declFailure("store_locked", store.PythonSQLiteError(txErr), heldPath)); err != nil {
+		if err := body(c.ctx, nil, "", declFailure("store_locked", store.StoredSQLiteError(txErr), heldPath)); err != nil {
 			return nil, err
 		}
 	case bodyErr != nil:
 		return nil, bodyErr
 	case txErr != nil && str(record, "state") == declRecorded:
 		// Held.settled: a commit that failed undoes the record.
-		record = declFailure("store_write_failed", store.PythonSQLiteError(txErr), fieldOf(record, "store"))
+		record = declFailure("store_write_failed", store.StoredSQLiteError(txErr), fieldOf(record, "store"))
 	}
 	return withStoreRecord(published, record)
 }
@@ -483,7 +483,7 @@ func openDeclarationStore(ctx context.Context, dbPath any) (*store.Store, string
 	case errors.Is(err, os.ErrNotExist):
 		return nil, path, declNotRecorded("store_absent", "the relay store the intent names does not exist, so nothing can be derived from it either; nothing was created", path), nil
 	case err != nil:
-		return nil, path, declFailure("store_unreadable", store.PythonOSError(err), path), nil
+		return nil, path, declFailure("store_unreadable", store.StoredOSError(err), path), nil
 	case !metadata.Mode().IsRegular():
 		return nil, path, declFailure("store_not_a_file", "the path the intent names is not a regular file", path), nil
 	}
@@ -492,7 +492,7 @@ func openDeclarationStore(ctx context.Context, dbPath any) (*store.Store, string
 	}
 	s, err := store.Open(ctx, path, "")
 	if err != nil {
-		return nil, path, declFailure("store_unopenable", store.PythonSQLiteError(err), path), nil
+		return nil, path, declFailure("store_unopenable", store.StoredSQLiteError(err), path), nil
 	}
 	return s, path, nil, nil
 }
@@ -551,7 +551,7 @@ func recordClaim(ctx context.Context, dbPath any, row store.ReportingSessionsRow
 		return nil
 	})
 	if err != nil {
-		return declFailure("store_write_failed", store.PythonSQLiteError(err), path), nil
+		return declFailure("store_write_failed", store.StoredSQLiteError(err), path), nil
 	}
 	return answer, nil
 }
@@ -562,11 +562,11 @@ func recordDisposition(ctx context.Context, held *store.Store, path string, row 
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		if err := held.RecordTurnDeclaration(ctx, row); err != nil {
-			return declFailure("store_write_failed", store.PythonSQLiteError(err), path)
+			return declFailure("store_write_failed", store.StoredSQLiteError(err), path)
 		}
 		return declRecordedAnswer(path)
 	case err != nil:
-		return declFailure("store_write_failed", store.PythonSQLiteError(err), path)
+		return declFailure("store_write_failed", store.StoredSQLiteError(err), path)
 	case existing.Outcome == row.Outcome:
 		return declUnchangedAnswer(path)
 	}

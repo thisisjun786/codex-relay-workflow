@@ -61,7 +61,7 @@ func PullRequestNumber(value any) (any, error) {
 	}
 	n, ok := value.(*big.Int)
 	if !ok {
-		n, ok = argparse.ParseInt(text)
+		n, ok = pyvalue.ParseInt(text)
 	}
 	if !ok {
 		return 0, &ForgeUsage{"a pull request number is a positive whole number, not " + pyvalue.Repr(value)}

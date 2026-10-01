@@ -12,6 +12,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -126,7 +127,7 @@ func NormaliseFindings(sources ...[]any) ([]any, error) {
 			if v, _ := get(o, "verdict"); truthy(v) {
 				disposition = pyStr(v)
 				if _, isText := v.(string); !isText || !slices.Contains(dispositions, disposition) {
-					return nil, refuse(DispositionConflict, "%s is not one of \"verified\", \"needs_changes\" or \"unverified\"; the contract's criteria enum is frozen and a finding outside it cannot be recorded", pyvalue.Quote(v))
+					return nil, refuse(DispositionConflict, "%s is not one of \"verified\", \"needs_changes\" or \"unverified\"; the contract's criteria enum is frozen and a finding outside it cannot be recorded", quote.Value(v))
 				}
 			}
 			entry := Obj{{Key: "id", Value: id}, {Key: "verdict", Value: disposition}}
@@ -158,7 +159,7 @@ func NormaliseFindings(sources ...[]any) ([]any, error) {
 		}
 	}
 	if len(carriers) > 1 {
-		return nil, refuse(DispositionConflict, "%s each declare the restoration block. One correction carries one block, and two candidates is a block nobody can locate", pyvalue.Quote(carriers))
+		return nil, refuse(DispositionConflict, "%s each declare the restoration block. One correction carries one block, and two candidates is a block nobody can locate", quote.Value(carriers))
 	}
 	for _, e := range merged {
 		if v, _ := get(e, "restoration"); v == true {
@@ -391,7 +392,7 @@ func (c *Criteria) Coverage(ctx context.Context, rid, eventID, verdict string, f
 		}
 		sort.Strings(missing)
 		if len(missing) > 0 {
-			return nil, refuse(CriteriaNotCovered, "these required criteria are not recorded as verified: %s", pyvalue.Quote(missing))
+			return nil, refuse(CriteriaNotCovered, "these required criteria are not recorded as verified: %s", quote.Value(missing))
 		}
 	case "needs_changes":
 		ok := false

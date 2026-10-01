@@ -7,7 +7,6 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 type Object = contract.OrderedObject
@@ -41,7 +40,7 @@ var hookValues = pyjson.LoadOptions{Constants: true, Surrogates: true, Numbers: 
 // Decode is json.loads over bytes: strict UTF-8 (its UnicodeDecodeError), then json.loads'
 // language and refusals (its JSONDecodeError text), without panic paths.
 func Decode(raw []byte) (any, error) {
-	if _, err := store.DecodeUTF8(raw); err != nil {
+	if _, err := pyjson.DecodeUTF8(raw); err != nil {
 		return nil, err
 	}
 	options := hookValues

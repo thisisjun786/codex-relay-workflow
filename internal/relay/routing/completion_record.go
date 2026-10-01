@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/faults"
 )
 
@@ -139,7 +140,7 @@ func (r *Router) recordReading(ctx context.Context, reading Object) (Object, err
 		return nil, err
 	}
 	if registry == nil {
-		return nil, routeRefused("route_product_unknown", fmt.Sprintf("%s is not a registered product", pyvalue.Quote(product)))
+		return nil, routeRefused("route_product_unknown", fmt.Sprintf("%s is not a registered product", quote.Value(product)))
 	}
 	simulated := reading["origin"] == "simulated"
 	if simulated && registry["testTarget"] == nil {
