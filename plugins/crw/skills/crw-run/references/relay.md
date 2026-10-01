@@ -197,6 +197,20 @@ Every process in one assignment must pass the same `--state`. The child emitting
 verifying, and whichever process delivers all read one store; a mismatched `--state` simply means
 they do not see each other.
 
+The parent determines the two values on its host before deciding the execution mode. `SOCK` is
+the App Server control socket, the one the bridge also defaults to, and `RELAY_STATE` is the
+`stateSelection.path` that `doctor` reports for it, the store the relay service on that socket
+serves:
+
+    SOCK="${CODEX_HOME:-$HOME/.codex}/app-server-control/app-server-control.sock"
+    codex-session-relay --socket "$SOCK" doctor    # RELAY_STATE = its stateSelection.path
+
+A `doctor` reading with `dbWritable: false` whose `access.detail` is a `store_owned_by_other`
+refusal of an unstamped store (no ownership stamp, no `write-gate.lock`) means the wrong store was
+selected, not that the relay is unavailable: no running relay serves such a store. Read again with
+`--socket "$SOCK"`, or run the `serviceStore.recover` line when the report carries one, before
+recording the mode.
+
 There are TWO selectors and they are set separately. `--state` chooses the relay's own store, and
 falls back to `state_dir()` when omitted. For ordinary delivery commands, the adapter's ledger,
 which is where duplicate suppression and delivery recovery live, comes from `state_dir()`: it reads
