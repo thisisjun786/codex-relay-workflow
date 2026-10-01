@@ -35,12 +35,19 @@ func (r Report) Object() contract.OrderedObject {
 	return contract.OrderedObject{{Key: "observed", Value: r.Observed}, {Key: "reconciled", Value: r.Reconciled}, {Key: "delivered", Value: r.Delivered}, {Key: "deferred", Value: r.Deferred}, {Key: "skipped", Value: r.Skipped}, {Key: "acksVerified", Value: r.AcksVerified}, {Key: "anchorsBound", Value: r.AnchorsBound}, {Key: "requeued", Value: r.Requeued}, {Key: "faultsRecorded", Value: r.FaultsRecorded}, {Key: "supervisorStaged", Value: r.SupervisorStaged}, {Key: "supervisorSent", Value: r.SupervisorSent}, {Key: "notificationsDelivered", Value: r.NotificationsDelivered}, {Key: "turnsLost", Value: r.TurnsLost}, {Key: "turnsUndecided", Value: r.TurnsUndecided}, {Key: "quiet", Value: r.Quiet()}, {Key: "notes", Value: notes}}
 }
 
+// Policy bounds what one tick does. The observation pass (observe.go) reads at most MaxTurnReads turns, no
+// relationship more than its share of them (never less than MinRelationshipShare), and stops reading after
+// MaxObserveSeconds, apart from the first read of each class of turn; zero turns that time limit off.
 type Policy struct {
-	PollInterval                                                                                                float64
+	PollInterval, MaxObserveSeconds                                                                             float64
 	MaxSends, MaxReconciles, MaxTurnReads, MaxTurnChecks, MinRelationshipShare, MaxProjects, MaxSupervisorSends int
 }
 
-func DefaultPolicy() Policy { return Policy{20, 4, 8, 8, 4, 2, 4, 2} }
+// DefaultPolicy: a read of one turn cost a mean of 2.3 ms at the median thread and 17 ms at the worst of 40 recent
+// threads, measured read-only against the App Server (CRW-258), so 32 reads take under a second of a 20 s tick.
+func DefaultPolicy() Policy {
+	return Policy{PollInterval: 20, MaxObserveSeconds: 10, MaxSends: 4, MaxReconciles: 8, MaxTurnReads: 32, MaxTurnChecks: 4, MinRelationshipShare: 2, MaxProjects: 4, MaxSupervisorSends: 2}
+}
 
 type Daemon struct {
 	Store      *store.Store
@@ -59,6 +66,9 @@ type Daemon struct {
 	mu                                                     sync.Mutex
 	checks                                                 *delivery.TurnChecks
 	afterProject, afterStaged, afterMessage, lastAttention string
+	// mono is the clock the observation time limit runs on; nil is time.Now, whose monotonic reading no wall
+	// clock step can change. Tests move it by hand.
+	mono func() time.Time
 }
 
 func New(s *store.Store, host Host, clock delivery.Clock, channel *supervisor.Channel) *Daemon {

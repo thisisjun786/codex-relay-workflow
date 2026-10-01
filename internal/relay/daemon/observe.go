@@ -1,13 +1,13 @@
 package daemon
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
-	"strconv"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
@@ -15,37 +15,6 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
-func (d *Daemon) cursor(ctx context.Context, name string, size int) (int, error) {
-	if size <= 0 {
-		return 0, nil
-	}
-	var v string
-	err := d.Store.Q(ctx).QueryRowContext(ctx, "SELECT cursor FROM discovery_cursors WHERE task_id='scheduler' AND listing=?", name).Scan(&v)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, nil
-	}
-	if err != nil {
-		return 0, err
-	}
-	n, _ := strconv.Atoi(v)
-	return ((n % size) + size) % size, nil
-}
-func (d *Daemon) saveCursor(ctx context.Context, name, value string) error {
-	return d.Store.Transaction(ctx, func(tx context.Context, _ *sql.Conn) error {
-		_, err := d.Store.Q(tx).ExecContext(tx, "INSERT INTO discovery_cursors (task_id,listing,cursor,updated_at) VALUES ('scheduler',?,?,?) ON CONFLICT(task_id,listing) DO UPDATE SET cursor=excluded.cursor,updated_at=excluded.updated_at", name, value, d.Clock.ISO())
-		return err
-	})
-}
-func (d *Daemon) advance(ctx context.Context, name string, by, size int) error {
-	if size <= 0 {
-		return nil
-	}
-	n, err := d.cursor(ctx, name, size)
-	if err != nil {
-		return err
-	}
-	return d.saveCursor(ctx, name, strconv.Itoa((n+max(1, by))%size))
-}
 func (d *Daemon) worth(ctx context.Context, thread, turn, rid string) (bool, error) {
 	var found int
 	err := d.Store.Q(ctx).QueryRowContext(ctx, "SELECT 1 FROM events WHERE stage='staged' AND turn_thread_id=? AND turn_id=? AND relationship_id=? LIMIT 1", thread, turn, rid).Scan(&found)
@@ -63,195 +32,130 @@ func (d *Daemon) worth(ctx context.Context, thread, turn, rid string) (bool, err
 		return err
 	}()
 }
-func (d *Daemon) turns(ctx context.Context, r delivery.Relationship, share int) ([]string, error) {
-	current := ""
-	history := []string{}
-	for _, g := range r.Generations {
-		turn := g.S("dispatch_turn_id")
-		if turn == "" {
-			continue
-		}
-		if g.I("execution_generation") == r.Generation {
-			current = turn
-		} else {
-			history = append(history, turn)
+
+// monotonic is the clock the time bound of a pass runs on: a wall clock that steps cannot lengthen it.
+func (d *Daemon) monotonic() time.Time {
+	if d.mono != nil {
+		return d.mono()
+	}
+	return time.Now()
+}
+
+// pass is one tick's observation: the reads it has made against its budget, and when it began.
+type pass struct {
+	d         *Daemon
+	report    *Report
+	start     time.Time
+	floor     int // reads made whatever the clock says
+	reads     int
+	stopped   bool
+	relations map[string]delivery.Relationship
+	used      [2]map[string]int // reads this tick, by class and relationship
+}
+
+// spent reports whether the pass has used the time Policy.MaxObserveSeconds allows it, and says so once. The
+// first reads, one for each class that waits, are made whatever the clock says, so a slow class cannot keep the
+// other out of the tick.
+func (o *pass) spent() bool {
+	if limit := o.d.Policy.MaxObserveSeconds; !o.stopped && limit > 0 && o.reads >= o.floor {
+		if took := o.d.monotonic().Sub(o.start).Seconds(); took >= limit {
+			o.stopped = true
+			o.report.Notes = append(o.report.Notes, fmt.Sprintf("observation stopped after %.1f s, the limit for one pass; the other turns wait for the next tick", took))
 		}
 	}
-	staged, err := d.Store.All(ctx, "SELECT turn_id FROM events WHERE stage='staged' AND turn_thread_id=? AND relationship_id=? ORDER BY first_seen_at", r.Child.TaskID, r.ID)
-	if err != nil {
-		return nil, err
+	return o.stopped
+}
+
+// observe reads the host for the turns that still need it, as the census finds them from store rows alone: a
+// relationship with nothing to observe is neither loaded nor read. Reads are scheduled per turn and shared out per
+// relationship. A turn a staged claim waits on (class A) is read before the others (class B), but one read of B
+// goes first, so A can never take the budget whole, and inside a class the relationships that have waited longest
+// deal one turn each, round after round. No relationship gets more than its share of a class in a tick, which is
+// what the budget allows each relationship that needs it and never less than Policy.MinRelationshipShare. The pass
+// is bounded by Policy.MaxTurnReads reads and Policy.MaxObserveSeconds of time.
+func (d *Daemon) observe(ctx context.Context, report *Report) error {
+	budget := d.Policy.MaxTurnReads
+	work, err := d.census(ctx)
+	if err != nil || len(work) == 0 || budget <= 0 {
+		return err
 	}
-	var saved string
-	err = d.Store.Q(ctx).QueryRowContext(ctx, "SELECT cursor FROM discovery_cursors WHERE task_id='scheduler' AND listing=?", "admitted:"+r.ID).Scan(&saved)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return nil, err
+	staged, others := deal(work, 1), deal(work, 0)
+	order, floor := slices.Concat(staged, others), 1
+	switch {
+	case len(staged) == 0 || len(others) == 0:
+	case budget < 2:
+		// One read serves the longest-waiting turn of either class.
+		slices.SortStableFunc(order, func(a, b read) int {
+			return cmp.Or(cmp.Compare(a.t.waiting(), b.t.waiting()), cmp.Compare(a.p.id, b.p.id), cmp.Compare(a.t.how, b.t.how), cmp.Compare(a.t.pos, b.t.pos))
+		})
+	default:
+		order, floor = slices.Concat(others[:1], staged, others[1:]), 2
 	}
-	var pos struct{ After, Through int64 }
-	_ = json.Unmarshal([]byte(saved), &pos)
-	if pos.After >= pos.Through {
-		pos.After = 0
-		if err = d.Store.Q(ctx).QueryRowContext(ctx, "SELECT COALESCE(MAX(rowid),0) FROM generation_turns").Scan(&pos.Through); err != nil {
-			return nil, err
-		}
-	}
-	query := "SELECT t.rowid AS admission_row,t.turn_id,CASE WHEN t.relationship_id=? THEN (EXISTS (SELECT 1 FROM generations g WHERE g.relationship_id=t.relationship_id AND g.execution_generation=t.execution_generation AND g.dispatch_turn_id IS NOT NULL AND g.dispatch_turn_id<>'' AND t.evidence=('explicit_admission_bound:' || g.dispatch_turn_id)) AND NOT EXISTS (SELECT 1 FROM assignment_settlements s WHERE s.relationship_id=t.relationship_id AND s.thread_id=? AND s.turn_id=t.turn_id)) ELSE 0 END AS eligible FROM generation_turns t WHERE t.rowid>? AND t.rowid<=? ORDER BY t.rowid LIMIT ?"
-	page, err := d.Store.All(ctx, query, r.ID, r.Child.TaskID, pos.After, pos.Through, max(1, share-1))
-	if err != nil {
-		return nil, err
-	}
-	if len(page) == 0 && pos.After != 0 {
-		page, err = d.Store.All(ctx, query, r.ID, r.Child.TaskID, 0, pos.Through, max(1, share-1))
-		if err != nil {
-			return nil, err
-		}
-	}
-	candidates := []string{}
-	for _, row := range staged {
-		candidates = append(candidates, row.Get("turn_id").(string))
-	}
-	for _, row := range page {
-		if row.Get("eligible").(int64) != 0 {
-			candidates = append(candidates, row.Get("turn_id").(string))
-		}
-	}
-	candidates = append(candidates, history...)
-	ring := []string{}
-	for _, turn := range candidates {
-		if turn == current || slices.Contains(ring, turn) {
-			continue
-		}
-		worth, e := d.worth(ctx, r.Child.TaskID, turn, r.ID)
-		if e != nil {
-			return nil, e
-		}
-		if worth {
-			ring = append(ring, turn)
-		}
-	}
-	selected := []string{}
-	if current != "" {
-		worth, e := d.worth(ctx, r.Child.TaskID, current, r.ID)
-		if e != nil {
-			return nil, e
-		}
-		if worth {
-			selected = append(selected, current)
-		}
-	}
-	remaining := share - len(selected)
-	if remaining <= 0 && len(ring) > 0 {
-		alt, e := d.cursor(ctx, "alt:"+r.ID, 2)
-		if e != nil {
-			return nil, e
-		}
-		if e = d.advance(ctx, "alt:"+r.ID, 1, 2); e != nil {
-			return nil, e
-		}
-		if alt == 1 {
-			selected = nil
-			remaining = 1
-		}
-	}
-	if remaining > 0 && len(ring) > 0 {
-		taken := min(remaining, len(ring))
-		start, e := d.cursor(ctx, "ring:"+r.ID, len(ring))
-		if e != nil {
-			return nil, e
-		}
-		for i := 0; i < taken; i++ {
-			selected = append(selected, ring[(start+i)%len(ring)])
-		}
-		if e = d.advance(ctx, "ring:"+r.ID, taken, len(ring)); e != nil {
-			return nil, e
-		}
-	}
-	var consumed int64
-	for _, row := range page {
-		turn := row.Get("turn_id").(string)
-		if row.Get("eligible").(int64) != 0 && turn != current && !slices.Contains(selected, turn) {
+	share := max(1, d.Policy.MinRelationshipShare, budget/len(work))
+	o := &pass{d: d, report: report, start: d.monotonic(), floor: floor, relations: map[string]delivery.Relationship{}, used: [2]map[string]int{{}, {}}}
+	for _, next := range order {
+		if o.reads >= budget || o.spent() {
 			break
 		}
-		consumed = row.Get("admission_row").(int64)
-	}
-	if consumed != 0 {
-		if err = d.saveCursor(ctx, "admitted:"+r.ID, fmt.Sprintf("{\"after\": %d, \"through\": %d}", consumed, pos.Through)); err != nil {
-			return nil, err
+		if o.used[next.class][next.p.id] >= share {
+			continue
 		}
-	}
-	return selected, nil
-}
-func (d *Daemon) observe(ctx context.Context, report *Report) error {
-	rows, err := d.Store.All(ctx, "SELECT relationship_id FROM relationships WHERE status='active' AND superseded_by IS NULL")
-	if err != nil || len(rows) == 0 {
-		return err
-	}
-	relations := []delivery.Relationship{}
-	for _, row := range rows {
-		r, e := delivery.LoadRelationship(ctx, d.Store, row.Get("relationship_id").(string))
-		if e != nil {
-			return e
-		}
-		relations = append(relations, r)
-	}
-	budget := d.Policy.MaxTurnReads
-	served := max(1, min(len(relations), budget/max(1, d.Policy.MinRelationshipShare)))
-	start, err := d.cursor(ctx, "relationships", len(relations))
-	if err != nil {
-		return err
-	}
-	share := max(1, budget/served)
-	reads := 0
-	for i := 0; i < served; i++ {
-		r := relations[(start+i)%len(relations)]
-		turns, e := d.turns(ctx, r, share)
-		if e != nil {
-			return e
-		}
-		for _, turnID := range turns {
-			if reads >= budget {
-				break
-			}
-			reads++
-			turn, e := d.Host.ReadTurn(r.Child.TaskID, turnID)
-			var status, pollErr any
-			if e != nil {
-				report.Notes = append(report.Notes, "turn read failed for "+turnID+": "+e.Error())
-				pollErr = "Exception: " + e.Error()
-			} else if turn == nil {
-				status = "absent"
-				pollErr = "str: the host reports this turn absent"
-			} else {
-				status = turn.Status
-			}
-			now := d.Clock.ISO()
-			var success any
-			if pollErr == nil {
-				success = now
-			}
-			if err = d.Store.Transaction(ctx, func(tx context.Context, _ *sql.Conn) error {
-				_, err := d.Store.Q(tx).ExecContext(tx, "INSERT INTO poll_observations (relationship_id,execution_generation,turn_id,last_status,last_polled_at,last_attempt_at,last_error) VALUES (?,?,?,?,?,?,?) ON CONFLICT(relationship_id,execution_generation,turn_id) DO UPDATE SET last_status=excluded.last_status,last_polled_at=COALESCE(excluded.last_polled_at,poll_observations.last_polled_at),last_attempt_at=excluded.last_attempt_at,last_error=excluded.last_error", r.ID, r.Generation, turnID, status, success, now, pollErr)
-				return err
-			}); err != nil {
+		r, ok := o.relations[next.p.id]
+		if !ok {
+			if r, err = delivery.LoadRelationship(ctx, d.Store, next.p.id); err != nil {
 				return err
 			}
-			// Python: turn.status not in ("completed", "failed", "interrupted"); a
-			// non-string host status equals none of them.
-			final, _ := statusText(turn)
-			if e != nil || turn == nil || !slices.Contains([]string{"completed", "failed", "interrupted"}, final) {
-				continue
-			}
-			worth, e := d.worth(ctx, r.Child.TaskID, turnID, r.ID)
-			if e != nil {
-				return e
-			}
-			if !worth {
-				continue
-			}
-			d.settle(ctx, r, store.TurnReference{ThreadID: r.Child.TaskID, TurnID: turnID, Status: final}, report)
+			o.relations[next.p.id] = r
+		}
+		o.reads++
+		o.used[next.class][next.p.id]++
+		if err = d.read(ctx, r, next.t.id, report); err != nil {
+			return err
 		}
 	}
-	return d.advance(ctx, "relationships", served, len(relations))
+	return nil
 }
+
+// read asks the host about one turn of r, records the attempt and, when the turn ended, settles it.
+func (d *Daemon) read(ctx context.Context, r delivery.Relationship, turnID string, report *Report) (err error) {
+	turn, e := d.Host.ReadTurn(r.Child.TaskID, turnID)
+	var status, pollErr any
+	if e != nil {
+		report.Notes = append(report.Notes, "turn read failed for "+turnID+": "+e.Error())
+		pollErr = "Exception: " + e.Error()
+	} else if turn == nil {
+		status = "absent"
+		pollErr = "str: the host reports this turn absent"
+	} else {
+		status = turn.Status
+	}
+	now := d.Clock.ISO()
+	var success any
+	if pollErr == nil {
+		success = now
+	}
+	if err = d.Store.Transaction(ctx, func(tx context.Context, _ *sql.Conn) error {
+		_, err := d.Store.Q(tx).ExecContext(tx, "INSERT INTO poll_observations (relationship_id,execution_generation,turn_id,last_status,last_polled_at,last_attempt_at,last_error) VALUES (?,?,?,?,?,?,?) ON CONFLICT(relationship_id,execution_generation,turn_id) DO UPDATE SET last_status=excluded.last_status,last_polled_at=COALESCE(excluded.last_polled_at,poll_observations.last_polled_at),last_attempt_at=excluded.last_attempt_at,last_error=excluded.last_error", r.ID, r.Generation, turnID, status, success, now, pollErr)
+		return err
+	}); err != nil {
+		return err
+	}
+	// Python: turn.status not in ("completed", "failed", "interrupted"); a
+	// non-string host status equals none of them.
+	final, _ := statusText(turn)
+	if e != nil || turn == nil || !slices.Contains([]string{"completed", "failed", "interrupted"}, final) {
+		return nil
+	}
+	worth, e := d.worth(ctx, r.Child.TaskID, turnID, r.ID)
+	if e != nil {
+		return e
+	}
+	if worth {
+		d.settle(ctx, r, store.TurnReference{ThreadID: r.Child.TaskID, TurnID: turnID, Status: final}, report)
+	}
+	return nil
+}
+
 func (d *Daemon) settle(ctx context.Context, r delivery.Relationship, turn store.TurnReference, report *Report) {
 	synthesized, laterTurn, laterEvent := "", "", ""
 	ended := turn.Status == "failed" || turn.Status == "interrupted"
