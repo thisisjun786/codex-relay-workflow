@@ -28,6 +28,7 @@ import (
 type gatedHost struct {
 	mu                  sync.Mutex
 	gates               map[string]chan struct{}
+	noticed             map[string]chan struct{}
 	entered             chan string
 	events              []string
 	inFlight            int
@@ -36,7 +37,7 @@ type gatedHost struct {
 }
 
 func newGatedHost() *gatedHost {
-	return &gatedHost{gates: map[string]chan struct{}{}, entered: make(chan string, 16), closeCalled: make(chan struct{})}
+	return &gatedHost{gates: map[string]chan struct{}{}, noticed: map[string]chan struct{}{}, entered: make(chan string, 16), closeCalled: make(chan struct{})}
 }
 
 // hold makes the next call of method block. The returned release opens the gate; it also opens
@@ -53,20 +54,38 @@ func (h *gatedHost) hold(t *testing.T, method string) (release func()) {
 	return release
 }
 
+// holdStubborn is hold for a call that ignores its context: when the context ends the host only
+// notes it (the returned channel closes) and answers once the gate opens, as a call that finishes
+// just as its cancellation arrives does.
+func (h *gatedHost) holdStubborn(t *testing.T, method string) (release func(), noticed <-chan struct{}) {
+	t.Helper()
+	seen := make(chan struct{})
+	h.mu.Lock()
+	h.noticed[method] = seen
+	h.mu.Unlock()
+	return h.hold(t, method), seen
+}
+
 func (h *gatedHost) Call(ctx context.Context, method string, params map[string]any) (json.RawMessage, error) {
 	h.mu.Lock()
 	h.inFlight++
 	h.events = append(h.events, "start "+method)
 	gate := h.gates[method]
 	delete(h.gates, method)
+	seen := h.noticed[method]
+	delete(h.noticed, method)
 	h.mu.Unlock()
 	if gate != nil {
 		h.entered <- method
 		select {
 		case <-gate:
 		case <-ctx.Done():
-			h.settle("cancelled " + method)
-			return nil, ctx.Err()
+			if seen == nil {
+				h.settle("cancelled " + method)
+				return nil, ctx.Err()
+			}
+			close(seen)
+			<-gate
 		}
 	}
 	h.settle("end " + method)
@@ -531,6 +550,85 @@ func TestReadAdmission_ACreateReadsItsReceiptBeforeCloseCanEndTheLedger(t *testi
 	got := waitEdge(t, created)
 	if got.err != nil || got.receipt["threadId"] != "thread-created-1" {
 		t.Fatalf("a create admitted before Close must return its retained receipt: %+v", got)
+	}
+	if err := waitEdge(t, closed); err != nil {
+		t.Fatal(err)
+	}
+	host.assertClosedLast(t)
+}
+
+func TestReadAdmission_ACreateNeverJoinsALiveLease(t *testing.T) {
+	host := newGatedHost()
+	a := admissionAdapter(t, host, time.Hour)
+	cwd := t.TempDir()
+	inGuard := make(chan struct{})
+	proceed := make(chan struct{})
+	var once sync.Once
+	open := func() { once.Do(func() { close(proceed) }) }
+	t.Cleanup(open)
+	creates := make(chan [2]error, 1)
+	guard := func(ctx context.Context) (map[string]any, error) {
+		close(inGuard)
+		select {
+		case <-proceed:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		// ctx carries the send's live lease and Close has begun: a read may join it, a create may not.
+		_, direct := a.Create(ctx, bridge.CreateThread{RequestID: "late-direct", CWD: cwd, Sandbox: "read-only", Model: "gpt-5.4", Effort: "medium"})
+		_, viaManaged := (Managed{a}).CreateThread(ctx, managed.CreateThreadRequest{RequestID: "late-managed", CWD: cwd, Sandbox: "read-only", Model: "gpt-5.4", ReasoningEffort: "medium"})
+		creates <- [2]error{direct, viaManaged}
+		return nil, nil
+	}
+	sent := make(chan struct{}, 1)
+	go func() {
+		_, _ = a.Send(context.Background(), "req-late-create", "thread-1", "hello", sendSettings(), guard, 1)
+		sent <- struct{}{}
+	}()
+	waitEdge(t, inGuard)
+	closed := closeAsync(a)
+	awaitRefusal(t, a, host)
+	open()
+	const want = "the relay transport is shutting down; nothing was sent"
+	got := waitEdge(t, creates)
+	for i, name := range []string{"Create", "Managed.CreateThread"} {
+		if got[i] == nil || got[i].Error() != want {
+			t.Errorf("%s from inside an admitted send after Close began: want %q, got %v", name, want, got[i])
+		}
+	}
+	waitEdge(t, sent)
+	if err := waitEdge(t, closed); err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range host.log() {
+		if event == "start thread/start" {
+			t.Fatal("a create started a host thread after Close began")
+		}
+	}
+	host.assertClosedLast(t)
+}
+
+func TestReadAdmission_ACompletedCreateStillReadsItsReceiptWhenTheDrainBudgetEndsFirst(t *testing.T) {
+	host := newGatedHost()
+	a := admissionAdapter(t, host, -1)
+	release, noticed := host.holdStubborn(t, "turn/start")
+	type outcome struct {
+		receipt map[string]any
+		err     error
+	}
+	created := make(chan outcome, 1)
+	go func() {
+		receipt, err := (Managed{a}).CreateThread(context.Background(), managed.CreateThreadRequest{RequestID: "create-late-cancel", CWD: t.TempDir(), Prompt: "bootstrap", Sandbox: "read-only", Model: "gpt-5.4", ReasoningEffort: "medium"})
+		created <- outcome{receipt, err}
+	}()
+	waitEdge(t, host.entered)
+	closed := closeAsync(a)
+	// The drain budget is already spent, so Close cancels the create's context; the host finishes the call anyway.
+	waitEdge(t, noticed)
+	release()
+	got := waitEdge(t, created)
+	if got.err != nil || got.receipt["threadId"] != "thread-created-1" {
+		t.Fatalf("a create that completed must return its retained receipt, read under the caller's own context: receipt=%v err=%v", got.receipt, got.err)
 	}
 	if err := waitEdge(t, closed); err != nil {
 		t.Fatal(err)

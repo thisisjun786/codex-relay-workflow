@@ -111,15 +111,19 @@ func (a *Adapter) Close() error {
 
 // admit counts one caller in pending and returns a context that Close cancels when the drain
 // budget is spent, with the release that ends the count; call release exactly once. It refuses
-// once Close began, unless ctx carries a live lease of this transport: the caller is then nested
-// in work that is itself counted, so Close is still waiting on that work and Add cannot race
-// the Wait. A nested caller takes its own count and lease, so a read that outlives the work it
-// started in is still collected by Close.
-func (t *transport) admit(ctx context.Context) (context.Context, func(), bool) {
+// once Close began. A read may join (join true) when ctx carries a live lease of this transport:
+// it is then nested in work that is itself counted, so Close is still waiting on that work and
+// Add cannot race the Wait. A nested caller takes its own count and lease, so a read that
+// outlives the work it started in is still collected by Close. A write never joins: a create
+// that arrives after Close began is refused whatever context it carries.
+func (t *transport) admit(ctx context.Context, join bool) (context.Context, func(), bool) {
 	held := &lease{t: t}
 	t.mu.Lock()
-	parent, _ := ctx.Value(leaseKey{}).(*lease)
-	nested := parent != nil && parent.t == t && !parent.ended
+	nested := false
+	if join {
+		parent, _ := ctx.Value(leaseKey{}).(*lease)
+		nested = parent != nil && parent.t == t && !parent.ended
+	}
 	if !t.accepting && !nested {
 		t.mu.Unlock()
 		return nil, nil, false
@@ -145,7 +149,7 @@ func (a *Adapter) admitRead(ctx context.Context) (context.Context, func(), error
 	if t == nil {
 		return ctx, func() {}, nil
 	}
-	run, release, ok := t.admit(ctx)
+	run, release, ok := t.admit(ctx, true)
 	if !ok {
 		return nil, nil, ErrTransportClosing
 	}

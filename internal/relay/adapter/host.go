@@ -117,7 +117,7 @@ func (a *Adapter) admitCreate(ctx context.Context) (context.Context, func(), err
 			return nil, nil, err
 		}
 	}
-	run, release, ok := a.transport.admit(ctx)
+	run, release, ok := a.transport.admit(ctx, false)
 	if !ok {
 		return nil, nil, errors.New("the relay transport is shutting down; nothing was sent")
 	}
@@ -182,8 +182,10 @@ func (a Managed) CreateThread(ctx context.Context, in managed.CreateThreadReques
 	}
 	// Managed consumes decoded JSON lists, while Bridge.call uses []string for
 	// runtime roots internally. Read the actual retained receipt at this boundary.
-	// It is read inside the create's own admission: Close cannot end the ledger between the two.
-	return a.ledger.Get(run, in.RequestID)
+	// It is read inside the create's own admission, so Close cannot end the ledger between the two,
+	// and under the caller's own context, as before: a create that completed is not turned into a
+	// cancellation by a drain budget that ended while it was saving.
+	return a.ledger.Get(ctx, in.RequestID)
 }
 func (a Managed) GetOperation(ctx context.Context, id string) (map[string]any, error) {
 	ctx, release, err := a.admitRead(ctx)
