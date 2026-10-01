@@ -66,6 +66,9 @@ Issue/PR mapping: [one implementation issue ID, target repository, and intended 
   For non-PR work, state the result and how it will be verified]
 Title: [issue ID · descriptive title of up to 20 characters, following Child task titles]
 Workflow: [effective workflow per Default independent execution]
+Language: English for everything you write: your messages and final return, commit messages,
+  the pull request's title, body and review replies, and receipt text. Keep exact identifiers,
+  quotations and code as they are
 
 Context:
 - Code target: [verified GitHub owner/repo or URL; explicit none for non-code work]
@@ -337,6 +340,9 @@ field in brackets where that reduced shape names it differently.
   here, what the coordinator owns after it.
 - Model and effort — `Effective model/effort:` [`Workflow/settings:`], applied through
   the creation tool's real arguments and read back from the receipt.
+- Language — `Language:`, the same in both shapes: what the child writes is English from its
+  first message, since a later correction cannot rewrite the commits and pull request text
+  already published.
 
 One obligation is new rather than a restatement. Where a workflow with its own goal and
 state is effective, the child's first execution leaves its own activation evidence and
@@ -479,6 +485,7 @@ Coordinator: [actual task/host IDs if delegated; project ID only if one exists]
 Scope: [accepted question/outcome, exclusions, dependencies and write authority]
 Input baseline: [source IDs, revisions/updated-at evidence and known gaps]
 Workflow/settings: [effective workflow, model/effort and actual permission profile]
+Language: English for everything you write, as in the launch packet
 Working location: [permitted cwd/artifact roots; no invented Git repository]
 Workspace ownership: [what is already present at that working location and those artifact
   roots, each entry labelled as already owned by this assignment or owned elsewhere, since
@@ -800,6 +807,10 @@ says, so read the level first and the fields second:
   reload every skill it once had, and an unrelated reference is not part of recovery.
 - The effective workflow, restated. A transport carries model and effort as settings
   and has no field for the workflow, so a send that omits it has silently dropped it.
+- The language the task writes in, restated: English for an issue child under
+  [Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution),
+  or the explicit override its assignment carried. Like the workflow it has no transport field,
+  and a child that lost its first assignment answers a review in whatever language it drifts to.
 - Assignment identity: the issue, this task's own id, and where a relay holds the
   assignment its relationship id and the generation to emit under, read from the
   assignment rather than copied from the coordinator's own state. On a needs-changes
