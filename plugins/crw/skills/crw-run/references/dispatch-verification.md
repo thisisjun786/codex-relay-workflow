@@ -167,10 +167,11 @@ added a capability check the coordinator performs before creating the task. A ch
 happens on the coordinator's side, before anything exists to answer, is not a turn spent
 asking the child whether it is ready.
 
-S19 and S20 were read against the first relay-managed project run after they were written,
-P-CRW-115: its six issue children, whose pull requests are #271 to #276 (merges 14b01079,
-6b5ba199, 9fb54f4b, ca4316b4, 2ecad795 and 3a71c5d5), read on 2026-10-02 at dev 3a71c5d5.
-The receipts and relay records read for this are private and are not linked.
+S19 and S20 were read against P-CRW-115, a relay-managed project run: its six issue
+children, whose pull requests are #271 to #276 (merges 14b01079, 6b5ba199, 9fb54f4b,
+ca4316b4, 2ecad795 and 3a71c5d5), read on 2026-10-02 at dev 3a71c5d5. S19 was written before
+the run (PR #269, commit 15796f52); S20 was introduced during it, by PR #272 (commit
+bf4bc149). The receipts and relay records read for this are private and are not linked.
 
 S19 is partly measured. All six packets carried the `Language:` line, and what was inspected
 of what the children published is English: the titles and bodies of the six pull requests,
