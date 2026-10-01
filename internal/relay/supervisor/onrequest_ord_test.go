@@ -121,13 +121,7 @@ func (h *ordSendHost) ReadTurn(_ string, id string) (*delivery.TurnInfo, error) 
 	return &delivery.TurnInfo{TurnID: id, StartedAt: &h.startedAt}, nil
 }
 func (h *ordSendHost) SendMessage(id, _ string, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
-	h.sends = append(h.sends, message)
-	h.settings = settings
-	if h.items == nil {
-		h.items = map[string]string{}
-	}
-	h.items[h.turnID] = message
-	return delivery.Obj{{Key: "status", Value: "accepted"}, {Key: "requestId", Value: id}, {Key: "turnId", Value: h.turnID}}, nil
+	return h.accept(id, h.turnID, message, settings), nil
 }
 
 func normalizeORDRows(tables map[string][]map[string]any) {
