@@ -246,7 +246,7 @@ func Test24_SCH_47_Capture(t *testing.T) {
 			t.Fatal(err)
 		}
 		service := delivery.NewService(s, delivery.SystemClock{})
-		reason, err := service.SendRefusal(ctx, "01supervisor-task", 1700000000)
+		reason, err := service.SendRefusal(ctx, "other-relationship", "01supervisor-task", 1700000000)
 		if err != nil {
 			t.Fatal(err)
 		}

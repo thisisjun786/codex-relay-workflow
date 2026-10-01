@@ -145,11 +145,11 @@ func (c *Channel) holdUnaddressed(ctx context.Context, row store.SupervisorMessa
 
 // Attempt enforces the live hierarchy, lifecycle and settings gates before the
 // claim and again at transport start. The attempt row and frozen bytes commit first.
-func (c *Channel) preflightRate(ctx context.Context, service *delivery.Service, recipient string, now float64) (string, error) {
+func (c *Channel) preflightRate(ctx context.Context, service *delivery.Service, relationship, recipient string, now float64) (string, error) {
 	if c.skipPreflightRate {
 		return "", nil
 	}
-	return service.SendRefusal(ctx, recipient, now)
+	return service.SendRefusal(ctx, relationship, recipient, now)
 }
 
 func (c *Channel) Attempt(ctx context.Context, id string, adapter SendAdapter, now float64) (map[string]any, error) {
@@ -230,7 +230,7 @@ func (c *Channel) claim(ctx context.Context, id string, r Resolution, now float6
 		}
 		token = requestID + "." + hex.EncodeToString(tokenBytes)
 		message = c.render(p, requestID, token)
-		if refusal, err := service.SendRefusal(tx, r.Recipient, now); err != nil {
+		if refusal, err := service.SendRefusal(tx, current.RelationshipID, r.Recipient, now); err != nil {
 			return err
 		} else if refusal != "" {
 			return Refusal{"paced", refusal}
@@ -321,7 +321,7 @@ func (c *Channel) attempt(ctx context.Context, id string, adapter SendAdapter, n
 		return nil, refusal
 	}
 	service := delivery.NewService(c.Store, delivery.SystemClock{})
-	if refused, err := c.preflightRate(ctx, service, r.Recipient, now); err != nil {
+	if refused, err := c.preflightRate(ctx, service, row.RelationshipID, r.Recipient, now); err != nil {
 		return nil, err
 	} else if refused != "" {
 		return nil, c.deferMessage(ctx, row, row.State, "", delivery.ISOOf(now), now+5)
@@ -471,7 +471,7 @@ func (c *Channel) attempt(ctx context.Context, id string, adapter SendAdapter, n
 				transportNow = max(now, float64(stamp.UnixMicro())/1e6)
 			}
 		}
-		if refused, err := service.ReserveSend(tx, r.Recipient, transportNow); err != nil {
+		if refused, err := service.ReserveSend(tx, current.RelationshipID, r.Recipient, transportNow); err != nil {
 			return err
 		} else if refused != "" {
 			transportRefusal = Refusal{"paced", refused}

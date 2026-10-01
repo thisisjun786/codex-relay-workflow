@@ -1,8 +1,9 @@
 package delivery
 
 import (
-	"math"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // Clock is the Python clock: seconds as a float, and an isoformat stamp at microseconds.
@@ -12,15 +13,7 @@ type Clock interface {
 }
 
 // ISOOf is datetime.fromtimestamp(now, utc).isoformat(timespec="microseconds").
-func ISOOf(now float64) string {
-	sec := math.Floor(now)
-	micro := math.RoundToEven((now - sec) * 1e6)
-	if micro >= 1e6 {
-		sec++
-		micro -= 1e6
-	}
-	return time.Unix(int64(sec), int64(micro)*1000).UTC().Format("2006-01-02T15:04:05.000000+00:00")
-}
+func ISOOf(now float64) string { return store.SendStamp(now) }
 
 // SystemClock reads the wall clock.
 type SystemClock struct{}

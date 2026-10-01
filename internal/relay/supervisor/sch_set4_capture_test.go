@@ -185,7 +185,7 @@ func Test24_SCH_67_LivePacedAtTransport(t *testing.T) {
 		h := &captureHost57{&sendHost{status: "idle"}}
 		c.beforeTransport = func() {
 			service := delivery.NewService(s, delivery.SystemClock{})
-			if refused, err := service.ReserveSend(context.Background(), "01supervisor-task", 1700000000); err != nil || refused != "" {
+			if refused, err := service.ReserveSend(context.Background(), "other-relationship", "01supervisor-task", 1700000000); err != nil || refused != "" {
 				t.Fatalf("reserve %q %v", refused, err)
 			}
 		}

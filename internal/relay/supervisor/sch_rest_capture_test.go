@@ -280,7 +280,7 @@ func Test24_SCH_40_Capture(t *testing.T) {
 		if _, err := c.Attempt(ctx, id, h, 1700000000); err != nil {
 			t.Fatal(err)
 		}
-		refused, err := service.SendRefusal(ctx, "01supervisor-task", 1700000001)
+		refused, err := service.SendRefusal(ctx, "other-relationship", "01supervisor-task", 1700000001)
 		if err != nil {
 			t.Fatal(err)
 		}

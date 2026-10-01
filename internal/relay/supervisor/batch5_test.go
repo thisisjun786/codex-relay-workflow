@@ -132,7 +132,7 @@ func Test24_SCH_47_FutureRecipientRateDoesNotPaceNow(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := delivery.NewService(f.s, delivery.SystemClock{})
-	reason, err := service.SendRefusal(f.ctx, "supervisor", 1_700_000_000)
+	reason, err := service.SendRefusal(f.ctx, "other-relationship", "supervisor", 1_700_000_000)
 	if err != nil || reason != "" {
 		t.Fatalf("future pacing %q %v", reason, err)
 	}

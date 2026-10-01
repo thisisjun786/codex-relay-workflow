@@ -105,7 +105,9 @@ var (
 	parentRecoveryAll = []string{ActionHostLostHeld, ActionUnknownSendHeld, ActionUnknownSendUndecided, ActionParentRecoversSettings}
 )
 
-// RetryPolicy is the part of policy.RetryPolicy the assignment view reads: the send budget.
+// RetryPolicy is the part of policy.RetryPolicy the assignment view reads: the send budget. The
+// hour count is the relationship's own count of sends to the recipient (the delivery package
+// owns the rule; this is its reading copy), the gap is the recipient's.
 type RetryPolicy struct {
 	MinSendIntervalSeconds float64
 	MaxSendsPerHour        int64
@@ -383,8 +385,7 @@ func (v *AssignmentView) Anchored(ctx context.Context, eventID any, generation i
 		"       v.last_reason AS ack_last_reason,"+
 		"       (SELECT COUNT(*) FROM attempts h WHERE h.event_id = e.event_id"+
 		"         AND h.state = 'host_lost_turn') AS host_lost_attempts,"+
-		"       (SELECT sends FROM recipient_rate WHERE recipient_task_id = d.recipient_task_id"+
-		"         AND window_start = ?) AS rate_sends,"+
+		"       "+store.RelationshipSendsSQL("d.relationship_id", "d.recipient_task_id")+" AS rate_sends,"+
 		"       (SELECT MAX(last_send_at) FROM recipient_rate"+
 		"         WHERE recipient_task_id = d.recipient_task_id"+
 		"           AND window_start BETWEEN ? AND ?) AS rate_last,"+
@@ -408,7 +409,7 @@ func (v *AssignmentView) Anchored(ctx context.Context, eventID any, generation i
 		"  LEFT JOIN delivery_supersession sx ON sx.event_id = e.event_id"+
 		"  LEFT JOIN relationships r ON r.relationship_id = e.relationship_id"+
 		lifecycleWithholdJoin("lf", "e", "d")+
-		" WHERE e.event_id = ?", window, earliest, window, eventID)
+		" WHERE e.event_id = ?", append(store.RelationshipSendsArgs(float64(window)), earliest, window, eventID)...)
 	if err != nil {
 		return nil, err
 	}

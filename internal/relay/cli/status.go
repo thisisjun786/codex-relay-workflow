@@ -132,13 +132,13 @@ func snapshot(ctx context.Context, s *store.Store, relationship string) (contrac
 		var pacing contract.OrderedObject
 		state := colText(row, "state")
 		if (state == stQueued || state == stDeferredBusy || state == stWithheldPreSend) && !pyvalue.Truthy(col(row, "hold_reason")) {
-			recipient := colText(row, "recipient_task_id")
-			reading, seen := paced[recipient]
+			recipient, owner := colText(row, "recipient_task_id"), colText(row, "relationship_id")
+			reading, seen := paced[owner+"\x00"+recipient]
 			if !seen {
-				if reading, err = sendPacing(ctx, s, recipient, now); err != nil {
+				if reading, err = sendPacing(ctx, s, owner, recipient, now); err != nil {
 					return nil, err
 				}
-				paced[recipient] = reading
+				paced[owner+"\x00"+recipient] = reading
 			}
 			pacing = pacingHolding(reading, col(row, "next_eligible_at"))
 		}
@@ -313,21 +313,18 @@ func currentGrant(ctx context.Context, s *store.Store, turn string, tenure any) 
 	return best, nil
 }
 
-// sendPacing is send_pacing with RetryPolicy.pacing.
-func sendPacing(ctx context.Context, s *store.Store, recipient string, now float64) (contract.OrderedObject, error) {
+// sendPacing is send_pacing with RetryPolicy.pacing: the recipient's gap since its latest send, and
+// the hour count of the delivery's own relationship (the delivery package owns the rule).
+func sendPacing(ctx context.Context, s *store.Store, relationship, recipient string, now float64) (contract.OrderedObject, error) {
 	window := math.Floor(now/rateWindowSeconds) * rateWindowSeconds
 	reach := rateWindowSeconds * (1 + math.Floor(minSendIntervalSeconds/rateWindowSeconds))
 	last, err := s.One(ctx, "SELECT MAX(last_send_at) AS last FROM recipient_rate WHERE recipient_task_id = ?   AND window_start BETWEEN ? AND ?", recipient, window-reach, window)
 	if err != nil {
 		return nil, err
 	}
-	used, err := s.One(ctx, "SELECT sends FROM recipient_rate WHERE recipient_task_id = ? AND window_start = ?", recipient, window)
+	sends, err := s.RelationshipSends(ctx, relationship, recipient, window)
 	if err != nil {
 		return nil, err
-	}
-	var sends int64
-	if used != nil {
-		sends, _ = col(used, "sends").(int64)
 	}
 	var lastSend any
 	if last != nil {
