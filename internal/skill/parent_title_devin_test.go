@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestParentTitleDevinLivePythonParity(t *testing.T) {
+func TestParentTitleDevinCases(t *testing.T) {
 	goldenRoot(t)
 	base := map[string]any{
 		"role":              "parent",

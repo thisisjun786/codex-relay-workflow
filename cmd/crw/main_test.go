@@ -26,7 +26,7 @@ func TestRun_help_and_version_exit_like_the_python_clis(t *testing.T) {
 		{[]string{"version"}, 0, version, ""},
 		{[]string{"--version"}, 0, version, ""},
 		{nil, 2, "", "the following arguments are required: command"},
-		{[]string{"bogus"}, 2, "", "invalid choice: 'bogus'"},
+		{[]string{"bogus"}, 2, "", `invalid choice: "bogus"`},
 		{[]string{"relay"}, 2, "", "the following arguments are required: command"},
 	} {
 		var stdout, stderr bytes.Buffer

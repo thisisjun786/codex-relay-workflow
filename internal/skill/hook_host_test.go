@@ -11,7 +11,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
-func TestHookHostMutationsLivePython(t *testing.T) {
+func TestHookHostMutations(t *testing.T) {
 	goldenRoot(t)
 	crw := recordedCRW(t)
 	host := diskSkillPath(defaultFixture("host"))

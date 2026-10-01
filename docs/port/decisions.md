@@ -1376,7 +1376,7 @@ Why: the port follows properties, not interpreter internals. Frames name
 checkout paths and Python line numbers that change with any edit and with the
 installation location, so they cannot be a stable contract.
 
-Evidence: 148 of the 2061 cases in `TestSkillJSONShapeLivePython`
+Evidence: 148 of the 2061 cases in `TestSkillJSONShapeLivePython` (`TestSkillJSONShape` since refactor R3)
 (`internal/skill/shape_matrix_test.go`) end in an uncaught Python exception and
 differ from Go only in traceback frames;
 `.omo/evidence/task-35-devin2-exception-matrix.json` lists them with matching
@@ -1402,7 +1402,7 @@ keeps one deterministic behaviour and the oracle is pinned to it. The pin change
 no Python output for valid input.
 
 Evidence: `oracleEnv` in `internal/skill/process_parity_test.go`;
-`TestSkillUnreadableInputsLivePython` passes under outer `LC_ALL=C`, `LC_ALL=C.UTF-8`
+`TestSkillUnreadableInputsLivePython` (`TestSkillUnreadableInputs` since refactor R3) passes under outer `LC_ALL=C`, `LC_ALL=C.UTF-8`
 and `LANG=en_US.UTF-8`, and fails under outer `LC_ALL=C` without the pin.
 
 ## 32. Native hook allocations bound waiting, not scheduling
@@ -3396,3 +3396,46 @@ internal/dev/trialledger/moment.go (`parseMoment`), fs.go (`failure`), ledger_te
 (`TestParseMomentReadsRFC3339`, `TestLedgerReadsRecordsAsDeepAsAWriterWrote`);
 internal/dev/stopevents/stopevents_test.go (`TestSEV12_OnDiskFormIsTheWriters`);
 docs/port/known-defects.md.
+
+## R3R-3. `crw skill` parses flags with Go's flag package and words its refusals the Go way (refactor R3)
+
+Decision: the `crw skill` commands (`hook-probe`, `parent-title`, `start-policy`) stop
+emulating the Python scripts they were ported from where only Python's own bytes were
+reproduced. What goes: the argparse emulation (`internal/skill/argparse.go` and the argparse help
+texts in `help_text.go`, with the stale program names `hook_probe.py`, `parent_title.py` and
+`start_policy.py`, unique-prefix abbreviation and repr() of a refused argument); `pySorted`
+(`pysort.go`, CPython's TimSort replayed comparison by comparison so the first unorderable pair
+raised the same `TypeError` and a NaN landed where CPython left it); the Python exception
+vocabulary (`AttributeError: 'list' object has no attribute 'get'`, `TypeError: ... is not
+iterable`, `unhashable type`, `UnicodeDecodeError`, `json.decoder.JSONDecodeError`); CPython's
+`[Errno N]` texts with repr() of a pathlib-spelled path; repr() of values in replay and host
+messages; and the U+2028/U+2029 unescaping of `parent-title`'s JSON. Each command now reads its
+flags with the flag package (`crw skill <family> <command> -h` lists every flag; a usage error
+exits 2); values sort by Go comparison of numbers, strings and arrays and a pair that cannot be
+ordered is refused; a refusal names the JSON kind it found (`expected a JSON object, found an
+array`), the system's error (`open <path>: no such file or directory`) or encoding/json's; and a
+message names a value as JSON. The fixtures, observations and requests decode with
+`pyjson.Loads` under explicit options rather than `hook.Decode`, so the relay hook's input
+decoding can change without moving the skills.
+
+Consumer check: `git grep` of `plugins/crw/skills`, `docs/` and `contract/` for `crw skill`,
+`hook-probe`, `parent-title` and `start-policy`: the skills run `hook-probe observe --sanitize`,
+`hook-probe replay`, `parent-title decide`/`replay` and `start-policy vocabulary`/`check`/
+`selftest` with fixed argv, read `parent-title decide`'s JSON fields and the exit codes, and copy
+`start-policy vocabulary`'s lines; `crw-dev ci contracts` runs the replays and the self-test in
+process and reads their exit and summary lines. None reads a refusal's prose.
+
+What stays and why: every exit code (0, 1, 2 and 3 for an unreadable file), every JSON field and
+summary line, the decision table and its return sites, the record values (NaN, the infinities
+and a lone surrogate escape still decode, because a committed fixture holds `"\ud800"`), and
+Python's truthiness and equality where the decision reads a field (`pyvalue.Truthy`,
+`pyvalue.ItemEqual`), because those decide verdicts, not wording. Three inputs answer otherwise:
+a trailing `--` after a command that takes no argument now ends its flags (exit 0) where argparse
+refused it (exit 2); and `hook-probe observe` reads the schemas a binary embeds as JSON, so one
+holding NaN or Infinity is not a schema (exit 3, "No embedded hook schemas found", where Python
+read it) and one holding an integer longer than 4300 digits is (Python refused it, exit 3).
+
+Evidence: internal/skill/command.go (`family`, `commandLine`), values.go (`decodeJSON`,
+`sortValues`, `notObject`); internal/skill/command_test.go (`TestSkillCommandLine`,
+`TestSkillDoubleDashPassesOptionLikePositionals`); the goldens of `TestSkillJSONShape` and the
+other renamed command tests; docs/port/known-defects.md.
