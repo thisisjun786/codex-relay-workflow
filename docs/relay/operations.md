@@ -115,6 +115,16 @@ own two arguments and opens no store. Exempt from these guards is not the same a
 refusing — `doctor` still exits non-zero when a same-store comparison it was asked to make
 comes back unproven or mismatched.
 
+Exempt from the two discovery refusals is not exempt from the third. Every command that uses the
+selected store is refused `state_directory_serves_another_socket` when that store records another
+socket than `--socket`, or than the default socket that scoped a discovery made without one:
+the `service` subcommands that write intent and records (`enable`, `disable`, `stop`, `declare`,
+`start`, `restart`, `run`), `managed-start`, `managed-show` and `reporting-derive` included, before
+anything is written. `doctor` and `service status` are how that mismatch is diagnosed, so they
+answer it rather than refuse: their report carries a `socketMismatch` block with the refusal's
+fields (reason, detail, both sockets, the directory and the recovery lines), and still exits 0.
+`packet-check` consults the whole selection refusal itself where it reads the store.
+
 The eight marker commands are exempt too, for a third reason: the managed marker exists so that a
 Stop hook can answer without asking the relay anything, and legacy state nobody is using must not
 be able to switch that hook off. Two of them do reach a store and are exempt only conditionally.

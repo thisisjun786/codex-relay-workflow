@@ -17,12 +17,14 @@ type Services struct {
 	SocketPath, Program string
 }
 
-// Refusal is _selection_refusal: what is wrong with the selected store, or nil.
-func Refusal(services Services) (contract.OrderedObject, error) {
+// SocketMismatch is Refusal's first half: the refusal of a selected store that records another
+// App Server socket than the one it must serve, or nil. That socket is --socket, or the default
+// App Server socket that scoped a discovery made without one (decision 73), which is compared only:
+// nothing here or after it connects to it. It applies to every command that uses the selected
+// store, those exempt from the discovery refusals included; doctor and service status report it
+// rather than refuse (Mismatch).
+func SocketMismatch(services Services) (contract.OrderedObject, error) {
 	selection := services.Selection
-	// The socket the selected store must not contradict: --socket, or the default App Server
-	// socket that scoped a discovery made without one (decision 73). The second is compared only;
-	// nothing here or after it connects to it.
 	socket, detail := services.SocketPath, "this store records a different App Server socket; serving the requested"+
 		" one from it would expose one installation's assignments through another"
 	if socket == "" && selection.DefaultSocket != "" {
@@ -30,25 +32,46 @@ func Refusal(services Services) (contract.OrderedObject, error) {
 			" that scoped its directory; serving it to a command given no --socket would expose one"+
 			" installation's assignments through another"
 	}
-	if socket != "" && fileExists(selection.DBPath()) {
-		recorded := store.StoreSocket(selection.DBPath())
-		wanted, err := store.CanonicalSocket(socket)
-		if err != nil {
-			return nil, err
-		}
-		if recorded != "" && recorded != wanted {
-			return contract.OrderedObject{
-				{Key: "error", Value: "refused"},
-				{Key: "reason", Value: "state_directory_serves_another_socket"},
-				{Key: "detail", Value: detail},
-				{Key: "recordedSocket", Value: recorded},
-				{Key: "requestedSocket", Value: wanted},
-				{Key: "stateDirectory", Value: selection.Path},
-				{Key: "recover", Value: wrongSocketRecovery(services, recorded, wanted)},
-				{Key: "note", Value: "using a store does not rewrite the socket it recorded, so neither" +
-					" command here adopts anything; choose the matching pair"},
-			}, nil
-		}
+	if socket == "" || !fileExists(selection.DBPath()) {
+		return nil, nil
+	}
+	recorded := store.StoreSocket(selection.DBPath())
+	wanted, err := store.CanonicalSocket(socket)
+	if err != nil {
+		return nil, err
+	}
+	if recorded == "" || recorded == wanted {
+		return nil, nil
+	}
+	return contract.OrderedObject{
+		{Key: "error", Value: "refused"},
+		{Key: "reason", Value: "state_directory_serves_another_socket"},
+		{Key: "detail", Value: detail},
+		{Key: "recordedSocket", Value: recorded},
+		{Key: "requestedSocket", Value: wanted},
+		{Key: "stateDirectory", Value: selection.Path},
+		{Key: "recover", Value: wrongSocketRecovery(services, recorded, wanted)},
+		{Key: "note", Value: "using a store does not rewrite the socket it recorded, so neither" +
+			" command here adopts anything; choose the matching pair"},
+	}, nil
+}
+
+// Mismatch is SocketMismatch as a diagnostic reports it (doctor's and service status's
+// socketMismatch): the same fields without "error", or nil, also when the socket cannot be
+// resolved, which leaves nothing to compare.
+func Mismatch(services Services) contract.OrderedObject {
+	refusal, err := SocketMismatch(services)
+	if refusal == nil || err != nil {
+		return nil
+	}
+	return refusal[1:]
+}
+
+// Refusal is _selection_refusal: what is wrong with the selected store, or nil.
+func Refusal(services Services) (contract.OrderedObject, error) {
+	selection := services.Selection
+	if refusal, err := SocketMismatch(services); refusal != nil || err != nil {
+		return refusal, err
 	}
 	if len(selection.Ambiguous) == 0 && len(selection.Unidentified) == 0 {
 		return nil, nil

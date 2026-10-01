@@ -30,7 +30,7 @@ func init() {
 		}, Defaults: commandDefaults[name], ReadOnly: readOnly[name],
 			// packet-check reads a supplied record, or its store-backed check consults the
 			// selection refusal itself (run).
-			Exempt: name == "packet-check"})
+			Exempt: name == "packet-check", ChecksOwnSelection: name == "packet-check"})
 	}
 	dispatch.Register(nil, commands...)
 }

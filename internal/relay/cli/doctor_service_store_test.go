@@ -2,6 +2,9 @@ package cli_test
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -179,5 +182,88 @@ func TestANoSocketSelectionIsHeldToTheDefaultSocket(t *testing.T) {
 				t.Fatalf("deliver without --socket: %+v", deliver)
 			}
 		})
+	}
+}
+
+// dirFiles is each file under dir with its size and modification time, to show a command wrote
+// nothing there. The SQLite shared-memory index (-shm) is named with its size only: any reader of
+// a WAL database, the refusal's own reading of the recorded socket among them, touches it.
+func dirFiles(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	files := map[string]string{}
+	err := filepath.WalkDir(dir, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return err
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		files[path] = fmt.Sprintf("%d %d", info.Size(), info.ModTime().UnixNano())
+		if strings.HasSuffix(path, "-shm") {
+			files[path] = fmt.Sprint(info.Size())
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return files
+}
+
+// The commands exempt from the discovery refusals are held to the socket the selected store
+// records too (decision 73). Every one that uses the store is refused a default-scoped store
+// recording another socket, the service family's writers among them, and writes nothing; doctor
+// and service status, which are how the mismatch is diagnosed, answer and name it in
+// socketMismatch. An explicit --socket that the store contradicts is held the same way.
+func TestExemptCommandsAreHeldToTheSocketTheStoreRecords(t *testing.T) {
+	home := tempHome(t)
+	withHome(t, home)
+	socket := filepath.Join(home, "codex-home", "app-server-control", "app-server-control.sock")
+	scope, err := store.SocketScope(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(home, ".local", "state", "codex-session-relay", scope)
+	other := filepath.Join(home, "other.sock")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	testsupport.Create(t, filepath.Join(dir, "relay.sqlite3"), other, "go")
+	recorded, _ := store.CanonicalSocket(other)
+	requested, _ := store.CanonicalSocket(socket)
+
+	// Diagnosed, not refused, whether the default socket or --socket is the one contradicted.
+	for _, argv := range [][]string{{"doctor"}, {"service", "status"}, {"--socket", socket, "doctor"}, {"--socket", socket, "service", "status"}} {
+		answer := golang(t, home, argv...)
+		mismatch := obj(decode(t, answer.stdout)["socketMismatch"])
+		if answer.code != 0 || mismatch["reason"] != "state_directory_serves_another_socket" || mismatch["recordedSocket"] != recorded ||
+			mismatch["requestedSocket"] != requested || mismatch["stateDirectory"] != dir || mismatch["error"] != nil {
+			t.Fatalf("%v: want exit 0 naming the mismatch: %+v", argv, answer)
+		}
+	}
+
+	before := dirFiles(t, dir)
+	policy := filepath.Join(home, "policy.json")
+	if err := os.WriteFile(policy, []byte(`{"allowed": [{"model": "gpt-5", "efforts": ["high"]}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, argv := range [][]string{
+		{"service", "enable"}, {"service", "disable"}, {"service", "stop"},
+		{"service", "declare", "--execution-policy", policy}, {"service", "start"},
+		{"managed-show", "--request-id", "x"}, {"reporting-derive", "--relationship", "r", "--turn", "t"},
+		{"--socket", socket, "service", "enable"},
+	} {
+		answer := golang(t, home, argv...)
+		refusal := decode(t, answer.stdout)
+		if answer.code != 2 || refusal["reason"] != "state_directory_serves_another_socket" || refusal["recordedSocket"] != recorded || refusal["requestedSocket"] != requested {
+			t.Fatalf("%v: want state_directory_serves_another_socket (exit 2): %+v", argv, answer)
+		}
+		if after := dirFiles(t, dir); !maps.Equal(before, after) {
+			t.Fatalf("%v wrote into the refused directory:\nbefore %v\nafter  %v", argv, before, after)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "service.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("an intent was written: %v", err)
 	}
 }
