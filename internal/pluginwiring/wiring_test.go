@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -39,22 +38,10 @@ var moduleRoot = func() string {
 var linkDir string
 
 func TestMain(m *testing.M) {
-	cleanup, err := testsupport.IsolateRelayState()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	linkDir, err = os.MkdirTemp("", "crw-pluginwiring-")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	code := m.Run()
-	if err := errors.Join(os.RemoveAll(linkDir), cleanup(), testsupport.RemoveCRW()); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		code = 1
-	}
-	os.Exit(code)
+	testsupport.Main(m, func(root string) (func() error, error) {
+		linkDir = filepath.Join(root, "links")
+		return nil, os.Mkdir(linkDir, 0o755)
+	})
 }
 
 // builtCrw is the real multi-call binary (testsupport.CRW).

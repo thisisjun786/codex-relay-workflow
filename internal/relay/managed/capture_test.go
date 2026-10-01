@@ -47,6 +47,21 @@ func checkManaged(t *testing.T, key string, value any, root string) {
 // managedTables are the tables a managed start writes, each compared whole with its golden.
 var managedTables = []string{"managed_start_requests", "relationships", "generations", "canonical_criteria", "verification_mode", "authorized_settings", "generation_turns"}
 
+// managedRows are table's rows in rowid order (testsupport.Rows), each integer as a float64.
+func managedRows(t *testing.T, s *store.Store, table string) []any {
+	t.Helper()
+	rows := []any{}
+	for _, row := range testsupport.Rows(t, s.DB, "SELECT * FROM "+testsupport.QuoteIdent(table)+" ORDER BY rowid") {
+		for key, value := range row {
+			if number, ok := value.(int64); ok {
+				row[key] = float64(number)
+			}
+		}
+		rows = append(rows, row)
+	}
+	return rows
+}
+
 // ledgerDevice and ledgerInode are the physical identity of the operations ledger the fake host
 // reports; a replaced ledger is the same file with inode ledgerInode+1.
 const (
@@ -187,7 +202,7 @@ func compareExecutionCLI(t *testing.T) {
 	}
 	steps := make([]any, len(got))
 	for i, step := range got {
-		steps[i] = normalizedExecution(t, testsupport.Go, step, goRuntimeBuild())
+		steps[i] = normalizedExecution(t, step, goRuntimeBuild())
 	}
 	device, err := deviceOf(root)
 	if err != nil {
@@ -235,9 +250,9 @@ func goRuntimeBuild() string {
 // from Go. Any other value is kept, so a runtime naming the wrong build still differs.
 const answeringBuild = "<answering runtime build>"
 
-// normalizedExecution normalizes the step output of writer, the runtime that produced it; build
-// is the runtime_build that runtime's doctor names.
-func normalizedExecution(t *testing.T, writer testsupport.Runtime, v any, build string) any {
+// normalizedExecution normalizes the step output of the Go runtime; build is the runtime_build its
+// doctor names.
+func normalizedExecution(t *testing.T, v any, build string) any {
 	switch x := v.(type) {
 	case map[string]any:
 		out := map[string]any{}
@@ -267,7 +282,7 @@ func normalizedExecution(t *testing.T, writer testsupport.Runtime, v any, build 
 				rows := map[string]any{}
 				for key, row := range block {
 					if block["owner"] != nil {
-						row = testsupport.OwnerNeutral(t, writer, key, row)
+						row = testsupport.OwnerNeutral(t, key, row)
 					}
 					rows[key] = row
 				}
@@ -276,13 +291,13 @@ func normalizedExecution(t *testing.T, writer testsupport.Runtime, v any, build 
 				}
 				value = rows
 			}
-			out[k] = normalizedExecution(t, writer, value, build)
+			out[k] = normalizedExecution(t, value, build)
 		}
 		return out
 	case []any:
 		out := make([]any, len(x))
 		for i, item := range x {
-			out[i] = normalizedExecution(t, writer, item, build)
+			out[i] = normalizedExecution(t, item, build)
 		}
 		return out
 	case string:
@@ -813,44 +828,7 @@ func checkReservation(t *testing.T, s *store.Store, got []any) {
 	golden.CheckJSON(t, "receipts", got)
 	for _, table := range managedTables {
 		if table != "managed_start_requests" {
-			rows, err := s.DB.QueryContext(ctx, "SELECT * FROM "+table+" ORDER BY rowid")
-			if err != nil {
-				t.Fatal(err)
-			}
-			columns, err := rows.Columns()
-			if err != nil {
-				rows.Close()
-				t.Fatal(err)
-			}
-			actual := []any{}
-			for rows.Next() {
-				values := make([]any, len(columns))
-				pointers := make([]any, len(columns))
-				for i := range values {
-					pointers[i] = &values[i]
-				}
-				if err := rows.Scan(pointers...); err != nil {
-					rows.Close()
-					t.Fatal(err)
-				}
-				record := map[string]any{}
-				for i, key := range columns {
-					switch v := values[i].(type) {
-					case []byte:
-						record[key] = string(v)
-					case int64:
-						record[key] = float64(v)
-					default:
-						record[key] = v
-					}
-				}
-				actual = append(actual, record)
-			}
-			if err := rows.Err(); err != nil {
-				rows.Close()
-				t.Fatal(err)
-			}
-			rows.Close()
+			actual := managedRows(t, s, table)
 			golden.CheckJSON(t, "table "+table, actual)
 			continue
 		}
@@ -1422,44 +1400,7 @@ func compareManaged(t *testing.T, scenario string, steps int) {
 		golden.CheckJSON(t, "scope", outcomes)
 	}
 	for _, table := range managedTables {
-		rows, err := s.DB.QueryContext(ctx, "SELECT * FROM "+table+" ORDER BY rowid")
-		if err != nil {
-			t.Fatal(err)
-		}
-		columns, err := rows.Columns()
-		if err != nil {
-			rows.Close()
-			t.Fatal(err)
-		}
-		actual := []any{}
-		for rows.Next() {
-			values := make([]any, len(columns))
-			pointers := make([]any, len(columns))
-			for i := range values {
-				pointers[i] = &values[i]
-			}
-			if err := rows.Scan(pointers...); err != nil {
-				rows.Close()
-				t.Fatal(err)
-			}
-			record := map[string]any{}
-			for i, key := range columns {
-				if text, ok := values[i].([]byte); ok {
-					values[i] = string(text)
-				}
-				if number, ok := values[i].(int64); ok {
-					record[key] = float64(number)
-				} else {
-					record[key] = values[i]
-				}
-			}
-			actual = append(actual, record)
-		}
-		err = rows.Err()
-		rows.Close()
-		if err != nil {
-			t.Fatal(err)
-		}
+		actual := managedRows(t, s, table)
 		checkManaged(t, "table "+table, normalizedManaged(actual), root)
 	}
 }

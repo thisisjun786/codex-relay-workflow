@@ -70,14 +70,13 @@ func builtBinary(t *testing.T) string {
 			binaryError = err
 			return
 		}
-		clockBinary = filepath.Join(dir, "clock", "crw")
-		var out bytes.Buffer
-		cmd := exec.Command("go", "build", "-overlay", overlayPath, "-o", clockBinary, "./cmd/crw")
-		cmd.Dir = root
-		cmd.Stdout = &out
-		cmd.Stderr = &out
-		if err = cmd.Run(); err != nil {
+		built, err := testsupport.BuildCRWPath("-overlay", overlayPath)
+		if err != nil {
 			binaryError = err
+			return
+		}
+		clockBinary = filepath.Join(dir, "clock", "crw")
+		if binaryError = testsupport.CopyBinary(built, clockBinary); binaryError != nil {
 			return
 		}
 		binaryError = os.Symlink(clockBinary, filepath.Join(filepath.Dir(clockBinary), "codex-session-relay"))
@@ -197,13 +196,9 @@ func cliReplay(t *testing.T, mode string) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			tables, err = tablesJSON(ctx, s)
-			closeErr := s.Close()
-			if err != nil {
+			tables = tablesJSON(t, s)
+			if err := s.Close(); err != nil {
 				t.Fatal(err)
-			}
-			if closeErr != nil {
-				t.Fatal(closeErr)
 			}
 		}) {
 			return

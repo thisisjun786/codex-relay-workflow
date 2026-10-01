@@ -176,7 +176,7 @@ func WorkspaceDir(root, workspace string) (string, error) {
 // is not an assignment id is ValueError, as _checked_assignment raises it.
 func AssignmentDir(root, workspace string, assignment any) (string, error) {
 	if !ValidAssignment(assignment) {
-		return "", &dispatch.HostError{Class: "ValueError", Detail: "an assignment id is the hex sha256 of a dispatch request id, not " + pyvalue.Repr(assignment)}
+		return "", &dispatch.HostError{Class: "ValueError", Detail: "an assignment id is the hex sha256 of a dispatch request id, not " + pyReprValue(assignment)}
 	}
 	directory, err := WorkspaceDir(root, workspace)
 	if err != nil {

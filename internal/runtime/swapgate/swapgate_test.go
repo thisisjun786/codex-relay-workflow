@@ -24,17 +24,7 @@ import (
 
 func TestMain(m *testing.M) {
 	golden.Helper()
-	cleanup, err := testsupport.IsolateRelayState()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	code := m.Run()
-	if err := cleanup(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		code = 1
-	}
-	os.Exit(code)
+	testsupport.Main(m)
 }
 
 // The inputs the Python generator used, by name: every envelope and presence.

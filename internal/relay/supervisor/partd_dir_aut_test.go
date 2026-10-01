@@ -349,14 +349,7 @@ type partDHost struct{ sendHost }
 
 func (h *partDHost) ReadGoalStatus(string) (any, error) { return nil, nil }
 func (h *partDHost) SendMessage(id, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
-	h.sends = append(h.sends, message)
-	h.settings = settings
-	if h.items == nil {
-		h.items = map[string]string{}
-	}
-	turn := "turn-" + thread + "-1"
-	h.items[turn] = message
-	return delivery.Obj{{Key: "status", Value: "accepted"}, {Key: "requestId", Value: id}, {Key: "turnId", Value: turn}}, nil
+	return h.accept(id, "turn-"+thread+"-1", message, settings), nil
 }
 func (h *partDHost) ReadTurn(thread, id string) (*delivery.TurnInfo, error) {
 	at := float64(1700000001)

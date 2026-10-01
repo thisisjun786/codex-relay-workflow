@@ -191,17 +191,19 @@ func Test24_SCH_63_ReadbackEstablishesArrivalOnly(t *testing.T) {
 	}
 }
 
-type policyHost24 struct {
-	*sendHost
+// policyRefusalHost is a host whose recipient refuses the first send for its approval policy
+// while refused is set, without starting a turn, and which then sends as the host it wraps.
+type policyRefusalHost struct {
+	SendAdapter
 	refused bool
 }
 
-func (h *policyHost24) SendMessage(id, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
+func (h *policyRefusalHost) SendMessage(id, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
 	if h.refused {
 		h.refused = false
 		return delivery.Obj{{Key: "status", Value: "failed"}, {Key: "resumed", Value: delivery.Obj{{Key: "approvalPolicy", Value: "untrusted"}}}, {Key: "rpcError", Value: delivery.Obj{{Key: "code", Value: "unsupported_approval_policy"}}}}, nil
 	}
-	return h.sendHost.SendMessage(id, thread, message, settings)
+	return h.SendAdapter.SendMessage(id, thread, message, settings)
 }
 func Test24_SCH_58_ClaimOwnerSettlesAfterExpiredLease(t *testing.T) {
 	f := fixture24(t)
@@ -436,7 +438,7 @@ func Test24_SCH_74_ApprovalPolicyPushRefusalCanRetry(t *testing.T) {
 	f.c.Settings = &delivery.TaskSettings{}
 	_, staged := f.staged(t)
 	id := staged["messageId"].(string)
-	h := &policyHost24{sendHost: &sendHost{status: "idle"}, refused: true}
+	h := &policyRefusalHost{SendAdapter: &sendHost{status: "idle"}, refused: true}
 	answer, err := f.c.Attempt(f.ctx, id, h, 1_700_000_000)
 	if err != nil || answer["deliveryState"] != "withheld_pre_send" || answer["transportDeliveryState"] != "inbox_only" || answer["sendAttempted"] != "no" || answer["turnId"] != nil {
 		t.Fatalf("refusal %v %v", answer, err)

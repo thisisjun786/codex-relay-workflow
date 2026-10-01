@@ -249,7 +249,7 @@ func composeWorkCompletion(ctx context.Context, s *store.Store, row Row, receipt
 		}
 		if issue != "" {
 			if project != nil && project.Get("project_key") != nil {
-				scope = "project " + pyvalue.Str(project.Get("project_key")) + ", issue " + issue
+				scope = "project " + pyStr(project.Get("project_key")) + ", issue " + issue
 			} else {
 				scope = "issue " + issue + "; no project scope is recorded for this relationship"
 			}
@@ -296,7 +296,7 @@ func composeWorkCompletion(ctx context.Context, s *store.Store, row Row, receipt
 	}
 	pr := []string{"", "repository: " + reportValue(r, "repository"), "pull request: none recorded for this event"}
 	if r["pr_number"] != nil {
-		pr = []string{"", "pull request: " + reportValue(r, "repository") + "#" + pyvalue.Str(r["pr_number"])}
+		pr = []string{"", "pull request: " + reportValue(r, "repository") + "#" + pyStr(r["pr_number"])}
 		if r["pr_state"] != nil && r["pr_state"] != "" {
 			pr[1] += "  (" + reportValue(r, "pr_state") + ")"
 		}
@@ -356,14 +356,14 @@ func composeWorkCompletion(ctx context.Context, s *store.Store, row Row, receipt
 			item := py.Dict(raw, false)
 			line := "  " + pyvalue.Str(py.Item(raw, "path")) + "  sha256=" + pyvalue.Str(py.Item(raw, "sha256"))
 			if size := item["bytes"]; size != nil {
-				line += "  bytes=" + pyvalue.Str(size)
+				line += "  bytes=" + pyStr(size)
 			}
 			manifest = append(manifest, line)
 		}
 	}
 	manifestRef := []string{}
 	if ref := reportField(receipt, "manifestRef"); ref != nil && ref != "" {
-		text := pyvalue.Str(ref)
+		text := pyStr(ref)
 		if !utf8.ValidString(text) || strings.Contains(text, `\ud800`) {
 			manifestRef = []string{"", "manifestRef: present but not renderable; read it in the record"}
 		} else {
@@ -386,7 +386,7 @@ func composeWorkCompletion(ctx context.Context, s *store.Store, row Row, receipt
 	sections := []reportSection{
 		{"header", []string{"[codex-session-relay] verification request", "result: " + reportValue(r, "summary"), "cxc: " + reportValue(r, "cxc_status") + " - " + reportValue(r, "cxc_reason"), "  meaning: " + meaning[reportValue(r, "cxc_status")], "  this is the child reporting on its own work. It is not a verification: " + nonVerification}, 0, 5, true, false},
 		{"pull request", pr, 1, 2, true, false}, {"merge readiness", handoff, 1, 2, true, false}, {"acceptance confirmations", confirmations, 1, len(confirmations), true, false}, {"verification", evidence, 4, 0, false, false}, {"unresolved", unresolved, 2, 2, true, false}, {"next", []string{"next: " + reportValue(r, "next_action")}, 0, 1, true, false}, {"workflow restore", restoreLines, 3, 0, false, false}, {"deliverables", manifest, 6, 0, false, false}, {"manifest reference", manifestRef, 2, 2, true, false},
-		{"relay record", []string{"", "relay record:", "  requestId: " + request, "  eventId: " + event, fmt.Sprintf("  submission: %d  contract: relay-report/1", r["submission_no"]), "  message: " + kind + " - an answer is owed by the recipient", "  messageId: " + messageID + "  child_to_parent/" + purpose + "  envelope: relay-envelope/1", "  relationshipId: " + rid, "  from: child " + sender + "  to: parent " + recipient, "  scope: " + scope, "  observedAt: " + reportValue(r, "recorded_at"), "  executionGeneration: " + pyvalue.Str(reportField(receipt, "executionGeneration")), "  attempt: " + pyvalue.Str(reportField(receipt, "attempt")), "  outcome: " + pyvalue.Str(reportField(receipt, "outcome")), "  revisionHash: " + pyvalue.Str(reportField(receipt, "revisionHash"))}, 5, 7, true, false},
+		{"relay record", []string{"", "relay record:", "  requestId: " + request, "  eventId: " + event, fmt.Sprintf("  submission: %d  contract: relay-report/1", r["submission_no"]), "  message: " + kind + " - an answer is owed by the recipient", "  messageId: " + messageID + "  child_to_parent/" + purpose + "  envelope: relay-envelope/1", "  relationshipId: " + rid, "  from: child " + sender + "  to: parent " + recipient, "  scope: " + scope, "  observedAt: " + reportValue(r, "recorded_at"), "  executionGeneration: " + pyStr(reportField(receipt, "executionGeneration")), "  attempt: " + pyStr(reportField(receipt, "attempt")), "  outcome: " + pyStr(reportField(receipt, "outcome")), "  revisionHash: " + pyStr(reportField(receipt, "revisionHash"))}, 5, 7, true, false},
 		{"respond", []string{"", "To respond, from inside your own turn:", "  claim     --event " + event + " --turn <your turn id>", "  ack-proof --event " + event + " --turn <your turn id>", "  ack       --event " + event + " --ack-turn <your turn id> --ack-proof <proof>", "  verdict   --event " + event + " --verdict <verified|needs_changes|unverified|aborted> --verdict-turn <your turn id>", "", "The proof is sha256(eventId|<your own turn id>). This message does not and cannot", "contain that turn id, which is what distinguishes acknowledging from echoing.", "Full record: codex-session-relay show --event " + event}, 0, 7, true, false},
 	}
 	return reportCompose(sections, event, budget)

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -21,7 +20,7 @@ func syncCanonical(target, targetRef, kind, rid string, event, generation, revis
 		if v == nil {
 			return "null"
 		}
-		return pyvalue.Str(v)
+		return pyStr(v)
 	}
 	parts := []string{target, targetRef, kind, rid, render(event), render(generation), render(revision), render(verdict)}
 	payload := strings.Join(parts, "|")
@@ -49,7 +48,7 @@ func renderVerdictSummary(r Relationship, event Row, verdict string, findings []
 		lines = append(lines, line)
 	}
 	if next, _ := get(record, "nextExecutionGeneration"); truthy(next) {
-		lines = append(lines, fmt.Sprintf("a revision request was queued to the same child under generation %s", pyvalue.Str(next)))
+		lines = append(lines, fmt.Sprintf("a revision request was queued to the same child under generation %s", pyStr(next)))
 	}
 	if len(findings) > 0 {
 		lines = append(lines, "findings:")

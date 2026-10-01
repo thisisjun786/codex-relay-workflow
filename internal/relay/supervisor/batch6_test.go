@@ -154,7 +154,7 @@ func Test24_SCH_52_InvalidTurnStartCannotVerify(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f, h, id, _ := delivered24(t)
-			host := &invalidTurnStartHost{sendHost: h, started: tc.start}
+			host := &turnStartHost{sendHost: h, started: tc.start}
 			answer, err := f.c.ReadBack(f.ctx, id, "turn-supervisor-1", Proof(id, "turn-supervisor-1"), "", host, 1_700_000_002)
 			if err != nil || answer["verified"] != "unverified_turn" {
 				t.Fatalf("readback %v %v", answer, err)
@@ -165,15 +165,6 @@ func Test24_SCH_52_InvalidTurnStartCannotVerify(t *testing.T) {
 			}
 		})
 	}
-}
-
-type invalidTurnStartHost struct {
-	*sendHost
-	started *float64
-}
-
-func (h *invalidTurnStartHost) ReadTurn(_ string, id string) (*delivery.TurnInfo, error) {
-	return &delivery.TurnInfo{TurnID: id, StartedAt: h.started}, nil
 }
 
 // The readback reads the named turn's start by supervisorchannel._host_time, the rule every
@@ -194,7 +185,7 @@ func Test24_SCH_52b_TurnStartIsReadAsAHostTime(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f, h, id, _ := delivered24(t)
-			host := &textTurnStartHost{sendHost: h, started: tc.started}
+			host := &turnStartHost{sendHost: h, started: tc.started}
 			answer, err := f.c.ReadBack(f.ctx, id, "turn-supervisor-1", Proof(id, "turn-supervisor-1"), "", host, 1_700_000_002)
 			if err != nil || answer["verified"] != tc.want {
 				t.Fatalf("readback %v %v", answer, err)
@@ -203,12 +194,14 @@ func Test24_SCH_52b_TurnStartIsReadAsAHostTime(t *testing.T) {
 	}
 }
 
-type textTurnStartHost struct {
+// turnStartHost answers every turn it is asked for with started as its start, whatever that is: a
+// *float64 (nil, NaN or infinite included) or any other value a host might give.
+type turnStartHost struct {
 	*sendHost
 	started any
 }
 
-func (h *textTurnStartHost) ReadTurn(_ string, id string) (*delivery.TurnInfo, error) {
+func (h *turnStartHost) ReadTurn(_ string, id string) (*delivery.TurnInfo, error) {
 	return &delivery.TurnInfo{TurnID: id, StartedAt: h.started}, nil
 }
 

@@ -2,8 +2,10 @@ package delivery
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
@@ -18,6 +20,46 @@ const (
 )
 
 var headings = []string{"VIOLATED CRITERION", "WHAT CHANGED", "FIX SCOPE", "PRESERVE", "REVERIFY AND RETURN", "TASK", "SCOPE", "MUST DO", "MUST NOT", "PROOF", "RETURN FORMAT", "DECISION BOUNDARY", "VERDICT"}
+
+// pyStr is str(v) as delivery has always spelled it: pyvalue.Str, except that a float that is
+// not finite keeps the JSON spelling (NaN, Infinity, -Infinity) delivery's text carried before
+// the shared pyvalue existed, and a list or object reads through pyReprValue, so no message
+// changes.
+func pyStr(v any) string {
+	switch t := v.(type) {
+	case float64:
+		if math.IsNaN(t) || math.IsInf(t, 0) {
+			return pyjson.Dumps(t, pyjson.Options{})
+		}
+	case []any, Obj:
+		return pyReprValue(t)
+	}
+	return pyvalue.Str(v)
+}
+
+// pyReprValue is repr(v) as delivery has always spelled it: pyvalue.Repr, except that a float
+// that is not finite, at any depth of a list or object, keeps the JSON spelling.
+func pyReprValue(v any) string {
+	switch t := v.(type) {
+	case float64:
+		if math.IsNaN(t) || math.IsInf(t, 0) {
+			return pyjson.Dumps(t, pyjson.Options{})
+		}
+	case []any:
+		parts := make([]string, len(t))
+		for i, x := range t {
+			parts[i] = pyReprValue(x)
+		}
+		return "[" + strings.Join(parts, ", ") + "]"
+	case Obj:
+		parts := make([]string, len(t))
+		for i, f := range t {
+			parts[i] = pyvalue.Repr(f.Key) + ": " + pyReprValue(f.Value)
+		}
+		return "{" + strings.Join(parts, ", ") + "}"
+	}
+	return pyvalue.Repr(v)
+}
 
 // splitlines is str.splitlines.
 func splitlines(text string) []string {
@@ -45,7 +87,7 @@ func splitlines(text string) []string {
 
 // inline is report.inline: a record's text kept on the one line it is spliced into.
 func inline(v any) string {
-	text := pyvalue.Str(v)
+	text := pyStr(v)
 	parts := splitlines(text)
 	if len(parts) <= 1 && (len(parts) == 0 || parts[0] == text) {
 		return text
@@ -67,7 +109,7 @@ func known(v any) string {
 }
 
 func unheaded(v any) string {
-	text := pyvalue.Str(v)
+	text := pyStr(v)
 	probe := strings.TrimSpace(text)
 	probe = strings.TrimLeft(probe, "-*#>")
 	probe = strings.Trim(strings.TrimSpace(probe), "*`_")
@@ -237,7 +279,7 @@ func overflowLine(items []any, eventID string, nameBlock bool) string {
 			if o, ok := h.(Obj); ok {
 				if v, _ := get(o, "restoration"); truthy(v) {
 					id, _ := get(o, "id")
-					detail = ", including the restoration block on " + pyvalue.Str(id)
+					detail = ", including the restoration block on " + pyStr(id)
 					break
 				}
 			}
@@ -254,18 +296,18 @@ func renderCompletion(row Row, record Obj, request string) string {
 		"requestId: " + request,
 		"eventId: " + event,
 		"relationshipId: " + row.S("relationship_id"),
-		"executionGeneration: " + pyvalue.Str(g("executionGeneration")),
-		"attempt: " + pyvalue.Str(g("attempt")),
-		"outcome: " + pyvalue.Str(g("outcome")),
-		"revisionHash: " + pyvalue.Str(g("revisionHash")),
+		"executionGeneration: " + pyStr(g("executionGeneration")),
+		"attempt: " + pyStr(g("attempt")),
+		"outcome: " + pyStr(g("outcome")),
+		"revisionHash: " + pyStr(g("revisionHash")),
 	}
 	if manifest, _ := g("manifest").([]any); len(manifest) > 0 {
 		lines = append(lines, fmt.Sprintf("deliverables: %d", len(manifest)))
 		for _, entry := range manifest[:min(len(manifest), manifestLines)] {
 			o, _ := entry.(Obj)
-			line := "  " + pyvalue.Str(func() any { v, _ := get(o, "path"); return v }()) + "  sha256=" + pyvalue.Str(func() any { v, _ := get(o, "sha256"); return v }())
+			line := "  " + pyStr(func() any { v, _ := get(o, "path"); return v }()) + "  sha256=" + pyStr(func() any { v, _ := get(o, "sha256"); return v }())
 			if size, ok := get(o, "bytes"); ok && size != nil {
-				line += "  bytes=" + pyvalue.Str(size)
+				line += "  bytes=" + pyStr(size)
 			}
 			lines = append(lines, line)
 		}
@@ -276,7 +318,7 @@ func renderCompletion(row Row, record Obj, request string) string {
 		lines = append(lines, "deliverables: none (execution-only outcome)")
 	}
 	if ref := g("manifestRef"); truthy(ref) {
-		lines = append(lines, "manifestRef: "+pyvalue.Str(ref))
+		lines = append(lines, "manifestRef: "+pyStr(ref))
 	}
 	if criteria, _ := g("criteria").([]any); len(criteria) > 0 {
 		lines = append(lines, "criteria claimed by the child:")
@@ -284,7 +326,7 @@ func renderCompletion(row Row, record Obj, request string) string {
 			o, _ := item.(Obj)
 			id, _ := get(o, "id")
 			verdict, _ := get(o, "verdict")
-			lines = append(lines, "  "+pyvalue.Str(id)+": "+pyvalue.Str(verdict))
+			lines = append(lines, "  "+pyStr(id)+": "+pyStr(verdict))
 		}
 		if overflow := overflowLine(criteria, event, false); overflow != "" {
 			lines = append(lines, overflow)

@@ -8,6 +8,9 @@
 package testsupport
 
 import (
+	"errors"
+	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"testing"
@@ -141,40 +144,124 @@ func NewTree(t *testing.T) *Tree {
 
 // IsolateRelayState points every relay-owned home and state root at one temporary tree and
 // keeps the live-state refusal (RefuseLiveStateEnv) in force for the process and its children.
-// TestMain callers must invoke the returned cleanup after m.Run.
+// The caller invokes the returned cleanup when it is done; a TestMain uses Main, which does.
 func IsolateRelayState() (func() error, error) {
-	originalHome, err := os.UserHomeDir()
+	root, err := isolate()
 	if err != nil {
 		return nil, err
+	}
+	return func() error { return RemoveTempTree(root) }, nil
+}
+
+// isolate makes the isolation root and points the homes, the XDG directories and the relay's
+// state, scope and marker roots below it. The Go toolchain keeps the module and build caches it
+// had before (GOPATH, GOMODCACHE, GOCACHE), so a go command a test runs is not cold.
+func isolate() (string, error) {
+	toolchain, err := toolchainDirs()
+	if err != nil {
+		return "", err
 	}
 	root, err := os.MkdirTemp("", "crw-relay-test-")
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	for key, path := range map[string]string{
+	env := map[string]string{
 		"HOME":                            filepath.Join(root, "home"),
 		"XDG_STATE_HOME":                  filepath.Join(root, "xdg-state"),
 		"XDG_DATA_HOME":                   filepath.Join(root, "xdg-data"),
 		"XDG_CONFIG_HOME":                 filepath.Join(root, "xdg-config"),
+		"XDG_CACHE_HOME":                  filepath.Join(root, "xdg-cache"),
 		"CODEX_HOME":                      filepath.Join(root, "codex-home"),
 		"CODEX_SESSION_RELAY_STATE":       filepath.Join(root, "relay-state"),
 		"CODEX_SESSION_RELAY_SCOPE_DIR":   filepath.Join(root, "scopes"),
 		"CODEX_SESSION_RELAY_MARKER_ROOT": filepath.Join(root, "markers"),
-		"GOPATH":                          filepath.Join(originalHome, "go"),
-		"GOMODCACHE":                      filepath.Join(originalHome, "go", "pkg", "mod"),
-		"GOCACHE":                         filepath.Join(originalHome, ".cache", "go-build"),
-	} {
+	}
+	maps.Copy(env, toolchain)
+	for key, path := range env {
 		if err := os.Setenv(key, path); err != nil {
-			_ = os.RemoveAll(root)
-			return nil, err
+			return "", errors.Join(err, RemoveTempTree(root))
 		}
 	}
 	if err := RefuseLiveState(); err != nil {
-		_ = os.RemoveAll(root)
-		return nil, err
+		return "", errors.Join(err, RemoveTempTree(root))
 	}
-	return func() error { return os.RemoveAll(root) }, nil
+	return root, nil
 }
+
+// toolchainDirs are the Go toolchain's module and build cache directories as this process has
+// them before isolation: each variable as set, else the default the go command derives from the
+// home and the user cache directory.
+func toolchainDirs() (map[string]string, error) {
+	dirs := map[string]string{"GOPATH": os.Getenv("GOPATH"), "GOMODCACHE": os.Getenv("GOMODCACHE"), "GOCACHE": os.Getenv("GOCACHE")}
+	if dirs["GOPATH"] == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, err
+		}
+		dirs["GOPATH"] = filepath.Join(home, "go")
+	}
+	if dirs["GOMODCACHE"] == "" {
+		dirs["GOMODCACHE"] = filepath.Join(filepath.SplitList(dirs["GOPATH"])[0], "pkg", "mod")
+	}
+	if dirs["GOCACHE"] == "" {
+		cache, err := os.UserCacheDir()
+		if err != nil {
+			return nil, err
+		}
+		dirs["GOCACHE"] = filepath.Join(cache, "go-build")
+	}
+	return dirs, nil
+}
+
+// Setup extends Main for a package whose tests need more than the isolated relay state. It runs
+// once the state is isolated and is given the isolation root, which Main removes after the tests;
+// the cleanup it returns (nil for none) runs after the tests, before the root is removed.
+type Setup func(root string) (cleanup func() error, err error)
+
+// Main is a test package's TestMain: it isolates the relay state (IsolateRelayState), runs each
+// setup in order, runs the tests, then runs the setups' cleanups (the last first), removes the
+// isolation root and every binary this process built (CRW, CRWDevPath, BuildCRW), and exits with
+// the tests' code, or 1 when isolation, a setup or a cleanup failed. A package whose test binary
+// also runs as a helper process (a crash child, a lock holder) starts the helper before calling
+// Main: the helper inherits its parent's isolation.
+func Main(m *testing.M, setups ...Setup) {
+	os.Exit(run(m, setups))
+}
+
+func run(m *testing.M, setups []Setup) (code int) {
+	root, err := isolate()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "testsupport: isolate the relay state:", err)
+		return 1
+	}
+	cleanups := []func() error{removeBuilds, func() error { return RemoveTempTree(root) }}
+	defer func() {
+		var errs []error
+		for i := len(cleanups) - 1; i >= 0; i-- {
+			errs = append(errs, cleanups[i]())
+		}
+		if err := errors.Join(errs...); err != nil {
+			fmt.Fprintln(os.Stderr, "testsupport: clean up after the tests:", err)
+			code = 1
+		}
+	}()
+	for _, setup := range setups {
+		cleanup, err := setup(root)
+		if cleanup != nil {
+			cleanups = append(cleanups, cleanup)
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "testsupport: set up the tests:", err)
+			return 1
+		}
+	}
+	return m.Run()
+}
+
+// TempDirInRoot is a Setup that points TMPDIR at the isolation root, so the temporary directories
+// the tests and the processes they start make (t.TempDir, os.MkdirTemp) lie in the tree Main
+// removes.
+func TempDirInRoot(root string) (func() error, error) { return nil, os.Setenv("TMPDIR", root) }
 
 // Artifact writes text to name under Root, creating parent directories, and returns its path.
 func (tr *Tree) Artifact(name, text string) string {

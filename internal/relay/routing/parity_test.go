@@ -19,51 +19,14 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	home, err := os.MkdirTemp("", "routing-home-")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	cache, err := os.UserCacheDir()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	if os.Getenv("GOPATH") == "" {
-		if err := os.Setenv("GOPATH", filepath.Join(os.Getenv("HOME"), "go")); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-	}
-	if os.Getenv("GOCACHE") == "" {
-		if err := os.Setenv("GOCACHE", filepath.Join(cache, "go-build")); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-	}
-	if err := os.MkdirAll(filepath.Join(home, "tmp"), 0700); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	env := map[string]string{"HOME": home, "XDG_STATE_HOME": filepath.Join(home, "state"), "XDG_CONFIG_HOME": filepath.Join(home, "config"), "XDG_DATA_HOME": filepath.Join(home, "data"), "CODEX_HOME": filepath.Join(home, "codex"), "CODEX_SESSION_RELAY_STATE": filepath.Join(home, "relay"), "CODEX_SESSION_RELAY_SCOPE_DIR": filepath.Join(home, "scope"), "TMPDIR": filepath.Join(home, "tmp")}
-	for k, v := range env {
-		if err := os.Setenv(k, v); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-	}
-	code := m.Run()
-	if testBinary != "" {
-		if err := os.RemoveAll(filepath.Dir(testBinary)); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			code = 1
-		}
-	}
-	if err := errors.Join(os.RemoveAll(home), testsupport.RemoveCRW()); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		code = 1
-	}
-	os.Exit(code)
+	testsupport.Main(m, testsupport.TempDirInRoot, func(string) (func() error, error) {
+		return func() error {
+			if testBinary == "" {
+				return nil
+			}
+			return os.RemoveAll(filepath.Dir(testBinary))
+		}, nil
+	})
 }
 func restoreNumbers(value any) any {
 	switch v := value.(type) {

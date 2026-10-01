@@ -134,44 +134,7 @@ func sosRows(t *testing.T, path string) map[string][]map[string]any {
 	if err := db.Ping(); err != nil {
 		return map[string][]map[string]any{}
 	}
-	tables := map[string][]map[string]any{}
-	names, err := db.Query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT IN ('schema_meta','sqlite_sequence') ORDER BY name")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var list []string
-	for names.Next() {
-		var n string
-		_ = names.Scan(&n)
-		list = append(list, n)
-	}
-	names.Close()
-	for _, n := range list {
-		rows, err := db.Query("SELECT * FROM " + n + " ORDER BY rowid")
-		if err != nil {
-			t.Fatal(err)
-		}
-		cols, _ := rows.Columns()
-		for rows.Next() {
-			vals := make([]any, len(cols))
-			ptr := make([]any, len(cols))
-			for i := range vals {
-				ptr[i] = &vals[i]
-			}
-			if err := rows.Scan(ptr...); err != nil {
-				t.Fatal(err)
-			}
-			row := map[string]any{}
-			for i, v := range vals {
-				if b, ok := v.([]byte); ok {
-					v = string(b)
-				}
-				row[cols[i]] = v
-			}
-			tables[n] = append(tables[n], row)
-		}
-		rows.Close()
-	}
+	tables := testsupport.NonEmpty(testsupport.TableRows(t, db, "name NOT IN ('schema_meta','sqlite_sequence')"))
 	raw, _ := json.Marshal(tables)
 	var normalized map[string][]map[string]any
 	_ = json.Unmarshal(raw, &normalized)

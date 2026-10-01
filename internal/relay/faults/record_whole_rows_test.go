@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // recordFault records one observation, or a list of steps, through Go's ledger in a disposable
@@ -119,31 +120,7 @@ func recordFaults(t *testing.T, observations []map[string]any) {
 	if len(replies) == 1 {
 		reply = replies[0]
 	}
-	goRows, err := goStore.All(context.Background(), "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'fault_%' ORDER BY name")
-	if err != nil {
-		t.Fatal(err)
-	}
-	tables := map[string]any{}
-	for _, table := range goRows {
-		name := text(table, "name")
-		rows, e := goStore.All(context.Background(), "SELECT * FROM "+name+" ORDER BY rowid")
-		if e != nil {
-			t.Fatal(e)
-		}
-		if len(rows) == 0 {
-			continue
-		}
-		entries := make([]any, len(rows))
-		for i, r := range rows {
-			entry := map[string]any{}
-			for _, col := range r {
-				entry[col.Name] = col.Value
-			}
-			entries[i] = entry
-		}
-		tables[name] = entries
-	}
-	tableRaw, err := json.Marshal(tables)
+	tableRaw, err := json.Marshal(testsupport.NonEmpty(testsupport.TableRows(t, goStore.DB, "name LIKE 'fault_%'")))
 	if err != nil {
 		t.Fatal(err)
 	}

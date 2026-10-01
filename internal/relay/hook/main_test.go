@@ -2,8 +2,6 @@ package hook
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -15,23 +13,11 @@ import (
 var testRoot string
 
 func TestMain(m *testing.M) {
-	root, err := filepath.Abs("../../..")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	testRoot = root
-	cleanup, err := testsupport.IsolateRelayState()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	code := m.Run()
-	if err := errors.Join(cleanup(), testsupport.RemoveCRW()); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		code = 1
-	}
-	os.Exit(code)
+	testsupport.Main(m, func(string) (func() error, error) {
+		root, err := filepath.Abs("../../..")
+		testRoot = root
+		return nil, err
+	})
 }
 func binary(t *testing.T) string {
 	t.Helper()

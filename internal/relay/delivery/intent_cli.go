@@ -268,7 +268,7 @@ func cmdIntentClaim(c *cliRun) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		record, err = recordClaim(c.ctx, storeOf(facts), store.ReportingSessionsRow{AssignmentID: assignment, SessionID: pyvalue.Str(session), DispatchRequestID: dispatch,
+		record, err = recordClaim(c.ctx, storeOf(facts), store.ReportingSessionsRow{AssignmentID: assignment, SessionID: pyStr(session), DispatchRequestID: dispatch,
 			MarkerRoot: markerRoot, Workspace: workspaceResolved, IssueKey: nullString(fieldOf(intentFact, "issueKey")), Capability: declarationsCapability, RecordedAt: c.clock.ISO()})
 		if err != nil {
 			return nil, err
@@ -318,8 +318,8 @@ func cmdIntentDisposition(c *cliRun) (any, error) {
 			if !truthy(declaredAt) {
 				declaredAt = ""
 			}
-			record = recordDisposition(ctx, held, heldPath, store.TurnDeclarationsRow{AssignmentID: assignment, SessionID: pyvalue.Str(fieldOf(published, "sessionId")), TurnID: pyvalue.Str(fieldOf(published, "turnId")),
-				Outcome: pyvalue.Str(fieldOf(standing, "outcome")), DeclaredAt: pyvalue.Str(declaredAt), RecordedAt: c.clock.ISO()})
+			record = recordDisposition(ctx, held, heldPath, store.TurnDeclarationsRow{AssignmentID: assignment, SessionID: pyStr(fieldOf(published, "sessionId")), TurnID: pyStr(fieldOf(published, "turnId")),
+				Outcome: pyStr(fieldOf(standing, "outcome")), DeclaredAt: pyStr(declaredAt), RecordedAt: c.clock.ISO()})
 		}
 		return nil
 	}
@@ -382,7 +382,7 @@ func malformedDisposition(record any) string {
 func withStoreRecord(published, record Obj) (any, error) {
 	payload := append(slices.Clone(published), F{Key: "storeRecord", Value: record})
 	if str(record, "state") == declFailed {
-		return nil, &dispatch.PayloadExit{Payload: append(payload, F{Key: "detail", Value: "the marker fact was published and the relay store record was not: " + pyvalue.Str(fieldOf(record, "detail"))}), Code: contract.ExitRefused}
+		return nil, &dispatch.PayloadExit{Payload: append(payload, F{Key: "detail", Value: "the marker fact was published and the relay store record was not: " + pyStr(fieldOf(record, "detail"))}), Code: contract.ExitRefused}
 	}
 	return payload, nil
 }
@@ -506,7 +506,7 @@ func declUnchangedAnswer(path string) Obj {
 
 func declConflictAnswer(path string, existing Obj) Obj {
 	return Obj{{Key: "recorded", Value: false}, {Key: "state", Value: Conflict}, {Key: "reason", Value: "store_disagrees"}, {Key: "store", Value: path},
-		{Key: "detail", Value: "this store already holds a different record for it, and the first one stands, as it does in the marker: " + pyvalue.Repr(existing)}}
+		{Key: "detail", Value: "this store already holds a different record for it, and the first one stands, as it does in the marker: " + pyReprValue(existing)}}
 }
 
 func nullString(v any) sql.NullString {

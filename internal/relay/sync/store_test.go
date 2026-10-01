@@ -6,57 +6,28 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/reception"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
-	"golang.org/x/sys/unix"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
-	stdsync "sync"
 	"testing"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/reception"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
+	"golang.org/x/sys/unix"
 )
 
-var binaryOnce stdsync.Once
-var binaryPath string
-var binaryError error
-
+// builtBinary is crw built with the contracttest tag, whose outbox runs on a fake clock and a
+// fixed token (cli_clock_contract.go).
 func builtBinary(t *testing.T) string {
 	t.Helper()
-	binaryOnce.Do(func() {
-		dir, e := os.MkdirTemp("", "t23b-binary-")
-		if e != nil {
-			binaryError = e
-			return
-		}
-		binaryPath = filepath.Join(dir, "crw")
-		root, e := filepath.Abs("../../..")
-		if e != nil {
-			binaryError = e
-			return
-		}
-		goBinary, e := exec.LookPath("go")
-		if e != nil {
-			binaryError = e
-			return
-		}
-		cmd := exec.Command(goBinary, "build", "-tags", "contracttest", "-o", binaryPath, "./cmd/crw")
-		cmd.Dir = root
-		output, e := cmd.CombinedOutput()
-		if e != nil {
-			binaryError = errors.New(string(output))
-		}
-	})
-	if binaryError != nil {
-		t.Fatal(binaryError)
-	}
-	return binaryPath
+	return testsupport.BuildCRW(t, "-tags", "contracttest")
 }
 
 // storeCapture is one call of a Python store-reception scenario: a packet-check command line or a

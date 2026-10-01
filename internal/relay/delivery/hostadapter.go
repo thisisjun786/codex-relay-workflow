@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // Host reading rules shared by every adapter (hostadapter.py).
@@ -105,7 +103,7 @@ func FindInListingPaged(read func() (ListingPage, error), bound int, turnID stri
 	}
 	subject := "the send's turn"
 	if turnID != "" {
-		subject = "turn " + pyvalue.Repr(turnID)
+		subject = "turn " + pyReprValue(turnID)
 	}
 	return TurnPresence{}, &ListingBounded{fmt.Sprintf("%s was not among %d turns and the bounded listing never reached the send; this is not evidence of absence", subject, scanned)}
 }

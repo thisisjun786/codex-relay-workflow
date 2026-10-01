@@ -77,30 +77,20 @@ var moduleRoot string
 var toolchainEnv []string
 
 func TestMain(m *testing.M) {
-	cwd, err := os.Getwd()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	moduleRoot = filepath.Join(cwd, "..", "..", "..")
-	if _, err := os.Stat(filepath.Join(moduleRoot, "go.mod")); err != nil {
-		fmt.Fprintln(os.Stderr, "the module root is not three directories above the package:", err)
-		os.Exit(1)
-	}
 	toolchainEnv = os.Environ()
 	// This process's own homes and relay state roots point at a temporary tree too, so nothing
 	// the test runs in-process can reach the machine's real ones.
-	cleanup, err := testsupport.IsolateRelayState()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	code := m.Run()
-	if err := cleanup(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		code = 1
-	}
-	os.Exit(code)
+	testsupport.Main(m, func(string) (func() error, error) {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return nil, err
+		}
+		moduleRoot = filepath.Join(cwd, "..", "..", "..")
+		if _, err := os.Stat(filepath.Join(moduleRoot, "go.mod")); err != nil {
+			return nil, fmt.Errorf("the module root is not three directories above the package: %w", err)
+		}
+		return nil, nil
+	})
 }
 
 const (

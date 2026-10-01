@@ -90,35 +90,7 @@ func snapshotQuery(t *testing.T, dbPath, query string, args ...any) []map[string
 		t.Fatal(err)
 	}
 	defer db.Close()
-	rows, err := db.Query(query, args...)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	columns, err := rows.Columns()
-	if err != nil {
-		t.Fatal(err)
-	}
-	var out []map[string]any
-	for rows.Next() {
-		values := make([]any, len(columns))
-		pointers := make([]any, len(columns))
-		for i := range values {
-			pointers[i] = &values[i]
-		}
-		if err = rows.Scan(pointers...); err != nil {
-			t.Fatal(err)
-		}
-		row := map[string]any{}
-		for i, column := range columns {
-			if b, ok := values[i].([]byte); ok {
-				values[i] = string(b)
-			}
-			row[column] = values[i]
-		}
-		out = append(out, row)
-	}
-	return out
+	return testsupport.Rows(t, db, query, args...)
 }
 
 // cli.py main runs check_start for every command that is neither read-only nor answers without

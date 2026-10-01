@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // storeRows is every row of a store the retired Python implementation wrote but its schema_meta
@@ -80,7 +82,7 @@ func restoreStore(t *testing.T, path string, dump storeRows) *Store {
 	}
 	if err = s.Transaction(ctx, func(ctx context.Context, conn *sql.Conn) error {
 		for _, table := range tables {
-			if _, err := conn.ExecContext(ctx, "DELETE FROM "+quoteIdent(table)); err != nil {
+			if _, err := conn.ExecContext(ctx, "DELETE FROM "+testsupport.QuoteIdent(table)); err != nil {
 				return err
 			}
 		}
@@ -88,9 +90,9 @@ func restoreStore(t *testing.T, path string, dump storeRows) *Store {
 			names := make([]string, len(table.Columns))
 			marks := make([]string, len(table.Columns))
 			for i, column := range table.Columns {
-				names[i], marks[i] = quoteIdent(column), "?"
+				names[i], marks[i] = testsupport.QuoteIdent(column), "?"
 			}
-			insert := "INSERT INTO " + quoteIdent(table.Table) + " (" + strings.Join(names, ", ") + ") VALUES (" + strings.Join(marks, ", ") + ")"
+			insert := "INSERT INTO " + testsupport.QuoteIdent(table.Table) + " (" + strings.Join(names, ", ") + ") VALUES (" + strings.Join(marks, ", ") + ")"
 			for _, row := range table.Rows {
 				args := make([]any, len(row))
 				for i, c := range row {
@@ -128,8 +130,6 @@ func queryStrings(db *sql.DB, query string) ([]string, error) {
 	}
 	return out, errors.Join(rows.Err(), rows.Close())
 }
-
-func quoteIdent(name string) string { return `"` + strings.ReplaceAll(name, `"`, `""`) + `"` }
 
 // pythonNoise are the values a rerun changes: a digest (of a temporary path, most often), the
 // random name of a directory Python's tempfile made, a time read from the clock, and a file's

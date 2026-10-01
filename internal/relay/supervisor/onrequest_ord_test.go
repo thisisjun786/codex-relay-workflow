@@ -99,7 +99,7 @@ func replayORDChannel(t *testing.T, mode string) {
 		t.Fatal(err)
 	}
 	_ = row
-	got.Tables = supervisorTablesORD(t, s)
+	got.Tables = supervisorTables(t, s)
 	rows := got.Tables["supervisor_messages"]
 	got.Row = rows[len(rows)-1]
 	normalizeORDRows(got.Tables)
@@ -121,13 +121,7 @@ func (h *ordSendHost) ReadTurn(_ string, id string) (*delivery.TurnInfo, error) 
 	return &delivery.TurnInfo{TurnID: id, StartedAt: &h.startedAt}, nil
 }
 func (h *ordSendHost) SendMessage(id, _ string, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
-	h.sends = append(h.sends, message)
-	h.settings = settings
-	if h.items == nil {
-		h.items = map[string]string{}
-	}
-	h.items[h.turnID] = message
-	return delivery.Obj{{Key: "status", Value: "accepted"}, {Key: "requestId", Value: id}, {Key: "turnId", Value: h.turnID}}, nil
+	return h.accept(id, h.turnID, message, settings), nil
 }
 
 func normalizeORDRows(tables map[string][]map[string]any) {
@@ -158,51 +152,6 @@ func normalizeORDRow(row map[string]any) {
 		row["goal_status"] = nil
 	}
 	// packet, record and detail are persisted byte contracts, not decoded values.
-}
-
-func supervisorTablesORD(t *testing.T, s *store.Store) map[string][]map[string]any {
-	t.Helper()
-	got := make(map[string][]map[string]any)
-	names, err := s.DB.Query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT IN ('schema_meta','sqlite_sequence') ORDER BY name")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var tables []string
-	for names.Next() {
-		var name string
-		if err := names.Scan(&name); err != nil {
-			t.Fatal(err)
-		}
-		tables = append(tables, name)
-	}
-	_ = names.Close()
-	for _, name := range tables {
-		rows, err := s.DB.Query("SELECT * FROM " + name + " ORDER BY rowid")
-		if err != nil {
-			t.Fatal(err)
-		}
-		columns, _ := rows.Columns()
-		for rows.Next() {
-			values := make([]any, len(columns))
-			pointers := make([]any, len(columns))
-			for i := range values {
-				pointers[i] = &values[i]
-			}
-			if err := rows.Scan(pointers...); err != nil {
-				t.Fatal(err)
-			}
-			row := make(map[string]any, len(columns))
-			for i, value := range values {
-				if b, ok := value.([]byte); ok {
-					value = string(b)
-				}
-				row[columns[i]] = value
-			}
-			got[name] = append(got[name], row)
-		}
-		_ = rows.Close()
-	}
-	return got
 }
 
 func Test24_ORD_8_HandoffOnRequestSupervisorPushWholeRowsAndReply(t *testing.T) {

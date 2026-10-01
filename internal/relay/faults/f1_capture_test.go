@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 func TestF1WholeOutput(t *testing.T) {
@@ -117,30 +119,7 @@ func TestF1WholeOutput(t *testing.T) {
 			if e != nil {
 				t.Fatal(e)
 			}
-			tables := map[string]any{}
-			names, e := s.All(ctx, "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'fault_%' ORDER BY name")
-			if e != nil {
-				t.Fatal(e)
-			}
-			for _, name := range names {
-				key := text(name, "name")
-				rows, e := s.All(ctx, "SELECT * FROM "+key+" ORDER BY rowid")
-				if e != nil {
-					t.Fatal(e)
-				}
-				if len(rows) == 0 {
-					continue
-				}
-				entries := []any{}
-				for _, r := range rows {
-					entry := map[string]any{}
-					for _, c := range r {
-						entry[c.Name] = c.Value
-					}
-					entries = append(entries, entry)
-				}
-				tables[key] = entries
-			}
+			tables := testsupport.NonEmpty(testsupport.TableRows(t, s.DB, "name LIKE 'fault_%'"))
 			normalized, e := json.Marshal(map[string]any{"reply": answer, "tables": tables})
 			if e != nil {
 				t.Fatal(e)

@@ -2,7 +2,6 @@ package pointer_test
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,17 +16,7 @@ import (
 
 func TestMain(m *testing.M) {
 	golden.Helper()
-	cleanup, err := testsupport.IsolateRelayState()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	code := m.Run()
-	if err := cleanup(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		code = 1
-	}
-	os.Exit(code)
+	testsupport.Main(m)
 }
 
 func dirs(t *testing.T, names ...string) string {
