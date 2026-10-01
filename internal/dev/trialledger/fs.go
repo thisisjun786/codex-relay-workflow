@@ -8,13 +8,12 @@ import (
 	"os"
 	"strings"
 	"syscall"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/pyload"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
-// The four states a reading of a record ends in (scripts/crw_runtime/reading.py): absent is a
+// The four states a reading of a record ends in: absent is a
 // clean answer, unreadable means something is there whose shape cannot be read, an access error
 // means the question could not be asked, and present means it was read.
 const (
@@ -40,23 +39,18 @@ func kindOf(mode os.FileMode) string {
 	return "not a regular file"
 }
 
-// failure is a raised error classified: an OSError established nothing (an access error), the
-// rest read something and could not make sense of it.
+// failure is an error classified: one from the system established nothing (an access error), a
+// decodeError read something and could not make sense of it.
 func failure(err error, detail string) (string, string) {
-	var class, said string
 	var decode *decodeError
-	switch {
-	case errors.As(err, &decode):
-		class, said = decode.class, decode.text
-	default:
-		said = store.PythonOSError(err)
-		return accessError, detail + " (" + said + ")"
+	if errors.As(err, &decode) {
+		return unreadable, detail + " (" + decode.text + ")"
 	}
-	return unreadable, detail + " (" + class + ": " + said + ")"
+	return accessError, detail + " (" + err.Error() + ")"
 }
 
-// decodeError is a ValueError a reading raised: a UnicodeDecodeError or a JSONDecodeError.
-type decodeError struct{ class, text string }
+// decodeError is bytes a reading could not decode: not UTF-8 text, or not JSON.
+type decodeError struct{ text string }
 
 func (e *decodeError) Error() string { return e.text }
 
@@ -87,8 +81,8 @@ func observe(path string) (string, string) {
 	return "", ""
 }
 
-// readRegularText is the file's text as Python reads it in text mode: one descriptor judged a
-// regular file, strict UTF-8, universal newlines.
+// readRegularText is the file's text: read through one descriptor judged a regular file, strict
+// UTF-8, "\r\n" and "\r" read as "\n".
 func readRegularText(path, what string) (string, string, string) {
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
@@ -98,7 +92,7 @@ func readRegularText(path, what string) (string, string, string) {
 	defer f.Close()
 	info, err := f.Stat()
 	if err == nil && !info.Mode().IsRegular() {
-		return accessError, "could not read " + what + " (OSError: [Errno 22] this path became a " + kindOf(info.Mode()) + " after it was looked at, and it is not read: " + store.PathRepr(path) + ")", ""
+		return accessError, "could not read " + what + " (this path became a " + kindOf(info.Mode()) + " after it was looked at, and it is not read: " + path + ")", ""
 	}
 	var raw []byte
 	if err == nil {
@@ -108,12 +102,11 @@ func readRegularText(path, what string) (string, string, string) {
 		state, detail := failure(err, "could not read "+what)
 		return state, detail, ""
 	}
-	text, err := pyjson.DecodeUTF8(raw)
-	if err != nil {
-		state, detail := failure(&decodeError{"UnicodeDecodeError", err.Error()}, "could not read "+what)
+	if !utf8.Valid(raw) {
+		state, detail := failure(&decodeError{"not UTF-8 text"}, "could not read "+what)
 		return state, detail, ""
 	}
-	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text := strings.ReplaceAll(string(raw), "\r\n", "\n")
 	return present, "", strings.ReplaceAll(text, "\r", "\n")
 }
 
@@ -133,23 +126,11 @@ func readJSON(path, what string) (string, string, any) {
 		return state, detail, nil
 	}
 	value, err := pyload.Loads([]byte(text))
-	if python, deep := pyload.Recursion(err); deep {
-		panic(python) // region() classifies ValueError and OSError; a RecursionError raises past it
-	}
 	if err != nil {
-		state, detail := failure(&decodeError{decodeClass(err.Error()), err.Error()}, "could not read "+what)
+		state, detail := failure(&decodeError{err.Error()}, "could not read "+what)
 		return state, detail, nil
 	}
 	return present, "", value
-}
-
-// decodeClass is the class of what json.loads raised: a JSONDecodeError, or the ValueError
-// int() raises for an integer longer than sys.get_int_max_str_digits() allows.
-func decodeClass(message string) string {
-	if strings.HasPrefix(message, "Exceeds the limit (4300 digits) for integer string conversion") {
-		return "ValueError"
-	}
-	return "JSONDecodeError"
 }
 
 // pathlibForm is str(Path(p)): repeated separators and "." components collapse, ".." stays, a

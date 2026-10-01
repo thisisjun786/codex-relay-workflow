@@ -103,8 +103,7 @@ func TestImportLegacy_whenConflictRollsBack(t *testing.T) {
 	// When: the legacy ledger is imported.
 	err = left.ImportLegacy(ctx, filepath.Join(dir, "right.sqlite3"))
 	// Then: the conflicting row rejects the entire import, including the earlier extra row.
-	// ledger.py:149, recorded from Python on the same two ledgers.
-	want := "Conflicting retained request 'id' in legacy socket ledger " + filepath.Join(dir, "right.sqlite3") + "; no requests will be dispatched. Preserve both ledgers."
+	want := `Conflicting retained request "id" in legacy socket ledger ` + filepath.Join(dir, "right.sqlite3") + "; no requests will be dispatched. Preserve both ledgers."
 	if err == nil || err.Error() != want {
 		t.Fatalf("refusal\n got: %v\nwant: %s", err, want)
 	}

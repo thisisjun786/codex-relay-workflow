@@ -257,9 +257,9 @@ func snapshot(t *testing.T, root string) string {
 	return strings.Join(lines, "\n")
 }
 
-// The connected field quotes the relay's socketConnect as runtime_install.py does, with repr():
-// the quote repr picks for a str holding one, a backslash doubled and U+00A0 escaped.
-func TestDoctorQuotesTheSocketConnectAsPythonsRepr(t *testing.T) {
+// The connected field quotes the relay's socketConnect as JSON: a quote kept, a backslash
+// doubled and U+00A0 escaped.
+func TestDoctorQuotesTheSocketConnectAsJSON(t *testing.T) {
 	h := newHost(t)
 	env := h.scriptedRuntime(t)
 	link(t, env, h.current())
@@ -280,7 +280,7 @@ func TestDoctorQuotesTheSocketConnectAsPythonsRepr(t *testing.T) {
 	if got := at(report, "scope", "socketConnect"); got != connect {
 		t.Fatalf("scope.socketConnect = %q", got)
 	}
-	want := `doctor actorReachability.socketConnect = "OSError: it's \\ x\xa0". A socket file existing on disk does not establish this.`
+	want := `doctor actorReachability.socketConnect = "OSError: it's \\ x\u00a0". A socket file existing on disk does not establish this.`
 	if got := at(report, "checks", "results", "connected", "evidence"); got != want {
 		t.Errorf("connected.evidence = %s\nwant                %s", got, want)
 	}

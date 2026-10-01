@@ -66,7 +66,7 @@ func hashed(s string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func TestHookProbeRoundThreeSelectionLivePython(t *testing.T) {
+func TestHookProbeRoundThreeSelection(t *testing.T) {
 	goldenRoot(t)
 	binary := recordedCRW(t)
 	cases := []struct {
@@ -115,7 +115,7 @@ func TestHookProbeRoundThreeSelectionLivePython(t *testing.T) {
 	}
 }
 
-func TestSkillUnreadableInputsLivePython(t *testing.T) {
+func TestSkillUnreadableInputs(t *testing.T) {
 	goldenRoot(t)
 	binary := recordedCRW(t)
 	dir := t.TempDir()
@@ -161,7 +161,7 @@ func TestSkillUnreadableInputsLivePython(t *testing.T) {
 	}
 }
 
-func TestSkillReplayUnreadableFixturesLivePython(t *testing.T) {
+func TestSkillReplayUnreadableFixtures(t *testing.T) {
 	goldenRoot(t)
 	binary := recordedCRW(t)
 	copyDir := func(t *testing.T, from string) string {
@@ -224,7 +224,7 @@ func TestSkillReplayUnreadableFixturesLivePython(t *testing.T) {
 }
 
 // 4124181621: the printed self-check is computed by a real oracle self-check.
-func TestHookOracleSelfCheckLivePython(t *testing.T) {
+func TestHookOracleSelfCheck(t *testing.T) {
 	goldenRoot(t)
 	without := func(key string) []string {
 		return slices.DeleteFunc(slices.Clone(hookComparedKeys), func(k string) bool { return k == key })
@@ -265,7 +265,7 @@ func TestHookOracleSelfCheckLivePython(t *testing.T) {
 
 // 4124181823: every return site the Go replay records is a site Python's tracer reached, per
 // fixture observation.
-func TestHookReplayReachMatchesPythonTracer(t *testing.T) {
+func TestHookReplayReach(t *testing.T) {
 	fixtures := t.TempDir()
 	if output, err := exec.Command("cp", "-r", diskSkillPath(defaultFixture("decisions"))+"/.", fixtures).CombinedOutput(); err != nil {
 		t.Fatalf("%v %s", err, output)

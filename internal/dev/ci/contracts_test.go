@@ -22,7 +22,7 @@ var opsFiles = []string{"operations.md", "operations/check-result.example.json",
 	"operations/scenarios.md"}
 
 // opsCopy copies this checkout's operations contract and the fixtures its checker reads into a
-// scratch root. An edit of them changes what the parity rows answer: rewrite the goldens with
+// scratch root. An edit of them changes what the golden rows answer: rewrite the goldens with
 // CRW_GOLDEN=update and review their diff.
 func opsCopy(t *testing.T) string {
 	t.Helper()
@@ -78,20 +78,19 @@ func failLines(stderr string) string {
 	return strings.Join(fails, "\n")
 }
 
-// opsParity requires `crw-dev ci operations` to answer the golden kept under label for root
-// (first taken as what scripts/check_operations_contract.py answered for the same root).
-func opsParity(t *testing.T, label, root string) result {
+// opsGolden requires `crw-dev ci operations` to answer the golden kept under label for root.
+func opsGolden(t *testing.T, label, root string) result {
 	t.Helper()
 	got := goCheck(t, root, nil, "operations", "--root", root)
 	checkResult(t, label, root, got)
 	return got
 }
 
-// The operations checker has no property of its own in the todo-47 list: it is ported as part
-// of `crw-dev ci contracts` (GATE-8 places that check in validate). These tests pin its
-// parity on the repository and on failing fixtures.
-func Test47_OperationsContractParity(t *testing.T) {
-	if got := opsParity(t, "repository", opsCopy(t)); got.code != 0 {
+// The operations checker has no property of its own in the todo-47 list: it runs as part of
+// `crw-dev ci contracts` (GATE-8 places that check in validate). These tests pin its answer on
+// the repository and on failing fixtures.
+func Test47_OperationsContractGolden(t *testing.T) {
+	if got := opsGolden(t, "repository", opsCopy(t)); got.code != 0 {
 		t.Fatalf("clean copy: %+v", got)
 	}
 	for _, row := range []struct {
@@ -146,13 +145,13 @@ func Test47_OperationsContractParity(t *testing.T) {
 	} {
 		root := opsCopy(t)
 		editOps(t, root, row.rel, row.edit)
-		got := opsParity(t, row.label, root)
+		got := opsGolden(t, row.label, root)
 		if got.code != 1 || (row.fragment != "" && !strings.Contains(got.stderr, row.fragment)) {
 			t.Errorf("%s: %+v", row.label, got)
 		}
 	}
 	root := t.TempDir()
-	got := opsParity(t, "missing", root)
+	got := opsGolden(t, "missing", root)
 	if got.code != 1 || !strings.HasPrefix(got.stderr, "MISSING ") {
 		t.Errorf("missing: %+v", got)
 	}
@@ -190,10 +189,10 @@ func goShapedRecord(point string) string {
 }
 
 // A Go-shaped record is accepted.
-func TestOperationsGoShapedCompatibilityRecordParity(t *testing.T) {
+func TestOperationsGoShapedCompatibilityRecord(t *testing.T) {
 	root := opsCopy(t)
 	editOps(t, root, "operations/compatibility-record.example.json", func(string) string { return goShapedRecord("") })
-	if got := opsParity(t, "go-shaped record", root); got.code != 0 {
+	if got := opsGolden(t, "go-shaped record", root); got.code != 0 {
 		t.Fatalf("a Go-shaped compatibility record must pass: %+v", got)
 	}
 }
@@ -201,7 +200,7 @@ func TestOperationsGoShapedCompatibilityRecordParity(t *testing.T) {
 // OPS-1.3: a point takes the kind of the install it covers. Its own shape cannot choose the
 // lighter schema, and a Go point has to name one of the component's Go installs and the digest
 // of that binary; the rest is refused.
-func TestOperationsMeasuredPointCoversAnInstallOfItsKindParity(t *testing.T) {
+func TestOperationsMeasuredPointCoversAnInstallOfItsKind(t *testing.T) {
 	bin := "/example/home/.local/share/crw-runtime/bin-0.5.0-aaaaaaaaaaaa/bin"
 	rest := `"codexCli": "codex-cli 0.154.0", "appServer": "{}", "host": "example-host", "date": "2026-01-01", "measuredBy": "<issue-id>", "method": "doctor"`
 	for _, row := range []struct {
@@ -220,7 +219,7 @@ func TestOperationsMeasuredPointCoversAnInstallOfItsKindParity(t *testing.T) {
 	} {
 		root := opsCopy(t)
 		editOps(t, root, "operations/compatibility-record.example.json", func(string) string { return goShapedRecord(row.point) })
-		got := opsParity(t, row.label, root)
+		got := opsGolden(t, row.label, root)
 		if got.code != 1 || !strings.Contains(got.stderr, row.fragment) {
 			t.Errorf("%s: %+v", row.label, got)
 		}
@@ -231,22 +230,8 @@ func TestOperationsMeasuredPointCoversAnInstallOfItsKindParity(t *testing.T) {
 		location := "/example/checkouts/codex-session-relay/.venv/lib/python3.13/site-packages/codex_session_relay"
 		return strings.Replace(s, `"measuredPoints": []`, `"measuredPoints": [{"install": "`+location+`", "installDigest": "`+strings.Repeat("9", 64)+`", `+rest+`}]`, 1)
 	})
-	if got := opsParity(t, "go point on a python-era install", root); got.code != 1 || !strings.Contains(got.stderr, "has a measured point that names no Go install of this component") {
+	if got := opsGolden(t, "go point on a python-era install", root); got.code != 1 || !strings.Contains(got.stderr, "has a measured point that names no Go install of this component") {
 		t.Errorf("go point on a python-era install: %+v", got)
-	}
-}
-
-func TestOperationsUnicodeClauseBoundaryParity(t *testing.T) {
-	root := opsCopy(t)
-	editOps(t, root, "operations.md", func(s string) string {
-		return s + "\n### OPS-٢.٣ Unicode clause\n## OPS-٤ Unicode section\n### OPS-٩.١suffix Not a clause\n"
-	})
-	editOps(t, root, "operations/scenarios.md", func(s string) string {
-		return s + "\nCitation: OPS-٢.٣ and OPS-٤\n"
-	})
-	got := opsParity(t, "unicode headings and citations", root)
-	if got.code != 0 {
-		t.Fatalf("Unicode clauses must be defined and cited: %+v", got)
 	}
 }
 
@@ -304,8 +289,7 @@ func copyTree(t *testing.T, root, rel string) {
 // 44), refused a contract whose checker script was missing (and the reverse); Go has no script to
 // pair.
 func Test47_ContractsPairsAndAbsentComponents(t *testing.T) {
-	// No component present: every check reports it claims no coverage, as the golden holds (first
-	// taken as the Python twin's answer).
+	// No component present: every check reports it claims no coverage, as the golden holds.
 	r := contractsRepo(t)
 	got := goCheck(t, r.root, nil, "contracts")
 	checkResult(t, "all absent", r.root, got)
@@ -430,8 +414,7 @@ func Test47_ContractsOperationsPairAndResult(t *testing.T) {
 		t.Errorf("operations script without contract: %+v", got)
 	}
 
-	// A failing operations replay fails contracts. The Python twin ended in a CalledProcessError
-	// traceback, so the golden (first taken as its answer) holds the exit, stdout and the
+	// A failing operations replay fails contracts: the golden holds the exit, stdout and the
 	// checker's own FAIL lines.
 	root := opsCopy(t)
 	editOps(t, root, "operations/scenarios.md", func(s string) string { return strings.Replace(s, "OPS-2.3", "OPS-99.1", 1) })
@@ -456,7 +439,7 @@ func Test47_OperationsActionMinimum(t *testing.T) {
 			end := action + strings.Index(s[action:], "Preserved:")
 			return s[:action] + "Action: " + strings.Repeat("a", n) + "\n\n" + s[end:]
 		})
-		got := opsParity(t, fmt.Sprintf("action %d", n), root)
+		got := opsGolden(t, fmt.Sprintf("action %d", n), root)
 		failed := strings.Contains(got.stderr, "scenario S1 states its Action part in fewer than 80 characters")
 		if failed != (n < 80) || (got.code == 0) != (n >= 80) {
 			t.Errorf("action of %d characters: %+v", n, got)

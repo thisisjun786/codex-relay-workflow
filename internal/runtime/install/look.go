@@ -7,7 +7,6 @@ import (
 	"os"
 	"syscall"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 )
 
@@ -34,16 +33,16 @@ func lookAt(path string) look {
 		return look{}
 	}
 	if err != nil {
-		return look{present: true, failed: store.PythonOSError(err)}
+		return look{present: true, failed: err.Error()}
 	}
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil {
-		return look{present: true, failed: store.PythonOSError(err)}
+		return look{present: true, failed: err.Error()}
 	}
 	raw, err := io.ReadAll(file)
 	if err != nil {
-		return look{present: true, failed: store.PythonOSError(err)}
+		return look{present: true, failed: err.Error()}
 	}
 	out := look{present: true, size: info.Size(), mtime: info.ModTime().UnixNano(), raw: raw}
 	if sys, ok := info.Sys().(*syscall.Stat_t); ok {

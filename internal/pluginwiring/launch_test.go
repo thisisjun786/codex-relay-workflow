@@ -17,14 +17,10 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
-// The launcher's answers are goldens that began as what crw_bridge_mcp.py did, the launcher the
-// package shipped until todo 43, placed in the same cache layout under one Codex home and started
-// with the same record, environment and working directory: stderr and exit byte for byte, once
-// Python's repairs were rewritten to the Go ones (decision 26: the repairs name the installer that
-// writes the record since todo 38). Where the Python launcher exec'd the recorded
-// bridgeExecutable, the record names a probe that prints its argv and the two policy variables,
-// and the golden is the view Prepare gives it; Go execs the real bridge, which is asked for
-// --version in the same position.
+// The launcher's answers are goldens, one per record placed in the package's cache layout under
+// one Codex home: the exit and both streams of a refusal, and for a record that starts the bridge
+// the view Prepare gives it (the record names a probe that prints its argv and the two policy
+// variables); the real bridge is then started the same way and asked for --version.
 
 // bridgeEntry is the built crw under the name the launcher execs it by, codex-thread-bridge.
 var bridgeEntry = sync.OnceValues(func() (string, error) {
@@ -160,7 +156,7 @@ func v1(h launcherHost, overrides map[string]any) string {
 
 func literal(text string) func(launcherHost) string { return func(launcherHost) string { return text } }
 
-// char is the character r, for the non-printing ones Python's pyvalue.Repr() escapes.
+// char is the character r.
 func char(r rune) string { return string(r) }
 
 var escapeMark = regexp.MustCompile(`\[U\+([0-9A-F]{4})\]`)
@@ -258,8 +254,7 @@ var recordCases = []recordCase{
 	{name: "v1 args not UTF-8 start", record: func(h launcherHost) string {
 		return escapes(v1(h, map[string]any{"args": []string{"--state-dir", h.root + "/st[U+DC80]te", "--socket", h.root + "/s[U+DCFF].sock"}}))
 	}, starts: true},
-	// The same path missing: str() of it and the OSError's pyvalue.Repr() both carry the surrogate, which
-	// the stream writes as its escape.
+	// The same path missing, and a lone surrogate outside the escape range, which names no bytes.
 	{name: "v2 policy path not UTF-8, missing", record: policyAt("/gone[U+DC80].json")},
 	{name: "v2 policy path with a surrogate outside the escape range", record: policyAt("/p[U+D800].json")},
 	{name: "v2 inherited policy variable not UTF-8, another file", record: func(h launcherHost) string { return v2(h, nil) },
@@ -267,22 +262,8 @@ var recordCases = []recordCase{
 			return h.env("CODEX_THREAD_BRIDGE_EXECUTION_POLICY=" + h.root + "/other\x80.json")
 		}},
 
-	// What pyvalue.Repr() escapes: every character str.isprintable() rejects.
-	{name: "owner holding a no-break space", record: func(h launcherHost) string {
-		return v1(h, map[string]any{"owner": "a" + char(0xa0) + "b"})
-	}},
-	{name: "owner holding a zero-width space between printables", record: func(h launcherHost) string {
-		return v1(h, map[string]any{"owner": char(0xe9) + char(0x200b) + char(0x1f600)})
-	}},
-	{name: "owner holding private-use, unassigned and astral format characters", record: func(h launcherHost) string {
-		return v1(h, map[string]any{"owner": char(0xe000) + char(0x378) + char(0xe0001) + char(0x3000)})
-	}},
-	{name: "owner a lone surrogate", record: func(h launcherHost) string {
-		return escapes(v1(h, map[string]any{"owner": "[U+D800]"}))
-	}},
-	{name: "server name holding a Mongolian vowel separator", record: func(h launcherHost) string {
-		return v1(h, map[string]any{"serverName": "x" + char(0x180e)})
-	}},
+	// A policy path padded with a character Python and Go both read as white space, or holding a
+	// line separator: the launcher refuses the first and fails to find the second.
 	{name: "v2 policy path padded with a no-break space", record: func(h launcherHost) string {
 		return v2(h, map[string]any{"executionPolicy": map[string]any{"path": h.policy + char(0xa0), "digest": h.digest}})
 	}},
@@ -298,7 +279,7 @@ var recordCases = []recordCase{
 		}},
 }
 
-func TestBridgeLaunch_matches_the_python_launcher_record_by_record(t *testing.T) {
+func TestBridgeLaunch_answers_each_record_as_the_golden(t *testing.T) {
 	for _, c := range recordCases {
 		t.Run(c.name, func(t *testing.T) {
 			h := newLauncherHost(t)
@@ -440,22 +421,21 @@ func TestBridgeLaunch_refuses_arguments_that_would_start_the_launcher_again(t *t
 	}
 }
 
-// Where the record names an executable or argument os.execv cannot encode (a lone surrogate
-// outside U+DC80..U+DCFF, or a NUL), the Python launcher started nothing: execv raised, and the
-// traceback exited 1. The Go launcher does not exec bridgeExecutable, but refuses that record too,
-// with exit 2 naming the record, rather than starting a bridge Python never started.
-func TestBridgeLaunch_refuses_a_record_python_cannot_exec(t *testing.T) {
+// Where the record names an executable or argument an exec cannot take (a lone surrogate outside
+// U+DC80..U+DCFF, or a NUL), the launcher does not exec bridgeExecutable, but refuses the record,
+// with exit 2 naming it, rather than starting a bridge no exec of that record could start.
+func TestBridgeLaunch_refuses_a_record_no_exec_could_start(t *testing.T) {
 	for _, c := range []struct {
 		name, executable, args, golang string
 	}{
 		{"argument with a surrogate outside the escape range", "", `["--state-dir", "ROOT/st[U+D800]te"]`,
-			"lists the argument 'ROOT/st" + `\` + "ud800te'"},
+			`lists the argument "ROOT/st\xed\xa0\x80te"`},
 		{"argument holding a NUL", "", `["--state-dir", "ROOT/st[U+0000]te"]`,
-			`lists the argument 'ROOT/st\x00te'`},
+			`lists the argument "ROOT/st\x00te"`},
 		{"executable with a surrogate outside the escape range", "/probe[U+DBFF]", `[]`,
-			"names bridgeExecutable '/probe" + `\` + "udbff'"},
+			`names bridgeExecutable "/probe\xed\xaf\xbf"`},
 		{"executable holding a NUL", "/probe[U+0000]", `[]`,
-			`names bridgeExecutable '/probe\x00'`},
+			`names bridgeExecutable "/probe\x00"`},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			h := newLauncherHost(t)

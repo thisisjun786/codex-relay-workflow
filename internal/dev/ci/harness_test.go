@@ -15,8 +15,8 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
-// crwDev is the crw-dev binary under test (testsupport.CRWDevPath), so parity tests run the real
-// command line.
+// crwDev is the crw-dev binary under test (testsupport.CRWDevPath), so the command tests run the
+// real command line.
 var crwDev string
 
 func TestMain(m *testing.M) {
@@ -62,28 +62,13 @@ func runEnv(t *testing.T, dir string, env []string, name string, args ...string)
 	return result{code, stdout.String(), stderr.String()}
 }
 
-// python runs a repository Python script (scripts/ci/<name>.py or another path).
-func python(t *testing.T, dir string, env []string, script string, args ...string) result {
-	t.Helper()
-	return runCommand(t, dir, env, "python3", append([]string{filepath.Join(repoRoot(), script)}, args...)...)
-}
-
 // goCheck runs `crw-dev ci <check>`.
 func goCheck(t *testing.T, dir string, env []string, check string, args ...string) result {
 	t.Helper()
 	return runCommand(t, dir, env, crwDev, append([]string{"ci", check}, args...)...)
 }
 
-// sameResult requires the Go command to match the Python script byte for byte.
-func sameResult(t *testing.T, label string, py, got result) {
-	t.Helper()
-	if py != got {
-		t.Errorf("%s: Go differs from Python\npython: %d\n%s\n%s\ngo:     %d\n%s\n%s", label,
-			py.code, py.stdout, py.stderr, got.code, got.stdout, got.stderr)
-	}
-}
-
-// fixtureRepo is a scratch Git repository like the Python tests' setUp.
+// fixtureRepo is a scratch Git repository.
 type fixtureRepo struct {
 	t    *testing.T
 	root string

@@ -94,7 +94,7 @@ func Main(ctx context.Context, args []string, env map[string]string, stdin io.Re
 	client := appserver.New(canonical, appserver.DefaultBounds)
 	defer client.Close()
 	server := NewServer(bridge.New(client, store, policy), PackageVersion, stderr)
-	if err := server.Run(ctx, pythonTransport{&sdk.IOTransport{Reader: stdin, Writer: stdout}}); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, io.EOF) {
+	if err := server.Run(ctx, &sdk.IOTransport{Reader: stdin, Writer: stdout}); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, io.EOF) {
 		fmt.Fprintln(stderr, "crw bridge:", err)
 		return 1
 	}

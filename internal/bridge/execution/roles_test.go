@@ -158,12 +158,12 @@ func TestRoles_whenExpectationGuardIsTheOnlyRefusal(t *testing.T) {
 		want  string
 	}{
 		{"supervisor declares pair", doc{"supervisor": doc{"expectation": "pair"}}, "execution_policy_unreadable: role 'supervisor' expectation must be 'record': its model and effort are the user's own selection, not something the policy pins"},
-		{"parent declares record with a full pair", doc{"parent": doc{"expectation": "record", "model": "m", "reasoningEffort": "e"}}, "execution_policy_unreadable: role 'parent' expectation must be 'pair': only 'supervisor' defers to the recorded authorization, and letting another role do so would exempt it from the role check"},
-		{"bogus expectation value", doc{"parent": doc{"expectation": "bogus", "model": "m", "reasoningEffort": "e"}}, "execution_policy_unreadable: role 'parent' expectation must be 'pair' or 'record'"},
+		{"parent declares record with a full pair", doc{"parent": doc{"expectation": "record", "model": "m", "reasoningEffort": "e"}}, `execution_policy_unreadable: role "parent" expectation must be 'pair': only 'supervisor' defers to the recorded authorization, and letting another role do so would exempt it from the role check`},
+		{"bogus expectation value", doc{"parent": doc{"expectation": "bogus", "model": "m", "reasoningEffort": "e"}}, `execution_policy_unreadable: role "parent" expectation must be 'pair' or 'record'`},
 	}
 	for _, row := range rows {
 		t.Run(row.name, func(t *testing.T) {
-			// Given: a roles-only policy. When: it is loaded. Then: Python's exact refusal.
+			// Given: a roles-only policy. When: it is loaded. Then: the guard's refusal.
 			_, err := load(t, doc{"roles": row.roles})
 			if got := policyError(t, err).Error(); got != row.want {
 				t.Fatalf("got %q", got)

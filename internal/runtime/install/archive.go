@@ -20,7 +20,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/definition"
 )
 
@@ -168,7 +167,7 @@ func read(archivePath, name, sumsPath string) (Archive, error) {
 	}
 	raw, err := readBounded(archivePath)
 	if err != nil {
-		return Archive{}, refuse("the archive %s could not be read: %s", archivePath, store.PythonOSError(err))
+		return Archive{}, refuse("the archive %s could not be read: %s", archivePath, err.Error())
 	}
 	sum := sha256.Sum256(raw)
 	digest := hex.EncodeToString(sum[:])
@@ -199,7 +198,7 @@ func readBounded(path string) ([]byte, error) {
 func sumsFor(sumsPath, name string) (string, error) {
 	raw, err := readBounded(sumsPath)
 	if err != nil {
-		return "", refuse("the checksum file %s could not be read: %s; an archive is never unpacked unverified", sumsPath, store.PythonOSError(err))
+		return "", refuse("the checksum file %s could not be read: %s; an archive is never unpacked unverified", sumsPath, err.Error())
 	}
 	var found []string
 	lines := bufio.NewScanner(bytes.NewReader(raw))

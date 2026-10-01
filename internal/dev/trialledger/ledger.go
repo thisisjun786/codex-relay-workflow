@@ -113,7 +113,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		var refused *refusal
 		if !errors.As(err, &refused) {
-			refused = refuse("this run raised before it could report", "exception", exceptionName(err), "detail", exceptionText(err), "raisedAt", nil)
+			refused = refuse("this run raised before it could report", "exception", "panic", "detail", err.Error(), "raisedAt", nil)
 		}
 		fmt.Fprintln(stdout, pyjson.Dumps(refused.record(), pyjson.Options{Indent: 2, SortKeys: true}))
 		return 2
@@ -125,33 +125,13 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// exceptionText is str(error): a Python exception's message without its class.
-func exceptionText(err error) string {
-	var python *evidence.PythonError
-	if errors.As(err, &python) {
-		return python.Detail
-	}
-	return err.Error()
-}
-
-func exceptionName(err error) string {
-	var python *evidence.PythonError
-	if errors.As(err, &python) {
-		return python.Class
-	}
-	return "RuntimeError"
-}
-
 // Grade reads the start record, grades its trial's ledger and returns the document and whether
-// a judgment in it failed. A trial it cannot grade is a *refusal error.
+// a judgment in it failed. A trial it cannot grade is a *refusal error; a grading that panicked
+// is an error carrying the panic's value, which Run reports as the run that raised.
 func Grade(startPath string) (document object, failed bool, err error) {
 	defer func() {
 		if p := recover(); p != nil {
-			if python, ok := p.(*evidence.PythonError); ok {
-				err = python
-			} else {
-				err = fmt.Errorf("%v", p)
-			}
+			err = fmt.Errorf("%v", p)
 		}
 	}()
 	record, ledgerPath, err := loadStart(startPath)
@@ -283,7 +263,7 @@ func moment(value any, what string) (time.Time, error) {
 	if strings.HasSuffix(text, "Z") {
 		text = text[:len(text)-1] + "+00:00"
 	}
-	at, aware, err := fromISOFormat(text)
+	at, aware, err := parseMoment(text)
 	if err != nil {
 		return time.Time{}, refuse(what+" is not an ISO-8601 timestamp", "value", value, "detail", err.Error())
 	}
@@ -313,9 +293,6 @@ func report(record object, path string) (object, error) {
 			continue
 		}
 		value, err := pyload.Loads([]byte(line))
-		if python, deep := pyload.Recursion(err); deep {
-			panic(python) // `except ValueError` does not catch a RecursionError
-		}
 		if err != nil {
 			return nil, refuse("a ledger line is not JSON", "line", number, "detail", err.Error())
 		}

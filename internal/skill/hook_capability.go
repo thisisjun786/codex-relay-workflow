@@ -7,21 +7,9 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
-// probeSorted is sorted(value or []): Python's '<' in CPython's comparison
-// order, so numbers sort by value and an unorderable pair raises TypeError.
-func probeSorted(value any) ([]any, error) {
-	items, err := hostList(value)
-	if err != nil {
-		return nil, err
-	}
-	return pySorted(items)
-}
-
-// probeCapabilityMatrix is capability_matrix. It reduces the schemas in the
-// order the binary first embeds each title, and walks each schema's
-// definitions in the order the schema spells them, as Python's dicts keep
-// both, so the first schema or definition that cannot be read is the one that
-// raises.
+// probeCapabilityMatrix reduces the schemas to what each event can do, in the order the binary
+// first embeds each title, walking each schema's definitions in the order the schema spells
+// them, so the first schema or definition that cannot be read is the one refused.
 func probeCapabilityMatrix(titles []string, schemas map[string]contract.OrderedObject) (map[string]any, error) {
 	events := map[string]any{}
 	for _, title := range titles {
@@ -38,11 +26,11 @@ func probeCapabilityMatrix(titles []string, schemas map[string]contract.OrderedO
 			props = map[string]any{}
 		}
 		if kind == "input" {
-			required, err := probeSorted(schema["required"])
+			required, err := hostSorted(schema["required"])
 			if err != nil {
 				return nil, err
 			}
-			properties, err := probeSorted(props)
+			properties, err := hostSorted(props)
 			if err != nil {
 				return nil, err
 			}
@@ -50,7 +38,7 @@ func probeCapabilityMatrix(titles []string, schemas map[string]contract.OrderedO
 		} else if kind == "output" {
 			propertyMap, ok := props.(map[string]any)
 			if !ok {
-				return nil, pythonAttribute(props, "get")
+				return nil, notObject(props)
 			}
 			defsValue := schema["definitions"]
 			if !pyvalue.Truthy(defsValue) {
@@ -58,20 +46,20 @@ func probeCapabilityMatrix(titles []string, schemas map[string]contract.OrderedO
 			}
 			defs, ok := defsValue.(map[string]any)
 			if !ok {
-				return nil, pythonAttribute(defsValue, "get")
+				return nil, notObject(defsValue)
 			}
 			decision := defs["BlockDecisionWire"]
 			if !pyvalue.Truthy(decision) {
 				decision = defs["PreToolUseDecisionWire"]
 			}
 			additional := false
-			// definitions.values(): a falsy definitions is {} and has none.
+			// A falsy definitions is {} and has none.
 			definitionsOrdered, _ := objGet(ordered, "definitions").(contract.OrderedObject)
 			for _, field := range definitionsOrdered {
 				v := defs[field.Key]
 				definition, ok := v.(map[string]any)
 				if !ok {
-					return nil, pythonAttribute(v, "get")
+					return nil, notObject(v)
 				}
 				properties := definition["properties"]
 				switch p := properties.(type) {
@@ -88,7 +76,7 @@ func probeCapabilityMatrix(titles []string, schemas map[string]contract.OrderedO
 					}
 				default:
 					if pyvalue.Truthy(properties) {
-						return nil, pythonNotIterable(properties, true)
+						return nil, notList(properties)
 					}
 				}
 			}
@@ -97,13 +85,13 @@ func probeCapabilityMatrix(titles []string, schemas map[string]contract.OrderedO
 			}
 			decisionMap, ok := decision.(map[string]any)
 			if !ok {
-				return nil, pythonAttribute(decision, "get")
+				return nil, notObject(decision)
 			}
-			values, err := probeSorted(decisionMap["enum"])
+			values, err := hostSorted(decisionMap["enum"])
 			if err != nil {
 				return nil, err
 			}
-			properties, err := probeSorted(props)
+			properties, err := hostSorted(props)
 			if err != nil {
 				return nil, err
 			}

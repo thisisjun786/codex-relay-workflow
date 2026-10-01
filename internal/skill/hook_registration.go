@@ -1,12 +1,11 @@
 package skill
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
-
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 )
 
 func hookRegistrations(codexHome string, knownEvents map[string]any) (map[string]any, error) {
@@ -27,14 +26,14 @@ func hookRegistrations(codexHome string, knownEvents map[string]any) (map[string
 		if err != nil {
 			continue
 		}
-		decoded, err := hook.Decode(raw)
+		decoded, err := decodeJSON(raw)
 		if err != nil {
 			continue
 		}
 		value := orderedPlain(decoded)
 		payload, ok := value.(map[string]any)
 		if !ok {
-			return nil, pythonAttribute(value, "get")
+			return nil, fmt.Errorf("%s: %w", path, notObject(value))
 		}
 		hooks, ok := payload["hooks"].(map[string]any)
 		if !ok {

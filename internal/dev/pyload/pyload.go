@@ -1,55 +1,69 @@
 //go:build dev
 
-// Package pyload is json.loads for the development judges (crw-dev stop-events and
-// crw-dev trial-ledger): the value hook.Decode builds from a record (ordered objects, int64 or
-// json.Number integers, float64, WTF-8 strings), read by pyjson.Loads, which has no nesting limit
-// of its own.
-//
-// CPython 3.14, the interpreter the judges answer for, has no nesting limit of its own: its C
-// scanner recurses until the thread's stack runs out and raises RecursionError there. Loads
-// models that edge as Nesting and returns the RecursionError past it, so a judge reads what
-// Python reads and fails where Python fails rather than at encoding/json's 10000. The real edge
-// moves with the stack and the container kind, which no model reproduces; docs/port/known-defects.md
-// names the difference.
+// Package pyload reads the records the development judges grade (crw-dev stop-events and
+// crw-dev trial-ledger): journal rows, host ledgers and trial ledgers that Python and Go writers
+// left on the host. A reader of stored data keeps accepting what any earlier writer wrote, so a
+// record reads as Python's json.dumps could have written it: NaN and the infinities, a lone
+// surrogate escape (held in the WTF-8 bytes a Go string holds it in), objects in their key order
+// with a repeated key's last value, and containers as deep as MaxNesting. A refusal is in
+// encoding/json's words.
 package pyload
 
 import (
 	"errors"
+	"fmt"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
-// Nesting is how many containers deep a judge reads a record. CPython 3.14.4 on the default
-// 8 MiB main-thread stack stopped at 57,930 (stop_events.py, a journal row), 57,929 and 57,955
-// (trial_startup.py ledger, a ledger line and the start record): where exactly moves by tens with
-// whatever else is on the stack. The model stays just below every edge measured, so a judge
-// never reads a record the interpreter could not; between Nesting and the interpreter's edge it
-// raises where Python still reads.
-const Nesting = 57900
+// MaxNesting is how many containers deep a record may nest. The Python writers read, and so
+// wrote, records as deep as CPython 3.14's json nests on the default 8 MiB stack, which stopped
+// between 57,929 and 57,955 containers; the cap stays just below every edge measured, past
+// encoding/json's 10000.
+const MaxNesting = 57900
 
-// Loads is json.loads(raw.decode("utf-8")): the decoded value, the ValueError Python raises
-// (its message), or past Nesting the RecursionError, as an *evidence.PythonError a judge raises
-// on, because neither reader it ports catches one.
+// errNotUTF8 refuses a record whose bytes are not UTF-8 text.
+var errNotUTF8 = errors.New("the record is not UTF-8 text")
+
+// stored is how a judge reads a record's values: what hook.Decode reads a record into, at any
+// depth MaxNesting allows.
+var stored = pyjson.LoadOptions{Constants: true, Surrogates: true, Numbers: pyjson.Int64Numbers, Deep: true}
+
+// Loads is the value one record holds.
 func Loads(raw []byte) (any, error) {
-	if _, err := store.DecodeUTF8(raw); err != nil {
-		return nil, err
+	if !utf8.Valid(raw) {
+		return nil, errNotUTF8
 	}
-	text := string(raw)
-	if message, recursion := pyjson.ErrorWithLimit(text, Nesting); recursion {
-		return nil, &evidence.PythonError{Class: "RecursionError", Detail: message}
-	} else if message != "" {
-		return nil, errors.New(message)
+	if nesting(raw) > MaxNesting {
+		return nil, fmt.Errorf("the record nests deeper than %d containers", MaxNesting)
 	}
-	return pyjson.Loads(text, pyjson.LoadOptions{Constants: true, Surrogates: true, Numbers: pyjson.Int64Numbers, Deep: true})
+	return pyjson.Loads(string(raw), stored)
 }
 
-// Recursion is the RecursionError Loads returned, if it returned one.
-func Recursion(err error) (*evidence.PythonError, bool) {
-	var python *evidence.PythonError
-	if errors.As(err, &python) && python.Class == "RecursionError" {
-		return python, true
+// nesting is how deep raw's brackets nest outside its strings: the depth of a well-formed
+// document, and a bound the reader then refuses a malformed one within.
+func nesting(raw []byte) int {
+	deepest, open, inString, escaped := 0, 0, false, false
+	for _, c := range raw {
+		switch {
+		case inString:
+			switch {
+			case escaped:
+				escaped = false
+			case c == '\\':
+				escaped = true
+			case c == '"':
+				inString = false
+			}
+		case c == '"':
+			inString = true
+		case c == '[' || c == '{':
+			open++
+			deepest = max(deepest, open)
+		case c == ']' || c == '}':
+			open--
+		}
 	}
-	return nil, false
+	return deepest
 }

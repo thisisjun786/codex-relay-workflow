@@ -22,7 +22,6 @@ import (
 	"io"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 )
 
@@ -46,7 +45,7 @@ var Exit = map[string]int{verdictTrue: 0, verdictFalse: 1, verdictUnreadable: 3}
 // records are compared with bounds as strings, which orders them only in whole UTC seconds.
 func WindowBound(value string) error {
 	if !stamp(value) {
-		return fmt.Errorf("a window bound is a UTC time in the records' own format, YYYY-MM-DDTHH:MM:SSZ, not %s", pyvalue.StrRepr(value))
+		return fmt.Errorf("a window bound is a UTC time in the records' own format, YYYY-MM-DDTHH:MM:SSZ, not %q", value)
 	}
 	return nil
 }

@@ -94,15 +94,14 @@ applicable. A structural test does not prove the workflow's meaning, and a fixtu
 replay does not prove an actual Codex hook, relay delivery or Desktop behavior.
 
 The Go checks need only the Go toolchain `go.mod` names and temporary synthetic
-data; the CI checks' Python twins, developer tools listed in
+data; the port checkers, developer tools listed in
 `scripts/dev/ALLOWED_PYTHON.txt` until todo 48, use Python's standard library. Pin any
 downloaded tooling by version, commit and checksum, and keep fixtures synthetic
 and local. Ordinary CI does not need a
 contributor's Codex, CXC, Paperthin, Linear account, App Server socket or user
 skill installation. `crw-dev skills link` in the development binary links a checkout's skills
-(its Python predecessor, `scripts/install.py`, left in todo 44). While the twins
-remain, `make test` compares them with their Go checks under the runner's Python, and the
-validate job checks their syntax on the documented minimum Python version; cross-platform
+(its Python predecessor, `scripts/install.py`, left in todo 44). While Python files
+remain, the validate job checks their syntax on the documented minimum Python version; cross-platform
 symlink behavior and actual host compatibility need their own evidence before claiming support.
 
 Use hosted Linux runners, pinned Action commits, bounded timeouts and a

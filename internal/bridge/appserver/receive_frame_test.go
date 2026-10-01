@@ -14,9 +14,9 @@ import (
 	"github.com/coder/websocket"
 )
 
-// rpc.py:362: a frame that is not JSON reaches the reader's generic handler, so the pending
-// request fails as a TransportError reading "App Server transport failed: JSONDecodeError: ...".
-func TestReceive_non_json_frame_fails_pending_request_as_python_transport_error(t *testing.T) {
+// A frame that is not JSON fails the pending request as a TransportError reading "App Server
+// transport failed: a frame is not JSON: ...".
+func TestReceive_non_json_frame_fails_pending_request_as_a_transport_error(t *testing.T) {
 	socket := filepath.Join(t.TempDir(), "app.sock")
 	listener, err := net.Listen("unix", socket)
 	if err != nil {
@@ -55,7 +55,7 @@ func TestReceive_non_json_frame_fails_pending_request_as_python_transport_error(
 	t.Cleanup(func() { _ = client.Close() })
 	_, err = client.Call(context.Background(), "thread/read", map[string]any{})
 	var transport *TransportError
-	if !errors.As(err, &transport) || !strings.HasPrefix(transport.Reason, "App Server transport failed: JSONDecodeError: ") {
+	if !errors.As(err, &transport) || !strings.HasPrefix(transport.Reason, "App Server transport failed: a frame is not JSON: ") {
 		t.Fatalf("non-JSON frame failed the request as %T %v", err, err)
 	}
 }

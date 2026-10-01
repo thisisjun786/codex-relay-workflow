@@ -18,8 +18,8 @@ import (
 // decision 26). The launcher (Prepare), the installer that writes the record and the doctor that
 // judges it read a record through it, and each words its own refusals.
 type BridgeRecord struct {
-	// Version is recordVersion by Python's == (True is 1, 1.0 is 1): 1 or 2, or 0 when it is
-	// neither. VersionValue is the value as written.
+	// Version is recordVersion as the Python writer and reader compared it (True is 1, 1.0 is
+	// 1): 1 or 2, or 0 when it is neither. VersionValue is the value as written.
 	Version      int64
 	VersionValue any
 	// Owner is owner as written.
@@ -139,10 +139,8 @@ func PolicyDigest(path string) (digest string, encodable bool, err error) {
 	return hex.EncodeToString(sum[:]), true, nil
 }
 
-// readRegular is crw_bridge_mcp.py read_regular: opened without blocking, judged on the descriptor.
-// path is the bytes opened, which str(OSError) names as Python holds them: os.fsdecode of them
-// (store.PathRepr), the str Python opened. A descriptor that cannot be judged is not a regular
-// file.
+// readRegular is the bytes of the regular file at path: opened without blocking, judged on the
+// descriptor. A descriptor that cannot be judged is not a regular file.
 func readRegular(path string) ([]byte, error) {
 	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NONBLOCK|syscall.O_CLOEXEC, 0)
 	if err != nil {

@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestHookProbeUnreadableFixtureLivePython(t *testing.T) {
+func TestHookProbeUnreadableFixture(t *testing.T) {
 	// Given a copied fixture whose permissions prohibit reads by this user.
 	binary := recordedCRW(t)
 	dir := t.TempDir()
@@ -30,7 +30,7 @@ func TestHookProbeUnreadableFixtureLivePython(t *testing.T) {
 	// When the real command replays that unreadable fixture.
 	answer := runHookProbeGo(t, binary, args...)
 	// Then it may not silently skip the unreadable record.
-	if answer.exit != 3 || !strings.Contains(answer.stderr, "Permission denied") {
+	if answer.exit != 3 || !strings.Contains(answer.stderr, "permission denied") {
 		t.Fatalf("replay of an unreadable fixture: %+v", answer)
 	}
 }

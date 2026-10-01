@@ -2,8 +2,7 @@
 
 // Package skills is `crw-dev skills`: link this checkout's skills into a Codex installation.
 // It lives in the development binary because it links a checkout, and a release archive has no
-// checkout to link. It replaces scripts/install.py, which stays until the Python execution path
-// is removed.
+// checkout to link. It replaced scripts/install.py.
 package skills
 
 import (
@@ -18,7 +17,6 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/ci"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // Run dispatches `crw-dev skills <command> [args]`.
@@ -88,12 +86,11 @@ func Link(args []string, getenv func(string) string, stdout, stderr io.Writer) i
 		return usageError("argument --dest: expected one argument")
 	}
 	home := getenv("HOME")
-	// install.py computes Path(CODEX_HOME or Path.home()/".codex") / "skills" (or --dest), then
-	// .expanduser().absolute(): a leading ~ is expanded on whichever destination it ends up with,
-	// the working directory is prefixed to a relative one, and nothing else is normalised beyond
-	// Path()'s own spelling rules. In particular ".." is never folded, so a symlink followed by
-	// ".." means what the filesystem makes of it, as for Codex; filepath.Join and filepath.Abs
-	// would fold it lexically and could name another directory.
+	// The destination is (CODEX_HOME or HOME/.codex)/skills, or --dest: a leading ~ is expanded on
+	// whichever destination it ends up with, the working directory is prefixed to a relative one,
+	// and repeated separators and "." components are dropped (spelled). ".." is never folded, so a
+	// symlink followed by ".." means what the filesystem makes of it, as for Codex; filepath.Join
+	// and filepath.Abs would fold it lexically and could name another directory.
 	var expanded string
 	if !destGiven {
 		codexHome := getenv("CODEX_HOME")
@@ -101,13 +98,13 @@ func Link(args []string, getenv func(string) string, stdout, stderr io.Writer) i
 			return usageError("neither CODEX_HOME nor HOME is set, so there is no default destination; pass --dest")
 		}
 		if codexHome == "" {
-			codexHome = pathlibJoin(home, ".codex")
+			codexHome = joinUnfolded(home, ".codex")
 		}
 		codexDir, err := expandUser(codexHome, home)
 		if err != nil {
 			return usageError("CODEX_HOME: " + err.Error())
 		}
-		expanded = pathlibJoin(codexDir, "skills")
+		expanded = joinUnfolded(codexDir, "skills")
 	} else {
 		var err error
 		if expanded, err = expandUser(dest, home); err != nil {
@@ -119,9 +116,9 @@ func Link(args []string, getenv func(string) string, stdout, stderr io.Writer) i
 		if err != nil {
 			return usageError(err.Error())
 		}
-		expanded = pathlibJoin(cwd, expanded)
+		expanded = joinUnfolded(cwd, expanded)
 	}
-	destination := store.PathlibSpelling(expanded)
+	destination := spelled(expanded)
 	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
 	if err != nil {
 		return usageError("not inside a Git checkout, so there is no checkout to link: " + err.Error())
@@ -148,7 +145,7 @@ func link(root, destination string, apply bool, stdout, stderr io.Writer) int {
 	var pending []pair
 	conflicts := 0
 	for _, source := range sources {
-		target := pathlibJoin(destination, filepath.Base(source)) // destination / name, never folded
+		target := joinUnfolded(destination, filepath.Base(source)) // destination / name, never folded
 		switch linkState(target, source) {
 		case "LINKED":
 			fmt.Fprintf(stdout, "LINKED %s -> %s\n", target, source)
@@ -219,13 +216,31 @@ func expandUser(path, home string) (string, error) {
 			return "", fmt.Errorf("%q names no user with a home directory", path)
 		}
 	}
-	// Path() collapses repeated slashes before expanduser, so ~//codex is <home>/codex.
-	return pathlibJoin(dir, strings.TrimLeft(rest, "/")), nil
+	// ~//codex is <home>/codex.
+	return joinUnfolded(dir, strings.TrimLeft(rest, "/")), nil
 }
 
-// pathlibJoin is str(Path(base) / rest) before Path()'s spelling rules: an absolute rest wins,
-// and nothing is folded.
-func pathlibJoin(base, rest string) string {
+// spelled is p without repeated separators or "." components. ".." is kept: what it names is
+// what the filesystem makes of it.
+func spelled(p string) string {
+	var parts []string
+	for _, part := range strings.Split(p, "/") {
+		if part != "" && part != "." {
+			parts = append(parts, part)
+		}
+	}
+	joined := strings.Join(parts, "/")
+	switch {
+	case strings.HasPrefix(p, "/"):
+		return "/" + joined
+	case joined == "":
+		return "."
+	}
+	return joined
+}
+
+// joinUnfolded is base/rest: an absolute rest wins, and nothing is folded.
+func joinUnfolded(base, rest string) string {
 	switch {
 	case rest == "":
 		return base

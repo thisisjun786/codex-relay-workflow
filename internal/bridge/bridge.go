@@ -15,7 +15,6 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
-	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/pyerr"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/worktrees"
 )
@@ -97,12 +96,9 @@ func copyMap(source map[string]any) map[string]any {
 }
 func id(response map[string]any, entity string) string { return text(object(response[entity])["id"]) }
 
-// errorText renders an error as Python's f"{type(error).__name__}: {error}": the bare type
-// name of the innermost non-wrapper error, so receipts start with e.g. "ResponseTooLarge:".
+// errorText is an error as a receipt names it: the bare type name of the innermost non-wrapper
+// error, then the error's text, so receipts start with e.g. "ResponseTooLarge:".
 func errorText(err error) string {
-	if name, message, ok := pyerr.OSError(err); ok {
-		return name + ": " + message
-	}
 	named := err
 	for e := err; e != nil; e = errors.Unwrap(e) {
 		named = e

@@ -26,9 +26,6 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 )
@@ -100,40 +97,20 @@ func Payload(state, writtenBy string, issue, run any, pid int, host, writtenAt s
 func Shape(v any) error {
 	claim, ok := v.(record.Object)
 	if !ok {
-		return reading.Fail("TypeError", "a staging claim is an object, found "+pyvalue.TypeName(v))
+		return reading.Fail("TypeError", "a staging claim is an object, found "+reading.JSONKind(v))
 	}
 	writer := record.Get(claim, "writtenBy")
 	if writer != WrittenByGo {
-		return reading.Fail("ValueError", "this claim was not written by "+WrittenByGo+", it names "+repr(writer))
+		return reading.Fail("ValueError", "this claim was not written by "+WrittenByGo+", it names "+reading.Show(writer))
 	}
 	version := record.Get(claim, "claimVersion")
 	if n, ok := version.(int64); !ok || n != ClaimVersion {
-		return reading.Fail("ValueError", "a claim declares claimVersion 1, found "+repr(version))
+		return reading.Fail("ValueError", "a claim declares claimVersion 1, found "+reading.Show(version))
 	}
 	if state := record.Get(claim, "state"); state != Staging && state != Complete {
-		return reading.Fail("ValueError", "a staging claim's state is one of STAGING, COMPLETE, found "+repr(state))
+		return reading.Fail("ValueError", "a staging claim's state is one of STAGING, COMPLETE, found "+reading.Show(state))
 	}
 	return nil
-}
-
-// repr is Python's repr() of a decoded JSON scalar, for refusal text.
-func repr(v any) string {
-	switch value := v.(type) {
-	case nil:
-		return "None"
-	case string:
-		return pyvalue.StrRepr(value)
-	case bool:
-		if value {
-			return "True"
-		}
-		return "False"
-	case float64:
-		return pyjson.Float(value)
-	case int64:
-		return strconv.FormatInt(value, 10)
-	}
-	return pyjson.Dumps(v, pyjson.Options{Unicode: true})
 }
 
 // ReadClaim is staging.read_claim: absent, present, unreadable and unreachable stay four
@@ -222,7 +199,7 @@ func OwnerLiveness(directory string) (string, string) {
 func DirectoryOccupied(directory string) (*bool, string) {
 	entries, err := os.ReadDir(directory)
 	if err != nil {
-		return nil, "the directory could not be listed: " + store.PythonOSError(err)
+		return nil, "the directory could not be listed: " + err.Error()
 	}
 	other := 0
 	for _, entry := range entries {

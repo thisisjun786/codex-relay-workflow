@@ -10,6 +10,6 @@ import "unicode"
 // The table, printable_generated.go, is frozen. Its generator (internal/bridge/settings/generate,
 // run by go generate) read it from a CPython 3.14 on PATH, and was deleted with the Python
 // execution path in todo 44 (decision 49): the bridge settings it serves are held to what the
-// Python bridge answered, and TestPrintableIsCPython314sIsprintable checks the table against
-// that interpreter's recorded answer.
+// Python bridge answered, and TestPrintableIsTheFrozenTable holds the table to its golden,
+// which began as that interpreter's answer.
 func Printable(r rune) bool { return unicode.Is(pythonPrintable, r) }

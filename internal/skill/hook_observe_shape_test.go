@@ -44,11 +44,10 @@ func observeShapeCases(t *testing.T) []skillShapeCase {
 	return append(cases, observeScanCases()...)
 }
 
-// observeSortShapeCases seed the arrays capability_matrix passes to sorted():
-// numbers order by value, lists lexicographically, and a pair '<' cannot order
-// raises the TypeError of the first comparison CPython's sort makes. Values are
-// spelled as raw JSON so 1.0, 1e400 and NaN reach both runtimes as written; a
-// NaN, neither less nor greater than anything, stays where the sort leaves it.
+// observeSortShapeCases seed the arrays the capability matrix sorts: numbers
+// order by value, lists lexicographically, and a pair that cannot be ordered is
+// refused. Values are spelled as raw JSON so 1.0, 1e400 and NaN reach the
+// command as written.
 func observeSortShapeCases(t *testing.T, input, output map[string]any) []skillShapeCase {
 	t.Helper()
 	seeds := []struct{ name, value string }{

@@ -12,17 +12,16 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
-// The fixture refused-arguments.json holds the calls; the golden holds, for each, the first
-// line and the failing locations, which began as what Python's FastMCP server (mcp 1.30.0,
-// pydantic 2.13) reported through the Python mcp client against `python -m
-// codex_thread_bridge.server`. The first thirteen are the schema failures the round-1 check
-// found; the last two are multi-field cases whose order a map-ordered validator could not keep.
+// The fixture refused-arguments.json holds calls whose arguments the input schema refuses
+// (a missing field, a value of another type, a value outside an enum, several at once). Each is
+// refused as an error result before the tool runs, the same way every time; the golden holds
+// each refusal's text.
 type refusedCall struct {
 	Tool      string         `json:"tool"`
 	Arguments map[string]any `json:"arguments"`
 }
 
-func Test_a_refused_argument_reports_every_field_in_signature_order_the_same_way_every_time(t *testing.T) {
+func Test_a_refused_argument_is_an_error_result_the_same_way_every_time(t *testing.T) {
 	var cases []refusedCall
 	if err := json.Unmarshal(golden.Fixture(t, "refused-arguments.json"), &cases); err != nil {
 		t.Fatal(err)
@@ -52,17 +51,33 @@ func Test_a_refused_argument_reports_every_field_in_signature_order_the_same_way
 				t.Fatalf("case %d: not an error: %s", i, text)
 			}
 		}
-		lines := strings.Split(first, "\n")
-		fields := []string{}
-		for _, line := range lines[1:] {
-			if line != "" && !strings.HasPrefix(line, " ") {
-				fields = append(fields, line)
-			}
-		}
-		golden.CheckJSON(t, fmt.Sprintf("case %d %s", i, tc.Tool), map[string]any{"prefix": lines[0], "fields": fields})
-		// Each location is followed by its own indented reason.
-		if len(lines) != 1+2*len(fields) {
-			t.Errorf("case %d: %d lines for %d fields:\n%s", i, len(lines), len(fields), first)
+		golden.Check(t, fmt.Sprintf("case %d %s", i, tc.Tool), []byte(strings.ReplaceAll(first, cwd, "<CWD>")))
+	}
+	s.finish(t)
+}
+
+// A number field takes a string holding the number, which a model writing a call sends; a string
+// that holds no number, or not an integer where one is asked, is refused by the schema.
+func Test_a_number_written_as_a_string_is_read_as_the_number(t *testing.T) {
+	home, env := isolated(t)
+	s := serve(t, []string{"--socket", filepath.Join(home, "absent.sock"), "--state-dir", filepath.Join(home, "ledger")}, env)
+	for _, tc := range []struct {
+		arguments map[string]any
+		refused   string
+	}{
+		{map[string]any{"limit": "5"}, ""},
+		{map[string]any{"limit": " 7 "}, ""},
+		{map[string]any{"limit": 5.0}, ""},
+		{map[string]any{"limit": "5.0"}, ""},
+		{map[string]any{"limit": "5.5"}, "invalid arguments for list_threads: limit must be an integer"},
+		{map[string]any{"limit": "0.99999999999999999"}, "invalid arguments for list_threads: limit must be an integer"},
+		{map[string]any{"limit": "1e2"}, "invalid arguments for list_threads: limit must be an integer"},
+		{map[string]any{"limit": "five"}, "invalid arguments for list_threads: limit must be an integer"},
+		{map[string]any{"limit": true}, "invalid arguments for list_threads: limit must be an integer"},
+	} {
+		text := call(t, s, "list_threads", tc.arguments).Content[0].(*sdk.TextContent).Text
+		if tc.refused == "" && strings.HasPrefix(text, "invalid arguments") || tc.refused != "" && text != tc.refused {
+			t.Errorf("%v: %s", tc.arguments, text)
 		}
 	}
 	s.finish(t)

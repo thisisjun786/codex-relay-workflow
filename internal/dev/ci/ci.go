@@ -9,8 +9,6 @@ import (
 	"io"
 	"sort"
 	"strings"
-
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // Check runs one CI check with its arguments and returns the exit status.
@@ -44,7 +42,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	check, ok := Checks[args[0]]
 	if !ok {
 		fmt.Fprintln(stderr, usage)
-		fmt.Fprintf(stderr, "crw-dev ci: error: invalid choice: %s (choose from %s)\n", pyvalue.StrRepr(args[0]), strings.Join(names, ", "))
+		fmt.Fprintf(stderr, "crw-dev ci: error: invalid choice: %q (choose from %s)\n", args[0], strings.Join(names, ", "))
 		return 2
 	}
 	return check(args[1:], stdout, stderr)

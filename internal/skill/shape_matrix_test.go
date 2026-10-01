@@ -31,7 +31,7 @@ type shapeUnreadableFile string
 
 // One process-level matrix owns all JSON-shape surfaces, each answer held to the golden (first
 // taken as the Python script's answer).
-func TestSkillJSONShapeLivePython(t *testing.T) {
+func TestSkillJSONShape(t *testing.T) {
 	goldenRoot(t)
 	t.Setenv("TZ", "Pacific/Honolulu")
 	binary := recordedCRW(t)

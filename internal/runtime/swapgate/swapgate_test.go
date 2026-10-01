@@ -92,7 +92,7 @@ func schemas() map[string]record.Object {
 // Python's answers): the daemon cell from the service reading, the in-flight cell from presence
 // then openAttempts, the schema cell over whole CREATE statements, and the verdict over every
 // declared cell.
-func TestCellsAndVerdictsArePythons(t *testing.T) {
+func TestCellsAndVerdicts(t *testing.T) {
 	same := func(key string, got any) { t.Helper(); expected.Check(t, key, []byte(golden.Canon(got))) }
 	envs := envelopes(t)
 	for name, envelope := range envs {

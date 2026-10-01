@@ -7,10 +7,10 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
-// The table is str.isprintable() of every code point as CPython 3.14 answers it (decision 49):
-// the golden, one digit per code point with every surrogate 0, began as that interpreter's
-// answer, and the table is frozen, so a difference means the table changed.
-func TestPrintableIsCPython314sIsprintable(t *testing.T) {
+// The table is frozen (decision 49): settings.Repr, and through it pyvalue.StrRepr, escapes what
+// it refuses, so the golden, one digit per code point with every surrogate 0, holds it, and a
+// difference means the table changed. It began as CPython 3.14's str.isprintable().
+func TestPrintableIsTheFrozenTable(t *testing.T) {
 	table := make([]byte, 0x110000)
 	for c := range rune(0x110000) {
 		table[c] = '0'

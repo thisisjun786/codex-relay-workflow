@@ -15,7 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/pyload"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 )
@@ -27,9 +27,7 @@ import (
 
 type object = hook.Object
 
-// The names the adapter gives the files it writes. A Python regular expression's $ also matches
-// before one trailing newline, so pyMatch accepts that too: the reading classifies such a name
-// the way the Python reader did.
+// The names the adapter gives the files it writes.
 var (
 	journalName = regexp.MustCompile(`^[0-9a-f]{32}\.json$`)
 	journalDay  = regexp.MustCompile(`^[0-9]{8}$`)
@@ -37,10 +35,6 @@ var (
 	outcomeName = regexp.MustCompile(`^[0-9a-f]{64}\.outcome\.json$`)
 	stampShape  = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$`)
 )
-
-func pyMatch(re *regexp.Regexp, s string) bool {
-	return re.MatchString(s) || (strings.HasSuffix(s, "\n") && re.MatchString(s[:len(s)-1]))
-}
 
 func get(o object, key string) any { return evidence.Get(o, key) }
 
@@ -54,35 +48,20 @@ func asObject(v any) (object, bool) {
 	return o, ok
 }
 
-// member is Python's `value in (strings...)`: equality, so a value of another type is never in.
+// member is whether v is one of the strings in set: a value of another type is never in it.
 func member(v any, set []string) bool {
 	s, ok := v.(string)
 	return ok && slices.Contains(set, s)
 }
 
-// dictKey hashes a value used as (or inside, as) a dict key. An unhashable one raises the
-// TypeError Python 3.14, the relay host's interpreter, raises there.
-func dictKey(as string, v any) string {
+// valueKey keys a value a record holds: equal numbers alike whatever their spelling, and an
+// array or object by its JSON text.
+func valueKey(v any) string {
 	switch v.(type) {
 	case object, []any:
-		name := pyvalue.TypeName(v)
-		if as == "" {
-			as = name
-		}
-		panic(&evidence.PythonError{Class: "TypeError", Detail: "cannot use '" + as + "' as a dict key (unhashable type: '" + name + "')"})
+		return "json:" + pyjson.Dumps(v, pyjson.Options{})
 	}
 	return evidence.HashKey(v)
-}
-
-// keyIn is `value in dict`: the value is hashed first, so an unhashable one raises TypeError.
-func keyIn(v any, keys ...any) bool {
-	hashed := dictKey("", v)
-	for _, k := range keys {
-		if evidence.HashKey(k) == hashed {
-			return true
-		}
-	}
-	return false
 }
 
 func nonEmptyString(v any) bool {
@@ -125,7 +104,9 @@ func fieldsExactly(v any, fields []string) bool {
 
 func isAbs(p string) bool { return strings.HasPrefix(p, "/") }
 
-// normpath is posixpath.normpath, which keeps a leading "//" that path.Clean drops.
+// normpath is the normal form the adapter's writers give a path: path.Clean, except that a
+// leading "//" stays (POSIX leaves its meaning to the system), as every writer, Python's
+// os.path.abspath first, has kept it. A recorded path is checked against that form.
 func normpath(p string) string {
 	cleaned := path.Clean(p)
 	if strings.HasPrefix(p, "//") && !strings.HasPrefix(p, "///") {
@@ -146,7 +127,7 @@ func stamp(v any) bool {
 
 // day is a day directory's name that is a real date.
 func day(name string) bool {
-	if !pyMatch(journalDay, name) || strings.HasSuffix(name, "\n") {
+	if !journalDay.MatchString(name) {
 		return false
 	}
 	at, err := time.Parse("20060102", name)
@@ -160,7 +141,7 @@ func slot(v any) bool {
 		return false
 	}
 	parts := strings.Split(s, "/")
-	return len(parts) == 2 && day(parts[0]) && pyMatch(journalName, parts[1])
+	return len(parts) == 2 && day(parts[0]) && journalName.MatchString(parts[1])
 }
 
 // readRecord is a record as the reading finds it: its content, whether it is a readable regular
@@ -180,9 +161,6 @@ func readRecord(p string) (any, bool, bool) {
 		return nil, false, false
 	}
 	body, err := pyload.Loads(raw)
-	if python, deep := pyload.Recursion(err); deep {
-		panic(python) // _read_record catches ValueError only, so the reading stops here
-	}
 	if err != nil {
 		return nil, false, false
 	}
@@ -395,7 +373,7 @@ func rowFieldsWritten(row object) bool {
 	if member(outcome, slices.Concat(hook.BeforeTheGuard, []string{hook.DuplicateInvocation, hook.ArbitrationFailed})) && !isString(detail) {
 		return false
 	}
-	if keyIn(outcome, hook.DuplicateInvocation, hook.ArbitrationFailed) {
+	if member(outcome, []string{hook.DuplicateInvocation, hook.ArbitrationFailed}) {
 		fixed := map[string]string{hook.DuplicateInvocation: hook.DuplicateDetail, hook.ArbitrationFailed: hook.UnarbitratedDetail}
 		if detail != fixed[outcome.(string)] {
 			return false
@@ -445,9 +423,9 @@ func rowFieldsWritten(row object) bool {
 	return true
 }
 
-// acceptances is every acceptance a row can carry, None (an invocation that reached no event)
-// among them, and the outcomes each one ends in besides a fault.
-var acceptances = []any{nil, hook.Unestablished, hook.Accepted, hook.Unclaimable, hook.ClaimFailed, hook.Duplicate, hook.Unarbitrated}
+// acceptances is every acceptance a row can carry besides null (an invocation that reached no
+// event), and outcomesOf the outcomes each one ends in besides a fault.
+var acceptances = []string{hook.Unestablished, hook.Accepted, hook.Unclaimable, hook.ClaimFailed, hook.Duplicate, hook.Unarbitrated}
 
 func outcomesOf(acceptance any) []string {
 	switch acceptance {
@@ -473,7 +451,7 @@ func rowShape(row object) bool {
 	}
 	acceptance, key := get(row, "acceptance"), get(row, "eventKey")
 	outcome, asked := get(row, "adapterOutcome"), get(row, "guardInvoked")
-	if !keyIn(acceptance, acceptances...) || !isBool(asked) || !guardResultWritten(row) {
+	if !(acceptance == nil || member(acceptance, acceptances)) || !isBool(asked) || !guardResultWritten(row) {
 		return false
 	}
 	switch {
@@ -492,7 +470,7 @@ func rowShape(row object) bool {
 		return false
 	}
 	k, keyed := key.(string)
-	keyed = keyed && pyMatch(ledgerName, k+".json")
+	keyed = keyed && ledgerName.MatchString(k+".json")
 	named := nonEmptyString(get(row, "sessionId")) && nonEmptyString(get(row, "turnId"))
 	identity, isIdentity := asObject(get(row, "eventIdentity"))
 	switch acceptance {

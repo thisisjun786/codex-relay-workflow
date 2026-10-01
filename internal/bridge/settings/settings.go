@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -19,7 +20,7 @@ const (
 
 var ErrInvalid = errors.New("invalid settings")
 
-// invalid is a settings.py ValueError: its text is exactly Python's, and it matches ErrInvalid.
+// invalid is a declaration the settings contract refuses; it matches ErrInvalid.
 type invalid string
 
 func (e invalid) Error() string        { return string(e) }
@@ -85,10 +86,10 @@ func Normalise(policy any) map[string]any {
 func (c Contract) Validate() error {
 	approval := c.ApprovalPolicy
 	if approval != "" && approval != "never" && approval != "on-request" && approval != "untrusted" {
-		return invalid("approval_policy must be one of ['never', 'on-request', 'untrusted']; a granular policy has no name a caller can declare")
+		return invalid(`approval_policy must be one of "never", "on-request", "untrusted"; a granular policy has no name a caller can declare`)
 	}
 	if c.Sandbox != "" && modes[c.Sandbox] == "" {
-		return invalid("Unsupported sandbox " + Repr(c.Sandbox))
+		return invalid("Unsupported sandbox " + strconv.Quote(c.Sandbox))
 	}
 	if c.ExpectedPolicy != nil {
 		if err := c.validatePolicy(); err != nil {
@@ -143,7 +144,7 @@ func (c Contract) validatePolicy() error {
 			if len(names) > 0 {
 				quoted := make([]string, len(names))
 				for i, name := range names {
-					quoted[i] = Repr(name)
+					quoted[i] = strconv.Quote(name)
 				}
 				carried = "[" + strings.Join(quoted, ", ") + "]"
 			}

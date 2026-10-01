@@ -6,10 +6,13 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,11 +22,10 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
-
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"unicode/utf8"
 )
 
-// Constants and patterns of scripts/ci/plugin.py; see that script for why each exists.
+// The package rules: what a manifest may declare and what the payload may ship.
 const (
 	pluginRelative      = "plugins/crw"
 	marketplacePath     = ".agents/plugins/marketplace.json"
@@ -62,17 +64,16 @@ var (
 		{regexp.MustCompile(`^/root/`), true},
 		{regexp.MustCompile(`[A-Za-z]:\\Users\\[A-Za-z0-9._-]+`), false},
 	}
-	// Python's re.match with a trailing $ also accepts one final newline, hence \n?\z.
 	forbiddenNames = regexp.MustCompile(`(?i)^(\.git|\.codexclaw|\.env(\..*)?|id_(rsa|dsa|ecdsa|ed25519)(\..*)?` +
 		`|\.netrc|\.pgpass|\.htpasswd|\.npmrc|authorized_keys` +
 		`|.*credentials?(?:[._-].*)?|.*secrets?(?:[._-].*)?` +
-		`|.*\.(sqlite3?|db|pem|key|p12|pfx))\n?\z`)
+		`|.*\.(sqlite3?|db|pem|key|p12|pfx))$`)
 	httpsFields = []string{"websiteURL", "privacyPolicyURL", "termsOfServiceURL"}
 	assetFields = []string{"composerIcon", "logo", "logoDark"}
-	brandColor  = regexp.MustCompile(`^#[0-9A-Fa-f]{6}\n?\z`)
+	brandColor  = regexp.MustCompile(`^#[0-9A-Fa-f]{6}$`)
 )
 
-// packageError is plugin.py's PackageError: a fact could not be read, so no verdict.
+// packageError is a fact the check could not read, so it gives no verdict.
 type packageError struct{ text string }
 
 func (e packageError) Error() string { return e.text }
@@ -111,7 +112,7 @@ func (c *pluginChecker) git(args ...string) ([]byte, error) {
 	if err := cmd.Run(); err != nil {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) {
-			return nil, packageError{pyvalue.Strip(decodeReplace(stderr.Bytes()))}
+			return nil, packageError{strings.TrimSpace(strings.ToValidUTF8(stderr.String(), "\ufffd"))}
 		}
 		return nil, err
 	}
@@ -123,7 +124,10 @@ func (c *pluginChecker) gitText(args ...string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return decodeUTF8(out)
+	if !utf8.Valid(out) {
+		return "", fmt.Errorf("git %s: %w", args[0], errNotUTF8)
+	}
+	return string(out), nil
 }
 
 func (c *pluginChecker) revisionPayload(revision string) (payload, []string, error) {
@@ -141,7 +145,7 @@ func (c *pluginChecker) revisionPayload(revision string) (payload, []string, err
 		meta, path, _ := strings.Cut(record, "\t")
 		fields := strings.SplitN(meta, " ", 3)
 		mode, kind, sha := fields[0], fields[1], fields[2]
-		name := strings.Join(pyPurePath(path)[len(pyPurePath(pluginRelative)):], "/")
+		name := strings.Join(pathParts(path)[len(pathParts(pluginRelative)):], "/")
 		if kind != "blob" {
 			errs = append(errs, "release "+path+": the package may not contain a "+kind)
 			continue
@@ -225,29 +229,25 @@ func directoryPayload(pluginRoot string) (payload, []string) {
 }
 
 // regularBytes reads a file through one descriptor opened without blocking and judged a
-// regular file, so a pipe cannot hold the check (and a lock its caller holds) open. The
-// error text is Python's "<OSError class>: <str(error)>".
+// regular file, so a pipe cannot hold the check (and a lock its caller holds) open.
 func regularBytes(path string) ([]byte, error) {
 	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
-		return nil, errors.New(pyOSError(err))
+		return nil, err
 	}
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil {
-		return nil, errors.New(pyOSError(err))
+		return nil, err
 	}
 	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("OSError: [Errno %d] not a regular file: %s", int(syscall.EINVAL), pyvalue.StrRepr(path))
+		return nil, fmt.Errorf("%s: not a regular file", path)
 	}
-	data, err := io.ReadAll(file)
-	if err != nil {
-		return nil, errors.New(pyOSError(err))
-	}
-	return data, nil
+	return io.ReadAll(file)
 }
 
 // payloadDigest is sha256 over length-framed "<len>:<name> <mode> <sha256>" lines in name order.
+// Its first 12 hex digits are the version suffix the manifest records, so these bytes are fixed.
 func payloadDigest(p payload) string {
 	var blocks [][]byte
 	for _, name := range p.names() {
@@ -271,22 +271,14 @@ func versionPayload(p payload, version string) (payload, error) {
 		return p, nil
 	}
 	manifest := p[manifestPath]
-	recorded, plain := []byte(pyJSONString(version)), []byte(pyJSONString(release))
+	recorded, plain := []byte(show(version)), []byte(show(release))
 	if count := bytes.Count(manifest.data, recorded); count != 1 {
-		return nil, valueError{fmt.Sprintf("%s spells %s %d times; the suffix has to be elided exactly once for the digest beneath it to be derived at all",
-			manifestPath, pyvalue.StrRepr(version), count)}
+		return nil, fmt.Errorf("%s spells %q %d times; the suffix has to be elided exactly once for the digest beneath it to be derived at all",
+			manifestPath, version, count)
 	}
-	out := maps(p)
+	out := maps.Clone(p)
 	out[manifestPath] = entry{manifest.mode, bytes.ReplaceAll(manifest.data, recorded, plain)}
 	return out, nil
-}
-
-func maps(p payload) payload {
-	out := payload{}
-	for k, v := range p {
-		out[k] = v
-	}
-	return out
 }
 
 func payloadVersion(p payload, version string) (string, error) {
@@ -298,15 +290,15 @@ func payloadVersion(p payload, version string) (string, error) {
 	return release + "+" + payloadDigest(elided)[:payloadSuffixLength], nil
 }
 
-// manifestVersion is str(manifest.get("version", "")).
-func manifestVersion(m *pyDict) string {
-	if !m.has("version") {
+// manifestVersion is the manifest's version as text, "" when it has none.
+func manifestVersion(m map[string]any) string {
+	if !has(m, "version") {
 		return ""
 	}
-	return pyStr(m.get("version"))
+	return text(m["version"])
 }
 
-func versionErrors(m *pyDict, p payload, label string) []string {
+func versionErrors(m map[string]any, p payload, label string) []string {
 	version := manifestVersion(m)
 	expected, err := payloadVersion(p, version)
 	if err != nil {
@@ -338,53 +330,48 @@ func versionErrors(m *pyDict, p payload, label string) []string {
 	if version == expected {
 		return nil
 	}
-	return []string{label + " manifest: version " + pyvalue.StrRepr(version) + " does not name this payload." +
-		" Record " + pyvalue.StrRepr(expected) + "; `--record-version` writes it into the working" +
-		" tree manifest. The suffix is this payload's own digest, because two packages" +
-		" that ship different bytes may not offer one version"}
+	return []string{fmt.Sprintf("%s manifest: version %q does not name this payload. Record %q; `--record-version` writes it into the working"+
+		" tree manifest. The suffix is this payload's own digest, because two packages"+
+		" that ship different bytes may not offer one version", label, version, expected)}
 }
 
-func readManifest(p payload, label string) (*pyDict, error) {
+func readManifest(p payload, label string) (map[string]any, error) {
 	file, ok := p[manifestPath]
 	if !ok {
 		return nil, packageError{label + ": " + manifestPath + " is missing from the package"}
 	}
-	text, err := decodeUTF8(file.data)
+	value, err := decodeJSON(file.data)
 	if err != nil {
 		return nil, packageError{label + " " + manifestPath + ": " + err.Error()}
 	}
-	value, err := pyJSONLoadsOrdered(text)
-	if err != nil {
-		return nil, packageError{label + " " + manifestPath + ": " + err.Error()}
-	}
-	m, ok := asDict(value)
+	m, ok := object(value)
 	if !ok {
 		return nil, packageError{label + " " + manifestPath + ": the manifest must be a JSON object"}
 	}
 	return m, nil
 }
 
-// insidePath is plugin.py's inside(): a ./ relative path that stays in the package.
+// insidePath is a ./ relative path that stays in the package, without its ./.
 func insidePath(declared any) (string, bool) {
 	text, ok := declared.(string)
 	if !ok || !strings.HasPrefix(text, "./") {
 		return "", false
 	}
-	parts := pyPurePath(strings.Trim(text[2:], "/"))
+	parts := pathParts(strings.Trim(text[2:], "/"))
 	if len(parts) == 0 || slices.Contains(parts, "..") {
 		return "", false
 	}
 	return strings.Join(parts, "/"), true
 }
 
-func declaredSkillsPath(m *pyDict) (string, error) {
-	declared, ok := m.get("skills").(string)
+func declaredSkillsPath(m map[string]any) (string, error) {
+	declared, ok := m["skills"].(string)
 	if !ok || !strings.HasPrefix(declared, "./") {
-		return "", valueError{"manifest must declare skills as a ./ relative path"}
+		return "", errors.New("manifest must declare skills as a ./ relative path")
 	}
 	relative, ok := insidePath(declared)
 	if !ok {
-		return "", valueError{"declared skills path must stay inside the plugin root"}
+		return "", errors.New("declared skills path must stay inside the plugin root")
 	}
 	return relative, nil
 }
@@ -396,15 +383,15 @@ func declaredSkillsPath(m *pyDict) (string, error) {
 // not a directory.
 func SkillsRoot(root string) (string, error) {
 	manifest := filepath.Join(root, pluginRelative, manifestPath)
-	text, err := readText(manifest)
+	data, err := os.ReadFile(manifest)
+	if err != nil {
+		return "", err
+	}
+	value, err := decodeJSON(data)
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", manifest, err)
 	}
-	value, err := pyJSONLoadsOrdered(text)
-	if err != nil {
-		return "", fmt.Errorf("%s: %w", manifest, err)
-	}
-	m, ok := asDict(value)
+	m, ok := object(value)
 	if !ok {
 		return "", fmt.Errorf("%s: the manifest must be a JSON object", manifest)
 	}
@@ -412,8 +399,8 @@ func SkillsRoot(root string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", manifest, err)
 	}
-	pluginRoot := realpath(filepath.Join(root, pluginRelative))
-	skills := realpath(filepath.Join(pluginRoot, filepath.FromSlash(relative)))
+	pluginRoot := resolve(filepath.Join(root, pluginRelative))
+	skills := resolve(filepath.Join(pluginRoot, filepath.FromSlash(relative)))
 	if !strings.HasPrefix(skills, pluginRoot+string(filepath.Separator)) {
 		return "", fmt.Errorf("%s: the declared skills path resolves outside %s", skills, pluginRoot)
 	}
@@ -423,8 +410,8 @@ func SkillsRoot(root string) (string, error) {
 	return skills, nil
 }
 
-func declaredHooks(m *pyDict) ([]any, error) {
-	switch declared := m.get("hooks").(type) {
+func declaredHooks(m map[string]any) ([]any, error) {
+	switch declared := m["hooks"].(type) {
 	case nil:
 		return nil, nil
 	case string:
@@ -432,12 +419,12 @@ func declaredHooks(m *pyDict) ([]any, error) {
 	case []any:
 		return declared, nil
 	}
-	return nil, valueError{"hooks must be a ./ relative path or a list of them; an inline document does not load"}
+	return nil, errors.New("hooks must be a ./ relative path or a list of them; an inline document does not load")
 }
 
 type component struct{ field, relative string }
 
-func declaredComponents(m *pyDict) ([]component, []string, []string) {
+func declaredComponents(m map[string]any) ([]component, []string, []string) {
 	var paths []component
 	roots := slices.Clone(alwaysRoots)
 	var errs []string
@@ -459,8 +446,8 @@ func declaredComponents(m *pyDict) ([]component, []string, []string) {
 	for _, hook := range hooks {
 		declarations = append(declarations, declaration{"hooks", hook})
 	}
-	mcp := m.get("mcpServers")
-	if _, inline := asDict(mcp); inline {
+	mcp := m["mcpServers"]
+	if _, inline := object(mcp); inline {
 		errs = append(errs, "mcpServers must name a ./ relative file: an inline table would ship a server this check never reads")
 		mcp = nil
 	}
@@ -470,13 +457,13 @@ func declaredComponents(m *pyDict) ([]component, []string, []string) {
 	for _, d := range declarations {
 		relative, ok := insidePath(d.value)
 		if !ok {
-			errs = append(errs, d.field+" "+pyReprValue(d.value)+" must be a ./ relative path inside the plugin root")
+			errs = append(errs, d.field+" "+show(d.value)+" must be a ./ relative path inside the plugin root")
 			continue
 		}
 		paths = append(paths, component{d.field, relative})
 		roots = append(roots, strings.Split(relative, "/")[0])
 	}
-	if m.has("apps") {
+	if has(m, "apps") {
 		errs = append(errs, "apps is not declared by this package")
 	}
 	return paths, sortedSet(roots), errs
@@ -485,18 +472,15 @@ func declaredComponents(m *pyDict) ([]component, []string, []string) {
 // nonempty is a string that is not blank; ingestion treats whitespace-only as absent.
 func nonempty(value any) bool {
 	text, ok := value.(string)
-	return ok && pyvalue.Strip(text) != ""
+	return ok && strings.TrimSpace(text) != ""
 }
 
 func loadDocument(name string, data []byte, label string) (any, []string) {
-	text, err := decodeUTF8(data)
-	if err == nil {
-		var document any
-		if document, err = pyJSONLoadsOrdered(text); err == nil {
-			return document, nil
-		}
+	document, err := decodeJSON(data)
+	if err != nil {
+		return nil, []string{label + " " + name + ": " + err.Error()}
 	}
-	return nil, []string{label + " " + name + ": " + err.Error()}
+	return document, nil
 }
 
 func hookDocumentErrors(name string, data []byte, label string) []string {
@@ -504,42 +488,42 @@ func hookDocumentErrors(name string, data []byte, label string) []string {
 	if errs != nil {
 		return errs
 	}
-	var events *pyDict
-	if d, ok := asDict(document); ok {
-		events, _ = asDict(d.get("hooks"))
+	var events map[string]any
+	if d, ok := object(document); ok {
+		events, _ = object(d["hooks"])
 	}
-	if events == nil || len(events.keys) == 0 {
+	if len(events) == 0 {
 		return []string{label + " " + name + ": a hook file must hold a nonempty hooks object"}
 	}
 	prefix := label + " " + name + ": "
-	for _, event := range events.sortedKeys() {
-		groups, ok := events.get(event).([]any)
+	for _, event := range sortedKeys(events) {
+		groups, ok := events[event].([]any)
 		if !ok || len(groups) == 0 {
 			errs = append(errs, prefix+event+" must hold a nonempty list")
 			continue
 		}
 		for _, group := range groups {
 			var entries []any
-			if g, ok := asDict(group); ok {
-				entries, _ = g.get("hooks").([]any)
+			if g, ok := object(group); ok {
+				entries, _ = g["hooks"].([]any)
 			}
 			if len(entries) == 0 {
 				errs = append(errs, prefix+"every "+event+" group must hold a nonempty hooks list")
 				continue
 			}
 			for _, item := range entries {
-				hook, ok := asDict(item)
-				if !ok || hook.get("type") != "command" {
+				hook, ok := object(item)
+				if !ok || hook["type"] != "command" {
 					errs = append(errs, prefix+"every hook must be a command hook")
 					continue
 				}
-				if !nonempty(hook.get("command")) {
+				if !nonempty(hook["command"]) {
 					errs = append(errs, prefix+"every hook needs a command")
 				}
-				timeout, isInt := pyInt(hook.get("timeout"))
-				if !isInt || timeout.Sign() <= 0 {
+				timeout, isInt := integer(hook["timeout"])
+				if !isInt || timeout <= 0 {
 					errs = append(errs, prefix+"every hook needs a positive integer timeout")
-				} else if timeout.Cmp(bigInt(hookTimeoutSeconds)) > 0 {
+				} else if timeout > hookTimeoutSeconds {
 					errs = append(errs, prefix+"a hook timeout may not exceed "+strconv.Itoa(hookTimeoutSeconds)+" seconds")
 				}
 			}
@@ -553,30 +537,30 @@ func mcpDocumentErrors(name string, data []byte, p payload, label string) []stri
 	if errs != nil {
 		return errs
 	}
-	var servers *pyDict
-	if d, ok := asDict(document); ok {
-		servers, _ = asDict(d.get("mcpServers"))
+	var servers map[string]any
+	if d, ok := object(document); ok {
+		servers, _ = object(d["mcpServers"])
 	}
-	if servers == nil || len(servers.keys) == 0 {
+	if len(servers) == 0 {
 		return []string{label + " " + name + ": an MCP file must hold a nonempty mcpServers object"}
 	}
-	for _, server := range servers.sortedKeys() {
+	for _, server := range sortedKeys(servers) {
 		where := label + " " + name + " " + server + ": "
-		declared, ok := asDict(servers.get(server))
+		declared, ok := object(servers[server])
 		if !ok {
 			errs = append(errs, where+"a server must be an object")
 			continue
 		}
 		var words []string
-		if command, ok := declared.get("command").(string); ok && nonempty(command) {
+		if command, ok := declared["command"].(string); ok && nonempty(command) {
 			words = append(words, command)
 		} else {
 			errs = append(errs, where+"a server needs a command")
 		}
-		if declared.get("cwd") != "." {
+		if declared["cwd"] != "." {
 			errs = append(errs, where+`cwd must be ".": a relative command resolves against it, and a server declared without one never starts`)
 		}
-		arguments, ok := declared.get("args").([]any)
+		arguments, ok := declared["args"].([]any)
 		allStrings := ok
 		for _, word := range arguments {
 			if _, isString := word.(string); !isString {
@@ -593,12 +577,12 @@ func mcpDocumentErrors(name string, data []byte, p payload, label string) []stri
 		for _, word := range words {
 			switch {
 			case strings.ContainsAny(word, "$%"):
-				errs = append(errs, where+pyvalue.StrRepr(word)+" carries a variable; a plugin MCP server"+
+				errs = append(errs, where+strconv.Quote(word)+" carries a variable; a plugin MCP server"+
 					" runs without a shell and inherits no plugin root, so it would arrive as literal text")
 			case strings.HasPrefix(word, "/"):
-				errs = append(errs, where+pyvalue.StrRepr(word)+" is an absolute path; the package ships to hosts it has not seen")
+				errs = append(errs, where+strconv.Quote(word)+" is an absolute path; the package ships to hosts it has not seen")
 			case strings.HasPrefix(word, "./") && !p.has(word[2:]):
-				errs = append(errs, where+pyvalue.StrRepr(word)+" names a file the package does not ship")
+				errs = append(errs, where+strconv.Quote(word)+" names a file the package does not ship")
 			}
 		}
 		errs = append(errs, toolApprovalErrors(server, declared, where)...)
@@ -606,14 +590,14 @@ func mcpDocumentErrors(name string, data []byte, p payload, label string) []stri
 	return errs
 }
 
-func toolApprovalErrors(server string, declared *pyDict, where string) []string {
+func toolApprovalErrors(server string, declared map[string]any, where string) []string {
 	required := requiredToolApprovals[server]
 	var errs []string
-	if !declared.has("tools") {
+	if !has(declared, "tools") {
 		if len(required) > 0 {
 			var gates []string
 			for _, gate := range required {
-				gates = append(gates, gate[0]+" with "+pyvalue.StrRepr(gate[1]))
+				gates = append(gates, fmt.Sprintf("%s with %q", gate[0], gate[1]))
 			}
 			errs = append(errs, where+"declares no tools, and this server must gate "+strings.Join(gates, ", ")+
 				". The user configuration this package replaces carries that gate, and"+
@@ -621,25 +605,25 @@ func toolApprovalErrors(server string, declared *pyDict, where string) []string 
 		}
 		return errs
 	}
-	tools, ok := asDict(declared.get("tools"))
-	if !ok || len(tools.keys) == 0 {
+	tools, ok := object(declared["tools"])
+	if !ok || len(tools) == 0 {
 		return []string{where + "tools must be a nonempty object; what a host does with an empty one is not measured"}
 	}
-	for _, tool := range tools.sortedKeys() {
+	for _, tool := range sortedKeys(tools) {
 		named := where + "tools." + tool + ": "
 		if !nonempty(tool) {
 			errs = append(errs, where+"a tool name must be a nonempty string")
 			continue
 		}
-		gate, ok := asDict(tools.get(tool))
+		gate, ok := object(tools[tool])
 		if !ok {
 			errs = append(errs, named+"a tool gate must be an object")
 			continue
 		}
 		var unknown []string
-		for _, key := range gate.sortedKeys() {
+		for _, key := range sortedKeys(gate) {
 			if !slices.Contains(approvalKeys, key) {
-				unknown = append(unknown, pyvalue.StrRepr(key))
+				unknown = append(unknown, strconv.Quote(key))
 			}
 		}
 		if len(unknown) > 0 {
@@ -647,30 +631,30 @@ func toolApprovalErrors(server string, declared *pyDict, where string) []string 
 				" is checked here, and a declaration this host dislikes disappears without a word")
 			continue
 		}
-		mode, isString := gate.get("approval_mode").(string)
+		mode, isString := gate["approval_mode"].(string)
 		if !isString || !slices.Contains(approvalModes, mode) {
-			errs = append(errs, named+"approval_mode "+pyReprValue(gate.get("approval_mode"))+" is not one of "+strings.Join(approvalModes, ", "))
+			errs = append(errs, named+"approval_mode "+show(gate["approval_mode"])+" is not one of "+strings.Join(approvalModes, ", "))
 		}
 	}
 	for _, gate := range required {
 		var carried any
-		if g, ok := asDict(tools.get(gate[0])); ok {
-			carried = g.get("approval_mode")
+		if g, ok := object(tools[gate[0]]); ok {
+			carried = g["approval_mode"]
 		}
-		if !pyEqual(carried, gate[1]) {
-			errs = append(errs, where+"must gate "+gate[0]+" with "+pyvalue.StrRepr(gate[1])+", and it declares "+pyReprValue(carried))
+		if carried != gate[1] {
+			errs = append(errs, fmt.Sprintf("%smust gate %s with %q, and it declares %s", where, gate[0], gate[1], show(carried)))
 		}
 	}
 	return errs
 }
 
-// yamlScalar is plugin.py's yaml_scalar: one quoted or bare scalar.
+// yamlScalar is one quoted or bare YAML scalar: a double-quoted one reads as JSON.
 func yamlScalar(text string) (any, error) {
-	text = pyvalue.Strip(text)
+	text = strings.TrimSpace(text)
 	if strings.HasPrefix(text, `"`) {
-		return pyJSONLoadsOrdered(text)
+		return decodeJSON([]byte(text))
 	}
-	if strings.HasPrefix(text, "'") && strings.HasSuffix(text, "'") && len([]rune(text)) > 1 {
+	if strings.HasPrefix(text, "'") && strings.HasSuffix(text, "'") && len(text) > 1 {
 		return strings.ReplaceAll(text[1:len(text)-1], "''", "'"), nil
 	}
 	return text, nil
@@ -679,24 +663,20 @@ func yamlScalar(text string) (any, error) {
 func interfaceErrors(skillPath string, p payload, label string) []string {
 	name := skillPath[strings.LastIndex(skillPath, "/")+1:]
 	where := label + " " + skillPath + "/agents/openai.yaml: "
-	file, ok := p[skillPath+"/agents/openai.yaml"]
-	if !ok {
-		return []string{where + pyvalue.StrRepr(skillPath+"/agents/openai.yaml")}
-	}
-	text, err := decodeUTF8(file.data)
-	if err != nil {
-		return []string{where + err.Error()}
+	file := p[skillPath+"/agents/openai.yaml"]
+	if !utf8.Valid(file.data) {
+		return []string{where + errNotUTF8.Error()}
 	}
 	values := map[string]any{}
 	section := ""
-	for _, line := range pySplitlines(text) {
-		if pyIsBlank(line) || strings.HasPrefix(pyLStrip(line), "#") {
+	for _, line := range lines(string(file.data)) {
+		if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
 			continue
 		}
 		if !strings.HasPrefix(line, " ") {
-			section = pyvalue.Strip(line)
+			section = strings.TrimSpace(line)
 		} else if section == "interface:" {
-			key, value, found := strings.Cut(pyvalue.Strip(line), ":")
+			key, value, found := strings.Cut(strings.TrimSpace(line), ":")
 			if _, seen := values[key]; !found || seen {
 				return []string{where + "malformed interface metadata"}
 			}
@@ -722,14 +702,24 @@ func interfaceErrors(skillPath string, p payload, label string) []string {
 	return nil
 }
 
-func interfaceOptionErrors(iface *pyDict, p payload, label string) []string {
+// httpsURL is an https URL with a host.
+func httpsURL(value any) bool {
+	text, ok := value.(string)
+	if !ok {
+		return false
+	}
+	u, err := url.Parse(text)
+	return err == nil && u.Scheme == "https" && u.Hostname() != ""
+}
+
+func interfaceOptionErrors(iface map[string]any, p payload, label string) []string {
 	var errs []string
 	for _, field := range httpsFields {
-		if value := iface.get(field); value != nil && !httpsURL(value) {
+		if value := iface[field]; value != nil && !httpsURL(value) {
 			errs = append(errs, label+" manifest: interface."+field+" must be an https URL")
 		}
 	}
-	if color := iface.get("brandColor"); color != nil {
+	if color := iface["brandColor"]; color != nil {
 		if text, ok := color.(string); !ok || !brandColor.MatchString(text) {
 			errs = append(errs, label+" manifest: interface.brandColor must be #RRGGBB")
 		}
@@ -740,11 +730,11 @@ func interfaceOptionErrors(iface *pyDict, p payload, label string) []string {
 	}
 	var assets []asset
 	for _, field := range assetFields {
-		if iface.has(field) {
-			assets = append(assets, asset{field, iface.get(field)})
+		if has(iface, field) {
+			assets = append(assets, asset{field, iface[field]})
 		}
 	}
-	if screenshots := iface.get("screenshots"); screenshots != nil {
+	if screenshots := iface["screenshots"]; screenshots != nil {
 		if shots, ok := screenshots.([]any); !ok || len(shots) == 0 {
 			errs = append(errs, label+" manifest: interface.screenshots must be a nonempty list")
 		} else {
@@ -758,7 +748,7 @@ func interfaceOptionErrors(iface *pyDict, p payload, label string) []string {
 		if !ok || !strings.HasPrefix(text, "./") {
 			errs = append(errs, label+" manifest: interface."+a.field+" must be a ./ relative path")
 		} else if p != nil && !p.has(text[2:]) {
-			errs = append(errs, label+" manifest: interface."+a.field+" names "+pyvalue.StrRepr(text)+", which the package does not ship")
+			errs = append(errs, label+" manifest: interface."+a.field+" names "+strconv.Quote(text)+", which the package does not ship")
 		}
 	}
 	return errs
@@ -766,62 +756,62 @@ func interfaceOptionErrors(iface *pyDict, p payload, label string) []string {
 
 // manifestErrors checks the manifest; rootName is "" for an installed tree, whose directory
 // is named by version, and p is nil when no payload is known.
-func manifestErrors(m *pyDict, rootName, label string, p payload) []string {
+func manifestErrors(m map[string]any, rootName, label string, p payload) []string {
 	var errs []string
 	add := func(text string) { errs = append(errs, label+" manifest: "+text) }
 	for _, field := range textFields {
-		if !nonempty(m.get(field)) {
+		if !nonempty(m[field]) {
 			add(field + " must be a nonempty string")
 		}
 	}
-	if keywords, ok := m.get("keywords").([]any); !ok || len(keywords) == 0 {
+	if keywords, ok := m["keywords"].([]any); !ok || len(keywords) == 0 {
 		add("keywords must be a nonempty list")
 	} else if !allNonempty(keywords) {
 		add("keywords must be nonempty strings")
 	}
-	if m.get("license") != licenseID {
-		add("license " + pyReprValue(m.get("license")) + " must be " + pyvalue.StrRepr(licenseID) + ", the license this repository ships")
+	if m["license"] != licenseID {
+		add(fmt.Sprintf("license %s must be %q, the license this repository ships", show(m["license"]), licenseID))
 	}
-	author, isDict := asDict(m.get("author"))
-	if !isDict || !nonempty(author.get("name")) {
+	author, isObject := object(m["author"])
+	if !isObject || !nonempty(author["name"]) {
 		add("author.name is required")
-	} else if extra := without(author.sortedKeys(), authorKeys); len(extra) > 0 {
-		add("author carries unsupported keys " + pyvalue.Repr(extra))
+	} else if extra := without(sortedKeys(author), authorKeys); len(extra) > 0 {
+		add("author carries unsupported keys " + show(extra))
 	}
-	if isDict {
-		if author.has("email") && !nonempty(author.get("email")) {
+	if isObject {
+		if has(author, "email") && !nonempty(author["email"]) {
 			add("author.email must be a nonempty string")
 		}
-		if author.has("url") && !httpsURL(author.get("url")) {
+		if has(author, "url") && !httpsURL(author["url"]) {
 			add("author.url must be an https URL with a host")
 		}
 	}
-	for _, key := range without(m.sortedKeys(), manifestKeys) {
-		add(pyvalue.StrRepr(key) + " is not a supported manifest key")
+	for _, key := range without(sortedKeys(m), manifestKeys) {
+		add(strconv.Quote(key) + " is not a supported manifest key")
 	}
-	if rootName != "" && m.get("name") != rootName {
-		add("name " + pyReprValue(m.get("name")) + " must match the plugin directory " + pyvalue.StrRepr(rootName))
+	if rootName != "" && m["name"] != rootName {
+		add(fmt.Sprintf("name %s must match the plugin directory %q", show(m["name"]), rootName))
 	}
 	if !semverPattern.MatchString(manifestVersion(m)) {
-		add("version " + pyReprValue(m.get("version")) + " is not a semantic version")
+		add("version " + show(m["version"]) + " is not a semantic version")
 	} else if p != nil {
 		errs = append(errs, versionErrors(m, p, label)...)
 	}
 	if _, err := declaredSkillsPath(m); err != nil {
 		add(err.Error())
 	}
-	iface, ok := asDict(m.get("interface"))
+	iface, ok := object(m["interface"])
 	if !ok {
 		add("interface must be an object")
 	} else {
-		for _, key := range without(iface.sortedKeys(), append(slices.Clone(interfaceFields), interfaceOptional...)) {
+		for _, key := range without(sortedKeys(iface), append(slices.Clone(interfaceFields), interfaceOptional...)) {
 			add("interface." + key + " is not a supported interface key")
 		}
-		for _, key := range iface.sortedKeys() {
+		for _, key := range sortedKeys(iface) {
 			if !slices.Contains(interfaceOptional, key) {
 				continue
 			}
-			value := iface.get(key)
+			value := iface[key]
 			valid := nonempty(value)
 			if list, isList := value.([]any); key == "screenshots" && isList {
 				valid = allNonempty(list) && len(list) > 0
@@ -832,7 +822,7 @@ func manifestErrors(m *pyDict, rootName, label string, p payload) []string {
 		}
 		errs = append(errs, interfaceOptionErrors(iface, p, label)...)
 		for _, field := range interfaceFields {
-			value := iface.get(field)
+			value := iface[field]
 			list := field == "capabilities" || field == "defaultPrompt"
 			valid := nonempty(value)
 			if list {
@@ -856,7 +846,7 @@ func manifestErrors(m *pyDict, rootName, label string, p payload) []string {
 		for _, c := range declared {
 			file, ok := p[c.relative]
 			if !ok {
-				add(c.field + " names " + pyvalue.StrRepr("./"+c.relative) + ", which the package does not ship")
+				add(c.field + " names " + strconv.Quote("./"+c.relative) + ", which the package does not ship")
 				continue
 			}
 			if c.field == "hooks" {
@@ -878,7 +868,7 @@ func allNonempty(items []any) bool {
 	return true
 }
 
-// without is sorted(set(items) - set(allowed)) for already sorted items.
+// without is the items allowed does not hold, in their order.
 func without(items, allowed []string) []string {
 	var out []string
 	for _, item := range items {
@@ -889,73 +879,61 @@ func without(items, allowed []string) []string {
 	return out
 }
 
-// errNotIterable stands in for the TypeError plugin.py raises iterating a catalog whose
-// plugins value is a number, boolean or null.
-var errNotIterable = errors.New("marketplace: plugins must be a list")
-
-func marketplaceErrors(catalog, m *pyDict) ([]string, error) {
+func marketplaceErrors(catalog, m map[string]any) []string {
 	var errs []string
-	if !pyEqual(catalog.get("name"), m.get("name")) {
-		errs = append(errs, "marketplace: name "+pyReprValue(catalog.get("name"))+" must match the plugin name "+pyReprValue(m.get("name")))
+	if !same(catalog["name"], m["name"]) {
+		errs = append(errs, "marketplace: name "+show(catalog["name"])+" must match the plugin name "+show(m["name"]))
 	}
 	var expected any
-	declared, declaredIsDict := asDict(m.get("interface"))
-	if declaredIsDict {
-		expected = declared.get("displayName")
+	declared, declaredIsObject := object(m["interface"])
+	if declaredIsObject {
+		expected = declared["displayName"]
 	}
-	if iface, ok := asDict(catalog.get("interface")); !ok || !pyEqual(iface.get("displayName"), expected) {
-		errs = append(errs, "marketplace: interface.displayName must match the manifest display name "+pyReprValue(expected))
+	if iface, ok := object(catalog["interface"]); !ok || !same(iface["displayName"], expected) {
+		errs = append(errs, "marketplace: interface.displayName must match the manifest display name "+show(expected))
 	}
-	var candidates []any
-	switch plugins := catalog.get("plugins").(type) {
-	case []any:
-		candidates = plugins
-	case string, *pyDict:
-	default:
-		if catalog.has("plugins") {
-			return nil, errNotIterable
-		}
+	candidates, isList := catalog["plugins"].([]any)
+	if !isList && has(catalog, "plugins") {
+		return append(errs, "marketplace: plugins must be a list")
 	}
-	var entries []*pyDict
+	var entries []map[string]any
 	for _, candidate := range candidates {
-		if e, ok := asDict(candidate); ok && pyEqual(e.get("name"), m.get("name")) {
+		if e, ok := object(candidate); ok && same(e["name"], m["name"]) {
 			entries = append(entries, e)
 		}
 	}
 	if len(entries) != 1 {
-		return append(errs, "marketplace: expected exactly one entry named "+pyReprValue(m.get("name"))), nil
+		return append(errs, "marketplace: expected exactly one entry named "+show(m["name"]))
 	}
 	e := entries[0]
-	source, ok := asDict(e.get("source"))
+	source, ok := object(e["source"])
 	if !ok {
 		errs = append(errs, "marketplace: entry source must be an object")
-		source = &pyDict{vals: map[string]any{}}
 	}
-	if source.get("source") != "local" {
+	if source["source"] != "local" {
 		errs = append(errs, "marketplace: entry source.source must be local")
 	}
-	if path := source.get("path"); path != "./"+pluginRelative {
-		errs = append(errs, "marketplace: entry source.path "+pyReprValue(path)+" must be "+pyvalue.StrRepr("./"+pluginRelative))
+	if path := source["path"]; path != "./"+pluginRelative {
+		errs = append(errs, fmt.Sprintf("marketplace: entry source.path %s must be %q", show(path), "./"+pluginRelative))
 	}
-	policy, ok := asDict(e.get("policy"))
+	policy, ok := object(e["policy"])
 	if !ok {
 		errs = append(errs, "marketplace: entry policy must be an object")
-		policy = &pyDict{vals: map[string]any{}}
 	}
-	if policy.get("installation") != "AVAILABLE" {
+	if policy["installation"] != "AVAILABLE" {
 		errs = append(errs, "marketplace: entry policy.installation must be AVAILABLE")
 	}
-	if policy.get("authentication") != "ON_USE" {
+	if policy["authentication"] != "ON_USE" {
 		errs = append(errs, "marketplace: entry policy.authentication must be ON_USE; installation does not create credentials")
 	}
 	var category any
-	if declaredIsDict {
-		category = declared.get("category")
+	if declaredIsObject {
+		category = declared["category"]
 	}
-	if text, ok := e.get("category").(string); !ok || !pyEqual(text, category) {
-		errs = append(errs, "marketplace: entry category must be the manifest category "+pyReprValue(category))
+	if text, ok := e["category"].(string); !ok || !same(text, category) {
+		errs = append(errs, "marketplace: entry category must be the manifest category "+show(category))
 	}
-	return errs, nil
+	return errs
 }
 
 // personalPath finds the first personal home path in text, pattern by pattern.
@@ -982,7 +960,7 @@ func personalPath(text string) string {
 	return ""
 }
 
-func hygiene(p payload, m *pyDict, label string) []string {
+func hygiene(p payload, m map[string]any, label string) []string {
 	var errs []string
 	for _, required := range requiredFiles {
 		if !p.has(required) {
@@ -991,7 +969,7 @@ func hygiene(p payload, m *pyDict, label string) []string {
 	}
 	_, roots, _ := declaredComponents(m)
 	for _, name := range p.names() {
-		parts := pyPurePath(name)
+		parts := pathParts(name)
 		if !slices.Contains(roots, parts[0]) {
 			errs = append(errs, label+" "+name+": only "+strings.Join(roots, ", ")+
 				" may ship in the package; a component the manifest does not declare installs without ever loading")
@@ -1002,20 +980,19 @@ func hygiene(p payload, m *pyDict, label string) []string {
 				break
 			}
 		}
-		text, err := decodeUTF8(p[name].data)
-		if err != nil {
+		if !utf8.Valid(p[name].data) {
 			continue
 		}
-		if found := personalPath(text); found != "" {
-			errs = append(errs, label+" "+name+": contains the personal path "+pyvalue.StrRepr(found)+
+		if found := personalPath(string(p[name].data)); found != "" {
+			errs = append(errs, label+" "+name+": contains the personal path "+strconv.Quote(found)+
 				"; the package must not require one account checkout")
 		}
 	}
 	return errs
 }
 
-// skillSet is plugin.py's skills(): the skill set is the declared directory's children.
-func skillSet(p payload, m *pyDict, label string) ([]string, map[string]map[string]bool) {
+// skillSet is the skill set: the declared skills directory's children.
+func skillSet(p payload, m map[string]any, label string) ([]string, map[string]map[string]bool) {
 	prefix, err := declaredSkillsPath(m)
 	if err != nil {
 		return []string{label + ": " + err.Error()}, map[string]map[string]bool{}
@@ -1024,7 +1001,7 @@ func skillSet(p payload, m *pyDict, label string) ([]string, map[string]map[stri
 	found := map[string]map[string]bool{}
 	prefixParts := strings.Split(prefix, "/")
 	for name := range p {
-		parts := pyPurePath(name)
+		parts := pathParts(name)
 		if len(parts) < len(prefixParts)+2 || !slices.Equal(parts[:len(prefixParts)], prefixParts) {
 			continue
 		}
@@ -1039,7 +1016,7 @@ func skillSet(p payload, m *pyDict, label string) ([]string, map[string]map[stri
 	}
 	declared, _, _ := declaredComponents(m)
 	for _, name := range p.names() {
-		parts := pyPurePath(name)
+		parts := pathParts(name)
 		isComponent := false
 		for _, c := range declared {
 			isComponent = isComponent || c.relative == name ||
@@ -1064,30 +1041,21 @@ func skillSet(p payload, m *pyDict, label string) ([]string, map[string]map[stri
 	return errs, found
 }
 
-func sortedKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for key := range m {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-// report is the --json result, keys in sort_keys order when printed.
+// report is the --json result, printed with sorted keys, one top-level member per line.
 type report map[string]any
 
-func reportPayload(p payload, m *pyDict, found map[string]map[string]bool, extra report) report {
+func reportPayload(p payload, m map[string]any, found map[string]map[string]bool, extra report) report {
 	skills := sortedKeys(found)
 	name := ""
-	if m.has("name") {
-		name = pyStr(m.get("name"))
+	if has(m, "name") {
+		name = text(m["name"])
 	}
 	var expected []string
 	for _, skill := range skills {
 		expected = append(expected, name+":"+skill)
 	}
 	sort.Strings(expected)
-	r := report{"digest": payloadDigest(p), "files": len(p), "version": m.get("version"),
+	r := report{"digest": payloadDigest(p), "files": len(p), "version": m["version"],
 		"skills": nonNil(skills), "expectedSkillNames": nonNil(expected)}
 	for key, value := range hookReport(p, m) {
 		r[key] = value
@@ -1104,7 +1072,7 @@ func reportPayload(p payload, m *pyDict, found map[string]map[string]bool, extra
 // hooksDigest frames each named file, in the order the manifest names it, as payloadDigest
 // frames a shipped file, so two payloads share it exactly when they name the same files in the
 // same order with the same bytes.
-func hookReport(p payload, m *pyDict) report {
+func hookReport(p payload, m map[string]any) report {
 	declared, _ := declaredHooks(m)
 	stop := 0
 	var blocks [][]byte
@@ -1116,23 +1084,19 @@ func hookReport(p payload, m *pyDict) report {
 		}
 		sum := sha256.Sum256(file.data)
 		blocks = append(blocks, fmt.Appendf(nil, "%d:%s %s %s", len(relative), relative, file.mode, hex.EncodeToString(sum[:])))
-		text, err := decodeUTF8(file.data)
-		if err != nil {
-			continue
-		}
-		document, err := pyJSONLoadsOrdered(text)
+		document, err := decodeJSON(file.data)
 		if err != nil {
 			continue
 		}
 		var groups []any
-		if d, ok := asDict(document); ok {
-			if events, ok := asDict(d.get("hooks")); ok {
-				groups, _ = events.get("Stop").([]any)
+		if d, ok := object(document); ok {
+			if events, ok := object(d["hooks"]); ok {
+				groups, _ = events["Stop"].([]any)
 			}
 		}
 		for _, group := range groups {
-			if g, ok := asDict(group); ok {
-				entries, _ := g.get("hooks").([]any)
+			if g, ok := object(group); ok {
+				entries, _ := g["hooks"].([]any)
 				stop += len(entries)
 			}
 		}
@@ -1141,12 +1105,17 @@ func hookReport(p payload, m *pyDict) report {
 	return report{"stopHooks": stop, "hooksDigest": hex.EncodeToString(sum[:])}
 }
 
+// json is the report as --json prints it: indented by two spaces, so each top-level member is
+// one line that docs/plugin-packaging.md reads with sed.
 func (r report) json() string {
-	var object jsonObject
-	for _, key := range sortedKeys(r) {
-		object = append(object, jsonKV{key, r[key]})
+	var b bytes.Buffer
+	encoder := json.NewEncoder(&b)
+	encoder.SetEscapeHTML(false)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(map[string]any(r)); err != nil {
+		panic(err)
 	}
-	return pyJSONIndent(object, 2)
+	return strings.TrimSuffix(b.String(), "\n")
 }
 
 func checkInstalled(path string) ([]string, report, error) {
@@ -1170,8 +1139,7 @@ func (c *pluginChecker) recordVersion(stdout, stderr io.Writer) int {
 	}
 	version := manifestVersion(m)
 	if !semverPattern.MatchString(version) {
-		errs = append(errs, "working tree manifest: version "+pyvalue.StrRepr(version)+
-			" is not a semantic version, so no payload suffix can be recorded under it")
+		errs = append(errs, fmt.Sprintf("working tree manifest: version %q is not a semantic version, so no payload suffix can be recorded under it", version))
 	}
 	if len(errs) > 0 {
 		return failf(stderr, "%s", strings.Join(sortedSet(errs), "\n"))
@@ -1185,16 +1153,16 @@ func (c *pluginChecker) recordVersion(stdout, stderr io.Writer) int {
 	if err != nil {
 		return failf(stderr, "%s", err)
 	}
-	recorded := pyJSONString(version)
+	recorded := show(version)
 	if count := strings.Count(document, recorded); count != 1 {
-		return failf(stderr, "%s spells %s %d times; exactly one of them is the version to rewrite", manifestPath, pyvalue.StrRepr(version), count)
+		return failf(stderr, "%s spells %q %d times; exactly one of them is the version to rewrite", manifestPath, version, count)
 	}
 	if version != expected {
 		info, err := os.Stat(path)
 		if err != nil {
 			return failf(stderr, "%s", err)
 		}
-		if err := os.WriteFile(path, []byte(strings.ReplaceAll(document, recorded, pyJSONString(expected))), info.Mode().Perm()); err != nil {
+		if err := os.WriteFile(path, []byte(strings.ReplaceAll(document, recorded, show(expected))), info.Mode().Perm()); err != nil {
 			return failf(stderr, "%s", err)
 		}
 		fmt.Fprintf(stdout, "Version %s in %s, recorded from %d shipped files. Commit it: the release payload is read from the revision, not from this tree\n",
@@ -1210,7 +1178,7 @@ func (c *pluginChecker) checkRevision(revision string) ([]string, report, error)
 	if err != nil {
 		return nil, nil, err
 	}
-	resolved := pyvalue.Strip(out)
+	resolved := strings.TrimSpace(out)
 	release, errs, err := c.revisionPayload(resolved)
 	if err != nil {
 		return nil, nil, err
@@ -1225,10 +1193,7 @@ func (c *pluginChecker) checkRevision(revision string) ([]string, report, error)
 	skillErrs, found := skillSet(release, m, "release")
 	errs = append(errs, skillErrs...)
 	catalogText, err := c.gitText("show", resolved+":"+marketplacePath)
-	errs, err = c.catalogErrors(errs, "marketplace: ", catalogText, err, m)
-	if err != nil {
-		return nil, nil, err
-	}
+	errs = catalogErrors(errs, "marketplace: ", catalogText, err, m)
 	licenseBlob, err := c.git("show", resolved+":LICENSE")
 	if err != nil {
 		return nil, nil, err
@@ -1243,8 +1208,8 @@ func (c *pluginChecker) checkRevision(revision string) ([]string, report, error)
 		errs = append(errs, err.Error())
 	}
 	hygieneManifest := workingManifest
-	if hygieneManifest == nil || len(hygieneManifest.keys) == 0 {
-		hygieneManifest = &pyDict{vals: map[string]any{}}
+	if hygieneManifest == nil {
+		hygieneManifest = map[string]any{}
 	}
 	errs = append(errs, hygiene(working, hygieneManifest, "working tree")...)
 	if workingManifest != nil {
@@ -1262,10 +1227,7 @@ func (c *pluginChecker) checkRevision(revision string) ([]string, report, error)
 			}
 		}
 		catalogNow, readErr := readText(filepath.Join(c.root, marketplacePath))
-		errs, err = c.catalogErrors(errs, "working tree marketplace: ", catalogNow, readErr, workingManifest)
-		if err != nil {
-			return nil, nil, err
-		}
+		errs = catalogErrors(errs, "working tree marketplace: ", catalogNow, readErr, workingManifest)
 		repoLicense, _ := os.ReadFile(filepath.Join(c.root, "LICENSE"))
 		if !bytes.Equal(working["LICENSE"].data, repoLicense) {
 			errs = append(errs, "working tree LICENSE: the package copy must match the repository license")
@@ -1275,9 +1237,9 @@ func (c *pluginChecker) checkRevision(revision string) ([]string, report, error)
 	if err != nil {
 		return nil, nil, err
 	}
-	for _, line := range pySplitlines(status) {
+	for _, line := range lines(status) {
 		if strings.HasPrefix(line, "??") || strings.HasPrefix(line, "!!") {
-			errs = append(errs, "working tree "+pyvalue.Strip(line[min(3, len(line)):])+": untracked or ignored files "+
+			errs = append(errs, "working tree "+strings.TrimSpace(line[min(3, len(line)):])+": untracked or ignored files "+
 				"inside the plugin root are copied into the cache; commit or remove it")
 		}
 	}
@@ -1299,61 +1261,49 @@ func (c *pluginChecker) checkRevision(revision string) ([]string, report, error)
 
 // catalogErrors reads a marketplace document (text, or the error reading it) and appends
 // its findings; a read or decode failure is itself a finding under prefix.
-func (c *pluginChecker) catalogErrors(errs []string, prefix, text string, readErr error, m *pyDict) ([]string, error) {
+func catalogErrors(errs []string, prefix, text string, readErr error, m map[string]any) []string {
 	if readErr != nil {
-		var pkg packageError
-		var val valueError
-		var osErr osError
-		if !errors.As(readErr, &pkg) && !errors.As(readErr, &val) && !errors.As(readErr, &osErr) {
-			return nil, readErr
-		}
-		return append(errs, prefix+readErr.Error()), nil
+		return append(errs, prefix+readErr.Error())
 	}
-	value, err := pyJSONLoadsOrdered(text)
+	value, err := decodeJSON([]byte(text))
 	if err != nil {
-		return append(errs, prefix+err.Error()), nil
+		return append(errs, prefix+err.Error())
 	}
-	catalog, ok := asDict(value)
+	catalog, ok := object(value)
 	if !ok {
-		return append(errs, prefix+"the marketplace file must be a JSON object"), nil
+		return append(errs, prefix+"the marketplace file must be a JSON object")
 	}
-	found, err := marketplaceErrors(catalog, m)
-	if err != nil {
-		return append(errs, err.Error()), nil
-	}
-	return append(errs, found...), nil
+	return append(errs, marketplaceErrors(catalog, m)...)
 }
 
 // Plugin is `crw-dev ci plugin`: validate the Codex plugin package this repository publishes.
 func Plugin(args []string, stdout, stderr io.Writer) int {
-	values, present, code := parseOptions("plugin", "Validate the Codex plugin package this repository publishes.",
-		[]string{"revision", "payload"}, []string{"record-version", "json"}, args, stdout, stderr)
-	if code >= 0 {
+	flags := newFlags("plugin")
+	revision := flags.String("revision", "HEAD", "check the package as this Git revision ships it")
+	payloadDir := flags.String("payload", "", "check an installed plugin directory instead of a revision")
+	record := flags.Bool("record-version", false, "write the payload's version suffix into the working tree manifest")
+	asJSON := flags.Bool("json", false, "print the report as JSON")
+	if code := parseFlags(flags, "Validate the Codex plugin package this repository publishes.", args, stdout, stderr); code >= 0 {
 		return code
 	}
-	revision := "HEAD"
-	if present["revision"] {
-		revision = values["revision"]
-	}
 	checker := &pluginChecker{}
-	needRoot := present["record-version"] || !present["payload"]
-	if needRoot {
+	if *record || !given(flags, "payload") {
 		out, err := runGit(".", "rev-parse", "--show-toplevel")
 		if err != nil {
 			return failf(stderr, "plugin: not inside a Git checkout: %s", err)
 		}
-		checker.root = realpath(strings.TrimSpace(string(out)))
+		checker.root = resolve(strings.TrimSpace(string(out)))
 	}
 	var errs []string
 	var result report
 	var err error
 	switch {
-	case present["record-version"]:
+	case *record:
 		return checker.recordVersion(stdout, stderr)
-	case present["payload"]:
-		errs, result, err = checkInstalled(realpath(values["payload"]))
+	case given(flags, "payload"):
+		errs, result, err = checkInstalled(resolve(*payloadDir))
 	default:
-		errs, result, err = checker.checkRevision(revision)
+		errs, result, err = checker.checkRevision(*revision)
 	}
 	if err != nil {
 		return failf(stderr, "%s", err)
@@ -1361,7 +1311,7 @@ func Plugin(args []string, stdout, stderr io.Writer) int {
 	if len(errs) > 0 {
 		return failf(stderr, "%s", strings.Join(sortedSet(errs), "\n"))
 	}
-	if present["json"] {
+	if *asJSON {
 		fmt.Fprintln(stdout, result.json())
 		return 0
 	}
@@ -1370,7 +1320,7 @@ func Plugin(args []string, stdout, stderr io.Writer) int {
 		where = resolved
 	}
 	fmt.Fprintf(stdout, "Package %s at %s: %d files, digest %s. The version's suffix is these same files digested with that suffix elided\n",
-		pyStr(result["version"]), where, result["files"], result["digest"].(string)[:16])
+		text(result["version"]), where, result["files"], result["digest"].(string)[:16])
 	fmt.Fprintln(stdout, "Skill names under the plugin namespace: "+strings.Join(result["expectedSkillNames"].([]string), ", "))
 	if drift, _ := result["worktreeDrift"].([]string); len(drift) > 0 {
 		fmt.Fprintln(stdout, "Working tree differs from the revision payload: "+strings.Join(drift, ", "))

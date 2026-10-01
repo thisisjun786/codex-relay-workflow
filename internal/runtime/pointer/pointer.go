@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 )
 
@@ -48,21 +47,21 @@ type Answer struct {
 // Read is what is at this path, decided by lstat without following the link.
 func Read(path string) Answer {
 	if strings.ContainsRune(path, 0) {
-		return Answer{State: Unreachable, Detail: "this path cannot name a file: ValueError: embedded null byte"}
+		return Answer{State: Unreachable, Detail: "this path cannot name a file: it holds a NUL byte"}
 	}
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return Answer{State: NoPointer, Detail: "nothing exists at " + path}
 	}
 	if err != nil {
-		return Answer{State: Unreachable, Detail: "whether anything exists at " + path + " could not be established: " + store.PythonOSError(err)}
+		return Answer{State: Unreachable, Detail: "whether anything exists at " + path + " could not be established: " + err.Error()}
 	}
 	if info.Mode()&os.ModeSymlink == 0 {
 		return Answer{State: NotALink, Detail: "this path is a real file or directory, not a pointer this command placed, so it is left exactly as it is"}
 	}
 	target, err := os.Readlink(path)
 	if err != nil {
-		return Answer{State: Unreachable, Detail: "the pointer is a link whose target could not be read: " + store.PythonOSError(err)}
+		return Answer{State: Unreachable, Detail: "the pointer is a link whose target could not be read: " + err.Error()}
 	}
 	return Answer{State: Link, Target: target, Detail: "the pointer names " + target}
 }
@@ -130,7 +129,7 @@ func Remove(path, expected string) (bool, string) {
 		return false, "the pointer names " + answer.Target + " rather than " + expected + ", so it is not this run's to remove"
 	}
 	if err := os.Remove(path); err != nil {
-		return false, "the pointer could not be removed: " + store.PythonOSError(err)
+		return false, "the pointer could not be removed: " + err.Error()
 	}
 	after := Read(path)
 	if after.State == NoPointer {

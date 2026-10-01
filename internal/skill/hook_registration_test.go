@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestHookRegistrationLivePython(t *testing.T) {
+func TestHookRegistration(t *testing.T) {
 	goldenRoot(t)
 	crw := recordedCRW(t)
 	for _, name := range []string{"declared and trusted", "no registration", "sanitized"} {
