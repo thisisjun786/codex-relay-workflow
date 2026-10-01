@@ -50,8 +50,9 @@ func WindowBound(value string) error {
 	return nil
 }
 
-// parser is stop_events.py's argparse parser, so the command takes what that parser takes: a
-// unique prefix of a flag, a value that looks like a negative number, and help wherever -h is.
+// parser declares the command's options for the relay's command-line parser (decision R3C-1): a
+// flag is spelled in full, a value that looks like a negative number is a value, and -h or --help
+// is help wherever it stands.
 var parser = argparse.Spec{Actions: []argparse.Action{
 	{Flags: []string{"-h", "--help"}, Kind: "_HelpAction"},
 	{Flags: []string{"--journal-root"}, Kind: "_AppendAction", Required: true},
