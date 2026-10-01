@@ -12,32 +12,28 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
-// Every reason rolepolicy.worker_readiness gives, against Python's answer for the same
-// observation, requirement list and caller policy (the "readiness" cases of
-// ../service/testdata/worker_reasons.json, captured once by worker_reasons_capture.py). The
-// observation readers' reasons are pinned beside it in package service.
+// Every reason rolepolicy.worker_readiness gives for an observation, requirement list and caller
+// policy, checked against the golden "readiness" (each case's reason, null where the worker is
+// ready), which began as the reasons Python gave (the "readiness" cases worker_reasons_capture.py
+// captured once). The caller policy is the worker policy package service's worker-reason tests
+// serve (../service/testdata/fixtures/worker_policy.json); the observation readers' reasons are
+// pinned beside them there.
 func TestWorkerReadiness_every_reason_is_pythons(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "service", "testdata", "worker_reasons.json"))
+	workerPolicy, err := os.ReadFile(filepath.Join("..", "service", "testdata", "fixtures", "worker_policy.json"))
 	if err != nil {
-		t.Fatal(err)
-	}
-	var golden struct {
-		Readiness map[string]*string `json:"readiness"`
-		Policy    json.RawMessage    `json:"policy"`
-	}
-	if err = json.Unmarshal(raw, &golden); err != nil {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
 	policyFile, parentOnly := filepath.Join(dir, "policy.json"), filepath.Join(dir, "parent-only.json")
 	var policy map[string]map[string]any
-	if err = json.Unmarshal(golden.Policy, &policy); err != nil {
+	if err = json.Unmarshal(workerPolicy, &policy); err != nil {
 		t.Fatal(err)
 	}
 	parent, _ := json.Marshal(map[string]any{"roles": map[string]any{"parent": policy["roles"]["parent"]}})
-	for path, content := range map[string][]byte{policyFile: golden.Policy, parentOnly: parent} {
+	for path, content := range map[string][]byte{policyFile: workerPolicy, parentOnly: parent} {
 		if err = os.WriteFile(path, content, 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -115,22 +111,23 @@ func TestWorkerReadiness_every_reason_is_pythons(t *testing.T) {
 		"pair-mismatch-model":  {valid, "[" + strings.Replace(ready, `"anthropic/claude-opus-5-5"`, `"other-model"`, 1) + "]", policyFile},
 		"pair-mismatch-effort": {valid, "[" + strings.Replace(ready, `"xhigh"`, `"low"`, 1) + "]", policyFile},
 	}
-	if len(cases) != len(golden.Readiness) {
-		t.Fatalf("%d Go cases, %d Python cases", len(cases), len(golden.Readiness))
-	}
+	// An answer is ready with the caller policy's digest and no reason, or not ready with a
+	// reason and no digest; the golden holds each case's reason (null when ready).
 	digest := registry.ResolveRolePolicy(map[string]string{execution.EnvPolicy: policyFile}).Digest()
-	for name, want := range golden.Readiness {
-		c, ok := cases[name]
-		if !ok {
-			t.Fatalf("no Go case for Python's %q", name)
-		}
+	reasons := map[string]any{}
+	for name, c := range cases {
 		answer := cli.WorkerReadiness(c.observation, requirement(c.requirements), c.policyFile)
 		reason, _ := get(answer, "reason").(string)
 		switch {
-		case want == nil && (reason != "" || get(answer, "ready") != true || get(answer, "digest") != digest):
-			t.Errorf("%s: %v, Python ready", name, answer)
-		case want != nil && (reason != *want || get(answer, "ready") != false || get(answer, "digest") != nil):
-			t.Errorf("%s: %v, Python %s", name, answer, *want)
+		case reason == "" && (get(answer, "ready") != true || get(answer, "digest") != digest):
+			t.Errorf("%s: %v, ready without the policy's digest", name, answer)
+		case reason != "" && (get(answer, "ready") != false || get(answer, "digest") != nil):
+			t.Errorf("%s: %v, a reason but not refused", name, answer)
+		}
+		reasons[name] = nil
+		if reason != "" {
+			reasons[name] = reason
 		}
 	}
+	golden.CheckJSON(t, "readiness", reasons)
 }
