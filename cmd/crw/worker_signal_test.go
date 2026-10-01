@@ -162,7 +162,9 @@ func TestTheInterruptIsRegisteredBeforeTheCommandLineIsRead(t *testing.T) {
 	})
 	t.Run("ordering-other", func(t *testing.T) {
 		output, status := runWorkerSignalProcess(t, "ordering-other")
-		wantOutput(t, "ordering-other", output, "seam called\n")
+		// exit= is printed once serve has returned: the interrupt delivered while the line was read
+		// did not end the process, which is what shows it was caught.
+		wantOutput(t, "ordering-other", output, "seam called\n", "exit=")
 		if !status.Signaled() || status.Signal() != syscall.SIGINT {
 			t.Fatalf("after an interrupt delivered while the line was read, the release did not happen: a later copy did not end the process (exit %d):\n%s", status.ExitStatus(), output)
 		}

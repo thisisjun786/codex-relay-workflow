@@ -41,9 +41,9 @@ func main() {
 }
 
 // serve is this process's whole run, from its SIGINT policy to the status it exits with: main is
-// its only caller and exits with what it returns, so nothing registered here is released before
-// the process ends. (A test that wants a command's answer runs run or runAt, which register
-// nothing.)
+// its only caller and exits with what it returns, so a registration serve does not release is
+// held until the process ends. (A test that wants a command's answer runs run or runAt, which
+// register no SIGINT handling.)
 //
 // The first SIGINT cancels the run, and it is registered before the command line is read, as it
 // always was. Every line but a supervised worker's then gets SIGINT's default disposition back

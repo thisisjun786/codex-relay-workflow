@@ -2194,7 +2194,7 @@ launcher) and `TestParity_state_home_is_hostrecords`.
 
 Decision: the Go service supervisor (`service run`, the takeover candidate included once it is
 active) waits for its worker only until its own interrupt. The first SIGINT cancels its context
-(cmd/crw `cancelOn`). If a worker is running, or has just been spawned, the supervisor sends it
+(cmd/crw `serve`). If a worker is running, or has just been spawned, the supervisor sends it
 SIGINT, the signal a Go worker stops on and a Go-owner drain sends, and keeps waiting for it. It
 then records the worker's exit (`lastExit`, `workerPid` cleared), starts no successor and
 returns the interruption: exit 3, `RuntimeError: context canceled`, as an interrupt during the
