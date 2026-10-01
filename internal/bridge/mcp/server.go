@@ -1,5 +1,6 @@
-// Package mcp serves the bridge's twelve tools over MCP stdio, as server.py's FastMCP server
-// does: the same tool names, input schemas, annotations, instructions and replies.
+// Package mcp serves the bridge's twelve tools over MCP stdio: the tool names, input schemas,
+// annotations and instructions contract/schema/bridge-mcp-tools.json freezes, and each tool's
+// structured reply.
 package mcp
 
 import (
@@ -15,7 +16,6 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge"
-	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/pyerr"
 )
 
 // ServerName is the name FastMCP("codex-thread-bridge") reports and the plugin declares.
@@ -36,7 +36,7 @@ type Output = map[string]any
 func NewServer(b *bridge.Bridge, version string, log io.Writer) *sdk.Server {
 	logger := slog.New(slog.NewTextHandler(log, nil))
 	server := sdk.NewServer(&sdk.Implementation{Name: ServerName, Version: version}, &sdk.ServerOptions{Instructions: instructions, Logger: logger})
-	server.AddReceivingMiddleware(pythonWire, unknownTool, preParseArguments)
+	server.AddReceivingMiddleware(frozenToolsList, unknownTool, checkedArguments)
 	h := handlers{b: b, log: logger}
 	add(server, "get_capabilities", h.getCapabilities)
 	add(server, "create_thread", h.createThread)
@@ -53,8 +53,9 @@ func NewServer(b *bridge.Bridge, version string, log io.Writer) *sdk.Server {
 	return server
 }
 
-// add registers one typed tool. The schemas are the frozen FastMCP ones rather than inferred
-// from In, because pydantic's rendering (titles, anyOf-null, defaults) is the contract.
+// add registers one typed tool. The schemas are the frozen ones rather than inferred from In,
+// because their rendering (titles, anyOf-null, defaults) is the contract. The SDK validates a
+// call's arguments against them and refuses one that does not validate as an error result.
 func add[In any](server *sdk.Server, name string, call func(context.Context, In) (map[string]any, error)) {
 	annotations := writeAnnotations
 	if readOnly[name] {
@@ -64,9 +65,8 @@ func add[In any](server *sdk.Server, name string, call func(context.Context, In)
 	sdk.AddTool(server, tool, func(ctx context.Context, _ *sdk.CallToolRequest, in In) (*sdk.CallToolResult, Output, error) {
 		out, err := call(ctx, in)
 		if err != nil {
-			// FastMCP's Tool.run wraps every exception the same way.
-			//lint:ignore ST1005 tools/call text is caller-visible and byte-identical to FastMCP's
-			return nil, nil, fmt.Errorf("Error executing tool %s: %s", name, pythonMessage(err))
+			//lint:ignore ST1005 tools/call text is caller-visible and names the tool first
+			return nil, nil, fmt.Errorf("Error executing tool %s: %v", name, err)
 		}
 		text, err := indented(out)
 		if err != nil {
@@ -76,8 +76,7 @@ func add[In any](server *sdk.Server, name string, call func(context.Context, In)
 	})
 }
 
-// indented is FastMCP's unstructured copy of a dict result: pydantic_core.to_json(indent=2),
-// which, unlike json.dumps, leaves non-ASCII text unescaped.
+// indented is a result's unstructured copy: indented JSON, its text unescaped.
 func indented(value any) (string, error) {
 	var out strings.Builder
 	encoder := json.NewEncoder(&out)
@@ -89,14 +88,6 @@ func indented(value any) (string, error) {
 	return strings.TrimSuffix(out.String(), "\n"), nil
 }
 
-// pythonMessage is str(error) for the error Python raises in the same place.
-func pythonMessage(err error) string {
-	if _, message, ok := pyerr.OSError(err); ok {
-		return message
-	}
-	return err.Error()
-}
-
 type handlers struct {
 	b   *bridge.Bridge
 	log *slog.Logger
@@ -105,7 +96,7 @@ type handlers struct {
 // explained logs a failed call on the log stream and passes it through unchanged.
 func (h handlers) explained(tool string, out map[string]any, err error) (map[string]any, error) {
 	if err != nil {
-		h.log.Error("tool call failed", "tool", tool, "error", pythonMessage(err))
+		h.log.Error("tool call failed", "tool", tool, "error", err.Error())
 		return nil, err
 	}
 	if status, _ := out["status"].(string); status == "not_attempted" || status == "outcome_unknown" || status == "failed" {

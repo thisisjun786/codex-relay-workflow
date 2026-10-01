@@ -43,7 +43,7 @@ func (b *Bridge) SendMessageToThread(ctx context.Context, in SendMessage) (ledge
 	}
 	if len(unknown) > 0 {
 		slices.Sort(unknown)
-		return nil, &Invalid{fmt.Sprintf("expected_settings has unknown keys %s; supported keys are %s", pyRepr(anyStrings(unknown)), pyRepr(anyStrings(expectedSettingsKeys)))}
+		return nil, &Invalid{fmt.Sprintf("expected_settings has unknown keys %s; supported keys are %s", show(anyStrings(unknown)), show(anyStrings(expectedSettingsKeys)))}
 	}
 	if policy := object(expected["expected_sandbox_policy"]); policy != nil || expected["expected_sandbox_policy"] != nil {
 		if err := validateSandboxPolicy(policy); err != nil {
@@ -133,7 +133,7 @@ func (b *Bridge) SendMessageToThread(ctx context.Context, in SendMessage) (ledge
 			first := findings[0]
 			message := findingText(first.Code, first.Field, first.Returned, first.Expected) + "; message withheld"
 			if first.Code == settings.UnsupportedApproval {
-				message = fmt.Sprintf("Thread approval policy is %s; this request declared %s. Message withheld and NOT delivered; no turn was started. This bridge preserves a thread's approval policy and never sets one, so the way to deliver here is a NEW request id declaring the policy the thread is actually on. Declaring it does not make this bridge an approver: it answers no approval request, and the thread's own client decides every one the turn raises.", pyRepr(first.Returned), pyRepr(first.Expected))
+				message = fmt.Sprintf("Thread approval policy is %s; this request declared %s. Message withheld and NOT delivered; no turn was started. This bridge preserves a thread's approval policy and never sets one, so the way to deliver here is a NEW request id declaring the policy the thread is actually on. Declaring it does not make this bridge an approver: it answers no approval request, and the thread's own client decides every one the turn raises.", show(first.Returned), show(first.Expected))
 			}
 			return &appserver.RPCError{Method: "thread/resume", Message: message, Object: map[string]any{"code": first.Code, "message": message}}
 		}

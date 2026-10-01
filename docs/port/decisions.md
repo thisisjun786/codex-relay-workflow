@@ -2633,7 +2633,7 @@ Evidence: `internal/relay/service/takeover.go` (`NoPythonCandidate`, `Preflight`
 Decision: `internal/bridge/settings/generate`, the `go generate` program that ran `python3 -c` to
 read `str.isprintable()` of every code point under CPython 3.14's Unicode database (16.0.0) into
 `printable_generated.go`, is deleted with the `//go:generate` line. The generated table is kept as
-committed and is not regenerated: `TestPrintableIsCPython314sIsprintable` compares it with a
+committed and is not regenerated: `TestPrintableIsCPython314sIsprintable` (`TestPrintableIsTheFrozenTable` since refactor R3) compares it with a
 golden that began as that interpreter's answer.
 
 Why: the table's source of truth is the Python bridge's behaviour, which is frozen with the
@@ -3478,3 +3478,50 @@ Evidence: internal/runtime/reading/{reading.go,value.go} (`classOf`, `Decode`, `
 internal/runtime/install/cli.go (`fixedHome`); internal/runtime/scope/scope_test.go
 (`TestARelayTheDeadlineEndedIsUnreadable`); the goldens of `TestShapeRefusals`,
 `TestServiceStateReadings` and `TestCellsAndVerdicts`.
+
+## R3R-5. The bridge's MCP server is the SDK's outside the frozen tool listing; its messages name values the Go way (refactor R3)
+
+Decision: `crw bridge` (`codex-thread-bridge`) stops reproducing FastMCP and pydantic on the
+wire and CPython in its messages. What goes: `pythonWire` (FastMCP's initialize capabilities
+bytes and member order, its empty prompts/resources/templates lists, its answers to
+`logging/setLevel`, `completion/complete`, `prompts/get` and `resources/read`), `pythonTransport`
+(the MCP 1.30.0 low-level server's validation of every message: "Invalid request parameters" for a
+method outside ClientRequest, the `notifications/message` log for non-object params, dropped
+unknown notifications, the bare "Method not found"), pydantic's lax argument reading
+(`preParseArguments`: a JSON-shaped string decoded for a non-str field; `laxNumber`: a bool as 0
+or 1, underscores in numbers) and its refusal text (`N validation errors for <tool>Arguments`,
+`Input should be a valid ...`), CPython's OSError text in receipts, tool errors and policy refusals
+(`bridge/pyerr`), and repr() of values in findings, refusals and the policy's messages. The SDK
+answers every method outside tools/list and tools/call, a call's arguments are judged against the
+frozen input schema by the bridge's own checker, which names every problem in field order (`invalid
+arguments for <tool>: model is required; limit must be an integer`) so a refusal reads the same
+every time, and a value is named as Go quotes a string (`"x y"`, a lone surrogate's bytes
+visible) or as JSON. A receipt's error is the innermost error's type name and the Go error's text
+(`OpError: dial unix ...: connect: no such file or directory`).
+
+Consumer check: `git grep` of `plugins/crw/skills`, `docs/`, `contract/` and the relay for the
+MCP surface: the skills read tool results and their structured fields, the `isError` flag and the
+refusal codes (`execution_not_allowed` and the rest); contract/fixtures/mcp-tools checks errors,
+codes and fields; `internal/contracttest` holds tools/list to contract/schema/bridge-mcp-tools.json
+member for member (names, order, annotations, schemas, no extra member) and expects an unknown tool
+to be an error result. The relay reads a receipt's fields, never its error's prose. crw-run's
+bridge.md says a missing `turn_id` is a validation error, which it still is.
+
+What stays and why: the tool names, input and output schemas, annotations and instructions; the
+tools/list reply as the frozen contract has it (registration order, no idempotentHint, "tools" its
+only member: `frozenToolsList`); an unknown tool answered as an error result (`unknownTool`), which
+the contract corpus expects; every structured field and refusal code; a number field reading a
+string that holds the number ("5"), which a model writing a call sends and the bridge always
+accepted; the indented JSON text content beside the structured content; the execution policy's
+acceptance (its codec handling, duplicate-key refusal, depth and constants), because a host's
+policy file must keep loading; the ledger's request fingerprint (`ledger/canonical.go`) and the
+bridge record format; `bridge/settings.Printable`, frozen since decision 49, which `settings.Repr`
+and through it `pyvalue.StrRepr` use across the relay; and `bridge/pyerr`, which
+`internal/relay/registry` still calls.
+
+Evidence: internal/bridge/mcp/middleware.go (`frozenToolsList`, `unknownTool`,
+`checkedArguments`, `numberText`); internal/bridge/mcp/{wire_test.go,validate_test.go}
+(`Test_tools_list_is_the_frozen_listing`, `Test_a_refused_argument_is_an_error_result_the_same_way_every_time`,
+`Test_a_number_written_as_a_string_is_read_as_the_number`); internal/bridge/{bridge.go,show.go},
+execution/{decode.go,load.go}; internal/contracttest (`Test_a_live_tools_list_from_the_built_binary_equals_the_frozen_contract`,
+`Test_every_mcp_reply_equals_the_python_servers_whole_json`).

@@ -7,7 +7,6 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/pyerr"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
@@ -25,14 +24,10 @@ func FromFile(path string) (Policy, error) {
 // PolicyError from_file raises for it, os.open's ValueError for an embedded NUL included.
 func ReadFile(path string) ([]byte, error) {
 	unreadable := func(err error) error {
-		// str(OSError) as Python raises it: "[Errno 2] No such file or directory: '<path>'".
-		if _, message, ok := pyerr.OSError(err); ok {
-			return &PolicyError{fmt.Sprintf("cannot read %s: %s", path, message)}
-		}
 		return &PolicyError{fmt.Sprintf("cannot read %s: %v", path, err)}
 	}
 	if strings.IndexByte(path, 0) >= 0 {
-		// CPython's path converter refuses it before any system call.
+		// A path holding a NUL byte names no file; it is refused before any system call.
 		return nil, &PolicyError{fmt.Sprintf("cannot read %s: open: embedded null character in path", path)}
 	}
 	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
