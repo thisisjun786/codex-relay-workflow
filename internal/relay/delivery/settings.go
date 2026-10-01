@@ -228,9 +228,14 @@ type RoleGate func(ctx context.Context, s *store.Store, taskID string, settings 
 // DefaultRoleGate is the registry's role check (registry.CheckBoundRole) against the execution
 // policy this process was started with: a task bound to no role passes, and a bound task passes
 // only when that policy declares a pair its recorded settings are authorized for. Without a
-// policy a bound task is withheld as role_policy_unconfigured.
+// policy a bound task is withheld as role_policy_unconfigured. A bound task whose pair was not
+// derived from its role's pair (a supervisor's recorded pair, an exception) is resumed
+// settings-free, as every other sender resumes it, so a later user selection is never reverted.
 func DefaultRoleGate(ctx context.Context, s *store.Store, taskID string, settings *TaskSettings) error {
-	_, err := registry.CheckBoundRole(ctx, s, taskID, settings.Data, registry.EnvironmentRolePolicy())
+	_, settingsFree, err := registry.CheckBoundRole(ctx, s, taskID, settings.Data, registry.EnvironmentRolePolicy())
+	if err == nil {
+		settings.SettingsFreeResume = settingsFree
+	}
 	return err
 }
 

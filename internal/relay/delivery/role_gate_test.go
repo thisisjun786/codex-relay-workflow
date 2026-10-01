@@ -20,8 +20,10 @@ func TestTheDefaultRoleGateAuthorizesABoundTaskUnderThisProcessesPolicy(t *testi
 	if _, err := execSQL(f.ctx, f.store, "INSERT INTO authorized_settings (task_id, settings, source, recorded_at) VALUES (?,?,?,?)", task, settings, "creation_result", "t"); err != nil {
 		t.Fatal(err)
 	}
+	var last *TaskSettings
 	gate := func() error {
-		_, err := AuthorizedSettings(f.ctx, f.store, task, nil)
+		var err error
+		last, err = AuthorizedSettings(f.ctx, f.store, task, nil)
 		return err
 	}
 	usePolicy := func(text string) {
@@ -55,9 +57,30 @@ func TestTheDefaultRoleGateAuthorizesABoundTaskUnderThisProcessesPolicy(t *testi
 	if err := gate(); err != nil {
 		t.Fatalf("a bound parent whose recorded pair is the policy's parent pair is withheld: %v", err)
 	}
+	if last.SettingsFreeResume {
+		t.Fatal("a parent whose pair was derived from its role's pair is resumed settings-free")
+	}
 
 	usePolicy(`{"roles": {"parent": {"model": "devin/swe-2", "reasoningEffort": "high"}}}`)
 	if err := gate(); Reason(err) == "" || Reason(err) == RolePolicyUnconfigured {
 		t.Fatalf("a bound parent whose recorded pair is not the policy's passed or was misread: %v", err)
+	}
+
+	// A supervisor's pair is its recorded pair, never derived from a declared one, so a resume
+	// carries no settings and a later user selection on the thread stands.
+	const supervisor = "01supervisor-bound"
+	if _, err := execSQL(f.ctx, f.store, "INSERT INTO authorized_settings (task_id, settings, source, recorded_at) VALUES (?,?,?,?)", supervisor, settings, "creation_result", "t"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := execSQL(f.ctx, f.store, "INSERT INTO scope_bindings (binding_id, role, scope_kind, scope_key, task_id, host_id, status, revision, created_at, updated_at) VALUES ('bnd-2','supervisor','initiative','INIT-1',?,'host-a','active',1,'t','t')", supervisor); err != nil {
+		t.Fatal(err)
+	}
+	usePolicy(`{"roles": {"supervisor": {"expectation": "record"}, "parent": {"model": "anthropic/claude-opus-5", "reasoningEffort": "xhigh"}}}`)
+	got, err := AuthorizedSettings(f.ctx, f.store, supervisor, nil)
+	if err != nil {
+		t.Fatalf("a bound supervisor under a policy that records its pair is withheld: %v", err)
+	}
+	if !got.SettingsFreeResume {
+		t.Fatal("a supervisor whose pair is not derived from a declared pair would be resumed with its recorded settings")
 	}
 }
