@@ -34,10 +34,10 @@ mean the same thing wherever this page uses them. A plugin installation has no s
 The Python installer, `scripts/runtime_install.py`, installed the Python fence release and was the
 development and rollback path until todo 44 removed the Python execution path;
 [the Python fence installer](#the-python-fence-installer) is the one section of this page about it.
-Moving a host from the Python runtime to this one is [the cutover](port/cutover.md), not an install
-alone. The cutover moves the store's ownership. Where `crw install install`, which moves the
-pointer, falls among its steps is not written yet; that order is an open item todo 42 settles
-([the backlog](port/refactor-backlog.md#deferred-review-findings)).
+Moving a host from the Python runtime to this one was [the cutover](port/cutover.md), not an install
+alone: it moved the store's ownership. It ran at todos 42 and 43; the Python runtime left the
+repository in todo 44 (decision 48) and the takeover controller in refactor R1 (decision 54), so no
+order between `crw install install`, which moves the pointer, and a takeover is left to settle.
 
 ## What an installation is
 
