@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -15,12 +14,6 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 	_ "modernc.org/sqlite"
 )
-
-type supervisorCapture struct {
-	Captures []any                       `json:"captures"`
-	Problems []string                    `json:"problems"`
-	Tables   map[string][]map[string]any `json:"tables"`
-}
 
 func TestMain(m *testing.M) {
 	cleanup, err := testsupport.IsolateRelayState()
@@ -66,9 +59,12 @@ func removeStoreFiles(path string) error {
 }
 
 // checkSupervisorValues compares the values a replay produced, as JSON decodes them, with the
-// golden.
+// golden; no values is an empty list.
 func checkSupervisorValues(t *testing.T, got []any, opts ...golden.Option) {
 	t.Helper()
+	if got == nil {
+		got = []any{}
+	}
 	golden.CheckJSON(t, goldenKey(t, "captures"), asJSON(t, got), opts...)
 }
 
@@ -79,56 +75,7 @@ func checkSupervisorTables(t *testing.T, s *store.Store, opts ...golden.Option) 
 	golden.CheckJSON(t, goldenKey(t, "tables"), asJSON(t, supervisorTables(t, s)), opts...)
 }
 
-func compareSupervisorValues(t *testing.T, got []any, python supervisorCapture) {
-	t.Helper()
-	var normalized []any
-	raw, err := json.Marshal(got)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(raw, &normalized); err != nil {
-		t.Fatal(err)
-	}
-	for i := 0; i < max(len(normalized), len(python.Captures)); i++ {
-		var g, w any = "<missing>", "<missing>"
-		if i < len(normalized) {
-			g = normalized[i]
-		}
-		if i < len(python.Captures) {
-			w = python.Captures[i]
-		}
-		if !reflect.DeepEqual(g, w) {
-			t.Errorf("assertion %d differs from Python: go=%s python=%s", i+1, jsonText(g), jsonText(w))
-		}
-	}
-}
 func jsonText(v any) string { b, _ := json.Marshal(v); return string(b) }
-
-// compareSupervisorTables compares every populated row in every table, including fixture rows.
-func compareSupervisorTables(t *testing.T, s *store.Store, python supervisorCapture) {
-	t.Helper()
-	got := supervisorTables(t, s)
-	for name, want := range python.Tables {
-		var normalized []map[string]any
-		if rows, ok := got[name]; ok {
-			encoded, err := json.Marshal(rows)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := json.Unmarshal(encoded, &normalized); err != nil {
-				t.Fatal(err)
-			}
-		}
-		if !reflect.DeepEqual(normalized, want) {
-			t.Errorf("table %s differs from Python:\ngo: %s\npython: %s", name, jsonText(got[name]), jsonText(want))
-		}
-	}
-	for name, rows := range got {
-		if _, ok := python.Tables[name]; !ok && len(rows) > 0 {
-			t.Errorf("unexpected Go table %s: %s", name, jsonText(rows))
-		}
-	}
-}
 
 // supervisorTables is every row of every table but schema_meta and sqlite_sequence, by table, in
 // rowid order; a table without rows is absent.

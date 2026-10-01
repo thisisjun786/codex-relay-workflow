@@ -43,18 +43,6 @@ func repoRoot(t testing.TB) string {
 	return repo
 }
 
-// pyKeys numbers the answers a test asks for, for a test that asks the same question more than
-// once in a fixed sequence.
-var pyKeys sync.Map
-
-// pyKey is a key unique within the running test: what, numbered by the order it is asked in.
-func pyKey(t testing.TB, what string) string {
-	counter, _ := pyKeys.LoadOrStore(t, new(int))
-	n := counter.(*int)
-	*n++
-	return fmt.Sprintf("%d %s", *n, what)
-}
-
 // pythonOutput is what a live Python run printed, recorded under key with the repository root
 // substituted. Check mode compares it with the recording up to random identifiers
 // (sameUpToRandomIDs) unless opts name another comparison.

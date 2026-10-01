@@ -3,7 +3,6 @@ package supervisor
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,66 +11,8 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
-
-// sweepPython runs body against a VACUUM copy of f's store. body sees store, clock,
-// channel (state_directory = f.root/state, relay_program pinned) and appends to `out`.
-func sweepPython(t *testing.T, f *stageFixture, body string, args ...string) supervisorCapture {
-	t.Helper()
-	repo, err := filepath.Abs("../../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	script := `
-import json,sys
-from codex_session_relay.clock import FakeClock
-from codex_session_relay.linkage import Linkage
-from codex_session_relay.registry import Registry
-from codex_session_relay.store import Store
-from codex_session_relay import supervision,supervisorchannel
-from codex_session_relay.delivery import DeliveryRefused
-store=Store(sys.argv[1]); clock=FakeClock()
-supervisorchannel.relay_program=lambda: ('/usr/bin/codex-session-relay',)
-channel=supervisorchannel.SupervisorChannel(store,Registry(store,clock),Linkage(store,clock),clock,state_directory=sys.argv[2])
-args=sys.argv[3:]
-out=[]
-def refusal(fn):
-    try:
-        return {'ok':fn()}
-    except DeliveryRefused as error:
-        return {'error':'DeliveryRefused','reason':getattr(getattr(error,'reason',None),'value',None),'detail':error.detail}
-` + body + `
-tables={}
-for row in store.all("SELECT name FROM sqlite_master WHERE type='table' AND name NOT IN ('schema_meta','sqlite_sequence') ORDER BY name"):
-    name=row['name']; values=[dict(one) for one in store.all('SELECT * FROM '+name+' ORDER BY rowid')]
-    if values: tables[name]=values
-print(json.dumps({'captures':out,'problems':[],'tables':tables},sort_keys=True,default=str))
-store.close()
-`
-	// Python answers on a copy it owns of the store as it stands (recorded, pythonOutput).
-	out := pythonOutput(t, pyKey(t, "sweep"), func() ([]byte, error) {
-		copyPath := filepath.Join(t.TempDir(), "relay.sqlite3")
-		if _, err := f.s.DB.ExecContext(f.ctx, "VACUUM INTO ?", copyPath); err != nil {
-			return nil, err
-		}
-		ownCopied(t, copyPath, "python")
-		cmd := exec.Command(filepath.Join(repo, ".venv/bin/python"), append([]string{"-c", script, copyPath, filepath.Join(f.root, "state")}, args...)...)
-		home := t.TempDir()
-		cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
-		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "XDG_DATA_HOME="+home, "XDG_CONFIG_HOME="+home, "CODEX_HOME="+home, "TMPDIR=/dev/shm", "PYTHONPATH="+filepath.Join(repo, "packages/codex-session-relay/src"))
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			return nil, fmt.Errorf("live Python: %v\n%s", err, out)
-		}
-		return out, nil
-	}, pyoracle.Substitute(f.root, "<fixture>"))
-	var capture supervisorCapture
-	if err := json.Unmarshal(out, &capture); err != nil {
-		t.Fatalf("live Python JSON: %v\n%s", err, out)
-	}
-	return capture
-}
 
 func sweepExec(t *testing.T, f *stageFixture, stmts ...string) {
 	t.Helper()
@@ -90,14 +31,12 @@ func TestSweep24_CompletionReportRecordedAfterStaging(t *testing.T) {
 		t.Fatal(err)
 	}
 	sweepExec(t, f, `INSERT INTO work_reports (event_id,submission_no,relationship_id,execution_generation,revision_hash,repository,cxc_status,cxc_reason,contract_version,summary,next_action,recorded_at) VALUES ('event-1',1,'rel-1',1,'abc123456789abcdef','thisisjun786/codex-relay-workflow','DONE','proved','v1','the work is done','merge','2023-11-14T22:13:20.000000+00:00')`)
-	python := sweepPython(t, f, `out.append(channel.stage_standing('PRJ-1'))`)
 	answer, err := f.c.StageStanding(f.ctx, "PRJ-1", f.at)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sweepDump(t, f, []any{answer}, python)
-	compareSupervisorValues(t, []any{answer}, python)
-	compareSupervisorTables(t, f.s, python)
+	checkSupervisorValues(t, []any{answer}, fixtureGolden(t, f.root)...)
+	checkSupervisorTables(t, f.s, fixtureGolden(t, f.root)...)
 }
 
 // S2: one block stated twice (same cause, two events), staged fresh from standing.
@@ -107,14 +46,12 @@ func TestSweep24_BlockStatedTwiceStagesLatest(t *testing.T) {
 		"UPDATE work_reports SET cxc_status='BLOCKED'",
 		`INSERT INTO events (event_id,relationship_id,execution_generation,revision_hash,outcome,producer,turn_thread_id,turn_id,turn_status,receipt,first_seen_at,last_seen_at) VALUES ('event-2','rel-1',1,'def','ready_for_review','child','child','turn-2','completed','{}','2023-11-14T22:13:21.000000+00:00','2023-11-14T22:13:21.000000+00:00')`,
 		`INSERT INTO work_reports (event_id,submission_no,relationship_id,execution_generation,revision_hash,repository,cxc_status,cxc_reason,contract_version,summary,next_action,recorded_at) VALUES ('event-2',1,'rel-1',1,'def','thisisjun786/codex-relay-workflow','BLOCKED','proved','v1','the work is done','merge','2023-11-14T22:13:21.000000+00:00')`)
-	python := sweepPython(t, f, `out.append(channel.stage_standing('PRJ-1'))`)
 	answer, err := f.c.StageStanding(f.ctx, "PRJ-1", f.at)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sweepDump(t, f, []any{answer}, python)
-	compareSupervisorValues(t, []any{answer}, python)
-	compareSupervisorTables(t, f.s, python)
+	checkSupervisorValues(t, []any{answer}, fixtureGolden(t, f.root)...)
+	checkSupervisorTables(t, f.s, fixtureGolden(t, f.root)...)
 }
 
 // S3: a message held superseded_by_report whose obligation is still owed, staged again.
@@ -122,14 +59,12 @@ func TestSweep24_SupersededHoldReleasedOnStage(t *testing.T) {
 	f := fixture24(t)
 	f.staged(t)
 	sweepExec(t, f, "UPDATE supervisor_messages SET hold_reason='superseded_by_report', next_eligible_at=123")
-	python := sweepPython(t, f, `out.append(channel.stage_standing('PRJ-1'))`)
 	answer, err := f.c.StageStanding(f.ctx, "PRJ-1", f.at)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sweepDump(t, f, []any{answer}, python)
-	compareSupervisorValues(t, []any{answer}, python)
-	compareSupervisorTables(t, f.s, python)
+	checkSupervisorValues(t, []any{answer}, fixtureGolden(t, f.root)...)
+	checkSupervisorTables(t, f.s, fixtureGolden(t, f.root)...)
 }
 
 // S4: completion staged, supervisor handed over, message deferred_busy with a backoff: readdress.
@@ -138,14 +73,12 @@ func TestSweep24_EventReaddressFromDeferred(t *testing.T) {
 	f.staged(t)
 	sweepExec(t, f, "UPDATE supervisor_messages SET state='deferred_busy', next_eligible_at=1700000100, hold_reason='hierarchy_unresolved'")
 	moveDevinSupervisor(t, f)
-	python := sweepPython(t, f, `out.append(channel.stage_standing('PRJ-1'))`)
 	answer, err := f.c.StageStanding(f.ctx, "PRJ-1", f.at)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sweepDump(t, f, []any{answer}, python)
-	compareSupervisorValues(t, []any{answer}, python)
-	compareSupervisorTables(t, f.s, python)
+	checkSupervisorValues(t, []any{answer}, fixtureGolden(t, f.root)...)
+	checkSupervisorTables(t, f.s, fixtureGolden(t, f.root)...)
 }
 
 // S5: completion staged, report resubmitted (submission 2) and supervisor moved: readdress+restate.
@@ -154,25 +87,17 @@ func TestSweep24_EventReaddressWithNewSubmission(t *testing.T) {
 	f.staged(t)
 	moveDevinSupervisor(t, f)
 	sweepExec(t, f, `INSERT INTO work_reports (event_id,submission_no,relationship_id,execution_generation,revision_hash,repository,cxc_status,cxc_reason,contract_version,summary,next_action,recorded_at) VALUES ('event-1',2,'rel-1',1,'abc123456789abcdef','thisisjun786/codex-relay-workflow','DONE','proved','v1','the work is done, corrected','merge','2023-11-14T22:13:20.000000+00:00')`)
-	python := sweepPython(t, f, `out.append(channel.stage_standing('PRJ-1'))`)
 	answer, err := f.c.StageStanding(f.ctx, "PRJ-1", f.at)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sweepDump(t, f, []any{answer}, python)
-	compareSupervisorValues(t, []any{answer}, python)
-	compareSupervisorTables(t, f.s, python)
+	checkSupervisorValues(t, []any{answer}, fixtureGolden(t, f.root)...)
+	checkSupervisorTables(t, f.s, fixtureGolden(t, f.root)...)
 }
 
 // S6: repeated automatic ticks over an event obligation (no omissions -> F6 not involved).
 func TestSweep24_StageUnsentRepeatedTicks(t *testing.T) {
 	f := fixture24(t)
-	python := sweepPython(t, f, `
-for i in range(3):
-    a=channel.stage_unsent('PRJ-1'); out.append(a)
-store.db.execute("UPDATE supervisor_messages SET state='sending'")
-out.append(channel.stage_unsent('PRJ-1'))
-`)
 	var got []any
 	for i := 0; i < 3; i++ {
 		a, err := f.c.StageUnsent(f.ctx, "PRJ-1", f.at, 300)
@@ -187,9 +112,8 @@ out.append(channel.stage_unsent('PRJ-1'))
 		t.Fatal(err)
 	}
 	got = append(got, a)
-	sweepDump(t, f, got, python)
-	compareSupervisorValues(t, got, python)
-	compareSupervisorTables(t, f.s, python)
+	checkSupervisorValues(t, got, fixtureGolden(t, f.root)...)
+	checkSupervisorTables(t, f.s, fixtureGolden(t, f.root)...)
 }
 
 // S7: moved hierarchy with an attempted (maybe-sent) completion: refusal text.
@@ -198,17 +122,13 @@ func TestSweep24_ReaddressRefusedAfterSend(t *testing.T) {
 	f.staged(t)
 	sweepExec(t, f, "UPDATE supervisor_messages SET state='uncertain', attempt_count=1")
 	moveDevinSupervisor(t, f)
-	python := sweepPython(t, f, `out.append(channel.stage_standing('PRJ-1'))`)
 	answer, err := f.c.StageStanding(f.ctx, "PRJ-1", f.at)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sweepDump(t, f, []any{answer}, python)
-	compareSupervisorValues(t, []any{answer}, python)
-	compareSupervisorTables(t, f.s, python)
+	checkSupervisorValues(t, []any{answer}, fixtureGolden(t, f.root)...)
+	checkSupervisorTables(t, f.s, fixtureGolden(t, f.root)...)
 }
-
-func sweepDump(t *testing.T, f *stageFixture, got []any, python supervisorCapture) {}
 
 // snapshotFixture opens a copy of a Python-built store under a fresh state directory.
 func snapshotFixture(t *testing.T, variant string) (*stageFixture, map[string]any, string) {
@@ -243,8 +163,6 @@ func snapshotFixture(t *testing.T, variant string) (*stageFixture, map[string]an
 // S8: the child declared the turn in_progress before the parent stages its own reading.
 func TestSweep24_DeclarationBeforeParentStages(t *testing.T) {
 	f, reading, project := snapshotFixture(t, "before")
-	raw, _ := json.Marshal(reading)
-	python := sweepPython(t, f, `out.append(channel.stage_standing(args[0], observations=[json.loads(args[1])]))`, project, string(raw))
 	readings := []map[string]any{reading}
 	derived, err := f.c.OmissionReadingsExcept(f.ctx, project, f.at, 300, readings) // CLI supervisor-stage --project
 	if err != nil {
@@ -255,17 +173,14 @@ func TestSweep24_DeclarationBeforeParentStages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sweepDump(t, f, []any{answer}, python)
-	compareSupervisorValues(t, []any{answer}, python)
-	compareSupervisorTables(t, f.s, python)
+	checkSupervisorValues(t, []any{answer}, fixtureGolden(t, f.root)...)
+	checkSupervisorTables(t, f.s, fixtureGolden(t, f.root)...)
 }
 
 // S9: the parent staged its reading, then the child declared in_progress; parent stages again.
 func TestSweep24_DeclarationAfterParentStaged(t *testing.T) {
 	f, reading, project := snapshotFixture(t, "after")
 	sweepExec(t, f, "UPDATE supervisor_messages SET reading=replace(reading,'"+"PLACEHOLDER"+"','x')")
-	raw, _ := json.Marshal(reading)
-	python := sweepPython(t, f, `out.append(channel.stage_standing(args[0], observations=[json.loads(args[1])]))`, project, string(raw))
 	derived, err := f.c.OmissionReadingsExcept(f.ctx, project, f.at, 300, []map[string]any{reading})
 	if err != nil {
 		t.Fatal(err)
@@ -274,9 +189,8 @@ func TestSweep24_DeclarationAfterParentStaged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sweepDump(t, f, []any{answer}, python)
-	compareSupervisorValues(t, []any{answer}, python)
-	compareSupervisorTables(t, f.s, python)
+	checkSupervisorValues(t, []any{answer}, fixtureGolden(t, f.root)...)
+	checkSupervisorTables(t, f.s, fixtureGolden(t, f.root)...)
 }
 
 // S10: staged parent reading, then child declared in_progress: Go attempt still sends.
@@ -301,10 +215,6 @@ func TestSweep24_DeclarationAfterStagedStillSent(t *testing.T) {
 // S11: parent passes its own reading of an omission the store can also derive (cli supervisor-stage --project path).
 func TestSweep24_CallerReadingPlusStoreReading(t *testing.T) {
 	f, reading, project := snapshotFixture(t, "plain")
-	raw, _ := json.Marshal(reading)
-	python := sweepPython(t, f, `
-clock.advance(float(args[2]))
-out.append(channel.stage_standing(args[0], observations=[json.loads(args[1])]))`, project, string(raw), "0")
 	derived, err := f.c.OmissionReadingsExcept(f.ctx, project, f.at, 300, []map[string]any{reading}) // CLI supervisor-stage --project
 	if err != nil {
 		t.Fatal(err)
@@ -313,9 +223,8 @@ out.append(channel.stage_standing(args[0], observations=[json.loads(args[1])]))`
 	if err != nil {
 		t.Fatal(err)
 	}
-	sweepDump(t, f, []any{answer}, python)
-	compareSupervisorValues(t, []any{answer}, python)
-	compareSupervisorTables(t, f.s, python)
+	checkSupervisorValues(t, []any{answer}, fixtureGolden(t, f.root)...)
+	checkSupervisorTables(t, f.s, fixtureGolden(t, f.root)...)
 }
 
 // S12: store-derived omission inside its grace, no caller reading (cli supervisor-stage --project path).
@@ -326,20 +235,6 @@ func TestSweep24_ProjectCLIUsesGraceAndDeduplicatesCallerReading(t *testing.T) {
 	}{{"caller reading", "plain", true}, {"inside grace", "plain", false}} {
 		t.Run(tc.name, func(t *testing.T) {
 			goFixture, reading, project := snapshotFixture(t, tc.variant)
-			pythonRoot := t.TempDir()
-			pythonState := filepath.Join(pythonRoot, "state")
-			// Python's copy of the store is taken before Go answers, and only when Python is asked.
-			if pyoracle.Live() {
-				if err := os.MkdirAll(pythonState, 0700); err != nil {
-					t.Fatal(err)
-				}
-				rawDB, _ := os.ReadFile(goFixture.s.Path)
-				pythonDB := filepath.Join(pythonState, "relay.sqlite3")
-				if err := os.WriteFile(pythonDB, rawDB, 0600); err != nil {
-					t.Fatal(err)
-				}
-				ownCopied(t, pythonDB, "python")
-			}
 			var args []string
 			if tc.caller {
 				path := filepath.Join(t.TempDir(), "reading.json")
@@ -358,43 +253,18 @@ func TestSweep24_ProjectCLIUsesGraceAndDeduplicatesCallerReading(t *testing.T) {
 			if goErr != nil {
 				t.Fatalf("Go CLI: %v\n%s", goErr, goOut)
 			}
-			pyOut := pythonOutput(t, "supervisor-stage", func() ([]byte, error) {
-				repo, _ := filepath.Abs("../../..")
-				pyArgs := []string{"--state", filepath.Join(pythonRoot, "state"), "supervisor-stage", "--project", project}
-				if tc.caller {
-					path := filepath.Join(pythonRoot, "python-reading.json")
-					pythonReading := copyReading(t, reading)
-					pythonReading["selectors"].(map[string]any)["state"] = pythonState
-					raw, _ := json.Marshal(pythonReading)
-					if err := os.WriteFile(path, raw, 0600); err != nil {
-						return nil, err
-					}
-					pyArgs = append(pyArgs, "--observation", path)
-				}
-				pyCmd := exec.Command(filepath.Join(repo, ".venv/bin/codex-session-relay"), pyArgs...)
-				pyCmd.Env = append(os.Environ(), "HOME="+pythonRoot, "XDG_STATE_HOME="+pythonRoot, "CODEX_HOME="+pythonRoot, "PYTHONPATH="+filepath.Join(repo, "packages/codex-session-relay/src"))
-				pyOut, pyErr := pyCmd.CombinedOutput()
-				if pyErr != nil {
-					return nil, fmt.Errorf("Python CLI: %v\n%s", pyErr, pyOut)
-				}
-				return pyOut, nil
-			}, pyoracle.Substitute(pythonRoot, "<python root>"), pyoracle.Substitute(goFixture.root, "<fixture>"))
-			var goAnswer, pyAnswer map[string]any
-			if json.Unmarshal(goOut, &goAnswer) != nil || json.Unmarshal(pyOut, &pyAnswer) != nil {
-				t.Fatalf("CLI JSON\nGo: %s\nPython: %s", goOut, pyOut)
+			var goAnswer map[string]any
+			if json.Unmarshal(goOut, &goAnswer) != nil {
+				t.Fatalf("CLI JSON: %s", goOut)
 			}
-			goStaged := goAnswer["staged"].([]any)
-			pyStaged := pyAnswer["staged"].([]any)
-			if len(goStaged) != len(pyStaged) || len(goAnswer["refused"].([]any)) != len(pyAnswer["refused"].([]any)) {
-				t.Fatalf("CLI behavior differs\nGo: %s\nPython: %s", goOut, pyOut)
-			}
+			// The CLI's staged and refused counts are the golden.
+			golden.CheckJSON(t, "supervisor-stage", map[string]any{"staged": len(goAnswer["staged"].([]any)), "refused": len(goAnswer["refused"].([]any))})
 		})
 	}
 }
 
 func TestSweep24_StoreReadingInsideGrace(t *testing.T) {
 	f, _, project := snapshotFixture(t, "plain")
-	python := sweepPython(t, f, `out.append(channel.stage_standing(args[0]))`, project)
 	derived, err := f.c.OmissionReadingsExcept(f.ctx, project, f.at, 300, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -403,9 +273,8 @@ func TestSweep24_StoreReadingInsideGrace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sweepDump(t, f, []any{answer}, python)
-	compareSupervisorValues(t, []any{answer}, python)
-	compareSupervisorTables(t, f.s, python)
+	checkSupervisorValues(t, []any{answer}, fixtureGolden(t, f.root)...)
+	checkSupervisorTables(t, f.s, fixtureGolden(t, f.root)...)
 }
 
 // S13: hierarchy_unresolved hold on a queued completion, endpoints unchanged; staged again.
@@ -413,14 +282,12 @@ func TestSweep24_UnaddressedHoldReleased(t *testing.T) {
 	f := fixture24(t)
 	f.staged(t)
 	sweepExec(t, f, "UPDATE supervisor_messages SET hold_reason='hierarchy_unresolved', state='withheld_pre_send', next_eligible_at=1700000500")
-	python := sweepPython(t, f, `out.append(channel.stage_standing('PRJ-1'))`)
 	answer, err := f.c.StageStanding(f.ctx, "PRJ-1", f.at)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sweepDump(t, f, []any{answer}, python)
-	compareSupervisorValues(t, []any{answer}, python)
-	compareSupervisorTables(t, f.s, python)
+	checkSupervisorValues(t, []any{answer}, fixtureGolden(t, f.root)...)
+	checkSupervisorTables(t, f.s, fixtureGolden(t, f.root)...)
 }
 
 // S14: two completions on one relationship with equal first_seen_at; staging order.
@@ -428,7 +295,6 @@ func TestSweep24_EqualTimestampEvents(t *testing.T) {
 	f := fixture24(t)
 	sweepExec(t, f,
 		`INSERT INTO events (event_id,relationship_id,execution_generation,revision_hash,outcome,producer,turn_thread_id,turn_id,turn_status,receipt,first_seen_at,last_seen_at) VALUES ('event-0','rel-1',1,'def','ready_for_review','child','child','turn-0','completed','{}','2023-11-14T22:13:20.000000+00:00','2023-11-14T22:13:20.000000+00:00')`)
-	python := sweepPython(t, f, `out.append(channel.stage_standing('PRJ-1')); out.append(channel.stage_unsent('PRJ-1'))`)
 	a, err := f.c.StageStanding(f.ctx, "PRJ-1", f.at)
 	if err != nil {
 		t.Fatal(err)
@@ -437,7 +303,6 @@ func TestSweep24_EqualTimestampEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sweepDump(t, f, []any{a, b}, python)
-	compareSupervisorValues(t, []any{a, b}, python)
-	compareSupervisorTables(t, f.s, python)
+	checkSupervisorValues(t, []any{a, b}, fixtureGolden(t, f.root)...)
+	checkSupervisorTables(t, f.s, fixtureGolden(t, f.root)...)
 }
