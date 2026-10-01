@@ -67,7 +67,7 @@ func TestReadJSONKeepsFourAnswers(t *testing.T) {
 }
 
 // Universal newlines apply before the JSON is read, as Python's text mode does.
-func TestDecodeReadsLikePythonTextMode(t *testing.T) {
+func TestDecodeReadsUniversalNewlines(t *testing.T) {
 	if _, err := reading.Decode([]byte("{\r\n\"a\": 1\r}")); err != nil {
 		t.Fatal(err)
 	}

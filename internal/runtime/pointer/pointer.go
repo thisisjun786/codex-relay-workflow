@@ -47,7 +47,7 @@ type Answer struct {
 // Read is what is at this path, decided by lstat without following the link.
 func Read(path string) Answer {
 	if strings.ContainsRune(path, 0) {
-		return Answer{State: Unreachable, Detail: "this path cannot name a file: ValueError: embedded null byte"}
+		return Answer{State: Unreachable, Detail: "this path cannot name a file: it holds a NUL byte"}
 	}
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {

@@ -3686,3 +3686,34 @@ Evidence: internal/dev/stopevents/{judge.go,shape.go,stopevents.go} and stopeven
 words", "a root is read where its expanded absolute path is", "a ~ is expanded only where it
 leads the path"; `TestSEV09_RowIntegrity`: "a legacy row naming its session by an array is
 counted, never TRUE"); internal/dev/trialledger/ledger.go; internal/dev/skills/link.go.
+
+## R3R-8. The last Python words in the runtime's and the bridge's messages (refactor R3)
+
+Decision: the messages R3R-4 and R3R-5 left in CPython's words take Go's. What goes: the App
+Server client's `JSONDecodeError: ` in the transport failure a frame that is not JSON causes
+(now `App Server transport failed: a frame is not JSON: <encoding/json's error>`); `ValueError:
+embedded null byte` in the pointer's and the residue scan's details (now "it holds a NUL byte");
+Python's list repr in the bridge's approval-policy refusal and the execution policy's
+supported-roles refusal (now `"never", "on-request", "untrusted"` and `"child", "parent",
+"supervisor"`). Seven tests whose names said their answers were Python's, where those answers
+are now the goldens' (`Test_round3_argument_refusals_read_as_their_goldens`,
+`Test_round3_destination_refusals_read_as_their_goldens`, the busy-thread, capabilities and
+worktree-receipt round-3 tests, `TestReceive_non_json_frame_fails_pending_request_as_a_transport_error`,
+`TestDecodeReadsUniversalNewlines`), are renamed; their goldens are unchanged but for the name.
+
+Consumer check: `git grep` of `plugins/crw/skills`, `docs/`, `contract/` and the product for
+`transport failed`, `embedded null byte`, `approval_policy must be one of` and `supported are`:
+no skill, doc command or product code matches the texts; the relay's own `embedded null byte`
+and `JSONDecodeError` details are the relay areas'.
+
+What stays and why: the transport failure's prefix and its error type, every refusal code
+(`execution_policy_unreadable`, the settings codes), the readings' `exception` vocabulary
+(R3R-4). Test names that say "Python" where they name where a case or a fixture came from (the
+re-expressed `test_settings.py` and `test_execution.py` cases, the Python-generated ledger
+fingerprint and receipt) or the stored bytes Python wrote (host record, Stop settings, bridge
+record, staging claim) keep it, because that is still what they hold.
+
+Evidence: internal/bridge/appserver/receive.go and receive_frame_test.go;
+internal/runtime/pointer/pointer.go; internal/runtime/residue/residue.go;
+internal/bridge/settings/settings.go, internal/bridge/mutations.go;
+internal/bridge/execution/roles.go (`TestAPolicyRefusalQuotesANameAsJSON`).

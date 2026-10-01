@@ -9,7 +9,7 @@ import (
 
 // The destination refusals the earlier tests never reached, each the golden (which began as the
 // Python bridge's refusal), and the Worktree.validate order that produces each.
-func Test_round3_destination_refusals_read_exactly_as_python(t *testing.T) {
+func Test_round3_destination_refusals_read_as_their_goldens(t *testing.T) {
 	for name, place := range map[string]func(t *testing.T, input *CreateWorktree){
 		"wt_parent_missing": func(t *testing.T, input *CreateWorktree) {
 			input.Destination = filepath.Join(filepath.Dir(input.Destination), "no", "x")

@@ -43,7 +43,7 @@ func receiptKeys(receipt map[string]any) []any {
 	return keys
 }
 
-func Test_round3_a_busy_thread_answers_with_the_python_code_and_steer_guidance(t *testing.T) {
+func Test_round3_a_busy_thread_answers_with_its_code_and_steer_guidance(t *testing.T) {
 	b, host := testBridge(t)
 	host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{"status": map[string]any{"type": "active"}}}})
 	receipt, err := b.SendMessageToThread(context.Background(), SendMessage{RequestID: "busy", ThreadID: "thread-1", Message: "hi", Expected: map[string]any{"model": "explicit-model", "reasoning_effort": "high"}})
@@ -123,13 +123,13 @@ func Test_round3_a_send_receipt_reports_the_requests_its_dispatch_met(t *testing
 	sameJSON(t, "approvalRequests", got)
 }
 
-func Test_round3_capabilities_are_the_python_document(t *testing.T) {
+func Test_round3_capabilities_are_the_frozen_document(t *testing.T) {
 	report, _ := capabilityReport(t)
 	report["socket"] = "<SOCKET>"
 	sameJSON(t, "get_capabilities", report)
 }
 
-func Test_round3_a_worktree_receipt_carries_the_python_fields(t *testing.T) {
+func Test_round3_a_worktree_receipt_carries_its_fields(t *testing.T) {
 	b, host := testBridge(t)
 	input := worktreeInput(t)
 	input.Prompt = "p"

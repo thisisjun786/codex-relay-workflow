@@ -78,7 +78,7 @@ func Survey(destination *string, pointerPath string, pointerOwnership any, prote
 	}
 	listed, err := os.ReadDir(root)
 	if err != nil || strings.ContainsRune(root, 0) {
-		said := "ValueError: embedded null byte"
+		said := "the path holds a NUL byte"
 		if err != nil {
 			said = err.Error()
 		}

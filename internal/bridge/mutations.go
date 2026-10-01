@@ -84,7 +84,7 @@ func (b *Bridge) SendMessageToThread(ctx context.Context, in SendMessage) (ledge
 			contract.ApprovalPolicy = text(approval)
 			if approval == nil {
 				// Python checks None against the same list as any other undeclarable value.
-				return &Invalid{"approval_policy must be one of ['never', 'on-request', 'untrusted']; a granular policy has no name a caller can declare"}
+				return &Invalid{`approval_policy must be one of "never", "on-request", "untrusted"; a granular policy has no name a caller can declare`}
 			}
 		}
 		return contract.Validate()

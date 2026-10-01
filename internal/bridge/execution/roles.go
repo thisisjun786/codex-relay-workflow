@@ -14,7 +14,7 @@ const (
 // roleNames is roles.ROLES in declaration order; checks that iterate roles follow it.
 var roleNames = [...]string{Supervisor, Parent, Child}
 
-const supportedRoles = "['child', 'parent', 'supervisor']"
+const supportedRoles = `"child", "parent", "supervisor"`
 
 // Role is roles.RoleExpectation. Model and Effort are empty for a supervisor.
 type Role struct{ Model, Effort, Expectation string }
