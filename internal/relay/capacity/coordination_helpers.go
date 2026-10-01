@@ -23,6 +23,9 @@ func derive(prefix string, fields ...string) string {
 	return registry.CoordinationID(prefix, fields...)
 }
 
+// refusal is a contest the edit-region and capacity ledgers record in coordination_conflicts
+// before refusing it (recordIn); the stored detail keeps the repr() quoting it was always written
+// with. A refusal that is only returned is built with refuse and quotes as Go does.
 type refusal struct {
 	reason                                         contract.RefusalReason
 	detail, domain, subject, incumbent, challenger string

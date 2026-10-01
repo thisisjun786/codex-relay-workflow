@@ -87,7 +87,9 @@ func fenceLength(line string) (int, string) {
 type Block struct {
 	Fields                Obj
 	Text, Summary, Format string
-	Problems              []string
+	// Problems (and PayloadMismatch's) are stored as sync_outbox.last_error, so they keep the
+	// repr() quoting they were always written with.
+	Problems []string
 }
 
 type Document struct {

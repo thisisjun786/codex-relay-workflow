@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -121,8 +122,8 @@ func (e *EditRegions) Propose(ctx context.Context, in Proposal) (contract.Ordere
 			return nil, err
 		}
 		if owned == "" {
-			return nil, refuse(contract.RefusalScopeRoleMismatch, "task "+pyvalue.StrRepr(in.ProposerTaskID)+" is the registered parent of neither "+
-				pyvalue.StrRepr(low)+" nor "+pyvalue.StrRepr(high)+", and a proposal pre-accepts its own side, so a stranger could forge one and block an overlapping region")
+			return nil, refuse(contract.RefusalScopeRoleMismatch, "task "+strconv.Quote(in.ProposerTaskID)+" is the registered parent of neither "+
+				strconv.Quote(low)+" nor "+strconv.Quote(high)+", and a proposal pre-accepts its own side, so a stranger could forge one and block an overlapping region")
 		}
 	}
 	now := e.Now()
@@ -274,11 +275,11 @@ func shapeRefusal(clean string, canonical bool, in Proposal) *refusal {
 	}
 	switch {
 	case !slices.Contains(regionKinds, in.RegionKind):
-		return broad("a region kind is one of " + strings.Join(regionKinds, ", ") + ", not " + pyvalue.StrRepr(in.RegionKind))
+		return broad("a region kind is one of " + strings.Join(regionKinds, ", ") + ", not " + strconv.Quote(in.RegionKind))
 	case !slices.Contains(regionClasses, in.RegionClass):
-		return broad("a region class is one of " + strings.Join(regionClasses, ", ") + ", not " + pyvalue.StrRepr(in.RegionClass))
+		return broad("a region class is one of " + strings.Join(regionClasses, ", ") + ", not " + strconv.Quote(in.RegionClass))
 	case !canonical:
-		return broad("a region path is repository-relative and canonical: " + pyvalue.StrRepr(in.Path) +
+		return broad("a region path is repository-relative and canonical: " + strconv.Quote(in.Path) +
 			" has a leading slash, a '..' component, a redundant separator or a trailing one. Two spellings of one place would derive two regions while" +
 			" containment treated them as the same place")
 	case in.RegionKind == kindTree && (clean == "" || clean == "."):
@@ -526,7 +527,7 @@ func (e *EditRegions) retireCarried(ctx context.Context, predecessor row, succes
 // Settle is EditRegions.settle: accept, decline, withdraw or release.
 func (e *EditRegions) Settle(ctx context.Context, identifier, actor, disposition string, condition, reason sql.NullString) (contract.OrderedObject, error) {
 	if !slices.Contains(dispositions, disposition) {
-		return nil, refuse(contract.RefusalLinkNotActive, "a disposition is one of "+strings.Join(dispositions, ", ")+", not "+pyvalue.StrRepr(disposition))
+		return nil, refuse(contract.RefusalLinkNotActive, "a disposition is one of "+strings.Join(dispositions, ", ")+", not "+strconv.Quote(disposition))
 	}
 	if disposition == "accepted" && condition.Valid {
 		return nil, refuse(contract.RefusalLinkNotActive, "an acceptance takes no condition, and one given here would be dropped. A side"+
@@ -541,7 +542,7 @@ func (e *EditRegions) Settle(ctx context.Context, identifier, actor, disposition
 			return err
 		}
 		if r == nil {
-			return refuse(contract.RefusalUnregisteredScope, "no agreement "+pyvalue.StrRepr(identifier))
+			return refuse(contract.RefusalUnregisteredScope, "no agreement "+strconv.Quote(identifier))
 		}
 		repository, state := text(r, "repository"), text(r, "state")
 		side, acting, err := e.actingSide(ctx, r, actor, repository)

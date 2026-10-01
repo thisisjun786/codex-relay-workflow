@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"database/sql"
+	"strconv"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -21,7 +22,7 @@ const (
 // CoordinationExact validates a field before it enters a derived identity.
 func CoordinationExact(value, what string) (string, error) {
 	if strings.TrimSpace(value) == "" {
-		return "", refuse(contract.RefusalUnregisteredScope, "%s must be a non-empty string, not %s", what, pyvalue.StrRepr(value))
+		return "", refuse(contract.RefusalUnregisteredScope, "%s must be a non-empty string, not %s", what, strconv.Quote(value))
 	}
 	if strings.Contains(value, "|") {
 		return "", refuse(contract.RefusalUnregisteredScope, "%s must not contain '|', which is the field separator", what)
@@ -35,6 +36,8 @@ func CoordinationID(prefix string, fields ...string) string {
 }
 
 // CoordinationRefusal is a decided refusal, committed as a conflict before returning its error.
+// Its detail is stored in coordination_conflicts, so its writers keep the repr() quoting it was
+// always written with.
 type CoordinationRefusal struct {
 	Reason                                         contract.RefusalReason
 	Detail, Domain, Subject, Incumbent, Challenger string

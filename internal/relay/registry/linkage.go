@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strconv"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -24,6 +25,8 @@ const (
 )
 
 // linkRefusal is linkage._Refusal: decided, then recorded in the transaction that decided it.
+// Its detail is stored in linkage_conflicts, so it keeps the repr() quoting it was always
+// written with; a refusal that is only returned (refuse) quotes as Go does.
 type linkRefusal struct {
 	reason                      contract.RefusalReason
 	detail, scopeKind, scopeKey string
@@ -65,7 +68,7 @@ func linkID(kind, upperKind, upperKey, lowerKind, lowerKey string) string {
 
 func exact(value, what string) error {
 	if strings.TrimSpace(value) == "" {
-		return refuse(contract.RefusalUnregisteredScope, "%s must be a non-empty string, not %s", what, pyvalue.StrRepr(value))
+		return refuse(contract.RefusalUnregisteredScope, "%s must be a non-empty string, not %s", what, strconv.Quote(value))
 	}
 	if strings.Contains(value, "|") {
 		return refuse(contract.RefusalUnregisteredScope, "%s must not contain '|', which is the field separator", what)
@@ -525,7 +528,7 @@ func (l linkage) applyRelationshipStatus(ctx context.Context, rid, status, previ
 func (r *Registry) BindScope(ctx context.Context, role, key string, endpoint Endpoint) (contract.OrderedObject, error) {
 	kind, known := roleScope[role]
 	if !known {
-		return nil, refuse(contract.RefusalScopeRoleMismatch, "a role is one of child, parent, supervisor, not %s", pyvalue.StrRepr(role))
+		return nil, refuse(contract.RefusalScopeRoleMismatch, "a role is one of child, parent, supervisor, not %s", strconv.Quote(role))
 	}
 	for _, check := range []struct{ value, what string }{{key, "a scope key"}, {endpoint.TaskID, "a task id"}, {endpoint.HostID, "a host id"}} {
 		if err := exact(check.value, check.what); err != nil {

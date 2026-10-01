@@ -4,16 +4,17 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -584,7 +585,7 @@ func (v *AssignmentView) verdictFor(ctx context.Context, event string) (contract
 	}
 	decoded, err := decodeJSON([]byte(colString(row, "record")))
 	if err != nil {
-		return nil, &dispatch.HostError{Class: "JSONDecodeError", Detail: err.Error()}
+		return nil, fmt.Errorf("the recorded verdict of event %s is not JSON: %w", event, err)
 	}
 	record, _ := decoded.(contract.OrderedObject)
 	generation, _ := getField(record, "executionGeneration")
@@ -786,7 +787,7 @@ func (v *AssignmentView) relayProvenance(ctx context.Context, holds bool) (contr
 // decided inside the write transaction against the exact event the caller integrated.
 func (v *AssignmentView) Mark(ctx context.Context, rid, mark, evidence, actor, expectedEvent string) (contract.OrderedObject, error) {
 	if mark != StateMerged {
-		return nil, refuse(contract.RefusalDispositionConflict, "unknown mark %s", pyvalue.StrRepr(mark))
+		return nil, refuse(contract.RefusalDispositionConflict, "unknown mark %s", strconv.Quote(mark))
 	}
 	if strings.TrimSpace(evidence) == "" {
 		return nil, refuse(contract.RefusalFindingsRequired, "a mark carries its evidence")
@@ -801,10 +802,10 @@ func (v *AssignmentView) Mark(ctx context.Context, rid, mark, evidence, actor, e
 			return err
 		}
 		if x == nil {
-			return refuse(contract.RefusalUnregisteredRelationship, "no relationship %s", pyvalue.StrRepr(rid))
+			return refuse(contract.RefusalUnregisteredRelationship, "no relationship %s", strconv.Quote(rid))
 		}
 		if x.Status != Active || x.SupersededBy.String != "" {
-			return refuse(contract.RefusalRelationshipNotActive, "relationship %s is %s", pyvalue.StrRepr(rid), pyvalue.StrRepr(x.Status))
+			return refuse(contract.RefusalRelationshipNotActive, "relationship %s is %s", strconv.Quote(rid), strconv.Quote(x.Status))
 		}
 		generation := x.Generation
 		head, err := HeadRevision(ctx, v.s(), rid, generation)
@@ -820,7 +821,7 @@ func (v *AssignmentView) Mark(ctx context.Context, rid, mark, evidence, actor, e
 		}
 		if head.EventID != expectedEvent {
 			return refuse(contract.RefusalStaleMarkContext, "this mark names %s, but the current revision of generation %d is %s; "+
-				"re-read the assignment before recording what was integrated", pyvalue.StrRepr(expectedEvent), generation, pyvalue.StrRepr(head.EventID))
+				"re-read the assignment before recording what was integrated", strconv.Quote(expectedEvent), generation, strconv.Quote(head.EventID))
 		}
 		verdict, err := v.verdictFor(ctx, head.EventID)
 		if err != nil {

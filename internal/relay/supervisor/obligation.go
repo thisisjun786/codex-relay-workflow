@@ -8,10 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -185,7 +185,7 @@ func validateObligation(ctx context.Context, c *Channel, o Obligation) error {
 		return err
 	}
 	if derived == nil {
-		return Refusal{"contradictory_observation", "the obligation handed in is not the one event " + pyvalue.StrRepr(eventID) + " raises: its obligationId differ. The packet and the journal entry would both be composed from it, so nothing was composed or recorded; stage the obligation the event raises"}
+		return Refusal{"contradictory_observation", "the obligation handed in is not the one event " + strconv.Quote(eventID) + " raises: its obligationId differ. The packet and the journal entry would both be composed from it, so nothing was composed or recorded; stage the obligation the event raises"}
 	}
 	a, _ := json.Marshal(o)
 	b, _ := json.Marshal(derived)
@@ -205,7 +205,7 @@ func validateObligation(ctx context.Context, c *Channel, o Obligation) error {
 				drift = append(drift, field)
 			}
 		}
-		return Refusal{"contradictory_observation", "the obligation handed in is not the one event " + pyvalue.StrRepr(eventID) + " raises: its " + strings.Join(drift, ", ") + " differ. The packet and the journal entry would both be composed from it, so nothing was composed or recorded; stage the obligation the event raises"}
+		return Refusal{"contradictory_observation", "the obligation handed in is not the one event " + strconv.Quote(eventID) + " raises: its " + strings.Join(drift, ", ") + " differ. The packet and the journal entry would both be composed from it, so nothing was composed or recorded; stage the obligation the event raises"}
 	}
 	return nil
 }

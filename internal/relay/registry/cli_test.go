@@ -310,21 +310,17 @@ func Test25_RAT1_register_is_one_transaction_and_a_kill_before_commit_leaves_not
 	}
 }
 
-// Host errors keep Python's envelope: exit 3, {"error": "host", "detail": "<Class>: <message>"}.
-func Test25_CLI_host_errors_carry_pythons_class_and_message(t *testing.T) {
-	sameCLIAsGolden(t, "host_errors")
-}
-
-// The JSONDecodeError text a malformed --settings answers with is Python's, message and position,
-// for a table of broken documents; the golden holds each document with its answer.
-func Test25_CLI_settings_json_errors_read_like_pythons(t *testing.T) {
-	var answers [][2]string
-	for _, doc := range []string{"", " ", "{not json", "{", "}", "[", "[1,", "[1,]", `{"a":1,}`, `{"a" 1}`, `{"a":}`,
-		`{"a":1 "b":2}`, `{"a":"x`, `"\q"`, `"\u12g4"`, "\"a\x01b\"", "tru", "nul", "01", "-", "1.", "1e", "1 2", "{}x",
-		`{"a":[1,2`, "\n\n  {\"a\": x}", `{"é": ?}`, "NaN", "-Infinity", "[1,\n2,\n]", "{\"a\":1}\n\n?", "[]]"} {
-		answers = append(answers, [2]string{doc, store.PythonJSONError(doc)})
+// A host error exits 3 with {"error": "host", "detail": <the error's text>}.
+func Test25_CLI_host_errors_exit_three_with_their_detail(t *testing.T) {
+	got, _ := sameCLIAsGolden(t, "host_errors")
+	for _, step := range got {
+		if step.Exit != 3 {
+			continue
+		}
+		if payload := stdoutJSON(t, step); payload["error"] != "host" || payload["detail"] == "" || len(payload) != 2 {
+			t.Fatal(step)
+		}
 	}
-	golden.CheckJSON(t, "errors", answers)
 }
 
 // CLI-6: a refusal exits 2 with {"error": "refused", "reason": <machine-readable reason>,

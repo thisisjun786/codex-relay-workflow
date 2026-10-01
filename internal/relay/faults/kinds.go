@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
-// Static kinds replace Python's dynamic --kind-module registration. The project_create
-// declaration is sourced from projects.py; todo 23 owns its publication implementation.
+// KindPolicy is a publication kind's terms. The built-in kinds are below; project_create is
+// executable once --kind-module codex_session_relay.projects has installed routing's hook.
 type KindPolicy struct {
 	Creates, RequiresIssue bool
 	Target, Evidence       string
@@ -212,7 +214,7 @@ func preIssue(ctx context.Context, l *Ledger, spec kindPolicy, r, fault row, mom
 		}
 	}
 	if answer != nil {
-		return nil, fmt.Errorf("fault_not_claimable: the %s pre-issue check answered %s", kind, f1Repr(answer))
+		return nil, fmt.Errorf("fault_not_claimable: the %s pre-issue check answered %s", kind, pyvalue.Quote(answer))
 	}
 	return nil, nil
 }

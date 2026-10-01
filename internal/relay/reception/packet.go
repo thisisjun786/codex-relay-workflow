@@ -125,7 +125,7 @@ func known(v any, allowed []string, what string) error {
 	}
 	sorted := slices.Clone(allowed)
 	slices.Sort(sorted)
-	return malformed("%s is not a known %s; it is one of %s", pyvalue.Repr(v), what, strings.Join(sorted, ", "))
+	return malformed("%s is not a known %s; it is one of %s", pyvalue.Quote(v), what, strings.Join(sorted, ", "))
 }
 func KindOf(direction, purpose any) (string, error) {
 	if e := known(direction, []string{"child_to_parent", "parent_to_child", "supervisor_to_parent", "parent_to_supervisor"}, "direction"); e != nil {
@@ -139,7 +139,7 @@ func KindOf(direction, purpose any) (string, error) {
 			names = append(names, k)
 		}
 		slices.Sort(names)
-		return "", malformed("%s is not a purpose %s carries; it has %s", pyvalue.Repr(purpose), direction, strings.Join(names, ", "))
+		return "", malformed("%s is not a purpose %s carries; it has %s", pyvalue.Quote(purpose), direction, strings.Join(names, ", "))
 	}
 	return kind, nil
 }
@@ -226,10 +226,10 @@ func checkEnvelope(region any) error {
 		source := reachSources[direction][i]
 		if source == "" {
 			if state != "not_applicable" {
-				return malformed("%s has no mechanism for %s, so it cannot answer %s: %s", direction, n, pyvalue.Repr(state), noMechanism[direction])
+				return malformed("%s has no mechanism for %s, so it cannot answer %s: %s", direction, n, pyvalue.Quote(state), noMechanism[direction])
 			}
 		} else if slices.Contains([]any{"yes", "no", "conditional"}, state) && Get(entry, "source") != source {
-			return malformed("%s on %s is answered by %s, not by %s", n, direction, source, pyvalue.Repr(Get(entry, "source")))
+			return malformed("%s on %s is answered by %s, not by %s", n, direction, source, pyvalue.Quote(Get(entry, "source")))
 		}
 	}
 	return nil
@@ -243,13 +243,13 @@ func Check(one any) error {
 		return malformed("a packet carries a relay-envelope/1 region under envelope, not a %s", pyvalue.TypeName(region))
 	}
 	if Get(one, "version") != "relay-packet/1" {
-		return malformed("this reader is relay-packet/1 and the packet says %s; a version nobody mapped is diagnosed rather than read under these rules", pyvalue.Repr(Get(one, "version")))
+		return malformed("this reader is relay-packet/1 and the packet says %s; a version nobody mapped is diagnosed rather than read under these rules", pyvalue.Quote(Get(one, "version")))
 	}
 	if e := checkEnvelope(region); e != nil {
 		return e
 	}
 	if Get(region, "version") != "relay-envelope/1" {
-		return malformed("this reader is relay-envelope/1 and the region says %s; the identification region is read under the version that wrote it or not at all", pyvalue.Repr(Get(region, "version")))
+		return malformed("this reader is relay-envelope/1 and the region says %s; the identification region is read under the version that wrote it or not at all", pyvalue.Quote(Get(region, "version")))
 	}
 	direction, purpose := str(Get(region, "direction")), str(Get(region, "purpose"))
 	kind, e := KindOf(direction, purpose)
@@ -257,11 +257,11 @@ func Check(one any) error {
 		return e
 	}
 	if Get(region, "kind") != kind {
-		return malformed("this region says it is a %s, but %s/%s is a %s; the kind is what the recipient owes, and it is derived rather than declared", pyvalue.Repr(Get(region, "kind")), direction, purpose, kind)
+		return malformed("this region says it is a %s, but %s/%s is a %s; the kind is what the recipient owes, and it is derived rather than declared", pyvalue.Quote(Get(region, "kind")), direction, purpose, kind)
 	}
 	for i, k := range []string{"sender", "recipient"} {
 		if Get(Get(region, k), "role") != roles[direction][i] {
-			return malformed("the %s claims the role %s, but on %s it is the %s; a direction fixes both roles and a caller supplies neither", k, pyvalue.Repr(Get(Get(region, k), "role")), direction, roles[direction][i])
+			return malformed("the %s claims the role %s, but on %s it is the %s; a direction fixes both roles and a caller supplies neither", k, pyvalue.Quote(Get(Get(region, k), "role")), direction, roles[direction][i])
 		}
 	}
 	id, e := MessageID(direction, str(Get(region, "relationId")), purpose, str(Get(region, "subject")))
@@ -269,7 +269,7 @@ func Check(one any) error {
 		return e
 	}
 	if Get(region, "messageId") != id {
-		return malformed("this region carries messageId %s, but its own direction, relation, purpose and subject derive %s; the identifier belongs to another message", pyvalue.Repr(Get(region, "messageId")), id)
+		return malformed("this region carries messageId %s, but its own direction, relation, purpose and subject derive %s; the identifier belongs to another message", pyvalue.Quote(Get(region, "messageId")), id)
 	}
 	for _, k := range []string{"relationId", "messageId", "subject", "correlationId", "relationRevision", "decision"} {
 		v := Get(region, k)
@@ -310,7 +310,7 @@ func Check(one any) error {
 		}
 		for _, item := range items {
 			if pyvalue.TypeName(item) != "str" || strings.TrimSpace(str(item)) == "" {
-				return malformed("each evidence entry is a pointer somebody can follow, not %s", pyvalue.Repr(item))
+				return malformed("each evidence entry is a pointer somebody can follow, not %s", pyvalue.Quote(item))
 			}
 		}
 	}
@@ -345,7 +345,7 @@ func Check(one any) error {
 		words := strings.FieldsFunc(strings.ToLower(str(Get(p, "workflow"))), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
 		for i := 0; i+1 < len(words); i++ {
 			if words[i] == "cxc" && words[i+1] == "loop" && Get(p, "mode") != "loop" {
-				return malformed("the workflow names CXC Loop and the policy says %s; the Loop arms a goalplan, so its mode is loop", pyvalue.Repr(Get(p, "mode")))
+				return malformed("the workflow names CXC Loop and the policy says %s; the Loop arms a goalplan, so its mode is loop", pyvalue.Quote(Get(p, "mode")))
 			}
 		}
 	}
@@ -403,13 +403,13 @@ func Check(one any) error {
 		}
 		mode := Get(triple, "mode")
 		if !slices.Contains(modes, str(mode)) {
-			return malformed("an activation reading states the mode it was read under, one of coordination, loop, non_loop, not %s; not_applicable means something only under a mode that arms nothing", pyvalue.Repr(mode))
+			return malformed("an activation reading states the mode it was read under, one of coordination, loop, non_loop, not %s; not_applicable means something only under a mode that arms nothing", pyvalue.Quote(mode))
 		}
 		if _, e := ActivationClass(triple, str(mode), nil); e != nil {
 			return e
 		}
 		if p := Get(one, "policy"); present(p) && Get(p, "mode") != mode {
-			return malformed("the activation reading was taken under mode %s and the policy this packet states runs under %s; one packet cannot say both, and an audit's not_applicable is not a loop child's", pyvalue.Repr(mode), pyvalue.Repr(Get(p, "mode")))
+			return malformed("the activation reading was taken under mode %s and the policy this packet states runs under %s; one packet cannot say both, and an audit's not_applicable is not a loop child's", pyvalue.Quote(mode), pyvalue.Quote(Get(p, "mode")))
 		}
 	}
 	return nil

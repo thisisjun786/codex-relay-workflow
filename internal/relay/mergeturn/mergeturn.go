@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"math/big"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -89,7 +90,7 @@ func (s *Service) ledger(ctx context.Context, id, kind, from, to, evidence, acto
 		return err
 	}
 	if seen.Kind != wanted.Kind || seen.FromState != wanted.FromState || seen.ToState != wanted.ToState || seen.EvidenceKind != wanted.EvidenceKind || seen.ActorTaskID != wanted.ActorTaskID || seen.Evidence != wanted.Evidence {
-		return &store.RefusedError{Reason: string(contract.RefusalMergeEvidenceRequired), Detail: "turn " + pyvalue.StrRepr(id) + " already holds " + pyvalue.StrRepr(identity) + " as " + pyvalue.StrRepr(seen.EvidenceKind) + " by " + pyvalue.StrRepr(seen.ActorTaskID) + ", so recording " + pyvalue.StrRepr(evidence) + " under it would be discarded without anything saying so; this ledger is inconsistent and the operation is rolled back rather than half written"}
+		return &store.RefusedError{Reason: string(contract.RefusalMergeEvidenceRequired), Detail: "turn " + strconv.Quote(id) + " already holds " + strconv.Quote(identity) + " as " + strconv.Quote(seen.EvidenceKind) + " by " + strconv.Quote(seen.ActorTaskID) + ", so recording " + strconv.Quote(evidence) + " under it would be discarded without anything saying so; this ledger is inconsistent and the operation is rolled back rather than half written"}
 	}
 	return nil
 }
@@ -621,11 +622,11 @@ func (s *Service) Target(ctx context.Context, repository, base string) (map[stri
 func (s *Service) Attest(ctx context.Context, turn, kind, identity, actor, evidence string) (map[string]any, error) {
 	squatted := ""
 	if engineLedgerKind(kind) {
-		squatted = "evidence kind " + pyvalue.StrRepr(kind)
+		squatted = "evidence kind " + strconv.Quote(kind)
 	} else {
 		for _, prefix := range []string{"request:", "close:", "head:", "take:", "promote:", "merging:", "unknown:", "ready:", "grant:", "grant_acknowledged:", "restate-base:"} {
 			if strings.HasPrefix(identity, prefix) {
-				squatted = "idempotency key " + pyvalue.StrRepr(identity) + ", which is in the " + pyvalue.StrRepr(prefix) + " namespace"
+				squatted = "idempotency key " + strconv.Quote(identity) + ", which is in the " + strconv.Quote(prefix) + " namespace"
 				break
 			}
 		}

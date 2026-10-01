@@ -50,17 +50,13 @@ func routeJSON(value, what string) (any, error) {
 	if path, ok := strings.CutPrefix(value, "@"); ok {
 		data, err := os.ReadFile(path)
 		if err != nil {
-			message := store.PythonOSError(err)
-			if _, detail, ok := strings.Cut(message, ": "); ok {
-				message = detail
-			}
-			return nil, malformed("the " + what + " file cannot be read: " + message)
+			return nil, malformed("the " + what + " file cannot be read: " + err.Error())
 		}
 		raw = strings.ReplaceAll(strings.ReplaceAll(string(data), "\r\n", "\n"), "\r", "\n")
 	}
 	out, err := pyjson.Loads(raw, pyjson.LoadOptions{Map: true, Numbers: pyjson.SpelledNumbers})
 	if err != nil {
-		return nil, malformed("the " + what + " is not readable JSON: " + store.PythonJSONError(raw))
+		return nil, malformed("the " + what + " is not readable JSON: " + err.Error())
 	}
 	return out, nil
 }
@@ -155,5 +151,5 @@ func runCommand(ctx context.Context, services dispatch.Services, args dispatch.A
 		}
 		return nil, err
 	}
-	return CommandRecord(name, answer), nil
+	return CommandRecord(answer), nil
 }

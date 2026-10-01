@@ -666,14 +666,14 @@ func registrationError(reason, detail string) error {
 
 func checkedAssignment(value any) (string, error) {
 	if !ValidAssignment(value) {
-		return "", registrationError(UnknownGeneration, "an assignment id is the hex sha256 of a dispatch request id, not "+pyReprValue(value))
+		return "", registrationError(UnknownGeneration, "an assignment id is the hex sha256 of a dispatch request id, not "+pyvalue.Quote(value))
 	}
 	return value.(string), nil
 }
 
 func checkedIdentity(value any, what string) (string, error) {
 	if !ValidSegment(value) {
-		return "", registrationError(UnboundGeneration, "a "+what+" becomes a directory name, so it cannot be empty, . or .., or contain a path separator: "+pyReprValue(value))
+		return "", registrationError(UnboundGeneration, "a "+what+" becomes a directory name, so it cannot be empty, . or .., or contain a path separator: "+pyvalue.Quote(value))
 	}
 	return value.(string), nil
 }
@@ -846,7 +846,7 @@ func RecordAttempt(root, workspace string, assignment any, outcome, at string, t
 		valid = valid || o == outcome
 	}
 	if !valid {
-		return nil, registrationError(UnknownGeneration, "an attempt outcome is one of "+strings.Join(AttemptOutcomes, ", ")+", not "+pyvalue.StrRepr(outcome))
+		return nil, registrationError(UnknownGeneration, "an attempt outcome is one of "+strings.Join(AttemptOutcomes, ", ")+", not "+strconv.Quote(outcome))
 	}
 	directory, err := assignmentDirectory(root, workspace, assignment)
 	if err != nil {
@@ -939,7 +939,7 @@ func RegisterRelationship(ctx context.Context, root, workspace string, assignmen
 	path, isPath := dbPath.(string)
 	if !isPath {
 		// Path(None) raises TypeError, which registration_hold answers as an unreadable path.
-		return nil, refuseUnheld("the relay store path " + pyReprValue(dbPath) + " could not be read as a path")
+		return nil, refuseUnheld("the relay store path " + pyvalue.Quote(dbPath) + " could not be read as a path")
 	}
 	var result Obj
 	err = store.RegistrationHold(ctx, path, func(held *sql.Conn, unavailable string) error {
@@ -1021,7 +1021,7 @@ func PublishDisposition(root, workspace string, assignment, sessionID, turnID an
 		known = known || o == outcome
 	}
 	if !known {
-		return nil, registrationError(OutcomeInconsistent, "a disposition outcome is one of "+strings.Join(DispositionOutcomes, ", ")+", not "+pyvalue.StrRepr(outcome))
+		return nil, registrationError(OutcomeInconsistent, "a disposition outcome is one of "+strings.Join(DispositionOutcomes, ", ")+", not "+strconv.Quote(outcome))
 	}
 	directory, err := assignmentDirectory(root, workspace, assignment)
 	if err != nil {
