@@ -53,7 +53,7 @@ func runHelper(role, arg string) int {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
-		// Whatever ends the controller before it has waited for the worker, the worker is
+		// When the controller returns before it has waited for the worker, the worker is
 		// stopped and reaped rather than left running.
 		defer func() {
 			if worker.ProcessState == nil {
