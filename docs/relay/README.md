@@ -531,7 +531,7 @@ call:
     ... --turn-id <later turn> --continues-anchor <dispatch turn> \
         --continuation-actor <child task id> --continuation-reason 'cycle 3 of this execution'
 
-Without that, a non-anchor turn is refused. Host ordering can corroborate the claim and can
+Without that, a non-anchor turn that was not already admitted is refused. Host ordering can corroborate the claim and can
 contradict it, but it never admits a turn on its own: ordering is not lineage.
 
 The parent, from inside its own turn:
