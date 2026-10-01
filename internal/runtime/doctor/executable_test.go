@@ -3,7 +3,9 @@ package doctor_test
 import (
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
 )
@@ -125,6 +127,33 @@ func TestAScriptIsJudgedByTheInterpreterItsHashBangResolvesTo(t *testing.T) {
 	} {
 		if e := classifier.Classify(filepath.Join(scripts, name), ""); e.Kind != want {
 			t.Errorf("%s: kind %s (%s), want %s", name, e.Kind, e.Detail, want)
+		}
+	}
+}
+
+// A runtime directory whose bin/crw is a FIFO is a directory, not a runtime: classifying it must
+// not open the FIFO, which blocks until something writes to it. A malformed registration's cwd
+// can name any directory, so the reading reaches this with whatever a host holds.
+func TestClassifyDoesNotOpenAFifoWhereARuntimeBinaryBelongs(t *testing.T) {
+	root := t.TempDir()
+	mkdir(t, filepath.Join(root, "bin"))
+	if err := syscall.Mkfifo(filepath.Join(root, "bin", "crw"), 0o600); err != nil {
+		t.Skip("cannot make a FIFO here: ", err)
+	}
+	for name, run := range map[string]func() string{
+		"the directory":    func() string { return doctor.Classify(root, "", "").Kind },
+		"the FIFO":         func() string { return doctor.Classify(filepath.Join(root, "bin", "crw"), "", "").Kind },
+		"its runtime kind": func() string { return doctor.RuntimeKind(root) },
+	} {
+		answered := make(chan string, 1)
+		go func() { answered <- run() }()
+		select {
+		case kind := <-answered:
+			if kind == doctor.KindGoRuntime || kind == doctor.KindNative {
+				t.Errorf("%s: %s, but a FIFO is no binary", name, kind)
+			}
+		case <-time.After(20 * time.Second):
+			t.Fatalf("%s: blocked opening the FIFO", name)
 		}
 	}
 }

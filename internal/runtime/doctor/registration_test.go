@@ -274,3 +274,31 @@ func TestDoctorJudgesTheStopCommandsInHooksJSON(t *testing.T) {
 	}
 	h.runRegistrationCases(t, cases)
 }
+
+// Finding 26 (CRW-251). `crw install remove` ignores another program's malformed hooks.json and
+// config.toml entries that name nothing of CRW's (decision 68, as amended), because it asks
+// whether any registration can name the directory it would delete. The doctor asks another
+// question - is the selected runtime registered as the host accepts it - and the host accepts a
+// configuration only whole (finding 23): a server table of another program with args = 42
+// makes Codex refuse the file, CRW's bridge registration in it included, so the registration is
+// unreadable whoever the broken table belongs to. A Stop command that is not a string is read
+// the same way, because any Stop command may be the relay's hook; a hook of another event is not
+// read at all. The inputs are the ones the removal tests use (internal/runtime/install,
+// TestRemoveIgnoresAMalformedRegistrationThatIsNotCRWs): the doctor keeps reading them as
+// unreadable, and that is intended.
+func TestDoctorKeepsReadingAnUnrelatedMalformedEntryAsUnreadable(t *testing.T) {
+	h, dir, _ := goHost(t, true)
+	goodBridge := encodeJSON(t, h.bridgeRecord(nil))
+	userStop := encodeJSON(t, h.stopSettings(t, map[string]any{"owner": "user", "adapterInterpreter": nil, "adapterEntryPoint": nil}))
+	good := "[mcp_servers.codex-thread-bridge]\ncommand = \"" + filepath.Join(dir, "bin", "crw") + "\"\nargs = [\"bridge\"]\n"
+	h.runRegistrationCases(t, []registrationCase{
+		{name: "a server of another program whose args are 42", stop: userStop, bridge: goodBridge, config: good + "\n[mcp_servers.other]\ncommand = \"python3\"\nargs = 42\n",
+			relay: "own", bridgeClass: "unreadable", want: []string{`"other" has args that are not a list of strings, they are an integer`}},
+		{name: "a server of another program whose command is 5", stop: userStop, bridge: goodBridge, config: good + "\n[mcp_servers.third]\ncommand = 5\n",
+			relay: "own", bridgeClass: "unreadable", want: []string{`"third" has a command that is not a string, it is an integer`}},
+		{name: "a Stop hook of another program whose command is 42", stop: userStop, bridge: goodBridge, hooks: `{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": 42}]}]}}`,
+			relay: "unreadable", bridgeClass: "own", want: []string{"hooks.Stop[0].hooks[0].command is a number, not a string"}},
+		{name: "a SessionStart hook of another program whose command is 42", stop: userStop, bridge: goodBridge, hooks: `{"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": 42}]}]}}`,
+			relay: "own", bridgeClass: "own"},
+	})
+}
