@@ -16,7 +16,7 @@ func Test26_LNK1_a_binding_is_the_role_scope_and_task(t *testing.T) {
 	w := newWorld(t)
 	record := w.step(w.r.BindScopeAs(w.ctx, "parent", project, parentEP(parent), "active")).(contract.OrderedObject)
 	w.step(registry.BindingID("parent", "project", project, parent), nil)
-	w.sameAsPython("lnk1_binding_identity")
+	w.matchesGolden("lnk1_binding_identity")
 	for _, f := range record {
 		for _, forbidden := range []string{"title", "latest", "name"} {
 			if f.Key != "_bindings" && strings.Contains(strings.ToLower(f.Key), forbidden) {
@@ -37,7 +37,7 @@ func Test26_LNK2_identical_replays_converge(t *testing.T) {
 	w.step(w.supervise(s))
 	w.step(w.supervise(s))
 	w.rows("SELECT link_id FROM scope_links")
-	w.sameAsPython("lnk2_replays_converge")
+	w.matchesGolden("lnk2_replays_converge")
 
 	// Two identical concurrent binds on independent stores: no error, one row.
 	c := newWorld(t)
@@ -110,7 +110,7 @@ func Test26_LNK3_a_link_id_does_not_change_when_its_owner_does(t *testing.T) {
 	w.step(w.supervise(w.supervision()))
 	w.step(w.r.Handover(w.ctx, "parent", project, parent, parentEP(otherParent), nil, "the outgoing parent handed over its project", "test"))
 	link := w.step(w.r.Link(w.ctx, lid)).(contract.OrderedObject)
-	w.sameAsPython("lnk3_link_id_stable_across_handover")
+	w.matchesGolden("lnk3_link_id_stable_across_handover")
 	if lower := field(link, "lower").(contract.OrderedObject); field(lower, "taskId") != otherParent {
 		t.Fatalf("lower task %v", field(lower, "taskId"))
 	}
@@ -126,7 +126,7 @@ func Test26_LNK4_one_live_owner_per_scope(t *testing.T) {
 	}
 	conflicts := w.conflicts()
 	w.rows("SELECT task_id FROM scope_bindings WHERE scope_key = ?", project)
-	w.sameAsPython("lnk4_one_owner_per_scope")
+	w.matchesGolden("lnk4_one_owner_per_scope")
 	if len(conflicts) != 1 || conflicts[0].Get("reason") != "duplicate_scope_owner" ||
 		conflicts[0].Get("incumbent") != parent || conflicts[0].Get("challenger") != otherParent {
 		t.Fatalf("conflicts %v", conflicts)
@@ -138,7 +138,7 @@ func Test26_LNK4_one_live_owner_per_scope(t *testing.T) {
 	a.step(a.r.BindScopeAs(a.ctx, "parent", project, parentEP(otherParent), "active"))
 	a.step(a.r.BindScopeAs(a.ctx, "parent", project, parentEP(parent), "active"))
 	a.ownerStep("project", project)
-	a.sameAsPython("lnk4_archived_is_revalidated")
+	a.matchesGolden("lnk4_archived_is_revalidated")
 
 	c := newWorld(t)
 	claim := func(task string) func(*registry.Registry) (contract.OrderedObject, error) {
@@ -170,26 +170,26 @@ func Test26_LNK5_one_task_one_role_one_scope(t *testing.T) {
 		w := newWorld(t)
 		w.step(w.r.BindScopeAs(w.ctx, "parent", project, parentEP(parent), "active"))
 		w.step(w.r.BindScopeAs(w.ctx, "supervisor", initiative, supervisorEP(parent), "active"))
-		w.sameAsPython("lnk5_parent_as_supervisor")
+		w.matchesGolden("lnk5_parent_as_supervisor")
 	})
 	t.Run("child_as_supervisor", func(t *testing.T) {
 		w := newWorld(t)
 		w.scoped()
 		w.step(w.r.BindScopeAs(w.ctx, "supervisor", otherInitiative, supervisorEP(child), "active"))
-		w.sameAsPython("lnk5_child_as_supervisor")
+		w.matchesGolden("lnk5_child_as_supervisor")
 	})
 	t.Run("parent_as_another_supervisor", func(t *testing.T) {
 		w := newWorld(t)
 		w.superviseDefault()
 		w.step(w.supervise(supervision{otherInitiative, otherProject, supervisorEP(parent), parentEP(otherParent), "execution"}))
-		w.sameAsPython("lnk5_parent_as_another_supervisor")
+		w.matchesGolden("lnk5_parent_as_another_supervisor")
 	})
 	t.Run("handover_to_supervisor", func(t *testing.T) {
 		w := newWorld(t)
 		w.superviseDefault()
 		w.step(w.r.Handover(w.ctx, "parent", project, parent, supervisorEP(supervisorTask), nil, "the supervisor tried to take the project", "test"))
 		w.ownerStep("project", project)
-		w.sameAsPython("lnk5_handover_to_supervisor")
+		w.matchesGolden("lnk5_handover_to_supervisor")
 	})
 	t.Run("cross_role_resume", func(t *testing.T) {
 		w := newWorld(t)
@@ -198,7 +198,7 @@ func Test26_LNK5_one_task_one_role_one_scope(t *testing.T) {
 		w.step(w.r.BindScopeAs(w.ctx, "supervisor", "INIT-LATER", bare(child), "active"))
 		w.step(w.resume(rid))
 		w.conflicts()
-		w.sameAsPython("lnk5_cross_role_resume")
+		w.matchesGolden("lnk5_cross_role_resume")
 	})
 	t.Run("parent_second_project", func(t *testing.T) {
 		w := newWorld(t)
@@ -207,7 +207,7 @@ func Test26_LNK5_one_task_one_role_one_scope(t *testing.T) {
 		s.project = otherProject
 		w.step(w.supervise(s))
 		w.ownerStep("project", otherProject)
-		w.sameAsPython("lnk5_parent_second_project")
+		w.matchesGolden("lnk5_parent_second_project")
 	})
 	t.Run("child_second_issue", func(t *testing.T) {
 		w := newWorld(t)
@@ -218,7 +218,7 @@ func Test26_LNK5_one_task_one_role_one_scope(t *testing.T) {
 			Child: bare(child), IssueKey: "REL-2", ArtifactRoots: []string{root}, AllowedRecipients: []string{parent},
 			DispatchRequestID: "dispatch-2", DispatchTurnID: ns("turn-2")})).(string)
 		w.step(w.r.AttachIssue(w.ctx, second, project))
-		w.sameAsPython("lnk5_child_second_issue")
+		w.matchesGolden("lnk5_child_second_issue")
 	})
 	t.Run("child_in_another_scope_resume", func(t *testing.T) {
 		w := newWorld(t)
@@ -229,7 +229,7 @@ func Test26_LNK5_one_task_one_role_one_scope(t *testing.T) {
 		x := w.must(w.r.Get(w.ctx, rid)).(registry.Relationship)
 		w.step(x.Status, nil)
 		w.ownerStep("issue", issue)
-		w.sameAsPython("lnk5_child_in_another_scope_resume")
+		w.matchesGolden("lnk5_child_in_another_scope_resume")
 	})
 }
 
@@ -241,7 +241,7 @@ func Test26_LNK6_cycles_and_kinds(t *testing.T) {
 		s.supervisor = supervisorEP(parent)
 		w.step(w.supervise(s))
 		w.conflicts()
-		w.sameAsPython("lnk6_self_supervision")
+		w.matchesGolden("lnk6_self_supervision")
 	})
 	t.Run("child_supervises_its_project", func(t *testing.T) {
 		w := newWorld(t)
@@ -249,7 +249,7 @@ func Test26_LNK6_cycles_and_kinds(t *testing.T) {
 		s := w.supervision()
 		s.initiative, s.supervisor, s.kind = otherInitiative, supervisorEP(child), "reference"
 		w.step(w.supervise(s))
-		w.sameAsPython("lnk6_child_supervises_its_project")
+		w.matchesGolden("lnk6_child_supervises_its_project")
 	})
 	t.Run("issue_parent_is_its_child", func(t *testing.T) {
 		w := newWorld(t)
@@ -257,14 +257,14 @@ func Test26_LNK6_cycles_and_kinds(t *testing.T) {
 		rid := w.must(w.registerRaw(registry.Registration{Parent: bare("01same-task"), Child: bare("01same-task"), IssueKey: "REL-SELF",
 			ArtifactRoots: []string{root}, AllowedRecipients: []string{parent}, DispatchRequestID: "dispatch-self", DispatchTurnID: ns("turn-self")})).(string)
 		w.step(w.r.AttachIssue(w.ctx, rid, project))
-		w.sameAsPython("lnk6_issue_parent_is_its_child")
+		w.matchesGolden("lnk6_issue_parent_is_its_child")
 	})
 	t.Run("peer_kind", func(t *testing.T) {
 		w := newWorld(t)
 		s := w.supervision()
 		s.kind = "peer"
 		w.step(w.supervise(s))
-		w.sameAsPython("lnk6_peer_kind")
+		w.matchesGolden("lnk6_peer_kind")
 	})
 }
 
@@ -278,20 +278,20 @@ func Test26_LNK7_issue_attachment_scoping(t *testing.T) {
 		rid := w.register()
 		w.step(w.r.AttachIssue(w.ctx, rid, otherProject))
 		w.conflicts()
-		w.sameAsPython("lnk7_foreign_parent")
+		w.matchesGolden("lnk7_foreign_parent")
 	})
 	t.Run("unregistered_project", func(t *testing.T) {
 		w := newWorld(t)
 		rid := w.register()
 		w.step(w.r.AttachIssue(w.ctx, rid, project))
-		w.sameAsPython("lnk7_unregistered_project")
+		w.matchesGolden("lnk7_unregistered_project")
 	})
 	t.Run("scoped_elsewhere", func(t *testing.T) {
 		w := newWorld(t)
 		rid := w.scoped()
 		w.must(w.supervise(other))
 		w.step(w.r.AttachIssue(w.ctx, rid, otherProject))
-		w.sameAsPython("lnk7_scoped_elsewhere")
+		w.matchesGolden("lnk7_scoped_elsewhere")
 	})
 	t.Run("two_projects", func(t *testing.T) {
 		w := newWorld(t)
@@ -306,7 +306,7 @@ func Test26_LNK7_issue_attachment_scoping(t *testing.T) {
 			DispatchRequestID: "dispatch-rival", DispatchTurnID: ns("turn-rival"), Supersedes: first})).(string)
 		w.step(w.r.AttachIssue(w.ctx, second, otherProject))
 		w.rows("SELECT link_id FROM scope_links WHERE lower_kind = ? AND lower_key = ?  AND status IN ('active','paused')", "issue", issue)
-		want := w.sameAsPython("lnk7_two_projects")
+		want := w.matchesGolden("lnk7_two_projects")
 		if !strings.Contains(text(want[0]["refused"].(map[string]any)["detail"]), otherProject) {
 			t.Fatal("the refusal does not name the other project")
 		}
@@ -322,7 +322,7 @@ func Test26_LNK7_issue_attachment_scoping(t *testing.T) {
 			w.setStatus(rid, status)
 			w.step(w.r.AttachIssue(w.ctx, rid, project))
 		}
-		w.sameAsPython("lnk7_inactive")
+		w.matchesGolden("lnk7_inactive")
 	})
 }
 
@@ -337,7 +337,7 @@ func Test26_LNK8_attaching_writes_converges_and_keeps_paused(t *testing.T) {
 		w.step(w.r.AttachIssue(w.ctx, rid, project))
 		w.rows("SELECT * FROM relationship_scope")
 		w.rows("SELECT link_id FROM scope_links WHERE lower_kind = ?", "issue")
-		w.sameAsPython("lnk8_attach_writes_and_converges")
+		w.matchesGolden("lnk8_attach_writes_and_converges")
 	})
 	t.Run("completes_partial", func(t *testing.T) {
 		w := newWorld(t)
@@ -347,7 +347,7 @@ func Test26_LNK8_attaching_writes_converges_and_keeps_paused(t *testing.T) {
 		w.ownerStep("issue", issue)
 		w.step(w.r.AttachIssue(w.ctx, rid, project))
 		w.step(w.r.Link(w.ctx, registry.LinkID("execution", "project", project, "issue", issue)))
-		w.sameAsPython("lnk8_completes_partial")
+		w.matchesGolden("lnk8_completes_partial")
 	})
 	t.Run("paused_stays_paused", func(t *testing.T) {
 		w := newWorld(t)
@@ -356,7 +356,7 @@ func Test26_LNK8_attaching_writes_converges_and_keeps_paused(t *testing.T) {
 		w.setStatus(rid, "paused")
 		w.step(w.r.AttachIssue(w.ctx, rid, project))
 		w.ownerStep("issue", issue)
-		w.sameAsPython("lnk8_paused_stays_paused")
+		w.matchesGolden("lnk8_paused_stays_paused")
 	})
 }
 
@@ -368,7 +368,7 @@ func Test26_LNK9_a_shared_project(t *testing.T) {
 		w.superviseDefault()
 		w.step(w.supervise(reference))
 		w.rows("SELECT task_id FROM scope_bindings WHERE scope_kind = ? AND scope_key = ?  AND role = ? AND status IN ('active','paused')", "project", project, "parent")
-		w.sameAsPython("lnk9_second_initiative_references")
+		w.matchesGolden("lnk9_second_initiative_references")
 	})
 	t.Run("second_execution_edge", func(t *testing.T) {
 		w := newWorld(t)
@@ -377,7 +377,7 @@ func Test26_LNK9_a_shared_project(t *testing.T) {
 		s.kind = "execution"
 		w.step(w.supervise(s))
 		w.rows("SELECT link_id FROM scope_links WHERE lower_key = ? AND link_kind = 'execution'  AND status IN ('active','paused')", project)
-		w.sameAsPython("lnk9_second_execution_edge")
+		w.matchesGolden("lnk9_second_execution_edge")
 	})
 	t.Run("reference_naming_another_parent", func(t *testing.T) {
 		w := newWorld(t)
@@ -386,7 +386,7 @@ func Test26_LNK9_a_shared_project(t *testing.T) {
 		s.parent = parentEP(otherParent)
 		w.step(w.supervise(s))
 		w.conflicts()
-		w.sameAsPython("lnk9_reference_naming_another_parent")
+		w.matchesGolden("lnk9_reference_naming_another_parent")
 	})
 	t.Run("supervisor_cannot_reference", func(t *testing.T) {
 		w := newWorld(t)
@@ -396,13 +396,13 @@ func Test26_LNK9_a_shared_project(t *testing.T) {
 		w.step(w.supervise(s))
 		w.rows("SELECT link_id FROM scope_links WHERE lower_key = ? AND status IN ('active','paused')", project)
 		w.step(w.supervise(reference))
-		w.sameAsPython("lnk9_supervisor_cannot_reference")
+		w.matchesGolden("lnk9_supervisor_cannot_reference")
 	})
 	t.Run("reference_not_first", func(t *testing.T) {
 		w := newWorld(t)
 		w.step(w.supervise(supervision{"INIT-3", "PROJ-3", supervisorEP("01supervisor-three"), parentEP("01parent-three"), "reference"}))
 		w.ownerStep("project", "PROJ-3")
-		w.sameAsPython("lnk9_reference_not_first")
+		w.matchesGolden("lnk9_reference_not_first")
 	})
 }
 
@@ -425,7 +425,7 @@ func Test26_LNK10_directive_authority(t *testing.T) {
 		w.record(initiative, "01nobody", execution, "d-one", "project", project)
 		w.record(initiative, supervisorTask, execution, "d-kind", "issue", project)
 		w.conflicts()
-		w.sameAsPython("lnk10_directive_authority")
+		w.matchesGolden("lnk10_directive_authority")
 		if field(first, "linkKind") != "execution" {
 			t.Fatal("the first directive is not an execution one")
 		}
@@ -436,6 +436,6 @@ func Test26_LNK10_directive_authority(t *testing.T) {
 		w.must(w.supervise(supervision{"INIT-2", otherProject, supervisorEP(otherSupervisor), parentEP(otherParent), "execution"}))
 		other := registry.LinkID("execution", "initiative", "INIT-2", "project", otherProject)
 		w.record(initiative, supervisorTask, other, "d-two", "project", project)
-		w.sameAsPython("lnk10_upper_endpoint")
+		w.matchesGolden("lnk10_upper_endpoint")
 	})
 }

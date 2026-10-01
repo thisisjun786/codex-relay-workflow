@@ -6,13 +6,10 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"math"
-	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -22,6 +19,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 // The fixture of test_capacity.py's CapacityTestCase: two parents, each under one supervisor
@@ -90,7 +88,7 @@ func newEnv(t *testing.T) *env {
 
 func ctx() context.Context { return context.Background() }
 
-// step records one answer as gen_capacity.py does: the json.dumps(indent=2) text or the refusal.
+// step records one answer: the json.dumps(indent=2) text or the refusal.
 func (e *env) step(value any, err error) any {
 	e.t.Helper()
 	if err != nil {
@@ -162,36 +160,10 @@ func (e *env) rows(query string, args ...any) any {
 	return e.step(out, nil)
 }
 
-var python = sync.OnceValues(func() (map[string][]map[string]any, error) {
-	raw, err := os.ReadFile("testdata/python_capacity.json")
-	if err != nil {
-		return nil, err
-	}
-	var out map[string][]map[string]any
-	return out, json.Unmarshal(raw, &out)
-})
-
-// sameAsPython compares every recorded step, whole, with Python's text for the same call.
-func (e *env) sameAsPython(name string) {
+// matchesGolden compares every recorded step, whole, with the golden of the scenario.
+func (e *env) matchesGolden(name string) {
 	e.t.Helper()
-	all, err := python()
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	want, ok := all[name]
-	if !ok {
-		e.t.Fatalf("no python scenario %q", name)
-	}
-	if len(e.steps) != len(want) {
-		e.t.Fatalf("%s: %d steps, python has %d", name, len(e.steps), len(want))
-	}
-	for i := range want {
-		g, _ := json.Marshal(e.steps[i])
-		w, _ := json.Marshal(want[i])
-		if !bytes.Equal(g, w) {
-			e.t.Errorf("%s step %d differs from Python\n go: %v\n py: %v", name, i, e.steps[i], want[i])
-		}
-	}
+	golden.CheckJSON(e.t, name, e.steps)
 }
 
 // field reads one key of an answer the test just recorded.

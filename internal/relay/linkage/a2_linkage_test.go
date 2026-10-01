@@ -3,35 +3,24 @@ package linkage
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
-	"fmt"
-	"os/exec"
-	"path/filepath"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 // Part A2: test_linkage_peer.py, test_linkage_queries.py, test_linkage_recovery.py.
-// Every scenario is replayed against testdata/python_a2.json (gen_a2.py, live Python).
+// Every scenario is compared with its golden, which began as the answers of the live Python.
 
 const (
 	thirdProject = "PROJ-3"
 	thirdParent  = "01parent-three"
 )
-
-var pythonA2 = pythonFile("testdata/python_a2.json")
-
-// sameAsA2 is sameAsPython against python_a2.json.
-func (w *world) sameAsA2(name string) []map[string]any {
-	w.t.Helper()
-	return w.sameAs(pythonA2, name)
-}
 
 func (w *world) twoProjects() {
 	w.t.Helper()
@@ -92,25 +81,13 @@ func (w *world) bindingStep(bid string) {
 }
 
 // unreadable records an unreadable answer without its driver-specific detail, after checking
-// that the detail is there, and drops Python's detail at the same step index.
-func (w *world) unreadable(answer contract.OrderedObject, python []map[string]any) {
+// that the detail is there.
+func (w *world) unreadable(answer contract.OrderedObject) {
 	w.t.Helper()
 	if field(answer, "state") != "unreadable" || field(answer, "readable") != false || text(field(answer, "detail")) == "" {
 		w.t.Fatalf("unreadable answer %v", answer)
 	}
-	if ok, _ := python[len(w.steps)]["ok"].(map[string]any); ok != nil {
-		delete(ok, "detail")
-	}
 	w.step(dropDetail(answer), nil)
-}
-
-func (w *world) a2(name string) []map[string]any {
-	w.t.Helper()
-	all, err := pythonA2()
-	if err != nil {
-		w.t.Fatal(err)
-	}
-	return all[name]
 }
 
 // Test26_LPR1: a peer link is one record whichever side registers it and across a handover.
@@ -123,7 +100,7 @@ func Test26_LPR1_a_peer_link_is_one_record(t *testing.T) {
 	w.hand(otherProject, otherParent, thirdParent, "the peer project changed hands")
 	again := w.peer(project, parent, otherProject, thirdParent).(contract.OrderedObject)
 	peers := w.rows("SELECT link_id FROM scope_links WHERE link_kind = 'peer'")
-	w.sameAsA2("lpr1_one_record")
+	w.matchesGolden("lpr1_one_record")
 	if field(first, "linkId") != field(mirrored, "linkId") || field(again, "linkId") != field(first, "linkId") || len(peers) != 1 {
 		t.Fatalf("peer link ids %v %v %v, %d rows", field(first, "linkId"), field(mirrored, "linkId"), field(again, "linkId"), len(peers))
 	}
@@ -144,7 +121,7 @@ func Test26_LPR2_a_peer_link_adds_no_level(t *testing.T) {
 		w.rows("SELECT task_id FROM scope_bindings WHERE scope_kind = ? AND scope_key = ?"+
 			"  AND role = ? AND status IN ('active','paused')", "project", p, "parent")
 	}
-	want := w.sameAsA2("lpr2_no_level")
+	want := w.matchesGolden("lpr2_no_level")
 	if len(field(downBefore, "levels").([]any)) == 0 {
 		t.Fatal("the fixture produced no hierarchy to compare")
 	}
@@ -160,7 +137,7 @@ func Test26_LPR3_peer_refusals(t *testing.T) {
 	w.peer(project, parent, project, parent)
 	w.peer(project, parent, otherProject, thirdParent)
 	w.peer(project, parent, thirdProject, thirdParent)
-	want := w.sameAsA2("lpr3_refusals")
+	want := w.matchesGolden("lpr3_refusals")
 	for i, reason := range []string{"scope_cycle", "scope_role_mismatch", "scope_role_mismatch"} {
 		if got := want[i]["refused"].(map[string]any)["reason"]; got != reason {
 			t.Fatalf("step %d: %v", i, got)
@@ -173,7 +150,7 @@ func Test26_LPR4_a_linked_counterpart_answer(t *testing.T) {
 	w := newWorld(t)
 	w.peered()
 	w.counterpart(parent, otherParent, registry.CounterpartQuery{})
-	want := w.sameAsA2("lpr4_linked")
+	want := w.matchesGolden("lpr4_linked")
 	answer := want[0]["ok"].(map[string]any)
 	link := answer["link"].(map[string]any)
 	counterpart := answer["counterpart"].(map[string]any)
@@ -201,7 +178,7 @@ func Test26_LPR5_counterpart_findings(t *testing.T) {
 		w.hand(otherProject, otherParent, thirdParent, "the peer project changed hands")
 		w.counterpart(parent, thirdParent, registry.CounterpartQuery{QuotedRevision: sql.NullInt64{Int64: 1, Valid: true}})
 		w.counterpart(parent, otherParent, registry.CounterpartQuery{})
-		want := w.sameAsA2("lpr5_recipient_replaced")
+		want := w.matchesGolden("lpr5_recipient_replaced")
 		stale := want[0]["ok"].(map[string]any)
 		owner := want[1]["ok"].(map[string]any)["currentOwner"].(map[string]any)
 		if !has(t, want[0], "stale_revision") || stale["link"].(map[string]any)["revision"].(float64) <= 1 ||
@@ -217,7 +194,7 @@ func Test26_LPR5_counterpart_findings(t *testing.T) {
 		rid := w.register()
 		w.must(w.r.AttachIssue(w.ctx, rid, project))
 		w.counterpart(supervisorTask, child, registry.CounterpartQuery{})
-		want := w.sameAsA2("lpr5_other_scope_and_roles")
+		want := w.matchesGolden("lpr5_other_scope_and_roles")
 		if !has(t, want[0], "foreign_scope") || want[1]["ok"].(map[string]any)["state"] != "linked" ||
 			has(t, want[1], "wrong_role") || !has(t, want[2], "wrong_role") {
 			t.Fatalf("answers %v", want)
@@ -228,7 +205,7 @@ func Test26_LPR5_counterpart_findings(t *testing.T) {
 		w.peered()
 		w.hand(project, parent, thirdParent, "the sending project changed hands")
 		w.counterpart(parent, otherParent, registry.CounterpartQuery{})
-		if want := w.sameAsA2("lpr5_sender_replaced"); !has(t, want[0], "stale_sender") {
+		if want := w.matchesGolden("lpr5_sender_replaced"); !has(t, want[0], "stale_sender") {
 			t.Fatalf("answer %v", want[0])
 		}
 	})
@@ -237,14 +214,13 @@ func Test26_LPR5_counterpart_findings(t *testing.T) {
 // Test26_LPR6: an unregistered task is unlinked; an unreadable store is unreadable.
 func Test26_LPR6_unregistered_is_not_unreadable(t *testing.T) {
 	w := newWorld(t)
-	want := w.a2("lpr6_unregistered_and_unreadable")
 	w.peered()
 	w.counterpart(parent, "01nobody-at-all", registry.CounterpartQuery{})
 	if err := w.s.DB.Close(); err != nil {
 		t.Fatal(err)
 	}
-	w.unreadable(w.r.Counterpart(w.ctx, parent, otherParent, registry.CounterpartQuery{}), want)
-	w.sameAsA2("lpr6_unregistered_and_unreadable")
+	w.unreadable(w.r.Counterpart(w.ctx, parent, otherParent, registry.CounterpartQuery{}))
+	want := w.matchesGolden("lpr6_unregistered_and_unreadable")
 	first := want[0]["ok"].(map[string]any)
 	last := want[1]["ok"].(map[string]any)
 	if first["state"] != "unlinked" || first["readable"] != true || first["findings"].([]any)[0] != "unregistered_link" ||
@@ -260,7 +236,7 @@ func Test26_LQY1_three_level_walks(t *testing.T) {
 	down := w.down("initiative", initiative)
 	w.up(registry.UpSelector{Task: ns(child)})
 	w.up(registry.UpSelector{Relationship: ns(rid)})
-	want := w.sameAsA2("lqy1_three_levels")
+	want := w.matchesGolden("lqy1_three_levels")
 	var tasks []any
 	for _, level := range field(down, "levels").([]any) {
 		owner := field(level.(contract.OrderedObject), "owner").(contract.OrderedObject)
@@ -287,14 +263,13 @@ func Test26_LQY1_three_level_walks(t *testing.T) {
 // Test26_LQY2: an unreadable store walks as unreadable with no levels or gaps.
 func Test26_LQY2_an_unreadable_store_walks_as_unreadable(t *testing.T) {
 	w := newWorld(t)
-	want := w.a2("lqy2_unreadable")
 	w.scoped()
 	if err := w.s.DB.Close(); err != nil {
 		t.Fatal(err)
 	}
-	w.unreadable(w.r.Down(w.ctx, "initiative", initiative), want)
-	w.unreadable(w.r.Up(w.ctx, registry.UpSelector{Task: ns(child)}), want)
-	w.sameAsA2("lqy2_unreadable")
+	w.unreadable(w.r.Down(w.ctx, "initiative", initiative))
+	w.unreadable(w.r.Up(w.ctx, registry.UpSelector{Task: ns(child)}))
+	want := w.matchesGolden("lqy2_unreadable")
 	for _, step := range want {
 		answer := step["ok"].(map[string]any)
 		if len(answer["levels"].([]any)) != 0 || len(answer["gaps"].([]any)) != 0 {
@@ -317,7 +292,7 @@ func Test26_LQY3_gap_words(t *testing.T) {
 		w := newWorld(t)
 		w.register()
 		w.up(registry.UpSelector{Issue: ns(issue)})
-		answer := w.sameAsA2("lqy3_unscoped_assignment")[0]["ok"].(map[string]any)
+		answer := w.matchesGolden("lqy3_unscoped_assignment")[0]["ok"].(map[string]any)
 		if answer["state"] != "unregistered" || answer["readable"] != true || !sameJSON(t, gapWords(answer), []any{"unscoped_assignment"}) {
 			t.Fatalf("answer %v", answer)
 		}
@@ -328,7 +303,7 @@ func Test26_LQY3_gap_words(t *testing.T) {
 		w.hand(project, parent, otherParent, "handing over")
 		w.exec("UPDATE scope_bindings SET status = 'archived' WHERE scope_key = ?", project)
 		w.down("initiative", initiative)
-		answer := w.sameAsA2("lqy3_project_without_parent")[0]["ok"].(map[string]any)
+		answer := w.matchesGolden("lqy3_project_without_parent")[0]["ok"].(map[string]any)
 		if answer["state"] != "resolved" || !sameJSON(t, gapWords(answer), []any{"project_without_parent"}) {
 			t.Fatalf("answer %v", answer)
 		}
@@ -337,7 +312,7 @@ func Test26_LQY3_gap_words(t *testing.T) {
 		w := newWorld(t)
 		w.must(w.r.BindScopeAs(w.ctx, "parent", project, parentEP(parent), "active"))
 		w.up(registry.UpSelector{Task: ns(parent)})
-		answer := w.sameAsA2("lqy3_no_supervisor")[0]["ok"].(map[string]any)
+		answer := w.matchesGolden("lqy3_no_supervisor")[0]["ok"].(map[string]any)
 		if !sameJSON(t, gapWords(answer), []any{"no_supervisor"}) {
 			t.Fatalf("answer %v", answer)
 		}
@@ -354,7 +329,7 @@ func Test26_LQY4_contention_rows(t *testing.T) {
 		s.initiative, s.supervisor = "INIT-9", supervisorEP("01supervisor-nine")
 		w.step(w.supervise(s))
 		w.down("project", project)
-		want := w.sameAsA2("lqy4_recorded_conflict")
+		want := w.matchesGolden("lqy4_recorded_conflict")
 		rows := contention(want[1])
 		if len(rows) == 0 || rows[0].(map[string]any)["reason"] != "duplicate_scope_owner" {
 			t.Fatalf("contention %v", rows)
@@ -370,7 +345,7 @@ func Test26_LQY4_contention_rows(t *testing.T) {
 			w.record(initiative, supervisorTask, text(field(execution, "linkId")), digest, "project", project)
 		}
 		w.down("project", project)
-		want := w.sameAsA2("lqy4_instruction_pair")
+		want := w.matchesGolden("lqy4_instruction_pair")
 		found := false
 		for _, row := range contention(want[3]) {
 			found = found || row.(map[string]any)["contention"] == "instruction_conflict"
@@ -384,7 +359,7 @@ func Test26_LQY4_contention_rows(t *testing.T) {
 		w.superviseDefault()
 		w.exec("UPDATE scope_bindings SET task_id = ? WHERE scope_key = ? AND role = ?", otherParent, project, "parent")
 		w.down("initiative", initiative)
-		rows := contention(w.sameAsA2("lqy4_owner_drift")[0])
+		rows := contention(w.matchesGolden("lqy4_owner_drift")[0])
 		if len(rows) != 1 || rows[0].(map[string]any)["recorded"] != parent || rows[0].(map[string]any)["live"] != otherParent {
 			t.Fatalf("contention %v", rows)
 		}
@@ -427,7 +402,7 @@ func Test26_LQY5_assignment_view_project_context(t *testing.T) {
 	// under _project_context; dropping its table reaches the same except branch through for_issue).
 	w.exec("DROP TABLE relationship_scope")
 	w.forIssue()
-	want := w.sameAsA2("lqy5_project_context")
+	want := w.matchesGolden("lqy5_project_context")
 	if want[0]["ok"].(map[string]any)["scopeState"] != "scoped" || want[1]["ok"].(map[string]any)["scopeState"] != "unreadable" {
 		t.Fatalf("scope states %v", want)
 	}
@@ -435,7 +410,7 @@ func Test26_LQY5_assignment_view_project_context(t *testing.T) {
 	u := newWorld(t)
 	u.register()
 	u.forIssue()
-	got := u.sameAsA2("lqy5_unscoped")[0]["ok"].(map[string]any)
+	got := u.matchesGolden("lqy5_unscoped")[0]["ok"].(map[string]any)
 	if got["projectKey"] != nil || got["scopeState"] != "unscoped" || got["responsibleChild"] != child {
 		t.Fatalf("unscoped %v", got)
 	}
@@ -470,12 +445,11 @@ var snapshots = []string{
 
 // reopenWithoutNewTables drops the linkage tables and reopens the store, as a pre-linkage
 // store takes the schema: the DDL runs again over what it had. Go never repairs a store: it
-// refuses one missing a table of the frozen schema (docs/port/decisions.md 14), and the DDL runs
-// over an older store only in the retained Python fence. So that reopen is Python's, on the store
-// it owns for it (testsupport.HandOver), and Go goes on with the result after a takeover back.
-// What Python's reopen adds is the linkage tables' DDL and nothing else (no row, no schema_meta
-// value), so that DDL is recorded (pyoracle) and, on replay, executed over the Go-owned store in
-// place of the Python reopen.
+// refuses one missing a table of the frozen schema (docs/port/decisions.md 14), and the DDL ran
+// over an older store only in the retained Python fence. What that Python reopen added is the
+// linkage tables' DDL and nothing else (no row, no schema_meta value); the DDL it left is the
+// fixture python-reopen-linkage-ddl.json, executed over the Go-owned store in place of the
+// Python reopen.
 func (w *world) reopenWithoutNewTables() {
 	w.t.Helper()
 	for _, table := range newTables {
@@ -492,23 +466,10 @@ func (w *world) reopenWithoutNewTables() {
 		w.t.Fatalf("Go's refusal of a store missing the linkage tables: %v", err)
 	}
 	var ddl []string
-	pyoracle.JSON(w.t, "python reopen ddl", &ddl, func() (any, error) {
-		testsupport.HandOver(w.t, w.path, "python")
-		repo, err := filepath.Abs(filepath.Join("..", "..", ".."))
-		if err != nil {
-			return nil, err
-		}
-		reopen := exec.Command(filepath.Join(repo, ".venv", "bin", "python"), "-c",
-			"import sys\nfrom codex_session_relay.store import Store\nStore(sys.argv[1]).close()", w.path)
-		if out, err := reopen.CombinedOutput(); err != nil {
-			return nil, fmt.Errorf("Python reopen: %v\n%s", err, out)
-		}
-		testsupport.HandOver(w.t, w.path, "go")
-		return w.linkageDDL(), nil
-	})
-	if !pyoracle.Live() {
-		w.runDDL(ddl)
+	if err := json.Unmarshal(golden.Fixture(w.t, "python-reopen-linkage-ddl.json"), &ddl); err != nil {
+		w.t.Fatal(err)
 	}
+	w.runDDL(ddl)
 	s, err := store.Open(context.Background(), w.path, "")
 	if err != nil {
 		w.t.Fatal(err)
@@ -518,36 +479,7 @@ func (w *world) reopenWithoutNewTables() {
 	w.r = &registry.Registry{Store: s, Now: w.r.Now, Policy: w.r.Policy}
 }
 
-// linkageDDL is the CREATE statement of every table and index the linkage tables hold, in the
-// order the store's schema lists them.
-func (w *world) linkageDDL() []string {
-	w.t.Helper()
-	db, err := ownership.OpenExisting(context.Background(), w.path, "ro")
-	if err != nil {
-		w.t.Fatal(err)
-	}
-	defer db.Close()
-	rows, err := db.Query("SELECT sql FROM sqlite_master WHERE sql IS NOT NULL AND tbl_name IN (?, ?, ?, ?, ?) ORDER BY rowid",
-		newTables[0], newTables[1], newTables[2], newTables[3], newTables[4])
-	if err != nil {
-		w.t.Fatal(err)
-	}
-	defer rows.Close()
-	var ddl []string
-	for rows.Next() {
-		var statement string
-		if err = rows.Scan(&statement); err != nil {
-			w.t.Fatal(err)
-		}
-		ddl = append(ddl, statement)
-	}
-	if err = rows.Err(); err != nil {
-		w.t.Fatal(err)
-	}
-	return ddl
-}
-
-// runDDL executes the recorded statements over the closed store, as Python's reopen did.
+// runDDL executes the fixture's statements over the closed store, as Python's reopen did.
 func (w *world) runDDL(ddl []string) {
 	w.t.Helper()
 	if len(ddl) == 0 {
@@ -592,7 +524,7 @@ func Test26_LRC1_an_existing_store_keeps_what_it_had(t *testing.T) {
 	w.superviseDefault()
 	w.step(w.r.AttachIssue(w.ctx, rid, project))
 	w.ownerStep("issue", issue)
-	want := w.sameAsA2("lrc1_existing_store")
+	want := w.matchesGolden("lrc1_existing_store")
 	for i := range snapshots {
 		if !sameJSON(t, want[i], want[i+len(snapshots)]) || len(want[i]["ok"].([]any)) == 0 {
 			t.Fatalf("snapshot %d changed or empty", i)
@@ -629,7 +561,7 @@ func Test26_LRC2_registering_with_a_project(t *testing.T) {
 		w.rows("SELECT project_key FROM relationship_scope WHERE relationship_id = ?", x.ID)
 		w.ownerStep("issue", "REL-NEW")
 		w.linkStep(registry.LinkID("execution", "project", project, "issue", "REL-NEW"))
-		want := w.sameAsA2("lrc2_register_with_project")
+		want := w.matchesGolden("lrc2_register_with_project")
 		if want[3]["ok"] == nil {
 			t.Fatal("no project to issue edge")
 		}
@@ -647,7 +579,7 @@ func Test26_LRC2_registering_with_a_project(t *testing.T) {
 		w.step(w.r.Attachment(w.ctx, rid))
 		_, err = w.again(otherProject)
 		w.step(nil, err)
-		want := w.sameAsA2("lrc2_reregister")
+		want := w.matchesGolden("lrc2_reregister")
 		if x.ID != rid || x.Generation != 1 || len(got.Generations) != 1 ||
 			want[4]["ok"].(map[string]any)["projectKey"] != project || reasonOf(err) != "relationship_conflict" {
 			t.Fatalf("re-register %v %v", x.ID, err)
@@ -669,7 +601,7 @@ func Test26_LRC3_lifecycle_propagation(t *testing.T) {
 		rid := w.scoped()
 		w.setStatus(rid, "archived")
 		w.issueState()
-		want := w.sameAsA2("lrc3_archive")
+		want := w.matchesGolden("lrc3_archive")
 		if status(want[0]) != "archived" || status(want[1]) != "archived" || want[2]["ok"] != nil {
 			t.Fatalf("archive %v", want)
 		}
@@ -681,7 +613,7 @@ func Test26_LRC3_lifecycle_propagation(t *testing.T) {
 		w.ownerStep("issue", issue)
 		w.must(w.resume(rid))
 		w.issueState()
-		want := w.sameAsA2("lrc3_resume")
+		want := w.matchesGolden("lrc3_resume")
 		if want[0]["ok"] != nil || status(want[2]) != "active" || want[3]["ok"].(map[string]any)["taskId"] != child {
 			t.Fatalf("resume %v", want)
 		}
@@ -692,7 +624,7 @@ func Test26_LRC3_lifecycle_propagation(t *testing.T) {
 		w.setStatus(rid, "archived")
 		w.rows("SELECT * FROM scope_bindings")
 		w.rows("SELECT * FROM scope_links")
-		w.sameAsA2("lrc3_unscoped")
+		w.matchesGolden("lrc3_unscoped")
 	})
 	t.Run("replacement", func(t *testing.T) {
 		w := newWorld(t)
@@ -707,7 +639,7 @@ func Test26_LRC3_lifecycle_propagation(t *testing.T) {
 		w.ownerStep("issue", issue)
 		w.linkStep(registry.LinkID("execution", "project", project, "issue", issue))
 		w.step(w.r.Attachment(w.ctx, x.ID))
-		want := w.sameAsA2("lrc3_replacement")
+		want := w.matchesGolden("lrc3_replacement")
 		edge := want[2]["ok"].(map[string]any)
 		if want[0]["ok"] != "archived" || edge["status"] != "active" || edge["lower"].(map[string]any)["taskId"] != "01child-two" ||
 			edge["revision"].(float64) <= 1 || want[3]["ok"].(map[string]any)["projectKey"] != project {
@@ -730,7 +662,7 @@ func Test26_LRC4_nothing_partial_survives(t *testing.T) {
 		w.rows("SELECT scope_key FROM scope_bindings ORDER BY scope_key")
 		w.rows("SELECT link_id FROM scope_links")
 		conflicts := w.conflicts()
-		want := w.sameAsA2("lrc4_refused_supervision")
+		want := w.matchesGolden("lrc4_refused_supervision")
 		if want[0]["refused"].(map[string]any)["reason"] != "scope_role_mismatch" || len(conflicts) != 1 {
 			t.Fatalf("refused supervision %v", want)
 		}
@@ -741,7 +673,7 @@ func Test26_LRC4_nothing_partial_survives(t *testing.T) {
 		rid := w.register()
 		w.exec("INSERT INTO relationship_scope (relationship_id, project_key, recorded_at) VALUES (?,?,?)", rid, project, fakeISO)
 		w.up(registry.UpSelector{Relationship: ns(rid)})
-		answer := w.sameAsA2("lrc4_half_written")[0]["ok"].(map[string]any)
+		answer := w.matchesGolden("lrc4_half_written")[0]["ok"].(map[string]any)
 		if answer["state"] != "resolved" || !sameJSON(t, gapWords(answer), []any{"issue_without_child"}) {
 			t.Fatalf("answer %v", answer)
 		}
@@ -780,7 +712,7 @@ func Test26_LRC4_nothing_partial_survives(t *testing.T) {
 		w.linkStep(registry.LinkID("execution", "project", project, "issue", issue))
 		w.step(w.r.AttachIssue(w.ctx, rid, project))
 		w.ownerStep("issue", issue)
-		want := w.sameAsA2("lrc4_failure_partway")
+		want := w.matchesGolden("lrc4_failure_partway")
 		if len(want[1]["ok"].([]any)) != 1 || len(want[2]["ok"].([]any)) != 0 || want[6]["ok"].(map[string]any)["taskId"] != child {
 			t.Fatalf("failure partway %v", want)
 		}
@@ -814,5 +746,5 @@ func Test26_LRC5_concurrent_attachment_settles_as_one_project(t *testing.T) {
 	}
 	rows := w.rowsQuiet("SELECT project_key FROM relationship_scope WHERE relationship_id = ?", rid)
 	w.step(contract.OrderedObject{{Key: "rows", Value: len(rows)}, {Key: "wins", Value: wins}, {Key: "refusals", Value: reasons}}, nil)
-	w.sameAsA2("lrc5_concurrent_attach")
+	w.matchesGolden("lrc5_concurrent_attach")
 }

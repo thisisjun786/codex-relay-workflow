@@ -118,7 +118,7 @@ func Test26_LNK11_contested_directives_are_kept(t *testing.T) {
 		list, err := w.r.Directives(w.ctx, "project", project)
 		w.step(objects(list), err)
 		w.step(w.r.Conflicts(w.ctx, "project", project))
-		w.sameAsPython("lnk11_contested_directives")
+		w.matchesGolden("lnk11_contested_directives")
 	})
 	t.Run("same_instruction_after_handover", func(t *testing.T) {
 		w := newWorld(t)
@@ -126,7 +126,7 @@ func Test26_LNK11_contested_directives_are_kept(t *testing.T) {
 		w.record(initiative, supervisorTask, execution, "d-same", "project", project)
 		w.handover(handoverArgs{role: "supervisor", key: initiative, expect: supervisorTask, endpoint: ep(supervisorEP(otherSupervisor)), evidence: "a new supervisor"})
 		w.record(initiative, otherSupervisor, execution, "d-same", "project", project)
-		w.sameAsPython("lnk11_same_instruction_after_handover")
+		w.matchesGolden("lnk11_same_instruction_after_handover")
 	})
 }
 
@@ -145,7 +145,7 @@ func Test26_LNK12_handover_confirmation(t *testing.T) {
 			w.handover(handoverArgs{endpoint: ep(e), evidence: "a blank replacement"})
 		}
 		w.handover(handoverArgs{key: "PROJ-NOBODY", endpoint: ep(parentEP(parent)), evidence: "handing over a scope that does not exist"})
-		want := w.sameAsPython("lnk12_handover_unconfirmed")
+		want := w.matchesGolden("lnk12_handover_unconfirmed")
 		if !strings.Contains(refusalDetail(want[len(want)-1]), "no live owner") {
 			t.Fatal("an unregistered scope is not told so")
 		}
@@ -156,7 +156,7 @@ func Test26_LNK12_handover_confirmation(t *testing.T) {
 		w.handover(handoverArgs{evidence: "the first handover"})
 		w.handover(handoverArgs{endpoint: ep(parentEP("01parent-three")), evidence: "a stale second handover"})
 		w.rows("SELECT task_id FROM scope_bindings WHERE scope_key = ? AND role = ?  AND status IN ('active','paused')", project, "parent")
-		w.sameAsPython("lnk12_second_stale_handover")
+		w.matchesGolden("lnk12_second_stale_handover")
 	})
 	t.Run("self_handover", func(t *testing.T) {
 		w := newWorld(t)
@@ -164,7 +164,7 @@ func Test26_LNK12_handover_confirmation(t *testing.T) {
 		w.handover(handoverArgs{endpoint: ep(parentEP(parent)), evidence: "handing over to myself"})
 		w.ownerStep("project", project)
 		w.step(w.r.Conflicts(w.ctx, "project", project))
-		w.sameAsPython("lnk12_self_handover_settled")
+		w.matchesGolden("lnk12_self_handover_settled")
 	})
 }
 
@@ -180,7 +180,7 @@ func Test26_LNK13_a_handover_would_strand_attached_work(t *testing.T) {
 		w.exec("UPDATE relationships SET status = 'active' WHERE relationship_id = ?", rid)
 		w.handover(handoverArgs{acknowledged: w.outstanding(sql.NullString{}), evidence: "a settled-looking project"})
 		w.ownerStep("project", project)
-		want := w.sameAsPython("lnk13_would_strand")
+		want := w.matchesGolden("lnk13_would_strand")
 		detail := refusalDetail(want[3])
 		if !strings.Contains(detail, rid) || !strings.Contains(detail, "supersedes") || !strings.Contains(detail, "reopens") {
 			t.Fatalf("detail %q", detail)
@@ -192,7 +192,7 @@ func Test26_LNK13_a_handover_would_strand_attached_work(t *testing.T) {
 		w.reg(registry.Registration{Parent: bare("01parent-three"), AllowedRecipients: []string{"01parent-three"}, Supersedes: rid}, "dispatch-third")
 		w.step(w.r.Attached(w.ctx, project, ns(parent), sql.NullString{}))
 		w.handover(handoverArgs{acknowledged: w.outstanding(sql.NullString{}), evidence: "work parked on a third parent"})
-		w.sameAsPython("lnk13_third_parent")
+		w.matchesGolden("lnk13_third_parent")
 	})
 }
 
@@ -206,7 +206,7 @@ func Test26_LNK14_a_settled_handover_succeeds(t *testing.T) {
 		w.step(w.r.Binding(w.ctx, registry.BindingID("parent", "project", project, parent)))
 		w.step(w.r.Link(w.ctx, registry.LinkID("execution", "initiative", initiative, "project", project)))
 		w.ownerStep("project", project)
-		w.sameAsPython("lnk14_settled_handover")
+		w.matchesGolden("lnk14_settled_handover")
 	})
 	t.Run("escape_route", func(t *testing.T) {
 		w := newWorld(t)
@@ -218,14 +218,14 @@ func Test26_LNK14_a_settled_handover_succeeds(t *testing.T) {
 		w.step(w.r.Outstanding(w.ctx, project, sql.NullString{}))
 		w.handover(handoverArgs{acknowledged: w.outstanding(sql.NullString{}), evidence: "the work moved first"})
 		w.ownerStep("issue", issue)
-		w.sameAsPython("lnk14_escape_route")
+		w.matchesGolden("lnk14_escape_route")
 	})
 	t.Run("child", func(t *testing.T) {
 		w := newWorld(t)
 		w.scoped()
 		w.handover(handoverArgs{role: "child", key: issue, expect: child, endpoint: ep(bare("01child-two")), evidence: "trying to move a child sideways"})
 		w.ownerStep("issue", issue)
-		w.sameAsPython("lnk14_child_not_handed_over")
+		w.matchesGolden("lnk14_child_not_handed_over")
 	})
 }
 
@@ -239,7 +239,7 @@ func Test26_LNK15_hosts_and_endpoints_on_replay(t *testing.T) {
 		w.step(w.supervise(s))
 		w.ownerStep("project", project)
 		w.step(w.r.Conflicts(w.ctx, "project", project))
-		w.sameAsPython("lnk15_replay_other_host")
+		w.matchesGolden("lnk15_replay_other_host")
 	})
 	t.Run("take_back_from_new_host", func(t *testing.T) {
 		w := newWorld(t)
@@ -249,13 +249,13 @@ func Test26_LNK15_hosts_and_endpoints_on_replay(t *testing.T) {
 			evidence: "taken back, from a different machine"})
 		w.ownerStep("project", project)
 		w.step(w.r.BindScopeAs(w.ctx, "parent", project, registry.Endpoint{TaskID: parent, HostID: "host-three"}, "active"))
-		w.sameAsPython("lnk15_take_back_from_new_host")
+		w.matchesGolden("lnk15_take_back_from_new_host")
 	})
 	t.Run("restore_keeps_status", func(t *testing.T) {
 		w := newWorld(t)
 		w.step(w.r.BindScopeAs(w.ctx, "child", issue, bare(child), "archived"))
 		w.step(w.r.BindScopeAs(w.ctx, "child", issue, bare(child), "paused"))
-		w.sameAsPython("lnk15_restore_keeps_status")
+		w.matchesGolden("lnk15_restore_keeps_status")
 	})
 	t.Run("cli_handover_keeps_cxc_session", func(t *testing.T) {
 		w := newWorld(t)
@@ -290,7 +290,7 @@ func Test26_LNK16_blank_endpoints_never_reach_a_binding(t *testing.T) {
 		s.project, s.parent = otherProject, parentEP(otherParent)
 		w.must(w.supervise(s))
 		w.step(w.r.RegisterPeer(w.ctx, project, registry.Endpoint{HostID: host}, otherProject, parentEP(otherParent)))
-		w.sameAsPython("lnk16_blank_endpoints")
+		w.matchesGolden("lnk16_blank_endpoints")
 	})
 	t.Run("blank_child_host", func(t *testing.T) {
 		w := newWorld(t)
@@ -299,7 +299,7 @@ func Test26_LNK16_blank_endpoints_never_reach_a_binding(t *testing.T) {
 		w.exec("UPDATE relationships SET child_host_id = '' WHERE relationship_id = ?", rid)
 		w.step(w.r.AttachIssue(w.ctx, rid, project))
 		w.ownerStep("issue", issue)
-		want := w.sameAsPython("lnk16_blank_child_host")
+		want := w.matchesGolden("lnk16_blank_child_host")
 		if !strings.Contains(refusalDetail(want[0]), "host id") {
 			t.Fatal("the refusal does not name the host id")
 		}
@@ -316,7 +316,7 @@ func Test26_LNK17_assignment_lifecycle_and_the_issue_scope(t *testing.T) {
 		w.step(w.r.Down(w.ctx, "project", project), nil)
 		w.setStatus(rid, "cancelled")
 		w.ownerStep("issue", issue)
-		w.sameAsPython("lnk17_pause_and_cancel")
+		w.matchesGolden("lnk17_pause_and_cancel")
 	})
 	t.Run("archived_then_resume", func(t *testing.T) {
 		w := newWorld(t)
@@ -332,7 +332,7 @@ func Test26_LNK17_assignment_lifecycle_and_the_issue_scope(t *testing.T) {
 		w.resumeAt(rid, 1)
 		w.ownerStep("issue", issue)
 		w.step(w.r.Attachment(w.ctx, rid))
-		w.sameAsPython("lnk17_archived_then_resume")
+		w.matchesGolden("lnk17_archived_then_resume")
 	})
 }
 
@@ -347,7 +347,7 @@ func Test26_LNK18_resume_revalidates_the_scope(t *testing.T) {
 		w.rows("SELECT task_id FROM scope_bindings WHERE scope_key = ? AND role = ?  AND status IN ('active','paused')", issue, "child")
 		w.statusOf(rid)
 		w.step(w.r.Conflicts(w.ctx, "issue", issue))
-		w.sameAsPython("lnk18_reassigned_issue")
+		w.matchesGolden("lnk18_reassigned_issue")
 	})
 	t.Run("project_changed_hands", func(t *testing.T) {
 		w := newWorld(t)
@@ -358,7 +358,7 @@ func Test26_LNK18_resume_revalidates_the_scope(t *testing.T) {
 		w.statusOf(rid)
 		w.ownerStep("issue", issue)
 		w.step(w.r.Conflicts(w.ctx, "project", project))
-		w.sameAsPython("lnk18_project_changed_hands")
+		w.matchesGolden("lnk18_project_changed_hands")
 	})
 	t.Run("project_without_parent", func(t *testing.T) {
 		w := newWorld(t)
@@ -367,7 +367,7 @@ func Test26_LNK18_resume_revalidates_the_scope(t *testing.T) {
 		w.exec("UPDATE scope_bindings SET status = 'archived'  WHERE scope_kind = ? AND scope_key = ? AND role = ?", "project", project, "parent")
 		w.resumeAt(rid, 1)
 		w.statusOf(rid)
-		w.sameAsPython("lnk18_project_without_parent")
+		w.matchesGolden("lnk18_project_without_parent")
 	})
 	t.Run("reclaimed_elsewhere", func(t *testing.T) {
 		w := newWorld(t)
@@ -378,7 +378,7 @@ func Test26_LNK18_resume_revalidates_the_scope(t *testing.T) {
 		w.statusOf(rid)
 		w.ownerStep("issue", issue)
 		w.step(w.r.Conflicts(w.ctx, "issue", issue))
-		w.sameAsPython("lnk18_reclaimed_elsewhere")
+		w.matchesGolden("lnk18_reclaimed_elsewhere")
 	})
 	t.Run("refused_resume_contest", func(t *testing.T) {
 		w := newWorld(t)
@@ -388,7 +388,7 @@ func Test26_LNK18_resume_revalidates_the_scope(t *testing.T) {
 		w.resumeAt(rid, 1)
 		w.step(w.r.Conflicts(w.ctx, "issue", issue))
 		w.statusOf(rid)
-		w.sameAsPython("lnk18_refused_resume_contest")
+		w.matchesGolden("lnk18_refused_resume_contest")
 	})
 }
 
@@ -400,7 +400,7 @@ func Test26_LNK19_lower_level_registration_guards(t *testing.T) {
 		w.reg(registry.Registration{Child: bare("01child-far"), IssueKey: "REL-FAR", Supersedes: rid}, "dispatch-far")
 		w.statusOf(rid)
 		w.step(w.r.Attachment(w.ctx, rid))
-		w.sameAsPython("lnk19_other_issue_successor")
+		w.matchesGolden("lnk19_other_issue_successor")
 	})
 	t.Run("borrowed_predecessor", func(t *testing.T) {
 		w := newWorld(t)
@@ -408,7 +408,7 @@ func Test26_LNK19_lower_level_registration_guards(t *testing.T) {
 		w.reg(registry.Registration{Parent: parentEP(otherParent), Child: bare("01child-far"), IssueKey: "REL-FAR",
 			AllowedRecipients: []string{otherParent}, Supersedes: rid, ProjectKey: project}, "dispatch-far")
 		w.statusOf(rid)
-		w.sameAsPython("lnk19_borrowed_predecessor")
+		w.matchesGolden("lnk19_borrowed_predecessor")
 	})
 	t.Run("dead_predecessor", func(t *testing.T) {
 		w := newWorld(t)
@@ -417,7 +417,7 @@ func Test26_LNK19_lower_level_registration_guards(t *testing.T) {
 		w.reg(registry.Registration{Parent: parentEP(otherParent), Child: registry.Endpoint{TaskID: "01child-two", HostID: host, Cwd: ns(root)},
 			AllowedRecipients: []string{otherParent}, Supersedes: rid, ProjectKey: project}, "dispatch-dead")
 		w.ownerStep("project", project)
-		w.sameAsPython("lnk19_dead_predecessor")
+		w.matchesGolden("lnk19_dead_predecessor")
 	})
 	t.Run("project_history_only", func(t *testing.T) {
 		w := newWorld(t)
@@ -430,7 +430,7 @@ func Test26_LNK19_lower_level_registration_guards(t *testing.T) {
 		w.setStatus(first, "cancelled")
 		unrelated := w.reg(registry.Registration{Parent: bare(otherParent), Child: bare("01child-far"), AllowedRecipients: []string{otherParent}}, "dispatch-unrelated")
 		w.step(w.r.AttachIssue(w.ctx, unrelated, project))
-		w.sameAsPython("lnk19_project_history_only")
+		w.matchesGolden("lnk19_project_history_only")
 	})
 	t.Run("same_child_second_parent", func(t *testing.T) {
 		w := newWorld(t)
@@ -438,7 +438,7 @@ func Test26_LNK19_lower_level_registration_guards(t *testing.T) {
 		w.reg(registry.Registration{Parent: parentEP(otherParent), Child: registry.Endpoint{TaskID: child, HostID: host, Cwd: ns(root)},
 			AllowedRecipients: []string{otherParent}}, "dispatch-second-parent")
 		w.rows("SELECT relationship_id FROM relationships WHERE issue_key = ?  AND status IN ('active','paused') AND superseded_by IS NULL", issue)
-		w.sameAsPython("lnk19_same_child_second_parent")
+		w.matchesGolden("lnk19_same_child_second_parent")
 	})
 	t.Run("reclaimed_issue_successor", func(t *testing.T) {
 		w := newWorld(t)
@@ -448,7 +448,7 @@ func Test26_LNK19_lower_level_registration_guards(t *testing.T) {
 		w.reg(registry.Registration{Parent: parentEP(parent), Child: registry.Endpoint{TaskID: "01child-two", HostID: host, Cwd: ns(root)},
 			Supersedes: rid, ProjectKey: project}, "dispatch-successor")
 		w.ownerStep("issue", issue)
-		w.sameAsPython("lnk19_reclaimed_issue_successor")
+		w.matchesGolden("lnk19_reclaimed_issue_successor")
 	})
 }
 
@@ -463,7 +463,7 @@ func Test26_LNK20_supersession_moves_the_lower_level(t *testing.T) {
 		w.setStatus(rid, "cancelled")
 		w.ownerStep("issue", issue)
 		w.step(w.r.Link(w.ctx, registry.LinkID("execution", "project", project, "issue", issue)))
-		w.sameAsPython("lnk20_replacement_inherits")
+		w.matchesGolden("lnk20_replacement_inherits")
 	})
 	t.Run("same_child_again", func(t *testing.T) {
 		w := newWorld(t)
@@ -477,7 +477,7 @@ func Test26_LNK20_supersession_moves_the_lower_level(t *testing.T) {
 		w.setStatus(first, "cancelled")
 		w.ownerStep("issue", issue)
 		w.step(w.r.Attachment(w.ctx, again))
-		w.sameAsPython("lnk20_same_child_again")
+		w.matchesGolden("lnk20_same_child_again")
 	})
 	t.Run("direct_rebind_survives", func(t *testing.T) {
 		w := newWorld(t)
@@ -486,7 +486,7 @@ func Test26_LNK20_supersession_moves_the_lower_level(t *testing.T) {
 		w.step(w.r.BindScopeAs(w.ctx, "child", issue, bare(child), "active"))
 		w.setStatus(rid, "cancelled")
 		w.ownerStep("issue", issue)
-		w.sameAsPython("lnk20_direct_rebind_survives")
+		w.matchesGolden("lnk20_direct_rebind_survives")
 	})
 	t.Run("supersede_dead_leaves_reclaim", func(t *testing.T) {
 		w := newWorld(t)
@@ -497,7 +497,7 @@ func Test26_LNK20_supersession_moves_the_lower_level(t *testing.T) {
 			t.Fatal(err)
 		}
 		w.ownerStep("issue", issue)
-		w.sameAsPython("lnk20_supersede_dead_leaves_reclaim")
+		w.matchesGolden("lnk20_supersede_dead_leaves_reclaim")
 	})
 }
 
@@ -513,7 +513,7 @@ func Test26_LNK19_a_contest_after_the_pre_check_is_still_recorded(t *testing.T) 
 	w.r.SetBeforeRegisterTx(nil)
 	w.step(w.r.Conflicts(w.ctx, "issue", issue))
 	w.rows("SELECT relationship_id FROM relationships WHERE issue_key = ?", issue)
-	want := w.sameAsPython("lnk19_racer")
+	want := w.matchesGolden("lnk19_racer")
 	if text(want[0]["refused"].(map[string]any)["reason"]) != "duplicate_scope_owner" || len(want[1]["ok"].([]any)) == 0 || len(want[2]["ok"].([]any)) != 0 {
 		t.Fatalf("python oracle %v", want)
 	}

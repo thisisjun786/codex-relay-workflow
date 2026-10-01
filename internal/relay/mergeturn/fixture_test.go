@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"regexp"
 	"sort"
 	"sync"
@@ -19,11 +18,12 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
-// Part C: every scenario here is replayed step by step against testdata/python_mergeturn.json,
-// which gen_mergeturn.py records from the live Python MergeTurn over the MergeTurnTestCase
-// fixture. A step is {"ok": <whole JSON answer>} or {"refused": {"reason", "detail"}}.
+// Part C: every scenario here is replayed step by step against its golden (testdata/golden),
+// which began as the answers of the live Python MergeTurn over the MergeTurnTestCase fixture.
+// A step is {"ok": <whole JSON answer>} or {"refused": {"reason", "detail"}}.
 
 const (
 	fxRepo = "owner/repo"
@@ -34,15 +34,6 @@ const (
 )
 
 var fxISO = registry.ISO(time.Unix(1_700_000_000, 0))
-
-var pythonC = sync.OnceValues(func() (map[string][]map[string]any, error) {
-	raw, err := os.ReadFile(filepath.Join("testdata", "python_mergeturn.json"))
-	if err != nil {
-		return nil, err
-	}
-	var out map[string][]map[string]any
-	return out, json.Unmarshal(raw, &out)
-})
 
 // fakeTarget is tests/support.FakeTarget: a tip per (repository, base), every read counted.
 type fakeTarget struct {
@@ -135,7 +126,7 @@ func (w *fx) must(v map[string]any, err error) map[string]any {
 	return v
 }
 
-// step records one call's outcome the way gen_mergeturn.World.step does.
+// step records one call's outcome the way the Python generator's World.step did.
 func (w *fx) step(value any, err error) any {
 	w.t.Helper()
 	if err != nil {
@@ -408,30 +399,11 @@ func stableTargets(t *testing.T, value any) any {
 	return out
 }
 
-// sameAsPython compares every recorded step's whole JSON with the named Python scenario.
-func (w *fx) sameAsPython(name string) []map[string]any {
+// matchesGolden compares every recorded step's whole JSON, target keys named in order of
+// appearance (stableTargets), with the scenario's golden.
+func (w *fx) matchesGolden(name string) {
 	w.t.Helper()
-	all, err := pythonC()
-	if err != nil {
-		w.t.Fatal(err)
-	}
-	want, ok := all[name]
-	if !ok {
-		w.t.Fatalf("no python scenario %q", name)
-	}
-	if len(w.steps) != len(want) {
-		g, _ := json.MarshalIndent(w.steps, "", " ")
-		w.t.Fatalf("%s: %d steps, python has %d\n go: %s", name, len(w.steps), len(want), g)
-	}
-	steps := stableTargets(w.t, w.steps).([]any)
-	for i := range want {
-		if !reflect.DeepEqual(steps[i], want[i]) {
-			g, _ := json.MarshalIndent(w.steps[i], "", " ")
-			p, _ := json.MarshalIndent(want[i], "", " ")
-			w.t.Errorf("%s step %d differs from Python\n go: %s\n py: %s", name, i, g, p)
-		}
-	}
-	return want
+	golden.CheckJSON(w.t, name, stableTargets(w.t, w.steps))
 }
 
 func reasonOf(err error) string {

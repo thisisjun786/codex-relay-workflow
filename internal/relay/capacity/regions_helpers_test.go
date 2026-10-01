@@ -1,13 +1,11 @@
 package capacity
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"sync"
 	"testing"
 	"time"
 
@@ -17,6 +15,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 // The fixture of test_edit_regions.py's EditRegionTestCase: PRJ-A/B/Z bound to alpha, beta and
@@ -233,39 +232,10 @@ func id(v any) string {
 	return ""
 }
 
-var pythonRegions = sync.OnceValues(func() (map[string][]map[string]any, error) {
-	raw, err := os.ReadFile("testdata/python_editregion.json")
-	if err != nil {
-		return nil, err
-	}
-	var out map[string][]map[string]any
-	return out, json.Unmarshal(raw, &out)
-})
-
-// sameAsPython compares every step with the Python scenario of the same name, whole.
-func (e *regionEnv) sameAsPython(name string) {
+// matchesGolden compares every step with the golden of the scenario, whole.
+func (e *regionEnv) matchesGolden(name string) {
 	e.t.Helper()
-	all, err := pythonRegions()
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	want, ok := all[name]
-	if !ok {
-		e.t.Fatalf("no python scenario %q", name)
-	}
-	if len(e.steps) != len(want) {
-		for i, s := range e.steps {
-			e.t.Logf("go step %d: %.300v", i, s)
-		}
-		e.t.Fatalf("%s: %d steps, python has %d", name, len(e.steps), len(want))
-	}
-	for i := range want {
-		g, _ := json.Marshal(e.steps[i])
-		w, _ := json.Marshal(want[i])
-		if !bytes.Equal(g, w) {
-			e.t.Errorf("%s step %d differs from Python\n go: %v\n py: %v", name, i, e.steps[i], want[i])
-		}
-	}
+	golden.CheckJSON(e.t, name, e.steps)
 }
 
 // ok is the answer the step at index i recorded, decoded (the tests' own assertions read it).

@@ -44,7 +44,7 @@ func Test26_LNK21_a_returning_tenure(t *testing.T) {
 		w.step(w.r.Attachment(w.ctx, original))
 		w.full(away)
 		w.rows("SELECT relationship_id, supersedes, superseded_by FROM relationships ORDER BY relationship_id")
-		w.sameAsPython("lnk21_handback")
+		w.matchesGolden("lnk21_handback")
 		if again != original {
 			t.Fatal("the returning tenure is not the same relationship")
 		}
@@ -56,7 +56,7 @@ func Test26_LNK21_a_returning_tenure(t *testing.T) {
 		moved := w.reg(registry.Registration{Parent: registry.Endpoint{TaskID: parent, HostID: "host-two", Cwd: ns("/moved"), CXCSession: ns("cxc-moved")},
 			Child: back, Supersedes: away, ProjectKey: project}, "dispatch-moved")
 		w.full(moved)
-		w.sameAsPython("lnk21_handback_new_host")
+		w.matchesGolden("lnk21_handback_new_host")
 	})
 	t.Run("restores_retained_project", func(t *testing.T) {
 		w := newWorld(t)
@@ -69,7 +69,7 @@ func Test26_LNK21_a_returning_tenure(t *testing.T) {
 		w.ownerStep("issue", issue)
 		w.step(w.r.Attachment(w.ctx, original))
 		w.step(w.r.Up(w.ctx, registry.UpSelector{Issue: ns(issue)}), nil)
-		w.sameAsPython("lnk21_restores_retained_project")
+		w.matchesGolden("lnk21_restores_retained_project")
 	})
 	t.Run("retired_identity", func(t *testing.T) {
 		w := newWorld(t)
@@ -77,7 +77,7 @@ func Test26_LNK21_a_returning_tenure(t *testing.T) {
 		w.setStatus(original, "archived")
 		w.reg(registry.Registration{Parent: parentEP(parent), Child: back}, "dispatch-silent")
 		w.statusOf(original)
-		want := w.sameAsPython("lnk21_refusals")
+		want := w.matchesGolden("lnk21_refusals")
 		if !strings.Contains(refusalDetail(want[0]), "relationship-resume") {
 			t.Fatal("the refusal does not name relationship-resume")
 		}
@@ -89,14 +89,14 @@ func Test26_LNK21_a_returning_tenure(t *testing.T) {
 		w.setStatus(away, "cancelled")
 		w.reg(registry.Registration{Parent: parentEP(parent), Child: back, Supersedes: away, ProjectKey: project}, "dispatch-late")
 		w.statusOf(original)
-		w.sameAsPython("lnk21_predecessor_released")
+		w.matchesGolden("lnk21_predecessor_released")
 	})
 	t.Run("live_replay_other_host", func(t *testing.T) {
 		w := newWorld(t)
 		w.superviseDefault()
 		w.register()
 		w.reg(registry.Registration{Parent: registry.Endpoint{TaskID: parent, HostID: "host-two", Cwd: ns("/parent")}, Child: back}, "dispatch-elsewhere")
-		w.sameAsPython("lnk21_live_replay_other_host")
+		w.matchesGolden("lnk21_live_replay_other_host")
 	})
 	t.Run("earlier_dispatch", func(t *testing.T) {
 		w := newWorld(t)
@@ -106,7 +106,7 @@ func Test26_LNK21_a_returning_tenure(t *testing.T) {
 			AllowedRecipients: []string{parent}, DispatchRequestID: "dispatch-1", DispatchTurnID: ns("turn-replayed"), Supersedes: away, ProjectKey: project})
 		w.step(x.ID, err)
 		w.statusOf(original)
-		w.sameAsPython("lnk21_earlier_dispatch")
+		w.matchesGolden("lnk21_earlier_dispatch")
 	})
 	t.Run("refused_tenure_contest", func(t *testing.T) {
 		w := newWorld(t)
@@ -118,7 +118,7 @@ func Test26_LNK21_a_returning_tenure(t *testing.T) {
 		w.step(w.r.Conflicts(w.ctx, "issue", issue))
 		w.full(away)
 		w.full(original)
-		w.sameAsPython("lnk21_refused_tenure_contest")
+		w.matchesGolden("lnk21_refused_tenure_contest")
 	})
 }
 
@@ -159,7 +159,7 @@ func Test26_LNK22_writers_refuse_a_contested_project(t *testing.T) {
 	w.step(w.r.RegisterPeer(w.ctx, project, parentEP(parent), otherProject, parentEP("01parent-three")))
 	w.step(w.r.BindScopeAs(w.ctx, "parent", project, parentEP(parent), "active"))
 	w.step(w.r.Conflicts(w.ctx, "project", project))
-	w.sameAsPython("lnk22_contested_writers")
+	w.matchesGolden("lnk22_contested_writers")
 }
 
 // Test26_LNK23: walk answer states, the unreadable one included.
@@ -193,16 +193,7 @@ func Test26_LNK23_walk_answer_states(t *testing.T) {
 		// the shape outside detail is compared whole.
 		w.step(dropDetail(answer), nil)
 	}
-	all, err := python()
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := all["lnk23_walk_states"]
-	for i := len(want) - 3; i < len(want); i++ {
-		ok := want[i]["ok"].(map[string]any)
-		delete(ok, "detail")
-	}
-	w.sameAsPython("lnk23_walk_states")
+	w.matchesGolden("lnk23_walk_states")
 }
 
 func dropDetail(o contract.OrderedObject) contract.OrderedObject {
@@ -235,7 +226,7 @@ func Test26_LNK24_walk_contention_words(t *testing.T) {
 		w.record(initiative, supervisorTask, execution, "d-two", "project", project)
 		w.step(w.r.Down(w.ctx, "project", project), nil)
 		w.step(w.r.Up(w.ctx, registry.UpSelector{Task: ns(parent)}), nil)
-		w.sameAsPython("lnk24_instruction_conflict")
+		w.matchesGolden("lnk24_instruction_conflict")
 	})
 	t.Run("cycle", func(t *testing.T) {
 		w := newWorld(t)
@@ -246,7 +237,7 @@ func Test26_LNK24_walk_contention_words(t *testing.T) {
 			" VALUES ('lnk-forced-cycle','execution','project',?,?,'initiative',?,?,"+
 			"         'active',1,NULL,?,?)", project, parent, initiative, supervisorTask, fakeISO, fakeISO)
 		w.step(w.r.Down(w.ctx, "initiative", initiative), nil)
-		w.sameAsPython("lnk24_cycle")
+		w.matchesGolden("lnk24_cycle")
 	})
 	t.Run("two_parents_of_issue", func(t *testing.T) {
 		w := newWorld(t)
@@ -262,21 +253,21 @@ func Test26_LNK24_walk_contention_words(t *testing.T) {
 				registry.LinkID("execution", "project", p, "issue", issue), p, parent, issue, child, "2026-09-19T00:00:00Z", "2026-09-19T00:00:00Z")
 		}
 		w.step(w.r.Down(w.ctx, "initiative", initiative), nil)
-		w.sameAsPython("lnk24_two_parents_of_issue")
+		w.matchesGolden("lnk24_two_parents_of_issue")
 	})
 	t.Run("two_supervisions", func(t *testing.T) {
 		w := newWorld(t)
 		w.superviseDefault()
 		w.strayLink("execution", otherInitiative, 2, otherSupervisor)
 		w.step(w.r.Up(w.ctx, registry.UpSelector{Task: ns(parent)}), nil)
-		w.sameAsPython("lnk24_two_supervisions")
+		w.matchesGolden("lnk24_two_supervisions")
 	})
 	t.Run("two_live_owners", func(t *testing.T) {
 		w := newWorld(t)
 		w.duplicateOwners()
 		w.step(w.r.Down(w.ctx, "project", project), nil)
 		w.step(w.r.Up(w.ctx, registry.UpSelector{Task: ns("01owner-two")}), nil)
-		w.sameAsPython("lnk24_two_live_owners")
+		w.matchesGolden("lnk24_two_live_owners")
 	})
 	t.Run("handover_staging", func(t *testing.T) {
 		w := newWorld(t)
@@ -285,7 +276,7 @@ func Test26_LNK24_walk_contention_words(t *testing.T) {
 			AllowedRecipients: []string{otherParent}, Supersedes: rid, ProjectKey: project}, "dispatch-moved")
 		w.step(w.r.Down(w.ctx, "initiative", initiative), nil)
 		w.step(w.r.Up(w.ctx, registry.UpSelector{Issue: ns(issue)}), nil)
-		w.sameAsPython("lnk24_handover_staging")
+		w.matchesGolden("lnk24_handover_staging")
 	})
 }
 
@@ -303,21 +294,21 @@ func Test26_LNK25_counterpart_never_borrows_a_link(t *testing.T) {
 		w.counterpart(parent, child, registry.CounterpartQuery{FromScope: ns("PROJ-NOT-MINE")})
 		w.counterpart(parent, child, registry.CounterpartQuery{QuotedScope: ns("ISS-NOT-HELD")})
 		w.counterpart(supervisorTask, parent, registry.CounterpartQuery{})
-		w.sameAsPython("lnk25_counterpart")
+		w.matchesGolden("lnk25_counterpart")
 	})
 	t.Run("key_reused_at_another_level", func(t *testing.T) {
 		w := newWorld(t)
 		w.must(w.r.BindScopeAs(w.ctx, "supervisor", "SHARED-KEY", supervisorEP(supervisorTask), "active"))
 		w.must(w.r.BindScopeAs(w.ctx, "child", "SHARED-KEY", bare("01child-far"), "active"))
 		w.counterpart(supervisorTask, "01child-far", registry.CounterpartQuery{})
-		w.sameAsPython("lnk25_key_reused_at_another_level")
+		w.matchesGolden("lnk25_key_reused_at_another_level")
 	})
 	t.Run("two_edges", func(t *testing.T) {
 		w := newWorld(t)
 		w.superviseDefault()
 		w.strayLink("reference", initiative, 1, supervisorTask)
 		w.counterpart(supervisorTask, parent, registry.CounterpartQuery{})
-		w.sameAsPython("lnk25_two_edges")
+		w.matchesGolden("lnk25_two_edges")
 	})
 	t.Run("two_historical_scopes", func(t *testing.T) {
 		w := newWorld(t)
@@ -329,7 +320,7 @@ func Test26_LNK25_counterpart_never_borrows_a_link(t *testing.T) {
 		w.handover(handoverArgs{key: otherProject, endpoint: ep(parentEP("01parent-three")), evidence: "and so did the second"})
 		w.counterpart(supervisorTask, parent, registry.CounterpartQuery{})
 		w.counterpart(supervisorTask, parent, registry.CounterpartQuery{QuotedScope: ns(otherProject)})
-		w.sameAsPython("lnk25_two_historical_scopes")
+		w.matchesGolden("lnk25_two_historical_scopes")
 	})
 }
 
@@ -347,7 +338,7 @@ func Test26_LNK26_the_one_live_owner_guard(t *testing.T) {
 			t.Fatal("the database accepted a second live owner")
 		}
 		w.step(store.PythonSQLiteError(err), nil)
-		w.sameAsPython("lnk26_guard_index")
+		w.matchesGolden("lnk26_guard_index")
 	})
 	t.Run("unenforced", func(t *testing.T) {
 		w := newWorld(t)
@@ -371,7 +362,7 @@ func Test26_LNK26_the_one_live_owner_guard(t *testing.T) {
 		w.step(r2.Up(w.ctx, registry.UpSelector{Task: ns("01owner-one")}), nil)
 		_, stdout, _ = runCLI(t, w, "linkage-down", "--scope-kind", "project", "--scope", project)
 		w.step(decodeStdout(t, stdout), nil)
-		w.sameAsPython("lnk26_unenforced")
+		w.matchesGolden("lnk26_unenforced")
 	})
 }
 
@@ -384,7 +375,7 @@ func Test26_LNK27_relay_owned_ids_keep_128_bits(t *testing.T) {
 	w.step(lid, nil)
 	w.step(registry.LinkID("peer", "project", otherProject, "project", project), nil)
 	w.step(registry.DirectiveID("project", project, initiative, "d-one", 1), nil)
-	w.sameAsPython("lnk27_ids")
+	w.matchesGolden("lnk27_ids")
 	if len(bid) != len("bnd-")+32 || len(lid) != len("lnk-")+32 {
 		t.Fatalf("%s %s", bid, lid)
 	}
@@ -419,7 +410,7 @@ func Test26_LNK29_assignment_view_of_a_contested_project(t *testing.T) {
 		picked = append(picked, contract.Field{Key: key, Value: field(answer, key)})
 	}
 	w.step(picked, nil)
-	w.sameAsPython("lnk29_contested_assignment_view")
+	w.matchesGolden("lnk29_contested_assignment_view")
 }
 
 // Test26_LNK_literal_reasons: every literal reason this port emits outside errors.RefusalReason
@@ -434,7 +425,7 @@ func Test26_LNK_literal_reasons(t *testing.T) {
 	w.step(w.r.Handover(w.ctx, "parent", project, parent, parentEP(otherParent), nil, "", "t"))
 	w.step(w.r.RegisterPeer(w.ctx, project, parentEP(parent), project, parentEP(otherParent)))
 	w.step(w.r.AttachIssue(w.ctx, "rel-missing", project))
-	want := w.sameAsPython("lnk_literal_reasons")
+	want := w.matchesGolden("lnk_literal_reasons")
 	var reasons []string
 	for _, s := range want {
 		reasons = append(reasons, text(s["refused"].(map[string]any)["reason"]))

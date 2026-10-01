@@ -9,8 +9,8 @@ import (
 )
 
 // test_capacity.py properties CAP-1..CAP-9 (.omo/ulw-execute/todo27-properties.md). Every step
-// is compared whole, as json.dumps(indent=2) text or as the refusal, with the Python answer to
-// the same calls (testdata/python_capacity.json, from testdata/gen_capacity.py).
+// is compared whole, as json.dumps(indent=2) text or as the refusal, with the scenario's golden
+// (testdata/golden), which began as the Python answer to the same calls.
 
 const slots = "SELECT tenure, state, release_reason FROM execution_slots WHERE subject_key = ? ORDER BY tenure"
 
@@ -28,7 +28,7 @@ func Test27_CAP1_a_slot_neither_leaks_nor_returns_twice(t *testing.T) {
 	}
 	released := e.rows("SELECT * FROM execution_slots WHERE subject_key = ? AND state = 'released'", "REL-2")
 	e.rows("SELECT kind, subject, detail FROM journal WHERE kind LIKE 'slot_%' ORDER BY seq")
-	e.sameAsPython("cap1")
+	e.matchesGolden("cap1")
 	if field(again, "alreadyHeld") != true || field(first, "total") != 1 {
 		t.Fatalf("replayed reservation: %v / total %v", field(again, "alreadyHeld"), field(first, "total"))
 	}
@@ -60,7 +60,7 @@ func Test27_CAP2_release_identity_is_the_subject_its_reason_and_its_tenure(t *te
 	e.giveBack("REL-1", "completed", alpha, 2)
 	after := e.report()
 	e.giveBack("REL-1", "completed", alpha, 7)
-	e.sameAsPython("cap2")
+	e.matchesGolden("cap2")
 	for i, want := range map[int]string{2: "disposition_conflict", 5: "slot_unknown", 7: "disposition_conflict", 10: "disposition_conflict", 16: "slot_unknown"} {
 		if got := e.reason(i); got != want {
 			t.Errorf("step %d: %s, want %s", i, got, want)
@@ -79,7 +79,7 @@ func Test27_CAP3_a_resume_opens_a_second_tenure_and_keeps_the_first(t *testing.T
 	e.take("REL-1")
 	rows := e.rows(slots, "REL-1").([]any)
 	report := e.report()
-	e.sameAsPython("cap3")
+	e.matchesGolden("cap3")
 	if len(rows) != 2 || field(rows[0], "state") != "released" || field(rows[1], "state") != "held" || field(report, "total") != 1 {
 		t.Fatalf("tenures %v total %v", rows, field(report, "total"))
 	}
@@ -101,7 +101,7 @@ func Test27_CAP4_authority_over_slots_ceilings_and_usage(t *testing.T) {
 	e.observe("file_descriptors", 1, "project", projectA, "task-stranger", "claimed")
 	e.ceiling("runs", 9, "initiative", "INIT-1", "runs", true, "")
 	e.headroom("initiative", "INIT-1")
-	e.sameAsPython("cap4")
+	e.matchesGolden("cap4")
 	for i, want := range map[int]string{1: "scope_role_mismatch", 3: "scope_role_mismatch", 5: "unregistered_scope",
 		8: "scope_role_mismatch", 9: "scope_role_mismatch", 10: "scope_role_mismatch", 11: "scope_role_mismatch"} {
 		if got := e.reason(i); got != want {
@@ -127,7 +127,7 @@ func Test27_CAP5_input_validation_is_refused_link_not_active(t *testing.T) {
 	e.observe("file_descriptors", 1, "project", projectA, alpha, " ")
 	e.ceiling("a|b", 1, "project", projectA, "runs", true, "")
 	e.rows("SELECT COUNT(*) AS n FROM execution_limits")
-	e.sameAsPython("cap5")
+	e.matchesGolden("cap5")
 	for i := range 8 {
 		if got := e.reason(i); got != "link_not_active" {
 			t.Errorf("step %d: %s, want link_not_active", i, got)
@@ -146,7 +146,7 @@ func Test27_CAP6_ceilings_and_counts_are_separate_facts(t *testing.T) {
 		report := e.report()
 		e.conflicts("REL-2")
 		e.headroom("store", "store")
-		e.sameAsPython("cap6")
+		e.matchesGolden("cap6")
 		per := field(report, "perParent").(contract.OrderedObject)
 		if e.reason(3) != "capacity_exhausted" || field(report, "total") != 2 || len(per) != 2 {
 			t.Fatalf("report %v", report)
@@ -157,7 +157,7 @@ func Test27_CAP6_ceilings_and_counts_are_separate_facts(t *testing.T) {
 		e.ceiling("runs", 1, "store", "store", "runs", true, "")
 		e.take("REL-1")
 		e.take("REL-2", beta, projectB)
-		e.sameAsPython("cap6_store")
+		e.matchesGolden("cap6_store")
 		if e.reason(2) != "capacity_exhausted" {
 			t.Fatal(e.steps[2])
 		}
@@ -172,7 +172,7 @@ func Test27_CAP6_ceilings_and_counts_are_separate_facts(t *testing.T) {
 		report := e.report()
 		e.take("REL-4")
 		e.rows("SELECT kind, subject, detail FROM journal WHERE kind = 'execution_limit_declared' ORDER BY seq")
-		e.sameAsPython("cap6_lowered")
+		e.matchesGolden("cap6_lowered")
 		if field(lowered, "overBy") != 2.0 || field(lowered, "state") != "over_ceiling" || field(lowered, "revision") != int64(2) ||
 			field(report, "total") != 3 || e.reason(6) != "capacity_exhausted" {
 			t.Fatalf("lowered %v", lowered)
@@ -183,7 +183,7 @@ func Test27_CAP6_ceilings_and_counts_are_separate_facts(t *testing.T) {
 		e.ceiling("model_cost", 1, "project", projectA, "usd", false, "")
 		e.take("REL-1")
 		room := e.headroom("project", projectA)
-		e.sameAsPython("cap6_unenforced")
+		e.matchesGolden("cap6_unenforced")
 		if field(field(room, "dimensions").([]any)[0], "enforce") != false {
 			t.Fatal(room)
 		}
@@ -199,7 +199,7 @@ func Test27_CAP7_how_a_number_was_reached(t *testing.T) {
 		e.take("REL-2")
 		e.take("REL-3")
 		e.headroom("project", projectA)
-		e.sameAsPython("cap7")
+		e.matchesGolden("cap7")
 		entry := field(empty, "dimensions").([]any)[0]
 		if field(entry, "used") != nil || field(entry, "proof") != "unmeasured" || e.steps[1]["ok"] != e.steps[5]["ok"] {
 			t.Fatalf("empty %v loaded %v", e.steps[1], e.steps[5])
@@ -210,7 +210,7 @@ func Test27_CAP7_how_a_number_was_reached(t *testing.T) {
 		e.ceiling("model_cost", 50, "project", projectA, "usd", true, "")
 		e.take("REL-1")
 		e.conflicts("REL-1")
-		e.sameAsPython("cap7_unmeasured")
+		e.matchesGolden("cap7_unmeasured")
 		if e.reason(1) != "capacity_unmeasured" {
 			t.Fatal(e.steps[1])
 		}
@@ -223,7 +223,7 @@ func Test27_CAP7_how_a_number_was_reached(t *testing.T) {
 		e.observe("file_descriptors", 120, "project", projectA, alpha, "counted /proc/<pid>/fd")
 		e.headroom("project", projectA)
 		e.take("REL-1")
-		e.sameAsPython("cap7_observed")
+		e.matchesGolden("cap7_observed")
 		entry := field(room, "dimensions").([]any)[0]
 		if field(entry, "used") != 99.0 || field(entry, "proof") != "observed" || field(entry, "state") != "within" || e.reason(5) != "capacity_exhausted" {
 			t.Fatal(entry)
@@ -234,7 +234,7 @@ func Test27_CAP7_how_a_number_was_reached(t *testing.T) {
 		e.ceiling("runs", 5, "project", projectA, "runs", true, "")
 		e.take("REL-1")
 		room := e.headroom("project", projectA)
-		e.sameAsPython("cap7_runs")
+		e.matchesGolden("cap7_runs")
 		entry := field(room, "dimensions").([]any)[0]
 		if field(entry, "used") != int64(1) || field(entry, "proof") != "derived_from_slots" || field(entry, "note") != nil {
 			t.Fatal(entry)
@@ -252,7 +252,7 @@ func Test27_CAP8_no_answer_changes_because_time_passed(t *testing.T) {
 	e.clock.now = e.clock.now.Add(1_000_000 * time.Second)
 	e.report()
 	e.headroom("project", projectA)
-	e.sameAsPython("cap8")
+	e.matchesGolden("cap8")
 	if e.steps[3]["ok"] != e.steps[5]["ok"] || e.steps[4]["ok"] != e.steps[6]["ok"] {
 		t.Fatal("an answer changed because time passed")
 	}

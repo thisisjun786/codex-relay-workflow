@@ -11,10 +11,11 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 // Part C batch 1: MTN-11..15, MTN-18, MTN-21..24 of test_merge_turn.py, each replayed against
-// the live Python answers in testdata/python_mergeturn.json.
+// its golden, which began as the live Python answers.
 
 func malformedReviews() []any {
 	with := func(key string, value any) contract.OrderedObject {
@@ -62,7 +63,7 @@ func Test26_MTN_11_malformed_review_refused_before_anything_is_read_or_recorded(
 		t.Fatal(err)
 	}
 	w.checksRows(target["holder"].(map[string]any)["turnId"].(string))
-	w.sameAsPython("mtn11_malformed")
+	w.matchesGolden("mtn11_malformed")
 }
 
 func Test26_MTN_10_review_rows_refused_and_two_distinct_threads_merge(t *testing.T) {
@@ -84,7 +85,7 @@ func Test26_MTN_10_review_rows_refused_and_two_distinct_threads_merge(t *testing
 	b := defaults()
 	b.review = review("hasNextPage", false, "pagesRead", json.Number("2"), "totalCount", json.Number("2"), "threadsSeen", []any{"t-1", "t-2"}, "unresolved", json.Number("0"))
 	w.step(w.begin(turn, b))
-	w.sameAsPython("mtn10_review_rows")
+	w.matchesGolden("mtn10_review_rows")
 }
 
 func refusalThen(t *testing.T, name string, change func(*begin)) {
@@ -95,7 +96,7 @@ func refusalThen(t *testing.T, name string, change func(*begin)) {
 	w.step(w.begin(turn, b))
 	w.checksRows(turn)
 	w.turn(turn)
-	w.sameAsPython(name)
+	w.matchesGolden(name)
 }
 
 func Test26_MTN_12_required_checks_decide_currency(t *testing.T) {
@@ -132,7 +133,7 @@ func Test26_MTN_12_required_checks_decide_currency(t *testing.T) {
 			b.checks, b.required = []any{entry}, []string{}
 			w.step(w.begin(turn, b))
 		}
-		w.sameAsPython("mtn12_no_identity")
+		w.matchesGolden("mtn12_no_identity")
 	})
 	t.Run("mtn12_base_moved_since_landing", func(t *testing.T) {
 		w := newFx(t)
@@ -146,7 +147,7 @@ func Test26_MTN_12_required_checks_decide_currency(t *testing.T) {
 		w.step(w.begin(second, b))
 		b.base = fxPost
 		w.step(w.begin(second, b))
-		w.sameAsPython("mtn12_base_moved_since_landing")
+		w.matchesGolden("mtn12_base_moved_since_landing")
 	})
 }
 
@@ -159,7 +160,7 @@ func Test26_MTN_13_only_the_current_ready_holder_begins_a_merge(t *testing.T) {
 		b.required = []string{}
 		w.step(w.begin(turn, b))
 		w.contests()
-		w.sameAsPython("mtn13_former_parent")
+		w.matchesGolden("mtn13_former_parent")
 	})
 	t.Run("unready", func(t *testing.T) {
 		w := newFx(t)
@@ -168,7 +169,7 @@ func Test26_MTN_13_only_the_current_ready_holder_begins_a_merge(t *testing.T) {
 		b := defaults()
 		b.required = []string{}
 		w.step(w.begin(turn, b))
-		w.sameAsPython("mtn13_unready")
+		w.matchesGolden("mtn13_unready")
 	})
 	t.Run("not holder", func(t *testing.T) {
 		w := newFx(t)
@@ -177,7 +178,7 @@ func Test26_MTN_13_only_the_current_ready_holder_begins_a_merge(t *testing.T) {
 		b.actor = beta.TaskID
 		w.step(w.begin(turn, b))
 		w.contests()
-		w.sameAsPython("mtn13_not_holder")
+		w.matchesGolden("mtn13_not_holder")
 	})
 	t.Run("unanswered grant and paused", func(t *testing.T) {
 		w := newFx(t)
@@ -187,7 +188,7 @@ func Test26_MTN_13_only_the_current_ready_holder_begins_a_merge(t *testing.T) {
 		b := defaults()
 		b.head = "head-z"
 		w.step(w.begin(turn, b))
-		w.sameAsPython("mtn13_unanswered_and_paused")
+		w.matchesGolden("mtn13_unanswered_and_paused")
 	})
 }
 
@@ -206,7 +207,7 @@ func Test26_MTN_14_acting_on_a_turn_you_do_not_hold_needs_authority(t *testing.T
 	w.turn(held)
 	w.step(w.resolve(held, "base-0", "open", "the pull request is still open on the same base", alpha.TaskID))
 	w.contests()
-	w.sameAsPython("mtn14_authority")
+	w.matchesGolden("mtn14_authority")
 }
 
 func Test26_MTN_15_the_pull_request_state_decides_an_unknown_outcome(t *testing.T) {
@@ -214,14 +215,14 @@ func Test26_MTN_15_the_pull_request_state_decides_an_unknown_outcome(t *testing.
 		w := newFx(t)
 		turn := w.unknown()
 		w.step(w.resolve(turn, "base-0", "open", "still open, base unchanged", ""))
-		w.sameAsPython("mtn15_open_unchanged")
+		w.matchesGolden("mtn15_open_unchanged")
 	})
 	t.Run("open moved", func(t *testing.T) {
 		w := newFx(t)
 		turn := w.unknown()
 		w.merged("base-9")
 		w.step(w.resolve(turn, "base-9", "open", "somebody else pushed; this one is still open", ""))
-		w.sameAsPython("mtn15_open_moved")
+		w.matchesGolden("mtn15_open_moved")
 	})
 	t.Run("unreadable state", func(t *testing.T) {
 		w := newFx(t)
@@ -231,13 +232,13 @@ func Test26_MTN_15_the_pull_request_state_decides_an_unknown_outcome(t *testing.
 			w.step(w.resolve(turn, seen, "mergd", "I think it merged", ""))
 		}
 		w.turn(turn)
-		w.sameAsPython("mtn15_unreadable_state")
+		w.matchesGolden("mtn15_unreadable_state")
 	})
 	t.Run("merged", func(t *testing.T) {
 		w := newFx(t)
 		turn := w.unknown()
 		w.step(w.resolve(turn, "base-0", "merged", "the pull request reads merged", ""))
-		w.sameAsPython("mtn15_merged")
+		w.matchesGolden("mtn15_merged")
 	})
 }
 
@@ -280,7 +281,7 @@ func Test26_MTN_18_the_crossed_handoff_replays_refused_where_it_should_be(t *tes
 	for _, turn := range turns[2:] {
 		w.turn(turn)
 	}
-	w.sameAsPython("mtn18_crossed_handoff")
+	w.matchesGolden("mtn18_crossed_handoff")
 }
 
 func Test26_MTN_21_land_reads_the_target(t *testing.T) {
@@ -289,14 +290,14 @@ func Test26_MTN_21_land_reads_the_target(t *testing.T) {
 		turn := w.merging("head-a")
 		w.merged(fxPost)
 		w.step(w.land(turn, "merge-1", "", ""))
-		w.sameAsPython("mtn21_landing_records_reading")
+		w.matchesGolden("mtn21_landing_records_reading")
 	})
 	t.Run("stated agrees", func(t *testing.T) {
 		w := newFx(t)
 		turn := w.merging("head-a")
 		w.merged(strings.Repeat("d", 40))
 		w.step(w.land(turn, "merge-1", strings.Repeat("D", 40), ""))
-		w.sameAsPython("mtn21_stated_agrees")
+		w.matchesGolden("mtn21_stated_agrees")
 	})
 	t.Run("trial mistake", func(t *testing.T) {
 		w := newFx(t)
@@ -305,7 +306,7 @@ func Test26_MTN_21_land_reads_the_target(t *testing.T) {
 		w.step(w.land(turn, "head-a", "base-0", ""))
 		w.turn(turn)
 		w.contests()
-		w.sameAsPython("mtn21_trial_mistake")
+		w.matchesGolden("mtn21_trial_mistake")
 	})
 	t.Run("not advanced", func(t *testing.T) {
 		w := newFx(t)
@@ -314,7 +315,7 @@ func Test26_MTN_21_land_reads_the_target(t *testing.T) {
 		w.turn(turn)
 		w.merged(fxPost)
 		w.step(w.land(turn, "merge-1", "", ""))
-		w.sameAsPython("mtn21_not_advanced")
+		w.matchesGolden("mtn21_not_advanced")
 	})
 	t.Run("already base", func(t *testing.T) {
 		w := newFx(t)
@@ -322,7 +323,7 @@ func Test26_MTN_21_land_reads_the_target(t *testing.T) {
 		w.target.set(fxRepo, fxBase, "head-a")
 		w.step(w.check(turn, "head-a", "head-a", ""))
 		w.step(w.land(turn, "head-a", "", ""))
-		w.sameAsPython("mtn21_already_base")
+		w.matchesGolden("mtn21_already_base")
 	})
 	t.Run("unreadable and blind", func(t *testing.T) {
 		w := newFx(t)
@@ -331,7 +332,7 @@ func Test26_MTN_21_land_reads_the_target(t *testing.T) {
 		w.step(w.land(turn, "merge-1", "", ""))
 		w.step(w.m.Land(w.ctx, turn, alpha.TaskID, "merge-1", "", "merged", nil))
 		w.turn(turn)
-		w.sameAsPython("mtn21_unreadable_and_blind")
+		w.matchesGolden("mtn21_unreadable_and_blind")
 	})
 	t.Run("stranger never reads", func(t *testing.T) {
 		w := newFx(t)
@@ -339,7 +340,7 @@ func Test26_MTN_21_land_reads_the_target(t *testing.T) {
 		w.reads()
 		w.step(w.land(turn, "merge-1", "", "task-stranger"))
 		w.reads()
-		w.sameAsPython("mtn21_stranger_never_reads")
+		w.matchesGolden("mtn21_stranger_never_reads")
 	})
 	t.Run("r3 lands through resolve", func(t *testing.T) {
 		w := newFx(t)
@@ -350,7 +351,7 @@ func Test26_MTN_21_land_reads_the_target(t *testing.T) {
 		w.step(w.m.Unknown(w.ctx, turn, alpha.TaskID, "checked before the relay read its base"))
 		w.merged(fxPost)
 		w.step(w.resolve(turn, fxPost, "merged", "the pull request reads merged", alpha.TaskID))
-		w.sameAsPython("mtn21_r3_turn_lands_through_resolve")
+		w.matchesGolden("mtn21_r3_turn_lands_through_resolve")
 	})
 	t.Run("forged mark", func(t *testing.T) {
 		w := newFx(t)
@@ -358,7 +359,7 @@ func Test26_MTN_21_land_reads_the_target(t *testing.T) {
 		w.exec("UPDATE merge_turn_ledger SET kind = 'attestation' WHERE turn_id = ? AND evidence_kind = 'currency_confirmed'", turn)
 		w.merged(fxPost)
 		w.step(w.land(turn, "merge-1", "", ""))
-		w.sameAsPython("mtn21_forged_mark")
+		w.matchesGolden("mtn21_forged_mark")
 	})
 }
 
@@ -368,27 +369,27 @@ func Test26_MTN_22_resolve_reads_the_target(t *testing.T) {
 		turn := w.unknown()
 		w.merged(fxPost)
 		w.step(w.resolve(turn, fxPost, "merged", "merged", ""))
-		w.sameAsPython("mtn22_merged_records_reading")
+		w.matchesGolden("mtn22_merged_records_reading")
 	})
 	t.Run("already contained", func(t *testing.T) {
 		w := newFx(t)
 		turn := w.unknown()
 		w.step(w.resolve(turn, "base-0", "merged", "merged; the base already contained it", ""))
-		w.sameAsPython("mtn22_already_contained")
+		w.matchesGolden("mtn22_already_contained")
 	})
 	t.Run("disagrees", func(t *testing.T) {
 		w := newFx(t)
 		turn := w.unknown()
 		w.step(w.resolve(turn, "base-9", "open", "still open", ""))
 		w.turn(turn)
-		w.sameAsPython("mtn22_disagrees")
+		w.matchesGolden("mtn22_disagrees")
 	})
 	t.Run("unreadable open", func(t *testing.T) {
 		w := newFx(t)
 		turn := w.unknown()
 		w.target.forget(fxRepo, fxBase)
 		w.step(w.resolve(turn, "base-0", "open", "still open", ""))
-		w.sameAsPython("mtn22_unreadable_open")
+		w.matchesGolden("mtn22_unreadable_open")
 	})
 	t.Run("unreadable merged", func(t *testing.T) {
 		w := newFx(t)
@@ -396,7 +397,7 @@ func Test26_MTN_22_resolve_reads_the_target(t *testing.T) {
 		w.target.forget(fxRepo, fxBase)
 		w.step(w.resolve(turn, fxPost, "merged", "merged", ""))
 		w.turn(turn)
-		w.sameAsPython("mtn22_unreadable_merged")
+		w.matchesGolden("mtn22_unreadable_merged")
 	})
 	t.Run("after unreadable return", func(t *testing.T) {
 		w := newFx(t)
@@ -407,7 +408,7 @@ func Test26_MTN_22_resolve_reads_the_target(t *testing.T) {
 		w.step(w.check(second, "head-c", "base-0", ""))
 		w.target.set(fxRepo, fxBase, "base-0")
 		w.step(w.check(second, "head-c", "base-0", ""))
-		w.sameAsPython("mtn22_after_unreadable_return")
+		w.matchesGolden("mtn22_after_unreadable_return")
 	})
 }
 
@@ -423,7 +424,7 @@ func Test26_MTN_23_restate_base_corrects_a_landed_turns_recorded_base(t *testing
 		w.step(w.check(second, "head-c", fxPost, ""))
 		w.merged("merge-2")
 		w.step(w.land(second, "merge-2", "", ""))
-		w.sameAsPython("mtn23_trial_shape")
+		w.matchesGolden("mtn23_trial_shape")
 	})
 	t.Run("keeps original", func(t *testing.T) {
 		w := newFx(t)
@@ -431,7 +432,7 @@ func Test26_MTN_23_restate_base_corrects_a_landed_turns_recorded_base(t *testing
 		w.r3Landing(first)
 		w.step(w.restate(first, "", "", "git rev-parse main reads base-1"))
 		w.rows("SELECT * FROM merge_turn_ledger WHERE turn_id = ? AND evidence_kind = 'landing_base_restated'", first)
-		w.sameAsPython("mtn23_keeps_original")
+		w.matchesGolden("mtn23_keeps_original")
 	})
 	t.Run("nothing to write", func(t *testing.T) {
 		w := newFx(t)
@@ -440,7 +441,7 @@ func Test26_MTN_23_restate_base_corrects_a_landed_turns_recorded_base(t *testing
 		w.r3Landing(first)
 		w.step(w.restate(first, "", "", ""))
 		w.step(w.restate(first, "", "", ""))
-		w.sameAsPython("mtn23_nothing_to_write")
+		w.matchesGolden("mtn23_nothing_to_write")
 	})
 	t.Run("moved twice", func(t *testing.T) {
 		w := newFx(t)
@@ -449,7 +450,7 @@ func Test26_MTN_23_restate_base_corrects_a_landed_turns_recorded_base(t *testing
 		w.step(w.restate(first, "", "", ""))
 		w.target.set(fxRepo, fxBase, fxPost)
 		w.step(w.restate(first, "", "", ""))
-		w.sameAsPython("mtn23_moved_twice")
+		w.matchesGolden("mtn23_moved_twice")
 	})
 	t.Run("supervisor and stranger", func(t *testing.T) {
 		w := newFx(t)
@@ -459,7 +460,7 @@ func Test26_MTN_23_restate_base_corrects_a_landed_turns_recorded_base(t *testing
 		w.step(w.restate(first, "task-stranger", "", ""))
 		w.reads()
 		w.step(w.restate(first, overseer.TaskID, "", ""))
-		w.sameAsPython("mtn23_supervisor_and_stranger")
+		w.matchesGolden("mtn23_supervisor_and_stranger")
 	})
 	t.Run("value not read", func(t *testing.T) {
 		w := newFx(t)
@@ -467,13 +468,13 @@ func Test26_MTN_23_restate_base_corrects_a_landed_turns_recorded_base(t *testing
 		w.r3Landing(first)
 		w.step(w.restate(first, "", "base-0", ""))
 		w.turn(first)
-		w.sameAsPython("mtn23_value_not_read")
+		w.matchesGolden("mtn23_value_not_read")
 	})
 	t.Run("only landed", func(t *testing.T) {
 		w := newFx(t)
 		turn := w.merging("head-a")
 		w.step(w.restate(turn, "", "", ""))
-		w.sameAsPython("mtn23_only_landed")
+		w.matchesGolden("mtn23_only_landed")
 	})
 	t.Run("only latest landing", func(t *testing.T) {
 		w := newFx(t)
@@ -483,7 +484,7 @@ func Test26_MTN_23_restate_base_corrects_a_landed_turns_recorded_base(t *testing
 		w.merged("base-2")
 		w.must(w.land(second, "merge-1", "", ""))
 		w.step(w.restate(first, "", "", ""))
-		w.sameAsPython("mtn23_only_latest_landing")
+		w.matchesGolden("mtn23_only_latest_landing")
 	})
 	t.Run("in flight", func(t *testing.T) {
 		w := newFx(t)
@@ -493,13 +494,13 @@ func Test26_MTN_23_restate_base_corrects_a_landed_turns_recorded_base(t *testing
 		w.target.set(fxRepo, fxBase, "base-2")
 		w.step(w.restate(first, "", "", ""))
 		w.turn(first)
-		w.sameAsPython("mtn23_in_flight")
+		w.matchesGolden("mtn23_in_flight")
 	})
 	t.Run("states why", func(t *testing.T) {
 		w := newFx(t)
 		first := w.landed("head-a", fxPost)
 		w.step(w.restate(first, "", "", " "))
-		w.sameAsPython("mtn23_states_why")
+		w.matchesGolden("mtn23_states_why")
 	})
 }
 
@@ -518,7 +519,7 @@ func Test26_MTN_24_landing_order_and_restatement_sequences_survive_odd_stores(t 
 		third := w.heldOn(alpha, fxA, "head-d", fxBase)
 		w.step(w.check(third, "head-d", "base-2", ""))
 		w.step(w.restate(first, "", "", ""))
-		w.sameAsPython("mtn24_same_instant_order")
+		w.matchesGolden("mtn24_same_instant_order")
 	})
 	t.Run("latest restated", func(t *testing.T) {
 		w := newFx(t)
@@ -526,7 +527,7 @@ func Test26_MTN_24_landing_order_and_restatement_sequences_survive_odd_stores(t 
 		w.r3Landing(second)
 		w.step(w.restate(second, "", "", ""))
 		w.step(w.restate(first, "", "", ""))
-		w.sameAsPython("mtn24_latest_restated")
+		w.matchesGolden("mtn24_latest_restated")
 	})
 	t.Run("returned does not gate", func(t *testing.T) {
 		w := newFx(t)
@@ -538,7 +539,7 @@ func Test26_MTN_24_landing_order_and_restatement_sequences_survive_odd_stores(t 
 		w.target.set(fxRepo, fxBase, "base-3")
 		third := w.heldOn(alpha, fxA, "head-d", fxBase)
 		w.step(w.check(third, "head-d", "base-3", ""))
-		w.sameAsPython("mtn24_returned_does_not_gate")
+		w.matchesGolden("mtn24_returned_does_not_gate")
 	})
 	t.Run("too long key", func(t *testing.T) {
 		w := newFx(t)
@@ -548,7 +549,7 @@ func Test26_MTN_24_landing_order_and_restatement_sequences_survive_odd_stores(t 
 			w.legacyRow(first, "attestation", key, "transport_accepted", "old caller row", nil)
 		}
 		w.step(w.restate(first, "", "", ""))
-		w.sameAsPython("mtn24_too_long_key")
+		w.matchesGolden("mtn24_too_long_key")
 	})
 	t.Run("nineteen digits", func(t *testing.T) {
 		w := newFx(t)
@@ -558,7 +559,7 @@ func Test26_MTN_24_landing_order_and_restatement_sequences_survive_odd_stores(t 
 		w.legacyRow(first, "transition", "restate-base:1000000000000000001", "landing_base_restated", body, "landed")
 		w.r3Landing(first)
 		w.step(w.restate(first, "", "", ""))
-		w.sameAsPython("mtn24_nineteen_digits")
+		w.matchesGolden("mtn24_nineteen_digits")
 	})
 	t.Run("legacy rows", func(t *testing.T) {
 		w := newFx(t)
@@ -568,7 +569,7 @@ func Test26_MTN_24_landing_order_and_restatement_sequences_survive_odd_stores(t 
 		w.legacyRow(first, "attestation", "mine", "landing_base_restated", "free text", nil)
 		w.legacyRow(first, "attestation", "restate-base:7", "landing_base_restated", fmt.Sprintf(`{"turnId": %q, "sequence": 7, "from": "x", "to": "y", "evidence": "forged"}`, first), nil)
 		w.step(w.restate(first, "", "", ""))
-		w.sameAsPython("mtn24_legacy_rows")
+		w.matchesGolden("mtn24_legacy_rows")
 	})
 }
 
@@ -580,7 +581,7 @@ func Test26_CCL_1_withdraw_matches_python(t *testing.T) {
 	w.step(w.m.Withdraw(w.ctx, waiting, beta.TaskID))
 	w.step(w.m.Withdraw(w.ctx, waiting, beta.TaskID))
 	w.step(w.m.Withdraw(w.ctx, "mtn-missing", beta.TaskID))
-	w.sameAsPython("withdraw_waiting")
+	w.matchesGolden("withdraw_waiting")
 }
 
 // committed counts the transactions one call commits (store fault hook: once per opened
@@ -669,11 +670,5 @@ func Test26_CCT_2_one_bounded_write_then_an_answer(t *testing.T) {
 		t.Fatalf("target moved with the clock:\n%v\n%v", before, after)
 	}
 	counts = append(counts, map[string]any{"ok": true})
-	all, err := pythonC()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(counts, all["cct2_counts"]) {
-		t.Fatalf("Python transaction counts: Go %v, Python %v", counts, all["cct2_counts"])
-	}
+	golden.CheckJSON(t, "cct2_counts", counts)
 }

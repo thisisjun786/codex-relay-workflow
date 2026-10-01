@@ -18,7 +18,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
-	"reflect"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 	"regexp"
 	"sort"
 )
@@ -85,7 +85,7 @@ func Test26_MTG_1_python_whole_output(t *testing.T) {
 	linked := filepath.Join(root, "linked")
 	gitWork(t, "-C", work, "worktree", "add", "-b", "side", linked)
 	targetStep(t, w, reader, linked, "main", linked)
-	w.sameAsPython("mtg1_local")
+	w.matchesGolden("mtg1_local")
 }
 func Test26_MTG_2_python_whole_output(t *testing.T) {
 	w := newFx(t)
@@ -99,7 +99,7 @@ func Test26_MTG_2_python_whole_output(t *testing.T) {
 		git(t, dir, "update-ref", "refs/heads/"+branch, second)
 		targetStep(t, w, reader, dir, branch, dir)
 	}
-	w.sameAsPython("mtg2_refs")
+	w.matchesGolden("mtg2_refs")
 }
 func Test26_MTG_3_python_whole_output(t *testing.T) {
 	w := newFx(t)
@@ -122,7 +122,7 @@ func Test26_MTG_3_python_whole_output(t *testing.T) {
 	t.Setenv("GIT_NAMESPACE", "x")
 	targetStep(t, w, reader, dir, "main", dir, root)
 	targetStep(t, w, reader, root, "main", dir, root)
-	w.sameAsPython("mtg3_unreadable")
+	w.matchesGolden("mtg3_unreadable")
 }
 func Test26_MTG_5_python_whole_output(t *testing.T) {
 	w := newFx(t)
@@ -130,7 +130,7 @@ func Test26_MTG_5_python_whole_output(t *testing.T) {
 	for _, v := range [][2]string{{strings.ToUpper(sha), sha}, {"abcdef1", sha}, {sha, "abcdef1"}, {"base-0", "base-00"}, {"base-0", "base-0"}, {"", ""}} {
 		w.step(SameCommit(v[0], v[1]), nil)
 	}
-	w.sameAsPython("mtg5_commit")
+	w.matchesGolden("mtg5_commit")
 }
 func Test26_MTG_6_python_whole_output(t *testing.T) {
 	w := newFx(t)
@@ -144,7 +144,7 @@ func Test26_MTG_6_python_whole_output(t *testing.T) {
 	w.merged("merge-2")
 	w.step(w.land(second, "merge-2", "", ""))
 	w.turn(second)
-	w.sameAsPython("mtg6_trial")
+	w.matchesGolden("mtg6_trial")
 }
 func Test26_MTG_6_python_bare_cli_whole_output(t *testing.T) {
 	root := t.TempDir()
@@ -233,22 +233,7 @@ func Test26_MTG_6_python_bare_cli_whole_output(t *testing.T) {
 		steps = append(steps, map[string]any{"ok": result})
 	}
 	normalizeBareCLI(t, steps, repoPath)
-	oracle, err := pythonC()
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := oracle["mtg6_bare_cli"]
-	if len(steps) != len(want) {
-		t.Fatalf("steps %d vs %d", len(steps), len(want))
-	}
-	stable := stableTargets(t, steps).([]any)
-	for i := range want {
-		if !reflect.DeepEqual(stable[i], want[i]) {
-			got, _ := json.MarshalIndent(steps[i], "", " ")
-			expected, _ := json.MarshalIndent(want[i], "", " ")
-			t.Errorf("step %d: Go %s Python %s", i, got, expected)
-		}
-	}
+	golden.CheckJSON(t, "mtg6_bare_cli", stableTargets(t, steps))
 }
 func normalizeBareCLI(t *testing.T, steps []map[string]any, repository string) {
 	t.Helper()
@@ -385,7 +370,7 @@ func Test26_MTG_7_python_whole_output(t *testing.T) {
 	var out, stderr bytes.Buffer
 	code := registry.Execute(w.ctx, []string{"merge-turn-restate-base", "--help"}, &out, &stderr)
 	w.step(map[string]any{"helpExitsZero": code == 0, "hasObservedBaseSha": strings.Contains(out.String(), "--observed-base-sha")}, nil)
-	w.sameAsPython("mtg7_help")
+	w.matchesGolden("mtg7_help")
 }
 func Test26_MTG_8_python_whole_output(t *testing.T) {
 	w := newFx(t)
@@ -412,7 +397,7 @@ func Test26_MTG_8_python_whole_output(t *testing.T) {
 	b.review = review("hasNextPage", false, "pagesRead", json.Number("1"), "totalCount", json.Number("1"), "unresolved", json.Number("0"))
 	w.step(w.begin(turn, b))
 	w.step(w.begin(turn, defaults()))
-	w.sameAsPython("mtg8_review")
+	w.matchesGolden("mtg8_review")
 }
 func wakeFx(t *testing.T) *fx {
 	w := newFx(t)
@@ -439,7 +424,7 @@ func Test26_MTW_1_python_whole_output(t *testing.T) {
 	w.step(w.m.Acknowledge(w.ctx, turn, alpha.TaskID, grant, "read it"))
 	w.step(w.m.Release(w.ctx, turn, alpha.TaskID, "returned", "handing it back", ""))
 	wakeNotices(w)
-	w.sameAsPython("mtw1_promotion")
+	w.matchesGolden("mtw1_promotion")
 }
 func Test26_MTW_2_python_whole_output(t *testing.T) {
 	w := wakeFx(t)
@@ -451,7 +436,7 @@ func Test26_MTW_2_python_whole_output(t *testing.T) {
 	wakeNotices(w)
 	w.step(w.m.Ready(w.ctx, waiter["turnId"].(string), alpha.TaskID, true, "", ""))
 	wakeNotices(w)
-	w.sameAsPython("mtw2_conditions")
+	w.matchesGolden("mtw2_conditions")
 }
 func Test26_MTW_6_python_whole_output(t *testing.T) {
 	w := wakeFx(t)
@@ -460,7 +445,7 @@ func Test26_MTW_6_python_whole_output(t *testing.T) {
 	w.step(w.m.Release(w.ctx, rival["turnId"].(string), beta.TaskID, "returned", "done", ""))
 	w.turn(waiter["turnId"].(string))
 	wakeNotices(w)
-	w.sameAsPython("mtw6_unaddressable")
+	w.matchesGolden("mtw6_unaddressable")
 }
 func Test26_MTW_7_python_whole_output(t *testing.T) {
 	w := wakeFx(t)
@@ -471,7 +456,7 @@ func Test26_MTW_7_python_whole_output(t *testing.T) {
 	w.step(plain.Release(w.ctx, held["turnId"].(string), beta.TaskID, "returned", "done", ""))
 	w.step(plain.Turn(w.ctx, waiter["turnId"].(string)))
 	wakeNotices(w)
-	w.sameAsPython("mtw7_optional")
+	w.matchesGolden("mtw7_optional")
 }
 func reportWake(w *fx, event string, submission int, head any) {
 	w.exec(`INSERT INTO work_reports (event_id,submission_no,relationship_id,execution_generation,revision_hash,repository,base_ref,head_sha,cxc_status,cxc_reason,contract_version,summary,next_action,recorded_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, event, submission, "rel-a", 3, "rev", fxRepo, fxBase, head, "done", "r", "1", "s", "n", fxISO)
@@ -494,7 +479,7 @@ func Test26_MTW_10_python_whole_output(t *testing.T) {
 	w.answer(historical, alpha.TaskID)
 	w.step(w.check(historical, "head-old", "base-0", ""))
 	w.turn(historical)
-	w.sameAsPython("mtw10_gate")
+	w.matchesGolden("mtw10_gate")
 }
 func Test26_MTW_9_python_whole_output(t *testing.T) {
 	w := wakeFx(t)
@@ -516,7 +501,7 @@ func Test26_MTW_9_python_whole_output(t *testing.T) {
 	reportWake(w, "event-b", 1, "head-a")
 	w.exec(`INSERT INTO work_report_handoffs (event_id,submission_no,is_draft,required_declared,checks,review_coverage,thread_dispositions,recorded_at) VALUES (?,?,?,?,?,?,?,?)`, "event-b", 1, 0, `["other-gate"]`, "[]", "{}", "[]", fxISO)
 	reading()
-	w.sameAsPython("mtw9_reading")
+	w.matchesGolden("mtw9_reading")
 }
 func Test26_MTW_1_python_two_grants(t *testing.T) {
 	w := wakeFx(t)
@@ -529,7 +514,7 @@ func Test26_MTW_1_python_two_grants(t *testing.T) {
 	w.step(w.m.Release(w.ctx, rival["turnId"].(string), beta.TaskID, "returned", "done", ""))
 	w.turn(waiter["turnId"].(string))
 	wakeNotices(w)
-	w.sameAsPython("mtw1_two_grants")
+	w.matchesGolden("mtw1_two_grants")
 }
 func Test26_MTW_2_python_unknown(t *testing.T) {
 	w := wakeFx(t)
@@ -546,7 +531,7 @@ func Test26_MTW_2_python_unknown(t *testing.T) {
 	w.m.Now = func() string { return registry.ISO(time.Unix(1_700_000_000+86400*7, 0)) }
 	w.turn(waiter["turnId"].(string))
 	wakeNotices(w)
-	w.sameAsPython("mtw2_unknown")
+	w.matchesGolden("mtw2_unknown")
 }
 func Test26_MTW_6_python_other_parent(t *testing.T) {
 	w := wakeFx(t)
@@ -555,7 +540,7 @@ func Test26_MTW_6_python_other_parent(t *testing.T) {
 	w.step(w.m.Release(w.ctx, held["turnId"].(string), alpha.TaskID, "returned", "done", ""))
 	w.turn(waiter["turnId"].(string))
 	wakeNotices(w)
-	w.sameAsPython("mtw6_other_parent")
+	w.matchesGolden("mtw6_other_parent")
 }
 func Test26_MTW_6_python_recipient_and_scope(t *testing.T) {
 	w := wakeFx(t)
@@ -570,7 +555,7 @@ func Test26_MTW_6_python_recipient_and_scope(t *testing.T) {
 	w.must(w.m.Release(w.ctx, held["turnId"].(string), beta.TaskID, "returned", "done", ""))
 	w.turn(waiter["turnId"].(string))
 	wakeNotices(w)
-	w.sameAsPython("mtw6_recipient_and_scope")
+	w.matchesGolden("mtw6_recipient_and_scope")
 }
 func Test26_MTG_4_python_whole_output(t *testing.T) {
 	w := newFx(t)
@@ -611,5 +596,5 @@ if [ "$code" = 200 ]; then head -c -3 "${0}.response"; elif [ "$code" = 404 ]; t
 		}
 		w.step([]string{}, nil)
 	}
-	w.sameAsPython("mtg4_forge")
+	w.matchesGolden("mtg4_forge")
 }
