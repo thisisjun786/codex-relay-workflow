@@ -223,28 +223,15 @@ func (t TaskSettings) RequireUsable() error {
 }
 
 // RoleGate decides the role-policy half of authorized_settings for a task bound to a scope.
-// The registry track owns rolepolicy (todo 25); until it is wired, a bound task is refused as
-// Python refuses it when this process has no readable policy.
 type RoleGate func(ctx context.Context, s *store.Store, taskID string, settings *TaskSettings) error
 
-// DefaultRoleGate is bound_role + the unresolved-policy refusal.
-func DefaultRoleGate(ctx context.Context, s *store.Store, taskID string, _ *TaskSettings) error {
-	rows, err := all(ctx, s, "SELECT DISTINCT role FROM scope_bindings WHERE task_id = ? AND status IN (?,?) AND superseded_by IS NULL", taskID, "active", "paused")
-	if err != nil {
-		return err
-	}
-	if len(rows) == 0 {
-		return nil
-	}
-	if len(rows) > 1 {
-		roles := make([]string, len(rows))
-		for i, r := range rows {
-			roles[i] = r.S("role")
-		}
-		slices.Sort(roles)
-		return refuse(RoleBindingMismatch, "%s holds live bindings at %s, and one task holds one role. Nothing was sent and no turn was started, because checking its authorization against either of them would report a clean answer derived from an arbitrary choice. Resolve the bindings first.", pyvalue.StrRepr(taskID), pyvalue.Repr(roles))
-	}
-	return refuse(RolePolicyUnconfigured, "%s is bound as %s and this process cannot read a role policy to check its authorization against: CODEX_THREAD_BRIDGE_EXECUTION_POLICY is not set in this process, so no role policy can be read. Nothing was sent and no turn was started. Set the policy for this process and the held deliveries resume on the next pass.", pyvalue.StrRepr(taskID), pyvalue.StrRepr(rows[0].S("role")))
+// DefaultRoleGate is the registry's role check (registry.CheckBoundRole) against the execution
+// policy this process was started with: a task bound to no role passes, and a bound task passes
+// only when that policy declares a pair its recorded settings are authorized for. Without a
+// policy a bound task is withheld as role_policy_unconfigured.
+func DefaultRoleGate(ctx context.Context, s *store.Store, taskID string, settings *TaskSettings) error {
+	_, err := registry.CheckBoundRole(ctx, s, taskID, settings.Data, registry.EnvironmentRolePolicy())
+	return err
 }
 
 // AuthorizedSettings is delivery.authorized_settings.
