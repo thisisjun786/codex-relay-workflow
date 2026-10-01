@@ -2200,10 +2200,17 @@ then records the worker's exit (`lastExit`, `workerPid` cleared), starts no succ
 returns the interruption: exit 3, `RuntimeError: context canceled`, as an interrupt during the
 restart delay already did. Its records and scope are released only once the worker holding the
 inherited locks has exited. A supervised worker (`daemon --supervised-lock-fd`) keeps SIGINT
-caught from the start of its run until the process exits. An interrupt it receives twice for one
-request, from its process group or a drain and again from its supervisor, therefore stops it
-once, through its own cleanup, and its exit status is reported. Its hard stops stay SIGTERM,
-SIGKILL and its supervisor's death (PR_SET_PDEATHSIG). The supervisor
+caught from the moment cmd/crw registers it, before the command line is read, until the process
+exits. An interrupt it receives twice for one request, from its process group or a drain and again
+from its supervisor, therefore stops it once, through its own cleanup, and its exit status is
+reported. Its hard stops stay SIGTERM, SIGKILL and its supervisor's death (PR_SET_PDEATHSIG).
+cmd/crw's `serve` owns that registration, because the process is the one that holds it until it
+exits: it registers the interrupt first, then reads the line with `cli.SupervisedWorker` (the
+daemon command given `--supervised-lock-fd`, read by the dispatcher's own parser) and releases the
+registration after its first signal for every line but a worker's, as `cancelOn` always did.
+`cli.ExecuteAs` and `runDaemon` register nothing, so a test that runs a worker's line in its own
+process is left with SIGINT as it found it (CRW-249; before, `runDaemon` registered the catch and
+no in-process caller could release it). The supervisor
 keeps cmd/crw's rule that a second interrupt has the default disposition: it ends the
 supervisor, and so the worker. Python is unchanged. Its supervisor's KeyboardInterrupt ends it
 at once, and PR_SET_PDEATHSIG then ends the worker.
@@ -2234,12 +2241,17 @@ found no socket, 3 answers were `guard_said_nothing` and 1 was a connection rese
 Cost: an interrupted Go supervisor exits only when its worker has stopped, where Python's exits
 at once. A worker that never stops is ended by the second interrupt, as before. A second SIGINT
 sent to a supervised worker alone no longer ends it; SIGTERM or its supervisor's death does. Two
-interrupts that land while a worker is still starting, before its run begins, still end it, as
-before, before it has done any work.
+interrupts that land before `serve` has registered the interrupt, in the Go runtime's start, still
+end it, as before, before it has done any work. A second interrupt that lands after that is
+absorbed, including one that lands while the dispatcher refuses the line or while `runDaemon`
+starts, which a worker used to meet with SIGINT's default disposition until `runDaemon` had
+registered its own catch; the first still cancels the run, so exit codes and recorded state are
+those the run reaches.
 
 Evidence: `internal/relay/service/supervise.go` (`awaitWorker`, `Supervise`),
-`internal/relay/cli/daemon.go` (`runDaemon`), `internal/relay/service/takeover.go`
-(`takeoverRuntime.Drain`), `cmd/crw/main.go` (`cancelOn`),
+`internal/relay/cli/daemon.go` (`runDaemon`, `SupervisedWorker`), `internal/relay/service/takeover.go`
+(`takeoverRuntime.Drain`), `cmd/crw/main.go` (`serve`, `supervisedWorker`, `releaseAfterFirst`,
+`cancelOn`),
 `packages/codex-session-relay/src/codex_session_relay/service.py` (`supervise`, its `finally`).
 Tests: `internal/relay/service/process_test.go` (`Test42InterruptedSupervisorStopsItsWorker`:
 python, go, go-interrupted-together) and `internal/relay/service/takeover_test.go`
@@ -2248,6 +2260,16 @@ the go subtest and after-active 3 of 3 times each. Restoring the previous `daemo
 go-interrupted-together 15 of 20 times. Under the load that failed the previous build 39 of 50
 times, the final build passed every run: the takeover test 50 of 50,
 `Test42InterruptedSupervisorStopsItsWorker` 50 of 50, and go-interrupted-together 200 more.
+Tests of where the registration lives (CRW-249): `internal/relay/cli/daemon_signal_test.go`
+(`TestExecuteAsLeavesNoInterruptCatchBehindASupervisedWorker` runs a worker's line through
+`ExecuteAs` in a re-executed test binary and then interrupts that process, which must end by SIGINT;
+with the previous `runDaemon` it survived, exit 97; `TestSupervisedWorkerReadsALineAsTheDispatcherDoes`)
+and `cmd/crw/worker_signal_test.go` (`TestSupervisedWorkerKeepsInterruptsCaughtUntilItsProcessExits`
+delivers twenty SIGINTs after `serve` returned and expects the worker's own exit status 2 under both
+program names, and a line that is no worker's to end by SIGINT;
+`TestTheInterruptIsRegisteredBeforeTheCommandLineIsRead` delivers one while the line is read). Releasing
+a worker's registration when `serve` returns, releasing it after the first signal like any other line,
+and reading the line before registering each fail them.
 
 ## 43. A host turn start is a time only when it reads as a finite number, in both runtimes
 

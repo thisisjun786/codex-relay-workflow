@@ -6,12 +6,12 @@ import (
 	"errors"
 	"math"
 	"os"
-	"os/signal"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/daemon"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
@@ -25,6 +25,28 @@ import (
 var DaemonFactory func(context.Context, dispatch.Services, *store.Store) (*daemon.Daemon, error)
 
 var daemonCommand = dispatch.Command{Name: "daemon", OwnAdmission: true, Run: runDaemon}
+
+// supervisedLockFlag is the option that makes a daemon line a supervised worker's: the service
+// supervisor is its only producer (service.SpawnWorker), and runDaemon takes its inherited lock
+// from the descriptor it names.
+const supervisedLockFlag = "supervised-lock-fd"
+
+// SupervisedWorker reports whether a relay command line (the arguments after the program, in the
+// relay CLI's own grammar) is a supervised worker's: the daemon command given --supervised-lock-fd,
+// read by the parser the dispatcher reads it with, so a line that would not run is not one.
+//
+// A supervised worker keeps SIGINT caught until its process exits (decision 42), and the process
+// is the one to hold that, so cmd/crw's main asks this before it runs the line and registers the
+// catch itself. ExecuteAs registers nothing: a test that runs a worker's line in its own process
+// is left with SIGINT as it found it.
+func SupervisedWorker(argv []string) bool {
+	root := argparse.Parse("", argv)
+	if root.Help || root.Message != "" || len(root.Remaining) == 0 || root.Remaining[0] != daemonCommand.Name {
+		return false
+	}
+	parsed := argparse.Parse(daemonCommand.Name, root.Remaining[1:])
+	return !parsed.Help && parsed.Message == "" && parsed.Given[supervisedLockFlag]
+}
 
 // serviceCommands are service's subcommands: status reads, the rest manage the supervisor, and
 // start, restart and run reach the host.
@@ -234,15 +256,6 @@ func runService(ctx context.Context, services dispatch.Services, args dispatch.A
 }
 
 func runDaemon(ctx context.Context, services dispatch.Services, args dispatch.Args) (out any, err error) {
-	if args.Given("supervised-lock-fd") {
-		// Decision 42: a supervised worker can be interrupted twice for one request, by its
-		// process group or a drain and again by its supervisor passing the interrupt on. The
-		// repeat is absorbed rather than meeting SIGINT's restored default disposition, which
-		// would kill the worker before its cleanup or before its exit status is reported, so
-		// the channel stays registered until the process exits. Its hard stops stay SIGTERM,
-		// SIGKILL and its supervisor's death (PR_SET_PDEATHSIG).
-		signal.Notify(make(chan os.Signal, 1), os.Interrupt)
-	}
 	if !services.AdapterRequested {
 		// cli.py main runs check_start before the daemon's handler asks for its --socket, so a
 		// socketless daemon is refused for any store the fence refuses first (a foreign,
@@ -319,7 +332,7 @@ func runDaemon(ctx context.Context, services dispatch.Services, args dispatch.Ar
 		v, _ := args.String("supervised-token")
 		token = &v
 	}
-	lockFD, scopeFD := integerOption(args, "supervised-lock-fd"), integerOption(args, "supervised-scope-fd")
+	lockFD, scopeFD := integerOption(args, supervisedLockFlag), integerOption(args, "supervised-scope-fd")
 	if err = s.Adopt(token, lockFD, scopeFD); err != nil {
 		return nil, serviceError(err)
 	}
