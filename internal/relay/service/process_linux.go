@@ -27,7 +27,7 @@ func OpenProcess(pid int) *ProcessHandle {
 		h.Gone = true
 		h.Detail = "the process is already gone"
 	} else {
-		h.Detail = fmt.Sprintf("OSError: %v", err)
+		h.Detail = fmt.Sprintf("pidfd_open: %v", err)
 	}
 	return h
 }
@@ -45,7 +45,7 @@ func (h *ProcessHandle) Send(sig unix.Signal) bool {
 	}
 	err := unix.PidfdSendSignal(h.FD, sig, nil, 0)
 	if err != nil && !errors.Is(err, unix.ESRCH) {
-		h.Detail = fmt.Sprintf("OSError: %v", err)
+		h.Detail = fmt.Sprintf("pidfd_send_signal: %v", err)
 		return false
 	}
 	return true

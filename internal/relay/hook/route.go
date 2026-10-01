@@ -11,12 +11,11 @@ import (
 	"path/filepath"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // SelectedStore is guard.selected_store: the receipt store Evaluate would read for this Stop,
@@ -63,6 +62,33 @@ func SelectedStore(ctx context.Context, stop Object, options GuardOptions) (sele
 	return selected, nil
 }
 
+// routeDepth is how deep the containers of an owner's answer may nest: as deep as the CLI has
+// always read one. A deeper answer is no readable answer.
+const routeDepth = 9998
+
+// nesting is how deep the containers of the JSON text raw nest, its strings skipped. It bounds
+// what a decoder is handed; whether raw is JSON at all is the decoder's to say.
+func nesting(raw []byte) int {
+	depth, deepest, quoted, escaped := 0, 0, false, false
+	for _, c := range raw {
+		switch {
+		case escaped:
+			escaped = false
+		case quoted && c == '\\':
+			escaped = true
+		case c == '"':
+			quoted = !quoted
+		case quoted:
+		case c == '[' || c == '{':
+			depth++
+			deepest = max(deepest, depth)
+		case c == ']' || c == '}':
+			depth--
+		}
+	}
+	return deepest
+}
+
 // routeBudget is the one bound on a routed guard-evaluate (stopadapter DEFAULT_TIMEOUT_SECONDS;
 // the CLI configures no shorter one).
 const routeBudget = 5 * time.Second
@@ -71,9 +97,9 @@ const routeBudget = 5 * time.Second
 // (stopadapter.socket_guard as cmd_guard_evaluate calls it). Answer is the answer decoded and Code
 // the exit status it carries: 0, or 2, 3 or 4 for an error record's refused, host or usage (2
 // for any other error). Readable is false when the owner closed without a readable answer (none,
-// bytes that are not UTF-8 or JSON, more than 64 MiB of them, or a JSON null, as the fence reads
-// them), and TimedOut when it did not answer within the budget, which Detail words. JSON nested
-// deeper than the fence's json.loads reads is RouteGuard's error, as it is the fence's.
+// bytes that are not UTF-8 or JSON, more than 64 MiB of them, JSON nested deeper than
+// routeDepth, a JSON null, or an error record whose kind is not a scalar), and TimedOut when it
+// did not answer within the budget, which Detail words.
 type Routed struct {
 	Answer   any
 	Code     int
@@ -133,18 +159,12 @@ func RouteGuard(ctx context.Context, state string, stop Object, options GuardOpt
 			return nil, err
 		}
 	}
-	if len(raw) == 0 || len(raw) > maxControlBytes || !store.ValidUTF8(raw) {
+	if len(raw) == 0 || len(raw) > maxControlBytes || !utf8.Valid(raw) || nesting(raw) > routeDepth {
 		return &Routed{}, nil
-	}
-	// The fence decodes the bytes, then json.loads them, whose C scanner takes 9998 nested
-	// containers here and raises RecursionError from 9999: not a ValueError, so it leaves
-	// socket_guard and cli.main reports it as a host error.
-	if message, recursion := store.PythonJSONErrorWithLimit(string(raw), 9998); recursion {
-		return nil, fmt.Errorf("RecursionError: %s", message)
 	}
 	value, err := Decode(raw)
 	if err != nil || value == nil {
-		// A JSON null is no answer either: the fence reads it as an empty stdout.
+		// A JSON null is no answer either.
 		return &Routed{}, nil
 	}
 	routed := &Routed{Answer: value, Readable: true}
@@ -152,8 +172,8 @@ func RouteGuard(ctx context.Context, state string, stop Object, options GuardOpt
 		switch kind := get(answer, "error"); kind.(type) {
 		case nil:
 		case Object, []any:
-			// The fence looks the kind up in a dict, which raises on an unhashable one.
-			return nil, fmt.Errorf("TypeError: unhashable type: '%s'", pyvalue.TypeName(kind))
+			// An error record whose kind is no scalar names no exit status.
+			return &Routed{}, nil
 		default:
 			routed.Code = map[string]int{"refused": 2, "host": 3, "usage": 4}[text(kind)]
 			if routed.Code == 0 {
@@ -188,8 +208,7 @@ func localStop(state string) bool {
 	return ok && get(record, "owner") == "go"
 }
 
-// routeError is why a routed guard-evaluate could not reach or trust the owner, worded as the
-// fence's Stop client words it: str(OSError), or _trusted_guard_peer's refusal.
+// routeError is why a routed guard-evaluate could not trust the owner it reached.
 type routeError struct{ detail string }
 
 func (e *routeError) Error() string { return e.detail }
@@ -197,16 +216,16 @@ func (e *routeError) Error() string { return e.detail }
 // dialTrusted connects to the control socket at path (through /proc/self/fd for a path a
 // sockaddr_un cannot hold) and establishes the peer as the fence's Stop client does before it
 // sends anything: the peer's uid, and path as a direct socket of this user's in a directory of
-// this user's that no group or other user may write. Errors read as Python's str(OSError).
+// this user's that no group or other user may write.
 func dialTrusted(ctx context.Context, path string) (*net.UnixConn, error) {
 	address, release, err := ControlAddress(path)
 	if err != nil {
-		return nil, pythonText(&os.PathError{Op: "open", Path: filepath.Dir(path), Err: err})
+		return nil, &os.PathError{Op: "open", Path: filepath.Dir(path), Err: err}
 	}
 	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", address)
 	release()
 	if err != nil {
-		return nil, pythonText(err)
+		return nil, err
 	}
 	unixConn := conn.(*net.UnixConn)
 	if err := trustedPeer(unixConn, path); err != nil {
@@ -219,16 +238,16 @@ func dialTrusted(ctx context.Context, path string) (*net.UnixConn, error) {
 func trustedPeer(conn *net.UnixConn, path string) error {
 	peer, err := peerUID(conn)
 	if err != nil {
-		return pythonText(err)
+		return err
 	}
 	ours := uint32(os.Getuid())
 	endpoint, err := os.Lstat(path)
 	if err != nil {
-		return pythonText(err)
+		return err
 	}
 	parent, err := os.Stat(filepath.Dir(path))
 	if err != nil {
-		return pythonText(err)
+		return err
 	}
 	refuse := func(format string, args ...any) error { return &routeError{fmt.Sprintf(format, args...)} }
 	switch {
@@ -244,13 +263,4 @@ func trustedPeer(conn *net.UnixConn, path string) error {
 		return refuse("guard socket directory is group- or world-writable")
 	}
 	return nil
-}
-
-// pythonText is err worded as Python's str(OSError).
-func pythonText(err error) error {
-	var errno syscall.Errno
-	if !errors.As(err, &errno) {
-		return err
-	}
-	return &routeError{store.PythonOSErrorText(err)}
 }

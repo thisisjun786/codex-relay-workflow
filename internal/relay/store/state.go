@@ -377,7 +377,9 @@ func PathlibParent(path string) string {
 }
 
 // pathlib.Path.exists suppresses absence/non-directory, but propagates access
-// errors at the canonical/legacy DB probes before sibling listing begins.
+// errors at the canonical/legacy DB probes before sibling listing begins. The error keeps its
+// str(OSError) wording: the owner's guard reaches it through the selection, and the Stop hook
+// that evaluates in process journals it as the row's fault.
 func discoveryExists(path string) (bool, error) {
 	_, err := os.Stat(path)
 	if err == nil {

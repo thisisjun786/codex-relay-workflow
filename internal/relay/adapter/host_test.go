@@ -89,3 +89,44 @@ func Test28_BuiltBinaryHostRoundTrips(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// deliver and verify-acks read a given --limit, not only their int64 default: a given limit is
+// served, and one past int64 is the parser's usage error, exit 2 (decision R3C-2), never a panic.
+func TestHostCommandsReadAGivenLimit(t *testing.T) {
+	root := t.TempDir()
+	host := fakehost.Start(t)
+	for _, c := range []struct {
+		argv  []string
+		exit  int
+		field string
+	}{
+		{[]string{"deliver", "--limit", "2"}, 0, "attempts"},
+		{[]string{"verify-acks", "--limit", "3"}, 0, ""},
+		{[]string{"deliver", "--limit", "99999999999999999999"}, 2, ""},
+		{[]string{"verify-acks", "--limit", "-99999999999999999999"}, 2, ""},
+	} {
+		state := filepath.Join(root, strings.Join(c.argv, "-"))
+		out, err := exec.Command(suiteBinary, append([]string{"relay", "--state", state, "--socket", host.SocketPath}, c.argv...)...).CombinedOutput()
+		code := 0
+		if e, ok := err.(*exec.ExitError); ok {
+			code = e.ExitCode()
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		if c.exit == 2 {
+			if code != 2 || !strings.Contains(string(out), "argument --limit: invalid int value") {
+				t.Fatalf("%v: exit %d, want 2: %s", c.argv, code, out)
+			}
+			continue
+		}
+		var answer map[string]any
+		if code != c.exit || json.Unmarshal(out, &answer) != nil {
+			t.Fatalf("%v: exit %d, want %d: %s", c.argv, code, c.exit, out)
+		}
+		if c.field != "" {
+			if _, ok := answer[c.field]; !ok {
+				t.Fatalf("%v: no %q in %s", c.argv, c.field, out)
+			}
+		}
+	}
+}
