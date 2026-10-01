@@ -379,6 +379,12 @@ passes the profile through without interpreting it and leaves it out of the sett
 so it arrives raw at `creation.activePermissionProfile` or `resumed.activePermissionProfile`, and
 inside `permissionReceipt` on the worktree path. Measured against the version named above.
 
+A record that names no profile still resumes on a host that reports the built-in profile of the
+recorded sandbox type, extending nothing: `:danger-full-access`, `:workspace` or `:read-only`, with
+`extends` null or absent. Codex 0.154 reports one on every thread run from a sandbox mode, and it
+grants nothing the sandbox comparison does not already check. Any other profile, a custom one or
+one that extends another, is still `UNVERIFIABLE_PERMISSION_PROFILE` until the record carries it.
+
 `--parent-settings` and `--child-settings` are optional. Leaving them off still registers the
 relationship, and either side can be recorded afterwards with
 `settings-record --task <id> --settings @file.json`. What is validated is the RECORD, so an
