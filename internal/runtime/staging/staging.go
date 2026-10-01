@@ -280,12 +280,6 @@ func ClearOwn(directory string) []string {
 	return removed
 }
 
-// IsSettled is staging.settled: whether a readable claim says its run finished.
-func IsSettled(claim reading.Reading) bool {
-	value, ok := claim.Value.(record.Object)
-	return claim.OK() && ok && record.Get(value, "state") == Complete
-}
-
 // ErrNotOwned is Create's answer when the directory could not be made by this run, so nothing in
 // it is this run's to remove.
 var ErrNotOwned = errors.New("the directory was not created by this run")

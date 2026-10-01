@@ -201,9 +201,6 @@ func TestAbandonedStagingIsReclaimedAndLiveStagingIsNot(t *testing.T) {
 	if decision, _ := staging.Decide(staging.ReadClaim(env), staging.Dead, occupied, true, true); decision != staging.Settled {
 		t.Fatalf("finished and selected: %s", decision)
 	}
-	if !staging.IsSettled(staging.ReadClaim(env)) {
-		t.Fatal("a COMPLETE claim is settled")
-	}
 }
 
 // A Go staging is its final directory, made with an exclusive mkdir and claimed STAGING while

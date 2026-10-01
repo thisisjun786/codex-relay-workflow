@@ -11,7 +11,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -856,9 +855,4 @@ func (sw *Sweeper) noteOvertaken(ctx context.Context, events []string) error {
 		}
 		return nil
 	})
-}
-
-// WallClockISO is faultsweep._now.
-func WallClockISO() string {
-	return time.Now().UTC().Format("2006-01-02T15:04:05.000000+00:00")
 }
