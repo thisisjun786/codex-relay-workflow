@@ -13,10 +13,25 @@ func admit(turn, evidence string) string {
 	return fmt.Sprintf("INSERT INTO generation_turns(relationship_id,execution_generation,turn_id,evidence,actor,detail,admitted_at) VALUES('r',1,'%s','%s','child','admitted','2023-11-14T22:13:20Z')", turn, evidence)
 }
 
+// revision is the setup for a newer revision of the receipt on "continuation": a final child event on
+// a newly admitted turn that declares it supersedes the first revision, so the first is replaced and
+// this one is the head. It is owed a delivery only when owed is set.
+func revision(turn string, owed bool) []string {
+	statements := []string{
+		admit(turn, "explicit_admission_bound:anchor"),
+		"INSERT INTO events(event_id,relationship_id,execution_generation,revision_hash,outcome,producer,turn_thread_id,turn_id,turn_status,receipt,stage,staged_at,finalized_at,finalizing_status,first_seen_at,last_seen_at) VALUES('claim-" + turn + "','r',1,'rev2','ready_for_review','child','child','" + turn + "','completed','{}','final','2023-11-14T22:13:20Z','2023-11-14T22:13:20Z','completed','2023-11-14T22:13:20Z','2023-11-14T22:13:20Z')",
+		"INSERT INTO revision_lineage(relationship_id,execution_generation,event_id,revision_hash,supersedes_hash,declared_by,recorded_at) VALUES('r',1,'claim-" + turn + "','rev2','rev','child_declared','2023-11-14T22:13:20Z')",
+	}
+	if owed {
+		statements = append(statements, "INSERT INTO deliveries(event_id,relationship_id,kind,recipient_task_id,recipient_thread_id,state,attempt_count,created_at,updated_at) VALUES('claim-"+turn+"','r','completion','parent','parent','queued',0,'2023-11-14T22:13:20Z','2023-11-14T22:13:20Z')")
+	}
+	return statements
+}
+
 // A later receipt only counts for a turn the store would admit: the anchor, or a turn admitted against
 // the anchor before the turn that holds the receipt, and the receipt must sit on a turn admitted the
-// same way. It also needs a delivery owed to the parent, and the relationship must still be active on
-// the generation it stands on now. Anything else matches nothing, so the observation path decides as it
+// same way. It also needs a delivery still owed to the parent (not one a newer revision replaced), and
+// the relationship must still be active on the generation it stands on now. Anything else matches nothing, so the observation path decides as it
 // did before, and still refuses a turn the relay never admitted as unassigned.
 func TestLaterReceiptIsFoundOnlyForTurnsTheStoreAdmits(t *testing.T) {
 	const bound = "explicit_admission_bound:anchor"
@@ -37,6 +52,11 @@ func TestLaterReceiptIsFoundOnlyForTurnsTheStoreAdmits(t *testing.T) {
 		{"a receipt on a later turn admitted on other evidence", []string{admit("odd", "not_the_anchor")}, lateClaim{"odd", "child", "final", owedQueued}, "business", "", ""},
 		{"the anchor's own receipt, the anchor admitted as a turn too", []string{admit("anchor", bound)}, lateClaim{"anchor", "child", "final", owedQueued}, "anchor", "", ""},
 		{"a receipt owed no delivery", nil, lateClaim{"continuation", "child", "final", ""}, "business", "", ""},
+		{"a receipt whose delivery was superseded", nil, lateClaim{"continuation", "child", "final", "superseded"}, "business", "", ""},
+		{"a receipt a newer revision replaced, the newer one owed no delivery", revision("second", false), owed, "business", "", ""},
+		{"a receipt already sent, then replaced by a revision owed no delivery", revision("second", false), lateClaim{"continuation", "child", "final", "dispatched"}, "business", "", "continuation"},
+		{"a receipt stored in the recipient's inbox, then replaced by a revision owed no delivery", revision("second", false), lateClaim{"continuation", "child", "final", "inbox_only"}, "business", "", "continuation"},
+		{"a receipt a newer revision replaced, the newer one owed a delivery", revision("second", true), owed, "business", "", "second"},
 		{"a thread that is not the child's", nil, owed, "business", "elsewhere", ""},
 		{"the relationship was superseded", []string{"UPDATE relationships SET superseded_by='r2' WHERE relationship_id='r'"}, owed, "business", "", ""},
 		{"the relationship is no longer active", []string{"UPDATE relationships SET status='paused' WHERE relationship_id='r'"}, owed, "business", "", ""},

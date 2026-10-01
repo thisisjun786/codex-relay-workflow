@@ -378,33 +378,49 @@ func (d *Daemon) settle(ctx context.Context, r delivery.Relationship, turn store
 // matches nothing, so DaemonObservation decides exactly as it did before.
 //
 // A final event is an accepted receipt, not a report that reached the parent. It counts only when a
-// delivery or a delivery intent exists for it, because delivery is then owed through the scheduler, to
-// the same parent and under the same holds an older event would meet. A final event with neither (one
-// emitted with --no-enqueue, or left behind by a refused enqueue) leaves the parent unaware, so the end
-// of the earlier turn is still reported.
-const laterReceiptQuery = `SELECT t.turn_id, e.event_id
+// delivery (not marked superseded) or a delivery intent exists for it, because delivery is then owed
+// through the scheduler, to the same parent and under the same holds an older event would meet. A final
+// event with neither (one emitted with --no-enqueue, or left behind by a refused enqueue) leaves the
+// parent unaware, so the end of the earlier turn is still reported. laterReceipt then asks, for a
+// receipt not yet sent, whether it is still current: one a newer revision has replaced is never sent.
+// A receipt that was already sent stands whatever replaced it, since the parent has its content.
+const laterReceiptQuery = `SELECT t.turn_id, e.event_id, d.state AS delivery_state
 FROM relationships rel
 JOIN generations g ON g.relationship_id=rel.relationship_id AND g.execution_generation=rel.execution_generation
 JOIN generation_turns t ON t.relationship_id=g.relationship_id AND t.execution_generation=g.execution_generation AND t.evidence=('explicit_admission_bound:' || g.dispatch_turn_id)
 JOIN events e ON e.relationship_id=t.relationship_id AND e.execution_generation=t.execution_generation AND e.turn_thread_id=rel.child_task_id AND e.turn_id=t.turn_id
+LEFT JOIN deliveries d ON d.event_id=e.event_id
 WHERE rel.relationship_id=? AND rel.child_task_id=? AND rel.status='active' AND rel.superseded_by IS NULL
   AND g.dispatch_turn_id IS NOT NULL AND g.dispatch_turn_id<>''
   AND t.turn_id<>?
   AND e.producer='child' AND e.stage='final' AND e.suppressed_reason IS NULL
-  AND (EXISTS (SELECT 1 FROM deliveries d WHERE d.event_id=e.event_id) OR EXISTS (SELECT 1 FROM delivery_intent i WHERE i.event_id=e.event_id))
+  AND ((d.event_id IS NOT NULL AND d.state<>'superseded') OR EXISTS (SELECT 1 FROM delivery_intent i WHERE i.event_id=e.event_id))
   AND (g.dispatch_turn_id=? OR t.rowid>(SELECT o.rowid FROM generation_turns o WHERE o.relationship_id=g.relationship_id AND o.execution_generation=g.execution_generation AND o.turn_id=? AND o.evidence=('explicit_admission_bound:' || g.dispatch_turn_id)))
-ORDER BY t.rowid, e.event_id LIMIT 1`
+ORDER BY t.rowid, e.event_id`
 
 // laterReceipt names a later admitted turn of the relationship's current generation that already
 // holds a final, unsuppressed child event with a delivery owed to the parent, and that event; both are
 // empty when there is none. Once a later turn has reported, the parent knows where the work stands and
 // the end of this turn is not news (CRW-256), so settle asserts nothing for it.
 func (d *Daemon) laterReceipt(ctx context.Context, relationshipID string, turn store.TurnReference) (laterTurn, event string, err error) {
-	row, err := d.Store.One(ctx, laterReceiptQuery, relationshipID, turn.ThreadID, turn.TurnID, turn.TurnID, turn.TurnID)
-	if err != nil || row == nil {
+	rows, err := d.Store.All(ctx, laterReceiptQuery, relationshipID, turn.ThreadID, turn.TurnID, turn.TurnID, turn.TurnID)
+	if err != nil {
 		return "", "", err
 	}
-	return row.Get("turn_id").(string), row.Get("event_id").(string), nil
+	for _, row := range rows {
+		candidate := row.Get("event_id").(string)
+		if state, _ := row.Get("delivery_state").(string); state == delivery.Dispatched || state == delivery.Acknowledged || state == delivery.InboxOnly {
+			return row.Get("turn_id").(string), candidate, nil
+		}
+		replaced, err := d.Delivery.SupersessionReason(ctx, candidate)
+		if err != nil {
+			return "", "", err
+		}
+		if replaced == "" {
+			return row.Get("turn_id").(string), candidate, nil
+		}
+	}
+	return "", "", nil
 }
 
 // statusText is the host turn status when it is a string; 28's lazy host
