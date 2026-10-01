@@ -109,6 +109,14 @@ func runDoctor(ctx context.Context, services dispatch.Services, args dispatch.Ar
 	// The Python report has no slot a runtime reading could fill without changing a key, so it
 	// is a new trailing top-level key (todo 20): every Python key keeps its place and value.
 	add("runtime", runtimeBlock())
+	// Present only where it has something to say, like issue and workerReadiness (decision 73).
+	served, err := serviceStore(services)
+	if err != nil {
+		return nil, err
+	}
+	if served != nil {
+		add("serviceStore", served)
+	}
 	asked := expectations.StoreIDGiven || expectations.InodeGiven || expectations.LogGiven || nonceGiven
 	if (asked && comparison.SameStore != store.Proven) || (requiredWorker && !ready) {
 		return nil, &dispatch.PayloadExit{Payload: report, Code: contract.ExitRefused}
@@ -117,6 +125,54 @@ func runDoctor(ctx context.Context, services dispatch.Services, args dispatch.Ar
 		return nil, &dispatch.PayloadExit{Payload: report, Code: contract.ExitRefused}
 	}
 	return report, nil
+}
+
+// serviceStore is the store the relay service registered for this selection's socket (the
+// default App Server socket when no --socket was given) serves, from its scope claim, when
+// discovery chose another directory: a reader that selected the wrong store is told where the
+// service's store is and how to read it. nil when --state or CODEX_SESSION_RELAY_STATE chose the
+// directory, when no claim is recorded, or when the claim names the selected directory.
+func serviceStore(services dispatch.Services) (contract.OrderedObject, error) {
+	if source := services.Selection.Source; source == "flag" || source == "env" {
+		return nil, nil
+	}
+	socket := services.SocketPath
+	if socket == "" {
+		var err error
+		if socket, err = store.DefaultSocket(); err != nil {
+			return nil, err
+		}
+	}
+	served := service.ServedStore(socket)
+	if served == nil {
+		return nil, nil
+	}
+	directory, _ := get(served, "stateDirectory").(string)
+	if sameDirectory(directory, services.Selection.Path) {
+		return nil, nil
+	}
+	claimed, _ := get(served, "socketPath").(string)
+	if claimed == "" {
+		claimed = socket
+	}
+	return append(served,
+		contract.Field{Key: "detail", Value: "the relay service registered for this App Server socket serves another directory than the one discovery selected here; that store, not this one, is the one it reads and writes"},
+		contract.Field{Key: "recover", Value: []any{
+			services.Program + " --state=" + shellQuote(directory) + " --socket=" + shellQuote(claimed) + " doctor",
+			"  reads the store that service serves",
+		}},
+	), nil
+}
+
+// sameDirectory is whether a and b name one directory once every symbolic link is followed; a
+// path that cannot be resolved is compared as spelled.
+func sameDirectory(a, b string) bool {
+	resolvedA, errA := store.ResolvePath(a)
+	resolvedB, errB := store.ResolvePath(b)
+	if errA != nil || errB != nil {
+		return a == b
+	}
+	return resolvedA == resolvedB
 }
 
 // ownershipReport is ownership.report: the six schema_meta keys and the mirror's raw phase,

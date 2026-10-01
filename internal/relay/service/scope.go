@@ -146,6 +146,24 @@ func (s *ScopeRegistry) Conflicts(socket, storeID, state string) []any {
 	}
 	return out
 }
+
+// ServedStore is what the scope claim for socket records about the store its relay service
+// serves: the claim's stateDir, socketPath and storeId, whether the process that registered it
+// still runs, and the claim's own path. It reads that one file, takes no lock and creates nothing;
+// nil when the scope root cannot be named or no claim names a state directory.
+func ServedStore(socket string) Object {
+	scope, err := ResolveScope()
+	if err != nil {
+		return nil
+	}
+	r := scope.Read(socket)
+	if text(get(r, "stateDir")) == "" {
+		return nil
+	}
+	return obj("stateDirectory", get(r, "stateDir"), "socketPath", get(r, "socketPath"), "storeId", get(r, "storeId"),
+		"live", live(r), "scopeRecord", scope.path(socket, ".json"))
+}
+
 func live(r Object) bool {
 	pid := num(get(r, "pid"))
 	if pid == 0 {

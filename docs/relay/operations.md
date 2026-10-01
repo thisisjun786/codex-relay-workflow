@@ -22,9 +22,27 @@ directory is chosen by the first rule that applies:
 | 3 | `XDG_STATE_HOME/codex-session-relay/<scope>` | the scope is a hash of the App Server socket path |
 | 4 | `~/.local/state/codex-session-relay/<scope>` | the default |
 
+The socket that scopes rules 3 and 4 is `--socket`, or without it the default App Server
+control socket, `$CODEX_HOME/app-server-control/app-server-control.sock` with `CODEX_HOME`
+defaulting to `~/.codex`: the socket the bridge defaults to, so a command given no `--socket`
+selects the store a relay service started on that socket serves. Nothing connects to the default
+socket; a command that needs the App Server still requires `--socket`. The selection's `detail`
+ends `; scoped by the default Codex App Server socket <path>`. A host that used the relay
+without `--socket` before this rule keeps its store in the legacy directory `default`: discovery
+keeps using it, and says so, only when the default socket's own directory holds no store and no
+other store records that socket (decision 73 in docs/port/decisions.md).
+
 The store is `<dir>/relay.sqlite3`. `codex-session-relay doctor` reports which rule won, the
 value that won, the resolved database path and the measured read/write access, so a
-participant never has to infer its own configuration.
+participant never has to infer its own configuration. When discovery chose the directory and the
+relay service registered for the selection's socket serves another one, `doctor` adds a trailing
+`serviceStore` block naming that directory, its socket, whether the service still runs, and the
+command that reads it.
+
+A store with no ownership stamp (no `takeover.json`, no ownership key, no `write-gate.lock`) is
+refused `store_owned_by_other` with the detail `the store carries no ownership stamp (no
+write-gate.lock): no Go writer was ever bound to it; it is not the store a running relay serves`.
+Read in a `doctor` report, that is a wrong selection, not an unavailable relay.
 
 Setting `--state` alone is not enough for an isolated run. The bridge adapter resolves its
 transport ledger from `CODEX_SESSION_RELAY_STATE` independently, so a run that overrides only

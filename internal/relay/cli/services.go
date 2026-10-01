@@ -115,7 +115,16 @@ func siblingStores(services dispatch.Services) (contract.OrderedObject, error) {
 	// Path.parent, which keeps a root of two slashes where filepath.Dir folds it.
 	root := store.PathlibParent(services.Selection.Path)
 	skip := filepath.Base(services.Selection.Path)
-	claiming, err := store.StoresClaimingSocket(root, services.SocketPath, skip)
+	// Without --socket, discovery scoped the selection by the default App Server socket, so the
+	// stores claiming that socket are the ones that compete with it.
+	socket := services.SocketPath
+	if socket == "" {
+		var err error
+		if socket, err = store.DefaultSocket(); err != nil {
+			return nil, err
+		}
+	}
+	claiming, err := store.StoresClaimingSocket(root, socket, skip)
 	if err != nil {
 		return nil, err
 	}

@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
@@ -166,7 +167,13 @@ func Test33PR181GuardDiscoveryPython(t *testing.T) {
 			command.Env = append(command.Env, key+"="+value)
 		}
 		got := runOutcome(t, command)
-		goldenOutcome(t, c.name, got, golden.Substitute(home, "<HOME>"))
+		// Given no socket, discovery scopes the directory by the default socket under
+		// CODEX_HOME, whose digest follows home.
+		scope, err := store.SocketScope(filepath.Join(env["CODEX_HOME"], "app-server-control", "app-server-control.sock"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		goldenOutcome(t, c.name, got, golden.Substitute(scope, "<DEFAULT-SCOPE>"), golden.Substitute(home, "<HOME>"))
 		if got.Code != c.code {
 			t.Fatalf("%s: %+v", c.name, got)
 		}
