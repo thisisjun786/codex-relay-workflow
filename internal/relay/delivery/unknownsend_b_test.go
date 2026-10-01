@@ -68,7 +68,8 @@ func (h *hl) reading(event string) []any {
 // fillWindow is UnknownSendCase.fill_window.
 func (h *hl) fillWindow(now float64) float64 {
 	window := math.Floor(now/3600) * 3600
-	h.exec("INSERT INTO recipient_rate (recipient_task_id, window_start, sends, last_send_at) VALUES (?,?,?,?)", parent, int64(window), h.delivery.Policy.MaxSendsPerRecipientPerHour, now-600)
+	h.exec("INSERT INTO recipient_rate (recipient_task_id, window_start, sends, last_send_at) VALUES (?,?,?,?)", parent, int64(window), h.delivery.Policy.MaxSendsPerRelationshipPerHour, now-600)
+	h.spendHour(h.rid, parent, int(h.delivery.Policy.MaxSendsPerRelationshipPerHour), now)
 	return window
 }
 
@@ -170,7 +171,8 @@ func Test21_USL15_the_hourly_cap_is_named_with_its_reopen_time(t *testing.T) {
 			event := h.queuedEvent(regOpts{})
 			now := h.clock.Now()
 			window := math.Floor(now/3600) * 3600
-			h.exec("INSERT INTO recipient_rate (recipient_task_id, window_start, sends, last_send_at) VALUES (?,?,?,?)", parent, int64(window), h.delivery.Policy.MaxSendsPerRecipientPerHour, now-1)
+			h.exec("INSERT INTO recipient_rate (recipient_task_id, window_start, sends, last_send_at) VALUES (?,?,?,?)", parent, int64(window), h.delivery.Policy.MaxSendsPerRelationshipPerHour, now-1)
+			h.spendHour(h.rid, parent, int(h.delivery.Policy.MaxSendsPerRelationshipPerHour), now)
 			h.eq(h.attemptOn(event, h.host, &now))
 			item := h.statusOf(event)
 			p := pacingOf(item)
@@ -196,7 +198,7 @@ func Test21_USL16_a_raised_or_lifted_cap_releases_the_delivery_within_a_minute(t
 			event, now, window := h.capped()
 			h.eq(h.attemptOn(event, h.host, &now))
 			raised := NewService(h.store, h.clock)
-			raised.Policy.MaxSendsPerRecipientPerHour = 24
+			raised.Policy.MaxSendsPerRelationshipPerHour = 24
 			h.clock.Advance(60)
 			h.eq(h.clock.Now() < window+3600)
 			record, err := raised.Attempt(h.ctx, event, h.host, at(h.clock.Now()), "")
@@ -207,7 +209,7 @@ func Test21_USL16_a_raised_or_lifted_cap_releases_the_delivery_within_a_minute(t
 	t.Run("zero cap lifted", func(t *testing.T) {
 		mirror(t, usl, cls+"test_a_lifted_zero_cap_releases_the_delivery_within_a_minute", func(h *hl) {
 			zero := NewService(h.store, h.clock)
-			zero.Policy.MaxSendsPerRecipientPerHour = 0
+			zero.Policy.MaxSendsPerRelationshipPerHour = 0
 			event := h.queuedEvent(regOpts{})
 			now := h.clock.Now()
 			record, err := zero.Attempt(h.ctx, event, h.host, &now, "")
@@ -224,7 +226,7 @@ func Test21_USL17_a_cap_of_zero_names_the_operator(t *testing.T) {
 	t.Run("pacing says only a changed policy reopens it", func(t *testing.T) {
 		mirror(t, usl, cls+"test_a_cap_of_zero_says_nothing_reopens_it_but_a_changed_policy", func(h *hl) {
 			policy := DefaultPolicy()
-			policy.MaxSendsPerRecipientPerHour = 0
+			policy.MaxSendsPerRelationshipPerHour = 0
 			p := policy.Pacing(h.clock.Now(), 0, nil)
 			h.eq([]any{field(p, "reason"), field(p, "reopensAt")})
 			h.eq(regexp.MustCompile("changed policy").MatchString(str(p, "detail")))
@@ -233,7 +235,7 @@ func Test21_USL17_a_cap_of_zero_names_the_operator(t *testing.T) {
 	t.Run("completion", func(t *testing.T) {
 		mirror(t, usl, cls+"test_a_cap_of_zero_is_read_again_each_minute_and_names_the_operator", func(h *hl) {
 			zero := NewService(h.store, h.clock)
-			zero.Policy.MaxSendsPerRecipientPerHour = 0
+			zero.Policy.MaxSendsPerRelationshipPerHour = 0
 			event := h.queuedEvent(regOpts{})
 			now := h.clock.Now()
 			record, err := zero.Attempt(h.ctx, event, h.host, &now, "")
@@ -248,7 +250,7 @@ func Test21_USL17_a_cap_of_zero_names_the_operator(t *testing.T) {
 	t.Run("correction", func(t *testing.T) {
 		mirror(t, usl, cls+"test_a_zero_cap_names_the_operator_for_a_correction", func(h *hl) {
 			h.correctionAfterNeedsChanges()
-			h.delivery.Policy.MaxSendsPerRecipientPerHour = 0
+			h.delivery.Policy.MaxSendsPerRelationshipPerHour = 0
 			h.eq(h.nextAction())
 		})
 	})

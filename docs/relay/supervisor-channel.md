@@ -128,10 +128,19 @@ carried by the envelope alone until somebody decides what an answer cannot do wi
    from a reporting observation - one a caller passes in, or one this store derives from the
    declarations the child's relay recorded here (see an omission this store derives) - and what
    vouches for it is that reading, which cannot precede the settlement it reads.
-3. The per-recipient hourly bound is SHARED between the two queues on purpose. It bounds how
-   often one task may be woken, and two queues feeding one task must not each get their own
-   budget. The consequence, said rather than implied: where one task is both a parent and a
-   supervisor, a report can wait behind parent-child traffic to that same task. The transport
+3. The send budget is SHARED between the two queues on purpose, at two grains. The minimum gap
+   between two sends is the recipient's, shared outright: it bounds how often one task may be
+   woken, and two queues feeding one task must not each get their own. The hourly count is the
+   relationship's (CRW-259): a report is charged to the relationship it reports, toward the
+   recipient it goes to, together with that relationship's parent-child deliveries to the same
+   task, so one relationship's loop cannot wake a task more than the cap an hour through either
+   queue, and a parent with many children is not held to one count for all of them. The
+   consequence, said rather than implied: where one task is both a parent and a supervisor, a
+   report can wait behind parent-child traffic to that same task through the gap, and through the
+   hour only when it is the same relationship's traffic. A transport counts toward the hour when
+   its attempt may have gone (it sent something, or its retry was not shown safe), the same test
+   that stops a message with such an attempt from being re-addressed, so counted usage cannot move
+   to another relationship or recipient; a transport that started and sent nothing woke nobody. The transport
    lock is shared in the same way within one adapter worker, which is where it lives; it is
    not a process-wide or durable lock.
    Both halves of the bound - the hourly count and the minimum gap between two sends - are

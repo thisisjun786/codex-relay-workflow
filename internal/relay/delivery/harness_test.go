@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -303,8 +305,24 @@ func (f *fixture) count(query string, args ...any) int64 {
 	return f.one(query, args...).I("c")
 }
 
+// spendHour records n sends of relationship rid to recipient inside now's hour window, the way n
+// claims would have left them: attempts of a delivery of that relationship, stamped at the
+// window's opening. A delivery of its own carries them so the fixture's real deliveries keep
+// their own attempts.
+func (f *fixture) spendHour(rid, recipient string, n int, now float64) {
+	f.t.Helper()
+	stamp := ISOOf(math.Floor(now/3600) * 3600)
+	event := "seed-" + rid + "-" + recipient
+	_, err := execSQL(f.ctx, f.store, "INSERT OR IGNORE INTO deliveries (event_id, relationship_id, kind, recipient_task_id, recipient_thread_id, state, attempt_count, next_eligible_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?,NULL,?,?)", event, rid, Completion, recipient, recipient, Acknowledged, n, stamp, stamp)
+	mustDo(f.t, err)
+	for i := 1; i <= n; i++ {
+		_, err := execSQL(f.ctx, f.store, "INSERT INTO attempts (request_id, event_id, attempt_no, kind, internal_state, state, sent_at, observed_at) VALUES (?,?,?,?,?,?,?,?)", fmt.Sprintf("%s-%d", event, i), event, i, Completion, "settled", Dispatched, stamp, stamp)
+		mustDo(f.t, err)
+	}
+}
+
 func (f *fixture) eligible() []string {
-	rows, err := f.delivery.Eligible(f.ctx, f.clock.Now(), 10, 0, 0, nil)
+	rows, err := f.delivery.Eligible(f.ctx, f.clock.Now(), 10, 0, 0)
 	mustDo(f.t, err)
 	var ids []string
 	for _, r := range rows {

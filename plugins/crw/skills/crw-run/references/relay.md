@@ -366,8 +366,10 @@ correction still held because its recipient was not loaded are three different f
 Six sit at the top level of the creation response. `environments` does not: on the current response
 it is nested at `creation.thread.environments`, so read it from there. When the response reports
 `activePermissionProfile`, carry it into the record's `expectedPermissionProfile` field, which is
-the key a later resume is checked against. Never ask a worker to echo its own settings back, and
-never widen a task's permissions to make a later send connect.
+the key a later resume is checked against. (That is how you record settings yourself, with
+`settings-record` or `--child-settings`; `managed-start` takes the value from its request, below.)
+Never ask a worker to echo its own settings back, and never widen a task's permissions to make a
+later send connect.
 
 Carry that value WHOLE. The later check is object equality against what the resume reports, so a
 record holding only the profile's id can never match: the comparison sees an id-shaped object
@@ -384,6 +386,25 @@ recorded sandbox type, extending nothing: `:danger-full-access`, `:workspace` or
 `extends` null or absent. Codex 0.154 reports one on every thread run from a sandbox mode, and it
 grants nothing the sandbox comparison does not already check. Any other profile, a custom one or
 one that extends another, is still `UNVERIFIABLE_PERMISSION_PROFILE` until the record carries it.
+
+A `managed-start` request carries the same object. Each role's `settings` there takes
+`expectedPermissionProfile` as the whole object, or as text (the form it took before, which matches
+only a host that reports that same text; Codex 0.154 reports an object), and leaves it out for a task
+running its sandbox's built-in profile. The object needs an `id` of text and may carry an `extends`
+that is null or text, kept exactly as written: an absent `extends` and a null one stay different
+objects. Any other member must hold text, a boolean or null, with no number and nothing nested, and the
+object holds at most 16 keys. Every key and every text value, the text form included, must be nonblank,
+free of NUL and at most 500 characters. A request outside that is refused before anything is created.
+The record stores the object as given, with its keys sorted like the rest of the record, so the order
+you wrote them in does not matter and a request that differs only in that order is the same request.
+
+The request is the only authority for the profile. `managed-start` checks the creation response's
+`activePermissionProfile` against what the request names and refuses `creation_settings_unverified`
+when they differ: a custom object has to come back equal, and a request naming none accepts only the
+built-in profile of its sandbox, or no profile at all. It does not copy the response's profile into
+the child's record, because that would record what the host chose and not what was authorized. The
+creation call cannot ask the host for a profile, so a child's is the one the host gives its sandbox:
+name that value, or none.
 
 `--parent-settings` and `--child-settings` are optional. Leaving them off still registers the
 relationship, and either side can be recorded afterwards with
@@ -761,24 +782,24 @@ state directory it
 was given, then reports the completion as UNEMITTED. It does not claim a receipt it could not
 write, and it does not adopt another relationship or nominate a different owner.
 
+### Recovery after late registration
+
 The coordinator recovers it after registering, from that SAME child, in a later turn on that same
-task. A turn which is not the generation's anchor is refused with `unassigned_turn` unless it
-carries a continuation claim naming the anchor it continues:
+task. That turn is not the generation's anchor, so its emit carries the continuation claim
+described in [Completing on a later turn of the same child](#completing-on-a-later-turn-of-the-same-child),
+and the reason says what happened:
 
     codex-session-relay --state "$RELAY_STATE" emit --relationship <rel> --generation <n> \
       --outcome ready_for_review --turn-thread <own task id> --turn-id <the later turn> \
       --artifact /abs/path --continues-anchor <that generation's dispatch turn> \
       --continuation-actor <own task id> --continuation-reason 'recovered after late registration'
 
-That anchor is checked against the registry, so a claimant which does not know which execution it
-is continuing cannot produce one, and naming the wrong anchor is refused the same way. Where an
-operator has to record the admission out of band instead, `admit-turn --relationship <rel>
---generation <n> --turn <id> --actor <who> --reason <why>` does it.
-
 Recovery lands the receipt that was always owed rather than a second one. For `ready_for_review`
 the event's identity is the relationship, generation, revision and outcome, NOT the turn, so the
 recovered receipt carries the same event id and revision hash the on-time emit would have
 produced. That is why this is a recovery and not a duplicate writer.
+
+### Another task owns the assignment
 
 A lookup that returns an assignment whose child is some other task is the other shape of the same
 moment, and it is not recoverable this way: a second registration for that issue is refused with
@@ -790,6 +811,65 @@ A completed turn carrying no receipt is an ordinary turn end, never success. Wha
 must record so that an ordinary turn end can be told apart from a finished one, and what a hook may
 conclude from a Stop event, are decided in
 [Managed marker, completion state, and hook adjudication](hook-contract.md).
+
+## Completing on a later turn of the same child
+
+A child that works across several turns completes in whichever turn it happens to be in, and the
+relay accepts a receipt from three kinds of turn only: the generation's anchor (the dispatch turn
+it bound for that generation), a turn already admitted against that anchor (managed-start admits
+the business turn it delivered once it has confirmed the dispatch), and a turn the receipt itself
+admits by carrying a continuation claim. Any other turn is refused `unassigned_turn`. A child
+under CXC Loop usually ends in the third kind: while its goal is outstanding Codex opens
+goal-continuation turns, and an App Server restart cuts the business turn, so the completion comes
+from a turn nobody admitted. A child outside a loop that finishes after a restart is in the same
+position.
+
+    codex-session-relay --state "$RELAY_STATE" emit --relationship <rel> --generation <n> \
+      --outcome ready_for_review --turn-thread <own task id> --turn-id <this turn> \
+      --artifact /abs/path --continues-anchor <that generation's anchor turn> \
+      --continuation-actor <own task id> \
+      --continuation-reason 'goal-continuation turn of the same managed child'
+
+Only `--continues-anchor` is required for the claim: the actor defaults to the turn thread and the
+reason to `continuation of this execution`, and both are worth stating. Attach the claim to the
+first emit from a turn that is not the anchor rather than after a refusal. A refusal is answered by
+one re-emit with the claim: its detail names the anchor the generation has, and the `emit`
+command adds the flags that state the claim.
+
+**Reading the anchor.** It is the relay's record, so a child reads it from the relay and not from a
+value a packet or a coordinator typed.
+
+- `status --relationship <rel>` is read-only and prints `observation.anchors.<rel>.turnId` for the
+  generation that is open now. `anchorPending: true` means no anchor is bound yet; a receipt in
+  that generation is refused `unbound_generation` and nothing can be claimed against it.
+- A managed start's routing record carries `standbyTurnId`, which is the FIRST generation's anchor
+  and no other generation's. The routing text's instruction to name it in a continuation claim
+  holds for that generation only: a correction (`needs_changes`) opens a new generation anchored
+  to the turn its revision request was dispatched into, so a claim there names that turn, and
+  naming the first generation's anchor is refused.
+- The `unassigned_turn` refusal prints `(anchor '<id>')`.
+
+`assignment-show` and `assignment-find` do not report the anchor.
+
+**What the relay checks.** The thread must be the relationship's registered child, and that check is
+absolute: a turn of any other task is refused whatever its claim says, and the refusal suggests no
+claim. The anchor turn and a turn already admitted for the generation are accepted without looking
+at a claim. For any other turn the anchor the claim names must be the one bound for that
+generation; a claim naming another anchor is refused and the refusal names the right one. A claim
+that is accepted is stored with the admission as
+`<actor>: <reason> | corroboration=not_corroborated`. The relay does not verify the actor or the
+reason, and it does not check that the turn follows the anchor in time; host ordering can
+corroborate or contradict a claim and never admits a turn on its own. Knowing the anchor is
+therefore not proof of continuity, since the refusal prints it: the claim is the child's statement
+of fact and the admission records that it was made. A turn admitted once needs no claim again within
+that generation, and an admission does not carry into another generation.
+
+Where an operator has to record the admission out of band instead, `admit-turn --relationship
+<rel> --generation <n> --turn <id> --actor <who> --reason <why>` does it.
+
+Admission changes which turns may emit and nothing else. Offline, the receipt is still STAGED until
+a host-capable process observes the turn end, as in
+[A staged receipt needs a host-capable process](#a-staged-receipt-needs-a-host-capable-process).
 
 ## The parent verifies
 
@@ -1039,7 +1119,8 @@ the bind. A child that meets the refusal is not stuck and does not wait for bind
 preserves the artifact and reports the completion unemitted, exactly as for an assignment that is
 not registered yet, and the coordinator binds the anchor and recovers the receipt from that same
 child. Polling for the binding would be a readiness loop, and this workflow does not have one.
-If the child completes on a later turn than the anchor, that is the continuation claim above.
+If the child completes on a later turn than the anchor, that is a
+[continuation turn of the same child](#completing-on-a-later-turn-of-the-same-child).
 
 The child then emits under the new generation. Identical artifact bytes are fine: event identity
 includes the generation, so the receipt is a new event, its claim binds the CURRENT criteria set,

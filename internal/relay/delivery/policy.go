@@ -18,21 +18,35 @@ const (
 )
 
 // RetryPolicy is policy.RetryPolicy with its defaults.
+//
+// The send budget has two parts with two owners. MinSendInterval is the recipient's: a task is
+// woken at most once in that gap, whoever sends. MaxSendsPerRelationshipPerHour is the
+// relationship's: it fences one relationship (a parent and a child with one issue) from waking one
+// recipient more than that many times in an hour, which is what a loop looks like. The cap used to
+// be counted per recipient, so every child of a parent spent the same twelve and a parent with ten
+// children stopped receiving; counted per relationship, a parent with R children can receive up to
+// 12 R an hour (the gap still holds a recipient to 720 an hour) and one runaway relationship still
+// stops at 12.
 type RetryPolicy struct {
-	BusyBase, BusyMax           float64
-	BusyMaxAttempts             int64
-	PresendBase, PresendMax     float64
-	MaxAttempts                 int64
-	MinSendInterval             float64
-	MaxSendsPerRecipientPerHour int64
-	LifecycleRecheck            float64
-	Lease                       float64
-	MaxSendsPerParentPerTick    int
+	BusyBase, BusyMax              float64
+	BusyMaxAttempts                int64
+	PresendBase, PresendMax        float64
+	MaxAttempts                    int64
+	MinSendInterval                float64
+	MaxSendsPerRelationshipPerHour int64
+	LifecycleRecheck               float64
+	Lease                          float64
+	// MaxSendsPerParentPerTick is how many attempts one parent may use in a tick, and how many of its
+	// recipients' queues the tick takes. A tick wakes a recipient at most once (its instant is fixed
+	// and the gap is longer), so what a parent needs is one attempt per recipient that can take a send;
+	// a refused row costs an attempt too. With the daemon's 20 s tick and four attempts a tick the
+	// scheduler can deliver 180 an hour to a parent and 720 an hour in all.
+	MaxSendsPerParentPerTick int
 }
 
 func DefaultPolicy() RetryPolicy {
 	return RetryPolicy{BusyBase: 15, BusyMax: 300, BusyMaxAttempts: 40, PresendBase: 30, PresendMax: 900, MaxAttempts: 6,
-		MinSendInterval: 5, MaxSendsPerRecipientPerHour: 12, LifecycleRecheck: 60, Lease: 300, MaxSendsPerParentPerTick: 2}
+		MinSendInterval: 5, MaxSendsPerRelationshipPerHour: 12, LifecycleRecheck: 60, Lease: 300, MaxSendsPerParentPerTick: 2}
 }
 
 func (p RetryPolicy) DelayFor(attemptNo int64, reason string) float64 {
@@ -64,10 +78,12 @@ func (p RetryPolicy) RateWindows(now float64) (float64, float64) {
 	return window, window - reach
 }
 
-// Pacing is policy.pacing: why a recipient may not be woken now, or nil.
+// Pacing is policy.pacing: why a recipient may not be woken now, or nil. sends is how many sends
+// the delivery's own relationship has charged to the recipient this hour, and last is the
+// recipient's latest send of any relationship.
 func (p RetryPolicy) Pacing(now float64, sends int64, last *float64) Obj {
 	window, _ := p.RateWindows(now)
-	capacity := p.MaxSendsPerRecipientPerHour
+	capacity := p.MaxSendsPerRelationshipPerHour
 	var gapEnds *float64
 	if last != nil {
 		g := *last + p.MinSendInterval

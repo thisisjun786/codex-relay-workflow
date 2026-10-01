@@ -82,7 +82,7 @@ func validateSettings(value any, at string) error {
 		}
 	}
 	if profile, ok := m["expectedPermissionProfile"]; ok && profile != nil {
-		if err := text(profile, at+".expectedPermissionProfile", 500); err != nil {
+		if err := permissionProfile(profile, at+".expectedPermissionProfile"); err != nil {
 			return err
 		}
 	}

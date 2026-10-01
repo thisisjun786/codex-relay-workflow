@@ -403,7 +403,7 @@ transport call.
 |---|---|
 | `awaiting_receipt` | the child has not produced a completion receipt yet |
 | `awaiting_send` | the receipt is collected and accepted; this relay has not reached the recipient yet |
-| `awaiting_send:hourly_cap` | as above, and the recipient's hourly send cap is spent; `pacing` says until when (see "When the send budget holds a delivery") |
+| `awaiting_send:hourly_cap` | as above, and the delivery's relationship has spent its hourly send cap to this recipient; `pacing` says until when (see "When the send budget holds a delivery") |
 | `in_flight` | a send was claimed and its outcome is not yet settled |
 | `parent_busy` | the parent is mid-turn; it is never interrupted |
 | `settings_rejected` | the host would not confirm the authorized execution settings; `settingsHold` and `recovery` name who restores them |
@@ -469,14 +469,20 @@ program writes after a newer program's settlement, which only an upgrade window 
 service holds one daemon per store, but a relay CLI is not under that lock), is read as the
 settlement's cause until the next transition is recorded.
 
-An unsent, unheld delivery whose recipient's send budget is what holds it also carries `pacing`. The
+An unsent, unheld delivery whose send budget is what holds it also carries `pacing`. The
 budget holds it unless the delivery's own backoff (a busy recipient, a pre-send failure) ends later
 than the budget reopens; then the backoff is what holds it and no `pacing` is shown. The block is
 `{reason, reopensAt, sends, cap, windowStart}`, where the reason is `hourly_cap` or
 `min_send_interval`. It is read live from the same budget the claim spends, so it is never stored
-and never a hold or a failure (I-225). A delivery refused by the hourly cap is tried again at its
-window's end or within a minute, whichever is sooner, so a policy changed in the meantime takes
-effect; `reopensAt` is the window's end and does not move from tick to tick.
+and never a hold or a failure (I-225). `sends` and `cap` are the delivery's own relationship's
+count of sends to this recipient this hour and the cap on it (CRW-259; they were the recipient's
+count of every relationship's sends, which a parent with many children exhausted); the gap
+behind `min_send_interval` is still the recipient's. The daemon does not attempt a delivery whose
+relationship has spent its hour: it is not due until the window reopens, and the cap is read
+against the live policy every tick, so a cap raised mid-window releases it on the next tick. A
+direct claim (`deliver --event`) is still refused by the cap, before or inside its claim, and tried
+again at the window's end or within a minute, whichever is sooner; `reopensAt` is the window's end
+and does not move from tick to tick.
 
 `status` also reports `pendingIntents`: events whose delivery was wanted and refused before a
 delivery row could exist, which a paused or unauthorized assignment produces. They have no
@@ -507,11 +513,22 @@ while producing no receipt of its own - so the owner's parent waited on an outco
 already been discarded. An inactive assignment's staged claim is left untouched until it is
 resumed, and is excluded from backlog for the same reason: the scheduler will not process it.
 
-Each parent's delivery window rotates. The parent order decides who goes first; a persistent
-per-parent cursor decides where that parent's own window starts, and it advances only by what
-was actually attempted. Without it the window was always a parent's oldest rows, so a delivery
-that fails before changing its own state stays eligible, stays oldest and blocks every later
-delivery for that parent indefinitely.
+Each parent's deliveries are served by recipient and, within a recipient, in the order their events
+were created (the event's first sighting, then when its delivery was queued). The parent's due
+rows form one queue per recipient; a persistent per-parent pointer holds the recipient last
+attempted and the tick takes the queues after it, so a recipient that cannot take a send (busy,
+withheld, inside its gap) costs one attempt and never keeps another recipient of the same parent
+waiting (a recipient whose rows are refused can use the parent's attempts of one tick, and the pointer has moved on by the next). Inside a queue the walk starts after a marker, the key of the last row the previous tick
+refused, and a refusal is an attempt that returned an error or returned nothing while its row did
+not move: that row stays as it is, no hold and no reschedule, the walk goes on to the recipient's
+next row within the tick's attempts, and the next tick starts after it. Without this a delivery
+that fails before changing its own state stays due, stays oldest and blocks every later delivery for
+that parent indefinitely. A tick that refuses nothing clears the marker, so with nothing refused a
+recipient's deliveries go out in creation order: a backlog that built up while the parent was busy
+leaves one a tick, oldest first, as soon as its turn ends. Both are keys, not positions, because a
+position into a list that changes between ticks drifts when rows leave and come back; a cursor an
+older scheduler wrote (an index) reads as no pointer. A relationship that has spent its hour is
+not due (see "When the send budget holds a delivery"), so its queued rows spend no attempt.
 
 A delivery that has reached its busy or pre-send attempt cap is annotated when its generation
 advances. Once a cap sets a hold, `attempt` returns before the pre-send supersession check, so
@@ -862,9 +879,18 @@ K5ctl leg.
 
 ## When the send budget holds a delivery
 
-Every sender that wakes a task shares one budget per recipient: a minimum gap between sends and a
-cap per hour (`min_send_interval_seconds`, `max_sends_per_recipient_per_hour`, I-225). CRW-124's
-H7 leg met the cap: an interrupted notice to the parent read `queued` with no hold, no failure
+The send budget has two owners (CRW-259). The recipient owns the gap: a task is woken at most once
+in `min_send_interval_seconds`, whoever sends, the parent-child queue or the supervisor channel. A
+relationship owns the hour: it may wake one recipient `max_sends_per_relationship_per_hour` times
+(12), counted over both queues from the attempts the relay already records, with no count stored
+for it (I-225, I-475). An attempt that woke nobody does not count: a delivery attempt that failed
+before the send or found the recipient busy, and a supervisor transport that sent nothing and may
+be retried; a claim still in flight, or one whose outcome is unknown, counts until it settles. The hour used to be one count per recipient, so a parent with ten children
+stopped receiving at twelve deliveries an hour in all; now it can receive 12 an hour from each
+child, a runaway relationship still stops at 12, and the gap holds the recipient to 720 an hour
+whatever the number of relationships.
+
+CRW-124's H7 leg met the cap: an interrupted notice to the parent read `queued` with no hold, no failure
 and a `nextEligibleAt` that moved every tick, and `assignment-show` said `daemon_delivers`,
 from 16:42:25Z until the 17:00Z window opened. Nothing named the cap or when it would reopen.
 
@@ -937,8 +963,12 @@ Status: implemented.
 **Every parent gets a turn.** Selection asks which parents have anything to send before it
 asks how much each of them has, then takes a bounded share from each, dealt one at a time.
 A single oldest-first window let one parent's backlog take every slot. Reconciliation is
-selected the same way. A parent whose send errors or defers is skipped for the rest of that
-tick only; it reserves no capacity and creates no hold.
+selected the same way. A recipient that sends, defers or is busy ends its own queue for that tick; a row that errors is refused, the next row of that recipient is tried, and none of it reserves capacity or creates a hold. The tick has one budget of attempts
+(`max_sends_per_tick`, 4), whatever their outcome, and a parent may use two of them
+(`MaxSendsPerParentPerTick`). A tick wakes a recipient at most once, because its instant is fixed
+and the gap is longer, so through the daemon (20 s ticks) one parent receives at most 180
+deliveries an hour and the scheduler as a whole 720; a recipient reached outside the daemon (the
+`deliver` command) is held to 720 an hour by the gap alone.
 
 This is scheduler fairness. Transport concurrency is a separate guarantee, and it is now a
 real one: the adapter dispatches each submission as its own task and allows one send in

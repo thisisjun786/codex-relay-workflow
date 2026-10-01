@@ -72,7 +72,7 @@ func Test24_SCH_40_RateIsSharedWithDelivery(t *testing.T) {
 	_, stage := f.staged(t)
 	id := stage["messageId"].(string)
 	service := delivery.NewService(f.s, delivery.SystemClock{})
-	if refused, err := service.ReserveSend(f.ctx, "supervisor", 1_700_000_000); err != nil || refused != "" {
+	if refused, err := service.ReserveSend(f.ctx, "other-relationship", "supervisor", 1_700_000_000); err != nil || refused != "" {
 		t.Fatalf("delivery reserve %q %v", refused, err)
 	}
 	result, err := f.c.Attempt(f.ctx, id, &sendHost{status: "idle"}, 1_700_000_001)
