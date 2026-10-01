@@ -4288,6 +4288,37 @@ Evidence: `internal/relay/delivery/{cli.go,cli_emit.go,intent_cli.go}`;
 `internal/relay/dispatch/answer.go` (`Host`, `Detail`); the goldens of internal/relay/delivery,
 internal/relay/cli and internal/contracttest.
 
+## Decision R3F-1. What R3 left unreachable is deleted (refactor R3, final sweep)
+
+Decision: once the four R3 areas merged, the code they had stopped calling is deleted, found with
+`deadcode -test` and `deadcode` (with the `dev` and `integration` tags) and staticcheck's U1000:
+
+- `internal/bridge/pyerr` (CPython's OSError class and `str()` for an errno), which decision
+  R3R-5 kept for `internal/relay/registry` until decision R3D-5 removed that caller;
+- `settings.StderrText`, `pyjson.ErrorWithBudget` with the scanner's model of CPython 3.13's
+  recursion budget (its one caller went with decision R3S-2), `pyjson.Unquote`,
+  `RawDecodePrefix`, `DecodeReplace`, `DecodeBytesWTF8` and `LoadOptions.RawSurrogates`, and the
+  fold-era helpers of `pyjsontest`;
+- ports of Python helpers that only their own tests called: `reading.Unusable`,
+  `reading.PathIdentity`, `record.PointerEntryFor`, `staging.IsSettled` and
+  `faults.WallClockISO` (which one delivery test keeps as its own clock).
+
+Kept, though only tests reach them: the seams tests drive a product surface through (fake clocks,
+`appserver.Dial`, `ledger.Open`, `cli.Execute`, the command table's `Registered`, `Lookup` and
+`Names`, the store forwarders the adapter's lease tests call, `registry.ResetRolePolicySnapshot`),
+and three ported behaviours no product path calls, left for the owner to wire or delete:
+`registry.CheckUnloadedTransmission`, the only implementation of the contract's
+`unverified_pair_for_unloaded_thread` refusal; `registry.SettingsFreeRefusalCode`, which the
+host adapter's `verifyResume` repeats inline; and `store.ReceiptIntake.ResolveStaged`, the
+resolution of staged receipt claims at a turn's end.
+
+Consumer check: deadcode reports no function unreachable from the tests after the deletions; the
+pyjson corpus golden's row for `hook.Decode` now reads with that reader's own options (it named
+`RawSurrogates`, which `hook.Decode` stopped using).
+
+Evidence: commits [R3F1] and [R3F2]; internal/pyjson/{scan.go,bytes.go,loads.go,utf8.go,
+corpus_test.go}; internal/pyjson/pyjsontest/corpus.go.
+
 ## Decision R3F-2. What R3 left of the Python value helpers is named for the format it keeps (refactor R3, final sweep)
 
 Decision: the helpers that outlived the Python relay say what they keep.
