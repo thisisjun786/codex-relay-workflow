@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -433,5 +434,46 @@ func TestScale_a_legacy_scheduler_cursor_is_not_a_pointer(t *testing.T) {
 	}
 	if got := w.f.one("SELECT cursor FROM discovery_cursors WHERE task_id = 'scheduler' AND listing = ?", "deliver:"+scaleParent).S("cursor"); got != scaleParent {
 		t.Errorf("the parent's pointer is %q, want the recipient last attempted %q", got, scaleParent)
+	}
+}
+
+// Whether a relationship has spent its hour is one grouped read joined to the due list, not an
+// expression evaluated for each candidate: ten thousand queued deliveries of a runaway relationship
+// are set aside in a fraction of a second (the per-candidate form took six seconds).
+func TestScale_a_large_backlog_of_a_capped_relationship_is_set_aside_in_linear_time(t *testing.T) {
+	const backlog = 10000
+	w := newScaleWorld(t, 2)
+	runaway := w.rels[0]
+	w.f.spendHour(runaway.rid, scaleParent, int(w.f.delivery.Policy.MaxSendsPerRelationshipPerHour), w.f.clock.Now())
+	stamp := w.f.clock.ISO()
+	w.exec("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?) INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status, receipt, first_seen_at, last_seen_at) SELECT 'bulk-' || i, ?, 1, 'h', 'ready_for_review', 'child', ?, ?, 'completed', '{}', ?, ? FROM n", backlog, runaway.rid, runaway.child, runaway.turn, stamp, stamp)
+	w.exec("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?) INSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id, recipient_thread_id, state, attempt_count, created_at, updated_at) SELECT 'bulk-' || i, ?, 'completion', ?, ?, 'queued', 0, ?, ? FROM n", backlog, runaway.rid, scaleParent, scaleParent, stamp, stamp)
+	calm := w.emit(1)
+	began := time.Now()
+	parents, err := w.f.delivery.EligibleParents(w.f.ctx, w.f.clock.Now())
+	mustDo(t, err)
+	rows, err := w.f.delivery.EligibleRows(w.f.ctx, scaleParent, w.f.clock.Now())
+	mustDo(t, err)
+	if elapsed := time.Since(began); elapsed > 3*time.Second {
+		t.Errorf("selecting among %d queued deliveries took %v", backlog, elapsed)
+	}
+	if !slices.Equal(parents, []string{scaleParent}) || len(rows) != 1 || rows[0].S("event_id") != calm {
+		t.Errorf("due: parents %v, %d rows; want the parent and only the calm sibling's %s", parents, len(rows), calm)
+	}
+}
+
+// A negative limit lists nothing; it does not slice a list with a negative bound.
+func TestScale_a_negative_limit_lists_nothing(t *testing.T) {
+	w := newScaleWorld(t, 2)
+	w.emit(0)
+	w.emit(1)
+	for _, limit := range []int{-1, 0} {
+		rows, err := w.f.delivery.Eligible(w.f.ctx, w.f.clock.Now(), limit, limit, 0)
+		if err != nil || len(rows) != 0 {
+			t.Errorf("limit %d: %d rows, %v", limit, len(rows), err)
+		}
+	}
+	if rows, err := w.f.delivery.Eligible(w.f.ctx, w.f.clock.Now(), 4, -1, 0); err != nil || len(rows) != 0 {
+		t.Errorf("a negative share: %d rows, %v", len(rows), err)
 	}
 }

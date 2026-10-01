@@ -285,22 +285,24 @@ const eligibleBase = " WHERE d.state IN (?,?,?) AND d.hold_reason IS NULL AND (d
 // its event was created in.
 const eligibleOrder = " ORDER BY e.first_seen_at, d.created_at, d.event_id"
 
-// eligibility is the predicate of a due delivery and its arguments at now. A delivery whose
-// relationship has already spent its hourly budget for the recipient is not due until the window
-// reopens: it would only be refused, and a runaway relationship's refused rows must not take the
-// attempts its calm siblings need. The count is read against the live policy cap, so a cap raised
-// mid-window takes effect on the next tick.
-func (d *Service) eligibility(now float64) (string, []any) {
+// eligibility is the join and predicate of a due delivery and their arguments at now (the four
+// stamps of the window's two counts, then the predicate's). A delivery whose relationship has
+// already spent its hourly budget for the recipient is not due until the window reopens: it would
+// only be refused, and a runaway relationship's refused rows must not take the attempts its calm
+// siblings need. The count is read against the live policy cap, so a cap raised mid-window takes
+// effect on the next tick. The spent counts are one grouped read joined to the candidates, not an
+// expression evaluated for each of them.
+func (d *Service) eligibility(now float64) (string, string, []any) {
 	window, _ := d.Policy.RateWindows(now)
-	where := eligibleBase + " AND " + store.RelationshipSendsSQL("d.relationship_id", "d.recipient_task_id") + " < ?"
-	args := append([]any{Queued, DeferredBusy, WithheldPreSend, now}, store.RelationshipSendsArgs(window)...)
-	return where, append(args, d.Policy.MaxSendsPerRelationshipPerHour)
+	join := " LEFT JOIN " + store.RelationshipSpentSQL + " sbspent ON sbspent.relationship_id = d.relationship_id AND sbspent.recipient_task_id = d.recipient_task_id"
+	args := append(store.RelationshipSendsArgs(window), Queued, DeferredBusy, WithheldPreSend, now, d.Policy.MaxSendsPerRelationshipPerHour)
+	return join, eligibleBase + " AND COALESCE(sbspent.spent, 0) < ?", args
 }
 
 // EligibleParents is eligible_parents.
 func (d *Service) EligibleParents(ctx context.Context, now float64) ([]string, error) {
-	where, args := d.eligibility(now)
-	rows, err := all(ctx, d.Store, "SELECT DISTINCT r.parent_task_id AS parent_task_id FROM deliveries d JOIN relationships r ON r.relationship_id = d.relationship_id JOIN events e ON e.event_id = d.event_id"+where+" ORDER BY r.parent_task_id", args...)
+	join, where, args := d.eligibility(now)
+	rows, err := all(ctx, d.Store, "SELECT DISTINCT r.parent_task_id AS parent_task_id FROM deliveries d JOIN relationships r ON r.relationship_id = d.relationship_id JOIN events e ON e.event_id = d.event_id"+join+where+" ORDER BY r.parent_task_id", args...)
 	var out []string
 	for _, r := range rows {
 		out = append(out, r.S("parent_task_id"))
@@ -311,14 +313,17 @@ func (d *Service) EligibleParents(ctx context.Context, now float64) ([]string, e
 // EligibleRows is every due delivery of one parent, in event creation order. Each row carries the
 // event's first_seen_at, which the scheduler's refusal marker is keyed by.
 func (d *Service) EligibleRows(ctx context.Context, parent string, now float64) ([]Row, error) {
-	where, args := d.eligibility(now)
-	return all(ctx, d.Store, "SELECT d.*, r.parent_task_id AS parent_task_id, e.first_seen_at AS first_seen_at FROM deliveries d JOIN relationships r ON r.relationship_id = d.relationship_id JOIN events e ON e.event_id = d.event_id"+where+" AND r.parent_task_id = ?"+eligibleOrder, append(args, parent)...)
+	join, where, args := d.eligibility(now)
+	return all(ctx, d.Store, "SELECT d.*, r.parent_task_id AS parent_task_id, e.first_seen_at AS first_seen_at FROM deliveries d JOIN relationships r ON r.relationship_id = d.relationship_id JOIN events e ON e.event_id = d.event_id"+join+where+" AND r.parent_task_id = ?"+eligibleOrder, append(args, parent)...)
 }
 
 // Eligible lists due deliveries: every eligible parent, then a bounded share of each parent's
 // oldest rows, dealt one at a time. The scheduler does not use it (it walks EligibleRows with its
 // refusal cursors); the deliver command lists with it.
 func (d *Service) Eligible(ctx context.Context, now float64, limit, perParent, cursor int) ([]Row, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
 	parents, err := d.EligibleParents(ctx, now)
 	if err != nil || len(parents) == 0 {
 		return nil, err
@@ -327,6 +332,7 @@ func (d *Service) Eligible(ctx context.Context, now float64, limit, perParent, c
 	if share == 0 {
 		share = d.Policy.MaxSendsPerParentPerTick
 	}
+	share = max(share, 0)
 	start := cursor % len(parents)
 	order := append(slices.Clone(parents[start:]), parents[:start]...)
 	queues := map[string][]Row{}

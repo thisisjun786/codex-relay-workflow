@@ -45,6 +45,23 @@ func RelationshipSendsSQL(relationship, recipient string) string {
 		" AND (sbs.send_attempted <> 'no' OR sbs.retry_safe = 0)))"
 }
 
+// RelationshipSpentSQL is a derived table of what every relationship has sent to every recipient
+// inside an hour window: one row per (relationship_id, recipient_task_id) with its count in spent.
+// It takes the four stamps of RelationshipSendsArgs and counts the same two kinds of row as
+// RelationshipSendsSQL, once for all pairs. A read over many candidate rows (the scheduler's due
+// list) joins this instead of evaluating the correlated expression for each candidate, which
+// rescans the relationship's deliveries every time and made a large backlog quadratic. The test
+// beside RelationshipSendsSQL holds the two to the same numbers.
+const RelationshipSpentSQL = "(SELECT relationship_id, recipient_task_id, SUM(sends) AS spent FROM (" +
+	"SELECT sbd.relationship_id AS relationship_id, sbd.recipient_task_id AS recipient_task_id, COUNT(*) AS sends" +
+	" FROM attempts sba JOIN deliveries sbd ON sbd.event_id = sba.event_id" +
+	" WHERE sba.sent_at >= ? AND sba.sent_at < ? GROUP BY sbd.relationship_id, sbd.recipient_task_id" +
+	" UNION ALL SELECT sbm.relationship_id, sbm.recipient_task_id, COUNT(*)" +
+	" FROM supervisor_attempts sbs JOIN supervisor_messages sbm ON sbm.message_id = sbs.message_id" +
+	" WHERE sbs.transport_started_at >= ? AND sbs.transport_started_at < ?" +
+	" AND (sbs.send_attempted <> 'no' OR sbs.retry_safe = 0) GROUP BY sbm.relationship_id, sbm.recipient_task_id" +
+	") GROUP BY relationship_id, recipient_task_id)"
+
 // RelationshipSendsArgs are the four stamps RelationshipSendsSQL takes for the hour window that
 // opens at window.
 func RelationshipSendsArgs(window float64) []any {

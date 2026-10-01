@@ -80,4 +80,27 @@ func TestRelationshipSends_counts_one_relationship_to_one_recipient_in_one_windo
 			t.Errorf("%v: embedded %v, method %d, %v", row.Get("event_id"), row.Get("sends"), want, err)
 		}
 	}
+
+	// The grouped form the scheduler's due list joins counts the same pairs the same way.
+	spent, err := s.All(ctx, "SELECT spent.relationship_id AS relationship_id, spent.recipient_task_id AS recipient, spent.spent AS spent FROM "+RelationshipSpentSQL+" spent", RelationshipSendsArgs(window)...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, row := range spent {
+		relationship, recipient := row.Get("relationship_id").(string), row.Get("recipient").(string)
+		want, err := s.RelationshipSends(ctx, relationship, recipient, window)
+		if err != nil || row.Get("spent").(int64) != want {
+			t.Errorf("%s to %s: grouped %v, method %d, %v", relationship, recipient, row.Get("spent"), want, err)
+		}
+		seen[relationship+">"+recipient] = true
+	}
+	for _, pair := range []string{"rel-a>parent", "rel-a>child", "rel-b>parent"} {
+		if !seen[pair] {
+			t.Errorf("the grouped form has no row for %s", pair)
+		}
+	}
+	if len(spent) != 3 {
+		t.Errorf("the grouped form has %d rows, want 3", len(spent))
+	}
 }

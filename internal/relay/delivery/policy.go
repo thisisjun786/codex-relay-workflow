@@ -36,9 +36,10 @@ type RetryPolicy struct {
 	MaxSendsPerRelationshipPerHour int64
 	LifecycleRecheck               float64
 	Lease                          float64
-	// MaxSendsPerParentPerTick is how many recipients of one parent a tick attempts. A tick wakes a
-	// recipient at most once (its instant is fixed and the gap is longer), so the count is of
-	// recipients, not of queued rows. With the daemon's 20 s tick and four attempts a tick the
+	// MaxSendsPerParentPerTick is how many attempts one parent may use in a tick, and how many of its
+	// recipients' queues the tick takes. A tick wakes a recipient at most once (its instant is fixed
+	// and the gap is longer), so what a parent needs is one attempt per recipient that can take a send;
+	// a refused row costs an attempt too. With the daemon's 20 s tick and four attempts a tick the
 	// scheduler can deliver 180 an hour to a parent and 720 an hour in all.
 	MaxSendsPerParentPerTick int
 }

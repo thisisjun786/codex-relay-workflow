@@ -518,7 +518,7 @@ were created (the event's first sighting, then when its delivery was queued). Th
 rows form one queue per recipient; a persistent per-parent pointer holds the recipient last
 attempted and the tick takes the queues after it, so a recipient that cannot take a send (busy,
 withheld, inside its gap) costs one attempt and never keeps another recipient of the same parent
-waiting. Inside a queue the walk starts after a marker, the key of the last row the previous tick
+waiting (a recipient whose rows are refused can use the parent's attempts of one tick, and the pointer has moved on by the next). Inside a queue the walk starts after a marker, the key of the last row the previous tick
 refused, and a refusal is an attempt that returned an error or returned nothing while its row did
 not move: that row stays as it is, no hold and no reschedule, the walk goes on to the recipient's
 next row within the tick's attempts, and the next tick starts after it. Without this a delivery
@@ -951,8 +951,7 @@ Status: implemented.
 **Every parent gets a turn.** Selection asks which parents have anything to send before it
 asks how much each of them has, then takes a bounded share from each, dealt one at a time.
 A single oldest-first window let one parent's backlog take every slot. Reconciliation is
-selected the same way. A recipient whose send errors, defers or is busy ends its own queue for
-that tick only; it reserves no capacity and creates no hold. The tick has one budget of attempts
+selected the same way. A recipient that sends, defers or is busy ends its own queue for that tick; a row that errors is refused, the next row of that recipient is tried, and none of it reserves capacity or creates a hold. The tick has one budget of attempts
 (`max_sends_per_tick`, 4), whatever their outcome, and a parent may use two of them
 (`MaxSendsPerParentPerTick`). A tick wakes a recipient at most once, because its instant is fixed
 and the gap is longer, so through the daemon (20 s ticks) one parent receives at most 180
