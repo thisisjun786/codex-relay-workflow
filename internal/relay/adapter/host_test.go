@@ -89,3 +89,42 @@ func Test28_BuiltBinaryHostRoundTrips(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// deliver and verify-acks read --limit as the integer argparse parsed (a *big.Int), not only as
+// their int64 default: a given limit is served, and one past what SQLite binds is the host
+// error, exit 3, never a panic.
+func TestHostCommandsReadAGivenLimit(t *testing.T) {
+	root := t.TempDir()
+	host := fakehost.Start(t)
+	for _, c := range []struct {
+		argv  []string
+		exit  int
+		field string
+	}{
+		{[]string{"deliver", "--limit", "2"}, 0, "attempts"},
+		{[]string{"verify-acks", "--limit", "3"}, 0, ""},
+		{[]string{"deliver", "--limit", "99999999999999999999"}, 3, "error"},
+		{[]string{"verify-acks", "--limit", "-99999999999999999999"}, 3, "error"},
+	} {
+		state := filepath.Join(root, strings.Join(c.argv, "-"))
+		out, err := exec.Command(suiteBinary, append([]string{"relay", "--state", state, "--socket", host.SocketPath}, c.argv...)...).CombinedOutput()
+		code := 0
+		if e, ok := err.(*exec.ExitError); ok {
+			code = e.ExitCode()
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		var answer map[string]any
+		if code != c.exit || json.Unmarshal(out, &answer) != nil {
+			t.Fatalf("%v: exit %d, want %d: %s", c.argv, code, c.exit, out)
+		}
+		if c.field != "" {
+			if _, ok := answer[c.field]; !ok {
+				t.Fatalf("%v: no %q in %s", c.argv, c.field, out)
+			}
+		}
+		if c.exit == 3 && answer["error"] != "host" {
+			t.Fatalf("%v: %s", c.argv, out)
+		}
+	}
+}
