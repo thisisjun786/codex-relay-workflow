@@ -28,5 +28,5 @@ func init() {
 		supervisorReportRecordedCommand, supervisorStageCommand, supervisorSendCommand, supervisorReadCommand,
 		supervisorShowCommand, showCommand, statusCommand, daemonCommand)
 	dispatch.Register(nil, serviceCommands()...)
-	dispatch.Register(nil, doctorCommand, storeIdentityCommand, storeChallengeCommand, guardEvaluateCommand, mergeEvidenceCommand)
+	dispatch.Register(nil, doctorCommand, storeIdentityCommand, storeChallengeCommand, mergeEvidenceCommand)
 }

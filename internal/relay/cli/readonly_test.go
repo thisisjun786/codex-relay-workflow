@@ -20,7 +20,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
@@ -713,16 +716,15 @@ func TestServiceAndDaemon_wait_for_a_creation_in_progress_as_the_fence_does(t *t
 
 // The live-state guard refuses only under test isolation (decisions.md 46), and a read it
 // refuses is reported, never read as an unreadable store. A Stop whose receipt lives under the
-// live state root is answered with the refusal while CRW_REFUSE_LIVE_STATE=1 is exported, and
-// with a verdict when it is not, as the product answers it. The store is Go's, so no daemon's
-// absence refuses the Stop first: the Go CLI evaluates its own store in-process, and the other
-// runtime's it routes to that owner.
-func TestGuardEvaluate_reports_the_live_state_refusal(t *testing.T) {
+// live state root is answered by the guard's evaluation with the refusal while
+// CRW_REFUSE_LIVE_STATE=1 is exported, and with a verdict when it is not, as the product answers
+// it.
+func TestGuard_reports_the_live_state_refusal(t *testing.T) {
 	t.Setenv("CRW_REFUSE_LIVE_STATE", "1")
 	// The Stop's markers are filed under a digest of the workspace path: a home at a fixed path
-	// keeps the fixture's markers where this run looks for them.
-	home := isolateHome(t, fixedTree(t, t.Name()))
-	_, alias := packageBinary(t)
+	// keeps the fixture's markers where this run looks for them. The tree keeps the name of the
+	// test that laid it out.
+	home := isolateHome(t, fixedTree(t, "TestGuardEvaluate_reports_the_live_state_refusal"))
 	state := filepath.Join(home, ".local", "state", "codex-session-relay", "scope")
 	var guard struct{ Root, Stop, Now string }
 	built := fixtureTree(t, "guard-live-state.json", home)
@@ -730,17 +732,29 @@ func TestGuardEvaluate_reports_the_live_state_refusal(t *testing.T) {
 		t.Fatal(err)
 	}
 	restamp(t, state, "go")
-	argv := []string{"--state", state, "guard-evaluate", "--marker-root", guard.Root, "--stop-input", guard.Stop,
-		"--mode", "observe", "--now", guard.Now, "--no-record"}
-	refused := binaryRun(t, alias, argv...)
-	want := "{\n  \"error\": \"host\",\n  \"detail\": \"store: live state refused under CRW_REFUSE_LIVE_STATE=1 (test isolation)\"\n}\n"
-	if refused.code != 3 || refused.stdout != want {
-		t.Fatalf("exit %d\n%s", refused.code, refused.stdout)
+	raw, err := os.ReadFile(guard.Stop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := hook.Decode(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stop, _ := evidence.Object(decoded)
+	options := hook.GuardOptions{Root: guard.Root, Mode: hook.Observe, Now: guard.Now, NoRecord: true,
+		DefaultDBPath: func() (string, error) { return filepath.Join(state, "relay.sqlite3"), nil }}
+	_, err = hook.Evaluate(t.Context(), stop, options)
+	if err == nil || err.Error() != "store: live state refused under CRW_REFUSE_LIVE_STATE=1 (test isolation)" {
+		t.Fatalf("under test isolation: %v", err)
 	}
 	t.Setenv("CRW_REFUSE_LIVE_STATE", "")
-	allowed := binaryRun(t, alias, argv...)
-	if allowed.code != 0 || !strings.Contains(allowed.stdout, `"decision": `) || strings.Contains(allowed.stdout, "receipts") {
-		t.Fatalf("exit %d\n%s", allowed.code, allowed.stdout)
+	verdict, err := hook.Evaluate(t.Context(), stop, options)
+	var answer strings.Builder
+	if err == nil {
+		err = contract.Emit(&answer, verdict)
+	}
+	if err != nil || !strings.Contains(answer.String(), `"decision": `) || strings.Contains(answer.String(), "receipts") {
+		t.Fatalf("%v\n%s", err, answer.String())
 	}
 }
 

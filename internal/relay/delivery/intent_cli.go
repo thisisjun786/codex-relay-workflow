@@ -18,8 +18,9 @@ import (
 
 // The eight marker commands of `codex-session-relay` (cli.py:3470-3760, parser :4960-5032):
 // intent-declare/attempt/bind/register/claim/disposition/resolve/show, plus the store records
-// intent-claim and intent-disposition mirror beside their marker facts (declarations.py).
-// guard-evaluate, the ninth marker command, is todo 33's.
+// intent-claim and intent-disposition mirror beside their marker facts (declarations.py). The
+// ninth, guard-evaluate, is gone: the Stop is judged in the hook or by the owner over control.sock
+// (internal/relay/hook).
 
 // intentCommands are the marker commands, in cli.py's add_parser order. They open their own
 // admitted connection (none is admitted at dispatch), and every form but intent-declare's and

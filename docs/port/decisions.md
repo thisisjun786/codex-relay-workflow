@@ -4354,3 +4354,46 @@ records them as they were) names a renamed symbol.
 Evidence: internal/quote/{quote.go,quote_test.go}; internal/pyvalue/{pyvalue.go,number.go,
 number_test.go}; internal/pyjson/scan.go; internal/relay/store/{pyerr.go,ownership.go,
 frozen_value.go,frozen_detailed.go}.
+
+## Decision R3F-3. The relay's `guard-evaluate` command is gone; the Stop is judged in the hook or by the owner (refactor R3, final sweep)
+
+Decision: `crw relay guard-evaluate` (the legacy Stop guard's command line, which decision R3C-5
+kept only because the hook package's guard tests drove it) is removed with its spec, its routing
+to the owner (`hook.RouteGuard`, `hook.SelectedStore`), the read-only Stop path's preflight it
+alone called (`store.CheckStop`) and its tests of that routing. The Stop is judged as before: the
+native hook evaluates in its own process when its runtime owns the store (`hook.Evaluate`
+through `evaluateOwner`), and otherwise asks the owner over `control.sock`, whose method keeps
+the name `guard-evaluate` and every request and answer field (decision R3S-2). Every Stop-path
+behaviour and every journal row the hook writes is unchanged.
+
+Consumer check: `git grep guard-evaluate` over `plugins/crw` (the skills, `hooks.json` and the
+wiring), `docs/` and the product finds no caller of the command: the hook settings carry no
+relay command line since decisions 22 and 32, the skills never ran it, and the product's Go code
+names `guard-evaluate` only as the control.sock method. Two contract fixtures exercised the
+command itself (`test_management_cli__test_a_hold_that_cannot_be_recorded_is_refused_at_the_command_line`
+and `..._a_stop_payload_that_is_not_json_is_a_usage_error`, its own usage refusals); they are
+deleted with it, and contract/notes/test_coordination_cli.md says so. docs/relay/operations.md
+now names the Stop hook's guard where it named the command, and the marker commands it counts
+are eight.
+
+What moved: the doctor's `actorReachability.offlineCommands` no longer lists `guard-evaluate`,
+the command it named (the doctor goldens of internal/relay/cli, managed and supervisor lose that
+one element); `crw relay guard-evaluate` is now an unknown command (exit 2, `invalid choice`).
+
+Tests: the hook package's guard tests drive the evaluator directly with the options the command
+handed it, their goldens unchanged (`Test33GuardBinaryPython` is
+`Test33GuardEvaluatesEachFixture`, its fixtures still laid out under its old root,
+`canonicalRootNamed`); `Test33PR181GuardDiscoveryPython` is
+`Test33PR181AnExplicitStoreIsReadWithoutDiscovery` (an explicit store is read and discovery is
+never asked; the two cases that were the command's eager state selection go);
+`TestGuardEvaluate_reports_the_live_state_refusal` is `TestGuard_reports_the_live_state_refusal`
+on `hook.Evaluate`. Deleted, as tests of the command alone: `Test33GuardUsagePython`, review group
+D10 (the command's stdin decoding), D3's three command steps (the evaluator's reading of a Stop
+holding constants is held by `TestControlAnswersEveryRequestItCannotServeWithTheHostRecord`), the
+guard form of `TestReadOnlyForms_match_python_in_every_ownership_state` (removed from its
+fixture), `TestGuardEvaluate_routes_to_the_owners_control_socket_as_the_fence_does` and the rest
+of internal/relay/cli/guard_route_test.go, and `TestRouteGuard_reads_an_answer_within_its_nesting_cap`.
+
+Evidence: internal/relay/cli/{registry.go,commands_list.go}; internal/relay/argparse/specs.json;
+internal/relay/hook/{control.go (`nesting`),guard_test.go,pr181_test.go,review_native_test.go};
+internal/relay/store/ownership.go (`CheckStartLikeFence`); internal/relay/cli/readonly_test.go.
