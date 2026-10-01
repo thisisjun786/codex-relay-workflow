@@ -22,6 +22,17 @@ type continuationClaim struct {
 	anchor, actor, reason string
 }
 
+// ContinuationRequired is the cause of the refusal of a turn the generation never admitted, when
+// the receipt carried no continuation claim: a claim naming Anchor, the generation's bound
+// dispatch turn, would admit it. It rides the refusal as its cause (RefusedBecause), so the
+// command that took the receipt can tell its caller how to state a claim without reading the
+// detail back; reason and detail are the same with or without it.
+type ContinuationRequired struct{ Anchor string }
+
+func (e *ContinuationRequired) Error() string {
+	return "a continuation claim naming anchor " + pyvalue.StrRepr(e.Anchor) + " would admit this turn"
+}
+
 // parseContinuation is ContinuationClaim.from_record; a malformed claim is a malformed receipt.
 func parseContinuation(raw []byte) (*continuationClaim, error) {
 	if raw == nil {
@@ -95,14 +106,18 @@ func (in ReceiptIntake) checkTurnIdentity(ctx context.Context, relationship Rela
 	if anchor.Valid {
 		anchorRepr = pyvalue.StrRepr(anchor.String)
 	}
-	unadmitted := func(detail string) error {
-		return refuse(ReasonUnassignedTurn, "turn %s is not admitted to generation %d (anchor %s): %s", pyvalue.StrRepr(turn.TurnID), generation.Number, anchorRepr, detail)
+	unadmitted := func(detail string, cause error) error {
+		return RefusedBecause(ReasonUnassignedTurn, fmt.Sprintf("turn %s is not admitted to generation %d (anchor %s): %s", pyvalue.StrRepr(turn.TurnID), generation.Number, anchorRepr, detail), cause)
 	}
 	if claim == nil {
-		return unadmitted("a turn other than the anchor needs an explicit continuation admission naming the generation, its anchor, an actor and a reason")
+		var cause error
+		if anchor.Valid {
+			cause = &ContinuationRequired{Anchor: anchor.String}
+		}
+		return unadmitted("a turn other than the anchor needs an explicit continuation admission naming the generation, its anchor, an actor and a reason", cause)
 	}
 	if !anchor.Valid || claim.anchor != anchor.String {
-		return unadmitted(fmt.Sprintf("the continuation claims anchor %s, but generation %d is anchored to %s", pyvalue.StrRepr(claim.anchor), generation.Number, anchorRepr))
+		return unadmitted(fmt.Sprintf("the continuation claims anchor %s, but generation %d is anchored to %s", pyvalue.StrRepr(claim.anchor), generation.Number, anchorRepr), nil)
 	}
 	detail := claim.actor + ": " + claim.reason + " | corroboration=not_corroborated"
 	return s.Transaction(ctx, func(ctx context.Context, conn *sql.Conn) error {
