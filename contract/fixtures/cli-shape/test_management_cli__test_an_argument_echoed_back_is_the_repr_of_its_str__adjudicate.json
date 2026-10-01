@@ -105,7 +105,7 @@
           "stdout_json",
           "detail"
         ],
-        "value": "--adjudicate takes factId=digest, not 'x\\xa0y'"
+        "value": "--adjudicate takes factId=digest, not \"x\\u00a0y\""
       },
       {
         "kind": "eq",
@@ -124,7 +124,7 @@
           "stdout_json",
           "detail"
         ],
-        "value": "--adjudicate takes factId=digest, not 'x\\u2028y'"
+        "value": "--adjudicate takes factId=digest, not \"x\\u2028y\""
       },
       {
         "kind": "eq",
@@ -143,7 +143,7 @@
           "stdout_json",
           "detail"
         ],
-        "value": "--adjudicate takes factId=digest, not 'x\\u200by'"
+        "value": "--adjudicate takes factId=digest, not \"x\\u200by\""
       },
       {
         "kind": "eq",

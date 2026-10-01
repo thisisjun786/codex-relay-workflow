@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -61,7 +62,7 @@ func cmdIntentDeclare(c *cliRun) (any, error) {
 	var settings any
 	if raw := c.s("--settings"); raw != "" {
 		if settings, err = loads(raw); err != nil {
-			return nil, &dispatch.HostError{Class: "JSONDecodeError", Detail: store.PythonJSONError(raw)}
+			return nil, dispatch.Host("--settings is not JSON: " + err.Error())
 		}
 	}
 	var db any
@@ -106,7 +107,7 @@ func adjudicated(values []string) ([]Obj, error) {
 	for _, value := range values {
 		factID, digest, _ := strings.Cut(value, "=")
 		if factID == "" || digest == "" {
-			return nil, &dispatch.UsageError{Detail: "--adjudicate takes factId=digest, not " + pyvalue.StrRepr(value), Code: contract.ExitUsage}
+			return nil, &dispatch.UsageError{Detail: "--adjudicate takes factId=digest, not " + strconv.Quote(value), Code: contract.ExitUsage}
 		}
 		entries = append(entries, Obj{{Key: "factId", Value: factID}, {Key: "digest", Value: digest}})
 	}
@@ -440,12 +441,12 @@ func pathlibString(value string) string {
 	return joined
 }
 
-// expandedStore is str(Path(value).expanduser()) for a store an intent names; an unknown ~user
-// is pathlib's RuntimeError, which the fence raises out of the command (a host error).
+// expandedStore is the store an intent names with its ~ expanded; an unknown ~user is a host
+// error out of the command.
 func expandedStore(dbPath any) (string, error) {
 	expanded, err := store.ExpandUser(dbPath.(string))
 	if errors.Is(err, store.ErrNoHome) {
-		return "", &dispatch.HostError{Class: "RuntimeError", Detail: "Could not determine home directory."}
+		return "", dispatch.Host("the relay store the intent names cannot be resolved: " + dispatch.Detail(err))
 	}
 	if err != nil {
 		return "", err

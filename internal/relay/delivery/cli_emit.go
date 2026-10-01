@@ -53,11 +53,11 @@ func cmdEmit(c *cliRun) (any, error) {
 			return nil, err
 		}
 	}
-	// No host in this process (the adapter is todo 28's): a readiness claim may only stage.
+	// With no --socket there is no host to ask: a readiness claim may only stage.
 	status, proof := c.s("--turn-status"), "claimed"
 	if c.socket != "" {
 		if ObserveTurn == nil {
-			return nil, &dispatch.HostError{Class: "HostUnavailable", Detail: "the relay host adapter (bridge_adapter.py) is not ported to Go yet (todo 28)"}
+			return nil, dispatch.Host("this build registers no host adapter, so it cannot observe the turn")
 		}
 		status, err = ObserveTurn(c.ctx, c.state, c.socket, c.s("--turn-thread"), c.s("--turn-id"))
 		if err != nil {
@@ -69,14 +69,14 @@ func cmdEmit(c *cliRun) (any, error) {
 		status, proof = "inProgress", "unverified_staged"
 	}
 	if generation.Sign() < 1 {
-		return nil, &dispatch.HostError{Class: "ValueError", Detail: "generation must be a positive integer"}
+		return nil, dispatch.Host("generation must be a positive integer")
 	}
 	if outcome == "ready_for_review" && digest == store.NoDeliverable {
-		return nil, &dispatch.HostError{Class: "ValueError", Detail: "a reviewable receipt cannot carry the no-deliverable sentinel"}
+		return nil, dispatch.Host("a reviewable receipt cannot carry the no-deliverable sentinel")
 	}
 	event, err := store.EventIDBig(rid, generation, digest, outcome, c.s("--turn-id"), attempt)
 	if err != nil {
-		return nil, &dispatch.HostError{Class: "ValueError", Detail: "event identity: " + err.Error()}
+		return nil, dispatch.Host("event identity: " + err.Error())
 	}
 	thread, turn := c.s("--turn-thread"), c.s("--turn-id")
 	payload := Obj{{Key: "eventId", Value: event}, {Key: "relationshipId", Value: rid}, {Key: "executionGeneration", Value: json.Number(generation.String())}, {Key: "attempt", Value: json.Number(attempt.String())},

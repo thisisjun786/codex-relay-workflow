@@ -3992,25 +3992,25 @@ Evidence: `internal/relay/argparse/argparse.go` (`convert`), `internal/relay/dis
 (`Number`); `TestParseReadsWhatTheSpecDeclares`; `Test24NumericDownstreamBytes`
 (internal/relay/cli); `TestHostCommandsReadAGivenLimit` (internal/relay/adapter).
 
-## Decision R3C-3. `--kind-module` takes a declared kind module; every other name is one usage refusal (refactor R3)
+## Decision R3C-3. `--kind-module` is checked by name, worded in Go; the import model goes (refactor R3)
 
 (Placeholder heading: the next free number is given when the R3 groups merge.)
 
-Decision: the relay's global `--kind-module` accepts the kind modules the relay declares,
-`codex_session_relay.projects` (the value docs/relay/product-routing.md tells a credential
-holder to pass), and refuses any other name the same way: exit 4,
-`{"error": "usage", "detail": "--kind-module \"<name>\" is not a kind module; the relay declares codex_session_relay.projects"}`,
-before the command runs and after check_start and the selection refusal, as before. What goes is
-the stand-in for Python's `importlib.import_module`: the standard-library probes `json` and
-`os.path` that were accepted as importable and installed nothing, the `No module named '<the
-first missing package>'` wording with Python's repr, and the host errors (exit 3) for an empty
-name (`ValueError: Empty module name`) and a relative one (`TypeError: the 'package' argument is
-required ...`), which are now the usage refusal too.
+Decision: the relay's global `--kind-module` keeps accepting the three names it accepted,
+`codex_session_relay.projects` (the value docs/relay/product-routing.md tells a credential holder
+to pass), `json` and `os.path` (docs/port/known-defects.md), and keeps its exits: an empty or
+relative name is a host error (exit 3), any other unknown name a usage error (exit 4), before
+the command runs and after check_start and the selection refusal, as before. What goes is the
+stand-in for Python's `importlib.import_module`: the walk that named the first missing package
+(`No module named '<prefix>'`), Python's repr, and the `ValueError: Empty module name` and
+`TypeError: the 'package' argument is required ...` texts. The refusals now read
+`--kind-module "<name>" is not a module this relay knows; it knows codex_session_relay.projects,
+json, os.path` and `--kind-module "<name>" is not an absolute module name`. This follows the
+proposal of decision R3D-3, which moved the model out of the fault package.
 
 Consumer check: docs/relay/product-routing.md, docs/relay/faults.md and the invariants name only
 `codex_session_relay.projects` or a placeholder; no skill, contract fixture or product call passes
-`--kind-module`; only the fault and relay CLI tests passed `json`, `os.path`, `""` and `.relative`.
-docs/port/known-defects.md says what the binary accepts now.
+`--kind-module`.
 
 What stays: the module's install hook (`dispatch.OnKindModule`, which the fault package uses to
 install the product declarations) and the order of the checks.
@@ -4102,3 +4102,33 @@ candidate used left the parser in refactor R1 (decision 54); nothing of it remai
 Evidence: `internal/relay/cli/doctor.go` (`runDoctor`); `TestDoctor_ownership_block_matches_python_on_a_broken_store`
 (its "non-string process builds" case goes with the echo); the doctor goldens of
 internal/relay/cli, internal/relay/managed and internal/relay/supervisor.
+
+## Decision R3C-6. The delivery commands' entry layer answers in Go's words (refactor R3)
+
+(Placeholder heading: the next free number is given when the R3 groups merge.)
+
+Decision: the delivery package's command entry files (`cli.go`, `cli_emit.go`, `intent_cli.go`),
+which decision R3D-3's wave left to the relay CLI's, stop raising `dispatch.HostError` with a
+Python class: `ack-proof`'s and a routed `ack`'s malformed event or turn, `emit`'s generation,
+sentinel and event-identity refusals, `verdict`'s `--criteria` that cannot be read, is not JSON or
+is not a list (`FileNotFoundError: `, `JSONDecodeError: `, `TypeError: '<type>' object is not
+iterable`), `intent-declare`'s `--settings` that is not JSON (CPython's `JSONDecodeError` text)
+and an intent's store under an unknown `~user` (`RuntimeError: Could not determine home
+directory.`) answer through `dispatch.Host` with the same exit 3 and Go's words. The family's
+unclassified failure loses its `RuntimeError: ` prefix. The stale `HostUnavailable: the relay host
+adapter (bridge_adapter.py) is not ported to Go yet (todo 28)`, which only a build without the
+host adapter reaches, says that the build registers no host adapter. `--adjudicate` and
+`--restoration` echo their value with `%q` instead of Python's repr.
+
+Kept, because it is stored: the intent records' `store_unreadable`/`store_unopenable` details,
+the marker facts and everything the delivery domain writes; and the `KeyError: ` texts the host
+adapter's `reconcile` reads back (`adapter/cli.go`), which none of these paths produce.
+
+Consumer check: no skill or doc reads these details; the contract fixture
+`test_management_cli__test_an_argument_echoed_back_is_the_repr_of_its_str__adjudicate` expects
+the `%q` spelling now (its exits unchanged), and cli's `TestAnEchoedArgumentIsQuotedInTheRefusal`
+(was `TestAnEchoedArgumentIsPythonsReprOfIt`) holds both echoes.
+
+Evidence: `internal/relay/delivery/{cli.go,cli_emit.go,intent_cli.go}`;
+`internal/relay/dispatch/answer.go` (`Host`, `Detail`); the goldens of internal/relay/delivery,
+internal/relay/cli and internal/contracttest.

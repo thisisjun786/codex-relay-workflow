@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -67,6 +68,12 @@ func (e *HostError) ExitPayload() (contract.OrderedObject, int) {
 func Host(detail string) error {
 	payload, code := hostEnvelope(detail)
 	return &PayloadExit{Payload: payload, Code: code}
+}
+
+// Detail is err's text for an answer's detail. The store's ErrNoHome keeps the words it is
+// stored with, which an answer leaves out of the error that wraps it.
+func Detail(err error) string {
+	return strings.Replace(err.Error(), store.ErrNoHome.Error()+": ", "", 1)
 }
 
 func hostEnvelope(detail string) (contract.OrderedObject, int) {

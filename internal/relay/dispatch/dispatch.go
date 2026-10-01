@@ -212,9 +212,7 @@ func (c *Command) run(ctx context.Context, g globals, args Args) (any, error) {
 		// under a working directory that is gone) is one host answer for every family.
 		resolved, err := store.ResolveStateDir(g.state, g.socket)
 		if err != nil {
-			// The store's ErrNoHome keeps its stored wording; the answer is worded in Go.
-			detail := strings.Replace(err.Error(), store.ErrNoHome.Error()+": ", "", 1)
-			return nil, Host("the state directory cannot be resolved: " + detail)
+			return nil, Host("the state directory cannot be resolved: " + Detail(err))
 		}
 		services.Selection = resolved
 	}
@@ -272,10 +270,11 @@ func CheckSelection(services Services) error {
 	return nil
 }
 
-// kindModules are the modules --kind-module may name, each with what naming it installs: the
-// publication kinds it declares. codex_session_relay.projects is the one there is; a credential
-// holder names it on routing's holder commands (docs/relay/product-routing.md).
-var kindModules = map[string]func(){"codex_session_relay.projects": nil}
+// kindModules are the modules --kind-module may name, each with what naming it installs.
+// codex_session_relay.projects declares the product publication kinds (a credential holder names
+// it on routing's holder commands, docs/relay/product-routing.md); json and os.path are accepted
+// and install nothing (docs/port/known-defects.md).
+var kindModules = map[string]func(){"json": nil, "os.path": nil, "codex_session_relay.projects": nil}
 
 // OnKindModule makes naming module run install (the fault package installs the product
 // declarations when codex_session_relay.projects is named).
@@ -286,24 +285,29 @@ func OnKindModule(module string, install func()) {
 	kindModules[module] = install
 }
 
-// importKindModules installs the named kind modules in order; a name that is not a kind module
-// stops the command with a usage error (exit 4).
+// importKindModules installs the named kind modules in order. The first name that is not one
+// stops the command: an empty or relative name as a host error (exit 3), any other as a usage
+// error (exit 4).
 func importKindModules(names []string) error {
 	for _, name := range names {
 		install, known := kindModules[name]
-		if !known {
-			declared := make([]string, 0, len(kindModules))
-			for module := range kindModules {
-				declared = append(declared, module)
+		switch {
+		case known:
+			if install != nil {
+				install()
 			}
-			slices.Sort(declared)
-			return &UsageError{
-				Detail: fmt.Sprintf("--kind-module %q is not a kind module; the relay declares %s", name, strings.Join(declared, ", ")),
-				Code:   contract.ExitUsage,
-			}
+			continue
+		case name == "" || strings.HasPrefix(name, "."):
+			return Host(fmt.Sprintf("--kind-module %q is not an absolute module name", name))
 		}
-		if install != nil {
-			install()
+		declared := make([]string, 0, len(kindModules))
+		for module := range kindModules {
+			declared = append(declared, module)
+		}
+		slices.Sort(declared)
+		return &UsageError{
+			Detail: fmt.Sprintf("--kind-module %q is not a module this relay knows; it knows %s", name, strings.Join(declared, ", ")),
+			Code:   contract.ExitUsage,
 		}
 	}
 	return nil

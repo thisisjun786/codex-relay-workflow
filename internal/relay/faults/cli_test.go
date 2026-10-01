@@ -23,14 +23,19 @@ func cliCall(t *testing.T, dir string, args ...string) (int, map[string]any) {
 }
 func Test22_FLT_33_StaticKindModules(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "relay")
-	code, reply := cliCall(t, dir, "--kind-module", "codex_session_relay.projects", "fault-target", "--product", "crw", "--team", "team-relay")
-	if code != 0 || reply["scopeKey"] != "crw" {
-		t.Fatalf("declared: %d %+v", code, reply)
+	for _, module := range []string{"json", "os.path", "codex_session_relay.projects"} {
+		code, reply := cliCall(t, dir, "--kind-module", module, "fault-target", "--product", "crw", "--team", "team-relay")
+		if code != 0 || reply["scopeKey"] != "crw" {
+			t.Fatalf("%s: %d %+v", module, code, reply)
+		}
 	}
-	// Only a declared kind module is one (decision R3C-3).
-	for _, module := range []string{"no_such_module_crw205", "json", "os.path", "", ".relative"} {
+	code, reply := cliCall(t, dir, "--kind-module", "no_such_module_crw205", "fault-target", "--product", "crw", "--team", "team-relay")
+	if code != 4 || reply["error"] != "usage" || !strings.Contains(reply["detail"].(string), strconv.Quote("no_such_module_crw205")) {
+		t.Fatalf("unregistered: %d %+v", code, reply)
+	}
+	for _, module := range []string{"", ".relative"} {
 		code, reply = cliCall(t, dir, "--kind-module", module, "fault-target", "--product", "crw", "--team", "team-relay")
-		if code != 4 || reply["error"] != "usage" || !strings.Contains(reply["detail"].(string), strconv.Quote(module)) {
+		if code != 3 || reply["error"] != "host" {
 			t.Fatalf("%q: %d %+v", module, code, reply)
 		}
 	}
