@@ -37,6 +37,9 @@ func pythonStrerror(errno syscall.Errno) string {
 
 // PythonOSError renders err as Python's f"{type(error).__name__}: {error}" for an OSError, so a
 // field copied from the Python diagnosis keeps its text. Errors that carry no errno keep Go's text.
+// The relay keeps this wording, and PythonOSErrorText's, only where the text is stored: the Stop
+// journal's rows (whose guard_unreachable detail the hook's own reader parses back,
+// hook.NativePrescanUnreachable) and the guard answers and faults the hook journals.
 func PythonOSError(err error) string {
 	var errno syscall.Errno
 	if !errors.As(err, &errno) {
@@ -116,14 +119,6 @@ func PathRepr(path string) string {
 	b.WriteString(quote)
 	return b.String()
 }
-
-// pythonHostError is an OS or SQLite failure Python raises out of Store() unhandled: its text is
-// Python's host envelope detail, f"{type(error).__name__}: {error}", and the failure itself
-// stays reachable through errors.As.
-type pythonHostError struct{ cause error }
-
-func (e *pythonHostError) Error() string { return PythonSQLiteError(e.cause) }
-func (e *pythonHostError) Unwrap() error { return e.cause }
 
 var sqliteCodeSuffix = regexp.MustCompile(` \(\d+\)( \(SQLITE_BUSY\))?$`)
 

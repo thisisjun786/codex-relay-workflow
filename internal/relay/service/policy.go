@@ -33,19 +33,19 @@ func launchRecord(path string) Object {
 			}
 			return absent(nil)
 		}
-		return absent("the launch declaration could not be read: " + store.PythonOSErrorText(err))
+		return absent("the launch declaration could not be read: " + err.Error())
 	}
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil {
-		return absent("the launch declaration could not be read: " + descriptorError(err))
+		return absent("the launch declaration could not be read: " + err.Error())
 	}
 	if !info.Mode().IsRegular() {
 		return absent("the launch declaration " + path + " is not a regular file")
 	}
 	raw, err := io.ReadAll(file)
 	if err != nil {
-		return absent("the launch declaration could not be read: " + descriptorError(err))
+		return absent("the launch declaration could not be read: " + err.Error())
 	}
 	decoded, err := store.DecodeUTF8(raw)
 	if err != nil {
@@ -65,16 +65,6 @@ func launchRecord(path string) Object {
 		return absent("the launch declaration names no execution policy file")
 	}
 	return obj("path", declared, "declaredAt", get(record, "declaredAt"), "declaredBy", get(record, "declaredBy"), "unreadable", nil)
-}
-
-// descriptorError is str(OSError) for a failure on an open descriptor (fstat, read): Python
-// names no file there.
-func descriptorError(err error) string {
-	var errno syscall.Errno
-	if errors.As(err, &errno) {
-		return store.PythonOSErrorText(errno)
-	}
-	return err.Error()
 }
 
 // ResolveLaunchPolicy is RelayService.resolve_launch_policy over this process's environment.

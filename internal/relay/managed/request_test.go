@@ -65,9 +65,9 @@ func Test27_MST_10_ManagedShowAbsentDoesNotCreateStore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := fmt.Sprintf("{\n  \"request\": null,\n  \"lastObservation\": null,\n  \"readable\": false,\n  \"detail\": \"FileNotFoundError: [Errno 2] No such file or directory: '%s/relay.sqlite3'\"\n}\n", state)
+	want := fmt.Sprintf("{\n  \"request\": null,\n  \"lastObservation\": null,\n  \"readable\": false,\n  \"detail\": \"open %s/relay.sqlite3: no such file or directory\"\n}\n", state)
 	if !bytes.Equal(got, []byte(want)) {
-		t.Fatalf("managed-show differs from Python:\nGo: %s\nPython: %s", got, want)
+		t.Fatalf("managed-show answered\n%s\nnot\n%s", got, want)
 	}
 	if _, err := os.Stat(state); !os.IsNotExist(err) {
 		t.Fatalf("managed-show created state: %v", err)

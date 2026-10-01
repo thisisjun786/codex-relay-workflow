@@ -1298,13 +1298,13 @@ action then refuses it as it refuses any socketless store.
 Before refusing an existing `D` that has no `write-gate.lock`, a Go writable open reads
 its `schema_meta` from a disposable copy, as the fence's `Store()` reads it before
 deciding what the store is: a `D` that cannot be read, or is not a database, fails
-with that error in Python's words (`DatabaseError: file is not a database`, a host
+with that error (in Go's words since decision R3S-1, `file is not a database (26)`, a host
 error, exit 3; `store_unopenable` in an intent's store record) and gains no gate or
 sidecar in either runtime; only a readable `D` is refused as unfenced. The
 registration hold (`intent-register`) stats `D` before its admission, as
 `registration_hold` does, so a missing store or directory answers
-`the relay store could not be opened for writing: [Errno 2] No such file or directory: '<D>'`
-in both runtimes, and it raises its admission's refusal (`register_relationship` re-raises the
+`the relay store could not be opened for writing: stat <D>: no such file or directory`
+(decision R3S-1), and it raises its admission's refusal (`register_relationship` re-raises the
 fence's `OwnershipRefused`): a store the other runtime owns answers reason
 `store_owned_by_other` in the fence's words, not `unregistered_relationship`.
 The creator places `write-gate.lock` already held EX (a temporary `S/.write-gate-*`
@@ -3319,3 +3319,55 @@ Compare; `CRW_GOLDEN`); 2,735 golden files and 507 fixtures under 36 packages' t
 sections of docs/port/oracles/g1.md to g5.md (per package goldens, fixtures and deleted
 recordings); `go list -deps -test ./... | grep pyoracle` is empty; `CRW_GOLDEN=update make test`
 leaves the tree unchanged.
+
+## Decision R3S-1. The store's and the service's messages name an OS or SQLite failure in Go's words (refactor R3)
+
+Decision: where the relay store, the service and the Stop hook's settings and routing readers
+put an OS or SQLite failure into a message that is only shown, the failure is worded as Go's
+error says it (`open <path>: permission denied`, `file is not a database (26)`,
+`SQL logic error: no such table: x (1)`) instead of as CPython's `str(OSError)` or `sqlite3`
+exception (`PermissionError: [Errno 13] Permission denied: '<path>'`,
+`DatabaseError: file is not a database`). This covers the doctor's `access` detail and its
+ownership block's `detail`, the read-only store readers' `detail` (dispositions, managed-show,
+the doctor's nonce and issue lookups, a service's `projects` reading, an omission's
+`store_unreadable:` reason), a writable or read-only open's host error, the ownership mirror's
+`takeover record unreadable:` refusal, the registration hold's refusal, an unenforced guard
+index's `detail`, the launch declaration's unreadable `detail`, the supervised worker's and the
+process handle's details, the hook settings reader's `config_unreachable` detail (which only
+`crw doctor` shows; the hook journals nothing on that path) and a routed `guard-evaluate`'s
+refusal when the owner's socket cannot be reached or trusted. Every message keeps its field, its
+reason and its exit code, and still names the path. The store's `pythonHostError` is `hostError`,
+which unwraps to the failure, so `store.PythonSQLiteError` of it still answers what it answered.
+A routed `guard-evaluate` reads the owner's answer to the depth it always read (9998 containers,
+`hook.routeDepth`, now a plain count instead of the C scanner's recursion check); an answer nested
+deeper, or an error record whose kind is a list or an object, is "the owner closed control.sock
+without a readable guard-evaluate answer", where it was `RecursionError: ...` or
+`TypeError: unhashable type: ...`: a host error, exit 3, as before.
+
+Consumer check: `plugins/crw/skills`, `docs/` and `contract/` were searched for `Errno`,
+`PermissionError`, `FileNotFoundError`, `OperationalError`, `DatabaseError` and the changed
+messages' prefixes. The only consumer of errno wording is the Stop journal's `guard_unreachable`
+detail, which `hook.NativePrescanUnreachable` parses back and the contract corpus pins
+(`test_adapter_agreement__test_a_runtime_that_cannot_be_run_is_unreachable_in_both__*`); no Go
+caller parses the changed details (`crw doctor` reads the relay doctor's booleans and fields,
+not its `detail` prose), and every reason (`store_owned_by_other`, `store_unreadable`,
+`execution_policy_unreadable`, `supervised_fd_unreadable`) is unchanged.
+
+Kept, because the text is stored: `store.PythonOSError`, `store.PythonOSErrorText`,
+`store.PathRepr` and the hook's `pythonErrnoName` where they write the Stop journal (the
+pre-scan and post-identity `guard_unreachable` detail and `errno` field), the frozen manifest's
+reach failure in a guard's receipt detail (which the hook journals as `receiptDetail`, decision
+44), and the state discovery's access error (`discoveryExists`), which the owner's guard reaches
+through its store selection and the in-process Stop journals as the row's `fault`. The intent
+records' `store_unopenable` and `store_write_failed` details are delivery's
+(`store.PythonSQLiteError`, refactor R3D's area) and are unchanged.
+
+Evidence: internal/relay/store/{diagnostic_probe.go,diagnostic_read.go,diagnostic.go,hold.go,
+ownership.go,registration_hold.go,store.go,refusal.go (`hostError`),state.go (`discoveryExists`),
+pyerr.go}; internal/relay/service/{policy.go,worker.go,process_linux.go};
+internal/relay/hook/{route.go (`routeDepth`, `nesting`),settings.go}; the goldens of
+internal/relay/{store,service,cli,delivery,registry,linkage,managed}; tests
+`TestRouteGuard_reads_an_answer_within_its_nesting_cap`,
+`TestGuardEvaluate_routes_to_the_owners_control_socket_as_the_fence_does`,
+`TestDoctor_ownership_block_matches_python_on_a_broken_store`,
+`Test27_MST_10_ManagedShowAbsentDoesNotCreateStore`.
