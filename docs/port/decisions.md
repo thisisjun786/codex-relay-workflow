@@ -3495,3 +3495,30 @@ Evidence: `internal/relay/argparse/argparse.go` (`convert`), `internal/relay/dis
 (`Number`); `TestParseReadsWhatTheSpecDeclares`; `Test24NumericDownstreamBytes`
 (internal/relay/cli); the panic reproduced with `crw relay --state D --socket D/none.sock
 deliver --limit 3` before this change.
+
+## Decision R3C-3. `--kind-module` takes a declared kind module; every other name is one usage refusal (refactor R3)
+
+(Placeholder heading: the next free number is given when the R3 groups merge.)
+
+Decision: the relay's global `--kind-module` accepts the kind modules the relay declares,
+`codex_session_relay.projects` (the value docs/relay/product-routing.md tells a credential
+holder to pass), and refuses any other name the same way: exit 4,
+`{"error": "usage", "detail": "--kind-module \"<name>\" is not a kind module; the relay declares codex_session_relay.projects"}`,
+before the command runs and after check_start and the selection refusal, as before. What goes is
+the stand-in for Python's `importlib.import_module`: the standard-library probes `json` and
+`os.path` that were accepted as importable and installed nothing, the `No module named '<the
+first missing package>'` wording with Python's repr, and the host errors (exit 3) for an empty
+name (`ValueError: Empty module name`) and a relative one (`TypeError: the 'package' argument is
+required ...`), which are now the usage refusal too.
+
+Consumer check: docs/relay/product-routing.md, docs/relay/faults.md and the invariants name only
+`codex_session_relay.projects` or a placeholder; no skill, contract fixture or product call passes
+`--kind-module`; only the fault and relay CLI tests passed `json`, `os.path`, `""` and `.relative`.
+docs/port/known-defects.md says what the binary accepts now.
+
+What stays: the module's install hook (`dispatch.OnKindModule`, which the fault package uses to
+install the product declarations) and the order of the checks.
+
+Evidence: `internal/relay/dispatch/dispatch.go` (`kindModules`, `importKindModules`);
+`TestKindModule_refuses_a_module_the_relay_does_not_declare` (internal/relay/cli),
+`Test22_FLT_33_StaticKindModules` (internal/relay/faults).

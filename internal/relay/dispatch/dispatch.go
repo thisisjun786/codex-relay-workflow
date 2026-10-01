@@ -16,10 +16,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/selection"
@@ -271,14 +271,13 @@ func CheckSelection(services Services) error {
 	return nil
 }
 
-// kindModules are the modules --kind-module can import: the relay's static stand-in for
-// importlib.import_module, each with what importing it installs. json and os.path are importable
-// standard-library probes; codex_session_relay.projects is the publication-kind declaration the
-// product-routing tests import.
-var kindModules = map[string]func(){"json": nil, "os.path": nil, "codex_session_relay.projects": nil}
+// kindModules are the modules --kind-module may name, each with what naming it installs: the
+// publication kinds it declares. codex_session_relay.projects is the one there is; a credential
+// holder names it on routing's holder commands (docs/relay/product-routing.md).
+var kindModules = map[string]func(){"codex_session_relay.projects": nil}
 
-// OnKindModule makes importing module run install (the fault package installs the product
-// declarations when codex_session_relay.projects is imported).
+// OnKindModule makes naming module run install (the fault package installs the product
+// declarations when codex_session_relay.projects is named).
 func OnKindModule(module string, install func()) {
 	if _, known := kindModules[module]; !known {
 		panic("dispatch: unknown kind module " + module)
@@ -286,35 +285,24 @@ func OnKindModule(module string, install func()) {
 	kindModules[module] = install
 }
 
-// importKindModules is _import_kind_modules: the modules are imported in order and the first
-// that cannot be stops the command.
+// importKindModules installs the named kind modules in order; a name that is not a kind module
+// stops the command with a usage error (exit 4).
 func importKindModules(names []string) error {
-	for _, candidate := range names {
-		if install := kindModules[candidate]; install != nil {
-			install()
-		}
-		if candidate == "" {
-			return &HostError{Class: "ValueError", Detail: "Empty module name"}
-		}
-		if strings.HasPrefix(candidate, ".") {
-			return &HostError{Class: "TypeError", Detail: "the 'package' argument is required to perform a relative import for " + pyvalue.StrRepr(candidate)}
-		}
-		if _, known := kindModules[candidate]; known {
-			continue
-		}
-		missing := candidate
-		parts := strings.Split(candidate, ".")
-		for i := 1; i < len(parts); i++ {
-			prefix := strings.Join(parts[:i], ".")
-			if _, known := kindModules[prefix]; prefix == "codex_session_relay" || known {
-				continue
+	for _, name := range names {
+		install, known := kindModules[name]
+		if !known {
+			declared := make([]string, 0, len(kindModules))
+			for module := range kindModules {
+				declared = append(declared, module)
 			}
-			missing = prefix
-			break
+			slices.Sort(declared)
+			return &UsageError{
+				Detail: fmt.Sprintf("--kind-module %q is not a kind module; the relay declares %s", name, strings.Join(declared, ", ")),
+				Code:   contract.ExitUsage,
+			}
 		}
-		return &UsageError{
-			Detail: "--kind-module " + pyvalue.StrRepr(candidate) + " could not be imported: No module named " + pyvalue.StrRepr(missing),
-			Code:   contract.ExitUsage,
+		if install != nil {
+			install()
 		}
 	}
 	return nil

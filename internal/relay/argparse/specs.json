@@ -2,7 +2,7 @@
 {"name":"","commands":true,"options":[
   {"flag":"--state"},
   {"flag":"--socket"},
-  {"flag":"--kind-module","kind":"append","help":"import a module that registers a fault publication kind (repeatable); a kind this process has not registered is never offered, claimed or issued"},
+  {"flag":"--kind-module","kind":"append","help":"register the publication kinds a kind module declares (repeatable; the one there is: codex_session_relay.projects); a kind this process has not registered is never offered, claimed or issued"},
   {"flag":"--json","kind":"true"}]},
 {"name":"managed-start","options":[
   {"flag":"--request","required":true,"help":"complete request JSON or @file"},
