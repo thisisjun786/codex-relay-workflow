@@ -366,8 +366,10 @@ correction still held because its recipient was not loaded are three different f
 Six sit at the top level of the creation response. `environments` does not: on the current response
 it is nested at `creation.thread.environments`, so read it from there. When the response reports
 `activePermissionProfile`, carry it into the record's `expectedPermissionProfile` field, which is
-the key a later resume is checked against. Never ask a worker to echo its own settings back, and
-never widen a task's permissions to make a later send connect.
+the key a later resume is checked against. (That is how you record settings yourself, with
+`settings-record` or `--child-settings`; `managed-start` takes the value from its request, below.)
+Never ask a worker to echo its own settings back, and never widen a task's permissions to make a
+later send connect.
 
 Carry that value WHOLE. The later check is object equality against what the resume reports, so a
 record holding only the profile's id can never match: the comparison sees an id-shaped object
@@ -384,6 +386,24 @@ recorded sandbox type, extending nothing: `:danger-full-access`, `:workspace` or
 `extends` null or absent. Codex 0.154 reports one on every thread run from a sandbox mode, and it
 grants nothing the sandbox comparison does not already check. Any other profile, a custom one or
 one that extends another, is still `UNVERIFIABLE_PERMISSION_PROFILE` until the record carries it.
+
+A `managed-start` request carries the same object. Each role's `settings` there takes
+`expectedPermissionProfile` as the whole object, or as text (the form it took before, which matches
+only a host that reports that same text; Codex 0.154 reports an object), and leaves it out for a task
+running its sandbox's built-in profile. The object needs an `id` of text and may carry an `extends`
+that is null or text, kept exactly as written: an absent `extends` and a null one stay different
+objects. Any other key must hold text, a boolean or null, with no number and nothing nested, and the
+object holds at most 16 keys; a request outside that is refused before anything is created. The record
+stores the object as given, with its keys sorted like the rest of the record, so the order you wrote
+them in does not matter and a request that differs only in that order is the same request.
+
+The request is the only authority for the profile. `managed-start` checks the creation response's
+`activePermissionProfile` against what the request names and refuses `creation_settings_unverified`
+when they differ: a custom object has to come back equal, and a request naming none accepts only the
+built-in profile of its sandbox, or no profile at all. It does not copy the response's profile into
+the child's record, because that would record what the host chose and not what was authorized. The
+creation call cannot ask the host for a profile, so a child's is the one the host gives its sandbox:
+name that value, or none.
 
 `--parent-settings` and `--child-settings` are optional. Leaving them off still registers the
 relationship, and either side can be recorded afterwards with
