@@ -208,12 +208,13 @@ func (c *Command) run(ctx context.Context, g globals, args Args) (any, error) {
 	services := Services{SocketPath: g.socket, AdapterRequested: g.socket != "", Program: selection.Program(g.argv0)}
 	selected := !c.Unselected && (c.SelectsNoStore == nil || !c.SelectsNoStore(args))
 	if !c.Unselected {
+		// A state directory that cannot be resolved (a ~user with no home, a relative --state
+		// under a working directory that is gone) is one host answer for every family.
 		resolved, err := store.ResolveStateDir(g.state, g.socket)
 		if err != nil {
-			if errors.Is(err, store.ErrNoHome) {
-				return nil, &HostError{Class: "RuntimeError", Detail: "Could not determine home directory."}
-			}
-			return nil, err
+			// The store's ErrNoHome keeps its stored wording; the answer is worded in Go.
+			detail := strings.Replace(err.Error(), store.ErrNoHome.Error()+": ", "", 1)
+			return nil, Host("the state directory cannot be resolved: " + detail)
 		}
 		services.Selection = resolved
 	}

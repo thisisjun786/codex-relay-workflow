@@ -182,7 +182,7 @@ func TestLaunchPolicy_service_run_is_refused_before_it_asks_for_a_host(t *testin
 	t.Setenv(service.SettledEnv, "")
 	_, state, _ = launchTree(t, fixture, "record-nul")
 	got = relay(t, "--state", state, "service", "run")
-	if want := "{\n  \"error\": \"host\",\n  \"detail\": \"ValueError: embedded null byte\"\n}\n"; got.code != 3 || got.stdout != want {
+	if want := "{\n  \"error\": \"host\",\n  \"detail\": \"embedded null byte\"\n}\n"; got.code != 3 || got.stdout != want {
 		t.Fatalf("NUL: exit %d\n%s", got.code, got.stdout)
 	}
 	for _, key := range []string{"service run", "--socket app.sock service run --segment-seconds 0", "another launch's settlement"} {
@@ -254,16 +254,15 @@ func TestLaunchPolicy_declare_records_the_path_as_spelled(t *testing.T) {
 			t.Fatalf("digest %s is not the file the spelling reaches (%s)", answer.LaunchPolicy.Digest, reached)
 		}
 	}
-	// An unknown ~user is pathlib's RuntimeError, worded as Python words it.
+	// An unknown ~user is a host error (decision R3C-4).
 	got := relay(t, "--state", state, "service", "declare", "--execution-policy", "~no-such-user-t32/policy.json")
-	if want := "{\n  \"error\": \"host\",\n  \"detail\": \"RuntimeError: Could not determine home directory.\"\n}\n"; got.code != 3 || got.stdout != want {
+	if want := "{\n  \"error\": \"host\",\n  \"detail\": \"Could not determine home directory.\"\n}\n"; got.code != 3 || got.stdout != want {
 		t.Fatalf("~user: exit %d\n%s", got.code, got.stdout)
 	}
 }
 
-// A directory where the declaration belongs is never replaced or removed: os.replace and
-// Path.unlink both answer IsADirectoryError (a Go rename refused it as EEXIST first, and a
-// Go remove deleted an empty one).
+// A directory where the declaration belongs is never replaced or removed: the rename and the
+// unlink both answer that it is a directory, a host error (exit 3).
 func TestLaunchPolicy_a_directory_in_place_of_the_declaration_stays(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
@@ -278,11 +277,11 @@ func TestLaunchPolicy_a_directory_in_place_of_the_declaration_stays(t *testing.T
 		t.Fatal(err)
 	}
 	got := relay(t, "--state", state, "service", "declare", "--forget-execution-policy")
-	if want := "{\n  \"error\": \"host\",\n  \"detail\": \"IsADirectoryError: [Errno 21] Is a directory: '" + target + "'\"\n}\n"; got.code != 3 || got.stdout != want {
+	if want := "{\n  \"error\": \"host\",\n  \"detail\": \"unlink " + target + ": is a directory\"\n}\n"; got.code != 3 || got.stdout != want {
 		t.Fatalf("forget: exit %d\n%s", got.code, got.stdout)
 	}
 	got = relay(t, "--state", state, "service", "declare", "--execution-policy", policy)
-	replace := regexp.MustCompile(`^\{\n  "error": "host",\n  "detail": "IsADirectoryError: \[Errno 21\] Is a directory: '` + regexp.QuoteMeta(state) + `/\.launch-policy\.json\.[0-9a-f]+' -> '` + regexp.QuoteMeta(target) + `'"\n\}\n$`)
+	replace := regexp.MustCompile(`^\{\n  "error": "host",\n  "detail": "rename ` + regexp.QuoteMeta(state) + `/\.launch-policy\.json\.[0-9a-f]+ ` + regexp.QuoteMeta(target) + `: is a directory"\n\}\n$`)
 	if got.code != 3 || !replace.MatchString(got.stdout) {
 		t.Fatalf("declare: exit %d\n%s", got.code, got.stdout)
 	}
@@ -333,7 +332,7 @@ func TestLaunchPolicy_start_and_restart_meet_a_recorded_NUL_as_the_launcher_does
 			t.Fatalf("enable: exit %d\n%s", got.code, got.stdout)
 		}
 		got := relay(t, "--state", state, "--socket", "app.sock", "service", command, "--allow-isolated-scope")
-		if want := "{\n  \"error\": \"host\",\n  \"detail\": \"ValueError: embedded null byte\"\n}\n"; got.code != 3 || got.stdout != want {
+		if want := "{\n  \"error\": \"host\",\n  \"detail\": \"embedded null byte\"\n}\n"; got.code != 3 || got.stdout != want {
 			t.Fatalf("%s: exit %d\n%s", command, got.code, got.stdout)
 		}
 		if log, err := os.ReadFile(filepath.Join(state, "daemon.log")); err != nil || len(log) != 0 {

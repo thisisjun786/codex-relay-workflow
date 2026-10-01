@@ -4,16 +4,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
 	"runtime/debug"
 	"strings"
-	"syscall"
 	"time"
-	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
@@ -184,7 +181,7 @@ func readOwnership(ctx context.Context, dbPath string) (map[string]string, any, 
 	}
 	value, err := decodeJSON([]byte(text))
 	if err != nil {
-		return nil, nil, "store_owned_by_other: takeover record unreadable: JSONDecodeError: " + err.Error()
+		return nil, nil, "store_owned_by_other: takeover record unreadable: " + err.Error()
 	}
 	record, ok := value.(contract.OrderedObject)
 	if !ok {
@@ -248,7 +245,7 @@ func reachability(services dispatch.Services, access store.ProbeAccess) contract
 		}
 		connect = "ok"
 		if err != nil {
-			connect = socketFailure(err)
+			connect = err.Error()
 		}
 	}
 	return contract.OrderedObject{
@@ -259,19 +256,6 @@ func reachability(services dispatch.Services, access store.ProbeAccess) contract
 		{Key: "offlineCommands", Value: stringList(offlineCommands)},
 		{Key: "hostRequiredCommands", Value: stringList(hostRequiredCommands)},
 	}
-}
-
-// socketFailure is f"{type(error).__name__}: {error}" for socket.connect: no filename part.
-func socketFailure(err error) string {
-	var errno syscall.Errno
-	if errors.As(err, &errno) {
-		full := store.PythonOSError(errno)
-		return full
-	}
-	if errors.Is(err, os.ErrDeadlineExceeded) {
-		return "TimeoutError: timed out"
-	}
-	return err.Error()
 }
 
 // accessReceipt is _access_receipt: identity and participants from ONE read.
@@ -314,10 +298,10 @@ func accessReceipt(ctx context.Context, services dispatch.Services, loc store.Lo
 			switch {
 			case !pyEqual(sqlValue(seen), nullableText(loc.StoreID)):
 				recorded[2].Value = fmt.Sprintf("the store changed under this command: identity %s was measured, settings were read from %s",
-					pyvalue.Repr(nullableText(loc.StoreID)), pyvalue.Repr(sqlValue(seen)))
+					shown(nullableText(loc.StoreID)), shown(sqlValue(seen)))
 			case read.Device != loc.Device || read.Inode != loc.Inode:
 				recorded[2].Value = fmt.Sprintf("the store changed under this command: device:inode %s:%s was measured, rows were read from %d:%d",
-					pyvalue.Repr(nullableCount(loc.Device)), pyvalue.Repr(nullableCount(loc.Inode)), read.Device, read.Inode)
+					shown(nullableCount(loc.Device)), shown(nullableCount(loc.Inode)), read.Device, read.Inode)
 			default:
 				participants := contract.OrderedObject{}
 				for _, r := range rows {
@@ -431,32 +415,17 @@ func issueReading(ctx context.Context, services dispatch.Services, loc store.Loc
 	}, nil
 }
 
-// settingsJSON is _settings_json: a JSON document, or @path to a file holding one.
+// settingsJSON is a JSON document given on the command line, or @path to a file holding one.
 func settingsJSON(raw string) (any, error) {
 	data := []byte(raw)
 	if path, found := strings.CutPrefix(raw, "@"); found {
 		content, err := os.ReadFile(path)
 		if err != nil {
-			return nil, errors.New(store.PythonOSErrorText(err))
-		}
-		if !utf8.Valid(content) {
-			return nil, errors.New("'utf-8' codec can't decode the file")
+			return nil, err
 		}
 		data = content
 	}
-	value, err := decodeJSON(data)
-	if err != nil {
-		return nil, errors.New(jsonErrorText(data, err))
-	}
-	return value, nil
-}
-
-// jsonErrorText is str(json.JSONDecodeError) for data json.loads refuses.
-func jsonErrorText(data []byte, err error) string {
-	if message := store.PythonJSONError(string(data)); message != "" {
-		return message
-	}
-	return err.Error()
+	return decodeInput(data)
 }
 
 // socketDigest is sha256(canonical).hexdigest()[:16].

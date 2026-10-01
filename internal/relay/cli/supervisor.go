@@ -8,7 +8,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
@@ -228,34 +227,18 @@ func supervisorOutput(ctx context.Context, c *supervisor.Channel, answer map[str
 	return supervisorOrdered(answer), nil
 }
 
-// observationFile accepts any JSON value, as Python's json.load does. Shape is
-// interpreted by the obligation reader, not by the file decoder.
+// observationFile accepts any JSON value; its shape is the obligation reader's to interpret.
 func observationFile(path string) (any, error) {
 	unreadable := func(detail string) (any, error) {
-		return nil, &dispatch.UsageError{Detail: "the observation at " + pyvalue.StrRepr(path) + " could not be read as a reporting-observation/1 record: " + detail, Code: contract.ExitUsage}
+		return nil, &dispatch.UsageError{Detail: fmt.Sprintf("the observation at %q could not be read as a reporting-observation/1 record: %s", path, detail), Code: contract.ExitUsage}
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return unreadable(store.PythonOSError(err))
+		return unreadable(err.Error())
 	}
-	if !utf8.Valid(data) {
-		for i := 0; i < len(data); {
-			_, size := utf8.DecodeRune(data[i:])
-			if size == 1 && data[i] >= utf8.RuneSelf {
-				cause := "invalid start byte"
-				if data[i] >= 0xc2 && data[i] <= 0xf4 && i+1 == len(data) {
-					cause = "unexpected end of data"
-				} else if data[i] >= 0xc2 && data[i] <= 0xf4 && i+1 < len(data) && data[i+1]&0xc0 != 0x80 {
-					cause = "invalid continuation byte"
-				}
-				return unreadable(fmt.Sprintf("UnicodeDecodeError: 'utf-8' codec can't decode byte 0x%02x in position %d: %s", data[i], i, cause))
-			}
-			i += size
-		}
-	}
-	reading, err := decodeJSON(data)
+	reading, err := decodeInput(data)
 	if err != nil {
-		return unreadable("JSONDecodeError: " + jsonErrorText(data, err))
+		return unreadable(err.Error())
 	}
 	return observationMaps(reading), nil
 }
@@ -378,9 +361,9 @@ var supervisorReportRecordedCommand = dispatch.Command{Name: "supervisor-report-
 		o = supervisor.ObservationObligation(reading)
 	}
 	if o == nil {
-		about := "event " + pyvalue.StrRepr(event)
+		about := fmt.Sprintf("event %q", event)
 		if hasObservation {
-			about = "the observation at " + pyvalue.StrRepr(observation)
+			about = fmt.Sprintf("the observation at %q", observation)
 		}
 		return nil, &dispatch.UsageError{Detail: about + " raises no obligation: an event has to be a completion, a new block or a decision the user owes, and an observation has to report state unreported. There is nothing here to record a report against", Code: contract.ExitUsage}
 	}
@@ -476,9 +459,9 @@ var supervisorStageCommand = dispatch.Command{
 			}
 		}
 		if o == nil {
-			about := "event " + pyvalue.StrRepr(event)
+			about := fmt.Sprintf("event %q", event)
 			if hasObservation {
-				about = "the observation at " + pyvalue.StrRepr(observations[0])
+				about = fmt.Sprintf("the observation at %q", observations[0])
 			}
 			return nil, &dispatch.UsageError{Detail: about + " raises no obligation, so there is nothing to stage. An event has to be a completion, a new block or a decision the user owes, and an observation has to report state unreported", Code: contract.ExitUsage}
 		}

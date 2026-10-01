@@ -48,15 +48,14 @@ func TestRun_relay_link_has_no_version_flag_like_python(t *testing.T) {
 	}
 }
 
-// An unknown ~user in --state is Python's pathlib RuntimeError: exit 3 with the host envelope.
-// Every command family resolves --state on the one dispatch path, so an unknown ~user reads alike
-// for each (decision R2B-2).
-func TestRun_unknown_user_state_is_a_python_host_error(t *testing.T) {
+// An unknown ~user in --state is a host error (exit 3) naming the user, worded alike by every
+// command family on the one dispatch path (decisions R2B-2, R3C-4).
+func TestRun_unknown_user_state_is_a_host_error(t *testing.T) {
 	for _, line := range [][]string{{"store-identity"}, {"settings-show", "--task", "t"}, {"claim", "--event", "e"},
 		{"intent-show", "--workspace", "w"}, {"fault-show", "--fault", "f"}, {"capacity-show"}, {"route-show"}, {"sync-status", "--relationship", "r"}} {
 		var stdout, stderr bytes.Buffer
 		code := run(context.Background(), "crw", append([]string{"relay", "--state", "~crw_user_that_does_not_exist_20/s"}, line...), &stdout, &stderr)
-		want := "{\n  \"error\": \"host\",\n  \"detail\": \"RuntimeError: Could not determine home directory.\"\n}\n"
+		want := "{\n  \"error\": \"host\",\n  \"detail\": \"the state directory cannot be resolved: cannot determine home directory for \\\"crw_user_that_does_not_exist_20\\\": user: unknown user crw_user_that_does_not_exist_20\"\n}\n"
 		if code != 3 || stdout.String() != want {
 			t.Fatalf("%v: code=%d stdout=%q", line, code, stdout.String())
 		}

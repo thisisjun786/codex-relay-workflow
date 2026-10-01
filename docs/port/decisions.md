@@ -3709,3 +3709,56 @@ install the product declarations) and the order of the checks.
 Evidence: `internal/relay/dispatch/dispatch.go` (`kindModules`, `importKindModules`);
 `TestKindModule_refuses_a_module_the_relay_does_not_declare` (internal/relay/cli),
 `Test22_FLT_33_StaticKindModules` (internal/relay/faults).
+
+## Decision R3C-4. The relay CLI's own failures are worded in Go, without Python's exception classes (refactor R3)
+
+(Placeholder heading: the next free number is given when the R3 groups merge.)
+
+Decision: where the relay CLI's dispatch and the cli package's commands put a failure into an
+answer's `detail` (or a doctor field that is only shown), it is worded as Go says it, without a
+Python exception class in front and without Python's repr:
+
+- A `--state` (or `CODEX_SESSION_RELAY_STATE`) that cannot be resolved answers, for every command
+  family alike, `the state directory cannot be resolved: <why>` (exit 3, `error: host`), where
+  `<why>` is Go's (`cannot determine home directory for "x": user: unknown user x`). It was
+  `RuntimeError: Could not determine home directory.` for a missing home and the family's
+  unclassified failure otherwise. The store's `ErrNoHome` keeps its words, which the dispatch
+  leaves out of the answer.
+- `dispatch.Host(detail)` is the host envelope (exit 3) a command words itself; the service and
+  daemon commands' unclassified failures, a launch policy that cannot be applied, a daemon run
+  that fails, merge-evidence's forge failures (a missing `gh` is Go's `exec: "gh": executable
+  file not found in $PATH`) and a routed `guard-evaluate` whose owner failed mid-answer answer
+  through it, where they answered `ValueError: `, `RuntimeError: `, `OSError: `/`<errno class>: [Errno
+  N] ...` or `FileNotFoundError: [Errno 2] No such file or directory: 'gh'`.
+- The doctor's `actorReachability.socketConnect` is `ok`, `not configured`, or Go's dial error
+  (`dial unix <path>: connect: connection refused`) where it was
+  `ConnectionRefusedError: [Errno 111] Connection refused`; `crw doctor` reads only whether it is
+  `ok`. Its `accessReceipt.detail` quotes the measured and read identities as JSON
+  (`"store-1"`, `null`) where it used Python's repr.
+- A JSON document a caller hands a command (doctor's `--require-worker-policy`, the supervisor
+  commands' `--observation` files, merge-evidence's `--restate` record) is read strictly, as
+  encoding/json reads it: UTF-8 only, no `NaN`/`Infinity`, at most 10000 levels of nesting, with
+  Go's error text. CPython's `JSONDecodeError`/`UnicodeDecodeError` texts, Path.read_text's
+  universal newlines and the 9998-level `RecursionError` host error (exit 3, now the usage error
+  exit 4 every other unreadable record gets) go. Stored JSON (the mirror, process records,
+  stored settings, staged packets) is still read as leniently as any writer wrote it.
+- merge-evidence's `--timeout` is a duration: zero or less times out at once, and a value past
+  what a Go duration holds is the longest one, where CPython's poll conversion raised
+  `OverflowError` (exit 3) past 24.8 days.
+- Names and values inside messages are quoted with `%q` (`no event "x"`,
+  `the observation at "/p"`, `event "x" raises no obligation`), and a stored settings value
+  that is not an object is named by its JSON type (`an array`).
+
+Every `error`, `reason` and exit code stays, except the two edge inputs named above (a record
+nested past the cap, a timeout past 24.8 days). Consumer check: `plugins/crw/skills`, `docs/` and
+`contract/` hold none of the changed texts; `crw doctor`, `install` and `exercise` read the relay
+doctor's `socketConnect` only as `ok` and its other fields by name, never a `detail`.
+
+What stays: `dispatch.HostError` (`<Class>: <Detail>`), which the delivery, registry, sync and
+managed commands still raise (refactor R3D's and the store side's), and the error texts the cli
+package passes through from other packages unchanged (the store's and the evidence collector's).
+
+Evidence: `internal/relay/dispatch/{answer.go (Host),dispatch.go (run)}`;
+`internal/relay/cli/{daemon.go,doctor.go,guard.go,merge_evidence.go,pyvalue.go (decodeInput),
+sandbox.go,show.go,supervisor.go}`; `TestRun_unknown_user_state_is_a_host_error` (cmd/crw); the
+goldens of internal/relay/cli, internal/relay/hook and internal/contracttest.

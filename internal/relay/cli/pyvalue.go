@@ -2,15 +2,59 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"math"
 	"strconv"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
-// decodeJSON is json.loads into Python-shaped values (store.LoadsJSON).
+// decodeJSON reads stored JSON into the values the relay reads (store.LoadsJSON), as leniently
+// as any writer could have written it.
 func decodeJSON(data []byte) (any, error) { return store.LoadsJSON(data) }
+
+// decodeInput reads a JSON document a caller handed this command (an option's value, a file,
+// stdin) strictly, as encoding/json reads it (UTF-8 only, no NaN or Infinity, at most 10000
+// levels of nesting), into the same values decodeJSON gives.
+func decodeInput(data []byte) (any, error) {
+	if !utf8.Valid(data) {
+		return nil, errors.New("it is not UTF-8 text")
+	}
+	var probe any
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return nil, err
+	}
+	return store.LoadsJSON(data)
+}
+
+// jsonKind names a decoded JSON value's type with an article: "an object", "a string".
+func jsonKind(v any) string {
+	switch v.(type) {
+	case nil:
+		return "null"
+	case bool:
+		return "a boolean"
+	case string:
+		return "a string"
+	case []any:
+		return "an array"
+	case contract.OrderedObject:
+		return "an object"
+	}
+	return "a number"
+}
+
+// shown is a value as a message quotes it: its JSON text.
+func shown(v any) string {
+	text, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Sprint(v)
+	}
+	return string(text)
+}
 
 func fieldIndex(object contract.OrderedObject, key string) int {
 	for i, field := range object {
