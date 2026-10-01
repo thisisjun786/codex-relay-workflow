@@ -2,7 +2,9 @@ package adapter
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -122,10 +124,13 @@ func startUnderPermissionProfile(t *testing.T, requested, created, resumed any) 
 	got.turns = turns
 	mu.Unlock()
 	var stored string
-	if err := s.DB.QueryRowContext(context.Background(), "SELECT settings FROM authorized_settings WHERE task_id = 'managed-child'").Scan(&stored); err == nil {
+	switch err := s.DB.QueryRowContext(context.Background(), "SELECT settings FROM authorized_settings WHERE task_id = 'managed-child'").Scan(&stored); {
+	case err == nil:
 		if err := json.Unmarshal([]byte(stored), &got.record); err != nil {
 			t.Fatal(err)
 		}
+	case !errors.Is(err, sql.ErrNoRows):
+		t.Fatal(err)
 	}
 	create, _ := managed.OperationIDs("managed-real-profile")
 	receipt, err := (Managed{a}).GetOperation(context.Background(), create)
