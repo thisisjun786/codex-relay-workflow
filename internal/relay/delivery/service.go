@@ -112,7 +112,7 @@ func (d *Service) ResolveRecipient(ctx context.Context, r Relationship, kind str
 	}
 	contention, _ := get(reading, "contention")
 	if state, _ := get(reading, "state"); state == "ambiguous" {
-		return "", nil, refuse(DuplicateScopeOwner, "the linkage reports more than one candidate for relationship %s; this reader will not choose between them: %s", pyvalue.StrRepr(rid), pyvalue.Repr(contention))
+		return "", nil, refuse(DuplicateScopeOwner, "the linkage reports more than one candidate for relationship %s; this reader will not choose between them: %s", pyvalue.StrRepr(rid), pyReprValue(contention))
 	}
 	var live []any
 	items, _ := contention.([]any)
@@ -131,7 +131,7 @@ func (d *Service) ResolveRecipient(ctx context.Context, r Relationship, kind str
 		if drifting {
 			reason = RelationOwnerDrift
 		}
-		return "", nil, refuse(reason, "the linkage reports the hierarchy of relationship %s as inconsistent, so who owns its scope is not settled: %s. A resolved state with contention is not a resolved owner, and delivery waits for the hierarchy to settle rather than picking the side that happens to match the frozen row", pyvalue.StrRepr(rid), pyvalue.Repr(live))
+		return "", nil, refuse(reason, "the linkage reports the hierarchy of relationship %s as inconsistent, so who owns its scope is not settled: %s. A resolved state with contention is not a resolved owner, and delivery waits for the hierarchy to settle rather than picking the side that happens to match the frozen row", pyvalue.StrRepr(rid), pyReprValue(live))
 	}
 	var wanted string
 	switch kind {
@@ -155,7 +155,7 @@ func (d *Service) ResolveRecipient(ctx context.Context, r Relationship, kind str
 	owner, _ := get(level, "owner")
 	if level == nil || owner == nil {
 		gaps, _ := get(reading, "gaps")
-		return "", nil, refuse(UnregisteredScope, "the linkage records no live %s owner for relationship %s; gaps %s. Nothing found is reported as nothing found, never as a delivery that may proceed", wanted, pyvalue.StrRepr(rid), pyvalue.Repr(gaps))
+		return "", nil, refuse(UnregisteredScope, "the linkage records no live %s owner for relationship %s; gaps %s. Nothing found is reported as nothing found, never as a delivery that may proceed", wanted, pyvalue.StrRepr(rid), pyReprValue(gaps))
 	}
 	current := ""
 	var revision any
@@ -163,11 +163,11 @@ func (d *Service) ResolveRecipient(ctx context.Context, r Relationship, kind str
 		current = str(o, "taskId")
 		revision, _ = get(o, "revision")
 	} else {
-		current = pyvalue.Str(owner)
+		current = pyStr(owner)
 	}
 	scopeKey, _ := get(level, "scopeKey")
 	if current != frozen {
-		return "", nil, refuse(RelationOwnerDrift, "relationship %s names %s but the linkage says %s %s is owned by %s. A report that arrived after the relationship changed is held rather than credited to either task; re-register the assignment under the current owner and deliver that", pyvalue.StrRepr(rid), pyvalue.StrRepr(frozen), wanted, pyvalue.Repr(scopeKey), pyvalue.StrRepr(current))
+		return "", nil, refuse(RelationOwnerDrift, "relationship %s names %s but the linkage says %s %s is owned by %s. A report that arrived after the relationship changed is held rather than credited to either task; re-register the assignment under the current owner and deliver that", pyvalue.StrRepr(rid), pyvalue.StrRepr(frozen), wanted, pyReprValue(scopeKey), pyvalue.StrRepr(current))
 	}
 	return current, Obj{{Key: "source", Value: "linkage"}, {Key: "verified", Value: true}, {Key: "scopeKind", Value: wanted}, {Key: "scopeKey", Value: scopeKey}, {Key: "revision", Value: revision}}, nil
 }
@@ -874,7 +874,7 @@ func renderFindings(findings any) any {
 		}
 		expected, _ := get(o, "expected")
 		returned, _ := get(o, "returned")
-		parts = append(parts, fmt.Sprintf("%s: expected %s, host %s", pyvalue.Str(field), pyvalue.Repr(expected), pyvalue.Repr(returned)))
+		parts = append(parts, fmt.Sprintf("%s: expected %s, host %s", pyStr(field), pyReprValue(expected), pyReprValue(returned)))
 	}
 	if len(parts) == 0 {
 		return nil
@@ -992,7 +992,7 @@ func (d *Service) withhold(ctx context.Context, eventID string, l Lifecycle, now
 		if changed == 1 {
 			detail := l.Detail
 			if detail == "" {
-				detail = pyvalue.Str(l.WithholdReason)
+				detail = pyStr(l.WithholdReason)
 				if l.WithholdReason == nil {
 					detail = "not deliverable"
 				}

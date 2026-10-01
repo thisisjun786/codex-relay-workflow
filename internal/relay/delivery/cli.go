@@ -373,7 +373,7 @@ func AckCommand(ctx context.Context, ack *Ack, rc *Reconciler, adapter Adapter, 
 		return nil, err
 	}
 	if why, ok := get(record, "_deliveryUnconfirmed"); ok && truthy(why) {
-		record = append(record, F{Key: "_note", Value: "kept as the parent's authored acknowledgement: the relay could not yet confirm this delivery for the turn it read (" + pyvalue.Str(why) + "). The daemon completes it once the delivery is confirmed, and a verdict completes it first; nothing needs to be acknowledged or sent again."})
+		record = append(record, F{Key: "_note", Value: "kept as the parent's authored acknowledgement: the relay could not yet confirm this delivery for the turn it read (" + pyStr(why) + "). The daemon completes it once the delivery is confirmed, and a verdict completes it first; nothing needs to be acknowledged or sent again."})
 	} else if str(record, "_verified") != "verified" {
 		record = append(record, F{Key: "_note", Value: "recorded as the parent's authored intent; this turn is not established yet, so it does not close the attempt and cannot yet produce a verdict. Run verify-acks from a process with host access."})
 	}

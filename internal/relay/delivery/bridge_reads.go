@@ -2,8 +2,6 @@ package delivery
 
 import (
 	"strings"
-
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // BridgeReads is the recipient-reading half of bridge_adapter.BridgeHostAdapter: the four reads
@@ -68,7 +66,7 @@ func (b BridgeReads) FindDispatchedTurn(thread, turnID string, sentAt float64) (
 				status = "unknown"
 			}
 			started, _ := get(turn, "startedAt")
-			turns = append(turns, TurnInfo{TurnID: pyStrOrEmpty(id), Status: pyvalue.Str(status), StartedAt: number(started)})
+			turns = append(turns, TurnInfo{TurnID: pyStrOrEmpty(id), Status: pyStr(status), StartedAt: number(started)})
 		}
 		return ListingPage{Turns: turns, Follows: cursor != nil}, nil
 	}
