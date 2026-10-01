@@ -36,9 +36,6 @@ var States = []string{Absent, Present, Unreadable, AccessError}
 // Usable is the partition a consumer asks: read, or established to be absent.
 func Usable(state string) bool { return state == Present || state == Absent }
 
-// Unusable is the other half: nothing can be concluded from a reading in this state.
-func Unusable(state string) bool { return state == Unreadable || state == AccessError }
-
 // Identity is what the kernel calls an object: its device and inode.
 type Identity struct{ Dev, Ino uint64 }
 
@@ -300,17 +297,4 @@ func SameDirectory(one, other string) bool {
 		return false
 	}
 	return os.SameFile(a, b)
-}
-
-// PathIdentity is reading.path_identity: the identity the kernel gives a path now, or false.
-func PathIdentity(path string) (Identity, bool) {
-	info, err := os.Stat(path)
-	if err != nil {
-		return Identity{}, false
-	}
-	sys, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
-		return Identity{}, false
-	}
-	return Identity{Dev: uint64(sys.Dev), Ino: sys.Ino}, true
 }

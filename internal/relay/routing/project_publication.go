@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/faults"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -67,7 +68,7 @@ func (r *Router) EvaluateProjects(ctx context.Context, product string) (Object, 
 		return nil, err
 	}
 	if registry == nil {
-		return nil, routeRefused("route_product_unknown", fmt.Sprintf("%s is not a registered product", pyvalue.Quote(product)))
+		return nil, routeRefused("route_product_unknown", fmt.Sprintf("%s is not a registered product", quote.Value(product)))
 	}
 	return r.evaluateProjects(ctx, product)
 }

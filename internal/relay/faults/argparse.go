@@ -5,7 +5,7 @@ import (
 	"math/big"
 	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 type numberArgsKey struct{}
@@ -18,6 +18,6 @@ func integerArg(ctx context.Context, name, raw string) *big.Int {
 			return n
 		}
 	}
-	n, _ := argparse.ParseInt(raw)
+	n, _ := pyvalue.ParseInt(raw)
 	return n
 }

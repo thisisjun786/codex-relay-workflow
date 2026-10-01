@@ -687,7 +687,9 @@ no copy, no sidecar), which refuses a store of its own that is draining or mid-t
 Otherwise it refuses, exit 2 `store_owned_by_other`, `the owner could not answer guard-evaluate:
 <error>` in Python's `str(OSError)` words
 (`TestGuardEvaluate_routes_to_the_owners_control_socket_as_the_fence_does`, against the live
-fence and a live Python owner).
+fence and a live Python owner). Refactor R3 removed the Go command with this routing (decision
+R3F-3): a Stop is judged by the native hook in its own process or by the owner over
+`control.sock`, and this paragraph records what the two command lines did until then.
 
 ### Read-only clients under a foreign owner
 

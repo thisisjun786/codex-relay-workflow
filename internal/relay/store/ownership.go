@@ -85,21 +85,11 @@ func creationRefused() error {
 // --kind-module and the handler. An absent store and one with neither an ownership key nor a
 // mirror pass, as does a store whose write-ahead log an in-place read cannot use: the writable
 // open decides them (decision 56).
+//
+// It reads in the fence's order: the mirror's bytes (absent is none; unreadable, or not a JSON
+// object, is refused in the fence's words), then the stamp read in place (an OS or SQLite failure
+// is the command's host error), then the stamp's judgement.
 func CheckStartLikeFence(ctx context.Context, dbPath string) error {
-	return checkStamp(ctx, dbPath, false)
-}
-
-// CheckStop is the read-only Stop path's check (guard-evaluate's local evaluation): as
-// CheckStartLikeFence, except that a store an in-place read cannot read at all is an error, which
-// the Stop answers as a host error rather than trusting D.
-func CheckStop(ctx context.Context, dbPath string) error {
-	return checkStamp(ctx, dbPath, true)
-}
-
-// checkStamp is the preflights' reading, in the fence's order: the mirror's bytes (absent is
-// none; unreadable, or not a JSON object, is refused in the fence's words), then the stamp read
-// in place (an OS or SQLite failure is the command's host error), then the stamp's judgement.
-func checkStamp(ctx context.Context, dbPath string, strict bool) error {
 	resolved := resolveLoosely(dbPath)
 	raw, err := os.ReadFile(filepath.Join(filepath.Dir(resolved), "takeover.json"))
 	switch {
@@ -112,15 +102,10 @@ func checkStamp(ctx context.Context, dbPath string, strict bool) error {
 			return fenceRefused(why)
 		}
 	}
-	// The Stop path never waits on a lock (its hook has a budget); a command's preflight waits
-	// for a writer as its own open would.
-	wait := ownership.LockWait
-	if strict {
-		wait = 0
-	}
-	meta, err := inPlaceMetadata(ctx, dbPath, wait)
+	// A command's preflight waits for a writer as its own open would.
+	meta, err := inPlaceMetadata(ctx, dbPath, ownership.LockWait)
 	if err != nil {
-		if !strict && errors.Is(err, ErrWALWithoutIndex) {
+		if errors.Is(err, ErrWALWithoutIndex) {
 			return nil
 		}
 		return &hostError{cause: err}
@@ -141,11 +126,11 @@ func fenceRefused(detail string) error {
 	return &RefusedError{Reason: "store_owned_by_other", Detail: detail, cause: refused}
 }
 
-// PythonHostDetail is the host envelope detail of an OS or SQLite failure the store raises
-// unhandled out of an open or an ownership read (CheckStartLikeFence), in Go's words, or of the
-// exception it raises for a frozen copy it could not read as a manifest, and whether err is one
-// of them.
-func PythonHostDetail(err error) (string, bool) {
+// HostDetail is the host envelope detail of an OS or SQLite failure the store raises unhandled
+// out of an open or an ownership read (CheckStartLikeFence), in Go's words, or of the exception it
+// raises for a frozen copy it could not read as a manifest (its StoredText), and whether err is
+// one of them.
+func HostDetail(err error) (string, bool) {
 	if encode := EncodeError(err); encode != nil {
 		return encode.HostDetail(), true
 	}
@@ -156,7 +141,7 @@ func PythonHostDetail(err error) (string, bool) {
 	// A frozen copy that is not a manifest leaves the fence's intake as this exception.
 	var frozen *ManifestException
 	if errors.As(err, &frozen) {
-		return frozen.PythonText(), true
+		return frozen.StoredText(), true
 	}
 	return "", false
 }

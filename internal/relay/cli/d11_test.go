@@ -12,7 +12,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor"
 )
 
-func TestD11SupervisorReportRecordedRefusalMatchesPythonCLI(t *testing.T) {
+func TestD11SupervisorReportRecordedRefusal(t *testing.T) {
 	if os.Getenv("D11_CLI_HELPER") != "" {
 		var args []string
 		if err := json.Unmarshal([]byte(os.Getenv("D11_CLI_ARGS")), &args); err != nil {
@@ -43,7 +43,7 @@ func TestD11SupervisorReportRecordedRefusalMatchesPythonCLI(t *testing.T) {
 	for _, invocation := range []struct{ name, argv0 string }{{"codex-session-relay", "codex-session-relay"}, {"crw relay", "crw relay"}} {
 		var compared map[string]any
 		t.Run(invocation.name, func(t *testing.T) {
-			cmd := exec.Command(os.Args[0], "-test.run=^TestD11SupervisorReportRecordedRefusalMatchesPythonCLI$")
+			cmd := exec.Command(os.Args[0], "-test.run=^TestD11SupervisorReportRecordedRefusal$")
 			cmd.Env = append(env, "D11_CLI_HELPER=1", "D11_ARGV0="+invocation.argv0, "D11_CLI_ARGS="+string(rawArgs))
 			var out, stderr bytes.Buffer
 			cmd.Stdout, cmd.Stderr = &out, &stderr

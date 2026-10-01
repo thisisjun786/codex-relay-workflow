@@ -257,7 +257,7 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 		finish("stdin_unreadable", "the Stop payload could not be read from stdin", "")
 		return 0
 	}
-	if _, err := store.DecodeUTF8(raw); err != nil {
+	if _, err := pyjson.DecodeUTF8(raw); err != nil {
 		finish("stdin_unreadable", "the Stop payload is not UTF-8: "+err.Error(), "")
 		return 0
 	}
@@ -296,7 +296,7 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 		// deadline (bookkeeping), so a late-scheduled invocation still leaves its row.
 		record = unreachableRecord(record, err, time.Since(dialStarted))
 		record = set(record, "adapterOutcome", "guard_unreachable")
-		record = set(record, "detail", "the configured runtime could not be run: "+store.PythonOSErrorText(&os.PathError{Op: "connect", Path: socket, Err: err}))
+		record = set(record, "detail", "the configured runtime could not be run: "+store.StoredOSErrorText(&os.PathError{Op: "connect", Path: socket, Err: err}))
 		record = set(record, "elapsedMs", time.Since(started).Milliseconds())
 		_, _ = bounded(bookkeeping, func() (string, error) { return Journal(bookkeeping, settings.config, record, slot) })
 		return 0
@@ -354,7 +354,7 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 		// Other transport failures use Python's ordinary post-identity failure
 		// shape, not a broader exception in the journal reader.
 		record = unreachableRecord(record, dialErr, time.Since(dialStarted))
-		finish("guard_unreachable", "the configured runtime could not be run: "+store.PythonOSErrorText(&os.PathError{Op: "connect", Path: socket, Err: dialErr}), "")
+		finish("guard_unreachable", "the configured runtime could not be run: "+store.StoredOSErrorText(&os.PathError{Op: "connect", Path: socket, Err: dialErr}), "")
 		return 0
 	}
 	guardStarted := time.Now()

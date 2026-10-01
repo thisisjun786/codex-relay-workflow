@@ -12,7 +12,7 @@ import (
 // LoadsJSON is json.loads into values contract.Emit renders as Python would: objects keep
 // their key order (a repeated key keeps its first position and last value), integers stay
 // exact as json.Number, NaN and the infinities are float64, and every other number becomes a
-// float64. A document json.loads refuses answers its JSONDecodeError text (PythonJSONError).
+// float64. A document json.loads refuses answers its JSONDecodeError text (pyjson.Error).
 func LoadsJSON(data []byte) (any, error) {
 	return pyjson.Loads(string(data), pyjson.LoadOptions{Python: true, Constants: true})
 }

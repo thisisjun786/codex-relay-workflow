@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 )
 
 func f1ReadingKey(value any) string {
@@ -114,7 +114,7 @@ func (sw *Sweeper) readingFaults(ctx context.Context, product, project string, r
 			observations = append(observations, entry("observation_unmeasured", Notice, fmt.Sprintf("unmeasured:%s:%s", rel, turn), "nothing was established about whether this turn owed a report", false, []any{evidence("reading", "reporting-observation/1", map[string]any{"reportingState": state, "reason": r["reason"]}), fact("whether this turn owed a report is established", "unmeasured: "+pyStr(r["reason"]), "nobody can say whether a report is owed for this turn", "a notice: recorded, never filed", nil)}, signature))
 		default:
 			if !established {
-				gaps = append(gaps, map[string]any{"gap": "reading_unknown_state", "relationId": rel, "reason": fmt.Sprintf("reportingState %s is not one this sweep knows", pyvalue.Quote(r["reportingState"]))})
+				gaps = append(gaps, map[string]any{"gap": "reading_unknown_state", "relationId": rel, "reason": fmt.Sprintf("reportingState %s is not one this sweep knows", quote.Value(r["reportingState"]))})
 			}
 		}
 	}

@@ -259,7 +259,7 @@ func TestDeliverableStateAnswersAsTheGuard(t *testing.T) {
 				if !errors.As(raised, &exception) {
 					t.Fatalf("raised %T %v", raised, raised)
 				}
-				got = []any{"raised", exception.PythonText()}
+				got = []any{"raised", exception.StoredText()}
 			}
 			goldenDumps(t, "deliverable_state", got, false, golden.Substitute(base, "<BASE>"))
 		})

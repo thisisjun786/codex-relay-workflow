@@ -2,7 +2,7 @@ package faults
 
 import "testing"
 
-func TestDNotificationRelationshipEligibilityAgainstPython(t *testing.T) {
+func TestDNotificationRelationshipEligibility(t *testing.T) {
 	ctx, gd := f1ReplayStores(t)
 	check := func(args ...string) map[string]any { t.Helper(); return f1ReplayCLI(t, ctx, gd, args) }
 	answer := check("fault-observe", "--observation", `{"schema":"fault-observation/1","product":"crw","faultClass":"observation_unmeasured","severity":"notice","signature":{"relationship":"rel","turn":"turn-1"},"occurrenceKey":"u1","scope":{"projectKey":"CRW"}}`)

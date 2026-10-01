@@ -30,7 +30,7 @@ func runArgparseBinary(t *testing.T, dir, program string, env []string, argv ...
 
 // The built crw answers an intent-declare line with the golden's exit status and output bytes
 // (first taken as what the Python CLI, `uv run codex-session-relay`, answered).
-func Test24IntentDeclareSamePathMatchesLivePythonBytes(t *testing.T) {
+func Test24IntentDeclareSamePathBytes(t *testing.T) {
 	root := todo24Root(t)
 	binary := relayAlias(t)
 	home := t.TempDir()

@@ -4287,3 +4287,267 @@ the `%q` spelling now (its exits unchanged), and cli's `TestAnEchoedArgumentIsQu
 Evidence: `internal/relay/delivery/{cli.go,cli_emit.go,intent_cli.go}`;
 `internal/relay/dispatch/answer.go` (`Host`, `Detail`); the goldens of internal/relay/delivery,
 internal/relay/cli and internal/contracttest.
+
+## Decision R3F-1. What R3 left unreachable is deleted (refactor R3, final sweep)
+
+Decision: once the four R3 areas merged, the code they had stopped calling is deleted, found with
+`deadcode -test` and `deadcode` (with the `dev` and `integration` tags) and staticcheck's U1000:
+
+- `internal/bridge/pyerr` (CPython's OSError class and `str()` for an errno), which decision
+  R3R-5 kept for `internal/relay/registry` until decision R3D-5 removed that caller;
+- `settings.StderrText`, `pyjson.ErrorWithBudget` with the scanner's model of CPython 3.13's
+  recursion budget (its one caller went with decision R3S-2), `pyjson.Unquote`,
+  `RawDecodePrefix`, `DecodeReplace`, `DecodeBytesWTF8` and `LoadOptions.RawSurrogates`, and the
+  fold-era helpers of `pyjsontest`;
+- ports of Python helpers that only their own tests called: `reading.Unusable`,
+  `reading.PathIdentity`, `record.PointerEntryFor`, `staging.IsSettled` and
+  `faults.WallClockISO` (which one delivery test keeps as its own clock).
+
+Kept, though only tests reach them: the seams tests drive a product surface through (fake clocks,
+`appserver.Dial`, `ledger.Open`, `cli.Execute`, the command table's `Registered`, `Lookup` and
+`Names`, the store forwarders the adapter's lease tests call, `registry.ResetRolePolicySnapshot`),
+and three ported behaviours no product path calls, left for the owner to wire or delete:
+`registry.CheckUnloadedTransmission`, the only implementation of the contract's
+`unverified_pair_for_unloaded_thread` refusal; `registry.SettingsFreeRefusalCode`, which the
+host adapter's `verifyResume` repeats inline; and `store.ReceiptIntake.ResolveStaged`, the
+resolution of staged receipt claims at a turn's end.
+
+Consumer check: deadcode reports no function unreachable from the tests after the deletions; the
+pyjson corpus golden's row for `hook.Decode` now reads with that reader's own options (it named
+`RawSurrogates`, which `hook.Decode` stopped using).
+
+Evidence: commits [R3F1] and [R3F2]; internal/pyjson/{scan.go,bytes.go,loads.go,utf8.go,
+corpus_test.go}; internal/pyjson/pyjsontest/corpus.go.
+
+## Decision R3F-2. What R3 left of the Python value helpers is named for the format it keeps (refactor R3, final sweep)
+
+Decision: the helpers that outlived the Python relay say what they keep.
+
+- `pyvalue.Quote`, the Go-native quoting decision R3D-1 added, is `quote.Value` in
+  `internal/quote`: it is how a relay message shows a value (a string as `%q`, any other value as
+  compact JSON), not Python's. Its bytes are unchanged.
+- `argparse.ParseInt`/`ParseFloat` (Python's `int()`/`float()` of a text) are
+  `pyvalue.ParseInt`/`ParseFloat`: the relay's parser stopped using them in R3C, and their readers
+  (delivery's `HostTime`, the evidence forge's numbers, the fault commands' text arguments) read a
+  number as Python did. `Test24NumericPythonBytes` and its golden moved with them, unchanged.
+- The store's helpers that word a failure as the stored rows word it are named for that role:
+  `PythonOSError`, `PythonOSErrorText` and `PythonSQLiteError` are `StoredOSError`,
+  `StoredOSErrorText` and `StoredSQLiteError`; `ManifestException.PythonText` is `StoredText`;
+  the frozen copy's value model (`PythonEntry`, `PythonEntries`, `PythonManifestEntries`,
+  `PythonRevisionHash`) is `FrozenEntry`, `FrozenEntries`, `FrozenManifestEntries` and
+  `FrozenRevisionHash`. `PythonHostDetail`, which words a failure in Go's since R3S-1, is
+  `HostDetail`. `PythonSQLiteMessage` is unexported. The pass-through wrappers
+  `store.PythonJSONError`, `PythonJSONErrorWithLimit`, `DecodeUTF8` and `ValidUTF8` are gone:
+  their callers call `pyjson.Error`, `pyjson.ErrorWithLimit`, `pyjson.DecodeUTF8` and
+  `utf8.Valid`.
+- The package comments of `internal/pyjson` and `internal/pyvalue` name the stored, hashed and
+  machine-read formats each keeps (decision R3S-3, R3R-4 and R3D-1 list them by package).
+- Kept under their names: `store.PathlibSpelling`, `PathlibChild`, `PathlibParent` and
+  `ownership.PathlibSpelling`, named for the rule they implement (`str(Path(...))`), which spells
+  the paths the state-dir key, the scope key and the managed request fingerprint are taken over
+  (decision R3S-3); `store.PathRepr`; and the packages' own names, since renaming `pyjson` and
+  `pyvalue` would touch about a hundred files for no change of meaning.
+
+Consumer check: renames inside the Go module only; no doc outside docs/port/decisions.md (which
+records them as they were) names a renamed symbol.
+
+Evidence: internal/quote/{quote.go,quote_test.go}; internal/pyvalue/{pyvalue.go,number.go,
+number_test.go}; internal/pyjson/scan.go; internal/relay/store/{pyerr.go,ownership.go,
+frozen_value.go,frozen_detailed.go}.
+
+## Decision R3F-3. The relay's `guard-evaluate` command is gone; the Stop is judged in the hook or by the owner (refactor R3, final sweep)
+
+Decision: `crw relay guard-evaluate` (the legacy Stop guard's command line, which decision R3C-5
+kept only because the hook package's guard tests drove it) is removed with its spec, its routing
+to the owner (`hook.RouteGuard`, `hook.SelectedStore`), the read-only Stop path's preflight it
+alone called (`store.CheckStop`) and its tests of that routing. The Stop is judged as before: the
+native hook evaluates in its own process when its runtime owns the store (`hook.Evaluate`
+through `evaluateOwner`), and otherwise asks the owner over `control.sock`, whose method keeps
+the name `guard-evaluate` and every request and answer field (decision R3S-2). Every Stop-path
+behaviour and every journal row the hook writes is unchanged.
+
+Consumer check: `git grep guard-evaluate` over `plugins/crw` (the skills, `hooks.json` and the
+wiring), `docs/` and the product finds no caller of the command: the hook settings carry no
+relay command line since decisions 22 and 32, the skills never ran it, and the product's Go code
+names `guard-evaluate` only as the control.sock method. Two contract fixtures exercised the
+command itself (`test_management_cli__test_a_hold_that_cannot_be_recorded_is_refused_at_the_command_line`
+and `..._a_stop_payload_that_is_not_json_is_a_usage_error`, its own usage refusals); they are
+deleted with it, and contract/notes/test_coordination_cli.md says so. docs/relay/operations.md
+now names the Stop hook's guard where it named the command, and the marker commands it counts
+are eight.
+
+What moved: the doctor's `actorReachability.offlineCommands` no longer lists `guard-evaluate`,
+the command it named (the doctor goldens of internal/relay/cli, managed and supervisor lose that
+one element); `crw relay guard-evaluate` is now an unknown command (exit 2, `invalid choice`).
+
+Tests: the hook package's guard tests drive the evaluator directly with the options the command
+handed it, their goldens unchanged (`Test33GuardBinaryPython` is
+`Test33GuardEvaluatesEachFixture`, its fixtures still laid out under its old root,
+`canonicalRootNamed`); `Test33PR181GuardDiscoveryPython` is
+`Test33PR181AnExplicitStoreIsReadWithoutDiscovery` (an explicit store is read and discovery is
+never asked; the two cases that were the command's eager state selection go);
+`TestGuardEvaluate_reports_the_live_state_refusal` is `TestGuard_reports_the_live_state_refusal`
+on `hook.Evaluate`. Deleted, as tests of the command alone: `Test33GuardUsagePython`, review group
+D10 (the command's stdin decoding), D3's three command steps (the evaluator's reading of a Stop
+holding constants is held by `TestControlAnswersEveryRequestItCannotServeWithTheHostRecord`), the
+guard form of `TestReadOnlyForms_match_python_in_every_ownership_state` (removed from its
+fixture), `TestGuardEvaluate_routes_to_the_owners_control_socket_as_the_fence_does` and the rest
+of internal/relay/cli/guard_route_test.go, and `TestRouteGuard_reads_an_answer_within_its_nesting_cap`.
+
+Evidence: internal/relay/cli/{registry.go,commands_list.go}; internal/relay/argparse/specs.json;
+internal/relay/hook/{control.go (`nesting`),guard_test.go,pr181_test.go,review_native_test.go};
+internal/relay/store/ownership.go (`CheckStartLikeFence`); internal/relay/cli/readonly_test.go.
+
+## Decision R3F-4. A parser test holds the parser's contract once, and each command's help as its golden (refactor R3, final sweep)
+
+Decision: the argparse-era sweeps that pinned the parser's prose per command are reduced to the
+contract, which one test holds for every relay command: cmd/crw's
+`TestRun_every_relay_command_line_has_the_usage_contract` (help on stdout, exit 0, naming the
+command and listing every option; an unknown option, a missing required option and now a value
+outside an option's choices answer exit 2 with the usage on stderr and nothing on stdout; and
+now: no store is created by any of them), beside internal/relay/argparse's own tests. A
+command family keeps one golden per command, its help:
+
+- routing's `Test23_ArgparseWidthsBuiltBinary` (1,410 keys: every command at three `COLUMNS`
+  widths under both program names, accepted and refused lines, abbreviations) is
+  `Test23_EachRoutingCommandPrintsItsHelp`, the eleven plain `--help` keys it held, unchanged;
+  its accepted-lines fixture is deleted;
+- faults' `TestFaultArgparseSurfaceMatchesPython` (help, no arguments, an unknown option and an
+  abbreviation per command) is `TestFaultCommandsPrintTheirHelp`, the help keys unchanged, and
+  `TestFaultArgparseAmbiguousPrefixMatchesPython` (an abbreviation, which the parser no longer
+  reads) is deleted;
+- service's `Test29CLIShape` keeps its ten `--help` goldens and drops the `--unknown` and
+  `--actor` ones;
+- supervisor's `Test24_RCL_1_HelpWholeStdoutBytes` stops setting `COLUMNS`, which nothing reads;
+  the other RCL tests already hold a command's answer or the exit and the missing flag;
+- cli's `TestAnEchoedArgumentIsQuotedInTheRefusal` is deleted: the contract corpus holds both
+  echoes' quoting (`test_management_cli__test_an_argument_echoed_back_is_the_repr_of_its_str__*`)
+  and `unencodable_argument_test.go` an argument that is not UTF-8.
+
+`dispatch.Command.UsageHelp`, which made the capacity and edit-region commands answer `--help`
+with the usage line alone as Python's capacity parser did, is gone: their help lists their
+options as every command's does. No golden held their help.
+
+Consumer check: no skill, doc or product code reads a relay command's help or usage text
+(decision R3C-1); docs/port/test-map.md's line about the routing sweep now names its successor.
+
+Evidence: cmd/crw/main_test.go; internal/relay/routing/cli_test.go; internal/relay/faults/
+argparse_test.go; internal/relay/service/parity_test.go; internal/relay/supervisor/rcl_test.go;
+internal/relay/dispatch/dispatch.go; internal/relay/capacity/cli.go.
+
+## Decision R3F-5. The last Python class names in the relay's returned host errors go; the stored ones stay (refactor R3, final sweep)
+
+Decision: two host errors the relay only returns stop carrying a Python exception class.
+`managed-start` answers a socket it cannot resolve with `the relay socket cannot be resolved:
+<Go's error>` and a build that registers no host adapter with `this build registers no host
+adapter, so it cannot start a managed task`, where both read `HostUnavailable: ...` (the second
+named `bridge_adapter.py` and todo 28). `packet-check` answers a launch declaration whose
+execution policy path holds a NUL byte with `the launch declaration's execution policy path holds
+a NUL byte`, where it read `ValueError: embedded null byte`. Both stay host errors (exit 3,
+`error: host`). `Test27_MST_9_AStartThisBuildCannotMakeIsAHostError` holds the first two.
+
+Kept, because the text is stored: `dispatch.HostError` (`<Class>: <Detail>`) is now raised only
+by the delivery domain's lifecycle integer reading (`lifecycle.go`, `pystring.go`: `int()` and
+SQLite's binding) and its marker path checks (`marker.go`: `AssignmentDir`, `confined`), whose
+text the supervisor journals as an attempt's fault label (`supervisor_attempt_faulted`, decision
+R3D-1); its comment says so. `service.ErrEmbeddedNUL` keeps its words for the service launch it
+also fails.
+
+Documented rather than replaced: `dispatch.Execute` recovers an `*evidence.PythonError` panic as
+the command's host error. The readers of stored packets, readings and forge values raise it as
+the Python relay's expressions raised, and the callers that store its text recover it themselves;
+turning those accessors into error returns would touch every reader of a stored document.
+
+Consumer check: no skill, doc or contract fixture reads these details; no golden held them.
+
+Evidence: internal/relay/managed/{start_cli.go,start_cli_test.go}; internal/relay/sync/policy.go;
+internal/relay/dispatch/{answer.go,dispatch.go}.
+
+## Decision R3F-6. A test whose name says it compares with Python is named for what it holds (refactor R3, final sweep)
+
+Decision: 142 relay and contract-corpus tests whose names claimed a comparison with Python
+(`...MatchesPython`, `..._matches_python`, `...LivePython...`, `..._PythonScenario`,
+`..._is_pythons`, `..._as_python_does`, `..._like_python`, `...AgainstPython`,
+`..._python_whole_output`) and that compare with a Go golden are renamed, the claim dropped:
+sync's 43 `Test23_*_PythonScenario` are `Test23_*_Scenario`; supervisor's 26
+`Test24_*_WholeLivePython` are `Test24_*_WholeOutput`; merge-turn's 34 `Test26_*_python_*` and
+`Test26_CCL_1_withdraw_matches_python` lose the word; and 38 more in internal/relay/{cli,faults,
+registry,store} and internal/contracttest (for example `TestShow_on_every_scenario_event`,
+`TestDAttentionWholeOutput`, `Test_every_mcp_reply_equals_its_golden_whole_json`). Their 152
+golden files and the 69 fixtures named after them are renamed with identical content (git
+`R100`); the subtests' goldens, whose names carry a digest of the test's name, were regenerated
+and checked value for value against the old files before those were removed.
+docs/port/test-map.md and contract/notes/test_fence.md name the new tests; the port's historical
+records (these decisions, docs/port/oracles, the backlog's evidence) keep the names they had.
+
+Kept, and why:
+
+- Many goldens on one name: `TestLaunchPolicy_resolution_is_pythons_for_every_declaration` (78),
+  `TestCLI_marker_preflight_answers_what_python_answers` (27),
+  `TestWorkerPolicy_every_reason_is_pythons_in_every_reader` (26), the five contract-corpus
+  `Test*Commands_the_built_crw_prints_what_python_printed` (kept together; two hold 18 and 12),
+  `TestDoctor_ownership_block_matches_python_on_a_broken_store` (16),
+  `Test26_MTW_9_every_notice_row_matches_python` (15), `TestStatus_phases_match_python` (14),
+  `TestStatus_observation_health_matches_python` and `Test26_MTW_8_every_status_row_matches_python`
+  (12), `Test28FrozenByteCountExactPythonParity` (11), `TestUpdateWritesWhatPythonWrites` (7),
+  `TestArgumentRefusals_fall_where_the_python_fence_puts_them`,
+  `TestWorkerPolicy_managed_start_readiness_is_pythons`,
+  `TestAWrongSocketRecoveryResolvesThePinnedDirectoryAsPythonDoes` and
+  `Test33TranscriptIdentityPython` (6).
+- A name the golden's bytes depend on: delivery's `TestCLI_every_delivery_command_answers_byte_for_byte_like_python`,
+  `TestCLI_every_intent_command_answers_byte_for_byte_like_python`,
+  `TestCLI_intent_register_refuses_a_store_the_other_runtime_owns_like_python` and
+  `TestCLI_store_selection_refusals_match_python` lay their stores at a path fixed by the test's
+  name, which their receipts' event ids and the marker workspace keys digest.
+- Stored, hashed or deliberately Python-kept bytes, where "Python" names what the bytes still
+  are (decision R3R-8's rule): the Stop hook's `Test33*Python` journal tests, store's
+  `TestPythonParity_*` table rows, the coordination conflict rows and ids
+  (`Test26_Coordination*`), the stored labels and reprs (`Test28PythonErrorLabelsPersisted`,
+  `Test24ProviderReprPythonBytes`, `TestPathReprIsPythonsReprOfTheDecodedFilename`), the path
+  spellings the state-dir, scope and workspace keys are taken over (`TestLocate_*`,
+  `TestResolveStateDir_*`, `TestDiscoverySpellsEveryStoreItNamesAsPythonDoes`,
+  `TestAMarkerRootIsTheDirectoryPythonNames`, `TestTheScopeRootIsTheOnePythonResolves`, ...),
+  the policy digest, the readings decided by Python's truth and equality, and the runtime's and
+  the bridge's (decision R3R-8).
+- Names that say where a case came from: managed's `Test27_*_PythonFake...` and faults'
+  `Test22_FLT_*_Python...` scenarios, store's `..._python_properties` ports.
+- Tests that compare with literals, not a golden (for example
+  `TestExpandUser_matches_python_home_and_named_user`).
+
+Evidence: commit [R3F7]: every renamed golden and fixture is a git rename with identical content.
+
+## Decision R3F-7. Three ported helpers no product path called are deleted, each by what replaced it (refactor R3, final sweep)
+
+Decision: the three behaviours decision R3F-1 left for the owner go; none was missing wiring.
+
+- `registry.CheckUnloadedTransmission` (with `taskIDOf`). Python's delivery gate called
+  `rolepolicy.check_unloaded_transmission(settings, role, policy, "notLoaded") is not None` only
+  to set `settings.settings_free_resume`; it never raised the refusal. `AuthorizedSettings`
+  computes the same flag: it is reached only with a bound role under a declared policy whose
+  record check passed, and there the two read the same predicate (no cited exception, the role's
+  expectation a pair, and the record's model and effort equal to it), so they agree on every
+  input the gate passes. The predicate is now one function, `derivedFromRolePair`, which
+  `AuthorizedSettings` and the role-policy scenarios' `unloaded` steps both call.
+  `contract.RefusalUnverifiedPairForUnloadedThread` stays: the bridge refuses with it.
+- `store.ReceiptIntake.ResolveStaged` (with `stagedEvents` and `StageResolution`). Python's
+  `resolve_staged` was called only by tests too; the product settles staged claims in the
+  daemon's observation (Python's `resolve_staged_in`, which internal/relay/daemon/observe.go
+  carries out inline, journal `staged_resolved`). Its cases move onto that path:
+  `Test29ASettledTurnResolvesItsStagedClaims` (internal/relay/daemon) holds a completed turn
+  finalizing its staged claim exactly once, a failed or an interrupted one suppressing it with
+  its reason, and a running one leaving it staged; delivery's SUP-03 settles its successor as
+  the daemon writes it (`settleStaged`), its tables unchanged.
+- `registry.SettingsFreeRefusalCode` stays as the one copy: the host adapter's `verifyResume`
+  calls it instead of repeating it inline (adapter already imports registry).
+
+Goldens: the role-policy scenarios `unloaded_guard` and `exception_equal_to_the_role_pair`
+(`Test25_ROL12_*`, `Test25_ROL15_*`): each `unloaded` step answers `{"settingsFree": ...}` (true
+where it answered the `unverified_pair_for_unloaded_thread` refusal, false where it answered
+null); no other step moved. `Test25_ROL12` and `Test25_ROL15` assert the flag.
+
+Consumer check: no product code, skill, doc or fixture called the three functions; the
+`settings_free_resume` flag and the refusal code are unchanged.
+
+Evidence: internal/relay/registry/{record.go,rolepolicy.go,rolepolicy_helpers_test.go,
+rolepolicy_test.go}; internal/relay/adapter/settings.go; internal/relay/daemon/staged_test.go;
+internal/relay/delivery/supersession_test.go; internal/relay/store/wp1_intake_test.go.

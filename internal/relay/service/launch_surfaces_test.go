@@ -142,10 +142,10 @@ func TestLaunchPolicy_the_receive_check_settles_the_declaration_first(t *testing
 	if got.code != 2 || got.stdout != want {
 		t.Fatalf("empty receiver: exit %d\n%s", got.code, got.stdout)
 	}
-	// os.environ refuses the recorded path before anything reads it.
+	// A recorded path holding NUL is refused before anything reads it.
 	_, state, _ = launchTree(t, fixture, "record-nul")
 	got = relay(t, "--state", state, "packet-check", "--packet", packet, "--receiver", "task")
-	if want := "{\n  \"error\": \"host\",\n  \"detail\": \"ValueError: embedded null byte\"\n}\n"; got.code != 3 || got.stdout != want {
+	if want := "{\n  \"error\": \"host\",\n  \"detail\": \"the launch declaration's execution policy path holds a NUL byte\"\n}\n"; got.code != 3 || got.stdout != want {
 		t.Fatalf("NUL: exit %d\n%s", got.code, got.stdout)
 	}
 	// The refusal LaunchRefusal makes of the resolution (its golden began as Python's).

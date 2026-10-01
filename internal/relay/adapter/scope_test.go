@@ -210,7 +210,7 @@ func frozenRaisedCapture(t *testing.T, reference string, entries []Entry) {
 	digest, problems, unreadable, err := VerifyFrozenDetailed(reference, entries)
 	var result any = map[string]any{"digest": digest, "problems": problems, "unreadable": unreadable}
 	if err != nil {
-		raised, ok := store.PythonHostDetail(err)
+		raised, ok := store.HostDetail(err)
 		switch {
 		case ok:
 		case store.RefusalReason(err) != "":

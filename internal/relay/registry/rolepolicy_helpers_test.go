@@ -245,18 +245,12 @@ func (x *roleRun) step(step roleStep) any {
 	case "check_binding":
 		return objectOrNil(CheckBinding(arg[any](t, args[0]), arg[string](t, args[1]), x.build(args[2]), x.r.Policy))
 	case "unloaded":
-		err := CheckUnloadedTransmission(x.build(args[0]), arg[string](t, args[1]), x.r.Policy, "notLoaded")
-		if err == nil {
-			return nil
-		}
-		return answerOf(nil, err)
+		// Whether a send resumes this record settings-free: its pair was not derived from the
+		// role's declared pair (the predicate Python asked check_unloaded_transmission).
+		return map[string]any{"settingsFree": !derivedFromRolePair(x.build(args[0]), arg[string](t, args[1]), x.r.Policy)}
 	case "unloaded_stored":
 		settings, _ := x.stored(arg[string](t, args[0])).(contract.OrderedObject)
-		err := CheckUnloadedTransmission(settings, arg[string](t, args[1]), x.r.Policy, "notLoaded")
-		if err == nil {
-			return nil
-		}
-		return answerOf(nil, err)
+		return map[string]any{"settingsFree": !derivedFromRolePair(settings, arg[string](t, args[1]), x.r.Policy)}
 	case "loaded_mismatch":
 		response, err := decodeJSON(step.Response)
 		if err != nil {

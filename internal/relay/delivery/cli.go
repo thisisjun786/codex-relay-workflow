@@ -152,7 +152,7 @@ func hostDetail(err error) string {
 	if errors.As(err, &expired) {
 		return expired.Error()
 	}
-	if detail, ok := store.PythonHostDetail(err); ok {
+	if detail, ok := store.HostDetail(err); ok {
 		return detail
 	}
 	return err.Error()

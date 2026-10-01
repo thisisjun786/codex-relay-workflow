@@ -107,27 +107,27 @@ func guardInsert(t *testing.T, table string, row map[string]any) func(context.Co
 	return nil
 }
 
-func TestGuard_scope_bindings_one_live_owner_fails_like_python(t *testing.T) {
+func TestGuard_scope_bindings_one_live_owner_fails(t *testing.T) {
 	runGuard(t, "scope_bindings_one_live_owner")
 }
 
-func TestGuard_scope_links_one_live_edge_fails_like_python(t *testing.T) {
+func TestGuard_scope_links_one_live_edge_fails(t *testing.T) {
 	runGuard(t, "scope_links_one_live_edge")
 }
 
-func TestGuard_merge_turns_one_live_holder_fails_like_python(t *testing.T) {
+func TestGuard_merge_turns_one_live_holder_fails(t *testing.T) {
 	runGuard(t, "merge_turns_one_live_holder")
 }
 
-func TestGuard_merge_turns_one_live_claim_fails_like_python(t *testing.T) {
+func TestGuard_merge_turns_one_live_claim_fails(t *testing.T) {
 	runGuard(t, "merge_turns_one_live_claim")
 }
 
-func TestGuard_execution_slots_one_live_subject_fails_like_python(t *testing.T) {
+func TestGuard_execution_slots_one_live_subject_fails(t *testing.T) {
 	runGuard(t, "execution_slots_one_live_subject")
 }
 
-func TestGuard_edit_agreements_one_live_per_region_fails_like_python(t *testing.T) {
+func TestGuard_edit_agreements_one_live_per_region_fails(t *testing.T) {
 	runGuard(t, "edit_agreements_one_live_per_region")
 }
 
