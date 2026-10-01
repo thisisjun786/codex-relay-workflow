@@ -11,16 +11,17 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
-	"regexp"
-	"sort"
 )
 
 func targetStep(t *testing.T, w *fx, reader TargetReader, repository, branch string, paths ...string) {
@@ -175,7 +176,7 @@ func Test26_MTG_6_python_bare_cli_whole_output(t *testing.T) {
 	call := func(args ...string) map[string]any {
 		t.Helper()
 		var out, stderr bytes.Buffer
-		code := registry.Execute(context.Background(), append([]string{"--state", state}, args...), &out, &stderr)
+		code := dispatch.Execute(context.Background(), "codex-session-relay", append([]string{"--state", state}, args...), &out, &stderr)
 		if stderr.Len() > 0 {
 			t.Fatalf("%v stderr: %s", args, stderr.String())
 		}
@@ -368,7 +369,7 @@ func normalizeBareCLI(t *testing.T, steps []map[string]any, repository string) {
 func Test26_MTG_7_python_whole_output(t *testing.T) {
 	w := newFx(t)
 	var out, stderr bytes.Buffer
-	code := registry.Execute(w.ctx, []string{"merge-turn-restate-base", "--help"}, &out, &stderr)
+	code := dispatch.Execute(w.ctx, "codex-session-relay", []string{"merge-turn-restate-base", "--help"}, &out, &stderr)
 	w.step(map[string]any{"helpExitsZero": code == 0, "hasObservedBaseSha": strings.Contains(out.String(), "--observed-base-sha")}, nil)
 	w.matchesGolden("mtg7_help")
 }

@@ -3354,3 +3354,32 @@ Evidence: `internal/relay/capacity/cli.go`, `cmd/crw/main.go`;
 A sweep of 278 capacity command lines through the built `crw relay` before and after found every
 difference in the classes above, none in a help answer and none in an answer to a line both
 parsers accepted.
+
+## Decision R2B-2. Every relay command takes one dispatch path; its endings read alike (refactor R2)
+
+(Placeholder heading: the next free number is given when the R2 groups merge.)
+
+Decision: the relay CLI keeps one command table (`internal/relay/dispatch`) and one path through
+it: the root parse (the global options are read there only), the command's argparse parse, the
+state directory, check_start for a write form, the selection refusal, then the writable store's
+admission (or `--kind-module` alone), the handler, and one emit. Each command's registration
+carries what that path reads: read-only (cli.py READ_ONLY_COMMANDS and `_read_only_command`),
+answers without a state directory (`merge-evidence`, `ack-proof`), answers without the selected
+store (`_reads_no_selected_store`, the marker commands), exempt from the selection refusal, admits
+its own store. The order of the checks is cli.main's for every family,
+as it was. The command families' own entry points and their re-parse of the global options are
+gone. Where the families answered the same ending differently, every command now answers it as
+cli.py did:
+
+- A `--state` (or `CODEX_SESSION_RELAY_STATE`) that cannot be resolved because `~user` names no
+  user, or `~` has no home, answers `RuntimeError: Could not determine home directory.` (exit 3).
+  The registry, linkage and merge-turn commands answered the wrapped Go text instead
+  (`cannot determine home directory for "x": ...`).
+
+Why: six entry paths served the relay CLI, each re-reading the global options and keeping its own
+copy of the selection refusal and of the ending-to-JSON classification; the copies had drifted
+apart only where nothing looked. One table and one path keep the refusal order in one place.
+
+Evidence: `internal/relay/dispatch` (`Execute`, `Command`, `emit`), the families' registrations
+(`internal/relay/cli/registry.go`, `internal/relay/registry/cli.go`, `external.go`); every relay CLI
+golden compares unchanged.

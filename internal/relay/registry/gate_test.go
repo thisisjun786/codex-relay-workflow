@@ -10,6 +10,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
@@ -218,7 +219,7 @@ func Test25_CLI23_a_write_forms_own_refusal_comes_after_its_store(t *testing.T) 
 		home := t.TempDir()
 		goState := filepath.Join(home, "go")
 		var goOut, goErr bytes.Buffer
-		goCode := Execute(ctx(), append([]string{"--state", goState}, c.argv...), &goOut, &goErr)
+		goCode := dispatch.Execute(ctx(), "codex-session-relay", append([]string{"--state", goState}, c.argv...), &goOut, &goErr)
 		goStdout := strings.ReplaceAll(goOut.String(), goState, "<STATE>")
 		goNames := listing(goState)
 		// The exit, stdout (the state directory spelled <STATE>) and the names the state
