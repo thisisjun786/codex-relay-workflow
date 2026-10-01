@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -24,21 +26,42 @@ const PackageVersion = appserver.BridgeVersion
 const description = "STDIO MCP entry point. No daemon startup or client configuration changes."
 
 // Defaults are server.py main()'s: the socket under CODEX_HOME (or ~/.codex) and the ledger
-// under XDG_STATE_HOME (or ~/.local/state). They are computed from env and never opened here. An
-// empty CODEX_HOME is no CODEX_HOME, as the relay reads it (store.DefaultSocket, decision 73):
-// taken as set, it named a socket relative to the working directory, which is never the App
-// Server's, and the relay given no --socket would scope its store by another socket.
+// under XDG_STATE_HOME (or ~/.local/state). They are computed from env and never opened here.
+// They read the environment as the relay does (store.DefaultSocket and DiscoverStateDir, decision
+// 73), so the default socket is the one the relay scopes a selection without --socket by: an
+// empty CODEX_HOME or XDG_STATE_HOME is unset, and the home is Path.home() (Home). Taken as set,
+// an empty variable named a socket or a ledger relative to the working directory, which is never
+// the App Server's socket and, for the plugin's MCP server, lies in the version directory the
+// next install replaces.
 func Defaults(env map[string]string) (socket, state string) {
-	home := env["HOME"]
+	home := Home(env)
 	codexHome := env["CODEX_HOME"]
 	if codexHome == "" {
 		codexHome = filepath.Join(home, ".codex")
 	}
-	stateHome, ok := env["XDG_STATE_HOME"]
-	if !ok {
+	stateHome := env["XDG_STATE_HOME"]
+	if stateHome == "" {
 		stateHome = filepath.Join(home, ".local", "state")
 	}
 	return filepath.Join(codexHome, "app-server-control", "app-server-control.sock"), filepath.Join(stateHome, "codex-thread-bridge")
+}
+
+// Home is Path.home() as the relay reads it (ownership.UserHome): HOME whenever it is set, else
+// this user's passwd entry, with trailing slashes dropped and a home that is nothing (an empty
+// HOME, or "/") being the root. Where neither answers it is "", as before.
+func Home(env map[string]string) string {
+	home, set := env["HOME"]
+	if !set {
+		account, err := user.LookupId(strconv.Itoa(os.Getuid()))
+		if err != nil {
+			return ""
+		}
+		home = account.HomeDir
+	}
+	if home = strings.TrimRight(home, "/"); home == "" {
+		return "/"
+	}
+	return home
 }
 
 // Environ turns os.Environ-shaped entries into a map.
