@@ -67,7 +67,10 @@ Runtime state lives outside any repository, in
 **Every process must point at the same state directory.** The child emitting, the parent
 acknowledging and the daemon delivering share one store; a mismatched `--state` means they simply do
 not see each other. The endpoint hash is derived from the socket path, so passing the same
-`--socket` is enough.
+`--socket` is enough. Without `--socket` it is derived from the default App Server socket,
+`$CODEX_HOME/app-server-control/app-server-control.sock` (`CODEX_HOME` defaulting to
+`~/.codex`), the one the bridge defaults to; a legacy `default` directory is kept only while it
+alone holds a store. See [where the state lives](operations.md#where-the-state-lives).
 
 `doctor` reports which rule won, the database it resolved to and the access this process really
 has. To prove two participants share one store rather than two copies of one, take

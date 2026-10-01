@@ -3,8 +3,10 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -42,7 +44,7 @@ func RegistrationHold(ctx context.Context, dbPath string, run func(conn *sql.Con
 	if err != nil {
 		// The fence does not yield its Admission's OwnershipRefused as an unheld hold:
 		// register_relationship raises it, so the caller answers store_owned_by_other.
-		return ownershipRefusal(&ownership.Refused{Detail: fmt.Sprintf("write gate: %v", err)})
+		return writeGateRefusal(err, errors.Is(err, os.ErrNotExist) && unstampedAt(ctx, absolute))
 	}
 	defer gate.Close()
 	u := url.URL{Scheme: "file", Path: absolute}

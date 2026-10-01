@@ -334,7 +334,10 @@ the command and its output are in
 [codex-session-relay](references/relay.md#determine-whether-this-store-holds-the-assignment).
 
 Run it from the process that will do the work, because what a task can reach is a property
-of that task's profile on that host rather than a fact about the relay. One reading answers
+of that task's profile on that host rather than a fact about the relay. Determine the socket and
+the state directory as [One shared state directory](references/relay.md#one-shared-state-directory)
+says; a `store_owned_by_other` refusal of an unstamped store there is a wrong selection, not an
+unavailable relay, and never by itself a reason for direct mode. One reading answers
 the issue half and the store half together and says whether they agree; act on it only where
 they do. A reading that names a store this process did not measure is refused rather than
 used, and an unreadable store answers null rather than "nothing is assigned", because those

@@ -80,3 +80,19 @@ func passwdHomeSubstitution() golden.Option {
 	}
 	return golden.Substitute("", "")
 }
+
+// defaultScopeSubstitution names the directory discovery scopes by the default App Server socket
+// (DefaultSocket, under the test's CODEX_HOME or HOME) <DEFAULT-SCOPE> in a golden: the name is a
+// digest of a path below the test's temporary directories.
+func defaultScopeSubstitution(t testing.TB) golden.Option {
+	t.Helper()
+	socket, err := DefaultSocket()
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope, err := SocketScope(socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return golden.Substitute(scope, "<DEFAULT-SCOPE>")
+}

@@ -65,6 +65,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
@@ -117,8 +118,10 @@ type isolated struct {
 	root, home, codex, state, tmp, trip, tools, sentinel string
 	// scopes and markers are the relay scope registry and marker root; see isolation.
 	scopes, markers string
-	// socket is the relay socket the installer's settings default to. No relay runs here, so
-	// every Stop the hook records finds nothing listening there.
+	// socket is the owner's control socket the Stop hook dials when the installer's settings name
+	// no App Server socket: in the state directory discovery scopes by the default App Server
+	// socket under CODEX_HOME, where a relay service started on that socket serves (decision 73).
+	// No relay runs here, so every Stop the hook records finds nothing listening there.
 	socket string
 	// dest is the installer's default destination and current its owned pointer.
 	dest, current, record, relayState, ledger string
@@ -154,7 +157,11 @@ func newIsolated(t *testing.T) *isolated {
 		tmp: filepath.Join(root, "tmp"), trip: filepath.Join(root, "trip"), tools: filepath.Join(root, "tools"),
 		sentinel: filepath.Join(root, "tripwire-fired"), relayState: filepath.Join(root, "relay-state"), ledger: filepath.Join(root, "bridge-ledger"),
 		scopes: filepath.Join(root, "scopes"), markers: filepath.Join(root, "markers")}
-	h.socket = filepath.Join(h.state, "codex-session-relay", "default", "control.sock")
+	scope, err := store.SocketScope(filepath.Join(h.codex, "app-server-control", "app-server-control.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.socket = filepath.Join(h.state, "codex-session-relay", scope, "control.sock")
 	h.dest = filepath.Join(h.home, ".local", "share", "crw-runtime")
 	h.current = filepath.Join(h.dest, "current")
 	h.record = filepath.Join(h.state, "codex-relay-workflow", "host-record.json")
@@ -602,8 +609,9 @@ func (h *isolated) rows(t *testing.T) []map[string]any {
 
 // journaled requires a released turn (exit 0, nothing on stdout) that left exactly one journal
 // row for that session and turn, read from the installer's settings, whose outcome is the only
-// healthy one here: no relay runs in this test, so the hook asked the guard at the default
-// socket the settings name and found nothing there. Any other outcome, adapter_faulted above
+// healthy one here: no relay runs in this test, so the hook asked the guard at the control
+// socket of the state directory the default App Server socket scopes (h.socket) and found
+// nothing there. Any other outcome, adapter_faulted above
 // all, is a hook that failed on this install.
 func (h *isolated) journaled(t *testing.T, got outcome, session, turn string) {
 	t.Helper()

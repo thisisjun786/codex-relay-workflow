@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
@@ -55,7 +56,13 @@ func compareRCLBytes(t *testing.T, argv func(string) []string, normalize func(ra
 	}
 	home := t.TempDir()
 	golang := runRCL(t, binary, home, argv)
-	golden.CheckJSON(t, "rcl", map[string]any{"code": golang.code, "stdout": string(normalize(golang.stdout)), "stderr": string(golang.stderr), "created": golang.created}, golden.Substitute(home, "<home>"), golden.Substitute(repoRoot(t), "<repo>"))
+	// A selection made without --socket is scoped by the default socket under CODEX_HOME, whose
+	// digest follows home.
+	scope, err := store.SocketScope(filepath.Join(home, "codex", "app-server-control", "app-server-control.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	golden.CheckJSON(t, "rcl", map[string]any{"code": golang.code, "stdout": string(normalize(golang.stdout)), "stderr": string(golang.stderr), "created": golang.created}, golden.Substitute(scope, "<default-scope>"), golden.Substitute(home, "<home>"), golden.Substitute(repoRoot(t), "<repo>"))
 	return golang
 }
 

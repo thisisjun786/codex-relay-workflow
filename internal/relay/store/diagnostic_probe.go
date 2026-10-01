@@ -51,7 +51,8 @@ func Probe(ctx context.Context, selection StateSelection) (result ProbeResult) {
 	} else if result.Access.DirectoryExists {
 		notes = append(notes, "database stat failed: "+err.Error())
 	}
-	if refusal := ownershipPreflight(ctx, selection.DBPath()); refusal != "" {
+	refusal, unstamped := ownershipPreflight(ctx, selection.DBPath())
+	if refusal != "" {
 		// A store this runtime may not write is diagnosed without a live SQLite open (even
 		// mode=ro can create WAL/SHM on a copied WAL database) and without creating even a
 		// temporary file beside it.
@@ -98,7 +99,7 @@ func Probe(ctx context.Context, selection StateSelection) (result ProbeResult) {
 		result.Store = Location{DBPath: result.Store.DBPath, RealPath: result.Store.RealPath}
 		return result
 	}
-	probeWrite(ctx, file, expected, &result, &notes)
+	probeWrite(ctx, file, expected, unstamped, &result, &notes)
 	return result
 }
 
@@ -107,37 +108,74 @@ func Probe(ctx context.Context, selection StateSelection) (result ProbeResult) {
 // Python's str(OwnershipRefused). The mirror is read as ownership.mirror reads it, before the
 // database; a database that cannot be read at all is left to the probe below, which reports
 // it in detail. Go's admission preflight decides whether a fenced store is refused, and
-// ownership.py validate's words name why wherever validate refuses it too.
-func ownershipPreflight(ctx context.Context, dbPath string) string {
+// ownership.py validate's words name why wherever validate refuses it too. unstamped is
+// whether the reading found no ownership stamp at all: no mirror and no ownership key.
+func ownershipPreflight(ctx context.Context, dbPath string) (refusal string, unstamped bool) {
 	const refused = "store_owned_by_other: "
 	raw, err := OwnershipMirror(dbPath)
 	if err != nil {
-		return err.Error()
+		return err.Error(), false
 	}
 	if raw != nil {
 		if why := MirrorRefusal(raw); why != "" {
-			return refused + why
+			return refused + why, false
 		}
 	}
 	meta, err := readMetadata(ctx, dbPath)
 	if err != nil {
-		return ""
+		return "", false
 	}
-	fenced := raw != nil
-	for _, key := range ownership.Keys {
-		_, present := meta[key]
-		fenced = fenced || present
-	}
-	if !fenced {
-		return ""
+	if !stamped(raw, meta) {
+		return "", true
 	}
 	if raw == nil || meta["writer_protocol"] != "1" {
-		return refused + "missing or unsupported writer protocol"
+		return refused + "missing or unsupported writer protocol", false
 	}
 	if meta["owner"] != "go" {
-		return refused + "the relay store belongs to another runtime"
+		return refused + "the relay store belongs to another runtime", false
 	}
-	return ""
+	return "", false
+}
+
+// stamped is whether a store carries any part of an ownership stamp: its mirror, or an ownership
+// key in schema_meta.
+func stamped(mirror []byte, meta map[string]string) bool {
+	if mirror != nil {
+		return true
+	}
+	for _, key := range ownership.Keys {
+		if _, present := meta[key]; present {
+			return true
+		}
+	}
+	return false
+}
+
+// UnstampedStoreDetail is the refusal detail for a store with no write gate and no ownership
+// stamp (no mirror, no ownership key): a database no Go writer was ever admitted to, which no
+// running relay holds open either, since a serving relay holds its store's write gate.
+const UnstampedStoreDetail = "the store carries no ownership stamp (no write-gate.lock): no Go writer was ever bound to it; it is not the store a running relay serves"
+
+// writeGateRefusal is store_owned_by_other for a write gate that could not be taken: in plain
+// words (UnstampedStoreDetail) when the gate does not exist beside a store that carries no
+// ownership stamp, else the gate's own failure as the fence words it.
+func writeGateRefusal(err error, unstamped bool) error {
+	refused := &ownership.Refused{Detail: fmt.Sprintf("write gate: %v", err)}
+	if unstamped && errors.Is(err, os.ErrNotExist) {
+		return &RefusedError{Reason: "store_owned_by_other", Detail: UnstampedStoreDetail, cause: refused}
+	}
+	return ownershipRefusal(refused)
+}
+
+// unstampedAt is whether the store at dbPath carries no ownership stamp, read as the probe's
+// preflight reads it; a mirror or schema_meta that cannot be read is not called unstamped.
+func unstampedAt(ctx context.Context, dbPath string) bool {
+	raw, err := OwnershipMirror(dbPath)
+	if err != nil {
+		return false
+	}
+	meta, err := readMetadata(ctx, dbPath)
+	return err == nil && !stamped(raw, meta)
 }
 
 // probeForeign is probe's foreign-store branch: identity from a disposable copy and a stat of
@@ -195,10 +233,10 @@ func probeRead(ctx context.Context, file *os.File, expected string, result *Prob
 	}
 }
 
-func probeWrite(ctx context.Context, file *os.File, expected string, result *ProbeResult, notes *[]string) {
+func probeWrite(ctx context.Context, file *os.File, expected string, unstamped bool, result *ProbeResult, notes *[]string) {
 	gate, err := ownership.Lock(filepath.Join(filepath.Dir(expected), "write-gate.lock"), false, false)
 	if err != nil {
-		*notes = append(*notes, "database write probe failed: "+ownershipRefusal(&ownership.Refused{Detail: fmt.Sprintf("write gate: %v", err)}).Error())
+		*notes = append(*notes, "database write probe failed: "+writeGateRefusal(err, unstamped).Error())
 		return
 	}
 	defer gate.Close()
