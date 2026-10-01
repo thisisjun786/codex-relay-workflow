@@ -7,6 +7,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
+	expected "github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 func text(v any) string {
@@ -22,29 +23,37 @@ func strList(v any) []string {
 	return out
 }
 
+// settingsInputs is one section of the fixture settings-documents-inputs.json, the inputs the
+// Python writers were given.
+func settingsInputs(t *testing.T, section string) record.Object {
+	t.Helper()
+	inputs, err := reading.Decode(expected.Fixture(t, "settings-documents-inputs.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return golden.Obj(record.Get(golden.Obj(inputs), section))
+}
+
 // The plugin bridge record is written byte for byte as bridgerecord.document plus
 // json.dumps(indent=2, sort_keys=True) writes it, version 1 without a policy and version 2 with
-// one (goldens captured from scripts/crw_runtime).
+// one: the golden began as scripts/crw_runtime's bytes.
 func TestBridgeRecordBytesArePythons(t *testing.T) {
-	for _, f := range golden.Obj(record.Get(golden.Obj(golden.Section(t, "settingsDocuments")), "bridgeRecords")) {
-		given := golden.Obj(record.Get(golden.Obj(f.Value), "inputs"))
+	for _, f := range settingsInputs(t, "bridgeRecords") {
+		given := golden.Obj(f.Value)
 		var policy record.Object
 		if p := golden.Obj(record.Get(given, "policy")); p != nil {
 			policy = record.Object{{Key: "path", Value: record.Get(p, "path")}, {Key: "digest", Value: record.Get(p, "digest")}}
 		}
-		got := string(record.Encode(install.BridgeDocument(text(record.Get(given, "command")), strList(record.Get(given, "args")), text(record.Get(given, "name")), text(record.Get(given, "issue")), policy)))
-		if want := text(record.Get(golden.Obj(f.Value), "bytes")); got != want {
-			t.Errorf("%s:\n%s\nwant\n%s", f.Key, got, want)
-		}
+		expected.Check(t, f.Key, record.Encode(install.BridgeDocument(text(record.Get(given, "command")), strList(record.Get(given, "args")), text(record.Get(given, "name")), text(record.Get(given, "issue")), policy)))
 	}
 }
 
 // The plugin-owned Stop settings are completion.configuration's bytes without the retired
-// adapterInterpreter and adapterEntryPoint (decision 66), and both the Python reader and the
-// Go hook's own reader accept them.
+// adapterInterpreter and adapterEntryPoint (decision 66): the golden began as those bytes. The
+// Go hook's own reader accepts them.
 func TestHookSettingsBytesArePythons(t *testing.T) {
-	for _, f := range golden.Obj(record.Get(golden.Obj(golden.Section(t, "settingsDocuments")), "hookSettings")) {
-		given := golden.Obj(record.Get(golden.Obj(f.Value), "inputs"))
+	for _, f := range settingsInputs(t, "hookSettings") {
+		given := golden.Obj(f.Value)
 		timeout, _ := record.Get(given, "timeout").(int64)
 		document, err := install.HookSettings{
 			Destination: text(record.Get(given, "destination")), MarkerRoot: text(record.Get(given, "marker_root")), Database: text(record.Get(given, "database")),
@@ -54,22 +63,9 @@ func TestHookSettingsBytesArePythons(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		recorded, err := reading.Decode([]byte(text(record.Get(golden.Obj(f.Value), "bytes"))))
-		if err != nil {
-			t.Fatal(err)
-		}
-		retired := golden.Obj(recorded)
-		for _, key := range []string{"adapterInterpreter", "adapterEntryPoint"} {
-			if record.Get(retired, key) == nil {
-				t.Fatalf("%s: the recording has no %s", f.Key, key)
-			}
-			retired = record.Delete(retired, key)
-		}
-		if got, want := string(record.Encode(document)), string(record.Encode(retired)); got != want {
-			t.Errorf("%s:\n%s\nwant\n%s", f.Key, got, want)
-		}
-		if len(golden.List(record.Get(golden.Obj(f.Value), "complaints"))) != 0 || len(install.Complaints(document)) != 0 {
-			t.Errorf("%s is refused: %v", f.Key, install.Complaints(document))
+		expected.Check(t, f.Key, record.Encode(document))
+		if complaints := install.Complaints(document); len(complaints) != 0 {
+			t.Errorf("%s is refused: %v", f.Key, complaints)
 		}
 	}
 }

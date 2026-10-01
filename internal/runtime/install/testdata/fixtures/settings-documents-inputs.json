@@ -1,0 +1,57 @@
+{
+ "bridgeRecords": {
+  "v1": {
+   "args": [],
+   "command": "/home/user/.local/share/crw-runtime/current/bin/codex-thread-bridge",
+   "issue": "CRW-158",
+   "name": "codex-thread-bridge",
+   "policy": null
+  },
+  "v1-args": {
+   "args": [
+    "--socket",
+    "/s \u00e9"
+   ],
+   "command": "/home/user/.local/share/crw-runtime/current/bin/codex-thread-bridge",
+   "issue": null,
+   "name": "codex-thread-bridge",
+   "policy": null
+  },
+  "v2": {
+   "args": [],
+   "command": "/home/user/.local/share/crw-runtime/current/bin/codex-thread-bridge",
+   "issue": "CRW-158",
+   "name": "codex-thread-bridge",
+   "policy": {
+    "digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "path": "/home/user/.config/crw/execution-policy.json"
+   }
+  }
+ },
+ "hookSettings": {
+  "plugin-hold-socket": {
+   "codex_home": "/home/user/.codex",
+   "database": "/home/user/state/relay.sqlite3",
+   "destination": "/home/user/.local/share/crw-runtime",
+   "isolation": "CRW-9",
+   "issue": null,
+   "journal_root": "/home/user/journal",
+   "marker_root": "/home/user/markers",
+   "mode": "hold",
+   "socket": "/home/user/.codex/app-server-control/app-server-control.sock",
+   "timeout": 7
+  },
+  "plugin-observe": {
+   "codex_home": "/home/user/.codex",
+   "database": null,
+   "destination": "/home/user/.local/share/crw-runtime",
+   "isolation": null,
+   "issue": "CRW-158",
+   "journal_root": null,
+   "marker_root": "/home/user/.local/state/codex-session-marker",
+   "mode": "observe",
+   "socket": null,
+   "timeout": 5
+  }
+ }
+}

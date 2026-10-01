@@ -1,43 +1,47 @@
 package ownership_test
 
 import (
+	"fmt"
 	"testing"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/golden"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/ownership"
-	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 // ownership.classify over the signals a Go install has (the checkout signals absent) gives the
 // same class with the same reasons, in the fixed precedence; only own's summary sentence is
-// Go's, because a Go install has no revision or cleanliness to agree on.
+// Go's, because a Go install has no revision or cleanliness to agree on, so the golden (which
+// began as Python's classification) holds no reasons for own.
 func TestClassifyIsPythons(t *testing.T) {
-	rows := golden.List(golden.Section(t, "ownership"))
-	if len(rows) != 72 {
-		t.Fatalf("%d rows", len(rows))
-	}
-	for _, raw := range rows {
-		row := golden.Obj(raw)
-		s := ownership.Signals{EntryPointRecorded: record.Get(row, "recorded") == true, HasPoint: record.Get(row, "point") == true}
-		if digest, ok := record.Get(row, "digest").(bool); ok {
-			s.DigestMatches = &digest
-		}
-		switch record.Get(row, "conflict") {
-		case "registration":
-			s.RegistrationConflict = "registered elsewhere"
-		case "pointer":
-			s.PointerConflict = "the pointer names another runtime"
-		}
-		if record.Get(row, "unreadable") == true {
-			s.Unreadable = []string{"the host record"}
-		}
-		class, reasons := ownership.Classify(s)
-		if class != record.Get(row, "class") {
-			t.Errorf("%s: go %s", golden.Canon(row), class)
-			continue
-		}
-		if class != ownership.Own && golden.Canon(reasons) != golden.Canon(record.Get(row, "reasons")) {
-			t.Errorf("%s: go reasons %s", golden.Canon(row), golden.Canon(reasons))
+	yes, no := true, false
+	for _, recorded := range []bool{true, false} {
+		for _, digest := range []*bool{nil, &yes, &no} {
+			for _, point := range []bool{true, false} {
+				for _, conflict := range []string{"", "registration", "pointer"} {
+					for _, unreadable := range []bool{false, true} {
+						s := ownership.Signals{EntryPointRecorded: recorded, HasPoint: point, DigestMatches: digest}
+						switch conflict {
+						case "registration":
+							s.RegistrationConflict = "registered elsewhere"
+						case "pointer":
+							s.PointerConflict = "the pointer names another runtime"
+						}
+						if unreadable {
+							s.Unreadable = []string{"the host record"}
+						}
+						class, reasons := ownership.Classify(s)
+						answer := map[string]any{"class": class}
+						if class != ownership.Own {
+							answer["reasons"] = reasons
+						}
+						digestText := "null"
+						if digest != nil {
+							digestText = fmt.Sprint(*digest)
+						}
+						golden.CheckJSON(t, fmt.Sprintf("recorded=%v digest=%s point=%v conflict=%q unreadable=%v", recorded, digestText, point, conflict, unreadable), answer)
+					}
+				}
+			}
 		}
 	}
 	for _, c := range ownership.Classes {

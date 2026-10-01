@@ -1,7 +1,6 @@
 package pluginwiring
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -9,49 +8,23 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/mcp"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
-// The oracle is crw_bridge_mcp.py itself, run by the workspace interpreter: the launcher the
-// package shipped until todo 43, kept byte for byte in testdata/pre-native-wiring until todo 44
-// deleted it with the Python implementation. What it did is recorded (pyoracle) and replayed;
-// taking a recording again needs a checkout from before that deletion.
-// Both launchers are placed in the same cache layout under one Codex home and started with the
-// same record, environment and working directory; stderr and exit are compared byte for byte,
-// once Python's repairs are rewritten to the Go ones (goRepairs). Where Python would exec the
-// recorded bridgeExecutable, the record names a probe that prints its argv and the two policy
-// variables; Go execs the real bridge, which is asked for --version in the same position, and
-// the probe's view is compared with Prepare's answer.
-
-// goRepairs are the only refusal texts in which the Go launcher departs from the Python one on
-// purpose (decision 26): the repairs name the installer that writes the record since todo 38.
-var goRepairs = []struct{ python, golang string }{
-	{" Which command writes it depends on who owns this server. If this host registers the bridge" +
-		" in its Codex configuration, run runtime_install.py register-mcp --apply and this launcher" +
-		" will stand down for that registration. If the package is to own it, add --owner plugin.",
-		" If the package is to own this server, run " + RepairCommand + " to write it. If this host" +
-			" registers the bridge in its Codex configuration instead, this package must not start a" +
-			" second one."},
-	{"Rewrite it with the runtime_install.py that ships with this package rather than",
-		"Rewrite it with " + RepairCommand + " rather than"},
-	{" Run runtime_install.py register-mcp --owner plugin --execution-policy <file> again",
-		" Run " + RepairCommand + " --execution-policy <file> again"},
-}
-
-// inGo is the Python launcher's stderr with its repairs rewritten to the Go launcher's.
-func inGo(python string) string {
-	for _, r := range goRepairs {
-		python = strings.ReplaceAll(python, r.python, r.golang)
-	}
-	return python
-}
+// The launcher's answers are goldens that began as what crw_bridge_mcp.py did, the launcher the
+// package shipped until todo 43, placed in the same cache layout under one Codex home and started
+// with the same record, environment and working directory: stderr and exit byte for byte, once
+// Python's repairs were rewritten to the Go ones (decision 26: the repairs name the installer that
+// writes the record since todo 38). Where the Python launcher exec'd the recorded
+// bridgeExecutable, the record names a probe that prints its argv and the two policy variables,
+// and the golden is the view Prepare gives it; Go execs the real bridge, which is asked for
+// --version in the same position.
 
 // bridgeEntry is the built crw under the name the launcher execs it by, codex-thread-bridge.
 var bridgeEntry = sync.OnceValues(func() (string, error) {
@@ -62,15 +35,6 @@ var bridgeEntry = sync.OnceValues(func() (string, error) {
 	entry := filepath.Join(linkDir, declaredServer)
 	return entry, os.Symlink(built, entry)
 })
-
-func workspacePython(t *testing.T) string {
-	t.Helper()
-	path := filepath.Join(repoRoot(t), ".venv", "bin", "python")
-	if _, err := os.Stat(path); err != nil {
-		t.Fatal("workspace Python missing: run uv sync --locked")
-	}
-	return path
-}
 
 // launcherHost is a Codex home holding a cached crw package with both launchers, and a probe.
 type launcherHost struct {
@@ -85,10 +49,6 @@ func newLauncherHost(t *testing.T) launcherHost {
 	if err := os.MkdirAll(filepath.Join(h.version, "wiring"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// The Python launcher stood under the native launcher's file name when its answers were
-	// recorded: codex_home() names its own __file__ in one failure text, and that made it the
-	// same path on both sides rather than rewriting text. The file keeps its place in the layout.
-	write(t, filepath.Join(h.version, "wiring", launcherName), "# crw_bridge_mcp.py stood here when its answers were recorded\n", 0o644)
 	h.probe = filepath.Join(root, "probe")
 	write(t, h.probe, "#!/bin/sh\nprintf 'argv=%s\\n' \"$*\"\nprintf 'policy=%s\\n' \"${CODEX_THREAD_BRIDGE_EXECUTION_POLICY-<unset>}\"\nprintf 'digest=%s\\n' \"${CODEX_THREAD_BRIDGE_EXECUTION_POLICY_DIGEST-<unset>}\"\n", 0o755)
 	h.policy = filepath.Join(root, "execution-policy.json")
@@ -131,77 +91,22 @@ func (h launcherHost) env(extra ...string) []string {
 	return append([]string{"PATH=" + os.Getenv("PATH"), "HOME=" + filepath.Join(h.root, "home"), "CODEX_HOME=" + h.codexHome}, extra...)
 }
 
-// python is what the Python launcher did under env. Its answer is recorded (pyoracle) with the
-// host's root spelled <ROOT> in both streams, replaced before the streams' lengths are written, so
-// a root of another length reads back whole.
-func (h launcherHost) python(t *testing.T, env []string, args ...string) outcome {
+// checkOutcome compares what the Go launcher did with the golden under key. The host's root is
+// spelled <ROOT> in both streams before the streams' lengths are written, so a root of another
+// length reads back whole.
+func (h launcherHost) checkOutcome(t *testing.T, key string, o outcome) {
 	t.Helper()
-	raw := pyoracle.Answer(t, strings.Join(append([]string{"launch"}, args...), " "), func() ([]byte, error) {
-		o := run(t, h.version, env, "", append([]string{workspacePython(t), "./wiring/" + launcherName}, args...)...)
-		o.stdout, o.stderr = strings.ReplaceAll(o.stdout, h.root, rootMark), strings.ReplaceAll(o.stderr, h.root, rootMark)
-		return encodeOutcome(o), nil
-	}, pyoracle.SameWhen(samePositions))
-	o, err := decodeOutcome(raw)
-	if err != nil {
-		t.Fatalf("recorded launcher outcome: %v", err)
-	}
-	o.stdout, o.stderr = strings.ReplaceAll(o.stdout, rootMark, h.root), strings.ReplaceAll(o.stderr, rootMark, h.root)
-	return o
+	o.stdout, o.stderr = strings.ReplaceAll(o.stdout, h.root, rootMark), strings.ReplaceAll(o.stderr, h.root, rootMark)
+	golden.Check(t, key, encodeOutcome(o))
 }
 
-// rootMark stands for the launcher host's root in a recorded outcome.
+// rootMark stands for the launcher host's root in a golden.
 const rootMark = "<ROOT>"
-
-// position is the character offset a UnicodeEncodeError names. Where the string it counts in
-// begins with the host's root, the offset moves with the root's length, so a live answer is
-// compared with its recording apart from it (no test reads the offset).
-var position = regexp.MustCompile(`in position [0-9]+`)
-
-func samePositions(recorded, live []byte) bool {
-	return bytes.Equal(position.ReplaceAll(recorded, []byte("in position N")), position.ReplaceAll(live, []byte("in position N")))
-}
 
 // encodeOutcome writes an exit and both streams, each stream preceded by its length, so a stream
 // that is not UTF-8 is kept byte for byte.
 func encodeOutcome(o outcome) []byte {
 	return []byte(fmt.Sprintf("exit %d\nstdout %d\n%sstderr %d\n%s", o.code, len(o.stdout), o.stdout, len(o.stderr), o.stderr))
-}
-
-func decodeOutcome(raw []byte) (outcome, error) {
-	var o outcome
-	text := string(raw)
-	field := func(name string) (int, error) {
-		line, rest, ok := strings.Cut(text, "\n")
-		value, found := strings.CutPrefix(line, name+" ")
-		if !ok || !found {
-			return 0, fmt.Errorf("no %s line in %q", name, text)
-		}
-		text = rest
-		return strconv.Atoi(value)
-	}
-	stream := func(name string) (string, error) {
-		n, err := field(name)
-		if err != nil || n > len(text) {
-			return "", fmt.Errorf("%s: %v (length %d of %d)", name, err, n, len(text))
-		}
-		value := text[:n]
-		text = text[n:]
-		return value, nil
-	}
-	var err error
-	if o.code, err = field("exit"); err != nil {
-		return o, err
-	}
-	if o.stdout, err = stream("stdout"); err != nil {
-		return o, err
-	}
-	if o.stderr, err = stream("stderr"); err != nil {
-		return o, err
-	}
-	if text != "" {
-		return o, fmt.Errorf("trailing %q", text)
-	}
-	return o, nil
 }
 
 // goLaunch starts the Go launcher as wiring/crw-bridge.sh execs it: codex-thread-bridge --plugin-launch.
@@ -219,7 +124,7 @@ type recordCase struct {
 	name   string
 	record func(h launcherHost) string
 	env    func(h launcherHost) []string
-	starts bool // true when Python execs the probe and Go starts the bridge
+	starts bool // true when the launcher starts the bridge (Python exec'd the probe)
 }
 
 func jsonText(v any) string {
@@ -393,16 +298,7 @@ var recordCases = []recordCase{
 		}},
 }
 
-// recordCheck is one row of the evidence the orchestrator asked for.
-type recordCheck struct {
-	Case   string `json:"case"`
-	Python string `json:"python"`
-	Go     string `json:"go"`
-	Equal  bool   `json:"equal"`
-}
-
 func TestBridgeLaunch_matches_the_python_launcher_record_by_record(t *testing.T) {
-	var checks []recordCheck
 	for _, c := range recordCases {
 		t.Run(c.name, func(t *testing.T) {
 			h := newLauncherHost(t)
@@ -417,48 +313,26 @@ func TestBridgeLaunch_matches_the_python_launcher_record_by_record(t *testing.T)
 			if c.env != nil {
 				env = c.env(h)
 			}
-			py := h.python(t, env)
 			if !c.starts {
 				got := h.goLaunch(t, env)
-				equal := py.code == got.code && inGo(py.stderr) == got.stderr && py.stdout == got.stdout
-				checks = append(checks, recordCheck{c.name, summary(py), summary(got), equal})
-				if !equal {
-					t.Fatalf("python: exit %d stdout %q stderr %q\ngo:     exit %d stdout %q stderr %q", py.code, py.stdout, inGo(py.stderr), got.code, got.stdout, got.stderr)
+				if got.code != 2 || got.stderr == "" {
+					t.Fatalf("the launcher did not refuse: exit %d stdout %q stderr %q", got.code, got.stdout, got.stderr)
 				}
-				if py.code != 2 || py.stderr == "" {
-					t.Fatalf("the oracle did not refuse: exit %d stderr %q", py.code, py.stderr)
-				}
+				h.checkOutcome(t, "launch", got)
 				return
 			}
-			// Python exec'd the probe. Go's arguments and variables must be what the probe saw,
-			// and the real bridge must start under them.
-			if py.code != 0 || py.stderr != "" {
-				t.Fatalf("the oracle did not start the probe: exit %d stderr %q", py.code, py.stderr)
-			}
+			// The launcher starts the bridge: the arguments and variables it prepares are what a
+			// probe in the bridge's place prints, and the real bridge must start under them.
 			goArgs, goEnv := prepared(t, h, env)
-			want := "argv=" + strings.Join(goArgs, " ") + "\npolicy=" + orUnset(goEnv, "CODEX_THREAD_BRIDGE_EXECUTION_POLICY") +
+			view := "argv=" + strings.Join(goArgs, " ") + "\npolicy=" + orUnset(goEnv, "CODEX_THREAD_BRIDGE_EXECUTION_POLICY") +
 				"\ndigest=" + orUnset(goEnv, "CODEX_THREAD_BRIDGE_EXECUTION_POLICY_DIGEST") + "\n"
-			equal := want == py.stdout
-			checks = append(checks, recordCheck{c.name, strings.TrimSpace(py.stdout), strings.TrimSpace(want), equal})
-			if !equal {
-				t.Fatalf("python's bridge saw %q\ngo prepares %q", py.stdout, want)
-			}
+			golden.Check(t, "probe", []byte(view), golden.Substitute(h.root, rootMark))
 			got := h.goLaunch(t, env, "--version")
 			if got.code != 0 || got.stdout != mcp.PackageVersion+"\n" {
 				t.Fatalf("crw bridge --plugin-launch --version: exit %d stdout %q stderr %q", got.code, got.stdout, got.stderr)
 			}
 		})
 	}
-	if path := os.Getenv("CRW_TASK34_RECORD_CHECKS"); path != "" {
-		raw, _ := json.MarshalIndent(checks, "", "  ")
-		if err := os.WriteFile(path, raw, 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-}
-
-func summary(o outcome) string {
-	return "exit " + strconv.Itoa(o.code) + ": " + strings.TrimSpace(o.stderr+o.stdout)
 }
 
 func orUnset(env map[string]string, name string) string {
@@ -471,13 +345,23 @@ func orUnset(env map[string]string, name string) string {
 // prepared is Prepare run from the version directory the host starts the launcher in.
 func prepared(t *testing.T, h launcherHost, env []string) ([]string, map[string]string) {
 	t.Helper()
-	t.Chdir(h.version)
 	values := map[string]string{}
 	for _, entry := range env {
 		key, value, _ := strings.Cut(entry, "=")
 		values[key] = value
 	}
+	// Back to the package directory before anything can fail: the goldens are read from there.
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.Chdir(h.version); err != nil {
+		t.Fatal(err)
+	}
 	args, environment, err := Prepare(values, nil)
+	if back := os.Chdir(wd); back != nil {
+		t.Fatal(back)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -491,10 +375,6 @@ func TestBridgeLaunch_passes_the_record_args_to_the_bridge(t *testing.T) {
 	h := newLauncherHost(t)
 	socket := filepath.Join(h.root, "app server.sock")
 	h.record(t, v1(h, map[string]any{"args": []string{"--socket", socket}}))
-	py := h.python(t, h.env())
-	if want := "argv=--socket " + socket; !strings.HasPrefix(py.stdout, want+"\n") {
-		t.Fatalf("python probe saw %q, want %q", py.stdout, want)
-	}
 	t.Chdir(h.version)
 	args, _, err := Prepare(map[string]string{"HOME": h.root, "CODEX_HOME": h.codexHome}, []string{"--state-dir", "/x"})
 	if err != nil || strings.Join(args, "|") != "--socket|"+socket+"|--state-dir|/x" {
@@ -534,9 +414,7 @@ func TestBridgeLaunch_starts_the_bridge_under_the_recorded_policy(t *testing.T) 
 }
 
 // The policy refusal's repair names the Go installer's command, not runtime_install.py
-// (docs/port/refactor-backlog.md, the todo 38 rebase gate). That goRepairs rewrites only what
-// the Python launcher still says is the record-by-record test's to show: an entry that no longer
-// matches leaves Python's text unrewritten there, and the comparison fails.
+// (docs/port/refactor-backlog.md, the todo 38 rebase gate).
 func TestBridgeLaunch_repairs_name_crw_install(t *testing.T) {
 	h := newLauncherHost(t)
 	h.record(t, v2(h, map[string]any{"executionPolicy": map[string]any{"path": h.policy, "digest": strings.Repeat("0", 64)}}))
@@ -563,21 +441,21 @@ func TestBridgeLaunch_refuses_arguments_that_would_start_the_launcher_again(t *t
 }
 
 // Where the record names an executable or argument os.execv cannot encode (a lone surrogate
-// outside U+DC80..U+DCFF, or a NUL), the Python launcher starts nothing: execv raises, and the
-// traceback exits 1. The Go launcher does not exec bridgeExecutable, but refuses that record too,
+// outside U+DC80..U+DCFF, or a NUL), the Python launcher started nothing: execv raised, and the
+// traceback exited 1. The Go launcher does not exec bridgeExecutable, but refuses that record too,
 // with exit 2 naming the record, rather than starting a bridge Python never started.
 func TestBridgeLaunch_refuses_a_record_python_cannot_exec(t *testing.T) {
 	for _, c := range []struct {
-		name, executable, args, python, golang string
+		name, executable, args, golang string
 	}{
 		{"argument with a surrogate outside the escape range", "", `["--state-dir", "ROOT/st[U+D800]te"]`,
-			"UnicodeEncodeError", "lists the argument 'ROOT/st" + `\` + "ud800te'"},
+			"lists the argument 'ROOT/st" + `\` + "ud800te'"},
 		{"argument holding a NUL", "", `["--state-dir", "ROOT/st[U+0000]te"]`,
-			"embedded null", `lists the argument 'ROOT/st\x00te'`},
+			`lists the argument 'ROOT/st\x00te'`},
 		{"executable with a surrogate outside the escape range", "/probe[U+DBFF]", `[]`,
-			"UnicodeEncodeError", "names bridgeExecutable '/probe" + `\` + "udbff'"},
+			"names bridgeExecutable '/probe" + `\` + "udbff'"},
 		{"executable holding a NUL", "/probe[U+0000]", `[]`,
-			"embedded null", `names bridgeExecutable '/probe\x00'`},
+			`names bridgeExecutable '/probe\x00'`},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			h := newLauncherHost(t)
@@ -588,10 +466,6 @@ func TestBridgeLaunch_refuses_a_record_python_cannot_exec(t *testing.T) {
 			// Under h.root, so a launcher that started the bridge anyway writes nothing elsewhere.
 			args := strings.ReplaceAll(c.args, "ROOT", h.root)
 			h.record(t, escapes(`{"recordVersion": 1, "owner": "plugin", "bridgeExecutable": "`+executable+`", "args": `+args+`}`))
-			py := h.python(t, h.env())
-			if py.code != 1 || py.stdout != "" || !strings.Contains(py.stderr, c.python) {
-				t.Fatalf("python: exit %d stdout %q stderr %q; want the exec to raise %s", py.code, py.stdout, py.stderr, c.python)
-			}
 			got := h.goLaunch(t, h.env())
 			want := "crw bridge launcher: the record at " + filepath.Join(h.codexHome, RecordName) + " " + strings.ReplaceAll(c.golang, "ROOT", h.root) +
 				", which this system cannot pass to exec. Rewrite it with " + RepairCommand + ".\n"

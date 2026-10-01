@@ -4,27 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"reflect"
 	"sort"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
-// pythonRound3 is testdata/python_round3.json: caller-visible bytes recorded from the real
-// Python bridge by testdata/gen_round3.py against the Python suite's own FakeServer.
-func pythonRound3(t *testing.T) map[string]any {
-	t.Helper()
-	raw, err := os.ReadFile("testdata/python_round3.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var recorded map[string]any
-	if err := json.Unmarshal(raw, &recorded); err != nil {
-		t.Fatal(err)
-	}
-	return recorded
-}
+// The round-3 tests hold the caller-visible values of each receipt as goldens, which began as
+// the bytes the real Python bridge answered against the Python suite's own FakeServer.
 
 // jsonShaped is v as a caller receives it: encoded and decoded again.
 func jsonShaped(t *testing.T, v any) any {
@@ -40,13 +28,10 @@ func jsonShaped(t *testing.T, v any) any {
 	return out
 }
 
-func sameJSON(t *testing.T, name string, got, want any) {
+// sameJSON checks v as a caller receives it against the golden named name.
+func sameJSON(t *testing.T, name string, got any) {
 	t.Helper()
-	if g, w := jsonShaped(t, got), jsonShaped(t, want); !reflect.DeepEqual(g, w) {
-		gotRaw, _ := json.MarshalIndent(g, "", " ")
-		wantRaw, _ := json.MarshalIndent(w, "", " ")
-		t.Fatalf("%s differs from Python\n got: %s\nwant: %s", name, gotRaw, wantRaw)
-	}
+	golden.CheckJSON(t, name, jsonShaped(t, got))
 }
 
 func receiptKeys(receipt map[string]any) []any {
@@ -59,19 +44,17 @@ func receiptKeys(receipt map[string]any) []any {
 }
 
 func Test_round3_a_busy_thread_answers_with_the_python_code_and_steer_guidance(t *testing.T) {
-	want := object(pythonRound3(t)["busy"])
 	b, host := testBridge(t)
 	host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{"status": map[string]any{"type": "active"}}}})
 	receipt, err := b.SendMessageToThread(context.Background(), SendMessage{RequestID: "busy", ThreadID: "thread-1", Message: "hi", Expected: map[string]any{"model": "explicit-model", "reasoning_effort": "high"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	sameJSON(t, "rpcError", receipt["rpcError"], want["rpcError"])
-	sameJSON(t, "error", receipt["error"], want["error"])
+	sameJSON(t, "rpcError", receipt["rpcError"])
+	sameJSON(t, "error", receipt["error"])
 }
 
 func Test_round3_a_creation_that_came_back_different_names_the_field_and_both_values(t *testing.T) {
-	recorded := pythonRound3(t)
 	for name, change := range map[string]map[string]any{
 		"create_model_mismatch":   {"model": "other"},
 		"create_sandbox_mismatch": {"sandbox": map[string]any{"type": "dangerFullAccess"}},
@@ -90,15 +73,13 @@ func Test_round3_a_creation_that_came_back_different_names_the_field_and_both_va
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := object(recorded[name])
-			sameJSON(t, "rpcError", receipt["rpcError"], want["rpcError"])
-			sameJSON(t, "error", receipt["error"], want["error"])
+			sameJSON(t, "rpcError", receipt["rpcError"])
+			sameJSON(t, "error", receipt["error"])
 		})
 	}
 }
 
 func Test_round3_a_worktree_creation_that_came_back_different_names_both_values(t *testing.T) {
-	recorded := pythonRound3(t)
 	for name, change := range map[string]map[string]any{
 		"worktree_model_mismatch":   {"model": "other"},
 		"worktree_sandbox_mismatch": {"sandbox": map[string]any{"type": "workspaceWrite", "writableRoots": []any{"/w"}}},
@@ -116,16 +97,12 @@ func Test_round3_a_worktree_creation_that_came_back_different_names_both_values(
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := object(recorded[name])
-			if receipt["status"] != want["status"] || receipt["error"] != want["error"] {
-				t.Fatalf("status=%v error=%q\nwant %v %q", receipt["status"], receipt["error"], want["status"], want["error"])
-			}
+			sameJSON(t, "status and error", map[string]any{"status": receipt["status"], "error": receipt["error"]})
 		})
 	}
 }
 
 func Test_round3_a_send_receipt_reports_the_requests_its_dispatch_met(t *testing.T) {
-	want := object(pythonRound3(t)["approvalRequests"])
 	b, host, input := interactiveSend(t)
 	input.Expected["approval_policy"] = "on-request"
 	host.Respond("turn/start", fakehost.Reply{Result: map[string]any{"turn": map[string]any{"id": "turn-2"}}, ServerRequests: []string{"item/commandExecution/requestApproval"}})
@@ -143,18 +120,16 @@ func Test_round3_a_send_receipt_reports_the_requests_its_dispatch_met(t *testing
 		}
 		delete(object(entry), "at")
 	}
-	sameJSON(t, "approvalRequests", got, want)
+	sameJSON(t, "approvalRequests", got)
 }
 
 func Test_round3_capabilities_are_the_python_document(t *testing.T) {
-	want := object(pythonRound3(t)["capabilities"])
 	report, _ := capabilityReport(t)
 	report["socket"] = "<SOCKET>"
-	sameJSON(t, "get_capabilities", report, want)
+	sameJSON(t, "get_capabilities", report)
 }
 
 func Test_round3_a_worktree_receipt_carries_the_python_fields(t *testing.T) {
-	recorded := pythonRound3(t)
 	b, host := testBridge(t)
 	input := worktreeInput(t)
 	input.Prompt = "p"
@@ -165,10 +140,8 @@ func Test_round3_a_worktree_receipt_carries_the_python_fields(t *testing.T) {
 	if err != nil || accepted["status"] != "accepted" {
 		t.Fatalf("accepted=%v err=%v", accepted, err)
 	}
-	sameJSON(t, "accepted keys", receiptKeys(accepted), recorded["worktree_accepted_keys"])
-	if accepted["recovery"] != object(recorded["dispatching_row"])["recovery"] {
-		t.Fatalf("recovery=%q", accepted["recovery"])
-	}
+	sameJSON(t, "accepted keys", receiptKeys(accepted))
+	sameJSON(t, "recovery", accepted["recovery"])
 	taken := worktreeInput(t)
 	taken.RequestID = "taken"
 	if err := os.Mkdir(taken.Destination, 0700); err != nil {
@@ -178,8 +151,7 @@ func Test_round3_a_worktree_receipt_carries_the_python_fields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := object(recorded["worktree_validation_failure"])
-	sameJSON(t, "validation failure keys", receiptKeys(failed), want["keys"])
+	sameJSON(t, "validation failure keys", receiptKeys(failed))
 	association := object(failed["desktopProjectAssociation"])
 	if len(association) != 2 || association["status"] != "unverified" || association["sourceRepository"] != taken.Source {
 		t.Fatalf("desktopProjectAssociation=%v", association)

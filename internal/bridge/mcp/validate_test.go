@@ -2,33 +2,29 @@ package mcp
 
 import (
 	"encoding/json"
-	"os"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
-// testdata/validation_python.json holds, for each call, the first line and the failing
-// locations Python's FastMCP server (mcp 1.30.0, pydantic 2.13) reported, recorded through
-// the Python mcp client against `python -m codex_thread_bridge.server`. The first thirteen
-// are the schema failures the round-1 check found; the last two are multi-field cases whose
-// order a map-ordered validator could not keep.
-type recordedValidation struct {
+// The fixture refused-arguments.json holds the calls; the golden holds, for each, the first
+// line and the failing locations, which began as what Python's FastMCP server (mcp 1.30.0,
+// pydantic 2.13) reported through the Python mcp client against `python -m
+// codex_thread_bridge.server`. The first thirteen are the schema failures the round-1 check
+// found; the last two are multi-field cases whose order a map-ordered validator could not keep.
+type refusedCall struct {
 	Tool      string         `json:"tool"`
 	Arguments map[string]any `json:"arguments"`
-	Prefix    string         `json:"prefix"`
-	Fields    []string       `json:"fields"`
 }
 
 func Test_a_refused_argument_reports_every_field_in_signature_order_the_same_way_every_time(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("testdata", "validation_python.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var cases []recordedValidation
-	if err := json.Unmarshal(raw, &cases); err != nil {
+	var cases []refusedCall
+	if err := json.Unmarshal(golden.Fixture(t, "refused-arguments.json"), &cases); err != nil {
 		t.Fatal(err)
 	}
 	home, env := isolated(t)
@@ -63,12 +59,10 @@ func Test_a_refused_argument_reports_every_field_in_signature_order_the_same_way
 				fields = append(fields, line)
 			}
 		}
-		if lines[0] != tc.Prefix || strings.Join(fields, ",") != strings.Join(tc.Fields, ",") {
-			t.Errorf("case %d %s\n got %q %v\nwant %q %v", i, tc.Tool, lines[0], fields, tc.Prefix, tc.Fields)
-		}
+		golden.CheckJSON(t, fmt.Sprintf("case %d %s", i, tc.Tool), map[string]any{"prefix": lines[0], "fields": fields})
 		// Each location is followed by its own indented reason.
-		if len(lines) != 1+2*len(tc.Fields) {
-			t.Errorf("case %d: %d lines for %d fields:\n%s", i, len(lines), len(tc.Fields), first)
+		if len(lines) != 1+2*len(fields) {
+			t.Errorf("case %d: %d lines for %d fields:\n%s", i, len(lines), len(fields), first)
 		}
 	}
 	s.finish(t)

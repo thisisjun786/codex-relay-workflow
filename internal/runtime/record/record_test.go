@@ -2,8 +2,7 @@ package record_test
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -17,6 +16,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	expected "github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 func TestMain(m *testing.M) {
@@ -88,19 +88,29 @@ func firstDifference(got, want []byte) string {
 
 // json.dumps(indent=2, sort_keys=True) over Python's own JSON: empty containers, escapes,
 // floats in repr form, integers of any size, the non-finite constants, a repeated key and a
-// lone surrogate.
+// lone surrogate. The inputs are a fixture; each output is the golden, which began as Python's.
 func TestEncodeIsPythonsIndentedJSON(t *testing.T) {
-	for _, raw := range golden.List(golden.Section(t, "dumpsIndent")) {
-		c := golden.Obj(raw)
-		input, _ := record.Get(c, "input").(string)
+	var inputs []string
+	if err := json.Unmarshal(expected.Fixture(t, "dumps-indent-inputs.json"), &inputs); err != nil {
+		t.Fatal(err)
+	}
+	for _, input := range inputs {
 		value, err := reading.Decode([]byte(input))
 		if err != nil {
 			t.Fatalf("%s: %v", input, err)
 		}
-		if got, want := string(record.Encode(value)), record.Get(c, "output").(string); got != want {
-			t.Errorf("%s\n go: %q\n py: %q", input, got, want)
-		}
+		expected.Check(t, input, record.Encode(value))
 	}
+}
+
+// fixtureObject is the named fixture of this package, decoded with its key order kept.
+func fixtureObject(t *testing.T, name string) record.Object {
+	t.Helper()
+	value, err := reading.Decode(expected.Fixture(t, name))
+	if err != nil {
+		t.Fatalf("%s: %v", name, err)
+	}
+	return golden.Obj(value)
 }
 
 func deltaOf(t *testing.T, raw record.Object) record.Delta {
@@ -134,32 +144,22 @@ func deltaOf(t *testing.T, raw record.Object) record.Delta {
 	return delta
 }
 
-// hostrecord.update's narrow deltas, applied to the same v1 record, write the same bytes in
-// Go: a Go install is additive (binaryDigest, target, source; no interpreter fields), a
-// re-install at one location replaces that location's entry, a selection or pointer is
-// compare-and-removed or compare-and-replaced, and the .crw-lock is gone afterwards.
+// hostrecord.update's narrow deltas (the fixture update-deltas.json), applied to the same v1
+// record, write the golden bytes, which began as Python's: a Go install is additive
+// (binaryDigest, target, source; no interpreter fields), a re-install at one location replaces
+// that location's entry, a selection or pointer is compare-and-removed or compare-and-replaced,
+// and the .crw-lock is gone afterwards.
 func TestUpdateWritesWhatPythonWrites(t *testing.T) {
-	updates := golden.Obj(golden.Section(t, "recordUpdates"))
-	for _, f := range updates {
-		c := golden.Obj(f.Value)
-		if _, ok := record.Lookup(c, "sha256"); !ok {
-			continue
-		}
+	for _, f := range fixtureObject(t, "update-deltas.json") {
 		t.Run(f.Key, func(t *testing.T) {
 			path := fixtureCopy(t)
-			read, err := record.Update(path, 1, deltaOf(t, golden.Obj(record.Get(c, "delta"))))
-			if err != nil || read.State != record.Get(c, "state") {
+			read, err := record.Update(path, 1, deltaOf(t, golden.Obj(f.Value)))
+			if err != nil {
 				t.Fatalf("state %s err %v", read.State, err)
 			}
+			expected.Check(t, "state", []byte(read.State))
 			written, _ := os.ReadFile(path)
-			sum := sha256.Sum256(written)
-			if hex.EncodeToString(sum[:]) != record.Get(c, "sha256") {
-				detail := fmt.Sprintf("go wrote %d bytes, python %v", len(written), record.Get(c, "length"))
-				if want, ok := record.Get(c, "bytes").(string); ok {
-					detail = firstDifference(written, []byte(want))
-				}
-				t.Fatalf("bytes differ from Python's: %s", detail)
-			}
+			expected.Check(t, "written", written)
 			if _, err := os.Lstat(path + record.LockSuffix); !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("the .crw-lock was left behind: %v", err)
 			}
@@ -168,7 +168,6 @@ func TestUpdateWritesWhatPythonWrites(t *testing.T) {
 }
 
 func TestUpdateOnAnAbsentRecordStartsFromEmpty(t *testing.T) {
-	want := golden.Obj(record.Get(golden.Obj(golden.Section(t, "recordUpdates")), "absent"))
 	path := filepath.Join(t.TempDir(), "state", record.Name)
 	if _, err := record.Update(path, 1, record.Delta{Select: []contract.Field{{Key: "codex-session-relay", Value: "/x"}}}); err != nil {
 		t.Fatal(err)
@@ -181,39 +180,37 @@ func TestUpdateOnAnAbsentRecordStartsFromEmpty(t *testing.T) {
 			keys = append(keys, key)
 		}
 	}
-	if golden.Canon(keys) != golden.Canon(record.Get(want, "keys")) || len(written) != len(keys) ||
-		golden.Canon(record.Get(written, "selected")) != golden.Canon(record.Get(want, "selected")) || record.Get(written, "recordVersion") != int64(1) {
+	if len(written) != len(keys) || record.Get(written, "recordVersion") != int64(1) {
 		t.Fatalf("an absent record became %s", golden.Canon(written))
 	}
+	expected.Check(t, "keys and selected", []byte(golden.Canon(record.Object{{Key: "keys", Value: keys}, {Key: "selected", Value: record.Get(written, "selected")}})))
 }
 
 // An unreadable record is never replaced: it is the only evidence anything was exercised.
 func TestUpdateNeverReplacesAnUnreadableRecord(t *testing.T) {
-	want := golden.Obj(record.Get(golden.Obj(golden.Section(t, "recordUpdates")), "unreadable"))
 	path := filepath.Join(t.TempDir(), record.Name)
 	if err := os.WriteFile(path, []byte("{ not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	read, err := record.Update(path, 1, record.Delta{Select: []contract.Field{{Key: "codex-session-relay", Value: "/x"}}})
-	if err != nil || read.State != record.Get(want, "state") || read.Exception != record.Get(want, "exception") {
+	if err != nil {
 		t.Fatalf("state %s exception %s err %v", read.State, read.Exception, err)
 	}
+	expected.Check(t, "state and exception", []byte(golden.Canon(record.Object{{Key: "state", Value: read.State}, {Key: "exception", Value: read.Exception}})))
 	if after, _ := os.ReadFile(path); string(after) != "{ not json" {
 		t.Fatalf("the unreadable record was rewritten: %q", after)
 	}
 }
 
+// Each record in the fixture shape-inputs.json is refused, or accepted, as the golden says
+// (which began as hostrecord.shape's answer).
 func TestShapeRefusesWhatPythonRefuses(t *testing.T) {
-	for _, f := range golden.Obj(golden.Section(t, "shapes")) {
-		c := golden.Obj(f.Value)
-		err := record.Shape(record.Get(c, "input"))
-		got := any(nil)
-		if err != nil {
-			got = err.Error()
+	for _, f := range fixtureObject(t, "shape-inputs.json") {
+		refusal := any(nil)
+		if err := record.Shape(f.Value); err != nil {
+			refusal = err.Error()
 		}
-		if got != record.Get(c, "refusal") {
-			t.Errorf("%s: go %v, python %v", f.Key, got, record.Get(c, "refusal"))
-		}
+		expected.Check(t, f.Key, []byte(golden.Canon(refusal)))
 	}
 }
 

@@ -16,6 +16,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/scope"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	expected "github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 func TestMain(m *testing.M) {
@@ -34,17 +35,11 @@ func TestMain(m *testing.M) {
 }
 
 // service_state keeps its four answers apart with the invocation first: a command that did
-// not run is never a stopped daemon.
+// not run is never a stopped daemon. Each answer is the golden, which began as Python's.
 func TestServiceStateIsPythons(t *testing.T) {
-	gate := golden.Obj(golden.Section(t, "swapGate"))
-	for _, f := range golden.Obj(record.Get(gate, "serviceState")) {
-		envelope := envelopeOf(t, f.Key)
-		if envelope == nil {
-			continue
-		}
-		if got := scope.ServiceState(envelope); golden.Canon(got) != golden.Canon(f.Value) {
-			t.Errorf("%s\n go: %s\n py: %s", f.Key, golden.Canon(got), golden.Canon(f.Value))
-		}
+	for _, name := range []string{"running", "stopped", "failed", "stderr", "bare-failure", "no-payload", "list-payload", "string-running",
+		"open-0", "open-2", "open-bool", "open-str", "unavailable", "no-contents"} {
+		expected.Check(t, name, []byte(golden.Canon(scope.ServiceState(envelopeOf(t, name)))))
 	}
 }
 
@@ -66,33 +61,49 @@ func envelopeOf(t *testing.T, name string) record.Object {
 		return record.Object{{Key: "ok", Value: true}, {Key: "payload", Value: []any{int64(1)}}}
 	case "string-running":
 		return record.Object{{Key: "ok", Value: true}, {Key: "payload", Value: record.Object{{Key: "running", Value: "yes"}}}}
+	case "no-contents":
+		return record.Object{{Key: "ok", Value: true}, {Key: "payload", Value: record.Object{}}, {Key: "command", Value: []any{"relay", "doctor"}}}
+	}
+	// The doctor envelopes swapgate's tests read too: a status the service never sends, so the
+	// state says it carries no boolean running.
+	contents := func(fields record.Object) record.Object {
+		return record.Object{{Key: "ok", Value: true}, {Key: "payload", Value: record.Object{{Key: "contents", Value: fields}}}, {Key: "command", Value: []any{"relay", "doctor"}}}
+	}
+	switch name {
+	case "open-0":
+		return contents(record.Object{{Key: "available", Value: true}, {Key: "openAttempts", Value: int64(0)}})
+	case "open-2":
+		return contents(record.Object{{Key: "available", Value: true}, {Key: "openAttempts", Value: int64(2)}})
+	case "open-bool":
+		return contents(record.Object{{Key: "available", Value: true}, {Key: "openAttempts", Value: true}})
+	case "open-str":
+		return contents(record.Object{{Key: "available", Value: true}, {Key: "openAttempts", Value: "2"}})
+	case "unavailable":
+		return contents(record.Object{{Key: "available", Value: false}, {Key: "detail", Value: "not readable"}})
 	}
 	return nil
 }
 
 // summarise answers from the selected store when one is selected, never borrowing the
-// discovered store's fields, and says which reading answered.
+// discovered store's fields, and says which reading answered. The readings are a fixture; each
+// summary is the golden, which began as Python's without its assignmentFind.
 func TestSummariseIsPythons(t *testing.T) {
-	section := golden.Obj(golden.Section(t, "scope"))
+	inputs, err := reading.Decode(expected.Fixture(t, "summarise-inputs.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	env := scope.Env{}
-	for _, f := range golden.Obj(record.Get(section, "env")) {
+	for _, f := range golden.Obj(record.Get(golden.Obj(inputs), "env")) {
 		env = env.With(f.Key, f.Value.(string))
 	}
-	readings := golden.Obj(record.Get(section, "readings"))
-	for _, f := range golden.Obj(record.Get(section, "summaries")) {
-		got := scope.Summarise(golden.Obj(record.Get(readings, f.Key)), env, record.Object{{Key: "state", Value: "x"}})
-		want := record.Delete(append(record.Object{}, golden.Obj(f.Value)...), "assignmentFind")
-		if golden.Canon(got) != golden.Canon(want) {
-			t.Errorf("%s\n go: %s\n py: %s", f.Key, golden.Canon(got), golden.Canon(want))
-		}
+	for _, f := range golden.Obj(record.Get(golden.Obj(inputs), "readings")) {
+		got := scope.Summarise(golden.Obj(f.Value), env, record.Object{{Key: "state", Value: "x"}})
+		expected.Check(t, "summary "+f.Key, []byte(golden.Canon(got)))
 	}
-	siblings := golden.List(record.Get(section, "siblings"))
 	for i, payload := range []record.Object{{{Key: "stateDirectory", Value: "/s"}}, {{Key: "siblingStores", Value: nil}},
 		{{Key: "siblingStores", Value: record.Object{{Key: "checked", Value: false}, {Key: "reason", Value: "chosen"}}}},
 		{{Key: "siblingStores", Value: record.Object{{Key: "checked", Value: true}}}}} {
-		if got := scope.SiblingReading(payload); got != siblings[i] {
-			t.Errorf("siblings %d: %q vs %q", i, got, siblings[i])
-		}
+		expected.Check(t, fmt.Sprintf("siblings %d", i), []byte(scope.SiblingReading(payload)))
 	}
 }
 
