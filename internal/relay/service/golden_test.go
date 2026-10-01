@@ -225,7 +225,7 @@ func tableText(t *testing.T, data map[string][][]any) string {
 			row[1] = "RANDOM_STORE_ID"
 		}
 		if key, ok := row[0].(string); ok {
-			row[1] = testsupport.OwnerNeutral(t, testsupport.Go, key, row[1])
+			row[1] = testsupport.OwnerNeutral(t, key, row[1])
 		}
 	}
 	raw, err := json.MarshalIndent(data, "", "  ")

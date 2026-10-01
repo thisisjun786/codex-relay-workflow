@@ -50,18 +50,3 @@ func readStore(t *testing.T, ctx context.Context, path string, read func(context
 		t.Fatal(err)
 	}
 }
-
-// ownerNeutralRows applies the one runtime-identity rule to schema_meta rows, read as objects,
-// of a store writer stamped.
-func ownerNeutralRows(t *testing.T, writer testsupport.Runtime, rows any) any {
-	t.Helper()
-	list, _ := rows.([]any)
-	for _, row := range list {
-		if entry, ok := row.(map[string]any); ok {
-			if key, ok := entry["key"].(string); ok {
-				entry["value"] = testsupport.OwnerNeutral(t, writer, key, entry["value"])
-			}
-		}
-	}
-	return rows
-}

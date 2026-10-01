@@ -185,7 +185,8 @@ func f1ReplayCLI(t *testing.T, ctx context.Context, gd string, args []string) ma
 		}
 		if key == "schema_meta" {
 			// The store names its owning runtime: compared as the runtime-neutral owner.
-			got = ownerNeutralRows(t, testsupport.Go, got)
+			rows, _ := got.([]any)
+			testsupport.OwnerNeutralRows(t, rows)
 		}
 		tables[key] = got
 	}

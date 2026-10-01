@@ -509,57 +509,49 @@ func TestRehome_refuses_a_shared_directory_and_an_unfenced_store(t *testing.T) {
 	})
 }
 
-// A copy of a store its creator still owns, restamped for the other runtime, is admitted by that
-// runtime alone, leaves the original as it was, and differs from it in the owner row alone - the
-// row OwnerNeutral neutralizes - so a whole-state comparison of the two needs nothing more.
+// A copy of a store Python still owns, restamped for Go, is admitted by Go alone, leaves the
+// original as it was, and differs from it in the owner row alone - the row OwnerNeutral
+// neutralizes.
 func TestRestamp_gives_a_copy_to_the_other_runtime_as_its_creator(t *testing.T) {
-	for _, owner := range []string{"python", "go"} {
-		for _, withMirror := range []bool{true, false} {
-			t.Run(fmt.Sprintf("%s/mirror=%t", owner, withMirror), func(t *testing.T) {
-				root := t.TempDir()
-				socket := filepath.Join(root, "app.sock")
-				original := filepath.Join(root, "original", "relay.sqlite3")
-				testsupport.Create(t, original, socket, otherOwner(owner))
-				copied := filepath.Join(root, "copy", "relay.sqlite3")
-				copyFile(t, original, copied)
-				if withMirror {
-					copyFile(t, filepath.Join(filepath.Dir(original), "takeover.json"), filepath.Join(filepath.Dir(copied), "takeover.json"))
+	for _, withMirror := range []bool{true, false} {
+		t.Run(fmt.Sprintf("go/mirror=%t", withMirror), func(t *testing.T) {
+			root := t.TempDir()
+			socket := filepath.Join(root, "app.sock")
+			original := filepath.Join(root, "original", "relay.sqlite3")
+			testsupport.Create(t, original, socket, "python")
+			copied := filepath.Join(root, "copy", "relay.sqlite3")
+			copyFile(t, original, copied)
+			if withMirror {
+				copyFile(t, filepath.Join(filepath.Dir(original), "takeover.json"), filepath.Join(filepath.Dir(copied), "takeover.json"))
+			}
+			// Reversion: Go refuses the copy of a Python store before Restamp. A copy stamped go is
+			// Go's to write on its stamp alone (decision 56).
+			if refused := goAdmission(t, copied, socket); !strings.HasPrefix(refused, "refused: store_owned_by_other") {
+				t.Fatalf("Go admitted the copy before Restamp: %s", refused)
+			}
+			testsupport.Restamp(t, copied)
+			requireOwnedBy(t, copied, socket, "go")
+			requireOwnedBy(t, original, socket, "python")
+			from, to := meta(t, original), meta(t, copied)
+			var differing []string
+			for key, value := range from {
+				if to[key] != value {
+					differing = append(differing, key)
 				}
-				// Reversion: Go refuses the copy of a Python store before Restamp. A copy stamped go is
-				// Go's to write on its stamp alone (decision 56). (The Python fence's refusal of a
-				// copy restamped for it was checked here until todo 44.)
-				if owner == "go" {
-					if refused := goAdmission(t, copied, socket); !strings.HasPrefix(refused, "refused: store_owned_by_other") {
-						t.Fatalf("Go admitted the copy for %s before Restamp: %s", owner, refused)
-					}
-				}
-				testsupport.Restamp(t, copied, owner)
-				requireOwnedBy(t, copied, socket, owner)
-				requireOwnedBy(t, original, socket, otherOwner(owner))
-				from, to := meta(t, original), meta(t, copied)
-				var differing []string
-				for key, value := range from {
-					if to[key] != value {
-						differing = append(differing, key)
-					}
-				}
-				if len(from) != len(to) || fmt.Sprint(differing) != "[owner]" || to["owner"] != owner || to["owner_epoch"] != "1" || to["takeover_id"] != "" {
-					t.Fatalf("Restamp changed %v, want [owner]\noriginal %v\ncopy     %v", differing, from, to)
-				}
-				for key := range from {
-					original, restamped := testsupport.Runtime(otherOwner(owner)), testsupport.Runtime(owner)
-					if testsupport.OwnerNeutral(t, original, key, from[key]) != testsupport.OwnerNeutral(t, restamped, key, to[key]) {
-						t.Fatalf("schema_meta %s still differs after OwnerNeutral: %q, %q", key, from[key], to[key])
-					}
-				}
-				// The mirror is the one owner's initializer publishes for a store it created.
-				created := filepath.Join(root, "created", "relay.sqlite3")
-				testsupport.Create(t, created, socket, owner)
-				if got, want := comparableMirror(mirror(t, copied)), comparableMirror(mirror(t, created)); fmt.Sprint(got) != fmt.Sprint(want) {
-					t.Fatalf("restamped mirror differs from a created one:\ncopy    %v\ncreated %v", got, want)
-				}
-			})
-		}
+			}
+			if len(from) != len(to) || fmt.Sprint(differing) != "[owner]" || to["owner"] != "go" || to["owner_epoch"] != "1" || to["takeover_id"] != "" {
+				t.Fatalf("Restamp changed %v, want [owner]\noriginal %v\ncopy     %v", differing, from, to)
+			}
+			if got := testsupport.OwnerNeutral(t, "owner", to["owner"]); got != testsupport.RuntimeOwner {
+				t.Fatalf("restamped owner %q reads %q after OwnerNeutral", to["owner"], got)
+			}
+			// The mirror is the one Go's initializer publishes for a store it created.
+			created := filepath.Join(root, "created", "relay.sqlite3")
+			testsupport.Create(t, created, socket, "go")
+			if got, want := comparableMirror(mirror(t, copied)), comparableMirror(mirror(t, created)); fmt.Sprint(got) != fmt.Sprint(want) {
+				t.Fatalf("restamped mirror differs from a created one:\ncopy    %v\ncreated %v", got, want)
+			}
+		})
 	}
 }
 
@@ -567,7 +559,7 @@ func TestRestamp_refuses_an_original_a_transferred_a_shared_and_an_unfenced_stor
 	t.Run("original", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "relay.sqlite3")
 		testsupport.Create(t, path, "", "python")
-		requireFatal(t, "not a copy: the mirror names this very file", func(tb testing.TB) { testsupport.Restamp(tb, path, "go") })
+		requireFatal(t, "not a copy: the mirror names this very file", func(tb testing.TB) { testsupport.Restamp(tb, path) })
 		requireOwnedBy(t, path, "", "python")
 	})
 	t.Run("changed hands", func(t *testing.T) {
@@ -576,25 +568,26 @@ func TestRestamp_refuses_an_original_a_transferred_a_shared_and_an_unfenced_stor
 		testsupport.HandOver(t, original, "go")
 		copied := filepath.Join(t.TempDir(), "relay.sqlite3")
 		copyFile(t, original, copied)
-		requireFatal(t, "store has changed hands (go at epoch 2", func(tb testing.TB) { testsupport.Restamp(tb, copied, "python") })
+		requireFatal(t, "store has changed hands (go at epoch 2", func(tb testing.TB) { testsupport.Restamp(tb, copied) })
 	})
 	t.Run("shared directory", func(t *testing.T) {
 		original := filepath.Join(t.TempDir(), "relay.sqlite3")
 		testsupport.Create(t, original, "", "go")
 		sibling := filepath.Join(filepath.Dir(original), "other.sqlite3")
 		copyFile(t, original, sibling)
-		requireFatal(t, "one takeover.json per directory", func(tb testing.TB) { testsupport.Restamp(tb, sibling, "python") })
+		requireFatal(t, "one takeover.json per directory", func(tb testing.TB) { testsupport.Restamp(tb, sibling) })
 		requireOwnedBy(t, original, "", "go")
 	})
 	t.Run("unfenced", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "relay.sqlite3")
 		writeFixture(t, path)
-		requireFatal(t, "not a fenced store", func(tb testing.TB) { testsupport.Restamp(tb, path, "go") })
+		requireFatal(t, "not a fenced store", func(tb testing.TB) { testsupport.Restamp(tb, path) })
 	})
 }
 
-// Python's and Go's absent-store initializers leave schema_meta rows that differ only in the
-// owner value and the store's own identity; OwnerNeutral removes the first and nothing else.
+// A store Create stamps for Python - the store the foreign-owner tests put before Go - holds the
+// schema_meta rows Go's absent-store initializer leaves but for the owner value and the store's own
+// identity; OwnerNeutral removes Go's owner and nothing else.
 func TestOwnerNeutral_is_the_only_runtime_difference_in_schema_meta(t *testing.T) {
 	root := t.TempDir()
 	socket := fixedSocket
@@ -616,10 +609,8 @@ func TestOwnerNeutral_is_the_only_runtime_difference_in_schema_meta(t *testing.T
 	}
 	goMeta := meta(t, goPath)
 	for _, key := range []string{"store_id", "store_created_at"} {
-		delete(pythonMeta, key)
 		delete(goMeta, key)
 	}
-	// Reversion: the raw rows differ, by the owner and nothing else.
 	var differing []string
 	for key, value := range pythonMeta {
 		if goMeta[key] != value {
@@ -629,27 +620,16 @@ func TestOwnerNeutral_is_the_only_runtime_difference_in_schema_meta(t *testing.T
 	if len(pythonMeta) != len(goMeta) || fmt.Sprint(differing) != "[owner]" {
 		t.Fatalf("raw schema_meta differs in %v\nPython %v\nGo     %v", differing, pythonMeta, goMeta)
 	}
-	for key := range pythonMeta {
-		pythonMeta[key] = testsupport.OwnerNeutral(t, testsupport.Python, key, pythonMeta[key])
-		goMeta[key] = testsupport.OwnerNeutral(t, testsupport.Go, key, goMeta[key])
-	}
-	if fmt.Sprint(pythonMeta) != fmt.Sprint(goMeta) {
-		t.Fatalf("neutral schema_meta differs\nPython %v\nGo     %v", pythonMeta, goMeta)
-	}
-	for _, c := range []struct {
-		writer testsupport.Runtime
-		key    string
-		in     any
-		want   any
-	}{
-		{testsupport.Python, "owner", "python", testsupport.RuntimeOwner}, {testsupport.Go, "owner", "go", testsupport.RuntimeOwner},
-		{testsupport.Go, "owner_epoch", "1", "1"}, {testsupport.Python, "store_id", "go", "go"},
-	} {
-		if got := testsupport.OwnerNeutral(t, c.writer, c.key, c.in); got != c.want {
-			t.Fatalf("OwnerNeutral(%s, %q, %v) = %v, want %v", c.writer, c.key, c.in, got, c.want)
+	for key, value := range goMeta {
+		want := value
+		if key == "owner" {
+			want = testsupport.RuntimeOwner
+		}
+		if got := testsupport.OwnerNeutral(t, key, value); got != want {
+			t.Fatalf("OwnerNeutral(%q, %q) = %q, want %q", key, value, got, want)
 		}
 	}
-	// The other runtime's owner, or one naming neither, fails the comparison (identity_test.go).
+	// Python's owner, or one naming no runtime, fails the comparison (identity_test.go).
 }
 
 func otherOwner(owner string) string {

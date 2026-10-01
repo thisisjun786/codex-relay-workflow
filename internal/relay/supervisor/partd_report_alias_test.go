@@ -101,23 +101,10 @@ func rrTables(t *testing.T, s *store.Store) []byte {
 		}
 		tables[name] = list
 	}
-	rrOwnerNeutral(t, testsupport.Go, tables)
-	return rrBytes(t, tables)
-}
-
-// rrOwnerNeutral applies the documented runtime-identity rule, testsupport.OwnerNeutral, to the
-// schema_meta rows of a table dump of a store writer stamped: the owner row of a store stamped as
-// writer's own reads "<runtime owner>". Nothing else in the dump is touched.
-func rrOwnerNeutral(t *testing.T, writer testsupport.Runtime, tables map[string]any) {
-	t.Helper()
+	// The store names its owning runtime: compared as the runtime-neutral owner.
 	rows, _ := tables["schema_meta"].([]any)
-	for _, row := range rows {
-		if cells, ok := row.(map[string]any); ok {
-			if key, ok := cells["key"].(string); ok {
-				cells["value"] = testsupport.OwnerNeutral(t, writer, key, cells["value"])
-			}
-		}
-	}
+	testsupport.OwnerNeutralRows(t, rows)
+	return rrBytes(t, tables)
 }
 
 // rrCapture restores the tree a Python restoration-visibility or correction-form test left (the
@@ -207,7 +194,7 @@ func rrReplay(t *testing.T, root string, op rrOperation, result *rrResult) {
 	ctx := context.Background()
 	// Each operation replays on its own copy of the Python snapshot, in a directory of its own,
 	// stamped as Go's own store (Restamp): the tables below include schema_meta, whose owner row
-	// rrOwnerNeutral neutralizes.
+	// rrTables neutralizes.
 	path := filepath.Join(t.TempDir(), "go.sqlite3")
 	data, err := os.ReadFile(op.Pre)
 	if err != nil {
@@ -216,7 +203,7 @@ func rrReplay(t *testing.T, root string, op rrOperation, result *rrResult) {
 	if err = os.WriteFile(path, data, 0600); err != nil {
 		t.Fatal(err)
 	}
-	testsupport.Restamp(t, path, "go")
+	testsupport.Restamp(t, path)
 	s, err := store.Open(ctx, path, "")
 	if err != nil {
 		t.Fatal(err)
@@ -253,7 +240,7 @@ func rrReplay(t *testing.T, root string, op rrOperation, result *rrResult) {
 		if err = os.WriteFile(filepath.Join(state, "relay.sqlite3"), data, 0600); err != nil {
 			t.Fatal(err)
 		}
-		testsupport.Restamp(t, filepath.Join(state, "relay.sqlite3"), "go")
+		testsupport.Restamp(t, filepath.Join(state, "relay.sqlite3"))
 		argv := []string{"--state", state, "--json"}
 		if op.Kind == "show" {
 			argv = append(argv, "show", "--event", event)

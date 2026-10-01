@@ -33,28 +33,12 @@ import (
 //   - Fence:    a stopped unfenced store (a fixture, a pre-fence copy), stamped the same way.
 //   - HandOver: a stopped fenced store after a completed takeover to the other runtime.
 //   - Rehome:   a fenced store copied into another directory, with the copy's identity.
-//   - Restamp:  a copy of a store its creator still owns, as the other runtime would have made it.
+//   - Restamp:  a copy of a store its creator still owns, as Go would have made it.
 //
-// RuntimeIdentity (identity.go), which OwnerNeutral applies to schema_meta, is the one
-// normalization a whole-state comparison between the runtimes may apply. No helper edits a
-// store that is in use: each takes the write gate exclusively, which every admitted writer of
-// either runtime holds shared.
-
-// PythonCompatibilityBuild is the pinned fence build every store's stamp and mirror name.
-const PythonCompatibilityBuild = ownership.CompatibilityBuild
-
-// RuntimeOwner is what OwnerNeutral reports for a schema_meta owner that is its writer's own.
-const RuntimeOwner = "<runtime owner>"
-
-// OwnerNeutral is RuntimeIdentity for a schema_meta row of a store writer stamped, the
-// documented runtime-identity rule a whole-state comparison of a Python-owned store with a
-// Go-owned one applies: the row whose key is "owner" must read writer's own name ("python" or
-// "go"), which then becomes RuntimeOwner; any other owner value fails the test and is returned
-// unchanged. Every other key is returned unchanged. Apply it to schema_meta rows only.
-func OwnerNeutral[V any](t testing.TB, writer Runtime, key string, value V) V {
-	t.Helper()
-	return RuntimeIdentity(t, writer, SchemaMeta, key, value)
-}
+// A Python-owned store is still a state a real host can have: Go refuses it (store_owned_by_other),
+// and the fixtures the Python relay left are Python-owned until a test hands them to Go. No helper
+// edits a store that is in use: each takes the write gate exclusively, which every admitted writer
+// of either runtime holds shared.
 
 // Create makes an absent store at dbPath owned by owner ("python" or "go") without running
 // either runtime: the frozen Python-produced empty store (contract/fixtures/sqlite-ddl) with a
@@ -112,22 +96,21 @@ func Rehome(t testing.TB, dbPath string) {
 }
 
 // Restamp is for a copy (a snapshot or a backup) of a fenced store that has never changed hands -
-// owner_epoch 1, no takeover_id, rollback_allowed 1 - which a test replays in owner's runtime and
-// compares whole with what its creator's runtime did to the original. It stamps the copy for owner
-// exactly as owner's absent-store initializer stamps a store it creates: it rewrites the
-// schema_meta owner value - the one row OwnerNeutral neutralizes - and nothing else in the
-// database, then publishes the mirror that stamp implies with the copy's physical identity and
-// control socket, creating write-gate.lock and takeover.lock 0600 when the copy lacks them. The
-// two stores then differ where OwnerNeutral says they may and nowhere else, which a HandOver
-// (owner_epoch+1, a takeover_id) cannot give. A copy already stamped for owner only gets its
-// mirror, as Rehome gives it. It fails the test on a store whose mirror names this very file
-// (moving an original between the runtimes is HandOver), on a store that has changed hands, on an
-// unfenced store (that is Fence), on a store in use and on a directory whose mirror belongs to
-// another store.
-func Restamp(t testing.TB, dbPath, owner string) {
+// owner_epoch 1, no takeover_id, rollback_allowed 1 - such as a snapshot a Python fixture left,
+// which a test replays in the Go runtime. It stamps the copy for Go exactly as Go's absent-store
+// initializer stamps a store it creates: it rewrites the schema_meta owner value - the one row
+// OwnerNeutral neutralizes - and nothing else in the database, then publishes the mirror that
+// stamp implies with the copy's physical identity and control socket, creating write-gate.lock and
+// takeover.lock 0600 when the copy lacks them. The copy then differs from the original where
+// OwnerNeutral says it may and nowhere else, which a HandOver (owner_epoch+1, a takeover_id)
+// cannot give. A copy already stamped for Go only gets its mirror, as Rehome gives it. It fails the
+// test on a store whose mirror names this very file (moving an original between the runtimes is
+// HandOver), on a store that has changed hands, on an unfenced store (that is Fence), on a store in
+// use and on a directory whose mirror belongs to another store.
+func Restamp(t testing.TB, dbPath string) {
 	t.Helper()
-	if err := restamp(context.Background(), dbPath, owner); err != nil {
-		t.Fatalf("testsupport.Restamp(%s, %s): %v", dbPath, owner, err)
+	if err := restamp(context.Background(), dbPath, "go"); err != nil {
+		t.Fatalf("testsupport.Restamp(%s): %v", dbPath, err)
 	}
 }
 

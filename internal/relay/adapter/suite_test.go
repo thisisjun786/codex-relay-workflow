@@ -223,24 +223,16 @@ func writeSeedStore(path string, tables map[string]seedTable) error {
 	return err
 }
 
-// ownerNeutral applies the runtime-identity rule to the schema_meta rows of a whole-table dump
-// of a store writer stamped.
-func ownerNeutral(t *testing.T, writer testsupport.Runtime, tables any) {
+// ownerNeutral applies the runtime-identity rule (testsupport.OwnerNeutralRows) to the
+// schema_meta rows of a whole-table dump.
+func ownerNeutral(t *testing.T, tables any) {
 	t.Helper()
 	all, ok := tables.(map[string]any)
 	if !ok {
 		t.Fatalf("table dump is %T", tables)
 	}
 	rows, _ := all["schema_meta"].([]any)
-	for _, row := range rows {
-		pair, ok := row.([]any)
-		if !ok || len(pair) != 2 {
-			t.Fatalf("schema_meta row %v", row)
-		}
-		if key, ok := pair[0].(string); ok {
-			pair[1] = testsupport.OwnerNeutral(t, writer, key, pair[1])
-		}
-	}
+	testsupport.OwnerNeutralRows(t, rows)
 }
 
 // preFenceFixture writes at dst a relay store as a pre-fence Python writes one, holding the rows

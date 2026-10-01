@@ -202,7 +202,7 @@ func compareExecutionCLI(t *testing.T) {
 	}
 	steps := make([]any, len(got))
 	for i, step := range got {
-		steps[i] = normalizedExecution(t, testsupport.Go, step, goRuntimeBuild())
+		steps[i] = normalizedExecution(t, step, goRuntimeBuild())
 	}
 	device, err := deviceOf(root)
 	if err != nil {
@@ -250,9 +250,9 @@ func goRuntimeBuild() string {
 // from Go. Any other value is kept, so a runtime naming the wrong build still differs.
 const answeringBuild = "<answering runtime build>"
 
-// normalizedExecution normalizes the step output of writer, the runtime that produced it; build
-// is the runtime_build that runtime's doctor names.
-func normalizedExecution(t *testing.T, writer testsupport.Runtime, v any, build string) any {
+// normalizedExecution normalizes the step output of the Go runtime; build is the runtime_build its
+// doctor names.
+func normalizedExecution(t *testing.T, v any, build string) any {
 	switch x := v.(type) {
 	case map[string]any:
 		out := map[string]any{}
@@ -282,7 +282,7 @@ func normalizedExecution(t *testing.T, writer testsupport.Runtime, v any, build 
 				rows := map[string]any{}
 				for key, row := range block {
 					if block["owner"] != nil {
-						row = testsupport.OwnerNeutral(t, writer, key, row)
+						row = testsupport.OwnerNeutral(t, key, row)
 					}
 					rows[key] = row
 				}
@@ -291,13 +291,13 @@ func normalizedExecution(t *testing.T, writer testsupport.Runtime, v any, build 
 				}
 				value = rows
 			}
-			out[k] = normalizedExecution(t, writer, value, build)
+			out[k] = normalizedExecution(t, value, build)
 		}
 		return out
 	case []any:
 		out := make([]any, len(x))
 		for i, item := range x {
-			out[i] = normalizedExecution(t, writer, item, build)
+			out[i] = normalizedExecution(t, item, build)
 		}
 		return out
 	case string:

@@ -121,7 +121,7 @@ func files(t *testing.T, home string) map[string]string {
 		if err == nil {
 			text := string(raw)
 			if processRecords[name] {
-				text = testsupport.RuntimeIdentityText(t, testsupport.Go, text)
+				text = testsupport.RuntimeIdentityText(t, text)
 			}
 			out[name] = normalize(text)
 		} else if !os.IsNotExist(err) {
@@ -137,7 +137,7 @@ func files(t *testing.T, home string) map[string]string {
 		if err != nil {
 			t.Fatal(err)
 		}
-		out["scopes/"+filepath.Base(path)] = normalize(testsupport.RuntimeIdentityText(t, testsupport.Go, string(raw)))
+		out["scopes/"+filepath.Base(path)] = normalize(testsupport.RuntimeIdentityText(t, string(raw)))
 	}
 	return out
 }
