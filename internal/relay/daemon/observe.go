@@ -257,15 +257,16 @@ func (d *Daemon) settle(ctx context.Context, r delivery.Relationship, turn store
 	ended := turn.Status == "failed" || turn.Status == "interrupted"
 	if ended {
 		var err error
-		if laterTurn, laterEvent, err = d.laterReceipt(ctx, r, turn); err != nil {
+		if laterTurn, laterEvent, err = d.laterReceipt(ctx, r.ID, turn); err != nil {
 			report.Notes = append(report.Notes, "later receipt lookup failed for "+turn.TurnID+": "+err.Error())
 			return
 		}
 	}
 	if laterEvent != "" {
-		// The parent already heard from a later turn of this generation, so the end of this one is
-		// not news. The turn is still settled below, with no event, so it is not read again.
-		report.Notes = append(report.Notes, "observation of "+turn.TurnID+" ("+turn.Status+") not asserted: turn "+laterTurn+", admitted after it, already holds the final child receipt "+laterEvent)
+		// A later turn of this generation holds a final child receipt whose delivery the parent is
+		// owed, so the end of this one is not news. The turn is still settled below, with no event, so
+		// it is not read again.
+		report.Notes = append(report.Notes, "observation of "+turn.TurnID+" ("+turn.Status+") not asserted: turn "+laterTurn+", admitted after it, holds the final child receipt "+laterEvent+", which is owed to the parent")
 	} else if ended {
 		receipt, err := d.Intake.DaemonObservation(ctx, r.ID, turn)
 		if err != nil {
@@ -371,22 +372,35 @@ func (d *Daemon) settle(ctx context.Context, r delivery.Relationship, turn store
 // that order by its own admission row; the anchor has none (it is the generation's immutable start),
 // so every admitted turn comes after it. A turn that is neither matches nothing, and the observation
 // path keeps refusing it as unassigned.
+//
+// The relationship and its generation are read here, not taken from the pass's earlier load, and the
+// relationship must still be active: a generation opened or a relationship stopped since the load
+// matches nothing, so DaemonObservation decides exactly as it did before.
+//
+// A final event is an accepted receipt, not a report that reached the parent. It counts only when a
+// delivery or a delivery intent exists for it, because delivery is then owed through the scheduler, to
+// the same parent and under the same holds an older event would meet. A final event with neither (one
+// emitted with --no-enqueue, or left behind by a refused enqueue) leaves the parent unaware, so the end
+// of the earlier turn is still reported.
 const laterReceiptQuery = `SELECT t.turn_id, e.event_id
-FROM generations g
+FROM relationships rel
+JOIN generations g ON g.relationship_id=rel.relationship_id AND g.execution_generation=rel.execution_generation
 JOIN generation_turns t ON t.relationship_id=g.relationship_id AND t.execution_generation=g.execution_generation AND t.evidence=('explicit_admission_bound:' || g.dispatch_turn_id)
-JOIN events e ON e.relationship_id=t.relationship_id AND e.execution_generation=t.execution_generation AND e.turn_thread_id=? AND e.turn_id=t.turn_id
-WHERE g.relationship_id=? AND g.execution_generation=? AND g.dispatch_turn_id IS NOT NULL AND g.dispatch_turn_id<>''
+JOIN events e ON e.relationship_id=t.relationship_id AND e.execution_generation=t.execution_generation AND e.turn_thread_id=rel.child_task_id AND e.turn_id=t.turn_id
+WHERE rel.relationship_id=? AND rel.child_task_id=? AND rel.status='active' AND rel.superseded_by IS NULL
+  AND g.dispatch_turn_id IS NOT NULL AND g.dispatch_turn_id<>''
   AND t.turn_id<>?
   AND e.producer='child' AND e.stage='final' AND e.suppressed_reason IS NULL
+  AND (EXISTS (SELECT 1 FROM deliveries d WHERE d.event_id=e.event_id) OR EXISTS (SELECT 1 FROM delivery_intent i WHERE i.event_id=e.event_id))
   AND (g.dispatch_turn_id=? OR t.rowid>(SELECT o.rowid FROM generation_turns o WHERE o.relationship_id=g.relationship_id AND o.execution_generation=g.execution_generation AND o.turn_id=? AND o.evidence=('explicit_admission_bound:' || g.dispatch_turn_id)))
 ORDER BY t.rowid, e.event_id LIMIT 1`
 
 // laterReceipt names a later admitted turn of the relationship's current generation that already
-// holds a final, unsuppressed child event, and that event; both are empty when there is none. Once a
-// later turn has reported, the parent knows where the work stands and the end of this turn is not
-// news (CRW-256), so settle asserts nothing for it.
-func (d *Daemon) laterReceipt(ctx context.Context, r delivery.Relationship, turn store.TurnReference) (laterTurn, event string, err error) {
-	row, err := d.Store.One(ctx, laterReceiptQuery, turn.ThreadID, r.ID, r.Generation, turn.TurnID, turn.TurnID, turn.TurnID)
+// holds a final, unsuppressed child event with a delivery owed to the parent, and that event; both are
+// empty when there is none. Once a later turn has reported, the parent knows where the work stands and
+// the end of this turn is not news (CRW-256), so settle asserts nothing for it.
+func (d *Daemon) laterReceipt(ctx context.Context, relationshipID string, turn store.TurnReference) (laterTurn, event string, err error) {
+	row, err := d.Store.One(ctx, laterReceiptQuery, relationshipID, turn.ThreadID, turn.TurnID, turn.TurnID, turn.TurnID)
 	if err != nil || row == nil {
 		return "", "", err
 	}
