@@ -807,6 +807,10 @@ says, so read the level first and the fields second:
   reload every skill it once had, and an unrelated reference is not part of recovery.
 - The effective workflow, restated. A transport carries model and effort as settings
   and has no field for the workflow, so a send that omits it has silently dropped it.
+- The language the task writes in, restated: English for an issue child under
+  [Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution),
+  or the explicit override its assignment carried. Like the workflow it has no transport field,
+  and a child that lost its first assignment answers a review in whatever language it drifts to.
 - Assignment identity: the issue, this task's own id, and where a relay holds the
   assignment its relationship id and the generation to emit under, read from the
   assignment rather than copied from the coordinator's own state. On a needs-changes
