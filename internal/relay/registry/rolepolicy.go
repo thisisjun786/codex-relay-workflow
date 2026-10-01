@@ -339,36 +339,8 @@ func boundRole(ctx context.Context, s *store.Store, taskID string) (string, []st
 	return "", roles, nil
 }
 
-// taskIDOf is rolepolicy.task_id_of: whatever names this record in a message (its cwd).
-func taskIDOf(settings contract.OrderedObject) string {
-	cwd, _ := getField(settings, "cwd")
-	if !pyvalue.Truthy(cwd) {
-		return pyvalue.StrRepr("this recipient")
-	}
-	return pyvalue.Repr(cwd)
-}
-
-// CheckUnloadedTransmission is rolepolicy.check_unloaded_transmission: the refusal for
-// transmitting a pair policy did not derive to a thread not yet loaded, or nil. Provenance, not
-// resemblance: a cited exception is never derived, even when it equals the role's pair.
-func CheckUnloadedTransmission(settings contract.OrderedObject, role string, policy RolePolicy, runtimeStatus string) error {
-	if runtimeStatus != "notLoaded" || !policy.Declared {
-		return nil
-	}
-	expectation, ok := policy.expectation(role)
-	model, effort := pairOf(settings)
-	if citedException(settings) == nil && ok && expectation.Expectation == "pair" && model == any(expectation.Model) && effort == any(expectation.Effort) {
-		return nil
-	}
-	return refuse(contract.RefusalUnverifiedPairForUnloadedThread, "%s is bound as %s, the host reports it as notLoaded, and "+
-		"the pair this send would transmit was not derived from a declared role pair (policy "+
-		"%s). Nothing was sent and no turn was started: a resume may apply what it "+
-		"transmits to a thread the host has to load first, which would restore a pair the user "+
-		"may have changed. Send once the host has the thread loaded, or read its current "+
-		"settings and re-record the authorization from that reading.", taskIDOf(settings), pyvalue.StrRepr(role), policy.digest)
-}
-
-// SettingsFreeRefusalCode is the code a settings-free resume refuses with (bridge_adapter.py):
+// SettingsFreeRefusalCode is the code a settings-free resume refuses with (the host adapter's
+// verifyResume, as bridge_adapter.py's):
 // the first finding's code, except that a difference (settings_not_preserved) is renamed
 // settings_differ_after_load, because nothing was transmitted that could have made it agree.
 func SettingsFreeRefusalCode(findings []contract.OrderedObject) string {

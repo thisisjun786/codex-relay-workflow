@@ -69,7 +69,7 @@ func recordCalls(w *fx, path string) {
 	}
 	w.step([]any{lines}, nil)
 }
-func Test26_MTG_1_python_whole_output(t *testing.T) {
+func Test26_MTG_1_whole_output(t *testing.T) {
 	w := newFx(t)
 	dir, _ := repo(t)
 	second := commitObject(t, dir, "second")
@@ -88,7 +88,7 @@ func Test26_MTG_1_python_whole_output(t *testing.T) {
 	targetStep(t, w, reader, linked, "main", linked)
 	w.matchesGolden("mtg1_local")
 }
-func Test26_MTG_2_python_whole_output(t *testing.T) {
+func Test26_MTG_2_whole_output(t *testing.T) {
 	w := newFx(t)
 	dir, _ := repo(t)
 	second := commitObject(t, dir, "second")
@@ -102,7 +102,7 @@ func Test26_MTG_2_python_whole_output(t *testing.T) {
 	}
 	w.matchesGolden("mtg2_refs")
 }
-func Test26_MTG_3_python_whole_output(t *testing.T) {
+func Test26_MTG_3_whole_output(t *testing.T) {
 	w := newFx(t)
 	dir, _ := repo(t)
 	root := filepath.Dir(dir)
@@ -125,7 +125,7 @@ func Test26_MTG_3_python_whole_output(t *testing.T) {
 	targetStep(t, w, reader, root, "main", dir, root)
 	w.matchesGolden("mtg3_unreadable")
 }
-func Test26_MTG_5_python_whole_output(t *testing.T) {
+func Test26_MTG_5_whole_output(t *testing.T) {
 	w := newFx(t)
 	sha := "abcdef1234" + strings.Repeat("0", 30)
 	for _, v := range [][2]string{{strings.ToUpper(sha), sha}, {"abcdef1", sha}, {sha, "abcdef1"}, {"base-0", "base-00"}, {"base-0", "base-0"}, {"", ""}} {
@@ -133,7 +133,7 @@ func Test26_MTG_5_python_whole_output(t *testing.T) {
 	}
 	w.matchesGolden("mtg5_commit")
 }
-func Test26_MTG_6_python_whole_output(t *testing.T) {
+func Test26_MTG_6_whole_output(t *testing.T) {
 	w := newFx(t)
 	first := w.landed("head-a", fxPost)
 	w.r3Landing(first)
@@ -147,7 +147,7 @@ func Test26_MTG_6_python_whole_output(t *testing.T) {
 	w.turn(second)
 	w.matchesGolden("mtg6_trial")
 }
-func Test26_MTG_6_python_bare_cli_whole_output(t *testing.T) {
+func Test26_MTG_6_bare_cli_whole_output(t *testing.T) {
 	root := t.TempDir()
 	repoPath := filepath.Join(root, "R-A.git")
 	gitWork(t, "init", "--bare", repoPath)
@@ -366,14 +366,14 @@ func normalizeBareCLI(t *testing.T, steps []map[string]any, repository string) {
 		}
 	}
 }
-func Test26_MTG_7_python_whole_output(t *testing.T) {
+func Test26_MTG_7_whole_output(t *testing.T) {
 	w := newFx(t)
 	var out, stderr bytes.Buffer
 	code := dispatch.Execute(w.ctx, "codex-session-relay", []string{"merge-turn-restate-base", "--help"}, &out, &stderr)
 	w.step(map[string]any{"helpExitsZero": code == 0, "hasObservedBaseSha": strings.Contains(out.String(), "--observed-base-sha")}, nil)
 	w.matchesGolden("mtg7_help")
 }
-func Test26_MTG_8_python_whole_output(t *testing.T) {
+func Test26_MTG_8_whole_output(t *testing.T) {
 	w := newFx(t)
 	turn := w.held()
 	for _, change := range []struct {
@@ -415,7 +415,7 @@ func wakePromote(w *fx) string {
 	w.must(w.m.Release(w.ctx, rival["turnId"].(string), beta.TaskID, "returned", "done", ""))
 	return waiter["turnId"].(string)
 }
-func Test26_MTW_1_python_whole_output(t *testing.T) {
+func Test26_MTW_1_whole_output(t *testing.T) {
 	w := wakeFx(t)
 	turn := wakePromote(w)
 	w.turn(turn)
@@ -427,7 +427,7 @@ func Test26_MTW_1_python_whole_output(t *testing.T) {
 	wakeNotices(w)
 	w.matchesGolden("mtw1_promotion")
 }
-func Test26_MTW_2_python_whole_output(t *testing.T) {
+func Test26_MTW_2_whole_output(t *testing.T) {
 	w := wakeFx(t)
 	held := w.claim(beta, fxB, "head-b")
 	waiter := w.must(w.m.Request(w.ctx, fxRepo, fxBase, fxA, alpha.TaskID, alpha.HostID, "head-a", false, ClaimOptions{Relationship: sql.NullString{String: "rel-a", Valid: true}}))
@@ -439,7 +439,7 @@ func Test26_MTW_2_python_whole_output(t *testing.T) {
 	wakeNotices(w)
 	w.matchesGolden("mtw2_conditions")
 }
-func Test26_MTW_6_python_whole_output(t *testing.T) {
+func Test26_MTW_6_whole_output(t *testing.T) {
 	w := wakeFx(t)
 	rival := w.claim(beta, fxB, "head-b")
 	waiter := w.claim(alpha, fxA, "head-a")
@@ -448,7 +448,7 @@ func Test26_MTW_6_python_whole_output(t *testing.T) {
 	wakeNotices(w)
 	w.matchesGolden("mtw6_unaddressable")
 }
-func Test26_MTW_7_python_whole_output(t *testing.T) {
+func Test26_MTW_7_whole_output(t *testing.T) {
 	w := wakeFx(t)
 	plain := *w.m
 	plain.Delivery = nil
@@ -462,7 +462,7 @@ func Test26_MTW_7_python_whole_output(t *testing.T) {
 func reportWake(w *fx, event string, submission int, head any) {
 	w.exec(`INSERT INTO work_reports (event_id,submission_no,relationship_id,execution_generation,revision_hash,repository,base_ref,head_sha,cxc_status,cxc_reason,contract_version,summary,next_action,recorded_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, event, submission, "rel-a", 3, "rev", fxRepo, fxBase, head, "done", "r", "1", "s", "n", fxISO)
 }
-func Test26_MTW_10_python_whole_output(t *testing.T) {
+func Test26_MTW_10_whole_output(t *testing.T) {
 	w := wakeFx(t)
 	reportWake(w, "event-a", 1, "head-old")
 	reportWake(w, "event-a", 2, "head-a")
@@ -482,7 +482,7 @@ func Test26_MTW_10_python_whole_output(t *testing.T) {
 	w.turn(historical)
 	w.matchesGolden("mtw10_gate")
 }
-func Test26_MTW_9_python_whole_output(t *testing.T) {
+func Test26_MTW_9_whole_output(t *testing.T) {
 	w := wakeFx(t)
 	reading := func() {
 		r, err := evidence.RequiredForCandidate(w.ctx, w.s, "rel-a", fxRepo, fxBase, "head-a")
@@ -504,7 +504,7 @@ func Test26_MTW_9_python_whole_output(t *testing.T) {
 	reading()
 	w.matchesGolden("mtw9_reading")
 }
-func Test26_MTW_1_python_two_grants(t *testing.T) {
+func Test26_MTW_1_two_grants(t *testing.T) {
 	w := wakeFx(t)
 	first := wakePromote(w)
 	grant := w.must(w.m.Turn(w.ctx, first))["grant"].(map[string]any)["grantId"].(string)
@@ -517,7 +517,7 @@ func Test26_MTW_1_python_two_grants(t *testing.T) {
 	wakeNotices(w)
 	w.matchesGolden("mtw1_two_grants")
 }
-func Test26_MTW_2_python_unknown(t *testing.T) {
+func Test26_MTW_2_unknown(t *testing.T) {
 	w := wakeFx(t)
 	rival := w.claim(beta, fxB, "head-b")
 	held := rival["turnId"].(string)
@@ -534,7 +534,7 @@ func Test26_MTW_2_python_unknown(t *testing.T) {
 	wakeNotices(w)
 	w.matchesGolden("mtw2_unknown")
 }
-func Test26_MTW_6_python_other_parent(t *testing.T) {
+func Test26_MTW_6_other_parent(t *testing.T) {
 	w := wakeFx(t)
 	held := w.claim(alpha, fxA, "head-a")
 	waiter := w.must(w.m.Request(w.ctx, fxRepo, fxBase, fxB, beta.TaskID, beta.HostID, "head-b", true, ClaimOptions{Relationship: sql.NullString{String: "rel-a", Valid: true}}))
@@ -543,7 +543,7 @@ func Test26_MTW_6_python_other_parent(t *testing.T) {
 	wakeNotices(w)
 	w.matchesGolden("mtw6_other_parent")
 }
-func Test26_MTW_6_python_recipient_and_scope(t *testing.T) {
+func Test26_MTW_6_recipient_and_scope(t *testing.T) {
 	w := wakeFx(t)
 	w.exec("UPDATE relationships SET allowed_recipients=? WHERE relationship_id=?", `["task-child"]`, "rel-a")
 	turn := wakePromote(w)
@@ -558,7 +558,7 @@ func Test26_MTW_6_python_recipient_and_scope(t *testing.T) {
 	wakeNotices(w)
 	w.matchesGolden("mtw6_recipient_and_scope")
 }
-func Test26_MTG_4_python_whole_output(t *testing.T) {
+func Test26_MTG_4_whole_output(t *testing.T) {
 	w := newFx(t)
 	sha := strings.Repeat("a", 40)
 	valid := fmt.Sprintf(`{"ref":"refs/heads/dev","object":{"type":"commit","sha":"%s"}}`, sha)

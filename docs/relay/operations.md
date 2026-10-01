@@ -59,11 +59,11 @@ refuses rather than guesses. Creating a store on a guess is the one outcome that
 undone by a later command: once a canonical database exists it wins every later resolution,
 and the assignments in whatever it hid become unreachable without knowing they exist.
 
-Three refusals cover it. All but one command decide them before that command runs, so a command
-that opens no store — `service status`, for instance — is refused on the same evidence as one
-that would create a database. The exception is `guard-evaluate`, which cannot be answered that
-early and carries the same question to the point where the selection would be used; the
-exemptions below own it.
+Three refusals cover it. Every command decides them before it runs, so a command that opens no
+store — `service status`, for instance — is refused on the same evidence as one that would create
+a database. The Stop hook's guard (`crw hook`, or the owner it asks over `control.sock`) cannot
+be answered that early and carries the same question to the point where the selection would be
+used; the exemptions below own it.
 
 | Reason | When | What it means |
 |---|---|---|
@@ -94,7 +94,7 @@ Two things this recovery does not do. Selecting one of two claiming stores does 
 ambiguity — both still record the socket, so the next invocation that relies on default
 discovery is refused again, and every participant of that assignment has to pass the same
 explicit `--state` until one of the stores is retired. The Stop hook is the exception: a
-directory chosen for one run does not settle it for `guard-evaluate`, whose refusal ends
+directory chosen for one run does not settle it for the Stop hook's guard, whose refusal ends
 differently (see the exemptions below). And the different-socket refusal's
 own recovery list adopts nothing: using a store does not rewrite the socket it recorded, so
 the two commands it prints only read the mismatched pair apart — this store under the socket
@@ -112,22 +112,23 @@ own two arguments and opens no store. Exempt from these guards is not the same a
 refusing — `doctor` still exits non-zero when a same-store comparison it was asked to make
 comes back unproven or mismatched.
 
-The nine marker commands are exempt too, for a third reason: the managed marker exists so that a
+The eight marker commands are exempt too, for a third reason: the managed marker exists so that a
 Stop hook can answer without asking the relay anything, and legacy state nobody is using must not
 be able to switch that hook off. Two of them do reach a store and are exempt only conditionally.
 `intent-declare` RECORDS the resolved path into the intent for the hook to read later, so it
 stays guarded unless `--no-db-path` says to record none, and `intent-register` confirms the
 relationship against a store, so it is exempt only when `--db-path` names which one.
 
-`guard-evaluate` is the third conditional one, and its condition is settled later than any of
-these. It reads receipts from the first of three sources that answers: `--db-path`, then the
-`dbPath` the coordinator recorded in the intent, then its own resolution. The first two are
+The Stop hook's guard is the third conditional one, and its condition is settled later than any
+of these. It reads receipts from the first of three sources that answers: the `dbPath` its
+settings name (written from `--db-path` at installation), then the `dbPath` the coordinator
+recorded in the intent, then its own resolution. The first two are
 selections somebody made, one explicit and one durable, and neither depends on discovery, so an
 ambiguity in discovery is genuinely unrelated to them and the hook goes on classifying and
 recording. The third is not a selection; it is a guess about somebody else's choice. That
-question cannot be settled on the command line, because whether the coordinator recorded a path
-is a fact in a marker the command has not read yet — the workspace it belongs to arrives inside
-the Stop payload, on stdin. So the refusal is not skipped for this command, it is deferred: it is
+question cannot be settled before the Stop is read, because whether the coordinator recorded a
+path is a fact in a marker the guard has not read yet — the workspace it belongs to arrives inside
+the Stop payload, on stdin. So the refusal is not skipped for the Stop, it is deferred: it is
 asked again where that third source would be used, and only if execution gets there. A turn
 released on the child's own declaration never opens a store and is never refused, and neither is
 a readiness with no registered relationship, because there is nothing to look a receipt up by. A

@@ -261,9 +261,19 @@ func (r *Registry) AuthorizedSettings(ctx context.Context, task string) (setting
 		return settings, false, refuse(contract.RefusalReason(findingText(finding, "code")), "%s is bound as %s: %s (policy %v). Nothing was sent and no turn was started. %v",
 			pyvalue.StrRepr(task), pyvalue.StrRepr(role), describe(finding), digest, recovery)
 	}
+	return settings, !derivedFromRolePair(settings.Data, role, policy), nil
+}
+
+// derivedFromRolePair is whether the pair a record carries was derived from its role's declared
+// pair: the role's expectation is a pair, the record's equals it, and the record cites no
+// exception (provenance, not resemblance: an exception that authorizes the role's own pair is
+// still an exception). A pair that was not derived is never transmitted: the send resumes the
+// recipient settings-free and compares what the host reports with the record
+// (TaskSettings.SettingsFreeResume). It is the predicate Python's delivery gate asked
+// rolepolicy.check_unloaded_transmission with "notLoaded" (decision R3F-7).
+func derivedFromRolePair(settings contract.OrderedObject, role string, policy RolePolicy) bool {
 	expectation, ok := policy.expectation(role)
-	model, effort := pairOf(settings.Data)
-	derived := citedException(settings.Data) == nil && ok && expectation.Expectation == "pair" &&
+	model, effort := pairOf(settings)
+	return citedException(settings) == nil && ok && expectation.Expectation == "pair" &&
 		model == any(expectation.Model) && effort == any(expectation.Effort)
-	return settings, !derived, nil
 }

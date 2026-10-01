@@ -32,6 +32,12 @@ func refusedDetailOf(v any) string {
 	return s
 }
 
+// settingsFree is an unloaded step's answer: whether a send resumes the record settings-free.
+func settingsFree(v any) any {
+	m, _ := v.(map[string]any)
+	return m["settingsFree"]
+}
+
 func okMap(v any) map[string]any {
 	m, _ := v.(map[string]any)
 	ok, _ := m["ok"].(map[string]any)
@@ -179,10 +185,11 @@ func Test25_ROL11_a_supervisor_is_resumed_settings_free(t *testing.T) {
 	}
 }
 
-// ROL-12: the unloaded guard refuses a pair differing in model only, or in effort only.
+// ROL-12: a pair differing from the role's in model only, or in effort only, was not derived
+// from it, so a send resumes the recipient settings-free.
 func Test25_ROL12_the_unloaded_guard_checks_both_halves_of_the_pair(t *testing.T) {
 	steps := sameRoleScenario(t, "unloaded_guard")
-	if steps[1] != nil || refusedReasonOf(steps[2]) != "unverified_pair_for_unloaded_thread" || refusedReasonOf(steps[3]) != "unverified_pair_for_unloaded_thread" {
+	if settingsFree(steps[1]) != false || settingsFree(steps[2]) != true || settingsFree(steps[3]) != true {
 		t.Fatal(steps)
 	}
 }
@@ -215,14 +222,14 @@ func Test25_ROL14_operator_exceptions_are_verified(t *testing.T) {
 	}
 }
 
-// ROL-15: an exception equal to the role's pair is still an exception; a user-transition
-// re-record onto the declared pair drops it and the guard then passes.
+// ROL-15: an exception equal to the role's pair is still an exception (resumed settings-free); a
+// user-transition re-record onto the declared pair drops it and the pair is then derived.
 func Test25_ROL15_an_exception_equal_to_the_pair_is_still_an_exception(t *testing.T) {
 	steps := sameRoleScenario(t, "exception_equal_to_the_role_pair")
-	if refusedReasonOf(steps[1]) != "unverified_pair_for_unloaded_thread" {
+	if settingsFree(steps[1]) != true {
 		t.Fatal(steps[1])
 	}
-	if _, cited := steps[5].(map[string]any)["citedException"]; cited || steps[6] != nil {
+	if _, cited := steps[5].(map[string]any)["citedException"]; cited || settingsFree(steps[6]) != false {
 		t.Fatal(steps[5], steps[6])
 	}
 }

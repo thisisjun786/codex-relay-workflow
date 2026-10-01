@@ -95,7 +95,7 @@ func compareCLI39(t *testing.T, scenario string, restate bool) {
 	normalizeCLI39(goPayload)
 	expectGolden(t, scenario, map[string]any{"code": code, "payload": goPayload}, goFile)
 }
-func Test24_CLI_39_LivePythonWholePayload(t *testing.T) {
+func Test24_CLI_39_WholePayload(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		restate bool
@@ -104,7 +104,7 @@ func Test24_CLI_39_LivePythonWholePayload(t *testing.T) {
 	}
 }
 
-func Test24_MergeEvidenceEmptyRestateMatchesLivePython(t *testing.T) {
+func Test24_MergeEvidenceEmptyRestate(t *testing.T) {
 	for _, restate := range []string{"", "<empty>"} {
 		code, got, goStdout, goStderr := goCLI39(t, "ready", restate)
 		normalizeCLI39(got)

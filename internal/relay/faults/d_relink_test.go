@@ -10,7 +10,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
-func TestDRelinkRepointsBoundedWritesAgainstPython(t *testing.T) {
+func TestDRelinkRepointsBoundedWrites(t *testing.T) {
 	home, e := os.MkdirTemp("/dev/shm", "fault-d-relink-")
 	if e != nil {
 		t.Fatal(e)

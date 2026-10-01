@@ -159,7 +159,7 @@ func Test25_CLI11_pause_refuses_and_resume_requires_the_restated_scope(t *testin
 
 // The generation, anchor, admission and status commands answer exactly as Python on success and
 // refusal (Domain/cli-shape for generation-open, generation-bind, admit-turn, relationship-status).
-func Test25_CLI_generation_anchor_admission_and_status_commands_match_python(t *testing.T) {
+func Test25_CLI_generation_anchor_admission_and_status_commands(t *testing.T) {
 	sameCLIAsGolden(t, "generations_cli")
 	sameCLIAsGolden(t, "register_refusals")
 	sameCLIAsGolden(t, "argparse_stray_positional")

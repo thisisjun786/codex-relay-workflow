@@ -167,15 +167,17 @@ func Test29ConsoleParity(t *testing.T) {
 		})
 	}
 }
+
+// Each service command's help (and the service parser's own) is its golden, one per command.
+// What a line the parser cannot read answers is the relay parser's contract for every command
+// (cmd/crw's TestRun_every_relay_command_line_has_the_usage_contract, internal/relay/argparse).
 func Test29CLIShape(t *testing.T) {
 	commands := [][]string{{"daemon"}, {"service"}, {"service", "status"}, {"service", "enable"}, {"service", "disable"}, {"service", "stop"}, {"service", "declare"}, {"service", "start"}, {"service", "restart"}, {"service", "run"}}
 	for _, command := range commands {
-		for _, suffix := range [][]string{{"--help"}, {"--unknown"}, {"--actor"}} {
-			args := append(append([]string{}, command...), suffix...)
-			t.Run(strings.Join(args, "_"), func(t *testing.T) {
-				home := t.TempDir()
-				checkAnswer(t, home, "answer", normalizedCapture(invoke(t, home, args...)))
-			})
-		}
+		args := append(append([]string{}, command...), "--help")
+		t.Run(strings.Join(args, "_"), func(t *testing.T) {
+			home := t.TempDir()
+			checkAnswer(t, home, "answer", normalizedCapture(invoke(t, home, args...)))
+		})
 	}
 }

@@ -23,8 +23,8 @@ import (
 )
 
 // review is one run of review_parity.py's group against the native hook: the native hook runs
-// through the group's scenario and its steps, in order (each pair's stdout and snapshot, each CLI
-// outcome, each lone snapshot), are the group's golden, which began as the steps of the script's
+// through the group's scenario and its steps, in order (each pair's stdout and snapshot, each lone
+// snapshot), are the group's golden, which began as the steps of the script's
 // Python side (review_parity.py python).
 type review struct {
 	t     *testing.T
@@ -59,8 +59,6 @@ func reviewPython(t *testing.T, id string) {
 		writeTest(t, stdin, []byte(pyjson.Dumps(h.payload, pyjson.Options{})))
 		r.pairInput(h, prefilledStdin(stdin), nil, 0o022, false, true)
 		t.Log("5 MiB prefilled stdin payload equal")
-	case "D10":
-		r.utf8()
 	default:
 		t.Fatal(id)
 	}
@@ -316,18 +314,6 @@ func (r *review) pairInput(h reviewHome, payload any, args []string, mask int, d
 	return got
 }
 
-// cli is the native relay CLI's outcome for args and input, a step.
-func (r *review) cli(h reviewHome, args []string, input string) outcomeBytes {
-	t := r.t
-	t.Helper()
-	command := exec.Command(binary(t), append([]string{"relay"}, args...)...)
-	command.Env = h.environ()
-	command.Stdin = strings.NewReader(input)
-	got := runOutcome(t, command)
-	r.steps = append(r.steps, Object{{Key: "kind", Value: "cli"}, {Key: "code", Value: int64(got.Code)}, {Key: "stdout", Value: got.Stdout}, {Key: "stderr", Value: got.Stderr}})
-	return got
-}
-
 func (r *review) paths(group string) {
 	t := r.t
 	cases := []string{"env", "argv_over_env", "empty_env", "empty_arg"}
@@ -424,10 +410,6 @@ func (r *review) constants() {
 				t.Fatalf("%s %s: %s", c.name, field, pyjson.Dumps(result, pyjson.Options{SortKeys: true}))
 			}
 		}
-		// The same loader on guard stdin: full CLI bytes, including echoed constants.
-		args := []string{"guard-evaluate", "--marker-root", filepath.Join(h.home, "markers"), "--now", "2026-01-01T00:00:00Z", "--no-record"}
-		stop := Object{{Key: "session_id", Value: c.value}, {Key: "turn_id", Value: c.value}, {Key: "extra", Value: []any{c.value}}}
-		r.cli(h, args, pyjson.Dumps(stop, pyjson.Options{}))
 		t.Log(c.name, "all loaders equal")
 	}
 }
@@ -473,27 +455,4 @@ func (r *review) dialErrors() {
 		r.invoke(h, h.payload, nil, 0o022)
 		r.steps = append(r.steps, Object{{Key: "kind", Value: "snapshot"}, {Key: "snapshot", Value: r.snapshot(h.home, false)}})
 	}
-}
-
-func (r *review) utf8() {
-	t := r.t
-	h := r.setup("utf8")
-	args := []string{"guard-evaluate", "--marker-root", text(get(h.cfg, "markerRoot"))}
-	h.env["PYTHONIOENCODING"] = "utf-8:strict"
-	for _, raw := range []string{`{"a":"` + "\xff" + `"}`, `{"a":"` + "\xe2\x82" + `"}`, "\x80"} {
-		if got := r.cli(h, args, raw); got.Code != 3 {
-			t.Fatalf("%q: %+v", raw, got)
-		}
-	}
-	// The settings environment never affects guard-evaluate's own inputs.
-	h.env["CRW_COMPLETION_HOOK_CONFIG"] = filepath.Join(h.home, "missing")
-	command := exec.Command(binary(t), append([]string{"relay"}, append(args, "--now", "2026-01-01T00:00:00Z")...)...)
-	command.Env = h.environ()
-	command.Stdin = strings.NewReader("{}")
-	o := runOutcome(t, command)
-	answer, err := decodeObject([]byte(o.Stdout))
-	if o.Code != 0 || err != nil || get(answer, "state") != "unmanaged" {
-		t.Fatalf("%+v %v", o, err)
-	}
-	t.Log("stdin host errors equal; guard ignores hook settings")
 }

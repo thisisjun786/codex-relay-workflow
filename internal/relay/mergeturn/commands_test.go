@@ -27,7 +27,7 @@ var pythonMergeTurnCommands = []string{"merge-turn-attest", "merge-turn-check", 
 
 // markerCommands is cli.MARKER_COMMANDS_BY_NAME.
 var markerCommands = []string{"intent-declare", "intent-attempt", "intent-bind", "intent-register", "intent-claim",
-	"intent-disposition", "intent-resolve", "intent-show", "guard-evaluate"}
+	"intent-disposition", "intent-resolve", "intent-show"}
 
 func Test26_CCL_1_merge_turn_commands_are_registered_offline_and_not_marker_commands(t *testing.T) {
 	var stdout, stderr bytes.Buffer

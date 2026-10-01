@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -69,8 +70,18 @@ func RecordRelationshipScope(ctx context.Context, s *store.Store, relationshipID
 	return err
 }
 
-// RecordRelationship creates the assignment and its first generation in one transaction.
+// RecordRelationship creates the assignment and its first generation in one transaction. Before it
+// opens the transaction it refuses, as the store's own RecordRelationship did until refactor R1
+// moved it here, what the product never writes: a dispatch turn id that is present but blank, and a
+// bound generation without a dispatch turn id. Both refusals are store.ReasonUnboundGeneration and
+// write nothing, so a test cannot start from a state the product cannot reach.
 func RecordRelationship(ctx context.Context, s *store.Store, relationship store.Relationship, generation store.Generation, parentHostID, childHostID string) error {
+	if turn := generation.DispatchTurnID; turn.Valid && strings.TrimSpace(turn.String) == "" {
+		return unboundGeneration("an anchor needs an exact dispatch turn id, not %q", turn.String)
+	}
+	if generation.AnchorState == store.AnchorBound && !generation.DispatchTurnID.Valid {
+		return unboundGeneration("a bound generation needs its dispatch turn id")
+	}
 	return s.Transaction(ctx, func(ctx context.Context, conn *sql.Conn) error {
 		if _, err := conn.ExecContext(ctx, `INSERT INTO relationships (relationship_id,issue_key,status,parent_task_id,parent_host_id,child_task_id,child_host_id,execution_generation,artifact_roots,allowed_recipients,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, relationship.ID, relationship.IssueKey, relationship.Status, relationship.ParentTaskID, parentHostID, relationship.ChildTaskID, childHostID, relationship.Generation, relationship.ArtifactRoots, relationship.AllowedRecipients, relationship.CreatedAt, relationship.UpdatedAt); err != nil {
 			return fmt.Errorf("insert relationship: %w", err)
@@ -80,6 +91,12 @@ func RecordRelationship(ctx context.Context, s *store.Store, relationship store.
 		}
 		return nil
 	})
+}
+
+// unboundGeneration is the refusal the store's RecordRelationship made for a generation with no
+// usable dispatch turn id; store.RefusalReason reads its reason.
+func unboundGeneration(format string, args ...any) error {
+	return &store.RefusedError{Reason: store.ReasonUnboundGeneration, Detail: fmt.Sprintf(format, args...)}
 }
 
 // AppendJournal writes one journal row in its own transaction.

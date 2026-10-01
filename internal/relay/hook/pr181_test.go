@@ -9,7 +9,6 @@ import (
 	"io/fs"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -19,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
@@ -134,57 +133,42 @@ func Test33PR181NativeAndPythonRegistration(t *testing.T) {
 	}
 }
 
-// The guard CLI when eager state selection cannot list roots answers each case as its golden
-// holds, which began as the Python CLI's answer (pr181_guard_discovery.py), over the fixture
-// pr181_guard_discovery.py prepare laid out.
-func Test33PR181GuardDiscoveryPython(t *testing.T) {
+// An evaluation handed an explicit store reads that store and never asks discovery, so a home or
+// an XDG_STATE_HOME that names a file, which leaves the state roots unlistable, changes nothing:
+// the empty store answers relationship_absent (pr181_guard_discovery.py's fixture). The relay's
+// guard-evaluate command once refused such a Stop at its eager state selection.
+func Test33PR181AnExplicitStoreIsReadWithoutDiscovery(t *testing.T) {
 	home := t.TempDir()
 	layFixture(t, "pr181-guard-discovery", home)
+	raw, err := os.ReadFile(filepath.Join(home, "stop.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stop, err := decodeObject(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, c := range []struct {
 		name      string
 		overrides map[string]string
-		code      int
 	}{
-		{"unknown_override", map[string]string{"CODEX_SESSION_RELAY_STATE": "~crw_user_that_does_not_exist/state"}, 3},
-		{"xdg_file", map[string]string{"XDG_STATE_HOME": filepath.Join(home, "blocked")}, 0},
-		{"home_file", map[string]string{"HOME": filepath.Join(home, "blocked"), "XDG_STATE_HOME": ""}, 0},
-		{"unreadable_xdg", map[string]string{"XDG_STATE_HOME": filepath.Join(home, "locked")}, 3},
+		{"xdg_file", map[string]string{"XDG_STATE_HOME": filepath.Join(home, "blocked")}},
+		{"home_file", map[string]string{"HOME": filepath.Join(home, "blocked"), "XDG_STATE_HOME": ""}},
 	} {
-		env := map[string]string{}
-		for _, kv := range os.Environ() {
-			key, value, _ := strings.Cut(kv, "=")
-			env[key] = value
-		}
-		for key, value := range map[string]string{"HOME": home, "CODEX_HOME": home, "XDG_STATE_HOME": filepath.Join(home, "xdg"), "CODEX_SESSION_RELAY_STATE": ""} {
-			env[key] = value
-		}
-		for key, value := range c.overrides {
-			env[key] = value
-		}
-		command := exec.Command(binary(t), "relay", "guard-evaluate", "--db-path", filepath.Join(home, "explicit.sqlite3"), "--marker-root", filepath.Join(home, "markers"),
-			"--stop-input", filepath.Join(home, "stop.json"), "--no-record", "--now", "2026-01-01T00:00:00Z")
-		for key, value := range env {
-			command.Env = append(command.Env, key+"="+value)
-		}
-		got := runOutcome(t, command)
-		// Given no socket, discovery scopes the directory by the default socket under
-		// CODEX_HOME, whose digest follows home.
-		scope, err := store.SocketScope(filepath.Join(env["CODEX_HOME"], "app-server-control", "app-server-control.sock"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		goldenOutcome(t, c.name, got, golden.Substitute(scope, "<DEFAULT-SCOPE>"), golden.Substitute(home, "<HOME>"))
-		if got.Code != c.code {
-			t.Fatalf("%s: %+v", c.name, got)
-		}
-		if c.code == 0 {
-			// The explicit store was really read: an empty readable store answers
-			// relationship_absent, not state_unreadable or an unmanaged shortcut.
-			answer, err := decodeObject([]byte(got.Stdout))
-			if err != nil || get(answer, "receiptEvidence") != "relationship_absent" {
-				t.Fatalf("%s: %v %s", c.name, err, got.Stdout)
+		t.Run(c.name, func(t *testing.T) {
+			for key, value := range map[string]string{"HOME": home, "CODEX_HOME": home, "XDG_STATE_HOME": filepath.Join(home, "xdg"), "CODEX_SESSION_RELAY_STATE": ""} {
+				t.Setenv(key, value)
 			}
-		}
+			for key, value := range c.overrides {
+				t.Setenv(key, value)
+			}
+			options := GuardOptions{Root: filepath.Join(home, "markers"), DBPath: filepath.Join(home, "explicit.sqlite3"), Now: "2026-01-01T00:00:00Z", NoRecord: true,
+				DefaultDBPath: func() (string, error) { t.Error("discovery was asked for a store"); return "", nil }}
+			answer, err := Evaluate(context.Background(), stop, options)
+			if err != nil || get(answer, "receiptEvidence") != "relationship_absent" {
+				t.Fatalf("%v %s", err, pyjson.Dumps(answer, pyjson.Options{}))
+			}
+		})
 	}
 }
 

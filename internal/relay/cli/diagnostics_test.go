@@ -276,7 +276,7 @@ func TestStatus_phases_match_python(t *testing.T) {
 }
 
 // P06 settings_check failure carries every mismatched field; P07 it survives reopening.
-func TestStatus_settings_rejection_and_reopen_match_python(t *testing.T) {
+func TestStatus_settings_rejection_and_reopen(t *testing.T) {
 	t.Run("test_a_settings_rejection_records_the_field_the_host_disagreed_on", func(t *testing.T) {
 		failure := deliveryOf(t, compareStatus(t, "test_a_settings_rejection_records_the_field_the_host_disagreed_on"))["lastFailedOperation"].(map[string]any)
 		requireEqual(t, failure["operation"], "settings_check", "operation")
@@ -296,7 +296,7 @@ func TestStatus_settings_rejection_and_reopen_match_python(t *testing.T) {
 }
 
 // P11 refused-before-queue intents are listed, and a scoped status filters them.
-func TestStatus_pending_intents_match_python(t *testing.T) {
+func TestStatus_pending_intents(t *testing.T) {
 	t.Run("test_an_event_refused_at_the_queue_is_visible_in_status", func(t *testing.T) {
 		status := compareStatus(t, "test_an_event_refused_at_the_queue_is_visible_in_status")
 		requireEqual(t, status["deliveries"], []any{}, "deliveries")
@@ -312,7 +312,7 @@ func TestStatus_pending_intents_match_python(t *testing.T) {
 }
 
 // P13 a dispatched revision awaits the child's receipt, not an acknowledgement.
-func TestStatus_revision_phase_matches_python(t *testing.T) {
+func TestStatus_revision_phase(t *testing.T) {
 	status := compareStatus(t, "test_a_dispatched_revision_is_not_waiting_for_an_acknowledgement")
 	for _, one := range status["deliveries"].([]any) {
 		item := one.(map[string]any)
@@ -431,7 +431,7 @@ func TestStatus_test_an_upgraded_store_does_not_forget_what_it_had_already_settl
 
 // show over every event the scenarios left: the whole JSON, byte for byte, including the
 // frozen attempt messages, and the usage refusal for an unknown event.
-func TestShow_matches_python_on_every_scenario_event(t *testing.T) {
+func TestShow_on_every_scenario_event(t *testing.T) {
 	shows := showsOf(t)
 	if len(shows) < 20 {
 		t.Fatalf("only %d show scenarios", len(shows))

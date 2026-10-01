@@ -585,6 +585,13 @@ const canonicalFixtureRoot = "/tmp/crw-oracle"
 // user owns canonicalFixtureRoot the test fails naming it.
 func canonicalRoot(t *testing.T) string {
 	t.Helper()
+	return canonicalRootNamed(t, t.Name())
+}
+
+// canonicalRootNamed is canonicalRoot at the path fixed by name: a test whose fixtures were laid
+// out, and their paths digested, under another test's root.
+func canonicalRootNamed(t *testing.T, name string) string {
+	t.Helper()
 	if err := os.MkdirAll(canonicalFixtureRoot, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -595,7 +602,7 @@ func canonicalRoot(t *testing.T) string {
 	if err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
 		t.Fatal(err)
 	}
-	dir := filepath.Join(canonicalFixtureRoot, digestOf(t.Name())[:8]) // short: a socket path under it must fit sun_path
+	dir := filepath.Join(canonicalFixtureRoot, digestOf(name)[:8]) // short: a socket path under it must fit sun_path
 	remove := func() {
 		_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 			if d != nil && d.IsDir() {

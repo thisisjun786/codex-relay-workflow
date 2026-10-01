@@ -4,6 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -149,12 +153,17 @@ func TestRun_every_relay_command_has_an_argparse_spec(t *testing.T) {
 
 // The relay command line's contract, for every command: --help prints the command's usage and
 // options on stdout and exits 0; a line its parser cannot read prints the usage and the reason on
-// stderr, nothing on stdout, and exits 2, naming the flag it is missing or the word it does not
-// know (decision R3C-1). The handler never runs for either.
+// stderr, nothing on stdout, and exits 2, naming the flag it is missing, the word it does not
+// know or the value a choice refuses (decision R3C-1). The handler never runs for either, so no
+// store is created.
 func TestRun_every_relay_command_line_has_the_usage_contract(t *testing.T) {
 	relay := func(args ...string) (int, string, string) {
 		var stdout, stderr bytes.Buffer
-		code := run(context.Background(), "crw", append([]string{"relay", "--state", t.TempDir()}, args...), &stdout, &stderr)
+		state := t.TempDir()
+		code := run(context.Background(), "crw", append([]string{"relay", "--state", state}, args...), &stdout, &stderr)
+		if _, err := os.Stat(filepath.Join(state, "relay.sqlite3")); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("%q created a store: %v", args, err)
+		}
 		return code, stdout.String(), stderr.String()
 	}
 	for _, name := range dispatch.Names() {
@@ -172,6 +181,15 @@ func TestRun_every_relay_command_line_has_the_usage_contract(t *testing.T) {
 		code, stdout, stderr = relay(append(words, "--definitely-not-a-flag")...)
 		if code != 2 || stdout != "" || !strings.HasPrefix(stderr, "usage: crw relay "+name) || !strings.Contains(stderr, "unrecognized arguments: --definitely-not-a-flag") {
 			t.Errorf("%s --definitely-not-a-flag: exit %d stdout %q stderr %q", name, code, stdout, stderr)
+		}
+		for _, action := range spec.Actions {
+			if len(action.Choices) == 0 {
+				continue
+			}
+			code, stdout, stderr = relay(append(words, action.Flags[0], "definitely-not-a-choice")...)
+			if code != 2 || stdout != "" || !strings.HasPrefix(stderr, "usage: crw relay "+name) || !strings.Contains(stderr, "invalid choice") || !strings.Contains(stderr, "definitely-not-a-choice") {
+				t.Errorf("%s %s definitely-not-a-choice: exit %d stdout %q stderr %q", name, action.Flags[0], code, stdout, stderr)
+			}
 		}
 		var required []string
 		for _, action := range spec.Actions {
