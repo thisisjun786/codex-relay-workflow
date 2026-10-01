@@ -77,14 +77,14 @@ func TestDoctor_ownership_block_matches_python_on_a_broken_store(t *testing.T) {
 			`"detail": "store_owned_by_other: takeover record unreadable: UnicodeDecodeError: `,
 			"store_owned_by_other: takeover record unreadable: UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 11: invalid start byte"},
 		{"unreadable mirror", func(t *testing.T, state string) { chmod(t, filepath.Join(state, "takeover.json"), 0) },
-			`"detail": "store_owned_by_other: takeover record unreadable: PermissionError: [Errno 13] Permission denied: `,
-			"store_owned_by_other: takeover record unreadable: PermissionError: [Errno 13] Permission denied: "},
+			`"detail": "store_owned_by_other: takeover record unreadable: open `,
+			"store_owned_by_other: takeover record unreadable: open "},
 		{"unreadable database", func(t *testing.T, state string) { chmod(t, filepath.Join(state, "relay.sqlite3"), 0) },
-			`"detail": "[Errno 13] Permission denied: `, ""},
+			`relay.sqlite3: permission denied"`, ""},
 		{"not a database", func(t *testing.T, state string) {
 			write(filepath.Join(state, "relay.sqlite3"), strings.Repeat("not a database ", 512))(t)
 		},
-			`"detail": "file is not a database"`, ""},
+			`"detail": "file is not a database (26)"`, ""},
 		{"database without schema_meta", durable("DROP TABLE schema_meta"), `"owner": null,`, "store_owned_by_other: missing or unsupported writer protocol"},
 		{"empty mirror object", func(t *testing.T, state string) { write(filepath.Join(state, "takeover.json"), "{}")(t) },
 			`"phase": null,`, "store_owned_by_other: missing or unsupported writer protocol"},

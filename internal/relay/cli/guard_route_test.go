@@ -111,7 +111,7 @@ func TestGuardEvaluate_routes_to_the_owners_control_socket_as_the_fence_does(t *
 
 	// No owner listens: each runtime refuses a store the other owns, and evaluates its own.
 	got := goCLI(t, argv(python, pf, pf.Root)...)
-	if got.stdout != unanswered("[Errno 2] No such file or directory") {
+	if got.stdout != unanswered("dial unix "+filepath.Join(python, "control.sock")+": connect: no such file or directory") {
 		t.Errorf("no control.sock: %s", got.stdout)
 	}
 	own := goCLI(t, argv(golang, gf, gf.Root)...)
@@ -121,16 +121,16 @@ func TestGuardEvaluate_routes_to_the_owners_control_socket_as_the_fence_does(t *
 	staleSocket(t, filepath.Join(python, "control.sock"))
 	got = goCLI(t, argv(python, pf, pf.Root)...)
 	expect("a socket nobody listens on", [][]string{argv(golang, gf, gf.Root)}, []answer{got}, 2)
-	if got.stdout != unanswered("[Errno 111] Connection refused") {
+	if got.stdout != unanswered("dial unix "+filepath.Join(python, "control.sock")+": connect: connection refused") {
 		t.Errorf("a stale control.sock: %s", got.stdout)
 	}
 	if err := os.Remove(filepath.Join(python, "control.sock")); err != nil {
 		t.Fatal(err)
 	}
 
-	// An owner that answers nothing readable (nothing, not UTF-8, not JSON, or null), and one
-	// whose error record the fence cannot look up (an unhashable kind), after the request was
-	// sent: host errors, never a refusal.
+	// An owner that answers nothing readable (nothing, not UTF-8, not JSON, null, nested past
+	// the CLI's cap, or an error record whose kind is no scalar), after the request was sent:
+	// host errors, never a refusal.
 	for _, owner := range []struct{ name, reply, detail string }{
 		{"an owner that answers nothing", "", "the owner closed control.sock without a readable guard-evaluate answer"},
 		{"an owner that answers bytes that are not JSON", "\xff not json\n", "the owner closed control.sock without a readable guard-evaluate answer"},
@@ -144,16 +144,13 @@ func TestGuardEvaluate_routes_to_the_owners_control_socket_as_the_fence_does(t *
 		{"an owner that answers over the frame limit", "\"" + strings.Repeat("a", 64<<20-1) + "\"\n", "the owner closed control.sock without a readable guard-evaluate answer"},
 		// The fence reads a JSON null as no answer at all (socket_guard's `if value is None`).
 		{"an owner that answers null", "null\n", "the owner closed control.sock without a readable guard-evaluate answer"},
-		{"an owner whose error kind is a list", "{\"error\": [\"refused\"]}\n", "TypeError: unhashable type: 'list'"},
-		// The fence's json.loads takes 9998 nested containers and raises RecursionError from
-		// 9999, which leaves socket_guard for cli.main's host error: at 9999 and 10000, where Go's
-		// decoder still reads the answer, and above 10000, where it no longer does.
-		{"an owner that answers 9999 nested arrays", strings.Repeat("[", 9999) + strings.Repeat("]", 9999) + "\n", "RecursionError: maximum recursion depth exceeded while decoding a JSON array from a unicode string"},
-		{"an owner that answers 9999 nested objects", strings.Repeat("{\"a\": ", 9998) + "{}" + strings.Repeat("}", 9998) + "\n", "RecursionError: maximum recursion depth exceeded while decoding a JSON object from a unicode string"},
-		{"an owner that answers 10000 nested arrays", strings.Repeat("[", 10000) + strings.Repeat("]", 10000) + "\n", "RecursionError: maximum recursion depth exceeded while decoding a JSON array from a unicode string"},
-		{"an owner that answers 10001 nested arrays", strings.Repeat("[", 10001) + strings.Repeat("]", 10001) + "\n", "RecursionError: maximum recursion depth exceeded while decoding a JSON array from a unicode string"},
-		// The fence decodes the bytes before it parses them: at any depth, bytes that are not
-		// UTF-8 are no answer.
+		{"an owner whose error kind is a list", "{\"error\": [\"refused\"]}\n", "the owner closed control.sock without a readable guard-evaluate answer"},
+		// The CLI reads an answer nested 9998 containers deep (hook.routeDepth), and none deeper.
+		{"an owner that answers 9999 nested arrays", strings.Repeat("[", 9999) + strings.Repeat("]", 9999) + "\n", "the owner closed control.sock without a readable guard-evaluate answer"},
+		{"an owner that answers 9999 nested objects", strings.Repeat("{\"a\": ", 9998) + "{}" + strings.Repeat("}", 9998) + "\n", "the owner closed control.sock without a readable guard-evaluate answer"},
+		{"an owner that answers 10000 nested arrays", strings.Repeat("[", 10000) + strings.Repeat("]", 10000) + "\n", "the owner closed control.sock without a readable guard-evaluate answer"},
+		{"an owner that answers 10001 nested arrays", strings.Repeat("[", 10001) + strings.Repeat("]", 10001) + "\n", "the owner closed control.sock without a readable guard-evaluate answer"},
+		// At any depth, bytes that are not UTF-8 are no answer.
 		{"an owner that answers 9999 nested arrays that are not UTF-8", strings.Repeat("[", 9999) + "\"\xff\"" + strings.Repeat("]", 9999) + "\n", "the owner closed control.sock without a readable guard-evaluate answer"},
 	} {
 		closed := fakeOwner(t, filepath.Join(python, "control.sock"), owner.reply)

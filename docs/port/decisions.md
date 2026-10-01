@@ -678,9 +678,10 @@ other value reaches a verdict or the observation it records; `protocol` is compa
 Python compares it and `noRecord` read by its truth value; the 5 s read bound is on the whole
 request line, not on each read, so a peer that trickles its line is answered `TimeoutError: timed
 out` by both; and the scanner's recursion budget covers the calls that raise a refusal near its
-edge (`Test30ControlPeerFailuresAreAnsweredAsPythonAnswersThem`,
-`TestControlReadsEveryFrameAsControlPyReadsIt`, test_fence.py's
-`test_python_control_server_bounds_the_whole_request_line`). Tests: `Test33RoutedSelectionRefusals`,
+edge (test_fence.py's `test_python_control_server_bounds_the_whole_request_line`). Decision R3S-2
+ends the Go owner's reading of a request as `control.py` read it: it reads the line strictly, in
+Go's words, and keeps the 5 s bound on the whole line
+(`Test30ControlPeerFailuresAreAnsweredWithTheHostRecord`). Tests: `Test33RoutedSelectionRefusals`,
 `Test33OwnerEvaluatesOnlyItsOwnLocations`, and test_fence.py's
 `test_a_routed_stop_is_refused_by_the_owner_as_the_owners_fallback_refuses_it` and
 `test_the_owner_writes_only_under_its_own_marker_root_and_reads_only_its_own_store`.
@@ -1299,13 +1300,13 @@ action then refuses it as it refuses any socketless store.
 Before refusing an existing `D` that has no `write-gate.lock`, a Go writable open reads
 its `schema_meta` from a disposable copy, as the fence's `Store()` reads it before
 deciding what the store is: a `D` that cannot be read, or is not a database, fails
-with that error in Python's words (`DatabaseError: file is not a database`, a host
+with that error (in Go's words since decision R3S-1, `file is not a database (26)`, a host
 error, exit 3; `store_unopenable` in an intent's store record) and gains no gate or
 sidecar in either runtime; only a readable `D` is refused as unfenced. The
 registration hold (`intent-register`) stats `D` before its admission, as
 `registration_hold` does, so a missing store or directory answers
-`the relay store could not be opened for writing: [Errno 2] No such file or directory: '<D>'`
-in both runtimes, and it raises its admission's refusal (`register_relationship` re-raises the
+`the relay store could not be opened for writing: stat <D>: no such file or directory`
+(decision R3S-1), and it raises its admission's refusal (`register_relationship` re-raises the
 fence's `OwnershipRefused`): a store the other runtime owns answers reason
 `store_owned_by_other` in the fence's words, not `unregistered_relationship`.
 The creator places `write-gate.lock` already held EX (a temporary `S/.write-gate-*`
@@ -1355,9 +1356,9 @@ Go and Python first openers paused after placing the gate and racing unpaused),
 `Test30SocketBindingWaitsForWritersWithinTheBound`),
 `internal/relay/cli/fence_parity_test.go` (`TestSocketBinding_*` against the live fence),
 `TestWriteForms_refuse_a_foreign_store_as_python_does` (byte for byte),
-`internal/relay/store/registration_hold_python_test.go`
-(`TestOpen_reads_a_gateless_store_before_refusing_it_as_python_does`,
-`TestRegistrationHold_answers_an_unstattable_store_as_python_does`), `Test24_SOS_14_WholeOutputAndSQLite`,
+`internal/relay/store/registration_hold_refusal_test.go`
+(`TestOpen_reads_a_gateless_store_before_refusing_it`,
+`TestRegistrationHold_answers_an_unstattable_store_with_the_stat_error`), `Test24_SOS_14_WholeOutputAndSQLite`,
 `TestCLI_intent_register_refuses_a_store_the_other_runtime_owns_like_python`,
 `TestINT10_an_unreadable_missing_or_held_store_refuses_registration` (against the live fence);
 `.omo/evidence/task-30-crw-go-port.txt`.
@@ -2704,8 +2705,8 @@ forwarders into `store_forwarders_test.go`). Where nothing but its own tests use
 them:
 
 - the second registration hold, `store.HoldForWrite` and `registry.RegisterUnderHold`: the relay
-  registers under `store.RegistrationHold` only (its recorded fence answers stay covered by
-  `TestRegistrationHold_answers_an_unstattable_store_as_python_does`);
+  registers under `store.RegistrationHold` only (its refusals stay covered by
+  `TestRegistrationHold_answers_an_unstattable_store_with_the_stat_error`);
 - `delivery.VerifyResume` and `TaskSettings.Mismatches` with their helpers, a second copy of the
   resume check the bridge adapter runs through `registry.TaskSettings`; the delivery and
   supervisor tests that replayed Python's answers through the copy now run the adapter's
@@ -3409,3 +3410,190 @@ Evidence: `internal/relay/dispatch` (`Execute`, `Command`, `emit`), the families
 `TestRun_every_relay_parser_choice_is_registered`,
 `TestRun_unknown_user_state_is_a_python_host_error` (cmd/crw); every relay CLI golden compares
 unchanged.
+
+## Decision R3S-1. The store's and the service's messages name an OS or SQLite failure in Go's words (refactor R3)
+
+Decision: where the relay store, the service and the Stop hook's settings and routing readers
+put an OS or SQLite failure into a message that is only shown, the failure is worded as Go's
+error says it (`open <path>: permission denied`, `file is not a database (26)`,
+`SQL logic error: no such table: x (1)`) instead of as CPython's `str(OSError)` or `sqlite3`
+exception (`PermissionError: [Errno 13] Permission denied: '<path>'`,
+`DatabaseError: file is not a database`). This covers the doctor's `access` detail and its
+ownership block's `detail`, the read-only store readers' `detail` (dispositions, managed-show,
+the doctor's nonce and issue lookups, a service's `projects` reading, an omission's
+`store_unreadable:` reason), a writable or read-only open's host error, the ownership mirror's
+`takeover record unreadable:` refusal, the registration hold's refusal, an unenforced guard
+index's `detail`, the launch declaration's unreadable `detail`, the supervised worker's and the
+process handle's details, the hook settings reader's `config_unreachable` detail (which only
+`crw doctor` shows; the hook journals nothing on that path) and a routed `guard-evaluate`'s
+refusal when the owner's socket cannot be reached or trusted. Every message keeps its field, its
+reason and its exit code, and still names the path. The store's `pythonHostError` is `hostError`,
+which unwraps to the failure, so `store.PythonSQLiteError` of it still answers what it answered.
+A routed `guard-evaluate` reads the owner's answer to the depth it always read (9998 containers,
+`hook.routeDepth`, now a plain count instead of the C scanner's recursion check); an answer nested
+deeper, or an error record whose kind is a list or an object, is "the owner closed control.sock
+without a readable guard-evaluate answer", where it was `RecursionError: ...` or
+`TypeError: unhashable type: ...`: a host error, exit 3, as before.
+
+Consumer check: `plugins/crw/skills`, `docs/` and `contract/` were searched for `Errno`,
+`PermissionError`, `FileNotFoundError`, `OperationalError`, `DatabaseError` and the changed
+messages' prefixes. The only consumer of errno wording is the Stop journal's `guard_unreachable`
+detail, which `hook.NativePrescanUnreachable` parses back and the contract corpus pins
+(`test_adapter_agreement__test_a_runtime_that_cannot_be_run_is_unreachable_in_both__*`); no Go
+caller parses the changed details (`crw doctor` reads the relay doctor's booleans and fields,
+not its `detail` prose), and every reason (`store_owned_by_other`, `store_unreadable`,
+`execution_policy_unreadable`, `supervised_fd_unreadable`) is unchanged.
+
+Kept, because the text is stored: `store.PythonOSError`, `store.PythonOSErrorText`,
+`store.PathRepr` and the hook's `pythonErrnoName` where they write the Stop journal (the
+pre-scan and post-identity `guard_unreachable` detail and `errno` field), the frozen manifest's
+reach failure in a guard's receipt detail (which the hook journals as `receiptDetail`, decision
+44), and the state discovery's access error (`discoveryExists`), which the owner's guard reaches
+through its store selection and the in-process Stop journals as the row's `fault`. The intent
+records' `store_unopenable` and `store_write_failed` details are delivery's
+(`store.PythonSQLiteError`, refactor R3D's area) and are unchanged.
+
+Evidence: internal/relay/store/{diagnostic_probe.go,diagnostic_read.go,diagnostic.go,hold.go,
+ownership.go,registration_hold.go,store.go,refusal.go (`hostError`),state.go (`discoveryExists`),
+pyerr.go}; internal/relay/service/{policy.go,worker.go,process_linux.go};
+internal/relay/hook/{route.go (`routeDepth`, `nesting`),settings.go}; the goldens of
+internal/relay/{store,service,cli,delivery,registry,linkage,managed}; tests
+`TestRouteGuard_reads_an_answer_within_its_nesting_cap`,
+`TestGuardEvaluate_routes_to_the_owners_control_socket_as_the_fence_does`,
+`TestDoctor_ownership_block_matches_python_on_a_broken_store`,
+`Test27_MST_10_ManagedShowAbsentDoesNotCreateStore`.
+
+## Decision R3S-2. The owner reads a control.sock request strictly, in Go's words (refactor R3)
+
+Decision: `hook.HandleControl` no longer reads a guard request as the fence's `control.py`
+read it under CPython 3.13. Gone: `json.loads`' decoding of bytes (a UTF-8 byte order mark
+skipped, UTF-16 and UTF-32 detected), the C scanner's recursion budget near the nesting edge
+(`pyjson.ErrorWithBudget`), CPython's integer-digit limit, `protocol` compared with 1 as Python
+compares it (`1.0` and `true` were served), `noRecord` read by its truth value,
+`datetime.fromisoformat` as CPython 3.13 parses it (`hook/isoformat.go`, 382 lines), and the
+host details in Python's `<exception class>: <message>` words (`JSONDecodeError: Expecting value:
+line 1 column 1 (char 0)`, `KeyError: 'params'`, `TypeError: can't subtract offset-naive and
+offset-aware datetimes`, `TimeoutError: timed out`). The owner reads one line of at most 64 MiB,
+UTF-8, nested no deeper than 9996 containers (`controlDepth`, a plain count), as an object whose
+params hold an object `stopInput` and an RFC 3339 `deadline` still ahead (`time.Parse` with
+`time.RFC3339Nano`); it serves `protocol` the integer 1 and `method` `guard-evaluate`, reads
+`noRecord` as true only when it is `true`, and answers every request it cannot serve with the
+host record `{"error": "host", "detail": <why>}` in Go's words (`guard request is not JSON:
+invalid character ...`, `guard params must be an object`, `guard request deadline expired`,
+`guard request line not received in time`). A dispatch other than guard-evaluate at protocol 1 is
+still `{"protocol":1,"requestRejected":true}`.
+
+Kept, for the hook protocol: what a Go hook sends is served exactly as before. The hook writes the
+request with `pyjson.Dumps` (ASCII, one line), `protocol` 1, `noRecord` a boolean and the deadline
+`deadline.UTC().Format(time.RFC3339Nano)`, and it forwards the Stop payload it accepted from Codex
+as it read it, so the owner reads a request's values as the hook read that payload
+(`requestValues`: `NaN`, the infinities and a lone surrogate escape are values, objects keep their
+order, an integer is an int64) and refuses past the depth it always refused. The hook journals a
+host record as `guard_host_error` with no detail, so the new wording reaches no journal row, and
+the Stop payload's decoding, the EventKey and every journal row the hook writes are unchanged
+(the hook's own stdin reading is not touched). The one reading that differs for a request a hook
+could forward is a `NaN` or an infinity at exactly the 9996th container, which CPython's budget
+refused and the plain cap reads (docs/port/known-defects.md).
+
+Consumer check: the only clients of `control.sock` are the Go hook (`hook.RequestGuard`) and the
+routed `guard-evaluate` CLI (`hook.RouteGuard`), both of which write the request as above; no
+skill, doc command or contract fixture sends a frame or reads a host record's detail
+(`contract/fixtures` drive the hook against a guard peer, not the owner's reader). The control.sock
+request and response fields, the rejection frame, the 64 MiB and 5 s bounds and the answer to a
+peer that never finishes its line are unchanged.
+
+Tests: `TestControlReadsEveryFrameAsControlPyReadsIt`, its 28,321-frame fixture
+(`control-frames.json.gz`, 199 KB) and its 144 KB golden of Python's exception texts are deleted;
+`TestControlAnswersEveryRequestItCannotServeWithTheHostRecord` and
+`TestControlReadsNoRecordAsTheBooleanTheHookSends` (internal/relay/hook/control_request_test.go)
+hold the reading: every unservable frame answered with exactly the two-field host record, the
+rejection, and the served forms (a UTC or offset deadline, a payload holding constants and a lone
+surrogate escape, a payload nested to the cap). `Test30ControlPeerFailuresAreAnsweredAsPythonAnswersThem`
+is `Test30ControlPeerFailuresAreAnsweredWithTheHostRecord`: the listener, accept and daemon cases
+keep their properties (each failure answered with the host record, the whole-line read bound,
+a hang-up skipped, an accept retried, the next Stop served, a clean Close and exit 0), without the
+edge corpus of CPython's recursion texts and its golden.
+
+Evidence: internal/relay/hook/control.go (`controlDepth`, `requestValues`, `readRequest`,
+`guardParams`), internal/relay/hook/adapter.go (`HandleControl`), internal/relay/hook/route.go
+(`nesting`); internal/relay/hook/control_request_test.go; internal/relay/service/control_test.go;
+docs/port/cutover.md (the control server paragraph).
+
+## Decision R3S-3. What the store side keeps of the Python emulation, because it is stored, hashed or journalled (refactor R3)
+
+Decision: wave R3 leaves these readings and wordings of the relay store, service, managed,
+adapter, daemon, linkage, selection and hook packages as they are, each because a byte it
+produces is stored, hashed or journalled (the brief's items 1 and 2), or because it is the hook
+protocol's:
+
+- The Stop hook's reading of its stdin (`hook.Decode`, `hookValues`: `json.loads`' refusals and
+  their `JSONDecodeError` text, `NaN`, the infinities and lone surrogate escapes accepted). The
+  values feed the EventKey and every journal row the hook writes (`sessionId`, `turnId`,
+  `eventIdentity`), and the refusal text is the stored `stdin_not_json` detail the contract corpus
+  pins (`test_adapter_agreement__test_every_payload_failure_is_the_same_failure_in_both__not_json__*`).
+  Codex sends neither a constant nor a lone surrogate, so refusing them would change no real
+  journal row, but it would change the stored row and key of such a payload, and it deletes no
+  code: the readings are options of the shared `internal/pyjson`. The owner keeps accepting what a
+  hook forwards for the same reason (decision R3S-2).
+- The hook's errno names (`hook/errno.go`) and `store.PythonOSErrorText`/`store.PathRepr` in the
+  journal's `guard_unreachable` detail, which `hook.NativePrescanUnreachable` parses back; the
+  guard's verdict texts (receipt details, `fault`s, selection refusals), which the hook journals;
+  and the frozen manifest's Python value model (`store/frozen_value.go`, `frozen_detailed.go`:
+  `PythonManifestEntries`, `PythonRevisionHash`, the `ManifestException` classes), whose entries
+  feed the manifest revision hash and whose exception texts reach a guard's journalled answer and
+  the omission reader (decision 44).
+- pathlib's spelling of paths (`store.PathlibSpelling`, `PathlibChild`, `PathlibParent`,
+  `ownership.PathlibSpelling`, `pythonNormpath`, `ScopeRoot`): it names the state directory, the
+  store's `Path` and the scope root, which feed the state-dir key, the scope key and the managed
+  request fingerprint (`managed/identity.go`), are stored in the ownership mirror and the scope
+  records, and decide which declared paths a scope accepts.
+- The bridge adapter's Python-shaped host-reply errors (`adapter/shape.go`, `pythonError`,
+  `pythonConnectionError`, `cursor.go`): their class and message are written into delivery
+  receipts (`transport.go`, the ledger's `error`; `delivery.errorLabel` in the delivery receipt
+  and its observations), and `pythonError` decides whether a failed listing is recorded.
+- `repr()` quoting (`pyvalue.StrRepr`, `pyvalue.Repr`) in the store's artifact, scope and
+  continuation refusals, which the guard journals and the receipt intake stores (the `refusals`
+  table's `detail`), in the receipt intake's `unassigned_turn` refusals (`adapter/cli.go`) and in
+  the selection refusals the guard answers with; `json.dumps` spacing in the worker policy record,
+  the scope record and the daemon's journal rows, which are stored.
+- Readers of stored documents keep their leniency and their refusal texts: the launch
+  declaration (`launch-policy.json`, `service/policy.go`, read to the depth CPython read it), the
+  service and worker records, receipts and continuation claims, and the ownership mirror.
+
+Consumer check: for each item the writer was followed to where its bytes land (SQLite `journal`
+and receipt rows, the bridge ledger, the Stop journal, the mirror and scope records, a hash);
+none is display-only.
+
+Evidence: internal/relay/hook/{value.go,errno.go,adapter.go,journal_row.go}; internal/relay/store/
+{pyerr.go,frozen_value.go,frozen_detailed.go,state.go,pyloads.go,scope.go};
+internal/relay/store/ownership/record.go; internal/relay/managed/{identity.go,start.go};
+internal/relay/adapter/{shape.go,transport.go,cursor.go}; internal/relay/service/{policy.go,
+record.go,worker.go}; internal/relay/daemon/observe.go.
+
+## Decision R3S-4. Values in the store side's display-only refusals are quoted with Go's %q (refactor R3)
+
+Decision: the managed reservation's refusals (`managed-start`'s reservation, `managed-release`:
+`relationship_conflict`, `duplicate_assignment`, `malformed_receipt`, `unregistered_relationship`),
+the managed request's key check (`missing [...], unknown [...]`), the launch policy's `conflict`
+detail and the registration hold's unreadable store path quote the values they name with Go's
+`%q` (`"req-1"`, `["a" "b"]`) instead of Python's `repr()` (`'req-1'`, `['a', 'b']`). A
+managed request holding a lone surrogate escape is still refused before any field is judged, now
+as `managed request holds a lone surrogate escape`: the reconstruction of `json.dumps(raw,
+ensure_ascii=False)` that named the position `str.encode` would name (`dumpsUnescaped`,
+`dumpsString`, 75 lines) is gone. The request's fingerprint, taken over the values an accepted
+request holds, is unchanged. Reasons, exit codes and fields are unchanged.
+
+Consumer check: these refusals are returned to the command that asked and printed; none is
+written to SQLite, a record or a journal (`Reservation.Reserve` and `Release` return their
+refusal to `managed-start` and `managed-release`, which print it; the request check is a usage
+error; the launch policy resolution is not persisted; the registration hold's refusal is
+delivery's printed `unregistered_relationship`), and no skill, doc or fixture matches their
+prose.
+
+Kept: the `repr()` quoting decision R3S-3 lists, where the text is stored or journalled.
+
+Evidence: internal/relay/managed/{reservation.go,request.go (`loneSurrogate`)}; internal/relay/
+service/policy.go (`ResolveLaunchPolicyAt`); internal/relay/store/registration_hold.go;
+`TestAnUnknownRequestFieldIsNamed` (internal/relay/managed/request_refusal_test.go, which was
+`TestAnUnknownRequestFieldIsNamedAsPythonReprsIt`); the goldens of
+internal/relay/{managed,service,sync}.

@@ -599,31 +599,22 @@ classifies them. The legacy `guard-evaluate` CLI answers the first three with ex
 64 MiB, answers a request it could not evaluate with `{"error":"host","detail":...}` and keeps
 serving, closes an unauthenticated peer unanswered, and applies the CLI's selection refusals
 to an unpinned request using its `socketPath` and `program` (decision 24). The Go owner's server
-(`service.ListenControl`, `hook.HandleControl`) reads a request as `control.py` reads it and
-answers failures the same way. The line is `json.loads` of its bytes: decoded as `json.loads`
-decodes bytes (UTF-8 with or without its byte order mark, UTF-16 or UTF-32 by their marks or
-NUL bytes, a lone surrogate passed and kept), then scanned to the nesting the C scanner reaches
-in `GuardServer`'s serving thread (9996 containers under CPython 3.13; the 9997th raises
-`RecursionError`). That depth is the thread's whole recursion budget, and the calls the scanner
-makes to raise a refusal or to convert a constant draw on it too: a `JSONDecodeError` other than
-`Expecting value` raised at 9993 to 9996 open containers, and an `Expecting value`, an
-over-long integer or a `NaN`, `Infinity` or `-Infinity` at 9996, raise `RecursionError`
-instead, with the message CPython gives there, and both owners answer them alike
-(`pyjson.ErrorWithBudget`, measured through `GuardServer`). The request is served when its
-`protocol` equals 1 as Python compares it (`1`, `1.0` or `true`) and its `method` is
-`guard-evaluate`; `noRecord` is read by its truth value. The deadline is `datetime.fromisoformat`
-of it as CPython 3.13 parses it (after `Z` becomes `+00:00`), subtracted from the aware present.
-A frame whose bytes do not decode, that is not a JSON object, nests too deep, lacks `params` or
-`stopInput`, carries a deadline that is not a string, does not parse, has no offset or has
-passed, or a `socketPath`, `program`, `mode` or `now` that is present, not null and not a
-string, is answered by both owners with the same host detail, `control.py`'s `<exception
-class>: <message>` (`TypeError: guard params must be an object`, `TypeError: can't subtract
-offset-naive and offset-aware datetimes`, `TimeoutError: guard request deadline expired`,
-`TypeError: guard mode must be a string`). A `mode` or `now` that is null or empty asks for the
-default; neither reaches the verdict or the observation it records unless it is a string. A peer
-has 5 s from being served to send its whole request line: the bound is on the line, each read
-given only the time that remains, so a peer that has not finished the line by then, whether it
-sent nothing more or trickled it in parts, is answered `TimeoutError: timed out` by both owners.
+(`service.ListenControl`, `hook.HandleControl`) reads a request strictly since decision R3S-2:
+one line of at most 64 MiB, UTF-8, JSON nested no deeper than 9996 containers (the depth it
+always read), and an object, whose values are read as the hook read the Stop payload it forwards
+(`NaN`, the infinities and a lone surrogate escape included). The request is served when its
+`protocol` is the integer 1 and its `method` is `guard-evaluate`; `noRecord` asks for no record
+only when it is `true`. The deadline is an RFC 3339 time (the hook writes it in UTC with
+nanoseconds), compared with the present. A frame that is not UTF-8, not JSON, not a JSON object,
+nests too deep, lacks an object `params` or `stopInput`, carries a deadline that is not a string,
+not an RFC 3339 time or has passed, or a `socketPath`, `program`, `mode` or `now` that is present,
+not null and not a string, is answered with the host record, `{"error": "host", "detail": <why>}`,
+in Go's words (`guard params must be an object`, `guard request deadline expired`,
+`guard mode must be a string`). A `mode` or `now` that is null or empty asks for the default;
+neither reaches the verdict or the observation it records unless it is a string. A peer has 5 s
+from being served to send its whole request line: the bound is on the line, each read given only
+the time that remains, so a peer that has not finished the line by then, whether it sent nothing
+more or trickled it in parts, is answered with the host record too.
 Nothing a peer does ends or fails either owner (PR #185 4128954449): a peer that goes away before
 its answer is skipped, an accept the kernel refuses for want of descriptors, buffers or memory is
 retried after 50 ms, and neither reaches the daemon's exit status. The Go owner serves each

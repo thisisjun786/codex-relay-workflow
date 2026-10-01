@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -14,10 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 const Schema = "managed-start/1"
@@ -28,15 +24,11 @@ func ParseRequest(raw []byte) (map[string]any, error) {
 	if len(raw) > maxRequestBytes {
 		return nil, fmt.Errorf("managed request exceeds the byte limit")
 	}
-	// parse_request measures json.dumps(raw, ensure_ascii=False).encode("utf-8") before it judges
-	// any field, and that encode raises for a lone surrogate escape ("\udcff") json.loads kept.
-	if value, err := hook.Decode(raw); err == nil {
-		var dumped strings.Builder
-		if dumpsUnescaped(&dumped, value) {
-			if err := store.EncodeUTF8(dumped.String()); err != nil {
-				return nil, err
-			}
-		}
+	// A lone surrogate escape ("\udcff") names no character: a request holding one is refused
+	// before any field is judged (hook.Decode keeps it as the WTF-8 bytes no valid string holds),
+	// where encoding/json would read it as U+FFFD.
+	if value, err := hook.Decode(raw); err == nil && loneSurrogate(value) {
+		return nil, fmt.Errorf("managed request holds a lone surrogate escape")
 	}
 	var v any
 	if err := json.Unmarshal(raw, &v); err != nil {
@@ -170,7 +162,7 @@ func object(v any, required, optional []string, at string) (map[string]any, erro
 	if len(missing) > 0 || len(extra) > 0 {
 		sort.Strings(missing)
 		sort.Strings(extra)
-		return nil, fmt.Errorf("%s: missing %s, unknown %s", at, pyvalue.Repr(missing), pyvalue.Repr(extra))
+		return nil, fmt.Errorf("%s: missing %q, unknown %q", at, missing, extra)
 	}
 	return m, nil
 }
@@ -188,75 +180,23 @@ func OperationIDs(requestID string) (string, string) {
 	return "managed-create-" + digest, "managed-business-" + digest
 }
 
-// dumpsUnescaped writes value as json.dumps(value, ensure_ascii=False) spells it, code point for
-// code point, with a lone surrogate (held as WTF-8) left as the character it is, so EncodeUTF8 of
-// the text names the position the fence's encode names. It answers false for a value json.dumps
-// refuses before anything is encoded (a non-finite float, which allow_nan=False raises for).
-func dumpsUnescaped(b *strings.Builder, value any) bool {
+// loneSurrogate is whether a key or a string anywhere in value holds a lone surrogate.
+func loneSurrogate(value any) bool {
 	switch v := value.(type) {
 	case contract.OrderedObject:
-		b.WriteByte('{')
-		for i, field := range v {
-			if i > 0 {
-				b.WriteString(", ")
-			}
-			dumpsString(b, field.Key)
-			b.WriteString(": ")
-			if !dumpsUnescaped(b, field.Value) {
-				return false
+		for _, field := range v {
+			if !utf8.ValidString(field.Key) || loneSurrogate(field.Value) {
+				return true
 			}
 		}
-		b.WriteByte('}')
 	case []any:
-		b.WriteByte('[')
-		for i, item := range v {
-			if i > 0 {
-				b.WriteString(", ")
-			}
-			if !dumpsUnescaped(b, item) {
-				return false
+		for _, item := range v {
+			if loneSurrogate(item) {
+				return true
 			}
 		}
-		b.WriteByte(']')
 	case string:
-		dumpsString(b, v)
-	case float64:
-		if math.IsNaN(v) || math.IsInf(v, 0) {
-			return false
-		}
-		b.WriteString(pyjson.Float(v))
-	case nil:
-		b.WriteString("null")
-	default: // bool, int64, json.Number
-		fmt.Fprint(b, v)
+		return !utf8.ValidString(v)
 	}
-	return true
-}
-
-// dumpsString is json.dumps's ensure_ascii=False spelling of a str: the quote, the backslash and
-// the control characters escaped, every other character as itself.
-func dumpsString(b *strings.Builder, s string) {
-	b.WriteByte('"')
-	for i := 0; i < len(s); i++ {
-		switch c := s[i]; {
-		case c == '"' || c == '\\':
-			b.WriteByte('\\')
-			b.WriteByte(c)
-		case c == '\n':
-			b.WriteString(`\n`)
-		case c == '\r':
-			b.WriteString(`\r`)
-		case c == '\t':
-			b.WriteString(`\t`)
-		case c == '\b':
-			b.WriteString(`\b`)
-		case c == '\f':
-			b.WriteString(`\f`)
-		case c < 0x20:
-			fmt.Fprintf(b, `\u%04x`, c)
-		default:
-			b.WriteByte(c)
-		}
-	}
-	b.WriteByte('"')
+	return false
 }

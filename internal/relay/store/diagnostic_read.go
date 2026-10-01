@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"syscall"
 
-	"modernc.org/sqlite"
-
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 )
 
@@ -66,7 +64,7 @@ func ReadOnlyRows(ctx context.Context, selection StateSelection, query string, a
 	}
 	conn, err := openHeld(ctx, file, "ro")
 	if err != nil {
-		return RowsRead{Detail: PythonSQLiteError(err)}
+		return RowsRead{Detail: err.Error()}
 	}
 	readErr := func() error {
 		defer conn.close()
@@ -88,7 +86,7 @@ func ReadOnlyRows(ctx context.Context, selection StateSelection, query string, a
 		if moved := relocation(file, expected); moved != "" {
 			return RowsRead{Detail: moved}
 		}
-		return RowsRead{Readable: true, Detail: PythonSQLiteError(readErr)}
+		return RowsRead{Readable: true, Detail: readErr.Error()}
 	}
 	// The closing question: without it a rename during the read that is still in place returns
 	// rows and an identity a caller reads as "the store at this path".
@@ -125,7 +123,7 @@ func NonceLookup(ctx context.Context, selection StateSelection, nonce string) No
 	}
 	conn, err := openHeld(ctx, file, "ro")
 	if err != nil {
-		return unreadable(PythonSQLiteError(err))
+		return unreadable(err.Error())
 	}
 	var actor, at string
 	readErr := func() error {
@@ -148,7 +146,7 @@ func NonceLookup(ctx context.Context, selection StateSelection, nonce string) No
 		if moved := relocation(file, expected); moved != "" {
 			return unreadable(moved)
 		}
-		return unreadable(PythonSQLiteError(readErr))
+		return unreadable(readErr.Error())
 	}
 	if moved := relocation(file, expected); moved != "" {
 		return unreadable(moved)
@@ -166,18 +164,9 @@ func NonceLookup(ctx context.Context, selection StateSelection, nonce string) No
 
 // OwnershipMetadata is ownership.metadata: schema_meta read from a disposable main-plus-WAL
 // copy of the database, so no sidecar is created beside the source. An absent database, or
-// one without schema_meta, reads as empty. The error text is Python's str(error): the bare OS
-// or SQLite message.
+// one without schema_meta, reads as empty. The error is the OS or SQLite failure as Go words it.
 func OwnershipMetadata(ctx context.Context, dbPath string) (map[string]string, error) {
-	meta, err := readMetadata(ctx, dbPath)
-	if err != nil {
-		var failure *sqlite.Error
-		if errors.As(err, &failure) {
-			return nil, errors.New(PythonSQLiteMessage(err))
-		}
-		return nil, errors.New(PythonOSErrorText(err))
-	}
-	return meta, nil
+	return readMetadata(ctx, dbPath)
 }
 
 // readMetadata is OwnershipMetadata with the underlying OS or SQLite error. D is named as
@@ -257,7 +246,7 @@ func OwnershipMirror(dbPath string) ([]byte, error) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, errors.New("store_owned_by_other: takeover record unreadable: " + PythonOSError(err))
+		return nil, errors.New("store_owned_by_other: takeover record unreadable: " + err.Error())
 	}
 	return raw, nil
 }

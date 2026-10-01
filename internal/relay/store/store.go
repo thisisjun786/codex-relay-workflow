@@ -229,7 +229,7 @@ func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ 
 		}
 		if _, guardErr := db.ExecContext(ctx, statement); guardErr != nil {
 			name := strings.Fields(strings.TrimPrefix(statement, "CREATE UNIQUE INDEX IF NOT EXISTS "))[0]
-			result.UnenforcedIndexes = append(result.UnenforcedIndexes, UnenforcedIndex{Index: name, Detail: PythonSQLiteMessage(guardErr)})
+			result.UnenforcedIndexes = append(result.UnenforcedIndexes, UnenforcedIndex{Index: name, Detail: guardErr.Error()})
 		}
 	}
 	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")

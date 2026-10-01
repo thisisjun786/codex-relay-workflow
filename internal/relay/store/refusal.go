@@ -71,3 +71,10 @@ func RefusalReason(err error) string {
 	}
 	return ""
 }
+
+// hostError is an OS or SQLite failure the store raises out of an open unhandled: the command's
+// host error, worded as Go words the failure, which stays reachable through errors.As.
+type hostError struct{ cause error }
+
+func (e *hostError) Error() string { return e.cause.Error() }
+func (e *hostError) Unwrap() error { return e.cause }
