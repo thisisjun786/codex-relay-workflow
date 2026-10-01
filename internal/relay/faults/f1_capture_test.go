@@ -16,6 +16,7 @@ import (
 )
 
 func TestF1WholeOutput(t *testing.T) {
+	goldenParent(t)
 	for _, action := range []string{"claim", "operation", "reconcile", "complete_refusal", "complete", "reconcile_ended", "sweep", "sweep_readings", "operation_retarget", "claim_backoff"} {
 		t.Run(action, func(t *testing.T) {
 			home, e := os.MkdirTemp("/dev/shm", "f1-whole-")
@@ -174,6 +175,7 @@ func TestF1WholeOutput(t *testing.T) {
 			if e = json.Unmarshal(normalized, &got); e != nil {
 				t.Fatal(e)
 			}
+			checkGoldenEvidence(t, "reply and fault tables", []string{action}, runPathsOf(t, home), got)
 			if !reflect.DeepEqual(got, expected) {
 				keys := []string{}
 				for key, want := range expected["tables"].(map[string]any) {

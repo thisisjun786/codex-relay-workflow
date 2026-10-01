@@ -5,10 +5,12 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
 func TestF2CLIOracle(t *testing.T) {
+	goldenParent(t)
 	for _, args := range [][]string{
 		{"fault-fail", "--publication", "missing", "--claim-token", "token", "--error", "failed"},
 		{"fault-fail", "--publication", "missing", "--claim-token", "token", "--error", "failed", "--ended"},
@@ -38,6 +40,7 @@ func TestF2CLIOracle(t *testing.T) {
 			want, pyStderr, pyCode := []byte(answer.Stdout), []byte(answer.Stderr), answer.Code
 			var got, stderr bytes.Buffer
 			code, handled := executeAsCLI(context.Background(), append([]string{"--state", filepath.Join(home, "go"), "--json"}, args...), &got, &stderr)
+			checkGolden(t, "relay "+strings.Join(args, " "), args, runPathsOf(t, home), cliGolden{Code: code, Stdout: got.String(), Stderr: stderr.String()})
 			if !handled || code != pyCode || !bytes.Equal(got.Bytes(), want) || !bytes.Equal(stderr.Bytes(), pyStderr) {
 				t.Errorf("python (%d) %s; go (%d) %s; stderr %s", pyCode, want, code, got.String(), stderr.String())
 			}

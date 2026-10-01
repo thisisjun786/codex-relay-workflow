@@ -2,12 +2,13 @@ package sync
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -17,7 +18,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 func TestMain(m *testing.M) {
@@ -124,27 +125,16 @@ func makeDocument(a action, row store.Row) string {
 	}
 	return block
 }
+
+// replay runs the outbox actions of a Python scenario against Go's outbox and checks every reply
+// and the tables it wrote against the golden, keyed by a digest of the actions.
 func replay(t *testing.T, input []action) {
 	t.Helper()
-	root, e := filepath.Abs("../../..")
-	if e != nil {
-		t.Fatal(e)
-	}
 	home := t.TempDir()
 	raw, e := json.Marshal(input)
 	if e != nil {
 		t.Fatal(e)
 	}
-	want := pythonAnswer(t, "capture.py", raw, func() ([]byte, error) {
-		cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(root, "internal/relay/sync/testdata/capture.py"), home+"/python", string(raw))
-		cmd.Dir = root
-		cmd.Env = append(os.Environ(), "UV_PROJECT_ENVIRONMENT="+filepath.Join(root, ".venv"), "UV_CACHE_DIR="+home+"/uv")
-		want, e := cmd.CombinedOutput()
-		if e != nil {
-			return nil, fmt.Errorf("python: %v\n%s", e, want)
-		}
-		return want, nil
-	}, pyoracle.Substitute(home, "<home>"))
 	ctx := context.Background()
 	s, e := store.Open(ctx, home+"/go/relay.sqlite3", "")
 	if e != nil {
@@ -288,9 +278,8 @@ func replay(t *testing.T, input []action) {
 		}{table, records})
 	}
 	got := evidence.Dumps(obj("replies", replies, "tables", tables), false, false, true) + "\n"
-	if got != string(want) {
-		t.Fatalf("complete Python/Go output differs\nPython: %s\nGo: %s", want, got)
-	}
+	sum := sha256.Sum256(raw)
+	golden.Check(t, "outbox "+hex.EncodeToString(sum[:8]), []byte(got), golden.Substitute(home, "<home>"))
 }
 func Test23_SO_1_OutboxIdentity(t *testing.T) {
 	verdictReplay(t, "test_a_verdict_enqueues_exactly_one_job_carrying_its_identity", "test_a_replayed_verdict_does_not_create_a_second_job", "test_no_target_means_no_job_and_no_failure")

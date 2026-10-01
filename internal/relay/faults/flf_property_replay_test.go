@@ -120,6 +120,7 @@ func Test22_FLF_6_CreationAnswerIndexWholeOutput(t *testing.T) {
 	for _, row := range rows {
 		got = append(got, text(row, "detail"))
 	}
+	checkGolden(t, "query plan", nil, runPathsOf(t, filepath.Dir(gd)), got)
 	if !reflect.DeepEqual(got, py) {
 		t.Fatalf("whole-output comparison diff: queryPlan: Go %v Python %v", got, py)
 	}
@@ -151,6 +152,7 @@ func Test22_FLF_7_InstalledRevisionWholeOutput(t *testing.T) {
 }
 
 func Test22_FLF_8_UnknownAndDirtyRevisionWholeOutput(t *testing.T) {
+	goldenParent(t)
 	for name, source := range map[string]map[string]any{"incomplete": {"repositoryCommit": strings.Repeat("a", 40)}, "dirty": func() map[string]any { x := testSource(); x["workingTreeClean"] = false; return x }()} {
 		t.Run(name, func(t *testing.T) {
 			ctx, gd, pd := f1ReplayStores(t)

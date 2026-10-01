@@ -1,0 +1,1190 @@
+[
+ {
+  "operation": "reset",
+  "args": [],
+  "kwargs": {},
+  "scenario": "test_every_port_method_refuses_by_name_while_the_contract_is_absent"
+ },
+ {
+  "operation": "port.require",
+  "args": [
+   "fault_id"
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "tables": true
+ },
+ {
+  "operation": "port.require",
+  "args": [
+   "observation"
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "tables": true
+ },
+ {
+  "operation": "port.require",
+  "args": [
+   "register_class"
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "tables": true
+ },
+ {
+  "operation": "port.require",
+  "args": [
+   "record"
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "tables": true
+ },
+ {
+  "operation": "port.require",
+  "args": [
+   "get"
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "tables": true
+ },
+ {
+  "operation": "port.require",
+  "args": [
+   "link"
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "tables": true
+ },
+ {
+  "operation": "port.require",
+  "args": [
+   "remediations"
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "tables": true
+ },
+ {
+  "operation": "port.require",
+  "args": [
+   "list"
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "tables": true
+ },
+ {
+  "operation": "port.require",
+  "args": [
+   "ensure_target"
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "tables": true
+ },
+ {
+  "operation": "port.require",
+  "args": [
+   "adopt"
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "tables": true
+ },
+ {
+  "operation": "port.require",
+  "args": [
+   "move"
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "tables": true
+ },
+ {
+  "operation": "port.require",
+  "args": [
+   "update"
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "tables": true
+ },
+ {
+  "operation": "port.require",
+  "args": [
+   "consume"
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "tables": true
+ },
+ {
+  "operation": "port.require",
+  "args": [
+   "budget"
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "tables": true
+ },
+ {
+  "operation": "port.require",
+  "args": [
+   "notify"
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "tables": true
+ },
+ {
+  "operation": "port.require",
+  "args": [
+   "notifications"
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "tables": true
+ },
+ {
+  "operation": "port.require",
+  "args": [
+   "register_kind"
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "tables": true
+ },
+ {
+  "operation": "port.require",
+  "args": [
+   "queue"
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "tables": true
+ },
+ {
+  "operation": "port.require",
+  "args": [
+   "publication"
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "tables": true
+ },
+ {
+  "operation": "port.require",
+  "args": [
+   "publications"
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "tables": true
+ },
+ {
+  "operation": "port.require",
+  "args": [
+   "cancel"
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "tables": true
+ },
+ {
+  "operation": "port.require",
+  "args": [
+   "operation"
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "tables": true
+ },
+ {
+  "operation": "port.require",
+  "args": [
+   "complete"
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "tables": true
+ },
+ {
+  "operation": "port.require",
+  "args": [
+   "claim"
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "tables": true
+ },
+ {
+  "operation": "port.require",
+  "args": [
+   "fail"
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "tables": true
+ },
+ {
+  "operation": "port.require",
+  "args": [
+   "reconcile"
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "tables": true
+ },
+ {
+  "operation": "port.require",
+  "args": [
+   "record_fix"
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "tables": true
+ },
+ {
+  "operation": "port.require",
+  "args": [
+   "record_reverification"
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "tables": true
+ },
+ {
+  "operation": "port.require",
+  "args": [
+   "resolve"
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "tables": true
+ },
+ {
+  "operation": "reset",
+  "args": [],
+  "kwargs": {},
+  "scenario": "test_every_ledger_backed_path_refuses_before_writing"
+ },
+ {
+  "operation": "router.register_product",
+  "args": [
+   {
+    "schema": "product-registry/1",
+    "product": "alpha-notes",
+    "workspace": "example-ws",
+    "team": "ALN",
+    "familyLabel": "제품:Alpha Notes",
+    "repositories": [
+     "example-org/alpha-notes"
+    ],
+    "surfaces": {
+     "dev_run": {
+      "method": "CRW managed run tool results",
+      "active": true
+     },
+     "verification": {
+      "method": "CRW verification verdicts",
+      "active": true
+     },
+     "user_report": {
+      "method": "reports filed through the parent",
+      "active": true
+     }
+    },
+    "testTarget": {
+     "team": "TST",
+     "project": "proj-test"
+    }
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.register_product",
+  "args": [
+   {
+    "schema": "product-registry/1",
+    "product": "beta-meter",
+    "workspace": "example-ws",
+    "team": "BTM",
+    "familyLabel": "제품:Beta Meter",
+    "repositories": [
+     "example-org/beta-meter"
+    ],
+    "surfaces": {
+     "real_use": {
+      "method": "error events the product forwards",
+      "active": true
+     },
+     "user_report": {
+      "method": "support inbox forwarded by the parent",
+      "active": false
+     }
+    },
+    "triageProject": "proj-btm-triage"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.bind",
+  "args": [
+   {
+    "schema": "product-binding/1",
+    "product": "alpha-notes",
+    "kind": "project",
+    "ref": "proj-aln-editor",
+    "title": "proj-aln-editor title",
+    "state": "active",
+    "components": [
+     "editor",
+     "sync"
+    ],
+    "source": "linear readback"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.bind",
+  "args": [
+   {
+    "schema": "product-binding/1",
+    "product": "alpha-notes",
+    "kind": "issue",
+    "ref": "ALN-3",
+    "title": "ALN-3 title",
+    "state": "open",
+    "components": [
+     "editor"
+    ],
+    "source": "linear readback",
+    "project": "proj-aln-editor"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.bind",
+  "args": [
+   {
+    "schema": "product-binding/1",
+    "product": "alpha-notes",
+    "kind": "issue",
+    "ref": "ALN-7",
+    "title": "ALN-7 title",
+    "state": "open",
+    "components": [
+     "sync"
+    ],
+    "source": "linear readback",
+    "symptoms": [
+     "conflict_lost"
+    ],
+    "project": "proj-aln-editor"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.bind",
+  "args": [
+   {
+    "schema": "product-binding/1",
+    "product": "alpha-notes",
+    "kind": "issue",
+    "ref": "ALN-9",
+    "title": "ALN-9 title",
+    "state": "done",
+    "components": [
+     "editor"
+    ],
+    "source": "linear readback",
+    "symptoms": [
+     "save_roundtrip_mismatch"
+    ],
+    "fixRef": "PR#12",
+    "project": "proj-aln-editor"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "sql",
+  "args": [
+   "INSERT INTO incident_routes (fault_id, product_key, workspace, disposition, stage,  target, origin, claimed_severity, goal, classification, superseded_by, detail,  created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(fault_id) DO UPDATE SET product_key = excluded.product_key,   workspace = excluded.workspace, disposition = excluded.disposition,   stage = excluded.stage, target = excluded.target, origin = excluded.origin,   claimed_severity = CASE     WHEN 'broken' IN (excluded.claimed_severity, incident_routes.claimed_severity)       THEN 'broken'     WHEN 'degraded' IN (excluded.claimed_severity, incident_routes.claimed_severity)       THEN 'degraded'     ELSE incident_routes.claimed_severity END,   goal = CASE WHEN ? THEN excluded.goal ELSE incident_routes.goal END,   classification = COALESCE(excluded.classification, incident_routes.classification),   superseded_by = COALESCE(excluded.superseded_by, incident_routes.superseded_by),   detail = excluded.detail, updated_at = excluded.updated_at",
+   [
+    "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "unclassified",
+    "example-ws",
+    "pending_classification",
+    "pending_classification",
+    "{\"cause\":null,\"hold\":null,\"labels\":[],\"obligations\":[],\"owner\":null,\"project\":null,\"relate\":[],\"team\":null,\"unverifiedCause\":null}",
+    "observed",
+    "broken",
+    null,
+    null,
+    null,
+    "",
+    "2023-11-14T22:13:20.000000+00:00",
+    "2023-11-14T22:13:20.000000+00:00",
+    0
+   ]
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "sql",
+  "args": [
+   "INSERT INTO route_incidents (incident_id, fault_id, record, recorded_at,  recorded_seq) VALUES (?,?,?,?,?) ON CONFLICT(incident_id) DO NOTHING",
+   [
+    "069482665cba4e3172582291af4ea006",
+    "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "{\"cause\":null,\"component\":\"editor\",\"context\":{\"currentIssue\":null,\"regressionOf\":null,\"run\":null,\"session\":null},\"detail\":{\"actual\":null,\"expected\":null,\"impact\":null,\"nextAction\":null,\"owner\":null,\"reproduction\":null},\"evidence\":[],\"expected\":null,\"goal\":null,\"observedAt\":null,\"occurrenceKey\":\"run-1\",\"origin\":\"observed\",\"phase\":\"development\",\"product\":null,\"repository\":\"example-org/nobody\",\"schema\":\"product-incident/1\",\"severity\":\"broken\",\"surface\":\"dev_run\",\"symptom\":\"cursor_jump\",\"workspace\":null}",
+    "2023-11-14T22:13:20.000000+00:00",
+    1
+   ]
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "sql",
+  "args": [
+   "DELETE FROM route_incidents WHERE fault_id = ? AND incident_id NOT IN  (SELECT incident_id FROM route_incidents WHERE fault_id = ?    ORDER BY recorded_seq DESC LIMIT ?)",
+   [
+    "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    16
+   ]
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "router.intake",
+  "args": [
+   {
+    "schema": "product-incident/1",
+    "product": "alpha-notes",
+    "surface": "dev_run",
+    "phase": "development",
+    "component": "editor",
+    "symptom": "cursor_jump",
+    "severity": "broken",
+    "occurrenceKey": "run-1"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "tables": true
+ },
+ {
+  "operation": "router.intake",
+  "args": [
+   {
+    "schema": "product-incident/1",
+    "product": null,
+    "surface": "dev_run",
+    "phase": "development",
+    "component": "editor",
+    "symptom": "cursor_jump",
+    "severity": "broken",
+    "occurrenceKey": "run-1",
+    "repository": "example-org/nobody"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "tables": true
+ },
+ {
+  "operation": "router.classify",
+  "args": [
+   "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+   {
+    "product": "alpha-notes",
+    "by": "operator"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "tables": true
+ },
+ {
+  "operation": "router.reconcile",
+  "args": [],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "tables": true
+ },
+ {
+  "operation": "router.show",
+  "args": [],
+  "kwargs": {
+   "attention": true
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "tables": true
+ },
+ {
+  "operation": "router.digest",
+  "args": [],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "pageSize": 100,
+  "tables": true
+ },
+ {
+  "operation": "router.evaluate_projects",
+  "args": [
+   "alpha-notes"
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "tables": true
+ },
+ {
+  "operation": "router.check_completion",
+  "args": [
+   {
+    "schema": "completion-reading/1",
+    "product": "alpha-notes",
+    "subject": "ALN-3",
+    "claims": {
+     "linearDone": true
+    },
+    "requires": {
+     "acceptance": true
+    },
+    "observed": {
+     "acceptance": "absent"
+    }
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "tables": true
+ },
+ {
+  "operation": "reset",
+  "args": [],
+  "kwargs": {},
+  "scenario": "test_an_unwatched_surface_is_refused_before_the_ledger_is_asked"
+ },
+ {
+  "operation": "router.register_product",
+  "args": [
+   {
+    "schema": "product-registry/1",
+    "product": "alpha-notes",
+    "workspace": "example-ws",
+    "team": "ALN",
+    "familyLabel": "제품:Alpha Notes",
+    "repositories": [
+     "example-org/alpha-notes"
+    ],
+    "surfaces": {
+     "dev_run": {
+      "method": "CRW managed run tool results",
+      "active": true
+     },
+     "verification": {
+      "method": "CRW verification verdicts",
+      "active": true
+     },
+     "user_report": {
+      "method": "reports filed through the parent",
+      "active": true
+     }
+    },
+    "testTarget": {
+     "team": "TST",
+     "project": "proj-test"
+    }
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.register_product",
+  "args": [
+   {
+    "schema": "product-registry/1",
+    "product": "beta-meter",
+    "workspace": "example-ws",
+    "team": "BTM",
+    "familyLabel": "제품:Beta Meter",
+    "repositories": [
+     "example-org/beta-meter"
+    ],
+    "surfaces": {
+     "real_use": {
+      "method": "error events the product forwards",
+      "active": true
+     },
+     "user_report": {
+      "method": "support inbox forwarded by the parent",
+      "active": false
+     }
+    },
+    "triageProject": "proj-btm-triage"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.bind",
+  "args": [
+   {
+    "schema": "product-binding/1",
+    "product": "alpha-notes",
+    "kind": "project",
+    "ref": "proj-aln-editor",
+    "title": "proj-aln-editor title",
+    "state": "active",
+    "components": [
+     "editor",
+     "sync"
+    ],
+    "source": "linear readback"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.bind",
+  "args": [
+   {
+    "schema": "product-binding/1",
+    "product": "alpha-notes",
+    "kind": "issue",
+    "ref": "ALN-3",
+    "title": "ALN-3 title",
+    "state": "open",
+    "components": [
+     "editor"
+    ],
+    "source": "linear readback",
+    "project": "proj-aln-editor"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.bind",
+  "args": [
+   {
+    "schema": "product-binding/1",
+    "product": "alpha-notes",
+    "kind": "issue",
+    "ref": "ALN-7",
+    "title": "ALN-7 title",
+    "state": "open",
+    "components": [
+     "sync"
+    ],
+    "source": "linear readback",
+    "symptoms": [
+     "conflict_lost"
+    ],
+    "project": "proj-aln-editor"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.bind",
+  "args": [
+   {
+    "schema": "product-binding/1",
+    "product": "alpha-notes",
+    "kind": "issue",
+    "ref": "ALN-9",
+    "title": "ALN-9 title",
+    "state": "done",
+    "components": [
+     "editor"
+    ],
+    "source": "linear readback",
+    "symptoms": [
+     "save_roundtrip_mismatch"
+    ],
+    "fixRef": "PR#12",
+    "project": "proj-aln-editor"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.intake",
+  "args": [
+   {
+    "schema": "product-incident/1",
+    "product": "beta-meter",
+    "surface": "user_report",
+    "phase": "in_use",
+    "component": "editor",
+    "symptom": "cursor_jump",
+    "severity": "broken",
+    "occurrenceKey": "run-1"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "tables": true
+ },
+ {
+  "operation": "router.intake",
+  "args": [
+   {
+    "schema": "product-incident/1",
+    "product": "beta-meter",
+    "surface": "real_use",
+    "phase": "in_use",
+    "component": "editor",
+    "symptom": "cursor_jump",
+    "severity": "broken",
+    "occurrenceKey": "run-1",
+    "origin": "simulated"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "tables": true
+ },
+ {
+  "operation": "reset",
+  "args": [],
+  "kwargs": {},
+  "scenario": "test_a_binding_touches_no_ledger_while_nothing_was_routed"
+ },
+ {
+  "operation": "router.register_product",
+  "args": [
+   {
+    "schema": "product-registry/1",
+    "product": "alpha-notes",
+    "workspace": "example-ws",
+    "team": "ALN",
+    "familyLabel": "제품:Alpha Notes",
+    "repositories": [
+     "example-org/alpha-notes"
+    ],
+    "surfaces": {
+     "dev_run": {
+      "method": "CRW managed run tool results",
+      "active": true
+     },
+     "verification": {
+      "method": "CRW verification verdicts",
+      "active": true
+     },
+     "user_report": {
+      "method": "reports filed through the parent",
+      "active": true
+     }
+    },
+    "testTarget": {
+     "team": "TST",
+     "project": "proj-test"
+    }
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.register_product",
+  "args": [
+   {
+    "schema": "product-registry/1",
+    "product": "beta-meter",
+    "workspace": "example-ws",
+    "team": "BTM",
+    "familyLabel": "제품:Beta Meter",
+    "repositories": [
+     "example-org/beta-meter"
+    ],
+    "surfaces": {
+     "real_use": {
+      "method": "error events the product forwards",
+      "active": true
+     },
+     "user_report": {
+      "method": "support inbox forwarded by the parent",
+      "active": false
+     }
+    },
+    "triageProject": "proj-btm-triage"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.bind",
+  "args": [
+   {
+    "schema": "product-binding/1",
+    "product": "alpha-notes",
+    "kind": "project",
+    "ref": "proj-aln-editor",
+    "title": "proj-aln-editor title",
+    "state": "active",
+    "components": [
+     "editor",
+     "sync"
+    ],
+    "source": "linear readback"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.bind",
+  "args": [
+   {
+    "schema": "product-binding/1",
+    "product": "alpha-notes",
+    "kind": "issue",
+    "ref": "ALN-3",
+    "title": "ALN-3 title",
+    "state": "open",
+    "components": [
+     "editor"
+    ],
+    "source": "linear readback",
+    "project": "proj-aln-editor"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.bind",
+  "args": [
+   {
+    "schema": "product-binding/1",
+    "product": "alpha-notes",
+    "kind": "issue",
+    "ref": "ALN-7",
+    "title": "ALN-7 title",
+    "state": "open",
+    "components": [
+     "sync"
+    ],
+    "source": "linear readback",
+    "symptoms": [
+     "conflict_lost"
+    ],
+    "project": "proj-aln-editor"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.bind",
+  "args": [
+   {
+    "schema": "product-binding/1",
+    "product": "alpha-notes",
+    "kind": "issue",
+    "ref": "ALN-9",
+    "title": "ALN-9 title",
+    "state": "done",
+    "components": [
+     "editor"
+    ],
+    "source": "linear readback",
+    "symptoms": [
+     "save_roundtrip_mismatch"
+    ],
+    "fixRef": "PR#12",
+    "project": "proj-aln-editor"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.bind",
+  "args": [
+   {
+    "schema": "product-binding/1",
+    "product": "alpha-notes",
+    "kind": "project",
+    "ref": "proj-aln-sync",
+    "title": "proj-aln-sync title",
+    "state": "active",
+    "components": [
+     "sync"
+    ],
+    "source": "linear readback"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "reset",
+  "args": [],
+  "kwargs": {},
+  "scenario": "test_a_binding_whose_decisions_were_refused_is_not_kept"
+ },
+ {
+  "operation": "router.register_product",
+  "args": [
+   {
+    "schema": "product-registry/1",
+    "product": "alpha-notes",
+    "workspace": "example-ws",
+    "team": "ALN",
+    "familyLabel": "제품:Alpha Notes",
+    "repositories": [
+     "example-org/alpha-notes"
+    ],
+    "surfaces": {
+     "dev_run": {
+      "method": "CRW managed run tool results",
+      "active": true
+     },
+     "verification": {
+      "method": "CRW verification verdicts",
+      "active": true
+     },
+     "user_report": {
+      "method": "reports filed through the parent",
+      "active": true
+     }
+    },
+    "testTarget": {
+     "team": "TST",
+     "project": "proj-test"
+    }
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.register_product",
+  "args": [
+   {
+    "schema": "product-registry/1",
+    "product": "beta-meter",
+    "workspace": "example-ws",
+    "team": "BTM",
+    "familyLabel": "제품:Beta Meter",
+    "repositories": [
+     "example-org/beta-meter"
+    ],
+    "surfaces": {
+     "real_use": {
+      "method": "error events the product forwards",
+      "active": true
+     },
+     "user_report": {
+      "method": "support inbox forwarded by the parent",
+      "active": false
+     }
+    },
+    "triageProject": "proj-btm-triage"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "sql",
+  "args": [
+   "INSERT INTO incident_routes (fault_id, product_key, workspace, disposition, stage,  target, origin, claimed_severity, goal, classification, superseded_by, detail,  created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(fault_id) DO UPDATE SET product_key = excluded.product_key,   workspace = excluded.workspace, disposition = excluded.disposition,   stage = excluded.stage, target = excluded.target, origin = excluded.origin,   claimed_severity = CASE     WHEN 'broken' IN (excluded.claimed_severity, incident_routes.claimed_severity)       THEN 'broken'     WHEN 'degraded' IN (excluded.claimed_severity, incident_routes.claimed_severity)       THEN 'degraded'     ELSE incident_routes.claimed_severity END,   goal = CASE WHEN ? THEN excluded.goal ELSE incident_routes.goal END,   classification = COALESCE(excluded.classification, incident_routes.classification),   superseded_by = COALESCE(excluded.superseded_by, incident_routes.superseded_by),   detail = excluded.detail, updated_at = excluded.updated_at",
+   [
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "alpha-notes",
+    "example-ws",
+    "held",
+    "held",
+    "{\"cause\":null,\"hold\":\"no_project\",\"labels\":[],\"obligations\":[],\"owner\":null,\"project\":null,\"relate\":[],\"team\":\"ALN\",\"unverifiedCause\":null}",
+    "observed",
+    "degraded",
+    "offline_sync",
+    null,
+    null,
+    "",
+    "2023-11-14T22:13:20.000000+00:00",
+    "2023-11-14T22:13:20.000000+00:00",
+    1
+   ]
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "sql",
+  "args": [
+   "INSERT INTO route_incidents (incident_id, fault_id, record, recorded_at,  recorded_seq) VALUES (?,?,?,?,?) ON CONFLICT(incident_id) DO NOTHING",
+   [
+    "e3b7e229079ea364987b4f25e8d45d4b",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "{\"cause\":null,\"component\":\"editor\",\"context\":{\"currentIssue\":null,\"regressionOf\":null,\"run\":null,\"session\":null},\"detail\":{\"actual\":null,\"expected\":null,\"impact\":null,\"nextAction\":null,\"owner\":null,\"reproduction\":null},\"evidence\":[],\"expected\":null,\"goal\":null,\"observedAt\":null,\"occurrenceKey\":\"run-1:step-4\",\"origin\":\"observed\",\"phase\":\"development\",\"product\":\"alpha-notes\",\"repository\":null,\"schema\":\"product-incident/1\",\"severity\":\"degraded\",\"surface\":\"dev_run\",\"symptom\":\"cursor_jump\",\"workspace\":null}",
+    "2023-11-14T22:13:20.000000+00:00",
+    1
+   ]
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "sql",
+  "args": [
+   "DELETE FROM route_incidents WHERE fault_id = ? AND incident_id NOT IN  (SELECT incident_id FROM route_incidents WHERE fault_id = ?    ORDER BY recorded_seq DESC LIMIT ?)",
+   [
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    16
+   ]
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "router.bind",
+  "args": [
+   {
+    "schema": "product-binding/1",
+    "product": "alpha-notes",
+    "kind": "project",
+    "ref": "proj-aln-editor",
+    "title": "proj-aln-editor title",
+    "state": "active",
+    "components": [
+     "editor"
+    ],
+    "source": "linear readback"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "tables": true
+ }
+]

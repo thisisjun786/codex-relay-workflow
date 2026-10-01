@@ -1,21 +1,17 @@
 package routing
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"os/exec"
-	"path/filepath"
-	"runtime"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 type projectReader struct{ args Object }
@@ -52,28 +48,14 @@ func (r projectReader) Owners(context.Context, string, string) ([]contract.Order
 }
 func projectCompletionReplay(t *testing.T, id string) {
 	t.Helper()
-	_, file, _, _ := runtime.Caller(0)
-	raw := scenarioAnswer(t, "project_completion_capture.py", id, func() ([]byte, error) {
-		cmd := exec.Command("uv", "run", "--no-sync", "--no-project", "python3", filepath.Join(filepath.Dir(file), "testdata/project_completion_capture.py"), id, filepath.Join(filepath.Dir(file), "testdata/properties.md"))
-		var stderr bytes.Buffer
-		cmd.Stderr = &stderr
-		raw, err := cmd.Output()
-		if err != nil {
-			return nil, fmt.Errorf("Python %v %s", err, stderr.String())
-		}
-		return raw, nil
-	})
 	var records []struct {
 		Args Object
-		Wire string
 	}
-	if err := json.Unmarshal(raw, &records); err != nil {
-		t.Fatal(err)
-	}
+	scenarioInputs(t, "project-completion-"+id+".json", &records)
 	if len(records) == 0 {
 		t.Fatal("no scenarios")
 	}
-	for _, record := range records {
+	for i, record := range records {
 		var reader registry.ProjectReader
 		if record.Args["reader"] == true {
 			reader = projectReader{record.Args}
@@ -85,9 +67,7 @@ func projectCompletionReplay(t *testing.T, id string) {
 			return contract.OrderedObject{{Key: "state", Value: record.Args["fixed"]}}, nil
 		})
 		got := evidence.Dumps(answer, false, false, true)
-		if got != record.Wire {
-			t.Fatalf("project reading bytes differ\nPython: %s\nGo:     %s", record.Wire, got)
-		}
+		golden.Check(t, fmt.Sprintf("%02d wire", i), []byte(got), goldenPaths()...)
 	}
 }
 func Test23_PC_1_NoAnswer(t *testing.T)     { projectCompletionReplay(t, "PC-1") }

@@ -81,6 +81,7 @@ func goFaultCLI(t *testing.T, args ...string) cliResult {
 }
 
 func TestFaultArgparseSurfaceMatchesPython(t *testing.T) {
+	goldenParent(t)
 	root, err := filepath.Abs("../../..")
 	if err != nil {
 		t.Fatal(err)
@@ -134,10 +135,11 @@ func TestFaultArgparseSurfaceMatchesPython(t *testing.T) {
 			for _, tc := range cases {
 				t.Run(tc.name, func(t *testing.T) {
 					args := append([]string{"--json", command.name}, tc.args...)
-					want, created := pythonFaultCLI(t, root, home, append([]string{"--state", pyState}, args...)...)
-					state := oracleState(created, pyState, goState)
+					want, pyCreated := pythonFaultCLI(t, root, home, append([]string{"--state", pyState}, args...)...)
+					state := oracleState(pyCreated, pyState, goState)
 					got := goFaultCLI(t, append([]string{"--state", state}, args...)...)
 					neverCreated(t, pyState, state)
+					checkGolden(t, "relay "+strings.Join(args, " "), args, runPathsOf(t, home), cliGolden{Code: got.code, Stdout: got.stdout, Stderr: got.stderr, Created: created(t, state)})
 					if got != want {
 						t.Fatalf("args %v\nPython: code=%d stdout=%q stderr=%q\nGo: code=%d stdout=%q stderr=%q", args, want.code, want.stdout, want.stderr, got.code, got.stdout, got.stderr)
 					}
@@ -152,12 +154,15 @@ func TestFaultArgparseAmbiguousPrefixMatchesPython(t *testing.T) {
 	home := t.TempDir()
 	args := []string{"--state", filepath.Join(home, "relay"), "fault-policy", "--f", "x"}
 	want, _ := pythonFaultCLI(t, root, home, args...)
-	if got := goFaultCLI(t, args...); got != want {
+	got := goFaultCLI(t, args...)
+	checkGolden(t, "relay "+strings.Join(args[2:], " "), args[2:], runPathsOf(t, home), cliGolden{Code: got.code, Stdout: got.stdout, Stderr: got.stderr})
+	if got != want {
 		t.Fatalf("Python: %#v\nGo: %#v", want, got)
 	}
 }
 
 func TestFaultObserveMalformedJSONMatchesPython(t *testing.T) {
+	goldenParent(t)
 	root, _ := filepath.Abs("../../..")
 	for _, raw := range []string{"{not json", "[1,2"} {
 		t.Run(raw, func(t *testing.T) {
@@ -165,7 +170,9 @@ func TestFaultObserveMalformedJSONMatchesPython(t *testing.T) {
 			// Each runtime keeps its own store: neither writes a store the other owns.
 			args := []string{"--json", "fault-observe", "--observation", raw}
 			want, _ := pythonFaultCLI(t, root, home, append([]string{"--state", filepath.Join(home, "relay")}, args...)...)
-			if got := goFaultCLI(t, append([]string{"--state", filepath.Join(home, "go", "relay")}, args...)...); got != want {
+			got := goFaultCLI(t, append([]string{"--state", filepath.Join(home, "go", "relay")}, args...)...)
+			checkGolden(t, "relay "+strings.Join(args, " "), args, runPathsOf(t, home), cliGolden{Code: got.code, Stdout: got.stdout, Stderr: got.stderr})
+			if got != want {
 				t.Fatalf("Python: %#v\nGo: %#v", want, got)
 			}
 		})
@@ -177,7 +184,9 @@ func TestFaultKindModuleNestedImportErrorMatchesPython(t *testing.T) {
 	home := t.TempDir()
 	args := []string{"--state", filepath.Join(home, "relay"), "--json", "--kind-module", "codex_session_relay.not_real", "fault-attention"}
 	want, _ := pythonFaultCLI(t, root, home, args...)
-	if got := goFaultCLI(t, args...); got != want {
+	got := goFaultCLI(t, args...)
+	checkGolden(t, "relay "+strings.Join(args[2:], " "), args[2:], runPathsOf(t, home), cliGolden{Code: got.code, Stdout: got.stdout, Stderr: got.stderr})
+	if got != want {
 		t.Fatalf("Python: %#v\nGo: %#v", want, got)
 	}
 }

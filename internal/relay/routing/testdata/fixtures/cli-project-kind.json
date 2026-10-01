@@ -1,0 +1,111 @@
+{
+ "records": [
+  {
+   "args": [
+    "product-register",
+    "--record",
+    "{\"schema\": \"product-registry/1\", \"product\": \"gamma-kit\", \"workspace\": \"example-ws\", \"team\": \"GMK\", \"familyLabel\": \"product:gamma-kit\", \"repositories\": [\"example-org/gamma-kit\"], \"surfaces\": {\"real_use\": {\"method\": \"error events the product forwards\", \"active\": true}}, \"testTarget\": null}"
+   ]
+  },
+  {
+   "args": [
+    "route-policy",
+    "--record",
+    "{\"schema\": \"routing-policy/1\", \"policy\": \"project_creation\", \"enabled\": true, \"minIndependentFixes\": 2, \"requireSharedGoal\": true, \"requireCompletionCriteria\": true, \"basis\": \"CRW-206, Jun 2026-09-22\"}"
+   ]
+  },
+  {
+   "args": [
+    "route-intake",
+    "--incident",
+    "{\"schema\": \"product-incident/1\", \"product\": \"gamma-kit\", \"surface\": \"real_use\", \"phase\": \"in_use\", \"component\": \"cache\", \"symptom\": \"stale\", \"severity\": \"broken\", \"occurrenceKey\": \"g1\", \"repository\": \"example-org/gamma-kit\", \"goal\": {\"key\": \"offline_sync\", \"criteria\": \"edits survive reconnect\"}}"
+   ]
+  },
+  {
+   "args": [
+    "route-intake",
+    "--incident",
+    "{\"schema\": \"product-incident/1\", \"product\": \"gamma-kit\", \"surface\": \"real_use\", \"phase\": \"in_use\", \"component\": \"queue\", \"symptom\": \"lost\", \"severity\": \"broken\", \"occurrenceKey\": \"g2\", \"repository\": \"example-org/gamma-kit\", \"goal\": {\"key\": \"offline_sync\", \"criteria\": \"edits survive reconnect\"}}"
+   ]
+  },
+  {
+   "args": [
+    "--kind-module",
+    "codex_session_relay.projects",
+    "fault-next",
+    "--limit",
+    "50"
+   ]
+  },
+  {
+   "args": [
+    "--kind-module",
+    "codex_session_relay.projects",
+    "fault-queue",
+    "--fault",
+    "1dc18cf27735522140c5296c7f7c0bf9",
+    "--kind",
+    "project_create",
+    "--trigger",
+    "invalid",
+    "--payload",
+    "{}"
+   ]
+  },
+  {
+   "args": [
+    "--kind-module",
+    "codex_session_relay.projects",
+    "fault-operation",
+    "--publication",
+    "missing",
+    "--claim-token",
+    "missing"
+   ]
+  },
+  {
+   "args": [
+    "--kind-module",
+    "codex_session_relay.projects",
+    "fault-claim",
+    "--publication",
+    "8da184b1522e39396ff285e2c7a25cc5",
+    "--owner",
+    "holder"
+   ]
+  },
+  {
+   "args": [
+    "--kind-module",
+    "codex_session_relay.projects",
+    "fault-operation",
+    "--publication",
+    "8da184b1522e39396ff285e2c7a25cc5",
+    "--claim-token",
+    "0001020304050607"
+   ]
+  },
+  {
+   "args": [
+    "--kind-module",
+    "codex_session_relay.projects",
+    "fault-complete",
+    "--publication",
+    "8da184b1522e39396ff285e2c7a25cc5",
+    "--claim-token",
+    "0001020304050607",
+    "--readback",
+    "<!-- relay-fault:8da184b1522e39396ff285e2c7a25cc5 -->\nblockFormat: v1\npublicationId: 8da184b1522e39396ff285e2c7a25cc5\nfaultId: 1dc18cf27735522140c5296c7f7c0bf9\nproduct: gamma-kit\nfaultClass: project_needed\ntrigger: create\ncycle: 1\nidentityDigest: 576c31699299d7b63233dc037083d93a6f4577c73092a57b9b09f0b6f15ff94c\nsummarySha256: a01bf0d8b8cef43b85492c13620797099cf05aca1f45d0da73cb062ed37065b0\n\n```text\n[gamma-kit] project_needed: goal=offline_sync\n\n\nfault: 1dc18cf27735522140c5296c7f7c0bf9\nclass: project_needed  component: planning  severity: notice\ndomain: goal=offline_sync\nobserved: 1 occurrence(s), first 2023-11-14T22:13:20.000000+00:00, most recent 2023-11-14T22:13:20.000000+00:00\ndetail: 2 independent fixes share offline_sync: {'edits survive reconnect'}\n\nevidence, as observed at the time:\n- 2023-11-14T22:13:20.000000+00:00 need:offline_sync\n\nRecorded by codex-session-relay. The occurrence count counts observations, not incidents: a source that overwrites its own history is observed once per sweep, not once per failure.\npublication: 8da184b1522e39396ff285e2c7a25cc5\n```\n<!-- /relay-fault:8da184b1522e39396ff285e2c7a25cc5 -->",
+    "--external-ref",
+    "proj-new-1",
+    "--observed-fields",
+    "{\"team\": \"GMK\"}"
+   ]
+  },
+  {
+   "args": [
+    "route-digest"
+   ]
+  }
+ ]
+}

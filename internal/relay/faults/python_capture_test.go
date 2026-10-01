@@ -173,6 +173,7 @@ func capturePythonFaults(t *testing.T, observations []map[string]any) (any, map[
 	if err = json.Unmarshal(tableRaw, &normalized); err != nil {
 		t.Fatal(err)
 	}
+	checkGolden(t, "fault tables", []string{string(raw)}, runPathsOf(t, home), normalized)
 	if !reflect.DeepEqual(normalized, expected["tables"]) {
 		var differing []string
 		for name, want := range expected["tables"].(map[string]any) {
@@ -190,6 +191,7 @@ func capturePythonFaults(t *testing.T, observations []map[string]any) (any, map[
 	if err = json.Unmarshal(goRaw, &got); err != nil {
 		t.Fatal(err)
 	}
+	checkGolden(t, "reply", []string{string(raw)}, runPathsOf(t, home), got)
 	return got, expected
 }
 func captureOriginalAssertions(t *testing.T, module, class, method string) []any {
@@ -331,6 +333,7 @@ func Test22_FLT_4_PythonSlidingWindowWholeReceipts(t *testing.T) {
 	}
 }
 func Test22_FLT_8_PythonUnfiledClearAndPublishedClear(t *testing.T) {
+	goldenParent(t)
 	for _, severity := range []string{Notice, Broken} {
 		t.Run(severity, func(t *testing.T) {
 			o := map[string]any{"schema": SchemaObservation, "product": "crw", "faultClass": "report_omitted", "severity": severity, "signature": map[string]any{"relationship": "rel-1", "turn": "turn-7"}, "occurrenceKey": "active", "scope": map[string]any{"projectKey": "CRW"}}
@@ -376,6 +379,7 @@ func Test22_FLT_3_PythonEvidenceDropsNonObjectsBeforeBounding(t *testing.T) {
 }
 
 func Test22_FLT_3_PythonEvidenceEntryAndCountBounds(t *testing.T) {
+	goldenParent(t)
 	for name, evidence := range map[string][]any{
 		"count": func() []any {
 			entries := make([]any, 10)
@@ -417,6 +421,7 @@ func Test22_FLT_2_PythonOriginalClassClearAssertions(t *testing.T) {
 		policy, _ := classLookup(name)
 		got = append(got, policy.clears != "")
 	}
+	checkGolden(t, "assertions", nil, nil, got)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("class declarations: Go=%v Python=%v", got, want)
 	}
@@ -425,12 +430,14 @@ func Test22_FLT_3_PythonOriginalEvidenceAssertions(t *testing.T) {
 	want := captureOriginalAssertions(t, "test_faults", "Evidence", "test_an_occurrence_keeps_what_was_observed_rather_than_a_pointer")
 	items := []any{map[string]any{"kind": "row", "ref": "sync_outbox:s1", "observed": map[string]any{"state": "failed"}}}
 	got := []any{items[0].(map[string]any)["observed"].(map[string]any)["state"], evidenceDigest(items)}
+	checkGolden(t, "assertions", nil, nil, got)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Python assertions: Go=%v Python=%v", got, want)
 	}
 }
 func Test22_FLT_1_PythonOriginalSignatureAssertion(t *testing.T) {
 	got := FaultID("crw", "report_omitted", map[string]any{"a": 1, "b": 2})
+	checkGolden(t, "assertions", nil, nil, []any{got})
 	want := captureOriginalAssertions(t, "test_faults", "Identity", "test_signature_order_does_not_change_identity")
 	if len(want) != 1 || got != want[0] {
 		t.Fatalf("signature hash Go %s Python %+v", got, want)

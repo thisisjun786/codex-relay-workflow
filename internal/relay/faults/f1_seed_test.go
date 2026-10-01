@@ -15,6 +15,7 @@ import (
 // Replay a publication's stable state through both CLIs, including refusals
 // that require an existing claimed, issued or uncertain write.
 func TestF1SeededCLIOracle(t *testing.T) {
+	goldenParent(t)
 	root, err := filepath.Abs("../../..")
 	if err != nil {
 		t.Fatal(err)
@@ -93,6 +94,7 @@ func TestF1SeededCLIOracle(t *testing.T) {
 			want, pyCode := []byte(answer.Stdout), answer.Code
 			var got, stderr bytes.Buffer
 			goCode, handled := executeAsCLI(ctx, append([]string{"--state", goDir, "--json"}, args...), &got, &stderr)
+			checkGolden(t, "relay "+strings.Join(args, " "), args, runPathsOf(t, home), cliGolden{Code: goCode, Stdout: got.String()})
 			if !handled || pyCode != goCode || !bytes.Equal(want, got.Bytes()) {
 				t.Errorf("python (%d): %s\ngo (%d): %s\nstderr: %s", pyCode, want, goCode, got.String(), stderr.String())
 			}

@@ -17,6 +17,7 @@ import (
 // Compare the complete presence verdict and memo table with the live Python source
 // on separately seeded disposable stores.
 func Test22_OvertakenPresenceWholePythonPage(t *testing.T) {
+	goldenParent(t)
 	for _, total := range []int{1, presentChecks + 1} {
 		t.Run(fmt.Sprint(total), func(t *testing.T) { testOvertakenPresenceWholePythonPage(t, total) })
 	}
@@ -94,6 +95,7 @@ finally: delivery.supersession_reason=old;faultsweep._now=old_now;s.close()`
 	if e = json.Unmarshal(raw, &got); e != nil {
 		t.Fatal(e)
 	}
+	checkGolden(t, "presence and memo", nil, runPathsOf(t, home), got)
 	if want["present"] == nil {
 		want["present"] = false
 	} else if _, ok := want["present"].(map[string]any); ok {

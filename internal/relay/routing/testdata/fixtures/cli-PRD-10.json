@@ -1,0 +1,35 @@
+{
+ "records": [
+  {
+   "args": [
+    "product-bind",
+    "--record",
+    "{\"schema\": \"product-binding/1\", \"product\": \"alpha-notes\", \"kind\": \"project\", \"ref\": \"proj-aln-editor\", \"title\": \"proj-aln-editor title\", \"state\": \"active\", \"components\": [\"editor\", \"sync\"], \"source\": \"linear readback\"}"
+   ]
+  },
+  {
+   "args": [
+    "product-register",
+    "--record",
+    "{\"schema\": \"product-registry/1\", \"product\": \"alpha-notes\", \"workspace\": \"example-ws\", \"team\": \"ALN\", \"familyLabel\": \"\\uc81c\\ud488:Alpha Notes\", \"repositories\": [\"example-org/alpha-notes\"], \"surfaces\": {\"dev_run\": {\"method\": \"CRW managed run tool results\", \"active\": true}, \"verification\": {\"method\": \"CRW verification verdicts\", \"active\": true}, \"user_report\": {\"method\": \"reports filed through the parent\", \"active\": true}}, \"testTarget\": {\"team\": \"TST\", \"project\": \"proj-test\"}}"
+   ]
+  },
+  {
+   "args": [
+    "product-bind",
+    "--record",
+    "@<state>/binding.json"
+   ]
+  },
+  {
+   "args": [
+    "product-show",
+    "--product",
+    "alpha-notes"
+   ]
+  }
+ ],
+ "files": {
+  "binding.json": "{\"schema\": \"product-binding/1\", \"product\": \"alpha-notes\", \"kind\": \"project\", \"ref\": \"proj-aln-editor\", \"title\": \"proj-aln-editor title\", \"state\": \"active\", \"components\": [\"editor\", \"sync\"], \"source\": \"linear readback\"}"
+ }
+}

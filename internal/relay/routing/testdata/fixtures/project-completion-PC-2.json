@@ -1,0 +1,85 @@
+[
+ {
+  "args": {
+   "project": "PRJ-1",
+   "reader": true,
+   "fixed": "verifying",
+   "attached": [
+    "r1",
+    "r2",
+    "r3"
+   ],
+   "outstanding": [
+    "r3"
+   ],
+   "owners": [
+    {
+     "taskId": "parent-a"
+    }
+   ]
+  }
+ },
+ {
+  "args": {
+   "project": "PRJ-1",
+   "reader": true,
+   "fixed": "merged",
+   "attached": [
+    "r0",
+    "r1",
+    "r2",
+    "r3",
+    "r4",
+    "r5",
+    "r6",
+    "r7",
+    "r8",
+    "r9"
+   ],
+   "outstanding": [
+    "r9"
+   ],
+   "owners": [
+    {
+     "taskId": "p"
+    }
+   ]
+  }
+ },
+ {
+  "args": {
+   "project": "PRJ-1",
+   "reader": true,
+   "fixed": "merged",
+   "attached": [
+    "mine",
+    "someone-elses"
+   ],
+   "outstanding": [
+    "someone-elses"
+   ],
+   "owners": [
+    {
+     "taskId": "p"
+    }
+   ]
+  }
+ },
+ {
+  "args": {
+   "project": "PRJ-1",
+   "reader": true,
+   "fixed": "merged",
+   "attached": [
+    "r1",
+    "r2"
+   ],
+   "outstanding": [],
+   "owners": [
+    {
+     "taskId": "parent-a"
+    }
+   ]
+  }
+ }
+]

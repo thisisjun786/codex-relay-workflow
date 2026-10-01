@@ -18,6 +18,7 @@ import (
 // FLT-26: a failed issued write is uncertain and stays write-once, with an
 // ended attempt only when the holder attests a definitive connector refusal.
 func TestF2WholeOutput(t *testing.T) {
+	goldenParent(t)
 	for _, action := range []string{"fail", "fail_issued", "fail_ended", "move", "adopt", "update", "update_owned", "update_project"} {
 		t.Run(action, func(t *testing.T) {
 			home, e := os.MkdirTemp("/dev/shm", "f2-whole-")
@@ -145,6 +146,7 @@ func TestF2WholeOutput(t *testing.T) {
 			if e = json.Unmarshal(normalized, &got); e != nil {
 				t.Fatal(e)
 			}
+			checkGolden(t, "reply and fault tables", []string{action}, runPathsOf(t, home), got)
 			if !reflect.DeepEqual(got, expected) {
 				keys := []string{}
 				for key, v := range expected["tables"].(map[string]any) {

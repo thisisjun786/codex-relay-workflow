@@ -1,0 +1,325 @@
+[
+ {
+  "operation": "reset",
+  "args": [],
+  "kwargs": {},
+  "scenario": "test_an_owner_found_after_the_create_was_issued_is_held_without_moving_the_fault"
+ },
+ {
+  "operation": "router.register_product",
+  "args": [
+   {
+    "schema": "product-registry/1",
+    "product": "alpha-notes",
+    "workspace": "example-ws",
+    "team": "ALN",
+    "familyLabel": "product:alpha-notes",
+    "repositories": [
+     "example-org/alpha-notes"
+    ],
+    "surfaces": {
+     "dev_run": {
+      "method": "CRW managed run tool results",
+      "active": true
+     },
+     "verification": {
+      "method": "CRW verification verdicts",
+      "active": true
+     },
+     "user_report": {
+      "method": "reports forwarded by the parent",
+      "active": true
+     }
+    },
+    "testTarget": {
+     "team": "TST",
+     "project": "proj-test"
+    }
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.register_product",
+  "args": [
+   {
+    "schema": "product-registry/1",
+    "product": "beta-meter",
+    "workspace": "example-ws",
+    "team": "BTM",
+    "familyLabel": "product:beta-meter",
+    "repositories": [
+     "example-org/beta-meter"
+    ],
+    "surfaces": {
+     "real_use": {
+      "method": "error events the product forwards",
+      "active": true
+     },
+     "user_report": {
+      "method": "support inbox",
+      "active": false
+     }
+    },
+    "triageProject": "proj-btm-triage"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.register_product",
+  "args": [
+   {
+    "schema": "product-registry/1",
+    "product": "gamma-kit",
+    "workspace": "example-ws",
+    "team": "GMK",
+    "familyLabel": "product:gamma-kit",
+    "repositories": [
+     "example-org/gamma-kit"
+    ],
+    "surfaces": {
+     "real_use": {
+      "method": "error events the product forwards",
+      "active": true
+     }
+    }
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.bind",
+  "args": [
+   {
+    "schema": "product-binding/1",
+    "product": "alpha-notes",
+    "kind": "project",
+    "ref": "proj-aln-editor",
+    "title": "proj-aln-editor",
+    "state": "active",
+    "components": [
+     "editor",
+     "sync"
+    ],
+    "source": "linear readback"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.bind",
+  "args": [
+   {
+    "schema": "product-binding/1",
+    "product": "alpha-notes",
+    "kind": "issue",
+    "ref": "ALN-3",
+    "title": "ALN-3",
+    "state": "open",
+    "components": [
+     "editor"
+    ],
+    "source": "linear readback",
+    "project": "proj-aln-editor"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.bind",
+  "args": [
+   {
+    "schema": "product-binding/1",
+    "product": "alpha-notes",
+    "kind": "issue",
+    "ref": "ALN-7",
+    "title": "ALN-7",
+    "state": "open",
+    "components": [
+     "sync"
+    ],
+    "source": "linear readback",
+    "symptoms": [
+     "conflict_lost"
+    ],
+    "project": "proj-aln-editor"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.bind",
+  "args": [
+   {
+    "schema": "product-binding/1",
+    "product": "alpha-notes",
+    "kind": "issue",
+    "ref": "ALN-9",
+    "title": "ALN-9",
+    "state": "done",
+    "components": [
+     "editor"
+    ],
+    "source": "linear readback",
+    "symptoms": [
+     "save_mismatch"
+    ],
+    "fixRef": "PR#12",
+    "project": "proj-aln-editor"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.intake",
+  "args": [
+   {
+    "schema": "product-incident/1",
+    "product": "alpha-notes",
+    "repository": "example-org/alpha-notes",
+    "surface": "dev_run",
+    "phase": "development",
+    "component": "editor",
+    "symptom": "scroll_lock",
+    "severity": "broken",
+    "occurrenceKey": "run-1:step-1",
+    "detail": {
+     "impact": "the cursor jumps",
+     "expected": "stays",
+     "actual": "jumps",
+     "reproduction": "type fast"
+    }
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "ledger.next",
+  "args": [],
+  "kwargs": {
+   "limit": 50
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "ledger.claim",
+  "args": [
+   "107accd1a8e70d2d64bd8e625a4febad"
+  ],
+  "kwargs": {
+   "owner": "holder"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "ledger.operation",
+  "args": [
+   "107accd1a8e70d2d64bd8e625a4febad"
+  ],
+  "kwargs": {
+   "claim_token": "0001020304050607"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "ledger.get",
+  "args": [
+   "cced55718da409e7c6dd938fd30dff0f"
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.bind",
+  "args": [
+   {
+    "schema": "product-binding/1",
+    "product": "alpha-notes",
+    "kind": "issue",
+    "ref": "ALN-11",
+    "title": "ALN-11",
+    "state": "open",
+    "components": [
+     "editor"
+    ],
+    "source": "linear readback",
+    "symptoms": [
+     "scroll_lock"
+    ],
+    "project": "proj-aln-editor"
+   }
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "ledger.get",
+  "args": [
+   "cced55718da409e7c6dd938fd30dff0f"
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ },
+ {
+  "operation": "router.show",
+  "args": [],
+  "kwargs": {
+   "attention": true
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00",
+  "now": 1700000000.0,
+  "wire": true,
+  "tables": true
+ }
+]

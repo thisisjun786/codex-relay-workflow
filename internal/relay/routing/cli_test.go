@@ -16,7 +16,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 var binaryOnce sync.Once
@@ -88,86 +88,43 @@ func builtBinary(t *testing.T) string {
 	return testBinary
 }
 
-// oracleScript returns what the Python oracle script printed for mode against state: the
-// recording by default, a live run under CRW_PYTHON_ORACLE=record or check (see pyoracle). Each
-// observe runs after a live run and judges what Python did beyond its answer.
-func oracleScript(t *testing.T, name, mode, state string, observe ...func() error) []byte {
-	t.Helper()
-	_, file, _, _ := runtime.Caller(0)
-	return pyoracle.AnswerInterned(t, name+" "+mode, func() ([]byte, error) {
-		cmd := exec.Command("uv", "run", "--no-sync", "--no-project", "python3", filepath.Join(filepath.Dir(file), "testdata", name), mode, state)
-		var stderr bytes.Buffer
-		cmd.Stderr = &stderr
-		raw, err := cmd.Output()
-		if err != nil {
-			return nil, fmt.Errorf("oracle %v\n%s", err, stderr.String())
-		}
-		for _, check := range observe {
-			if err := check(); err != nil {
-				return nil, err
-			}
-		}
-		return raw, nil
-	}, pyoracle.Substitute(state, "<state>"), pyoracle.Substitute(filepath.Clean(filepath.Join(filepath.Dir(file), "../../..")), "<repo>"), pyoracle.Substitute(os.Getenv("TMPDIR"), "<tmpdir>"))
+// cliReply is what a command answered, as its golden holds it.
+type cliReply struct {
+	Exit   int    `json:"exit"`
+	Stdout string `json:"stdout"`
+	Stderr string `json:"stderr"`
 }
 
-// stateFiles returns the regular files Python left in state once its store is gone, so a replay
-// hands Go the same directory: the recording by default, the live directory under
-// CRW_PYTHON_ORACLE=record or check.
-func stateFiles(t *testing.T, key, state string) map[string]string {
-	t.Helper()
-	files := map[string]string{}
-	pyoracle.JSON(t, key, &files, func() (any, error) {
-		found := map[string]string{}
-		err := filepath.WalkDir(state, func(path string, entry os.DirEntry, err error) error {
-			if err != nil || !entry.Type().IsRegular() {
-				return err
-			}
-			data, err := os.ReadFile(path)
-			if err != nil {
-				return err
-			}
-			rel, err := filepath.Rel(state, path)
-			found[filepath.ToSlash(rel)] = string(data)
-			return err
-		})
-		return found, err
-	}, pyoracle.Substitute(state, "<state>"))
-	return files
+// cliScenario is a CLI scenario's fixture: the commands in order and the files the state directory
+// holds before the first (PRD-10's binding.json, which product-bind --record @... reads).
+type cliScenario struct {
+	Records []struct{ Args []string }
+	Files   map[string]string
 }
+
 func Test23_ArgparseWidthsBuiltBinary(t *testing.T) {
 	binary := builtBinary(t)
-	state := t.TempDir()
-	raw := oracleScript(t, "cli_capture.py", "argv", state, func() error {
-		if _, err := os.Stat(filepath.Join(state, "relay.sqlite3")); !os.IsNotExist(err) {
-			return fmt.Errorf("parser-only oracle wrote store: %v", err)
-		}
-		return nil
-	})
+	state := filepath.Join(t.TempDir(), "state")
 	var cases []struct {
-		Command        string
-		Args           []string
-		Prog           string
-		Width          *string
-		Code           int
-		Stdout, Stderr string
+		Command string
+		Args    []string
+		Prog    string
+		Width   *string
 	}
-	if err := json.Unmarshal(raw, &cases); err != nil {
-		t.Fatal(err)
+	scenarioInputs(t, "cli-argv.json", &cases, [2]string{state, "<state>"})
+	var accepted []struct {
+		Command string
+		Args    []string
+		Prog    string
+		Width   *string
 	}
-	acceptedRaw := oracleScript(t, "cli_capture.py", "accepted-argv", state)
-	accepted := cases[:0:0]
-	if err := json.Unmarshal(acceptedRaw, &accepted); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.RemoveAll(state); err != nil {
-		t.Fatal(err)
-	}
+	scenarioInputs(t, "cli-accepted-argv.json", &accepted, [2]string{state, "<state>"})
 	parserCases := len(cases)
 	cases = append(cases, accepted...)
 	for index, tc := range cases {
 		label := tc.Command + "/" + tc.Prog + "/" + strings.Join(tc.Args, " ")
-		t.Run(label, func(t *testing.T) {
+		var reply cliReply
+		if !t.Run(label, func(t *testing.T) {
 			path := binary
 			args := []string{"relay", "--state", state, tc.Command}
 			if tc.Prog == "codex-session-relay" {
@@ -196,15 +153,16 @@ func Test23_ArgparseWidthsBuiltBinary(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if code != tc.Code || stdout.String() != tc.Stdout || stderr.String() != tc.Stderr {
-				t.Fatalf("argparse bytes differ exit Python=%d Go=%d\nPython stdout=%q stderr=%q\nGo stdout=%q stderr=%q", tc.Code, code, tc.Stdout, tc.Stderr, stdout.String(), stderr.String())
-			}
+			reply = cliReply{code, stdout.String(), stderr.String()}
 			if index < parserCases {
 				if _, err := os.Stat(filepath.Join(state, "relay.sqlite3")); !os.IsNotExist(err) {
 					t.Fatalf("parse error/help wrote store: %v", err)
 				}
 			}
-		})
+		}) {
+			continue
+		}
+		golden.CheckJSON(t, fmt.Sprintf("%04d %s", index, label), reply, goldenPaths([2]string{state, "<state>"})...)
 	}
 }
 func Test23_CLIWholeRepliesAndTables(t *testing.T) { cliReplay(t, "qa") }
@@ -212,26 +170,11 @@ func Test23_PRD_2_PolicyCLI(t *testing.T)          { cliReplay(t, "PRD-2") }
 func Test23_PRD_10_RegistryCLI(t *testing.T)       { cliReplay(t, "PRD-10") }
 func Test23_PRD_16_UnreadableJSON(t *testing.T)    { cliReplay(t, "PRD-16") }
 func cliReplay(t *testing.T, mode string) {
-	pythonState := filepath.Join(t.TempDir(), "state")
-	raw := oracleScript(t, "cli_capture.py", mode, pythonState)
-	var records []struct {
-		Args                   []string
-		Code                   int
-		Stdout, Stderr, Tables string
-	}
-	if err := json.Unmarshal(raw, &records); err != nil {
-		t.Fatal(err)
-	}
-	// Remove Python's store whole, its fence (mirror, write gate, controller lock) included, so
-	// the directory holds an absent store and Go's first command creates its own.
-	for _, name := range []string{"relay.sqlite3", "relay.sqlite3-wal", "relay.sqlite3-shm", "events.jsonl", "takeover.json", "write-gate.lock", "takeover.lock"} {
-		if err := os.Remove(filepath.Join(pythonState, name)); err != nil && !os.IsNotExist(err) {
-			t.Fatal(err)
-		}
-	}
-	// What Python left beside its store (PRD-10's binding.json) is input to Go's commands.
-	for name, data := range stateFiles(t, "files cli_capture.py "+mode+" left beside its store", pythonState) {
-		path := filepath.Join(pythonState, filepath.FromSlash(name))
+	state := filepath.Join(t.TempDir(), "state")
+	var scenario cliScenario
+	scenarioInputs(t, "cli-"+mode+".json", &scenario, [2]string{state, "<state>"})
+	for name, data := range scenario.Files {
+		path := filepath.Join(state, filepath.FromSlash(name))
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -241,18 +184,20 @@ func cliReplay(t *testing.T, mode string) {
 	}
 	clock := &integrationClock{stamp: "2023-11-14T22:13:20.000000+00:00", now: 1700000000}
 	ctx := WithClock(context.Background(), clock)
-	for _, record := range records {
-		t.Run(strings.Join(record.Args[:1], ""), func(t *testing.T) {
+	opts := goldenPaths([2]string{state, "<state>"})
+	trail := &tableTrail{}
+	for i, record := range scenario.Records {
+		var reply cliReply
+		var tables string
+		if !t.Run(strings.Join(record.Args[:1], ""), func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
-			code := cli.ExecuteAs(ctx, "codex-session-relay", append([]string{"--state", pythonState}, record.Args...), &stdout, &stderr)
-			if code != record.Code || stdout.String() != record.Stdout || stderr.String() != record.Stderr {
-				t.Fatalf("CLI bytes differ exit Python=%d Go=%d\nPython: %s\nGo: %s\nstderr: %s", record.Code, code, record.Stdout, stdout.String(), stderr.String())
-			}
-			s, err := store.Open(ctx, filepath.Join(pythonState, "relay.sqlite3"), "")
+			code := cli.ExecuteAs(ctx, "codex-session-relay", append([]string{"--state", state}, record.Args...), &stdout, &stderr)
+			reply = cliReply{code, stdout.String(), stderr.String()}
+			s, err := store.Open(ctx, filepath.Join(state, "relay.sqlite3"), "")
 			if err != nil {
 				t.Fatal(err)
 			}
-			got, err := tablesJSON(ctx, s)
+			tables, err = tablesJSON(ctx, s)
 			closeErr := s.Close()
 			if err != nil {
 				t.Fatal(err)
@@ -260,23 +205,11 @@ func cliReplay(t *testing.T, mode string) {
 			if closeErr != nil {
 				t.Fatal(closeErr)
 			}
-			if got != record.Tables {
-				var want, actual any
-				d := json.NewDecoder(strings.NewReader(record.Tables))
-				d.UseNumber()
-				if err := d.Decode(&want); err != nil {
-					t.Fatal(err)
-				}
-				d = json.NewDecoder(strings.NewReader(got))
-				d.UseNumber()
-				if err := d.Decode(&actual); err != nil {
-					t.Fatal(err)
-				}
-				t.Fatal(firstDifference("tables", want, actual))
-			}
-		})
-		if t.Failed() {
+		}) {
 			return
 		}
+		key := fmt.Sprintf("%02d %s", i, record.Args[0])
+		golden.CheckJSON(t, key+" reply", reply, opts...)
+		trail.check(t, key+" tables", tables, opts...)
 	}
 }

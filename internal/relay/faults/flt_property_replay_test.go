@@ -153,6 +153,7 @@ func Test22_FLT_17_SchemaWholeOutput(t *testing.T) {
 	}
 	twin := flt17Rows(t, ctx, gd)
 	delete(twin, "schema_meta")
+	checkGolden(t, "the twin's tables", nil, runPathsOf(t, filepath.Dir(gd)), twin)
 	delete(repair.Tables, "schema_meta")
 	if !reflect.DeepEqual(twin, repair.Tables) {
 		t.Fatalf("Go's twin is not the store Python repaired:\nGo     %v\nPython %v", twin, repair.Tables)

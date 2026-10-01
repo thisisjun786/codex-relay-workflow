@@ -6,6 +6,7 @@ import (
 )
 
 func Test22_FC_15_ProductBudgetWholeOutput(t *testing.T) {
+	goldenParent(t)
 	t.Run("create", func(t *testing.T) {
 		ctx, gd, pd, _ := fnReplayFault(t)
 		for i := 0; i < 8; i++ {

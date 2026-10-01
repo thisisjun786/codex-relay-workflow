@@ -77,6 +77,7 @@ func TestDRelinkRepointsBoundedWritesAgainstPython(t *testing.T) {
 	})
 	var got, stderr bytes.Buffer
 	code, handled := executeAsCLI(context.Background(), []string{"--state", goDir, "--json", "fault-relink", "--limit", "1"}, &got, &stderr)
+	checkGolden(t, "relay fault-relink --limit 1", nil, runPathsOf(t, home), map[string]any{"code": code, "stdout": got.String(), "trackerRef": trackerRef(goDir)})
 	if !handled || code != 0 || want.Stdout != got.String() {
 		t.Fatalf("python %s; go %d %s; stderr %s", want.Stdout, code, got.String(), stderr.String())
 	}

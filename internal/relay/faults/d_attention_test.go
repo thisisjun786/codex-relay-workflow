@@ -32,6 +32,7 @@ func TestDAttentionWholeOutputAgainstPython(t *testing.T) {
 	compare := func(label string) {
 		t.Helper()
 		gc, g := cliCall(t, goDir, "fault-attention")
+		checkGolden(t, "relay fault-attention: "+label, []string{label}, runPathsOf(t, home), map[string]any{"code": gc, "reply": g})
 		out := pyAnswer(t, "relay fault-attention", []string{label}, pyRunPaths(t, home), func() ([]byte, error) {
 			cmd := exec.Command("uv", "run", "--no-sync", "codex-session-relay", "--state", pyDir, "--json", "fault-attention")
 			cmd.Dir = root

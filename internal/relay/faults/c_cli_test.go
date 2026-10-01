@@ -11,6 +11,7 @@ import (
 
 // Fresh disposable state per process; compare the actual CLI JSON bytes, not selected fields.
 func TestCCLIOracle(t *testing.T) {
+	goldenParent(t)
 	cases := [][]string{
 		{"fault-show"}, {"fault-next"}, {"fault-show", "--fault", "missing"},
 		{"fault-show", "--fault", "missing", "--product", "crw"},
@@ -38,6 +39,7 @@ func TestCCLIOracle(t *testing.T) {
 				t.Fatal("unhandled")
 			}
 			neverCreated(t, py, goDir)
+			checkGolden(t, "relay "+strings.Join(args, " "), args, runPathsOf(t, home), cliGolden{Code: code, Stdout: got.String(), Created: created(t, goDir)})
 			if pyCode != code || !bytes.Equal(want, got.Bytes()) {
 				t.Errorf("python (%d): %s\ngo (%d): %s\nstderr: %s", pyCode, want, code, got.String(), stderr.String())
 			}

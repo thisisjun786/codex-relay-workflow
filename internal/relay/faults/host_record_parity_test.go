@@ -68,19 +68,40 @@ print(json.dumps(str(host_record_path())))`)
 		})
 		want[c.name] = path
 	}
-	t.Chdir(root)
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			t.Setenv("XDG_STATE_HOME", c.xdg)
-			t.Setenv("HOME", c.home)
-			if c.home == unset {
-				if err := os.Unsetenv("HOME"); err != nil {
+	// Go answers from root; the goldens are read and written from the package directory.
+	got := map[string]string{}
+	func() {
+		wd, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = os.Chdir(root); err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			if err := os.Chdir(wd); err != nil {
+				t.Fatal(err)
+			}
+		}()
+		for _, c := range cases {
+			t.Run(c.name, func(t *testing.T) {
+				t.Setenv("XDG_STATE_HOME", c.xdg)
+				t.Setenv("HOME", c.home)
+				if c.home == unset {
+					if err := os.Unsetenv("HOME"); err != nil {
+						t.Fatal(err)
+					}
+				}
+				path, err := HostRecordPath()
+				if err != nil {
 					t.Fatal(err)
 				}
-			}
-			if got, err := HostRecordPath(); err != nil || got != want[c.name] {
-				t.Errorf("%q, python %q: %v", got, want[c.name], err)
-			}
-		})
-	}
+				got[c.name] = path
+				if path != want[c.name] {
+					t.Errorf("%q, python %q: %v", path, want[c.name], err)
+				}
+			})
+		}
+	}()
+	checkGolden(t, "host record paths", nil, runPaths(paths), got)
 }

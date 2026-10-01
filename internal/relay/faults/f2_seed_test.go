@@ -5,12 +5,14 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 func TestF2SeededCLIOracle(t *testing.T) {
+	goldenParent(t)
 	for _, tc := range []struct {
 		name string
 		args func(string, string) []string
@@ -77,6 +79,7 @@ func TestF2SeededCLIOracle(t *testing.T) {
 			want, pyCode := []byte(answer.Stdout), answer.Code
 			var got, stderr bytes.Buffer
 			goCode, handled := executeAsCLI(context.Background(), append([]string{"--state", goDir, "--json"}, args...), &got, &stderr)
+			checkGolden(t, "relay "+strings.Join(args, " "), args, runPathsOf(t, home), cliGolden{Code: goCode, Stdout: got.String()})
 			if !handled || pyCode != goCode || !bytes.Equal(want, got.Bytes()) {
 				t.Errorf("python (%d): %s\ngo (%d): %s\nstderr: %s", pyCode, want, goCode, got.String(), stderr.String())
 			}

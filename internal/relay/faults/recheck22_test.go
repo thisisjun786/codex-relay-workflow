@@ -7,6 +7,7 @@ import (
 )
 
 func Test22_FC_5_TargetOwnershipWholeOutput(t *testing.T) {
+	goldenParent(t)
 	for _, variant := range []string{"no_project", "retarget_team", "retarget_project", "ownerless", "foreign_product"} {
 		t.Run(variant, func(t *testing.T) {
 			ctx, gd, pd := f1ReplayStores(t)
@@ -39,6 +40,7 @@ func Test22_FC_5_TargetOwnershipWholeOutput(t *testing.T) {
 }
 
 func Test22_FC_14_WorkspaceIsolationWholeOutput(t *testing.T) {
+	goldenParent(t)
 	for _, moved := range []bool{false, true} {
 		t.Run(fmt.Sprintf("moved_%t", moved), func(t *testing.T) {
 			ctx, gd, pd := f1ReplayStores(t)
@@ -75,6 +77,7 @@ func Test22_FC_14_WorkspaceIsolationWholeOutput(t *testing.T) {
 }
 
 func Test22_FC_29_ClaimLeaseBudgetWholeOutput(t *testing.T) {
+	goldenParent(t)
 	for _, variant := range []string{"lapsed_claim", "lapsed_issue", "at_budget", "consume_boundary"} {
 		t.Run(variant, func(t *testing.T) {
 			ctx, gd, pd := f1ReplayStores(t)
@@ -142,6 +145,7 @@ func Test22_PruneAliasesAndJournalWholeOutput(t *testing.T) {
 }
 
 func Test22_UnknownFaultDetailsWholeOutput(t *testing.T) {
+	goldenParent(t)
 	for _, args := range [][]string{
 		{"fault-resolve", "--fault", "nosuch"},
 		{"fault-fix", "--fault", "nosuch", "--ref", "fix"},

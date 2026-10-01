@@ -1,0 +1,697 @@
+[
+ {
+  "operation": "reset",
+  "args": [],
+  "kwargs": {}
+ },
+ {
+  "operation": "upsert",
+  "args": [],
+  "kwargs": {
+   "fault_id": "00000000000000000000000000000000",
+   "product": "alpha-notes",
+   "workspace": "example-ws",
+   "disposition": "project_proposal",
+   "stage": "filed",
+   "target": {
+    "team": "ALN",
+    "project": null,
+    "owner": null,
+    "relate": [],
+    "hold": null,
+    "labels": [],
+    "cause": null,
+    "unverifiedCause": null,
+    "obligations": []
+   },
+   "origin": "observed",
+   "claimed_severity": "degraded",
+   "goal": "sync_a"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "upsert",
+  "args": [],
+  "kwargs": {
+   "fault_id": "11111111111111111111111111111111",
+   "product": "alpha-notes",
+   "workspace": "example-ws",
+   "disposition": "project_proposal",
+   "stage": "filed",
+   "target": {
+    "team": "ALN",
+    "project": null,
+    "owner": null,
+    "relate": [],
+    "hold": null,
+    "labels": [],
+    "cause": null,
+    "unverifiedCause": null,
+    "obligations": []
+   },
+   "origin": "observed",
+   "claimed_severity": "degraded",
+   "goal": "sync_b"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "upsert",
+  "args": [],
+  "kwargs": {
+   "fault_id": "22222222222222222222222222222222",
+   "product": "alpha-notes",
+   "workspace": "example-ws",
+   "disposition": "project_proposal",
+   "stage": "filed",
+   "target": {
+    "team": "ALN",
+    "project": null,
+    "owner": null,
+    "relate": [],
+    "hold": null,
+    "labels": [],
+    "cause": null,
+    "unverifiedCause": null,
+    "obligations": []
+   },
+   "origin": "observed",
+   "claimed_severity": "degraded",
+   "goal": "sync_c"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "upsert",
+  "args": [],
+  "kwargs": {
+   "fault_id": "99999999999999999999999999999999",
+   "product": "alpha-notes",
+   "workspace": "example-ws",
+   "disposition": "held",
+   "stage": "held",
+   "target": {
+    "team": "ALN",
+    "project": null,
+    "owner": null,
+    "relate": [],
+    "hold": "no_project",
+    "labels": [],
+    "cause": null,
+    "unverifiedCause": null,
+    "obligations": []
+   },
+   "origin": "observed",
+   "claimed_severity": "degraded",
+   "goal": "sync_a"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "outstanding_proposals",
+  "args": [
+   1
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "unreached_count",
+  "args": [
+   [
+    "00000000000000000000000000000000"
+   ]
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "unreached_proposal",
+  "args": [
+   "alpha-notes",
+   "sync_a",
+   [
+    "00000000000000000000000000000000"
+   ]
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "unreached_proposal",
+  "args": [
+   "alpha-notes",
+   "sync_b",
+   [
+    "00000000000000000000000000000000"
+   ]
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "unreached_proposal",
+  "args": [
+   "alpha-notes",
+   "sync_c",
+   [
+    "00000000000000000000000000000000"
+   ]
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "checked",
+  "args": [
+   "00000000000000000000000000000000"
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "outstanding_proposals",
+  "args": [
+   1
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "unreached_count",
+  "args": [
+   [
+    "11111111111111111111111111111111"
+   ]
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "unreached_proposal",
+  "args": [
+   "alpha-notes",
+   "sync_a",
+   [
+    "11111111111111111111111111111111"
+   ]
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "unreached_proposal",
+  "args": [
+   "alpha-notes",
+   "sync_b",
+   [
+    "11111111111111111111111111111111"
+   ]
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "unreached_proposal",
+  "args": [
+   "alpha-notes",
+   "sync_c",
+   [
+    "11111111111111111111111111111111"
+   ]
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "checked",
+  "args": [
+   "11111111111111111111111111111111"
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "outstanding_proposals",
+  "args": [
+   1
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "unreached_count",
+  "args": [
+   [
+    "22222222222222222222222222222222"
+   ]
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "unreached_proposal",
+  "args": [
+   "alpha-notes",
+   "sync_a",
+   [
+    "22222222222222222222222222222222"
+   ]
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "unreached_proposal",
+  "args": [
+   "alpha-notes",
+   "sync_b",
+   [
+    "22222222222222222222222222222222"
+   ]
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "unreached_proposal",
+  "args": [
+   "alpha-notes",
+   "sync_c",
+   [
+    "22222222222222222222222222222222"
+   ]
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "checked",
+  "args": [
+   "22222222222222222222222222222222"
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "settle",
+  "args": [
+   "11111111111111111111111111111111",
+   "created and bound"
+  ],
+  "kwargs": {},
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "outstanding_proposals",
+  "args": [
+   5
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "unreached_count",
+  "args": [
+   [
+    "00000000000000000000000000000000",
+    "22222222222222222222222222222222"
+   ]
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "unreached_proposal",
+  "args": [
+   "alpha-notes",
+   "sync_b",
+   [
+    "00000000000000000000000000000000",
+    "22222222222222222222222222222222"
+   ]
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "unreached_proposal",
+  "args": [
+   "alpha-notes",
+   null,
+   []
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "tables",
+  "args": [],
+  "kwargs": {}
+ },
+ {
+  "operation": "reset",
+  "args": [],
+  "kwargs": {}
+ },
+ {
+  "operation": "upsert",
+  "args": [],
+  "kwargs": {
+   "fault_id": "00000000000000000000000000000000",
+   "product": "beta-meter",
+   "workspace": "example-ws",
+   "disposition": "project_proposal",
+   "stage": "filed",
+   "target": {
+    "team": "ALN",
+    "project": null,
+    "owner": null,
+    "relate": [],
+    "hold": null,
+    "labels": [],
+    "cause": null,
+    "unverifiedCause": null,
+    "obligations": []
+   },
+   "origin": "observed",
+   "claimed_severity": "degraded",
+   "goal": "goal_0"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "upsert",
+  "args": [],
+  "kwargs": {
+   "fault_id": "00000000000000000000000000000001",
+   "product": "alpha-notes",
+   "workspace": "example-ws",
+   "disposition": "project_proposal",
+   "stage": "filed",
+   "target": {
+    "team": "ALN",
+    "project": null,
+    "owner": null,
+    "relate": [],
+    "hold": null,
+    "labels": [],
+    "cause": null,
+    "unverifiedCause": null,
+    "obligations": []
+   },
+   "origin": "observed",
+   "claimed_severity": "degraded",
+   "goal": "goal_1"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "upsert",
+  "args": [],
+  "kwargs": {
+   "fault_id": "00000000000000000000000000000002",
+   "product": "beta-meter",
+   "workspace": "example-ws",
+   "disposition": "project_proposal",
+   "stage": "filed",
+   "target": {
+    "team": "ALN",
+    "project": null,
+    "owner": null,
+    "relate": [],
+    "hold": null,
+    "labels": [],
+    "cause": null,
+    "unverifiedCause": null,
+    "obligations": []
+   },
+   "origin": "observed",
+   "claimed_severity": "degraded",
+   "goal": "goal_2"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "upsert",
+  "args": [],
+  "kwargs": {
+   "fault_id": "00000000000000000000000000000003",
+   "product": "alpha-notes",
+   "workspace": "example-ws",
+   "disposition": "project_proposal",
+   "stage": "filed",
+   "target": {
+    "team": "ALN",
+    "project": null,
+    "owner": null,
+    "relate": [],
+    "hold": null,
+    "labels": [],
+    "cause": null,
+    "unverifiedCause": null,
+    "obligations": []
+   },
+   "origin": "observed",
+   "claimed_severity": "degraded",
+   "goal": "goal_3"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "upsert",
+  "args": [],
+  "kwargs": {
+   "fault_id": "00000000000000000000000000000004",
+   "product": "beta-meter",
+   "workspace": "example-ws",
+   "disposition": "project_proposal",
+   "stage": "filed",
+   "target": {
+    "team": "ALN",
+    "project": null,
+    "owner": null,
+    "relate": [],
+    "hold": null,
+    "labels": [],
+    "cause": null,
+    "unverifiedCause": null,
+    "obligations": []
+   },
+   "origin": "observed",
+   "claimed_severity": "degraded",
+   "goal": "goal_4"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "upsert",
+  "args": [],
+  "kwargs": {
+   "fault_id": "00000000000000000000000000000005",
+   "product": "alpha-notes",
+   "workspace": "example-ws",
+   "disposition": "project_proposal",
+   "stage": "filed",
+   "target": {
+    "team": "ALN",
+    "project": null,
+    "owner": null,
+    "relate": [],
+    "hold": null,
+    "labels": [],
+    "cause": null,
+    "unverifiedCause": null,
+    "obligations": []
+   },
+   "origin": "observed",
+   "claimed_severity": "degraded",
+   "goal": "goal_5"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "upsert",
+  "args": [],
+  "kwargs": {
+   "fault_id": "00000000000000000000000000000006",
+   "product": "beta-meter",
+   "workspace": "example-ws",
+   "disposition": "project_proposal",
+   "stage": "filed",
+   "target": {
+    "team": "ALN",
+    "project": null,
+    "owner": null,
+    "relate": [],
+    "hold": null,
+    "labels": [],
+    "cause": null,
+    "unverifiedCause": null,
+    "obligations": []
+   },
+   "origin": "observed",
+   "claimed_severity": "degraded",
+   "goal": "goal_6"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "upsert",
+  "args": [],
+  "kwargs": {
+   "fault_id": "00000000000000000000000000000007",
+   "product": "alpha-notes",
+   "workspace": "example-ws",
+   "disposition": "project_proposal",
+   "stage": "filed",
+   "target": {
+    "team": "ALN",
+    "project": null,
+    "owner": null,
+    "relate": [],
+    "hold": null,
+    "labels": [],
+    "cause": null,
+    "unverifiedCause": null,
+    "obligations": []
+   },
+   "origin": "observed",
+   "claimed_severity": "degraded",
+   "goal": "goal_7"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "upsert",
+  "args": [],
+  "kwargs": {
+   "fault_id": "00000000000000000000000000000008",
+   "product": "beta-meter",
+   "workspace": "example-ws",
+   "disposition": "project_proposal",
+   "stage": "filed",
+   "target": {
+    "team": "ALN",
+    "project": null,
+    "owner": null,
+    "relate": [],
+    "hold": null,
+    "labels": [],
+    "cause": null,
+    "unverifiedCause": null,
+    "obligations": []
+   },
+   "origin": "observed",
+   "claimed_severity": "degraded",
+   "goal": "goal_8"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "upsert",
+  "args": [],
+  "kwargs": {
+   "fault_id": "00000000000000000000000000000009",
+   "product": "alpha-notes",
+   "workspace": "example-ws",
+   "disposition": "project_proposal",
+   "stage": "filed",
+   "target": {
+    "team": "ALN",
+    "project": null,
+    "owner": null,
+    "relate": [],
+    "hold": null,
+    "labels": [],
+    "cause": null,
+    "unverifiedCause": null,
+    "obligations": []
+   },
+   "origin": "observed",
+   "claimed_severity": "degraded",
+   "goal": "goal_9"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "upsert",
+  "args": [],
+  "kwargs": {
+   "fault_id": "0000000000000000000000000000000a",
+   "product": "beta-meter",
+   "workspace": "example-ws",
+   "disposition": "project_proposal",
+   "stage": "filed",
+   "target": {
+    "team": "ALN",
+    "project": null,
+    "owner": null,
+    "relate": [],
+    "hold": null,
+    "labels": [],
+    "cause": null,
+    "unverifiedCause": null,
+    "obligations": []
+   },
+   "origin": "observed",
+   "claimed_severity": "degraded",
+   "goal": "goal_10"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "upsert",
+  "args": [],
+  "kwargs": {
+   "fault_id": "0000000000000000000000000000000b",
+   "product": "alpha-notes",
+   "workspace": "example-ws",
+   "disposition": "project_proposal",
+   "stage": "filed",
+   "target": {
+    "team": "ALN",
+    "project": null,
+    "owner": null,
+    "relate": [],
+    "hold": null,
+    "labels": [],
+    "cause": null,
+    "unverifiedCause": null,
+    "obligations": []
+   },
+   "origin": "observed",
+   "claimed_severity": "degraded",
+   "goal": "goal_11"
+  },
+  "stamp": "2023-11-14T22:13:20.000000+00:00"
+ },
+ {
+  "operation": "outstanding_proposals",
+  "args": [
+   3
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "unreached_count",
+  "args": [
+   [
+    "00000000000000000000000000000000",
+    "00000000000000000000000000000001",
+    "00000000000000000000000000000002"
+   ]
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "unreached_proposal",
+  "args": [
+   "alpha-notes",
+   "goal_11",
+   [
+    "00000000000000000000000000000000",
+    "00000000000000000000000000000001",
+    "00000000000000000000000000000002"
+   ]
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "unreached_proposal",
+  "args": [
+   "beta-meter",
+   "goal_11",
+   [
+    "00000000000000000000000000000000",
+    "00000000000000000000000000000001",
+    "00000000000000000000000000000002"
+   ]
+  ],
+  "kwargs": {}
+ },
+ {
+  "operation": "tables",
+  "args": [],
+  "kwargs": {}
+ }
+]

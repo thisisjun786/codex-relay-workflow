@@ -1,0 +1,61 @@
+[
+ {
+  "operation": "read_registry",
+  "arguments": [
+   [
+    {
+     "schema": "product-registry/1",
+     "product": "beta-meter",
+     "workspace": "example-ws",
+     "team": "BTM",
+     "familyLabel": "제품:Beta Meter",
+     "repositories": [
+      "example-org/beta-meter"
+     ],
+     "surfaces": {
+      "real_use": {
+       "method": "error events the product forwards",
+       "active": true
+      },
+      "user_report": {
+       "method": "support inbox forwarded by the parent",
+       "active": false
+      }
+     },
+     "triageProject": "proj-btm-triage"
+    }
+   ],
+   {}
+  ]
+ },
+ {
+  "operation": "coverage",
+  "arguments": [
+   [
+    {
+     "schema": "product-registry/1",
+     "product": "beta-meter",
+     "workspace": "example-ws",
+     "team": "BTM",
+     "familyLabel": "제품:Beta Meter",
+     "repositories": [
+      "example-org/beta-meter"
+     ],
+     "surfaces": {
+      "real_use": {
+       "method": "error events the product forwards",
+       "active": true
+      },
+      "user_report": {
+       "method": "support inbox forwarded by the parent",
+       "active": false
+      }
+     },
+     "triageProject": "proj-btm-triage",
+     "testTarget": null
+    }
+   ],
+   {}
+  ]
+ }
+]

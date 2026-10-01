@@ -52,6 +52,7 @@ const f1Relationship = "INSERT INTO relationships(relationship_id,issue_key,stat
 const f1Delivery = "INSERT INTO deliveries(event_id,relationship_id,kind,recipient_task_id,recipient_thread_id,state,attempt_count,created_at,updated_at) VALUES('event','rel','completion','parent','thread','pending',3,'stamp','stamp')"
 
 func TestF1_FLT_18_21_22_SweepSourcesWholeCLI(t *testing.T) {
+	goldenParent(t)
 	for _, source := range []string{"delivery", "sync", "observation", "refusal"} {
 		t.Run(source, func(t *testing.T) {
 			ctx, gd, pd := f1ReplayStores(t)
@@ -147,6 +148,7 @@ func TestF1SweepBoundsAndScopeWholeCLI(t *testing.T) {
 }
 
 func TestF1SweepReadingsWholeCLI(t *testing.T) {
+	goldenParent(t)
 	for _, state := range []string{"unreported", "reported", "unmeasured", "in_progress", "unmanaged", "unexpected"} {
 		t.Run(state, func(t *testing.T) {
 			ctx, gd, pd := f1ReplayStores(t)
