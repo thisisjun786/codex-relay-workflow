@@ -2,34 +2,17 @@ package daemon
 
 import (
 	"context"
-	"fmt"
-	"os"
 	"path/filepath"
 	"sync"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"golang.org/x/sys/unix"
 )
 
-func TestMain(m *testing.M) {
-	home, err := os.MkdirTemp("", "crw-daemon-test-")
-	if err != nil {
-		panic(err)
-	}
-	for _, key := range []string{"HOME", "XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "CODEX_HOME", "CODEX_SESSION_RELAY_STATE", "CODEX_SESSION_RELAY_SCOPE_DIR"} {
-		if err = os.Setenv(key, filepath.Join(home, key)); err != nil {
-			panic(err)
-		}
-	}
-	code := m.Run()
-	if err = os.RemoveAll(home); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		code = 1
-	}
-	os.Exit(code)
-}
+func TestMain(m *testing.M) { testsupport.Main(m) }
 func Test29InheritedDescriptionSurvivesClose(t *testing.T) {
 	directory := t.TempDir()
 	parent, err := Acquire(directory, true, nil)

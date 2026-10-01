@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -24,33 +23,10 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	root, err := os.MkdirTemp("", "crw-adapter-tests-")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	suiteDirectory = root
-	if err := buildSuiteBinary(root); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		if cleanupErr := testsupport.RemoveTempTree(root); cleanupErr != nil {
-			fmt.Fprintln(os.Stderr, cleanupErr)
-		}
-		os.Exit(1)
-	}
-	for _, key := range []string{"HOME", "XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "CODEX_HOME", "CODEX_SESSION_RELAY_STATE", "CODEX_SESSION_RELAY_STATE_DIR", "CODEX_SESSION_RELAY_SCOPE_DIR"} {
-		if err := os.Setenv(key, filepath.Join(root, key)); err != nil {
-			panic(err)
-		}
-	}
-	if err := os.Setenv("TMPDIR", root); err != nil {
-		panic(err)
-	}
-	code := m.Run()
-	if err := testsupport.RemoveTempTree(root); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		code = 1
-	}
-	os.Exit(code)
+	testsupport.Main(m, testsupport.TempDirInRoot, func(root string) (func() error, error) {
+		suiteDirectory = root
+		return nil, installSuiteBinary(root)
+	})
 }
 
 type scriptRPC struct {

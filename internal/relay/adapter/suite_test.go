@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -24,25 +23,18 @@ var suiteDirectory string
 var suiteBinary string
 var suiteAlias string
 
-// Build before TestMain changes HOME so the toolchain inherits the caller's
-// caches and module environment, on both developer workstations and hosted CI.
-// Every binary scenario uses this one clock-injected build; production defaults
-// are unchanged because ordinary builds do not set the link-time clock seam.
-func buildSuiteBinary(root string) error {
-	repo, err := filepath.Abs("../../..")
+// installSuiteBinary puts the crw every binary scenario runs, one clock-injected build, at
+// <suite>/crw with its codex-session-relay alias beside it. Production defaults are unchanged
+// because ordinary builds do not set the link-time clock seam.
+func installSuiteBinary(root string) error {
+	built, err := testsupport.BuildCRWPath("-buildvcs=false", "-ldflags=-X github.com/thisisjun786/codex-relay-workflow/internal/relay/adapter.testClock=1700000000")
 	if err != nil {
 		return err
 	}
 	suiteBinary = filepath.Join(root, "crw")
 	suiteAlias = filepath.Join(root, "codex-session-relay")
-	goBinary, err := exec.LookPath("go")
-	if err != nil {
+	if err := testsupport.CopyBinary(built, suiteBinary); err != nil {
 		return err
-	}
-	command := exec.Command(goBinary, "build", "-buildvcs=false", "-ldflags=-X github.com/thisisjun786/codex-relay-workflow/internal/relay/adapter.testClock=1700000000", "-o", suiteBinary, "./cmd/crw")
-	command.Dir = repo
-	if output, err := command.CombinedOutput(); err != nil {
-		return fmt.Errorf("build shared crw: %w\n%s", err, output)
 	}
 	return os.Symlink(suiteBinary, suiteAlias)
 }

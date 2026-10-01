@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -21,25 +20,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
-func TestMain(m *testing.M) {
-	cleanup, err := testsupport.IsolateRelayState()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	code := m.Run()
-	if binaryPath != "" {
-		if err := os.RemoveAll(filepath.Dir(binaryPath)); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			code = 1
-		}
-	}
-	if err := cleanup(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		code = 1
-	}
-	os.Exit(code)
-}
+func TestMain(m *testing.M) { testsupport.Main(m) }
 
 type action = map[string]any
 

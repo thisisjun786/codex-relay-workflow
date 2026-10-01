@@ -2,7 +2,6 @@ package cli_test
 
 import (
 	"errors"
-	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -119,25 +118,17 @@ func TestMain(m *testing.M) {
 	if filepath.Base(os.Args[0]) == "gh" {
 		os.Exit(fakeGH(os.Args[1:], os.Stdout, os.Stderr))
 	}
-	cleanup, err := testsupport.IsolateRelayState()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	code := m.Run()
-	if err := errors.Join(cleanup(), testsupport.RemoveCRW()); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		code = 1
-	}
-	for _, dir := range []string{binaryDir, ghDir, scenarioSetDir} {
-		if dir != "" {
-			if err := testsupport.RemoveTempTree(dir); err != nil {
-				fmt.Fprintln(os.Stderr, err)
-				code = 1
+	testsupport.Main(m, func(string) (func() error, error) {
+		return func() error {
+			var errs []error
+			for _, dir := range []string{binaryDir, ghDir, scenarioSetDir} {
+				if dir != "" {
+					errs = append(errs, testsupport.RemoveTempTree(dir))
+				}
 			}
-		}
-	}
-	os.Exit(code)
+			return errors.Join(errs...)
+		}, nil
+	})
 }
 
 var (

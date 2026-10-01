@@ -3,8 +3,6 @@ package supervisor
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -16,17 +14,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	cleanup, err := testsupport.IsolateRelayState()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	code := m.Run()
-	if err := errors.Join(cleanup(), testsupport.RemoveCRW()); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		code = 1
-	}
-	os.Exit(code)
+	testsupport.Main(m)
 }
 
 // supervisorFixture restores the tree one Python supervisor test left (the former

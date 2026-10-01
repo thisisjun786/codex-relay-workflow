@@ -1,8 +1,6 @@
 package contracttest
 
 import (
-	"errors"
-	"fmt"
 	"os"
 	"testing"
 
@@ -13,38 +11,21 @@ func TestMain(m *testing.M) {
 	if mode := os.Getenv(sqlitePeerEnv); mode != "" {
 		os.Exit(sqlitePeer(mode, os.Getenv(sqlitePeerPath)))
 	}
-	dir, err := os.MkdirTemp("", "crw-contracttest-")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	buildDir = dir
-	// Build both binaries before HOME isolation, inheriting the invoking toolchain caches: a build
-	// after it starts from an empty GOCACHE and would spend a scenario's deadline compiling.
-	for _, binary := range []func() (string, error){crwBinary, crwDevBinary} {
-		if _, err := binary(); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			if cleanupErr := testsupport.RemoveTempTree(dir); cleanupErr != nil {
-				fmt.Fprintln(os.Stderr, cleanupErr)
+	testsupport.Main(m, func(string) (func() error, error) {
+		// Both binaries are built before the first scenario, so none spends its deadline linking.
+		for _, binary := range []func() (string, error){crwBinary, crwDevBinary} {
+			if _, err := binary(); err != nil {
+				return nil, err
 			}
-			os.Exit(1)
 		}
-	}
-	for _, key := range []string{"HOME", "XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "CODEX_HOME", "CODEX_SESSION_RELAY_STATE", "CODEX_SESSION_RELAY_SCOPE_DIR"} {
-		value := dir + "/" + key
-		if err := os.MkdirAll(value, 0700); err != nil {
-			panic(err)
+		// The scenarios start in homes whose directories exist.
+		for _, key := range []string{"HOME", "XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "CODEX_HOME", "CODEX_SESSION_RELAY_STATE", "CODEX_SESSION_RELAY_SCOPE_DIR"} {
+			if err := os.MkdirAll(os.Getenv(key), 0o700); err != nil {
+				return nil, err
+			}
 		}
-		if err := os.Setenv(key, value); err != nil {
-			panic(err)
-		}
-	}
-	code := m.Run()
-	if err := errors.Join(testsupport.RemoveTempTree(dir), testsupport.RemoveCRW()); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		code = 1
-	}
-	os.Exit(code)
+		return nil, nil
+	})
 }
 
 // TestDomain replays contract/fixtures/<domain>/*.json. `-run 'Domain/<name>'` selects one

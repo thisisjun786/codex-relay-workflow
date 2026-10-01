@@ -1,13 +1,6 @@
 package contracttest
 
 import (
-	"errors"
-	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
-	"sync"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
@@ -32,39 +25,11 @@ var runners = map[RunKind]Runner{
 	"release":   runRelease,
 }
 
-// crwBinary is the crw under test (testsupport.CRW: CRW_TEST_BINARY, or ./cmd/crw built once).
-// crwDevBinary is the development binary the hook corpus's `verify` steps run (`crw-dev
-// stop-events`): CRW_TEST_DEV_BINARY, or ./cmd/crw-dev built with -tags dev once into buildDir,
-// which TestMain creates and removes. TestMain builds both before it isolates HOME.
+// crwBinary is the crw under test and crwDevBinary the development binary the hook corpus's
+// `verify` steps run (`crw-dev stop-events`): testsupport.CRWPath and CRWDevPath, each
+// $CRW_TEST_BINARY or $CRW_TEST_DEV_BINARY when set, else built once. TestMain builds both before
+// the first scenario.
 var (
-	buildDir     string
 	crwBinary    = testsupport.CRWPath
-	crwDevBinary = sync.OnceValues(func() (string, error) {
-		return build("CRW_TEST_DEV_BINARY", "crw-dev", "-tags", "dev", "./cmd/crw-dev")
-	})
-	errNoBuild = errors.New("contracttest: build directory not set (TestMain did not run)")
+	crwDevBinary = testsupport.CRWDevPath
 )
-
-func build(override, name string, args ...string) (string, error) {
-	if path := os.Getenv(override); path != "" {
-		return filepath.Abs(path)
-	}
-	if buildDir == "" {
-		return "", errNoBuild
-	}
-	root, err := Root()
-	if err != nil {
-		return "", err
-	}
-	goBinary, err := exec.LookPath("go")
-	if err != nil {
-		return "", err
-	}
-	out := filepath.Join(buildDir, name)
-	command := exec.Command(goBinary, append([]string{"build", "-buildvcs=false", "-o", out}, args...)...)
-	command.Dir = root
-	if output, err := command.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("contracttest: go build %s: %w\n%s", strings.Join(args, " "), err, output)
-	}
-	return out, nil
-}
