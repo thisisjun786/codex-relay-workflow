@@ -551,7 +551,7 @@ func Test25_CLI24_worker_policy_requirements_are_parsed_then_judged(t *testing.T
 		t.Fatal(bad)
 	}
 	missing := goldenAnswer(t, home, "--state", state, "doctor", "--require-worker-policy", "@"+filepath.Join(home, "absent.json"))
-	if missing["error"] != "usage" || !strings.Contains(missing["detail"].(string), "No such file") {
+	if missing["error"] != "usage" || !strings.Contains(missing["detail"].(string), "no such file or directory") {
 		t.Fatal(missing)
 	}
 	file := filepath.Join(home, "requirements.json")

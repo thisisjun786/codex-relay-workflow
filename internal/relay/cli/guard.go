@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
@@ -27,19 +28,19 @@ var guardEvaluateCommand = dispatch.Command{Name: "guard-evaluate", Exempt: true
 		if err == nil {
 			raw, err = os.ReadFile(path)
 		}
-		if err == nil {
-			_, err = store.DecodeUTF8(raw)
+		if err == nil && !utf8.Valid(raw) {
+			err = errors.New(path + " is not UTF-8 text")
 		}
 		if err != nil {
-			return nil, &dispatch.UsageError{Detail: "the Stop payload file could not be read: " + store.PythonOSErrorText(err), Code: contract.ExitUsage}
+			return nil, &dispatch.UsageError{Detail: "the Stop payload file could not be read: " + err.Error(), Code: contract.ExitUsage}
 		}
 	} else {
 		raw, err = io.ReadAll(os.Stdin)
 		if err != nil {
 			return nil, err
 		}
-		if _, err := store.DecodeUTF8(raw); err != nil {
-			return nil, &dispatch.HostError{Class: "UnicodeDecodeError", Detail: err.Error()}
+		if !utf8.Valid(raw) {
+			return nil, dispatch.Host("the Stop payload on stdin is not UTF-8 text")
 		}
 	}
 	v, err := hook.Decode(raw)
@@ -128,8 +129,8 @@ func routeGuard(ctx context.Context, s dispatch.Services, stop hook.Object, opti
 	switch {
 	case err != nil:
 		// Sent, then failed: the owner may hold part of the request, so it is neither refused
-		// nor evaluated here (cli.main's f"{type(error).__name__}: {error}").
-		return nil, true, errors.New(store.PythonOSError(err))
+		// nor evaluated here.
+		return nil, true, dispatch.Host(err.Error())
 	case answer == nil:
 		// The read-only Stop path verifies the durable owner without copying the store or
 		// creating a sidecar, and writes nothing to it.

@@ -380,8 +380,8 @@ Running it does not wake a parent, write a queue, or publish a new report.
 Before the business turn, authorization is checked again after resume. A known paused, archived,
 busy or unreadable recipient is withheld. An external UI change can still race the final host
 read and `turn/start`: the host offers no atomic conditional start. Raw bridge calls are outside
-this managed admission boundary. Malformed JSON requests exit 4; missing CLI arguments follow
-argparse's exit 2 on stderr. Refused or incomplete admission
+this managed admission boundary. Malformed JSON requests exit 4; missing CLI arguments are a
+usage error, exit 2 on stderr. Refused or incomplete admission
 exits 2; admitted requests exit 0. Transport failures retain the existing host-error behavior.
 
 ### Admission identity after an update
@@ -421,7 +421,7 @@ subcommand, the same shape as `reportingArgv`:
 
 The answer uses schema `reporting-observation/1`. `reportingState` may be `unreported`,
 `reported`, `in_progress`, `unmanaged` (no selected marker), or `unmeasured`. A completed diagnosis, including `unmeasured`, exits 0.
-Malformed identity arguments exit 4. Missing required flags follow argparse and exit 2 on stderr.
+Malformed identity arguments exit 4. Missing required flags are a usage error: exit 2 on stderr.
 An absent store stays absent and is reported as missing evidence, not as a created database and
 not as proof that nothing happened.
 

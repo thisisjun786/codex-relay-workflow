@@ -89,9 +89,9 @@ const help = `Grade a finished live trial's intervention ledger (docs/live-trial
 
 Exit 0 when every judgment passed, 1 when one failed, 2 when the trial cannot be graded.`
 
-// parser is the ledger subcommand's argparse parser in trial_startup.py, so the command takes
-// what it takes: a unique prefix of --start, a value that looks like a negative number, and help
-// wherever -h is.
+// parser declares --start for the relay's command-line parser (decision R3C-1): the flag is
+// spelled in full, a value that looks like a negative number is a value, and -h or --help is help
+// wherever it stands.
 var parser = argparse.Spec{Actions: []argparse.Action{
 	{Flags: []string{"-h", "--help"}, Kind: "_HelpAction"},
 	{Flags: []string{"--start"}, Required: true},

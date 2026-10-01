@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -48,8 +49,8 @@ func (e *UsageError) ExitPayload() (contract.OrderedObject, int) {
 	return contract.OrderedObject{{Key: "error", Value: "usage"}, {Key: "detail", Value: e.Detail}}, e.Code
 }
 
-// HostError is an unexpected failure whose Python class name is known, so the host envelope
-// carries Python's f"{type(error).__name__}: {error}" unchanged.
+// HostError is an unexpected failure the host envelope names with a class: "<Class>: <Detail>".
+// The relay CLI's own failures answer through Host instead.
 type HostError struct {
 	Class  string
 	Detail string
@@ -60,6 +61,19 @@ func (e *HostError) Error() string { return e.Class + ": " + e.Detail }
 // ExitPayload is the host envelope.
 func (e *HostError) ExitPayload() (contract.OrderedObject, int) {
 	return hostEnvelope(e.Error())
+}
+
+// Host is a failure answered with the host envelope and this detail (exit 3), whatever the
+// command's family makes of an unclassified failure.
+func Host(detail string) error {
+	payload, code := hostEnvelope(detail)
+	return &PayloadExit{Payload: payload, Code: code}
+}
+
+// Detail is err's text for an answer's detail. The store's ErrNoHome keeps the words it is
+// stored with, which an answer leaves out of the error that wraps it.
+func Detail(err error) string {
+	return strings.Replace(err.Error(), store.ErrNoHome.Error()+": ", "", 1)
 }
 
 func hostEnvelope(detail string) (contract.OrderedObject, int) {

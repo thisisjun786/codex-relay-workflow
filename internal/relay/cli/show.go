@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
@@ -58,7 +59,7 @@ var showCommand = dispatch.Command{
 			return nil, err
 		}
 		if row == nil {
-			return nil, &dispatch.UsageError{Detail: "no event " + pyvalue.StrRepr(event), Code: contract.ExitUsage}
+			return nil, &dispatch.UsageError{Detail: fmt.Sprintf("no event %q", event), Code: contract.ExitUsage}
 		}
 		queued, err := opened.One(ctx, "SELECT * FROM deliveries WHERE event_id = ?", event)
 		if err != nil {

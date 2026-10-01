@@ -7,6 +7,7 @@ import (
 	"os"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -137,8 +138,7 @@ func argsOf(command string, args dispatch.Args) map[string]any {
 	return out
 }
 
-// hostDetail is the host envelope's detail, in Python's words, for a failure no other ending
-// classifies.
+// hostDetail is the host envelope's detail for a failure no other ending classifies.
 func hostDetail(err error) string {
 	if encode := store.EncodeError(err); encode != nil {
 		return encode.HostDetail()
@@ -155,7 +155,24 @@ func hostDetail(err error) string {
 	if detail, ok := store.PythonHostDetail(err); ok {
 		return detail
 	}
-	return "RuntimeError: " + err.Error()
+	return err.Error()
+}
+
+// jsonType names a decoded JSON value's type, for a refusal that says what it got.
+func jsonType(v any) string {
+	switch v.(type) {
+	case nil:
+		return "null"
+	case bool:
+		return "boolean"
+	case string:
+		return "string"
+	case []any:
+		return "array"
+	case Obj:
+		return "object"
+	}
+	return "number"
 }
 
 // HostCommand is installed by the production adapter at executable composition time.
@@ -171,7 +188,7 @@ func needsHost(c *cliRun) (any, error) {
 	if HostCommand != nil {
 		return HostCommand(c.ctx, c.command, c.state, c.socket, c.args, c.clock)
 	}
-	return nil, &dispatch.HostError{Class: "HostUnavailable", Detail: "the relay host adapter (bridge_adapter.py) is not ported to Go yet (todo 28)"}
+	return nil, dispatch.Host("this build registers no host adapter, so it cannot reach the host")
 }
 
 // Python re.match's $ also matches immediately before one final LF.
@@ -180,10 +197,10 @@ var eventIDPattern = regexp.MustCompile(`^[0-9a-f]{32}\n?$`)
 func cmdAckProof(c *cliRun) (any, error) {
 	event, turn := c.s("--event"), c.s("--turn")
 	if !eventIDPattern.MatchString(event) {
-		return nil, &dispatch.HostError{Class: "ValueError", Detail: "event id must be 32 lowercase hex characters"}
+		return nil, dispatch.Host("event id must be 32 lowercase hex characters")
 	}
 	if pyvalue.Strip(turn) == "" {
-		return nil, &dispatch.HostError{Class: "ValueError", Detail: "ack_turn_id must be a non-empty string"}
+		return nil, dispatch.Host("ack_turn_id must be a non-empty string")
 	}
 	return Obj{{Key: "eventId", Value: event}, {Key: "turnId", Value: turn}, {Key: "ackProof", Value: AckProof(event, turn)}}, nil
 }
@@ -215,10 +232,10 @@ func AckCommand(ctx context.Context, ack *Ack, rc *Reconciler, adapter Adapter, 
 	if adapter != nil && rc != nil {
 		// Python derives the proof before looking up the event or reading the host.
 		if !eventIDPattern.MatchString(event) {
-			return nil, &dispatch.HostError{Class: "ValueError", Detail: "event id must be 32 lowercase hex characters"}
+			return nil, dispatch.Host("event id must be 32 lowercase hex characters")
 		}
 		if pyvalue.Strip(ackTurn) == "" {
-			return nil, &dispatch.HostError{Class: "ValueError", Detail: "ack_turn_id must be a non-empty string"}
+			return nil, dispatch.Host("ack_turn_id must be a non-empty string")
 		}
 	}
 	if adapter != nil && rc != nil && proof == AckProof(event, ackTurn) {
@@ -357,13 +374,13 @@ func cmdVerdict(c *cliRun) (any, error) {
 		if strings.HasPrefix(raw, "@") {
 			content, err := os.ReadFile(raw[1:])
 			if err != nil {
-				return nil, &dispatch.HostError{Class: "FileNotFoundError", Detail: err.Error()}
+				return nil, dispatch.Host("--criteria could not be read: " + err.Error())
 			}
 			text = string(content)
 		}
 		parsed, err := loads(text)
 		if err != nil {
-			return nil, &dispatch.HostError{Class: "JSONDecodeError", Detail: err.Error()}
+			return nil, dispatch.Host("--criteria is not JSON: " + err.Error())
 		}
 		switch v := parsed.(type) {
 		case []any:
@@ -373,7 +390,7 @@ func cmdVerdict(c *cliRun) (any, error) {
 				findings = append(findings, f.Key)
 			}
 		default:
-			return nil, &dispatch.HostError{Class: "TypeError", Detail: fmt.Sprintf("'%s' object is not iterable", pyvalue.TypeName(v))}
+			return nil, dispatch.Host(fmt.Sprintf("--criteria is a JSON %s, not a list of findings", jsonType(v)))
 		}
 	}
 	if c.opt("--restoration") != nil {
@@ -395,7 +412,7 @@ func cmdVerdict(c *cliRun) (any, error) {
 			}
 		}
 		if len(marked) == 0 && wellFormed {
-			return nil, &dispatch.UsageError{Detail: "--restoration names " + pyvalue.StrRepr(c.s("--restoration")) + ", which is not one of the findings this verdict carries. The block travels inside a finding, so it names one", Code: contract.ExitUsage}
+			return nil, &dispatch.UsageError{Detail: "--restoration names " + strconv.Quote(c.s("--restoration")) + ", which is not one of the findings this verdict carries. The block travels inside a finding, so it names one", Code: contract.ExitUsage}
 		}
 		for _, list := range [][]any{criteria, findings} {
 			for i, item := range list {
@@ -408,7 +425,7 @@ func cmdVerdict(c *cliRun) (any, error) {
 				}
 				existing, present := get(o, "restoration")
 				if present && existing == false {
-					return nil, &dispatch.UsageError{Detail: "--restoration names " + pyvalue.StrRepr(wanted) + ", whose finding declares the restoration block false. One correction carries one block and says so once", Code: contract.ExitUsage}
+					return nil, &dispatch.UsageError{Detail: "--restoration names " + strconv.Quote(wanted) + ", whose finding declares the restoration block false. One correction carries one block and says so once", Code: contract.ExitUsage}
 				}
 				if present && existing != nil {
 					if _, isBool := existing.(bool); !isBool {

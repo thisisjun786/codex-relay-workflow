@@ -277,9 +277,9 @@ func TestDoctor_matches_python_with_a_declared_execution_policy(t *testing.T) {
 
 const policyEnv = "CODEX_THREAD_BRIDGE_EXECUTION_POLICY"
 
-// --kind-module names a Python module, which this build cannot import: the answer is the one
-// Python gives for a module it cannot import, including the empty and relative spellings.
-func TestKindModule_matches_python_for_an_unimportable_module(t *testing.T) {
+// --kind-module takes a kind module the relay declares; any other name, empty, relative or nested
+// under the relay's package included, is a usage error (exit 4) before the command runs.
+func TestKindModule_refuses_a_module_the_relay_does_not_declare(t *testing.T) {
 	home := tempHome(t)
 	state := filepath.Join(home, "state")
 	for _, argv := range [][]string{
@@ -287,24 +287,18 @@ func TestKindModule_matches_python_for_an_unimportable_module(t *testing.T) {
 		{"--kind-module", "a", "--kind-module", "b.c", "doctor"},
 		{"--kind-module", "", "status"},
 		{"--kind-module", "..x", "store-identity"},
-		// Parsing comes first: an unknown command is argparse's exit 2 before any import. The
-		// choices listed differ only by the commands this build does not register yet.
+		{"--json", "--kind-module", "codex_session_relay.not_real", "status"},
+		// Parsing comes first: an unknown command is the parser's exit 2 before any import.
 		{"--kind-module", "nosuch", "bogus"},
 	} {
 		argv := append([]string{"--state", state}, argv...)
 		key := answerKey(t, argv)
 		got := golang(t, home, argv...)
-		// The choices an unknown command lists differ by the commands this build registers: the
-		// line is compared up to them.
-		compared := lastLine(got.stderr)
-		if strings.Contains(compared, "invalid choice") {
-			compared = compared[:max(0, strings.Index(compared, "(choose"))]
-		}
-		expectJSON(t, key, map[string]any{"code": got.code, "stdout": got.stdout, "stderr": compared}, append([]string{home}, argv...)...)
+		expectJSON(t, key, map[string]any{"code": got.code, "stdout": got.stdout, "stderr": lastLine(got.stderr)}, append([]string{home}, argv...)...)
 	}
 }
 
-func TestDelivery_kind_module_refusal_matches_python_before_ack_proof(t *testing.T) {
+func TestDelivery_kind_module_refusal_comes_before_ack_proof(t *testing.T) {
 	home := tempHome(t)
 	args := []string{"--kind-module", "does_not_exist", "ack-proof", "--event", "0123456789abcdef0123456789abcdef", "--turn", "turn-1"}
 	for _, argv := range [][]string{args, args[2:]} {
@@ -314,7 +308,7 @@ func TestDelivery_kind_module_refusal_matches_python_before_ack_proof(t *testing
 	}
 }
 
-func TestRegistry_kind_module_refusal_matches_python_before_register(t *testing.T) {
+func TestRegistry_kind_module_refusal_comes_before_register(t *testing.T) {
 	home := tempHome(t)
 	state := filepath.Join(home, "state")
 	args := []string{"--state", state, "--kind-module", "does_not_exist", "register",

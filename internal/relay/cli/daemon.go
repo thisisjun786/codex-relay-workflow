@@ -7,8 +7,6 @@ import (
 	"math"
 	"os"
 	"os/signal"
-	"strings"
-	"syscall"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
@@ -20,7 +18,6 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/service"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 )
 
 // DaemonFactory is wired once at executable composition, before command execution.
@@ -74,15 +71,7 @@ func integerOption(args dispatch.Args, name string) *int {
 	if !args.Given(name) {
 		return nil
 	}
-	n := args.Integer(name)
-	i := int(n.Int64())
-	if !n.IsInt64() {
-		if n.Sign() > 0 {
-			i = int(^uint(0) >> 1)
-		} else {
-			i = -int(^uint(0) >> 1)
-		}
-	}
+	i := int(args.Integer(name).Int64()) // the parser reads an int option within int64
 	return &i
 }
 func serviceError(err error) error {
@@ -94,22 +83,8 @@ func serviceError(err error) error {
 	if errors.As(err, &refusal) {
 		return &dispatch.PayloadExit{Code: 2, Payload: contract.OrderedObject{{Key: "ok", Value: false}, {Key: "reason", Value: refusal.Reason}, {Key: "detail", Value: nullableText(refusal.Detail)}}}
 	}
-	if errors.Is(err, ownership.ErrNoHome) {
-		// Already the fence's host detail, RuntimeError: Could not determine home directory.
-		return err
-	}
-	if errors.Is(err, service.ErrEmbeddedNUL) {
-		// The launcher's environment assignment (os.environ / subprocess.Popen).
-		return &dispatch.HostError{Class: "ValueError", Detail: service.ErrEmbeddedNUL.Error()}
-	}
-	var errno syscall.Errno
-	if errors.As(err, &errno) {
-		// main's f"{type(error).__name__}: {error}" for an OSError.
-		class, text, _ := strings.Cut(store.PythonOSError(err), ": ")
-		return &dispatch.HostError{Class: class, Detail: text}
-	}
 	if err != nil {
-		return &dispatch.HostError{Class: "RuntimeError", Detail: err.Error()}
+		return dispatch.Host(err.Error())
 	}
 	return nil
 }
@@ -141,7 +116,7 @@ func applyLaunchPolicy(s *service.Service) error {
 	}
 	value, recorded, err := service.LaunchVariable(resolution)
 	if err != nil {
-		return &dispatch.HostError{Class: "ValueError", Detail: err.Error()}
+		return dispatch.Host(err.Error())
 	}
 	if recorded {
 		return os.Setenv(execution.EnvPolicy, value)
@@ -375,7 +350,7 @@ func runDaemon(ctx context.Context, services dispatch.Services, args dispatch.Ar
 	}
 	reports, err := daemon.Run(ctx, d.Tick, clock, d.Policy.PollInterval, maxTicks, deadline, stop, func(seconds float64) error { return daemon.SchedulerWait(ctx, clock, deadline, seconds) })
 	if err != nil {
-		return nil, &dispatch.HostError{Class: "ValueError", Detail: err.Error()}
+		return nil, dispatch.Host(err.Error())
 	}
 	if len(reports) == 0 && bound != nil && service.Monotonic() >= *bound && !noTicks {
 		return nil, spent("the bound was spent while this run was taking its locks and building its adapter, so it began with nothing left and took no tick")

@@ -1,9 +1,8 @@
 // Package dispatch is the relay CLI's one command table and the one path every relay command
-// line takes through it, as cli.py main does: argparse's root parse (once, for the global
-// options), the command's own parse, the selected store's checks in cli.main's order
-// (check_start, the selection refusal, then admission or --kind-module), the handler, and one
-// JSON document on stdout for every ending but a line argparse rejects (exit 2, usage on
-// stderr).
+// line takes through it: the root parse (once, for the global options), the command's own
+// parse, the selected store's checks in cli.main's order (check_start, the selection refusal,
+// then admission or --kind-module), the handler, and one JSON document on stdout for every
+// ending but a line the parser cannot read (exit 2, usage on stderr).
 //
 // Every relay command registers here from its own package (Register): cli's, the registry's
 // (with the linkage and merge-turn commands), delivery's (with the marker commands), the faults',
@@ -17,23 +16,23 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/selection"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
-// Command is one relay command: the parser argparse.Specs[Name] reads its line, Run answers it.
+// Command is one relay command: its parser, argparse.Specs[Name], reads its line; Run answers it.
 type Command struct {
 	// Name is the command's parser: a root subcommand, or "service <sub>" for one of service's.
 	Name string
 	// Run is the handler, reached once the selected store passed the checks below.
 	Run func(context.Context, Services, Args) (any, error)
-	// Defaults are the argparse defaults of the options Run reads when the line omits them.
+	// Defaults are the values of the options Run reads when the line omits them.
 	Defaults map[string]any
 
 	// ReadOnly is cli.py's READ_ONLY_COMMANDS, ReadOnlyWhen its _read_only_command for a form
@@ -51,8 +50,8 @@ type Command struct {
 	// OwnAdmission commands open their own admitted connection (service, daemon, managed-start
 	// and the marker commands), so dispatch admits no store before their handler.
 	OwnAdmission bool
-	// UsageHelp answers -h/--help with the usage line alone, never wrapped: the capacity and
-	// edit-region commands' help, which their goldens hold.
+	// UsageHelp answers -h/--help with the usage line alone (the capacity and edit-region
+	// commands').
 	UsageHelp bool
 
 	family *Family
@@ -112,10 +111,11 @@ func Names() []string {
 	return names
 }
 
-const parserExit = 2 // argparse's exit status for a command line it cannot parse
+const parserExit = 2 // the exit status of a command line the parser cannot read
 
-// Execute is cli.main for one relay command line; argv0 is how the CLI was invoked (its base
-// name is argparse's prog, and Services.Program spells the recovery commands with it).
+// Execute is the relay CLI for one command line; argv0 is how the CLI was invoked (its base
+// name is the program the usage lines name, and Services.Program spells the recovery commands
+// with it). The root options come before the command, the command's own after it.
 func Execute(ctx context.Context, argv0 string, argv []string, stdout, stderr io.Writer) (code int) {
 	defer func() {
 		if value := recover(); value != nil {
@@ -131,70 +131,37 @@ func Execute(ctx context.Context, argv0 string, argv []string, stdout, stderr io
 		prog = prog[i+1:]
 	}
 	root := argparse.Parse("", argv)
-	if root.Help {
-		fmt.Fprint(stdout, argparse.Help(prog, ""))
-		return contract.ExitOk
+	if code, done := parsedLine(stdout, stderr, prog, "", root); done {
+		return code
 	}
-	if root.Message != "" {
-		fmt.Fprint(stderr, root.Error(prog, ""))
-		return parserExit
-	}
-	remaining := root.Remaining
-	if len(root.Unknown) > 0 {
-		// argparse reports unknown root options after the subcommand parsed, so its help and
-		// its own errors come first.
-		childName := remaining[0]
-		child := argparse.Parse(childName, remaining[1:])
-		if childName == "service" && child.Message == "" && !child.Help {
-			childName += " " + child.Remaining[0]
-			child = argparse.Parse(childName, append(append([]string{}, child.Unknown...), child.Remaining[1:]...))
-		}
-		if child.Help {
-			fmt.Fprint(stdout, argparse.Help(prog, childName))
-			return contract.ExitOk
-		}
-		if child.Message != "" && !child.Global {
-			fmt.Fprint(stderr, child.Error(prog, childName))
-			return parserExit
-		}
-		message := "unrecognized arguments: " + strings.Join(root.Unknown, " ")
-		if child.Message != "" {
-			message += " " + strings.TrimPrefix(child.Message, "unrecognized arguments: ")
-		}
-		return parseError(stderr, prog, message)
-	}
-	name, line := remaining[0], remaining[1:]
+	name, line := root.Remaining[0], root.Remaining[1:]
 	var positionals []string
 	if name == "service" {
 		parent := argparse.Parse(name, line)
-		if parent.Help {
-			fmt.Fprint(stdout, argparse.Help(prog, name))
-			return contract.ExitOk
-		}
-		if parent.Message != "" {
-			fmt.Fprint(stderr, parent.Error(prog, name))
-			return parserExit
+		if code, done := parsedLine(stdout, stderr, prog, name, parent); done {
+			return code
 		}
 		positionals = []string{parent.Remaining[0]}
 		name += " " + parent.Remaining[0]
-		line = append(append([]string{}, parent.Unknown...), parent.Remaining[1:]...)
+		line = parent.Remaining[1:]
 	}
 	command := table[name]
 	if command == nil {
-		return parseError(stderr, prog, fmt.Sprintf("argument command: invalid choice: %s (choose from %s)", pyvalue.StrRepr(remaining[0]), choices()))
+		// A command this build does not register: the parser that read its name refuses it.
+		parent, word, who := "", name, prog
+		if len(positionals) > 0 {
+			parent, word, who = "service", positionals[0], prog+" service"
+		}
+		fmt.Fprintf(stderr, "%s\n%s: error: argument command: invalid choice: %q (see %s --help)\n", argparse.Usage(prog, parent), who, word, who)
+		return parserExit
 	}
 	parsed := argparse.Parse(name, line)
 	if parsed.Help && command.UsageHelp {
-		fmt.Fprintln(stdout, strings.Join(append([]string{"usage:", prog, name}, argparse.Specs[name].Parts...), " "))
+		fmt.Fprintln(stdout, argparse.Usage(prog, name))
 		return contract.ExitOk
 	}
-	if parsed.Help {
-		fmt.Fprint(stdout, argparse.Help(prog, name))
-		return contract.ExitOk
-	}
-	if parsed.Message != "" {
-		fmt.Fprint(stderr, parsed.Error(prog, name))
-		return parserExit
+	if code, done := parsedLine(stdout, stderr, prog, name, parsed); done {
+		return code
 	}
 	ctx, admitted := store.WithAdmitted(ctx)
 	defer func() { _ = admitted.Release() }()
@@ -209,24 +176,18 @@ func Execute(ctx context.Context, argv0 string, argv []string, stdout, stderr io
 	return emit(stdout, stderr, result, err, command.family)
 }
 
-func parseError(stderr io.Writer, prog, message string) int {
-	fmt.Fprintln(stderr, argparse.Usage(prog, ""))
-	fmt.Fprintf(stderr, "%s: error: %s\n", prog, message)
-	return parserExit
-}
-
-// choices names the registered commands, for a root choice this build does not implement.
-func choices() string {
-	var names []string
-	seen := map[string]bool{}
-	for _, command := range order {
-		name, _, _ := strings.Cut(command.Name, " ")
-		if !seen[name] {
-			seen[name] = true
-			names = append(names, pyvalue.StrRepr(name))
-		}
+// parsedLine ends a command line the parser answered: its help on stdout (exit 0), or why it
+// cannot be read on stderr (exit 2). done is false for a line to run.
+func parsedLine(stdout, stderr io.Writer, prog, name string, parsed argparse.Result) (code int, done bool) {
+	switch {
+	case parsed.Help:
+		fmt.Fprint(stdout, argparse.Help(prog, name))
+		return contract.ExitOk, true
+	case parsed.Message != "":
+		fmt.Fprint(stderr, parsed.Error(prog, name))
+		return parserExit, true
 	}
-	return strings.Join(names, ", ")
+	return 0, false
 }
 
 // globals are the root parser's options.
@@ -247,12 +208,11 @@ func (c *Command) run(ctx context.Context, g globals, args Args) (any, error) {
 	services := Services{SocketPath: g.socket, AdapterRequested: g.socket != "", Program: selection.Program(g.argv0)}
 	selected := !c.Unselected && (c.SelectsNoStore == nil || !c.SelectsNoStore(args))
 	if !c.Unselected {
+		// A state directory that cannot be resolved (a ~user with no home, a relative --state
+		// under a working directory that is gone) is one host answer for every family.
 		resolved, err := store.ResolveStateDir(g.state, g.socket)
 		if err != nil {
-			if errors.Is(err, store.ErrNoHome) {
-				return nil, &HostError{Class: "RuntimeError", Detail: "Could not determine home directory."}
-			}
-			return nil, err
+			return nil, Host("the state directory cannot be resolved: " + Detail(err))
 		}
 		services.Selection = resolved
 	}
@@ -310,14 +270,14 @@ func CheckSelection(services Services) error {
 	return nil
 }
 
-// kindModules are the modules --kind-module can import: the relay's static stand-in for
-// importlib.import_module, each with what importing it installs. json and os.path are importable
-// standard-library probes; codex_session_relay.projects is the publication-kind declaration the
-// product-routing tests import.
+// kindModules are the modules --kind-module may name, each with what naming it installs.
+// codex_session_relay.projects declares the product publication kinds (a credential holder names
+// it on routing's holder commands, docs/relay/product-routing.md); json and os.path are accepted
+// and install nothing (docs/port/known-defects.md).
 var kindModules = map[string]func(){"json": nil, "os.path": nil, "codex_session_relay.projects": nil}
 
-// OnKindModule makes importing module run install (the fault package installs the product
-// declarations when codex_session_relay.projects is imported).
+// OnKindModule makes naming module run install (the fault package installs the product
+// declarations when codex_session_relay.projects is named).
 func OnKindModule(module string, install func()) {
 	if _, known := kindModules[module]; !known {
 		panic("dispatch: unknown kind module " + module)
@@ -325,34 +285,28 @@ func OnKindModule(module string, install func()) {
 	kindModules[module] = install
 }
 
-// importKindModules is _import_kind_modules: the modules are imported in order and the first
-// that cannot be stops the command.
+// importKindModules installs the named kind modules in order. The first name that is not one
+// stops the command: an empty or relative name as a host error (exit 3), any other as a usage
+// error (exit 4).
 func importKindModules(names []string) error {
-	for _, candidate := range names {
-		if install := kindModules[candidate]; install != nil {
-			install()
-		}
-		if candidate == "" {
-			return &HostError{Class: "ValueError", Detail: "Empty module name"}
-		}
-		if strings.HasPrefix(candidate, ".") {
-			return &HostError{Class: "TypeError", Detail: "the 'package' argument is required to perform a relative import for " + pyvalue.StrRepr(candidate)}
-		}
-		if _, known := kindModules[candidate]; known {
-			continue
-		}
-		missing := candidate
-		parts := strings.Split(candidate, ".")
-		for i := 1; i < len(parts); i++ {
-			prefix := strings.Join(parts[:i], ".")
-			if _, known := kindModules[prefix]; prefix == "codex_session_relay" || known {
-				continue
+	for _, name := range names {
+		install, known := kindModules[name]
+		switch {
+		case known:
+			if install != nil {
+				install()
 			}
-			missing = prefix
-			break
+			continue
+		case name == "" || strings.HasPrefix(name, "."):
+			return Host(fmt.Sprintf("--kind-module %q is not an absolute module name", name))
 		}
+		declared := make([]string, 0, len(kindModules))
+		for module := range kindModules {
+			declared = append(declared, module)
+		}
+		slices.Sort(declared)
 		return &UsageError{
-			Detail: "--kind-module " + pyvalue.StrRepr(candidate) + " could not be imported: No module named " + pyvalue.StrRepr(missing),
+			Detail: fmt.Sprintf("--kind-module %q is not a module this relay knows; it knows %s", name, strings.Join(declared, ", ")),
 			Code:   contract.ExitUsage,
 		}
 	}

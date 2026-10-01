@@ -4060,3 +4060,230 @@ returned only and now quote as Go does.
 
 Evidence: internal/relay/faults/{cli.go,commands_f1.go}, internal/relay/routing/{cli.go,products.go};
 the faults and routing goldens (message prose only).
+
+## Decision R3C-1. The relay CLI reads its command lines with its own parser, not an argparse emulation (refactor R3)
+
+(Placeholder heading: the next free number is given when the R3 groups merge.)
+
+Decision: `internal/relay/argparse` stops reproducing CPython 3.13's argparse and reads relay
+command lines with a parser of its own, driven by `specs.json`, which now declares each parser's
+options only: flag, whether it takes a value (`append` keeps every one, `true`/`false` take
+none), type (`int`, `float`), choices, required, its help line, the groups whose options exclude
+one another, and which parsers name a command with their first word (the root's and service's).
+The file went from 460 KB to 48 KB: the rendered usage parts, textwrap chunks, section tables,
+dests and headers argparse's formatter needed are gone. What goes:
+
+- Abbreviations: an option is its full flag (`--subj` for `--subject` is an unrecognized
+  argument, where argparse took a unique prefix and refused an ambiguous one). No skill, doc,
+  contract fixture or product subprocess call spells a relay flag short of its declaration;
+  only the argparse byte tests did.
+- `-hx` as help, and `--help=x`/`-h=x` read as help: help is `-h` or `--help` as a token of its own
+  (still wherever it stands among words the parser does not know).
+- argparse's prose and layout: usage and help are one line per option, never wrapped and never
+  depending on `COLUMNS` or the terminal; messages quote a value Go's way (`%q`), not with
+  Python's repr; an unknown command or option is reported by the parser that read it (the root
+  for a word before the command, the command's own after it, `crw relay service` for a service
+  word), where argparse reported every unrecognized word under the root parser; unrecognized
+  words are reported before a missing required option.
+- Python's number syntax: an int option is `strconv.ParseInt(text, 10, 64)` (no Unicode digits,
+  no underscores, no surrounding whitespace, nothing outside int64, see decision R3C-2) and a
+  float option is `strconv.ParseFloat`.
+
+What stays, because consumers read it: every command, flag and choice; exit 0 with the usage
+and every option on stdout for `-h`/`--help`; exit 2 with the usage line and the reason on
+stderr (nothing on stdout) for a line the parser cannot read, in the vocabulary the contract
+fixtures read (`invalid choice`, `the following arguments are required: <flags>`,
+`unrecognized arguments: <words>`, `expected one argument`, `not allowed with argument`); a
+value that looks like a negative number or holds a space is a value (`--session -1`,
+`--evidence "- merged by hand"`); global options before the command. The parsed result keeps its
+shape for the handlers (values by flag, an int as `*big.Int`, a float as `float64`), and the
+capacity and edit-region commands' help is still their usage line alone
+(`dispatch.Command.UsageHelp`). `argparse.ParseInt`/`ParseFloat` (Python's int()/float() of a
+text) stay for the packages that read stored or forge text with them; the parser does not use
+them. The development tools `crw-dev stop-events` and `crw-dev trial-ledger` read their lines
+with the same parser and change the same way.
+
+Consumer check: `git grep` over `plugins/crw/skills`, `plugins/crw/wiring`, `docs/` and
+`contract/` for every token that is a strict prefix of a declared flag finds none; the product's
+own relay argv (service's daemon launch, `crw doctor`/`install`/`exercise` through
+`scope.Relay`, the recovery and readback commands the relay prints) spells every flag in full;
+no Go caller and no skill reads a relay usage or help text; the two cli-shape fixtures that read
+stderr look for `invalid choice` and `required`, which the parser still says.
+
+Removed with it, as tests that pinned only argparse's bytes: the formatter test over every spec
+at five widths, `Test24ArgparsePython`, the built-binary argparse, runtime and root-parser sweeps
+with their 2,000-case fixture, the contract corpus's per-command argparse sweep and its sweep of
+the eleven routing commands' help and error lines at three widths (447 cases). The
+contract they shared is held instead by `TestParseReadsWhatTheSpecDeclares`,
+`TestTheRootParserStopsAtTheCommand`, `TestEveryParserListsItsOptions` (internal/relay/argparse)
+and `TestRun_every_relay_command_line_has_the_usage_contract` (cmd/crw: every registered
+command's help lists its options, an unknown option and a missing required option exit 2 with
+usage on stderr and nothing on stdout).
+
+Evidence: `internal/relay/argparse/argparse.go`, `specs.json`, `parse_test.go`;
+`internal/relay/dispatch/dispatch.go` (`Execute`, `parsedLine`); `cmd/crw/main_test.go`;
+`cmd/crw-dev/main_test.go`.
+
+## Decision R3C-2. An int option is a signed 64-bit integer (refactor R3)
+
+(Placeholder heading: the next free number is given when the R3 groups merge.)
+
+Decision: the parser refuses an int option's value outside int64 as a usage error (exit 2,
+`argument --x: invalid int value: "..."`), and `dispatch.Args.Number` answers an int option as an
+`int64` whether the line gave it or its default stands. Before, the parser accepted any Python
+integer as a `*big.Int`, so a value beyond int64 reached the handler and answered a host error
+about SQLite's INTEGER (`OverflowError: Python int too large to convert to SQLite INTEGER`,
+exit 3) or, for a command that stored nothing, whatever the handler made of it; it is now refused
+before any handler runs. `Args.Number` answered a given int as that `*big.Int` while its default
+was an `int64`, which is how the host adapter's `deliver --limit`/`verify-acks --limit` came to
+panic; R3S5 fixed the adapter (`hostLimit`, `TestHostCommandsReadAGivenLimit`, whose out-of-range
+rows now expect this refusal), and `Number` now hands every caller one type. The parsed value
+stays a `*big.Int` in `Result.Numbers` for the handlers that read it there.
+
+Consumer check: no skill, doc, fixture or product call passes an integer beyond int64 to a relay
+option; the numeric downstream test holds the extremes the parser accepts and one it refuses.
+
+Evidence: `internal/relay/argparse/argparse.go` (`convert`), `internal/relay/dispatch/args.go`
+(`Number`); `TestParseReadsWhatTheSpecDeclares`; `Test24NumericDownstreamBytes`
+(internal/relay/cli); `TestHostCommandsReadAGivenLimit` (internal/relay/adapter).
+
+## Decision R3C-3. `--kind-module` is checked by name, worded in Go; the import model goes (refactor R3)
+
+(Placeholder heading: the next free number is given when the R3 groups merge.)
+
+Decision: the relay's global `--kind-module` keeps accepting the three names it accepted,
+`codex_session_relay.projects` (the value docs/relay/product-routing.md tells a credential holder
+to pass), `json` and `os.path` (docs/port/known-defects.md), and keeps its exits: an empty or
+relative name is a host error (exit 3), any other unknown name a usage error (exit 4), before
+the command runs and after check_start and the selection refusal, as before. What goes is the
+stand-in for Python's `importlib.import_module`: the walk that named the first missing package
+(`No module named '<prefix>'`), Python's repr, and the `ValueError: Empty module name` and
+`TypeError: the 'package' argument is required ...` texts. The refusals now read
+`--kind-module "<name>" is not a module this relay knows; it knows codex_session_relay.projects,
+json, os.path` and `--kind-module "<name>" is not an absolute module name`. This follows the
+proposal of decision R3D-3, which moved the model out of the fault package.
+
+Consumer check: docs/relay/product-routing.md, docs/relay/faults.md and the invariants name only
+`codex_session_relay.projects` or a placeholder; no skill, contract fixture or product call passes
+`--kind-module`.
+
+What stays: the module's install hook (`dispatch.OnKindModule`, which the fault package uses to
+install the product declarations) and the order of the checks.
+
+Evidence: `internal/relay/dispatch/dispatch.go` (`kindModules`, `importKindModules`);
+`TestKindModule_refuses_a_module_the_relay_does_not_declare` (internal/relay/cli),
+`Test22_FLT_33_StaticKindModules` (internal/relay/faults).
+
+## Decision R3C-4. The relay CLI's own failures are worded in Go, without Python's exception classes (refactor R3)
+
+(Placeholder heading: the next free number is given when the R3 groups merge.)
+
+Decision: where the relay CLI's dispatch and the cli package's commands put a failure into an
+answer's `detail` (or a doctor field that is only shown), it is worded as Go says it, without a
+Python exception class in front and without Python's repr:
+
+- A `--state` (or `CODEX_SESSION_RELAY_STATE`) that cannot be resolved answers, for every command
+  family alike, `the state directory cannot be resolved: <why>` (exit 3, `error: host`), where
+  `<why>` is Go's (`cannot determine home directory for "x": user: unknown user x`). It was
+  `RuntimeError: Could not determine home directory.` for a missing home and the family's
+  unclassified failure otherwise. The store's `ErrNoHome` keeps its words, which the dispatch
+  leaves out of the answer.
+- `dispatch.Host(detail)` is the host envelope (exit 3) a command words itself; the service and
+  daemon commands' unclassified failures, a launch policy that cannot be applied, a daemon run
+  that fails, merge-evidence's forge failures (a missing `gh` is Go's `exec: "gh": executable
+  file not found in $PATH`) and a routed `guard-evaluate` whose owner failed mid-answer answer
+  through it, where they answered `ValueError: `, `RuntimeError: `, `OSError: `/`<errno class>: [Errno
+  N] ...` or `FileNotFoundError: [Errno 2] No such file or directory: 'gh'`.
+- The doctor's `actorReachability.socketConnect` is `ok`, `not configured`, or Go's dial error
+  (`dial unix <path>: connect: connection refused`) where it was
+  `ConnectionRefusedError: [Errno 111] Connection refused`; `crw doctor` reads only whether it is
+  `ok`. Its `accessReceipt.detail` quotes the measured and read identities as JSON
+  (`"store-1"`, `null`) where it used Python's repr.
+- A JSON document a caller hands a command (doctor's `--require-worker-policy`, the supervisor
+  commands' `--observation` files, merge-evidence's `--restate` record) is read strictly, as
+  encoding/json reads it: UTF-8 only, no `NaN`/`Infinity`, at most 10000 levels of nesting, with
+  Go's error text. CPython's `JSONDecodeError`/`UnicodeDecodeError` texts, Path.read_text's
+  universal newlines and the 9998-level `RecursionError` host error (exit 3, now the usage error
+  exit 4 every other unreadable record gets) go. Stored JSON (the mirror, process records,
+  stored settings, staged packets) is still read as leniently as any writer wrote it.
+- merge-evidence's `--timeout` is a duration: zero or less times out at once, and a value past
+  what a Go duration holds is the longest one, where CPython's poll conversion raised
+  `OverflowError` (exit 3) past 24.8 days.
+- Names and values inside messages are quoted with `%q` (`no event "x"`,
+  `the observation at "/p"`, `event "x" raises no obligation`), and a stored settings value
+  that is not an object is named by its JSON type (`an array`).
+
+Every `error`, `reason` and exit code stays, except the two edge inputs named above (a record
+nested past the cap, a timeout past 24.8 days). Consumer check: `plugins/crw/skills`, `docs/` and
+`contract/` hold none of the changed texts; `crw doctor`, `install` and `exercise` read the relay
+doctor's `socketConnect` only as `ok` and its other fields by name, never a `detail`.
+
+What stays: `dispatch.HostError` (`<Class>: <Detail>`), which the delivery, registry, sync and
+managed commands still raise (refactor R3D's and the store side's), and the error texts the cli
+package passes through from other packages unchanged (the store's and the evidence collector's).
+
+Evidence: `internal/relay/dispatch/{answer.go (Host),dispatch.go (run)}`;
+`internal/relay/cli/{daemon.go,doctor.go,guard.go,merge_evidence.go,pyvalue.go (decodeInput),
+sandbox.go,show.go,supervisor.go}`; `TestRun_unknown_user_state_is_a_host_error` (cmd/crw); the
+goldens of internal/relay/cli, internal/relay/hook and internal/contracttest.
+
+## Decision R3C-5. The doctor no longer echoes the process records' `python_compatibility_build`; `guard-evaluate` stays for now (refactor R3)
+
+(Placeholder heading: the next free number is given when the R3 groups merge.)
+
+Decision: `doctor`'s `ownership` block loses `processes` (`{"supervisor": ..., "worker": ...}`),
+the raw echo of `daemon.json`'s and `worker-policy.json`'s `python_compatibility_build`, which
+named the Python fence build a process ran. A Go process writes that key as null (decision 31);
+with no Python runtime left (decision 48) the echo can only say null or repeat a stale record.
+The records keep the key (they are stored, and the store keeps reading what Python wrote), and
+the block's six stamp keys, `phase`, `runtime_build` and `detail` are unchanged. Decision 54
+deferred this here because about 140 recorded Python answers held the block; they are goldens now.
+
+Consumer check: no skill, doc, contract fixture, `crw doctor`/`install`/`exercise` reading or Go
+caller reads `ownership.processes`; `git grep processes` over `plugins/`, `docs/relay/` and
+`contract/` finds no reader.
+
+Not removed, although survey B-03 names it: the `guard-evaluate` command. No skill, wiring file
+or product path runs it (the Stop hook evaluates in process or through `control.sock`'s
+`guard-evaluate` method, which stays), and docs/relay/operations.md only describes its
+selection exemption. But it is the binary surface the hook package's guard tests drive
+(`Test33Guard*`, `Test33PR181GuardDiscoveryPython`, `Test33ReviewD10`), and its routing is the only
+caller of `hook.RouteGuard`, `hook.SelectedStore` and `store.CheckStop`: removing it means moving
+those tests onto the hook's own entry and deleting those functions, in the store side's packages.
+It is left for that change. The hidden `service run --takeover-candidate` flag that the takeover
+candidate used left the parser in refactor R1 (decision 54); nothing of it remains in
+`specs.json`.
+
+Evidence: `internal/relay/cli/doctor.go` (`runDoctor`); `TestDoctor_ownership_block_matches_python_on_a_broken_store`
+(its "non-string process builds" case goes with the echo); the doctor goldens of
+internal/relay/cli, internal/relay/managed and internal/relay/supervisor.
+
+## Decision R3C-6. The delivery commands' entry layer answers in Go's words (refactor R3)
+
+(Placeholder heading: the next free number is given when the R3 groups merge.)
+
+Decision: the delivery package's command entry files (`cli.go`, `cli_emit.go`, `intent_cli.go`),
+which decision R3D-3's wave left to the relay CLI's, stop raising `dispatch.HostError` with a
+Python class: `ack-proof`'s and a routed `ack`'s malformed event or turn, `emit`'s generation,
+sentinel and event-identity refusals, `verdict`'s `--criteria` that cannot be read, is not JSON or
+is not a list (`FileNotFoundError: `, `JSONDecodeError: `, `TypeError: '<type>' object is not
+iterable`), `intent-declare`'s `--settings` that is not JSON (CPython's `JSONDecodeError` text)
+and an intent's store under an unknown `~user` (`RuntimeError: Could not determine home
+directory.`) answer through `dispatch.Host` with the same exit 3 and Go's words. The family's
+unclassified failure loses its `RuntimeError: ` prefix. The stale `HostUnavailable: the relay host
+adapter (bridge_adapter.py) is not ported to Go yet (todo 28)`, which only a build without the
+host adapter reaches, says that the build registers no host adapter. `--adjudicate` and
+`--restoration` echo their value with `%q` instead of Python's repr.
+
+Kept, because it is stored: the intent records' `store_unreadable`/`store_unopenable` details,
+the marker facts and everything the delivery domain writes; and the `KeyError: ` texts the host
+adapter's `reconcile` reads back (`adapter/cli.go`), which none of these paths produce.
+
+Consumer check: no skill or doc reads these details; the contract fixture
+`test_management_cli__test_an_argument_echoed_back_is_the_repr_of_its_str__adjudicate` expects
+the `%q` spelling now (its exits unchanged), and cli's `TestAnEchoedArgumentIsQuotedInTheRefusal`
+(was `TestAnEchoedArgumentIsPythonsReprOfIt`) holds both echoes.
+
+Evidence: `internal/relay/delivery/{cli.go,cli_emit.go,intent_cli.go}`;
+`internal/relay/dispatch/answer.go` (`Host`, `Detail`); the goldens of internal/relay/delivery,
+internal/relay/cli and internal/contracttest.

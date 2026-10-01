@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"math"
-	"math/big"
 	"os"
 	"os/exec"
 	"strings"
@@ -13,7 +12,6 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 var forgeRunner = func(ctx context.Context) evidence.Runner {
@@ -54,30 +52,13 @@ var mergeEvidenceCommand = dispatch.Command{Name: "merge-evidence", Unselected: 
 	forge.CallBudget = args.Integer("call-budget")
 	seconds := args.Integer("timeout")
 	forge.TimeoutSeconds = seconds.String()
-	forge.Timeout, err = subprocessTimeout(seconds)
-	if err != nil {
-		failure := err
-		forge.Run = func(argv []string, _ time.Duration) (int, string, string, error) {
-			// subprocess spawns before converting its timeout. Preserve missing-gh
-			// precedence, and keep a spent call budget from evaluating the timeout.
-			if _, err := exec.LookPath(argv[0]); err != nil {
-				return 0, "", "", &dispatch.HostError{Class: "FileNotFoundError", Detail: "[Errno 2] No such file or directory: 'gh'"}
-			}
-			return 0, "", "", failure
-		}
-	}
+	forge.Timeout = subprocessTimeout(seconds.Int64())
 	snapshot, err := evidence.Collect(forge, repository, number)
 	if err != nil {
-		if host, ok := err.(*dispatch.HostError); ok {
-			return nil, host
-		}
-		if host, ok := err.(*evidence.PythonError); ok {
-			return nil, &dispatch.HostError{Class: host.Class, Detail: host.Detail}
-		}
 		if _, lookupErr := exec.LookPath("gh"); lookupErr != nil {
-			return nil, &dispatch.HostError{Class: "FileNotFoundError", Detail: "[Errno 2] No such file or directory: 'gh'"}
+			return nil, dispatch.Host(lookupErr.Error())
 		}
-		return nil, &dispatch.HostError{Class: "RuntimeError", Detail: err.Error()}
+		return nil, dispatch.Host(err.Error())
 	}
 	ready := snapshot["verdict"] == evidence.Ready
 	if source, given := args.TruthyString("restate"); given {
@@ -115,32 +96,16 @@ var mergeEvidenceCommand = dispatch.Command{Name: "merge-evidence", Unselected: 
 	return payload, nil
 }}
 
-// subprocessTimeout follows Linux CPython's communicate -> PollSelector -> poll
-// conversion chain: float seconds, ceil milliseconds, signed PyTime_t, then C int.
-// Negative finite seconds time out before reaching poll, but still convert to float.
-func subprocessTimeout(seconds *big.Int) (time.Duration, error) {
-	fail := func(detail string) (time.Duration, error) {
-		return 0, &dispatch.HostError{Class: "OverflowError", Detail: detail}
+// subprocessTimeout is how long one gh call may take: --timeout seconds, none at all for zero or
+// less (the call times out at once), and the longest a time.Duration holds for more than that.
+func subprocessTimeout(seconds int64) time.Duration {
+	if seconds <= 0 {
+		return 0
 	}
-	value, _ := new(big.Float).SetInt(seconds).Float64()
-	if math.IsInf(value, 0) {
-		return fail("int too large to convert to float")
+	if seconds > math.MaxInt64/int64(time.Second) {
+		return math.MaxInt64
 	}
-	if value <= 0 {
-		return 0, nil
-	}
-	milliseconds := math.Ceil(value * 1e3)
-	if math.IsInf(milliseconds, 0) {
-		return fail("cannot convert float infinity to integer")
-	}
-	// poll converts its integer milliseconds to nanoseconds before narrowing to int32.
-	if milliseconds >= math.Exp2(63)/1e6 {
-		return fail("timestamp too large to convert to C PyTime_t")
-	}
-	if milliseconds > math.MaxInt32 {
-		return fail("timeout is too large")
-	}
-	return time.Duration(value * float64(time.Second)), nil
+	return time.Duration(seconds) * time.Second
 }
 
 func readRestatement(source string) (contract.OrderedObject, error) {
@@ -152,31 +117,15 @@ func readRestatement(source string) (contract.OrderedObject, error) {
 		raw, err = os.ReadFile(source)
 	}
 	if err != nil {
-		return nil, &dispatch.UsageError{Detail: "the record to restate could not be read: " + store.PythonOSErrorText(err), Code: contract.ExitUsage}
-	}
-	text, err := store.DecodeUTF8(raw)
-	if err != nil {
 		return nil, &dispatch.UsageError{Detail: "the record to restate could not be read: " + err.Error(), Code: contract.ExitUsage}
 	}
-	// Path.read_text uses universal newlines; sys.stdin retains CR bytes.
-	if source != "-" {
-		text = strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
-	}
-	// CPython's C scanner allows 9998 nested containers at this CLI boundary
-	// (the outer record plus 9997 nested values), independently of Python frames.
-	if message, recursion := store.PythonJSONErrorWithLimit(text, 9998); message != "" {
-		if recursion {
-			return nil, &dispatch.HostError{Class: "RecursionError", Detail: message}
-		}
-		return nil, &dispatch.UsageError{Detail: "the record to restate is not JSON: " + message, Code: contract.ExitUsage}
-	}
-	document, err := decodeJSON([]byte(text))
+	document, err := decodeInput(raw)
 	if err != nil {
 		return nil, &dispatch.UsageError{Detail: "the record to restate is not JSON: " + err.Error(), Code: contract.ExitUsage}
 	}
 	out, ok := document.(contract.OrderedObject)
 	if !ok {
-		return nil, &dispatch.UsageError{Detail: "the record to restate is an object, not a " + pyvalue.TypeName(document), Code: contract.ExitUsage}
+		return nil, &dispatch.UsageError{Detail: "the record to restate must be a JSON object, not " + jsonKind(document), Code: contract.ExitUsage}
 	}
 	return out, nil
 }

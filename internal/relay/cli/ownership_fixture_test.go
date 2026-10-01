@@ -3,8 +3,6 @@ package cli_test
 import (
 	"errors"
 	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
@@ -97,27 +95,4 @@ func selectedStoreID(t *testing.T, dir string, args []string) string {
 		return ""
 	}
 	return stamp.StoreID
-}
-
-// ownedTree hands every store under root to runtime.
-func ownedTree(t *testing.T, root, runtime string) {
-	t.Helper()
-	e := filepath.WalkDir(root, func(path string, d os.DirEntry, e error) error {
-		if errors.Is(e, os.ErrNotExist) {
-			return nil
-		}
-		if e != nil {
-			return e
-		}
-		if d.IsDir() && strings.HasPrefix(d.Name(), ".git") {
-			return filepath.SkipDir
-		}
-		if !d.IsDir() && d.Name() == "relay.sqlite3" {
-			ownedBy(t, path, runtime)
-		}
-		return nil
-	})
-	if e != nil {
-		t.Fatal(e)
-	}
 }

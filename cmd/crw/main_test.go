@@ -11,11 +11,9 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 )
 
-// The Python CLIs this binary replaces are argparse programs: -h/--help and the bridge's
-// --version print to stdout and exit 0, and a command line they cannot parse prints usage to
-// stderr and exits 2 (measured with `uv run --no-sync codex-thread-bridge --version|bogus` and
-// `codex-session-relay` with no command). crw's own help/version follow the same contract.
-func TestRun_help_and_version_exit_like_the_python_clis(t *testing.T) {
+// crw's help and version print to stdout and exit 0, and a command line it cannot read prints
+// usage to stderr and exits 2, as the relay's and the bridge's command lines do.
+func TestRun_help_and_version_exit_0_and_an_unreadable_line_exits_2(t *testing.T) {
 	for _, test := range []struct {
 		args   []string
 		code   int
@@ -39,24 +37,23 @@ func TestRun_help_and_version_exit_like_the_python_clis(t *testing.T) {
 	}
 }
 
-// Python's relay CLI has no --version: argparse refuses it with exit 2. The multi-call link
-// must answer the same, not print a version the Python CLI never printed.
-func TestRun_relay_link_has_no_version_flag_like_python(t *testing.T) {
+// The relay command line has no --version: its parser refuses it with exit 2, under the
+// codex-session-relay link too.
+func TestRun_relay_link_has_no_version_flag(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	if code := run(context.Background(), "/x/codex-session-relay", []string{"--version"}, &stdout, &stderr); code != 2 || stdout.Len() != 0 {
 		t.Fatalf("code=%d stdout=%q", code, stdout.String())
 	}
 }
 
-// An unknown ~user in --state is Python's pathlib RuntimeError: exit 3 with the host envelope.
-// Every command family resolves --state on the one dispatch path, so an unknown ~user reads alike
-// for each (decision R2B-2).
-func TestRun_unknown_user_state_is_a_python_host_error(t *testing.T) {
+// An unknown ~user in --state is a host error (exit 3) naming the user, worded alike by every
+// command family on the one dispatch path (decisions R2B-2, R3C-4).
+func TestRun_unknown_user_state_is_a_host_error(t *testing.T) {
 	for _, line := range [][]string{{"store-identity"}, {"settings-show", "--task", "t"}, {"claim", "--event", "e"},
 		{"intent-show", "--workspace", "w"}, {"fault-show", "--fault", "f"}, {"capacity-show"}, {"route-show"}, {"sync-status", "--relationship", "r"}} {
 		var stdout, stderr bytes.Buffer
 		code := run(context.Background(), "crw", append([]string{"relay", "--state", "~crw_user_that_does_not_exist_20/s"}, line...), &stdout, &stderr)
-		want := "{\n  \"error\": \"host\",\n  \"detail\": \"RuntimeError: Could not determine home directory.\"\n}\n"
+		want := "{\n  \"error\": \"host\",\n  \"detail\": \"the state directory cannot be resolved: cannot determine home directory for \\\"crw_user_that_does_not_exist_20\\\": user: unknown user crw_user_that_does_not_exist_20\"\n}\n"
 		if code != 3 || stdout.String() != want {
 			t.Fatalf("%v: code=%d stdout=%q", line, code, stdout.String())
 		}
@@ -107,26 +104,12 @@ func TestRun_install_dispatches_to_the_installer(t *testing.T) {
 	}
 }
 
-// The relay command table is complete: every subcommand of the relay CLI's root parser (and of
-// service's) is registered, and every command the doctor lists as offline or host required is one.
+// The relay command table is complete: every command the relay CLI's root parser (and service's)
+// declares is registered, and every command the doctor lists as offline or host required is one.
 func TestRun_every_relay_parser_choice_is_registered(t *testing.T) {
-	subcommands := func(spec string) []string {
-		for _, action := range argparse.Specs[spec].Actions {
-			if action.Kind == "_SubParsersAction" {
-				return action.Choices
-			}
-		}
-		t.Fatalf("parser %q has no subcommands", spec)
-		return nil
-	}
-	for _, name := range subcommands("") {
+	for _, name := range append(argparse.Commands(""), argparse.Commands("service")...) {
 		if !dispatch.Registered(name) {
 			t.Errorf("relay command %s is not registered", name)
-		}
-	}
-	for _, name := range subcommands("service") {
-		if _, ok := dispatch.Lookup("service " + name); !ok {
-			t.Errorf("service %s is not registered", name)
 		}
 	}
 	var stdout, stderr bytes.Buffer
@@ -150,7 +133,7 @@ func TestRun_every_relay_parser_choice_is_registered(t *testing.T) {
 	}
 }
 
-// Every relay command a package registers on the relay CLI is parsed by its argparse spec; the
+// Every relay command a package registers on the relay CLI is read by its declared parser; the
 // CLI has no second parser to fall back on (wave R1).
 func TestRun_every_relay_command_has_an_argparse_spec(t *testing.T) {
 	names := dispatch.Names()
@@ -160,6 +143,54 @@ func TestRun_every_relay_command_has_an_argparse_spec(t *testing.T) {
 	for _, name := range names {
 		if _, ok := argparse.Specs[name]; !ok {
 			t.Errorf("relay command %s has no argparse spec", name)
+		}
+	}
+}
+
+// The relay command line's contract, for every command: --help prints the command's usage and
+// options on stdout and exits 0; a line its parser cannot read prints the usage and the reason on
+// stderr, nothing on stdout, and exits 2, naming the flag it is missing or the word it does not
+// know (decision R3C-1). The handler never runs for either.
+func TestRun_every_relay_command_line_has_the_usage_contract(t *testing.T) {
+	relay := func(args ...string) (int, string, string) {
+		var stdout, stderr bytes.Buffer
+		code := run(context.Background(), "crw", append([]string{"relay", "--state", t.TempDir()}, args...), &stdout, &stderr)
+		return code, stdout.String(), stderr.String()
+	}
+	for _, name := range dispatch.Names() {
+		words := strings.Fields(name)
+		spec := argparse.Specs[name]
+		code, stdout, stderr := relay(append(words, "--help")...)
+		if code != 0 || stderr != "" || !strings.HasPrefix(stdout, "usage: crw relay "+name) {
+			t.Errorf("%s --help: exit %d stdout %q stderr %q", name, code, stdout, stderr)
+		}
+		for _, action := range spec.Actions {
+			if !strings.Contains(stdout, action.Flags[0]) {
+				t.Errorf("%s --help does not list %s", name, action.Flags[0])
+			}
+		}
+		code, stdout, stderr = relay(append(words, "--definitely-not-a-flag")...)
+		if code != 2 || stdout != "" || !strings.HasPrefix(stderr, "usage: crw relay "+name) || !strings.Contains(stderr, "unrecognized arguments: --definitely-not-a-flag") {
+			t.Errorf("%s --definitely-not-a-flag: exit %d stdout %q stderr %q", name, code, stdout, stderr)
+		}
+		var required []string
+		for _, action := range spec.Actions {
+			if action.Required {
+				required = append(required, action.Flags[0])
+			}
+		}
+		if len(required) == 0 {
+			continue
+		}
+		code, stdout, stderr = relay(words...)
+		if code != 2 || stdout != "" || !strings.Contains(stderr, "the following arguments are required: "+strings.Join(required, ", ")) {
+			t.Errorf("%s with no options: exit %d stdout %q stderr %q", name, code, stdout, stderr)
+		}
+	}
+	for _, line := range [][]string{{"no-such-command"}, {"service", "no-such-command"}, {"--no-such-option", "doctor"}, {"--state"}} {
+		code, stdout, stderr := relay(line...)
+		if code != 2 || stdout != "" || !strings.Contains(stderr, "usage: crw relay") || !strings.Contains(stderr, "error: ") {
+			t.Errorf("%q: exit %d stdout %q stderr %q", line, code, stdout, stderr)
 		}
 	}
 }

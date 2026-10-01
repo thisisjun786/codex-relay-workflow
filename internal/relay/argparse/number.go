@@ -10,8 +10,10 @@ import (
 	"unicode"
 )
 
-// Numbers are converted here, once, before dispatch. Python integers are not
-// machine integers: callers must narrow only at the boundary that needs it.
+// ParseInt and ParseFloat read a number's text as Python's int() and float() do (Unicode
+// digits, underscores, surrounding whitespace, int()'s 4300-digit limit), for the packages that
+// still read stored or forge text that way. The command-line parser does not use them: an
+// option's number is read Go's way (argparse.go).
 var intSyntax = regexp.MustCompile(`^[+-]?[0-9](?:_?[0-9])*$`)
 var floatSyntax = regexp.MustCompile(`^[+-]?(?:(?:[0-9](?:_?[0-9])*(?:\.(?:[0-9](?:_?[0-9])*)?)?|\.[0-9](?:_?[0-9])*)(?:[eE][+-]?[0-9](?:_?[0-9])*)?|(?i:inf(?:inity)?|nan))$`)
 
@@ -63,8 +65,8 @@ func ParseFloat(s string) (float64, bool) {
 	return n, err == nil || errors.Is(err, strconv.ErrRange)
 }
 
-// NumberText is the canonical spelling used by legacy string flag stores. The
-// typed value remains in Result.Numbers and is what numeric consumers receive.
+// NumberText is the canonical spelling a parsed number's text is kept in (Result.Values); the
+// typed value is in Result.Numbers.
 func NumberText(v any) string {
 	if n, ok := v.(*big.Int); ok {
 		return n.String()
