@@ -132,6 +132,29 @@ func TestTheRootParserStopsAtTheCommand(t *testing.T) {
 	}
 }
 
+// "--" ends the options of a parser that names commands, which takes the next word as its
+// command; a command's parser reads no words, so it refuses "--" with what follows it.
+func TestTheEndOfOptionsMarker(t *testing.T) {
+	for _, c := range []struct {
+		command   string
+		argv      []string
+		remaining []string
+		refusal   string
+	}{
+		{"", []string{"--", "doctor"}, []string{"doctor"}, ""},
+		{"", []string{"--state", "/s", "--", "doctor", "--issue", "x"}, []string{"doctor", "--issue", "x"}, ""},
+		{"", []string{"--"}, nil, "the following arguments are required: command"},
+		{"service", []string{"--", "status"}, []string{"status"}, ""},
+		{"", []string{"--", "--json"}, []string{"--json"}, ""},
+		{"doctor", []string{"--", "x"}, nil, "unrecognized arguments: -- x"},
+	} {
+		r := Parse(c.command, c.argv)
+		if r.Message != c.refusal || !slices.Equal(r.Remaining, c.remaining) {
+			t.Errorf("%q %q: message %q remaining %q; want %q %q", c.command, c.argv, r.Message, r.Remaining, c.refusal, c.remaining)
+		}
+	}
+}
+
 // Every declared parser can be asked for help, which lists every option it reads, and its usage
 // line names them too; every parser that names commands lists them.
 func TestEveryParserListsItsOptions(t *testing.T) {

@@ -184,12 +184,20 @@ func Parse(command string, argv []string) Result { return ParseSpec(Specs[comman
 
 // ParseSpec reads argv against spec. Options are read in order: the first that cannot be read
 // is the answer, unless -h or --help came first. Words the parser does not know are collected
-// and reported once the line is read, before a missing required option.
+// and reported once the line is read, before a missing required option. In a parser that names commands, "--" ends the options.
 func ParseSpec(spec Spec, argv []string) Result {
 	r := Result{Values: map[string][]string{}, Numbers: map[string]any{}, Given: map[string]bool{}}
 	var unknown []string
 	for i := 0; i < len(argv); i++ {
 		token := argv[i]
+		if token == "--" && spec.Commands {
+			// The end of options: the next word names the command, whatever it looks like. A
+			// command's parser reads no words, so there "--" is refused with what follows it.
+			if i+1 < len(argv) {
+				r.Remaining = argv[i+1:]
+			}
+			break
+		}
 		name, value, inline := strings.Cut(token, "=")
 		at := spec.find(name)
 		if at < 0 {
