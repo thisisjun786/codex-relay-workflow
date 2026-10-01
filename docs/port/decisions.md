@@ -3363,3 +3363,36 @@ Evidence: internal/dev/ci/{common.go,json.go,plugin.go,validate.go,operations.go
 internal/dev/ci/plugin_test.go (`Test47_PLG_11_DigestIsFramedAndCoversMode`,
 `Test47_PLG_18_JSONReport`), validate_test.go, ci_test.go (`TestACheckListsItsFlags`);
 docs/port/inventory.md (Files deleted with evidence); scripts/dev/ALLOWED_PYTHON.txt.
+
+## R3R-2. The development judges read records to a fixed depth and times as RFC 3339 (refactor R3)
+
+Decision: `crw-dev stop-events` and `crw-dev trial-ledger` stop modelling CPython where the
+model was only Python's own wording. What goes: `internal/dev/pyload`'s model of the
+interpreter's stack edge (a `RecursionError` with CPython's message, raised past 57,900
+containers and turned into a reader fault or "this run raised before it could report"), its
+CPython JSONDecodeError and UnicodeDecodeError texts and its 4300-digit integer refusal; and
+`internal/dev/trialledger/isoformat.go`, a port of CPython 3.14's `datetime.fromisoformat`
+(separator rules, week dates, hour 24, `timedelta` repr in its refusals). A record nested past
+`pyload.MaxNesting` is a record the judge could not read, like any other undecodable one, and a
+decode refusal is in encoding/json's words; the trial ledger reads a time with `time.Parse` as
+RFC 3339 and refuses one that names no offset as before. The trial ledger's read failures name
+the system's error (`lstat <path>: permission denied`) instead of `PermissionError: [Errno 13]`.
+
+Consumer check: `git grep` of `plugins/crw/skills`, `docs/`, `contract/` and the product for
+`stop-events`, `trial-ledger`, `readerFault` and the judges' refusal texts: no skill, hook, doc
+command or product code runs the judges or reads their output; they are developer tools whose
+JSON a person reads.
+
+What stays and why: the depth itself (57,900, past encoding/json's 10,000) and the reading of
+NaN, the infinities, lone surrogate escapes and repeated keys, because the judges read stored
+records (journal rows, host ledgers, trial ledgers) that the Python writers wrote and a reader
+of stored data keeps accepting what an earlier writer wrote. The verdicts, exits and field names
+of both judges are unchanged. Their remaining Python emulation (surrogateescape spelling of
+paths, `os.path.realpath`, `str.splitlines`, the dict-key `TypeError`, the argparse parser) is
+left for a later pass and listed in the R3R report.
+
+Evidence: internal/dev/pyload/pyload.go (`MaxNesting`, `Loads`) and pyload_test.go;
+internal/dev/trialledger/moment.go (`parseMoment`), fs.go (`failure`), ledger_test.go
+(`TestParseMomentReadsRFC3339`, `TestLedgerReadsRecordsAsDeepAsAWriterWrote`);
+internal/dev/stopevents/stopevents_test.go (`TestSEV12_OnDiskFormIsTheWriters`);
+docs/port/known-defects.md.

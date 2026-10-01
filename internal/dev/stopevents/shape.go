@@ -180,9 +180,6 @@ func readRecord(p string) (any, bool, bool) {
 		return nil, false, false
 	}
 	body, err := pyload.Loads(raw)
-	if python, deep := pyload.Recursion(err); deep {
-		panic(python) // _read_record catches ValueError only, so the reading stops here
-	}
 	if err != nil {
 		return nil, false, false
 	}

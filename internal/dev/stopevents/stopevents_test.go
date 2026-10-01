@@ -949,11 +949,10 @@ func TestSEV12_OnDiskFormIsTheWriters(t *testing.T) {
 			})
 		}
 	}
-	// A field the reader never types can hold anything its writer's JSON can, as deep as
-	// CPython 3.14's json nests: past encoding/json's 10000 the record still reads, and it is
-	// the writer's bytes. One container past the interpreter's edge, _read_record raises the
-	// RecursionError it does not catch and the reading stops there as a reader fault.
-	t.Run("a record nested as deep as Python reads one", func(t *testing.T) {
+	// A field the reader never types can hold anything its writer's JSON can, as deep as a Python
+	// writer could have written it: past encoding/json's 10000 the record still reads, and it is
+	// the writer's bytes. One container deeper the record cannot be read.
+	t.Run("a record nested as deep as a writer wrote one", func(t *testing.T) {
 		deep := func(depth int) any {
 			var v any = []any{}
 			for range depth - 1 {
@@ -967,7 +966,7 @@ func TestSEV12_OnDiskFormIsTheWriters(t *testing.T) {
 		}{
 			{"assignmentId", 10000},
 			{"observation", 20000},
-			{"guardRecordedAs", pyload.Nesting - 1},
+			{"guardRecordedAs", pyload.MaxNesting - 1}, // the record object is one container more
 		} {
 			h, records := oneEvent(t)
 			change(t, records[hook.Accepted], set(c.field, deep(c.depth)))
@@ -978,12 +977,8 @@ func TestSEV12_OnDiskFormIsTheWriters(t *testing.T) {
 			}
 		}
 		h, records := oneEvent(t)
-		change(t, records[hook.Accepted], set("assignmentId", deep(pyload.Nesting)))
-		code, answer := verify(t, append(roots(h.journal), "--codex-home", h.codex)...)
-		expectVerdict(t, code, answer, 3, "UNREADABLE")
-		if answer["readerFault"] != "RecursionError: maximum recursion depth exceeded while decoding a JSON array from a unicode string" {
-			t.Fatal(answer["readerFault"])
-		}
+		change(t, records[hook.Accepted], set("assignmentId", deep(pyload.MaxNesting)))
+		unreadable(t, h)
 	})
 	t.Run("a linked day or ledger directory", func(t *testing.T) {
 		for _, kind := range []string{hook.Accepted, "claim"} {

@@ -283,7 +283,7 @@ func moment(value any, what string) (time.Time, error) {
 	if strings.HasSuffix(text, "Z") {
 		text = text[:len(text)-1] + "+00:00"
 	}
-	at, aware, err := fromISOFormat(text)
+	at, aware, err := parseMoment(text)
 	if err != nil {
 		return time.Time{}, refuse(what+" is not an ISO-8601 timestamp", "value", value, "detail", err.Error())
 	}
@@ -313,9 +313,6 @@ func report(record object, path string) (object, error) {
 			continue
 		}
 		value, err := pyload.Loads([]byte(line))
-		if python, deep := pyload.Recursion(err); deep {
-			panic(python) // `except ValueError` does not catch a RecursionError
-		}
 		if err != nil {
 			return nil, refuse("a ledger line is not JSON", "line", number, "detail", err.Error())
 		}
