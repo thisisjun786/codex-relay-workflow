@@ -43,8 +43,8 @@ type ScanOptions struct {
 	// <home>/.codex-session-relay/scopes, home taken from the passwd entry as the relay takes it.
 	ScopeRegistry string
 	// Foreign keeps what another program's registration in hooks.json or config.toml could not be
-	// read or judged, which RegisteredMatching otherwise drops (shared; a seam for the tests of the
-	// grammar, which read such registrations).
+	// read or judged, a malformed entry of it included, which RegisteredMatching otherwise drops
+	// (shared; a seam for the tests of the grammar, which read such registrations).
 	Foreign bool
 }
 
@@ -186,8 +186,10 @@ func (s *scan) crwWord(word string) bool {
 // when the registration is CRW's: when a word it names or runs, a path it classifies, or where
 // that path resolves is a CRW program or lies in the destination. Another program's registration
 // that this reading cannot judge (a hook running an interpreter's script, a server started over
-// ssh) leaves a CRW runtime unused, so it never holds a removal back (decision 68). What
-// it finds inside the directory is kept whoever registered it.
+// ssh, an entry with a field of the wrong type) leaves a CRW runtime unused, so it never holds a
+// removal back (decision 68). A malformed entry is listed inside judge, after ownsMalformed has
+// read what it holds, so it is kept only when it could be CRW's. What it finds inside the
+// directory is kept whoever registered it.
 func (s *scan) shared(judge func()) {
 	if s.o.Foreign {
 		judge()
@@ -334,6 +336,34 @@ func texts(v any) ([]string, bool) {
 	return nil, false
 }
 
+// looseTexts is the strings of a value that is not the list of strings an MCP server's args are:
+// the string itself, or the strings among a list's items. What a malformed declaration still
+// says is judged as far as it can be read.
+func looseTexts(v any) []string {
+	switch value := v.(type) {
+	case string:
+		return []string{value}
+	case []any:
+		var out []string
+		for _, item := range value {
+			if text, ok := item.(string); ok {
+				out = append(out, text)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+// serverEntry is what server needs to read a declaration that is not a table Codex reads: its
+// name and the declaration as decoded (ownsMalformed reads what a typed field cannot carry),
+// and why it is no table at all when it is one of an array of tables.
+type serverEntry struct {
+	name     string
+	notTable string
+	raw      any
+}
+
 // malformed lists a declaration or record entry that is not what its reader takes: what it
 // runs, or which settings it reads, is unknown.
 func (s *scan) malformed(row int, source, field, what string) {
@@ -376,31 +406,47 @@ func lookPath(name, path string) (string, error) {
 // A hook command runs through a shell in the session's workspace, so it is judged as a program
 // (argvJudge) with no working directory: a relative word in it is unreadable.
 func (s *scan) hookCommands(row int, path string, document Object, pluginRoot string) {
-	// bad lists an entry that is not a hook declaration; one that may be a Stop hook also leaves
+	// list lists an entry that is not a hook declaration; one that may be a Stop hook also leaves
 	// the settings it reads unknown.
-	bad := func(field, what string, stop bool) {
+	list := func(field, what string, stop bool) {
 		s.malformed(row, path, field, what)
 		if stop {
 			s.stopSettings = append(s.stopSettings, stopSettings{source: path, field: field, problem: "the Stop declaration is malformed"})
 		}
 	}
+	// bad lists the malformed unit (an event, a group or a hook, as decoded). In hooks.json
+	// (row 9) another program's unit that names nothing of CRW's is dropped with the settings it
+	// would leave unknown (shared); the CRW plugin's own declarations (row 5) are always listed.
+	bad := func(field, what string, stop bool, unit any) {
+		if row != 9 {
+			list(field, what, stop)
+			return
+		}
+		s.shared(func() {
+			if !s.o.Foreign {
+				s.ownsMalformed(s.judge(row, path, field, "", s.expander(pluginRoot)), "", unit)
+			}
+			list(field, what, stop)
+		})
+	}
 	declared, present := record.Lookup(document, "hooks")
 	events, ok := declared.(Object)
 	if present && !ok {
-		bad("hooks", "hooks is "+reading.JSONKind(declared)+", not an object of events", true)
+		// The top-level structure: which entries hooks.json holds cannot be told.
+		list("hooks", "hooks is "+reading.JSONKind(declared)+", not an object of events", true)
 	}
 	for _, event := range events {
 		stop := event.Key == "Stop"
 		groups, ok := event.Value.([]any)
 		if !ok {
-			bad("hooks."+event.Key, "the event is "+reading.JSONKind(event.Value)+", not a list of groups", stop)
+			bad("hooks."+event.Key, "the event is "+reading.JSONKind(event.Value)+", not a list of groups", stop, event.Value)
 			continue
 		}
 		for g, group := range groups {
 			at := "hooks." + event.Key + "[" + strconv.Itoa(g) + "]"
 			hooks, ok := record.Get(asObject(group), "hooks").([]any)
 			if !ok {
-				bad(at+".hooks", "the group's hooks are "+reading.JSONKind(record.Get(asObject(group), "hooks"))+", not a list", stop)
+				bad(at+".hooks", "the group's hooks are "+reading.JSONKind(record.Get(asObject(group), "hooks"))+", not a list", stop, group)
 				continue
 			}
 			for h, hook := range hooks {
@@ -412,13 +458,13 @@ func (s *scan) hookCommands(row int, path string, document Object, pluginRoot st
 				_, isNumber := number(timeout)
 				switch {
 				case !isObject:
-					bad(field, "the hook is "+reading.JSONKind(hook)+", not an object", stop)
+					bad(field, "the hook is "+reading.JSONKind(hook)+", not an object", stop, hook)
 					continue
 				case !isText || (typed && kind != "command"):
-					bad(field, "the hook's command is "+reading.JSONKind(record.Get(one, "command"))+" and its type "+reading.Text(kind)+", not a command string", stop)
+					bad(field, "the hook's command is "+reading.JSONKind(record.Get(one, "command"))+" and its type "+reading.Text(kind)+", not a command string", stop, hook)
 					continue
 				case timed && !isNumber:
-					bad(field, "the hook's timeout is "+reading.JSONKind(timeout)+", not a number", stop)
+					bad(field, "the hook's timeout is "+reading.JSONKind(timeout)+", not a number", stop, hook)
 				}
 				judge := func() {
 					j := s.judge(row, path, field, "", s.expander(pluginRoot))
@@ -455,18 +501,29 @@ func asObject(v any) Object {
 // resolves against cwd, and is unreadable when cwd is not one this reading can place; a bare
 // command is found on env's PATH, else the reading's. versionDir is a cached plugin version's
 // directory, which a ./ or ${PLUGIN_ROOT} cwd names.
-func (s *scan) server(row int, source, field string, get func(string) any, versionDir string) {
+//
+// A declaration that is not what Codex reads (a field of the wrong type, or not a table) is
+// judged as far as it can be read, by this same code, and then read whole by ownsMalformed under
+// the same cwd, env and PATH; in config.toml (row 10) it is listed only when that finds CRW in
+// it (shared), and in the plugin's own cache (row 5) at once.
+func (s *scan) server(row int, source, field string, get func(string) any, versionDir string, entry serverEntry) {
 	command, isText := get("command").(string)
 	args, argsOK := texts(get("args"))
 	if _, isList := get("args").([]any); get("args") != nil && !isList {
 		argsOK = false
+	}
+	if !argsOK {
+		args = looseTexts(get("args"))
 	}
 	cwd, cwdOK := get("cwd").(string)
 	env := map[string]string{}
 	envOK := true
 	each := func(key string, v any) {
 		text, ok := v.(string)
-		env[key], envOK = text, envOK && ok
+		if ok {
+			env[key] = text
+		}
+		envOK = envOK && ok
 	}
 	switch declared := get("env").(type) {
 	case nil:
@@ -481,11 +538,16 @@ func (s *scan) server(row int, source, field string, get func(string) any, versi
 	default:
 		envOK = false
 	}
-	switch {
-	case get("command") == nil && get("url") != nil:
+	if get("command") == nil && get("url") != nil {
 		return // a server Codex reaches over HTTP starts nothing here
-	case !isText || command == "" || !argsOK || (!cwdOK && get("cwd") != nil) || !envOK:
-		s.malformed(row, source, field, "its command, args, cwd or env is not a non-empty string, a list of strings, a string and an object of strings")
+	}
+	what := "its command, args, cwd or env is not a non-empty string, a list of strings, a string and an object of strings"
+	if entry.notTable != "" {
+		what = entry.notTable
+	}
+	malformed := entry.notTable != "" || !isText || command == "" || !argsOK || (!cwdOK && get("cwd") != nil) || !envOK
+	if malformed && row != 10 {
+		s.malformed(row, source, field, what)
 		return
 	}
 	x := Expander{Vars: map[string]string{"HOME": s.o.Env.Get("HOME")}, Path: s.o.Env.Get("PATH")}
@@ -510,13 +572,26 @@ func (s *scan) server(row int, source, field string, get func(string) any, versi
 	for _, arg := range args {
 		argv = append(argv, literal(arg))
 	}
+	j := s.judge(row, source, field, cwd, x)
 	judge := func() {
-		for _, w := range argv {
-			s.ours = s.ours || s.crwWord(w.Value)
+		if malformed {
+			s.malformed(row, source, field, what)
+			if s.o.Foreign {
+				return
+			}
 		}
-		j := s.judge(row, source, field, cwd, x)
-		defer j.recovered(strings.Join(append([]string{command}, args...), " "))
-		j.argv(argv, false)
+		if command != "" {
+			for _, w := range argv {
+				s.ours = s.ours || s.crwWord(w.Value)
+			}
+			func() {
+				defer j.recovered(strings.Join(append([]string{command}, args...), " "))
+				j.argv(argv, false)
+			}()
+		}
+		if malformed {
+			s.ownsMalformed(j, entry.name, entry.raw)
+		}
 	}
 	if row == 10 {
 		s.shared(judge)
@@ -564,7 +639,7 @@ func (s *scan) pluginCache() {
 				}
 				for _, server := range servers {
 					entry := asObject(server.Value)
-					s.server(5, path, "mcpServers."+server.Key, func(key string) any { return record.Get(entry, key) }, base)
+					s.server(5, path, "mcpServers."+server.Key, func(key string) any { return record.Get(entry, key) }, base, serverEntry{})
 				}
 			}
 		}
@@ -925,7 +1000,16 @@ func (s *scan) configToml(_ context.Context) {
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		entry, _ := servers[name].(map[string]any)
-		s.server(10, path, "mcp_servers."+name, func(key string) any { return entry[key] }, "")
+		field := "mcp_servers." + name
+		switch entry := servers[name].(type) {
+		case map[string]any:
+			s.server(10, path, field, func(key string) any { return entry[key] }, "", serverEntry{name: name, raw: entry})
+		case []map[string]any: // [[mcp_servers.name]]: each table starts a server with its own cwd and env
+			for _, table := range entry {
+				s.server(10, path, field, func(key string) any { return table[key] }, "", serverEntry{name: name, notTable: "it is one of an array of tables, not a table", raw: table})
+			}
+		default:
+			s.server(10, path, field, func(string) any { return nil }, "", serverEntry{name: name, raw: entry})
+		}
 	}
 }

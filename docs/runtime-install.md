@@ -510,9 +510,20 @@ is CRW's: when a word it names or runs, a path it classifies, or where that path
 destination (spelled from `$HOME`, `${HOME}` or `~` too). Another tool's `SessionStart` hook
 running an interpreter's script, or a server started over `ssh` or by `node`, leaves a CRW runtime
 unused and no longer refuses a removal (decision 68); on the relay host three such entries did
-until todo 43 ran the removal against an edited copy of the Codex home. What any entry names inside
-the directory is still found, a file that cannot be read or parsed still refuses, and the CRW
-files (rows 4 and 5) refuse on anything they hold that cannot be judged.
+until todo 43 ran the removal against an edited copy of the Codex home. An entry with a field of the
+wrong type (a server whose `args` is `42`, a hook whose `command` is a list, an event that is not
+a list, a server that is not a table) is judged the same way: every string it holds is read as a
+shell line and as one program, under the entry's own `cwd`, `env` and `PATH`, and searched for
+the names above and the destination, and the entry holds a removal back only when that finds CRW in
+it. Its server name counts (CRW registers the bridge as `codex-thread-bridge`), its map keys are
+matched by spelling and never read as paths, and a number or boolean names nothing. What any entry
+names inside the directory is still found, a file that cannot be read or parsed, or whose top-level
+structure is not what the host reads (`hooks` that is not an object, `mcp_servers` that is not a
+table), still refuses, and the CRW files (rows 4 and 5) refuse on anything they hold that cannot be
+judged. `crw doctor` reads the same two files as one document the way Codex accepts it, so there a
+server of another program with `args = 42` makes the bridge's registration unreadable; the doctor
+asks whether the selected runtime is registered as the host reads it, and remove asks whether any
+registration can name the directory it would delete.
 
 Row 8, the `<CODEX_HOME>/crw-stop-hook.py` launcher copy, is no longer read (decision 67): the
 relay host holds none, and the Python bootstrap that fell back to it left the plugin cache with the
