@@ -50,9 +50,6 @@ type Command struct {
 	// OwnAdmission commands open their own admitted connection (service, daemon, managed-start
 	// and the marker commands), so dispatch admits no store before their handler.
 	OwnAdmission bool
-	// UsageHelp answers -h/--help with the usage line alone (the capacity and edit-region
-	// commands').
-	UsageHelp bool
 
 	family *Family
 }
@@ -156,10 +153,6 @@ func Execute(ctx context.Context, argv0 string, argv []string, stdout, stderr io
 		return parserExit
 	}
 	parsed := argparse.Parse(name, line)
-	if parsed.Help && command.UsageHelp {
-		fmt.Fprintln(stdout, argparse.Usage(prog, name))
-		return contract.ExitOk
-	}
 	if code, done := parsedLine(stdout, stderr, prog, name, parsed); done {
 		return code
 	}

@@ -4397,3 +4397,40 @@ of internal/relay/cli/guard_route_test.go, and `TestRouteGuard_reads_an_answer_w
 Evidence: internal/relay/cli/{registry.go,commands_list.go}; internal/relay/argparse/specs.json;
 internal/relay/hook/{control.go (`nesting`),guard_test.go,pr181_test.go,review_native_test.go};
 internal/relay/store/ownership.go (`CheckStartLikeFence`); internal/relay/cli/readonly_test.go.
+
+## Decision R3F-4. A parser test holds the parser's contract once, and each command's help as its golden (refactor R3, final sweep)
+
+Decision: the argparse-era sweeps that pinned the parser's prose per command are reduced to the
+contract, which one test holds for every relay command: cmd/crw's
+`TestRun_every_relay_command_line_has_the_usage_contract` (help on stdout, exit 0, naming the
+command and listing every option; an unknown option, a missing required option and now a value
+outside an option's choices answer exit 2 with the usage on stderr and nothing on stdout; and
+now: no store is created by any of them), beside internal/relay/argparse's own tests. A
+command family keeps one golden per command, its help:
+
+- routing's `Test23_ArgparseWidthsBuiltBinary` (1,410 keys: every command at three `COLUMNS`
+  widths under both program names, accepted and refused lines, abbreviations) is
+  `Test23_EachRoutingCommandPrintsItsHelp`, the eleven plain `--help` keys it held, unchanged;
+  its accepted-lines fixture is deleted;
+- faults' `TestFaultArgparseSurfaceMatchesPython` (help, no arguments, an unknown option and an
+  abbreviation per command) is `TestFaultCommandsPrintTheirHelp`, the help keys unchanged, and
+  `TestFaultArgparseAmbiguousPrefixMatchesPython` (an abbreviation, which the parser no longer
+  reads) is deleted;
+- service's `Test29CLIShape` keeps its ten `--help` goldens and drops the `--unknown` and
+  `--actor` ones;
+- supervisor's `Test24_RCL_1_HelpWholeStdoutBytes` stops setting `COLUMNS`, which nothing reads;
+  the other RCL tests already hold a command's answer or the exit and the missing flag;
+- cli's `TestAnEchoedArgumentIsQuotedInTheRefusal` is deleted: the contract corpus holds both
+  echoes' quoting (`test_management_cli__test_an_argument_echoed_back_is_the_repr_of_its_str__*`)
+  and `unencodable_argument_test.go` an argument that is not UTF-8.
+
+`dispatch.Command.UsageHelp`, which made the capacity and edit-region commands answer `--help`
+with the usage line alone as Python's capacity parser did, is gone: their help lists their
+options as every command's does. No golden held their help.
+
+Consumer check: no skill, doc or product code reads a relay command's help or usage text
+(decision R3C-1); docs/port/test-map.md's line about the routing sweep now names its successor.
+
+Evidence: cmd/crw/main_test.go; internal/relay/routing/cli_test.go; internal/relay/faults/
+argparse_test.go; internal/relay/service/parity_test.go; internal/relay/supervisor/rcl_test.go;
+internal/relay/dispatch/dispatch.go; internal/relay/capacity/cli.go.

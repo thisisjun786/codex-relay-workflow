@@ -722,9 +722,9 @@ Those supersede the earlier observer-only mutation examples.
 Receipts/refusals compare whole live-Python values and routing CLI replies compare
 insertion-order JSON bytes. Store replays compare every table except store identity
 metadata (`schema_meta`), retaining serialized JSON text and numeric spelling.
-`Test23_ArgparseWidthsBuiltBinary` covers accepted and rejected arguments for all
-11 commands, both executable names, at COLUMNS=80, 120 and unset, including bare
-`--`, `-- x`, abbreviations, dash-leading values and boolean `=value` errors.
+`Test23_EachRoutingCommandPrintsItsHelp` holds the help of all 11 commands; the
+accepted and rejected forms of their lines are the relay parser's contract for
+every command (cmd/crw and internal/relay/argparse, decision R3F-4).
 `Test23_BuiltCommandRoundTrips` and `Test23_PR_18_BuiltProjectKind` exercise real
 SQLite state through the built dispatcher, including refusals, duplicate intake,
 classification replay, and queue/claim/operation/complete project publication.
