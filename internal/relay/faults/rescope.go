@@ -3,6 +3,8 @@ package faults
 import (
 	"context"
 	"fmt"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // rescope changes the owning scope and re-points the bounded set of unsent writes
@@ -25,7 +27,7 @@ func (l *Ledger) rescopeCount(ctx context.Context, fault row, scope map[string]a
 		return 0, err
 	}
 	if other != nil {
-		return 0, fmt.Errorf("fault_scope_conflict: scope key %s is already carried by product %s; one product's issues are never filed through another's key", f1Repr(key), f1Repr(text(other, "product")))
+		return 0, fmt.Errorf("fault_scope_conflict: scope key %s is already carried by product %s; one product's issues are never filed through another's key", pyvalue.Quote(key), pyvalue.Quote(text(other, "product")))
 	}
 	if _, err = l.exec(ctx, "UPDATE fault_ledger SET scope=?,scope_key=?,updated_at=? WHERE fault_id=?", dumps(scope, false), key, now, text(fault, "fault_id")); err != nil {
 		return 0, err

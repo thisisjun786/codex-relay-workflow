@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -180,10 +181,10 @@ func (s *Service) Resolve(ctx context.Context, turn, actor, stated, prState, evi
 			default:
 				moved := ""
 				if r.CheckedBaseSHA.Valid && stated != r.CheckedBaseSHA.String {
-					moved = "; the base moved from " + pyvalue.StrRepr(r.CheckedBaseSHA.String) + " to " + pyvalue.StrRepr(stated) + ", which any unrelated commit also does"
+					moved = "; the base moved from " + strconv.Quote(r.CheckedBaseSHA.String) + " to " + strconv.Quote(stated) + ", which any unrelated commit also does"
 				}
-				// Raised inside the transaction, as Python does: it rolls back and records no contest.
-				return &store.RefusedError{Reason: string(contract.RefusalMergeEvidenceRequired), Detail: pyvalue.StrRepr(prState) + " does not say whether this candidate merged. Read the pull request and resolve again with merged, open or closed" + moved}
+				// Raised inside the transaction: it rolls back and records no contest.
+				return &store.RefusedError{Reason: string(contract.RefusalMergeEvidenceRequired), Detail: strconv.Quote(prState) + " does not say whether this candidate merged. Read the pull request and resolve again with merged, open or closed" + moved}
 			}
 			if tip.SHA == "" {
 				if landed {

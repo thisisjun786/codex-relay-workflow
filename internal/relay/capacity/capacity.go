@@ -205,7 +205,7 @@ func slotRecord(row store.ExecutionSlotsRow) contract.OrderedObject {
 // finite is Capacity._finite: a bound and a measurement are real, finite and not negative.
 func finite(value float64, what string) error {
 	if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
-		return refuse(contract.RefusalLinkNotActive, what+" is a finite number of zero or more, not "+pyjson.Float(value))
+		return refuse(contract.RefusalLinkNotActive, what+" is a finite number of zero or more, not "+strconv.FormatFloat(value, 'g', -1, 64))
 	}
 	return nil
 }
@@ -213,7 +213,7 @@ func finite(value float64, what string) error {
 // checkScope is Capacity._check_scope: the store scope has exactly one key.
 func checkScope(scopeKind, scopeKey string) error {
 	if scopeKind == scopeStore && scopeKey != scopeStore {
-		return refuse(contract.RefusalLinkNotActive, "the store scope has one key, "+pyvalue.StrRepr(scopeStore)+", not "+pyvalue.StrRepr(scopeKey)+
+		return refuse(contract.RefusalLinkNotActive, "the store scope has one key, "+strconv.Quote(scopeStore)+", not "+strconv.Quote(scopeKey)+
 			"; enforcement reads that key and a ceiling under any other would be recorded and never applied")
 	}
 	return nil
@@ -225,7 +225,7 @@ func checkScopeKind(scopeKind, what string) error {
 			return nil
 		}
 	}
-	return refuse(contract.RefusalLinkNotActive, "a "+what+" scope is one of "+strings.Join(scopes, ", ")+", not "+pyvalue.StrRepr(scopeKind))
+	return refuse(contract.RefusalLinkNotActive, "a "+what+" scope is one of "+strings.Join(scopes, ", ")+", not "+strconv.Quote(scopeKind))
 }
 
 // checkDeclarer is Capacity._check_declarer: the declarer owns the scope it speaks for; the
@@ -237,7 +237,7 @@ func (c *Capacity) checkDeclarer(ctx context.Context, scopeKind, scopeKey, actor
 			"  WHERE task_id = ? AND role = 'supervisor'"+
 			"    AND status IN ('active','paused') AND superseded_by IS NULL", actor).Scan(&task)
 		if noRows(err) {
-			return refuse(contract.RefusalScopeRoleMismatch, "task "+pyvalue.StrRepr(actor)+" holds no live supervisor binding, and the store"+
+			return refuse(contract.RefusalScopeRoleMismatch, "task "+strconv.Quote(actor)+" holds no live supervisor binding, and the store"+
 				" scope has no owner of its own to speak for it")
 		}
 		return err
@@ -255,10 +255,10 @@ func (c *Capacity) checkDeclarer(ctx context.Context, scopeKind, scopeKey, actor
 	}
 	which := ", which has " + strconv.Itoa(len(held)) + " live owners"
 	if len(held) == 1 {
-		which = ", which is held by " + pyvalue.StrRepr(held[0])
+		which = ", which is held by " + strconv.Quote(held[0])
 	}
-	return refuse(contract.RefusalScopeRoleMismatch, "task "+pyvalue.StrRepr(actor)+" is not the registered "+role+" of "+
-		scopeKind+" "+pyvalue.StrRepr(scopeKey)+which+", so it cannot state a bound for it")
+	return refuse(contract.RefusalScopeRoleMismatch, "task "+strconv.Quote(actor)+" is not the registered "+role+" of "+
+		scopeKind+" "+strconv.Quote(scopeKey)+which+", so it cannot state a bound for it")
 }
 
 // Reservation is Capacity.reserve's keyword arguments; Detail invalid is None.
@@ -448,14 +448,14 @@ func (c *Capacity) Release(ctx context.Context, in Release) (contract.OrderedObj
 			for i, t := range tenures {
 				numbers[i] = t.Tenure
 			}
-			return refuse(contract.RefusalDispositionConflict, in.SubjectKind+" "+pyvalue.StrRepr(in.SubjectKey)+" has tenures "+
-				pyvalue.Repr(numbers)+"; name the one this release settles, because the newest is not necessarily the one a"+
+			return refuse(contract.RefusalDispositionConflict, in.SubjectKind+" "+strconv.Quote(in.SubjectKey)+" has tenures "+
+				pyvalue.Quote(numbers)+"; name the one this release settles, because the newest is not necessarily the one a"+
 				" delayed notification is about")
 		case len(tenures) == 1:
 			row = &tenures[0]
 		}
 		if row == nil {
-			return refuse(contract.RefusalSlotUnknown, "no slot was ever reserved for "+in.SubjectKind+" "+pyvalue.StrRepr(in.SubjectKey))
+			return refuse(contract.RefusalSlotUnknown, "no slot was ever reserved for "+in.SubjectKind+" "+strconv.Quote(in.SubjectKey))
 		}
 		if row.ParentTaskID != in.ReleasedBy {
 			supervisor, err := above(ctx, c.Store, row.ProjectKey)
@@ -463,8 +463,8 @@ func (c *Capacity) Release(ctx context.Context, in Release) (contract.OrderedObj
 				return err
 			}
 			if supervisor == nil || !supervisor.owned || supervisor.owner != in.ReleasedBy {
-				return refuse(contract.RefusalScopeRoleMismatch, "slot "+pyvalue.StrRepr(row.SlotID)+" is held by "+
-					pyvalue.StrRepr(row.ParentTaskID)+", so "+pyvalue.StrRepr(in.ReleasedBy)+" cannot release it")
+				return refuse(contract.RefusalScopeRoleMismatch, "slot "+strconv.Quote(row.SlotID)+" is held by "+
+					strconv.Quote(row.ParentTaskID)+", so "+strconv.Quote(in.ReleasedBy)+" cannot release it")
 			}
 		}
 		if row.State == released {

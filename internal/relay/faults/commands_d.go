@@ -9,57 +9,12 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 )
 
 var dNames = []string{"fault-policy", "fault-limit", "fault-attention", "fault-relink", "fault-notifications", "fault-notification-raise", "fault-notification-reserve", "fault-notification-ack", "fault-notification-fail", "fault-notification-reconcile"}
 
-func dOrdered(value any, parent string) any {
-	if m, ok := value.(map[string]any); ok {
-		if parent == "" {
-			if _, ok := m["faultClass"]; ok {
-				parent = "policyChange"
-			} else if _, ok := m["maxCount"]; ok {
-				parent = "limitChange"
-			} else if _, ok := m["notificationId"]; ok {
-				parent = "notificationChange"
-			}
-		}
-		keys := map[string][]string{"": {"product", "policies", "limits", "unsent", "unlinked", "notifications", "next", "warning", "relinked", "relinkPending", "backfilled", "backfillPending", "reserved", "withheld", "held", "waiting"}, "policies": {"product", "faultClass", "severity", "threshold", "window", "publish", "clears", "source", "overrideReason"}, "limits": {"product", "kind", "limit", "window", "used", "remaining", "source"}, "unsent": {"ready", "awaitingTarget", "held", "awaitingRecord", "scopeKeyContested", "backingOff", "kindUnregistered", "issueOwned", "unclassified", "claimed", "claimedLapsed", "issued", "issuedLapsed", "failed", "uncertain"}, "notifications": {"pending", "reserved", "uncertain", "reservedLapsed"}, "notificationRows": {"notificationId", "faultId", "product", "kind", "reason", "cycle", "ref", "state", "deliveryKey", "owner", "attempts", "lastError", "createdAt", "deliveredAt", "ackRef", "eligibility"}, "eligibility": {"relationshipId", "parentTaskId", "contact", "eligible", "reason"}, "contact": {"deliverable", "observedAt", "contactable", "ageSeconds", "asked", "reason"}, "reserved": {"notificationId", "faultId", "product", "kind", "reason", "cycle", "ref", "state", "deliveryKey", "owner", "attempts", "lastError", "createdAt", "deliveredAt", "ackRef", "token"}, "previous": {"threshold", "window_seconds", "reason"}, "refusal": {"error", "reason", "detail"}, "policyChange": {"product", "faultClass", "severity", "threshold", "window", "reason", "previous"}, "limitChange": {"product", "kind", "maxCount", "window"}, "notificationChange": {"notificationId", "faultId", "product", "kind", "reason", "cycle", "ref", "state", "deliveryKey", "owner", "attempts", "lastError", "createdAt", "deliveredAt", "ackRef"}}
-		ordered := contract.OrderedObject{}
-		seen := map[string]bool{}
-		for _, key := range keys[parent] {
-			if v, ok := m[key]; ok {
-				ordered = append(ordered, contract.Field{Key: key, Value: dOrdered(v, key)})
-				seen[key] = true
-			}
-		}
-		rest := []string{}
-		for key := range m {
-			if !seen[key] {
-				rest = append(rest, key)
-			}
-		}
-		sort.Strings(rest)
-		for _, key := range rest {
-			ordered = append(ordered, contract.Field{Key: key, Value: dOrdered(m[key], key)})
-		}
-		return ordered
-	}
-	if array, ok := value.([]any); ok {
-		out := make([]any, len(array))
-		for i, v := range array {
-			key := parent
-			if parent == "notifications" {
-				key = "notificationRows"
-			}
-			out[i] = dOrdered(v, key)
-		}
-		return out
-	}
-	return value
-}
 func dBound(ctx context.Context, raw, field string, fallback, max int) (int, error) {
 	if raw == "" {
 		return fallback, nil
@@ -79,7 +34,7 @@ func dBound(ctx context.Context, raw, field string, fallback, max int) (int, err
 }
 func dProduct(p string) error {
 	if !productName.MatchString(p) {
-		return fmt.Errorf("fault_observation_malformed: product %s is not a plain identifier (letters, digits, '.', '_', '-'); a ':' '@' or '|' would let one product's key read as another's", f1Repr(p))
+		return fmt.Errorf("fault_observation_malformed: product %s is not a plain identifier (letters, digits, '.', '_', '-'); a ':' '@' or '|' would let one product's key read as another's", pyvalue.Quote(p))
 	}
 	return nil
 }
@@ -224,7 +179,7 @@ func dPolicies(ctx context.Context, l *Ledger, a map[string]string) (any, error)
 	}
 	after := a["--after"]
 	if after != "" && strings.TrimSpace(after) == "" {
-		return nil, fmt.Errorf("fault_observation_malformed: after is the name the last page returned, not %s", f1Repr(after))
+		return nil, fmt.Errorf("fault_observation_malformed: after is the name the last page returned, not %s", pyvalue.Quote(after))
 	}
 	names := classNames(after)
 	names = slices.DeleteFunc(names, func(c string) bool { return !dPythonClass(c) })
@@ -312,7 +267,7 @@ func dLimits(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
 	}
 	after := a["--after"]
 	if after != "" && strings.TrimSpace(after) == "" {
-		return nil, fmt.Errorf("fault_observation_malformed: after is the name the last page returned, not %s", f1Repr(after))
+		return nil, fmt.Errorf("fault_observation_malformed: after is the name the last page returned, not %s", pyvalue.Quote(after))
 	}
 	names := map[string]bool{"open_record": true, "append_comment": true, "update_record": true, "notification": true}
 	for k := range kinds {

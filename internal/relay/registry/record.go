@@ -4,11 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -123,7 +123,7 @@ func (r *Registry) LoadSettings(ctx context.Context, task string) (TaskSettings,
 	}
 	decoded, err := decodeJSON([]byte(raw))
 	if err != nil {
-		return TaskSettings{}, false, &dispatch.HostError{Class: "JSONDecodeError", Detail: err.Error()}
+		return TaskSettings{}, false, fmt.Errorf("the recorded settings of %s are not JSON: %w", task, err)
 	}
 	object, _ := decoded.(contract.OrderedObject)
 	return TaskSettings{object}, true, nil

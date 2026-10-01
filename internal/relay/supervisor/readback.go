@@ -7,14 +7,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"math"
+	"strconv"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -63,10 +63,10 @@ func (c *Channel) ReadBack(ctx context.Context, id, turnID, proof, assertedBy st
 		return nil, err
 	}
 	if assertedBy != "" && assertedBy != row.RecipientTaskID {
-		return nil, Refusal{"recipient_not_authorized", pyvalue.StrRepr(assertedBy) + " is not the recipient of this message, which is " + pyvalue.StrRepr(row.RecipientTaskID) + ". The declaration is checked against the row; it is not evidence of who is calling, and nothing on this side could be"}
+		return nil, Refusal{"recipient_not_authorized", strconv.Quote(assertedBy) + " is not the recipient of this message, which is " + strconv.Quote(row.RecipientTaskID) + ". The declaration is checked against the row; it is not evidence of who is calling, and nothing on this side could be"}
 	}
 	if row.State != "dispatched" && row.State != "held_uncertain" && row.State != "read" {
-		return nil, Refusal{"not_claimable", "message " + pyvalue.StrRepr(id) + " is " + pyvalue.StrRepr(row.State) + "; only a message that was sent, or whose send nobody heard back from, is read back, because otherwise there is nothing yet to have read"}
+		return nil, Refusal{"not_claimable", "message " + strconv.Quote(id) + " is " + strconv.Quote(row.State) + "; only a message that was sent, or whose send nobody heard back from, is read back, because otherwise there is nothing yet to have read"}
 	}
 	if turnID == "" {
 		return nil, Refusal{"malformed_receipt", "a readback names the turn it was written in; without one there is nothing to check against the host"}
@@ -93,7 +93,7 @@ func (c *Channel) ReadBack(ctx context.Context, id, turnID, proof, assertedBy st
 		}
 	}
 	if row.State == "held_uncertain" && attempt == nil {
-		return nil, Refusal{"not_claimable", "message " + pyvalue.StrRepr(id) + " is held uncertain with no attempt " + fmt.Sprint(row.AttemptCount) + " to read it back against, so there is no token to look for"}
+		return nil, Refusal{"not_claimable", "message " + strconv.Quote(id) + " is held uncertain with no attempt " + fmt.Sprint(row.AttemptCount) + " to read it back against, so there is no token to look for"}
 	}
 	origin := "unknown"
 	if attempt != nil && attempt.TurnID.Valid {
@@ -227,7 +227,7 @@ func (c *Channel) ReadBack(ctx context.Context, id, turnID, proof, assertedBy st
 			return e
 		}
 		if current.State != row.State || current.AttemptCount != row.AttemptCount {
-			return Refusal{"not_claimable", "message " + pyvalue.StrRepr(id) + " moved while this readback was being checked, so the checks describe a message that is no longer there. Nothing was recorded; answer again"}
+			return Refusal{"not_claimable", "message " + strconv.Quote(id) + " moved while this readback was being checked, so the checks describe a message that is no longer there. Nothing was recorded; answer again"}
 		}
 		record := store.SupervisorReadbacksRow{MessageID: id, ReadTurnID: turnID, Proof: proof, Verified: verified, RequestID: request, Detail: sql.NullString{String: encoded, Valid: true}, ReadAt: at}
 		if e = c.Store.RecordSupervisorReadback(tx, record); e != nil {

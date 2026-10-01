@@ -297,7 +297,7 @@ func (l *Ledger) record(ctx context.Context, o Observation, adoption *Adoption) 
 				return err
 			}
 			if other != nil {
-				return fmt.Errorf("fault_scope_conflict: scope key %s is already carried by product %s; one product's issues are never filed through another's key", f1Repr(f.scopeKey), f1Repr(text(other, "product")))
+				return fmt.Errorf("fault_scope_conflict: scope key %s is already carried by product %s; one product's issues are never filed through another's key", pyvalue.Quote(f.scopeKey), pyvalue.Quote(text(other, "product")))
 			}
 			if _, err := l.exec(ctx, "INSERT INTO fault_ledger (fault_id, product, fault_class, component,  severity, signature, scope, scope_key, state, cycle, occurrence_count,  reopen_count, detail, suppression, first_seen_at, last_seen_at,  updated_at) VALUES (?,?,?,?,?,?,?,?,?,1,0,0,?,?,?,?,?)",
 				f.id, f.Product, f.FaultClass, f.component, f.Severity, f.signature, scopeText, f.scopeKey, Observed, f.Detail, nil, nowISO, nowISO, nowISO); err != nil {

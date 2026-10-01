@@ -49,7 +49,7 @@ func WorkspaceFor(incident, registry Object) (string, error) {
 		return "unassigned", nil
 	}
 	if declared != "" && declared != registry["workspace"] {
-		return "", malformed(fmt.Sprintf("%s files in workspace %s; the incident declares %s", registry["product"], pyvalue.Repr(registry["workspace"]), pyvalue.Repr(declared)))
+		return "", malformed(fmt.Sprintf("%s files in workspace %s; the incident declares %s", registry["product"], pyvalue.Quote(registry["workspace"]), pyvalue.Quote(declared)))
 	}
 	return text(registry["workspace"]), nil
 }

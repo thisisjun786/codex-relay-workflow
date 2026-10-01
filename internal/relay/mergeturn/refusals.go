@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
@@ -16,11 +17,14 @@ import (
 func (s *Service) row(ctx context.Context, turn string) (store.MergeTurnsRow, error) {
 	r, err := s.Store.MergeTurn(ctx, turn)
 	if errors.Is(err, sql.ErrNoRows) {
-		return r, &store.RefusedError{Reason: string(contract.RefusalUnregisteredScope), Detail: "no merge turn " + pyvalue.StrRepr(turn)}
+		return r, &store.RefusedError{Reason: string(contract.RefusalUnregisteredScope), Detail: "no merge turn " + strconv.Quote(turn)}
 	}
 	return r, err
 }
 
+// coordination is a contest the merge-turn ledger records in coordination_conflicts before
+// refusing it; the stored detail keeps the repr() quoting it was always written with. A refusal
+// that is only returned is a store.RefusedError and quotes as Go does.
 func coordination(r store.MergeTurnsRow, reason contract.RefusalReason, detail, incumbent, challenger string) *registry.CoordinationRefusal {
 	return &registry.CoordinationRefusal{Reason: reason, Detail: detail, Domain: registry.DomainMergeTarget, Subject: r.TargetKey, Incumbent: incumbent, Challenger: challenger}
 }

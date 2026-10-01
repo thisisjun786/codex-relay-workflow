@@ -455,7 +455,7 @@ func sendObservation(row dispRow) (string, any) {
 		return obsSuppressed, "the claim was suppressed, so there is no delivery obligation to measure: " + pyText(row["suppressed_reason"])
 	}
 	if row["stage"] != "final" {
-		return "not_deliverable:" + pyText(row["stage"]), "only a final event may be delivered, so an event at stage " + pyvalue.Repr(row["stage"]) +
+		return "not_deliverable:" + pyText(row["stage"]), "only a final event may be delivered, so an event at stage " + pyvalue.Quote(row["stage"]) +
 			" has no delivery to measure and is never delivery evidence"
 	}
 	if row["delivery_event"] != nil {
@@ -464,7 +464,7 @@ func sendObservation(row dispRow) (string, any) {
 		}
 		observation, known := observationByState[row.s("delivery_state")]
 		if !known || row["delivery_state"] == nil {
-			return obsUnrecognised, "the delivery records state " + pyvalue.Repr(row["delivery_state"]) + ", which this reader has no word for; read it with status"
+			return obsUnrecognised, "the delivery records state " + pyvalue.Quote(row["delivery_state"]) + ", which this reader has no word for; read it with status"
 		}
 		return observation, observationDetail[observation]
 	}

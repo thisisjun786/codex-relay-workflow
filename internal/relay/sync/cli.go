@@ -5,13 +5,14 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/reception"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
@@ -146,17 +147,28 @@ func readText(value string) (string, error) {
 	}
 	raw, e := os.ReadFile(value[1:])
 	if e != nil {
-		return "", &dispatch.HostError{Class: "FileNotFoundError", Detail: store.PythonOSErrorText(e)}
+		return "", e
 	}
 	return string(raw), nil
 }
+
+// pathProblem is what went wrong with a path, without the operation and the path its
+// *fs.PathError repeats.
+func pathProblem(err error) error {
+	var pathErr *fs.PathError
+	if errors.As(err, &pathErr) {
+		return pathErr.Err
+	}
+	return err
+}
+
 func readDocument(path, what string, packet bool) (any, error) {
 	raw, e := os.ReadFile(path)
 	if e != nil {
-		return nil, &dispatch.UsageError{Code: 4, Detail: fmt.Sprintf("the %s at %s could not be read: FileNotFoundError: %s", what, pyvalue.StrRepr(path), store.PythonOSErrorText(e))}
+		return nil, &dispatch.UsageError{Code: 4, Detail: fmt.Sprintf("the %s at %q could not be read: %v", what, path, pathProblem(e))}
 	}
 	if problem := reception.JSONReaderDepthProblem(raw); problem != "" {
-		return nil, &dispatch.UsageError{Code: 4, Detail: fmt.Sprintf("the %s at %s could not be read: RecursionError: %s", what, pyvalue.StrRepr(path), problem)}
+		return nil, &dispatch.UsageError{Code: 4, Detail: fmt.Sprintf("the %s at %q could not be read: %s", what, path, problem)}
 	}
 	if packet {
 		if e = reception.CheckJSONText(raw); e != nil {
@@ -165,9 +177,11 @@ func readDocument(path, what string, packet bool) (any, error) {
 			}
 		}
 	}
-	v, e := registry.DecodeJSON(string(raw))
+	// encoding/json's reading: the same values json.loads gave a document both accept, and its
+	// own words for one it refuses.
+	v, e := pyjson.Loads(string(raw), pyjson.LoadOptions{})
 	if e != nil {
-		return nil, &dispatch.UsageError{Code: 4, Detail: fmt.Sprintf("the %s at %s could not be read: JSONDecodeError: %s", what, pyvalue.StrRepr(path), e)}
+		return nil, &dispatch.UsageError{Code: 4, Detail: fmt.Sprintf("the %s at %q could not be read: %v", what, path, e)}
 	}
 	return v, nil
 }

@@ -498,7 +498,7 @@ func (r *Router) Classify(ctx context.Context, id string, value any) (Object, er
 			return err
 		}
 		if registry == nil {
-			return routeRefused("route_product_unknown", fmt.Sprintf("%s is not a registered product", pyvalue.Repr(classification["product"])))
+			return routeRefused("route_product_unknown", fmt.Sprintf("%s is not a registered product", pyvalue.Quote(classification["product"])))
 		}
 		stored, err := r.routes().Incidents(ctx, id)
 		if err != nil {

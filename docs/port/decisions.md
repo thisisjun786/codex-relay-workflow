@@ -3906,6 +3906,161 @@ internal/runtime/pointer/pointer.go; internal/runtime/residue/residue.go;
 internal/bridge/settings/settings.go, internal/bridge/mutations.go;
 internal/bridge/execution/roles.go (`TestAPolicyRefusalQuotesANameAsJSON`).
 
+## Decision R3D-1. A refusal the relay only returns names a value as Go quotes it; a stored or hashed one keeps repr() (refactor R3)
+
+Decision: in the domain packages (`internal/relay/{capacity, delivery, evidence, faults,
+mergeturn, reception, registry, routing, supervisor, sync}`) a refusal, usage or host error that
+the relay only returns to its caller names a string with Go's quoting (`strconv.Quote`, `%q`:
+`"x"`, an invisible character escaped as `\u00a0`) and any other value with
+`pyvalue.Quote` (its compact JSON), where it used Python's `repr()` (`'x'`, `True`, `None`,
+`[1, 2]`). A float in such a message is Go's spelling (`-1`, `NaN`, `+Inf`), not `float.__repr__`.
+Message prose only: every `error`, `reason`, `code`, field and exit stays.
+
+Consumers checked: `plugins/crw/skills`, `docs/` and `contract/` quote no relay detail with
+Python's quotes (the skills read `reason`, `error` and codes); the product's own parses of detail
+text (`adapter/cli.go` reads a `KeyError: ` prefix, `mergeturn/target.go` an `HTTP 404`,
+`delivery/reconcile.go` `not scanned`, `delivery/hostcheck.go` `unreadable`) read messages this
+entry does not change. The contract fixture
+`test_management_cli__test_an_argument_echoed_back_is_the_repr_of_its_str__relationship` pinned
+`relationship-status`'s `no relationship 'x\xa0y'`; it now pins Go's quoting
+(`no relationship "x\u00a0y"`), so an invisible character in an echoed argument is still shown
+escaped.
+
+What stays, and why: a message that is also written to disk or SQLite, or that feeds a hash,
+keeps its bytes, so a stored row reads the same whichever runtime wrote it. Which messages
+those are was settled two ways and their union kept: by running every relay, contract and skill
+test with `repr()` marked by its call site and the store's bound arguments, the hook's records,
+the marker files, the reception ledger, the frozen manifests and every SHA-256 input checked for
+the mark; and by the call graph (VTA) from the functions whose callers store an error's text
+(the hook and `control.sock`, which journal an evaluation's error; `delivery.Enqueue`, whose
+refusal the daemon stores in `delivery_intent.last_error`; `delivery.AuthorizedSettings`, whose
+refusal the send journals; `Reconciler.ReconcileAttempt`; the supervisor's `attempt`). Kept
+therefore: the contests recorded in `coordination_conflicts` and `linkage_conflicts` (capacity's
+and edit regions' `refusal`, merge-turn's `coordination` and `CoordinationRefusal`, registry's
+`linkRefusal`), the sync job problems stored as `sync_outbox.last_error`, the settings and role
+refusals a withheld send journals, the merge-turn grant's wake refusal (stored in the grant's
+evidence), a routing observation's detail (part of the fault's evidence digest) and the
+supervisor's held and withheld records. In delivery that keeps the recipient resolution's and
+`Enqueue`'s refusals (stored in `delivery_intent.last_error`), the settings and role refusals, the
+rendered messages and their helpers, the lifecycle's integer reading and the marker path checks
+(their host error text reaches the supervisor's `supervisor_attempt_faulted` journal as the
+attempt's fault label), the omission readings and the `KeyError: ` texts `adapter/cli.go` parses; the
+acknowledgement, verdict, criteria and intent-registration refusals and the claim's request-id
+clash quote as Go does.
+
+Evidence: `internal/pyvalue/quote.go`; the golden diffs of the R3D commits (message prose only).
+
+## Decision R3D-2. merge-turn, routing and fault answers print a map's keys in sorted order; Python's key order is not rebuilt (refactor R3)
+
+Decision: `mergeturn.PythonOrder` and its table of eleven answer shapes, which re-sorted a map's
+keys into the order `mergeturn.py` inserted them, are deleted. A `merge-turn-*` answer built from
+a map prints its keys sorted (`mergeturn.plain`); every key, value and type is unchanged. The
+same holds for the routing commands (`product-*`, `route-*`, `completion-check`):
+`routing.CommandRecord`, which carried each command's and each nested record's key order from
+`products.py`/`routing.py` (about 150 lines of order tables), now prints every map with its keys
+sorted. So do the fault commands (`fault-*`): `faultAnswer` chose among five key-order
+reconstructions (`f1Ordered`, `f2Ordered`, `cOrdered`, `dOrdered` and `ordered`, about 250 lines
+of order tables keyed by command family and by which keys a map happened to hold); it now renders
+every answer and refusal with one sorted `answerObject`.
+
+Consumers checked: the skills and `crw` read merge-turn and routing answers as JSON fields
+(`plugins/crw/skills/crw-run/references/merge-readiness.md`, docs/relay/product-routing.md); no
+consumer reads them as bytes or by position. The answers are never stored or hashed: the stored
+grant evidence, the turn's ledger rows and the routing records (`product_registry`,
+`incident_routes`) are written by their own encoders, which this entry leaves alone.
+
+Evidence: internal/relay/mergeturn/order.go, internal/relay/routing/command_records.go,
+internal/relay/faults/cli.go (`answerObject`); the contracttest goldens `TestMergeTurnCommands_*`
+and the routing and fault goldens (key order only). The fault ledger's stored journal JSON
+(`noticeJournal`'s fixed key order) is unchanged.
+
+## Decision R3D-3. `--kind-module`'s module model is the relay CLI's; the domain packages keep none (refactor R3)
+
+Decision: the fault package no longer models Python's import for `--kind-module`
+(`faults.RegisteredModule`, the prefix walk for "No module named", the `ValueError` and
+`TypeError` texts): with the dispatch table (decision R2B-2) the check moved to
+`internal/relay/dispatch` (`importKindModules`, `OnKindModule`), which the relay CLI owns, and the
+fault package only installs its product declarations there
+(`dispatch.OnKindModule("codex_session_relay.projects", InstallProductDeclarations)`). This
+wave's first commit had simplified the fault package's copy; the merge of the dispatch table
+replaced that copy, so the simplification is left to the relay CLI's own wave (R3C): accept the
+three documented names (`codex_session_relay.projects`, which docs/relay/product-routing.md
+names, and `json` and `os.path`, which docs/port/known-defects.md names), refuse anything else
+with the same exits (3 for an empty or relative name, 4 for any other) in Go's words, naming the
+value given, without the prefix walk.
+
+Consumers checked: docs/relay/product-routing.md, docs/relay/faults.md and the holder protocol
+name only `codex_session_relay.projects`; no skill passes `--kind-module`.
+
+Evidence: internal/relay/faults/cli.go (`dispatch.OnKindModule`); internal/relay/dispatch/dispatch.go.
+
+## Decision R3D-4. packet-check's text checks say what they found, not CPython's exception (refactor R3)
+
+Decision: `packet-check` and the reception reads it makes word their refusals without CPython's
+exception text: a packet holding a lone surrogate escape is refused (`malformed_receipt`, as
+before) naming the escape and its byte offset, where it quoted `'utf-8' codec can't encode
+character ... in position N` at a position in `json.dumps`' re-spelled text (the re-spelling is
+deleted); a document nested past the bound is refused naming the bound (the bound, 9,998 levels,
+and 9,997 for recorded settings, stays) instead of `RecursionError: maximum recursion depth
+exceeded while decoding a JSON array from a unicode string`; a file that cannot be read names Go's
+error; the `FileNotFoundError:`, `RecursionError:`, `JSONDecodeError:`, `TypeError:`,
+`OperationalError:` and `ValueError:` prefixes are gone from the reception notes and the sync
+host errors. The packet, record and observation files packet-check reads are decoded by
+encoding/json's reading rather than re-checked as `json.loads` would (`registry.DecodeJSON`), so a
+file that is not JSON is refused (exit 4, as before) in encoding/json's words; a document both
+readings accept decodes to the same values, so its content digest is unchanged. The reception
+ledger, a file the relay itself writes and reads back, keeps its lenient reader.
+
+Consumers checked: plugins/crw/skills/crw-run/references/{relay.md,task-packet.md} read
+packet-check's `verdict`, `disposition` and `act`, not the detail; nothing parses a reception note.
+The reception ledger's file format (written by `SaveLedger`) is unchanged.
+
+Evidence: internal/relay/reception/{unicode.go,depth.go,depth_test.go,store.go};
+internal/relay/sync/cli.go, packet_read_test.go; the sync goldens (message prose only).
+
+## Decision R3D-5. The registry's host errors are Go errors; `--settings` is read as encoding/json reads it (refactor R3)
+
+Decision: `registry.HostError`, which carried a Python exception class name so the host envelope
+read `<Class>: <message>`, is deleted. The registry's host errors are plain Go errors and still
+answer `{"error": "host", "detail": ...}` with exit 3: a settings file that cannot be read names
+Go's error (`open <path>: no such file or directory`), settings that are not UTF-8 say so, and
+`register --parent-settings`/`--child-settings` and `settings-record --settings` are decoded by
+encoding/json's reading (`pyjson.Loads` without `Python`, which only re-checked the document as
+`json.loads` would to word its refusal), so a refusal reads `the settings are not JSON:
+<encoding/json's error>` instead of CPython's `JSONDecodeError` text. Both readings decode a
+document they accept to the same values (constants were already refused), so
+`authorized_settings` and the settings' canonical bytes are unchanged. The test of `store.PythonJSONError`'s wording that lived in the registry's tests is deleted
+(it tested another package's emulation); the host-error test checks the envelope.
+
+Consumers checked: the skills pass settings documents written by `json.dumps` (no constants);
+docs/port/known-defects.md's settings entry is updated.
+
+Evidence: internal/relay/registry/cli.go (settingsJSON); Test25_CLI_host_errors_exit_three_with_their_detail.
+
+## Decision R3D-6. Fault and routing commands word unreadable input as Go reads it (refactor R3)
+
+Decision: `fault-observe --observation`, `fault-complete --observed` and `fault-sweep --readings`
+refuse text that is not JSON with `fault_observation_malformed: the ... is not readable JSON:
+<encoding/json's error>`, and the routing commands' `--incident`, `--classification` and
+`--registry` documents with `route_input_malformed: ... is not readable JSON: <encoding/json's
+error>`, where both quoted CPython's `JSONDecodeError` text (`store.PythonJSONError`) for a
+document their encoding/json reading had already refused; an `@file` that cannot be read names
+Go's error instead of `[Errno N] ...`. The reasons and exits are unchanged. The fault ledger's
+`f1Repr` (repr of a str, `None`, fmt for the rest) is deleted: its refusals name a value with
+`pyvalue.Quote` (R3D-1), and a choice list in a routing refusal is Go's `%q` of the list instead of
+a Python tuple's repr.
+
+Consumers checked: the holder protocol (docs/relay/product-routing.md, docs/relay/faults.md) reads
+the refusal's `reason`; no skill parses these details.
+
+What stays: the fault sweep's reading of the host record (`the host record at ... could not be read:
+OSError`) and the managed readings' `TypeError:`/`ValueError:` reasons, because a sweep's reading
+can become a recorded observation; the readback problems a publication's block carries are
+returned only and now quote as Go does.
+
+Evidence: internal/relay/faults/{cli.go,commands_f1.go}, internal/relay/routing/{cli.go,products.go};
+the faults and routing goldens (message prose only).
+
 ## Decision R3C-1. The relay CLI reads its command lines with its own parser, not an argparse emulation (refactor R3)
 
 (Placeholder heading: the next free number is given when the R3 groups merge.)

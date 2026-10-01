@@ -67,7 +67,7 @@ func (r *Router) EvaluateProjects(ctx context.Context, product string) (Object, 
 		return nil, err
 	}
 	if registry == nil {
-		return nil, routeRefused("route_product_unknown", fmt.Sprintf("%s is not a registered product", pyvalue.Repr(product)))
+		return nil, routeRefused("route_product_unknown", fmt.Sprintf("%s is not a registered product", pyvalue.Quote(product)))
 	}
 	return r.evaluateProjects(ctx, product)
 }

@@ -265,10 +265,10 @@ func (r *Registry) ContestedDirectives(ctx context.Context, kind, key string) ([
 func (r *Registry) BindScopeAs(ctx context.Context, role, key string, endpoint Endpoint, status string) (contract.OrderedObject, error) {
 	kind, known := roleScope[role]
 	if !known {
-		return nil, refuse(contract.RefusalScopeRoleMismatch, "a role is one of child, parent, supervisor, not %s", pyvalue.StrRepr(role))
+		return nil, refuse(contract.RefusalScopeRoleMismatch, "a role is one of child, parent, supervisor, not %s", strconv.Quote(role))
 	}
 	if status != Active && status != "paused" && status != "cancelled" && status != statusArchived {
-		return nil, refuse(contract.RefusalLinkNotActive, "bad status %s", pyvalue.StrRepr(status))
+		return nil, refuse(contract.RefusalLinkNotActive, "bad status %s", strconv.Quote(status))
 	}
 	for _, check := range []struct{ value, what string }{{key, "a scope key"}, {endpoint.TaskID, "a task id"}, {endpoint.HostID, "a host id"}} {
 		if err := exact(check.value, check.what); err != nil {
@@ -327,7 +327,7 @@ func (l linkage) insertLink(ctx context.Context, lid, kind string, upper, lower 
 // RegisterSupervision is Linkage.register_supervision.
 func (r *Registry) RegisterSupervision(ctx context.Context, initiative, project string, supervisor, parent Endpoint, kind string) (contract.OrderedObject, error) {
 	if kind != linkExec && kind != linkReference {
-		return nil, refuse(contract.RefusalScopeRoleMismatch, "a supervision is execution or reference, not %s; a peer link is registered with register_peer", pyvalue.StrRepr(kind))
+		return nil, refuse(contract.RefusalScopeRoleMismatch, "a supervision is execution or reference, not %s; a peer link is registered with register_peer", strconv.Quote(kind))
 	}
 	if err := exact(initiative, "an initiative key"); err != nil {
 		return nil, err
@@ -553,7 +553,7 @@ func (r *Registry) RegisterPeer(ctx context.Context, leftProject string, leftPar
 		}
 	}
 	if leftProject == rightProject {
-		return nil, refuse(contract.RefusalScopeCycle, "project %s is not its own peer", pyvalue.StrRepr(leftProject))
+		return nil, refuse(contract.RefusalScopeCycle, "project %s is not its own peer", strconv.Quote(leftProject))
 	}
 	if err := encodedID(peerLinkFields(leftProject, rightProject)...); err != nil {
 		return nil, err
@@ -641,7 +641,7 @@ func (r *Registry) AttachIssue(ctx context.Context, rid, project string) (any, e
 			return err
 		}
 		if x == nil {
-			return refuse(contract.RefusalUnregisteredRelationship, "no relationship %s", pyvalue.StrRepr(rid))
+			return refuse(contract.RefusalUnregisteredRelationship, "no relationship %s", strconv.Quote(rid))
 		}
 		refusal, err := l.attachIn(ctx, x, project, now, "")
 		if err != nil || refusal == nil {
@@ -757,7 +757,7 @@ func (r *Registry) Attached(ctx context.Context, project string, task, otherThan
 func (r *Registry) Handover(ctx context.Context, role, key, expect string, endpoint Endpoint, acknowledged []string, evidence, actor string) (contract.OrderedObject, error) {
 	kind, known := roleScope[role]
 	if !known {
-		return nil, refuse(contract.RefusalScopeRoleMismatch, "unknown role %s", pyvalue.StrRepr(role))
+		return nil, refuse(contract.RefusalScopeRoleMismatch, "unknown role %s", strconv.Quote(role))
 	}
 	if role == roleChild {
 		return nil, refuse(contract.RefusalScopeRoleMismatch, "a child is replaced by registering its successor with supersedes, which moves "+
@@ -1070,7 +1070,7 @@ func (l linkage) competitor(ctx context.Context, kind, key, digest string, refer
 // SettleDirective is Linkage.settle_directive; reason NULL is None.
 func (r *Registry) SettleDirective(ctx context.Context, id, disposition, decidedBy string, reason sql.NullString) (contract.OrderedObject, error) {
 	if disposition != "chosen" && disposition != "superseded" {
-		return nil, refuse(contract.RefusalLinkNotActive, "a disposition is chosen or superseded, not %s", pyvalue.StrRepr(disposition))
+		return nil, refuse(contract.RefusalLinkNotActive, "a disposition is chosen or superseded, not %s", strconv.Quote(disposition))
 	}
 	now := r.now()
 	l := r.linkage()
@@ -1082,7 +1082,7 @@ func (r *Registry) SettleDirective(ctx context.Context, id, disposition, decided
 			return err
 		}
 		if row == nil {
-			return refuse(contract.RefusalUnregisteredScope, "no directive %s", pyvalue.StrRepr(id))
+			return refuse(contract.RefusalUnregisteredScope, "no directive %s", strconv.Quote(id))
 		}
 		if stored := row.Get("disposition"); stored != nil {
 			if stored != disposition {

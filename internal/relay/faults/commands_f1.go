@@ -9,10 +9,8 @@ import (
 	"io"
 	"math/big"
 	"os"
-	"sort"
 	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -34,60 +32,6 @@ func f1Clock(ctx context.Context) Clock {
 
 var f1Names = []string{"fault-claim", "fault-operation", "fault-reconcile", "fault-complete", "fault-sweep"}
 
-func f1Ordered(value any) any {
-	if list, ok := value.([]any); ok {
-		out := make([]any, len(list))
-		for i, v := range list {
-			out[i] = f1Ordered(v)
-		}
-		return out
-	}
-	m, ok := value.(map[string]any)
-	if !ok {
-		return value
-	}
-	order := []string{"publicationId", "kind", "trackerRef", "projectRef", "externalRef", "title", "identityDigest", "protocol", "note", "block", "startMarker", "endMarker", "payload", "update", "claimToken", "owner", "leaseUntil", "error", "reason", "detail"}
-	if _, ok := m["gap"]; ok {
-		order = []string{"gap", "faultClass", "relationId", "reason"}
-	}
-	if _, ok := m["claimToken"]; ok {
-		order = []string{"publicationId", "claimToken", "owner", "leaseUntil"}
-	}
-	if _, ok := m["error"]; ok {
-		order = []string{"error", "reason", "detail"}
-	}
-	if _, ok := m["readingsTotal"]; ok {
-		order = []string{"read", "recorded", "queued", "gaps", "readingsNext", "readingsTotal", "limits"}
-	}
-	if _, ok := m["outcome"]; ok {
-		order = []string{"publicationId", "state", "outcome", "problems", "detail"}
-	}
-	if _, ok := m["confirmed"]; ok {
-		order = []string{"publication_id", "fault_id", "kind", "trigger_key", "cycle", "tracker_ref", "external_ref", "summary", "identity_digest", "state", "attempts", "next_attempt_at", "lease_owner", "lease_until", "issued_at", "last_error", "external_result", "created_at", "updated_at", "confirmed_at", "confirmed", "reason"}
-	}
-	if _, ok := m["op"]; ok {
-		order = []string{"op", "value"}
-	}
-	fields := contract.OrderedObject{}
-	seen := map[string]bool{}
-	for _, key := range order {
-		if v, ok := m[key]; ok {
-			fields = append(fields, contract.Field{Key: key, Value: f1Ordered(v)})
-			seen[key] = true
-		}
-	}
-	rest := []string{}
-	for key := range m {
-		if !seen[key] {
-			rest = append(rest, key)
-		}
-	}
-	sort.Strings(rest)
-	for _, key := range rest {
-		fields = append(fields, contract.Field{Key: key, Value: f1Ordered(m[key])})
-	}
-	return fields
-}
 func executeF1(ctx context.Context, l *Ledger, name string, a map[string]string) (any, error) {
 	switch name {
 	case "fault-claim":
@@ -186,7 +130,7 @@ func f1Claim(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
 		}
 		takeover := writer != nil && text(writer, "owner") != owner
 		if takeover && a["--takeover"] == "" {
-			return fmt.Errorf("fault_writer_conflict: this write belongs to %s; pass takeover to reassign it", f1Repr(text(writer, "owner")))
+			return fmt.Errorf("fault_writer_conflict: this write belongs to %s; pass takeover to reassign it", pyvalue.Quote(text(writer, "owner")))
 		}
 		attempt := integer(r, "attempts") + 1
 		takeoverInt := 0
@@ -384,7 +328,7 @@ func f1Operation(ctx context.Context, l *Ledger, a map[string]string) (any, erro
 	return answer, err
 }
 func f1Unregistered(kind string) error {
-	return fmt.Errorf("fault_kind_unregistered: kind %s is not registered in this process; load the module that declares it (--kind-module) before acting on its writes", f1Repr(kind))
+	return fmt.Errorf("fault_kind_unregistered: kind %s is not registered in this process; load the module that declares it (--kind-module) before acting on its writes", pyvalue.Quote(kind))
 }
 
 func f1OwnedTarget(ctx context.Context, l *Ledger, fault row) (row, string, error) {
@@ -477,7 +421,7 @@ func f1Argument(raw, label string) (string, error) {
 	if path, ok := strings.CutPrefix(raw, "@"); ok {
 		data, e := os.ReadFile(path)
 		if e != nil {
-			return "", fmt.Errorf("%s", store.PythonOSError(e))
+			return "", e
 		}
 		return strings.ReplaceAll(strings.ReplaceAll(string(data), "\r\n", "\n"), "\r", "\n"), nil
 	}
@@ -493,7 +437,7 @@ func f1Fields(raw string) (map[string]any, error) {
 	}
 	parsed, e := loads(value)
 	if e != nil {
-		return nil, fmt.Errorf("fault_observation_malformed: the observed fields is not readable JSON: %s", store.PythonJSONError(value))
+		return nil, fmt.Errorf("fault_observation_malformed: the observed fields is not readable JSON: %v", e)
 	}
 	result, _ := parsed.(map[string]any)
 	return result, nil
@@ -722,7 +666,7 @@ func f1ConfirmFields(extra row, observed map[string]any) []string {
 		if observed["projectId"] == value {
 			return nil
 		}
-		return []string{fmt.Sprintf("the issue reads project %s, not %s", f1Repr(observed["projectId"]), f1Repr(value))}
+		return []string{fmt.Sprintf("the issue reads project %s, not %s", pyvalue.Quote(observed["projectId"]), pyvalue.Quote(value))}
 	case "reopen":
 		if observed["open"] == true {
 			return nil
@@ -739,20 +683,10 @@ func f1ConfirmFields(extra row, observed map[string]any) []string {
 				return nil
 			}
 		}
-		return []string{fmt.Sprintf("the issue has no %s %s", item, f1Repr(value))}
+		return []string{fmt.Sprintf("the issue has no %s %s", item, pyvalue.Quote(value))}
 	}
-	return []string{fmt.Sprintf("unknown update %s", f1Repr(op))}
+	return []string{fmt.Sprintf("unknown update %s", pyvalue.Quote(op))}
 }
-func f1Repr(v any) string {
-	if v == nil {
-		return "None"
-	}
-	if s, ok := v.(string); ok {
-		return pyvalue.StrRepr(s)
-	}
-	return pyStr(v)
-}
-
 func f1Mismatch(r, fault row, found f1Block) []string {
 	if !found.found {
 		return []string{"no block for this publication was observed in the readback"}
@@ -777,7 +711,7 @@ func f1Mismatch(r, fault row, found f1Block) []string {
 			if ok {
 				value = actual
 			}
-			problems = append(problems, fmt.Sprintf("%s reads %s, not %s", key, f1Repr(value), f1Repr(expected[key])))
+			problems = append(problems, fmt.Sprintf("%s reads %s, not %s", key, pyvalue.Quote(value), pyvalue.Quote(expected[key])))
 		}
 	}
 	observed := strings.TrimRight(strings.ReplaceAll(strings.ReplaceAll(found.summary, "\r\n", "\n"), "\r", "\n"), "\n")
@@ -863,7 +797,7 @@ func f1Complete(ctx context.Context, l *Ledger, a map[string]string) (any, error
 					return fmt.Errorf("fault_state_conflict: this fault owns no issue yet, so a comment on it cannot be confirmed")
 				}
 				if reference != owned {
-					return fmt.Errorf("fault_readback_mismatch: this comment names %s, and the fault owns %s", f1Repr(reference), f1Repr(owned))
+					return fmt.Errorf("fault_readback_mismatch: this comment names %s, and the fault owns %s", pyvalue.Quote(reference), pyvalue.Quote(owned))
 				}
 			}
 			if spec.Creates && !named(reference) {
@@ -978,7 +912,7 @@ func validateSweep(ctx context.Context, a map[string]string) (sweepInput, error)
 		}
 		value, e := loads(raw)
 		if e != nil {
-			return input, fmt.Errorf("fault_observation_malformed: the readings is not readable JSON: %s", store.PythonJSONError(raw))
+			return input, fmt.Errorf("fault_observation_malformed: the readings is not readable JSON: %v", e)
 		}
 		input.readings = value
 	}
