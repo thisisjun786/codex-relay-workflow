@@ -11,10 +11,10 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 )
 
-// Every ROL test replays its scenario from testdata/python_rolepolicy.json (gen_rolepolicy.py,
+// Every ROL test replays its scenario from testdata/fixtures/rolepolicy_scenarios.json against
+// the Go registry and compares every answer whole with the golden (which began as the answers of
 // the real Python rolepolicy/registry/linkage/delivery.authorized_settings/cmd_settings_show
-// driven by the same steps) against the Go registry and compares every answer whole, then
-// asserts the property's own values. The send-time gate is delivery.authorized_settings, the
+// driven by the same steps), then asserts the property's own values. The send-time gate is delivery.authorized_settings, the
 // one check every sender runs before any transport call (Registry.AuthorizedSettings).
 
 func refusedReasonOf(v any) string {

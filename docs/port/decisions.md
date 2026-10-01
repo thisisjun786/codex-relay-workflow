@@ -1542,8 +1542,8 @@ record version 1" for anything else, which would lose every fault's installed re
 Evidence: scripts/crw_runtime/hostrecord.py:77-160, :451-540; internal/runtime/record;
 internal/runtime/record/testdata/host-record-v1.json (the relay host's record, redacted and
 reduced to three installs and two points per component); `TestV1RecordRoundTripsByteForByte`,
-`TestUpdateWritesWhatPythonWrites` (seven deltas against Python's bytes in
-internal/runtime/testdata/goldens.json), `TestMakefileStampsTheTreeOnlyFromACleanTree` (the
+`TestUpdateWritesWhatPythonWrites` (seven deltas against goldens that began as Python's bytes
+in the former internal/runtime/testdata/goldens.json), `TestMakefileStampsTheTreeOnlyFromACleanTree` (the
 Makefile run in a temporary repository: clean stamps HEAD's tree, modified or untracked stamps
 nothing), `TestSourceWithoutAStampIsNull`, `Test37_SweeperReadsTheGoInstallEntry` and
 `Test37_FaultSweepCLIRecordsTheRunningBinarysInstallEntry` (a `-trimpath` build's `fault-sweep`
@@ -2632,8 +2632,8 @@ Evidence: `internal/relay/service/takeover.go` (`NoPythonCandidate`, `Preflight`
 Decision: `internal/bridge/settings/generate`, the `go generate` program that ran `python3 -c` to
 read `str.isprintable()` of every code point under CPython 3.14's Unicode database (16.0.0) into
 `printable_generated.go`, is deleted with the `//go:generate` line. The generated table is kept as
-committed and is not regenerated: `TestPrintableIsCPython314sIsprintable` compares it with that
-interpreter's recorded answer (pyoracle).
+committed and is not regenerated: `TestPrintableIsCPython314sIsprintable` compares it with a
+golden that began as that interpreter's answer.
 
 Why: the table's source of truth is the Python bridge's behaviour, which is frozen with the
 Python implementation; a generator that needs a CPython 3.14 on PATH is a Python execution path

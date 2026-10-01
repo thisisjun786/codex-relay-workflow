@@ -11,11 +11,12 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 // ASG-1: state and next action follow the head: requested/child_emits, received, verifying,
 // verified/coordinator_integrates, needs_changes then corrected, ambiguous. Every answer is
-// compared whole with Python's AssignmentView.state.
+// compared whole with the golden, which began as Python's AssignmentView.state.
 func Test25_ASG1_state_and_next_action_follow_the_head(t *testing.T) {
 	cases := []struct {
 		scenario string
@@ -326,11 +327,14 @@ func Test25_ASG14_a_refusal_stops_being_the_reason_once_delivered(t *testing.T) 
 }
 
 // ASG-15: one anchor's whole lifecycle is read in ONE statement, for a completion and for a
-// withheld correction.
+// withheld correction; the anchored projection is compared whole with the golden.
 func Test25_ASG15_one_anchor_is_read_in_one_statement(t *testing.T) {
-	for _, c := range []struct{ scenario, projection string }{
-		{"test_the_request_id_names_the_current_attempt_not_the_first", "completion"},
-		{"test_a_correction_withheld_for_an_archived_child_names_the_withhold", "correction"},
+	for _, c := range []struct {
+		scenario, projection, eventID string
+		generation                    int64
+	}{
+		{"test_the_request_id_names_the_current_attempt_not_the_first", "completion", "aaf3d1c10c86caee2bffd74c867c0b89", 1},
+		{"test_a_correction_withheld_for_an_archived_child_names_the_withhold", "correction", "434a5e6aaab3b6f9f892212a64a0bdd4", 2},
 	} {
 		point := assignmentScenario(t, c.scenario)[0]
 		dir := filepath.Join(t.TempDir(), "state")
@@ -345,20 +349,21 @@ func Test25_ASG15_one_anchor_is_read_in_one_statement(t *testing.T) {
 		if _, err := s.DB.ExecContext(ctx(), point.SQL); err != nil {
 			t.Fatal(err)
 		}
-		want := okOf(t, point.Result)["projection"].(map[string]any)[c.projection].(map[string]any)
 		var statements []string
 		view := &AssignmentView{R: &Registry{Store: s}, Clock: func() float64 { return point.Now }, Policy: DefaultRetryPolicy,
 			statement: func(q string) { statements = append(statements, q) }}
-		got, err := view.Anchored(ctx(), want["eventId"], int64(want["executionGeneration"].(float64)))
+		got, err := view.Anchored(ctx(), c.eventID, c.generation)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if len(statements) != 1 {
 			t.Fatalf("%s: the lifecycle came from %d statements", c.scenario, len(statements))
 		}
-		if !reflect.DeepEqual(plain(t, got), any(want)) {
-			t.Fatalf("%s: go %v\npy %v", c.scenario, plain(t, got), want)
+		anchored := plain(t, got).(map[string]any)
+		if anchored["eventId"] != c.eventID || anchored["executionGeneration"] != float64(c.generation) {
+			t.Fatalf("%s: anchored %v", c.scenario, anchored)
 		}
+		golden.CheckJSON(t, c.scenario, anchored)
 	}
 }
 

@@ -75,5 +75,5 @@ The Go port is the bridge now:
 | `scripts/check_connection.py` | `internal/runtime/exercise` (the exercise `crw install` runs) |
 
 Its tests carried the Python suite's properties ([test map](../../docs/port/test-map.md)), and
-the Python answers they were compared with are recorded beside them
-(`testdata/python-oracle`).
+the Python answers they were compared with are the goldens beside them
+(`testdata/golden`), which began as those answers.

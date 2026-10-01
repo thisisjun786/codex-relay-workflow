@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 const head = "c68be165ae8ee4a645f3266eae3e9c543a851382"
@@ -196,14 +195,10 @@ func envelopeMessageID(direction, relation, purpose, subject string) string {
 
 // Replay pointer parsing through the registry's real CLI, including the complete
 // refusal, rather than just comparing the shared message-id hash. Go sets up and runs every
-// command on its own store; Python's answer to the same sequence, run on its own store with the
-// recordedAt Go stamped, is recorded (internal/testsupport/pyoracle).
+// command on its own store; each command's exit code and output are the golden, with the
+// recordedAt Go stamped as a placeholder.
 func sevDirectiveBytes(t *testing.T, correlationOnly bool) {
 	t.Helper()
-	repo, err := filepath.Abs("../../..")
-	if err != nil {
-		t.Fatal(err)
-	}
 	root := t.TempDir()
 	binary := testsupport.CRW(t)
 	env := append(os.Environ(), "HOME="+root, "XDG_STATE_HOME="+root, "CODEX_HOME="+root)
@@ -240,24 +235,6 @@ func sevDirectiveBytes(t *testing.T, correlationOnly bool) {
 		t.Fatal(err)
 		return -1
 	}
-	// Python's store, set up by Python's own linkage-supervise, only when Python is asked.
-	python := filepath.Join(repo, ".venv/bin/python")
-	pythonState := filepath.Join(root, "state")
-	pythonReady := false
-	pythonSetup := func() error {
-		if pythonReady {
-			return nil
-		}
-		setup := exec.Command(python, append([]string{"-c", `import sys
-from codex_session_relay import cli
-raise SystemExit(cli.main(sys.argv[1:]))`, "--state", pythonState}, supervise...)...)
-		setup.Env = env
-		if raw, err := setup.Output(); err != nil {
-			return fmt.Errorf("Python setup: %v %s", err, raw)
-		}
-		pythonReady = true
-		return nil
-	}
 	for _, extra := range cases {
 		args := append(append([]string{}, base...), extra...)
 		goCmd := exec.Command(binary, append([]string{"relay", "--state", goState}, args...)...)
@@ -268,33 +245,7 @@ raise SystemExit(cli.main(sys.argv[1:]))`, "--state", pythonState}, supervise...
 			t.Fatal(err)
 		}
 		at, _ := reply["recordedAt"].(string)
-		var want struct {
-			Code   int    `json:"code"`
-			Output string `json:"output"`
-		}
-		pyoracle.JSON(t, strings.Join(extra, " "), &want, func() (any, error) {
-			if err := pythonSetup(); err != nil {
-				return nil, err
-			}
-			pyCmd := exec.Command(python, append([]string{"-c", `import sys
-from codex_session_relay import cli,clock
-clock.SystemClock.iso=lambda self: sys.argv[1]
-raise SystemExit(cli.main(sys.argv[2:]))`, at, "--state", pythonState}, args...)...)
-			pyCmd.Env = env
-			out, pyErr := pyCmd.CombinedOutput()
-			exit := 0
-			if pyErr != nil {
-				e, ok := pyErr.(*exec.ExitError)
-				if !ok {
-					return nil, pyErr
-				}
-				exit = e.ExitCode()
-			}
-			return map[string]any{"code": exit, "output": string(out)}, nil
-		}, pyoracle.Substitute(at, "<recordedAt>"))
-		if code(goErr) != want.Code || string(got) != want.Output {
-			t.Errorf("directive CLI byte diff %v\nGo(%d): %s\nPython(%d): %s", extra, code(goErr), got, want.Code, want.Output)
-		}
+		golden.CheckJSON(t, strings.Join(extra, " "), map[string]any{"code": code(goErr), "output": string(got)}, golden.Substitute(at, "<recordedAt>"))
 	}
 }
 

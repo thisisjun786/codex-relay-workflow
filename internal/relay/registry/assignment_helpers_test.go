@@ -3,59 +3,38 @@ package registry
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
-	"strings"
-	"sync"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
-// checkpoint is one recorded Python call from testdata/gen_assignment.py: the whole store as
-// SQL at that moment, the clock, the call and Python's whole answer.
+// checkpoint is one call of an assignment scenario (testdata/fixtures/assignment_checkpoints.json,
+// what the retired gen_assignment.py recorded from the Python test scenarios): the whole store as
+// SQL at that moment, the clock, the call and the work root the scenario ran in.
 type checkpoint struct {
-	Op       string            `json:"op"`
-	Args     map[string]string `json:"args"`
-	SQL      string            `json:"sql"`
-	Now      float64           `json:"now"`
-	ISO      string            `json:"iso"`
-	StateDir string            `json:"stateDir"`
-	Root     string            `json:"root"`
-	Result   map[string]any    `json:"result"`
-}
-
-var pythonAssignment = sync.OnceValues(func() (map[string][]checkpoint, error) {
-	raw, err := os.ReadFile("testdata/python_assignment.json")
-	if err != nil {
-		return nil, err
-	}
-	var out map[string][]checkpoint
-	return out, json.Unmarshal(raw, &out)
-})
-
-func pythonProgram(t *testing.T) string {
-	t.Helper()
-	point := assignmentScenario(t, "__program__")[0]
-	argv, _ := point.Result["ok"].([]any)
-	if len(argv) != 1 || !filepath.IsAbs(argv[0].(string)) || filepath.Base(argv[0].(string)) != "codex-session-relay" {
-		t.Fatalf("python relay program %v", argv)
-	}
-	return argv[0].(string)
+	Op   string            `json:"op"`
+	Args map[string]string `json:"args"`
+	SQL  string            `json:"sql"`
+	Now  float64           `json:"now"`
+	ISO  string            `json:"iso"`
+	Root string            `json:"root"`
 }
 
 func assignmentScenario(t *testing.T, name string) []checkpoint {
 	t.Helper()
-	all, err := pythonAssignment()
-	if err != nil {
+	var all map[string][]checkpoint
+	if err := json.Unmarshal(golden.Fixture(t, "assignment_checkpoints.json"), &all); err != nil {
 		t.Fatal(err)
 	}
 	points, ok := all[name]
 	if !ok {
-		t.Fatalf("no python assignment scenario %q", name)
+		t.Fatalf("no assignment scenario %q", name)
 	}
 	return points
 }
@@ -93,9 +72,8 @@ func loadCheckpoint(t *testing.T, path, dump string) {
 }
 
 // replay loads a checkpoint's rows into a Go-owned store and makes the same call. It returns
-// Go's answer and Python's, with Python's store directory rewritten to the Go store's, and the
-// physical identity (device, inode) of the Go store substituted after asserting it is present.
-func replay(t *testing.T, point checkpoint) (got, want map[string]any) {
+// Go's answer and the Go store's directory.
+func replay(t *testing.T, point checkpoint) (map[string]any, string) {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "state")
 	loadCheckpoint(t, filepath.Join(dir, "relay.sqlite3"), point.SQL)
@@ -134,38 +112,40 @@ func replay(t *testing.T, point checkpoint) (got, want map[string]any) {
 	default:
 		t.Fatalf("unknown op %q", point.Op)
 	}
-	got = outcome(t, answer, err)
-	raw, _ := json.Marshal(point.Result)
-	text := strings.ReplaceAll(string(raw), point.StateDir, dir)
-	// Each relay names its own executable in a recovery command (supervisorchannel.relay_program);
-	// Python's is its console script, Go's is fixed here. Everything after it is compared.
-	if program := pythonProgram(t); program != "" {
-		text = strings.ReplaceAll(text, `"`+program+` --state`, `"codex-session-relay --state`)
-	}
-	if err := json.Unmarshal([]byte(text), &want); err != nil {
-		t.Fatal(err)
-	}
-	if relay := obj(obj(want["ok"])["relay"]); relay != nil {
-		py := obj(relay["store"])
-		gostore := obj(obj(obj(got["ok"])["relay"])["store"])
-		if py["inode"] == nil || gostore["inode"] == nil || py["device"] == nil || gostore["device"] == nil {
-			t.Fatalf("store identity missing: python %v go %v", py, gostore)
-		}
-		py["inode"], py["device"] = gostore["inode"], gostore["device"]
-	}
-	return got, want
+	return outcome(t, answer, err), dir
 }
 
-// samePoint compares one checkpoint whole with Python and returns Go's answer.
+// withoutStoreIdentity is answer with the relay store's physical identity (device, inode), which
+// every run's store has anew, written as placeholders after asserting it is present.
+func withoutStoreIdentity(t *testing.T, answer map[string]any) map[string]any {
+	t.Helper()
+	relay := obj(obj(answer["ok"])["relay"])
+	if relay == nil {
+		return answer
+	}
+	raw, err := json.Marshal(answer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatal(err)
+	}
+	identity := obj(obj(obj(out["ok"])["relay"])["store"])
+	if identity["inode"] == nil || identity["device"] == nil {
+		t.Fatalf("store identity missing: %v", identity)
+	}
+	identity["inode"], identity["device"] = "<INODE>", "<DEVICE>"
+	return out
+}
+
+// samePoint compares one checkpoint's answer whole with the golden (the Go store's directory
+// written <STATE>, its identity masked) and returns Go's answer.
 func samePoint(t *testing.T, name string, index int) map[string]any {
 	t.Helper()
-	point := assignmentScenario(t, name)[index]
-	got, want := replay(t, point)
-	if !reflect.DeepEqual(got, want) {
-		g, _ := json.Marshal(got)
-		w, _ := json.Marshal(want)
-		t.Fatalf("%s[%d] %s differs from Python\nGO %s\nPY %s\n", name, index, point.Op, g, w)
-	}
+	got, dir := replay(t, assignmentScenario(t, name)[index])
+	key := fmt.Sprintf("%s[%d]", name, index)
+	golden.CheckJSON(t, key, withoutStoreIdentity(t, got), golden.Substitute(dir, "<STATE>"))
 	return got
 }
 

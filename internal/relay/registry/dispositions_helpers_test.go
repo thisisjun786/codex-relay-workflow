@@ -4,31 +4,59 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
-// pythonDispositions is testdata/python_dispositions.json (gen_dispositions.py): the Python
-// CLI's exit and stdout for every step of every store-only test_dispositions fixture.
-var pythonDispositions = sync.OnceValues(func() (map[string]map[string]struct {
-	Exit   int    `json:"exit"`
-	Stdout string `json:"stdout"`
-}, error) {
-	raw, err := os.ReadFile("testdata/python_dispositions.json")
+// storeOnlyDispositions are the cli-shape fixtures of test_dispositions that need only a store: no
+// given.host, and dispositions-show at every step. Each is compared whole with its golden.
+var storeOnlyDispositions = sync.OnceValues(func() ([]string, error) {
+	directory := filepath.Join("..", "..", "..", "contract", "fixtures", "cli-shape")
+	paths, err := filepath.Glob(filepath.Join(directory, "test_dispositions__*.json"))
 	if err != nil {
 		return nil, err
 	}
-	var out map[string]map[string]struct {
-		Exit   int    `json:"exit"`
-		Stdout string `json:"stdout"`
+	var names []string
+	for _, path := range paths {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		type step struct {
+			Argv []json.RawMessage `json:"argv"`
+		}
+		var fixture struct {
+			Given map[string]json.RawMessage `json:"given"`
+			Run   struct {
+				step
+				Steps []step `json:"steps"`
+			} `json:"run"`
+		}
+		if err := json.Unmarshal(raw, &fixture); err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
+		steps := fixture.Run.Steps
+		if steps == nil {
+			steps = []step{fixture.Run.step}
+		}
+		storeOnly := fixture.Given["host"] == nil
+		for _, s := range steps {
+			storeOnly = storeOnly && len(s.Argv) > 0 && string(s.Argv[0]) == `"dispositions-show"`
+		}
+		if storeOnly {
+			names = append(names, filepath.Base(path))
+		}
 	}
-	return out, json.Unmarshal(raw, &out)
+	return names, nil
 })
 
 // The run-dependent identity of a store: a fresh random id and the file's device and inode.
@@ -106,17 +134,18 @@ func runDispositionsFixture(t *testing.T, name string) map[string][2]string {
 	return out
 }
 
-// sameDispositionsAsPython replays every recorded fixture (or those containing a substring) and
-// compares exit code and whole stdout with Python's, identity values normalised.
-func sameDispositionsAsPython(t *testing.T, contains ...string) int {
+// sameDispositionsAsGolden replays every store-only fixture (or those containing a substring)
+// and compares each step's exit code and whole stdout with the golden, identity values
+// normalised.
+func sameDispositionsAsGolden(t *testing.T, contains ...string) int {
 	t.Helper()
-	want, err := pythonDispositions()
+	names, err := storeOnlyDispositions()
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	count := 0
-	for name, steps := range want {
+	for _, name := range names {
 		matched := len(contains) == 0
 		for _, c := range contains {
 			matched = matched || strings.Contains(name, c)
@@ -125,16 +154,24 @@ func sameDispositionsAsPython(t *testing.T, contains ...string) int {
 			continue
 		}
 		count++
-		got := runDispositionsFixture(t, name)
-		for id, w := range steps {
-			g := got[id]
-			if g[0] != itoa(w.Exit) || normaliseIdentity(g[1]) != normaliseIdentity(w.Stdout) {
-				t.Errorf("%s step %s: go exit %s\n%s\npython exit %d\n%s", name, id, g[0], g[1], w.Exit, w.Stdout)
+		steps := map[string]dispositionStep{}
+		for id, g := range runDispositionsFixture(t, name) {
+			exit, err := strconv.Atoi(g[0])
+			if err != nil {
+				t.Fatal(err)
 			}
+			steps[id] = dispositionStep{Exit: exit, Stdout: normaliseIdentity(g[1])}
 		}
+		golden.CheckJSON(t, name, steps)
 	}
 	if count == 0 {
-		t.Fatalf("no recorded fixture matches %v", contains)
+		t.Fatalf("no store-only fixture matches %v", contains)
 	}
 	return count
+}
+
+// dispositionStep is one fixture step's exit and stdout.
+type dispositionStep struct {
+	Exit   int    `json:"exit"`
+	Stdout string `json:"stdout"`
 }
