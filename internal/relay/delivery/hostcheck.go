@@ -136,7 +136,7 @@ func (rc *Reconciler) ConfirmDelivery(ctx context.Context, eventID string, adapt
 	if err != nil {
 		return append(out, F{Key: "turnRead", Value: "unreadable: " + errorLabel(err)}), nil
 	}
-	detail := fmt.Sprintf("found=%s in turn %s, the acknowledging turn (%d of its items read)", pyvalue.Str(scan.Found), turnID, scan.Scanned)
+	detail := fmt.Sprintf("found=%s in turn %s, the acknowledging turn (%d of its items read)", pyStr(scan.Found), turnID, scan.Scanned)
 	out = append(out, F{Key: "turnRead", Value: detail})
 	if !scan.Found {
 		return out, nil

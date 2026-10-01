@@ -101,7 +101,7 @@ func pyStrOrEmpty(v any) string {
 	if !truthy(v) {
 		return ""
 	}
-	return pyvalue.Str(v)
+	return pyStr(v)
 }
 
 // NormaliseFindings is normalise_findings: criteria and findings merged by id, dispositions in
@@ -123,9 +123,9 @@ func NormaliseFindings(sources ...[]any) ([]any, error) {
 			}
 			disposition := "verified"
 			if v, _ := get(o, "verdict"); truthy(v) {
-				disposition = pyvalue.Str(v)
+				disposition = pyStr(v)
 				if _, isText := v.(string); !isText || !slices.Contains(dispositions, disposition) {
-					return nil, refuse(DispositionConflict, "%s is not one of ('verified', 'needs_changes', 'unverified'); the contract's criteria enum is frozen and a finding outside it cannot be recorded", pyvalue.Repr(v))
+					return nil, refuse(DispositionConflict, "%s is not one of ('verified', 'needs_changes', 'unverified'); the contract's criteria enum is frozen and a finding outside it cannot be recorded", pyReprValue(v))
 				}
 			}
 			entry := Obj{{Key: "id", Value: id}, {Key: "verdict", Value: disposition}}
@@ -357,10 +357,10 @@ func (c *Criteria) Coverage(ctx context.Context, rid, eventID, verdict string, f
 		return nil, refuse(ReviewNotBound, "this managed review is not bound to a criteria set: claim the event first, or pass the reviewed digest explicitly. Current set is %s", digest)
 	}
 	if bound != nil && bound != digest {
-		return nil, refuse(CriteriaSetChanged, "the criteria set changed after this review was claimed: bound %s, current %s. Findings made against the previous wording cannot certify the current one; claim the review again", pyvalue.Str(bound), digest)
+		return nil, refuse(CriteriaSetChanged, "the criteria set changed after this review was claimed: bound %s, current %s. Findings made against the previous wording cannot certify the current one; claim the review again", pyStr(bound), digest)
 	}
 	if expected != nil && expected != digest {
-		return nil, refuse(CriteriaSetChanged, "expected criteria set %s, but the current set is %s", pyvalue.Str(expected), digest)
+		return nil, refuse(CriteriaSetChanged, "expected criteria set %s, but the current set is %s", pyStr(expected), digest)
 	}
 	list, _ := get(registered, "criteria")
 	known, required := map[string]bool{}, []string{}

@@ -204,7 +204,7 @@ func (t TaskSettings) RequireUsable() error {
 	}
 	policy, _ := get(t.Data, "approvalPolicy")
 	if p, ok := policy.(string); !ok || !slices.Contains(CarriedApprovalPolicies, p) {
-		return refuse(UnsupportedApprovalPolicy, "the recorded approvalPolicy is %s; this transport carries only 'never' and 'on-request', leaving every approval a turn raises with the thread's own approver", pyvalue.Repr(policy))
+		return refuse(UnsupportedApprovalPolicy, "the recorded approvalPolicy is %s; this transport carries only 'never' and 'on-request', leaving every approval a turn raises with the thread's own approver", pyReprValue(policy))
 	}
 	if _, ok := t.sandboxMode(); !ok {
 		recorded, _ := get(t.Data, "sandbox")
@@ -213,7 +213,7 @@ func (t TaskSettings) RequireUsable() error {
 			return refuse(UnsupportedSandboxType, "the recorded sandbox is %s, not the policy object a creation result reports, so it does not record the full policy a resume would have to restore", pyvalue.TypeName(recorded))
 		}
 		kind, _ := get(o, "type")
-		return refuse(UnsupportedSandboxType, "%s has no ThreadResumeParams.sandbox mode, so it cannot be restored on a resume", pyvalue.Repr(kind))
+		return refuse(UnsupportedSandboxType, "%s has no ThreadResumeParams.sandbox mode, so it cannot be restored on a resume", pyReprValue(kind))
 	}
 	sandbox, _ := get(t.Data, "sandbox")
 	if normalisePolicy(sandbox) == nil {

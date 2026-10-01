@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -115,12 +114,12 @@ func ReadRecipientTurn(adapter Adapter, clock Clock, attempt, delivery Row, turn
 	}
 	if scan.Found {
 		if listed {
-			return set(set(r, "finding", Present), "detail", fmt.Sprintf("the recipient %s, but this attempt's message is in its items (turn %s)", where, pyvalue.Str(scan.TurnID)))
+			return set(set(r, "finding", Present), "detail", fmt.Sprintf("the recipient %s, but this attempt's message is in its items (turn %s)", where, pyStr(scan.TurnID)))
 		}
-		return set(set(set(r, "finding", Present), "detail", fmt.Sprintf("the recipient does not list this turn, but this attempt's token is in its items (turn %s)", pyvalue.Str(scan.TurnID))), "undecided", TokenWithoutTurn)
+		return set(set(set(r, "finding", Present), "detail", fmt.Sprintf("the recipient does not list this turn, but this attempt's token is in its items (turn %s)", pyStr(scan.TurnID))), "undecided", TokenWithoutTurn)
 	}
 	if scan.OtherKind != nil {
-		return set(set(r, "detail", fmt.Sprintf("undecided: the recipient %s, and this attempt's token is in its items only in an item of type %s (turn %s), which is neither the delivered message nor agent output; not sent again", where, pyvalue.Str(scan.OtherKind), pyvalue.Str(scan.OtherTurn))), "undecided", TokenInOtherItem)
+		return set(set(r, "detail", fmt.Sprintf("undecided: the recipient %s, and this attempt's token is in its items only in an item of type %s (turn %s), which is neither the delivered message nor agent output; not sent again", where, pyStr(scan.OtherKind), pyStr(scan.OtherTurn))), "undecided", TokenInOtherItem)
 	}
 	if !scan.Exhausted {
 		return set(set(r, "detail", fmt.Sprintf("undecided: the recipient %s, and %d items did not reach history older than the send, so the token's absence is not shown", where, scan.Scanned)), "undecided", TokenScanBounded)
@@ -135,7 +134,7 @@ func ReadRecipientTurn(adapter Adapter, clock Clock, attempt, delivery Row, turn
 func RecordUndecided(ctx context.Context, s *store.Store, requestID string, reading Reading) (int64, error) {
 	var wanted any
 	if u, _ := get(reading, "undecided"); truthy(u) {
-		wanted = undecidedMark + pyvalue.Str(u)
+		wanted = undecidedMark + pyStr(u)
 	} else if str(reading, "finding") != Present {
 		return 0, nil
 	}
@@ -284,7 +283,7 @@ func ReadUnknownSend(adapter Adapter, clock Clock, attempt, delivery Row, receip
 		return pending("unreadable: the recipient's items could not be read for this attempt's token: " + errorLabel(err))
 	}
 	if scan.Found {
-		return set(set(set(r, "finding", Present), "turnId", scan.TurnID), "detail", fmt.Sprintf("this attempt's message is in the recipient's items since the send (turn %s, %d items read)", pyvalue.Str(scan.TurnID), scan.Scanned))
+		return set(set(set(r, "finding", Present), "turnId", scan.TurnID), "detail", fmt.Sprintf("this attempt's message is in the recipient's items since the send (turn %s, %d items read)", pyStr(scan.TurnID), scan.Scanned))
 	}
 	type owned struct {
 		turn TurnInfo
@@ -303,11 +302,11 @@ func ReadUnknownSend(adapter Adapter, clock Clock, attempt, delivery Row, receip
 	}
 	for _, o := range owns {
 		if o.scan.OtherKind != nil {
-			return undecided(fmt.Sprintf("undecided: this attempt's token is in turn %s, which the send could have been folded into, only in an item of type %s, which is neither the delivered message nor agent output; not sent again", o.turn.TurnID, pyvalue.Str(o.scan.OtherKind)), TokenInOtherItem)
+			return undecided(fmt.Sprintf("undecided: this attempt's token is in turn %s, which the send could have been folded into, only in an item of type %s, which is neither the delivered message nor agent output; not sent again", o.turn.TurnID, pyStr(o.scan.OtherKind)), TokenInOtherItem)
 		}
 	}
 	if scan.OtherKind != nil {
-		return undecided(fmt.Sprintf("undecided: this attempt's token is in the recipient's items only in an item of type %s (turn %s), which is neither the delivered message nor agent output; not sent again", pyvalue.Str(scan.OtherKind), pyvalue.Str(scan.OtherTurn)), TokenInOtherItem)
+		return undecided(fmt.Sprintf("undecided: this attempt's token is in the recipient's items only in an item of type %s (turn %s), which is neither the delivered message nor agent output; not sent again", pyStr(scan.OtherKind), pyStr(scan.OtherTurn)), TokenInOtherItem)
 	}
 	if !scan.Exhausted {
 		return undecided(fmt.Sprintf("undecided: %d items did not reach history older than the send, so the token's absence is not shown", scan.Scanned), TokenScanBounded)

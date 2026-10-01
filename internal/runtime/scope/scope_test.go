@@ -27,7 +27,8 @@ func TestMain(m *testing.M) {
 // service_state keeps its four answers apart with the invocation first: a command that did
 // not run is never a stopped daemon. Each answer is the golden, which began as Python's.
 func TestServiceStateIsPythons(t *testing.T) {
-	for _, name := range []string{"running", "stopped", "failed", "stderr", "bare-failure", "no-payload", "list-payload", "string-running"} {
+	for _, name := range []string{"running", "stopped", "failed", "stderr", "bare-failure", "no-payload", "list-payload", "string-running",
+		"open-0", "open-2", "open-bool", "open-str", "unavailable", "no-contents"} {
 		expected.Check(t, name, []byte(golden.Canon(scope.ServiceState(envelopeOf(t, name)))))
 	}
 }
@@ -50,6 +51,25 @@ func envelopeOf(t *testing.T, name string) record.Object {
 		return record.Object{{Key: "ok", Value: true}, {Key: "payload", Value: []any{int64(1)}}}
 	case "string-running":
 		return record.Object{{Key: "ok", Value: true}, {Key: "payload", Value: record.Object{{Key: "running", Value: "yes"}}}}
+	case "no-contents":
+		return record.Object{{Key: "ok", Value: true}, {Key: "payload", Value: record.Object{}}, {Key: "command", Value: []any{"relay", "doctor"}}}
+	}
+	// The doctor envelopes swapgate's tests read too: a status the service never sends, so the
+	// state says it carries no boolean running.
+	contents := func(fields record.Object) record.Object {
+		return record.Object{{Key: "ok", Value: true}, {Key: "payload", Value: record.Object{{Key: "contents", Value: fields}}}, {Key: "command", Value: []any{"relay", "doctor"}}}
+	}
+	switch name {
+	case "open-0":
+		return contents(record.Object{{Key: "available", Value: true}, {Key: "openAttempts", Value: int64(0)}})
+	case "open-2":
+		return contents(record.Object{{Key: "available", Value: true}, {Key: "openAttempts", Value: int64(2)}})
+	case "open-bool":
+		return contents(record.Object{{Key: "available", Value: true}, {Key: "openAttempts", Value: true}})
+	case "open-str":
+		return contents(record.Object{{Key: "available", Value: true}, {Key: "openAttempts", Value: "2"}})
+	case "unavailable":
+		return contents(record.Object{{Key: "available", Value: false}, {Key: "detail", Value: "not readable"}})
 	}
 	return nil
 }
