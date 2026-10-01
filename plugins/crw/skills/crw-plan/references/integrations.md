@@ -901,9 +901,15 @@ review corrections, active-turn steer messages, resumes, and restoration blocks.
 to a supervisor's instructions to a parent and to messages between peer parents.
 Translate the actionable instructions without changing their scope or acceptance
 criteria; preserve exact identifiers, URLs, paths, code, and necessary source quotes.
+A child also works and writes in English: its own messages and final return, its commit
+messages, its pull request's title, body and review replies, and the text of its receipts. The
+assignment says so in its `Language:` line. Without that line a child writes in whatever language
+its host, its workflow or the last thing it read leaned toward, and children of one project end up
+answering in different languages. Exact identifiers, quotations and code stay as they are.
 Keep task titles under the existing Korean title convention, and keep user-facing
-reports and Linear records in Korean unless explicitly requested otherwise. This
-language rule applies to future messages; it does not require resending old prompts
+reports and Linear records in Korean unless explicitly requested otherwise. A child writes neither
+of those: it returns proposed Linear changes for its parent to write, and the parent reports to the
+user. This language rule applies to future messages; it does not require resending old prompts
 or waking existing tasks merely to change their language.
 Name the three levels the same way in both registers. A Korean report or record calls them 감독 세션,
 부모 세션 and 자식 세션, spelled out where prose first introduces the role and shortened to 감독, 부모
