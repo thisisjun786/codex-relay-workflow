@@ -10,10 +10,10 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
-// Ownership states for this package's comparisons with live Python. Every store is fenced
-// (docs/port/decisions.md 14 and 30) and each runtime refuses one the other owns, so a comparison
-// puts the store each runtime reads into the state a real host would have for that step - the
-// runtime under test owns it - with the shared testsupport fixture API and nothing else:
+// Ownership states for this package's tests, which start from stores Python's test fixtures built
+// (tree fixtures). Every store is fenced (docs/port/decisions.md 14 and 30) and each runtime
+// refuses one the other owns, so a test puts the store it reads into the state a real host would
+// have for that step - Go owns it - with the shared testsupport fixture API and nothing else:
 //
 //   - restoreSnapshot: a captured snapshot copied back to where its run kept the store.
 //   - ownCopied:       a copy the test made itself, in a directory of its own.

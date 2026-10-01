@@ -48,16 +48,6 @@ func supervisorFixture(t *testing.T, id string) string {
 	return root
 }
 
-// removeStoreFiles deletes a store Python left and the files beside it that belong to it.
-func removeStoreFiles(path string) error {
-	for _, name := range []string{path, path + "-wal", path + "-shm", filepath.Join(filepath.Dir(path), "takeover.json")} {
-		if err := os.Remove(name); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-	}
-	return nil
-}
-
 // checkSupervisorValues compares the values a replay produced, as JSON decodes them, with the
 // golden; no values is an empty list.
 func checkSupervisorValues(t *testing.T, got []any, opts ...golden.Option) {
