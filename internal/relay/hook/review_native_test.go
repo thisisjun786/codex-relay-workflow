@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -317,6 +318,16 @@ func (r *review) snapshot(home string, directories bool) Object {
 	return records
 }
 
+// journalDay is the journal's day directory (YYYYMMDD of the run), which a snapshot that lists
+// directories names; it is the run's date, not anything the hook decides.
+var journalDay = regexp.MustCompile(`journal/[0-9]{8}`)
+
+// snapshotText is a snapshot as compared: its JSON with the journal's day directory spelled
+// journal/<DAY>, so a recorded snapshot compares on any later day.
+func snapshotText(v any) string {
+	return journalDay.ReplaceAllString(evidence.Dumps(v, false, true, true), "journal/<DAY>")
+}
+
 func clearReview(t *testing.T, home string) {
 	for _, name := range []string{"journal", "crw-completion-hook"} {
 		if err := os.RemoveAll(filepath.Join(home, name)); err != nil {
@@ -348,7 +359,7 @@ func (r *review) pairInput(h reviewHome, payload any, args []string, mask int, d
 	if stdout != get(want, "stdout") {
 		t.Fatalf("stdout %q, Python %q", stdout, get(want, "stdout"))
 	}
-	if g, w := evidence.Dumps(got, false, true, true), evidence.Dumps(get(want, "snapshot"), false, true, true); g != w {
+	if g, w := snapshotText(got), snapshotText(get(want, "snapshot")); g != w {
 		t.Fatalf("snapshot\n go     %s\n python %s", g, w)
 	}
 	return got
@@ -514,7 +525,7 @@ func (r *review) dialErrors() {
 		h.writeSettings(t)
 		want := r.take("snapshot")
 		r.invoke(h, h.payload, nil, 0o022)
-		if g, w := evidence.Dumps(r.snapshot(h.home, false), false, true, true), evidence.Dumps(get(want, "snapshot"), false, true, true); g != w {
+		if g, w := snapshotText(r.snapshot(h.home, false)), snapshotText(get(want, "snapshot")); g != w {
 			t.Fatalf("%v\n go     %s\n python %s", number, g, w)
 		}
 		t.Log(number, "row equal")
