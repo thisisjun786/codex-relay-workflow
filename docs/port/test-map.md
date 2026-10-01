@@ -730,7 +730,8 @@ SQLite state through the built dispatcher, including refusals, duplicate intake,
 classification replay, and queue/claim/operation/complete project publication.
 Clocks/tokens are injected through a test-only build overlay, never normalized.
 The shared `argparse` implementation/spec originated with todo 24; routing registers
-through `cli.Commands`, without an extra pre-dispatch path.
+through the relay command table (`internal/relay/dispatch`), without an extra
+pre-dispatch path.
 
 Validation: full relay/contract race suite, lint, static binary build, routing-only
 strict parser contract and applicable strict cli-shape/linkage cases. Broad strict

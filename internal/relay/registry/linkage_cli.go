@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -100,40 +101,29 @@ func withEnforcement(r *Registry, answer contract.OrderedObject) contract.Ordere
 	return append(copyObject(answer), contract.Field{Key: "unenforcedIndexes", Value: unenforced})
 }
 
-// linkageExit is a PayloadExit: the whole answer printed with its own exit code.
-type linkageExit struct {
-	payload contract.OrderedObject
-	code    int
-}
-
-func (e *linkageExit) Error() string { return "linkage refusal" }
-
-// ExitPayload prints the answer whole.
-func (e *linkageExit) ExitPayload() (contract.OrderedObject, int) { return e.payload, e.code }
-
 func endpoint(p parsed, prefix string) Endpoint {
 	return Endpoint{TaskID: p.text(prefix + "task"), HostID: p.text(prefix + "host"), Cwd: p.optional(prefix + "cwd"), CXCSession: p.optional(prefix + "cxc-session")}
 }
 
 var linkageCommands = []command{
-	{name: "linkage-bind",
+	{Command: dispatch.Command{Name: "linkage-bind"},
 		run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
 			return r.BindScopeAs(ctx, p.text("role"), p.text("scope"), endpoint(p, ""), Active)
 		}},
-	{name: "linkage-supervise", defaults: map[string]string{"kind": linkExec},
+	{Command: dispatch.Command{Name: "linkage-supervise", Defaults: map[string]any{"kind": linkExec}},
 		run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
 			return r.RegisterSupervision(ctx, p.text("initiative"), p.text("project"), endpoint(p, "supervisor-"), endpoint(p, "parent-"), p.text("kind"))
 		}},
-	{name: "linkage-peer",
+	{Command: dispatch.Command{Name: "linkage-peer"},
 		run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
 			return r.RegisterPeer(ctx, p.text("left-project"), Endpoint{TaskID: p.text("left-task"), HostID: p.text("left-host")},
 				p.text("right-project"), Endpoint{TaskID: p.text("right-task"), HostID: p.text("right-host")})
 		}},
-	{name: "linkage-attach",
+	{Command: dispatch.Command{Name: "linkage-attach"},
 		run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
 			return r.AttachIssue(ctx, p.text("relationship"), p.text("project"))
 		}},
-	{name: "linkage-outstanding",
+	{Command: dispatch.Command{Name: "linkage-outstanding", ReadOnly: true},
 		run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
 			outstanding, err := r.Outstanding(ctx, p.text("project"), p.optional("task"))
 			if err != nil {
@@ -142,22 +132,22 @@ var linkageCommands = []command{
 			return contract.OrderedObject{{Key: "projectKey", Value: p.text("project")}, {Key: "taskId", Value: nullable(p.optional("task"))},
 				{Key: "outstanding", Value: strList(outstanding)}}, nil
 		}},
-	{name: "linkage-completion",
+	{Command: dispatch.Command{Name: "linkage-completion", ReadOnly: true},
 		run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
 			return withEnforcement(r, r.ProjectState(ctx, p.text("project"))), nil
 		}},
-	{name: "linkage-handover",
+	{Command: dispatch.Command{Name: "linkage-handover"},
 		run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
 			return r.Handover(ctx, p.text("role"), p.text("scope"), p.text("expect-task"), endpoint(p, ""), p.values["acknowledge"],
 				p.text("evidence"), p.text("actor"))
 		}},
-	{name: "linkage-directive",
+	{Command: dispatch.Command{Name: "linkage-directive"},
 		run: cmdLinkageDirective},
-	{name: "linkage-settle",
+	{Command: dispatch.Command{Name: "linkage-settle"},
 		run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
 			return r.SettleDirective(ctx, p.text("directive"), p.text("disposition"), p.text("actor"), p.optional("reason"))
 		}},
-	{name: "linkage-down",
+	{Command: dispatch.Command{Name: "linkage-down", ReadOnly: true},
 		run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
 			answer, err := r.downRaising(ctx, p.text("scope-kind"), p.text("scope"))
 			if err != nil {
@@ -165,9 +155,9 @@ var linkageCommands = []command{
 			}
 			return withEnforcement(r, answer), nil
 		}},
-	{name: "linkage-up",
+	{Command: dispatch.Command{Name: "linkage-up", ReadOnly: true},
 		precheck: linkageUpPrecheck, run: cmdLinkageUp},
-	{name: "linkage-counterpart",
+	{Command: dispatch.Command{Name: "linkage-counterpart", ReadOnly: true},
 		run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
 			q := CounterpartQuery{QuotedScope: p.optional("quoted-scope"), FromScope: p.optional("from-scope")}
 			if p.set["quoted-revision"] {
@@ -188,11 +178,11 @@ func cmdLinkageDirective(ctx context.Context, r *Registry, p parsed) (any, error
 	reference := p.optional("reference")
 	correlation, purpose := p.optional("correlation"), p.optional("purpose")
 	if correlation.String != "" && purpose.String == "" {
-		return nil, &usage{detail: "--correlation is part of an envelope pointer, so it requires --purpose", code: contract.ExitUsage}
+		return nil, &dispatch.UsageError{Detail: "--correlation is part of an envelope pointer, so it requires --purpose", Code: contract.ExitUsage}
 	}
 	if purpose.String != "" {
 		if reference.String != "" {
-			return nil, &usage{detail: "--purpose derives the envelope pointer, so it cannot be given with --reference", code: contract.ExitUsage}
+			return nil, &dispatch.UsageError{Detail: "--purpose derives the envelope pointer, so it cannot be given with --reference", Code: contract.ExitUsage}
 		}
 		derived, err := DirectiveReference(purpose.String, p.text("link"), p.text("digest"), correlation.String, correlation.Valid)
 		if err != nil {
@@ -208,10 +198,10 @@ func cmdLinkageDirective(ctx context.Context, r *Registry, p parsed) (any, error
 // on an absent store this refusal, not store_absent, is the answer.
 func linkageUpPrecheck(p *parsed) error {
 	if p.text("scope") != "" && p.text("task") == "" {
-		return &linkageExit{payload: contract.OrderedObject{{Key: "ok", Value: false}, {Key: "reason", Value: "bad_invocation"},
+		return &dispatch.PayloadExit{Payload: contract.OrderedObject{{Key: "ok", Value: false}, {Key: "reason", Value: "bad_invocation"},
 			{Key: "detail", Value: "--scope chooses between the scopes one TASK owns, so it goes with" +
 				" --task. With --issue or --relationship the starting scope is already" +
-				" decided and --scope would be silently ignored."}}, code: contract.ExitRefused}
+				" decided and --scope would be silently ignored."}}, Code: contract.ExitRefused}
 	}
 	return nil
 }
@@ -225,5 +215,3 @@ func cmdLinkageUp(ctx context.Context, r *Registry, p parsed) (any, error) {
 	}
 	return withEnforcement(r, answer), nil
 }
-
-func init() { commands = append(commands, linkageCommands...) }

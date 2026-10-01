@@ -20,9 +20,6 @@ func TestFaultNextOfferablePublicationOrderMatchesPython(t *testing.T) {
 		t.Fatal(reply)
 	}
 	var stdout, stderr bytes.Buffer
-	gotCode, handled := executeAsCLI(context.Background(), []string{"--state", goDir, "--json", "fault-next"}, &stdout, &stderr)
-	if !handled {
-		t.Fatal("unhandled")
-	}
+	gotCode := executeAsCLI(context.Background(), []string{"--state", goDir, "--json", "fault-next"}, &stdout, &stderr)
 	checkGolden(t, "relay --json fault-next", []string{"--json", "fault-next"}, runPathsOf(t, home), cliGolden{Code: gotCode, Stdout: stdout.String(), Stderr: stderr.String()})
 }

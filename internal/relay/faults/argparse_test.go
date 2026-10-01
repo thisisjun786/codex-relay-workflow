@@ -44,10 +44,7 @@ type cliResult struct {
 func goFaultCLI(t *testing.T, args ...string) cliResult {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
-	code, handled := executeAsCLI(context.Background(), args, &stdout, &stderr)
-	if !handled {
-		t.Fatalf("not handled: %v", args)
-	}
+	code := executeAsCLI(context.Background(), args, &stdout, &stderr)
 	return cliResult{code, stdout.String(), stderr.String()}
 }
 

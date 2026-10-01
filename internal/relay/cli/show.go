@@ -2,18 +2,17 @@ package cli
 
 import (
 	"context"
-	"flag"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
-var statusCommand = Command{
-	Name:  "status",
-	Flags: func(f *flag.FlagSet) { f.String("relationship", "", "") },
-	Run: func(ctx context.Context, services Services, args Args) (any, error) {
+var statusCommand = dispatch.Command{
+	Name: "status", ReadOnly: true,
+	Run: func(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
 		relationship, _ := args.String("relationship")
 		opened, err := openStore(ctx, services)
 		if err != nil {
@@ -45,13 +44,9 @@ var statusCommand = Command{
 	},
 }
 
-var showCommand = Command{
-	Name: "show",
-	Flags: func(f *flag.FlagSet) {
-		f.String("event", "", "")
-		f.Bool("message", false, "include the exact text a recipient was or would be sent")
-	},
-	Run: func(ctx context.Context, services Services, args Args) (any, error) {
+var showCommand = dispatch.Command{
+	Name: "show", ReadOnly: true,
+	Run: func(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
 		event, _ := args.String("event")
 		opened, err := openStore(ctx, services)
 		if err != nil {
@@ -63,7 +58,7 @@ var showCommand = Command{
 			return nil, err
 		}
 		if row == nil {
-			return nil, &UsageError{Detail: "no event " + pyvalue.StrRepr(event), Code: contract.ExitUsage}
+			return nil, &dispatch.UsageError{Detail: "no event " + pyvalue.StrRepr(event), Code: contract.ExitUsage}
 		}
 		queued, err := opened.One(ctx, "SELECT * FROM deliveries WHERE event_id = ?", event)
 		if err != nil {

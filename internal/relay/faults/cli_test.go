@@ -13,10 +13,7 @@ func cliCall(t *testing.T, dir string, args ...string) (int, map[string]any) {
 	t.Helper()
 	argv := append([]string{"--state", dir}, args...)
 	var out, stderr bytes.Buffer
-	code, handled := executeAsCLI(context.Background(), argv, &out, &stderr)
-	if !handled {
-		t.Fatalf("not handled: %v", argv)
-	}
+	code := executeAsCLI(context.Background(), argv, &out, &stderr)
 	var payload map[string]any
 	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
 		t.Fatalf("%s (stderr: %s): %v", out.String(), stderr.String(), err)

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
@@ -16,7 +17,7 @@ func Test26_CCL1_existing_linkage_commands_are_registered(t *testing.T) {
 	// CCL-1 is split by owner: merge-turn commands belong to 26B, capacity/region to 27.
 	for _, name := range []string{"linkage-bind", "linkage-supervise", "linkage-peer", "linkage-attach", "linkage-outstanding", "linkage-completion", "linkage-handover", "linkage-directive", "linkage-settle", "linkage-down", "linkage-up", "linkage-counterpart"} {
 		var stdout, stderr byteBuffer
-		code := registry.ExecuteAs(context.Background(), "codex-session-relay", []string{name, "--help"}, &stdout, &stderr, nil)
+		code := dispatch.Execute(context.Background(), "codex-session-relay", []string{name, "--help"}, &stdout, &stderr)
 		if code != 0 || stdout.Len() == 0 || stderr.Len() != 0 {
 			t.Errorf("%s: code=%d stdout=%q stderr=%q", name, code, stdout.String(), stderr.String())
 		}

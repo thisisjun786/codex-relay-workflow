@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
@@ -214,7 +215,7 @@ func Test25_DSP9_an_unreadable_store_is_not_an_empty_one(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
-	code := ExecuteAs(ctx(), "codex-session-relay", []string{"--state", state, "dispositions-show", "--project", "P"}, &stdout, &stderr, nil)
+	code := dispatch.Execute(ctx(), "codex-session-relay", []string{"--state", state, "dispositions-show", "--project", "P"}, &stdout, &stderr)
 	var answer map[string]any
 	if err := json.Unmarshal(stdout.Bytes(), &answer); err != nil {
 		t.Fatal(err)
@@ -259,13 +260,13 @@ func Test25_DSP11_the_selectors(t *testing.T) {
 	dir := t.TempDir()
 	for _, argv := range [][]string{{"dispositions-show"}, {"dispositions-show", "--project", "P", "--relationship", "r"}} {
 		var stdout, stderr bytes.Buffer
-		code := ExecuteAs(ctx(), "codex-session-relay", append([]string{"--state", dir}, argv...), &stdout, &stderr, nil)
+		code := dispatch.Execute(ctx(), "codex-session-relay", append([]string{"--state", dir}, argv...), &stdout, &stderr)
 		if code != 2 || stdout.Len() != 0 {
 			t.Fatal(argv, code, stdout.String())
 		}
 	}
 	var stderr bytes.Buffer
-	ExecuteAs(ctx(), "codex-session-relay", []string{"--state", dir, "dispositions-show"}, &bytes.Buffer{}, &stderr, nil)
+	dispatch.Execute(ctx(), "codex-session-relay", []string{"--state", dir, "dispositions-show"}, &bytes.Buffer{}, &stderr)
 	golden.Check(t, "dispositions-show", stderr.Bytes())
 }
 

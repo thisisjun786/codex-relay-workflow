@@ -75,10 +75,7 @@ func TestF2SeededCLIOracle(t *testing.T) {
 			}
 			args := tc.args(id, publication)
 			var got, stderr bytes.Buffer
-			goCode, handled := executeAsCLI(context.Background(), append([]string{"--state", goDir, "--json"}, args...), &got, &stderr)
-			if !handled {
-				t.Fatal("unhandled")
-			}
+			goCode := executeAsCLI(context.Background(), append([]string{"--state", goDir, "--json"}, args...), &got, &stderr)
 			checkGolden(t, "relay "+strings.Join(args, " "), args, runPathsOf(t, home), cliGolden{Code: goCode, Stdout: got.String()})
 		})
 	}

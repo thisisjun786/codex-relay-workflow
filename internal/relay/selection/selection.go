@@ -3,6 +3,7 @@ package selection
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -191,6 +192,22 @@ func GuardFallback(s Services) (string, error) {
 	}
 	refusal = append(refusal, contract.Field{Key: "stopNotJudged", Value: "this Stop was neither classified nor recorded: no --db-path named a receipt store and the coordinator recorded none in the intent, so the only candidate left was" + suffix})
 	return "", &Refused{Payload: refusal}
+}
+
+// Program is the shell-rendered command prefix the recovery commands name: how the operator
+// invoked the relay CLI (argv0), the multi-call `crw relay` spelled with the executable it ran.
+func Program(argv0 string) string {
+	if argv0 == "crw relay" {
+		argv0 = os.Args[0]
+		if !strings.Contains(argv0, "/") {
+			argv0 = filepath.Base(argv0)
+		}
+		return shellQuote(argv0) + " relay"
+	}
+	if strings.Contains(argv0, "/") {
+		return shellQuote(argv0)
+	}
+	return shellQuote(filepath.Base(argv0))
 }
 
 // shellQuote is shlex.quote.

@@ -9,7 +9,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
@@ -75,7 +75,7 @@ func Test23_PC_2_EveryChild(t *testing.T)   { projectCompletionReplay(t, "PC-2")
 func Test23_PC_3_ReadFailures(t *testing.T) { projectCompletionReplay(t, "PC-3") }
 func Test23_PC_4_ReachableConsumer(t *testing.T) {
 	projectCompletionReplay(t, "PC-4")
-	if !cli.Registered("linkage-completion") {
+	if !dispatch.Registered("linkage-completion") {
 		t.Fatal("linkage-completion not registered")
 	}
 }

@@ -474,26 +474,6 @@ func ParseSpec(spec Spec, argv []string) Result {
 	return r
 }
 
-// RootArgs binds accepted globals for the command-family runners, which retain
-// their own handler interfaces. Abbreviations never reach a second parser.
-func (r Result) RootArgs() []string {
-	var argv []string
-	for _, action := range Specs[""].Actions {
-		if len(action.Flags) == 0 {
-			continue
-		}
-		flag := action.Flags[len(action.Flags)-1]
-		for _, value := range r.Values[strings.TrimPrefix(flag, "--")] {
-			if action.Kind == "_StoreTrueAction" {
-				argv = append(argv, flag)
-			} else {
-				argv = append(argv, flag+"="+value)
-			}
-		}
-	}
-	return append(argv, r.Remaining...)
-}
-
 func (r Result) Error(prog, command string) string {
 	who := program(prog, command)
 	if r.Global {

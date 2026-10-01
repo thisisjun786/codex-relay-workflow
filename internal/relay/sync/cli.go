@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"flag"
 	"fmt"
 	"os"
 	"strconv"
@@ -13,65 +12,60 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/reception"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
+// commandNames are the sync and packet commands, in cli.py's add_parser order.
+var commandNames = []string{"sync-target", "sync-next", "sync-claim", "sync-operation", "sync-reconcile", "sync-complete", "sync-fail", "sync-retry", "sync-status", "sync-progress", "packet-check"}
+
 func init() {
-	for _, name := range []string{"sync-target", "sync-next", "sync-claim", "sync-operation", "sync-reconcile", "sync-complete", "sync-fail", "sync-retry", "sync-status", "sync-progress", "packet-check"} {
-		name := name
-		spec := argparse.Specs[name]
-		cli.Commands = append(cli.Commands, cli.Command{Name: name, Exempt: name == "packet-check", Flags: func(f *flag.FlagSet) {
-			for _, action := range spec.Actions {
-				if len(action.Flags) == 0 || action.Kind == "_HelpAction" {
-					continue
-				}
-				key := strings.TrimPrefix(action.Flags[len(action.Flags)-1], "--")
-				if action.Kind == "_StoreTrueAction" {
-					f.Bool(key, false, "")
-				} else if action.Type == "int" {
-					fallback := int64(0)
-					if name == "sync-next" && key == "limit" {
-						fallback = 4
-					}
-					f.Int64(key, fallback, "")
-				} else {
-					fallback := ""
-					if name == "sync-target" && key == "target" {
-						fallback = "coordination_document"
-					}
-					f.String(key, fallback, "")
-				}
-			}
-		}, Run: func(ctx context.Context, services cli.Services, args cli.Args) (any, error) {
-			values := map[string]string{}
-			args.Flags.VisitAll(func(f *flag.Flag) {
-				if args.Set[f.Name] || f.DefValue != "" {
-					values[f.Name] = f.Value.String()
-				}
-			})
-			var policy *registry.RolePolicy
-			if name == "packet-check" && values["receiver"] != "" && values["applied"] != "true" {
-				if err := cli.CheckPacketSelection(services); err != nil {
-					return nil, err
-				}
-				// cli.py main settles the launch declaration before any handler reads the
-				// packet, so a refused declaration answers before a bad packet does.
-				resolved, err := packetPolicy(services.Selection.Path, os.Getenv(execution.EnvPolicy))
-				if err != nil {
-					return nil, err
-				}
-				policy = &resolved
-			}
-			result, err := runCommand(ctx, services, name, values, policy)
-			return wireValue(result), err
-		}})
+	var commands []dispatch.Command
+	for _, name := range commandNames {
+		commands = append(commands, dispatch.Command{Name: name, Run: func(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
+			return run(ctx, services, name, args)
+		}, Defaults: commandDefaults[name], ReadOnly: readOnly[name],
+			// packet-check reads a supplied record, or its store-backed check consults the
+			// selection refusal itself (run).
+			Exempt: name == "packet-check"})
 	}
+	dispatch.Register(nil, commands...)
 }
-func runCommand(ctx context.Context, services cli.Services, name string, args map[string]string, policy *registry.RolePolicy) (any, error) {
+
+var (
+	commandDefaults = map[string]map[string]any{"sync-target": {"target": "coordination_document"}, "sync-next": {"limit": int64(4)}}
+	readOnly        = map[string]bool{"sync-next": true, "sync-operation": true, "sync-status": true, "packet-check": true}
+)
+
+// run answers one command from its options' texts: each option the line gave, and each default.
+func run(ctx context.Context, services dispatch.Services, name string, args dispatch.Args) (any, error) {
+	values := map[string]string{}
+	for key, given := range args.Parsed.Values {
+		values[key] = given[len(given)-1]
+	}
+	for key := range args.Defaults {
+		values[key] = args.Text(key)
+	}
+	var policy *registry.RolePolicy
+	if name == "packet-check" && values["receiver"] != "" && values["applied"] != "true" {
+		if err := dispatch.CheckSelection(services); err != nil {
+			return nil, err
+		}
+		// cli.py main settles the launch declaration before any handler reads the
+		// packet, so a refused declaration answers before a bad packet does.
+		resolved, err := packetPolicy(services.Selection.Path, os.Getenv(execution.EnvPolicy))
+		if err != nil {
+			return nil, err
+		}
+		policy = &resolved
+	}
+	result, err := runCommand(ctx, services, name, values, policy)
+	return wireValue(result), err
+}
+
+func runCommand(ctx context.Context, services dispatch.Services, name string, args map[string]string, policy *registry.RolePolicy) (any, error) {
 	if name == "packet-check" {
 		return packetCommand(ctx, services, args, policy)
 	}
@@ -152,17 +146,17 @@ func readText(value string) (string, error) {
 	}
 	raw, e := os.ReadFile(value[1:])
 	if e != nil {
-		return "", &cli.HostError{Class: "FileNotFoundError", Detail: store.PythonOSErrorText(e)}
+		return "", &dispatch.HostError{Class: "FileNotFoundError", Detail: store.PythonOSErrorText(e)}
 	}
 	return string(raw), nil
 }
 func readDocument(path, what string, packet bool) (any, error) {
 	raw, e := os.ReadFile(path)
 	if e != nil {
-		return nil, &cli.UsageError{Code: 4, Detail: fmt.Sprintf("the %s at %s could not be read: FileNotFoundError: %s", what, pyvalue.StrRepr(path), store.PythonOSErrorText(e))}
+		return nil, &dispatch.UsageError{Code: 4, Detail: fmt.Sprintf("the %s at %s could not be read: FileNotFoundError: %s", what, pyvalue.StrRepr(path), store.PythonOSErrorText(e))}
 	}
 	if problem := reception.JSONReaderDepthProblem(raw); problem != "" {
-		return nil, &cli.UsageError{Code: 4, Detail: fmt.Sprintf("the %s at %s could not be read: RecursionError: %s", what, pyvalue.StrRepr(path), problem)}
+		return nil, &dispatch.UsageError{Code: 4, Detail: fmt.Sprintf("the %s at %s could not be read: RecursionError: %s", what, pyvalue.StrRepr(path), problem)}
 	}
 	if packet {
 		if e = reception.CheckJSONText(raw); e != nil {
@@ -173,14 +167,14 @@ func readDocument(path, what string, packet bool) (any, error) {
 	}
 	v, e := registry.DecodeJSON(string(raw))
 	if e != nil {
-		return nil, &cli.UsageError{Code: 4, Detail: fmt.Sprintf("the %s at %s could not be read: JSONDecodeError: %s", what, pyvalue.StrRepr(path), e)}
+		return nil, &dispatch.UsageError{Code: 4, Detail: fmt.Sprintf("the %s at %s could not be read: JSONDecodeError: %s", what, pyvalue.StrRepr(path), e)}
 	}
 	return v, nil
 }
 
 // packetCommand is cmd_packet_check; policy is the role policy the store-backed check judges
 // pairs by, settled before the handler (packetPolicy).
-func packetCommand(ctx context.Context, services cli.Services, args map[string]string, policy *registry.RolePolicy) (any, error) {
+func packetCommand(ctx context.Context, services dispatch.Services, args map[string]string, policy *registry.RolePolicy) (any, error) {
 	packet, e := readDocument(args["packet"], "relay-packet/1 message", true)
 	if e != nil {
 		return nil, e
@@ -189,7 +183,7 @@ func packetCommand(ctx context.Context, services cli.Services, args map[string]s
 	applied := args["applied"] == "true"
 	if !storeMode {
 		if args["observation"] != "" || args["ledger"] != "" || applied {
-			return nil, &cli.UsageError{Code: 4, Detail: "--observation, --ledger and --applied belong to the store reading (--receiver); a supplied record answers for itself"}
+			return nil, &dispatch.UsageError{Code: 4, Detail: "--observation, --ledger and --applied belong to the store reading (--receiver); a supplied record answers for itself"}
 		}
 		record, e := readDocument(args["record"], "receiver's own reading", false)
 		if e != nil {
@@ -211,10 +205,10 @@ func packetCommand(ctx context.Context, services cli.Services, args map[string]s
 	ledgerPath := args["ledger"]
 	if applied {
 		if ledgerPath == "" {
-			return nil, &cli.UsageError{Code: 4, Detail: "--applied records what you did in your own reception ledger; name it with --ledger"}
+			return nil, &dispatch.UsageError{Code: 4, Detail: "--applied records what you did in your own reception ledger; name it with --ledger"}
 		}
 		if args["observation"] != "" {
-			return nil, &cli.UsageError{Code: 4, Detail: "--applied reads nothing; an observation belongs to the check that came before it"}
+			return nil, &dispatch.UsageError{Code: 4, Detail: "--applied reads nothing; an observation belongs to the check that came before it"}
 		}
 		var answer Obj
 		e = reception.WithLedgerLock(ledgerPath, func() error {
@@ -305,7 +299,7 @@ func packetCommand(ctx context.Context, services cli.Services, args map[string]s
 func ledgerUsage(e error) error {
 	var unusable *reception.LedgerError
 	if errors.As(e, &unusable) {
-		return &cli.UsageError{Code: 4, Detail: unusable.Detail}
+		return &dispatch.UsageError{Code: 4, Detail: unusable.Detail}
 	}
 	return e
 }

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -137,10 +138,10 @@ func boolInt(value any) (any, error) {
 		}
 		n, ok := new(big.Int).SetString(string(v), 10)
 		if !ok {
-			return nil, &hostError{"ValueError", "invalid literal for int() with base 10: " + pyvalue.StrRepr(string(v))}
+			return nil, &dispatch.HostError{Class: "ValueError", Detail: "invalid literal for int() with base 10: " + pyvalue.StrRepr(string(v))}
 		}
 		if !n.IsInt64() {
-			return nil, &hostError{"OverflowError", "Python int too large to convert to SQLite INTEGER"}
+			return nil, &dispatch.HostError{Class: "OverflowError", Detail: "Python int too large to convert to SQLite INTEGER"}
 		}
 		return n.Int64(), nil
 	case string:
@@ -150,19 +151,19 @@ func boolInt(value any) (any, error) {
 	if _, ok := value.([]any); ok {
 		kind = "list"
 	}
-	return nil, &hostError{"TypeError", "int() argument must be a string, a bytes-like object or a real number, not '" + kind + "'"}
+	return nil, &dispatch.HostError{Class: "TypeError", Detail: "int() argument must be a string, a bytes-like object or a real number, not '" + kind + "'"}
 }
 
 func sqliteFloatInt(value float64) (int64, error) {
 	if math.IsNaN(value) {
-		return 0, &hostError{"ValueError", "cannot convert float NaN to integer"}
+		return 0, &dispatch.HostError{Class: "ValueError", Detail: "cannot convert float NaN to integer"}
 	}
 	if math.IsInf(value, 0) {
-		return 0, &hostError{"OverflowError", "cannot convert float infinity to integer"}
+		return 0, &dispatch.HostError{Class: "OverflowError", Detail: "cannot convert float infinity to integer"}
 	}
 	integer, _ := new(big.Float).SetFloat64(value).Int(nil)
 	if !integer.IsInt64() {
-		return 0, &hostError{"OverflowError", "Python int too large to convert to SQLite INTEGER"}
+		return 0, &dispatch.HostError{Class: "OverflowError", Detail: "Python int too large to convert to SQLite INTEGER"}
 	}
 	return integer.Int64(), nil
 }

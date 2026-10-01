@@ -2,21 +2,21 @@ package cli
 
 import (
 	"context"
-	"flag"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // openStore is services.store: the Store constructor, which creates and migrates the database
 // exactly as Python's Store.__init__ does. The caller closes it.
-func openStore(ctx context.Context, services Services) (*store.Store, error) {
+func openStore(ctx context.Context, services dispatch.Services) (*store.Store, error) {
 	return store.Open(ctx, services.Selection.DBPath(), services.SocketPath)
 }
 
-var storeIdentityCommand = Command{
-	Name: "store-identity",
-	Run: func(ctx context.Context, services Services, _ Args) (any, error) {
+var storeIdentityCommand = dispatch.Command{
+	Name: "store-identity", ReadOnly: true,
+	Run: func(ctx context.Context, services dispatch.Services, _ dispatch.Args) (any, error) {
 		opened, err := openStore(ctx, services)
 		if err != nil {
 			return nil, err
@@ -33,17 +33,14 @@ var storeIdentityCommand = Command{
 	},
 }
 
-var storeChallengeCommand = Command{
+var storeChallengeCommand = dispatch.Command{
 	Name: "store-challenge",
-	Flags: func(f *flag.FlagSet) {
-		f.Bool("write", false, "")
-		f.String("read", "", "")
-		f.String("actor", "", "")
-	},
-	Run: func(ctx context.Context, services Services, args Args) (any, error) {
+	// A challenge read (--read) is read-only; a write is not.
+	ReadOnlyWhen: func(args dispatch.Args) bool { return args.Given("read") },
+	Run: func(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
 		read, _ := args.String("read")
 		if !args.Bool("write") && read == "" {
-			return nil, &UsageError{Detail: "store-challenge needs --write or --read <nonce>", Code: contract.ExitUsage}
+			return nil, &dispatch.UsageError{Detail: "store-challenge needs --write or --read <nonce>", Code: contract.ExitUsage}
 		}
 		opened, err := openStore(ctx, services)
 		if err != nil {

@@ -4,11 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"flag"
 	"math"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -18,6 +16,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/daemon"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/service"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -26,44 +25,32 @@ import (
 
 // DaemonFactory is wired once at executable composition, before command execution.
 // It opens the adapter only after ownership has been acquired.
-var DaemonFactory func(context.Context, Services, *store.Store) (*daemon.Daemon, error)
+var DaemonFactory func(context.Context, dispatch.Services, *store.Store) (*daemon.Daemon, error)
 
-var daemonCommand = Command{Name: "daemon", Flags: func(f *flag.FlagSet) {
-	f.Int("max-ticks", 0, "")
-	f.Float64("deadline", 0, "")
-	f.Float64("deadline-monotonic", 0, "")
-	f.Bool("allow-isolated-scope", false, "")
-	f.String("supervised-token", "", "")
-	f.Int("supervised-lock-fd", 0, "")
-	f.Int("supervised-scope-fd", 0, "")
-}, Run: runDaemon}
-var serviceCommand = Command{Name: "service", Exempt: true, Flags: func(f *flag.FlagSet) {
-	f.String("actor", "", "")
-	f.String("execution-policy", "", "")
-	f.Bool("forget-execution-policy", false, "")
-	f.Bool("allow-isolated-scope", false, "")
-	f.Float64("segment-seconds", 0, "")
-	f.Int("max-segments", 0, "")
-	f.Float64("deadline", 0, "")
-	f.Float64("deadline-monotonic", 0, "")
-	f.String("launch-id", "", "")
-	f.Bool("takeover-scope", false, "")
-}, Run: runService}
+var daemonCommand = dispatch.Command{Name: "daemon", OwnAdmission: true, Run: runDaemon}
 
-func boundValue(args Args, name string) (*float64, error) {
-	if !args.Set[name] {
+// serviceCommands are service's subcommands: status reads, the rest manage the supervisor, and
+// start, restart and run reach the host.
+func serviceCommands() []dispatch.Command {
+	var commands []dispatch.Command
+	for _, sub := range []string{"status", "enable", "disable", "stop", "declare", "start", "restart", "run"} {
+		commands = append(commands, dispatch.Command{Name: "service " + sub, Exempt: true, OwnAdmission: true,
+			ReadOnly: sub == "status", Run: runService})
+	}
+	return commands
+}
+
+func boundValue(args dispatch.Args, name string) (*float64, error) {
+	if !args.Given(name) {
 		return nil, nil
 	}
-	v, err := strconv.ParseFloat(args.Flags.Lookup(name).Value.String(), 64)
-	if err != nil {
-		return nil, err
-	}
+	v := args.Float(name)
 	if math.IsNaN(v) || math.IsInf(v, 0) {
-		return nil, &UsageError{"--" + name + " must be a finite number of seconds", 4}
+		return nil, &dispatch.UsageError{Detail: "--" + name + " must be a finite number of seconds", Code: 4}
 	}
 	return &v, nil
 }
-func declaredBound(args Args) (*float64, *float64, error) {
+func declaredBound(args dispatch.Args) (*float64, *float64, error) {
 	duration, err := boundValue(args, "deadline")
 	if err != nil {
 		return nil, nil, err
@@ -73,18 +60,18 @@ func declaredBound(args Args) (*float64, *float64, error) {
 		return nil, nil, err
 	}
 	if duration != nil && instant != nil {
-		return nil, nil, &UsageError{"--deadline and --deadline-monotonic are two different bounds; pass one", 4}
+		return nil, nil, &dispatch.UsageError{Detail: "--deadline and --deadline-monotonic are two different bounds; pass one", Code: 4}
 	}
 	if duration != nil && *duration < 0 {
-		return nil, nil, &UsageError{"--deadline cannot be negative", 4}
+		return nil, nil, &dispatch.UsageError{Detail: "--deadline cannot be negative", Code: 4}
 	}
 	if instant != nil && *instant < 0 {
-		return nil, nil, &UsageError{"--deadline-monotonic cannot be negative", 4}
+		return nil, nil, &dispatch.UsageError{Detail: "--deadline-monotonic cannot be negative", Code: 4}
 	}
 	return duration, instant, nil
 }
-func integerOption(args Args, name string) *int {
-	if !args.Set[name] {
+func integerOption(args dispatch.Args, name string) *int {
+	if !args.Given(name) {
 		return nil
 	}
 	n := args.Integer(name)
@@ -105,7 +92,7 @@ func serviceError(err error) error {
 	}
 	var refusal *service.Refused
 	if errors.As(err, &refusal) {
-		return &PayloadExit{Code: 2, Payload: contract.OrderedObject{{Key: "ok", Value: false}, {Key: "reason", Value: refusal.Reason}, {Key: "detail", Value: nullableText(refusal.Detail)}}}
+		return &dispatch.PayloadExit{Code: 2, Payload: contract.OrderedObject{{Key: "ok", Value: false}, {Key: "reason", Value: refusal.Reason}, {Key: "detail", Value: nullableText(refusal.Detail)}}}
 	}
 	if errors.Is(err, ownership.ErrNoHome) {
 		// Already the fence's host detail, RuntimeError: Could not determine home directory.
@@ -113,29 +100,29 @@ func serviceError(err error) error {
 	}
 	if errors.Is(err, service.ErrEmbeddedNUL) {
 		// The launcher's environment assignment (os.environ / subprocess.Popen).
-		return &HostError{Class: "ValueError", Detail: service.ErrEmbeddedNUL.Error()}
+		return &dispatch.HostError{Class: "ValueError", Detail: service.ErrEmbeddedNUL.Error()}
 	}
 	var errno syscall.Errno
 	if errors.As(err, &errno) {
 		// main's f"{type(error).__name__}: {error}" for an OSError.
 		class, text, _ := strings.Cut(store.PythonOSError(err), ": ")
-		return &HostError{Class: class, Detail: text}
+		return &dispatch.HostError{Class: class, Detail: text}
 	}
 	if err != nil {
-		return &HostError{Class: "RuntimeError", Detail: err.Error()}
+		return &dispatch.HostError{Class: "RuntimeError", Detail: err.Error()}
 	}
 	return nil
 }
-func requireDaemonHost(s Services) error {
+func requireDaemonHost(s dispatch.Services) error {
 	if !s.AdapterRequested {
-		return &UsageError{Detail: "this command needs --socket to reach the host", Code: 4}
+		return &dispatch.UsageError{Detail: "this command needs --socket to reach the host", Code: 4}
 	}
 	return nil
 }
 
 // ownershipPreflight is Python's check_start before a service or daemon command
 // (store.StartPreflight), with the command's App Server socket.
-func ownershipPreflight(ctx context.Context, services Services) error {
+func ownershipPreflight(ctx context.Context, services dispatch.Services) error {
 	return store.StartPreflight(ctx, services.Selection.DBPath())
 }
 
@@ -150,11 +137,11 @@ func applyLaunchPolicy(s *service.Service) error {
 	}
 	resolution := s.ResolveLaunchPolicy()
 	if refusal := service.LaunchRefusal(resolution); refusal != nil {
-		return &PayloadExit{Payload: refusal, Code: contract.ExitRefused}
+		return &dispatch.PayloadExit{Payload: refusal, Code: contract.ExitRefused}
 	}
 	value, recorded, err := service.LaunchVariable(resolution)
 	if err != nil {
-		return &HostError{Class: "ValueError", Detail: err.Error()}
+		return &dispatch.HostError{Class: "ValueError", Detail: err.Error()}
 	}
 	if recorded {
 		return os.Setenv(execution.EnvPolicy, value)
@@ -162,7 +149,7 @@ func applyLaunchPolicy(s *service.Service) error {
 	return nil
 }
 
-func runService(ctx context.Context, services Services, args Args) (out any, err error) {
+func runService(ctx context.Context, services dispatch.Services, args dispatch.Args) (out any, err error) {
 	if args.Positionals[0] != "status" {
 		if err = ownershipPreflight(ctx, services); err != nil {
 			return nil, err
@@ -208,7 +195,7 @@ func runService(ctx context.Context, services Services, args Args) (out any, err
 			return nil, e
 		}
 		if segment != nil && *segment <= 0 {
-			return nil, &UsageError{"--segment-seconds must be greater than zero", 4}
+			return nil, &dispatch.UsageError{Detail: "--segment-seconds must be greater than zero", Code: 4}
 		}
 		options := service.Options{Actor: actor, AllowIsolated: args.Bool("allow-isolated-scope"), Takeover: args.Bool("takeover-scope"), Deadline: duration, DeadlineMonotonic: instant, SegmentSeconds: segment, MaxSegments: integerOption(args, "max-segments")}
 		switch args.Positionals[0] {
@@ -261,13 +248,13 @@ func runService(ctx context.Context, services Services, args Args) (out any, err
 		return nil, serviceError(err)
 	}
 	if get(payload, "ok") != true {
-		return nil, &PayloadExit{Payload: payload, Code: 2}
+		return nil, &dispatch.PayloadExit{Payload: payload, Code: 2}
 	}
 	return payload, nil
 }
 
-func runDaemon(ctx context.Context, services Services, args Args) (out any, err error) {
-	if args.Set["supervised-lock-fd"] {
+func runDaemon(ctx context.Context, services dispatch.Services, args dispatch.Args) (out any, err error) {
+	if args.Given("supervised-lock-fd") {
 		// Decision 42: a supervised worker can be interrupted twice for one request, by its
 		// process group or a drain and again by its supervisor passing the interrupt on. The
 		// repeat is absorbed rather than meeting SIGINT's restored default disposition, which
@@ -310,7 +297,7 @@ func runDaemon(ctx context.Context, services Services, args Args) (out any, err 
 		if e := s.JournalNote("this run served nothing: " + detail); e != nil {
 			return e
 		}
-		return &PayloadExit{Payload: contract.OrderedObject{{Key: "ok", Value: false}, {Key: "reason", Value: "bound_already_spent"}, {Key: "detail", Value: detail}}, Code: 5}
+		return &dispatch.PayloadExit{Payload: contract.OrderedObject{{Key: "ok", Value: false}, {Key: "reason", Value: "bound_already_spent"}, {Key: "detail", Value: detail}}, Code: 5}
 	}
 	var deadline, bound *float64
 	if instant != nil {
@@ -348,7 +335,7 @@ func runDaemon(ctx context.Context, services Services, args Args) (out any, err 
 	// Ownership supersedes the pre-fence initializer: Own calls Prepare only
 	// after both permanent service locks are held, including inherited workers.
 	var token *string
-	if args.Set["supervised-token"] {
+	if args.Given("supervised-token") {
 		v, _ := args.String("supervised-token")
 		token = &v
 	}
@@ -388,7 +375,7 @@ func runDaemon(ctx context.Context, services Services, args Args) (out any, err 
 	}
 	reports, err := daemon.Run(ctx, d.Tick, clock, d.Policy.PollInterval, maxTicks, deadline, stop, func(seconds float64) error { return daemon.SchedulerWait(ctx, clock, deadline, seconds) })
 	if err != nil {
-		return nil, &HostError{Class: "ValueError", Detail: err.Error()}
+		return nil, &dispatch.HostError{Class: "ValueError", Detail: err.Error()}
 	}
 	if len(reports) == 0 && bound != nil && service.Monotonic() >= *bound && !noTicks {
 		return nil, spent("the bound was spent while this run was taking its locks and building its adapter, so it began with nothing left and took no tick")
