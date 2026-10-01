@@ -248,7 +248,7 @@ func (w *wakeParity) phase(event string) {
 	}
 	w.t.Fatal("snapshot has no phase", item)
 }
-func Test26_MTW_3_python_second_dispatch(t *testing.T) {
+func Test26_MTW_3_second_dispatch(t *testing.T) {
 	w := newWakeParity(t)
 	first, _ := w.promote()
 	old := w.grant(first)
@@ -265,7 +265,7 @@ func Test26_MTW_3_python_second_dispatch(t *testing.T) {
 	w.step(map[string]any{"newGrant": strings.Contains(text, current["grantId"].(string)), "notOldGrant": !strings.Contains(text, old)}, nil)
 	w.compare("mtw3_second_dispatch")
 }
-func Test26_MTW_3_python_whole_output(t *testing.T) {
+func Test26_MTW_3_whole_output(t *testing.T) {
 	w := newWakeParity(t)
 	turn, event := w.promote()
 	grant := w.grant(turn)
@@ -280,7 +280,7 @@ func Test26_MTW_3_python_whole_output(t *testing.T) {
 	w.step(w.host.sends, nil)
 	w.compare("mtw3_dispatch")
 }
-func Test26_MTW_5_python_whole_output(t *testing.T) {
+func Test26_MTW_5_whole_output(t *testing.T) {
 	w := newWakeParity(t)
 	w.exec("UPDATE relationships SET allowed_recipients=? WHERE relationship_id=?", `["task-alpha","task-child"]`, "rel-a")
 	settings := `{"sandbox":{"type":"workspaceWrite","writableRoots":[],"networkAccess":false,"excludeTmpdirEnvVar":false,"excludeSlashTmp":false},"approvalPolicy":"never","cwd":"/child","runtimeWorkspaceRoots":["/child"],"model":"anthropic/claude-opus-5","reasoningEffort":"xhigh","environments":[{"environmentId":"local","cwd":"/child","runtimeWorkspaceRoots":["/child"]}]}`
@@ -321,7 +321,7 @@ func (w *wakeParity) snapshot(event string) {
 	}
 	w.step(item, nil)
 }
-func Test26_MTW_8_python_states(t *testing.T) {
+func Test26_MTW_8_states(t *testing.T) {
 	w := newWakeParity(t)
 	turn, event := w.promote()
 	grant := w.grant(turn)
@@ -333,7 +333,7 @@ func Test26_MTW_8_python_states(t *testing.T) {
 	w.snapshot(event)
 	w.compare("mtw8_states")
 }
-func Test26_MTW_8_python_damage(t *testing.T) {
+func Test26_MTW_8_damage(t *testing.T) {
 	w := newWakeParity(t)
 	turn, event := w.promote()
 	sent, err := w.d.Attempt(w.ctx, event, w.host, nil, "")
@@ -493,7 +493,7 @@ func (w *wakeParity) refusal(err error) {
 	}
 	w.out = append(w.out, map[string]any{"refused": map[string]any{"reason": r.Reason, "detail": r.Detail}})
 }
-func Test26_MTW_9_python_notice(t *testing.T) {
+func Test26_MTW_9_notice(t *testing.T) {
 	w := newWakeParity(t)
 	_, event := w.promote()
 	message, err := w.d.PreviewMessage(w.ctx, event)
@@ -506,7 +506,7 @@ func Test26_MTW_9_python_notice(t *testing.T) {
 	w.step(map[string]any{"notRecorded": strings.Contains(sent, "requiredDeclared: not recorded ("), "mergeEvidence": strings.Contains(sent, "merge-evidence --repository owner/repo")}, nil)
 	w.compare("mtw9_notice")
 }
-func Test26_MTW_8_python_whole_output(t *testing.T) {
+func Test26_MTW_8_whole_output(t *testing.T) {
 	w := newWakeParity(t)
 	turn, event := w.promote()
 	row, err := w.store.One(w.ctx, "SELECT receipt FROM events WHERE event_id=?", event)
@@ -533,7 +533,7 @@ func Test26_MTW_8_python_whole_output(t *testing.T) {
 	w.snapshot(event)
 	w.compare("mtw8_currency")
 }
-func Test26_MTW_4_python_restated(t *testing.T) {
+func Test26_MTW_4_restated(t *testing.T) {
 	w := newWakeParity(t)
 	turn, event := w.promote()
 	w.must(w.m.Ready(w.ctx, turn, "task-alpha", true, "head-a2", ""))
@@ -541,7 +541,7 @@ func Test26_MTW_4_python_restated(t *testing.T) {
 	w.step(w.host.sends, nil)
 	w.compare("mtw4_restated")
 }
-func Test26_MTW_4_python_generation(t *testing.T) {
+func Test26_MTW_4_generation(t *testing.T) {
 	w := newWakeParity(t)
 	_, event := w.promote()
 	w.exec("UPDATE relationships SET execution_generation=4 WHERE relationship_id='rel-a'")
@@ -550,7 +550,7 @@ func Test26_MTW_4_python_generation(t *testing.T) {
 	w.phase(event)
 	w.compare("mtw4_generation")
 }
-func Test26_MTW_4_python_whole_output(t *testing.T) {
+func Test26_MTW_4_whole_output(t *testing.T) {
 	w := newWakeParity(t)
 	turn, event := w.promote()
 	w.must(w.m.Acknowledge(w.ctx, turn, "task-alpha", w.grant(turn), "read it"))

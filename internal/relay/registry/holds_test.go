@@ -418,7 +418,7 @@ func nextRows(t *testing.T) [][9]any {
 
 // SHN-14: next-action precedence over the whole projection table (15552 completion and
 // correction projections), compared with the golden one row per line as the row and its action.
-func Test25_SHN14_next_action_precedence_matches_python(t *testing.T) {
+func Test25_SHN14_next_action_precedence(t *testing.T) {
 	rows := nextRows(t)
 	lines := make([]any, len(rows))
 	seen := map[string]int{}

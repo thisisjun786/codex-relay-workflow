@@ -836,8 +836,9 @@ completion needs, and `crw install hook --owner plugin` writes the settings it r
 | `isolationAssertedBy` | required with `--mode hold`, and nothing else |
 
 The decision is not made in the hook. [The hook contract](../plugins/crw/skills/crw-run/references/hook-contract.md)
-fixes the rules and the relay's `guard-evaluate` implements them; `crw hook` is the piece between the
-host and that guard, and it exits 0 on every path, because exit 2 is the host's blocking code.
+fixes the rules and the relay's guard implements them (in the hook's own process, or in the store's
+owner, which `crw hook` asks over `control.sock`); `crw hook` is the piece between the host and
+that guard, and it exits 0 on every path, because exit 2 is the host's blocking code.
 
 The settings are written before anything could read them, and every precondition is checked before
 any write: the budget against the registered timeout, a hook file that already registers

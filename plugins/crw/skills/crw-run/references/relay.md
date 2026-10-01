@@ -174,7 +174,7 @@ The durable owners are separate:
 | Dispatch intent and task correlation | [intent.go](../../../../../internal/relay/delivery/intent.go) | Published intent, creation observations, identity binding and relationship reference |
 | Authorized assignment and execution | [registry.go](../../../../../internal/relay/registry/registry.go) and [criteria.go](../../../../../internal/relay/delivery/criteria.go) | Endpoints, scope, generation, exact dispatch anchor and canonical criteria |
 | Actual worker policy | [the service package](../../../../../internal/relay/service/) and [rolepolicy.go](../../../../../internal/relay/registry/rolepolicy.go) | The serving process's policy snapshot and point-in-time readiness |
-| Child's declared result and observed turn ending | [receipt_classification.go](../../../../../internal/relay/store/receipt_classification.go) and [receipt_staging.go](../../../../../internal/relay/store/receipt_staging.go) | Staged versus final result, or failure/interruption/ordinary turn end |
+| Child's declared result and observed turn ending | [receipt_classification.go](../../../../../internal/relay/store/receipt_classification.go) and the daemon's settlement ([observe.go](../../../../../internal/relay/daemon/observe.go)) | Staged versus final result, or failure/interruption/ordinary turn end |
 | Stop-time omission | [guard.go](../../../../../internal/relay/hook/guard.go) | Bounded missing-declaration/receipt observations, never an invented result |
 | Delivery, acknowledgement and judgment | [the delivery service](../../../../../internal/relay/delivery/service.go) and [ack.go](../../../../../internal/relay/delivery/ack.go) | Separate queued, dispatched, received and judged states |
 

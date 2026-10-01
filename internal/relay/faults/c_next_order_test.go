@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestFaultNextOfferablePublicationOrderMatchesPython(t *testing.T) {
+func TestFaultNextOfferablePublicationOrder(t *testing.T) {
 	home := t.TempDir()
 	goDir := filepath.Join(home, "go")
 	// Seeded at fixed times: the answer echoes the times the store holds.
