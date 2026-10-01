@@ -13,6 +13,7 @@ import (
 	// The shared Python value helpers live here at the todo-22 base revision.
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 )
 
@@ -53,7 +54,7 @@ func (v *validator) closed(value any, keys []string, name string) Object {
 	}
 	slices.Sort(unknown)
 	if len(unknown) > 0 {
-		v.fail(fmt.Sprintf("%s carries keys this contract does not define: %s", name, pyvalue.Quote(unknown)))
+		v.fail(fmt.Sprintf("%s carries keys this contract does not define: %s", name, quote.Value(unknown)))
 	}
 	return m
 }
@@ -64,7 +65,7 @@ func (v *validator) object(value any, schema string, keys []string, name string)
 		return Object{}
 	}
 	if m["schema"] != schema {
-		v.fail(fmt.Sprintf("%s carries schema %s, not %s", name, pyvalue.Quote(m["schema"]), schema))
+		v.fail(fmt.Sprintf("%s carries schema %s, not %s", name, quote.Value(m["schema"]), schema))
 	}
 	return v.closed(m, keys, name)
 }
@@ -85,7 +86,7 @@ func (v *validator) text(value any, name string, optional bool, limit int) any {
 func (v *validator) project(value any, name string, optional bool) any {
 	p := v.text(value, name, optional, 600)
 	if p == ProjectsScope {
-		v.fail(fmt.Sprintf("%s %s is reserved for routing's own project-create records", name, pyvalue.Quote(p)))
+		v.fail(fmt.Sprintf("%s %s is reserved for routing's own project-create records", name, quote.Value(p)))
 	}
 	return p
 }
@@ -95,7 +96,7 @@ func (v *validator) key(value any, name string, optional bool) any {
 	}
 	s, ok := value.(string)
 	if !ok || !keyPattern.MatchString(s) {
-		v.fail(fmt.Sprintf("%s is a key (%s), not %s", name, keyPattern.String(), pyvalue.Quote(value)))
+		v.fail(fmt.Sprintf("%s is a key (%s), not %s", name, keyPattern.String(), quote.Value(value)))
 	}
 	return value
 }
@@ -105,7 +106,7 @@ func (v *validator) product(value any, name string, optional bool) any {
 	}
 	s, ok := value.(string)
 	if !ok || !productPattern.MatchString(s) {
-		v.fail(fmt.Sprintf("%s is a plain product identifier (%s), not %s", name, productPattern.String(), pyvalue.Quote(value)))
+		v.fail(fmt.Sprintf("%s is a plain product identifier (%s), not %s", name, productPattern.String(), quote.Value(value)))
 	}
 	return value
 }
@@ -115,7 +116,7 @@ func (v *validator) issue(value any, name string, optional bool) any {
 	}
 	s, ok := value.(string)
 	if !ok || !issuePattern.MatchString(s) {
-		v.fail(fmt.Sprintf("%s is a Linear issue identifier like ABC-12, not %s", name, pyvalue.Quote(value)))
+		v.fail(fmt.Sprintf("%s is a Linear issue identifier like ABC-12, not %s", name, quote.Value(value)))
 	}
 	return value
 }
@@ -134,7 +135,7 @@ func (v *validator) choice(value any, choices []string, name string, optional bo
 	}
 	s, ok := value.(string)
 	if !ok || !slices.Contains(choices, s) {
-		v.fail(fmt.Sprintf("%s is one of %q, not %s", name, choices, pyvalue.Quote(value)))
+		v.fail(fmt.Sprintf("%s is one of %q, not %s", name, choices, quote.Value(value)))
 	}
 	return value
 }
@@ -218,7 +219,7 @@ func ReadRegistry(value any) (Object, error) {
 	}
 	out := Object{"schema": "product-registry/1", "product": product, "workspace": v.key(r["workspace"], "workspace", false), "team": v.text(r["team"], "team", false, 600), "familyLabel": v.text(r["familyLabel"], "familyLabel", false, 600), "repositories": v.keys(r["repositories"], "repositories"), "surfaces": watched, "triageProject": v.project(r["triageProject"], "triageProject", true), "testTarget": v.target(r["testTarget"], "testTarget")}
 	if target := object(out["testTarget"]); target != nil && out["triageProject"] == target["project"] {
-		v.fail(fmt.Sprintf("the test target project %s is also the triage project; a simulated record and a real one would share one project's target", pyvalue.Quote(target["project"])))
+		v.fail(fmt.Sprintf("the test target project %s is also the triage project; a simulated record and a real one would share one project's target", quote.Value(target["project"])))
 	}
 	return out, v.err
 }
@@ -317,14 +318,14 @@ func ReadBinding(value any, registry Object) (Object, error) {
 				v.fail(fmt.Sprintf("%s has no test target, so nothing of it is a test binding", out["product"]))
 			} else {
 				if where != target["project"] {
-					v.fail(fmt.Sprintf("a test binding sits on the test target project %s, not %s", pyvalue.Quote(target["project"]), pyvalue.Quote(where)))
+					v.fail(fmt.Sprintf("a test binding sits on the test target project %s, not %s", quote.Value(target["project"]), quote.Value(where)))
 				}
 				if kind == "issue" && strings.Split(text(out["ref"]), "-")[0] != target["team"] {
-					v.fail(fmt.Sprintf("a test issue belongs to the test target team %s", pyvalue.Quote(target["team"])))
+					v.fail(fmt.Sprintf("a test issue belongs to the test target team %s", quote.Value(target["team"])))
 				}
 			}
 		} else if target != nil && where == target["project"] {
-			v.fail(fmt.Sprintf("%s is the test target project; only a test binding sits there, or a simulated record and a real one would share one project's target", pyvalue.Quote(where)))
+			v.fail(fmt.Sprintf("%s is the test target project; only a test binding sits there, or a simulated record and a real one would share one project's target", quote.Value(where)))
 		}
 	}
 	return out, v.err
@@ -514,12 +515,12 @@ func ReadClassification(value any) (Object, error) {
 func ReadPage(limit, after any, ceiling int64) (int64, any, error) {
 	n, ok := evidence.PyInt(limit)
 	if !ok || n < 1 {
-		return 0, nil, malformed("limit is a positive whole number, not " + pyvalue.Quote(limit))
+		return 0, nil, malformed("limit is a positive whole number, not " + quote.Value(limit))
 	}
 	if after != nil {
 		cursor, ok := evidence.PyInt(after)
 		if !ok || cursor < 0 {
-			return 0, nil, malformed("after is a non-negative rowid cursor, not " + pyvalue.Quote(after))
+			return 0, nil, malformed("after is a non-negative rowid cursor, not " + quote.Value(after))
 		}
 	}
 	return min(n, ceiling), after, nil

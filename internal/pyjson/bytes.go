@@ -16,63 +16,34 @@ import (
 // (from the start of the input for UTF-16 and UTF-32, after the mark for utf-8-sig) and the
 // reason. A lone surrogate, which a Go string cannot hold, is U+FFFD: one character, as it is
 // one in Python, so the scanner's positions stay Python's.
-func DecodeBytes(b []byte) (string, error) { return decodeBytes(b, false) }
-
-// DecodeBytesWTF8 is DecodeBytes with each lone surrogate kept as the three bytes of its
-// generalized UTF-8 form (ED A0..BF 80..BF, WTF-8), the form a Go string holds a Python str's
-// lone surrogate in, rather than as U+FFFD: the characters json.loads builds its strings from,
-// where DecodeBytes gives the characters its scanner counts. It fails exactly where DecodeBytes
-// fails.
-func DecodeBytesWTF8(b []byte) (string, error) { return decodeBytes(b, true) }
-
-func decodeBytes(b []byte, wtf8 bool) (string, error) {
+func DecodeBytes(b []byte) (string, error) {
 	switch {
 	case bytes.HasPrefix(b, []byte{0, 0, 0xfe, 0xff}):
-		return decodeUTF32(b, 4, binary.BigEndian, "utf-32-be", wtf8)
+		return decodeUTF32(b, 4, binary.BigEndian, "utf-32-be")
 	case bytes.HasPrefix(b, []byte{0xff, 0xfe, 0, 0}):
-		return decodeUTF32(b, 4, binary.LittleEndian, "utf-32-le", wtf8)
+		return decodeUTF32(b, 4, binary.LittleEndian, "utf-32-le")
 	case bytes.HasPrefix(b, []byte{0xfe, 0xff}):
-		return decodeUTF16(b, 2, binary.BigEndian, "utf-16-be", wtf8)
+		return decodeUTF16(b, 2, binary.BigEndian, "utf-16-be")
 	case bytes.HasPrefix(b, []byte{0xff, 0xfe}):
-		return decodeUTF16(b, 2, binary.LittleEndian, "utf-16-le", wtf8)
+		return decodeUTF16(b, 2, binary.LittleEndian, "utf-16-le")
 	case bytes.HasPrefix(b, []byte{0xef, 0xbb, 0xbf}):
-		return decodeSurrogateUTF8(b[3:], wtf8)
+		return decodeUTF8(b[3:], true)
 	}
 	switch {
 	case len(b) >= 4 && b[0] == 0 && b[1] != 0:
-		return decodeUTF16(b, 0, binary.BigEndian, "utf-16-be", wtf8)
+		return decodeUTF16(b, 0, binary.BigEndian, "utf-16-be")
 	case len(b) >= 4 && b[0] == 0:
-		return decodeUTF32(b, 0, binary.BigEndian, "utf-32-be", wtf8)
+		return decodeUTF32(b, 0, binary.BigEndian, "utf-32-be")
 	case len(b) >= 4 && b[1] == 0 && (b[2] != 0 || b[3] != 0):
-		return decodeUTF16(b, 0, binary.LittleEndian, "utf-16-le", wtf8)
+		return decodeUTF16(b, 0, binary.LittleEndian, "utf-16-le")
 	case len(b) >= 4 && b[1] == 0:
-		return decodeUTF32(b, 0, binary.LittleEndian, "utf-32-le", wtf8)
+		return decodeUTF32(b, 0, binary.LittleEndian, "utf-32-le")
 	case len(b) == 2 && b[0] == 0:
-		return decodeUTF16(b, 0, binary.BigEndian, "utf-16-be", wtf8)
+		return decodeUTF16(b, 0, binary.BigEndian, "utf-16-be")
 	case len(b) == 2 && b[1] == 0:
-		return decodeUTF16(b, 0, binary.LittleEndian, "utf-16-le", wtf8)
+		return decodeUTF16(b, 0, binary.LittleEndian, "utf-16-le")
 	}
-	return decodeSurrogateUTF8(b, wtf8)
-}
-
-// decodeSurrogateUTF8 is bytes.decode("utf-8", "surrogatepass"). The bytes it passes as a lone
-// surrogate are already that surrogate's WTF-8 form, so with wtf8 set they stand as they are.
-func decodeSurrogateUTF8(b []byte, wtf8 bool) (string, error) {
-	text, err := decodeUTF8(b, true)
-	if err != nil || !wtf8 {
-		return text, err
-	}
-	return string(b), nil
-}
-
-// writeSurrogate writes a lone surrogate: U+FFFD, one character as it is one in Python, or with
-// wtf8 set its WTF-8 bytes.
-func writeSurrogate(s *strings.Builder, unit rune, wtf8 bool) {
-	if !wtf8 {
-		s.WriteRune(unit) // a lone surrogate is written as U+FFFD
-		return
-	}
-	s.Write([]byte{byte(0xe0 | unit>>12), byte(0x80 | (unit>>6)&0x3f), byte(0x80 | unit&0x3f)})
+	return decodeUTF8(b, true)
 }
 
 // codecError is str(UnicodeDecodeError) for the bytes b[start:end].
@@ -85,7 +56,7 @@ func codecError(codec string, b []byte, start, end int, reason string) error {
 
 // decodeUTF16 decodes b[from:]: a pair of surrogates is one character, a lone one passes as one
 // (surrogatepass), and an odd byte at the end is truncated data.
-func decodeUTF16(b []byte, from int, order binary.ByteOrder, codec string, wtf8 bool) (string, error) {
+func decodeUTF16(b []byte, from int, order binary.ByteOrder, codec string) (string, error) {
 	var s strings.Builder
 	for i := from; i < len(b); i += 2 {
 		if i+1 == len(b) {
@@ -100,7 +71,7 @@ func decodeUTF16(b []byte, from int, order binary.ByteOrder, codec string, wtf8 
 			}
 		}
 		if utf16.IsSurrogate(unit) {
-			writeSurrogate(&s, unit, wtf8)
+			s.WriteRune(unit) // a lone surrogate is written as U+FFFD
 			continue
 		}
 		s.WriteRune(unit)
@@ -110,7 +81,7 @@ func decodeUTF16(b []byte, from int, order binary.ByteOrder, codec string, wtf8 
 
 // decodeUTF32 decodes b[from:]: a surrogate passes as one character, a value past U+10FFFF is
 // out of range, and one to three bytes at the end are truncated data.
-func decodeUTF32(b []byte, from int, order binary.ByteOrder, codec string, wtf8 bool) (string, error) {
+func decodeUTF32(b []byte, from int, order binary.ByteOrder, codec string) (string, error) {
 	var s strings.Builder
 	for i := from; i < len(b); i += 4 {
 		if i+4 > len(b) {
@@ -121,7 +92,7 @@ func decodeUTF32(b []byte, from int, order binary.ByteOrder, codec string, wtf8 
 			return "", codecError(codec, b, i, i+4, "code point not in range(0x110000)")
 		}
 		if utf16.IsSurrogate(rune(value)) {
-			writeSurrogate(&s, rune(value), wtf8)
+			s.WriteRune(rune(value)) // a lone surrogate is written as U+FFFD
 			continue
 		}
 		s.WriteRune(rune(value))

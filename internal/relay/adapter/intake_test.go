@@ -181,7 +181,7 @@ func Test28_MSC_11_IntakeAdmissionUnchanged(t *testing.T) {
 				got["reason"] = reason
 			} else {
 				got["reason"] = nil
-				detail, ok := store.PythonHostDetail(err)
+				detail, ok := store.HostDetail(err)
 				if !ok {
 					detail = "RuntimeError: " + err.Error()
 				}

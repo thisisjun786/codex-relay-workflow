@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -286,7 +286,7 @@ func (a *Ack) Acknowledge(ctx context.Context, eventID, ackTurn, proof string, a
 		if accepted {
 			rejection = nil
 		} else if r, _ := rejection.(string); !slices.Contains(rejections, r) {
-			return refuse(DispositionConflict, "unknown rejection %s", pyvalue.Quote(rejection))
+			return refuse(DispositionConflict, "unknown rejection %s", quote.Value(rejection))
 		}
 		record := Obj{{Key: "eventId", Value: eventID}, {Key: "relationshipId", Value: event.S("relationship_id")}, {Key: "executionGeneration", Value: event.I("execution_generation")}, {Key: "revisionHash", Value: event.S("revision_hash")},
 			{Key: "ackTurnId", Value: ackTurn}, {Key: "accepted", Value: accepted}, {Key: "rejectionReason", Value: rejection}, {Key: "ackAt", Value: now}, {Key: "ackProof", Value: proof}}
@@ -479,7 +479,7 @@ func (a *Ack) RecordVerdict(ctx context.Context, eventID, verdict, verdictTurn s
 			}
 			projected = projectCap(normalised)
 			if o := str(projected, "outcome"); o == "truncated" || o == "budget_dropped" {
-				return refuse(RestorationUndeliverable, "this correction declares a restoration block on %s that the revision message would not carry: %s. Move it within the first %d findings and rule again. No execution generation has been opened", pyvalue.Quote(func() any { v, _ := get(projected, "criterion"); return v }()), str(projected, "detail"), manifestLines)
+				return refuse(RestorationUndeliverable, "this correction declares a restoration block on %s that the revision message would not carry: %s. Move it within the first %d findings and rule again. No execution generation has been opened", quote.Value(func() any { v, _ := get(projected, "criterion"); return v }()), str(projected, "detail"), manifestLines)
 			}
 		} else {
 			projected = restorationResult("not_carried", "relay-message/legacy", nil, fmt.Sprintf("a %s verdict opens no correction, so no message carries a restoration block", verdict))
@@ -808,7 +808,7 @@ func BindAnchor(ctx context.Context, s *store.Store, clock Clock, rid string, nu
 				bound = generationRecord(current)
 				return nil
 			}
-			return refuse("anchor_already_bound", "generation %d is already bound to %s", number, pyvalue.Quote(current.Opt("dispatch_turn_id")))
+			return refuse("anchor_already_bound", "generation %d is already bound to %s", number, quote.Value(current.Opt("dispatch_turn_id")))
 		}
 		now := clock.ISO()
 		if _, err := execSQL(ctx, s, "UPDATE generations SET anchor_state = ?, dispatch_turn_id = ?, bound_at = ? WHERE relationship_id = ? AND execution_generation = ?", "bound", turn, now, rid, number); err != nil {

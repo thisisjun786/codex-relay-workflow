@@ -114,7 +114,7 @@ func Evaluate(ctx context.Context, stop Object, options GuardOptions) (verdict O
 			if errors.As(err, &raised) {
 				// The exception guard.deliverable_state lets out (a RecursionError) leaves
 				// lookup_receipt too, and evaluate classifies it as a fault of this evaluation.
-				fault(raised.PythonText())
+				fault(raised.StoredText())
 				return verdict, nil
 			}
 			if err != nil {

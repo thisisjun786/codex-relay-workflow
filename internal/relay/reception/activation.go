@@ -5,6 +5,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 )
 
@@ -16,11 +17,11 @@ func checkMode(mode any) error {
 	if slices.Contains(modes, str(mode)) {
 		return nil
 	}
-	return malformed("%s is not an execution mode; it is one of coordination, loop, non_loop", pyvalue.Quote(mode))
+	return malformed("%s is not an execution mode; it is one of coordination, loop, non_loop", quote.Value(mode))
 }
 func ActivationFact(state, source any, detail string) (Obj, error) {
 	if !slices.Contains(activationStates, str(state)) {
-		return nil, malformed("%s is not an activation state; it is one of absent, not_applicable, observed, refused, unverified", pyvalue.Quote(state))
+		return nil, malformed("%s is not an activation state; it is one of absent, not_applicable, observed, refused, unverified", quote.Value(state))
 	}
 	if slices.Contains([]any{"observed", "absent", "refused"}, state) && !truth(source) {
 		return nil, malformed("an %s activation fact names the record that says so; without one it is unverified", state)
@@ -90,15 +91,15 @@ func CheckProgression(ladder any) error {
 		}
 		state := Get(entry, "state")
 		if !slices.Contains(states, str(state)) {
-			return malformed("%s is not a state; it is one of conditional, no, not_applicable, unmeasured, yes", pyvalue.Quote(state))
+			return malformed("%s is not a state; it is one of conditional, no, not_applicable, unmeasured, yes", quote.Value(state))
 		}
 		source := progressionSources[i]
 		if source == "" {
 			if state != "not_applicable" {
-				return malformed("nothing answers %s, so it cannot say %s: %s", n, pyvalue.Quote(state), noReading)
+				return malformed("nothing answers %s, so it cannot say %s: %s", n, quote.Value(state), noReading)
 			}
 		} else if slices.Contains([]any{"yes", "no", "conditional"}, state) && Get(entry, "source") != source {
-			return malformed("%s is answered by %s, not by %s", n, source, pyvalue.Quote(Get(entry, "source")))
+			return malformed("%s is answered by %s, not by %s", n, source, quote.Value(Get(entry, "source")))
 		}
 	}
 	return nil

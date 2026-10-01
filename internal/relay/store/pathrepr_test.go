@@ -35,11 +35,11 @@ func TestPathReprIsPythonsReprOfTheDecodedFilename(t *testing.T) {
 		}
 	}
 	err := &os.PathError{Op: "stat", Path: "/tmp/a\u00a0\xffb", Err: syscall.EACCES}
-	if got := PythonOSError(err); got != `PermissionError: [Errno 13] Permission denied: '/tmp/a\xa0\udcffb'` {
+	if got := StoredOSError(err); got != `PermissionError: [Errno 13] Permission denied: '/tmp/a\xa0\udcffb'` {
 		t.Fatal(got)
 	}
 	link := &os.LinkError{Op: "rename", Old: "/tmp/\u2028", New: "/tmp/\xff", Err: syscall.ENOENT}
-	if got := PythonOSErrorText(link); got != `[Errno 2] No such file or directory: '/tmp/\u2028' -> '/tmp/\udcff'` {
+	if got := StoredOSErrorText(link); got != `[Errno 2] No such file or directory: '/tmp/\u2028' -> '/tmp/\udcff'` {
 		t.Fatal(got)
 	}
 }

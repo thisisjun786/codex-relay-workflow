@@ -87,24 +87,3 @@ func illFormed(data []byte, i int) (int, string) {
 	}
 	return n, reason
 }
-
-// DecodeReplace is bytes.decode("utf-8", errors="replace"): every sequence the strict decoder
-// would refuse, an encoded surrogate included, becomes one U+FFFD, and decoding carries on after it.
-func DecodeReplace(data []byte) string {
-	if utf8.Valid(data) {
-		return string(data)
-	}
-	var b strings.Builder
-	for i := 0; i < len(data); {
-		r, size := utf8.DecodeRune(data[i:])
-		if r == utf8.RuneError && size == 1 {
-			n, _ := illFormed(data, i)
-			b.WriteRune(utf8.RuneError)
-			i += n
-			continue
-		}
-		b.Write(data[i : i+size])
-		i += size
-	}
-	return b.String()
-}

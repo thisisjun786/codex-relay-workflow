@@ -388,6 +388,6 @@ func discoveryExists(path string) (bool, error) {
 	if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) || errors.Is(err, syscall.ELOOP) {
 		return false, nil
 	}
-	return false, errors.New(PythonOSError(err))
+	return false, errors.New(StoredOSError(err))
 }
 func exists(path string) bool { _, err := os.Stat(path); return err == nil }

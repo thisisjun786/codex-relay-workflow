@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 )
 
 func cRetryCancel(ctx context.Context, l *Ledger, name string, a map[string]string) (any, error) {
@@ -121,7 +122,7 @@ func cStage(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
 func cQueue(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
 	kind := a["--kind"]
 	if _, ok := executableKind(kind); !ok {
-		return nil, fmt.Errorf("fault_kind_unregistered: kind %s is not registered in this process; load the module that declares it (--kind-module) before acting on its writes", pyvalue.Quote(kind))
+		return nil, fmt.Errorf("fault_kind_unregistered: kind %s is not registered in this process; load the module that declares it (--kind-module) before acting on its writes", quote.Value(kind))
 	}
 	if kind == openRecord {
 		return nil, fmt.Errorf("fault_state_conflict: only suppression opens a fault's issue; queue() never creates one")

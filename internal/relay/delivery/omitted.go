@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -201,7 +202,7 @@ func omissionStops(directory, session, turn string) ([]OmissionStop, error) {
 		if read > OmittedMaxBytes {
 			return nil, fmt.Errorf("stop_record_limit")
 		}
-		if message := store.PythonJSONError(string(raw[:read])); message != "" {
+		if message := pyjson.Error(string(raw[:read])); message != "" {
 			return nil, errors.New(message)
 		}
 		value, err := loads(string(raw[:read]))
@@ -633,7 +634,7 @@ func omissionReceipt(ctx context.Context, path, rid, session, turn string, gener
 	} {
 		if err := json.Unmarshal([]byte(item.text), item.target); err != nil {
 			base = set(base, "evidence", "stored_receipt_unreadable")
-			base = set(base, "detail", "JSONDecodeError: "+store.PythonJSONError(item.text))
+			base = set(base, "detail", "JSONDecodeError: "+pyjson.Error(item.text))
 			return set(base, "eventId", event.S("event_id")), nil
 		}
 	}
@@ -683,7 +684,7 @@ func omissionDeliverable(entries []store.ManifestEntry, revision, reference stri
 			// both); anything else read the frozen copy and found no manifest in it.
 			var exception *store.ManifestException
 			if errors.As(err, &exception) && !exception.OSError() && !exception.RuntimeError() {
-				return "", exception.PythonText(), nil
+				return "", exception.StoredText(), nil
 			}
 			return "", "", err
 		}
