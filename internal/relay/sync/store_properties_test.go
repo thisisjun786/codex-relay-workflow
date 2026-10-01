@@ -2,60 +2,60 @@ package sync
 
 import "testing"
 
-func Test23_SR_1_PythonScenario(t *testing.T) {
+func Test23_SR_1_Scenario(t *testing.T) {
 	storeReplay(t, "test_an_agreeing_report_is_accepted_and_every_field_names_what_answered_it", "test_the_offline_supplied_form_still_says_it_was_supplied")
 }
-func Test23_SR_2_PythonScenario(t *testing.T) {
+func Test23_SR_2_Scenario(t *testing.T) {
 	storeReplay(t, "test_a_supplied_reading_or_packet_of_the_wrong_shape_never_ends_as_a_host_failure", "test_json_nested_past_any_reading_is_refused_as_input_not_a_host_failure", "test_an_envelope_of_the_wrong_shape_is_refused_as_a_packet", "test_text_that_cannot_be_encoded_is_refused_as_a_packet", "test_an_empty_container_where_an_optional_field_belongs_is_refused")
 }
-func Test23_SR_3_PythonScenario(t *testing.T) {
+func Test23_SR_3_Scenario(t *testing.T) {
 	storeReplay(t, "test_a_missing_required_field_is_refused_by_name", "test_a_packet_for_another_child_is_refused_as_that", "test_a_correction_whose_generation_was_superseded_is_stale", "test_criteria_registered_again_make_the_old_digest_stale", "test_a_digest_a_block_states_is_held_to_the_registered_one", "test_a_head_that_moved_is_stale_and_an_unobserved_head_is_unchecked", "test_an_ended_relationship_takes_no_packet", "test_a_non_pull_request_audit_passes_without_being_asked_for_a_head")
 }
-func Test23_SR_4_PythonScenario(t *testing.T) {
+func Test23_SR_4_Scenario(t *testing.T) {
 	storeReplay(t, "test_a_duplicate_correction_is_applied_once_and_a_changed_one_collides", "test_an_accepted_instruction_is_acted_on_until_it_is_recorded_applied", "test_only_an_accepted_answer_can_be_recorded_applied")
 }
-func Test23_SR_5_PythonScenario(t *testing.T) {
+func Test23_SR_5_Scenario(t *testing.T) {
 	storeReplay(t, "test_a_paused_relationship_holds_act_until_it_is_resumed", "test_applied_is_recorded_only_after_a_check_said_act", "test_work_done_on_a_check_that_said_act_can_be_recorded_after_a_held_replay", "test_a_held_replay_is_not_told_it_is_acted_on")
 }
-func Test23_SR_6_PythonScenario(t *testing.T) {
+func Test23_SR_6_Scenario(t *testing.T) {
 	storeReplay(t, "test_the_callback_pair_the_parent_left_is_refused", "test_a_callback_the_parents_own_record_still_holds_is_refused_once_the_policy_moved", "test_a_policy_naming_permissions_the_task_was_not_created_with_is_refused", "test_a_recorded_setting_of_another_shape_is_unread_rather_than_agreed_with")
 }
-func Test23_SR_7_PythonScenario(t *testing.T) {
+func Test23_SR_7_Scenario(t *testing.T) {
 	storeReplay(t, "test_it_is_unavailable_before_registration_and_accepted_after", "test_a_dispatch_that_did_not_open_the_generation_is_another_relation", "test_a_shared_child_takes_the_first_assignment_its_dispatch_opened", "test_a_returning_tenure_takes_its_own_assignment", "test_only_a_registration_begins_a_tenure", "test_an_assignment_accepted_in_a_revision_generation_is_held_for_the_tenure")
 }
-func Test23_SR_8_PythonScenario(t *testing.T) {
+func Test23_SR_8_Scenario(t *testing.T) {
 	storeReplay(t, "test_a_later_packet_cannot_redefine_the_mode_the_ledger_holds", "test_a_later_packet_cannot_replace_the_workflow_the_ledger_holds", "test_a_revision_generation_keeps_the_tenures_mode_and_workflow")
 }
-func Test23_SR_9_PythonScenario(t *testing.T) {
+func Test23_SR_9_Scenario(t *testing.T) {
 	storeReplay(t, "test_a_returned_tenure_whose_opening_row_is_gone_is_unread_not_the_old_one", "test_a_policy_packet_whose_tenure_is_unread_is_not_accepted", "test_a_returned_tenure_with_a_damaged_generation_is_unread_not_a_host_failure", "test_a_tenure_the_store_answers_two_ways_is_unread", "test_a_current_generation_no_dispatch_opened_leaves_the_tenure_unread", "test_a_packet_from_an_earlier_tenure_of_an_unscoped_relationship_is_not_accepted")
 }
-func Test23_SR_10_PythonScenario(t *testing.T) {
+func Test23_SR_10_Scenario(t *testing.T) {
 	// The recursion-edge scenario is covered from the installed console entry point by
 	// reception.Test23JSONDepthBoundaryMatchesPython; this in-process unittest capture has a
 	// lower, harness-specific stack boundary and must not define product parity.
 	storeReplay(t, "test_a_store_value_of_the_wrong_shape_never_ends_as_a_host_failure")
 }
-func Test23_SR_11_PythonScenario(t *testing.T) {
+func Test23_SR_11_Scenario(t *testing.T) {
 	storeReplay(t, "test_a_policy_of_the_wrong_shape_is_refused_and_leaves_the_ledger_usable")
 }
-func Test23_SR_12_PythonScenario(t *testing.T) {
+func Test23_SR_12_Scenario(t *testing.T) {
 	storeReplay(t, "test_criteria_that_are_not_registered_leave_the_digest_unchecked", "test_a_digest_stated_unasked_is_unchecked_where_no_criteria_are_registered", "test_an_unscoped_relationship_has_no_revision_and_that_is_an_answer", "test_a_link_that_is_not_this_relationships_live_link_leaves_the_revision_unread", "test_a_store_missing_a_column_answers_nothing_rather_than_failing", "test_a_store_that_is_not_there_is_not_created_and_answers_nothing", "test_a_file_that_is_not_a_relay_store_answers_nothing")
 }
-func Test23_SR_13_PythonScenario(t *testing.T) {
+func Test23_SR_13_Scenario(t *testing.T) {
 	storeReplay(t, "test_a_ledger_in_a_directory_not_made_yet_is_created_with_it", "test_a_ledger_belonging_to_another_receiver_is_refused", "test_a_ledger_entry_missing_a_field_is_damaged_not_defaulted", "test_a_ledger_entry_no_writer_could_produce_is_damaged", "test_a_ledger_whose_entries_are_not_entries_is_refused_rather_than_failing")
 }
-func Test23_SR_14_PythonScenario(t *testing.T) {
+func Test23_SR_14_Scenario(t *testing.T) {
 	storeReplay(t, "test_a_check_run_without_the_variable_reads_the_declared_policy", "test_a_variable_naming_another_file_than_the_declaration_is_refused_as_that", "test_with_no_policy_declared_or_set_a_bound_packet_is_unavailable_and_says_why", "test_recording_an_applied_packet_does_not_wait_on_the_policy", "test_a_policy_file_too_deep_to_parse_ends_no_command_as_a_host_failure", "test_a_declaration_too_deep_to_parse_is_refused_as_unreadable", "test_a_declaration_that_is_there_and_cannot_be_read_is_refused")
 }
-func Test23_SR_15_PythonScenario(t *testing.T) {
+func Test23_SR_15_Scenario(t *testing.T) {
 	selectionReplay(t)
 }
-func Test23_SR_16_PythonScenario(t *testing.T) {
+func Test23_SR_16_Scenario(t *testing.T) {
 	storeReplay(t, "test_the_store_backed_check_writes_nothing_in_the_state_directory")
 }
-func Test23_SR_17_PythonScenario(t *testing.T) {
+func Test23_SR_17_Scenario(t *testing.T) {
 	storeReplay(t, "test_only_a_dispatched_attempt_is_a_transport_acceptance", "test_an_acknowledgement_holds_only_once_verified", "test_a_verdict_and_an_acceptance_are_two_states", "test_a_landing_counts_only_for_the_observed_repository_and_head", "test_a_confirmed_outbox_row_is_coordination_and_not_linear_done", "test_a_merge_and_a_direct_send_are_not_an_acknowledgement")
 }
-func Test23_SR_18_PythonScenario(t *testing.T) {
+func Test23_SR_18_Scenario(t *testing.T) {
 	storeReplay(t, "test_a_locator_correction_is_observed_and_checked_again_before_it_is_acted_on", "test_a_pull_request_correction_without_an_observation_is_unavailable_on_its_identity")
 }

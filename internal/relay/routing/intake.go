@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/faults"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -498,7 +498,7 @@ func (r *Router) Classify(ctx context.Context, id string, value any) (Object, er
 			return err
 		}
 		if registry == nil {
-			return routeRefused("route_product_unknown", fmt.Sprintf("%s is not a registered product", pyvalue.Quote(classification["product"])))
+			return routeRefused("route_product_unknown", fmt.Sprintf("%s is not a registered product", quote.Value(classification["product"])))
 		}
 		stored, err := r.routes().Incidents(ctx, id)
 		if err != nil {

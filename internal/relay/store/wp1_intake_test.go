@@ -221,50 +221,6 @@ func TestWP1_python_active_turn_self_emission(t *testing.T) {
 			t.Fatalf("stored %+v", stored)
 		}
 	})
-	t.Run("test_normal_completion_finalizes_the_staged_claim_exactly_once", func(t *testing.T) {
-		f, payload, _ := staged(t)
-		result, err := f.intake.ResolveStaged(ctx, assignedTurn("completed"))
-		if err != nil || len(result.Finalized) != 1 || result.Finalized[0] != payload.EventID || len(result.Suppressed) != 0 {
-			t.Fatalf("result %+v: %v", result, err)
-		}
-		if !deliverable(t, f, payload.EventID) || f.count(`SELECT COUNT(*) FROM events`) != 1 {
-			t.Fatal("finalized claim not deliverable exactly once")
-		}
-		again, err := f.intake.ResolveStaged(ctx, assignedTurn("completed"))
-		if err != nil || len(again.Finalized) != 0 {
-			t.Fatalf("again %+v: %v", again, err)
-		}
-	})
-	t.Run("test_a_failed_ending_suppresses_the_staged_claim", func(t *testing.T) {
-		f, payload, _ := staged(t)
-		result, err := f.intake.ResolveStaged(ctx, assignedTurn("failed"))
-		if err != nil || len(result.Suppressed) != 1 || result.Suppressed[0] != payload.EventID {
-			t.Fatalf("result %+v: %v", result, err)
-		}
-		var reason string
-		if err := f.store.DB.QueryRowContext(ctx, `SELECT suppressed_reason FROM events WHERE event_id=?`, payload.EventID).Scan(&reason); err != nil {
-			t.Fatal(err)
-		}
-		if deliverable(t, f, payload.EventID) || stage(t, f, payload.EventID).Stage != StageSuppressed || !strings.Contains(reason, "not promoted") {
-			t.Fatalf("suppression %q", reason)
-		}
-	})
-	t.Run("test_an_interrupted_ending_suppresses_the_staged_claim", func(t *testing.T) {
-		f, payload, _ := staged(t)
-		if _, err := f.intake.ResolveStaged(ctx, assignedTurn("interrupted")); err != nil {
-			t.Fatal(err)
-		}
-		if deliverable(t, f, payload.EventID) || stage(t, f, payload.EventID).Stage != StageSuppressed {
-			t.Fatal("interrupted claim not suppressed")
-		}
-	})
-	t.Run("test_a_still_running_turn_leaves_the_claim_staged", func(t *testing.T) {
-		f, payload, _ := staged(t)
-		result, err := f.intake.ResolveStaged(ctx, assignedTurn("inProgress"))
-		if err != nil || !result.Pending || deliverable(t, f, payload.EventID) || stage(t, f, payload.EventID).Stage != StageStaged {
-			t.Fatalf("result %+v: %v", result, err)
-		}
-	})
 	t.Run("test_a_receipt_from_a_completed_turn_is_final_immediately", func(t *testing.T) {
 		f := newIntakeFixture(t)
 		payload := f.readyPayload(f.relationship, []string{f.artifact("out.txt", "done")}, 1, assignedTurn("completed"))

@@ -60,7 +60,6 @@ func compareRCLBytes(t *testing.T, argv func(string) []string, normalize func(ra
 }
 
 func Test24_RCL_1_HelpWholeStdoutBytes(t *testing.T) {
-	t.Setenv("COLUMNS", "80")
 	answer := compareRCLBytes(t, func(string) []string { return []string{"reporting-show", "--help"} }, func(raw []byte) []byte { return raw })
 	if answer.code != 0 {
 		t.Fatalf("exit %d", answer.code)

@@ -61,10 +61,6 @@ type LoadOptions struct {
 	// Surrogates keeps a lone surrogate escape as the three WTF-8 bytes a Go string holds a lone
 	// surrogate in (json.loads' str). Without it the escape is U+FFFD, as encoding/json reads it.
 	Surrogates bool
-	// RawSurrogates keeps a lone surrogate the document holds in its three WTF-8 bytes, as a
-	// text DecodeBytesWTF8 decoded holds it. Without it each of those bytes is U+FFFD, as every
-	// other byte that is not UTF-8 is.
-	RawSurrogates bool
 	// Numbers is the Go value of a number.
 	Numbers Numbers
 	// RangeErrors refuses a number past float64's range, where it would become a float64, with
@@ -464,11 +460,6 @@ func (d *decoder) str() (any, error) {
 		default:
 			r, size := utf8.DecodeRuneInString(d.s[d.i:])
 			if r == utf8.RuneError && size == 1 {
-				if _, wtf8 := wtf8At(d.s, d.i); wtf8 && d.o.RawSurrogates {
-					b.WriteString(d.s[d.i : d.i+3])
-					d.i += 3
-					continue
-				}
 				b.WriteRune(utf8.RuneError)
 				d.i++
 				continue
@@ -521,14 +512,6 @@ func hex4(s string, i int) (rune, bool) {
 	}
 	value, err := strconv.ParseUint(s[i+2:i+6], 16, 16)
 	return rune(value), err == nil
-}
-
-// wtf8At reports the lone surrogate s holds at i in its three WTF-8 bytes (ED A0..BF 80..BF).
-func wtf8At(s string, i int) (rune, bool) {
-	if i+2 >= len(s) || s[i] != 0xed || s[i+1] < 0xa0 || s[i+1] > 0xbf || s[i+2] < 0x80 || s[i+2] > 0xbf {
-		return 0, false
-	}
-	return 0xd000 | rune(s[i+1]&0x3f)<<6 | rune(s[i+2]&0x3f), true
 }
 
 // goWalk is the error json.Decoder gives the document: read token by token, as every ordered

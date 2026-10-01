@@ -299,9 +299,6 @@ func TestPlacementNeedsNonBlankStrings(t *testing.T) {
 	if kept := record.WithoutPlacement(entry); golden.Canon(kept) != `{"path":"/p"}` {
 		t.Fatalf("withdrawing the placement kept %s", golden.Canon(kept))
 	}
-	if record.PointerEntryFor(entry, "/other") != nil || record.PointerEntryFor(entry, "/p") == nil {
-		t.Fatal("an entry answers only for its own path")
-	}
 }
 
 // .crw-lock keeps Python's O_EXCL protocol: a second taker waits and reports Busy, the file is

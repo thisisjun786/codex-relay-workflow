@@ -105,6 +105,29 @@ func ControlAddress(path string) (string, func(), error) {
 // refused before it is decoded.
 const controlDepth = 9996
 
+// nesting is how deep the containers of the JSON text raw nest, its strings skipped. It bounds
+// what a decoder is handed; whether raw is JSON at all is the decoder's to say.
+func nesting(raw []byte) int {
+	depth, deepest, quoted, escaped := 0, 0, false, false
+	for _, c := range raw {
+		switch {
+		case escaped:
+			escaped = false
+		case quoted && c == '\\':
+			escaped = true
+		case c == '"':
+			quoted = !quoted
+		case quoted:
+		case c == '[' || c == '{':
+			depth++
+			deepest = max(deepest, depth)
+		case c == ']' || c == '}':
+			depth--
+		}
+	}
+	return deepest
+}
+
 // requestValues is how the owner reads a request: as the hook read the Stop payload it forwards
 // (hookValues), so NaN, the infinities and a lone surrogate escape the hook accepted from Codex
 // reach the guard as the values the hook read; objects keep their order and an integer is an

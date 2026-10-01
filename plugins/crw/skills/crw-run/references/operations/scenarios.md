@@ -2,10 +2,9 @@
 
 The situations the issue requires, each resolved against [the operations contract](../operations.md).
 Every scenario names what was observed, the clause that decides it, the required action, and what
-must survive. These are fixtures for the operations contract check (`crw-dev ci operations`, and
-`scripts/check_operations_contract.py` until it is deleted), which verifies that each one cites a real
-clause and that every normative section of the contract is exercised by at least
-one of them.
+must survive. These are fixtures for the operations contract check, `crw-dev ci operations`, which
+verifies that each scenario cites a real clause and that every normative clause of the contract is
+cited by at least one fixture in this directory.
 
 ## S1 New installation on a host that has nothing
 

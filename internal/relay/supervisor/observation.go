@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 )
 
@@ -49,7 +50,7 @@ func ObservationObligation(reading map[string]any) *Obligation {
 }
 func validateObservation(o Obligation, reading map[string]any, directory string) error {
 	mismatch := ""
-	quoted := pyvalue.Quote
+	quoted := quote.Value
 	switch {
 	case reading["schema"] != "reporting-observation/1":
 		mismatch = "its schema is " + quoted(reading["schema"]) + ", not \"reporting-observation/1\""

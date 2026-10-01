@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/faults"
 )
@@ -12,8 +13,11 @@ import (
 // The fault half of UnknownSendCase: fault_states() sweeps the store and records the batch
 // (faultsweep.sweep + record_all), through the todo-21 subset of internal/relay/faults.
 
+// wallClockISO is the sweep's time now, as the fault rows store a time.
+func wallClockISO() string { return time.Now().UTC().Format("2006-01-02T15:04:05.000000+00:00") }
+
 func (h *hl) sweeper() *faults.Sweeper {
-	return &faults.Sweeper{Store: h.store, MaxAttempts: h.delivery.Policy.MaxAttempts, Now: faults.WallClockISO,
+	return &faults.Sweeper{Store: h.store, MaxAttempts: h.delivery.Policy.MaxAttempts, Now: wallClockISO,
 		HostRecordPath: filepath.Join(os.Getenv("XDG_STATE_HOME"), "codex-relay-workflow", "host-record.json"),
 		Installation: faults.Installation{Package: "codex-session-relay", Version: faults.RelayPackageVersion,
 			Location: installationDir(h.t)},

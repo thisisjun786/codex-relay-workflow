@@ -13,7 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -666,14 +666,14 @@ func registrationError(reason, detail string) error {
 
 func checkedAssignment(value any) (string, error) {
 	if !ValidAssignment(value) {
-		return "", registrationError(UnknownGeneration, "an assignment id is the hex sha256 of a dispatch request id, not "+pyvalue.Quote(value))
+		return "", registrationError(UnknownGeneration, "an assignment id is the hex sha256 of a dispatch request id, not "+quote.Value(value))
 	}
 	return value.(string), nil
 }
 
 func checkedIdentity(value any, what string) (string, error) {
 	if !ValidSegment(value) {
-		return "", registrationError(UnboundGeneration, "a "+what+" becomes a directory name, so it cannot be empty, . or .., or contain a path separator: "+pyvalue.Quote(value))
+		return "", registrationError(UnboundGeneration, "a "+what+" becomes a directory name, so it cannot be empty, . or .., or contain a path separator: "+quote.Value(value))
 	}
 	return value.(string), nil
 }
@@ -939,7 +939,7 @@ func RegisterRelationship(ctx context.Context, root, workspace string, assignmen
 	path, isPath := dbPath.(string)
 	if !isPath {
 		// Path(None) raises TypeError, which registration_hold answers as an unreadable path.
-		return nil, refuseUnheld("the relay store path " + pyvalue.Quote(dbPath) + " could not be read as a path")
+		return nil, refuseUnheld("the relay store path " + quote.Value(dbPath) + " could not be read as a path")
 	}
 	var result Obj
 	err = store.RegistrationHold(ctx, path, func(held *sql.Conn, unavailable string) error {

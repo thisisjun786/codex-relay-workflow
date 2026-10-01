@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -130,7 +131,7 @@ func f1Claim(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
 		}
 		takeover := writer != nil && text(writer, "owner") != owner
 		if takeover && a["--takeover"] == "" {
-			return fmt.Errorf("fault_writer_conflict: this write belongs to %s; pass takeover to reassign it", pyvalue.Quote(text(writer, "owner")))
+			return fmt.Errorf("fault_writer_conflict: this write belongs to %s; pass takeover to reassign it", quote.Value(text(writer, "owner")))
 		}
 		attempt := integer(r, "attempts") + 1
 		takeoverInt := 0
@@ -328,7 +329,7 @@ func f1Operation(ctx context.Context, l *Ledger, a map[string]string) (any, erro
 	return answer, err
 }
 func f1Unregistered(kind string) error {
-	return fmt.Errorf("fault_kind_unregistered: kind %s is not registered in this process; load the module that declares it (--kind-module) before acting on its writes", pyvalue.Quote(kind))
+	return fmt.Errorf("fault_kind_unregistered: kind %s is not registered in this process; load the module that declares it (--kind-module) before acting on its writes", quote.Value(kind))
 }
 
 func f1OwnedTarget(ctx context.Context, l *Ledger, fault row) (row, string, error) {
@@ -666,7 +667,7 @@ func f1ConfirmFields(extra row, observed map[string]any) []string {
 		if observed["projectId"] == value {
 			return nil
 		}
-		return []string{fmt.Sprintf("the issue reads project %s, not %s", pyvalue.Quote(observed["projectId"]), pyvalue.Quote(value))}
+		return []string{fmt.Sprintf("the issue reads project %s, not %s", quote.Value(observed["projectId"]), quote.Value(value))}
 	case "reopen":
 		if observed["open"] == true {
 			return nil
@@ -683,9 +684,9 @@ func f1ConfirmFields(extra row, observed map[string]any) []string {
 				return nil
 			}
 		}
-		return []string{fmt.Sprintf("the issue has no %s %s", item, pyvalue.Quote(value))}
+		return []string{fmt.Sprintf("the issue has no %s %s", item, quote.Value(value))}
 	}
-	return []string{fmt.Sprintf("unknown update %s", pyvalue.Quote(op))}
+	return []string{fmt.Sprintf("unknown update %s", quote.Value(op))}
 }
 func f1Mismatch(r, fault row, found f1Block) []string {
 	if !found.found {
@@ -711,7 +712,7 @@ func f1Mismatch(r, fault row, found f1Block) []string {
 			if ok {
 				value = actual
 			}
-			problems = append(problems, fmt.Sprintf("%s reads %s, not %s", key, pyvalue.Quote(value), pyvalue.Quote(expected[key])))
+			problems = append(problems, fmt.Sprintf("%s reads %s, not %s", key, quote.Value(value), quote.Value(expected[key])))
 		}
 	}
 	observed := strings.TrimRight(strings.ReplaceAll(strings.ReplaceAll(found.summary, "\r\n", "\n"), "\r", "\n"), "\n")
@@ -797,7 +798,7 @@ func f1Complete(ctx context.Context, l *Ledger, a map[string]string) (any, error
 					return fmt.Errorf("fault_state_conflict: this fault owns no issue yet, so a comment on it cannot be confirmed")
 				}
 				if reference != owned {
-					return fmt.Errorf("fault_readback_mismatch: this comment names %s, and the fault owns %s", pyvalue.Quote(reference), pyvalue.Quote(owned))
+					return fmt.Errorf("fault_readback_mismatch: this comment names %s, and the fault owns %s", quote.Value(reference), quote.Value(owned))
 				}
 			}
 			if spec.Creates && !named(reference) {

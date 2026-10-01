@@ -293,8 +293,8 @@ func Runtime(pointerPath, from string, rec Object) Object {
 	}...)
 }
 
-// pointerEntryAbout is record.PointerEntryFor with both paths read in their lexical form:
-// "/d/current/" and "/d/current" are one link.
+// pointerEntryAbout is the pointer entry only when it is about path, both paths read in their
+// lexical form: "/d/current/" and "/d/current" are one link.
 func pointerEntryAbout(entry any, path string) Object {
 	o, ok := entry.(Object)
 	recorded, _ := record.Get(o, "path").(string)

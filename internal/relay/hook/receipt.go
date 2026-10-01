@@ -152,7 +152,7 @@ func accessFailure(err error) bool {
 }
 
 // DeliverableState is guard.deliverable_state. The stored receipt's records and the frozen copy's
-// are read as the values json.loads made of them (store.PythonManifestEntries), so a path, digest
+// are read as the values json.loads made of them (store.FrozenManifestEntries), so a path, digest
 // or byte count of another type is compared, printed and refused as the fence does, and an
 // exception the fence raises is answered as its except clauses answer it (raisedState). The error
 // is the exception those clauses do not name (a *store.ManifestException whose RuntimeError holds),
@@ -166,11 +166,11 @@ func DeliverableState(ctx context.Context, payload any, reference string, rootsV
 	if !ok || len(records) == 0 {
 		return "changed", "", "the stored receipt carries no manifest to verify", nil
 	}
-	entries, err := store.PythonManifestEntries(records)
+	entries, err := store.FrozenManifestEntries(records)
 	if err != nil {
 		return raisedState(err)
 	}
-	revision, err := store.PythonRevisionHash(entries)
+	revision, err := store.FrozenRevisionHash(entries)
 	if err != nil {
 		return raisedState(err)
 	}
@@ -231,9 +231,9 @@ func raisedState(err error) (string, string, string, error) {
 		case exception.RuntimeError():
 			return "", "", "", exception
 		case exception.OSError():
-			return "unverifiable", "", exception.PythonText(), nil
+			return "unverifiable", "", exception.StoredText(), nil
 		}
-		return "changed", "", exception.PythonText(), nil
+		return "changed", "", exception.StoredText(), nil
 	}
 	return "unverifiable", "", "ScopeError: " + err.Error(), nil
 }
@@ -246,7 +246,7 @@ func (e *frozenAnswer) Error() string { return e.detail }
 
 // verifyEntries is manifest.verify_against_disk_detailed over entries revision_hash accepted, so
 // each path and digest is a str; a byte count is compared as the value it is.
-func verifyEntries(ctx context.Context, entries []store.PythonEntry, roots []string) ([]string, []string) {
+func verifyEntries(ctx context.Context, entries []store.FrozenEntry, roots []string) ([]string, []string) {
 	problems, unreadable := []string{}, []string{}
 	for _, e := range entries {
 		path, _ := e.Path.(string)
@@ -280,7 +280,7 @@ func verifyEntries(ctx context.Context, entries []store.PythonEntry, roots []str
 // (store.FrozenDocument), and what follows its read is the store's own reading of a frozen copy
 // (store.VerifyFrozenDocument), so the hook, the intake and the omission reader judge one frozen
 // copy alike.
-func verifyFrozen(ctx context.Context, reference string, entries []store.PythonEntry) ([]string, []string, error) {
+func verifyFrozen(ctx context.Context, reference string, entries []store.FrozenEntry) ([]string, []string, error) {
 	document := store.FrozenDocument(reference)
 	if strings.ContainsRune(document, 0) {
 		// os.stat refuses the name before any system call; the fence lets that ValueError out.
@@ -290,14 +290,14 @@ func verifyFrozen(ctx context.Context, reference string, entries []store.PythonE
 	if info, err := os.Stat(document); err != nil || !info.Mode().IsRegular() {
 		message := reference + ": no MANIFEST.json in the frozen copy"
 		if err != nil && accessFailure(err) {
-			return []string{message}, []string{reference + ": the frozen manifest could not be reached: " + store.PythonOSErrorText(err)}, nil
+			return []string{message}, []string{reference + ": the frozen manifest could not be reached: " + store.StoredOSErrorText(err)}, nil
 		}
 		return []string{message}, nil, nil
 	}
 	raw, err := readRegular(ctx, document, unbounded)
 	if err != nil {
 		// Reached and not read: the fence raises the OSError, a comparison that did not happen.
-		return nil, nil, &frozenAnswer{"unverifiable", store.PythonOSError(err)}
+		return nil, nil, &frozenAnswer{"unverifiable", store.StoredOSError(err)}
 	}
 	_, problems, unreadable, err := store.VerifyFrozenDocument(ctx, reference, raw, entries)
 	if err != nil {

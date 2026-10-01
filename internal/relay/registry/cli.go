@@ -10,10 +10,11 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -220,7 +221,7 @@ func settingsJSON(raw string) (contract.OrderedObject, error) {
 		}
 		data = content
 	}
-	if !store.ValidUTF8(data) {
+	if !utf8.Valid(data) {
 		return nil, errors.New("the settings are not UTF-8 text")
 	}
 	decoded, err := pyjson.Loads(string(data), pyjson.LoadOptions{})
@@ -330,7 +331,7 @@ func (r *Registry) refuseRoleDisagreement(ctx context.Context, writes []settings
 			return err
 		}
 		if contested != nil {
-			return refuse(contract.RefusalRoleBindingMismatch, "%s holds live bindings at %s; one task holds one role, so there is no single role to register settings against", strconv.Quote(w.task), pyvalue.Quote(contested))
+			return refuse(contract.RefusalRoleBindingMismatch, "%s holds live bindings at %s; one task holds one role, so there is no single role to register settings against", strconv.Quote(w.task), quote.Value(contested))
 		}
 		target := bound
 		if target == "" {

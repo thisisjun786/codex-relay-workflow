@@ -118,7 +118,7 @@ func pdRecord(t *testing.T, r *registry.Registry, link, digest, purpose, corr, t
 	return r.RecordDirective(context.Background(), "project", "PRJ-1", task, "INI-1", link, digest, ref)
 }
 
-func Test24_DIR_1_WholeLivePython(t *testing.T) {
+func Test24_DIR_1_WholeOutput(t *testing.T) {
 	root := partDFixture(t, "test_directive_places", "TheG1OrderReportsUpward.test_a_scope_correction_beside_both_does_not_need_the_others_settled")
 	s, c, r := partDOpen(t, root, "event")
 	captureTokens21(t)
@@ -129,7 +129,7 @@ func Test24_DIR_1_WholeLivePython(t *testing.T) {
 	}
 	partDCheck(t, root, s, []any{0, 0, 0, len(partDIDs(t, r)), []any{got.SupervisorStaged, got.SupervisorSent}, partDContest(t, r)})
 }
-func Test24_DIR_2_WholeLivePython(t *testing.T) {
+func Test24_DIR_2_WholeOutput(t *testing.T) {
 	root := partDFixture(t, "test_directive_places", "ARealConflictIsRefusedWhereItIsRecorded.test_a_second_assignment_is_refused_and_names_the_one_in_force")
 	s, _, r := partDOpen(t, root, "setup")
 	l := partDLink(t, s)
@@ -162,7 +162,7 @@ func stringContains(x, s string) bool {
 	return false
 }
 
-func Test24_DIR_3_WholeLivePython(t *testing.T) {
+func Test24_DIR_3_WholeOutput(t *testing.T) {
 	root := partDFixture(t, "test_directive_places", "ARealConflictIsRefusedWhereItIsRecorded.test_two_different_answers_to_one_message_are_refused")
 	s, _, r := partDOpen(t, root, "setup")
 	l := partDLink(t, s)
@@ -171,7 +171,7 @@ func Test24_DIR_3_WholeLivePython(t *testing.T) {
 	x := partDRefusal(e)
 	partDCheck(t, root, s, []any{0, 2, contains(x["detail"], did(a)), partDIDs(t, r)})
 }
-func Test24_DIR_4_WholeLivePython(t *testing.T) {
+func Test24_DIR_4_WholeOutput(t *testing.T) {
 	root := partDFixture(t, "test_directive_places", "ARealConflictIsRefusedWhereItIsRecorded.test_a_refusal_names_the_message_the_live_correction_answers")
 	s, _, r := partDOpen(t, root, "setup")
 	l := partDLink(t, s)
@@ -180,7 +180,7 @@ func Test24_DIR_4_WholeLivePython(t *testing.T) {
 	x := partDRefusal(e)
 	partDCheck(t, root, s, []any{0, 2, contains(x["detail"], did(a)), contains(x["detail"], "msg-blocked-7")})
 }
-func Test24_DIR_5_WholeLivePython(t *testing.T) {
+func Test24_DIR_5_WholeOutput(t *testing.T) {
 	root := partDFixture(t, "test_directive_places", "ARealConflictIsRefusedWhereItIsRecorded.test_two_instructions_of_unknown_purpose_are_still_recorded_and_contested")
 	s, _, r := partDOpen(t, root, "setup")
 	l := partDLink(t, s)
@@ -188,7 +188,7 @@ func Test24_DIR_5_WholeLivePython(t *testing.T) {
 	_, _ = pdRecord(t, r, l, "d-two", "", "", "01supervisor-task")
 	partDCheck(t, root, s, []any{0, 0, len(partDIDs(t, r)), len(partDContest(t, r))})
 }
-func Test24_DIR_6_WholeLivePython(t *testing.T) {
+func Test24_DIR_6_WholeOutput(t *testing.T) {
 	root := partDFixture(t, "test_directive_places", "ARealConflictIsRefusedWhereItIsRecorded.test_a_place_keeps_one_live_row_across_a_handover")
 	s, _, r := partDOpen(t, root, "setup")
 	l := partDLink(t, s)
@@ -214,13 +214,13 @@ func Test24_DIR_6_WholeLivePython(t *testing.T) {
 	partDCheck(t, root, s, vals)
 }
 
-func Test24_DIR_7_WholeLivePython(t *testing.T) {
+func Test24_DIR_7_WholeOutput(t *testing.T) {
 	partDReplayReadScenario(t, "ARealConflictIsRefusedWhereItIsRecorded.test_a_pair_of_one_digest_an_older_writer_left_holds_no_report", 7)
 }
-func Test24_DIR_8_WholeLivePython(t *testing.T) {
+func Test24_DIR_8_WholeOutput(t *testing.T) {
 	partDReplayReadScenario(t, "AHeldReportIsNamedWhereTheOperatorLooks.test_a_held_report_is_a_named_gap_in_supervisor_standing", 8)
 }
-func Test24_DIR_9_WholeLivePython(t *testing.T) {
+func Test24_DIR_9_WholeOutput(t *testing.T) {
 	partDReplayReadScenario(t, "AHeldReportIsNamedWhereTheOperatorLooks.test_a_project_nobody_supervises_is_a_named_hold_of_its_own", 9)
 }
 func partDReplayReadScenario(t *testing.T, id string, kind int) {
@@ -273,22 +273,22 @@ func partDReplayReadScenario(t *testing.T, id string, kind int) {
 	partDCheck(t, root, s, got)
 }
 
-func Test24_AUT_1_WholeLivePython(t *testing.T) {
+func Test24_AUT_1_WholeOutput(t *testing.T) {
 	partDAutoBasic(t, "AParentThatNeverReports.test_a_completion_goes_up_once_with_nobody_asking", 1)
 }
-func Test24_AUT_3_WholeLivePython(t *testing.T) {
+func Test24_AUT_3_WholeOutput(t *testing.T) {
 	partDAutoReplay(t, "OneLogicalIdAcrossRestartsAndRedelivery.test_a_restarted_daemon_converges_on_the_message_already_sent", 3, 4, 2)
 }
-func Test24_AUT_4_WholeLivePython(t *testing.T) {
+func Test24_AUT_4_WholeOutput(t *testing.T) {
 	partDAutoBasic(t, "ASupervisorWhoCannotBeWoken.test_an_archived_supervisor_is_not_woken_and_the_report_waits_for_it", 4)
 }
-func Test24_AUT_5_WholeLivePython(t *testing.T) {
+func Test24_AUT_5_WholeOutput(t *testing.T) {
 	partDAutoBasic(t, "AParentWhoAlsoSendsByHand.test_a_parent_who_sent_first_leaves_the_daemon_nothing_to_send", 5)
 }
-func Test24_AUT_7_WholeLivePython(t *testing.T) {
+func Test24_AUT_7_WholeOutput(t *testing.T) {
 	partDAutoReplay(t, "AReportWithNoAddresseeDoesNotHoldTheQueue.test_the_hold_is_released_when_the_hierarchy_names_the_message_again", 7, 4, 2)
 }
-func Test24_AUT_8_WholeLivePython(t *testing.T) {
+func Test24_AUT_8_WholeOutput(t *testing.T) {
 	partDAutoReplay(t, "TwoSupervisorsOneStuck.test_a_head_that_is_never_sendable_does_not_starve_another", 8, 4, 1)
 }
 func partDAutoBasic(t *testing.T, id string, kind int) {
@@ -514,28 +514,28 @@ func partDAutoReplay(t *testing.T, id string, kind, projects, sends int) {
 	partDCheck(t, root, s, got)
 }
 
-func Test24_AUT_8_StrugglingWrapWholeLivePython(t *testing.T) {
+func Test24_AUT_8_StrugglingWrapWholeOutput(t *testing.T) {
 	partDAutoReplay(t, "parity_struggling_wrap", 13, 0, 2)
 }
-func Test24_AUT_9_ProjectWrapWholeLivePython(t *testing.T) {
+func Test24_AUT_9_ProjectWrapWholeOutput(t *testing.T) {
 	partDAutoReplay(t, "parity_project_wrap", 14, 4, 2)
 }
-func Test24_AUT_3_ExpiredLeaseWholeLivePython(t *testing.T) {
+func Test24_AUT_3_ExpiredLeaseWholeOutput(t *testing.T) {
 	partDAutoReplay(t, "parity_expired_lease", 0, 4, 2)
 }
-func Test24_AUT_8_HeadWindowWholeLivePython(t *testing.T) {
+func Test24_AUT_8_HeadWindowWholeOutput(t *testing.T) {
 	partDAutoReplay(t, "parity_head_window", 12, 4, 1)
 }
-func Test24_AUT_10_WholeLivePython(t *testing.T) {
+func Test24_AUT_10_WholeOutput(t *testing.T) {
 	partDAutoReplay(t, "parity_deferred", 10, 4, 2)
 }
-func Test24_AUT_2_WholeLivePython(t *testing.T) {
+func Test24_AUT_2_WholeOutput(t *testing.T) {
 	partDAutoReplay(t, "AParentThatNeverReports.test_a_quiet_store_ticks_without_touching_the_channel", 2, 4, 2)
 }
-func Test24_AUT_9_WholeLivePython(t *testing.T) {
+func Test24_AUT_9_WholeOutput(t *testing.T) {
 	partDAutoReplay(t, "TheSupervisorPassReadsAndReportsWhatItDid.test_projects_are_read_a_page_at_a_time_and_rotate", 9, 1, 2)
 }
-func Test24_AUT_11_WholeLivePython(t *testing.T) {
+func Test24_AUT_11_WholeOutput(t *testing.T) {
 	partDAutoReplay(t, "AWindowOfUnsendableHeadsDoesNotHideTheRest.test_a_later_supervisor_is_reached_behind_a_window_of_unsendable_ones", 11, 4, 1)
 }
 
@@ -625,7 +625,7 @@ func partDInterleaveStore(t *testing.T, s *store.Store, kind int, message string
 	s.DB = db
 }
 
-func Test24_DIR_3_DifferentCorrelationsWholeLivePython(t *testing.T) {
+func Test24_DIR_3_DifferentCorrelationsWholeOutput(t *testing.T) {
 	root := partDFixture(t, "test_directive_places", "ARealConflictIsRefusedWhereItIsRecorded.test_answers_to_two_messages_stand_together")
 	s, _, r := partDOpen(t, root, "setup")
 	l := partDLink(t, s)
@@ -639,7 +639,7 @@ func partDCode(err error) int {
 	}
 	return 0
 }
-func Test24_DIR_5_PurposedBesideUnknownWholeLivePython(t *testing.T) {
+func Test24_DIR_5_PurposedBesideUnknownWholeOutput(t *testing.T) {
 	root := partDFixture(t, "test_directive_places", "ARealConflictIsRefusedWhereItIsRecorded.test_a_purposed_instruction_beside_one_of_unknown_purpose_is_refused")
 	s, _, r := partDOpen(t, root, "setup")
 	l := partDLink(t, s)
@@ -651,7 +651,7 @@ func Test24_DIR_5_PurposedBesideUnknownWholeLivePython(t *testing.T) {
 	refusal := partDRefusal(err)
 	partDCheck(t, root, s, []any{partDCode(err), contains(refusal["detail"], did(older)), contains(refusal["detail"], "purpose"), partDIDs(t, r)})
 }
-func Test24_DIR_9_CappedWholeLivePython(t *testing.T) {
+func Test24_DIR_9_CappedWholeOutput(t *testing.T) {
 	root := partDFixture(t, "test_directive_places", "AHeldReportIsNamedWhereTheOperatorLooks.test_a_capped_report_is_still_called_held")
 	s, c, r := partDOpen(t, root, "event")
 	o := captureObligation4(t, c, s)
