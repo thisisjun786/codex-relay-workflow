@@ -18,8 +18,8 @@ Installing and operating the runtime is [runtime installation](runtime-install.m
 | `CRW_TEST_BINARY=<crw> go test -tags integration ./internal/runtime/integration/...` | `dist`: installs release archives of the linux/amd64 binary it built (and a relinked second one) into an isolated home with `crw install` and runs the plugin's declared Stop hook and MCP server against them (IS-1, IS-7, IS-8) |
 
 `crw-dev` is the development binary (`make crw-dev`); it builds only with the `dev` tag, so
-`make dist` and the release archives never contain it. `ci validate` and `ci plugin` still have
-Python twins under `scripts/ci`, which `internal/dev/ci`'s tests compare with them until todo 48.
+`make dist` and the release archives never contain it. Its checks have no Python twin: the copies
+under `scripts/ci` and `scripts/check_operations_contract.py` left in refactor R3 (decision R3R-1).
 See the [workflow](../.github/workflows/ci.yml) for the exact job inputs.
 
 ## The workflow
@@ -59,8 +59,8 @@ Until wave R1 of the post-port refactoring a `selection` job classified the chan
 the Python twins' own tests on two Python versions. The selection's changed-path list reached
 the gate in one environment variable, which made the gate fail with "Argument list too long" once
 a pull request changed about a thousand paths. All three left; the release workflow's tests
-became Go tests (`internal/contracttest` `TestReleaseWorkflow_*`), and the twins are compared with
-their Go checks by `internal/dev/ci`.
+became Go tests (`internal/contracttest` `TestReleaseWorkflow_*`), and the twins were compared with
+their Go checks by `internal/dev/ci` until refactor R3 deleted them.
 
 During iteration run the affected tests and reuse valid evidence for unchanged source, criteria
 and environments. CI concurrency cancels obsolete runs within the same PR or branch. An

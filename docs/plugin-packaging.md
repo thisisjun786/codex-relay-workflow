@@ -824,8 +824,7 @@ go run -tags dev ./cmd/crw-dev ci validate   # skill metadata, local links, Pyth
 go test ./internal/runtime/install/...       # the wiring through the pointer, among the installer's tests
 ```
 
-`scripts/ci/plugin.py` and `scripts/ci/validate.py`, the checks' Python twins, answer the same
-with the same flags and output until todo 48 removes them; they are developer tools
+The checks' Python twins, `scripts/ci/plugin.py` and `scripts/ci/validate.py`, left in refactor R3
 ([CI operation](CI.md)). The Python installer's wiring tests left with it in todo 44.
 
 `crw-dev ci plugin` builds the release payload from a Git revision rather than from the

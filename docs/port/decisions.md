@@ -3265,8 +3265,9 @@ unchanged), needs every other job, runs `if: always()`, and passes only when eve
 reports `success`; it still fails a pull request whose base is `main`. The job results reach its
 shell step as a file the step's own script writes from `toJSON(needs)`, never as an environment
 variable. The `tests` job, which ran the CI checks' Python twins' own tests, is removed too: its
-release cases are Go tests (R1D1), and the twins that stay (`plugin.py`, `validate.py`) are
-compared with their Go checks by `internal/dev/ci` in `make test` until todo 48. The dist leg's
+release cases are Go tests (R1D1), and the twins that stayed (`plugin.py`, `validate.py`) were
+compared with their Go checks by `internal/dev/ci` in `make test` until refactor R3 deleted them
+(decision R3R-1). The dist leg's
 second `crw-dev ci plugin` run is removed; the validate job runs it once.
 
 Why: the Go product legs, the longest, always ran whatever changed, so path selection only ever
@@ -3319,3 +3320,46 @@ Compare; `CRW_GOLDEN`); 2,735 golden files and 507 fixtures under 36 packages' t
 sections of docs/port/oracles/g1.md to g5.md (per package goldens, fixtures and deleted
 recordings); `go list -deps -test ./... | grep pyoracle` is empty; `CRW_GOLDEN=update make test`
 leaves the tree unchanged.
+
+## R3R-1. The CI checks read JSON, paths, URLs and flags the Go way; their Python twins are deleted (refactor R3)
+
+Decision: `crw-dev ci plugin`, `validate`, `operations` and `contracts` no longer reproduce
+CPython. What goes: the json.loads/json.dumps emulation of `internal/dev/ci` (`pyjson.go`,
+`pyjsondecode.go`, `pyvalue.go`: NaN and Infinity literals, Python dict order, int/float/bool
+equality, repr of values, CPython's JSONDecodeError and UnicodeDecodeError texts), the
+`urllib.parse.urlsplit` emulation (`urlsplit.go`: NFKC netloc and bracketed-host ValueErrors), the
+`os.path.realpath`, `str.isspace`, `str.splitlines` and Unicode `\d`/`\b` emulation, the
+CalledProcessError and `[Errno N]` texts, and the argparse-shaped option parser (unique prefixes).
+The checks decode with encoding/json (numbers as json.Number, so an integer timeout and a
+fraction stay apart; a nesting cap of encoding/json's own), resolve paths with
+`filepath.EvalSymlinks`, judge an https URL with `net/url`, split lines on `\n` (and `\r\n`), use
+ASCII `\d`, `\s` and `\b`, and parse flags with the standard `flag` package (`-h` lists every
+flag; a usage error exits 2). Messages name values as `%q` or compact JSON instead of repr. The
+Python twins `scripts/ci/plugin.py`, `scripts/ci/validate.py` and
+`scripts/check_operations_contract.py` are deleted with the parity tests that ran them; the tests
+now assert the Go check's own fragments and exits, and goldens hold the payload digests of fixed
+payloads and the `--payload --json` report. `scripts/dev/ALLOWED_PYTHON.txt` keeps the three port
+checkers.
+
+Consumer check: `git grep` of `plugins/crw/skills`, `docs/`, `contract/`, `.github/` and the
+Makefile for `crw-dev ci`, `plugin.py`, `validate.py` and `check_operations_contract`: CI's
+validate job runs `crw-dev ci validate|plugin|contracts` and reads only the exit status; nothing
+ran the twins outside `internal/dev/ci`'s tests; docs/plugin-packaging.md reads `stopHooks` and
+`hooksDigest` out of `crw-dev ci plugin --payload <dir> --json` with
+`sed -nE 's/^  "<field>": (.*[^,]),?$/\1/p'`, one top-level member per line two spaces in.
+
+What stays and why: the payload digest's framing (`<len>:<name> <mode> <sha256>` lines in name
+order, sha256) and the version elision, because the manifest records the digest's first twelve
+digits as its version suffix (`plugins/crw/.codex-plugin/plugin.json`); the recorded version of
+this checkout still verifies. The `--json` report keeps its field names, its sorted keys and its
+two-space indentation, which the doc's `field()` reads; it is byte-identical to the Python
+twin's for this checkout. `crw-dev ci validate`'s Python syntax check stays while the port
+checkers (`scripts/port/*.py`) remain, so CI's validate job keeps its Python setup.
+`scripts/port/check_test_map.py`, `check_inventory.py` and `check_cutover_doc.py` stay: each port
+step's verification runs the first two with `--final`, and they keep docs/port honest until todo
+48.
+
+Evidence: internal/dev/ci/{common.go,json.go,plugin.go,validate.go,operations.go};
+internal/dev/ci/plugin_test.go (`Test47_PLG_11_DigestIsFramedAndCoversMode`,
+`Test47_PLG_18_JSONReport`), validate_test.go, ci_test.go (`TestACheckListsItsFlags`);
+docs/port/inventory.md (Files deleted with evidence); scripts/dev/ALLOWED_PYTHON.txt.

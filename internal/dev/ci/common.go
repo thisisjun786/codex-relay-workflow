@@ -4,39 +4,21 @@ package ci
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
-	"regexp"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
-	"syscall"
-
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
-// Helpers the CI checks share: the git runner, Python's error texts and the argparse-shaped flag
-// parser (they sat in scope.go until the selection check left in wave R1).
+// Helpers the CI checks share: the git runner, path resolution and the flag parser.
 
-// isPythonInt reports whether json.loads would read the number as an int, not a float.
-func isPythonInt(number json.Number) bool {
-	return regexp.MustCompile(`^-?[0-9]+$`).MatchString(string(number))
-}
-
-// gitError is subprocess.CalledProcessError's text for a failed git command.
-type gitError struct {
-	args   []string
-	status string
-}
-
-func (e *gitError) Error() string {
-	return fmt.Sprintf("Command '%s' %s", pyvalue.Repr(append([]string{"git"}, e.args...)), e.status)
-}
-
+// runGit runs git in root and returns its standard output; a failure names the command, how it
+// ended and what git wrote on its standard error.
 func runGit(root string, args ...string) ([]byte, error) {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = root
@@ -46,35 +28,45 @@ func runGit(root string, args ...string) ([]byte, error) {
 	if err == nil {
 		return out, nil
 	}
-	var exit *exec.ExitError
-	if errors.As(err, &exit) {
-		status := exit.Sys().(syscall.WaitStatus)
-		if status.Signaled() {
-			return nil, &gitError{args, fmt.Sprintf("died with <Signals.%s: %d>.", signalName(status.Signal()), int(status.Signal()))}
+	if text := strings.TrimSpace(strings.ToValidUTF8(stderr.String(), "�")); text != "" {
+		err = fmt.Errorf("%w: %s", err, text)
+	}
+	return nil, fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
+}
+
+// resolve is path made absolute with its symbolic links resolved; a path that does not exist (or
+// cannot be resolved) is only made absolute, so a check judges it as missing.
+func resolve(path string) string {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return path
+	}
+	if resolved, err := filepath.EvalSymlinks(absolute); err == nil {
+		return resolved
+	}
+	return absolute
+}
+
+// isRelativeTo reports whether path is root or inside it.
+func isRelativeTo(path, root string) bool {
+	return path == root || strings.HasPrefix(path, strings.TrimSuffix(root, "/")+"/")
+}
+
+// pathParts is a slash-separated relative path's components, without empty and "." ones.
+func pathParts(text string) []string {
+	var parts []string
+	for _, part := range strings.Split(text, "/") {
+		if part != "" && part != "." {
+			parts = append(parts, part)
 		}
-		return nil, &gitError{args, fmt.Sprintf("returned non-zero exit status %d.", exit.ExitCode())}
 	}
-	if errors.Is(err, exec.ErrNotFound) {
-		return nil, fmt.Errorf("[Errno 2] No such file or directory: 'git'")
-	}
-	return nil, err
+	return parts
 }
 
-func signalName(sig syscall.Signal) string {
-	names := map[syscall.Signal]string{syscall.SIGKILL: "SIGKILL", syscall.SIGTERM: "SIGTERM",
-		syscall.SIGINT: "SIGINT", syscall.SIGSEGV: "SIGSEGV", syscall.SIGABRT: "SIGABRT", syscall.SIGPIPE: "SIGPIPE"}
-	if name, ok := names[sig]; ok {
-		return name
-	}
-	return fmt.Sprintf("SIG%d", int(sig))
+// lines is text split into lines; "\r\n" ends a line as "\n" does.
+func lines(text string) []string {
+	return strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
 }
-
-var errNoValue = valueError{"ValueError"}
-
-type valueError struct{ text string }
-
-func (e valueError) Error() string        { return e.text }
-func (e valueError) Is(target error) bool { return target == errNoValue }
 
 func sortedSet(items []string) []string {
 	var out []string
@@ -87,106 +79,53 @@ func sortedSet(items []string) []string {
 	return slices.Compact(out)
 }
 
-// pyOSError is f"{type(error).__name__}: {error}" for an OSError.
-func pyOSError(err error) string {
-	var errno syscall.Errno
-	if !errors.As(err, &errno) {
-		return err.Error()
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
 	}
-	class := map[syscall.Errno]string{syscall.ENOENT: "FileNotFoundError", syscall.EACCES: "PermissionError",
-		syscall.EPERM: "PermissionError", syscall.EISDIR: "IsADirectoryError", syscall.ENOTDIR: "NotADirectoryError",
-		syscall.EAGAIN: "BlockingIOError", syscall.EINTR: "InterruptedError"}[errno]
-	if class == "" {
-		class = "OSError"
-	}
-	return class + ": " + pyOSErrorText(err)
+	sort.Strings(keys)
+	return keys
 }
 
-// pyOSErrorText is str(OSError) for a path error: "[Errno N] Text: 'path'".
-func pyOSErrorText(err error) string {
-	var errno syscall.Errno
-	if !errors.As(err, &errno) {
-		return err.Error()
-	}
-	text := errno.Error()
-	text = fmt.Sprintf("[Errno %d] %s%s", int(errno), strings.ToUpper(text[:1]), text[1:])
-	var path *os.PathError
-	if errors.As(err, &path) {
-		text += ": " + pyvalue.StrRepr(path.Path)
-	}
-	return text
+// newFlags is a check's flag set, named as the command line names it.
+func newFlags(check string) *flag.FlagSet {
+	flags := flag.NewFlagSet("crw-dev ci "+check, flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	flags.Usage = func() {}
+	return flags
 }
 
-// parseFlags reads argparse-style string options ("--name value" or "--name=value", unique
-// prefixes allowed, default ""). code is -1 to continue, else the exit status to return.
-func parseFlags(prog, description string, names []string, args []string, stdout, stderr io.Writer) (map[string]string, int) {
-	values, _, code := parseOptions(prog, description, names, nil, args, stdout, stderr)
-	return values, code
+// parseFlags parses args into flags. It returns -1 to go on, or the exit status: 0 after -h or
+// --help printed the usage on stdout, 2 after a usage error printed on stderr.
+func parseFlags(flags *flag.FlagSet, description string, args []string, stdout, stderr io.Writer) int {
+	usage := func(w io.Writer) {
+		fmt.Fprintf(w, "usage: %s [flags]\n\n%s\n\nflags:\n", flags.Name(), description)
+		flags.SetOutput(w)
+		flags.PrintDefaults()
+		flags.SetOutput(io.Discard)
+	}
+	err := flags.Parse(args)
+	if err == nil && flags.NArg() > 0 {
+		err = fmt.Errorf("unexpected arguments: %s", strings.Join(flags.Args(), " "))
+	}
+	switch {
+	case errors.Is(err, flag.ErrHelp):
+		usage(stdout)
+		return 0
+	case err != nil:
+		fmt.Fprintf(stderr, "%s: %v\n", flags.Name(), err)
+		usage(stderr)
+		return 2
+	}
+	return -1
 }
 
-// parseOptions is parseFlags plus store_true switches; present names every option given.
-func parseOptions(prog, description string, names, switches []string, args []string, stdout, stderr io.Writer) (map[string]string, map[string]bool, int) {
-	usage := "usage: crw-dev ci " + prog + " [-h]"
-	for _, name := range names {
-		usage += fmt.Sprintf(" [--%s %s]", name, strings.ToUpper(strings.ReplaceAll(name, "-", "_")))
-	}
-	for _, name := range switches {
-		usage += " [--" + name + "]"
-	}
-	fail := func(message string) (map[string]string, map[string]bool, int) {
-		fmt.Fprintln(stderr, usage)
-		fmt.Fprintf(stderr, "crw-dev ci %s: error: %s\n", prog, message)
-		return nil, nil, 2
-	}
-	values := map[string]string{}
-	present := map[string]bool{}
-	for _, name := range names {
-		values[name] = ""
-	}
-	all := append(slices.Clone(names), switches...)
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		if arg == "-h" || arg == "--help" {
-			fmt.Fprintf(stdout, "%s\n\n%s\n", usage, description)
-			return nil, nil, 0
-		}
-		if !strings.HasPrefix(arg, "--") || arg == "--" {
-			return fail("unrecognized arguments: " + strings.Join(args[i:], " "))
-		}
-		key, value, inline := strings.Cut(arg[2:], "=")
-		var match []string
-		for _, name := range all {
-			if name == key {
-				match = []string{name}
-				break
-			}
-			if strings.HasPrefix(name, key) {
-				match = append(match, name)
-			}
-		}
-		switch {
-		case len(match) == 0:
-			return fail("unrecognized arguments: " + arg)
-		case len(match) > 1:
-			return fail(fmt.Sprintf("ambiguous option: --%s could match --%s", key, strings.Join(match, ", --")))
-		}
-		present[match[0]] = true
-		if slices.Contains(switches, match[0]) {
-			if inline {
-				return fail(fmt.Sprintf("argument --%s: ignored explicit argument %s", match[0], pyvalue.StrRepr(value)))
-			}
-			continue
-		}
-		if !inline {
-			if i+1 >= len(args) || (strings.HasPrefix(args[i+1], "-") && args[i+1] != "-") {
-				return fail(fmt.Sprintf("argument --%s: expected one argument", match[0]))
-			}
-			i++
-			value = args[i]
-		}
-		values[match[0]] = value
-	}
-	return values, present, -1
+// given reports whether the command line set the named flag.
+func given(flags *flag.FlagSet, name string) bool {
+	set := false
+	flags.Visit(func(f *flag.Flag) { set = set || f.Name == name })
+	return set
 }
 
 // nonNil is items, or an empty list for none, so a JSON encoding says [] rather than null.
@@ -195,4 +134,10 @@ func nonNil(items []string) []string {
 		return []string{}
 	}
 	return items
+}
+
+// failf prints a check's refusal on w and returns exit status 1.
+func failf(w io.Writer, format string, args ...any) int {
+	fmt.Fprintf(w, format+"\n", args...)
+	return 1
 }

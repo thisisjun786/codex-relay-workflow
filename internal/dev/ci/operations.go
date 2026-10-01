@@ -11,16 +11,14 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
-// Port of scripts/check_operations_contract.py: the operations fixtures replayed against the
-// contract they claim to follow. Citation and shape only; see that script's docstring.
+// The operations fixtures replayed against the contract they claim to follow: citation and
+// shape only, never the fixtures' meaning.
 var (
 	opsClause      = regexp.MustCompile(`OPS-\d+(?:\.\d+)?`)
-	opsHeading     = regexp.MustCompile(`^#{2,3}\s+(OPS-\d+(?:\.\d+)?)`)
-	opsNormative   = regexp.MustCompile(`^###\s+(OPS-\d+\.\d+)`)
+	opsHeading     = regexp.MustCompile(`^#{2,3}\s+(OPS-\d+(?:\.\d+)?)\b`)
+	opsNormative   = regexp.MustCompile(`^###\s+(OPS-\d+\.\d+)\b`)
 	opsRegisterRow = regexp.MustCompile(`^\|\s*(OPS-\d+\.\d+)\s*\|`)
 	opsTicked      = regexp.MustCompile("`([A-Za-z][A-Za-z0-9_]*)`")
 	opsScenario    = regexp.MustCompile(`^##\s+(S\d+)\s+(.+)$`)
@@ -34,34 +32,13 @@ var (
 	opsPythonPointKeys = []string{"interpreter", "codexCli", "appServer", "host", "date", "measuredBy", "method"}
 )
 
-// init makes the ASCII-only patterns above match any Unicode decimal digit, as Python's \d
-// does for str patterns.
-func init() {
-	digit := `[\p{Nd}]`
-	for _, p := range []**regexp.Regexp{&opsClause, &opsHeading, &opsNormative, &opsRegisterRow, &opsScenario} {
-		*p = regexp.MustCompile(strings.ReplaceAll((*p).String(), `\d`, digit))
-	}
-	space := `[` + pySpace + `]`
-	for _, p := range []**regexp.Regexp{&opsHeading, &opsNormative, &opsRegisterRow, &opsScenario} {
-		*p = regexp.MustCompile(strings.ReplaceAll((*p).String(), `\s`, space))
-	}
-}
-
 func contractClauses(text string) (map[string]bool, map[string]bool) {
 	defined, normative := map[string]bool{}, map[string]bool{}
-	for _, line := range pySplitlines(text) {
+	for _, line := range lines(text) {
 		if m := opsHeading.FindStringSubmatch(line); m != nil {
-			if pyWordBoundaryAfter(line, m[0]) {
-				defined[m[1]] = true
-			} else if base, _, dotted := strings.Cut(m[1], "."); dotted {
-				// Python backtracks the optional .digits when the trailing boundary fails.
-				prefix := strings.TrimSuffix(m[0], m[1]) + base
-				if pyWordBoundaryAfter(line, prefix) {
-					defined[base] = true
-				}
-			}
+			defined[m[1]] = true
 		}
-		if m := opsNormative.FindStringSubmatch(line); m != nil && pyWordBoundaryAfter(line, m[0]) {
+		if m := opsNormative.FindStringSubmatch(line); m != nil {
 			normative[m[1]] = true
 		}
 		if m := opsRegisterRow.FindStringSubmatch(line); m != nil {
@@ -74,22 +51,10 @@ func contractClauses(text string) (map[string]bool, map[string]bool) {
 	return defined, normative
 }
 
-// pyWordBoundaryAfter enforces Python's Unicode trailing \b after the regex match
-// (Go's \b is ASCII-only and rejects matches ending in a Unicode digit).
-func pyWordBoundaryAfter(line, match string) bool {
-	rest := []rune(line[len(match):])
-	return len(rest) == 0 || !isPyWord(rest[0])
-}
-
-func isPyWord(r rune) bool {
-	return r == '_' || (r >= '0' && r <= '9') || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
-		(r > 0x7f && (isLetterOrDigit(r)))
-}
-
 func declaredCheckFields(contract string) map[string]bool {
 	names := map[string]bool{}
 	inside := false
-	for _, line := range pySplitlines(contract) {
+	for _, line := range lines(contract) {
 		if strings.HasPrefix(line, "### OPS-6.1") {
 			inside = true
 			continue
@@ -106,43 +71,39 @@ func declaredCheckFields(contract string) map[string]bool {
 	return names
 }
 
-// dictItems is isinstance(value, dict). Where check_operations_contract.py would raise on a non-object (an
-// AttributeError traceback), the Go check reports the malformed record and exits 1 instead.
-func dictItems(value any) (*pyDict, bool) {
-	d, ok := asDict(value)
-	return d, ok
-}
+// A record that is not the shape the check reads (a member that is not an object or a list)
+// is reported as malformed and the check exits 1.
 
-func checkResultRecord(contract string, record *pyDict, problems []string) ([]string, error) {
+func checkResultRecord(contract string, record map[string]any, problems []string) ([]string, error) {
 	declared := declaredCheckFields(contract)
-	fields := &pyDict{vals: map[string]any{}}
-	if record.has("fields") {
-		d, ok := dictItems(record.get("fields"))
+	fields := map[string]any{}
+	if has(record, "fields") {
+		d, ok := object(record["fields"])
 		if !ok {
 			return nil, fmt.Errorf("check-result fields is not an object")
 		}
 		fields = d
 	}
 	present := map[string]bool{}
-	for _, key := range fields.keys {
+	for key := range fields {
 		present[key] = true
 	}
 	if len(declared) == 0 {
 		problems = append(problems, "OPS-6.1 declares no fields, so the check-result example cannot be verified")
 	} else if !sameSet(declared, present) {
-		problems = append(problems, "check-result fields "+pyvalue.Repr(sortedKeys(present))+" do not match OPS-6.1 "+pyvalue.Repr(sortedKeys(declared)))
+		problems = append(problems, "check-result fields "+show(sortedKeys(present))+" do not match OPS-6.1 "+show(sortedKeys(declared)))
 	}
-	for _, name := range fields.keys {
-		field, ok := dictItems(fields.get(name))
+	for _, name := range sortedKeys(fields) {
+		field, ok := object(fields[name])
 		if !ok {
 			return nil, fmt.Errorf("check-result field %s is not an object", name)
 		}
 		for _, key := range []string{"value", "evidence", "command", "actor", "measuredAt"} {
-			if !field.has(key) {
+			if !has(field, key) {
 				problems = append(problems, "check-result field "+name+" is missing "+key)
 			}
 		}
-		value, isString := field.get("value").(string)
+		value, isString := field["value"].(string)
 		if !isString || !contains(opsFieldValues, value) {
 			problems = append(problems, "check-result field "+name+" has an undeclared value")
 		}
@@ -171,30 +132,10 @@ func contains(items []string, item string) bool {
 	return false
 }
 
-// pyTruthy is bool(value) for a decoded JSON value.
-func pyTruthy(value any) bool {
-	switch v := value.(type) {
-	case nil:
-		return false
-	case bool:
-		return v
-	case string:
-		return v != ""
-	case []any:
-		return len(v) > 0
-	case *pyDict:
-		return len(v.keys) > 0
-	}
-	if f, nan, ok := pyNumber(value); ok {
-		return nan || f.Sign() != 0
-	}
-	return true
-}
-
-func compatibilityRecord(record *pyDict, problems []string) ([]string, error) {
+func compatibilityRecord(record map[string]any, problems []string) ([]string, error) {
 	var components []any
-	if record.has("components") {
-		list, ok := record.get("components").([]any)
+	if has(record, "components") {
+		list, ok := record["components"].([]any)
 		if !ok {
 			return nil, fmt.Errorf("compatibility components is not a list")
 		}
@@ -204,136 +145,136 @@ func compatibilityRecord(record *pyDict, problems []string) ([]string, error) {
 		problems = append(problems, "the compatibility example records no component")
 	}
 	shapes := map[string]bool{}
-	var dicts []*pyDict
+	var dicts []map[string]any
 	for _, item := range components {
-		component, ok := dictItems(item)
+		component, ok := object(item)
 		if !ok {
 			return nil, fmt.Errorf("a compatibility component is not an object")
 		}
 		dicts = append(dicts, component)
-		shapes[strings.Join(component.sortedKeys(), "\x00")] = true
+		shapes[strings.Join(sortedKeys(component), "\x00")] = true
 	}
 	if len(shapes) > 1 {
 		problems = append(problems, "compatibility components do not share one field set")
 	}
 	for _, component := range dicts {
 		name := "<unnamed>"
-		if component.has("component") {
-			value, ok := component.get("component").(string)
+		if has(component, "component") {
+			value, ok := component["component"].(string)
 			if !ok {
 				return nil, fmt.Errorf("a component name is not a string")
 			}
 			name = value
 		}
 		for _, key := range []string{"source", "revision", "tree", "version", "installs"} {
-			if !pyTruthy(component.get(key)) {
+			if !filled(component[key]) {
 				problems = append(problems, name+" is missing a non-empty "+key)
 			}
 		}
 		// OPS-1.1: requires-python belongs to a Python-era install, which records an install
 		// mode; a Go install is a release binary and declares no interpreter at all.
 		pythonEra := false
-		if list, ok := component.get("installs").([]any); ok {
+		if list, ok := component["installs"].([]any); ok {
 			for _, item := range list {
-				if install, ok := dictItems(item); ok && install.has("installMode") {
+				if install, ok := object(item); ok && has(install, "installMode") {
 					pythonEra = true
 				}
 			}
 		}
-		if pythonEra && !pyTruthy(component.get("requiresPython")) {
+		if pythonEra && !filled(component["requiresPython"]) {
 			problems = append(problems, name+" is missing a non-empty requiresPython, which a Python-era install needs")
 		}
-		if !component.has("measuredPoints") {
+		if !has(component, "measuredPoints") {
 			problems = append(problems, name+" does not state measuredPoints, not even as an empty list")
-		} else if _, ok := component.get("measuredPoints").([]any); !ok {
+		} else if _, ok := component["measuredPoints"].([]any); !ok {
 			problems = append(problems, name+" states measuredPoints as something other than a list")
 		}
-		if !component.has("workingTreeClean") {
+		if !has(component, "workingTreeClean") {
 			problems = append(problems, name+" does not state workingTreeClean, which OPS-2.1 needs as a signal")
 		}
-		source := &pyDict{vals: map[string]any{}}
-		if component.has("source") {
-			d, ok := dictItems(component.get("source"))
+		source := map[string]any{}
+		if has(component, "source") {
+			d, ok := object(component["source"])
 			if !ok {
 				return nil, fmt.Errorf("%s source is not an object", name)
 			}
 			source = d
 		}
-		if !pyTruthy(source.get("checkout")) {
+		if !filled(source["checkout"]) {
 			problems = append(problems, name+" has no source.checkout path")
 		}
 		for _, key := range []string{"revision", "tree"} {
-			text := ""
-			if component.has(key) {
-				text = pyStr(component.get(key))
+			id := ""
+			if has(component, key) {
+				id = text(component[key])
 			}
-			if len([]rune(text)) != 40 {
+			if len([]rune(id)) != 40 {
 				kind := map[string]string{"revision": "commit", "tree": "tree"}[key]
 				problems = append(problems, name+" "+key+" is not a full 40 character "+kind+" id")
 			}
 		}
-		if !source.has("remote") {
+		if !has(source, "remote") {
 			problems = append(problems, name+" does not state a remote, not even as none")
 		}
 		var installs []any
-		if component.has("installs") {
-			list, ok := component.get("installs").([]any)
+		if has(component, "installs") {
+			list, ok := component["installs"].([]any)
 			if !ok {
 				return nil, fmt.Errorf("%s installs is not a list", name)
 			}
 			installs = list
 		}
-		var goInstalls []*pyDict
+		var goInstalls []map[string]any
 		for _, item := range installs {
-			install, ok := dictItems(item)
+			install, ok := object(item)
 			if !ok {
 				return nil, fmt.Errorf("%s has an install that is not an object", name)
 			}
-			if install.has("installMode") {
-				if mode, _ := install.get("installMode").(string); mode != "editable" && mode != "copied" {
+			if has(install, "installMode") {
+				if mode, _ := install["installMode"].(string); mode != "editable" && mode != "copied" {
 					problems = append(problems, name+" has an install with an undeclared installMode")
 				}
 			} else {
 				goInstalls = append(goInstalls, install)
 				// A Go install: the binary's own digest and the target it was built for.
 				digest := ""
-				if install.has("binaryDigest") {
-					digest = pyStr(install.get("binaryDigest"))
+				if has(install, "binaryDigest") {
+					digest = text(install["binaryDigest"])
 				}
 				if len([]rune(digest)) != 64 {
 					problems = append(problems, name+" has a Go install without a 64 character binaryDigest")
 				}
-				if !pyTruthy(install.get("target")) {
+				if !filled(install["target"]) {
 					problems = append(problems, name+" has a Go install that does not name its target")
 				}
 			}
 			integrity := ""
-			if install.has("integrity") {
-				integrity = pyStr(install.get("integrity"))
+			if has(install, "integrity") {
+				integrity = text(install["integrity"])
 			}
 			if len([]rune(integrity)) != 64 {
 				problems = append(problems, name+" has an install without a 64 character integrity digest")
 			}
 			for _, key := range []string{"environment", "location", "entryPoint"} {
-				if !pyTruthy(install.get(key)) {
+				if !filled(install[key]) {
 					problems = append(problems, name+" has an install with no "+key+", so OPS-1.1 cannot separate the environment from the imported package")
 				}
 			}
 		}
-		points, _ := component.get("measuredPoints").([]any)
+		points, _ := component["measuredPoints"].([]any)
 		for _, item := range points {
-			point, ok := dictItems(item)
+			point, ok := object(item)
 			if !ok {
 				problems = append(problems, name+" has a measured point that is not an object")
 				continue
 			}
-			pythonPoint := point.has("interpreter")
+			pythonPoint := has(point, "interpreter")
 			keys := opsGoPointKeys
 			if pythonPoint {
 				keys = opsPythonPointKeys
 			}
 			for _, key := range keys {
-				if !point.has(key) {
+				if !has(point, key) {
 					problems = append(problems, name+" has a measured point missing "+key)
 				}
 			}
@@ -346,10 +287,10 @@ func compatibilityRecord(record *pyDict, problems []string) ([]string, error) {
 				}
 				continue
 			}
-			var covered *pyDict
-			if want, ok := point.get("install").(string); ok {
+			var covered map[string]any
+			if want, ok := point["install"].(string); ok {
 				for _, install := range goInstalls {
-					if location, ok := install.get("location").(string); ok && location == want {
+					if location, ok := install["location"].(string); ok && location == want {
 						covered = install
 						break
 					}
@@ -359,13 +300,13 @@ func compatibilityRecord(record *pyDict, problems []string) ([]string, error) {
 				problems = append(problems, name+" has a measured point that names no Go install of this component")
 				continue
 			}
-			digest, digestOK := point.get("installDigest").(string)
-			if binary, ok := covered.get("binaryDigest").(string); !digestOK || !ok || binary != digest {
+			digest, digestOK := point["installDigest"].(string)
+			if binary, ok := covered["binaryDigest"].(string); !digestOK || !ok || binary != digest {
 				problems = append(problems, name+" has a measured point whose installDigest is not its install's binaryDigest")
 			}
 		}
 	}
-	if !record.has("unmeasured") {
+	if !has(record, "unmeasured") {
 		problems = append(problems, "the compatibility example does not say what is unmeasured, which invites a range claim")
 	}
 	return problems, nil
@@ -375,7 +316,7 @@ func opsScenarios(text string, problems []string) (int, []string) {
 	blocks := map[string][]string{}
 	current := ""
 	started := false
-	for _, line := range pySplitlines(text) {
+	for _, line := range lines(text) {
 		if m := opsScenario.FindStringSubmatch(line); m != nil {
 			current, started = m[1], true
 			blocks[current] = []string{}
@@ -410,7 +351,7 @@ func opsScenarios(text string, problems []string) (int, []string) {
 			start := min(p.index+len([]rune(p.part)), len(body))
 			written := 0
 			if start < end {
-				written = len([]rune(strings.Join(strings.FieldsFunc(string(body[start:end]), pyIsSpace), "")))
+				written = len([]rune(strings.Join(strings.Fields(string(body[start:end])), "")))
 			}
 			if minimum := opsMinimum[p.part]; written < minimum {
 				problems = append(problems, "scenario "+name+" states its "+strings.TrimSuffix(p.part, ":")+" part in fewer than "+strconv.Itoa(minimum)+" characters")
@@ -423,22 +364,21 @@ func opsScenarios(text string, problems []string) (int, []string) {
 	return len(blocks), problems
 }
 
-// OperationsContract is `crw-dev ci operations` (scripts/check_operations_contract.py).
+// OperationsContract is `crw-dev ci operations`.
 func OperationsContract(args []string, stdout, stderr io.Writer) int {
-	values, present, code := parseOptions("operations", "Replay the operations fixtures against the contract they claim to follow.",
-		[]string{"root"}, nil, args, stdout, stderr)
-	if code >= 0 {
+	flags := newFlags("operations")
+	root := flags.String("root", "", "the checkout to check (default: the one holding the working directory)")
+	if code := parseFlags(flags, "Replay the operations fixtures against the contract they claim to follow.", args, stdout, stderr); code >= 0 {
 		return code
 	}
-	root := values["root"]
-	if !present["root"] {
+	if !given(flags, "root") {
 		top, err := repositoryRoot()
 		if err != nil {
 			return failf(stderr, "operations: %s", err)
 		}
-		root = top
+		*root = top
 	}
-	return operationsCheck(root, stdout, stderr)
+	return operationsCheck(*root, stdout, stderr)
 }
 
 func operationsCheck(root string, stdout, stderr io.Writer) int {
@@ -475,7 +415,7 @@ func operationsCheck(root string, stdout, stderr io.Writer) int {
 	blockCount, problems := opsScenarios(scenarioText, problems)
 	entries, err := os.ReadDir(fixtures)
 	if err != nil {
-		return crash(valueErrorOS(err))
+		return crash(err)
 	}
 	cited := map[string]bool{}
 	for _, e := range entries {
@@ -501,19 +441,19 @@ func operationsCheck(root string, stdout, stderr io.Writer) int {
 			problems = append(problems, clause+" is never exercised by a fixture")
 		}
 	}
-	records := make([]*pyDict, 2)
+	records := make([]map[string]any, 2)
 	var decodeErr error
 	for i, name := range []string{"compatibility-record.example.json", "check-result.example.json"} {
 		text, err := readText(filepath.Join(fixtures, name))
 		if err != nil {
 			return crash(err)
 		}
-		value, err := pyJSONLoadsOrdered(text)
+		value, err := decodeJSON([]byte(text))
 		if err != nil {
 			decodeErr = err
 			break
 		}
-		record, ok := asDict(value)
+		record, ok := object(value)
 		if !ok {
 			return crash(fmt.Errorf("%s is not a JSON object", name))
 		}

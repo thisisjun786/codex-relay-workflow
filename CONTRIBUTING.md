@@ -47,10 +47,9 @@ Changes to the runtime (`cmd/`, `internal/`, `contract/`) also need `make lint t
 
 The Python packages the runtime was ported from left the repository in todo 44; what stays of
 them is the bridge's licence and provenance under `packages/codex-thread-bridge` and the relay's
-documents under `docs/relay`. The CI checks keep Python twins under `scripts/ci`, developer tools
-listed in `scripts/dev/ALLOWED_PYTHON.txt` until todo 48 removes them: `make test` runs
-`internal/dev/ci`'s parity tests, which compare each twin with its `crw-dev ci` check. Change a
-twin only together with its Go check.
+documents under `docs/relay`. The CI checks are Go only (`crw-dev ci`); their Python twins left in
+refactor R3. The Python files left are the port checkers listed in
+`scripts/dev/ALLOWED_PYTHON.txt` until todo 48 removes them.
 
 Installer tests use temporary destinations; do not point test runs at your real
 Codex skill directory. The bundled Codex skill validator, when installed, is an
