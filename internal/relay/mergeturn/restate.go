@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -101,9 +102,9 @@ func (s *Service) RestateBase(ctx context.Context, turn, actor, stated, evidence
 				return e
 			}
 			if latest == nil {
-				refusal = coordination(r, contract.RefusalMergeTurnNotHeld, "turn "+pyRepr(turn)+" is not the landing the currency check reads; it records no base", "", actor)
+				refusal = coordination(r, contract.RefusalMergeTurnNotHeld, "turn "+pyvalue.StrRepr(turn)+" is not the landing the currency check reads; it records no base", "", actor)
 			} else if other, _ := latest.Get("turn_id").(string); other != turn {
-				refusal = coordination(r, contract.RefusalMergeTurnNotHeld, "turn "+pyRepr(turn)+" is not the landing the currency check reads; that is "+pyRepr(other)+", so restate that one", other, actor)
+				refusal = coordination(r, contract.RefusalMergeTurnNotHeld, "turn "+pyvalue.StrRepr(turn)+" is not the landing the currency check reads; that is "+pyvalue.StrRepr(other)+", so restate that one", other, actor)
 			}
 		}
 		if refusal == nil {

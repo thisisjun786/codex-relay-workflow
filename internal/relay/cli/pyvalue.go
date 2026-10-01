@@ -2,13 +2,10 @@ package cli
 
 import (
 	"encoding/json"
-	"fmt"
 	"math"
 	"strconv"
-	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -47,59 +44,6 @@ func pyInt(v any) (int64, bool) {
 	}
 	value, err := number.Int64()
 	return value, err == nil
-}
-
-// pyTypeName is type(v).__name__ for a decoded JSON value.
-func pyTypeName(v any) string {
-	switch v.(type) {
-	case nil:
-		return "NoneType"
-	case bool:
-		return "bool"
-	case string:
-		return "str"
-	case json.Number:
-		return "int"
-	case float64:
-		return "float"
-	case []any:
-		return "list"
-	default:
-		return "dict"
-	}
-}
-
-// pyRepr is repr() of a decoded JSON value.
-func pyRepr(v any) string {
-	switch value := v.(type) {
-	case nil:
-		return "None"
-	case bool:
-		if value {
-			return "True"
-		}
-		return "False"
-	case string:
-		return store.PythonRepr(value)
-	case json.Number:
-		return string(value)
-	case float64:
-		return pyjson.Float(value)
-	case []any:
-		parts := make([]string, len(value))
-		for i, item := range value {
-			parts[i] = pyRepr(item)
-		}
-		return "[" + strings.Join(parts, ", ") + "]"
-	case contract.OrderedObject:
-		parts := make([]string, len(value))
-		for i, field := range value {
-			parts[i] = store.PythonRepr(field.Key) + ": " + pyRepr(field.Value)
-		}
-		return "{" + strings.Join(parts, ", ") + "}"
-	default:
-		return fmt.Sprint(value)
-	}
 }
 
 // pyNumber is the numeric value Python's == compares: bool is an int.
@@ -168,24 +112,6 @@ func pyEqual(a, b any) bool {
 		return true
 	}
 	return false
-}
-
-// truthy is Python's bool(v) for a decoded JSON value.
-func truthy(v any) bool {
-	switch value := v.(type) {
-	case nil:
-		return false
-	case bool:
-		return value
-	case string:
-		return value != ""
-	case []any:
-		return len(value) > 0
-	case contract.OrderedObject:
-		return len(value) > 0
-	}
-	n, _ := pyNumber(v)
-	return n != 0
 }
 
 // nullable renders Python's None for an unmeasured field ("" or 0 in the store's Go types).

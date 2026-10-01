@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/pyload"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 )
@@ -64,7 +65,7 @@ func member(v any, set []string) bool {
 func dictKey(as string, v any) string {
 	switch v.(type) {
 	case object, []any:
-		name := evidence.TypeName(v)
+		name := pyvalue.TypeName(v)
 		if as == "" {
 			as = name
 		}

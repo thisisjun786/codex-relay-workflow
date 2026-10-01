@@ -59,26 +59,6 @@ func usableTurnID(v any) any {
 	return nil
 }
 
-func truthy(v any) bool {
-	switch t := v.(type) {
-	case nil:
-		return false
-	case bool:
-		return t
-	case string:
-		return t != ""
-	case Obj:
-		return len(t) > 0
-	case []any:
-		return len(t) > 0
-	case int64:
-		return t != 0
-	case float64:
-		return t != 0
-	}
-	return true
-}
-
 // Classify is transport.classify_operation_receipt. The error CODE is read before the method
 // prefix, and an unfinished receipt is never proof of non-delivery.
 func Classify(receipt Obj) Facts {
@@ -190,4 +170,27 @@ func AssertAttemptInvariants(record Obj) error {
 		}
 	}
 	return nil
+}
+
+// truthy is bool(v) over the values delivery reads (int64, float64, str, Obj, list); any other Go
+// value, a json.Number a host's answer carries included, is true whatever it holds, which
+// pyvalue.Truthy (bool()) is not: the transport's classification has always read it so.
+func truthy(v any) bool {
+	switch t := v.(type) {
+	case nil:
+		return false
+	case bool:
+		return t
+	case string:
+		return t != ""
+	case Obj:
+		return len(t) > 0
+	case []any:
+		return len(t) > 0
+	case int64:
+		return t != 0
+	case float64:
+		return t != 0
+	}
+	return true
 }

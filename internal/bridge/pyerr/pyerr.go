@@ -10,7 +10,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // names are the OSError subclasses CPython raises for an errno (PEP 3151), read from
@@ -63,7 +63,7 @@ func OSError(err error) (name, message string, ok bool) {
 	message = fmt.Sprintf("[Errno %d] %s", int(errno), Strerror(errno))
 	var path *fs.PathError
 	if errors.As(err, &path) {
-		message += ": " + settings.Repr(path.Path)
+		message += ": " + pyvalue.StrRepr(path.Path)
 	}
 	return name, message, true
 }

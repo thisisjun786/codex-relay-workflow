@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -113,7 +114,7 @@ func wrongSocketRecovery(services Services, recorded, wanted string) []any {
 		resolved, err = store.Realpath(expanded)
 	}
 	if err != nil {
-		return append(lines, "  "+store.StateEnv+" is set to "+store.PythonRepr(pinned)+", which names a home directory that does not"+
+		return append(lines, "  "+store.StateEnv+" is set to "+pyvalue.StrRepr(pinned)+", which names a home directory that does not"+
 			" resolve on this host, so it is not offered as a candidate")
 	}
 	selected, err := store.Realpath(services.Selection.Path)
@@ -160,7 +161,7 @@ func GuardFallback(s Services) (string, error) {
 			refusal = append(refusal, contract.Field{Key: "overriddenBy", Value: s.Selection.Detail}, contract.Field{Key: "selectedDirectory", Value: s.Selection.Path})
 			for i := range refusal {
 				if refusal[i].Key == "detail" {
-					refusal[i].Value = evidence.Text(refusal[i].Value) + "; this run's state directory came from " + s.Selection.Detail + ", which skips discovery rather than settling it, and a directory chosen for one run is not one anybody recorded"
+					refusal[i].Value = pyvalue.Str(refusal[i].Value) + "; this run's state directory came from " + s.Selection.Detail + ", which skips discovery rather than settling it, and a directory chosen for one run is not one anybody recorded"
 				}
 			}
 		}
@@ -171,11 +172,11 @@ func GuardFallback(s Services) (string, error) {
 	for i := range refusal {
 		if refusal[i].Key == "recover" {
 			lines, _ := evidence.List(refusal[i].Value)
-			if len(lines) > 0 && strings.HasPrefix(evidence.Text(lines[len(lines)-1]), "  then pass --state") {
+			if len(lines) > 0 && strings.HasPrefix(pyvalue.Str(lines[len(lines)-1]), "  then pass --state") {
 				lines = lines[:len(lines)-1]
 				lines = append(lines, stopRecovery...)
 				if _, present := os.LookupEnv(store.StateEnv); present {
-					lines[0] = "env -u " + store.StateEnv + " " + evidence.Text(lines[0])
+					lines[0] = "env -u " + store.StateEnv + " " + pyvalue.Str(lines[0])
 				}
 			}
 			if overridden {
@@ -218,7 +219,7 @@ func fileExists(path string) bool {
 // Refused carries the complete Python selection envelope.
 type Refused struct{ Payload contract.OrderedObject }
 
-func (e *Refused) Error() string { return evidence.Text(evidence.Get(e.Payload, "detail")) }
+func (e *Refused) Error() string { return pyvalue.Str(evidence.Get(e.Payload, "detail")) }
 func nullableText(value string) any {
 	if value == "" {
 		return nil

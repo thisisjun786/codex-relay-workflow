@@ -13,6 +13,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // pluginDriver calls scripts/ci/plugin.py's functions on inputs the Go test sends, so each
@@ -305,7 +307,7 @@ func Test47_PLG_2_VersionIsSemVer(t *testing.T) {
 	}
 	for _, bad := range []string{"1.0", "01.0.0", "1.0.0-01", "1.0.0-..", "1.0.0-", "1.0.0+", "1.0.0\n"} {
 		expectFragment(t, bad, manifestParity(t, testManifest().set("version", bad), "crw", nil),
-			"version "+pyRepr(bad)+" is not a semantic version")
+			"version "+pyvalue.StrRepr(bad)+" is not a semantic version")
 	}
 	r := pluginRepo(t, goodFiles(t).with(manifestPath, dumps(testManifest().set("version", "1.0.0\n"))), "")
 	got := pluginCLIParity(t, r.root)
@@ -598,13 +600,13 @@ func Test47_PLG_12_VersionNamesItsPayload(t *testing.T) {
 	expectEqual(t, "elided manifest", string(elided[manifestPath].data), dumps(testManifest()))
 	stale := parseObject(t, good[manifestPath]).set("version", "0.1.0+000000000000")
 	errs := manifestParity(t, stale, "crw", good.with(manifestPath, dumps(stale)).payload())
-	expectFragment(t, "stale", errs, "does not name this payload. Record "+pyRepr(version))
+	expectFragment(t, "stale", errs, "does not name this payload. Record "+pyvalue.StrRepr(version))
 	suffix := strings.SplitN(version, "+", 2)[1]
 	errs = manifestParity(t, parseObject(t, good[manifestPath]), "crw", good.with("skills/crw-run/references/built.md", "built from "+suffix).payload())
 	expectFragment(t, "repeat", errs, "t skills/crw-run/references/built.md: a shipped file repeats the payload suffix")
 	twice := parseObject(t, good[manifestPath]).set("description", version)
 	errs = manifestParity(t, twice, "crw", good.with(manifestPath, dumps(twice)).payload())
-	expectFragment(t, "twice", errs, "spells "+pyRepr(version)+" 2 times; the suffix has to be elided")
+	expectFragment(t, "twice", errs, "spells "+pyvalue.StrRepr(version)+" 2 times; the suffix has to be elided")
 	errs = manifestParity(t, testManifest(), "crw", good.with(manifestPath, dumps(testManifest())).payload())
 	expectFragment(t, "plain", errs, "version '0.1.0' does not name this payload")
 	// CLI: a committed skill edited after recording; an installed LICENSE edited.

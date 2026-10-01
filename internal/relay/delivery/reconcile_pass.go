@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // The daemon's reconciliation pass (daemon._reconcile, _attempts_for, _gate, _mark_gate,
@@ -219,7 +221,7 @@ func gate(ctx context.Context, rc *Reconciler, adapter Adapter, attempt Row) (bo
 	status, turnID := "missing", ""
 	if receipt != nil {
 		if v, ok := get(receipt, "status"); ok {
-			status = pyStr(v)
+			status = pyvalue.Str(v)
 		}
 		if v, ok := get(receipt, "turnId"); ok {
 			if turn, ok := usableTurnID(v).(string); ok {

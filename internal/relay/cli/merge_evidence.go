@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -95,20 +96,20 @@ var mergeEvidenceCommand = Command{Name: "merge-evidence", Exempt: true, Flags: 
 		}
 		headText, _ := args.String("restate-head")
 		var head any = headText
-		if !evidence.Truthy(head) {
+		if !pyvalue.Truthy(head) {
 			head = get(document, "headSha")
 		}
-		if !evidence.Truthy(head) {
+		if !pyvalue.Truthy(head) {
 			head = get(get(document, "pinned"), "headSha")
 		}
-		if !evidence.Truthy(head) {
+		if !pyvalue.Truthy(head) {
 			return nil, &UsageError{Detail: "the record does not say which head it is about; pass --restate-head", Code: contract.ExitUsage}
 		}
 		handoff := document
 		if h, ok := get(document, "handoff").(contract.OrderedObject); ok && len(h) > 0 {
 			handoff = h
 		}
-		problems := evidence.RestateProblems(evidence.Text(head), handoff, snapshot)
+		problems := evidence.RestateProblems(pyvalue.Str(head), handoff, snapshot)
 		items := make([]any, len(problems))
 		for i, p := range problems {
 			items[i] = map[string]any{"code": p.Code, "detail": p.Detail}
@@ -184,7 +185,7 @@ func readRestatement(source string) (contract.OrderedObject, error) {
 	}
 	out, ok := document.(contract.OrderedObject)
 	if !ok {
-		return nil, &UsageError{Detail: "the record to restate is an object, not a " + evidence.TypeName(document), Code: contract.ExitUsage}
+		return nil, &UsageError{Detail: "the record to restate is an object, not a " + pyvalue.TypeName(document), Code: contract.ExitUsage}
 	}
 	return out, nil
 }

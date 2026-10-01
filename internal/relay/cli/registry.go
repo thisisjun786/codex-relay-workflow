@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
@@ -245,7 +246,7 @@ func ExecuteAs(ctx context.Context, argv0 string, argv []string, stdout, stderr 
 		}
 	}
 	if command == nil {
-		return parseError(globalUsage, fmt.Sprintf("argument command: invalid choice: %s (choose from %s)", store.PythonRepr(remaining[0]), choices()))
+		return parseError(globalUsage, fmt.Sprintf("argument command: invalid choice: %s (choose from %s)", pyvalue.StrRepr(remaining[0]), choices()))
 	}
 	commandArgs := remaining[1:]
 	parserName := command.Name
@@ -343,7 +344,7 @@ func importKindModules(names []string) error {
 				return &HostError{Class: "ValueError", Detail: "Empty module name"}
 			}
 			if strings.HasPrefix(candidate, ".") {
-				return &HostError{Class: "TypeError", Detail: "the 'package' argument is required to perform a relative import for " + store.PythonRepr(candidate)}
+				return &HostError{Class: "TypeError", Detail: "the 'package' argument is required to perform a relative import for " + pyvalue.StrRepr(candidate)}
 			}
 			if faults.RegisteredModule(candidate) {
 				continue
@@ -359,7 +360,7 @@ func importKindModules(names []string) error {
 				break
 			}
 			return &UsageError{
-				Detail: "--kind-module " + store.PythonRepr(candidate) + " could not be imported: No module named " + store.PythonRepr(missing),
+				Detail: "--kind-module " + pyvalue.StrRepr(candidate) + " could not be imported: No module named " + pyvalue.StrRepr(missing),
 				Code:   contract.ExitUsage,
 			}
 		}
@@ -429,7 +430,7 @@ func allNames() []string {
 func choices() string {
 	names := allNames()
 	for i, name := range names {
-		names[i] = store.PythonRepr(name)
+		names[i] = pyvalue.StrRepr(name)
 	}
 	return strings.Join(names, ", ")
 }

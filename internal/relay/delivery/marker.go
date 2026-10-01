@@ -3,7 +3,6 @@ package delivery
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"io"
@@ -18,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -135,11 +135,6 @@ func resolved(value string) (string, error) {
 	return store.ResolvePath(expanded)
 }
 
-func sha256Hex(text string) string {
-	sum := sha256.Sum256([]byte(text))
-	return hex.EncodeToString(sum[:])
-}
-
 // WorkspaceKey is workspace_key: sha256 of the resolved workspace path, so a symlinked or
 // relative cwd reaches the same assignment the coordinator declared against.
 func WorkspaceKey(workspace string) (string, error) {
@@ -151,11 +146,11 @@ func WorkspaceKey(workspace string) (string, error) {
 	if err = store.EncodeUTF8(path); err != nil {
 		return "", err
 	}
-	return sha256Hex(path), nil
+	return pyvalue.SHA256Hex(path), nil
 }
 
 // AssignmentID is assignment_id: the hash of the dispatch request id, never the id itself.
-func AssignmentID(dispatchRequestID string) string { return sha256Hex(dispatchRequestID) }
+func AssignmentID(dispatchRequestID string) string { return pyvalue.SHA256Hex(dispatchRequestID) }
 
 // encodedAssignmentID is assignment_id as the marker commands meet it first: an id holding a
 // surrogate escape (an argv byte that is not UTF-8) raises str.encode("utf-8")'s
@@ -180,7 +175,7 @@ func WorkspaceDir(root, workspace string) (string, error) {
 // is not an assignment id is ValueError, as _checked_assignment raises it.
 func AssignmentDir(root, workspace string, assignment any) (string, error) {
 	if !ValidAssignment(assignment) {
-		return "", &hostError{"ValueError", "an assignment id is the hex sha256 of a dispatch request id, not " + pyReprValue(assignment)}
+		return "", &hostError{"ValueError", "an assignment id is the hex sha256 of a dispatch request id, not " + pyvalue.Repr(assignment)}
 	}
 	directory, err := WorkspaceDir(root, workspace)
 	if err != nil {
@@ -197,7 +192,7 @@ func FactDigest(payload Obj) string {
 			body = append(body, f)
 		}
 	}
-	return sha256Hex(canonical(body))
+	return pyvalue.SHA256Hex(canonical(body))
 }
 
 // canonical is _canonical: json.dumps(sort_keys=True, separators=(",", ":")), ASCII escaped.

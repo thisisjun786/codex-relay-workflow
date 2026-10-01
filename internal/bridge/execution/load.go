@@ -8,6 +8,7 @@ import (
 	"syscall"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/pyerr"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // FromFile is ExecutionPolicy.from_file: ReadFile, then FromBytes over what was read.
@@ -55,8 +56,8 @@ func ReadFile(path string) ([]byte, error) {
 
 // FromEnvironment is ExecutionPolicy.from_environment; the zero Policy is PRESENCE_ONLY.
 func FromEnvironment(env map[string]string) (Policy, error) {
-	configured := pyStrip(env[EnvPolicy])
-	expected := pyStrip(env[EnvDigest])
+	configured := pyvalue.Strip(env[EnvPolicy])
+	expected := pyvalue.Strip(env[EnvDigest])
 	if configured == "" {
 		if expected != "" {
 			return Policy{}, &PolicyError{fmt.Sprintf("%s expects a policy with digest %s, and %s names no file", EnvDigest, expected, EnvPolicy)}

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
@@ -323,7 +324,7 @@ func cmdAckProof(c *cliRun) (any, error) {
 	if !eventIDPattern.MatchString(event) {
 		return nil, &hostError{"ValueError", "event id must be 32 lowercase hex characters"}
 	}
-	if pyStrip(turn) == "" {
+	if pyvalue.Strip(turn) == "" {
 		return nil, &hostError{"ValueError", "ack_turn_id must be a non-empty string"}
 	}
 	return Obj{{Key: "eventId", Value: event}, {Key: "turnId", Value: turn}, {Key: "ackProof", Value: AckProof(event, turn)}}, nil
@@ -358,7 +359,7 @@ func AckCommand(ctx context.Context, ack *Ack, rc *Reconciler, adapter Adapter, 
 		if !eventIDPattern.MatchString(event) {
 			return nil, &hostError{"ValueError", "event id must be 32 lowercase hex characters"}
 		}
-		if pyStrip(ackTurn) == "" {
+		if pyvalue.Strip(ackTurn) == "" {
 			return nil, &hostError{"ValueError", "ack_turn_id must be a non-empty string"}
 		}
 	}
@@ -372,7 +373,7 @@ func AckCommand(ctx context.Context, ack *Ack, rc *Reconciler, adapter Adapter, 
 		return nil, err
 	}
 	if why, ok := get(record, "_deliveryUnconfirmed"); ok && truthy(why) {
-		record = append(record, F{Key: "_note", Value: "kept as the parent's authored acknowledgement: the relay could not yet confirm this delivery for the turn it read (" + pyStr(why) + "). The daemon completes it once the delivery is confirmed, and a verdict completes it first; nothing needs to be acknowledged or sent again."})
+		record = append(record, F{Key: "_note", Value: "kept as the parent's authored acknowledgement: the relay could not yet confirm this delivery for the turn it read (" + pyvalue.Str(why) + "). The daemon completes it once the delivery is confirmed, and a verdict completes it first; nothing needs to be acknowledged or sent again."})
 	} else if str(record, "_verified") != "verified" {
 		record = append(record, F{Key: "_note", Value: "recorded as the parent's authored intent; this turn is not established yet, so it does not close the attempt and cannot yet produce a verdict. Run verify-acks from a process with host access."})
 	}
@@ -514,7 +515,7 @@ func cmdVerdict(c *cliRun) (any, error) {
 				findings = append(findings, f.Key)
 			}
 		default:
-			return nil, &hostError{"TypeError", fmt.Sprintf("'%s' object is not iterable", pyTypeName(v))}
+			return nil, &hostError{"TypeError", fmt.Sprintf("'%s' object is not iterable", pyvalue.TypeName(v))}
 		}
 	}
 	if c.opt("--restoration") != nil {
@@ -536,7 +537,7 @@ func cmdVerdict(c *cliRun) (any, error) {
 			}
 		}
 		if len(marked) == 0 && wellFormed {
-			return nil, &usageError{"--restoration names " + store.PyRepr(c.s("--restoration")) + ", which is not one of the findings this verdict carries. The block travels inside a finding, so it names one", contract.ExitUsage}
+			return nil, &usageError{"--restoration names " + pyvalue.StrRepr(c.s("--restoration")) + ", which is not one of the findings this verdict carries. The block travels inside a finding, so it names one", contract.ExitUsage}
 		}
 		for _, list := range [][]any{criteria, findings} {
 			for i, item := range list {
@@ -549,7 +550,7 @@ func cmdVerdict(c *cliRun) (any, error) {
 				}
 				existing, present := get(o, "restoration")
 				if present && existing == false {
-					return nil, &usageError{"--restoration names " + store.PyRepr(wanted) + ", whose finding declares the restoration block false. One correction carries one block and says so once", contract.ExitUsage}
+					return nil, &usageError{"--restoration names " + pyvalue.StrRepr(wanted) + ", whose finding declares the restoration block false. One correction carries one block and says so once", contract.ExitUsage}
 				}
 				if present && existing != nil {
 					if _, isBool := existing.(bool); !isBool {

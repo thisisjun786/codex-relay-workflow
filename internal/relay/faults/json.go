@@ -11,17 +11,10 @@
 package faults
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
-
-func sha256Hex(text string) string {
-	sum := sha256.Sum256([]byte(text))
-	return hex.EncodeToString(sum[:])
-}
 
 // dumps is Python json.dumps(value, ensure_ascii=False, sort_keys=True); compact selects
 // separators=(",", ":"). A string is read as Go's range reads it (a byte that is not UTF-8 is

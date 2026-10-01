@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -423,7 +424,7 @@ func (v *AssignmentView) Anchored(ctx context.Context, eventID any, generation i
 			}
 		}
 		var pacing any
-		if contains(notSentStates, state) && !truthyValue(row.Get("hold_reason")) {
+		if contains(notSentStates, state) && !pyvalue.Truthy(row.Get("hold_reason")) {
 			pacing = pacingHolding(v.Policy.pacing(now, row.Get("rate_sends"), row.Get("rate_last")), row.Get("next_eligible_at"))
 		}
 		reading := SettingsHoldReading(holdColumnsOf(row))
@@ -457,7 +458,7 @@ func (v *AssignmentView) Anchored(ctx context.Context, eventID any, generation i
 		tier = "unrecorded"
 	}
 	record = setField(record, "ack", contract.OrderedObject{
-		{Key: "accepted", Value: ifAcked(truthyValue(row.Get("ack_accepted")))},
+		{Key: "accepted", Value: ifAcked(pyvalue.Truthy(row.Get("ack_accepted")))},
 		{Key: "rejectionReason", Value: ifAcked(row.Get("ack_rejection"))},
 		{Key: "settlement", Value: ifAcked(row.Get("ack_verified"))},
 		{Key: "lastReason", Value: ifAcked(row.Get("ack_last_reason"))},
@@ -471,7 +472,7 @@ func (v *AssignmentView) Anchored(ctx context.Context, eventID any, generation i
 	})))
 	if row.Get("supersession_reason") != nil {
 		record = setField(record, "supersession", contract.OrderedObject{{Key: "reason", Value: row.Get("supersession_reason")},
-			{Key: "applied", Value: truthyValue(row.Get("supersession_applied"))}})
+			{Key: "applied", Value: pyvalue.Truthy(row.Get("supersession_applied"))}})
 	}
 	return record, nil
 }
@@ -481,25 +482,6 @@ func holdColumnsOf(row store.Row) *HoldColumns {
 		SettledSent: colString(row, "sh_settled_sent"), SettledReconciled: colString(row, "sh_settled_reconciled"),
 		Presend: colString(row, "sh_presend"), Request: colString(row, "sh_request"),
 		SettingsAt: colString(row, "sh_settings_at"), LifecycleAt: colString(row, "sh_lifecycle_at"), InactiveAt: colString(row, "sh_inactive_at")}
-}
-
-// truthyValue is Python bool() of a column value.
-func truthyValue(v any) bool {
-	switch x := v.(type) {
-	case nil:
-		return false
-	case bool:
-		return x
-	case int64:
-		return x != 0
-	case float64:
-		return x != 0
-	case string:
-		return x != ""
-	case []byte:
-		return len(x) > 0
-	}
-	return true
 }
 
 // reasonRow carries the columns assignment.undelivered_reason reads.
@@ -803,7 +785,7 @@ func (v *AssignmentView) relayProvenance(ctx context.Context, holds bool) (contr
 // decided inside the write transaction against the exact event the caller integrated.
 func (v *AssignmentView) Mark(ctx context.Context, rid, mark, evidence, actor, expectedEvent string) (contract.OrderedObject, error) {
 	if mark != StateMerged {
-		return nil, refuse(contract.RefusalDispositionConflict, "unknown mark %s", pyStr(mark))
+		return nil, refuse(contract.RefusalDispositionConflict, "unknown mark %s", pyvalue.StrRepr(mark))
 	}
 	if strings.TrimSpace(evidence) == "" {
 		return nil, refuse(contract.RefusalFindingsRequired, "a mark carries its evidence")
@@ -818,10 +800,10 @@ func (v *AssignmentView) Mark(ctx context.Context, rid, mark, evidence, actor, e
 			return err
 		}
 		if x == nil {
-			return refuse(contract.RefusalUnregisteredRelationship, "no relationship %s", pyStr(rid))
+			return refuse(contract.RefusalUnregisteredRelationship, "no relationship %s", pyvalue.StrRepr(rid))
 		}
 		if x.Status != Active || x.SupersededBy.String != "" {
-			return refuse(contract.RefusalRelationshipNotActive, "relationship %s is %s", pyStr(rid), pyStr(x.Status))
+			return refuse(contract.RefusalRelationshipNotActive, "relationship %s is %s", pyvalue.StrRepr(rid), pyvalue.StrRepr(x.Status))
 		}
 		generation := x.Generation
 		head, err := HeadRevision(ctx, v.s(), rid, generation)
@@ -837,7 +819,7 @@ func (v *AssignmentView) Mark(ctx context.Context, rid, mark, evidence, actor, e
 		}
 		if head.EventID != expectedEvent {
 			return refuse(contract.RefusalStaleMarkContext, "this mark names %s, but the current revision of generation %d is %s; "+
-				"re-read the assignment before recording what was integrated", pyStr(expectedEvent), generation, pyStr(head.EventID))
+				"re-read the assignment before recording what was integrated", pyvalue.StrRepr(expectedEvent), generation, pyvalue.StrRepr(head.EventID))
 		}
 		verdict, err := v.verdictFor(ctx, head.EventID)
 		if err != nil {
@@ -962,7 +944,7 @@ func (v *AssignmentView) parentRecovery(action string, projection map[string]any
 		return v.settingsRecoveryRecord(held, anchored["eventId"], "", directory, true)
 	}
 	reason := delivery["holdReason"]
-	if !truthyValue(reason) {
+	if !pyvalue.Truthy(reason) {
 		reason = delivery["state"]
 	}
 	event, _ := anchored["eventId"].(string)

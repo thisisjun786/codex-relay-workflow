@@ -10,8 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 type Slot struct{ Day, ID string }
@@ -82,7 +81,7 @@ func ClaimEvent(ctx context.Context, config Object, key string, identity, stop O
 	if root == "" {
 		return "unclaimable", nil
 	}
-	rootFS, encoded := fsencode(root)
+	rootFS, encoded := pyvalue.FSEncode(root)
 	if !encoded {
 		return "claim_failed", nil
 	}
@@ -94,7 +93,7 @@ func ClaimEvent(ctx context.Context, config Object, key string, identity, stop O
 		return "claim_failed", nil
 	}
 	// The host ledger is named as Python holds a path from the environment: os.fsdecode's str.
-	document := set(base, "claimedBy", Object{{Key: "pid", Value: os.Getpid()}, {Key: "attemptRow", Value: slot.Name()}, {Key: "hostLedger", Value: nullable(store.FSDecode(host))}})
+	document := set(base, "claimedBy", Object{{Key: "pid", Value: os.Getpid()}, {Key: "attemptRow", Value: slot.Name()}, {Key: "hostLedger", Value: nullable(pyvalue.FSDecode(host))}})
 	// claim_event likewise returns ACCEPTED after a failed write, never unlinking.
 	created, err := createOnce(ctx, filepath.Join(directory, key+".json"), document, true)
 	name := LedgerDirectory + "/" + key + ".json"
@@ -121,7 +120,7 @@ func Journal(ctx context.Context, config, record Object, slot Slot) (string, err
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	root, encoded := fsencode(root)
+	root, encoded := pyvalue.FSEncode(root)
 	if !encoded {
 		return "", errUnencodable
 	}
@@ -141,12 +140,12 @@ func RecordOutcome(ctx context.Context, config Object, key string, record Object
 	if root == "" || key == "" {
 		return nil
 	}
-	root, encoded := fsencode(root)
+	root, encoded := pyvalue.FSEncode(root)
 	if !encoded {
 		return errUnencodable
 	}
 	policy := get(config, "journalPolicy")
-	if !evidence.Truthy(policy) {
+	if !pyvalue.Truthy(policy) {
 		policy = EveryInvocation
 	}
 	out := Object{{Key: "ledgerVersion", Value: int64(LedgerVersion)}, {Key: "eventKey", Value: key}, {Key: "sessionId", Value: get(record, "sessionId")}, {Key: "turnId", Value: get(record, "turnId")}, {Key: "journalPolicy", Value: policy}, {Key: "adapterOutcome", Value: get(record, "adapterOutcome")}, {Key: "guardDecision", Value: get(record, "guardDecision")}, {Key: "guardState", Value: get(record, "guardState")}, {Key: "held", Value: get(record, "held")}, {Key: "attemptRow", Value: row}, {Key: "at", Value: now()}}

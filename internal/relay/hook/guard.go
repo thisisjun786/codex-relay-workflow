@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -71,10 +72,10 @@ func Evaluate(ctx context.Context, stop Object, options GuardOptions) (verdict O
 	var marker Object
 	unreadable := []string{}
 	session, turn := get(stop, "session_id"), get(stop, "turn_id")
-	if workspace := get(stop, "cwd"); evidence.Truthy(workspace) {
+	if workspace := get(stop, "cwd"); pyvalue.Truthy(workspace) {
 		path, ok := workspace.(string)
 		if !ok {
-			fault("TypeError: expected str, bytes or os.PathLike object, not " + evidence.TypeName(workspace))
+			fault("TypeError: expected str, bytes or os.PathLike object, not " + pyvalue.TypeName(workspace))
 			return verdict, nil
 		}
 		directory, marker, unreadable, err = delivery.SelectAssignmentContext(ctx, options.Root, path, session)

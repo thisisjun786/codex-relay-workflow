@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf16"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // jsonKV is one member of an ordered JSON object.
@@ -162,7 +164,7 @@ func pyJSONString(s string) string {
 func pyReprList(items []string) string {
 	parts := make([]string, len(items))
 	for i, s := range items {
-		parts[i] = pyRepr(s)
+		parts[i] = pyvalue.StrRepr(s)
 	}
 	return "[" + strings.Join(parts, ", ") + "]"
 }

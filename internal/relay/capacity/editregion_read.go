@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -106,7 +107,7 @@ func AgreementID(region, left, right string, tenure int64) string {
 
 // FollowupID is editregion.followup_id.
 func FollowupID(agreement, trigger string) string {
-	return derive("fup", agreement, sha256Hex(trigger))
+	return derive("fup", agreement, pyvalue.SHA256Hex(trigger))
 }
 
 // MarkID is editregion.mark_id.
@@ -544,7 +545,7 @@ func (e *EditRegions) awaiting(ctx context.Context, record contract.OrderedObjec
 			task = parent
 			command = commandLine("region-settle", "--agreement", identifier, "--actor", parent, "--disposition", "accepted")
 		} else {
-			precondition = repr(key) + " has no single registered parent; the parent that takes it runs " +
+			precondition = pyvalue.StrRepr(key) + " has no single registered parent; the parent that takes it runs " +
 				commandLine("region-settle", "--agreement", identifier) + " --actor <that task> --disposition accepted"
 		}
 		reason := notYetAccepted

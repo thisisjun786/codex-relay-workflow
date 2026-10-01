@@ -7,6 +7,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
@@ -23,8 +24,8 @@ func Test24PacketAccessorPython(t *testing.T) {
 	raw := golden.Want(t, "packet-accessors", func() []byte { return packetAccessorRows(f, row.Packet) }, golden.Substitute(f.c.StoreDirectory(), "<state>"), golden.Substitute(repoRoot(t), "<repo>"))
 	for _, one := range evidence.Items(evidence.Decode(string(raw))) {
 		tc := evidence.Dict(one, false)
-		field := evidence.Text(tc["field"])
-		t.Run(field+"/"+evidence.Repr(tc["value"]), func(t *testing.T) {
+		field := pyvalue.Str(tc["field"])
+		t.Run(field+"/"+pyvalue.Repr(tc["value"]), func(t *testing.T) {
 			got, failure := packetAccessor(f, row.Packet, field, tc["value"])
 			if pyjson.Dumps(failure, pyjson.Options{SortKeys: true}) != pyjson.Dumps(tc["error"], pyjson.Options{SortKeys: true}) || (failure == nil && got != tc["result"]) {
 				t.Fatalf("diff: Go=(%v,%v) golden=(%v,%v)", got, failure, tc["result"], tc["error"])

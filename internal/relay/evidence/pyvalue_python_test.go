@@ -6,6 +6,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
@@ -54,7 +55,7 @@ func Test24ProviderReprPythonBytes(t *testing.T) {
 		{`{"z":{"b":true,"a":null},"a":[1,"x"]}`, contract.OrderedObject{{Key: "z", Value: contract.OrderedObject{{Key: "b", Value: true}, {Key: "a", Value: nil}}}, {Key: "a", Value: []any{1, "x"}}}},
 	} {
 		// The key is the JSON text whose Python repr the golden began as.
-		golden.Check(t, tc.input, []byte(Repr(tc.value)))
+		golden.Check(t, tc.input, []byte(pyvalue.Repr(tc.value)))
 	}
 }
 

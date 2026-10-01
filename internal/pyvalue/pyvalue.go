@@ -3,7 +3,7 @@
 // integer json.Number, float as float64 or a json.Number with a fraction or an exponent, list as
 // []any, []string or []map[string]any, dict as pyjson.Object or map[string]any), and the small
 // helpers every package spelled for itself: str.strip(), os.fsdecode and os.fsencode, and the
-// hex SHA-256 of a str. A str's repr is bridge/settings.Repr, the one repr of text.
+// hex SHA-256 of a str. A str's repr is StrRepr, the one repr of text.
 package pyvalue
 
 import (
@@ -19,7 +19,6 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
@@ -29,7 +28,7 @@ import (
 func Repr(v any) string {
 	switch x := v.(type) {
 	case string:
-		return settings.Repr(x)
+		return StrRepr(x)
 	case nil, bool, float64, json.Number, int, int64, *big.Int:
 		return Str(x)
 	case []string:
@@ -41,7 +40,7 @@ func Repr(v any) string {
 	case pyjson.Object:
 		parts := make([]string, len(x))
 		for i, field := range x {
-			parts[i] = settings.Repr(field.Key) + ": " + Repr(field.Value)
+			parts[i] = StrRepr(field.Key) + ": " + Repr(field.Value)
 		}
 		return "{" + strings.Join(parts, ", ") + "}"
 	case map[string]any:

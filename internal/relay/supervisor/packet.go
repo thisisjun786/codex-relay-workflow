@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	py "github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -101,14 +102,14 @@ func (c *Channel) Compose(ctx context.Context, o Obligation, r Resolution, at st
 	scope := "project " + r.ProjectKey + ", issue " + issue
 	var basis any = absent("unknown", "no generation or revision was read")
 	if o.Revision != nil && *o.Revision != "" {
-		basis = "generation " + py.Text(o.Generation) + ", revision " + (*o.Revision)[:min(12, len(*o.Revision))]
+		basis = "generation " + pyvalue.Str(o.Generation) + ", revision " + (*o.Revision)[:min(12, len(*o.Revision))]
 	} else if o.Kind == "unreported" {
 		description := "unreported: turn " + o.Subject + " ended without a report"
 		if reason, ok := o.Basis["reason"].(string); ok && reason != "" {
 			description += ", reading " + reason
 		}
 		if o.Generation != nil {
-			description += ", generation " + py.Text(o.Generation)
+			description += ", generation " + pyvalue.Str(o.Generation)
 		}
 		basis = description
 	}
@@ -142,5 +143,5 @@ func (c *Channel) Compose(ctx context.Context, o Obligation, r Resolution, at st
 	return Packet{"version": packetVersion, "envelope": region, "issue": issue, "generation": generation, "criteriaDigest": nil, "policy": nil, "callback": nil, "artifact": artifact, "evidence": []string{evidence}, "body": nil, "activation": nil}, nil
 }
 func (p Packet) ID() string {
-	return py.Text(py.Item(py.Item(map[string]any(p), "envelope"), "messageId"))
+	return pyvalue.Str(py.Item(py.Item(map[string]any(p), "envelope"), "messageId"))
 }

@@ -12,6 +12,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/service"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -83,7 +84,7 @@ func workerReadiness(observation contract.OrderedObject, requirements any, calle
 		}
 		for _, field := range object {
 			text, ok := field.Value.(string)
-			if !ok || store.PythonStrip(text) == "" {
+			if !ok || pyvalue.Strip(text) == "" {
 				return refused("worker_policy_requirements_invalid")
 			}
 		}
@@ -91,9 +92,9 @@ func workerReadiness(observation contract.OrderedObject, requirements any, calle
 			return refused("worker_policy_role_unsupported")
 		}
 	}
-	if !truthy(get(observation, "observed")) {
+	if !pyvalue.Truthy(get(observation, "observed")) {
 		reason := get(observation, "reason")
-		if !truthy(reason) {
+		if !pyvalue.Truthy(reason) {
 			reason = "worker_policy_unobserved"
 		}
 		return refused(reason)
@@ -172,7 +173,7 @@ func readWorkerPolicy(services Services, loc store.Location) contract.OrderedObj
 		}
 	}
 	expectedPid, expectedTicks := get(recordObject, "pid"), get(recordObject, "startTicks")
-	if truthy(workerPid) {
+	if pyvalue.Truthy(workerPid) {
 		expectedPid, expectedTicks = workerPid, get(recordObject, "workerStartTicks")
 	}
 	ep, epOK := pyInt(expectedPid)
@@ -183,7 +184,7 @@ func readWorkerPolicy(services Services, loc store.Location) contract.OrderedObj
 		return absent("worker_policy_process_mismatch")
 	}
 	boot := get(recordObject, "bootId")
-	if !truthy(boot) || !pyEqual(get(worker, "bootId"), boot) || !pyEqual(boot, service.BootID()) {
+	if !pyvalue.Truthy(boot) || !pyEqual(get(worker, "bootId"), boot) || !pyEqual(boot, service.BootID()) {
 		return absent("worker_policy_boot_mismatch")
 	}
 	identity := contract.OrderedObject{}
@@ -196,7 +197,7 @@ func readWorkerPolicy(services Services, loc store.Location) contract.OrderedObj
 	}
 	identity = append(identity, contract.Field{Key: "dbDevice", Value: int64(info.Dev)}, contract.Field{Key: "dbInode", Value: int64(info.Ino)})
 	root, authority := scopeRoot()
-	if !pyEqual(run, identity) || !truthy(get(recordObject, "token")) || loc.StoreID == "" ||
+	if !pyEqual(run, identity) || !pyvalue.Truthy(get(recordObject, "token")) || loc.StoreID == "" ||
 		!pyEqual(get(recordObject, "storeId"), loc.StoreID) ||
 		!pyEqual(get(recordObject, "installationId"), installationID(services.Selection.Path)) ||
 		!pyEqual(get(recordObject, "stateDir"), services.Selection.Path) ||

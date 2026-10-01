@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -320,7 +321,7 @@ func deriveDispositions(rows []dispRow, selector contract.OrderedObject) contrac
 			continue
 		}
 		c.events = append(c.events, dispositionEvent(row))
-		if row["outcome"] == reviewable && row["stage"] == "final" && !truthyValue(row["suppressed_reason"]) {
+		if row["outcome"] == reviewable && row["stage"] == "final" && !pyvalue.Truthy(row["suppressed_reason"]) {
 			c.eventIDs = append(c.eventIDs, row["event_id"])
 		}
 	}
@@ -368,7 +369,7 @@ func pyText(v any) string {
 	if s, ok := v.(string); ok {
 		return s
 	}
-	return pyRepr(v)
+	return pyvalue.Repr(v)
 }
 
 func dispositionEvent(row dispRow) contract.OrderedObject {
@@ -398,7 +399,7 @@ func dispositionCorrection(row dispRow) contract.OrderedObject {
 		var supersession any
 		if superseded {
 			supersession = contract.OrderedObject{{Key: "reason", Value: row["correction_supersession_reason"]},
-				{Key: "applied", Value: truthyValue(row["correction_supersession_applied"])}}
+				{Key: "applied", Value: pyvalue.Truthy(row["correction_supersession_applied"])}}
 		}
 		delivery = contract.OrderedObject{{Key: "observation", Value: observation}, {Key: "state", Value: state},
 			{Key: "attemptCount", Value: row["correction_attempts"]}, {Key: "holdReason", Value: row["correction_hold"]},
@@ -431,7 +432,7 @@ func dispositionDelivery(row dispRow) contract.OrderedObject {
 	}
 	var supersession, current any
 	if row["supersession_reason"] != nil {
-		supersession = contract.OrderedObject{{Key: "reason", Value: row["supersession_reason"]}, {Key: "applied", Value: truthyValue(row["supersession_applied"])}}
+		supersession = contract.OrderedObject{{Key: "reason", Value: row["supersession_reason"]}, {Key: "applied", Value: pyvalue.Truthy(row["supersession_applied"])}}
 	}
 	if row["request_id"] != nil {
 		current = contract.OrderedObject{{Key: "requestId", Value: row["request_id"]}, {Key: "attemptNo", Value: row["attempt_no"]},
@@ -450,11 +451,11 @@ func dispositionDelivery(row dispRow) contract.OrderedObject {
 
 // sendObservation is dispositions._observation.
 func sendObservation(row dispRow) (string, any) {
-	if truthyValue(row["suppressed_reason"]) {
+	if pyvalue.Truthy(row["suppressed_reason"]) {
 		return obsSuppressed, "the claim was suppressed, so there is no delivery obligation to measure: " + pyText(row["suppressed_reason"])
 	}
 	if row["stage"] != "final" {
-		return "not_deliverable:" + pyText(row["stage"]), "only a final event may be delivered, so an event at stage " + pyRepr(row["stage"]) +
+		return "not_deliverable:" + pyText(row["stage"]), "only a final event may be delivered, so an event at stage " + pyvalue.Repr(row["stage"]) +
 			" has no delivery to measure and is never delivery evidence"
 	}
 	if row["delivery_event"] != nil {
@@ -463,7 +464,7 @@ func sendObservation(row dispRow) (string, any) {
 		}
 		observation, known := observationByState[row.s("delivery_state")]
 		if !known || row["delivery_state"] == nil {
-			return obsUnrecognised, "the delivery records state " + pyRepr(row["delivery_state"]) + ", which this reader has no word for; read it with status"
+			return obsUnrecognised, "the delivery records state " + pyvalue.Repr(row["delivery_state"]) + ", which this reader has no word for; read it with status"
 		}
 		return observation, observationDetail[observation]
 	}
@@ -513,7 +514,7 @@ func acknowledgement(row dispRow) contract.OrderedObject {
 	if tier == nil {
 		tier = "unrecorded"
 	}
-	return contract.OrderedObject{{Key: "recorded", Value: present}, {Key: "accepted", Value: when(truthyValue(row["ack_accepted"]))},
+	return contract.OrderedObject{{Key: "recorded", Value: present}, {Key: "accepted", Value: when(pyvalue.Truthy(row["ack_accepted"]))},
 		{Key: "rejectionReason", Value: when(row["ack_rejection"])}, {Key: "settlement", Value: when(row["ack_verified"])}, {Key: "evidenceTier", Value: tier}}
 }
 
@@ -524,7 +525,7 @@ func turnDisposition(events []contract.OrderedObject) contract.OrderedObject {
 	var candidates []contract.OrderedObject
 	for _, e := range events {
 		outcome, _ := eventField(e, "outcome").(string)
-		if contains(executionOnly, outcome) && eventField(e, "stage") == "final" && !truthyValue(eventField(e, "suppressedReason")) {
+		if contains(executionOnly, outcome) && eventField(e, "stage") == "final" && !pyvalue.Truthy(eventField(e, "suppressedReason")) {
 			candidates = append(candidates, e)
 		}
 	}

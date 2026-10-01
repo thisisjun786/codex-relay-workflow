@@ -13,9 +13,9 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -180,7 +180,7 @@ func object(v any, required, optional []string, at string) (map[string]any, erro
 func pythonTextList(values []string) string {
 	parts := make([]string, len(values))
 	for i, value := range values {
-		parts[i] = settings.Repr(value)
+		parts[i] = pyvalue.StrRepr(value)
 	}
 	return "[" + strings.Join(parts, ", ") + "]"
 }

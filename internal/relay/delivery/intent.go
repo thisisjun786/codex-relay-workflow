@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -97,7 +98,7 @@ func Moment(value any) *time.Time {
 		if value == nil {
 			return nil
 		}
-		text = pyStr(value)
+		text = pyvalue.Str(value)
 	}
 	text = strings.Replace(text, "Z", "+00:00", 1)
 	zone := time.UTC
@@ -281,7 +282,7 @@ func pyStrOr(value any) string {
 	if !truthy(value) {
 		return ""
 	}
-	return pyStr(value)
+	return pyvalue.Str(value)
 }
 
 func acceptedTasks(marker Obj) map[any]bool {
@@ -665,14 +666,14 @@ func registrationError(reason, detail string) error {
 
 func checkedAssignment(value any) (string, error) {
 	if !ValidAssignment(value) {
-		return "", registrationError(UnknownGeneration, "an assignment id is the hex sha256 of a dispatch request id, not "+pyReprValue(value))
+		return "", registrationError(UnknownGeneration, "an assignment id is the hex sha256 of a dispatch request id, not "+pyvalue.Repr(value))
 	}
 	return value.(string), nil
 }
 
 func checkedIdentity(value any, what string) (string, error) {
 	if !ValidSegment(value) {
-		return "", registrationError(UnboundGeneration, "a "+what+" becomes a directory name, so it cannot be empty, . or .., or contain a path separator: "+pyReprValue(value))
+		return "", registrationError(UnboundGeneration, "a "+what+" becomes a directory name, so it cannot be empty, . or .., or contain a path separator: "+pyvalue.Repr(value))
 	}
 	return value.(string), nil
 }
@@ -829,7 +830,7 @@ func DeclareIntent(root string, d IntentDeclaration) (Obj, error) {
 	payload := Obj{{Key: "dispatchRequestIdHash", Value: assignment}, {Key: "issueKey", Value: d.IssueKey}, {Key: "workspace", Value: workspace},
 		{Key: "criteriaSource", Value: d.CriteriaSource}, {Key: "baselineRevision", Value: d.BaselineRevision}, {Key: "authorizedSettings", Value: d.AuthorizedSettings}, {Key: "declaredAt", Value: d.DeclaredAt}}
 	if truthy(d.DBPath) {
-		payload = append(payload, F{Key: "dbPath", Value: pyStr(d.DBPath)})
+		payload = append(payload, F{Key: "dbPath", Value: pyvalue.Str(d.DBPath)})
 	}
 	outcome, err := publishOrCompare(filepath.Join(directory, "intent.json"), payload, intentFields, root, nil)
 	if err != nil {
@@ -845,7 +846,7 @@ func RecordAttempt(root, workspace string, assignment any, outcome, at string, t
 		valid = valid || o == outcome
 	}
 	if !valid {
-		return nil, registrationError(UnknownGeneration, "an attempt outcome is one of "+strings.Join(AttemptOutcomes, ", ")+", not "+store.PyRepr(outcome))
+		return nil, registrationError(UnknownGeneration, "an attempt outcome is one of "+strings.Join(AttemptOutcomes, ", ")+", not "+pyvalue.StrRepr(outcome))
 	}
 	directory, err := assignmentDirectory(root, workspace, assignment)
 	if err != nil {
@@ -926,7 +927,7 @@ func RegisterRelationship(ctx context.Context, root, workspace string, assignmen
 	if hashed, err := encodedAssignmentID(dispatchRequestID); err != nil {
 		return nil, err
 	} else if hashed != assignment {
-		return nil, registrationError(RelationshipConflict, "relationship "+relationshipID+" was dispatched under a different request id, so it does not belong to assignment "+pyStr(assignment))
+		return nil, registrationError(RelationshipConflict, "relationship "+relationshipID+" was dispatched under a different request id, so it does not belong to assignment "+pyvalue.Str(assignment))
 	}
 	directory, err := assignmentDirectory(root, workspace, assignment)
 	if err != nil {
@@ -938,7 +939,7 @@ func RegisterRelationship(ctx context.Context, root, workspace string, assignmen
 	path, isPath := dbPath.(string)
 	if !isPath {
 		// Path(None) raises TypeError, which registration_hold answers as an unreadable path.
-		return nil, refuseUnheld("the relay store path " + pyReprValue(dbPath) + " could not be read as a path")
+		return nil, refuseUnheld("the relay store path " + pyvalue.Repr(dbPath) + " could not be read as a path")
 	}
 	var result Obj
 	err = store.RegistrationHold(ctx, path, func(held *sql.Conn, unavailable string) error {
@@ -991,7 +992,7 @@ func PublishClaim(root, workspace string, assignment, sessionID any, dispatchReq
 	if hashed, err := encodedAssignmentID(dispatchRequestID); err != nil {
 		return nil, err
 	} else if hashed != assignment {
-		return nil, registrationError(RelationshipConflict, "this claim names dispatch request id "+dispatchRequestID+", which does not hash to assignment "+pyStr(assignment)+", so it claims a different assignment")
+		return nil, registrationError(RelationshipConflict, "this claim names dispatch request id "+dispatchRequestID+", which does not hash to assignment "+pyvalue.Str(assignment)+", so it claims a different assignment")
 	}
 	directory, err := assignmentDirectory(root, workspace, assignment)
 	if err != nil {
@@ -1020,7 +1021,7 @@ func PublishDisposition(root, workspace string, assignment, sessionID, turnID an
 		known = known || o == outcome
 	}
 	if !known {
-		return nil, registrationError(OutcomeInconsistent, "a disposition outcome is one of "+strings.Join(DispositionOutcomes, ", ")+", not "+store.PyRepr(outcome))
+		return nil, registrationError(OutcomeInconsistent, "a disposition outcome is one of "+strings.Join(DispositionOutcomes, ", ")+", not "+pyvalue.StrRepr(outcome))
 	}
 	directory, err := assignmentDirectory(root, workspace, assignment)
 	if err != nil {

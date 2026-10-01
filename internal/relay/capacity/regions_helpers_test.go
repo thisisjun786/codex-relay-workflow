@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -64,7 +65,7 @@ func newRegionEnv(t *testing.T) *regionEnv {
 
 // peer writes register_peer's link row and journal entry.
 func (e *regionEnv) peer(left, leftTask, right, rightTask string) string {
-	id := "lnk-" + sha256Hex("peer|project|" + left + "|project|" + right)[:32]
+	id := "lnk-" + pyvalue.SHA256Hex("peer|project|" + left + "|project|" + right)[:32]
 	if err := storeseed.InsertScopeLink(ctx(), e.store, store.ScopeLinksRow{LinkID: id, LinkKind: "peer", UpperKind: "project", UpperKey: left,
 		UpperTaskID: leftTask, LowerKind: "project", LowerKey: right, LowerTaskID: rightTask, Status: "active", Revision: 1,
 		CreatedAt: e.clock.iso(), UpdatedAt: e.clock.iso()}); err != nil {
@@ -81,8 +82,8 @@ func (e *regionEnv) peer(left, leftTask, right, rightTask string) string {
 func (e *regionEnv) handover(project, from, to, host string) {
 	e.t.Helper()
 	now := e.clock.iso()
-	oldID := "bnd-" + sha256Hex("parent|project|" + project + "|" + from)[:32]
-	newID := "bnd-" + sha256Hex("parent|project|" + project + "|" + to)[:32]
+	oldID := "bnd-" + pyvalue.SHA256Hex("parent|project|" + project + "|" + from)[:32]
+	newID := "bnd-" + pyvalue.SHA256Hex("parent|project|" + project + "|" + to)[:32]
 	for _, statement := range []struct {
 		query string
 		args  []any

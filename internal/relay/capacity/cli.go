@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
@@ -304,18 +305,18 @@ func (c command) parse(prog string, argv []string) (parsed, error) {
 		if o.choices != nil && !slices.Contains(o.choices, value) {
 			quoted := make([]string, len(o.choices))
 			for k, choice := range o.choices {
-				quoted[k] = repr(choice)
+				quoted[k] = pyvalue.StrRepr(choice)
 			}
-			return p, &usageError{c.usage(prog), "argument --" + o.name + ": invalid choice: " + repr(value) + " (choose from " + strings.Join(quoted, ", ") + ")"}
+			return p, &usageError{c.usage(prog), "argument --" + o.name + ": invalid choice: " + pyvalue.StrRepr(value) + " (choose from " + strings.Join(quoted, ", ") + ")"}
 		}
 		if o.integer {
 			if _, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64); err != nil {
-				return p, &usageError{c.usage(prog), "argument --" + o.name + ": invalid int value: " + repr(value)}
+				return p, &usageError{c.usage(prog), "argument --" + o.name + ": invalid int value: " + pyvalue.StrRepr(value)}
 			}
 		}
 		if o.number {
 			if _, err := parseFloat(value); err != nil {
-				return p, &usageError{c.usage(prog), "argument --" + o.name + ": invalid float value: " + repr(value)}
+				return p, &usageError{c.usage(prog), "argument --" + o.name + ": invalid float value: " + pyvalue.StrRepr(value)}
 			}
 		}
 		p.values[o.name], p.set[o.name] = value, true

@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -93,9 +94,9 @@ func RequiredForCandidate(ctx context.Context, s *store.Store, relationship, rep
 	if len(heads) != 1 || heads[0] != head {
 		quoted := make([]string, len(heads))
 		for i, h := range heads {
-			quoted[i] = StrRepr(h)
+			quoted[i] = pyvalue.StrRepr(h)
 		}
-		return absent("the current work report is about " + strings.Join(quoted, ", ") + ", not the candidate " + StrRepr(head))
+		return absent("the current work report is about " + strings.Join(quoted, ", ") + ", not the candidate " + pyvalue.StrRepr(head))
 	}
 	for _, row := range rows {
 		if row.Get("repository") != any(repository) {

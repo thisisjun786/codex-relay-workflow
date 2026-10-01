@@ -2,9 +2,7 @@ package cli
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"fmt"
 	"math"
 	"os"
@@ -14,6 +12,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -132,7 +131,7 @@ func snapshot(ctx context.Context, s *store.Store, relationship string) (contrac
 		}
 		var pacing contract.OrderedObject
 		state := colText(row, "state")
-		if (state == stQueued || state == stDeferredBusy || state == stWithheldPreSend) && !truthy(col(row, "hold_reason")) {
+		if (state == stQueued || state == stDeferredBusy || state == stWithheldPreSend) && !pyvalue.Truthy(col(row, "hold_reason")) {
 			recipient := colText(row, "recipient_task_id")
 			reading, seen := paced[recipient]
 			if !seen {
@@ -297,7 +296,7 @@ func currentGrant(ctx context.Context, s *store.Store, turn string, tenure any) 
 		if !ok || get(envelope, "turnId") != turn || !pyEqual(get(envelope, "tenure"), tenure) {
 			continue
 		}
-		derived := "mtg-" + sha256Hex(turn + "|" + fmt.Sprint(tenure) + "|" + strconv.FormatInt(sequence, 10))[:32]
+		derived := "mtg-" + pyvalue.SHA256Hex(turn + "|" + fmt.Sprint(tenure) + "|" + strconv.FormatInt(sequence, 10))[:32]
 		if get(envelope, "grantId") != derived || colText(row, "idempotency_key") != "grant:"+derived {
 			continue
 		}
@@ -412,7 +411,7 @@ func packed(value any) *packedRow {
 		return nil
 	}
 	detail := contract.OrderedObject{}
-	if raw := get(outer, "detail"); truthy(raw) {
+	if raw := get(outer, "detail"); pyvalue.Truthy(raw) {
 		rawText, ok := raw.(string)
 		if !ok {
 			return nil
@@ -442,7 +441,7 @@ func currentSettingsHold(ctx context.Context, s *store.Store, event string) (con
 	}
 	state := colText(row, "sh_state")
 	kind := map[string]string{stWithheldPreSend: "withheld", stInboxOnly: "channel_closed"}[state]
-	if state == stWithheldPreSend && truthy(col(row, "sh_hold_reason")) {
+	if state == stWithheldPreSend && pyvalue.Truthy(col(row, "sh_hold_reason")) {
 		kind = ""
 		if colText(row, "sh_hold_reason") == attemptCap {
 			kind = "capped"
@@ -583,7 +582,7 @@ func shellCommand(argv ...string) string {
 // reportedState is _reported_state.
 func reportedState(row, ack store.Row, grant string, superseded store.Row) string {
 	state, hold := colText(row, "state"), colText(row, "hold_reason")
-	if ack != nil && colText(ack, "verified") == "verified" && truthy(col(ack, "accepted")) {
+	if ack != nil && colText(ack, "verified") == "verified" && pyvalue.Truthy(col(ack, "accepted")) {
 		return "acknowledged"
 	}
 	if colText(row, "kind") == kindMergeTurnGrant {
@@ -622,7 +621,7 @@ func reportedState(row, ack store.Row, grant string, superseded store.Row) strin
 func phase(row store.Row, attempts []store.Row, ack store.Row, failure contract.OrderedObject, superseded store.Row, grant string, pacing, reading contract.OrderedObject) string {
 	state, kind, hold := colText(row, "state"), colText(row, "kind"), colText(row, "hold_reason")
 	if ack != nil && colText(ack, "verified") == "verified" {
-		if truthy(col(ack, "accepted")) {
+		if pyvalue.Truthy(col(ack, "accepted")) {
 			return "acknowledged"
 		}
 		return "rejected"
@@ -664,26 +663,26 @@ func phase(row store.Row, attempts []store.Row, ack store.Row, failure contract.
 		}
 	}
 	record := contract.OrderedObject{}
-	if latest != nil && truthy(col(latest, "record")) {
+	if latest != nil && pyvalue.Truthy(col(latest, "record")) {
 		if decoded, ok := loads(colText(latest, "record")).(contract.OrderedObject); ok {
 			record = decoded
 		}
 	}
 	failed := get(record, "failedOperation")
 	failedText := ""
-	if truthy(failed) {
+	if pyvalue.Truthy(failed) {
 		failedText = fmt.Sprint(failed)
 	}
 	if state == stHeldUncertain {
 		if hold != "" {
 			return "held:" + hold
 		}
-		if truthy(get(record, "turnId")) {
+		if pyvalue.Truthy(get(record, "turnId")) {
 			return "turn_accepted"
 		}
 		return "outcome_unknown"
 	}
-	if state == stWithheldPreSend && truthy(reading) && truthy(get(reading, "definitive")) {
+	if state == stWithheldPreSend && pyvalue.Truthy(reading) && pyvalue.Truthy(get(reading, "definitive")) {
 		if get(reading, "chosen") == "attempt" {
 			if get(reading, "hold") != nil {
 				return "settings_rejected"
@@ -770,7 +769,7 @@ func observationHealth(ctx context.Context, s *store.Store, relationship string,
 	oldest := 0.0
 	for _, row := range stagedRows {
 		stamp := col(row, "staged_at")
-		if !truthy(stamp) {
+		if !pyvalue.Truthy(stamp) {
 			stamp = col(row, "first_seen_at")
 		}
 		ageValue := isoAge(stamp, now)
@@ -820,7 +819,7 @@ func observationHealth(ctx context.Context, s *store.Store, relationship string,
 				{Key: "lastError", Value: nil}, {Key: "settled", Value: false}, {Key: "anchorPending", Value: true}})
 			continue
 		}
-		settled := truthy(col(row, "observed")) && !truthy(col(row, "staged_here"))
+		settled := pyvalue.Truthy(col(row, "observed")) && !pyvalue.Truthy(col(row, "staged_here"))
 		setAnchor(id, contract.OrderedObject{{Key: "turnId", Value: col(row, "dispatch_turn_id")}, {Key: "lastPolledAt", Value: col(row, "last_polled_at")},
 			{Key: "ageSeconds", Value: isoAge(col(row, "last_polled_at"), now)}, {Key: "lastError", Value: col(row, "last_error")},
 			{Key: "settled", Value: settled}, {Key: "anchorPending", Value: false}})
@@ -839,7 +838,7 @@ func observationHealth(ctx context.Context, s *store.Store, relationship string,
 	never, stale := 0, 0
 	for _, field := range anchors {
 		a := field.Value.(contract.OrderedObject)
-		if truthy(get(a, "settled")) || truthy(get(a, "anchorPending")) {
+		if pyvalue.Truthy(get(a, "settled")) || pyvalue.Truthy(get(a, "anchorPending")) {
 			continue
 		}
 		if get(a, "lastPolledAt") == nil {
@@ -1011,10 +1010,10 @@ func heldReason(ctx context.Context, s *store.Store, row store.Row, moment float
 	if err != nil {
 		return "", err
 	}
-	if kind == "open_record" && truthy(col(fault, "external_ref")) {
+	if kind == "open_record" && pyvalue.Truthy(col(fault, "external_ref")) {
 		return "issue_owned", nil
 	}
-	if spec.requiresIssue && !truthy(col(fault, "external_ref")) {
+	if spec.requiresIssue && !pyvalue.Truthy(col(fault, "external_ref")) {
 		return "awaiting_record", nil
 	}
 	product, scope := colText(fault, "product"), colText(fault, "scope_key")
@@ -1036,7 +1035,7 @@ func heldReason(ctx context.Context, s *store.Store, row store.Row, moment float
 		if contested != nil {
 			return "scope_key_contested", nil
 		}
-		if spec.target == "team+project" && !truthy(col(target, "project_ref")) {
+		if spec.target == "team+project" && !pyvalue.Truthy(col(target, "project_ref")) {
 			return "awaiting_target", nil
 		}
 	}
@@ -1057,9 +1056,4 @@ func heldReason(ctx context.Context, s *store.Store, row store.Row, moment float
 		return "budget_spent", nil
 	}
 	return "", nil
-}
-
-func sha256Hex(text string) string {
-	sum := sha256.Sum256([]byte(text))
-	return hex.EncodeToString(sum[:])
 }

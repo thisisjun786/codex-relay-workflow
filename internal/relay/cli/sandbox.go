@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -26,7 +27,7 @@ func sandboxSummary(raw, source, recordedAt any) contract.OrderedObject {
 	}
 	settings, ok := decoded.(contract.OrderedObject)
 	if !ok {
-		return unreadable("the recorded settings are " + pyTypeName(decoded) + ", not an object")
+		return unreadable("the recorded settings are " + pyvalue.TypeName(decoded) + ", not an object")
 	}
 	policy := registry.NormalisePolicy(get(settings, "sandbox"))
 	if policy == nil {

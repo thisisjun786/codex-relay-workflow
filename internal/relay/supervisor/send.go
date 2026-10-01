@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"io"
 	"strconv"
@@ -28,7 +29,7 @@ var TokenSource io.Reader = rand.Reader
 func (c *Channel) render(p Packet, requestID, token string) string {
 	region := evidence.Item(map[string]any(p), "envelope")
 	field := func(key string) any { return evidence.Item(region, key) }
-	text := func(key string) string { return evidence.Text(field(key)) }
+	text := func(key string) string { return pyvalue.Str(field(key)) }
 	lines := []string{"[codex-session-relay] supervisor report", "requestId: " + requestID}
 	if token != "" {
 		lines = append(lines, "deliveryToken: "+token)
@@ -36,32 +37,32 @@ func (c *Channel) render(p Packet, requestID, token string) string {
 	owed := "an answer is owed by the recipient"
 	if evidence.IsAbsent(field("answerOwedBy")) {
 		owed = "no answer is owed"
-	} else if evidence.Equal(field("answerOwedBy"), "user") {
+	} else if pyvalue.ItemEqual(field("answerOwedBy"), "user") {
 		owed = "a decision is owed by the user, not by the recipient"
 	}
 	lines = append(lines, "  message: "+text("kind")+" - "+owed, "  messageId: "+text("messageId")+"  "+text("direction")+"/"+text("purpose")+"  envelope: "+text("version"))
 	sender, recipient := field("sender"), field("recipient")
-	lines = append(lines, "  relation: "+text("relationId")+"  basis: "+evidence.Shown(field("basis")), "  from: "+evidence.Text(evidence.Item(sender, "role"))+" "+evidence.Shown(evidence.Item(sender, "taskId"))+"  to: "+evidence.Text(evidence.Item(recipient, "role"))+" "+evidence.Shown(evidence.Item(recipient, "taskId")), "  scope: "+evidence.Shown(field("scope")), "  observedAt: "+evidence.Shown(field("observedAt")))
+	lines = append(lines, "  relation: "+text("relationId")+"  basis: "+evidence.Shown(field("basis")), "  from: "+pyvalue.Str(evidence.Item(sender, "role"))+" "+evidence.Shown(evidence.Item(sender, "taskId"))+"  to: "+pyvalue.Str(evidence.Item(recipient, "role"))+" "+evidence.Shown(evidence.Item(recipient, "taskId")), "  scope: "+evidence.Shown(field("scope")), "  observedAt: "+evidence.Shown(field("observedAt")))
 	for _, pair := range [][2]string{{"relationRevision", "relationRevision"}, {"correlationId", "answering"}} {
 		if value := field(pair[0]); !evidence.IsAbsent(value) {
-			lines = append(lines, "  "+pair[1]+": "+evidence.Text(value))
+			lines = append(lines, "  "+pair[1]+": "+pyvalue.Str(value))
 		}
 	}
 	for _, pointer := range evidence.Iter(field("evidence")) {
-		lines = append(lines, "  evidence: "+evidence.Text(pointer))
+		lines = append(lines, "  evidence: "+pyvalue.Str(pointer))
 	}
 	for _, key := range []string{"issue", "generation", "criteriaDigest"} {
 		value := p[key]
-		if value != nil && !evidence.IsAbsent(value) && (evidence.Truthy(value) || evidence.Equal(value, 0)) {
-			lines = append(lines, "  "+key+": "+evidence.Text(value))
+		if value != nil && !evidence.IsAbsent(value) && (pyvalue.Truthy(value) || pyvalue.ItemEqual(value, 0)) {
+			lines = append(lines, "  "+key+": "+pyvalue.Str(value))
 		}
 	}
-	if evidence.Truthy(p["artifact"]) {
+	if pyvalue.Truthy(p["artifact"]) {
 		artifact := evidence.Dict(p["artifact"], false)
 		if artifact["kind"] == "pull_request" {
-			lines = append(lines, "  pull request: "+evidence.Text(artifact["repository"])+" #"+evidence.Text(artifact["number"])+" at "+evidence.Text(artifact["headSha"]))
+			lines = append(lines, "  pull request: "+pyvalue.Str(artifact["repository"])+" #"+pyvalue.Str(artifact["number"])+" at "+pyvalue.Str(artifact["headSha"]))
 		} else {
-			lines = append(lines, "  artifact: "+evidence.Text(artifact["path"])+" digest "+evidence.Text(artifact["digest"]))
+			lines = append(lines, "  artifact: "+pyvalue.Str(artifact["path"])+" digest "+pyvalue.Str(artifact["digest"]))
 		}
 	}
 	socket := c.Socket
@@ -197,7 +198,7 @@ func (c *Channel) claim(ctx context.Context, id string, r Resolution, now float6
 		}
 		err = c.Store.Q(tx).QueryRowContext(tx, "SELECT message_id FROM supervisor_messages WHERE recipient_task_id=? AND message_id<>? AND hold_reason IS NULL AND ((state IN ('queued','deferred_busy','withheld_pre_send') AND (next_eligible_at IS NULL OR next_eligible_at<=?)) OR (state='sending' AND lease_until>?)) AND (staged_at<? OR (staged_at=? AND message_id<?)) ORDER BY staged_at,message_id LIMIT 1", r.Recipient, id, now, now, current.StagedAt, current.StagedAt, id).Scan(&message)
 		if err == nil {
-			return Refusal{"not_claimable", "message " + store.PyRepr(message) + " was staged for " + store.PyRepr(r.Recipient) + " first and can be sent now, so this one waits. Two facts reach the level above in the order they arose"}
+			return Refusal{"not_claimable", "message " + pyvalue.StrRepr(message) + " was staged for " + pyvalue.StrRepr(r.Recipient) + " first and can be sent now, so this one waits. Two facts reach the level above in the order they arose"}
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
@@ -207,7 +208,7 @@ func (c *Channel) claim(ctx context.Context, id string, r Resolution, now float6
 		var clash string
 		if err := c.Store.Q(tx).QueryRowContext(tx, "SELECT message_id FROM supervisor_attempts WHERE request_id=?", requestID).Scan(&clash); err == nil {
 			if clash != id {
-				return Refusal{"not_claimable", "request id " + store.PyRepr(requestID) + " already belongs to message " + store.PyRepr(clash) + "; two message ids share the prefix this id keeps, so this attempt cannot be told apart from that one"}
+				return Refusal{"not_claimable", "request id " + pyvalue.StrRepr(requestID) + " already belongs to message " + pyvalue.StrRepr(clash) + "; two message ids share the prefix this id keeps, so this attempt cannot be told apart from that one"}
 			}
 		} else if !errors.Is(err, sql.ErrNoRows) {
 			return err
@@ -297,7 +298,7 @@ func (c *Channel) attempt(ctx context.Context, id string, adapter SendAdapter, n
 	var older string
 	err = c.Store.Q(ctx).QueryRowContext(ctx, "SELECT message_id FROM supervisor_messages WHERE recipient_task_id=? AND message_id<>? AND ((state IN ('queued','deferred_busy','withheld_pre_send') AND hold_reason IS NULL AND (next_eligible_at IS NULL OR next_eligible_at<=?)) OR (state='sending' AND lease_until IS NOT NULL AND lease_until>?)) AND (staged_at<? OR (staged_at=? AND message_id<?)) ORDER BY staged_at,message_id LIMIT 1", row.RecipientTaskID, id, now, now, row.StagedAt, row.StagedAt, id).Scan(&older)
 	if err == nil {
-		return nil, Refusal{"not_claimable", "message " + store.PyRepr(older) + " was staged for " + store.PyRepr(row.RecipientTaskID) + " first and can be sent now, so this one waits. Two facts reach the level above in the order they arose, which is not a property an ordered selection can have on its own while any caller may name any row"}
+		return nil, Refusal{"not_claimable", "message " + pyvalue.StrRepr(older) + " was staged for " + pyvalue.StrRepr(row.RecipientTaskID) + " first and can be sent now, so this one waits. Two facts reach the level above in the order they arose, which is not a property an ordered selection can have on its own while any caller may name any row"}
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
@@ -313,7 +314,7 @@ func (c *Channel) attempt(ctx context.Context, id string, adapter SendAdapter, n
 		return nil, err
 	}
 	if r.Sender != row.SenderTaskID || r.Recipient != row.RecipientTaskID || r.ProjectKey != row.ProjectKey.String {
-		refusal := Refusal{"relation_owner_drift", "this message was staged from " + store.PyRepr(row.SenderTaskID) + " to " + store.PyRepr(row.RecipientTaskID) + " and the linkage now says " + store.PyRepr(r.Sender) + " reports to " + store.PyRepr(r.Recipient) + "; the hierarchy moved under a staged report, so it is held rather than sent to either. It was never attempted, so staging it again re-addresses it to the live supervisor"}
+		refusal := Refusal{"relation_owner_drift", "this message was staged from " + pyvalue.StrRepr(row.SenderTaskID) + " to " + pyvalue.StrRepr(row.RecipientTaskID) + " and the linkage now says " + pyvalue.StrRepr(r.Sender) + " reports to " + pyvalue.StrRepr(r.Recipient) + "; the hierarchy moved under a staged report, so it is held rather than sent to either. It was never attempted, so staging it again re-addresses it to the live supervisor"}
 		if err := c.holdUnaddressed(ctx, row, refusal, now); err != nil {
 			return nil, err
 		}
@@ -363,7 +364,7 @@ func (c *Channel) attempt(ctx context.Context, id string, adapter SendAdapter, n
 			}
 			detailText := err.Error()
 			if reason == "role_policy_unconfigured" {
-				detailText = store.PyRepr(r.Recipient) + " is bound as 'supervisor' and this process cannot read a role policy to check its authorization against: CODEX_THREAD_BRIDGE_EXECUTION_POLICY is not set in this process, so no role policy can be read. Nothing was sent and no turn was started. Set the policy for this process and the held deliveries resume on the next pass."
+				detailText = pyvalue.StrRepr(r.Recipient) + " is bound as 'supervisor' and this process cannot read a role policy to check its authorization against: CODEX_THREAD_BRIDGE_EXECUTION_POLICY is not set in this process, so no role policy can be read. Nothing was sent and no turn was started. Set the policy for this process and the held deliveries resume on the next pass."
 			}
 			detail := pyjson.Dumps(contract.OrderedObject{{Key: "reason", Value: reason}, {Key: "detail", Value: detailText}}, pyjson.Options{})
 			_, e := c.Store.Q(ctx).ExecContext(ctx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_withheld',?,?)", at, id, detail)
@@ -403,7 +404,7 @@ func (c *Channel) attempt(ctx context.Context, id string, adapter SendAdapter, n
 		}
 		live, err := c.Resolve(tx, row.RelationshipID)
 		if err == nil && live != r {
-			err = Refusal{"relation_owner_drift", "message " + store.PyRepr(id) + " names " + store.PyRepr(row.SenderTaskID) + " reporting to " + store.PyRepr(row.RecipientTaskID) + " for project " + store.PyRepr(row.ProjectKey.String) + ", and the linkage now says " + store.PyRepr(live.Sender) + " reports to " + store.PyRepr(live.Recipient) + " for project " + store.PyRepr(live.ProjectKey)}
+			err = Refusal{"relation_owner_drift", "message " + pyvalue.StrRepr(id) + " names " + pyvalue.StrRepr(row.SenderTaskID) + " reporting to " + pyvalue.StrRepr(row.RecipientTaskID) + " for project " + pyvalue.StrRepr(row.ProjectKey.String) + ", and the linkage now says " + pyvalue.StrRepr(live.Sender) + " reports to " + pyvalue.StrRepr(live.Recipient) + " for project " + pyvalue.StrRepr(live.ProjectKey)}
 		}
 		if err != nil {
 			var refusal Refusal
@@ -435,7 +436,7 @@ func (c *Channel) attempt(ctx context.Context, id string, adapter SendAdapter, n
 			if getErr != nil {
 				return getErr
 			}
-			detail := "message " + store.PyRepr(id) + " was staged from event " + nullableStringRepr(current.EventID) + " submission " + nullableIntRepr(current.SubmissionNo) + " and what is owed now is event " + nullableStringRepr(latest.EventID) + " submission " + nullableIntRepr(latest.SubmissionNo)
+			detail := "message " + pyvalue.StrRepr(id) + " was staged from event " + nullableStringRepr(current.EventID) + " submission " + nullableIntRepr(current.SubmissionNo) + " and what is owed now is event " + nullableStringRepr(latest.EventID) + " submission " + nullableIntRepr(latest.SubmissionNo)
 			record := pyjson.Dumps(map[string]any{"requestId": requestID, "messageId": id, "attemptNo": attemptNo, "deliveryState": "withheld_pre_send", "sendAttempted": "no", "retrySafe": true, "reason": "what is owed moved between the claim and the transport", "proposal": "restated", "detail": detail}, pyjson.Options{SortKeys: true})
 			if err := c.Store.SettleSupervisorAttempt(tx, requestID, "withheld_pre_send", "no", 1, sql.NullString{}, record, at); err != nil {
 				return err

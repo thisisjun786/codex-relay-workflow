@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	py "github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 )
 
@@ -24,7 +25,7 @@ func composeWorkRevisionMeasured(row Row, receipt Obj, request string, report ma
 		id := py.Item(raw, "id")
 		py.HashKey(id)
 		item := py.Dict(raw, false)
-		name := py.Text(id)
+		name := pyvalue.Str(id)
 		if _, seen := extras[name]; !seen {
 			orderedExtras = append(orderedExtras, name)
 		}
@@ -48,18 +49,18 @@ func composeWorkRevisionMeasured(row Row, receipt Obj, request string, report ma
 	findingOwners := map[int]string{}
 	seen := map[string]bool{}
 	for _, item := range findings {
-		id := py.Text(reportField(item, "id"))
-		if !py.Truthy(reportField(item, "id")) {
+		id := pyvalue.Str(reportField(item, "id"))
+		if !pyvalue.Truthy(reportField(item, "id")) {
 			continue
 		}
 		seen[id] = true
 		extra := extras[id]
 		note := reportField(item, "note")
-		if !py.Truthy(note) {
+		if !pyvalue.Truthy(note) {
 			note = extra["note"]
 		}
 		noteText := noNote
-		if py.Truthy(note) {
+		if pyvalue.Truthy(note) {
 			noteText = inline(note)
 		}
 		disposition := reportField(item, "verdict")
@@ -71,10 +72,10 @@ func composeWorkRevisionMeasured(row Row, receipt Obj, request string, report ma
 		findingOwners[len(findingLines)] = id
 		findingLines = append(findingLines, line)
 		anchor := extra["anchor"]
-		if !py.Truthy(anchor) {
+		if !pyvalue.Truthy(anchor) {
 			anchor = reportField(item, "anchor")
 		}
-		if py.Truthy(anchor) {
+		if pyvalue.Truthy(anchor) {
 			findingLines = append(findingLines, "    anchor: "+inline(anchor))
 		}
 	}
@@ -94,7 +95,7 @@ func composeWorkRevisionMeasured(row Row, receipt Obj, request string, report ma
 	for _, id := range reviewOnly {
 		item := extras[id]
 		note := noNote
-		if py.Truthy(item["note"]) {
+		if pyvalue.Truthy(item["note"]) {
 			note = inline(item["note"])
 		}
 		line := "  " + unheaded(inline(id))
@@ -102,7 +103,7 @@ func composeWorkRevisionMeasured(row Row, receipt Obj, request string, report ma
 			line += ": " + inline(item["verdict"])
 		}
 		findingLines = append(findingLines, line+" - "+note)
-		if py.Truthy(item["anchor"]) {
+		if pyvalue.Truthy(item["anchor"]) {
 			findingLines = append(findingLines, "    anchor: "+inline(item["anchor"]))
 		}
 	}
@@ -111,8 +112,8 @@ func composeWorkRevisionMeasured(row Row, receipt Obj, request string, report ma
 	}
 	what := whatChangedLines(receipt)[:2]
 	if len(review) > 0 {
-		if kind := review["kind"]; py.Truthy(kind) {
-			what[1] += "; the review judged " + py.Text(kind)
+		if kind := review["kind"]; pyvalue.Truthy(kind) {
+			what[1] += "; the review judged " + pyvalue.Str(kind)
 			if _, ok := py.PyInt(review["blockers"]); ok {
 				count := review["blockers"]
 				n := reportString(count)
@@ -127,7 +128,7 @@ func composeWorkRevisionMeasured(row Row, receipt Obj, request string, report ma
 	if len(fix) > 2 {
 		fix = fix[:len(fix)-1]
 	}
-	if len(findings) > 0 && py.Truthy(report["review"]) {
+	if len(findings) > 0 && pyvalue.Truthy(report["review"]) {
 		fix[1] = strings.Replace(fix[1], "verified and unverified findings are out of scope", "verified, unverified and review-only findings are out of scope", 1)
 	}
 	scope := []string{"", "SCOPE:", "  " + unheaded(reportValue(report, "repository"))}
@@ -152,7 +153,7 @@ func composeWorkRevisionMeasured(row Row, receipt Obj, request string, report ma
 				proof = append(proof, "    "+unheaded(item))
 			} else {
 				item := py.Dict(raw, false)
-				proof = append(proof, "    "+unheaded(py.Text(item["check"])))
+				proof = append(proof, "    "+unheaded(pyvalue.Str(item["check"])))
 			}
 		}
 	} else {
@@ -172,7 +173,7 @@ func composeWorkRevisionMeasured(row Row, receipt Obj, request string, report ma
 				unresolved = append(unresolved, "  - "+unheaded(item))
 			} else {
 				item := py.Dict(raw, false)
-				unresolved = append(unresolved, strings.TrimRight("  - "+unheaded(py.Text(item["id"]))+": "+py.Text(py.Or(item["note"], "")), ": "))
+				unresolved = append(unresolved, strings.TrimRight("  - "+unheaded(pyvalue.Str(item["id"]))+": "+pyvalue.Str(py.Or(item["note"], "")), ": "))
 			}
 		}
 	}
@@ -191,11 +192,11 @@ func composeWorkRevisionMeasured(row Row, receipt Obj, request string, report ma
 		{"workflow restore", workRestoreLines(report), 3, 0, false, false}, {"REVERIFY AND RETURN", reverify, 0, len(reverify), true, false},
 		{"relay record", []string{"", fmt.Sprintf("relay record: requestId %s, eventId %s, submission %v, contract relay-report/1", request, event, report["submission_no"]), "  message: request parent_to_child/revision_request, messageId " + messageID + ", envelope relay-envelope/1", "Full record: codex-session-relay show --event " + event}, 0, 4, true, false},
 	}
-	if py.Truthy(report["review"]) {
+	if pyvalue.Truthy(report["review"]) {
 		kind := py.Item(report["review"], "kind")
-		line := "VERDICT: " + py.Text(kind)
-		if !py.Equal(kind, "PASS") && !py.Equal(kind, "FAIL") && !py.Equal(kind, "GO-WITH-FIXES") {
-			panic(&py.PythonError{Class: "ValueError", Detail: py.Repr(kind) + " is not a review verdict; REVIEW-OUTPUT-01 fixes PASS, GO-WITH-FIXES, FAIL"})
+		line := "VERDICT: " + pyvalue.Str(kind)
+		if !pyvalue.ItemEqual(kind, "PASS") && !pyvalue.ItemEqual(kind, "FAIL") && !pyvalue.ItemEqual(kind, "GO-WITH-FIXES") {
+			panic(&py.PythonError{Class: "ValueError", Detail: pyvalue.Repr(kind) + " is not a review verdict; REVIEW-OUTPUT-01 fixes PASS, GO-WITH-FIXES, FAIL"})
 		}
 		if kind == "GO-WITH-FIXES" {
 			n, ok := py.PyInt(review["blockers"])
@@ -207,7 +208,7 @@ func composeWorkRevisionMeasured(row Row, receipt Obj, request string, report ma
 			}
 			line += fmt.Sprintf(" (blockers=%d)", n)
 		} else if review["blockers"] != nil {
-			panic(&py.PythonError{Class: "ValueError", Detail: "a " + py.Text(kind) + " verdict carries no blocker count"})
+			panic(&py.PythonError{Class: "ValueError", Detail: "a " + pyvalue.Str(kind) + " verdict carries no blocker count"})
 		}
 		sections = append(sections, reportSection{"verdict", []string{"", line}, 0, 2, true, true})
 	}

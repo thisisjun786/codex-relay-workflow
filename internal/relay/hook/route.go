@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -152,7 +153,7 @@ func RouteGuard(ctx context.Context, state string, stop Object, options GuardOpt
 		case nil:
 		case Object, []any:
 			// The fence looks the kind up in a dict, which raises on an unhashable one.
-			return nil, fmt.Errorf("TypeError: unhashable type: '%s'", evidence.TypeName(kind))
+			return nil, fmt.Errorf("TypeError: unhashable type: '%s'", pyvalue.TypeName(kind))
 		default:
 			routed.Code = map[string]int{"refused": 2, "host": 3, "usage": 4}[text(kind)]
 			if routed.Code == 0 {

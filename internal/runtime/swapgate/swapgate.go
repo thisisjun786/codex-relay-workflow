@@ -24,7 +24,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
@@ -75,7 +75,7 @@ func Cell(answer any, readable bool, detail string, command, evidenceValue any) 
 // Blocking is swapgate.blocking: whether this cell's established answer refuses the swap, nil
 // when it did not answer. The predicate is the cell's declared one.
 func Blocking(name string, cell Object) *bool {
-	if !evidence.Truthy(record.Get(cell, "readable")) {
+	if !pyvalue.Truthy(record.Get(cell, "readable")) {
 		return nil
 	}
 	answer := record.Get(cell, "answer")
@@ -122,22 +122,22 @@ type Presence = Object
 func InflightCell(envelope, presence Object) Object {
 	command := record.Get(envelope, "command")
 	if presence != nil {
-		if !evidence.Truthy(record.Get(presence, "readable")) {
+		if !pyvalue.Truthy(record.Get(presence, "readable")) {
 			return Cell(reading.AccessError, false, "whether a store exists at the resolved selection could not be established: "+scope.PyStr(record.Get(presence, "detail")), record.Get(presence, "command"), nil)
 		}
 		if record.Get(presence, "present") == false {
 			payload, _ := record.Get(envelope, "payload").(Object)
 			contents, _ := record.Get(payload, "contents").(Object)
-			if evidence.Truthy(record.Get(contents, "available")) {
+			if pyvalue.Truthy(record.Get(contents, "available")) {
 				return Cell(reading.Unreadable, false, "no store exists at "+scope.PyStr(record.Get(presence, "dbPath"))+" and the relay reports readable contents for it", command, nil)
 			}
 			return Cell(NoAttempts, true, "no store exists at "+scope.PyStr(record.Get(presence, "dbPath"))+", so no attempt can be open. That is established absence rather than a count nobody could read", record.Get(presence, "command"), NoAttempts)
 		}
 	}
-	if envelope == nil || !evidence.Truthy(record.Get(envelope, "ok")) {
+	if envelope == nil || !pyvalue.Truthy(record.Get(envelope, "ok")) {
 		detail := any(nil)
 		for _, key := range []string{"unreadable", "stderr"} {
-			if v := record.Get(envelope, key); evidence.Truthy(v) {
+			if v := record.Get(envelope, key); pyvalue.Truthy(v) {
 				detail = v
 				break
 			}
@@ -152,16 +152,16 @@ func InflightCell(envelope, presence Object) Object {
 		return Cell(reading.Unreadable, false, "the relay answered with no readable payload", command, nil)
 	}
 	contents, ok := record.Get(payload, "contents").(Object)
-	if !ok || !evidence.Truthy(record.Get(contents, "available")) {
+	if !ok || !pyvalue.Truthy(record.Get(contents, "available")) {
 		detail := record.Get(contents, "detail")
-		if !evidence.Truthy(detail) {
+		if !pyvalue.Truthy(detail) {
 			detail = "no contents were reported"
 		}
 		return Cell(reading.Unreadable, false, "the store's contents could not be read: "+scope.PyStr(detail), command, nil)
 	}
 	open, ok := record.Get(contents, "openAttempts").(int64)
 	if !ok {
-		return Cell(reading.Unreadable, false, "the contents carry no integer openAttempts, found "+scope.TypeName(record.Get(contents, "openAttempts")), command, nil)
+		return Cell(reading.Unreadable, false, "the contents carry no integer openAttempts, found "+pyvalue.TypeName(record.Get(contents, "openAttempts")), command, nil)
 	}
 	detail := "no attempt is open"
 	if open != 0 {
@@ -190,10 +190,10 @@ func SchemaCell(storeAnswer, candidate Object) Object {
 	if storeAnswer == nil || candidate == nil {
 		return Cell(reading.Unreadable, false, "a schema reading did not return an answer", nil, nil)
 	}
-	if !evidence.Truthy(record.Get(candidate, "readable")) {
+	if !pyvalue.Truthy(record.Get(candidate, "readable")) {
 		return Cell(reading.Unreadable, false, "the candidate's declared schema could not be read: "+scope.PyStr(record.Get(candidate, "detail")), record.Get(candidate, "command"), nil)
 	}
-	if !evidence.Truthy(record.Get(storeAnswer, "readable")) {
+	if !pyvalue.Truthy(record.Get(storeAnswer, "readable")) {
 		return Cell(reading.Unreadable, false, "the store's schema could not be read: "+scope.PyStr(record.Get(storeAnswer, "detail")), record.Get(storeAnswer, "command"), nil)
 	}
 	declared := schemaOf(record.Get(candidate, "objects"))
@@ -363,7 +363,7 @@ func StorePresence(state, socket string) Object {
 // creates nothing in the state directory.
 func StoreSchema(ctx context.Context, state, socket string) Object {
 	presence := StorePresence(state, socket)
-	if !evidence.Truthy(record.Get(presence, "readable")) || record.Get(presence, "present") == false {
+	if !pyvalue.Truthy(record.Get(presence, "readable")) || record.Get(presence, "present") == false {
 		return append(presence, record.Object{{Key: "objects", Value: nil}}...)
 	}
 	database := record.Get(presence, "dbPath")

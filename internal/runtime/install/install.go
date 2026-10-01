@@ -24,7 +24,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/definition"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
@@ -321,7 +321,7 @@ func (r *run) installed(standing []contract.Field) (Object, int, string) {
 		for _, c := range definition.Components {
 			location, _ := record.Get(selected, c.Name).(string)
 			if location == "" || !record.Under(location, r.environment) {
-				elsewhere = append(elsewhere, c.Name+" selects "+evidence.Repr(record.Get(selected, c.Name)))
+				elsewhere = append(elsewhere, c.Name+" selects "+pyvalue.Repr(record.Get(selected, c.Name)))
 			}
 		}
 		return refuse("this runtime is installed and the owned pointer names it, but the host record selects only part of it ("+strings.Join(elsewhere, "; ")+"), so reporting it as installed would hide a split host",
@@ -393,7 +393,7 @@ func (r *run) reclaim(standing []contract.Field) (Object, int, bool) {
 	}
 	defer exclusive.Release()
 	if says, readable := claimSays(r.environment); !readable || says != staging.Staging {
-		return keep("the claim here changed while this run waited for the promotion lock (it now says "+evidence.Repr(says)+"), so it is not read as abandoned staging", "nothing was removed, built or written; rerun to decide on what is there now.")
+		return keep("the claim here changed while this run waited for the promotion lock (it now says "+pyvalue.Repr(says)+"), so it is not read as abandoned staging", "nothing was removed, built or written; rerun to decide on what is there now.")
 	}
 	if liveness, detail := staging.OwnerLiveness(r.environment); liveness != staging.Dead {
 		return keep("another run took this staging while this run waited: "+detail, "nothing was removed, built or written.")

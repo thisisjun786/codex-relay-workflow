@@ -12,7 +12,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -112,7 +112,7 @@ func (c *Channel) StageWithReading(ctx context.Context, o Obligation, reading ma
 			return err
 		}
 		if live != r {
-			return Refusal{"relation_owner_drift", "the hierarchy moved while this was being decided: it was read as " + store.PyRepr(r.Sender) + " reporting to " + store.PyRepr(r.Recipient) + " and changed under the write lock; nothing was staged"}
+			return Refusal{"relation_owner_drift", "the hierarchy moved while this was being decided: it was read as " + pyvalue.StrRepr(r.Sender) + " reporting to " + pyvalue.StrRepr(r.Recipient) + " and changed under the write lock; nothing was staged"}
 		}
 		if err = validateObligation(tx, c, o); err != nil {
 			return err
@@ -122,7 +122,7 @@ func (c *Channel) StageWithReading(ctx context.Context, o Obligation, reading ma
 				return err
 			}
 			if withdrawn := c.omissionWithdrawn(tx, o, reading, at); withdrawn != "" {
-				return Refusal{"not_claimable", "nothing is owed upward for omission " + store.PyRepr(o.ID) + ": " + withdrawn + ". Decided under the staging write lock; nothing was written"}
+				return Refusal{"not_claimable", "nothing is owed upward for omission " + pyvalue.StrRepr(o.ID) + ": " + withdrawn + ". Decided under the staging write lock; nothing was written"}
 			}
 		}
 		fresh, err := currentReport(tx, c.Store, eventID)
@@ -138,7 +138,7 @@ func (c *Channel) StageWithReading(ctx context.Context, o Obligation, reading ma
 			return err
 		}
 		if fresh != report || freshEncoded != encoded {
-			return Refusal{"superseded_revision", "the work report for event " + store.PyRepr(eventID) + " changed while this was being staged; nothing was written; stage it again from the report that stands"}
+			return Refusal{"superseded_revision", "the work report for event " + pyvalue.StrRepr(eventID) + " changed while this was being staged; nothing was written; stage it again from the report that stands"}
 		}
 		existing, err := c.Store.SupervisorMessage(tx, id)
 		if err == nil {
@@ -172,7 +172,7 @@ func (c *Channel) StageWithReading(ctx context.Context, o Obligation, reading ma
 					return err
 				}
 				if frozenObligation := ObservationObligation(frozen); frozenObligation == nil || observationReadingKey(*frozenObligation, frozen) != observationReadingKey(o, reading) {
-					return Refusal{"contradictory_observation", "this omission is already staged as " + store.PyRepr(id) + " from another reading of it, which disagrees with this one about what it is or where it can be read. The staged message keeps the reading it froze; nothing was written"}
+					return Refusal{"contradictory_observation", "this omission is already staged as " + pyvalue.StrRepr(id) + " from another reading of it, which disagrees with this one about what it is or where it can be read. The staged message keeps the reading it froze; nothing was written"}
 				}
 			}
 			var submission sql.NullInt64
@@ -182,14 +182,14 @@ func (c *Channel) StageWithReading(ctx context.Context, o Obligation, reading ma
 			restating := existing.EventID != nullString(eventID) || existing.SubmissionNo != submission
 			if existing.SenderTaskID != r.Sender || existing.RecipientTaskID != r.Recipient {
 				if existing.State != "queued" && existing.State != "deferred_busy" && existing.State != "withheld_pre_send" {
-					return Refusal{"relation_owner_drift", "message " + store.PyRepr(id) + " was staged from " + store.PyRepr(existing.SenderTaskID) + " to " + store.PyRepr(existing.RecipientTaskID) + " and has " + fmt.Sprint(existing.AttemptCount) + " attempt(s), state " + store.PyRepr(existing.State) + "; the linkage now says " + store.PyRepr(r.Sender) + " reports to " + store.PyRepr(r.Recipient) + ". A message an attempt may have sent is never re-addressed, because its attempts would then describe a recipient they were never sent to - it went to the supervisor who was live when its transport started - so " + store.PyRepr(r.Recipient) + " has not been told by this channel, and the obligation stands until the Linear record confirms it"}
+					return Refusal{"relation_owner_drift", "message " + pyvalue.StrRepr(id) + " was staged from " + pyvalue.StrRepr(existing.SenderTaskID) + " to " + pyvalue.StrRepr(existing.RecipientTaskID) + " and has " + fmt.Sprint(existing.AttemptCount) + " attempt(s), state " + pyvalue.StrRepr(existing.State) + "; the linkage now says " + pyvalue.StrRepr(r.Sender) + " reports to " + pyvalue.StrRepr(r.Recipient) + ". A message an attempt may have sent is never re-addressed, because its attempts would then describe a recipient they were never sent to - it went to the supervisor who was live when its transport started - so " + pyvalue.StrRepr(r.Recipient) + " has not been told by this channel, and the obligation stands until the Linear record confirms it"}
 				}
 				var unsafe int
 				if err = c.Store.Q(tx).QueryRowContext(tx, "SELECT COUNT(*) FROM supervisor_attempts WHERE message_id=? AND (send_attempted<>'no' OR retry_safe=0)", id).Scan(&unsafe); err != nil {
 					return err
 				}
 				if unsafe != 0 {
-					return Refusal{"relation_owner_drift", "message " + store.PyRepr(id) + " was already attempted and is never re-addressed"}
+					return Refusal{"relation_owner_drift", "message " + pyvalue.StrRepr(id) + " was already attempted and is never re-addressed"}
 				}
 				update, err := c.Store.Q(tx).ExecContext(tx, "UPDATE supervisor_messages SET sender_task_id=?,recipient_task_id=?,project_key=?,packet=?,event_id=?,submission_no=?,state='queued',next_eligible_at=NULL,hold_reason=NULL,updated_at=? WHERE message_id=? AND sender_task_id=? AND recipient_task_id=? AND state IN ('queued','deferred_busy','withheld_pre_send') AND NOT EXISTS (SELECT 1 FROM supervisor_attempts a WHERE a.message_id=supervisor_messages.message_id AND (a.send_attempted<>'no' OR a.retry_safe=0))", r.Sender, r.Recipient, r.ProjectKey, encoded, nullString(eventID), submission, at, id, existing.SenderTaskID, existing.RecipientTaskID)
 				if err != nil {
@@ -249,7 +249,7 @@ func (c *Channel) StageWithReading(ctx context.Context, o Obligation, reading ma
 			return err
 		}
 		if !reportable {
-			return Refusal{"not_claimable", "nothing is owed upward for obligation " + store.PyRepr(o.ID) + ": " + reason + ", decided under the staging write lock. The obligation is preserved either way; what is refused is producing a second report about a fact somebody has already reported or the supervisor can already read for itself"}
+			return Refusal{"not_claimable", "nothing is owed upward for obligation " + pyvalue.StrRepr(o.ID) + ": " + reason + ", decided under the staging write lock. The obligation is preserved either way; what is refused is producing a second report about a fact somebody has already reported or the supervisor can already read for itself"}
 		}
 		row := store.SupervisorMessagesRow{MessageID: id, ObligationID: o.ID, ObligationKind: o.Kind, RelationshipID: o.RelationID, ProjectKey: nullString(r.ProjectKey), Purpose: purpose(o.Kind), Kind: packetKind(o.Kind), SenderTaskID: r.Sender, RecipientTaskID: r.Recipient, Subject: o.Subject, Packet: encoded, State: "queued", StagedAt: at, UpdatedAt: at, EventID: nullString(eventID)}
 		if reading != nil {
@@ -285,7 +285,7 @@ func (c *Channel) StageWithReading(ctx context.Context, o Obligation, reading ma
 func (c *Channel) Get(ctx context.Context, id string) (store.SupervisorMessagesRow, error) {
 	row, err := c.Store.SupervisorMessage(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
-		return row, Refusal{"not_claimable", "no supervisor message is staged as " + store.PyRepr(id)}
+		return row, Refusal{"not_claimable", "no supervisor message is staged as " + pyvalue.StrRepr(id)}
 	}
 	return row, err
 }
@@ -295,14 +295,14 @@ func (c *Channel) StageStanding(ctx context.Context, projectKey, at string) (map
 
 func obligationFromStanding(one map[string]any) Obligation {
 	o := Obligation{
-		Schema:     evidence.Text(one["schema"]),
-		ID:         evidence.Text(one["obligationId"]),
-		Kind:       evidence.Text(one["kind"]),
-		RelationID: evidence.Text(one["relationId"]),
-		Subject:    evidence.Text(one["subject"]),
+		Schema:     pyvalue.Str(one["schema"]),
+		ID:         pyvalue.Str(one["obligationId"]),
+		Kind:       pyvalue.Str(one["kind"]),
+		RelationID: pyvalue.Str(one["relationId"]),
+		Subject:    pyvalue.Str(one["subject"]),
 		Generation: one["executionGeneration"],
 		Basis:      one["basis"].(map[string]any),
-		Detail:     evidence.Text(one["detail"]),
+		Detail:     pyvalue.Str(one["detail"]),
 	}
 	if revision, ok := one["revisionHash"].(string); ok {
 		o.Revision = &revision

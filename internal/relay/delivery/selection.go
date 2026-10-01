@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -101,7 +102,7 @@ func wrongSocketRecovery(selection store.StateSelection, recorded, wanted string
 		resolved, err = store.Realpath(expanded)
 	}
 	if err != nil {
-		return append(lines, "  "+stateEnv+" is set to "+store.PyRepr(pinned)+", which names a home directory that does not resolve on this host, so it is not offered as a candidate")
+		return append(lines, "  "+stateEnv+" is set to "+pyvalue.StrRepr(pinned)+", which names a home directory that does not resolve on this host, so it is not offered as a candidate")
 	}
 	selected, err := store.Realpath(selection.Path)
 	if err != nil || resolved != selected {

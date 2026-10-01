@@ -218,28 +218,6 @@ func isOne(value any) bool {
 	return false
 }
 
-// truthy is Python's bool() of a decoded JSON value: control.py reads noRecord so.
-func truthy(value any) bool {
-	switch v := value.(type) {
-	case nil:
-		return false
-	case bool:
-		return v
-	case int64:
-		return v != 0
-	case float64:
-		return v != 0 // NaN is true, as bool(float("nan")) is
-	case string:
-		return v != ""
-	case []any:
-		return len(v) > 0
-	}
-	if o, ok := evidence.Object(value); ok {
-		return len(o) > 0
-	}
-	return true // an integer past int64, never zero
-}
-
 // answerHost answers a request with the relay's host record, as control.py answers a request
 // it could not serve: the requester journals guard_host_error, never a refusal or silence.
 func answerHost(conn net.Conn, detail string) error {

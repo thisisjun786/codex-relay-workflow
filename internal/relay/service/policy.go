@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -60,7 +61,7 @@ func launchRecord(path string) Object {
 	// Valid JSON that is not an object declares no file; it is not corrupt JSON.
 	record, _ := data.(Object)
 	declared, ok := get(record, "path").(string)
-	if !ok || store.PythonStrip(declared) == "" {
+	if !ok || pyvalue.Strip(declared) == "" {
 		return absent("the launch declaration names no execution policy file")
 	}
 	return obj("path", declared, "declaredAt", get(record, "declaredAt"), "declaredBy", get(record, "declaredBy"), "unreadable", nil)
@@ -87,7 +88,7 @@ func (s *Service) ResolveLaunchPolicy() Object {
 // status, declare, start, restart and run, doctor and the store-backed packet-check all
 // resolve through it.
 func ResolveLaunchPolicyAt(state, environment string) Object {
-	stated := store.PythonStrip(environment)
+	stated := pyvalue.Strip(environment)
 	record := launchRecord(stateFile(state, "launch-policy.json"))
 	declared := text(get(record, "path"))
 	answer := obj("variable", execution.EnvPolicy, "path", nil, "source", nil, "record", nullable(declared), "environment", nullable(stated), "declaredAt", get(record, "declaredAt"), "declaredBy", get(record, "declaredBy"), "state", nil, "digest", nil, "persisted", nil, "detail", nil, "hint", nil)
@@ -95,7 +96,7 @@ func ResolveLaunchPolicyAt(state, environment string) Object {
 		return set(answer, "source", "unreadable_record", "detail", get(record, "unreadable"), "hint", "declare the file again with service declare --execution-policy, or drop the record with service declare --forget-execution-policy. A launch does not fall back to this process's environment to cover an unreadable record")
 	}
 	if declared != "" && stated != "" && canonicalPolicyPath(declared) != canonicalPolicyPath(stated) {
-		return set(answer, "source", "conflict", "detail", "this service declares "+store.PythonRepr(declared)+" and "+execution.EnvPolicy+" in this process names "+store.PythonRepr(stated), "hint", "two files are not a preference: unset the variable to launch on the declaration, or declare that other file")
+		return set(answer, "source", "conflict", "detail", "this service declares "+pyvalue.StrRepr(declared)+" and "+execution.EnvPolicy+" in this process names "+pyvalue.StrRepr(stated), "hint", "two files are not a preference: unset the variable to launch on the declaration, or declare that other file")
 	}
 	path := declared
 	if declared != "" {

@@ -7,7 +7,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/faults"
 )
 
@@ -108,7 +108,7 @@ func completionDetail(reading, entry Object) string {
 	if claimed == "" {
 		claimed = "none"
 	}
-	return strings.Join([]string{fmt.Sprintf("completion check %s of %s: %s", check, reading["subject"], entry["verdict"]), "reason: " + text(entry["reason"]), "claims: " + claimed, fmt.Sprintf("required: %s  observed: %s  origin: %s", evidence.Text(object(reading["requires"])[check]), object(reading["observed"])[check], reading["origin"]), fmt.Sprintf("next action: re-verify %s for %s and record the fix and the verification, or an approved exception", check, reading["subject"]), "This asks the owner to re-verify. It changes no state of the subject: a Done stays Done until somebody who owns it decides otherwise."}, "\n")
+	return strings.Join([]string{fmt.Sprintf("completion check %s of %s: %s", check, reading["subject"], entry["verdict"]), "reason: " + text(entry["reason"]), "claims: " + claimed, fmt.Sprintf("required: %s  observed: %s  origin: %s", pyvalue.Str(object(reading["requires"])[check]), object(reading["observed"])[check], reading["origin"]), fmt.Sprintf("next action: re-verify %s for %s and record the fix and the verification, or an approved exception", check, reading["subject"]), "This asks the owner to re-verify. It changes no state of the subject: a Done stays Done until somebody who owns it decides otherwise."}, "\n")
 }
 func completionEvidence(reading Object, check, key string) []any {
 	entries := []any{Object{"kind": "completion-reading", "ref": key, "observed": Object{"check": check, "result": object(reading["observed"])[check], "required": object(reading["requires"])[check]}}}
@@ -139,7 +139,7 @@ func (r *Router) recordReading(ctx context.Context, reading Object) (Object, err
 		return nil, err
 	}
 	if registry == nil {
-		return nil, routeRefused("route_product_unknown", fmt.Sprintf("%s is not a registered product", evidence.Repr(product)))
+		return nil, routeRefused("route_product_unknown", fmt.Sprintf("%s is not a registered product", pyvalue.Repr(product)))
 	}
 	simulated := reading["origin"] == "simulated"
 	if simulated && registry["testTarget"] == nil {

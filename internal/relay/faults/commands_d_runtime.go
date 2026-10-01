@@ -9,6 +9,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 )
 
@@ -267,7 +268,7 @@ func dRaise(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
 		if r == nil {
 			return fmt.Errorf("fault_unknown: no fault '%s'", id)
 		}
-		notice = sha256Hex(id + "|decision|raised:" + reason)[:idWidth]
+		notice = pyvalue.SHA256Hex(id + "|decision|raised:" + reason)[:idWidth]
 		_, e = l.exec(ctx, "INSERT INTO fault_notifications(notification_id,fault_id,product,kind,reason,cycle,ref,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(notification_id) DO UPDATE SET state=excluded.state,last_error=NULL,updated_at=excluded.updated_at WHERE fault_notifications.state='withdrawn'", notice, id, text(r, "product"), "decision", "raised:"+reason, integer(r, "cycle"), nilIfEmpty(a["--ref"]), "pending", l.Clock.ISO(), l.Clock.ISO())
 		return e
 	})

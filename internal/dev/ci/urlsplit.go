@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"golang.org/x/text/unicode/norm"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 var ipvFuture = regexp.MustCompile(`^v[a-fA-F0-9]+\..+$`)
@@ -109,7 +111,7 @@ func checkBracketedNetloc(netloc string) error {
 	}
 	addr, err := netip.ParseAddr(hostname)
 	if err != nil {
-		return valueError{pyRepr(hostname) + " does not appear to be an IPv4 or IPv6 address"}
+		return valueError{pyvalue.StrRepr(hostname) + " does not appear to be an IPv4 or IPv6 address"}
 	}
 	if addr.Is4() {
 		return valueError{"An IPv4 address cannot be in brackets"}

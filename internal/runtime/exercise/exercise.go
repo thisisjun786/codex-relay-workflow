@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
@@ -52,7 +52,7 @@ func Relay(ctx context.Context, executable, socket, state string, env scope.Env)
 		{Key: "component", Value: "codex-session-relay"},
 		{Key: "command", Value: record.Get(doctor, "command")},
 		{Key: "exercised", Value: connect == "ok"},
-		{Key: "detail", Value: "actorReachability.socketConnect = " + evidence.Repr(connect) + "; a real connect is what makes this an exercise rather than a file read"},
+		{Key: "detail", Value: "actorReachability.socketConnect = " + pyvalue.Repr(connect) + "; a real connect is what makes this an exercise rather than a file read"},
 	}
 }
 
@@ -319,7 +319,7 @@ func (s *session) run() ([]string, any, error) {
 	if err != nil {
 		return tools, nil, err
 	}
-	if evidence.Truthy(record.Get(called, "isError")) {
+	if pyvalue.Truthy(record.Get(called, "isError")) {
 		return tools, nil, errors.New("get_capabilities answered with an error: " + pyjson.Dumps(record.Get(called, "content"), pyjson.Options{}))
 	}
 	connection := record.Get(called, "structuredContent")

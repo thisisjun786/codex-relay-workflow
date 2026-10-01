@@ -5,13 +5,13 @@ import (
 	"database/sql"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 func (c *Channel) resolveNoticeProject(ctx context.Context, key string) (Resolution, error) {
-	where := "project " + store.PyRepr(key)
+	where := "project " + pyvalue.StrRepr(key)
 	owners, err := c.Store.ScopeOwners(ctx, "project", key)
 	if err != nil {
 		return Resolution{}, Refusal{"relation_unreadable", "the linkage could not be read for " + where + " (OperationalError), so who the level above is is unknown; nothing is staged"}
@@ -22,7 +22,7 @@ func (c *Channel) resolveNoticeProject(ctx context.Context, key string) (Resolut
 	if len(owners) > 1 {
 		names := []string{}
 		for _, o := range owners {
-			names = append(names, store.PyRepr(o.TaskID))
+			names = append(names, pyvalue.StrRepr(o.TaskID))
 		}
 		return Resolution{}, Refusal{"duplicate_scope_owner", where + " has more than one live owner (" + strings.Join(names, ", ") + "); this sender will not choose between them"}
 	}

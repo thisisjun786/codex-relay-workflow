@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -60,7 +61,7 @@ func (rc *Reconciler) CheckDispatchedTurn(ctx context.Context, requestID string,
 		return nil, err
 	}
 	if attempt == nil {
-		return nil, fmt.Errorf("KeyError: %s", store.PyRepr(requestID))
+		return nil, fmt.Errorf("KeyError: %s", pyvalue.StrRepr(requestID))
 	}
 	delivery, err := rc.Delivery.Get(ctx, attempt.S("event_id"))
 	if err != nil {
@@ -135,7 +136,7 @@ func (rc *Reconciler) ConfirmDelivery(ctx context.Context, eventID string, adapt
 	if err != nil {
 		return append(out, F{Key: "turnRead", Value: "unreadable: " + errorLabel(err)}), nil
 	}
-	detail := fmt.Sprintf("found=%s in turn %s, the acknowledging turn (%d of its items read)", pyStr(scan.Found), turnID, scan.Scanned)
+	detail := fmt.Sprintf("found=%s in turn %s, the acknowledging turn (%d of its items read)", pyvalue.Str(scan.Found), turnID, scan.Scanned)
 	out = append(out, F{Key: "turnRead", Value: detail})
 	if !scan.Found {
 		return out, nil

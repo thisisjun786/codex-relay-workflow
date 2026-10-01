@@ -4,6 +4,7 @@ import (
 	"slices"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 )
 
@@ -15,11 +16,11 @@ func checkMode(mode any) error {
 	if slices.Contains(modes, str(mode)) {
 		return nil
 	}
-	return malformed("%s is not an execution mode; it is one of coordination, loop, non_loop", evidence.Repr(mode))
+	return malformed("%s is not an execution mode; it is one of coordination, loop, non_loop", pyvalue.Repr(mode))
 }
 func ActivationFact(state, source any, detail string) (Obj, error) {
 	if !slices.Contains(activationStates, str(state)) {
-		return nil, malformed("%s is not an activation state; it is one of absent, not_applicable, observed, refused, unverified", evidence.Repr(state))
+		return nil, malformed("%s is not an activation state; it is one of absent, not_applicable, observed, refused, unverified", pyvalue.Repr(state))
 	}
 	if slices.Contains([]any{"observed", "absent", "refused"}, state) && !truth(source) {
 		return nil, malformed("an %s activation fact names the record that says so; without one it is unverified", state)
@@ -77,7 +78,7 @@ func Unobserved() Obj {
 }
 func CheckProgression(ladder any) error {
 	if _, ok := evidence.Object(ladder); !ok {
-		return malformed("a handover ladder is an object of named states, not a %s", evidence.TypeName(ladder))
+		return malformed("a handover ladder is an object of named states, not a %s", pyvalue.TypeName(ladder))
 	}
 	for i, n := range Progression {
 		if !Has(ladder, n) {
@@ -85,19 +86,19 @@ func CheckProgression(ladder any) error {
 		}
 		entry := Get(ladder, n)
 		if _, ok := evidence.Object(entry); !ok {
-			return malformed("each handover state is an object with a state and the record that answered it; %s is a %s", n, evidence.TypeName(entry))
+			return malformed("each handover state is an object with a state and the record that answered it; %s is a %s", n, pyvalue.TypeName(entry))
 		}
 		state := Get(entry, "state")
 		if !slices.Contains(states, str(state)) {
-			return malformed("%s is not a state; it is one of conditional, no, not_applicable, unmeasured, yes", evidence.Repr(state))
+			return malformed("%s is not a state; it is one of conditional, no, not_applicable, unmeasured, yes", pyvalue.Repr(state))
 		}
 		source := progressionSources[i]
 		if source == "" {
 			if state != "not_applicable" {
-				return malformed("nothing answers %s, so it cannot say %s: %s", n, evidence.Repr(state), noReading)
+				return malformed("nothing answers %s, so it cannot say %s: %s", n, pyvalue.Repr(state), noReading)
 			}
 		} else if slices.Contains([]any{"yes", "no", "conditional"}, state) && Get(entry, "source") != source {
-			return malformed("%s is answered by %s, not by %s", n, source, evidence.Repr(Get(entry, "source")))
+			return malformed("%s is answered by %s, not by %s", n, source, pyvalue.Repr(Get(entry, "source")))
 		}
 	}
 	return nil

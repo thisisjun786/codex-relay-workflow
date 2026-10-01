@@ -19,6 +19,8 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // Constants and patterns of scripts/ci/plugin.py; see that script for why each exists.
@@ -109,7 +111,7 @@ func (c *pluginChecker) git(args ...string) ([]byte, error) {
 	if err := cmd.Run(); err != nil {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) {
-			return nil, packageError{pyStrip(decodeReplace(stderr.Bytes()))}
+			return nil, packageError{pyvalue.Strip(decodeReplace(stderr.Bytes()))}
 		}
 		return nil, err
 	}
@@ -236,7 +238,7 @@ func regularBytes(path string) ([]byte, error) {
 		return nil, errors.New(pyOSError(err))
 	}
 	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("OSError: [Errno %d] not a regular file: %s", int(syscall.EINVAL), pyRepr(path))
+		return nil, fmt.Errorf("OSError: [Errno %d] not a regular file: %s", int(syscall.EINVAL), pyvalue.StrRepr(path))
 	}
 	data, err := io.ReadAll(file)
 	if err != nil {
@@ -272,7 +274,7 @@ func versionPayload(p payload, version string) (payload, error) {
 	recorded, plain := []byte(pyJSONString(version)), []byte(pyJSONString(release))
 	if count := bytes.Count(manifest.data, recorded); count != 1 {
 		return nil, valueError{fmt.Sprintf("%s spells %s %d times; the suffix has to be elided exactly once for the digest beneath it to be derived at all",
-			manifestPath, pyRepr(version), count)}
+			manifestPath, pyvalue.StrRepr(version), count)}
 	}
 	out := maps(p)
 	out[manifestPath] = entry{manifest.mode, bytes.ReplaceAll(manifest.data, recorded, plain)}
@@ -336,8 +338,8 @@ func versionErrors(m *pyDict, p payload, label string) []string {
 	if version == expected {
 		return nil
 	}
-	return []string{label + " manifest: version " + pyRepr(version) + " does not name this payload." +
-		" Record " + pyRepr(expected) + "; `--record-version` writes it into the working" +
+	return []string{label + " manifest: version " + pyvalue.StrRepr(version) + " does not name this payload." +
+		" Record " + pyvalue.StrRepr(expected) + "; `--record-version` writes it into the working" +
 		" tree manifest. The suffix is this payload's own digest, because two packages" +
 		" that ship different bytes may not offer one version"}
 }
@@ -483,7 +485,7 @@ func declaredComponents(m *pyDict) ([]component, []string, []string) {
 // nonempty is a string that is not blank; ingestion treats whitespace-only as absent.
 func nonempty(value any) bool {
 	text, ok := value.(string)
-	return ok && pyStrip(text) != ""
+	return ok && pyvalue.Strip(text) != ""
 }
 
 func loadDocument(name string, data []byte, label string) (any, []string) {
@@ -591,12 +593,12 @@ func mcpDocumentErrors(name string, data []byte, p payload, label string) []stri
 		for _, word := range words {
 			switch {
 			case strings.ContainsAny(word, "$%"):
-				errs = append(errs, where+pyRepr(word)+" carries a variable; a plugin MCP server"+
+				errs = append(errs, where+pyvalue.StrRepr(word)+" carries a variable; a plugin MCP server"+
 					" runs without a shell and inherits no plugin root, so it would arrive as literal text")
 			case strings.HasPrefix(word, "/"):
-				errs = append(errs, where+pyRepr(word)+" is an absolute path; the package ships to hosts it has not seen")
+				errs = append(errs, where+pyvalue.StrRepr(word)+" is an absolute path; the package ships to hosts it has not seen")
 			case strings.HasPrefix(word, "./") && !p.has(word[2:]):
-				errs = append(errs, where+pyRepr(word)+" names a file the package does not ship")
+				errs = append(errs, where+pyvalue.StrRepr(word)+" names a file the package does not ship")
 			}
 		}
 		errs = append(errs, toolApprovalErrors(server, declared, where)...)
@@ -611,7 +613,7 @@ func toolApprovalErrors(server string, declared *pyDict, where string) []string 
 		if len(required) > 0 {
 			var gates []string
 			for _, gate := range required {
-				gates = append(gates, gate[0]+" with "+pyRepr(gate[1]))
+				gates = append(gates, gate[0]+" with "+pyvalue.StrRepr(gate[1]))
 			}
 			errs = append(errs, where+"declares no tools, and this server must gate "+strings.Join(gates, ", ")+
 				". The user configuration this package replaces carries that gate, and"+
@@ -637,7 +639,7 @@ func toolApprovalErrors(server string, declared *pyDict, where string) []string 
 		var unknown []string
 		for _, key := range gate.sortedKeys() {
 			if !slices.Contains(approvalKeys, key) {
-				unknown = append(unknown, pyRepr(key))
+				unknown = append(unknown, pyvalue.StrRepr(key))
 			}
 		}
 		if len(unknown) > 0 {
@@ -656,7 +658,7 @@ func toolApprovalErrors(server string, declared *pyDict, where string) []string 
 			carried = g.get("approval_mode")
 		}
 		if !pyEqual(carried, gate[1]) {
-			errs = append(errs, where+"must gate "+gate[0]+" with "+pyRepr(gate[1])+", and it declares "+pyReprValue(carried))
+			errs = append(errs, where+"must gate "+gate[0]+" with "+pyvalue.StrRepr(gate[1])+", and it declares "+pyReprValue(carried))
 		}
 	}
 	return errs
@@ -664,7 +666,7 @@ func toolApprovalErrors(server string, declared *pyDict, where string) []string 
 
 // yamlScalar is plugin.py's yaml_scalar: one quoted or bare scalar.
 func yamlScalar(text string) (any, error) {
-	text = pyStrip(text)
+	text = pyvalue.Strip(text)
 	if strings.HasPrefix(text, `"`) {
 		return pyJSONLoadsOrdered(text)
 	}
@@ -679,7 +681,7 @@ func interfaceErrors(skillPath string, p payload, label string) []string {
 	where := label + " " + skillPath + "/agents/openai.yaml: "
 	file, ok := p[skillPath+"/agents/openai.yaml"]
 	if !ok {
-		return []string{where + pyRepr(skillPath+"/agents/openai.yaml")}
+		return []string{where + pyvalue.StrRepr(skillPath+"/agents/openai.yaml")}
 	}
 	text, err := decodeUTF8(file.data)
 	if err != nil {
@@ -692,9 +694,9 @@ func interfaceErrors(skillPath string, p payload, label string) []string {
 			continue
 		}
 		if !strings.HasPrefix(line, " ") {
-			section = pyStrip(line)
+			section = pyvalue.Strip(line)
 		} else if section == "interface:" {
-			key, value, found := strings.Cut(pyStrip(line), ":")
+			key, value, found := strings.Cut(pyvalue.Strip(line), ":")
 			if _, seen := values[key]; !found || seen {
 				return []string{where + "malformed interface metadata"}
 			}
@@ -756,7 +758,7 @@ func interfaceOptionErrors(iface *pyDict, p payload, label string) []string {
 		if !ok || !strings.HasPrefix(text, "./") {
 			errs = append(errs, label+" manifest: interface."+a.field+" must be a ./ relative path")
 		} else if p != nil && !p.has(text[2:]) {
-			errs = append(errs, label+" manifest: interface."+a.field+" names "+pyRepr(text)+", which the package does not ship")
+			errs = append(errs, label+" manifest: interface."+a.field+" names "+pyvalue.StrRepr(text)+", which the package does not ship")
 		}
 	}
 	return errs
@@ -778,7 +780,7 @@ func manifestErrors(m *pyDict, rootName, label string, p payload) []string {
 		add("keywords must be nonempty strings")
 	}
 	if m.get("license") != licenseID {
-		add("license " + pyReprValue(m.get("license")) + " must be " + pyRepr(licenseID) + ", the license this repository ships")
+		add("license " + pyReprValue(m.get("license")) + " must be " + pyvalue.StrRepr(licenseID) + ", the license this repository ships")
 	}
 	author, isDict := asDict(m.get("author"))
 	if !isDict || !nonempty(author.get("name")) {
@@ -795,10 +797,10 @@ func manifestErrors(m *pyDict, rootName, label string, p payload) []string {
 		}
 	}
 	for _, key := range without(m.sortedKeys(), manifestKeys) {
-		add(pyRepr(key) + " is not a supported manifest key")
+		add(pyvalue.StrRepr(key) + " is not a supported manifest key")
 	}
 	if rootName != "" && m.get("name") != rootName {
-		add("name " + pyReprValue(m.get("name")) + " must match the plugin directory " + pyRepr(rootName))
+		add("name " + pyReprValue(m.get("name")) + " must match the plugin directory " + pyvalue.StrRepr(rootName))
 	}
 	if !semverPattern.MatchString(manifestVersion(m)) {
 		add("version " + pyReprValue(m.get("version")) + " is not a semantic version")
@@ -854,7 +856,7 @@ func manifestErrors(m *pyDict, rootName, label string, p payload) []string {
 		for _, c := range declared {
 			file, ok := p[c.relative]
 			if !ok {
-				add(c.field + " names " + pyRepr("./"+c.relative) + ", which the package does not ship")
+				add(c.field + " names " + pyvalue.StrRepr("./"+c.relative) + ", which the package does not ship")
 				continue
 			}
 			if c.field == "hooks" {
@@ -933,7 +935,7 @@ func marketplaceErrors(catalog, m *pyDict) ([]string, error) {
 		errs = append(errs, "marketplace: entry source.source must be local")
 	}
 	if path := source.get("path"); path != "./"+pluginRelative {
-		errs = append(errs, "marketplace: entry source.path "+pyReprValue(path)+" must be "+pyRepr("./"+pluginRelative))
+		errs = append(errs, "marketplace: entry source.path "+pyReprValue(path)+" must be "+pyvalue.StrRepr("./"+pluginRelative))
 	}
 	policy, ok := asDict(e.get("policy"))
 	if !ok {
@@ -1005,7 +1007,7 @@ func hygiene(p payload, m *pyDict, label string) []string {
 			continue
 		}
 		if found := personalPath(text); found != "" {
-			errs = append(errs, label+" "+name+": contains the personal path "+pyRepr(found)+
+			errs = append(errs, label+" "+name+": contains the personal path "+pyvalue.StrRepr(found)+
 				"; the package must not require one account checkout")
 		}
 	}
@@ -1168,7 +1170,7 @@ func (c *pluginChecker) recordVersion(stdout, stderr io.Writer) int {
 	}
 	version := manifestVersion(m)
 	if !semverPattern.MatchString(version) {
-		errs = append(errs, "working tree manifest: version "+pyRepr(version)+
+		errs = append(errs, "working tree manifest: version "+pyvalue.StrRepr(version)+
 			" is not a semantic version, so no payload suffix can be recorded under it")
 	}
 	if len(errs) > 0 {
@@ -1185,7 +1187,7 @@ func (c *pluginChecker) recordVersion(stdout, stderr io.Writer) int {
 	}
 	recorded := pyJSONString(version)
 	if count := strings.Count(document, recorded); count != 1 {
-		return failf(stderr, "%s spells %s %d times; exactly one of them is the version to rewrite", manifestPath, pyRepr(version), count)
+		return failf(stderr, "%s spells %s %d times; exactly one of them is the version to rewrite", manifestPath, pyvalue.StrRepr(version), count)
 	}
 	if version != expected {
 		info, err := os.Stat(path)
@@ -1208,7 +1210,7 @@ func (c *pluginChecker) checkRevision(revision string) ([]string, report, error)
 	if err != nil {
 		return nil, nil, err
 	}
-	resolved := pyStrip(out)
+	resolved := pyvalue.Strip(out)
 	release, errs, err := c.revisionPayload(resolved)
 	if err != nil {
 		return nil, nil, err
@@ -1275,7 +1277,7 @@ func (c *pluginChecker) checkRevision(revision string) ([]string, report, error)
 	}
 	for _, line := range pySplitlines(status) {
 		if strings.HasPrefix(line, "??") || strings.HasPrefix(line, "!!") {
-			errs = append(errs, "working tree "+pyStrip(line[min(3, len(line)):])+": untracked or ignored files "+
+			errs = append(errs, "working tree "+pyvalue.Strip(line[min(3, len(line)):])+": untracked or ignored files "+
 				"inside the plugin root are copied into the cache; commit or remove it")
 		}
 	}

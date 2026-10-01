@@ -7,6 +7,7 @@ import (
 	"math/big"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -136,7 +137,7 @@ func boolInt(value any) (any, error) {
 		}
 		n, ok := new(big.Int).SetString(string(v), 10)
 		if !ok {
-			return nil, &hostError{"ValueError", "invalid literal for int() with base 10: " + store.PyRepr(string(v))}
+			return nil, &hostError{"ValueError", "invalid literal for int() with base 10: " + pyvalue.StrRepr(string(v))}
 		}
 		if !n.IsInt64() {
 			return nil, &hostError{"OverflowError", "Python int too large to convert to SQLite INTEGER"}

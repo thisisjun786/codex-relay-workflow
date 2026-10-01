@@ -10,6 +10,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // VerifyFrozenDetailed is manifest.verify_frozen_detailed: the revision the frozen copy's own
@@ -81,7 +82,7 @@ func VerifyFrozenDocument(ctx context.Context, reference string, raw []byte, ent
 		for _, entry := range frozen {
 			for _, field := range []any{entry.Path, entry.SHA256} {
 				if !pythonHashable(field) {
-					return "", nil, nil, &ManifestException{Class: "TypeError", text: "unhashable type: '" + pythonTypeName(field) + "'"}
+					return "", nil, nil, &ManifestException{Class: "TypeError", text: "unhashable type: '" + pyvalue.TypeName(field) + "'"}
 				}
 			}
 		}
@@ -116,8 +117,8 @@ func VerifyFrozenDocument(ctx context.Context, reference string, raw []byte, ent
 		}
 		for _, entry := range entries {
 			path, _ := entry.Path.(string)
-			if size := sizes[path]; entry.Bytes != nil && size != nil && !PythonEqual(size, entry.Bytes) {
-				problems = append(problems, fmt.Sprintf("%s: caller claims %s bytes but the frozen copy records %s", path, PythonStr(entry.Bytes), PythonStr(size)))
+			if size := sizes[path]; entry.Bytes != nil && size != nil && !pyvalue.Equal(size, entry.Bytes) {
+				problems = append(problems, fmt.Sprintf("%s: caller claims %s bytes but the frozen copy records %s", path, pyvalue.Str(entry.Bytes), pyvalue.Str(size)))
 			}
 		}
 	}
@@ -125,20 +126,20 @@ func VerifyFrozenDocument(ctx context.Context, reference string, raw []byte, ent
 		// DIGEST_RE.match(entry.sha256 or ""): a false value is matched as "", a true one that is
 		// not a str is refused by re itself.
 		var candidate any = ""
-		if pythonTruthy(entry.SHA256) {
+		if pyvalue.Truthy(entry.SHA256) {
 			candidate = entry.SHA256
 		}
 		digest, ok := candidate.(string)
 		if !ok {
-			return "", nil, nil, &ManifestException{Class: "TypeError", text: "expected string or bytes-like object, got '" + pythonTypeName(candidate) + "'"}
+			return "", nil, nil, &ManifestException{Class: "TypeError", text: "expected string or bytes-like object, got '" + pyvalue.TypeName(candidate) + "'"}
 		}
 		if !lowerDigest.MatchString(digest) {
-			problems = append(problems, PythonStr(entry.Path)+": "+pythonReprValue(entry.SHA256)+" is not a digest")
+			problems = append(problems, pyvalue.Str(entry.Path)+": "+pyvalue.Repr(entry.SHA256)+" is not a digest")
 			continue
 		}
 		hashed, size, err := ReadFrozenBlob(ctx, reference, digest)
 		if err != nil {
-			message := PythonStr(entry.Path) + ": frozen bytes unreadable for " + digest + ": " + err.Error()
+			message := pyvalue.Str(entry.Path) + ": frozen bytes unreadable for " + digest + ": " + err.Error()
 			problems = append(problems, message)
 			// A deleted blob is the pinned walk's answer about a broken snapshot (a ScopeError),
 			// not a failure to look; anything else is.
@@ -149,9 +150,9 @@ func VerifyFrozenDocument(ctx context.Context, reference string, raw []byte, ent
 			continue
 		}
 		if hashed != digest {
-			problems = append(problems, PythonStr(entry.Path)+": frozen bytes do not match "+digest)
-		} else if entry.Bytes != nil && !PythonEqual(entry.Bytes, size) {
-			problems = append(problems, fmt.Sprintf("%s: frozen bytes are %d, not the claimed %s", PythonStr(entry.Path), size, PythonStr(entry.Bytes)))
+			problems = append(problems, pyvalue.Str(entry.Path)+": frozen bytes do not match "+digest)
+		} else if entry.Bytes != nil && !pyvalue.Equal(entry.Bytes, size) {
+			problems = append(problems, fmt.Sprintf("%s: frozen bytes are %d, not the claimed %s", pyvalue.Str(entry.Path), size, pyvalue.Str(entry.Bytes)))
 		}
 	}
 	revision, err := PythonRevisionHash(frozen)
@@ -215,7 +216,7 @@ func frozenRecords(raw []byte) ([]PythonEntry, error) {
 			records = []any{""}
 		}
 	default:
-		return nil, &ManifestException{Class: "TypeError", text: "'" + pythonTypeName(entries) + "' object is not iterable"}
+		return nil, &ManifestException{Class: "TypeError", text: "'" + pyvalue.TypeName(entries) + "' object is not iterable"}
 	}
 	return PythonManifestEntries(records)
 }

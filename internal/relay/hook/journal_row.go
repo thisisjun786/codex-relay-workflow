@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 )
 
@@ -84,7 +85,7 @@ func NativePrescanUnreachable(row Object) bool {
 	}
 	spelled := strings.TrimPrefix(detail, prefix)
 	socket, ok := pythonQuotedPath(spelled)
-	return ok && journalAbsolutePath(socket) && filepath.Base(socket) == "control.sock" && evidence.StrRepr(socket) == spelled
+	return ok && journalAbsolutePath(socket) && filepath.Base(socket) == "control.sock" && pyvalue.StrRepr(socket) == spelled
 }
 
 // Count is completion._is_count: an integer of any size, never a bool, that is non-negative

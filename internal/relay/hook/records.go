@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // The records the adapter leaves behind, stated once beside the writers for the readers of a
@@ -139,7 +140,7 @@ func RecordBytes(document any) []byte {
 // surrogate decodes the way Python's surrogateescape encodes it: U+DC80..U+DCFF stand for one
 // byte each and any other one cannot be encoded.
 func PathTheSystemTakes(path string) bool {
-	raw, ok := fsencode(path)
+	raw, ok := pyvalue.FSEncode(path)
 	if !ok || strings.IndexByte(raw, 0) >= 0 || len(raw) >= 4096 {
 		return false
 	}
@@ -149,27 +150,4 @@ func PathTheSystemTakes(path string) bool {
 		}
 	}
 	return true
-}
-
-// fsencode is os.fsencode of a str as a Go string holds one: each lone surrogate U+DC80..U+DCFF,
-// kept as WTF-8, back to the byte it escapes. ok is false for any other lone surrogate, which
-// Python cannot encode (UnicodeEncodeError). It is internal/runtime/reading.FSEncode, which this
-// package cannot import: reading imports hook.
-func fsencode(path string) (string, bool) {
-	var encoded strings.Builder
-	for i := 0; i < len(path); {
-		c := path[i]
-		if i+3 <= len(path) && c == 0xed && path[i+1] >= 0xa0 && path[i+1] <= 0xbf && path[i+2] >= 0x80 && path[i+2] <= 0xbf {
-			r := rune(c&0x0f)<<12 | rune(path[i+1]&0x3f)<<6 | rune(path[i+2]&0x3f)
-			if r < 0xdc80 || r > 0xdcff {
-				return "", false
-			}
-			encoded.WriteByte(byte(r - 0xdc00))
-			i += 3
-			continue
-		}
-		encoded.WriteByte(c)
-		i++
-	}
-	return encoded.String(), true
 }

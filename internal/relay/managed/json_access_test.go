@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
@@ -34,7 +35,7 @@ func Test24ManagedReceiptAccessorPython(t *testing.T) {
 	results := make([]any, len(values))
 	defer func() { golden.CheckJSON(t, "business-results", results) }()
 	for i, value := range values {
-		t.Run(evidence.Repr(value), func(t *testing.T) {
+		t.Run(pyvalue.Repr(value), func(t *testing.T) {
 			ctx := context.Background()
 			dir := t.TempDir()
 			s, err := store.Open(ctx, filepath.Join(dir, "relay.sqlite3"), "")
@@ -55,7 +56,7 @@ func Test24ManagedReceiptAccessorPython(t *testing.T) {
 					t.Fatal(err)
 				}
 				got := evidence.Dict(result, false)
-				answer := map[string]any{"value": evidence.Repr(value), "result": map[string]any{"state": got["state"], "stage": got["stage"], "reason": got["reason"]}}
+				answer := map[string]any{"value": pyvalue.Repr(value), "result": map[string]any{"state": got["state"], "stage": got["stage"], "reason": got["reason"]}}
 				if results[i] == nil {
 					results[i] = answer
 				} else if !reflect.DeepEqual(results[i], answer) {

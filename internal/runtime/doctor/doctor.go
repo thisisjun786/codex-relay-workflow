@@ -25,7 +25,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/definition"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/exercise"
@@ -212,7 +212,7 @@ func Runtime(pointerPath, from string, rec Object) Object {
 	}
 	unusable := []any{}
 	if present && !isObject {
-		unusable = append(unusable, "selected is "+scope.TypeName(raw)+", not an object")
+		unusable = append(unusable, "selected is "+pyvalue.TypeName(raw)+", not an object")
 	}
 	for _, c := range definition.Components {
 		value, ok := record.Lookup(selected, c.Name)
@@ -221,7 +221,7 @@ func Runtime(pointerPath, from string, rec Object) Object {
 		case !ok:
 			unusable = append(unusable, c.Name+": no selection is recorded")
 		case !isString:
-			unusable = append(unusable, c.Name+": the selection is "+scope.TypeName(value)+", not a path")
+			unusable = append(unusable, c.Name+": the selection is "+pyvalue.TypeName(value)+", not a path")
 		case location == "":
 			unusable = append(unusable, c.Name+": the selection is empty")
 		case !filepath.IsAbs(location):
@@ -348,7 +348,7 @@ func ReadSettings(codexHome, name string, keys []string, pointerPath string) Obj
 func jsonObject(what string) func(any) error {
 	return func(value any) error {
 		if _, ok := value.(Object); !ok {
-			return reading.Fail("ValueError", what+" is "+scope.TypeName(value)+", not a JSON object")
+			return reading.Fail("ValueError", what+" is "+pyvalue.TypeName(value)+", not a JSON object")
 		}
 		return nil
 	}
@@ -435,7 +435,7 @@ func classifyGo(c definition.Component, target string, rec Object, recordUsable 
 				matches := recorded == digest
 				signals.DigestMatches = &matches
 			} else {
-				signals.Unreadable = append(signals.Unreadable, "the recorded binaryDigest of the Go install entry at "+location+" (found "+evidence.Repr(record.Get(install, "binaryDigest"))+")")
+				signals.Unreadable = append(signals.Unreadable, "the recorded binaryDigest of the Go install entry at "+location+" (found "+pyvalue.Repr(record.Get(install, "binaryDigest"))+")")
 			}
 		}
 	}
@@ -907,7 +907,7 @@ func allOwn(classes []string) bool {
 // quote choice and its escapes), anything else as scope.PyStr spells it (None, a bool, a number).
 func pyRepr(v any) string {
 	if s, ok := v.(string); ok {
-		return evidence.StrRepr(s)
+		return pyvalue.StrRepr(s)
 	}
 	return scope.PyStr(v)
 }

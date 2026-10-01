@@ -14,6 +14,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/pyerr"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -232,7 +233,7 @@ func ExecuteAs(ctx context.Context, prog string, argv []string, stdout, stderr i
 		}
 	}
 	if chosen == nil {
-		fmt.Fprintln(stderr, prog+": error: argument command: invalid choice: "+pyStr(rest[0]))
+		fmt.Fprintln(stderr, prog+": error: argument command: invalid choice: "+pyvalue.StrRepr(rest[0]))
 		return 2
 	}
 	p, err := chosen.parse(prog, rest[1:])
@@ -370,7 +371,7 @@ func settingsJSON(raw string) (contract.OrderedObject, error) {
 	object, ok := decoded.(contract.OrderedObject)
 	if !ok {
 		// dict(values) of a non-object: TypeError/ValueError in Python, a host error either way.
-		return nil, &HostError{Class: "TypeError", Detail: "the settings are " + pyTypeName(decoded) + ", not a JSON object"}
+		return nil, &HostError{Class: "TypeError", Detail: "the settings are " + pyvalue.TypeName(decoded) + ", not a JSON object"}
 	}
 	return object, nil
 }
@@ -471,7 +472,7 @@ func (r *Registry) refuseRoleDisagreement(ctx context.Context, writes []settings
 			return err
 		}
 		if contested != nil {
-			return refuse(contract.RefusalRoleBindingMismatch, "%s holds live bindings at %s; one task holds one role, so there is no single role to register settings against", pyStr(w.task), rolesList(contested))
+			return refuse(contract.RefusalRoleBindingMismatch, "%s holds live bindings at %s; one task holds one role, so there is no single role to register settings against", pyvalue.StrRepr(w.task), rolesList(contested))
 		}
 		target := bound
 		if target == "" {

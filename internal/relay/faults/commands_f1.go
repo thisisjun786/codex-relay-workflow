@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -468,7 +469,7 @@ func f1RenderBlock(r, fault row) string {
 	}
 	fence := strings.Repeat("`", maxRun+1)
 	id := text(r, "publication_id")
-	fields := []string{"<!-- relay-fault:" + id + " -->", "blockFormat: v1", "publicationId: " + id, "faultId: " + text(r, "fault_id"), "product: " + text(fault, "product"), "faultClass: " + text(fault, "fault_class"), "trigger: " + text(r, "trigger_key"), fmt.Sprintf("cycle: %d", integer(r, "cycle")), "identityDigest: " + text(r, "identity_digest"), "summarySha256: " + sha256Hex(summary), "", fence + "text", summary, fence, "<!-- /relay-fault:" + id + " -->"}
+	fields := []string{"<!-- relay-fault:" + id + " -->", "blockFormat: v1", "publicationId: " + id, "faultId: " + text(r, "fault_id"), "product: " + text(fault, "product"), "faultClass: " + text(fault, "fault_class"), "trigger: " + text(r, "trigger_key"), fmt.Sprintf("cycle: %d", integer(r, "cycle")), "identityDigest: " + text(r, "identity_digest"), "summarySha256: " + pyvalue.SHA256Hex(summary), "", fence + "text", summary, fence, "<!-- /relay-fault:" + id + " -->"}
 	return strings.Join(fields, "\n")
 }
 
@@ -747,7 +748,7 @@ func f1Repr(v any) string {
 		return "None"
 	}
 	if s, ok := v.(string); ok {
-		return store.PythonRepr(s)
+		return pyvalue.StrRepr(s)
 	}
 	return pyStr(v)
 }
@@ -767,7 +768,7 @@ func f1Mismatch(r, fault row, found f1Block) []string {
 		return out
 	}
 	summary := strings.TrimRight(strings.ReplaceAll(strings.ReplaceAll(text(r, "summary"), "\r\n", "\n"), "\r", "\n"), "\n")
-	expected := map[string]string{"blockFormat": "v1", "publicationId": text(r, "publication_id"), "faultId": text(r, "fault_id"), "product": text(fault, "product"), "faultClass": text(fault, "fault_class"), "trigger": text(r, "trigger_key"), "cycle": fmt.Sprint(integer(r, "cycle")), "identityDigest": text(r, "identity_digest"), "summarySha256": sha256Hex(summary)}
+	expected := map[string]string{"blockFormat": "v1", "publicationId": text(r, "publication_id"), "faultId": text(r, "fault_id"), "product": text(fault, "product"), "faultClass": text(fault, "fault_class"), "trigger": text(r, "trigger_key"), "cycle": fmt.Sprint(integer(r, "cycle")), "identityDigest": text(r, "identity_digest"), "summarySha256": pyvalue.SHA256Hex(summary)}
 	problems := []string{}
 	for _, key := range []string{"blockFormat", "publicationId", "faultId", "product", "faultClass", "trigger", "cycle", "identityDigest", "summarySha256"} {
 		actual, ok := found.fields[key]

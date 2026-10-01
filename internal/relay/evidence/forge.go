@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 )
 
@@ -45,11 +46,11 @@ func SplitRepository(value any) (string, string, error) {
 		text = ""
 	}
 	if strings.Count(text, "/") != 1 {
-		return "", "", &ForgeUsage{"a repository is written owner/name, not " + Repr(value)}
+		return "", "", &ForgeUsage{"a repository is written owner/name, not " + pyvalue.Repr(value)}
 	}
 	owner, name, _ := strings.Cut(text, "/")
 	if !ownerPattern.MatchString(owner) || !namePattern.MatchString(name) {
-		return "", "", &ForgeUsage{"a repository is written owner/name over the characters GitHub allows, not " + Repr(value)}
+		return "", "", &ForgeUsage{"a repository is written owner/name over the characters GitHub allows, not " + pyvalue.Repr(value)}
 	}
 	return owner, name, nil
 }
@@ -63,10 +64,10 @@ func PullRequestNumber(value any) (any, error) {
 		n, ok = argparse.ParseInt(text)
 	}
 	if !ok {
-		return 0, &ForgeUsage{"a pull request number is a positive whole number, not " + Repr(value)}
+		return 0, &ForgeUsage{"a pull request number is a positive whole number, not " + pyvalue.Repr(value)}
 	}
 	if n.Sign() < 1 {
-		return 0, &ForgeUsage{"a pull request number is counted from one, not " + Repr(value)}
+		return 0, &ForgeUsage{"a pull request number is counted from one, not " + pyvalue.Repr(value)}
 	}
 	if n.IsInt64() {
 		return int(n.Int64()), nil
@@ -81,7 +82,7 @@ func countReached(count int, limit any) bool {
 func BranchRef(value any) (string, error) {
 	text := strings.TrimSpace(forgeText(value))
 	if text == "" || strings.Contains(text, "..") || strings.HasPrefix(text, "/") || !branchPattern.MatchString(text) {
-		return "", &ForgeUsage{"a branch name is a path segment without traversal or query characters, not " + Repr(value)}
+		return "", &ForgeUsage{"a branch name is a path segment without traversal or query characters, not " + pyvalue.Repr(value)}
 	}
 	return text, nil
 }
@@ -103,7 +104,7 @@ type Enumeration struct {
 func (e Enumeration) Record() map[string]any {
 	distinct := map[string]bool{}
 	for _, id := range e.Identifiers {
-		if Truthy(id) {
+		if pyvalue.Truthy(id) {
 			distinct[HashKey(id)] = true
 		}
 	}
@@ -115,7 +116,7 @@ func EnumerateConnection(name string, budget any, step func(any) (Page, error), 
 	used := []any{}
 	for {
 		if countReached(len(found.Pages), budget) {
-			found.Problems = append(found.Problems, Problem{Code: EnumerationTruncated, Detail: fmt.Sprintf("the %s connection was still unfinished after %s pages, so what was read is a prefix; a prefix of a list is not a count of the list", name, Text(budget))})
+			found.Problems = append(found.Problems, Problem{Code: EnumerationTruncated, Detail: fmt.Sprintf("the %s connection was still unfinished after %s pages, so what was read is a prefix; a prefix of a list is not a count of the list", name, pyvalue.Str(budget))})
 			return found, nil
 		}
 		page, err := step(token)
@@ -127,8 +128,8 @@ func EnumerateConnection(name string, budget any, step func(any) (Page, error), 
 		if total != nil {
 			if found.Total == nil {
 				found.Total = total
-			} else if !Equal(total, found.Total) {
-				found.Problems = append(found.Problems, Problem{Code: EnumerationTotalMoved, Detail: fmt.Sprintf("the %s connection reported %s items and then %s while it was being read, so no single set of them was ever observed", name, Text(found.Total), Text(total))})
+			} else if !pyvalue.ItemEqual(total, found.Total) {
+				found.Problems = append(found.Problems, Problem{Code: EnumerationTotalMoved, Detail: fmt.Sprintf("the %s connection reported %s items and then %s while it was being read, so no single set of them was ever observed", name, pyvalue.Str(found.Total), pyvalue.Str(total))})
 			}
 		}
 		for _, item := range page.Items {
@@ -139,9 +140,9 @@ func EnumerateConnection(name string, budget any, step func(any) (Page, error), 
 			found.Complete = true
 			break
 		}
-		repeated := Equal(page.Next, token)
+		repeated := pyvalue.ItemEqual(page.Next, token)
 		for _, previous := range used {
-			repeated = repeated || Equal(previous, page.Next)
+			repeated = repeated || pyvalue.ItemEqual(previous, page.Next)
 		}
 		if repeated {
 			found.Problems = append(found.Problems, Problem{Code: EnumerationNotProgressing, Detail: "the " + name + " connection handed back a page token it had already used, so the read was going in a circle and its page count is not evidence of distinct pages"})
@@ -153,7 +154,7 @@ func EnumerateConnection(name string, budget any, step func(any) (Page, error), 
 	distinct := map[string]bool{}
 	blank := false
 	for _, id := range found.Identifiers {
-		if !Truthy(id) {
+		if !pyvalue.Truthy(id) {
 			blank = true
 		} else {
 			distinct[HashKey(id)] = true
@@ -165,8 +166,8 @@ func EnumerateConnection(name string, budget any, step func(any) (Page, error), 
 	if len(distinct) != len(found.Identifiers) {
 		found.Problems = append(found.Problems, Problem{Code: EnumerationDuplicated, Detail: "the " + name + " connection returned the same identifier more than once, so the number of entries is not the number of items"})
 	}
-	if found.Total != nil && !Equal(len(distinct), found.Total) {
-		found.Problems = append(found.Problems, Problem{Code: EnumerationCountDisagrees, Detail: fmt.Sprintf("the %s connection says it holds %s items and %d distinct ones were read", name, Text(found.Total), len(distinct))})
+	if found.Total != nil && !pyvalue.ItemEqual(len(distinct), found.Total) {
+		found.Problems = append(found.Problems, Problem{Code: EnumerationCountDisagrees, Detail: fmt.Sprintf("the %s connection says it holds %s items and %d distinct ones were read", name, pyvalue.Str(found.Total), len(distinct))})
 	}
 	return found, nil
 }
@@ -207,13 +208,13 @@ func providerObject(value any) contract.OrderedObject {
 		var names []string
 		if list, ok := List(f.Value); ok {
 			for _, one := range list {
-				s := Text(one)
+				s := pyvalue.Str(one)
 				if strings.TrimSpace(s) != "" {
 					names = append(names, s)
 				}
 			}
-		} else if f.Value != nil && strings.TrimSpace(Text(f.Value)) != "" {
-			names = []string{Text(f.Value)}
+		} else if f.Value != nil && strings.TrimSpace(pyvalue.Str(f.Value)) != "" {
+			names = []string{pyvalue.Str(f.Value)}
 		}
 		slices.Sort(names)
 		names = slices.Compact(names)

@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -773,7 +774,7 @@ func observeOmission(ctx context.Context, selection store.StateSelection, root, 
 	declaredWorkValue := fieldOf(intent, "workspace")
 	declaredWork, isPath := declaredWorkValue.(string)
 	if truthy(declaredWorkValue) && !isPath {
-		return fail(fmt.Errorf("argument should be a str or an os.PathLike object where __fspath__ returns a str, not '%s'", pyTypeName(declaredWorkValue)))
+		return fail(fmt.Errorf("argument should be a str or an os.PathLike object where __fspath__ returns a str, not '%s'", pyvalue.TypeName(declaredWorkValue)))
 	}
 	declaredDB, _ := fieldOf(intent, "dbPath").(string)
 	dw, _ := resolvedPath(declaredWork)

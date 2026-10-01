@@ -289,18 +289,6 @@ func gitWorktreeOf(path string) string {
 	}
 }
 
-// pyIsSpace is str.isspace for one character.
-func pyIsSpace(r rune) bool {
-	switch r {
-	case '\t', '\n', '\v', '\f', '\r', 0x1c, 0x1d, 0x1e, 0x1f, ' ', 0x85, 0xa0, 0x1680, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000:
-		return true
-	}
-	return r >= 0x2000 && r <= 0x200a
-}
-
-// pyStrip is str.strip().
-func pyStrip(s string) string { return strings.TrimFunc(s, pyIsSpace) }
-
 // pySplitLines is str.splitlines(): every line boundary Python knows, the boundary dropped.
 func pySplitLines(s string) []string {
 	var lines []string

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -25,14 +26,14 @@ func (d StoreDelivery) Channel(ctx context.Context, relationship sql.NullString,
 		return "", "", err
 	}
 	if row == nil {
-		return fmt.Sprintf("assignment %s is not in this store", pyRepr(rid)), "", nil
+		return fmt.Sprintf("assignment %s is not in this store", pyvalue.StrRepr(rid)), "", nil
 	}
 	if row.Get("status") != "active" || row.Get("superseded_by") != nil {
-		return fmt.Sprintf("assignment %s is not active", pyRepr(rid)), "", nil
+		return fmt.Sprintf("assignment %s is not active", pyvalue.StrRepr(rid)), "", nil
 	}
 	parent, _ := row.Get("parent_task_id").(string)
 	if parent != recipient {
-		return fmt.Sprintf("assignment %s is addressed to parent %s, not to %s", pyRepr(rid), pyRepr(parent), pyRepr(recipient)), "", nil
+		return fmt.Sprintf("assignment %s is addressed to parent %s, not to %s", pyvalue.StrRepr(rid), pyvalue.StrRepr(parent), pyvalue.StrRepr(recipient)), "", nil
 	}
 	scope, err := d.Store.One(ctx, "SELECT project_key FROM relationship_scope WHERE relationship_id = ?", rid)
 	if err != nil {
@@ -40,14 +41,14 @@ func (d StoreDelivery) Channel(ctx context.Context, relationship sql.NullString,
 	}
 	if project != "" && scope != nil && scope.Get("project_key") != project {
 		attached, _ := scope.Get("project_key").(string)
-		return fmt.Sprintf("assignment %s is attached to project %s, not to this turn's %s", pyRepr(rid), pyRepr(attached), pyRepr(project)), "", nil
+		return fmt.Sprintf("assignment %s is attached to project %s, not to this turn's %s", pyvalue.StrRepr(rid), pyvalue.StrRepr(attached), pyvalue.StrRepr(project)), "", nil
 	}
 	var allowed []any
 	if text, ok := row.Get("allowed_recipients").(string); ok {
 		_ = json.Unmarshal([]byte(text), &allowed)
 	}
 	if !slices.Contains(allowed, any(recipient)) {
-		return fmt.Sprintf("%s is not in the recipients assignment %s authorizes", pyRepr(recipient), pyRepr(rid)), "", nil
+		return fmt.Sprintf("%s is not in the recipients assignment %s authorizes", pyvalue.StrRepr(recipient), pyvalue.StrRepr(rid)), "", nil
 	}
 	return "", GrantEventID(rid, grant), nil
 }
@@ -104,5 +105,5 @@ const noDeliverable = "000000000000000000000000000000000000000000000000000000000
 
 // GrantEventID is identity.merge_turn_grant_event_id.
 func GrantEventID(relationship, grant string) string {
-	return sha256Hex(relationship + "|" + grant + "|merge_turn_grant|null|null")[:32]
+	return pyvalue.SHA256Hex(relationship + "|" + grant + "|merge_turn_grant|null|null")[:32]
 }

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -129,7 +130,7 @@ func (rc *Reconciler) asItStands(ctx context.Context, requestID string, changed 
 	if changed.moved {
 		out = append(out, F{Key: "changed", Value: true}, F{Key: "detail", Value: "another reader settled this attempt while this one read it; nothing was written, and the attempt as it now stands is reported"})
 	} else {
-		out = append(out, F{Key: "kept", Value: true}, F{Key: "detail", Value: fmt.Sprintf("this attempt is already settled on %s; a reading that found no evidence does not write over it", pyStr(attempt.Opt("affirmative_evidence")))})
+		out = append(out, F{Key: "kept", Value: true}, F{Key: "detail", Value: fmt.Sprintf("this attempt is already settled on %s; a reading that found no evidence does not write over it", pyvalue.Str(attempt.Opt("affirmative_evidence")))})
 	}
 	if reading != nil {
 		out = append(out, F{Key: "recipientTurn", Value: reading})
@@ -184,7 +185,7 @@ func (rc *Reconciler) reconcile(ctx context.Context, requestID string, adapter A
 		return nil, err
 	}
 	if attempt == nil {
-		return nil, fmt.Errorf("KeyError: %s", store.PyRepr(requestID))
+		return nil, fmt.Errorf("KeyError: %s", pyvalue.StrRepr(requestID))
 	}
 	delivery, err := rc.Delivery.Get(ctx, attempt.S("event_id"))
 	if err != nil {
@@ -224,7 +225,7 @@ func (rc *Reconciler) reconcile(ctx context.Context, requestID string, adapter A
 	if err != nil {
 		scanDetail = "unreadable: " + errorLabel(err)
 	} else {
-		scanDetail = fmt.Sprintf("found=%s exhausted=%s scanned=%d", pyStr(scan.Found), pyStr(scan.Exhausted), scan.Scanned)
+		scanDetail = fmt.Sprintf("found=%s exhausted=%s scanned=%d", pyvalue.Str(scan.Found), pyvalue.Str(scan.Exhausted), scan.Scanned)
 		if scan.Found {
 			return rc.settleFromScan(ctx, attempt, delivery, scan, observation, scanDetail, now)
 		}
@@ -239,7 +240,7 @@ func (rc *Reconciler) reconcile(ctx context.Context, requestID string, adapter A
 		reading = readUnknownSend(adapter, rc.Clock, attempt, delivery, answer)
 		if str(reading, "finding") == Present {
 			turn, _ := get(reading, "turnId")
-			out, err := rc.settleFromScan(ctx, attempt, delivery, TokenScan{Found: true, TurnID: turn}, observation, "found since the send in turn "+pyStr(turn), now)
+			out, err := rc.settleFromScan(ctx, attempt, delivery, TokenScan{Found: true, TurnID: turn}, observation, "found since the send in turn "+pyvalue.Str(turn), now)
 			if err != nil {
 				return nil, err
 			}
@@ -400,7 +401,7 @@ func (rc *Reconciler) stayHeld(ctx context.Context, attempt, delivery Row, obser
 	var hold any
 	if reading != nil {
 		if u, _ := get(reading, "undecided"); truthy(u) {
-			mark, hold = unknownUndecided+pyStr(u), UnknownSendUndecided
+			mark, hold = unknownUndecided+pyvalue.Str(u), UnknownSendUndecided
 		} else if str(reading, "finding") == UnknownSendLost {
 			mark, hold = unknownLostMark, UnknownSendLost
 		}

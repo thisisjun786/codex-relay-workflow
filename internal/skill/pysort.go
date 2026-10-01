@@ -6,6 +6,7 @@ import (
 	"math"
 	"math/big"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 )
 
@@ -606,14 +607,14 @@ func pyLess(v, w any) (bool, error) {
 		if y, ok := w.([]any); ok {
 			for i := 0; i < len(x) && i < len(y); i++ {
 				// Item equality tries identity first; json gives every NaN one object.
-				if !evidence.Equal(x[i], y[i]) {
+				if !pyvalue.ItemEqual(x[i], y[i]) {
 					return pyLess(x[i], y[i])
 				}
 			}
 			return len(x) < len(y), nil
 		}
 	}
-	return false, &evidence.PythonError{Class: "TypeError", Detail: fmt.Sprintf("'<' not supported between instances of '%s' and '%s'", evidence.TypeName(v), evidence.TypeName(w))}
+	return false, &evidence.PythonError{Class: "TypeError", Detail: fmt.Sprintf("'<' not supported between instances of '%s' and '%s'", pyvalue.TypeName(v), pyvalue.TypeName(w))}
 }
 
 // pyRealValue is a JSON number or bool: a float kept as float64 for NaN and

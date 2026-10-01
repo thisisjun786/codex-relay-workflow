@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
@@ -37,7 +37,7 @@ func Test23ProjectPayloadWrongTypesMatchTheGolden(t *testing.T) {
 	}
 	base := map[string]any{"product": "p", "workspace": "w", "team": "t", "familyLabel": "f", "goal": "g", "criteria": "c", "name": "n", "members": []any{"m1", "m2"}, "components": []any{"c1"}}
 	for i, tc := range cases {
-		name := tc.Field + "/" + evidence.TypeName(tc.Value)
+		name := tc.Field + "/" + pyvalue.TypeName(tc.Value)
 		var problems []string
 		if !t.Run(name, func(t *testing.T) {
 			one := make(map[string]any, len(base)+1)

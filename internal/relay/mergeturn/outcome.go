@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -85,11 +86,11 @@ func (s *Service) Land(ctx context.Context, turn, actor, landed, stated, evidenc
 		case r.State != Merging:
 			refusal = wrongState(r, actor, "recording a landing")
 		case !read:
-			refusal = coordination(r, contract.RefusalMergeEvidenceRequired, "turn "+pyRepr(turn)+" entered merging before the relay read its base, so its checked base "+reprOrNone(r.CheckedBaseSHA)+" was typed rather than read and the branch cannot show whether this merge landed. Report the outcome with merge-turn-unknown and resolve it from the pull request's state with merge-turn-resolve, which reads the branch", r.CheckedBaseSHA.String, actor)
+			refusal = coordination(r, contract.RefusalMergeEvidenceRequired, "turn "+pyvalue.StrRepr(turn)+" entered merging before the relay read its base, so its checked base "+reprOrNone(r.CheckedBaseSHA)+" was typed rather than read and the branch cannot show whether this merge landed. Report the outcome with merge-turn-unknown and resolve it from the pull request's state with merge-turn-resolve, which reads the branch", r.CheckedBaseSHA.String, actor)
 		case tip.SHA == "":
 			refusal = unreadableTarget(r, actor, why, "the base this landing leaves behind cannot be recorded; the turn stays merging")
 		case r.CheckedBaseSHA.Valid && SameCommit(tip.SHA, r.CheckedBaseSHA.String) && !SameCommit(r.CheckedBaseSHA.String, r.CandidateHead):
-			refusal = coordination(r, contract.RefusalMergeBaseNotAdvanced, "the base branch "+pyRepr(r.BaseRef)+" still reads "+pyRepr(tip.SHA)+", the base the currency check read before merging, so the merge of "+pyRepr(r.CandidateHead)+" is not on it. The turn stays merging: merge and land again, or read again if the forge has not caught up. If the merge changed nothing because the base already contained the candidate, record that with merge-turn-unknown and merge-turn-resolve --pr-state merged", r.CheckedBaseSHA.String, tip.SHA)
+			refusal = coordination(r, contract.RefusalMergeBaseNotAdvanced, "the base branch "+pyvalue.StrRepr(r.BaseRef)+" still reads "+pyvalue.StrRepr(tip.SHA)+", the base the currency check read before merging, so the merge of "+pyvalue.StrRepr(r.CandidateHead)+" is not on it. The turn stays merging: merge and land again, or read again if the forge has not caught up. If the merge changed nothing because the base already contained the candidate, record that with merge-turn-unknown and merge-turn-resolve --pr-state merged", r.CheckedBaseSHA.String, tip.SHA)
 		case stated != "" && !SameCommit(stated, tip.SHA):
 			refusal = mismatch(r, actor, stated, tip, "--observed-base-sha", true)
 		}
@@ -126,7 +127,7 @@ func reprOrNone(v sql.NullString) string {
 	if !v.Valid {
 		return "None"
 	}
-	return pyRepr(v.String)
+	return pyvalue.StrRepr(v.String)
 }
 
 func (s *Service) turnOrNil(ctx context.Context, turn string) (any, error) {
@@ -179,10 +180,10 @@ func (s *Service) Resolve(ctx context.Context, turn, actor, stated, prState, evi
 			default:
 				moved := ""
 				if r.CheckedBaseSHA.Valid && stated != r.CheckedBaseSHA.String {
-					moved = "; the base moved from " + pyRepr(r.CheckedBaseSHA.String) + " to " + pyRepr(stated) + ", which any unrelated commit also does"
+					moved = "; the base moved from " + pyvalue.StrRepr(r.CheckedBaseSHA.String) + " to " + pyvalue.StrRepr(stated) + ", which any unrelated commit also does"
 				}
 				// Raised inside the transaction, as Python does: it rolls back and records no contest.
-				return &store.RefusedError{Reason: string(contract.RefusalMergeEvidenceRequired), Detail: pyRepr(prState) + " does not say whether this candidate merged. Read the pull request and resolve again with merged, open or closed" + moved}
+				return &store.RefusedError{Reason: string(contract.RefusalMergeEvidenceRequired), Detail: pyvalue.StrRepr(prState) + " does not say whether this candidate merged. Read the pull request and resolve again with merged, open or closed" + moved}
 			}
 			if tip.SHA == "" {
 				if landed {

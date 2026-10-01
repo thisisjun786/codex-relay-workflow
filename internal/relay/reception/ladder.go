@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -38,7 +39,7 @@ func Ladder(ctx context.Context, s *store.Store, rid, subject string, observatio
 		for _, a := range attempts {
 			dispatched = dispatched || a.Get("state") == "dispatched"
 			uncertain = uncertain || a.Get("state") == "held_uncertain" || a.Get("internal_state") != "settled"
-			ended = append(ended, evidence.Text(a.Get("state")))
+			ended = append(ended, pyvalue.Str(a.Get("state")))
 		}
 		transport := Stage("no", "attempts", "no attempt")
 		if dispatched {
@@ -60,7 +61,7 @@ func Ladder(ctx context.Context, s *store.Store, rid, subject string, observatio
 				if ack.Get("verified") == "verified" {
 					acknowledgement = Stage("yes", "acks", "accepted and verified")
 				} else {
-					acknowledgement = Stage("conditional", "acks", "recorded, verification "+evidence.Text(ack.Get("verified")))
+					acknowledgement = Stage("conditional", "acks", "recorded, verification "+pyvalue.Str(ack.Get("verified")))
 				}
 			} else {
 				acknowledgement = Stage("no", "acks", "the acknowledgement rejected it")

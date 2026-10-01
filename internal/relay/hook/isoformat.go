@@ -6,7 +6,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // fromISOFormat is datetime.datetime.fromisoformat as CPython 3.13's C module parses a str
@@ -18,7 +18,7 @@ import (
 // range). at is the moment in UTC; aware is false for a value with no offset. err is the
 // ValueError's message. A lone surrogate reaches here in its WTF-8 form.
 func fromISOFormat(text string) (at time.Time, aware bool, err error) {
-	invalid := isoError("Invalid isoformat string: %s", evidence.StrRepr(text))
+	invalid := isoError("Invalid isoformat string: %s", pyvalue.StrRepr(text))
 	if characters(text) < 7 {
 		return time.Time{}, false, invalid
 	}

@@ -7,7 +7,7 @@ import (
 
 	"modernc.org/sqlite"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 // UnicodeEncodeError is the UnicodeEncodeError Python raises encoding a str that holds a lone
@@ -30,7 +30,7 @@ func EncodeUTF8(text string) error {
 	position, start := 0, -1
 	var first rune
 	for i := 0; i < len(text); position++ {
-		r, size := settings.CodePoint(text, i)
+		r, size := pyjson.CodePoint(text, i)
 		i += size
 		surrogate := r >= 0xd800 && r <= 0xdfff
 		if start >= 0 && !surrogate {

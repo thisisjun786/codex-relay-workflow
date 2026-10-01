@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/faults"
@@ -64,7 +65,7 @@ func (c *Channel) refreshNotice(ctx context.Context, row store.SupervisorMessage
 		return false, Refusal{"superseded_revision", detail + ". Nothing is sent through this message; it is held as 'superseded_by_report', and staging the project stages what is owed now"}
 	}
 	if notice == nil {
-		return obsolete("notification " + store.PyRepr(row.ObligationID) + " no longer exists")
+		return obsolete("notification " + pyvalue.StrRepr(row.ObligationID) + " no longer exists")
 	}
 	lease, ok := notice["leaseUntil"].(float64)
 	if notice["state"] != "reserved" || !ok || lease <= now {
@@ -72,29 +73,29 @@ func (c *Channel) refreshNotice(ctx context.Context, row store.SupervisorMessage
 		if state == "reserved" {
 			state = "reserved under a lapsed lease"
 		}
-		return obsolete("notification " + store.PyRepr(row.ObligationID) + " is " + state + "; a notice goes out only while its notification is reserved, which is where its eligibility and budget are decided")
+		return obsolete("notification " + pyvalue.StrRepr(row.ObligationID) + " is " + state + "; a notice goes out only while its notification is reserved, which is where its eligibility and budget are decided")
 	}
 	if notice["kind"] == "blocking" && notice["faultState"] == "withdrawn" {
-		return obsolete("fault " + store.PyRepr(notice["faultId"].(string)) + " withdrew - it cleared before anything about it landed - so its blocking notice is no longer a new serious block and does not go up")
+		return obsolete("fault " + pyvalue.StrRepr(notice["faultId"].(string)) + " withdrew - it cleared before anything about it landed - so its blocking notice is no longer a new serious block and does not go up")
 	}
 	eligible, err := ledger.NotificationEligibility(ctx, notice["faultId"].(string), now)
 	if err != nil {
 		return false, err
 	}
 	if eligible["eligible"] != true {
-		return obsolete("notification " + store.PyRepr(row.ObligationID) + " is no longer eligible: " + fmt.Sprint(eligible["reason"]))
+		return obsolete("notification " + pyvalue.StrRepr(row.ObligationID) + " is no longer eligible: " + fmt.Sprint(eligible["reason"]))
 	}
 	if notice["anchor"] != row.RelationshipID {
-		return false, Refusal{"relation_owner_drift", "notification " + store.PyRepr(row.ObligationID) + " was addressed from " + store.PyRepr(row.RelationshipID) + " and is about " + fmt.Sprint(notice["anchor"]) + " now"}
+		return false, Refusal{"relation_owner_drift", "notification " + pyvalue.StrRepr(row.ObligationID) + " was addressed from " + pyvalue.StrRepr(row.RelationshipID) + " and is about " + fmt.Sprint(notice["anchor"]) + " now"}
 	}
 	staged := evidence.Dict(evidence.Decode(row.Packet), false)
-	observed := evidence.Text(evidence.Item(staged["envelope"], "observedAt"))
+	observed := pyvalue.Str(evidence.Item(staged["envelope"], "observedAt"))
 	live := map[string]any{"sender": r.Sender, "recipient": r.Recipient, "projectKey": r.ProjectKey, "initiativeKey": r.InitiativeKey, "source": r.Source}
 	packet, err := faults.ComposeNotice(notice, live, observed, c.command("fault-show", "--fault", notice["faultId"].(string)))
 	if err != nil {
 		return false, err
 	}
-	if evidence.Equal(staged, packet) {
+	if pyvalue.ItemEqual(staged, packet) {
 		return false, nil
 	}
 	packet, err = faults.ComposeNotice(notice, live, at, c.command("fault-show", "--fault", notice["faultId"].(string)))
@@ -117,7 +118,7 @@ func (c *Channel) refreshNotice(ctx context.Context, row store.SupervisorMessage
 	if row.State == "sending" {
 		instant = "transport_start"
 	}
-	detail := pyjson.Dumps(contract.OrderedObject{{Key: "fromEvent", Value: nil}, {Key: "toEvent", Value: nil}, {Key: "fromSubmission", Value: nil}, {Key: "toSubmission", Value: nil}, {Key: "at", Value: instant}, {Key: "reason", Value: "what notification " + store.PyRepr(row.ObligationID) + " says about its fault moved after it was staged"}}, pyjson.Options{})
+	detail := pyjson.Dumps(contract.OrderedObject{{Key: "fromEvent", Value: nil}, {Key: "toEvent", Value: nil}, {Key: "fromSubmission", Value: nil}, {Key: "toSubmission", Value: nil}, {Key: "at", Value: instant}, {Key: "reason", Value: "what notification " + pyvalue.StrRepr(row.ObligationID) + " says about its fault moved after it was staged"}}, pyjson.Options{})
 	_, err = c.Store.Q(ctx).ExecContext(ctx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_restated',?,?)", at, row.MessageID, detail)
 	return true, err
 }

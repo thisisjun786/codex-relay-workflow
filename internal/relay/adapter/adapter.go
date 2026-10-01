@@ -18,8 +18,8 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -120,7 +120,7 @@ func pythonConnectionError(err error) error {
 }
 
 func object(value any) (map[string]any, error) {
-	if !cursorTruthy(value) {
+	if !pyvalue.Truthy(value) {
 		return map[string]any{}, nil
 	}
 	if m, ok := value.(map[string]any); ok {
@@ -149,7 +149,7 @@ func rawEntries(page map[string]any) ([]any, error) {
 			}
 			return nil, attributeError("", "get")
 		}
-		return nil, &pythonError{"TypeError", fmt.Sprintf("'%s' object is not iterable", pythonType(value))}
+		return nil, &pythonError{"TypeError", fmt.Sprintf("'%s' object is not iterable", pyvalue.TypeName(value))}
 	}
 	return items, nil
 }
@@ -194,7 +194,7 @@ func (a *Adapter) ListTurnIDs(thread string, limit int) ([]any, error) {
 	for i, value := range rows {
 		row, ok := value.(map[string]any)
 		if !ok {
-			return nil, &pythonError{"TypeError", "'" + pythonType(value) + "' object is not subscriptable"}
+			return nil, &pythonError{"TypeError", "'" + pyvalue.TypeName(value) + "' object is not subscriptable"}
 		}
 		id, exists := row["id"]
 		if !exists {
@@ -219,7 +219,7 @@ func (a *Adapter) ReadTurn(thread, turn string) (*delivery.TurnInfo, error) {
 	var cursor any
 	for range MaxPagesPerCheck {
 		params := map[string]any{"threadId": thread, "limit": a.page, "itemsView": "summary"}
-		if cursorTruthy(cursor) {
+		if pyvalue.Truthy(cursor) {
 			params["cursor"] = cursor
 		}
 		r, err := a.HostCall(context.Background(), "thread/turns/list", params)
@@ -240,7 +240,7 @@ func (a *Adapter) ReadTurn(thread, turn string) (*delivery.TurnInfo, error) {
 			}
 		}
 		cursor = r["nextCursor"]
-		if !cursorTruthy(cursor) {
+		if !pyvalue.Truthy(cursor) {
 			return nil, nil
 		}
 	}
@@ -304,7 +304,7 @@ func (a *Adapter) scanListing(thread, listing string, filters map[string]any) (b
 			return nil
 		}
 		var saved sql.NullString
-		if cursorTruthy(cursor) {
+		if pyvalue.Truthy(cursor) {
 			value, err := a.cursorString(ctx, cursor)
 			if err != nil {
 				return err
@@ -318,7 +318,7 @@ func (a *Adapter) scanListing(thread, listing string, filters map[string]any) (b
 		for k, v := range filters {
 			params[k] = v
 		}
-		if cursorTruthy(cursor) {
+		if pyvalue.Truthy(cursor) {
 			params["cursor"] = cursor
 		}
 		page, err := a.HostCall(ctx, "thread/list", params)
@@ -345,7 +345,7 @@ func (a *Adapter) scanListing(thread, listing string, filters map[string]any) (b
 			}
 		}
 		cursor = page["nextCursor"]
-		if !cursorTruthy(cursor) {
+		if !pyvalue.Truthy(cursor) {
 			return false, save(true)
 		}
 	}
@@ -441,7 +441,7 @@ func (a *Adapter) FindToken(thread, token string, limit int, messageOnly bool) (
 	scanned := 0
 	for scanned < limit {
 		params := map[string]any{"threadId": thread, "sortDirection": "desc", "limit": min(a.page, limit-scanned)}
-		if cursorTruthy(cursor) {
+		if pyvalue.Truthy(cursor) {
 			params["cursor"] = cursor
 		}
 		page, err := a.HostCall(context.Background(), "thread/items/list", params)
@@ -470,7 +470,7 @@ func (a *Adapter) FindToken(thread, token string, limit int, messageOnly bool) (
 			}
 		}
 		cursor = page["nextCursor"]
-		if !cursorTruthy(cursor) {
+		if !pyvalue.Truthy(cursor) {
 			return delivery.TokenScan{Exhausted: true, Scanned: scanned}, nil
 		}
 		if len(rows) == 0 {
@@ -501,9 +501,9 @@ func (a *Adapter) RecipientFingerprint(thread string) (string, error) {
 		item, _ := row["item"].(map[string]any)
 		id, ok := item["id"].(string)
 		if !ok {
-			id = evidence.Text(row["id"])
+			id = pyvalue.Str(row["id"])
 		}
-		turn := evidence.Text(row["turnId"])
+		turn := pyvalue.Str(row["turnId"])
 		fmt.Fprintf(digest, "%s:%s:%x|", turn, id, sha256.Sum256([]byte(body)))
 	}
 	return fmt.Sprintf("%x", digest.Sum(nil)), nil

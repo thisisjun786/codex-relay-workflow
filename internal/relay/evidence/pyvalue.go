@@ -4,15 +4,11 @@ package evidence
 
 import (
 	"encoding/json"
-	"fmt"
-	"math/big"
 	"slices"
 	"strconv"
 	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 // Python value semantics for the decoded JSON a caller restates: an object is a
@@ -96,111 +92,6 @@ func PyInt(v any) (int64, bool) {
 	return 0, false
 }
 
-// TypeName is type(v).__name__.
-func TypeName(v any) string {
-	switch v.(type) {
-	case nil:
-		return "NoneType"
-	case bool:
-		return "bool"
-	case string:
-		return "str"
-	case json.Number, int, int64, *big.Int:
-		return "int"
-	case float64:
-		return "float"
-	case []any, []string, []map[string]any:
-		return "list"
-	case contract.OrderedObject, map[string]any:
-		return "dict"
-	}
-	return fmt.Sprintf("%T", v)
-}
-
-// Text is str(v).
-func Text(v any) string {
-	switch x := v.(type) {
-	case string:
-		return x
-	case *int64:
-		if x == nil {
-			return "None"
-		}
-		return Text(*x)
-	case nil:
-		return "None"
-	case bool:
-		if x {
-			return "True"
-		}
-		return "False"
-	case float64:
-		return pyjson.Float(x)
-	case json.Number, int, int64, *big.Int:
-		return fmt.Sprint(x)
-	}
-	return Repr(v)
-}
-
-// Repr is repr(v).
-func Repr(v any) string {
-	switch x := v.(type) {
-	case string:
-		return StrRepr(x)
-	case nil, bool, float64, json.Number, int, int64, *big.Int:
-		return Text(x)
-	case []string:
-		parts := make([]string, len(x))
-		for i, s := range x {
-			parts[i] = StrRepr(s)
-		}
-		return "[" + strings.Join(parts, ", ") + "]"
-	}
-	if l, ok := List(v); ok {
-		parts := make([]string, len(l))
-		for i, item := range l {
-			parts[i] = Repr(item)
-		}
-		return "[" + strings.Join(parts, ", ") + "]"
-	}
-	if o, ok := Object(v); ok {
-		parts := make([]string, len(o))
-		for i, f := range o {
-			parts[i] = StrRepr(f.Key) + ": " + Repr(f.Value)
-		}
-		return "{" + strings.Join(parts, ", ") + "}"
-	}
-	return fmt.Sprint(v)
-}
-
-// Truthy is bool(v).
-func Truthy(v any) bool {
-	switch x := v.(type) {
-	case nil:
-		return false
-	case bool:
-		return x
-	case string:
-		return x != ""
-	case float64:
-		return x != 0
-	case json.Number:
-		f, _ := x.Float64()
-		return f != 0
-	case int:
-		return x != 0
-	case int64:
-		return x != 0
-	}
-	if l, ok := List(v); ok {
-		return len(l) > 0
-	}
-	if o, ok := Object(v); ok {
-		return len(o) > 0
-	}
-	return true
-}
-
 // IntOf is int(v) for the numbers a restated record carries, with ok false where Python
 // would raise.
 func IntOf(v any) (int64, bool) {
@@ -218,6 +109,3 @@ func IntOf(v any) (int64, bool) {
 	}
 	return PyInt(v)
 }
-
-// StrRepr is repr() of a str.
-func StrRepr(s string) string { return settings.Repr(s) }

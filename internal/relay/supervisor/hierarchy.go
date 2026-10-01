@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -54,7 +54,7 @@ func (c *Channel) Resolve(ctx context.Context, relationshipID string) (Resolutio
 	if err != nil {
 		return Resolution{}, err
 	}
-	return resolveReading(reading, "relationship "+store.PyRepr(relationshipID))
+	return resolveReading(reading, "relationship "+pyvalue.StrRepr(relationshipID))
 }
 
 func resolveReading(reading map[string]any, where string) (Resolution, error) {
@@ -124,7 +124,7 @@ func resolveReading(reading map[string]any, where string) (Resolution, error) {
 func pythonRepr(value any) string {
 	switch v := value.(type) {
 	case nil, string, bool:
-		return evidence.Repr(v)
+		return pyvalue.Repr(v)
 	case []any:
 		parts := make([]string, len(v))
 		for i, item := range v {
@@ -158,7 +158,7 @@ func pythonRepr(value any) string {
 		keys = append(keys, extra...)
 		parts := make([]string, len(keys))
 		for i, key := range keys {
-			parts[i] = store.PyRepr(key) + ": " + pythonRepr(v[key])
+			parts[i] = pyvalue.StrRepr(key) + ": " + pythonRepr(v[key])
 		}
 		return "{" + strings.Join(parts, ", ") + "}"
 	default:
@@ -173,7 +173,7 @@ func (c *Channel) ResolveRecipient(ctx context.Context, relationshipID, expected
 		return Resolution{}, err
 	}
 	if expected != "" && expected != resolved.Recipient {
-		return Resolution{}, Refusal{"recipient_not_authorized", fmt.Sprintf("the caller named %s and the linkage says project %s is supervised by %s; a disagreement about who the level above is is the finding, not something to resolve by picking one", store.PyRepr(expected), store.PyRepr(resolved.ProjectKey), store.PyRepr(resolved.Recipient))}
+		return Resolution{}, Refusal{"recipient_not_authorized", fmt.Sprintf("the caller named %s and the linkage says project %s is supervised by %s; a disagreement about who the level above is is the finding, not something to resolve by picking one", pyvalue.StrRepr(expected), pyvalue.StrRepr(resolved.ProjectKey), pyvalue.StrRepr(resolved.Recipient))}
 	}
 	return resolved, nil
 }

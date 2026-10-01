@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor"
@@ -231,7 +232,7 @@ func supervisorOutput(ctx context.Context, c *supervisor.Channel, answer map[str
 // interpreted by the obligation reader, not by the file decoder.
 func observationFile(path string) (any, error) {
 	unreadable := func(detail string) (any, error) {
-		return nil, &UsageError{Detail: "the observation at " + store.PythonRepr(path) + " could not be read as a reporting-observation/1 record: " + detail, Code: contract.ExitUsage}
+		return nil, &UsageError{Detail: "the observation at " + pyvalue.StrRepr(path) + " could not be read as a reporting-observation/1 record: " + detail, Code: contract.ExitUsage}
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -382,9 +383,9 @@ var supervisorReportRecordedCommand = Command{Name: "supervisor-report-recorded"
 		o = supervisor.ObservationObligation(reading)
 	}
 	if o == nil {
-		about := "event " + store.PythonRepr(event)
+		about := "event " + pyvalue.StrRepr(event)
 		if hasObservation {
-			about = "the observation at " + store.PythonRepr(observation)
+			about = "the observation at " + pyvalue.StrRepr(observation)
 		}
 		return nil, &UsageError{Detail: about + " raises no obligation: an event has to be a completion, a new block or a decision the user owes, and an observation has to report state unreported. There is nothing here to record a report against", Code: contract.ExitUsage}
 	}
@@ -486,9 +487,9 @@ var supervisorStageCommand = Command{
 			}
 		}
 		if o == nil {
-			about := "event " + store.PythonRepr(event)
+			about := "event " + pyvalue.StrRepr(event)
 			if hasObservation {
-				about = "the observation at " + store.PythonRepr(observations[0])
+				about = "the observation at " + pyvalue.StrRepr(observations[0])
 			}
 			return nil, &UsageError{Detail: about + " raises no obligation, so there is nothing to stage. An event has to be a completion, a new block or a decision the user owes, and an observation has to report state unreported", Code: contract.ExitUsage}
 		}
@@ -538,7 +539,7 @@ var supervisorShowCommand = Command{Name: "supervisor-show", Flags: func(f *flag
 			if err != nil {
 				return nil, err
 			}
-			if !truthy(readback["detail"]) {
+			if !pyvalue.Truthy(readback["detail"]) {
 				readback["detail"] = nil
 			}
 		} else {

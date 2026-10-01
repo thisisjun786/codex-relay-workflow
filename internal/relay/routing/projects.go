@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -28,7 +29,7 @@ func ValidateProjectPayload(value any) []string {
 	}
 	slices.Sort(unknown)
 	if len(unknown) > 0 {
-		problems = append(problems, "payload carries keys this kind does not define: "+evidence.Repr(unknown))
+		problems = append(problems, "payload carries keys this kind does not define: "+pyvalue.Repr(unknown))
 	}
 	for _, key := range projectPayloadKeys {
 		v := payload[key]
@@ -77,7 +78,7 @@ func ConfirmProject(expected, observed any) []string {
 		return []string{"the readback does not show which team the project was created in"}
 	}
 	if team != payload["team"] {
-		return []string{fmt.Sprintf("the project was created in %s, not %s", evidence.Repr(team), evidence.Repr(payload["team"]))}
+		return []string{fmt.Sprintf("the project was created in %s, not %s", pyvalue.Repr(team), pyvalue.Repr(payload["team"]))}
 	}
 	return []string{}
 }
@@ -158,7 +159,7 @@ func ProjectEligibility(ctx context.Context, s *store.Store, payload Object) ([]
 		named[text(c)] = true
 	}
 	if len(members) > 0 && !slices.Equal(sortedKeys(named), sortedKeys(counted)) {
-		problems = append(problems, fmt.Sprintf("the create covers %s, but its members' components are %s", evidence.Repr(sortedKeys(named)), evidence.Repr(sortedKeys(counted))))
+		problems = append(problems, fmt.Sprintf("the create covers %s, but its members' components are %s", pyvalue.Repr(sortedKeys(named)), pyvalue.Repr(sortedKeys(counted))))
 	}
 	rows, err := s.All(ctx, "SELECT fault_id, target FROM incident_routes WHERE product_key = ? AND stage = ? AND goal = ?", payload["product"], "held", payload["goal"])
 	if err != nil {
@@ -183,7 +184,7 @@ func ProjectEligibility(ctx context.Context, s *store.Store, payload Object) ([]
 		}
 	}
 	if len(others) > 0 {
-		problems = append(problems, fmt.Sprintf("held defects under %s now also declare %s; a project needs one completion contract", payload["goal"], evidence.Repr(sortedKeys(others))))
+		problems = append(problems, fmt.Sprintf("held defects under %s now also declare %s; a project needs one completion contract", payload["goal"], pyvalue.Repr(sortedKeys(others))))
 	}
 	if payload["criteria"] == nil || payload["criteria"] == "" {
 		problems = append(problems, "the goal declares no completion criteria")
@@ -201,7 +202,7 @@ func ProjectEligibility(ctx context.Context, s *store.Store, payload Object) ([]
 		}
 		for _, pair := range [][2]string{{"team", "team"}, {"familyLabel", "family label"}} {
 			if registry[pair[0]] != payload[pair[0]] {
-				problems = append(problems, fmt.Sprintf("%s's %s is now %s, not %s", payload["product"], pair[1], evidence.Repr(registry[pair[0]]), evidence.Repr(payload[pair[0]])))
+				problems = append(problems, fmt.Sprintf("%s's %s is now %s, not %s", payload["product"], pair[1], pyvalue.Repr(registry[pair[0]]), pyvalue.Repr(payload[pair[0]])))
 			}
 		}
 	}
@@ -224,7 +225,7 @@ func ProjectEligibility(ctx context.Context, s *store.Store, payload Object) ([]
 					components = append(components, text(c))
 				}
 				slices.Sort(components)
-				problems = append(problems, fmt.Sprintf("%s now covers %s", project["ref"], evidence.Repr(components)))
+				problems = append(problems, fmt.Sprintf("%s now covers %s", project["ref"], pyvalue.Repr(components)))
 				break
 			}
 		}

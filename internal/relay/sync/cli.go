@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/reception"
@@ -158,10 +159,10 @@ func readText(value string) (string, error) {
 func readDocument(path, what string, packet bool) (any, error) {
 	raw, e := os.ReadFile(path)
 	if e != nil {
-		return nil, &cli.UsageError{Code: 4, Detail: fmt.Sprintf("the %s at %s could not be read: FileNotFoundError: %s", what, store.PyRepr(path), store.PythonOSErrorText(e))}
+		return nil, &cli.UsageError{Code: 4, Detail: fmt.Sprintf("the %s at %s could not be read: FileNotFoundError: %s", what, pyvalue.StrRepr(path), store.PythonOSErrorText(e))}
 	}
 	if problem := reception.JSONReaderDepthProblem(raw); problem != "" {
-		return nil, &cli.UsageError{Code: 4, Detail: fmt.Sprintf("the %s at %s could not be read: RecursionError: %s", what, store.PyRepr(path), problem)}
+		return nil, &cli.UsageError{Code: 4, Detail: fmt.Sprintf("the %s at %s could not be read: RecursionError: %s", what, pyvalue.StrRepr(path), problem)}
 	}
 	if packet {
 		if e = reception.CheckJSONText(raw); e != nil {
@@ -172,7 +173,7 @@ func readDocument(path, what string, packet bool) (any, error) {
 	}
 	v, e := registry.DecodeJSON(string(raw))
 	if e != nil {
-		return nil, &cli.UsageError{Code: 4, Detail: fmt.Sprintf("the %s at %s could not be read: JSONDecodeError: %s", what, store.PyRepr(path), e)}
+		return nil, &cli.UsageError{Code: 4, Detail: fmt.Sprintf("the %s at %s could not be read: JSONDecodeError: %s", what, pyvalue.StrRepr(path), e)}
 	}
 	return v, nil
 }

@@ -7,8 +7,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/plugins"
 )
 
@@ -44,7 +43,7 @@ func invalidOption(w io.Writer, prog, opt string) int {
 // argvRepr is repr() of a command-line argument as sys.argv holds it: os.fsdecode makes each
 // byte outside a well-formed UTF-8 sequence, the three of an encoded surrogate included, the
 // lone surrogate U+DC00+byte, and repr() escapes it.
-func argvRepr(arg string) string { return evidence.StrRepr(store.FSDecode(arg)) }
+func argvRepr(arg string) string { return pyvalue.StrRepr(pyvalue.FSDecode(arg)) }
 
 func readFileOrStdin(path string, stdin io.Reader) ([]byte, error) {
 	if path == "" {

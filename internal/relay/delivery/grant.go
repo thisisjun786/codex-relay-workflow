@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -14,7 +15,7 @@ import (
 // renderGrant is DeliveryService._render_grant (delivery.py:757): the merge target is this
 // parent's turn, and what it can actually do about it.
 func renderGrant(event string, record Obj, request string, reading evidence.RequiredReading) string {
-	turn, grant := pyStr(fieldOf(record, "turnId")), pyStr(fieldOf(record, "grantId"))
+	turn, grant := pyvalue.Str(fieldOf(record, "turnId")), pyvalue.Str(fieldOf(record, "grantId"))
 	declared, flags, guidance := requiredForNotice(record, reading)
 	lines := []string{
 		"[codex-session-relay] merge turn granted",
@@ -22,9 +23,9 @@ func renderGrant(event string, record Obj, request string, reading evidence.Requ
 		"eventId: " + event,
 		"grantId: " + grant,
 		"turnId: " + turn,
-		"target: " + pyStr(fieldOf(record, "repository")) + " " + pyStr(fieldOf(record, "baseRef")),
-		"candidateHead: " + pyStr(fieldOf(record, "candidateHead")),
-		"grantedFrom: " + pyStr(fieldOf(record, "grantedFrom")),
+		"target: " + pyvalue.Str(fieldOf(record, "repository")) + " " + pyvalue.Str(fieldOf(record, "baseRef")),
+		"candidateHead: " + pyvalue.Str(fieldOf(record, "candidateHead")),
+		"grantedFrom: " + pyvalue.Str(fieldOf(record, "grantedFrom")),
 		declared,
 		"",
 		"The target was released and this claim was the oldest ready one that still owns",
@@ -63,13 +64,13 @@ func requiredForNotice(record Obj, reading evidence.RequiredReading) (string, st
 			[]string{
 				"No required-check reading is recorded for this candidate, so --required is",
 				"yours to fill. Read the branch's required checks first:",
-				"  codex-session-relay merge-evidence --repository " + shellQuote(pyStr(fieldOf(record, "repository"))) + " --pull-request <its number>",
+				"  codex-session-relay merge-evidence --repository " + shellQuote(pyvalue.Str(fieldOf(record, "repository"))) + " --pull-request <its number>",
 				"and pass each name in its requiredDeclared as its own --required=<name>.",
 				"Leaving --required out declares that nothing is required, and a failing",
 				"required check would then not stop the merge.",
 			}
 	}
-	source := "work report " + reading.EventID + " submission " + pyStr(submission(reading.SubmissionNo))
+	source := "work report " + reading.EventID + " submission " + pyvalue.Str(submission(reading.SubmissionNo))
 	if len(reading.Required) == 0 {
 		return "requiredDeclared: none (" + source + " found no required check)", "",
 			[]string{

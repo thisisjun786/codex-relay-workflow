@@ -5,6 +5,7 @@ import (
 	"flag"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -62,7 +63,7 @@ var showCommand = Command{
 			return nil, err
 		}
 		if row == nil {
-			return nil, &UsageError{Detail: "no event " + store.PythonRepr(event), Code: contract.ExitUsage}
+			return nil, &UsageError{Detail: "no event " + pyvalue.StrRepr(event), Code: contract.ExitUsage}
 		}
 		queued, err := opened.One(ctx, "SELECT * FROM deliveries WHERE event_id = ?", event)
 		if err != nil {
@@ -161,7 +162,7 @@ func workReports(ctx context.Context, s *store.Store, event string) ([]any, erro
 			return []any{}
 		}
 		handoffs[number] = contract.OrderedObject{
-			{Key: "isDraft", Value: truthy(col(row, "is_draft"))},
+			{Key: "isDraft", Value: pyvalue.Truthy(col(row, "is_draft"))},
 			{Key: "baseVerifiedAt", Value: col(row, "base_verified_at")},
 			{Key: "requiredDeclared", Value: loads(colText(row, "required_declared"))},
 			{Key: "checks", Value: loads(colText(row, "checks"))},
@@ -214,7 +215,7 @@ func restorationEntries(ctx context.Context, s *store.Store, event string) ([]an
 	}
 	out := []any{}
 	for _, row := range rows {
-		if !truthy(col(row, "detail")) {
+		if !pyvalue.Truthy(col(row, "detail")) {
 			continue
 		}
 		entry, _ := loads(colText(row, "detail")).(contract.OrderedObject)
@@ -244,7 +245,7 @@ func attemptMessages(ctx context.Context, s *store.Store, event string) ([]any, 
 	out := []any{}
 	for _, row := range rows {
 		var record contract.OrderedObject
-		if truthy(col(row, "record")) {
+		if pyvalue.Truthy(col(row, "record")) {
 			record, _ = loads(colText(row, "record")).(contract.OrderedObject)
 		}
 		status := "uncertain"

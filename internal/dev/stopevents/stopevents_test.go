@@ -14,8 +14,8 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/pyload"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
@@ -95,8 +95,8 @@ func TestSEV05_EveryEventAcceptedOnceReadsTrue(t *testing.T) {
 				}
 			}
 			ledger := codex + "/" + strings.Join(hook.HostLedgerParts, "/")
-			change(t, journal+strings.TrimPrefix(records["claim"], h.journal), set("claimedBy.hostLedger", store.FSDecode(ledger)))
-			change(t, ledger+"/"+filepath.Base(records["host"]), set("claimedBy.journalRoot", store.FSDecode(journal)))
+			change(t, journal+strings.TrimPrefix(records["claim"], h.journal), set("claimedBy.hostLedger", pyvalue.FSDecode(ledger)))
+			change(t, ledger+"/"+filepath.Base(records["host"]), set("claimedBy.journalRoot", pyvalue.FSDecode(journal)))
 			for _, args := range [][]string{roots(journal), append(roots(journal), "--codex-home", codex)} {
 				var out, errs bytes.Buffer
 				code := Run(args, &out, &errs)

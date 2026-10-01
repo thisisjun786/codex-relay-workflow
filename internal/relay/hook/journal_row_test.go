@@ -9,7 +9,7 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -89,7 +89,7 @@ func Test33NativeJournalDetailErrnos(t *testing.T) {
 	for _, tc := range []struct{ name, prefix string }{{"ENOENT", "[Errno 2] No such file or directory"}, {"EACCES", "[Errno 13] Permission denied"}} {
 		for _, path := range []string{"/tmp/control.sock", "/tmp/quote'and\"/control.sock", "/tmp/new\nline/control.sock", "/tmp/한글/control.sock"} {
 			copy := set(append(Object{}, row...), "errno", tc.name)
-			copy = set(copy, "detail", "the configured runtime could not be run: "+tc.prefix+": "+evidence.StrRepr(path))
+			copy = set(copy, "detail", "the configured runtime could not be run: "+tc.prefix+": "+pyvalue.StrRepr(path))
 			if !NativePrescanUnreachable(copy) {
 				t.Fatalf("detail rejected: %v", get(copy, "detail"))
 			}

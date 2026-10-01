@@ -16,8 +16,8 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -46,7 +46,7 @@ func rowObject(r store.Row) Obj {
 func (s *Outbox) Get(ctx context.Context, id string) (store.Row, error) {
 	r, e := s.Store.One(ctx, "SELECT * FROM sync_outbox WHERE sync_id = ?", id)
 	if e == nil && r == nil {
-		e = refuse("sync_not_claimable", "no synchronisation job %s", store.PyRepr(id))
+		e = refuse("sync_not_claimable", "no synchronisation job %s", pyvalue.StrRepr(id))
 	}
 	return r, e
 }
@@ -99,12 +99,12 @@ func normalizeGeneration(value any) (any, sql.NullInt64, error) {
 			if err != nil {
 				return nil, sql.NullInt64{}, err
 			}
-			canonical = evidence.Text(f)
+			canonical = pyvalue.Str(f)
 		} else {
 			canonical = string(v)
 		}
 	case float64:
-		canonical = evidence.Text(v)
+		canonical = pyvalue.Str(v)
 	case bool:
 		if v {
 			return "True", sql.NullInt64{Int64: 1, Valid: true}, nil
@@ -120,7 +120,7 @@ func normalizeGeneration(value any) (any, sql.NullInt64, error) {
 	}
 	f, err := strconv.ParseFloat(textValue, 64)
 	if err != nil || math.IsNaN(f) || math.IsInf(f, 0) || f < math.MinInt64 || f >= math.MaxInt64 {
-		return nil, sql.NullInt64{}, fmt.Errorf("cannot store generation %s as SQLite INTEGER", evidence.Repr(value))
+		return nil, sql.NullInt64{}, fmt.Errorf("cannot store generation %s as SQLite INTEGER", pyvalue.Repr(value))
 	}
 	return canonical, sql.NullInt64{Int64: int64(f), Valid: true}, nil
 }
@@ -179,15 +179,15 @@ func (s *Outbox) Claim(ctx context.Context, id, owner string, now float64) (Obj,
 		}
 		switch text(r.Get("state")) {
 		case "confirmed":
-			return refuse("sync_not_claimable", "%s is already confirmed", store.PyRepr(id))
+			return refuse("sync_not_claimable", "%s is already confirmed", pyvalue.StrRepr(id))
 		case "failed":
-			return refuse("sync_not_claimable", "%s is failed after %v attempts; call retry to resume it deliberately", store.PyRepr(id), r.Get("attempts"))
+			return refuse("sync_not_claimable", "%s is failed after %v attempts; call retry to resume it deliberately", pyvalue.StrRepr(id), r.Get("attempts"))
 		}
 		if n, ok := r.Get("next_attempt_at").(float64); ok && n > now {
-			return refuse("sync_not_claimable", "%s is backing off until %s", store.PyRepr(id), pyjson.Dumps(n, pyjson.Options{}))
+			return refuse("sync_not_claimable", "%s is backing off until %s", pyvalue.StrRepr(id), pyjson.Dumps(n, pyjson.Options{}))
 		}
 		if n, ok := r.Get("lease_until").(float64); ok && n > now {
-			return refuse("sync_not_claimable", "%s is leased by %s until %s", store.PyRepr(id), store.PyRepr(text(r.Get("lease_owner"))), pyjson.Dumps(n, pyjson.Options{}))
+			return refuse("sync_not_claimable", "%s is leased by %s until %s", pyvalue.StrRepr(id), pyvalue.StrRepr(text(r.Get("lease_owner"))), pyjson.Dumps(n, pyjson.Options{}))
 		}
 		return s.Store.ClaimSync(ctx, id, "claimed", owner, now+300, token, s.Clock.ISO())
 	})
@@ -196,7 +196,7 @@ func (s *Outbox) Claim(ctx context.Context, id, owner string, now float64) (Obj,
 func (s *Outbox) fenced(ctx context.Context, id, token string) (store.Row, error) {
 	r, e := s.Get(ctx, id)
 	if e == nil && r.Get("claim_token") != token {
-		e = refuse("sync_not_claimable", "this claim token is not the one currently held for %s", store.PyRepr(id))
+		e = refuse("sync_not_claimable", "this claim token is not the one currently held for %s", pyvalue.StrRepr(id))
 	}
 	return r, e
 }
@@ -248,7 +248,7 @@ func (s *Outbox) Complete(ctx context.Context, id, token, targetRef, readback st
 			return nil
 		}
 		if r.Get("target_ref") != targetRef {
-			return refuse("sync_target_mismatch", "this job targets %s, not %s; validating the right text in the wrong document validates nothing", store.PyRepr(text(r.Get("target_ref"))), store.PyRepr(targetRef))
+			return refuse("sync_target_mismatch", "this job targets %s, not %s; validating the right text in the wrong document validates nothing", pyvalue.StrRepr(text(r.Get("target_ref"))), pyvalue.StrRepr(targetRef))
 		}
 		d := ParseDocument(readback)
 		b, ok := d.Blocks[id]
@@ -292,7 +292,7 @@ func (s *Outbox) Fail(ctx context.Context, id, token, message string, now float6
 			return e
 		}
 		if r.Get("state") == "confirmed" {
-			return refuse("sync_not_claimable", "%s is confirmed; a later failure cannot undo it", store.PyRepr(id))
+			return refuse("sync_not_claimable", "%s is confirmed; a later failure cannot undo it", pyvalue.StrRepr(id))
 		}
 		attempts := r.Get("attempts").(int64) + 1
 		state := "pending"

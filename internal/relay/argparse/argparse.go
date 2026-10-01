@@ -14,8 +14,9 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"golang.org/x/sys/unix"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 //go:embed specs.json
@@ -350,9 +351,9 @@ func ParseSpec(spec Spec, argv []string) Result {
 			if !slices.Contains(subparser.Choices, argv[i]) {
 				var choices []string
 				for _, name := range subparser.Choices {
-					choices = append(choices, store.PythonRepr(name))
+					choices = append(choices, pyvalue.StrRepr(name))
 				}
-				r.Message = "argument " + subparser.Dest + ": invalid choice: " + store.PythonRepr(argv[i]) + " (choose from " + strings.Join(choices, ", ") + ")"
+				r.Message = "argument " + subparser.Dest + ": invalid choice: " + pyvalue.StrRepr(argv[i]) + " (choose from " + strings.Join(choices, ", ") + ")"
 				return r
 			}
 			r.Remaining = argv[i:]
@@ -374,7 +375,7 @@ func ParseSpec(spec Spec, argv []string) Result {
 		boolean := a.Kind == "_StoreTrueAction" || a.Kind == "_StoreFalseAction" || a.Kind == "_HelpAction"
 		if boolean {
 			if t.inline {
-				r.Message = "argument " + label + ": ignored explicit argument " + store.PythonRepr(value)
+				r.Message = "argument " + label + ": ignored explicit argument " + pyvalue.StrRepr(value)
 				return r
 			}
 			if a.Kind == "_HelpAction" {
@@ -400,15 +401,15 @@ func ParseSpec(spec Spec, argv []string) Result {
 			valid = a.Check(value)
 		}
 		if !valid {
-			r.Message = "argument " + label + ": invalid " + a.Type + " value: " + store.PythonRepr(value)
+			r.Message = "argument " + label + ": invalid " + a.Type + " value: " + pyvalue.StrRepr(value)
 			return r
 		}
 		if a.Choices != nil && !slices.Contains(a.Choices, value) {
 			var choices []string
 			for _, v := range a.Choices {
-				choices = append(choices, store.PythonRepr(v))
+				choices = append(choices, pyvalue.StrRepr(v))
 			}
-			r.Message = "argument " + label + ": invalid choice: " + store.PythonRepr(value) + " (choose from " + strings.Join(choices, ", ") + ")"
+			r.Message = "argument " + label + ": invalid choice: " + pyvalue.StrRepr(value) + " (choose from " + strings.Join(choices, ", ") + ")"
 			return r
 		}
 		for _, g := range spec.Groups {

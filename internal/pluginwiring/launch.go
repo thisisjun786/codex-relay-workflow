@@ -13,10 +13,10 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/mcp"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
-	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 )
 
 // Flag is the first argument the plugin's declared commands pass to the bridge and `crw hook`.
@@ -138,12 +138,9 @@ func equalsInt(v any, n int64) bool {
 	return false
 }
 
-// pyStrip is str.strip() with no arguments.
-func pyStrip(s string) string { return store.PythonStrip(s) }
-
 // inherited is crw_bridge_mcp.py inherited(): stripped, and empty reads as unset.
 func inherited(env map[string]string, name string) (string, bool) {
-	value := pyStrip(env[name])
+	value := pyvalue.Strip(env[name])
 	return value, value != ""
 }
 
@@ -154,8 +151,6 @@ func canonical(path string) string {
 	}
 	return resolved
 }
-
-func repr(v any) string { return evidence.Repr(v) }
 
 // policyEnvironment is crw_bridge_mcp.py policy_environment: the two variables the bridge starts
 // under, or a refusal naming the record.
@@ -170,22 +165,22 @@ func policyEnvironment(env map[string]string, record string, reference any) (str
 	}
 	if !policy.File.OK() {
 		return "", "", fail("the record at " + record + " must name the execution policy as an absolute" +
-			" path with no surrounding whitespace or control characters, found " + repr(policy.File.Value))
+			" path with no surrounding whitespace or control characters, found " + pyvalue.Repr(policy.File.Value))
 	}
 	path, digest := policy.File.Text, policy.Digest
 	// What os.open and os.execve use: the path fs-encoded, a surrogate-escaped byte that byte again.
-	encoded, encodable := reading.FSEncode(path)
+	encoded, encodable := pyvalue.FSEncode(path)
 	if !encodable {
 		return "", "", fail("the record at " + record + " names an execution policy path this system" +
-			" cannot encode, found " + repr(path))
+			" cannot encode, found " + pyvalue.Repr(path))
 	}
 	if !policy.DigestOK {
 		return "", "", fail("the record at " + record + " must name the execution policy digest as 64" +
 			" lowercase hexadecimal characters")
 	}
 	if named, set := inherited(env, execution.EnvPolicy); set && canonical(named) != canonical(encoded) {
-		return "", "", fail("the record at " + record + " names the execution policy " + repr(path) +
-			" and this process was started with " + execution.EnvPolicy + "=" + repr(named) +
+		return "", "", fail("the record at " + record + " names the execution policy " + pyvalue.Repr(path) +
+			" and this process was started with " + execution.EnvPolicy + "=" + pyvalue.Repr(named) +
 			". Unset the variable, or register the other file")
 	}
 	if expected, set := inherited(env, execution.EnvDigest); set && expected != digest {
@@ -238,18 +233,18 @@ func Prepare(env map[string]string, extra []string) ([]string, map[string]string
 	}
 	read := ReadBridgeRecord(document)
 	if read.Version == 0 {
-		return nil, nil, fail("the record at " + record + " is version " + repr(read.VersionValue) +
+		return nil, nil, fail("the record at " + record + " is version " + pyvalue.Repr(read.VersionValue) +
 			", and this package reads versions 1 and 2. Rewrite it with " + RepairCommand +
 			" rather than starting a runtime under a contract this launcher does not implement.")
 	}
 	if read.Owner != pluginOwner {
-		return nil, nil, fail("the record at " + record + " names " + repr(read.Owner) +
+		return nil, nil, fail("the record at " + record + " names " + pyvalue.Repr(read.Owner) +
 			" as the owner of this server, so the Codex configuration registers it and this" +
 			" package must not start a second one")
 	}
 	if read.ServerName != nil && read.ServerName != declaredServer {
-		return nil, nil, fail("the record at " + record + " names the server " + repr(read.ServerName) +
-			", and this package declares " + repr(declaredServer) +
+		return nil, nil, fail("the record at " + record + " names the server " + pyvalue.Repr(read.ServerName) +
+			", and this package declares " + pyvalue.Repr(declaredServer) +
 			"; the record belongs to a registration this launcher does not start")
 	}
 	executable := read.Executable
@@ -284,14 +279,14 @@ func Prepare(env map[string]string, extra []string) ([]string, map[string]string
 	// records a byte that is not UTF-8, becomes that byte again), and a lone surrogate outside that
 	// range or a NUL raises there: a traceback, exit 1, and no bridge. The executable is not run
 	// here, but a record Python never starts is refused all the same.
-	if _, encodable := reading.FSEncode(executable); !encodable || strings.ContainsRune(executable, 0) {
-		return nil, nil, fail("the record at " + record + " names bridgeExecutable " + repr(executable) +
+	if _, encodable := pyvalue.FSEncode(executable); !encodable || strings.ContainsRune(executable, 0) {
+		return nil, nil, fail("the record at " + record + " names bridgeExecutable " + pyvalue.Repr(executable) +
 			", which this system cannot pass to exec. Rewrite it with " + RepairCommand + ".")
 	}
 	for i, word := range arguments {
-		encoded, encodable := reading.FSEncode(word)
+		encoded, encodable := pyvalue.FSEncode(word)
 		if !encodable || strings.ContainsRune(word, 0) {
-			return nil, nil, fail("the record at " + record + " lists the argument " + repr(word) +
+			return nil, nil, fail("the record at " + record + " lists the argument " + pyvalue.Repr(word) +
 				", which this system cannot pass to exec. Rewrite it with " + RepairCommand + ".")
 		}
 		arguments[i] = encoded

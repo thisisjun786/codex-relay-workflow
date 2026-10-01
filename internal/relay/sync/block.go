@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -115,7 +115,7 @@ func ParseDocument(source string) Document {
 			key = strings.TrimSpace(key)
 			if ok && key != "" && !strings.Contains(key, " ") {
 				if seen[key] {
-					b.Problems = append(b.Problems, "duplicate header "+store.PyRepr(key))
+					b.Problems = append(b.Problems, "duplicate header "+pyvalue.StrRepr(key))
 				}
 				seen[key] = true
 				found := false
@@ -164,7 +164,7 @@ func ParseDocument(source string) Document {
 		if declared := get(b.Fields, "blockFormat"); declared != nil {
 			if declared != "v2" {
 				b.Format = "unsupported"
-				b.Problems = append(b.Problems, "unsupported block format "+store.PyRepr(text(declared)))
+				b.Problems = append(b.Problems, "unsupported block format "+pyvalue.StrRepr(text(declared)))
 			} else {
 				b.Format = "v2"
 				if !hasSummary {
@@ -228,7 +228,7 @@ func PayloadMismatch(row store.Row, b Block) []string {
 		if actual == nil {
 			problems = append(problems, k+" is missing")
 		} else if actual != want {
-			problems = append(problems, fmt.Sprintf("%s is %s, expected %s", k, store.PyRepr(text(actual)), store.PyRepr(want)))
+			problems = append(problems, fmt.Sprintf("%s is %s, expected %s", k, pyvalue.StrRepr(text(actual)), pyvalue.StrRepr(want)))
 		}
 	}
 	if b.Format == "v2" {
@@ -244,7 +244,7 @@ func PayloadMismatch(row store.Row, b Block) []string {
 			for i, v := range unexpected {
 				items[i] = v
 			}
-			problems = append(problems, "the header region carries unexpected headers "+evidence.Repr(items))
+			problems = append(problems, "the header region carries unexpected headers "+pyvalue.Repr(items))
 		}
 		if b.Summary != CanonicalSummary(text(row.Get("summary"))) {
 			problems = append(problems, "the fenced summary is not this job's summary text")

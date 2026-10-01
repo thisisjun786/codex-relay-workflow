@@ -10,8 +10,8 @@ import (
 	"syscall"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
-	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 )
 
 // BridgeRecord is a bridge record's fields read as the launcher reads them (the record contract,
@@ -87,7 +87,7 @@ func ReadPolicyPath(value any) PolicyPath {
 	p := PolicyPath{Value: value}
 	p.Text, _ = value.(string)
 	p.NotString = p.Text == ""
-	p.Padded = p.Text != pyStrip(p.Text)
+	p.Padded = p.Text != pyvalue.Strip(p.Text)
 	p.Control = strings.IndexFunc(p.Text, func(r rune) bool { return r < 32 || r == 127 }) >= 0
 	p.Relative = !strings.HasPrefix(p.Text, "/")
 	return p
@@ -127,7 +127,7 @@ var ErrNotRegular = errors.New("not a regular file")
 // error opening it is the open's *os.PathError, one that is not a regular file is ErrNotRegular,
 // and one that cannot be read is the read's error.
 func PolicyDigest(path string) (digest string, encodable bool, err error) {
-	name, encodable := reading.FSEncode(path)
+	name, encodable := pyvalue.FSEncode(path)
 	if !encodable {
 		return "", false, nil
 	}

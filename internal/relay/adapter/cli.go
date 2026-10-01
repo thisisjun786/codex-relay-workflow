@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -55,7 +56,7 @@ func observeTurn(ctx context.Context, state, socket, thread, turn string) (statu
 		return "", unconfirmedTurn(turn, err)
 	}
 	if observed == nil {
-		return "", &store.RefusedError{Reason: "unassigned_turn", Detail: "turn " + store.PythonRepr(turn) + " does not exist on " + store.PythonRepr(thread)}
+		return "", &store.RefusedError{Reason: "unassigned_turn", Detail: "turn " + pyvalue.StrRepr(turn) + " does not exist on " + pyvalue.StrRepr(thread)}
 	}
 	status, _ = observed.Status.(string)
 	return status, nil
@@ -67,7 +68,7 @@ func observeTurn(ctx context.Context, state, socket, thread, turn string) (statu
 func unconfirmedTurn(turn string, err error) error {
 	var unavailable *HostUnavailable
 	if errors.As(err, &unavailable) {
-		return store.RefusedBecause("unassigned_turn", "the host could not confirm turn "+store.PythonRepr(turn)+": "+err.Error(), err)
+		return store.RefusedBecause("unassigned_turn", "the host could not confirm turn "+pyvalue.StrRepr(turn)+": "+err.Error(), err)
 	}
 	return err
 }

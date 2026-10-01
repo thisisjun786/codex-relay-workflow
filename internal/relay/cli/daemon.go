@@ -15,6 +15,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/daemon"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
@@ -143,7 +144,7 @@ func ownershipPreflight(ctx context.Context, services Services) error {
 // declares into this process's environment, or is refused. A run launched by `service start`
 // carries its launch's settled decision (_launch_already_settled) and is not asked again.
 func applyLaunchPolicy(s *service.Service) error {
-	settled := store.PythonStrip(os.Getenv(service.SettledEnv))
+	settled := pyvalue.Strip(os.Getenv(service.SettledEnv))
 	if settled != "" && s.LaunchID != "" && settled == s.LaunchID {
 		return nil
 	}

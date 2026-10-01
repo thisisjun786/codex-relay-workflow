@@ -9,6 +9,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -39,7 +40,7 @@ type roleExpectation struct{ Expectation, Model, Effort string }
 // document nested deeper than that parser descends answered as rolepolicy's RecursionError
 // branch answers it, naming the value as configured.
 func ResolveRolePolicy(env map[string]string) RolePolicy {
-	configured := store.PythonStrip(env[execution.EnvPolicy])
+	configured := pyvalue.Strip(env[execution.EnvPolicy])
 	if configured == "" {
 		return RolePolicy{Detail: execution.EnvPolicy + " is not set in this process, so no role policy can be read",
 			PublicDetail: "execution policy environment is not configured in this process"}
@@ -204,8 +205,8 @@ func unverifiedCitation(settings contract.OrderedObject, role string, policy Rol
 		{Key: "role", Value: role},
 		{Key: "citedException", Value: name},
 		{Key: "digest", Value: policy.digest},
-		{Key: "detail", Value: "this record cites exception " + pyRepr(name) + ", and this host's execution policy does not " +
-			"authorize that id for role " + pyStr(role) + " with this pair and directory. Record what " +
+		{Key: "detail", Value: "this record cites exception " + pyvalue.Repr(name) + ", and this host's execution policy does not " +
+			"authorize that id for role " + pyvalue.StrRepr(role) + " with this pair and directory. Record what " +
 			"actually authorized the creation, or nothing at all"},
 		{Key: "recovery", Value: RoleRecovery},
 	}
@@ -226,7 +227,7 @@ func CheckRecord(settings contract.OrderedObject, role string, policy RolePolicy
 			{Key: "role", Value: role},
 			{Key: "digest", Value: policy.digest},
 			{Key: "undeclared", Value: true},
-			{Key: "recovery", Value: "declare role " + pyStr(role) + " in this host's execution policy"},
+			{Key: "recovery", Value: "declare role " + pyvalue.StrRepr(role) + " in this host's execution policy"},
 		}
 	}
 	if expectation.Expectation != "pair" {
@@ -263,7 +264,7 @@ func CheckBinding(cited any, bound string, settings contract.OrderedObject, poli
 			{Key: "citedRole", Value: cited},
 			{Key: "boundRole", Value: bound},
 			{Key: "digest", Value: policy.digestValue()},
-			{Key: "detail", Value: "this task was created citing role " + pyRepr(cited) + " and is being bound as " + pyStr(bound) + "; " +
+			{Key: "detail", Value: "this task was created citing role " + pyvalue.Repr(cited) + " and is being bound as " + pyvalue.StrRepr(bound) + "; " +
 				"one of the two is wrong, and re-recording its settings would only hide that"},
 		}
 	}
@@ -280,7 +281,7 @@ func CheckBinding(cited any, bound string, settings contract.OrderedObject, poli
 			{Key: "citedRole", Value: cited},
 			{Key: "boundRole", Value: bound},
 			{Key: "digest", Value: policy.digest},
-			{Key: "detail", Value: "this host's execution policy declares no role " + pyStr(bound) + ", so a task cannot be " +
+			{Key: "detail", Value: "this host's execution policy declares no role " + pyvalue.StrRepr(bound) + ", so a task cannot be " +
 				"bound to it and checked; declare it before binding"},
 		}
 	}
@@ -301,7 +302,7 @@ func CheckBinding(cited any, bound string, settings contract.OrderedObject, poli
 		{Key: "recorded", Value: pairObject(model, effort)},
 		{Key: "expected", Value: pairObject(expectation.Model, expectation.Effort)},
 		{Key: "digest", Value: policy.digest},
-		{Key: "detail", Value: "this task's recorded pair is not the pair role " + pyStr(bound) + " runs on, and it is being " +
+		{Key: "detail", Value: "this task's recorded pair is not the pair role " + pyvalue.StrRepr(bound) + " runs on, and it is being " +
 			"bound to that role now rather than having drifted afterwards"},
 	}
 }
@@ -341,10 +342,10 @@ func boundRole(ctx context.Context, s *store.Store, taskID string) (string, []st
 // taskIDOf is rolepolicy.task_id_of: whatever names this record in a message (its cwd).
 func taskIDOf(settings contract.OrderedObject) string {
 	cwd, _ := getField(settings, "cwd")
-	if !truthyValue(cwd) {
-		return pyStr("this recipient")
+	if !pyvalue.Truthy(cwd) {
+		return pyvalue.StrRepr("this recipient")
 	}
-	return pyRepr(cwd)
+	return pyvalue.Repr(cwd)
 }
 
 // CheckUnloadedTransmission is rolepolicy.check_unloaded_transmission: the refusal for
@@ -364,7 +365,7 @@ func CheckUnloadedTransmission(settings contract.OrderedObject, role string, pol
 		"%s). Nothing was sent and no turn was started: a resume may apply what it "+
 		"transmits to a thread the host has to load first, which would restore a pair the user "+
 		"may have changed. Send once the host has the thread loaded, or read its current "+
-		"settings and re-record the authorization from that reading.", taskIDOf(settings), pyStr(role), policy.digest)
+		"settings and re-record the authorization from that reading.", taskIDOf(settings), pyvalue.StrRepr(role), policy.digest)
 }
 
 // SettingsFreeRefusalCode is the code a settings-free resume refuses with (bridge_adapter.py):

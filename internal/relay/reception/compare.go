@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 )
@@ -23,8 +24,8 @@ func (c *comparison) compare(kind, field string, found, expected any, reason str
 		c.problem(kind, field, expected, nil, "the packet states no "+field+", and "+reason)
 		return
 	}
-	if evidence.TypeName(found) != evidence.TypeName(expected) {
-		c.gap(field, expected, found, "the record holds a "+evidence.TypeName(expected)+" for "+field+" and the packet a "+evidence.TypeName(found)+"; values of different shapes are not a reading of each other, so this could not be checked")
+	if pyvalue.TypeName(found) != pyvalue.TypeName(expected) {
+		c.gap(field, expected, found, "the record holds a "+pyvalue.TypeName(expected)+" for "+field+" and the packet a "+pyvalue.TypeName(found)+"; values of different shapes are not a reading of each other, so this could not be checked")
 		return
 	}
 	if !equal(found, expected) {
@@ -45,7 +46,7 @@ func Reception(one, record any) (Obj, error) {
 		return nil, e
 	}
 	if _, ok := evidence.Object(record); !ok {
-		return nil, malformed("the receiver's own reading is an object of named values, not a %s", evidence.TypeName(record))
+		return nil, malformed("the receiver's own reading is an object of named values, not a %s", pyvalue.TypeName(record))
 	}
 	region := Get(one, "envelope")
 	c := comparison{problems: []any{}, gaps: []any{}}
@@ -75,9 +76,9 @@ func Reception(one, record any) (Obj, error) {
 	if !present(status) {
 		c.gap("relationStatus", nil, nil, "the record the receiver read does not say whether the relationship is still live, so that is unchecked")
 	} else if status != "active" && status != "paused" {
-		c.problem("superseded_relation", "relationStatus", "active or paused", status, "the relationship this packet belongs to is "+evidence.Text(status)+"; a packet for it is about an assignment that has ended or been replaced")
+		c.problem("superseded_relation", "relationStatus", "active or paused", status, "the relationship this packet belongs to is "+pyvalue.Str(status)+"; a packet for it is about an assignment that has ended or been replaced")
 	}
-	if !first && parentChild && (evidence.TypeName(Get(record, "dispatchRequestId")) != "str" || !present(Get(record, "dispatchRequestId"))) {
+	if !first && parentChild && (pyvalue.TypeName(Get(record, "dispatchRequestId")) != "str" || !present(Get(record, "dispatchRequestId"))) {
 		c.gap("dispatchRequestId", nil, nil, "the receiver could not read which dispatch opened the current generation, so which tenure this packet belongs to is unchecked")
 	}
 	if !first {
@@ -103,7 +104,7 @@ func Reception(one, record any) (Obj, error) {
 		if !ok || n < 1 {
 			c.gap("tenureGeneration", nil, nil, "the receiver could not read which registration began the current tenure, so the mode and workflow this policy is held to are unchecked")
 		}
-		if d := Get(record, "tenureDispatchRequestId"); evidence.TypeName(d) != "str" || !present(d) {
+		if d := Get(record, "tenureDispatchRequestId"); pyvalue.TypeName(d) != "str" || !present(d) {
 			c.gap("tenureDispatchRequestId", nil, nil, "the receiver could not read the dispatch that began the current tenure, so an assignment could not be held for it")
 		}
 	}
@@ -206,7 +207,7 @@ func refusalsUnreadable(record any, key string) bool {
 			return true
 		}
 		for _, k := range []string{"model", "effort"} {
-			if evidence.TypeName(Get(p, k)) != "str" || !present(Get(p, k)) {
+			if pyvalue.TypeName(Get(p, k)) != "str" || !present(Get(p, k)) {
 				return true
 			}
 		}
@@ -218,7 +219,7 @@ func (c *comparison) callback(stated, record any) {
 		return
 	}
 	held := Get(record, "callback")
-	if evidence.TypeName(held) != "dict" || !truth(held) {
+	if pyvalue.TypeName(held) != "dict" || !truth(held) {
 		c.gap("callback", nil, stated, "the receiver read no record of the task it answers or the pair that task runs now, so the callback is unchecked")
 		return
 	}
@@ -259,7 +260,7 @@ func (c *comparison) policy(stated, record any) {
 		return
 	}
 	held := Get(record, "policy")
-	if evidence.TypeName(held) != "dict" || !truth(held) {
+	if pyvalue.TypeName(held) != "dict" || !truth(held) {
 		c.gap("policy", nil, stated, "the receiver read no recorded settings for this task, so the stated pair is unchecked")
 		return
 	}

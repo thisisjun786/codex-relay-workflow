@@ -13,6 +13,8 @@ import (
 	"golang.org/x/sys/unix"
 
 	"modernc.org/sqlite"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // holdStat is registration_hold's resolved.stat(), taken before the fence's Admission: the
@@ -71,7 +73,7 @@ func openExamined(ctx context.Context, examined string, params url.Values, timeo
 	}
 	if opened != examined {
 		_ = db.Close()
-		return nil, fmt.Errorf("the store's sidecars were examined beside %s, but SQLite opened %s, so its committed state was not read", pythonRepr(examined), pythonRepr(opened))
+		return nil, fmt.Errorf("the store's sidecars were examined beside %s, but SQLite opened %s, so its committed state was not read", pyvalue.StrRepr(examined), pyvalue.StrRepr(opened))
 	}
 	return &ReadOnly{db: db}, nil
 }

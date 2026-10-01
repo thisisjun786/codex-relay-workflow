@@ -7,10 +7,9 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"unicode"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // object is a decoded JSON object that keeps document order, because Python iterates the
@@ -184,14 +183,8 @@ func (b *builder) object() (any, error) {
 	return o, nil
 }
 
-// pyStrip is str.strip(): str.isspace also covers U+001C..U+001F, which unicode.IsSpace
-// does not.
-func pyStrip(s string) string {
-	return strings.TrimFunc(s, func(r rune) bool { return unicode.IsSpace(r) || r >= 0x1c && r <= 0x1f })
-}
-
 // isBlank is Python's `not value.strip()`.
-func isBlank(s string) bool { return pyStrip(s) == "" }
+func isBlank(s string) bool { return pyvalue.Strip(s) == "" }
 
 // repr renders the Python repr() of the values the policy's messages quote.
 func repr(value any) string {
@@ -201,7 +194,7 @@ func repr(value any) string {
 	case string:
 		// settings.Repr: Python's quote choice and its escapes of every character
 		// str.isprintable() refuses, a lone surrogate included.
-		return settings.Repr(v)
+		return pyvalue.StrRepr(v)
 	case []string:
 		parts := make([]string, len(v))
 		for i, s := range v {

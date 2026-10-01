@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -43,7 +44,7 @@ func LoadRelationship(ctx context.Context, s *store.Store, id string) (Relations
 		return Relationship{}, err
 	}
 	if row == nil {
-		return Relationship{}, refuse(UnregisteredRelationship, "no relationship %s", store.PyRepr(id))
+		return Relationship{}, refuse(UnregisteredRelationship, "no relationship %s", pyvalue.StrRepr(id))
 	}
 	generations, err := all(ctx, s, "SELECT * FROM generations WHERE relationship_id = ? ORDER BY execution_generation", id)
 	if err != nil {
@@ -63,7 +64,7 @@ func LoadRelationship(ctx context.Context, s *store.Store, id string) (Relations
 		return Relationship{}, err
 	}
 	if r.generation(r.Generation) == nil {
-		return Relationship{}, refuse(UnknownGeneration, "%s points at generation %d which is not retained", store.PyRepr(id), r.Generation)
+		return Relationship{}, refuse(UnknownGeneration, "%s points at generation %d which is not retained", pyvalue.StrRepr(id), r.Generation)
 	}
 	return r, nil
 }
@@ -75,7 +76,7 @@ func RequireActive(ctx context.Context, s *store.Store, id string) (Relationship
 		return r, err
 	}
 	if r.Status != "active" {
-		return r, refuse(RelationshipNotActive, "relationship %s is %s and is never auto-resumed", store.PyRepr(id), store.PyRepr(r.Status))
+		return r, refuse(RelationshipNotActive, "relationship %s is %s and is never auto-resumed", pyvalue.StrRepr(id), pyvalue.StrRepr(r.Status))
 	}
 	return r, nil
 }

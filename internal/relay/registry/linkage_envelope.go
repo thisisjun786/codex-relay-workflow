@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // The part of envelope.py the directive paths read: the pointer a directive row carries in its
@@ -32,12 +33,12 @@ func messageID(direction, relation, purpose, subject string) (string, error) {
 			directions = append(directions, d)
 		}
 		slices.Sort(directions)
-		return "", refuse(contract.RefusalMalformedReceipt, "%s is not a known direction; it is one of %s", pyStr(direction), strings.Join(directions, ", "))
+		return "", refuse(contract.RefusalMalformedReceipt, "%s is not a known direction; it is one of %s", pyvalue.StrRepr(direction), strings.Join(directions, ", "))
 	}
 	if !slices.Contains(kinds, purpose) {
 		sorted := slices.Clone(kinds)
 		slices.Sort(sorted)
-		return "", refuse(contract.RefusalMalformedReceipt, "%s is not a purpose %s carries; it has %s", pyStr(purpose), direction, strings.Join(sorted, ", "))
+		return "", refuse(contract.RefusalMalformedReceipt, "%s is not a purpose %s carries; it has %s", pyvalue.StrRepr(purpose), direction, strings.Join(sorted, ", "))
 	}
 	for _, field := range []struct{ name, value string }{{"relation_id", relation}, {"subject", subject}} {
 		if strings.TrimSpace(field.value) == "" {
@@ -47,7 +48,7 @@ func messageID(direction, relation, purpose, subject string) (string, error) {
 			return "", refuse(contract.RefusalMalformedReceipt, "%s must not contain '|', which is the field separator", field.name)
 		}
 	}
-	return sha256Hex(direction + "|" + relation + "|" + purpose + "|" + subject)[:32], nil
+	return pyvalue.SHA256Hex(direction + "|" + relation + "|" + purpose + "|" + subject)[:32], nil
 }
 
 // DirectiveReference is envelope.directive_reference; correlation "" with hasCorrelation false is None.
@@ -100,7 +101,7 @@ func (p *pointer) correlationRepr() string {
 	if !p.hasCorrelation {
 		return "None"
 	}
-	return pyStr(p.correlation)
+	return pyvalue.StrRepr(p.correlation)
 }
 
 // envelopeContradiction is envelope.contradiction; "" is None.
@@ -170,7 +171,7 @@ func pointerDisagreement(stored, incoming any) string {
 	}
 	if first == nil {
 		return "this directive id is already recorded with a reference that is not an" +
-			" envelope pointer (" + pyRepr(stored) + "), so the purpose " + pyStr(second.purpose) +
+			" envelope pointer (" + pyvalue.Repr(stored) + "), so the purpose " + pyvalue.StrRepr(second.purpose) +
 			" and the correlation " + second.correlationRepr() + " you are asking for have nowhere to go on" +
 			" it. The recorded instruction is preserved; a later one is recorded as its" +
 			" own directive with its own digest. Settling the recorded one does not free" +
@@ -184,7 +185,7 @@ func pointerDisagreement(stored, incoming any) string {
 			second.correlationRepr() + "; one digest cannot answer two messages, so the later one is recorded as" +
 			" its own directive with its own digest"
 	}
-	return "this directive id already records the purpose " + pyStr(first.purpose) + " and the incoming pointer names " +
-		pyStr(second.purpose) + "; one digest cannot be two instructions, so the later one is recorded as its" +
+	return "this directive id already records the purpose " + pyvalue.StrRepr(first.purpose) + " and the incoming pointer names " +
+		pyvalue.StrRepr(second.purpose) + "; one digest cannot be two instructions, so the later one is recorded as its" +
 		" own directive with its own digest"
 }

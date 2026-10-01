@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
@@ -60,7 +61,7 @@ func (f *fakeTarget) Tip(_ context.Context, repository, base string) (Tip, error
 	f.reads++
 	sha, ok := f.tips[[2]string{repository, base}]
 	if !ok {
-		return Tip{}, &TargetUnreadable{"the test set no tip for " + pyRepr(base) + " of " + pyRepr(repository)}
+		return Tip{}, &TargetUnreadable{"the test set no tip for " + pyvalue.StrRepr(base) + " of " + pyvalue.StrRepr(repository)}
 	}
 	return Tip{SHA: sha, Source: "fake", Reference: "refs/heads/" + base, Repository: repository}, nil
 }

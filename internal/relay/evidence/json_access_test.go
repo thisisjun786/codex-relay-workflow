@@ -5,6 +5,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
@@ -18,8 +19,8 @@ func Test24EnvelopeAccessorPython(t *testing.T) {
 		tc := struct {
 			Op                   string
 			Value, Result, Error any
-		}{Text(row["op"]), row["value"], row["result"], row["error"]}
-		t.Run(tc.Op+"/"+Repr(tc.Value), func(t *testing.T) {
+		}{pyvalue.Str(row["op"]), row["value"], row["result"], row["error"]}
+		t.Run(tc.Op+"/"+pyvalue.Repr(tc.Value), func(t *testing.T) {
 			got, failure := envelopeAccessor(tc.Op, tc.Value)
 			if pyjson.Dumps(failure, pyjson.Options{SortKeys: true}) != pyjson.Dumps(tc.Error, pyjson.Options{SortKeys: true}) || (failure == nil && pyjson.Dumps(got, pyjson.Options{SortKeys: true}) != pyjson.Dumps(tc.Result, pyjson.Options{SortKeys: true})) {
 				t.Fatalf("diff: Go=(%v,%v) golden=(%v,%v)", got, failure, tc.Result, tc.Error)

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // Message kinds (delivery.py).
@@ -18,25 +18,6 @@ const (
 )
 
 var headings = []string{"VIOLATED CRITERION", "WHAT CHANGED", "FIX SCOPE", "PRESERVE", "REVERIFY AND RETURN", "TASK", "SCOPE", "MUST DO", "MUST NOT", "PROOF", "RETURN FORMAT", "DECISION BOUNDARY", "VERDICT"}
-
-func pyStr(v any) string {
-	switch t := v.(type) {
-	case nil:
-		return "None"
-	case string:
-		return t
-	case bool:
-		if t {
-			return "True"
-		}
-		return "False"
-	case int64:
-		return fmt.Sprint(t)
-	case float64:
-		return pyjson.Dumps(t, pyjson.Options{}) // NaN and the infinities spelled as JSON spells them
-	}
-	return pyReprValue(v)
-}
 
 // splitlines is str.splitlines.
 func splitlines(text string) []string {
@@ -64,7 +45,7 @@ func splitlines(text string) []string {
 
 // inline is report.inline: a record's text kept on the one line it is spliced into.
 func inline(v any) string {
-	text := pyStr(v)
+	text := pyvalue.Str(v)
 	parts := splitlines(text)
 	if len(parts) <= 1 && (len(parts) == 0 || parts[0] == text) {
 		return text
@@ -86,7 +67,7 @@ func known(v any) string {
 }
 
 func unheaded(v any) string {
-	text := pyStr(v)
+	text := pyvalue.Str(v)
 	probe := strings.TrimSpace(text)
 	probe = strings.TrimLeft(probe, "-*#>")
 	probe = strings.Trim(strings.TrimSpace(probe), "*`_")
@@ -256,7 +237,7 @@ func overflowLine(items []any, eventID string, nameBlock bool) string {
 			if o, ok := h.(Obj); ok {
 				if v, _ := get(o, "restoration"); truthy(v) {
 					id, _ := get(o, "id")
-					detail = ", including the restoration block on " + pyStr(id)
+					detail = ", including the restoration block on " + pyvalue.Str(id)
 					break
 				}
 			}
@@ -273,18 +254,18 @@ func renderCompletion(row Row, record Obj, request string) string {
 		"requestId: " + request,
 		"eventId: " + event,
 		"relationshipId: " + row.S("relationship_id"),
-		"executionGeneration: " + pyStr(g("executionGeneration")),
-		"attempt: " + pyStr(g("attempt")),
-		"outcome: " + pyStr(g("outcome")),
-		"revisionHash: " + pyStr(g("revisionHash")),
+		"executionGeneration: " + pyvalue.Str(g("executionGeneration")),
+		"attempt: " + pyvalue.Str(g("attempt")),
+		"outcome: " + pyvalue.Str(g("outcome")),
+		"revisionHash: " + pyvalue.Str(g("revisionHash")),
 	}
 	if manifest, _ := g("manifest").([]any); len(manifest) > 0 {
 		lines = append(lines, fmt.Sprintf("deliverables: %d", len(manifest)))
 		for _, entry := range manifest[:min(len(manifest), manifestLines)] {
 			o, _ := entry.(Obj)
-			line := "  " + pyStr(func() any { v, _ := get(o, "path"); return v }()) + "  sha256=" + pyStr(func() any { v, _ := get(o, "sha256"); return v }())
+			line := "  " + pyvalue.Str(func() any { v, _ := get(o, "path"); return v }()) + "  sha256=" + pyvalue.Str(func() any { v, _ := get(o, "sha256"); return v }())
 			if size, ok := get(o, "bytes"); ok && size != nil {
-				line += "  bytes=" + pyStr(size)
+				line += "  bytes=" + pyvalue.Str(size)
 			}
 			lines = append(lines, line)
 		}
@@ -295,7 +276,7 @@ func renderCompletion(row Row, record Obj, request string) string {
 		lines = append(lines, "deliverables: none (execution-only outcome)")
 	}
 	if ref := g("manifestRef"); truthy(ref) {
-		lines = append(lines, "manifestRef: "+pyStr(ref))
+		lines = append(lines, "manifestRef: "+pyvalue.Str(ref))
 	}
 	if criteria, _ := g("criteria").([]any); len(criteria) > 0 {
 		lines = append(lines, "criteria claimed by the child:")
@@ -303,7 +284,7 @@ func renderCompletion(row Row, record Obj, request string) string {
 			o, _ := item.(Obj)
 			id, _ := get(o, "id")
 			verdict, _ := get(o, "verdict")
-			lines = append(lines, "  "+pyStr(id)+": "+pyStr(verdict))
+			lines = append(lines, "  "+pyvalue.Str(id)+": "+pyvalue.Str(verdict))
 		}
 		if overflow := overflowLine(criteria, event, false); overflow != "" {
 			lines = append(lines, overflow)

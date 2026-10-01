@@ -13,6 +13,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -69,13 +70,13 @@ func seconds(v any) (float64, bool) {
 func Complaints(value any) []string {
 	o, ok := evidence.Object(value)
 	if !ok {
-		return []string{"the configuration is a " + evidence.TypeName(value) + ", not an object"}
+		return []string{"the configuration is a " + pyvalue.TypeName(value) + ", not an object"}
 	}
 	found := []string{}
 	version := get(o, "configVersion")
 	validVersion := version == true || version == int64(1) || version == float64(1) || version == int(1)
 	if !validVersion {
-		found = append(found, "configVersion must be 1, found "+evidence.Repr(version))
+		found = append(found, "configVersion must be 1, found "+pyvalue.Repr(version))
 	}
 	for _, k := range []string{"relayExecutable", "markerRoot"} {
 		v := get(o, k)
@@ -108,7 +109,7 @@ func Complaints(value any) []string {
 	}
 	owner := get(o, "owner")
 	if owner != nil && owner != "user" && owner != "plugin" {
-		found = append(found, "owner must be one of user, plugin when it is present at all, found "+evidence.Repr(owner))
+		found = append(found, "owner must be one of user, plugin when it is present at all, found "+pyvalue.Repr(owner))
 	}
 	// adapterInterpreter and adapterEntryPoint named the adapter the retired Python launchers ran;
 	// nothing reads them, and a document that still carries them is read as it is (decision 66).
@@ -266,7 +267,7 @@ func defaultCodexHome() string {
 // encoding it again would turn a literal ED B2..B3 run in it into another directory.
 func RoutingState(config Object) (string, error) {
 	if db := text(get(config, "dbPath")); db != "" {
-		if encoded, ok := fsencode(db); ok {
+		if encoded, ok := pyvalue.FSEncode(db); ok {
 			db = encoded
 		}
 		return filepath.Dir(db), nil

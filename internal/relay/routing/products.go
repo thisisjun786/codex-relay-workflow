@@ -12,6 +12,7 @@ import (
 
 	// The shared Python value helpers live here at the todo-22 base revision.
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 )
 
@@ -52,18 +53,18 @@ func (v *validator) closed(value any, keys []string, name string) Object {
 	}
 	slices.Sort(unknown)
 	if len(unknown) > 0 {
-		v.fail(fmt.Sprintf("%s carries keys this contract does not define: %s", name, evidence.Repr(unknown)))
+		v.fail(fmt.Sprintf("%s carries keys this contract does not define: %s", name, pyvalue.Repr(unknown)))
 	}
 	return m
 }
 func (v *validator) object(value any, schema string, keys []string, name string) Object {
 	m, ok := value.(map[string]any)
 	if !ok {
-		v.fail(name + " is an object, not " + evidence.TypeName(value))
+		v.fail(name + " is an object, not " + pyvalue.TypeName(value))
 		return Object{}
 	}
 	if m["schema"] != schema {
-		v.fail(fmt.Sprintf("%s carries schema %s, not %s", name, evidence.Repr(m["schema"]), schema))
+		v.fail(fmt.Sprintf("%s carries schema %s, not %s", name, pyvalue.Repr(m["schema"]), schema))
 	}
 	return v.closed(m, keys, name)
 }
@@ -84,7 +85,7 @@ func (v *validator) text(value any, name string, optional bool, limit int) any {
 func (v *validator) project(value any, name string, optional bool) any {
 	p := v.text(value, name, optional, 600)
 	if p == ProjectsScope {
-		v.fail(fmt.Sprintf("%s %s is reserved for routing's own project-create records", name, evidence.Repr(p)))
+		v.fail(fmt.Sprintf("%s %s is reserved for routing's own project-create records", name, pyvalue.Repr(p)))
 	}
 	return p
 }
@@ -94,7 +95,7 @@ func (v *validator) key(value any, name string, optional bool) any {
 	}
 	s, ok := value.(string)
 	if !ok || !keyPattern.MatchString(s) {
-		v.fail(fmt.Sprintf("%s is a key (%s), not %s", name, keyPattern.String(), evidence.Repr(value)))
+		v.fail(fmt.Sprintf("%s is a key (%s), not %s", name, keyPattern.String(), pyvalue.Repr(value)))
 	}
 	return value
 }
@@ -104,7 +105,7 @@ func (v *validator) product(value any, name string, optional bool) any {
 	}
 	s, ok := value.(string)
 	if !ok || !productPattern.MatchString(s) {
-		v.fail(fmt.Sprintf("%s is a plain product identifier (%s), not %s", name, productPattern.String(), evidence.Repr(value)))
+		v.fail(fmt.Sprintf("%s is a plain product identifier (%s), not %s", name, productPattern.String(), pyvalue.Repr(value)))
 	}
 	return value
 }
@@ -114,7 +115,7 @@ func (v *validator) issue(value any, name string, optional bool) any {
 	}
 	s, ok := value.(string)
 	if !ok || !issuePattern.MatchString(s) {
-		v.fail(fmt.Sprintf("%s is a Linear issue identifier like ABC-12, not %s", name, evidence.Repr(value)))
+		v.fail(fmt.Sprintf("%s is a Linear issue identifier like ABC-12, not %s", name, pyvalue.Repr(value)))
 	}
 	return value
 }
@@ -130,7 +131,7 @@ func (v *validator) flag(value any, name string, defaultValue any) any {
 func tuple(values []string) string {
 	parts := make([]string, len(values))
 	for i, s := range values {
-		parts[i] = evidence.Repr(s)
+		parts[i] = pyvalue.Repr(s)
 	}
 	suffix := ""
 	if len(values) == 1 {
@@ -144,7 +145,7 @@ func (v *validator) choice(value any, choices []string, name string, optional bo
 	}
 	s, ok := value.(string)
 	if !ok || !slices.Contains(choices, s) {
-		v.fail(fmt.Sprintf("%s is one of %s, not %s", name, tuple(choices), evidence.Repr(value)))
+		v.fail(fmt.Sprintf("%s is one of %s, not %s", name, tuple(choices), pyvalue.Repr(value)))
 	}
 	return value
 }
@@ -228,7 +229,7 @@ func ReadRegistry(value any) (Object, error) {
 	}
 	out := Object{"schema": "product-registry/1", "product": product, "workspace": v.key(r["workspace"], "workspace", false), "team": v.text(r["team"], "team", false, 600), "familyLabel": v.text(r["familyLabel"], "familyLabel", false, 600), "repositories": v.keys(r["repositories"], "repositories"), "surfaces": watched, "triageProject": v.project(r["triageProject"], "triageProject", true), "testTarget": v.target(r["testTarget"], "testTarget")}
 	if target := object(out["testTarget"]); target != nil && out["triageProject"] == target["project"] {
-		v.fail(fmt.Sprintf("the test target project %s is also the triage project; a simulated record and a real one would share one project's target", evidence.Repr(target["project"])))
+		v.fail(fmt.Sprintf("the test target project %s is also the triage project; a simulated record and a real one would share one project's target", pyvalue.Repr(target["project"])))
 	}
 	return out, v.err
 }
@@ -327,14 +328,14 @@ func ReadBinding(value any, registry Object) (Object, error) {
 				v.fail(fmt.Sprintf("%s has no test target, so nothing of it is a test binding", out["product"]))
 			} else {
 				if where != target["project"] {
-					v.fail(fmt.Sprintf("a test binding sits on the test target project %s, not %s", evidence.Repr(target["project"]), evidence.Repr(where)))
+					v.fail(fmt.Sprintf("a test binding sits on the test target project %s, not %s", pyvalue.Repr(target["project"]), pyvalue.Repr(where)))
 				}
 				if kind == "issue" && strings.Split(text(out["ref"]), "-")[0] != target["team"] {
-					v.fail(fmt.Sprintf("a test issue belongs to the test target team %s", evidence.Repr(target["team"])))
+					v.fail(fmt.Sprintf("a test issue belongs to the test target team %s", pyvalue.Repr(target["team"])))
 				}
 			}
 		} else if target != nil && where == target["project"] {
-			v.fail(fmt.Sprintf("%s is the test target project; only a test binding sits there, or a simulated record and a real one would share one project's target", evidence.Repr(where)))
+			v.fail(fmt.Sprintf("%s is the test target project; only a test binding sits there, or a simulated record and a real one would share one project's target", pyvalue.Repr(where)))
 		}
 	}
 	return out, v.err
@@ -524,12 +525,12 @@ func ReadClassification(value any) (Object, error) {
 func ReadPage(limit, after any, ceiling int64) (int64, any, error) {
 	n, ok := evidence.PyInt(limit)
 	if !ok || n < 1 {
-		return 0, nil, malformed("limit is a positive whole number, not " + evidence.Repr(limit))
+		return 0, nil, malformed("limit is a positive whole number, not " + pyvalue.Repr(limit))
 	}
 	if after != nil {
 		cursor, ok := evidence.PyInt(after)
 		if !ok || cursor < 0 {
-			return 0, nil, malformed("after is a non-negative rowid cursor, not " + evidence.Repr(after))
+			return 0, nil, malformed("after is a non-negative rowid cursor, not " + pyvalue.Repr(after))
 		}
 	}
 	return min(n, ceiling), after, nil

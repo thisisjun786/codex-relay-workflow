@@ -1,6 +1,7 @@
 package install
 
 import (
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/definition"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/pointer"
@@ -23,7 +24,7 @@ func foreignPointer(rec Object, dest string) string {
 	if store.PathlibSpelling(recorded) == store.PathlibSpelling(want) {
 		return ""
 	}
-	return "the host record names the owned pointer " + store.PythonRepr(recorded) + ", and crw install acts only on " + want + ", the pointer the plugin wiring runs: this host was installed at another destination (runtime_install.py --dest)"
+	return "the host record names the owned pointer " + pyvalue.StrRepr(recorded) + ", and crw install acts only on " + want + ", the pointer the plugin wiring runs: this host was installed at another destination (runtime_install.py --dest)"
 }
 
 // foreignRepair is how a host installed at another destination comes back under crw install. The
@@ -61,7 +62,7 @@ func unspellable(document any) []string {
 		switch value := v.(type) {
 		case string:
 			if !reading.WTF8(value) {
-				found = append(found, key+" holds a byte that is not UTF-8 ("+store.PythonRepr(store.FSDecode(value))+"), so it would be written as a replacement character naming nothing; crw install records only paths it can spell as UTF-8")
+				found = append(found, key+" holds a byte that is not UTF-8 ("+pyvalue.StrRepr(pyvalue.FSDecode(value))+"), so it would be written as a replacement character naming nothing; crw install records only paths it can spell as UTF-8")
 			}
 		case Object:
 			for _, f := range value {
