@@ -253,8 +253,20 @@ func (d *Daemon) observe(ctx context.Context, report *Report) error {
 	return d.advance(ctx, "relationships", served, len(relations))
 }
 func (d *Daemon) settle(ctx context.Context, r delivery.Relationship, turn store.TurnReference, report *Report) {
-	synthesized := ""
-	if turn.Status == "failed" || turn.Status == "interrupted" {
+	synthesized, laterTurn, laterEvent := "", "", ""
+	ended := turn.Status == "failed" || turn.Status == "interrupted"
+	if ended {
+		var err error
+		if laterTurn, laterEvent, err = d.laterReceipt(ctx, r, turn); err != nil {
+			report.Notes = append(report.Notes, "later receipt lookup failed for "+turn.TurnID+": "+err.Error())
+			return
+		}
+	}
+	if laterEvent != "" {
+		// The parent already heard from a later turn of this generation, so the end of this one is
+		// not news. The turn is still settled below, with no event, so it is not read again.
+		report.Notes = append(report.Notes, "observation of "+turn.TurnID+" ("+turn.Status+") not asserted: turn "+laterTurn+", admitted after it, already holds the final child receipt "+laterEvent)
+	} else if ended {
 		receipt, err := d.Intake.DaemonObservation(ctx, r.ID, turn)
 		if err != nil {
 			if store.RefusalReason(err) == store.ReasonRelationshipNotActive {
@@ -309,6 +321,12 @@ func (d *Daemon) settle(ctx context.Context, r delivery.Relationship, turn store
 			if _, err = conn.ExecContext(tx, "INSERT OR IGNORE INTO assignment_settlements(relationship_id,thread_id,turn_id,terminal_status,settled_at) VALUES(?,?,?,?,?)", r.ID, turn.ThreadID, turn.TurnID, turn.Status, now); err != nil {
 				return err
 			}
+			if laterEvent != "" {
+				detail := pyjson.Dumps(contract.OrderedObject{{Key: "status", Value: turn.Status}, {Key: "laterTurn", Value: laterTurn}, {Key: "laterEvent", Value: laterEvent}}, pyjson.Options{})
+				if _, err = conn.ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES (?,'observation_not_asserted',?,?)", now, turn.TurnID, detail); err != nil {
+					return err
+				}
+			}
 			if synthesized != "" {
 				finalized = append(finalized, synthesized)
 			}
@@ -345,6 +363,34 @@ func (d *Daemon) settle(ctx context.Context, r delivery.Relationship, turn store
 		return
 	}
 	report.Observed++
+}
+
+// laterReceiptQuery finds the final, unsuppressed child receipt of a turn admitted after the observed
+// turn in the same generation. "Admitted" is what the store's identity check accepts: a
+// generation_turns row whose evidence names the generation's anchor. The observed turn is placed in
+// that order by its own admission row; the anchor has none (it is the generation's immutable start),
+// so every admitted turn comes after it. A turn that is neither matches nothing, and the observation
+// path keeps refusing it as unassigned.
+const laterReceiptQuery = `SELECT t.turn_id, e.event_id
+FROM generations g
+JOIN generation_turns t ON t.relationship_id=g.relationship_id AND t.execution_generation=g.execution_generation AND t.evidence=('explicit_admission_bound:' || g.dispatch_turn_id)
+JOIN events e ON e.relationship_id=t.relationship_id AND e.execution_generation=t.execution_generation AND e.turn_thread_id=? AND e.turn_id=t.turn_id
+WHERE g.relationship_id=? AND g.execution_generation=? AND g.dispatch_turn_id IS NOT NULL AND g.dispatch_turn_id<>''
+  AND t.turn_id<>?
+  AND e.producer='child' AND e.stage='final' AND e.suppressed_reason IS NULL
+  AND (g.dispatch_turn_id=? OR t.rowid>(SELECT o.rowid FROM generation_turns o WHERE o.relationship_id=g.relationship_id AND o.execution_generation=g.execution_generation AND o.turn_id=? AND o.evidence=('explicit_admission_bound:' || g.dispatch_turn_id)))
+ORDER BY t.rowid, e.event_id LIMIT 1`
+
+// laterReceipt names a later admitted turn of the relationship's current generation that already
+// holds a final, unsuppressed child event, and that event; both are empty when there is none. Once a
+// later turn has reported, the parent knows where the work stands and the end of this turn is not
+// news (CRW-256), so settle asserts nothing for it.
+func (d *Daemon) laterReceipt(ctx context.Context, r delivery.Relationship, turn store.TurnReference) (laterTurn, event string, err error) {
+	row, err := d.Store.One(ctx, laterReceiptQuery, turn.ThreadID, r.ID, r.Generation, turn.TurnID, turn.TurnID, turn.TurnID)
+	if err != nil || row == nil {
+		return "", "", err
+	}
+	return row.Get("turn_id").(string), row.Get("event_id").(string), nil
 }
 
 // statusText is the host turn status when it is a string; 28's lazy host

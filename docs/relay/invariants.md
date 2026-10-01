@@ -36,7 +36,7 @@ the suite is the proof, not this table.
 | # | Invariant | Enforced in | Status |
 |---|---|---|---|
 | I-20 | A completed turn with no child receipt is an ordinary turn end, never success | `receipts.classify_observation` | implemented |
-| I-21 | A daemon observation may assert only failure or interruption | `receipts.daemon_observation` | implemented |
+| I-21 | A daemon observation may assert only failure or interruption, and asserts neither for a turn once a later admitted turn of its generation holds a final, unsuppressed child receipt: the parent already has a later report, so the earlier end is not news. The turn is still settled, with an observation row that names no event and a journal row (`observation_not_asserted`), so it is not read again | `receipts.daemon_observation`; `daemon.settle` with `daemon.laterReceipt` (a later turn is an admitted turn with a larger admission row, or any admitted turn when the observed turn is the anchor), tested by `TestLateEndOfAnEarlierTurnIsNotReportedOnceALaterTurnReported`, `TestLaterReceiptIsFoundOnlyForTurnsTheStoreAdmits`, `TestSettleKeepsATurnWhenTheLaterReceiptLookupFails` | implemented |
 | I-22 | Blocked-needs-input is a child assertion only | same; also a recorded capability limit, since approvals are unsupported end to end | implemented |
 | I-23 | A reviewable claim is verified against actual bytes, not trusted | `manifest.verify_against_disk` re-hashes every file; truncation or absence refuses | implemented |
 | I-24 | The digest is recomputed by the consumer | `receipts` recomputes from the manifest and compares | implemented |
