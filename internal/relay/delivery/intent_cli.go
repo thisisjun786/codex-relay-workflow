@@ -11,6 +11,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -19,56 +20,26 @@ import (
 // intent-claim and intent-disposition mirror beside their marker facts (declarations.py).
 // guard-evaluate, the ninth marker command, is todo 33's.
 
-func markerFlags(extra ...flagSpec) []flagSpec {
-	return append([]flagSpec{{"--marker-root", "store", false, nil, nil}, {"--workspace", "store", true, nil, nil}}, extra...)
+// intentCommands are the marker commands, in cli.py's add_parser order. They open their own
+// admitted connection (none is admitted at dispatch), and every form but intent-declare's and
+// intent-register's with the selected store answers without it (_reads_no_selected_store), so
+// only those two forms meet check_start and the selection refusal.
+var intentCommands = []commandSpec{
+	{marker("intent-declare", func(args dispatch.Args) bool { return args.Bool("no-db-path") }), cmdIntentDeclare},
+	{marker("intent-attempt", always), cmdIntentAttempt},
+	{marker("intent-bind", always), cmdIntentBind},
+	{marker("intent-register", func(args dispatch.Args) bool { return args.Text("db-path") != "" }), cmdIntentRegister},
+	{marker("intent-claim", always), cmdIntentClaim},
+	{marker("intent-disposition", always), cmdIntentDisposition},
+	{marker("intent-resolve", always), cmdIntentResolve},
+	{marker("intent-show", always), cmdIntentShow},
 }
 
-var intentCommands = map[string]commandSpec{
-	"intent-declare": {flags: markerFlags(flagSpec{"--dispatch-request-id", "store", true, nil, nil}, flagSpec{"--issue", "store", true, nil, nil}, flagSpec{"--declared-at", "store", false, nil, nil},
-		flagSpec{"--criteria-source", "store", false, nil, nil}, flagSpec{"--baseline-revision", "store", false, nil, nil}, flagSpec{"--settings", "store", false, nil, nil}, flagSpec{"--no-db-path", "true", false, nil, false}),
-		run: cmdIntentDeclare, exempt: func(a map[string]any) bool { return a["--no-db-path"] == true }},
-	"intent-attempt": {flags: markerFlags(flagSpec{"--assignment", "store", true, nil, nil}, flagSpec{"--outcome", "store", true, AttemptOutcomes, nil}, flagSpec{"--task-id", "store", false, nil, nil}),
-		run: cmdIntentAttempt, exempt: always},
-	"intent-bind": {flags: markerFlags(flagSpec{"--assignment", "store", true, nil, nil}, flagSpec{"--session", "store", true, nil, nil}, flagSpec{"--task-id", "store", true, nil, nil}),
-		run: cmdIntentBind, exempt: always},
-	"intent-register": {flags: markerFlags(flagSpec{"--assignment", "store", true, nil, nil}, flagSpec{"--relationship", "store", true, nil, nil}, flagSpec{"--dispatch-request-id", "store", true, nil, nil}, flagSpec{"--db-path", "store", false, nil, nil}),
-		run: cmdIntentRegister, exempt: func(a map[string]any) bool { return truthy(a["--db-path"]) }},
-	"intent-claim": {flags: markerFlags(flagSpec{"--assignment", "store", true, nil, nil}, flagSpec{"--session", "store", true, nil, nil}, flagSpec{"--dispatch-request-id", "store", true, nil, nil}, flagSpec{"--first-turn", "store", false, nil, nil}),
-		run: cmdIntentClaim, exempt: always},
-	"intent-disposition": {flags: markerFlags(flagSpec{"--assignment", "store", true, nil, nil}, flagSpec{"--session", "store", true, nil, nil}, flagSpec{"--turn", "store", true, nil, nil}, flagSpec{"--outcome", "store", true, DispositionOutcomes, nil}),
-		run: cmdIntentDisposition, exempt: always},
-	"intent-resolve": {flags: markerFlags(flagSpec{"--assignment", "store", true, nil, nil}, flagSpec{"--chosen-task", "store", true, nil, nil}, flagSpec{"--chosen-session", "store", true, nil, nil}, flagSpec{"--reason", "store", true, nil, nil}, flagSpec{"--adjudicate", "append", true, nil, nil}),
-		run: cmdIntentResolve, exempt: always},
-	"intent-show": {flags: markerFlags(flagSpec{"--assignment", "store", false, nil, nil}, flagSpec{"--session", "store", false, nil, nil}, flagSpec{"--now", "store", false, nil, nil}),
-		run: cmdIntentShow, exempt: always},
+func marker(name string, selectsNoStore func(dispatch.Args) bool) dispatch.Command {
+	return dispatch.Command{Name: name, OwnAdmission: true, ReadOnly: name == "intent-show", SelectsNoStore: selectsNoStore}
 }
 
-// intentCommandNames is cli.py's add_parser order for the marker commands this package serves.
-var intentCommandNames = []string{"intent-declare", "intent-attempt", "intent-bind", "intent-register", "intent-claim", "intent-disposition", "intent-resolve", "intent-show"}
-
-func init() {
-	for name, spec := range intentCommands {
-		deliveryCommands[name] = spec
-	}
-}
-
-func always(map[string]any) bool { return true }
-
-// fencedMarker is a marker command cli.py main runs check_start for when it is not exempt
-// (_reads_no_selected_store): every intent-* write form; intent-show is read-only.
-func fencedMarker(command string) bool {
-	_, marker := intentCommands[command]
-	return marker && command != "intent-show"
-}
-
-// payloadExit is cli.PayloadExit: a whole answer printed with its own exit code.
-type payloadExit struct {
-	payload Obj
-	code    int
-}
-
-func (p *payloadExit) Error() string                              { return pyvalue.Str(fieldOf(p.payload, "detail")) }
-func (p *payloadExit) ExitPayload() (contract.OrderedObject, int) { return p.payload, p.code }
+func always(dispatch.Args) bool { return true }
 
 // markerRoot is _marker_root: resolve_marker_root(args.marker_root).path.
 func (c *cliRun) markerRoot() (string, error) {
@@ -90,7 +61,7 @@ func cmdIntentDeclare(c *cliRun) (any, error) {
 	var settings any
 	if raw := c.s("--settings"); raw != "" {
 		if settings, err = loads(raw); err != nil {
-			return nil, &hostError{"JSONDecodeError", store.PythonJSONError(raw)}
+			return nil, &dispatch.HostError{Class: "JSONDecodeError", Detail: store.PythonJSONError(raw)}
 		}
 	}
 	var db any
@@ -135,7 +106,7 @@ func adjudicated(values []string) ([]Obj, error) {
 	for _, value := range values {
 		factID, digest, _ := strings.Cut(value, "=")
 		if factID == "" || digest == "" {
-			return nil, &usageError{"--adjudicate takes factId=digest, not " + pyvalue.StrRepr(value), contract.ExitUsage}
+			return nil, &dispatch.UsageError{Detail: "--adjudicate takes factId=digest, not " + pyvalue.StrRepr(value), Code: contract.ExitUsage}
 		}
 		entries = append(entries, Obj{{Key: "factId", Value: factID}, {Key: "digest", Value: digest}})
 	}
@@ -411,7 +382,7 @@ func malformedDisposition(record any) string {
 func withStoreRecord(published, record Obj) (any, error) {
 	payload := append(slices.Clone(published), F{Key: "storeRecord", Value: record})
 	if str(record, "state") == declFailed {
-		return nil, &payloadExit{append(payload, F{Key: "detail", Value: "the marker fact was published and the relay store record was not: " + pyvalue.Str(fieldOf(record, "detail"))}), contract.ExitRefused}
+		return nil, &dispatch.PayloadExit{Payload: append(payload, F{Key: "detail", Value: "the marker fact was published and the relay store record was not: " + pyvalue.Str(fieldOf(record, "detail"))}), Code: contract.ExitRefused}
 	}
 	return payload, nil
 }
@@ -474,7 +445,7 @@ func pathlibString(value string) string {
 func expandedStore(dbPath any) (string, error) {
 	expanded, err := store.ExpandUser(dbPath.(string))
 	if errors.Is(err, store.ErrNoHome) {
-		return "", &hostError{"RuntimeError", "Could not determine home directory."}
+		return "", &dispatch.HostError{Class: "RuntimeError", Detail: "Could not determine home directory."}
 	}
 	if err != nil {
 		return "", err

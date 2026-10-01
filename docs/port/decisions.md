@@ -3374,12 +3374,19 @@ cli.py did:
 - A `--state` (or `CODEX_SESSION_RELAY_STATE`) that cannot be resolved because `~user` names no
   user, or `~` has no home, answers `RuntimeError: Could not determine home directory.` (exit 3).
   The registry, linkage and merge-turn commands answered the wrapped Go text instead
-  (`cannot determine home directory for "x": ...`).
+  (`cannot determine home directory for "x": ...`), the delivery and marker commands that text
+  behind `OSError: `. Any other failure to resolve it (a relative `--state` under a working
+  directory that is gone) reads as the command family's unclassified failure, as the handler's
+  own failures do; the delivery and marker commands answered it behind `OSError: `.
+- The delivery and marker commands' own console (`delivery.ExecuteAs` without the relay CLI's
+  check, which only tests drove) is gone, and with it its copy of the selection refusal and of the
+  recovery lines (`internal/relay/delivery/selection.go`); the relay CLI's (`selection.Refusal`)
+  is the one, tested in `internal/relay/selection`.
 
 Why: six entry paths served the relay CLI, each re-reading the global options and keeping its own
 copy of the selection refusal and of the ending-to-JSON classification; the copies had drifted
 apart only where nothing looked. One table and one path keep the refusal order in one place.
 
 Evidence: `internal/relay/dispatch` (`Execute`, `Command`, `emit`), the families' registrations
-(`internal/relay/cli/registry.go`, `internal/relay/registry/cli.go`, `external.go`); every relay CLI
-golden compares unchanged.
+(`internal/relay/cli/registry.go`, `internal/relay/registry/cli.go`, `external.go`,
+`internal/relay/delivery/cli.go`, `intent_cli.go`); every relay CLI golden compares unchanged.

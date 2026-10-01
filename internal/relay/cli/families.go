@@ -10,21 +10,18 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/faults"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/selection"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
-// familyDelegate runs a command of the families that still parse their own line (delivery,
-// faults) with the selection refusal, check_start and admission cli.main applies
+// familyDelegate runs a command of the family that still parses its own line (faults) with the selection refusal, check_start and admission cli.main applies
 // first, handed to them as their check.
 func familyDelegate(ctx context.Context, argv0, prog string, root argparse.Result, stdout, stderr io.Writer) (int, bool) {
 	remaining := root.Remaining
 	name := remaining[0]
-	isFault, isDelivery := slices.Contains(faults.Names(), name), slices.Contains(delivery.CommandNames(), name)
-	if !isFault && !isDelivery {
+	if !slices.Contains(faults.Names(), name) {
 		return 0, false
 	}
 	kindModules := root.Values["kind-module"]
@@ -61,25 +58,11 @@ func familyDelegate(ctx context.Context, argv0, prog string, root argparse.Resul
 		}
 		return dispatch.CheckSelection(dispatch.Services{Selection: selected, SocketPath: socket, AdapterRequested: socket != "", Program: program})
 	}
-	if isFault {
-		code, _ := faults.ExecuteAs(ctx, prog, argv, stdout, stderr, func(selection store.StateSelection, socket string) error {
-			if err := refusal(selection, socket); err != nil || !drains {
-				return err
-			}
-			return admit(selection, socket)
-		})
-		return code, true
-	}
-	code, _ := delivery.ExecuteAs(ctx, prog, argv, stdout, stderr, func(selection store.StateSelection, socket string) error {
-		if name != "ack-proof" {
-			if err := refusal(selection, socket); err != nil {
-				return err
-			}
+	code, _ := faults.ExecuteAs(ctx, prog, argv, stdout, stderr, func(selection store.StateSelection, socket string) error {
+		if err := refusal(selection, socket); err != nil || !drains {
+			return err
 		}
-		if drains && selection.Path != "" {
-			return admit(selection, socket)
-		}
-		return kindModuleRefusal(kindModules)
+		return admit(selection, socket)
 	})
 	return code, true
 }
@@ -116,5 +99,5 @@ func kindModuleRefusal(names []string) error {
 
 // Registered reports whether this build implements the relay command name.
 func Registered(name string) bool {
-	return dispatch.Registered(name) || slices.Contains(faults.Names(), name) || slices.Contains(delivery.CommandNames(), name)
+	return dispatch.Registered(name) || slices.Contains(faults.Names(), name)
 }

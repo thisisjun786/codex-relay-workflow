@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
@@ -25,11 +26,11 @@ func Test28LifecycleNumericSQLiteParity(t *testing.T) {
 			err = RecordLifecycle(context.Background(), s, &FakeClock{T: 1700000000}, Lifecycle{TaskID: raw[i], RuntimeStatus: "idle", Archived: new(bool), CanAcceptInput: value, Deliverable: "yes"})
 			got := map[string]any{}
 			if err != nil {
-				var host *hostError
+				var host *dispatch.HostError
 				if !errors.As(err, &host) {
 					t.Fatal(err)
 				}
-				got["error"], got["detail"] = host.kind, host.message
+				got["error"], got["detail"] = host.Class, host.Detail
 			} else {
 				var stored any
 				var kind string
