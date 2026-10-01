@@ -4515,3 +4515,39 @@ Kept, and why:
   `TestExpandUser_matches_python_home_and_named_user`).
 
 Evidence: commit [R3F7]: every renamed golden and fixture is a git rename with identical content.
+
+## Decision R3F-7. Three ported helpers no product path called are deleted, each by what replaced it (refactor R3, final sweep)
+
+Decision: the three behaviours decision R3F-1 left for the owner go; none was missing wiring.
+
+- `registry.CheckUnloadedTransmission` (with `taskIDOf`). Python's delivery gate called
+  `rolepolicy.check_unloaded_transmission(settings, role, policy, "notLoaded") is not None` only
+  to set `settings.settings_free_resume`; it never raised the refusal. `AuthorizedSettings`
+  computes the same flag: it is reached only with a bound role under a declared policy whose
+  record check passed, and there the two read the same predicate (no cited exception, the role's
+  expectation a pair, and the record's model and effort equal to it), so they agree on every
+  input the gate passes. The predicate is now one function, `derivedFromRolePair`, which
+  `AuthorizedSettings` and the role-policy scenarios' `unloaded` steps both call.
+  `contract.RefusalUnverifiedPairForUnloadedThread` stays: the bridge refuses with it.
+- `store.ReceiptIntake.ResolveStaged` (with `stagedEvents` and `StageResolution`). Python's
+  `resolve_staged` was called only by tests too; the product settles staged claims in the
+  daemon's observation (Python's `resolve_staged_in`, which internal/relay/daemon/observe.go
+  carries out inline, journal `staged_resolved`). Its cases move onto that path:
+  `Test29ASettledTurnResolvesItsStagedClaims` (internal/relay/daemon) holds a completed turn
+  finalizing its staged claim exactly once, a failed or an interrupted one suppressing it with
+  its reason, and a running one leaving it staged; delivery's SUP-03 settles its successor as
+  the daemon writes it (`settleStaged`), its tables unchanged.
+- `registry.SettingsFreeRefusalCode` stays as the one copy: the host adapter's `verifyResume`
+  calls it instead of repeating it inline (adapter already imports registry).
+
+Goldens: the role-policy scenarios `unloaded_guard` and `exception_equal_to_the_role_pair`
+(`Test25_ROL12_*`, `Test25_ROL15_*`): each `unloaded` step answers `{"settingsFree": ...}` (true
+where it answered the `unverified_pair_for_unloaded_thread` refusal, false where it answered
+null); no other step moved. `Test25_ROL12` and `Test25_ROL15` assert the flag.
+
+Consumer check: no product code, skill, doc or fixture called the three functions; the
+`settings_free_resume` flag and the refusal code are unchanged.
+
+Evidence: internal/relay/registry/{record.go,rolepolicy.go,rolepolicy_helpers_test.go,
+rolepolicy_test.go}; internal/relay/adapter/settings.go; internal/relay/daemon/staged_test.go;
+internal/relay/delivery/supersession_test.go; internal/relay/store/wp1_intake_test.go.

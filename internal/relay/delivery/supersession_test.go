@@ -5,11 +5,14 @@ import (
 	"database/sql"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // test_supersession.py SUP-1..SUP-8. The daemon's observation pass (todo 29) is replaced by the
-// two calls it makes for a finished child turn: resolve_staged, then annotate_predecessors.
+// two steps it takes for a finished child turn: its settlement of the staged claims
+// (settleStaged), then annotate_predecessors.
 
 func (f *fixture) advanceTo(number int) {
 	turn := "turn-dispatch-" + string(rune('0'+number))
@@ -144,8 +147,7 @@ func TestSUP03_a_final_successor_annotates_its_predecessor(t *testing.T) {
 				mustDo(t, err)
 				f.declare(str(s, "eventId"), older)
 				if mode == "outstanding_pred" {
-					_, err := f.intake.ResolveStaged(f.ctx, store.TurnReference{ThreadID: child, TurnID: dispatchTurn, Status: "completed"})
-					mustDo(t, err)
+					f.settleStaged(child, dispatchTurn)
 					mustDo(t, f.delivery.AnnotatePredecessors(f.ctx, str(s, "eventId")))
 				} else {
 					_, err := f.delivery.Enqueue(f.ctx, str(s, "eventId"), "", "")
@@ -160,6 +162,25 @@ func TestSUP03_a_final_successor_annotates_its_predecessor(t *testing.T) {
 			})
 		})
 	}
+}
+
+// settleStaged is the daemon's settlement of a turn that completed (internal/relay/daemon/
+// observe.go): every claim staged on it becomes final, journalled once as staged_resolved.
+func (f *fixture) settleStaged(thread, turn string) {
+	f.t.Helper()
+	rows, err := f.store.All(f.ctx, "SELECT event_id FROM events WHERE stage='staged' AND turn_thread_id=? AND turn_id=? ORDER BY first_seen_at", thread, turn)
+	mustDo(f.t, err)
+	now := f.intake.Now()
+	finalized := []any{}
+	for _, row := range rows {
+		event := row.Get("event_id").(string)
+		_, err := execSQL(f.ctx, f.store, "UPDATE events SET stage='final',finalized_at=?,finalizing_status='completed' WHERE event_id=?", now, event)
+		mustDo(f.t, err)
+		finalized = append(finalized, event)
+	}
+	detail := pyjson.Dumps(contract.OrderedObject{{Key: "finalized", Value: finalized}, {Key: "suppressed", Value: []any{}}, {Key: "status", Value: "completed"}}, pyjson.Options{})
+	_, err = execSQL(f.ctx, f.store, "INSERT INTO journal(at,kind,subject,detail) VALUES (?,'staged_resolved',?,?)", now, turn, detail)
+	mustDo(f.t, err)
 }
 
 func TestSUP04_a_re_emitted_final_receipt_still_reports_its_stage(t *testing.T) {
