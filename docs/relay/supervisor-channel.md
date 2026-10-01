@@ -264,7 +264,8 @@ How soon an omission is owed depends on when the relay settles the turn, and tha
 grace. A turn that ended with no receipt has no staged event to find it by, so the daemon reaches it as an
 unsettled admitted turn of its relationship. Since CRW-258 the observation pass finds every such turn of every active
 relationship with one query and reads each in turn, longest-waiting first, up to `max_turn_reads_per_tick` (32) a
-tick, so the turn is read by the tick after its admission is stored and a relationship with nothing pending costs
+tick (no relationship more than its share of them, `max(min_relationship_share, 32 / relationships needing a read)`),
+so the turn is read by the tick after its admission is stored and a relationship with nothing pending costs
 nothing. Before it the scan read at most `share - 1` rows of `generation_turns` - the whole table, every
 relationship's rows - on each visit to one relationship; with `max_turn_reads_per_tick` 8 and
 `min_relationship_share` 2 that was four relationships a tick and one row a visit, and an admission written after a
@@ -275,8 +276,8 @@ ended, of which the grace is 5. A turn that carried a receipt settled within 90 
 puts it in the ring directly. The scan belongs to the observation pass and not to this channel; the follow-up that
 was named "supervisor omission latency" (reading one relationship's own admissions through an index) is the
 census query of that pass. The 2026-09-23 figures describe the old scan and were not re-measured on the new one;
-an omission's wake is now bounded by the grace plus the next tick while the pending turns fit the per-tick cap and the
-host answers within the pass's time bound.
+an omission's wake is now bounded by the grace plus the next tick while the pending turns fit the per-tick cap, no
+relationship has more than its share of them, and the host answers within the pass's time bound.
 
 The readers still read different sources, and where the marker and the store disagree about
 the assignment itself each answers from its own. A marker that never received

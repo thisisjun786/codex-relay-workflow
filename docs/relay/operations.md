@@ -937,7 +937,8 @@ something. Observation reads are capped per tick (`max_turn_reads_per_tick`, 32)
 (`max_observe_seconds`, 10, measured on a monotonic clock).
 
 - A turn waits since the later of when it became pending and when it was last read, so a read, even a failed one,
-  puts it behind every older turn and a new turn starts behind the old ones. The order is read from
+  puts it behind every older turn and a new turn starts behind the old ones. A stamp later than the clock now was
+  written before the clock was set back and counts as the oldest there is, so it cannot pin the front. The order is read from
   `poll_observations`, so a restart resumes it and no cursor is kept.
 - Turns a staged claim waits on (group A) are read before all others (group B), but one read of B goes first, so
   staged claims cannot hold the others out. Inside a group the assignments that have waited longest deal one turn

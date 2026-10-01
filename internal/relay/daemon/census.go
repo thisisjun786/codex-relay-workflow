@@ -5,6 +5,8 @@ import (
 	"context"
 	"maps"
 	"slices"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 )
 
 // A turn of an active relationship is pending while the relay still has something to learn by reading it: a
@@ -70,10 +72,8 @@ WHERE r.status='active' AND r.superseded_by IS NULL AND g.dispatch_turn_id IS NO
   AND NOT EXISTS (SELECT 1 FROM assignment_settlements s WHERE s.relationship_id=r.relationship_id AND s.thread_id=r.child_task_id AND s.turn_id=t.turn_id)
 ORDER BY r.relationship_id, t.rowid`
 
-	latestAttempts = `SELECT p.relationship_id AS rid, p.turn_id AS turn, MAX(p.last_attempt_at) AS attempt
-FROM poll_observations p JOIN relationships r ON r.relationship_id=p.relationship_id
-WHERE r.status='active' AND r.superseded_by IS NULL
-GROUP BY p.relationship_id, p.turn_id`
+	// The reads of one relationship, by its primary key prefix: only a relationship with a pending turn is asked.
+	latestAttempts = `SELECT turn_id AS turn, MAX(last_attempt_at) AS attempt FROM poll_observations WHERE relationship_id=? GROUP BY turn_id`
 )
 
 // census returns the active relationships that have a pending turn, in relationship id order.
@@ -112,21 +112,31 @@ func (d *Daemon) census(ctx context.Context) ([]*pending, error) {
 	if len(byID) == 0 {
 		return nil, nil
 	}
-	attempts, err := d.Store.All(ctx, latestAttempts)
-	if err != nil {
-		return nil, err
-	}
-	for _, row := range attempts {
-		if p := byID[row.Get("rid").(string)]; p != nil {
-			if t := p.turns[row.Get("turn").(string)]; t != nil {
-				t.attempt, _ = row.Get("attempt").(string)
-			}
+	// A stamp later than the clock now was written before the clock was set back, so it is older than anything the
+	// clock stamps now. It counts as the oldest stamp there is; reading the turn replaces it with a valid one, so
+	// turns stamped in a clock's future neither rank behind the turns just read nor hold the same front for ever.
+	now := delivery.ISOOf(d.Clock.Now())
+	past := func(stamp string) string {
+		if stamp > now {
+			return ""
 		}
+		return stamp
 	}
 	out := make([]*pending, 0, len(byID))
 	for _, id := range slices.Sorted(maps.Keys(byID)) {
 		p := byID[id]
+		attempts, err := d.Store.All(ctx, latestAttempts, id)
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range attempts {
+			if t := p.turns[row.Get("turn").(string)]; t != nil {
+				attempt, _ := row.Get("attempt").(string)
+				t.attempt = past(attempt)
+			}
+		}
 		for _, t := range p.turns {
+			t.since = past(t.since)
 			class := 0
 			if t.staged {
 				class = 1

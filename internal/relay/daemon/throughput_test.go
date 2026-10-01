@@ -684,3 +684,42 @@ func TestSpareBudgetGoesToTheRelationshipThatNeedsIt(t *testing.T) {
 		t.Fatalf("reads %v, want all five pending turns in one tick", host.reads)
 	}
 }
+
+// A stamp later than the clock now was written before the clock was set back, so it is older than anything the clock
+// stamps now: it must not hold the same turns at the front of the line. Without that, turns stamped in the future keep
+// ranking behind the ones just read for as long as the clock stays behind them.
+func TestAClockSetBackDoesNotPinTheSameTurnsAtTheFront(t *testing.T) {
+	const future = "2100-01-01T00:00:00.000000+00:00"
+	for _, c := range []struct {
+		name          string
+		relationships int
+		budget        int
+		setBack       func(t *testing.T, s *store.Store)
+	}{
+		{"turns that became pending after the clock now", 50, 32, func(t *testing.T, s *store.Store) {
+			exec(t, s, "UPDATE generations SET opened_at=?, bound_at=?", future, future)
+		}},
+		{"turns last read after the clock now", 50, 32, func(t *testing.T, s *store.Store) {
+			exec(t, s, "INSERT INTO poll_observations(relationship_id,execution_generation,turn_id,last_status,last_polled_at,last_attempt_at) SELECT relationship_id,execution_generation,dispatch_turn_id,'inProgress',?,? FROM generations", future, future)
+		}},
+		{"three relationships, a budget of two", 3, 2, func(t *testing.T, s *store.Store) {
+			exec(t, s, "INSERT INTO poll_observations(relationship_id,execution_generation,turn_id,last_status,last_polled_at,last_attempt_at) SELECT relationship_id,execution_generation,dispatch_turn_id,'inProgress',?,? FROM generations", future, future)
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			ctx, s := throughputStore(t)
+			members := []int{}
+			for i := range c.relationships {
+				seedIndexed(t, s, i)
+				members = append(members, i)
+			}
+			c.setBack(t, s)
+			host := &observationHost{status: "inProgress"}
+			d := New(s, host, movingClock(), nil)
+			d.Policy.MaxTurnReads, d.Policy.MaxSends = c.budget, -1
+			rounds := (c.relationships + c.budget - 1) / c.budget
+			reads := perTick(t, ctx, d, host, 2*rounds)
+			withinTicks(t, "clock set back", reads, members, rounds+1)
+		})
+	}
+}
