@@ -45,8 +45,17 @@ type Command struct {
 	// SelectsNoStore is _reads_no_selected_store for a form that answers without the store
 	// discovery picks (the marker commands'): no check_start, selection refusal or admission.
 	SelectsNoStore func(Args) bool
-	// Exempt commands are _refuse_ambiguous_state's exemptions: no selection refusal.
+	// Exempt commands are _refuse_ambiguous_state's exemptions: no ambiguous or unidentified
+	// discovery refusal. They are still refused a selected store that records another App Server
+	// socket than the one it must serve (selection.SocketMismatch), unless they report it
+	// (ReportsMismatch) or check the selection where they read the store (ChecksOwnSelection).
 	Exempt bool
+	// ReportsMismatch commands (doctor, service status) diagnose the selection: they answer a
+	// mismatched store with a socketMismatch field instead of the refusal (decision 73).
+	ReportsMismatch bool
+	// ChecksOwnSelection commands consult the whole selection refusal themselves, in the forms
+	// that read the selected store (packet-check), and read no store in the others.
+	ChecksOwnSelection bool
 	// OwnAdmission commands open their own admitted connection (service, daemon, managed-start
 	// and the marker commands), so dispatch admits no store before their handler.
 	OwnAdmission bool
@@ -228,6 +237,10 @@ func (c *Command) run(ctx context.Context, g globals, args Args) (any, error) {
 		if err := CheckSelection(services); err != nil {
 			return nil, err
 		}
+	} else if selected && !c.ReportsMismatch && !c.ChecksOwnSelection {
+		if err := CheckSocket(services); err != nil {
+			return nil, err
+		}
 	}
 	if selected && !readOnly && !c.Exempt && !c.OwnAdmission {
 		if err := admit(ctx, g, services.Selection); err != nil {
@@ -268,6 +281,24 @@ func CheckSelection(services Services) error {
 		return &PayloadExit{Payload: refusal, Code: contract.ExitRefused}
 	}
 	return nil
+}
+
+// CheckSocket is the selection refusal's socket half for an exempt command: a selected store
+// that records another App Server socket than --socket, or than the default socket that scoped a
+// discovery made without one, refused as CheckSelection refuses it (exit 2), or nil. A socket
+// that cannot be resolved leaves nothing to compare; the command resolves it and words that
+// failure itself, as before.
+func CheckSocket(services Services) error {
+	refusal, err := selection.SocketMismatch(selection.Services{Selection: services.Selection, SocketPath: services.SocketPath, Program: services.Program})
+	if err == nil && refusal != nil {
+		return &PayloadExit{Payload: refusal, Code: contract.ExitRefused}
+	}
+	return nil
+}
+
+// Mismatch is the socket half as a diagnostic reports it (selection.Mismatch), or nil.
+func Mismatch(services Services) contract.OrderedObject {
+	return selection.Mismatch(selection.Services{Selection: services.Selection, SocketPath: services.SocketPath, Program: services.Program})
 }
 
 // kindModules are the modules --kind-module may name, each with what naming it installs.

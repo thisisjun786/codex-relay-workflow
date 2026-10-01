@@ -4551,3 +4551,93 @@ Consumer check: no product code, skill, doc or fixture called the three function
 Evidence: internal/relay/registry/{record.go,rolepolicy.go,rolepolicy_helpers_test.go,
 rolepolicy_test.go}; internal/relay/adapter/settings.go; internal/relay/daemon/staged_test.go;
 internal/relay/delivery/supersession_test.go; internal/relay/store/wp1_intake_test.go.
+
+## 73. Without `--socket`, discovery scopes the state directory by the default App Server socket
+
+Decision: `store.DiscoverStateDir` given no socket scopes the state directory by
+`store.DefaultSocket()`, `$CODEX_HOME/app-server-control/app-server-control.sock` with
+`CODEX_HOME` when it is set and non-empty, else `Path.home()/.codex`: the socket the bridge
+defaults to (`internal/bridge/mcp` `Defaults`). The default socket goes through the rules an
+explicit one does: its canonical directory, its legacy spelling's, then the sibling walk, which
+adopts the one store recording that socket and leaves several to the `ambiguous_state_directory`
+refusal. The legacy directory `default`, which a selection without a socket named before, is
+kept only when it holds a store and none of those rules found one; its `socketScope` is
+`default`, and stores beside it that record no socket are not held against it. The selection's
+`detail` names the socket: `...; scoped by the default Codex App Server socket <path>`, followed
+by `; kept the legacy default directory: ...` when `default` was kept. Precedence is unchanged
+(flag, `CODEX_SESSION_RELAY_STATE`, `XDG_STATE_HOME`, home), and so is every selection made with
+`--socket`. Only the directory changes: nothing connects to the default socket, the services'
+`SocketPath` stays empty, so `adapter`, `ledger`, `actorReachability` and the commands that need
+the App Server answer exactly as before. Every caller without a socket follows: the relay CLI's
+selection, the Stop hook's routing and owner fallback when its settings name no `socketPath`, and
+`crw install`'s store presence. The callers that hold a socket (the adapter ledger, the daemon,
+the service, the hook with a `socketPath`) are unchanged, so the delivery ledger stays in the
+directory the store is in. `doctor`'s `siblingStores.claimingThisSocket` without `--socket` lists
+the stores recording the default socket.
+
+The default socket is also what a discovered selection is checked against. The selection carries
+it (`StateSelection.DefaultSocket`, empty for `--state`, `CODEX_SESSION_RELAY_STATE`, a given
+`--socket` and the kept `default` directory), and `selection.Refusal` compares the selected
+store's recorded socket with it when no `--socket` was given: a store recording another socket is
+refused `state_directory_serves_another_socket`, exit 2, before a writing command is admitted or a
+read-only one reads it, as under an explicit `--socket`. A store recording no socket is admitted as
+before. The commands exempt from the ambiguous and unidentified discovery refusals
+(`dispatch.Command.Exempt`) keep that exemption but are held to this socket half
+(`selection.SocketMismatch`, `dispatch.CheckSocket`), whether `--socket` or the default socket is
+the one contradicted: the service family's writers (`enable`, `disable`, `stop`, `declare`,
+`start`, `restart`, `run`), `managed-start`, `managed-show` and `reporting-derive` are refused
+before their handler writes or reads anything (a socket that cannot be resolved leaves nothing to
+compare, and the command words that failure itself); `reporting-show` takes `--state` and no socket, so
+nothing is compared; `packet-check` consults the whole refusal itself where it reads the store.
+`doctor` and `service status` answer instead of refusing (`ReportsMismatch`): an explicit `--socket`
+mismatch was answered by both with exit 0, and they are how a mismatch is diagnosed, so each
+carries a trailing `socketMismatch` block, the refusal's fields without `error`, and exits 0. The bridge's `Defaults` reads an empty `CODEX_HOME` as unset too, so the two runtimes name
+one default socket; taken as set, it named a socket relative to the working directory. It reads
+the home as the relay does (`mcp.Home`, `ownership.UserHome`: HOME whenever set, an empty HOME
+the root, an absent one this user's passwd entry), and an empty `XDG_STATE_HOME` as unset for
+its ledger, which the relay's discovery also does.
+
+A store with no ownership stamp, no `takeover.json` and no ownership key in `schema_meta`, whose
+`write-gate.lock` does not exist, is refused in plain words: the `doctor` write probe, a writable
+open and a registration hold answer reason `store_owned_by_other` (unchanged) with the detail
+`the store carries no ownership stamp (no write-gate.lock): no Go writer was ever bound to it; it
+is not the store a running relay serves`. A serving relay holds its store's write gate, so the
+last clause holds. The stamp's or the gate's own failure stays the error's cause, and a stamped
+store whose gate is missing keeps the gate's words.
+
+`doctor` gains one key, `serviceStore`, after `runtime` and only where it has something to say,
+like `issue` and `workerReadiness`: when discovery chose the directory (not `--state` or
+`CODEX_SESSION_RELAY_STATE`) and the scope claim of the selection's socket (the default socket
+without `--socket`) names another state directory. It carries the claim's `stateDirectory`,
+`socketPath` and `storeId`, `live` (whether the registering process still runs), the claim's
+path `scopeRecord`, a `detail` and a `recover` line, `<program> --state=<dir> --socket=<socket>
+doctor`. It reads that one file and takes no lock. No key is renamed, moved or removed.
+
+Why: on 2026-10-01 a CRW parent on Jun's host, following crw-run, ran `codex-session-relay
+doctor` with neither `--state` nor `--socket`. Discovery chose `default`, which held a store from
+2026-09-18 that was never stamped, and the report read `dbWritable: false` with
+`store_owned_by_other: ownership refused: write gate: no such file or directory`. The parent
+concluded the relay was unusable and ran the project in direct mode, without a relay
+registration or daemon delivery. The relay service ran on
+`--socket ~/.codex/app-server-control/app-server-control.sock`, whose directory is that socket's
+digest (`e4f02742e7163a2a`); `--socket <that socket> doctor` named it. The bridge already
+defaulted to that socket and the relay did not, so a reading without flags looked at a store no
+relay served and worded its refusal as an ownership dispute.
+
+Evidence: internal/relay/store/state.go (`DefaultSocket`, `SocketScope`, `DiscoverStateDir`,
+`LegacyDefaultScope`); internal/relay/store/diagnostic_probe.go (`UnstampedStoreDetail`,
+`writeGateRefusal`), stamp.go (`unstampedRefusal`), registration_hold.go;
+internal/relay/service/scope.go (`ServedStore`); internal/relay/cli/doctor.go (`serviceStore`,
+`socketMismatch`), services.go (`siblingStores`), daemon.go (`service status`);
+internal/relay/selection/selection.go (`Refusal`, `SocketMismatch`, `Mismatch`);
+internal/relay/dispatch/dispatch.go (`CheckSocket`, `ReportsMismatch`, `ChecksOwnSelection`);
+internal/bridge/mcp/main.go (`Defaults`); tests
+internal/relay/store/default_socket_scope_test.go
+(`TestDiscoveryWithoutASocketIsScopedByTheDefaultSocket`, `TestTheDefaultSocketIsTheBridges`,
+`TestAnUnstampedStoreIsRefusedInPlainWords`, `TestOnlyAnUnstampedStoreGetsThePlainWords`),
+internal/relay/cli/doctor_service_store_test.go (`TestDoctorNamesTheServiceStoreDiscoveryDidNotSelect`,
+`TestANoSocketSelectionIsHeldToTheDefaultSocket`, `TestExemptCommandsAreHeldToTheSocketTheStoreRecords`),
+internal/bridge/mcp/main_test.go (the empty `CODEX_HOME`, `XDG_STATE_HOME` and `HOME` cases of
+`Defaults`) and internal/runtime/integration/isolated_home_test.go (IS-1's Stop dials the default
+socket's directory); docs/relay/operations.md (Where the state lives);
+plugins/crw/skills/crw-run/references/relay.md (One shared state directory).

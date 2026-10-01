@@ -47,6 +47,38 @@ func ownershipRefusal(err error) error {
 	return &RefusedError{Reason: "store_owned_by_other", Detail: OwnershipRefusalDetail(err), cause: err}
 }
 
+// unstampedRefusal is a writable open's stamp refusal, err, in plain words (UnstampedStoreDetail)
+// when the store at resolved has no write gate and no part of a stamp: no mirror beside it and no
+// ownership key in its schema_meta. Any other failure is returned as it is.
+func unstampedRefusal(ctx context.Context, q ownership.Queryer, resolved string, err error) error {
+	var refused *RefusedError
+	if !errors.As(err, &refused) || refused.Reason != "store_owned_by_other" {
+		return err
+	}
+	dir := filepath.Dir(resolved)
+	for _, name := range []string{"write-gate.lock", "takeover.json"} {
+		if _, e := os.Lstat(filepath.Join(dir, name)); !errors.Is(e, os.ErrNotExist) {
+			return err
+		}
+	}
+	rows, e := q.QueryContext(ctx, "SELECT key FROM schema_meta")
+	if e != nil {
+		return err
+	}
+	meta := map[string]string{}
+	for rows.Next() {
+		var key string
+		if e = rows.Scan(&key); e != nil {
+			break
+		}
+		meta[key] = ""
+	}
+	if e = errors.Join(e, rows.Err(), rows.Close()); e != nil || stamped(nil, meta) {
+		return err
+	}
+	return &RefusedError{Reason: refused.Reason, Detail: UnstampedStoreDetail, cause: err}
+}
+
 // verifyWritable is a writable open's check on its first connection, before the schema script
 // runs: the stamp names this runtime, the frozen schema is whole (a store missing a table fails,
 // never repaired), and a socket the open names is the store's. A store not yet bound to
@@ -55,7 +87,7 @@ func ownershipRefusal(err error) error {
 func verifyWritable(ctx context.Context, db *sql.DB, resolved, socket string) (*os.File, error) {
 	stamp, err := stampOn(ctx, db)
 	if err != nil {
-		return nil, err
+		return nil, unstampedRefusal(ctx, db, resolved, err)
 	}
 	// A missing table or column is the command's host error, as the fence raised it.
 	if err = ValidateOwnershipSchema(ctx, db); err != nil {

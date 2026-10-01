@@ -15,6 +15,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
@@ -153,7 +154,13 @@ func TestTheControlSocketIsDialledWhereItsSourceNamesIt(t *testing.T) {
 		{"a state directory from the environment", func(home string) (Object, string) {
 			xdg := filepath.Join(home, "x\xed\xb3\xbf")
 			t.Setenv("XDG_STATE_HOME", xdg)
-			return nil, filepath.Join(xdg, "codex-session-relay", "default")
+			// Settings naming no socket are routed to the directory discovery scopes by the
+			// default socket under CODEX_HOME (home here).
+			scope, err := store.SocketScope(filepath.Join(home, "app-server-control", "app-server-control.sock"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			return nil, filepath.Join(xdg, "codex-session-relay", scope)
 		}},
 	} {
 		t.Run(c.name, func(t *testing.T) {

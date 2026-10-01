@@ -32,7 +32,7 @@ func serviceCommands() []dispatch.Command {
 	var commands []dispatch.Command
 	for _, sub := range []string{"status", "enable", "disable", "stop", "declare", "start", "restart", "run"} {
 		commands = append(commands, dispatch.Command{Name: "service " + sub, Exempt: true, OwnAdmission: true,
-			ReadOnly: sub == "status", Run: runService})
+			ReadOnly: sub == "status", ReportsMismatch: sub == "status", Run: runService})
 	}
 	return commands
 }
@@ -147,7 +147,12 @@ func runService(ctx context.Context, services dispatch.Services, args dispatch.A
 	var payload contract.OrderedObject
 	switch args.Positionals[0] {
 	case "status":
-		return s.Status(ctx), nil
+		status := s.Status(ctx)
+		// Reported, not refused: status is how the mismatch is diagnosed (decision 73).
+		if mismatch := dispatch.Mismatch(services); mismatch != nil {
+			status = append(status, contract.Field{Key: "socketMismatch", Value: mismatch})
+		}
+		return status, nil
 	case "enable":
 		payload, err = s.Enable(actor)
 	case "disable":

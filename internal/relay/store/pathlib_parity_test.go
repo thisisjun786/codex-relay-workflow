@@ -31,13 +31,15 @@ func TestAStateDirectoryKeepsTwoLeadingSlashesAsPythonDoes(t *testing.T) {
 	t.Setenv("HOME", filepath.Join(root, "home"))
 	t.Setenv("CODEX_SESSION_RELAY_STATE", "")
 	t.Setenv("XDG_STATE_HOME", "/"+filepath.Join(root, "xdg"))
+	t.Setenv("CODEX_HOME", filepath.Join(root, "codex-home"))
+	scope := defaultScopeSubstitution(t)
 	state := "/" + filepath.Join(root, "st")
 	flag, err := ResolveStateDir(state, "")
 	if err != nil || flag.Path != state {
 		t.Errorf("--state %s: %q: %v", state, flag.Path, err)
 	}
 	discovered, err := DiscoverStateDir("")
-	if err != nil || discovered.Path != "/"+filepath.Join(root, "xdg", "codex-session-relay", "default") {
+	if err != nil || discovered.Path != "/"+filepath.Join(root, "xdg", "codex-session-relay", discovered.SocketScope) {
 		t.Errorf("XDG_STATE_HOME %s: %q (%s): %v", os.Getenv("XDG_STATE_HOME"), discovered.Path, discovered.Detail, err)
 	}
 	t.Setenv("CODEX_SESSION_RELAY_STATE", state)
@@ -46,7 +48,7 @@ func TestAStateDirectoryKeepsTwoLeadingSlashesAsPythonDoes(t *testing.T) {
 		t.Fatalf("CODEX_SESSION_RELAY_STATE=%s: %v", state, err)
 	}
 	named := struct{ Flag, Env, Discovered, Detail string }{flag.Path, env.Path, discovered.Path, discovered.Detail}
-	checkJSON(t, "resolve_state_dir and discover_state_dir", named, golden.Substitute(root, "<ROOT>"))
+	checkJSON(t, "resolve_state_dir and discover_state_dir", named, scope, golden.Substitute(root, "<ROOT>"))
 }
 
 // A relative --state, override or XDG_STATE_HOME is read against the working directory as the
@@ -66,6 +68,7 @@ func TestARelativeStateDirectoryIsReadAgainstThePhysicalWorkingDirectory(t *test
 	alias := filepath.Join(root, "alias", "wd")
 	t.Chdir(alias) // sets PWD to the alias, as a shell that cd'd through the link does
 	t.Setenv("HOME", filepath.Join(root, "home"))
+	t.Setenv("CODEX_HOME", filepath.Join(root, "codex-home"))
 	t.Setenv("CODEX_SESSION_RELAY_STATE", "")
 	t.Setenv("XDG_STATE_HOME", "xdg")
 	flag, err := ResolveStateDir("st", "")
@@ -82,7 +85,7 @@ func TestARelativeStateDirectoryIsReadAgainstThePhysicalWorkingDirectory(t *test
 		t.Fatalf("CODEX_SESSION_RELAY_STATE=st: %v", err)
 	}
 	named := struct{ Flag, Env, Discovered string }{flag.Path, env.Path, discovered.Path}
-	checkJSON(t, "resolve_state_dir and discover_state_dir", named, golden.Substitute(root, "<ROOT>"))
+	checkJSON(t, "resolve_state_dir and discover_state_dir", named, defaultScopeSubstitution(t), golden.Substitute(root, "<ROOT>"))
 }
 
 // ~ is Path.home(): HOME when it is set at all, an empty HOME being the root and a HOME's
@@ -93,6 +96,10 @@ func TestHomeIsPathlibsHome(t *testing.T) {
 	t.Chdir(root)
 	t.Setenv("CODEX_SESSION_RELAY_STATE", "")
 	t.Setenv("XDG_STATE_HOME", "")
+	// Unset, CODEX_HOME is the home's .codex, so the default socket that scopes the state
+	// directory follows the same home.
+	t.Setenv("CODEX_HOME", "")
+	must(t, os.Unsetenv("CODEX_HOME"))
 	expansions := func(t *testing.T) [][2]string {
 		t.Helper()
 		var out [][2]string
@@ -117,7 +124,7 @@ func TestHomeIsPathlibsHome(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			checkJSON(t, "default state", [2]string{selected.Path, selected.Detail}, golden.Substitute(root, "<ROOT>"))
+			checkJSON(t, "default state", [2]string{selected.Path, selected.Detail}, defaultScopeSubstitution(t), golden.Substitute(root, "<ROOT>"))
 		})
 	}
 	// Unset, HOME is the passwd entry. Only ~ is compared: the default state directory under the

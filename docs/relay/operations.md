@@ -22,9 +22,27 @@ directory is chosen by the first rule that applies:
 | 3 | `XDG_STATE_HOME/codex-session-relay/<scope>` | the scope is a hash of the App Server socket path |
 | 4 | `~/.local/state/codex-session-relay/<scope>` | the default |
 
+The socket that scopes rules 3 and 4 is `--socket`, or without it the default App Server
+control socket, `$CODEX_HOME/app-server-control/app-server-control.sock` with `CODEX_HOME`
+defaulting to `~/.codex`: the socket the bridge defaults to, so a command given no `--socket`
+selects the store a relay service started on that socket serves. Nothing connects to the default
+socket; a command that needs the App Server still requires `--socket`. The selection's `detail`
+ends `; scoped by the default Codex App Server socket <path>`. A host that used the relay
+without `--socket` before this rule keeps its store in the legacy directory `default`: discovery
+keeps using it, and says so, only when the default socket's own directory holds no store and no
+other store records that socket (decision 73 in docs/port/decisions.md).
+
 The store is `<dir>/relay.sqlite3`. `codex-session-relay doctor` reports which rule won, the
 value that won, the resolved database path and the measured read/write access, so a
-participant never has to infer its own configuration.
+participant never has to infer its own configuration. When discovery chose the directory and the
+relay service registered for the selection's socket serves another one, `doctor` adds a trailing
+`serviceStore` block naming that directory, its socket, whether the service still runs, and the
+command that reads it.
+
+A store with no ownership stamp (no `takeover.json`, no ownership key, no `write-gate.lock`) is
+refused `store_owned_by_other` with the detail `the store carries no ownership stamp (no
+write-gate.lock): no Go writer was ever bound to it; it is not the store a running relay serves`.
+Read in a `doctor` report, that is a wrong selection, not an unavailable relay.
 
 Setting `--state` alone is not enough for an isolated run. The bridge adapter resolves its
 transport ledger from `CODEX_SESSION_RELAY_STATE` independently, so a run that overrides only
@@ -51,13 +69,16 @@ used; the exemptions below own it.
 |---|---|---|
 | `ambiguous_state_directory` | default discovery would select a new database and two or more stores record this socket | either could be the right one, and choosing by sort order would serve one set of assignments today and the other after a rename |
 | `unidentified_state_directory` | default discovery would select a new database and a sibling store records no socket at all | its directory hash cannot be inverted, so it cannot be ruled out as this socket's. "Records no socket" also covers a store whose metadata is unreadable or malformed |
-| `state_directory_serves_another_socket` | the selected existing database records a different socket than the one requested | the service would claim and serve the new socket while the database went on attributing itself to the old one |
+| `state_directory_serves_another_socket` | the selected existing database records a different socket than the one requested, or, without `--socket`, than the default socket that scoped discovery | the service would claim and serve the new socket while the database went on attributing itself to the old one; a command given no `--socket` would read and write another installation's store |
 
 The first two are reached only after the canonical and legacy-spelling shortcuts have both
 failed to find a store, which is why an installation that is simply running never sees them.
 The third applies to any explicitly selected store, from `--state` or from
 `CODEX_SESSION_RELAY_STATE`, because choosing a directory is not choosing what is already
-inside it.
+inside it. Without `--socket` it applies to a discovered store too, compared with the default
+socket that scoped its directory; that socket is only compared, never connected to, a store that
+records no socket is admitted as before, and so is the legacy `default` directory, which no socket
+scoped.
 
 To recover, inspect before adopting. `doctor` names the candidates:
 
@@ -93,6 +114,16 @@ is how the candidates are found in the first place, and `ack-proof` derives a va
 own two arguments and opens no store. Exempt from these guards is not the same as never
 refusing — `doctor` still exits non-zero when a same-store comparison it was asked to make
 comes back unproven or mismatched.
+
+Exempt from the two discovery refusals is not exempt from the third. Every command that uses the
+selected store is refused `state_directory_serves_another_socket` when that store records another
+socket than `--socket`, or than the default socket that scoped a discovery made without one:
+the `service` subcommands that write intent and records (`enable`, `disable`, `stop`, `declare`,
+`start`, `restart`, `run`), `managed-start`, `managed-show` and `reporting-derive` included, before
+anything is written. `doctor` and `service status` are how that mismatch is diagnosed, so they
+answer it rather than refuse: their report carries a `socketMismatch` block with the refusal's
+fields (reason, detail, both sockets, the directory and the recovery lines), and still exits 0.
+`packet-check` consults the whole selection refusal itself where it reads the store.
 
 The eight marker commands are exempt too, for a third reason: the managed marker exists so that a
 Stop hook can answer without asking the relay anything, and legacy state nobody is using must not

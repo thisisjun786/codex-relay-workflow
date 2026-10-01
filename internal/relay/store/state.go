@@ -17,7 +17,12 @@ import (
 
 type StateSelection struct {
 	Path, Source, Detail, SocketScope string
-	Ambiguous, Unidentified           []string
+	// DefaultSocket is the default App Server socket (DefaultSocket) that scoped a selection
+	// discovery made without --socket, so the selected store can be checked against it; "" for
+	// --state, CODEX_SESSION_RELAY_STATE, a given socket, and the legacy default directory. It is
+	// never connected to and never stands in for --socket.
+	DefaultSocket           string
+	Ambiguous, Unidentified []string
 }
 
 func (s StateSelection) DBPath() string { return s.Path + "/relay.sqlite3" }
@@ -260,6 +265,43 @@ func expandUser(path string) (string, error) {
 	}
 	return strings.TrimSuffix(home, "/") + "/" + suffix, nil
 }
+
+// LegacyDefaultScope is the directory discovery chose before it scoped a selection made without
+// --socket by the default App Server socket (docs/port/decisions.md section 73). A store already
+// there keeps being used while the default socket's own directory holds none.
+const LegacyDefaultScope = "default"
+
+// DefaultSocket is the Codex App Server control socket the bridge defaults to
+// (internal/bridge/mcp Defaults): <CODEX_HOME>/app-server-control/app-server-control.sock, with
+// CODEX_HOME when it is set and non-empty, else Path.home()/.codex. Discovery scopes the state
+// directory by it when no --socket is given; nothing connects to it.
+func DefaultSocket() (string, error) {
+	codexHome := os.Getenv("CODEX_HOME")
+	if codexHome == "" {
+		home, err := homeDir()
+		if err != nil {
+			return "", err
+		}
+		codexHome = strings.TrimSuffix(home, "/") + "/.codex"
+	}
+	return PathlibChild(PathlibChild(codexHome, "app-server-control"), "app-server-control.sock"), nil
+}
+
+// SocketScope is the directory name discovery gives socket's own store: the digest of the
+// socket's canonical path (CanonicalSocket).
+func SocketScope(socket string) (string, error) {
+	canonical, err := canonicalSocket(socket)
+	if err != nil {
+		return "", err
+	}
+	return socketHash(canonical), nil
+}
+
+// DiscoverStateDir is the state directory below XDG_STATE_HOME (or ~/.local/state) for socket.
+// Without a socket the directory is scoped by DefaultSocket, the one the bridge and a relay
+// service started on the default socket use, so a command given no --socket reads the store that
+// service serves; it connects to nothing. Only when that directory holds no store, no other store
+// records the default socket, and the legacy "default" directory holds one, is "default" kept.
 func DiscoverStateDir(socket string) (StateSelection, error) {
 	base := os.Getenv("XDG_STATE_HOME")
 	source := "xdg"
@@ -277,24 +319,30 @@ func DiscoverStateDir(socket string) (StateSelection, error) {
 	if err != nil {
 		return StateSelection{}, err
 	}
-	canonical := "default"
-	legacy := "default"
-	wanted := ""
-	if socket != "" {
-		if wanted, err = canonicalSocket(socket); err != nil {
+	defaulted := socket == ""
+	if defaulted {
+		if socket, err = DefaultSocket(); err != nil {
 			return StateSelection{}, err
 		}
-		canonical = socketHash(wanted)
-		expanded, err := expandUser(socket)
-		if err != nil {
-			return StateSelection{}, err
-		}
-		legacy = socketHash(pathlibSpelling(expanded))
+		detail += "; scoped by the default Codex App Server socket " + socket
 	}
+	wanted, err := canonicalSocket(socket)
+	if err != nil {
+		return StateSelection{}, err
+	}
+	canonical := socketHash(wanted)
+	expanded, err := expandUser(socket)
+	if err != nil {
+		return StateSelection{}, err
+	}
+	legacy := socketHash(pathlibSpelling(expanded))
 	// Every directory is joined as pathlib joins, never through filepath.Join, which would fold the
 	// two leading slashes pathlib keeps as a root of their own.
 	root := PathlibChild(absoluteBase, "codex-session-relay")
 	chosen := StateSelection{Path: PathlibChild(root, canonical), Source: source, Detail: detail, SocketScope: canonical}
+	if defaulted {
+		chosen.DefaultSocket = socket
+	}
 	found, err := discoveryExists(chosen.DBPath())
 	if err != nil {
 		return chosen, err
@@ -315,11 +363,18 @@ func DiscoverStateDir(socket string) (StateSelection, error) {
 			return chosen, nil
 		}
 	}
+	// The legacy default directory is probed with the other two, before any sibling is listed.
+	keptDefault := false
+	if defaulted {
+		if keptDefault, err = discoveryExists(PathlibChild(root, LegacyDefaultScope) + "/relay.sqlite3"); err != nil {
+			return chosen, err
+		}
+	}
 	// One walk answers stores_claiming_socket and stores_without_provenance: nothing between them
 	// changes what either finds.
 	for _, path := range siblingStoreDirs(root, canonical) {
 		recorded := storeSocket(path + "/relay.sqlite3")
-		if wanted != "" && recorded == wanted {
+		if recorded == wanted {
 			chosen.Ambiguous = append(chosen.Ambiguous, path)
 		} else if recorded == "" {
 			chosen.Unidentified = append(chosen.Unidentified, path)
@@ -339,6 +394,16 @@ func DiscoverStateDir(socket string) (StateSelection, error) {
 		return chosen, nil
 	}
 	chosen.Ambiguous = nil
+	if keptDefault {
+		// What a command given no --socket read before discovery scoped it by the default socket.
+		chosen.Path = PathlibChild(root, LegacyDefaultScope)
+		chosen.SocketScope = LegacyDefaultScope
+		// The legacy directory was never scoped by any socket: it is not checked against one.
+		chosen.DefaultSocket = ""
+		chosen.Detail += "; kept the legacy default directory: it holds a store, the default socket's own directory holds none, and no other store records that socket"
+		chosen.Unidentified = nil
+		return chosen, nil
+	}
 	if len(chosen.Unidentified) > 0 {
 		chosen.Detail += fmt.Sprintf("; %d stores here record no socket", len(chosen.Unidentified))
 	}
