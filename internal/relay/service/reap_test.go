@@ -34,14 +34,17 @@ func init() {
 //   - "controller": the parent of a worker it controls waitpid for. A zombie remains unreaped
 //     until the test releases stdin; no elapsed-time delay decides which process state the stop
 //     command observes. arg is "gone" (reaped before it answers) or "exited" (reaped after).
+//   - "idle": a process that stays alive until its stdin is closed and then exits, as cat did.
+//     It is the controller's worker and the supervisor reapStop stops, so these tests start no
+//     program found on PATH.
 //   - "leader-gone": a worker whose leader thread has exited while another thread keeps the
 //     descriptor table the threads share, and the daemon lock (arg) in it, until stdin is
 //     written: a multithreaded service process on its way out, held there. SIGTERM is ignored,
 //     so only SIGKILL ends it. SYS_exit ends the calling thread alone.
-func runHelper(helper, arg string) int {
-	switch helper {
+func runHelper(role, arg string) int {
+	switch role {
 	case "controller":
-		worker := exec.Command("cat")
+		worker := helper(context.Background(), "idle", "")
 		release, err := worker.StdinPipe()
 		if err == nil {
 			err = worker.Start()
@@ -50,6 +53,14 @@ func runHelper(helper, arg string) int {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
+		// Whatever ends the controller before it has waited for the worker, the worker is
+		// stopped and reaped rather than left running.
+		defer func() {
+			if worker.ProcessState == nil {
+				_ = worker.Process.Kill()
+				_ = worker.Wait()
+			}
+		}()
 		fd, err := unix.PidfdOpen(worker.Process.Pid, 0)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -72,6 +83,9 @@ func runHelper(helper, arg string) int {
 		}
 		_ = unix.Close(fd)
 		return 0
+	case "idle":
+		_, _ = io.Copy(io.Discard, os.Stdin)
+		return 0
 	case "leader-gone":
 		lock, err := os.OpenFile(arg, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o600)
 		if err == nil {
@@ -90,7 +104,7 @@ func runHelper(helper, arg string) int {
 		_, _, _ = unix.Syscall(unix.SYS_EXIT, 0, 0, 0)
 		return 1
 	}
-	fmt.Fprintf(os.Stderr, "unknown helper %q\n", helper)
+	fmt.Fprintf(os.Stderr, "unknown helper %q\n", role)
 	return 2
 }
 
@@ -168,8 +182,14 @@ func reapStop(t *testing.T, home, state string) reapAnswer {
 	// A live, independently reaped supervisor makes stop take its ordinary
 	// termination/re-read path; the worker state is already fixed before that.
 	ctx, cancel := context.WithCancel(context.Background())
-	supervisor := exec.CommandContext(ctx, "sleep", "60")
-	if err := supervisor.Start(); err != nil {
+	// The supervisor is the idle helper: it lives while the test holds its stdin open, and
+	// Wait closes that pipe.
+	supervisor := helper(ctx, "idle", "")
+	_, err := supervisor.StdinPipe()
+	if err == nil {
+		err = supervisor.Start()
+	}
+	if err != nil {
 		cancel()
 		t.Fatal(err)
 	}
