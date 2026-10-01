@@ -5,22 +5,22 @@ import (
 	"testing"
 )
 
-// These scenarios replay the complete CLI output and every SQLite table against
-// the live Python package. They cover the three review findings on Record.
+// These scenarios compare the complete CLI output and every SQLite table with the golden,
+// which began as the Python package's answers. They cover the three review findings on Record.
 func TestRecordReviewFindingsWholeOutput(t *testing.T) {
 	goldenParent(t)
 	t.Run("resolved recurrence queues reopen update", func(t *testing.T) {
-		ctx, gd, pd := f1ReplayStores(t)
-		invoke := func(args ...string) map[string]any { return f1ReplayCLI(t, ctx, gd, pd, args) }
+		ctx, gd := f1ReplayStores(t)
+		invoke := func(args ...string) map[string]any { return f1ReplayCLI(t, ctx, gd, args) }
 		observed := invoke("fault-observe", "--observation", reviewObservation("reopen", "first", "ISSUE-1", false))
 		id := observed["faultId"].(string)
-		f1SeedBoth(t, ctx, gd, pd, []string{fmt.Sprintf("UPDATE fault_ledger SET external_ref='ISSUE-1',state='resolved',resolved_at='stamp' WHERE fault_id='%s'", id)})
+		f1Seed(t, ctx, gd, []string{fmt.Sprintf("UPDATE fault_ledger SET external_ref='ISSUE-1',state='resolved',resolved_at='stamp' WHERE fault_id='%s'", id)})
 		invoke("fault-observe", "--observation", reviewObservation("reopen", "second", "ISSUE-1", false))
 	})
 
 	t.Run("clear refunds a claimed publication", func(t *testing.T) {
-		ctx, gd, pd := f1ReplayStores(t)
-		invoke := func(args ...string) map[string]any { return f1ReplayCLI(t, ctx, gd, pd, args) }
+		ctx, gd := f1ReplayStores(t)
+		invoke := func(args ...string) map[string]any { return f1ReplayCLI(t, ctx, gd, args) }
 		invoke("fault-target", "--product", "crw", "--project", "P", "--team", "team", "--project-ref", "project-P")
 		observed := invoke("fault-observe", "--observation", reviewObservation("withdraw", "first", "ISSUE-2", false))
 		publication := observed["publication"].(map[string]any)["publicationId"].(string)
@@ -29,8 +29,8 @@ func TestRecordReviewFindingsWholeOutput(t *testing.T) {
 	})
 
 	t.Run("same target key does not update scope text", func(t *testing.T) {
-		ctx, gd, pd := f1ReplayStores(t)
-		invoke := func(args ...string) map[string]any { return f1ReplayCLI(t, ctx, gd, pd, args) }
+		ctx, gd := f1ReplayStores(t)
+		invoke := func(args ...string) map[string]any { return f1ReplayCLI(t, ctx, gd, args) }
 		invoke("fault-observe", "--observation", reviewObservation("scope", "first", "ISSUE-OLD", false))
 		invoke("fault-observe", "--observation", reviewObservation("scope", "second", "ISSUE-NEW", false))
 	})

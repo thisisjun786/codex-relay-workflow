@@ -9,8 +9,9 @@ import (
 	"testing"
 )
 
-// The independent Python process, not a duplicated Go expectation, defines the CLI bytes.
-// FLT-30: all Part D handlers are reachable; FLT-34: listing and refusal bytes.
+// The golden, which began as the independent Python process's answer rather than a duplicated Go
+// expectation, defines the CLI bytes. FLT-30: all Part D handlers are reachable; FLT-34:
+// listing and refusal bytes.
 func TestDCLIOracle(t *testing.T) {
 	goldenParent(t)
 	cases := [][]string{
@@ -38,21 +39,14 @@ func TestDCLIOracle(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { os.RemoveAll(home) })
-			pythonDir := filepath.Join(home, "python")
-			goDir := filepath.Join(home, "go")
-			answer := pyCLIRun(t, home, pythonDir, append([]string{"--state", pythonDir, "--json"}, args...), false, pyHomeEnv(home)...)
-			want, pyCode := []byte(answer.Stdout), answer.Code
-			goDir = oracleState(answer.Created, pythonDir, goDir)
+			// The directory keeps the name the goldens were first taken with.
+			state := filepath.Join(home, "python")
 			var got, stderr bytes.Buffer
-			goCode, handled := executeAsCLI(context.Background(), append([]string{"--state", goDir, "--json"}, args...), &got, &stderr)
+			goCode, handled := executeAsCLI(context.Background(), append([]string{"--state", state, "--json"}, args...), &got, &stderr)
 			if !handled {
 				t.Fatal("unhandled")
 			}
-			neverCreated(t, pythonDir, goDir)
-			checkGolden(t, "relay "+strings.Join(args, " "), args, runPathsOf(t, home), cliGolden{Code: goCode, Stdout: got.String(), Created: created(t, goDir)})
-			if pyCode != goCode || !bytes.Equal(want, got.Bytes()) {
-				t.Errorf("python (%d): %s\ngo (%d): %s\nstderr: %s", pyCode, want, goCode, got.String(), stderr.String())
-			}
+			checkGolden(t, "relay "+strings.Join(args, " "), args, runPathsOf(t, home), cliGolden{Code: goCode, Stdout: got.String(), Created: created(t, state)})
 		})
 	}
 }

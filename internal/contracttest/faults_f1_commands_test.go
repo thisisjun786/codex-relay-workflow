@@ -1,18 +1,17 @@
 package contracttest
 
 import (
-	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 // The package replay tests inject clock/entropy and compare all transitions and
 // rows. This separate real-binary test proves that all five names are routed, answering what
-// the Python CLI answered (recorded, internal/testsupport/pyoracle).
+// the golden holds (first taken as what the Python CLI answered).
 func TestFaultF1CommandsBuiltCLI(t *testing.T) {
 	binary, e := crwBinary()
 	if e != nil {
@@ -43,13 +42,8 @@ func TestFaultF1CommandsBuiltCLI(t *testing.T) {
 				}
 				return answer
 			}
-			python := pythonProcess(t, "python", func() (processAnswer, error) {
-				return run(exec.Command("uv", append([]string{"run", "--no-sync", "codex-session-relay", "--state", filepath.Join(home, "py"), "--json"}, args...)...)), nil
-			}, pyoracle.Substitute(home, "<HOME>"), pyoracle.Substitute(root, "<ROOT>"))
 			got := run(exec.Command(binary, append([]string{"relay", "--state", filepath.Join(home, "go"), "--json"}, args...)...))
-			if python.exit != got.exit || !bytes.Equal(python.stdout, got.stdout) || !bytes.Equal(python.stderr, got.stderr) {
-				t.Fatalf("Python %d %s stderr %s\nGo %d %s stderr %s", python.exit, python.stdout, python.stderr, got.exit, got.stdout, got.stderr)
-			}
+			checkProcess(t, "answer", got, golden.Substitute(home, "<HOME>"), golden.Substitute(root, "<ROOT>"))
 		})
 	}
 }

@@ -6,18 +6,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
-// The FC properties of test_fault_contract.py are owned by the tests that compare Go's and
-// Python's complete replies, CLI bytes and fault_* rows (the composite tests that re-ran them
-// under one more name went in wave R1):
+// The FC properties of test_fault_contract.py are owned by the tests that compare Go's complete
+// replies, CLI bytes and fault_* rows with goldens that began as Python's answers (the composite
+// tests that re-ran them under one more name went in wave R1):
 //   - FC-1, 3, 4, 5, 23, 25, 26, 29, 31, 32 (publication fencing, issue ownership, adoption,
 //     extension kinds, budgets, target changes, readback): TestF1_FLT_25_26_27_LifecycleWholeCLI
 //     and TestF2WholeOutput;
@@ -34,16 +32,16 @@ import (
 
 // FC-39: scope conflicts and moves compare complete command outputs and rows.
 func Test22_FC_39_ScopeConflictWholeOutput(t *testing.T) {
-	ctx, gd, pd := f1ReplayStores(t)
+	ctx, gd := f1ReplayStores(t)
 	// A pre-restriction product collides with a modern product's project key.
-	f1SeedBoth(t, ctx, gd, pd, []string{legacyScopeFault,
+	f1Seed(t, ctx, gd, []string{legacyScopeFault,
 		"INSERT INTO fault_targets VALUES('a:b','legacy-team','stamp')"})
-	f1ReplayCLI(t, ctx, gd, pd, []string{"fault-observe", "--observation", scopeConflictObservation("b", "new")})
-	f1ReplayCLI(t, ctx, gd, pd, []string{"fault-target", "--product", "a", "--project", "b", "--team", "team", "--project-ref", "p"})
+	f1ReplayCLI(t, ctx, gd, []string{"fault-observe", "--observation", scopeConflictObservation("b", "new")})
+	f1ReplayCLI(t, ctx, gd, []string{"fault-target", "--product", "a", "--project", "b", "--team", "team", "--project-ref", "p"})
 	// Both automatic observation rescope and explicit move must refuse the same key.
-	answer := f1ReplayCLI(t, ctx, gd, pd, []string{"fault-observe", "--observation", scopeConflictObservation("safe", "first")})
-	f1ReplayCLI(t, ctx, gd, pd, []string{"fault-observe", "--observation", scopeConflictObservation("b", "again")})
-	f1ReplayCLI(t, ctx, gd, pd, []string{"fault-move", "--fault", answer["faultId"].(string), "--scope", `{"projectKey":"b"}`})
+	answer := f1ReplayCLI(t, ctx, gd, []string{"fault-observe", "--observation", scopeConflictObservation("safe", "first")})
+	f1ReplayCLI(t, ctx, gd, []string{"fault-observe", "--observation", scopeConflictObservation("b", "again")})
+	f1ReplayCLI(t, ctx, gd, []string{"fault-move", "--fault", answer["faultId"].(string), "--scope", `{"projectKey":"b"}`})
 }
 
 const legacyScopeFault = `INSERT INTO fault_ledger(fault_id,product,fault_class,component,severity,signature,scope,scope_key,state,cycle,occurrence_count,reopen_count,first_seen_at,last_seen_at,updated_at) VALUES('legacyfault','a:b','report_omitted','reporting','broken','{"relationship":"x"}','{}','a:b','open',1,1,0,'stamp','stamp','stamp')`
@@ -53,7 +51,7 @@ func scopeConflictObservation(project, occurrence string) string {
 }
 
 func Test22_FC_11_BusyIsWaitingWholeOutput(t *testing.T) {
-	ctx, gd, pd := f1ReplayStores(t)
+	ctx, gd := f1ReplayStores(t)
 	seed := []string{f1Relationship}
 	for _, event := range []string{"busy", "cap", "mixed"} {
 		hold := "NULL"
@@ -69,65 +67,65 @@ func Test22_FC_11_BusyIsWaitingWholeOutput(t *testing.T) {
 			seed = append(seed, fmt.Sprintf("INSERT INTO attempts(request_id,event_id,attempt_no,kind,internal_state,state,observed_at) VALUES('%s-%d','%s',%d,'completion','settled','%s','stamp')", event, i, event, i, state))
 		}
 	}
-	f1SeedBoth(t, ctx, gd, pd, seed)
-	f1ReplayCLI(t, ctx, gd, pd, []string{"fault-observe", "--observation", `{"schema":"fault-observation/1","product":"crw","faultClass":"delivery_stalled","severity":"degraded","signature":{"recipient":"parent","attemptState":"deferred_busy"},"occurrenceKey":"attempt:busy-1"}`})
-	f1ReplayCLI(t, ctx, gd, pd, []string{"fault-sweep"})
-	f1ReplayCLI(t, ctx, gd, pd, []string{"fault-show"})
+	f1Seed(t, ctx, gd, seed)
+	f1ReplayCLI(t, ctx, gd, []string{"fault-observe", "--observation", `{"schema":"fault-observation/1","product":"crw","faultClass":"delivery_stalled","severity":"degraded","signature":{"recipient":"parent","attemptState":"deferred_busy"},"occurrenceKey":"attempt:busy-1"}`})
+	f1ReplayCLI(t, ctx, gd, []string{"fault-sweep"})
+	f1ReplayCLI(t, ctx, gd, []string{"fault-show"})
 }
 
 func Test22_FC_16_CappedProductDoesNotHideAnotherWholeOutput(t *testing.T) {
-	ctx, gd, pd := f1ReplayStores(t)
+	ctx, gd := f1ReplayStores(t)
 	for _, product := range []string{"crw", "other"} {
-		f1ReplayCLI(t, ctx, gd, pd, []string{"fault-target", "--product", product, "--project", "P", "--team", "team-" + product, "--project-ref", "project-" + product})
+		f1ReplayCLI(t, ctx, gd, []string{"fault-target", "--product", product, "--project", "P", "--team", "team-" + product, "--project-ref", "project-" + product})
 	}
 	pubs := []string{}
 	for i := 0; i < 8; i++ {
 		observation := fmt.Sprintf(`{"schema":"fault-observation/1","product":"crw","faultClass":"report_omitted","severity":"broken","signature":{"relationship":"rel-%d","turn":"turn"},"occurrenceKey":"one","scope":{"projectKey":"P"}}`, i)
-		answer := f1ReplayCLI(t, ctx, gd, pd, []string{"fault-observe", "--observation", observation})
+		answer := f1ReplayCLI(t, ctx, gd, []string{"fault-observe", "--observation", observation})
 		pubs = append(pubs, answer["publication"].(map[string]any)["publicationId"].(string))
 	}
 	for _, pub := range pubs[:5] {
-		f1ReplayCLI(t, ctx, gd, pd, []string{"fault-claim", "--publication", pub, "--owner", "writer"})
+		f1ReplayCLI(t, ctx, gd, []string{"fault-claim", "--publication", pub, "--owner", "writer"})
 	}
-	f1ReplayCLI(t, ctx, gd, pd, []string{"fault-observe", "--observation", `{"schema":"fault-observation/1","product":"other","faultClass":"report_omitted","severity":"broken","signature":{"relationship":"rel","turn":"turn"},"occurrenceKey":"one","scope":{"projectKey":"P"}}`})
-	f1ReplayCLI(t, ctx, gd, pd, []string{"fault-next", "--limit", "3"})
-	f1ReplayCLI(t, ctx, gd, pd, []string{"fault-attention"})
+	f1ReplayCLI(t, ctx, gd, []string{"fault-observe", "--observation", `{"schema":"fault-observation/1","product":"other","faultClass":"report_omitted","severity":"broken","signature":{"relationship":"rel","turn":"turn"},"occurrenceKey":"one","scope":{"projectKey":"P"}}`})
+	f1ReplayCLI(t, ctx, gd, []string{"fault-next", "--limit", "3"})
+	f1ReplayCLI(t, ctx, gd, []string{"fault-attention"})
 }
 
 func Test22_FC_22_ProspectivePolicyWholeOutput(t *testing.T) {
-	ctx, gd, pd := f1ReplayStores(t)
-	replayObservation(t, ctx, gd, pd, "delivery_stalled", Degraded, "s1")
-	f1ReplayCLI(t, ctx, gd, pd, []string{"fault-policy", "--product", "crw", "--fault-class", "delivery_stalled", "--severity", "degraded", "--threshold", "1", "--reason", "one stall is enough here"})
-	replayObservation(t, ctx, gd, pd, "delivery_stalled", Degraded, "s2")
-	f1ReplayCLI(t, ctx, gd, pd, []string{"fault-policy", "--product", "crw", "--fault-class", "report_omitted", "--severity", "broken", "--threshold", "3", "--reason", "quiet"})
+	ctx, gd := f1ReplayStores(t)
+	replayObservation(t, ctx, gd, "delivery_stalled", Degraded, "s1")
+	f1ReplayCLI(t, ctx, gd, []string{"fault-policy", "--product", "crw", "--fault-class", "delivery_stalled", "--severity", "degraded", "--threshold", "1", "--reason", "one stall is enough here"})
+	replayObservation(t, ctx, gd, "delivery_stalled", Degraded, "s2")
+	f1ReplayCLI(t, ctx, gd, []string{"fault-policy", "--product", "crw", "--fault-class", "report_omitted", "--severity", "broken", "--threshold", "3", "--reason", "quiet"})
 }
 
 func Test22_FC_23_WriterTakeoverWholeOutput(t *testing.T) {
-	ctx, gd, pd := f1ReplayStores(t)
-	f1ReplayCLI(t, ctx, gd, pd, []string{"fault-target", "--product", "crw", "--project", "P", "--team", "team", "--project-ref", "project-P"})
-	answer := replayObservation(t, ctx, gd, pd, "report_omitted", Broken, "one")
+	ctx, gd := f1ReplayStores(t)
+	f1ReplayCLI(t, ctx, gd, []string{"fault-target", "--product", "crw", "--project", "P", "--team", "team", "--project-ref", "project-P"})
+	answer := replayObservation(t, ctx, gd, "report_omitted", Broken, "one")
 	pub := answer["publication"].(map[string]any)["publicationId"].(string)
-	claim := f1ReplayCLI(t, ctx, gd, pd, []string{"fault-claim", "--publication", pub, "--owner", "writer-A"})
-	f1ReplayCLI(t, ctx, gd, pd, []string{"fault-fail", "--publication", pub, "--claim-token", claim["claimToken"].(string), "--error", "network down"})
+	claim := f1ReplayCLI(t, ctx, gd, []string{"fault-claim", "--publication", pub, "--owner", "writer-A"})
+	f1ReplayCLI(t, ctx, gd, []string{"fault-fail", "--publication", pub, "--claim-token", claim["claimToken"].(string), "--error", "network down"})
 	// The clock is fixed on both sides; expire only the backoff, not the writer history.
-	f1SeedBoth(t, ctx, gd, pd, []string{"UPDATE fault_publications SET next_attempt_at=99999"})
-	f1ReplayCLI(t, ctx, gd, pd, []string{"fault-claim", "--publication", pub, "--owner", "writer-B"})
-	f1ReplayCLI(t, ctx, gd, pd, []string{"fault-claim", "--publication", pub, "--owner", "writer-B", "--takeover"})
-	f1ReplayCLI(t, ctx, gd, pd, []string{"fault-show", "--publication", pub})
+	f1Seed(t, ctx, gd, []string{"UPDATE fault_publications SET next_attempt_at=99999"})
+	f1ReplayCLI(t, ctx, gd, []string{"fault-claim", "--publication", pub, "--owner", "writer-B"})
+	f1ReplayCLI(t, ctx, gd, []string{"fault-claim", "--publication", pub, "--owner", "writer-B", "--takeover"})
+	f1ReplayCLI(t, ctx, gd, []string{"fault-show", "--publication", pub})
 }
 
 func Test22_FC_36_UnloadedKindStoredLimitWholeOutput(t *testing.T) {
-	ctx, gd, pd := f1ReplayStores(t)
+	ctx, gd := f1ReplayStores(t)
 	// set_limit accepts extension names even without importing their implementation.
-	f1ReplayCLI(t, ctx, gd, pd, []string{"fault-limit", "--product", "crw", "--kind", "external_kind_limit", "--max-count", "3", "--window", "3600"})
-	f1ReplayCLI(t, ctx, gd, pd, []string{"fault-limit", "--product", "crw"})
+	f1ReplayCLI(t, ctx, gd, []string{"fault-limit", "--product", "crw", "--kind", "external_kind_limit", "--max-count", "3", "--window", "3600"})
+	f1ReplayCLI(t, ctx, gd, []string{"fault-limit", "--product", "crw"})
 }
 
 func Test22_FC_9_ManagedReadingsWholeOutput(t *testing.T) {
 	goldenParent(t)
 	for _, variant := range []string{"unreported", "error", "none", "unnamed", "past_generation", "paged", "real_unreported", "real_absent", "real_reported", "real_unwitnessed", "real_bad_stop", "real_ready"} {
 		t.Run(variant, func(t *testing.T) {
-			ctx, gd, pd := f1ReplayStores(t)
+			ctx, gd := f1ReplayStores(t)
 			seed := []string{f1Relationship,
 				`INSERT INTO managed_start_requests(request_id,issue_key,request_fingerprint,fingerprint_version,workspace,marker_root,socket_identity,create_request_id,dispatch_request_id,state,revision,child_task_id,standby_turn_id,relationship_id,execution_generation,receipt_status,created_at,updated_at) VALUES('req-1','ISSUE','fp','v1','/w','/m','sock','create-1','dispatch-1','attached',3,'child','standby-1','rel',1,'accepted','stamp','stamp')`,
 				`INSERT INTO assignment_settlements VALUES('rel','child','turn-9','completed','stamp')`,
@@ -142,11 +140,11 @@ func Test22_FC_9_ManagedReadingsWholeOutput(t *testing.T) {
 					seed = append(seed, fmt.Sprintf("INSERT INTO assignment_settlements VALUES('rel','child','turn-%d','completed','stamp')", i))
 				}
 			}
-			f1SeedBoth(t, ctx, gd, pd, seed)
+			f1Seed(t, ctx, gd, seed)
 			real := strings.HasPrefix(variant, "real_")
 			if real {
 				root, work := filepath.Dir(gd)+"/markers", filepath.Dir(gd)+"/workspace"
-				f1SeedBoth(t, ctx, gd, pd, []string{
+				f1Seed(t, ctx, gd, []string{
 					fmt.Sprintf("UPDATE managed_start_requests SET marker_root='%s',workspace='%s'", root, work),
 					fmt.Sprintf("UPDATE relationships SET child_cwd='%s'", work),
 					"DELETE FROM assignment_settlements WHERE turn_id='turn-10' OR terminal_status='failed'",
@@ -183,7 +181,7 @@ func Test22_FC_9_ManagedReadingsWholeOutput(t *testing.T) {
 						if e != nil {
 							t.Fatal(e)
 						}
-						f1SeedBoth(t, ctx, gd, pd, []string{fmt.Sprintf(`UPDATE relationships SET artifact_roots='["%s"]'`, work), fmt.Sprintf(`INSERT INTO events(event_id,relationship_id,execution_generation,revision_hash,outcome,producer,turn_thread_id,turn_id,turn_status,receipt,first_seen_at,last_seen_at) VALUES('receipt','rel',1,'%s','ready_for_review','child','child','turn-9','completed','%s','stamp','stamp')`, revision, strings.ReplaceAll(string(payload), "'", "''"))})
+						f1Seed(t, ctx, gd, []string{fmt.Sprintf(`UPDATE relationships SET artifact_roots='["%s"]'`, work), fmt.Sprintf(`INSERT INTO events(event_id,relationship_id,execution_generation,revision_hash,outcome,producer,turn_thread_id,turn_id,turn_status,receipt,first_seen_at,last_seen_at) VALUES('receipt','rel',1,'%s','ready_for_review','child','child','turn-9','completed','%s','stamp','stamp')`, revision, strings.ReplaceAll(string(payload), "'", "''"))})
 					}
 				}
 			}
@@ -222,7 +220,7 @@ func Test22_FC_9_ManagedReadingsWholeOutput(t *testing.T) {
 				}
 				replies = append(replies, map[string]any{"read": reply.Read, "recorded": reply.Recorded, "queued": reply.Queued, "gaps": reply.Gaps, "results": reply.Results})
 			}
-			fcComparePath(t, ctx, s, pd, "managed", variant, replies, calls)
+			fcComparePath(t, ctx, s, gd, "managed", variant, replies, calls)
 		})
 	}
 }
@@ -252,9 +250,9 @@ func Test22_FC_26_PreIssueSavepointWholeOutput(t *testing.T) {
 	goldenParent(t)
 	for _, variant := range []string{"cancel", "write", "hold", "invalid", "accept"} {
 		t.Run(variant, func(t *testing.T) {
-			ctx, gd, pd := f1ReplayStores(t)
-			f1ReplayCLI(t, ctx, gd, pd, []string{"fault-target", "--product", "crw", "--project", "P", "--team", "team", "--project-ref", "project-P"})
-			observed := replayObservation(t, ctx, gd, pd, "report_omitted", Notice, "pre-issue")
+			ctx, gd := f1ReplayStores(t)
+			f1ReplayCLI(t, ctx, gd, []string{"fault-target", "--product", "crw", "--project", "P", "--team", "team", "--project-ref", "project-P"})
+			observed := replayObservation(t, ctx, gd, "report_omitted", Notice, "pre-issue")
 			id := observed["faultId"].(string)
 			s := fcOpen(t, ctx, gd)
 			l := &Ledger{Store: s, Clock: &testClock{now: 100000}}
@@ -308,35 +306,15 @@ func Test22_FC_26_PreIssueSavepointWholeOutput(t *testing.T) {
 				}
 				replies = append(replies, complete)
 			}
-			fcComparePath(t, ctx, s, pd, "pre_issue", variant, replies, calls)
+			fcComparePath(t, ctx, s, gd, "pre_issue", variant, replies, calls)
 		})
 	}
 }
 
-func fcComparePath(t *testing.T, ctx context.Context, s *store.Store, pd, action, variant string, replies, calls []any) {
+// fcComparePath compares the replies, hook calls and fault, journal and supervisor tables one
+// path through the store in gd produced with the golden.
+func fcComparePath(t *testing.T, ctx context.Context, s *store.Store, gd, action, variant string, replies, calls []any) {
 	t.Helper()
-	root, err := filepath.Abs("../../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Python's replies, hook calls and tables for the same path on its twin.
-	raw := pyAnswer(t, "fc_paths.py "+action+" "+variant, []string{action, variant}, pyRunPaths(t, filepath.Dir(pd)), func() ([]byte, error) {
-		cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(root, "internal/relay/faults/testdata/fc_paths.py"), pd+"/relay.sqlite3", action, variant)
-		cmd.Dir = root
-		raw, err := cmd.CombinedOutput()
-		if err != nil {
-			return nil, fmt.Errorf("Python %v: %s", err, raw)
-		}
-		return recordEvidenceDigests(raw)
-	})
-	raw, err = replayEvidenceDigests(raw)
-	if err != nil {
-		t.Fatalf("recorded Python answer: %v", err)
-	}
-	var want any
-	if err = json.Unmarshal(raw, &want); err != nil {
-		t.Fatal(err)
-	}
 	tables := map[string]any{}
 	names, err := s.All(ctx, "SELECT name FROM sqlite_master WHERE type='table' AND (name LIKE 'fault_%' OR name='journal' OR name LIKE 'supervisor_%') ORDER BY name")
 	if err != nil {
@@ -366,10 +344,7 @@ func fcComparePath(t *testing.T, ctx context.Context, s *store.Store, pd, action
 	if err = json.Unmarshal(gotRaw, &got); err != nil {
 		t.Fatal(err)
 	}
-	checkGoldenEvidence(t, "replies, calls and tables: "+action+" "+variant, []string{action, variant}, runPathsOf(t, filepath.Dir(pd)), got)
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("whole-output comparison diff: %s\nGo: %s\nPython: %s", noticeDifference("capture", want, got), gotRaw, raw)
-	}
+	checkGoldenEvidence(t, "replies, calls and tables: "+action+" "+variant, []string{action, variant}, runPathsOf(t, filepath.Dir(gd)), got)
 }
 
 func fcOpen(t *testing.T, ctx context.Context, dir string) *store.Store {

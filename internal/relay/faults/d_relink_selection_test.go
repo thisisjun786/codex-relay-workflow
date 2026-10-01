@@ -2,12 +2,8 @@ package faults
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"reflect"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -19,14 +15,9 @@ func TestDRelinkOutstandingWriteSelectionAgainstPython(t *testing.T) {
 		t.Fatal(e)
 	}
 	t.Cleanup(func() { os.RemoveAll(home) })
-	root, e := filepath.Abs("../../..")
-	if e != nil {
-		t.Fatal(e)
-	}
-	goDir, pyDir := filepath.Join(home, "go"), filepath.Join(home, "python")
+	goDir := filepath.Join(home, "go")
 	observation := `{"schema":"fault-observation/1","product":"crw","faultClass":"report_omitted","severity":"broken","signature":{"relationship":"r","turn":"t"},"occurrenceKey":"a","scope":{"projectKey":"CRW"}}`
-	// Seeded at fixed times: Python is given a copy of this store and what it writes and
-	// answers echoes the times it holds.
+	// Seeded at fixed times: what the relinks write and answer echoes the times the store holds.
 	_, reply := seedCLI(t, 100000, goDir, "fault-observe", "--observation", observation)
 	id := reply["faultId"].(string)
 	_, reply = seedCLI(t, 100001, goDir, "fault-target", "--product", "crw", "--project", "CRW", "--team", "team-relay", "--project-ref", "P2")
@@ -53,30 +44,10 @@ func TestDRelinkOutstandingWriteSelectionAgainstPython(t *testing.T) {
 		}
 	}
 	s.Close()
-	pythonCopy(t, goDir, pyDir)
-	py := func() map[string]any {
-		t.Helper()
-		out := pyAnswer(t, "relay fault-relink --limit 1", nil, pyRunPaths(t, home), func() ([]byte, error) {
-			cmd := exec.Command("uv", "run", "--no-sync", "codex-session-relay", "--state", pyDir, "--json", "fault-relink", "--limit", "1")
-			cmd.Dir = root
-			cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR=/dev/shm")
-			out, e := cmd.Output()
-			if e != nil {
-				return nil, fmt.Errorf("Python %v: %s", e, out)
-			}
-			return out, nil
-		})
-		var reply map[string]any
-		if e := json.Unmarshal(out, &reply); e != nil {
-			t.Fatal(e)
-		}
-		return reply
-	}
 	gotCode, got := cliCall(t, goDir, "fault-relink", "--limit", "1")
 	checkGolden(t, "relay fault-relink --limit 1", nil, runPathsOf(t, home), map[string]any{"code": gotCode, "reply": got})
-	want := py()
-	if gotCode != 0 || !reflect.DeepEqual(got, want) || got["relinked"] != float64(0) {
-		t.Fatalf("outstanding: Go %d %v Python %v", gotCode, got, want)
+	if gotCode != 0 || got["relinked"] != float64(0) {
+		t.Fatalf("outstanding: %d %v", gotCode, got)
 	}
 	settle := "UPDATE fault_publications SET state='confirmed' WHERE publication_id='other-write'"
 	s, e = store.Open(ctx, filepath.Join(goDir, "relay.sqlite3"), "")
@@ -87,12 +58,10 @@ func TestDRelinkOutstandingWriteSelectionAgainstPython(t *testing.T) {
 		t.Fatal(e)
 	}
 	s.Close()
-	seedPython(t, filepath.Join(pyDir, "relay.sqlite3"), seedSQL(settle)...)
 	gotCode, got = cliCall(t, goDir, "fault-relink", "--limit", "1")
 	checkGolden(t, "relay fault-relink --limit 1", nil, runPathsOf(t, home), map[string]any{"code": gotCode, "reply": got})
-	want = py()
-	if gotCode != 0 || !reflect.DeepEqual(got, want) || got["relinked"] != float64(1) {
-		t.Fatalf("settled: Go %d %v Python %v", gotCode, got, want)
+	if gotCode != 0 || got["relinked"] != float64(1) {
+		t.Fatalf("settled: %d %v", gotCode, got)
 	}
 	// relinked reads the link and the relink write of the store in dir.
 	type relinked struct {
@@ -122,20 +91,12 @@ func TestDRelinkOutstandingWriteSelectionAgainstPython(t *testing.T) {
 		})
 		return out
 	}
-	goWrite := read(goDir)
-	checkGolden(t, "store after relink", nil, runPathsOf(t, home), goWrite)
-	// What the store Python wrote holds after its relinks.
-	var pyWrite relinked
-	pyValue(t, "python store after relink", nil, pyRunPaths(t, home), &pyWrite, func() (any, error) { return read(pyDir), nil })
-	for dir, w := range map[string]relinked{goDir: goWrite, pyDir: pyWrite} {
-		if w.State != "unlinked" || w.ProjectRef != "P2" || w.Revision != 2 {
-			t.Fatalf("%s link %+v", dir, w)
-		}
-		if !w.Found || w.WriteState != "pending" {
-			t.Fatalf("%s write %+v", dir, w)
-		}
+	w := read(goDir)
+	checkGolden(t, "store after relink", nil, runPathsOf(t, home), w)
+	if w.State != "unlinked" || w.ProjectRef != "P2" || w.Revision != 2 {
+		t.Fatalf("link %+v", w)
 	}
-	if pyWrite.Summary != goWrite.Summary || pyWrite.Payload != goWrite.Payload {
-		t.Fatalf("relink write mismatch Go %+v Python %+v", goWrite, pyWrite)
+	if !w.Found || w.WriteState != "pending" {
+		t.Fatalf("write %+v", w)
 	}
 }

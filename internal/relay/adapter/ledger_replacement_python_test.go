@@ -1,7 +1,6 @@
 package adapter
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -32,7 +31,7 @@ func (r *ledgerReplacementRPC) Call(_ context.Context, method string, _ map[stri
 	return nil, &HostUnavailable{"unexpected method"}
 }
 
-func Test28LedgerReplacementAfterGuardMatchesPython(t *testing.T) {
+func Test28LedgerReplacementAfterGuardMatchesTheGolden(t *testing.T) {
 	root := t.TempDir()
 	socket := filepath.Join(root, "socket")
 	if err := os.WriteFile(socket, nil, 0600); err != nil {
@@ -69,15 +68,5 @@ func Test28LedgerReplacementAfterGuardMatchesPython(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	input, _ := json.Marshal(map[string]any{"root": filepath.Join(root, "python"), "settings": authorized(), "resume": resume()})
-	out := pyDriver(t, "ledger_replacement_capture.py", input)
-	var want map[string]any
-	if err := json.Unmarshal(out, &want); err != nil {
-		t.Fatal(err)
-	}
-	actual, _ := json.Marshal(result)
-	expected, _ := json.Marshal(want)
-	if !bytes.Equal(actual, expected) {
-		t.Fatalf("Go %s\nPython %s", actual, expected)
-	}
+	expectJSON(t, "ledger replacement", result)
 }

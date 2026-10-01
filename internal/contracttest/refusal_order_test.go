@@ -6,44 +6,35 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 // TestArgumentRefusals_fall_where_the_python_fence_puts_them drives the built crw through the
-// command lines the Python fence answered (recorded, internal/testsupport/pyoracle) and compares
-// stdout bytes, exit codes and what each left in its state directory. cli.main opens a write form's store in _ownership_preflight
-// before the handler reads its arguments, so a write form's own refusal leaves an absent store
-// initialized (decision 30) and a store the other runtime owns answers with the ownership
-// refusal. A read-only form's Services.store is lazy, so a handler that refuses its arguments
-// before touching it answers that refusal, never store_absent, and creates nothing
-// (decision 31): merge-turn-show's selectors and linkage-up's --scope.
+// command lines the Python fence answered and holds its stdout bytes, exit code and what it left
+// in its state directory to the golden (first taken as the Python fence's answer). cli.main
+// opens a write form's store in _ownership_preflight before the handler reads its arguments, so
+// a write form's own refusal leaves an absent store initialized (decision 30) and a store the
+// other runtime owns answers with the ownership refusal. A read-only form's Services.store is
+// lazy, so a handler that refuses its arguments before touching it answers that refusal, never
+// store_absent, and creates nothing (decision 31): merge-turn-show's selectors and linkage-up's
+// --scope.
 func TestArgumentRefusals_fall_where_the_python_fence_puts_them(t *testing.T) {
 	binary, err := crwBinary()
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, err := Root()
-	if err != nil {
-		t.Fatal(err)
-	}
-	python := filepath.Join(root, ".venv", "bin", "python")
 	type side struct {
 		stdout string
 		exit   int
 		left   []string
 	}
-	run := func(t *testing.T, home, state string, argv []string, pythonSide bool) side {
+	run := func(t *testing.T, home, state string, argv []string) side {
 		t.Helper()
-		prefix := []string{binary, "relay"}
-		if pythonSide {
-			prefix = []string{python, "-m", "codex_session_relay.cli"}
-		}
-		command := exec.Command(prefix[0], append(append(prefix[1:], "--state", state), argv...)...)
+		command := exec.Command(binary, append([]string{"relay", "--state", state}, argv...)...)
 		command.Dir = home
 		command.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home+"/xs", "XDG_DATA_HOME="+home+"/xd",
 			"XDG_CONFIG_HOME="+home+"/xc", "CODEX_HOME="+home+"/ch", "CODEX_THREAD_BRIDGE_EXECUTION_POLICY=")
@@ -71,9 +62,9 @@ func TestArgumentRefusals_fall_where_the_python_fence_puts_them(t *testing.T) {
 	for _, c := range []struct {
 		name string
 		argv []string
-		// foreign puts each runtime before a store the other runtime owns (testsupport.Create).
+		// foreign puts crw before a store the other runtime owns (testsupport.Create).
 		foreign bool
-		// created is whether each runtime must leave a store where there was none.
+		// created is whether crw must leave a store where there was none.
 		created bool
 		want    string
 	}{
@@ -86,36 +77,18 @@ func TestArgumentRefusals_fall_where_the_python_fence_puts_them(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			home := t.TempDir()
-			goState, pyState := filepath.Join(home, "go"), filepath.Join(home, "python")
+			goState := filepath.Join(home, "go")
 			if c.foreign {
 				testsupport.Create(t, filepath.Join(goState, "relay.sqlite3"), "", "python")
 			}
-			var recorded struct {
-				Stdout string   `json:"stdout"`
-				Exit   int      `json:"exit"`
-				Left   []string `json:"left"`
-			}
-			pyoracle.JSON(t, "python", &recorded, func() (any, error) {
-				if c.foreign {
-					testsupport.Create(t, filepath.Join(pyState, "relay.sqlite3"), "", "go")
-				}
-				answer := run(t, home, pyState, c.argv, true)
-				return map[string]any{"stdout": answer.stdout, "exit": answer.exit, "left": answer.left}, nil
-			}, pyoracle.Substitute(home, "<HOME>"))
-			pySide := side{recorded.Stdout, recorded.Exit, recorded.Left}
-			goSide := run(t, home, goState, c.argv, false)
-			if goSide.stdout != pySide.stdout || goSide.exit != pySide.exit {
-				t.Fatalf("crw exit %d\n%s\npython exit %d\n%s", goSide.exit, goSide.stdout, pySide.exit, pySide.stdout)
-			}
+			goSide := run(t, home, goState, c.argv)
 			if !strings.Contains(goSide.stdout, c.want) {
-				t.Fatalf("both runtimes answered without %s:\n%s", c.want, goSide.stdout)
-			}
-			if !reflect.DeepEqual(goSide.left, pySide.left) {
-				t.Fatalf("crw left %v, python left %v", goSide.left, pySide.left)
+				t.Fatalf("crw answered without %s:\n%s", c.want, goSide.stdout)
 			}
 			if !c.foreign && (goSide.left != nil) != c.created {
 				t.Fatalf("a store left behind: %v, expected %t", goSide.left, c.created)
 			}
+			golden.CheckJSON(t, "answer", map[string]any{"stdout": goSide.stdout, "exit": goSide.exit, "left": goSide.left}, golden.Substitute(home, "<HOME>"))
 		})
 	}
 }

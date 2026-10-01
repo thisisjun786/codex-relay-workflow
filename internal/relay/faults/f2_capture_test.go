@@ -4,12 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"reflect"
-	"sort"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -26,24 +22,6 @@ func TestF2WholeOutput(t *testing.T) {
 				t.Fatal(e)
 			}
 			t.Cleanup(func() { os.RemoveAll(home) })
-			root, e := filepath.Abs("../../..")
-			if e != nil {
-				t.Fatal(e)
-			}
-			raw := pyAnswer(t, "f2_capture.py "+action, []string{action}, pyRunPaths(t, home), func() ([]byte, error) {
-				cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(root, "internal/relay/faults/testdata/f2_capture.py"), filepath.Join(home, "py"), action)
-				cmd.Dir = root
-				cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR=/dev/shm")
-				raw, e := cmd.CombinedOutput()
-				if e != nil {
-					return nil, fmt.Errorf("python %v: %s", e, raw)
-				}
-				return raw, nil
-			})
-			var expected map[string]any
-			if e := json.Unmarshal(raw, &expected); e != nil {
-				t.Fatal(e)
-			}
 			ctx := context.Background()
 			s, e := store.Open(ctx, filepath.Join(home, "go", "relay.sqlite3"), "")
 			if e != nil {
@@ -147,22 +125,6 @@ func TestF2WholeOutput(t *testing.T) {
 				t.Fatal(e)
 			}
 			checkGolden(t, "reply and fault tables", []string{action}, runPathsOf(t, home), got)
-			if !reflect.DeepEqual(got, expected) {
-				keys := []string{}
-				for key, v := range expected["tables"].(map[string]any) {
-					if !reflect.DeepEqual(got["tables"].(map[string]any)[key], v) {
-						keys = append(keys, key)
-					}
-				}
-				sort.Strings(keys)
-				t.Errorf("different tables: %v\nreply go=%v\nreply python=%v", keys, got["reply"], expected["reply"])
-				for _, key := range keys {
-					t.Logf("%s go=%v python=%v", key, got["tables"].(map[string]any)[key], expected["tables"].(map[string]any)[key])
-				}
-				if len(keys) == 0 {
-					t.Log(fmt.Sprint(got["tables"]))
-				}
-			}
 		})
 	}
 }

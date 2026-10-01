@@ -15,6 +15,7 @@ import (
 )
 
 func Test28_MSC_5_StableReadAndMutations(t *testing.T) {
+	shareGoldens(t)
 	for _, kind := range []string{"quiet", "rename", "write", "mapped"} {
 		t.Run(kind, func(t *testing.T) {
 			root := t.TempDir()

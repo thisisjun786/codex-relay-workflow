@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "python": "txt:{\"exit\":2,\"stdout\":\"\",\"stderr\":\"usage: codex-session-relay merge-evidence [-h] --repository REPOSITORY\\n                                          --pull-request PULL_REQUEST\\n                                          [--restate RESTATE]\\n                                          [--restate-head RESTATE_HEAD]\\n                                          [--page-size PAGE_SIZE]\\n                                          [--page-budget PAGE_BUDGET]\\n                                          [--call-budget CALL_BUDGET]\\n                                          [--timeout TIMEOUT]\\ncodex-session-relay merge-evidence: error: ambiguous option: --rest could match --restate, --restate-head\\n\"}\n"
- }
-}

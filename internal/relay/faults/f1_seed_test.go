@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,14 +11,10 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
-// Replay a publication's stable state through both CLIs, including refusals
+// Replay a publication's stable state through the CLI, including refusals
 // that require an existing claimed, issued or uncertain write.
 func TestF1SeededCLIOracle(t *testing.T) {
 	goldenParent(t)
-	root, err := filepath.Abs("../../..")
-	if err != nil {
-		t.Fatal(err)
-	}
 	for _, tc := range []struct {
 		name, state, token string
 		args               func(string) []string
@@ -60,7 +55,7 @@ func TestF1SeededCLIOracle(t *testing.T) {
 			}
 			t.Cleanup(func() { _ = os.RemoveAll(home) })
 			ctx := context.WithValue(context.Background(), f1InputsKey{}, f1Inputs{clock: &testClock{now: 100000}})
-			goDir, pyDir := filepath.Join(home, "go"), filepath.Join(home, "py")
+			goDir := filepath.Join(home, "go")
 			s, err := store.Open(ctx, filepath.Join(goDir, "relay.sqlite3"), "")
 			if err != nil {
 				t.Fatal(err)
@@ -82,22 +77,13 @@ func TestF1SeededCLIOracle(t *testing.T) {
 			if err = s.Close(); err != nil {
 				t.Fatal(err)
 			}
-			pythonCopy(t, goDir, pyDir)
 			args := tc.args(pub)
-			var answer pyRun
-			pyValue(t, "f1_cli.py "+strings.Join(args, " "), args, pyRunPaths(t, home), &answer, func() (any, error) {
-				py := exec.Command("uv", append([]string{"run", "--no-sync", "python", filepath.Join(root, "internal/relay/faults/testdata/f1_cli.py"), "--state", pyDir, "--json"}, args...)...)
-				py.Dir = root
-				py.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home+"/state", "XDG_CONFIG_HOME="+home+"/config", "CODEX_HOME="+home+"/codex", "TMPDIR=/dev/shm")
-				return runPython(py, false)
-			})
-			want, pyCode := []byte(answer.Stdout), answer.Code
 			var got, stderr bytes.Buffer
 			goCode, handled := executeAsCLI(ctx, append([]string{"--state", goDir, "--json"}, args...), &got, &stderr)
-			checkGolden(t, "relay "+strings.Join(args, " "), args, runPathsOf(t, home), cliGolden{Code: goCode, Stdout: got.String()})
-			if !handled || pyCode != goCode || !bytes.Equal(want, got.Bytes()) {
-				t.Errorf("python (%d): %s\ngo (%d): %s\nstderr: %s", pyCode, want, goCode, got.String(), stderr.String())
+			if !handled {
+				t.Fatal("unhandled")
 			}
+			checkGolden(t, "relay "+strings.Join(args, " "), args, runPathsOf(t, home), cliGolden{Code: goCode, Stdout: got.String()})
 		})
 	}
 }

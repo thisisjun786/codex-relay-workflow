@@ -1,16 +1,13 @@
 package adapter
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -108,8 +105,7 @@ func capture(t *testing.T, s scenario) {
 	var db *store.Store
 	var err error
 	if s.store {
-		// Python's store sits in root: Go's store gets a directory of its own, since a
-		// directory holds one store's takeover.json.
+		// The store gets a directory of its own: a directory holds one store's takeover.json.
 		db, err = store.Open(context.Background(), filepath.Join(root, "go", "go-store.sqlite3"), "")
 		if err != nil {
 			t.Fatal(err)
@@ -274,43 +270,16 @@ func capture(t *testing.T, s scenario) {
 		}
 	}
 	got := map[string]any{"results": results, "calls": rpc.calls, "cursors": cursors, "receiptBytes": receiptBytes, "attemptBytes": attemptBytes}
-	spec := map[string]any{"root": root, "page": s.page, "store": s.store, "answers": s.answers, "actions": s.actions, "now": 1700000000.125, "settingsFree": s.settingsFree, "policy": s.policy}
-	if s.page == 0 {
-		spec["page"] = Page
-	}
-	if s.settings != nil {
-		spec["settings"] = s.settings
-	}
-	input, err := json.Marshal(spec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	repo := pyRepo(t)
-	output := pyOutput(t, pyKey(t, "capture.py"), func() *exec.Cmd {
-		cmd := exec.Command("uv", "run", "--no-sync", "--project", repo, "python", filepath.Join(repo, "internal/relay/adapter/testdata/capture.py"))
-		cmd.Env = append(os.Environ(), "PYTHONPATH="+filepath.Join(repo, "packages/codex-session-relay/src")+":"+filepath.Join(repo, "packages/codex-thread-bridge/src"))
-		cmd.Stdin = bytes.NewReader(input)
-		return cmd
-	})
-	var expected any
-	decoder := json.NewDecoder(bytes.NewReader(output))
-	decoder.UseNumber()
-	if err := decoder.Decode(&expected); err != nil {
-		t.Fatalf("decode oracle: %v\n%s", err, output)
-	}
+	// The golden holds the answer as JSON reads it back.
 	encoded, err := json.Marshal(got)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var actual any
-	decoder = json.NewDecoder(bytes.NewReader(encoded))
-	decoder.UseNumber()
-	if err := decoder.Decode(&actual); err != nil {
+	if err := decodeNumbers(encoded, &actual); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(actual, expected) {
-		t.Fatalf("whole-output mismatch\nGo: %s\nPython: %s", encoded, output)
-	}
+	expectJSON(t, "capture", actual)
 }
 func item(turn, id, body string) map[string]any {
 	return map[string]any{"turnId": turn, "item": map[string]any{"id": id, "text": body}}
@@ -402,7 +371,7 @@ func Test28_BAD_4_ArchiveDiscovery(t *testing.T) {
 	answers = append(answers, found)
 	capture(t, scenario{page: 1, store: true, answers: answers, actions: [][]any{{"archive", "01child-task", nil}, {"archive", "01child-task", nil}}})
 }
-func Test28ArchiveListingErrorMatchesPython(t *testing.T) {
+func Test28ArchiveListingErrorMatchesTheGolden(t *testing.T) {
 	answers := []map[string]any{{"thread": map[string]any{"status": map[string]any{"type": "idle"}, "canAcceptDirectInput": true}}, {"error": "listing failed"}, {"error": "listing failed"}, {"error": "listing failed"}, {"error": "listing failed"}, {"goal": nil}}
 	capture(t, scenario{store: true, answers: answers, actions: [][]any{{"lifecycle-observe", "01child-task"}}})
 }
@@ -448,6 +417,7 @@ func Test28_BAD_7_GuardedWireShape(t *testing.T) {
 	capture(t, scenario{settings: authorized(), actions: [][]any{{"no-settings", "send-without-settings", "thread-1", "hello"}}})
 }
 func Test28_BAD_8_SettingsWithhold(t *testing.T) {
+	shareGoldens(t)
 	for _, kind := range []string{"omitted", "null", "empty"} {
 		r := resume()
 		if kind == "omitted" {

@@ -1,12 +1,9 @@
 package adapter
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -92,26 +89,10 @@ func allTables(t *testing.T, s *store.Store) map[string]any {
 }
 func Test28_BAD_14_ShutdownSettlesClaimedDelivery(t *testing.T) {
 	root := t.TempDir()
-	repo := pyRepo(t)
-	script := filepath.Join(repo, "internal/relay/adapter/testdata/settlement_capture.py")
-	// The oracle reads <pyDir>/python.sqlite3. Each runtime's store has a directory of its own:
-	// a directory holds one store's takeover.json.
-	pyDir, goPath := filepath.Join(root, "python"), filepath.Join(root, "go", "go.sqlite3")
+	// The result includes every table, schema_meta too, its owner neutralized: the store is the
+	// seed as a pre-fence Python wrote it, stamped as Go stamps a store.
+	goPath := filepath.Join(root, "go", "go.sqlite3")
 	seed := copyDeliverySeed(t, root)
-	oracle := func(args ...string) []byte {
-		return pyOutput(t, "settlement_capture.py "+strings.Join(args[:1], " "), func() *exec.Cmd {
-			// Both results include every table, schema_meta too, and the only runtime difference
-			// that comparison admits is the owner. So each store is the seed as a pre-fence
-			// Python wrote it, stamped for the runtime that runs on it: Python's by its fence,
-			// Go's as Go stamps a store. (Copies of the fenced seed cannot serve: one runtime
-			// would own it only after a takeover, at another epoch and with a takeover id.)
-			preFenceFixture(t, filepath.Join(root, "python.sqlite3"), filepath.Join(pyDir, "python.sqlite3"), "")
-			testsupport.Fence(t, filepath.Join(pyDir, "python.sqlite3"), "python")
-			cmd := exec.Command("uv", append([]string{"run", "--no-sync", "python", script, pyDir}, args...)...)
-			cmd.Dir = repo
-			return cmd
-		}, seed.derived()...)
-	}
 	preFenceFixture(t, filepath.Join(root, "python.sqlite3"), goPath, "")
 	testsupport.Fence(t, goPath, "go")
 	rpc := &heldRPC{make(chan struct{}), make(chan struct{})}
@@ -155,15 +136,11 @@ func Test28_BAD_14_ShutdownSettlesClaimedDelivery(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := map[string]any{"result": plain(result), "tables": allTables(t, s)}
-	var want map[string]any
-	if err := json.Unmarshal(oracle("run", seed.Event), &want); err != nil {
+	ownerNeutral(t, testsupport.Go, got["tables"])
+	actual, _ := json.Marshal(got)
+	var settled any
+	if err := decodeNumbers(actual, &settled); err != nil {
 		t.Fatal(err)
 	}
-	ownerNeutral(t, testsupport.Go, got["tables"])
-	ownerNeutral(t, testsupport.Python, want["tables"])
-	actual, _ := json.Marshal(got)
-	expected, _ := json.Marshal(want)
-	if !bytes.Equal(actual, expected) {
-		t.Fatalf("Go %s\nPython %s", actual, expected)
-	}
+	expectJSON(t, "settlement", settled, seed.derived()...)
 }

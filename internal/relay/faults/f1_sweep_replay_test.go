@@ -11,7 +11,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
-func f1ReplayStores(t *testing.T) (context.Context, string, string) {
+func f1ReplayStores(t *testing.T) (context.Context, string) {
 	t.Helper()
 	home, e := os.MkdirTemp("/dev/shm", "f1-stores-")
 	if e != nil {
@@ -22,15 +22,14 @@ func f1ReplayStores(t *testing.T) (context.Context, string, string) {
 		t.Setenv(k, v)
 	}
 	ctx := context.WithValue(context.Background(), f1InputsKey{}, f1Inputs{clock: &testClock{now: 100000}, entropy: bytes.NewReader([]byte{0, 1, 2, 3, 4, 5, 6, 7})})
-	gd, pd := home+"/go", home+"/py"
-	// Both implementations start from identical metadata as well as domain rows, each store
-	// owned by the runtime that runs on it: schema_meta differs only in the owner value.
-	f1Twins(t, gd, pd)
-	return ctx, gd, pd
+	gd := home + "/go"
+	// The store Python's answers began on: the frozen empty store, fenced for Go.
+	f1Twin(t, gd)
+	return ctx, gd
 }
 
-// f1SeedBoth runs the same statements on both stores, each through its owner's writer.
-func f1SeedBoth(t *testing.T, ctx context.Context, gd, pd string, sql []string) {
+// f1Seed runs statements on the store in gd.
+func f1Seed(t *testing.T, ctx context.Context, gd string, sql []string) {
 	t.Helper()
 	s, e := store.Open(ctx, gd+"/relay.sqlite3", "")
 	if e != nil {
@@ -45,7 +44,6 @@ func f1SeedBoth(t *testing.T, ctx context.Context, gd, pd string, sql []string) 
 	if e = s.Close(); e != nil {
 		t.Fatal(e)
 	}
-	seedPython(t, pd+"/relay.sqlite3", seedSQL(sql...)...)
 }
 
 const f1Relationship = "INSERT INTO relationships(relationship_id,issue_key,status,parent_task_id,parent_host_id,child_task_id,child_host_id,execution_generation,artifact_roots,allowed_recipients,created_at,updated_at) VALUES('rel','ISSUE','active','parent','host','child','host',1,'[]','[]','stamp','stamp')"
@@ -55,7 +53,7 @@ func TestF1_FLT_18_21_22_SweepSourcesWholeCLI(t *testing.T) {
 	goldenParent(t)
 	for _, source := range []string{"delivery", "sync", "observation", "refusal"} {
 		t.Run(source, func(t *testing.T) {
-			ctx, gd, pd := f1ReplayStores(t)
+			ctx, gd := f1ReplayStores(t)
 			seed := []string{f1Relationship, "INSERT INTO relationship_scope VALUES('rel','CRW','stamp')"}
 			var clear []string
 			switch source {
@@ -75,42 +73,42 @@ func TestF1_FLT_18_21_22_SweepSourcesWholeCLI(t *testing.T) {
 				seed = append(seed, f1Delivery, "INSERT INTO journal(at,kind,subject,detail) VALUES('stamp','delivery_withheld','event','{\"reason\":\"settings_unavailable\",\"detail\":\"not readable\"}')")
 				clear = []string{"UPDATE deliveries SET state='dispatched'"}
 			}
-			f1SeedBoth(t, ctx, gd, pd, seed)
-			f1ReplayCLI(t, ctx, gd, pd, []string{"fault-sweep"})
-			f1ReplayCLI(t, ctx, gd, pd, []string{"fault-sweep"})
+			f1Seed(t, ctx, gd, seed)
+			f1ReplayCLI(t, ctx, gd, []string{"fault-sweep"})
+			f1ReplayCLI(t, ctx, gd, []string{"fault-sweep"})
 			if source == "delivery" {
-				f1SeedBoth(t, ctx, gd, pd, []string{"UPDATE deliveries SET hold_reason='attempt_cap',attempt_count=6"})
-				f1ReplayCLI(t, ctx, gd, pd, []string{"fault-sweep"})
+				f1Seed(t, ctx, gd, []string{"UPDATE deliveries SET hold_reason='attempt_cap',attempt_count=6"})
+				f1ReplayCLI(t, ctx, gd, []string{"fault-sweep"})
 			}
-			f1SeedBoth(t, ctx, gd, pd, clear)
-			f1ReplayCLI(t, ctx, gd, pd, []string{"fault-sweep"})
+			f1Seed(t, ctx, gd, clear)
+			f1ReplayCLI(t, ctx, gd, []string{"fault-sweep"})
 		})
 	}
 }
 func TestF1_FLT_18_21_InFlightWholeCLI(t *testing.T) {
-	ctx, gd, pd := f1ReplayStores(t)
-	f1SeedBoth(t, ctx, gd, pd, []string{f1Relationship, f1Delivery, "INSERT INTO attempts(request_id,event_id,attempt_no,kind,internal_state,state,observed_at) VALUES('request','event',1,'completion','in_flight','held_uncertain','stamp')"})
-	f1ReplayCLI(t, ctx, gd, pd, []string{"fault-sweep"})
-	f1SeedBoth(t, ctx, gd, pd, []string{"UPDATE attempts SET internal_state='settled'"})
-	f1ReplayCLI(t, ctx, gd, pd, []string{"fault-sweep"})
-	f1SeedBoth(t, ctx, gd, pd, []string{"UPDATE attempts SET internal_state='in_flight'"})
-	f1ReplayCLI(t, ctx, gd, pd, []string{"fault-sweep"})
+	ctx, gd := f1ReplayStores(t)
+	f1Seed(t, ctx, gd, []string{f1Relationship, f1Delivery, "INSERT INTO attempts(request_id,event_id,attempt_no,kind,internal_state,state,observed_at) VALUES('request','event',1,'completion','in_flight','held_uncertain','stamp')"})
+	f1ReplayCLI(t, ctx, gd, []string{"fault-sweep"})
+	f1Seed(t, ctx, gd, []string{"UPDATE attempts SET internal_state='settled'"})
+	f1ReplayCLI(t, ctx, gd, []string{"fault-sweep"})
+	f1Seed(t, ctx, gd, []string{"UPDATE attempts SET internal_state='in_flight'"})
+	f1ReplayCLI(t, ctx, gd, []string{"fault-sweep"})
 }
 
 func TestF1_FLT_21_SourceBeyondPageWholeCLI(t *testing.T) {
-	ctx, gd, pd := f1ReplayStores(t)
+	ctx, gd := f1ReplayStores(t)
 	seed := []string{f1Relationship}
 	for i := 0; i < 34; i++ {
 		seed = append(seed, fmt.Sprintf("INSERT INTO deliveries(event_id,relationship_id,kind,recipient_task_id,recipient_thread_id,state,hold_reason,created_at,updated_at) VALUES('event%03d','rel','completion','parent%03d','thread','withheld_pre_send','host_lost_turn','stamp','stamp')", i, i))
 	}
-	f1SeedBoth(t, ctx, gd, pd, seed)
+	f1Seed(t, ctx, gd, seed)
 	for i := 0; i < 4; i++ {
-		f1ReplayCLI(t, ctx, gd, pd, []string{"fault-sweep"})
+		f1ReplayCLI(t, ctx, gd, []string{"fault-sweep"})
 	}
 }
 
 func TestF1_FLT_32_ReadingsContinuationWholeCLI(t *testing.T) {
-	ctx, gd, pd := f1ReplayStores(t)
+	ctx, gd := f1ReplayStores(t)
 	readings := []any{}
 	for i := 0; i < 3; i++ {
 		readings = append(readings, map[string]any{"schema": "reporting-observation/1", "relationshipId": fmt.Sprintf("rel-%d", i), "selectors": map[string]any{"turn": "turn-1"}, "reportingState": "unreported"})
@@ -119,7 +117,7 @@ func TestF1_FLT_32_ReadingsContinuationWholeCLI(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	f1ReplayCLI(t, ctx, gd, pd, []string{"fault-sweep", "--readings", string(raw), "--readings-after", "2"})
+	f1ReplayCLI(t, ctx, gd, []string{"fault-sweep", "--readings", string(raw), "--readings-after", "2"})
 	s, e := store.Open(ctx, gd+"/relay.sqlite3", "")
 	if e != nil {
 		t.Fatal(e)
@@ -134,24 +132,24 @@ func TestF1_FLT_32_ReadingsContinuationWholeCLI(t *testing.T) {
 	}
 }
 func TestF1SweepBoundsAndScopeWholeCLI(t *testing.T) {
-	ctx, gd, pd := f1ReplayStores(t)
+	ctx, gd := f1ReplayStores(t)
 	reading := `[{"schema":"reporting-observation/1","relationshipId":"rel","selectors":{"turn":"turn"},"reportingState":"unreported"}]`
 	for _, args := range [][]string{
 		{"fault-sweep", "--readings-after", "1001"},
 		{"fault-sweep", "--readings", "null"},
 		{"fault-sweep", "--product", "bad:product", "--readings", reading},
 	} {
-		f1ReplayCLI(t, ctx, gd, pd, args)
+		f1ReplayCLI(t, ctx, gd, args)
 	}
-	f1SeedBoth(t, ctx, gd, pd, []string{f1Delivery, "UPDATE deliveries SET hold_reason='attempt_cap'"})
-	f1ReplayCLI(t, ctx, gd, pd, []string{"fault-sweep", "--project", "P"})
+	f1Seed(t, ctx, gd, []string{f1Delivery, "UPDATE deliveries SET hold_reason='attempt_cap'"})
+	f1ReplayCLI(t, ctx, gd, []string{"fault-sweep", "--project", "P"})
 }
 
 func TestF1SweepReadingsWholeCLI(t *testing.T) {
 	goldenParent(t)
 	for _, state := range []string{"unreported", "reported", "unmeasured", "in_progress", "unmanaged", "unexpected"} {
 		t.Run(state, func(t *testing.T) {
-			ctx, gd, pd := f1ReplayStores(t)
+			ctx, gd := f1ReplayStores(t)
 			reading := func(state string) string {
 				raw, e := json.Marshal([]any{map[string]any{"schema": "reporting-observation/1", "relationshipId": "rel", "selectors": map[string]any{"turn": "turn"}, "reportingState": state, "reason": "unavailable"}})
 				if e != nil {
@@ -159,8 +157,8 @@ func TestF1SweepReadingsWholeCLI(t *testing.T) {
 				}
 				return string(raw)
 			}
-			f1ReplayCLI(t, ctx, gd, pd, []string{"fault-sweep", "--readings", reading("unmeasured")})
-			f1ReplayCLI(t, ctx, gd, pd, []string{"fault-sweep", "--readings", reading(state)})
+			f1ReplayCLI(t, ctx, gd, []string{"fault-sweep", "--readings", reading("unmeasured")})
+			f1ReplayCLI(t, ctx, gd, []string{"fault-sweep", "--readings", reading(state)})
 		})
 	}
 }

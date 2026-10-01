@@ -1,10 +1,6 @@
 package adapter
 
 import (
-	"bytes"
-	"context"
-	"encoding/json"
-	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -107,37 +103,10 @@ func transportEdge(t *testing.T, kind string) {
 	default:
 		t.Fatal(kind)
 	}
-	spec := map[string]any{"root": root, "case": kind, "settings": authorized(), "resume": resume()}
-	raw, err := json.Marshal(spec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	repo := pyRepo(t)
-	out := pyOutput(t, "transport_edges.py", func() *exec.Cmd {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		t.Cleanup(cancel)
-		cmd := exec.CommandContext(ctx, "uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/adapter/testdata/transport_edges.py"))
-		cmd.Dir = repo
-		cmd.Stdin = bytes.NewReader(raw)
-		return cmd
-	})
-	var want any
-	if err := json.Unmarshal(out, &want); err != nil {
-		t.Fatal(err)
-	}
-	actual, err := json.Marshal(result)
-	if err != nil {
-		t.Fatal(err)
-	}
-	expected, err := json.Marshal(want)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(actual, expected) {
-		t.Fatalf("Go %s\nPython %s", actual, expected)
-	}
+	expectJSON(t, "transport", result)
 }
-func Test28_BAD_13_TransportEdgesLivePython(t *testing.T) {
+func Test28_BAD_13_TransportEdgesMatchTheGolden(t *testing.T) {
+	shareGoldens(t)
 	for _, kind := range []string{"abandoned", "racing-close", "stopping"} {
 		t.Run(kind, func(t *testing.T) { transportEdge(t, kind) })
 	}

@@ -9,8 +9,8 @@ func TestF1_FLT_25_26_27_LifecycleWholeCLI(t *testing.T) {
 }
 
 func testFLT252627LifecycleWholeCLI(t *testing.T) {
-	ctx, gd, pd := f1ReplayStores(t)
-	invoke := func(args ...string) map[string]any { return f1ReplayCLI(t, ctx, gd, pd, args) }
+	ctx, gd := f1ReplayStores(t)
+	invoke := func(args ...string) map[string]any { return f1ReplayCLI(t, ctx, gd, args) }
 	invoke("fault-target", "--product", "crw", "--project", "P", "--team", "team", "--project-ref", "project-P")
 	observed := invoke("fault-observe", "--observation", `{"schema":"fault-observation/1","product":"crw","faultClass":"report_omitted","severity":"broken","signature":{"turn":"flow"},"occurrenceKey":"first","scope":{"projectKey":"P"}}`)
 	id := observed["faultId"].(string)
@@ -43,13 +43,13 @@ func testFLT252627LifecycleWholeCLI(t *testing.T) {
 }
 
 func TestF1ArgumentFilesWholeCLI(t *testing.T) {
-	ctx, gd, pd := f1ReplayStores(t)
+	ctx, gd := f1ReplayStores(t)
 	for _, args := range [][]string{
 		{"fault-sweep", "--readings", "@" + gd + "/missing"},
 		{"fault-reconcile", "--publication", "missing", "--observed", "@" + gd + "/missing"},
 		{"fault-complete", "--publication", "missing", "--readback", "@" + gd + "/missing"},
 		{"fault-complete", "--publication", "missing", "--observed-fields", "@" + gd + "/missing"},
 	} {
-		f1ReplayCLI(t, ctx, gd, pd, args)
+		f1ReplayCLI(t, ctx, gd, args)
 	}
 }

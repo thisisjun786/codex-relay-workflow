@@ -18,7 +18,7 @@ func (refusedRPC) Call(context.Context, string, map[string]any) (json.RawMessage
 }
 
 func Test28PythonErrorLabelsPersisted(t *testing.T) {
-	// The lifecycle half is live-Python compared by Test28HostDecodedValueParity.
+	// The lifecycle half is Test28HostDecodedValueParity's.
 	l, err := ledger.OpenWithOptions(filepath.Join(t.TempDir(), "ops.sqlite3"), ledger.Options{Encode: encodeReceipt})
 	if err != nil {
 		t.Fatal(err)
@@ -37,16 +37,12 @@ func Test28PythonErrorLabelsPersisted(t *testing.T) {
 	if receipt["error"] != want {
 		t.Fatalf("transport label %v", receipt)
 	}
-	settings, _ := json.Marshal(authorized())
-	// The Python driver keeps the wall clock: the receipt's times are not compared.
-	out := pyDriverNormalized(t, "error_label_capture.py", append(settings, '\n'), withoutWallClock)
-	var python map[string]any
-	if err := json.Unmarshal(out, &python); err != nil {
+	// The receipt's times are the wall clock's.
+	persisted, err := withoutWallClock(receipt)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if python["error"] != want {
-		t.Fatalf("Python transport label %v", python)
-	}
+	expectJSON(t, "receipt", persisted)
 	var typed interface{ PythonExceptionKind() string }
 	if !errors.As(&HostUnavailable{"unavailable"}, &typed) {
 		t.Fatal("HostUnavailable is not typed")

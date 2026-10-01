@@ -51,7 +51,7 @@ func TestF2SeededCLIOracle(t *testing.T) {
 				t.Fatal(e)
 			}
 			t.Cleanup(func() { os.RemoveAll(home) })
-			goDir, pyDir := filepath.Join(home, "go"), filepath.Join(home, "py")
+			goDir := filepath.Join(home, "go")
 			observation := `{"schema":"fault-observation/1","product":"crw","faultClass":"report_omitted","severity":"broken","signature":{"turn":"f2-seed"},"occurrenceKey":"first","scope":{"projectKey":"P"}}`
 			code, reply := cliCall(t, goDir, "fault-observe", "--observation", observation)
 			if code != 0 {
@@ -74,15 +74,12 @@ func TestF2SeededCLIOracle(t *testing.T) {
 				}
 			}
 			args := tc.args(id, publication)
-			pythonCopy(t, goDir, pyDir)
-			answer := pyCLIRun(t, home, "", append([]string{"--state", pyDir, "--json"}, args...), false, pyHomeEnv(home)...)
-			want, pyCode := []byte(answer.Stdout), answer.Code
 			var got, stderr bytes.Buffer
 			goCode, handled := executeAsCLI(context.Background(), append([]string{"--state", goDir, "--json"}, args...), &got, &stderr)
-			checkGolden(t, "relay "+strings.Join(args, " "), args, runPathsOf(t, home), cliGolden{Code: goCode, Stdout: got.String()})
-			if !handled || pyCode != goCode || !bytes.Equal(want, got.Bytes()) {
-				t.Errorf("python (%d): %s\ngo (%d): %s\nstderr: %s", pyCode, want, goCode, got.String(), stderr.String())
+			if !handled {
+				t.Fatal("unhandled")
 			}
+			checkGolden(t, "relay "+strings.Join(args, " "), args, runPathsOf(t, home), cliGolden{Code: goCode, Stdout: got.String()})
 		})
 	}
 }

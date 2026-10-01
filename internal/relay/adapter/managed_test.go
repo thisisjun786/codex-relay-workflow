@@ -23,8 +23,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 func Test28_ManagedSixMethodsRealSocket(t *testing.T) {
@@ -123,13 +122,8 @@ func Test28_ManagedSixMethodsRealSocket(t *testing.T) {
 	if err := contract.Emit(&got, result); err != nil {
 		t.Fatal(err)
 	}
-	spec, err := json.Marshal(map[string]any{"state": state, "marker": marker, "socket": host.SocketPath, "request": request})
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Python replays on the ledger Go's adapter opened, whose name is a digest of the socket's
-	// path; the request fingerprint is a digest of a request naming the test's directories
-	// (asGoAnswers). The ledger's device and inode are its file's.
+	// The ledger's name is a digest of the socket's path and the request fingerprint a digest of
+	// a request naming the test's directories; the ledger's device and inode are its file's.
 	var goReceipt struct {
 		RequestFingerprint string `json:"requestFingerprint"`
 		Ledger             struct {
@@ -144,27 +138,12 @@ func Test28_ManagedSixMethodsRealSocket(t *testing.T) {
 		t.Fatal(err)
 	}
 	ledgerFile := info.Sys().(*syscall.Stat_t)
-	derived := []pyoracle.Option{
-		pyoracle.Substitute(host.SocketPath, "<host-socket>"),
-		asGoAnswers(filepath.Base(goReceipt.Ledger.RealPath), "<ledger-file>"),
-		asGoAnswers(goReceipt.RequestFingerprint, "<request-fingerprint>"),
-		pyoracle.Substitute(fmt.Sprintf(`"device": %d,`, uint64(ledgerFile.Dev)), `"device": "<ledger-device>",`),
-		pyoracle.Substitute(fmt.Sprintf(`"inode": %d`, ledgerFile.Ino), `"inode": "<ledger-inode>"`),
-	}
-	repo := pyRepo(t)
-	out := pyOutput(t, "managed_capture.py", func() *exec.Cmd {
-		// Python replays the start from the store Go wrote, after a takeover; the built CLI
-		// then replays it again after the store is taken back.
-		testsupport.HandOver(t, filepath.Join(state, "relay.sqlite3"), "python")
-		cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/adapter/testdata/managed_capture.py"))
-		cmd.Dir = repo
-		cmd.Stdin = bytes.NewReader(spec)
-		return cmd
-	}, derived...)
-	if !bytes.Equal(got.Bytes(), out) {
-		t.Fatalf("Go %s\nPython %s", &got, out)
-	}
-	testsupport.HandOver(t, filepath.Join(state, "relay.sqlite3"), "go")
+	expectBytes(t, "managed-start", got.Bytes(),
+		golden.Substitute(host.SocketPath, "<host-socket>"),
+		golden.Substitute(filepath.Base(goReceipt.Ledger.RealPath), "<ledger-file>"),
+		golden.Substitute(goReceipt.RequestFingerprint, "<request-fingerprint>"),
+		golden.Substitute(fmt.Sprintf(`"device": %d,`, uint64(ledgerFile.Dev)), `"device": "<ledger-device>",`),
+		golden.Substitute(fmt.Sprintf(`"inode": %d`, ledgerFile.Ino), `"inode": "<ledger-inode>"`))
 	binary := suiteBinary
 	publishWorker(t, state, host.SocketPath, scope, filepath.Dir(binary))
 	cliCmd := exec.Command(binary, "relay", "--state", state, "--socket", host.SocketPath, "managed-start", "--request", string(raw), "--marker-root", marker)
@@ -173,8 +152,8 @@ func Test28_ManagedSixMethodsRealSocket(t *testing.T) {
 	if err != nil {
 		t.Fatalf("managed CLI %v %s", err, built)
 	}
-	if !bytes.Equal(built, out) {
-		t.Fatalf("built managed receipt %s Python %s", built, out)
+	if !bytes.Equal(built, got.Bytes()) {
+		t.Fatalf("built managed receipt %s\nlibrary %s", built, &got)
 	}
 }
 

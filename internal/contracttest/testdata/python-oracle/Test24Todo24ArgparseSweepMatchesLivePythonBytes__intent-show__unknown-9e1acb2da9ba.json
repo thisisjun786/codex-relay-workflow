@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "python": "txt:{\"exit\":2,\"stdout\":\"\",\"stderr\":\"usage: codex-session-relay intent-show [-h] [--marker-root MARKER_ROOT]\\n                                       --workspace WORKSPACE\\n                                       [--assignment ASSIGNMENT]\\n                                       [--session SESSION] [--now NOW]\\ncodex-session-relay intent-show: error: the following arguments are required: --workspace\\n\"}\n"
- }
-}

@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "python": "txt:{\"acceptances\":[\"unestablished\"],\"calls\":1,\"claims\":[],\"host_claims\":{},\"ledger_outcomes\":[],\"outcomes\":[{\"exit\":0,\"signal\":null,\"stderr\":\"\",\"stdout\":\"\",\"stdout_json\":null,\"timeout\":false}],\"rows\":[{\"acceptance\":\"unestablished\",\"acceptedAs\":null,\"adapterOutcome\":\"guard_refused\",\"assignmentId\":null,\"configuration\":\"\\u003cHOME\\u003e/crw-completion-hook.json\",\"detail\":null,\"errno\":null,\"event\":\"Stop\",\"eventIdentity\":{\"answerItem\":null,\"established\":false,\"reason\":\"transcript_absent\",\"scannedBytes\":0,\"scannedLines\":0,\"transcriptPath\":\"<STOP_TRANSCRIPT>\"},\"eventKey\":null,\"exitCode\":2,\"guardDecision\":null,\"guardInvoked\":true,\"guardMode\":\"observe\",\"guardRecordedAs\":null,\"guardState\":null,\"guardStderr\":\"\",\"held\":false,\"processEnding\":\"exited\",\"recordVersion\":2,\"sessionId\":\"01a0b109-1ea5-7fb3-9adc-87f45ed83688\",\"signal\":null,\"stdoutReading\":\"said_an_error_record\",\"stopHookActive\":false,\"turnId\":\"turn-1\"}]}"
- }
-}

@@ -1,7 +1,6 @@
 package adapter
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os/exec"
@@ -12,11 +11,11 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
-func Test28_AckValidationLivePython(t *testing.T) {
-	repo := pyRepo(t)
+func Test28_AckValidationMatchesTheGolden(t *testing.T) {
+	shareGoldens(t)
 	root := t.TempDir()
 	host := fakehost.Start(t)
 	valid := "0123456789abcdef0123456789abcdef"
@@ -49,26 +48,14 @@ func Test28_AckValidationLivePython(t *testing.T) {
 				}
 				for _, program := range []string{suiteBinary, suiteAlias} {
 					dir := filepath.Join(root, tc.name, command, filepath.Base(program))
-					argv := append([]string{"--state", filepath.Join(dir, "go"), "--socket", host.SocketPath}, args...)
-					goArgs := argv
+					goArgs := append([]string{"--state", filepath.Join(dir, "go"), "--socket", host.SocketPath}, args...)
 					if program == suiteBinary {
-						goArgs = append([]string{"relay"}, argv...)
+						goArgs = append([]string{"relay"}, goArgs...)
 					}
 					ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 					goOut, goErr := exec.CommandContext(ctx, program, goArgs...).CombinedOutput()
 					cancel()
-					python := pyProcess(t, command+" "+filepath.Base(program), true, func() *exec.Cmd {
-						pyArgv := append([]string{}, argv...)
-						pyArgv[1] = filepath.Join(dir, "python")
-						ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-						t.Cleanup(cancel)
-						py := exec.CommandContext(ctx, "uv", append([]string{"run", "--no-sync", "python", "-m", "codex_session_relay.cli"}, pyArgv...)...)
-						py.Dir = repo
-						return py
-					}, pyoracle.Substitute(host.SocketPath, "<host-socket>"))
-					if code(goErr) != python.Code || !bytes.Equal(goOut, []byte(python.Stdout)) {
-						t.Fatalf("%s %q %q: Go exit %d %s\nPython exit %d %s", command, tc.event, tc.turn, code(goErr), goOut, python.Code, python.Stdout)
-					}
+					expectJSON(t, command+" "+filepath.Base(program), processExit{Code: code(goErr), Stdout: string(goOut)}, golden.Substitute(host.SocketPath, "<host-socket>"))
 				}
 			}
 		})

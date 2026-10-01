@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,7 +17,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 var suiteDirectory string
@@ -48,7 +47,7 @@ func buildSuiteBinary(root string) error {
 	return os.Symlink(suiteBinary, suiteAlias)
 }
 
-// deliverySeed is the relational seed Python's DeliveryTestCase builds: a relationship, its
+// deliverySeed is the relational seed Python's DeliveryTestCase built: a relationship, its
 // final event queued for delivery, and the artifact that event carries. Revision is the event's
 // revision hash; it and Event are digests over the artifact's path, which lies in this run's
 // suite directory.
@@ -56,41 +55,36 @@ type deliverySeed struct{ Event, Revision, Work string }
 
 // derived names the values of an answer that follow from the seed artifact's path: the event's
 // revision and id, and the delivery request ids named after the id's first twelve characters.
-func (seed deliverySeed) derived() []pyoracle.Option {
-	return []pyoracle.Option{pyoracle.Substitute(seed.Revision, "<seed-revision>"), pyoracle.Substitute(seed.Event, "<seed-event>"), pyoracle.Substitute("del-"+seed.Event[:12]+"-", "del-<seed-event-12>-")}
+func (seed deliverySeed) derived() []golden.Option {
+	return []golden.Option{golden.Substitute(seed.Revision, "<seed-revision>"), golden.Substitute(seed.Event, "<seed-event>"), golden.Substitute("del-"+seed.Event[:12]+"-", "del-<seed-event-12>-")}
 }
 
-// seedTable is one populated table of a store, its rows in rowid order (sqliteValue).
+// seedTable is one populated table of a store, its rows in rowid order: an integer or a text
+// is plain JSON, a real and a blob are tagged (sqliteArgument).
 type seedTable struct {
 	Columns []string `json:"columns"`
 	Rows    [][]any  `json:"rows"`
 }
 
-// seedAnswer is what the Python seed left: its event, the populated tables of its store but
-// schema_meta, and the files of its tree, by path relative to the tree. The event id and the
-// revision hash appear as <seed-event> and <seed-revision>.
+// seedAnswer is what the Python seed left, the fixture delivery-seed.json: its event, the
+// populated tables of its store but schema_meta, and the files of its tree, by path relative to
+// the tree. The event id and the revision hash appear as <seed-event> and <seed-revision>, the
+// suite directory the tree lay in as <suite>.
 type seedAnswer struct {
 	Event  string               `json:"event"`
 	Tables map[string]seedTable `json:"tables"`
 	Files  map[string]string    `json:"files"`
 }
 
-var seedOnce sync.Once
-var seedLive []byte
-var seedError error
 var seedFiles sync.Once
 
-// Python constructs the relational seed once, retaining its immutable artifact path. Each
+// Python constructed the relational seed once, retaining its immutable artifact path. Each
 // scenario gets independent SQLite copies, never a shared writer: rebuilt from the seed's rows
-// (seedAnswer) on the frozen Python-produced empty store, which is what preFenceFixture reads
-// of them.
+// on the frozen Python-produced empty store, which is what preFenceFixture reads of them.
 func copyDeliverySeed(t *testing.T, destination string) deliverySeed {
 	t.Helper()
 	root := filepath.Join(suiteDirectory, "oracle-seed")
-	raw := pyoracle.Answer(t, "settlement_capture.py seed", func() ([]byte, error) {
-		seedOnce.Do(func() { seedLive, seedError = pythonDeliverySeed(root) })
-		return seedLive, seedError
-	}, pyOptions(t)...)
+	raw := bytes.ReplaceAll(golden.Fixture(t, "delivery-seed.json"), []byte("<suite>"), []byte(suiteDirectory))
 	var answer seedAnswer
 	if err := decodeNumbers(raw, &answer); err != nil {
 		t.Fatal(err)
@@ -133,62 +127,6 @@ func copyDeliverySeed(t *testing.T, destination string) deliverySeed {
 		t.Fatal(err)
 	}
 	return seed
-}
-
-// pythonDeliverySeed runs the Python seed in root and answers what it left (seedAnswer).
-func pythonDeliverySeed(root string) ([]byte, error) {
-	if err := os.Mkdir(root, 0700); err != nil {
-		return nil, err
-	}
-	repo, err := filepath.Abs("../../..")
-	if err != nil {
-		return nil, err
-	}
-	command := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/adapter/testdata/settlement_capture.py"), root, "seed")
-	command.Dir = repo
-	output, err := command.CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("Python seed: %w\n%s", err, output)
-	}
-	var answer seedAnswer
-	if err := json.Unmarshal(output, &answer); err != nil {
-		return nil, err
-	}
-	if answer.Tables, err = populatedTables(filepath.Join(root, "python.sqlite3")); err != nil {
-		return nil, err
-	}
-	answer.Files = map[string]string{}
-	err = filepath.WalkDir(filepath.Join(root, "work"), func(path string, entry fs.DirEntry, err error) error {
-		if err != nil || entry.IsDir() {
-			return err
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		name, err := filepath.Rel(root, path)
-		answer.Files[filepath.ToSlash(name)] = string(data)
-		return err
-	})
-	if err != nil {
-		return nil, err
-	}
-	// Go derives both digests from the seed's artifact as Python did, or the seed is refused.
-	revision, event, err := seedIdentity(answer.Tables, filepath.Join(root, "work"))
-	if err != nil {
-		return nil, err
-	}
-	if answer.Event != event {
-		return nil, fmt.Errorf("Python's seed event is %s, Go derives %s", answer.Event, event)
-	}
-	encoded, err := encodeJSON(answer)
-	if err != nil {
-		return nil, err
-	}
-	for _, placeholder := range [][2]string{{event, "<seed-event>"}, {revision, "<seed-revision>"}} {
-		encoded = bytes.ReplaceAll(encoded, []byte(placeholder[0]), []byte(placeholder[1]))
-	}
-	return encoded, nil
 }
 
 // seedIdentity derives the seed event's revision hash and id from the one artifact under work
@@ -241,70 +179,6 @@ func seedIdentity(tables map[string]seedTable, work string) (string, string, err
 		}
 	}
 	return revision, event, nil
-}
-
-// populatedTables dumps every populated table of the store at path but schema_meta, read from
-// a snapshot so the store itself is not touched.
-func populatedTables(path string) (map[string]seedTable, error) {
-	ctx := context.Background()
-	snapshot, cleanup, err := ownership.CopySnapshot(path)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = cleanup() }()
-	db, err := ownership.OpenExisting(ctx, snapshot, "ro")
-	if err != nil {
-		return nil, err
-	}
-	defer db.Close()
-	names := []string{}
-	rows, err := db.QueryContext(ctx, "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name != 'schema_meta' ORDER BY name")
-	if err != nil {
-		return nil, err
-	}
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return nil, errors.Join(err, rows.Close())
-		}
-		names = append(names, name)
-	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-		return nil, err
-	}
-	tables := map[string]seedTable{}
-	for _, name := range names {
-		rows, err := db.QueryContext(ctx, `SELECT * FROM `+quoted(name)+` ORDER BY rowid`)
-		if err != nil {
-			return nil, err
-		}
-		columns, err := rows.Columns()
-		if err != nil {
-			return nil, errors.Join(err, rows.Close())
-		}
-		table := seedTable{Columns: columns}
-		for rows.Next() {
-			values := make([]any, len(columns))
-			pointers := make([]any, len(columns))
-			for i := range values {
-				pointers[i] = &values[i]
-			}
-			if err := rows.Scan(pointers...); err != nil {
-				return nil, errors.Join(err, rows.Close())
-			}
-			for i, value := range values {
-				values[i] = sqliteValue(value)
-			}
-			table.Rows = append(table.Rows, values)
-		}
-		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-			return nil, err
-		}
-		if len(table.Rows) > 0 {
-			tables[name] = table
-		}
-	}
-	return tables, nil
 }
 
 // writeSeedStore writes at path the frozen Python-produced empty store holding tables' rows.

@@ -1,18 +1,13 @@
 package contracttest
 
 import (
-	"bytes"
-	"encoding/json"
-	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"reflect"
 	"regexp"
 	"strings"
 	"testing"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 func Test33NativeCrashAndRejectionPython(t *testing.T) {
@@ -20,7 +15,6 @@ func Test33NativeCrashAndRejectionPython(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	python := filepath.Join(root, ".venv/bin/python")
 	scenarios, err := Load("hook")
 	if err != nil {
 		t.Fatal(err)
@@ -45,71 +39,27 @@ func Test33NativeCrashAndRejectionPython(t *testing.T) {
 			if err = Assert(scenario, actual); err != nil {
 				t.Fatal(err)
 			}
-			// The Python adapter's answer to the same fixture, normalized as below (recorded,
-			// internal/testsupport/pyoracle).
-			var expected map[string]any
-			pyoracle.JSON(t, "python", &expected, func() (any, error) {
-				home := t.TempDir()
-				cmd := exec.Command(python, filepath.Join(root, "internal/contracttest/testdata/hook_native_python.py"), scenario.Path, home, root)
-				out, err := cmd.CombinedOutput()
-				if err != nil {
-					return nil, fmt.Errorf("python fixture %w\n%s", err, out)
-				}
-				var live map[string]any
-				if err = json.Unmarshal(out, &live); err != nil {
-					return nil, fmt.Errorf("%w %s", err, out)
-				}
-				normalized := map[string]any{"calls": float64(len(live["calls"].([]any)))}
-				for _, field := range hookParityFields {
-					normalized[field] = normalizeHookParity(live[field], home, "")
-				}
-				return normalized, nil
-			}, pyoracle.Substitute(root, "<ROOT>"), pyoracle.Substitute(stopTranscript, "<STOP_TRANSCRIPT>"), pyoracle.Substitute(stopCWD, "<STOP_CWD>"))
-			// Compare every field of rows/claim bodies. Only process/time identities and
-			// temporary roots are normalized; outputs and fixed diagnostics are untouched.
+			// Every field of rows/claim bodies is held to the golden (first taken as the Python
+			// adapter's answer to the same fixture). Only process/time identities and temporary
+			// roots are normalized; outputs and fixed diagnostics are untouched.
+			observed := map[string]any{"calls": len(actual["calls"].([]any))}
 			for _, field := range hookParityFields {
-				got := jsonShaped(t, normalizeHookParity(actual[field], actual["home"].(string), ""))
-				want := expected[field]
-				if !reflect.DeepEqual(got, want) {
-					g, _ := json.MarshalIndent(got, "", "  ")
-					w, _ := json.MarshalIndent(want, "", "  ")
-					t.Fatalf("%s mismatch\nGo %s\nPython %s", field, g, w)
-				}
+				observed[field] = normalizeHookParity(actual[field], actual["home"].(string), "")
 			}
-			if calls, _ := expected["calls"].(json.Number); calls.String() != fmt.Sprint(len(actual["calls"].([]any))) {
-				t.Fatal("guard invocation count differs")
-			}
-			t.Logf("Python/native %s: stdout, exit, signal, full journal rows, accepted/outcome files and host claims equal", name)
+			golden.CheckJSON(t, "observed", observed, golden.Substitute(root, "<ROOT>"), golden.Substitute(stopTranscript, "<STOP_TRANSCRIPT>"), golden.Substitute(stopCWD, "<STOP_CWD>"))
 		})
 	}
 }
 
 // stopTranscript and stopCWD are the default Stop payload's fixed paths (contract/runner/core.py
-// STOP); a recording names them by placeholder so it carries no absolute temporary path.
+// STOP); a golden names them by placeholder so it carries no absolute temporary path.
 const (
 	stopTranscript = "/tmp/transcript.jsonl"
 	stopCWD        = "/tmp/workspace"
 )
 
-// hookParityFields are the observation fields compared with the Python adapter's.
+// hookParityFields are the observation fields held to the golden.
 var hookParityFields = []string{"outcomes", "rows", "claims", "ledger_outcomes", "host_claims", "acceptances"}
-
-// jsonShaped round-trips value through JSON with numbers kept as json.Number, the shape a
-// recorded answer decodes to.
-func jsonShaped(t *testing.T, value any) any {
-	t.Helper()
-	raw, err := json.Marshal(value)
-	if err != nil {
-		t.Fatal(err)
-	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	var out any
-	if err := decoder.Decode(&out); err != nil {
-		t.Fatal(err)
-	}
-	return out
-}
 
 var paritySlot = regexp.MustCompile(`^[0-9]{8}/[0-9a-f]{32}\.json$`)
 

@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "python": "txt:{\"exit\":0,\"stdout\":\"{\\n  \\\"assignmentId\\\": \\\"3f39d5c348e5b79d06e842c114e6cc571583bbf44e4b0ebfda1a01ec05745d43\\\",\\n  \\\"assignmentDir\\\": \\\"<HOME>/marker/<WORKSPACE_KEY>/3f39d5c348e5b79d06e842c114e6cc571583bbf44e4b0ebfda1a01ec05745d43\\\",\\n  \\\"outcome\\\": \\\"published\\\",\\n  \\\"declaredAt\\\": \\\"2026-01-01T00:00:00+00:00\\\"\\n}\\n\",\"stderr\":\"\"}\n"
- }
-}

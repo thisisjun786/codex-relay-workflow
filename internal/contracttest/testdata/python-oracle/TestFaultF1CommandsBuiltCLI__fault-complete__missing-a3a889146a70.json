@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "python": "txt:{\"exit\":2,\"stdout\":\"{\\n  \\\"error\\\": \\\"refused\\\",\\n  \\\"reason\\\": \\\"fault_unknown\\\",\\n  \\\"detail\\\": \\\"no publication 'missing'\\\"\\n}\\n\",\"stderr\":\"\"}\n"
- }
-}

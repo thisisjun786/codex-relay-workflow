@@ -3,14 +3,11 @@ package faults
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 func TestDRelinkRepointsBoundedWritesAgainstPython(t *testing.T) {
@@ -20,7 +17,6 @@ func TestDRelinkRepointsBoundedWritesAgainstPython(t *testing.T) {
 	}
 	t.Cleanup(func() { os.RemoveAll(home) })
 	goDir := filepath.Join(home, "go")
-	pyDir := filepath.Join(home, "python")
 	observation := `{"schema":"fault-observation/1","product":"crw","faultClass":"report_omitted","severity":"broken","signature":{"relationship":"rel-1","turn":"turn-7"},"occurrenceKey":"a","scope":{"projectKey":"CRW"}}`
 	seed := func(dir string) {
 		for _, args := range [][]string{{"fault-observe", "--observation", observation}, {"fault-target", "--product", "crw", "--project", "CRW", "--team", "team-relay", "--project-ref", "P1"}} {
@@ -53,37 +49,15 @@ func TestDRelinkRepointsBoundedWritesAgainstPython(t *testing.T) {
 		return ref
 	}
 	seed(goDir)
-	// Python's answer: its reply and the tracker reference its store then holds.
-	var want struct {
-		Stdout     string `json:"stdout"`
-		TrackerRef string `json:"trackerRef"`
-	}
-	pyValue(t, "relay fault-relink --limit 1", nil, pyRunPaths(t, home), &want, func() (any, error) {
-		// Go seeded Python's store as well; Python runs on it after a takeover.
-		seed(pyDir)
-		testsupport.HandOver(t, filepath.Join(pyDir, "relay.sqlite3"), "python")
-		root, e := filepath.Abs("../../..")
-		if e != nil {
-			return nil, e
-		}
-		cmd := exec.Command("uv", "run", "--no-sync", "codex-session-relay", "--state", pyDir, "--json", "fault-relink", "--limit", "1")
-		cmd.Dir = root
-		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR=/dev/shm")
-		out, e := cmd.Output()
-		if e != nil {
-			return nil, fmt.Errorf("python: %v", e)
-		}
-		return map[string]any{"stdout": string(out), "trackerRef": trackerRef(pyDir)}, nil
-	})
+	// The reply and the tracker reference the store then holds.
 	var got, stderr bytes.Buffer
 	code, handled := executeAsCLI(context.Background(), []string{"--state", goDir, "--json", "fault-relink", "--limit", "1"}, &got, &stderr)
-	checkGolden(t, "relay fault-relink --limit 1", nil, runPathsOf(t, home), map[string]any{"code": code, "stdout": got.String(), "trackerRef": trackerRef(goDir)})
-	if !handled || code != 0 || want.Stdout != got.String() {
-		t.Fatalf("python %s; go %d %s; stderr %s", want.Stdout, code, got.String(), stderr.String())
+	if !handled || code != 0 {
+		t.Fatalf("go %d %s; stderr %s", code, got.String(), stderr.String())
 	}
-	for dir, ref := range map[string]string{goDir: trackerRef(goDir), pyDir: want.TrackerRef} {
-		if ref != "team-relay" {
-			t.Fatalf("%s repoint: %v", dir, ref)
-		}
+	ref := trackerRef(goDir)
+	checkGolden(t, "relay fault-relink --limit 1", nil, runPathsOf(t, home), map[string]any{"code": code, "stdout": got.String(), "trackerRef": ref})
+	if ref != "team-relay" {
+		t.Fatalf("repoint: %v", ref)
 	}
 }

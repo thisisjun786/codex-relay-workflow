@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "python": "txt:{\"exit\":4,\"left\":[\"relay.sqlite3\",\"takeover.json\",\"write-gate.lock\"],\"stdout\":\"{\\n  \\\"error\\\": \\\"usage\\\",\\n  \\\"detail\\\": \\\"--clear-exception drops the citation and --exception records one; state one\\\"\\n}\\n\"}"
- }
-}
