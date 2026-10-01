@@ -6,54 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"sort"
 	"strings"
 	"unicode/utf8"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 var f2Names = []string{"fault-fail", "fault-adopt", "fault-move", "fault-update"}
-
-func f2Ordered(value any) any {
-	m, ok := value.(map[string]any)
-	if !ok {
-		return value
-	}
-	order := []string{"faultId", "externalRef", "state", "cancelled", "publication", "scopeKey", "moved", "repointed", "repointPending", "alias", "publicationId", "kind", "trigger", "queued", "awaitingTarget", "awaitingRecord", "linkState", "reason", "error", "detail"}
-	if _, ok := m["error"]; ok {
-		if _, reply := m["publicationId"]; reply {
-			order = []string{"publicationId", "state", "error", "detail"}
-		}
-	}
-	if _, refused := m["reason"]; refused {
-		if _, isError := m["error"]; isError {
-			order = []string{"error", "reason", "detail"}
-		} else if _, hasPublication := m["publicationId"]; hasPublication {
-			order = []string{"publicationId", "kind", "trigger", "queued", "awaitingTarget", "awaitingRecord", "linkState", "reason"}
-		}
-	}
-	out := contract.OrderedObject{}
-	seen := map[string]bool{}
-	for _, key := range order {
-		if v, exists := m[key]; exists {
-			out = append(out, contract.Field{Key: key, Value: f2Ordered(v)})
-			seen[key] = true
-		}
-	}
-	rest := []string{}
-	for key := range m {
-		if !seen[key] {
-			rest = append(rest, key)
-		}
-	}
-	sort.Strings(rest)
-	for _, key := range rest {
-		out = append(out, contract.Field{Key: key, Value: f2Ordered(m[key])})
-	}
-	return out
-}
 
 func executeF2(ctx context.Context, l *Ledger, name string, a map[string]string) (any, error) {
 	switch name {

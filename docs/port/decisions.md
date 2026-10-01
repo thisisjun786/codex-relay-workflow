@@ -3444,11 +3444,17 @@ and edit regions' `refusal`, merge-turn's `coordination` and `CoordinationRefusa
 `linkRefusal`), the sync job problems stored as `sync_outbox.last_error`, the settings and role
 refusals a withheld send journals, the merge-turn grant's wake refusal (stored in the grant's
 evidence), a routing observation's detail (part of the fault's evidence digest) and the
-supervisor's held and withheld records.
+supervisor's held and withheld records. In delivery that keeps the recipient resolution's and
+`Enqueue`'s refusals (stored in `delivery_intent.last_error`), the settings and role refusals, the
+rendered messages and their helpers, the lifecycle's integer reading and the marker path checks
+(their host error text reaches the supervisor's `supervisor_attempt_faulted` journal as the
+attempt's fault label), the omission readings and the `KeyError: ` texts `adapter/cli.go` parses; the
+acknowledgement, verdict, criteria and intent-registration refusals and the claim's request-id
+clash quote as Go does.
 
 Evidence: `internal/pyvalue/quote.go`; the golden diffs of the R3D commits (message prose only).
 
-## R3D-2. merge-turn and routing answers print a map's keys in sorted order; Python's key order is not rebuilt (refactor R3)
+## R3D-2. merge-turn, routing and fault answers print a map's keys in sorted order; Python's key order is not rebuilt (refactor R3)
 
 Decision: `mergeturn.PythonOrder` and its table of eleven answer shapes, which re-sorted a map's
 keys into the order `mergeturn.py` inserted them, are deleted. A `merge-turn-*` answer built from
@@ -3456,7 +3462,10 @@ a map prints its keys sorted (`mergeturn.plain`); every key, value and type is u
 same holds for the routing commands (`product-*`, `route-*`, `completion-check`):
 `routing.CommandRecord`, which carried each command's and each nested record's key order from
 `products.py`/`routing.py` (about 150 lines of order tables), now prints every map with its keys
-sorted.
+sorted. So do the fault commands (`fault-*`): `faultAnswer` chose among five key-order
+reconstructions (`f1Ordered`, `f2Ordered`, `cOrdered`, `dOrdered` and `ordered`, about 250 lines
+of order tables keyed by command family and by which keys a map happened to hold); it now renders
+every answer and refusal with one sorted `answerObject`.
 
 Consumers checked: the skills and `crw` read merge-turn and routing answers as JSON fields
 (`plugins/crw/skills/crw-run/references/merge-readiness.md`, docs/relay/product-routing.md); no
@@ -3464,8 +3473,10 @@ consumer reads them as bytes or by position. The answers are never stored or has
 grant evidence, the turn's ledger rows and the routing records (`product_registry`,
 `incident_routes`) are written by their own encoders, which this entry leaves alone.
 
-Evidence: internal/relay/mergeturn/order.go, internal/relay/routing/command_records.go; the
-contracttest goldens `TestMergeTurnCommands_*` and the routing goldens (key order only).
+Evidence: internal/relay/mergeturn/order.go, internal/relay/routing/command_records.go,
+internal/relay/faults/cli.go (`answerObject`); the contracttest goldens `TestMergeTurnCommands_*`
+and the routing and fault goldens (key order only). The fault ledger's stored journal JSON
+(`noticeJournal`'s fixed key order) is unchanged.
 
 ## R3D-3. `--kind-module`'s module model is the relay CLI's; the domain packages keep none (refactor R3)
 

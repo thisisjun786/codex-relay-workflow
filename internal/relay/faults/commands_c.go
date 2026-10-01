@@ -9,84 +9,12 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 )
 
 var cNames = []string{"fault-show", "fault-next", "fault-retry", "fault-queue", "fault-cancel", "fault-stage"}
 
-func cOrdered(v any, parent string) any {
-	if m, ok := v.(map[string]any); ok {
-		orders := map[string][]string{"": {"schema", "scopeKey", "faults", "limit", "next", "limits", "publications", "held", "budgets", "budgetsTruncated", "faultId", "found", "error", "reason", "detail", "publicationId", "state", "stage", "ref", "recorded", "remediationId"}, "target": {"team", "projectRef"}, "publicationsFull": {"publication_id", "fault_id", "kind", "trigger_key", "cycle", "tracker_ref", "external_ref", "summary", "identity_digest", "state", "attempts", "next_attempt_at", "lease_owner", "lease_until", "issued_at", "last_error", "external_result", "created_at", "updated_at", "confirmed_at", "payload", "target", "holdReason", "history"}, "faults": {"seq", "fault_id", "product", "fault_class", "component", "severity", "signature", "scope", "scope_key", "state", "cycle", "episode", "occurrence_count", "reopen_count", "detail", "suppression", "external_ref", "first_seen_at", "last_seen_at", "cleared_at", "published_at", "resolved_at", "updated_at", "linkState", "linkedProject", "occurrences", "publicationsTruncated", "publications", "clears"}, "occurrences": {"occurrence_id", "fault_id", "episode", "occurrence_key", "severity", "cleared", "detail", "evidence", "evidence_digest", "truncated", "observed_at", "recorded_at", "recorded_ts"}, "publications": {"publication_id", "kind", "trigger_key", "state", "attempts", "external_ref", "last_error"}, "held": {"publicationId", "kind", "product", "reason"}, "budgets": {"product", "kind", "limit", "window", "used", "remaining", "source"}}
-		order := orders[parent]
-		if parent == "history" || parent == "attempts" {
-			order = []string{"attempt", "owner", "takeover", "claimed_at", "issued_at", "outcome", "error", "ended", "ended_at"}
-		}
-		if parent == "remediations" {
-			order = []string{"remediation_id", "fault_id", "cycle", "kind", "ref", "method", "outcome", "detail", "recorded_at"}
-		}
-		if parent == "publicationsFull" {
-			order = orders["publicationsFull"]
-		}
-		if parent == "" {
-			if _, ok := m["publication_id"]; ok {
-				order = orders["publicationsFull"]
-			}
-			if _, ok := m["fault_id"]; ok {
-				if _, yes := m["occurrences"]; yes {
-					order = []string{"fault_id", "product", "fault_class", "component", "severity", "signature", "scope", "scope_key", "state", "cycle", "episode", "occurrence_count", "reopen_count", "detail", "suppression", "external_ref", "first_seen_at", "last_seen_at", "cleared_at", "published_at", "resolved_at", "updated_at", "linkState", "linkedProject", "occurrences", "remediations", "publications", "progress"}
-				}
-			}
-			if _, ok := m["readingsTotal"]; ok {
-				order = []string{"read", "recorded", "queued", "gaps", "readingsNext", "readingsTotal", "limits"}
-			}
-			if _, ok := m["awaitingRecord"]; ok {
-				order = []string{"publicationId", "kind", "trigger", "queued", "awaitingTarget", "awaitingRecord", "reason"}
-			}
-		}
-		keys := make([]string, 0, len(m))
-		for k := range m {
-			keys = append(keys, k)
-		}
-		sort.SliceStable(keys, func(i, j int) bool {
-			rank := func(k string) int {
-				for x, v := range order {
-					if v == k {
-						return x
-					}
-				}
-				return len(order)
-			}
-			a, b := rank(keys[i]), rank(keys[j])
-			if a != b {
-				return a < b
-			}
-			return keys[i] < keys[j]
-		})
-		out := make(contract.OrderedObject, 0, len(keys))
-		for _, k := range keys {
-			child := k
-			if k == "publications" && parent == "" {
-				_, isFault := m["fault_id"]
-				_, isNext := m["budgets"]
-				if isFault || isNext {
-					child = "publicationsFull"
-				}
-			}
-			out = append(out, contract.Field{Key: k, Value: cOrdered(m[k], child)})
-		}
-		return out
-	}
-	if list, ok := v.([]any); ok {
-		out := make([]any, len(list))
-		for i, item := range list {
-			out[i] = cOrdered(item, parent)
-		}
-		return out
-	}
-	return v
-}
 func cLimit(ctx context.Context, raw, name string, fallback int) (int, error) {
 	if raw == "" {
 		return fallback, nil

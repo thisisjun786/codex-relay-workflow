@@ -9,10 +9,8 @@ import (
 	"io"
 	"math/big"
 	"os"
-	"sort"
 	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -34,60 +32,6 @@ func f1Clock(ctx context.Context) Clock {
 
 var f1Names = []string{"fault-claim", "fault-operation", "fault-reconcile", "fault-complete", "fault-sweep"}
 
-func f1Ordered(value any) any {
-	if list, ok := value.([]any); ok {
-		out := make([]any, len(list))
-		for i, v := range list {
-			out[i] = f1Ordered(v)
-		}
-		return out
-	}
-	m, ok := value.(map[string]any)
-	if !ok {
-		return value
-	}
-	order := []string{"publicationId", "kind", "trackerRef", "projectRef", "externalRef", "title", "identityDigest", "protocol", "note", "block", "startMarker", "endMarker", "payload", "update", "claimToken", "owner", "leaseUntil", "error", "reason", "detail"}
-	if _, ok := m["gap"]; ok {
-		order = []string{"gap", "faultClass", "relationId", "reason"}
-	}
-	if _, ok := m["claimToken"]; ok {
-		order = []string{"publicationId", "claimToken", "owner", "leaseUntil"}
-	}
-	if _, ok := m["error"]; ok {
-		order = []string{"error", "reason", "detail"}
-	}
-	if _, ok := m["readingsTotal"]; ok {
-		order = []string{"read", "recorded", "queued", "gaps", "readingsNext", "readingsTotal", "limits"}
-	}
-	if _, ok := m["outcome"]; ok {
-		order = []string{"publicationId", "state", "outcome", "problems", "detail"}
-	}
-	if _, ok := m["confirmed"]; ok {
-		order = []string{"publication_id", "fault_id", "kind", "trigger_key", "cycle", "tracker_ref", "external_ref", "summary", "identity_digest", "state", "attempts", "next_attempt_at", "lease_owner", "lease_until", "issued_at", "last_error", "external_result", "created_at", "updated_at", "confirmed_at", "confirmed", "reason"}
-	}
-	if _, ok := m["op"]; ok {
-		order = []string{"op", "value"}
-	}
-	fields := contract.OrderedObject{}
-	seen := map[string]bool{}
-	for _, key := range order {
-		if v, ok := m[key]; ok {
-			fields = append(fields, contract.Field{Key: key, Value: f1Ordered(v)})
-			seen[key] = true
-		}
-	}
-	rest := []string{}
-	for key := range m {
-		if !seen[key] {
-			rest = append(rest, key)
-		}
-	}
-	sort.Strings(rest)
-	for _, key := range rest {
-		fields = append(fields, contract.Field{Key: key, Value: f1Ordered(m[key])})
-	}
-	return fields
-}
 func executeF1(ctx context.Context, l *Ledger, name string, a map[string]string) (any, error) {
 	switch name {
 	case "fault-claim":

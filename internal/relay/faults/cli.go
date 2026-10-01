@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -237,20 +238,20 @@ func execute(ctx context.Context, name string, services dispatch.Services, line 
 			result = map[string]any{"faultId": args["--fault"], "kept": keep, "removed": removed, "limits": "the ledger's occurrence_count still counts what was observed; these rows are the evidence, not the count"}
 		}
 	}
-	value, code := faultAnswer(name, result, err)
+	value, code := faultAnswer(result, err)
 	if code != contract.ExitOk {
 		return nil, &dispatch.PayloadExit{Payload: value.(contract.OrderedObject), Code: code}
 	}
 	return value, nil
 }
 
-// faultAnswer is cli.main's reply to a fault handler's ending: the printed object, in the
-// command family's own key order, and its exit code.
-func faultAnswer(name string, result any, err error) (any, int) {
+// faultAnswer is the printed object for a fault handler's ending, every map with its keys in
+// sorted order, and its exit code.
+func faultAnswer(result any, err error) (any, int) {
 	if err != nil {
 		var missing *cMissingFault
 		if errors.As(err, &missing) {
-			return cOrdered(map[string]any{"faultId": missing.id, "found": false}, ""), 2
+			return answerObject(map[string]any{"faultId": missing.id, "found": false}), 2
 		}
 		reason, _, _ := strings.Cut(err.Error(), ":")
 		if strings.HasPrefix(reason, "fault_") || strings.HasPrefix(err.Error(), "transaction body: fault_") {
@@ -258,32 +259,31 @@ func faultAnswer(name string, result any, err error) (any, int) {
 				reason, _, _ = strings.Cut(strings.TrimPrefix(err.Error(), "transaction body: "), ":")
 			}
 			detail := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(err.Error(), "transaction body: "), reason+":"))
-			refusal := map[string]any{"error": "refused", "reason": reason, "detail": detail}
-			switch {
-			case slices.Contains(f1Names, name):
-				return f1Ordered(refusal), 2
-			case slices.Contains(f2Names, name):
-				return f2Ordered(refusal), 2
-			case slices.Contains(dNames, name):
-				return dOrdered(refusal, "refusal"), 2
-			case slices.Contains(cNames, name):
-				return cOrdered(refusal, ""), 2
-			}
-			return ordered(refusal), 2
+			return answerObject(map[string]any{"error": "refused", "reason": reason, "detail": detail}), 2
 		}
-		return ordered(map[string]any{"error": "host", "detail": hostText(err)}), 3
+		return answerObject(map[string]any{"error": "host", "detail": hostText(err)}), 3
 	}
-	switch {
-	case slices.Contains(f1Names, name):
-		return f1Ordered(result), 0
-	case slices.Contains(f2Names, name):
-		return f2Ordered(result), 0
-	case slices.Contains(dNames, name):
-		return dOrdered(result, ""), 0
-	case slices.Contains(cNames, name):
-		return cOrdered(result, ""), 0
+	return answerObject(result), 0
+}
+
+// answerObject is a fault command's answer as the relay CLI prints it: every map as an object
+// with its keys in sorted order.
+func answerObject(value any) any {
+	switch v := value.(type) {
+	case map[string]any:
+		out := make(contract.OrderedObject, 0, len(v))
+		for _, key := range slices.Sorted(maps.Keys(v)) {
+			out = append(out, contract.Field{Key: key, Value: answerObject(v[key])})
+		}
+		return out
+	case []any:
+		out := make([]any, len(v))
+		for i, item := range v {
+			out[i] = answerObject(item)
+		}
+		return out
 	}
-	return ordered(result), 0
+	return value
 }
 
 func latestPublicationAnswer(ctx context.Context, l *Ledger, id string, before int64) any {
@@ -341,48 +341,6 @@ func publicationAnswer(ctx context.Context, l *Ledger, id string, recorded bool,
 		reason = fmt.Sprintf("%s; no target owned by %s for %s (%s), so it waits rather than being filed somewhere guessed", reason, text(fault, "product"), text(fault, "scope_key"), why)
 	}
 	return map[string]any{"publicationId": text(row, "publication_id"), "kind": openRecord, "trigger": triggerOpen, "queued": true, "awaitingTarget": awaiting, "awaitingRecord": false, "reason": reason}
-}
-func ordered(value any) any {
-	switch v := value.(type) {
-	case map[string]any:
-		keys := make([]string, 0, len(v))
-		for key := range v {
-			keys = append(keys, key)
-		}
-		order := []string{"error", "faultId", "recorded", "remediationId", "state", "resolved", "cycle", "severity", "occurrenceCount", "suppression", "reason", "publication", "kept", "removed", "limits", "scopeKey", "product", "team", "projectRef", "changed", "backfilled", "backfillPending", "relinked", "relinkPending", "detail"}
-		if _, ok := v["publicationId"]; ok {
-			order = []string{"publicationId", "kind", "trigger", "queued", "awaitingTarget", "awaitingRecord", "reason"}
-		} else if _, ok := v["publish"]; ok {
-			order = []string{"publish", "threshold", "window", "counted", "reason"}
-		}
-		slices.SortFunc(keys, func(a, b string) int {
-			rank := func(k string) int {
-				for i, name := range order {
-					if name == k {
-						return i
-					}
-				}
-				return len(order)
-			}
-			if rank(a) != rank(b) {
-				return rank(a) - rank(b)
-			}
-			return strings.Compare(a, b)
-		})
-		out := make(contract.OrderedObject, 0, len(keys))
-		for _, key := range keys {
-			out = append(out, contract.Field{Key: key, Value: ordered(v[key])})
-		}
-		return out
-	case []any:
-		out := make([]any, len(v))
-		for i, item := range v {
-			out[i] = ordered(item)
-		}
-		return out
-	default:
-		return value
-	}
 }
 func textRow(row store.Row, key string) string {
 	if row == nil {

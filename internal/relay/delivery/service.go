@@ -630,7 +630,7 @@ func (d *Service) claim(ctx context.Context, eventID string, now float64, owner,
 			return err
 		}
 		if clash != nil && clash.S("event_id") != eventID {
-			return refuse(NotClaimable, "request id %s already belongs to event %s", pyvalue.StrRepr(out.requestID), pyvalue.StrRepr(clash.S("event_id")))
+			return refuse(NotClaimable, "request id %q already belongs to event %q", out.requestID, clash.S("event_id"))
 		}
 		record, err := d.Receipt(ctx, eventID)
 		if err != nil {
