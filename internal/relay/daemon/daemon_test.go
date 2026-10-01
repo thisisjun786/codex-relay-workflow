@@ -115,8 +115,10 @@ func Test29QuietConcurrentTicks(t *testing.T) {
 type observationHost struct {
 	delivery.Adapter
 	status string
-	reads  []string
-	onRead func()
+	// statuses gives a turn its own status; a turn it does not name reads status.
+	statuses map[string]string
+	reads    []string
+	onRead   func()
 }
 
 func (h *observationHost) Close() error { return nil }
@@ -125,10 +127,14 @@ func (h *observationHost) ReadTurn(thread, turn string) (*delivery.TurnInfo, err
 	if h.onRead != nil {
 		h.onRead()
 	}
-	if h.status == "absent" {
+	status := h.status
+	if own, ok := h.statuses[turn]; ok {
+		status = own
+	}
+	if status == "absent" {
 		return nil, nil
 	}
-	return &delivery.TurnInfo{TurnID: turn, Status: h.status}, nil
+	return &delivery.TurnInfo{TurnID: turn, Status: status}, nil
 }
 func seed(t *testing.T, s *store.Store, rid, parent, child, turn string) {
 	t.Helper()
