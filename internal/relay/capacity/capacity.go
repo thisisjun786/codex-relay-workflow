@@ -13,6 +13,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -449,7 +450,7 @@ func (c *Capacity) Release(ctx context.Context, in Release) (contract.OrderedObj
 				numbers[i] = t.Tenure
 			}
 			return refuse(contract.RefusalDispositionConflict, in.SubjectKind+" "+strconv.Quote(in.SubjectKey)+" has tenures "+
-				pyvalue.Quote(numbers)+"; name the one this release settles, because the newest is not necessarily the one a"+
+				quote.Value(numbers)+"; name the one this release settles, because the newest is not necessarily the one a"+
 				" delayed notification is about")
 		case len(tenures) == 1:
 			row = &tenures[0]

@@ -232,7 +232,7 @@ func TestOmissionDeliverableAnswersAsTheGuard(t *testing.T) {
 			var raised *store.ManifestException
 			switch {
 			case errors.As(err, &raised) && raised.RuntimeError():
-				got = []any{"raised", raised.PythonText()}
+				got = []any{"raised", raised.StoredText()}
 			case err != nil:
 				got = []any{"unverifiable", nil}
 			case binding != "":

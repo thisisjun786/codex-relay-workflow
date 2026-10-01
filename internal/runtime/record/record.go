@@ -332,15 +332,6 @@ func WithoutPlacement(entry Object) Object {
 	return out
 }
 
-// PointerEntryFor is hostrecord.pointer_entry_for: the entry only when it is ABOUT path.
-func PointerEntryFor(entry any, path string) Object {
-	o, ok := entry.(Object)
-	if ok && Get(o, "path") == path {
-		return o
-	}
-	return nil
-}
-
 // Restore is the compare-and-replace pointer delta: Wrote is the path this run recorded and
 // the only one it may compare against; Found is the entry it replaced and what goes back.
 type Restore struct {

@@ -10,6 +10,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
@@ -30,7 +31,7 @@ func VerifyFrozenDetailed(reference string, entries []ManifestEntry) (string, []
 	if err != nil || !info.Mode().IsRegular() {
 		problems, unreadable := []string{reference + ": no MANIFEST.json in the frozen copy"}, []string{}
 		if err != nil && !interpretedErrno(err) {
-			unreadable = append(unreadable, reference+": the frozen manifest could not be reached: "+PythonOSErrorText(err))
+			unreadable = append(unreadable, reference+": the frozen manifest could not be reached: "+StoredOSErrorText(err))
 		}
 		return "", problems, unreadable, nil
 	}
@@ -38,7 +39,7 @@ func VerifyFrozenDetailed(reference string, entries []ManifestEntry) (string, []
 	if err != nil {
 		return "", nil, nil, frozenOSException(err)
 	}
-	return VerifyFrozenDocument(context.Background(), reference, raw, PythonEntries(entries))
+	return VerifyFrozenDocument(context.Background(), reference, raw, FrozenEntries(entries))
 }
 
 // FrozenDocument is str(Path(reference) / "MANIFEST.json").
@@ -72,7 +73,7 @@ func frozenPath(reference string, names ...string) string {
 // for a true value that is not a str, a problem for a false one), each blob is read within ctx,
 // and revision_hash closes, raising after every problem was found. entries are the caller's,
 // with a str path and digest each; nil is the fence's None and skips the comparison with them.
-func VerifyFrozenDocument(ctx context.Context, reference string, raw []byte, entries []PythonEntry) (string, []string, []string, error) {
+func VerifyFrozenDocument(ctx context.Context, reference string, raw []byte, entries []FrozenEntry) (string, []string, []string, error) {
 	frozen, err := frozenRecords(raw)
 	if err != nil {
 		return "", nil, nil, err
@@ -155,7 +156,7 @@ func VerifyFrozenDocument(ctx context.Context, reference string, raw []byte, ent
 			problems = append(problems, fmt.Sprintf("%s: frozen bytes are %d, not the claimed %s", pyvalue.Str(entry.Path), size, pyvalue.Str(entry.Bytes)))
 		}
 	}
-	revision, err := PythonRevisionHash(frozen)
+	revision, err := FrozenRevisionHash(frozen)
 	if err != nil {
 		return "", nil, nil, err
 	}
@@ -174,8 +175,8 @@ const frozenJSONDepth = 9998
 // universal newlines, then a JSONDecodeError (or the ValueError of an integer too long to read,
 // or the RecursionError of a document nested deeper than frozenJSONDepth), then the KeyError or
 // TypeError of reading payload["entries"] and each record's path and digest.
-func frozenRecords(raw []byte) ([]PythonEntry, error) {
-	text, err := DecodeUTF8(raw)
+func frozenRecords(raw []byte) ([]FrozenEntry, error) {
+	text, err := pyjson.DecodeUTF8(raw)
 	if err != nil {
 		// Its positions count the bytes before any newline is translated, as the fence's do.
 		return nil, &ManifestException{Class: "UnicodeDecodeError", text: err.Error(), cause: err}
@@ -183,7 +184,7 @@ func frozenRecords(raw []byte) ([]PythonEntry, error) {
 	// read_text() opens the file in text mode, so a CRLF or a lone CR is one line feed by the time
 	// json.loads counts lines, columns and characters to say where a document stops being JSON.
 	text = strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\r", "\n")
-	if message, recursion := PythonJSONErrorWithLimit(text, frozenJSONDepth); message != "" {
+	if message, recursion := pyjson.ErrorWithLimit(text, frozenJSONDepth); message != "" {
 		class := "JSONDecodeError"
 		switch {
 		case recursion:
@@ -218,7 +219,7 @@ func frozenRecords(raw []byte) ([]PythonEntry, error) {
 	default:
 		return nil, &ManifestException{Class: "TypeError", text: "'" + pyvalue.TypeName(entries) + "' object is not iterable"}
 	}
-	return PythonManifestEntries(records)
+	return FrozenManifestEntries(records)
 }
 
 // ManifestException is an exception the fence raises while reading a manifest instead of
@@ -250,11 +251,12 @@ func (e *ManifestException) OSError() bool {
 // catches RuntimeError, answers it as evidence it could not read.
 func (e *ManifestException) RuntimeError() bool { return e.Class == "RecursionError" }
 
-// PythonText is the fence's f"{type(error).__name__}: {error}".
-func (e *ManifestException) PythonText() string { return e.Class + ": " + e.text }
+// StoredText is the fence's f"{type(error).__name__}: {error}", the text a guard's receipt detail
+// and an omission's evidence keep for a frozen copy that is not a manifest.
+func (e *ManifestException) StoredText() string { return e.Class + ": " + e.text }
 
 func frozenOSException(err error) *ManifestException {
-	return &ManifestException{Class: pythonOSErrorClass(err), text: PythonOSErrorText(err), cause: err}
+	return &ManifestException{Class: osErrorClass(err), text: StoredOSErrorText(err), cause: err}
 }
 
 // interpretedErrno is manifest._INTERPRETED_ERRNOS: an answer about the path rather than a

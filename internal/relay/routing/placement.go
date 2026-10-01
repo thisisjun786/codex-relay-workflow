@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 )
 
 // ResolveProduct never files a defect under the observer's product by default.
@@ -49,7 +50,7 @@ func WorkspaceFor(incident, registry Object) (string, error) {
 		return "unassigned", nil
 	}
 	if declared != "" && declared != registry["workspace"] {
-		return "", malformed(fmt.Sprintf("%s files in workspace %s; the incident declares %s", registry["product"], pyvalue.Quote(registry["workspace"]), pyvalue.Quote(declared)))
+		return "", malformed(fmt.Sprintf("%s files in workspace %s; the incident declares %s", registry["product"], quote.Value(registry["workspace"]), quote.Value(declared)))
 	}
 	return text(registry["workspace"]), nil
 }

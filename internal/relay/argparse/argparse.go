@@ -392,3 +392,12 @@ func Help(prog, command string) string {
 func (r Result) Error(prog, command string) string {
 	return fmt.Sprintf("%s\n%s: error: %s\n", Usage(prog, command), program(prog, command), r.Message)
 }
+
+// NumberText is the canonical spelling a parsed number's text is kept in (Result.Values); the
+// typed value is in Result.Numbers.
+func NumberText(v any) string {
+	if n, ok := v.(*big.Int); ok {
+		return n.String()
+	}
+	return strconv.FormatFloat(v.(float64), 'g', -1, 64)
+}

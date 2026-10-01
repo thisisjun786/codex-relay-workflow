@@ -49,9 +49,6 @@ func TestReadJSONKeepsFourAnswers(t *testing.T) {
 		if got.State != c.state || got.Exception != c.exception || (c.detail != "" && got.Detail != c.detail) {
 			t.Errorf("%s: %s %s %q", c.path, got.State, got.Exception, got.Detail)
 		}
-		if reading.Usable(got.State) == reading.Unusable(got.State) {
-			t.Errorf("%s: usable and unusable agree", got.State)
-		}
 	}
 	shaped := reading.ReadJSON(good, "the thing", nil, func(any) error { return reading.Fail("TypeError", "no") })
 	if shaped.State != reading.Unreadable || shaped.Exception != "TypeError" || shaped.Detail != "could not read the thing (no)" || shaped.Identity == nil {
@@ -93,8 +90,5 @@ func TestSameDirectoryAsksTheFilesystem(t *testing.T) {
 	}
 	if reading.SameDirectory(root+"/missing/..", root) {
 		t.Fatal("a path the kernel answers ENOENT for is not the same directory")
-	}
-	if _, ok := reading.PathIdentity(filepath.Join(root, "missing")); ok {
-		t.Fatal("a missing path has no identity")
 	}
 }

@@ -13,7 +13,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -859,7 +859,7 @@ func (r *Registry) BindAnchor(ctx context.Context, rid string, number any, turn,
 		if current.DispatchTurnID.String == turn {
 			return current, nil
 		}
-		return Generation{}, refuse(contract.RefusalAnchorAlreadyBound, "generation %d is already bound to %s", number, pyvalue.Quote(nullable(current.DispatchTurnID)))
+		return Generation{}, refuse(contract.RefusalAnchorAlreadyBound, "generation %d is already bound to %s", number, quote.Value(nullable(current.DispatchTurnID)))
 	}
 	number = argparse.IntegerValue(number).Int64() // GenerationOf already bound this value to SQLite.
 	now := r.now()

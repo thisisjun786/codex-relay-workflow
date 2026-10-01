@@ -12,7 +12,7 @@ import (
 // The linkage readers: down, up and counterpart. Each answers with a record and never raises for
 // an absence; a store that did not answer is state unreadable with the fault kept in detail.
 
-func unreadableDetail(err error) string { return store.PythonSQLiteError(err) }
+func unreadableDetail(err error) string { return store.StoredSQLiteError(err) }
 
 // raised is the part of a reader's failure Python does not answer as unreadable: the
 // UnicodeEncodeError a str sqlite3 cannot bind raises (it catches sqlite3.Error only), or nil.

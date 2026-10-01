@@ -141,11 +141,11 @@ func fenceRefused(detail string) error {
 	return &RefusedError{Reason: "store_owned_by_other", Detail: detail, cause: refused}
 }
 
-// PythonHostDetail is the host envelope detail of an OS or SQLite failure the store raises
-// unhandled out of an open or an ownership read (CheckStartLikeFence), in Go's words, or of the
-// exception it raises for a frozen copy it could not read as a manifest, and whether err is one
-// of them.
-func PythonHostDetail(err error) (string, bool) {
+// HostDetail is the host envelope detail of an OS or SQLite failure the store raises unhandled
+// out of an open or an ownership read (CheckStartLikeFence), in Go's words, or of the exception it
+// raises for a frozen copy it could not read as a manifest (its StoredText), and whether err is
+// one of them.
+func HostDetail(err error) (string, bool) {
 	if encode := EncodeError(err); encode != nil {
 		return encode.HostDetail(), true
 	}
@@ -156,7 +156,7 @@ func PythonHostDetail(err error) (string, bool) {
 	// A frozen copy that is not a manifest leaves the fence's intake as this exception.
 	var frozen *ManifestException
 	if errors.As(err, &frozen) {
-		return frozen.PythonText(), true
+		return frozen.StoredText(), true
 	}
 	return "", false
 }

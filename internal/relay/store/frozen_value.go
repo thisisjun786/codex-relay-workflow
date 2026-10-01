@@ -12,25 +12,27 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
-// The fence reads a manifest record's fields as whatever json.loads made of them and compares,
-// prints and hashes them as Python does. These are those values in Go: nil (None), bool, an int as
+// A frozen copy of a manifest is read as the fence read it: a record's fields are whatever
+// json.loads made of them, compared, printed and hashed as Python does, because the manifest
+// revision hash is taken over them and the guard journals what it says of them (decision R3S-3).
+// These are those values in Go: nil (None), bool, an int as
 // int64 or *big.Int, a float as float64 (NaN and the infinities included), a str as a string that
 // keeps a lone surrogate in its three-byte generalized UTF-8 form, a list as []any and a dict as
 // contract.OrderedObject. A json.Number is read as the int or float its spelling is, so a decoder
 // that keeps an over-long integer that way (hook.Decode) passes its values unchanged.
 
-// PythonEntry is manifest.Entry as Entry.from_record builds it: each field the value json.loads
+// FrozenEntry is manifest.Entry as Entry.from_record builds it: each field the value json.loads
 // gave it, and Bytes nil for a "bytes" that is null or absent.
-type PythonEntry struct{ Path, SHA256, Bytes any }
+type FrozenEntry struct{ Path, SHA256, Bytes any }
 
-// PythonEntries is the Entry each ManifestEntry stands for; nil stays nil (the fence's None).
-func PythonEntries(entries []ManifestEntry) []PythonEntry {
+// FrozenEntries is the Entry each ManifestEntry stands for; nil stays nil (the fence's None).
+func FrozenEntries(entries []ManifestEntry) []FrozenEntry {
 	if entries == nil {
 		return nil
 	}
-	out := make([]PythonEntry, len(entries))
+	out := make([]FrozenEntry, len(entries))
 	for i, entry := range entries {
-		out[i] = PythonEntry{Path: entry.Path, SHA256: entry.SHA256}
+		out[i] = FrozenEntry{Path: entry.Path, SHA256: entry.SHA256}
 		if entry.Bytes != nil {
 			out[i].Bytes = *entry.Bytes
 		}
@@ -38,11 +40,11 @@ func PythonEntries(entries []ManifestEntry) []PythonEntry {
 	return out
 }
 
-// PythonManifestEntries is [Entry.from_record(record) for record in records]: each record's
+// FrozenManifestEntries is [Entry.from_record(record) for record in records]: each record's
 // ["path"] and ["sha256"] and its .get("bytes"), raising the KeyError or TypeError the first
 // record that is not a dict holding both raises.
-func PythonManifestEntries(records []any) ([]PythonEntry, error) {
-	out := make([]PythonEntry, 0, len(records))
+func FrozenManifestEntries(records []any) ([]FrozenEntry, error) {
+	out := make([]FrozenEntry, 0, len(records))
 	for _, record := range records {
 		path, err := pythonSubscript(record, "path")
 		if err != nil {
@@ -53,16 +55,17 @@ func PythonManifestEntries(records []any) ([]PythonEntry, error) {
 			return nil, err
 		}
 		size, _ := pythonGet(record.(contract.OrderedObject), "bytes")
-		out = append(out, PythonEntry{Path: path, SHA256: digest, Bytes: size})
+		out = append(out, FrozenEntry{Path: path, SHA256: digest, Bytes: size})
 	}
 	return out, nil
 }
 
-// PythonRevisionHash is manifest.revision_hash: each path encoded to UTF-8 in record order (an
+// FrozenRevisionHash is the manifest revision hash of a frozen copy's entries
+// (manifest.revision_hash): each path encoded to UTF-8 in record order (an
 // AttributeError for a path that is not a str, a UnicodeEncodeError for a lone surrogate), the
 // entries sorted stably by those bytes, and each then checked as canonical_payload checks it,
 // with a digest that is not a str named as its repr.
-func PythonRevisionHash(entries []PythonEntry) (string, error) {
+func FrozenRevisionHash(entries []FrozenEntry) (string, error) {
 	type keyed struct {
 		path   string
 		digest any
@@ -160,7 +163,7 @@ func pythonSubscript(value any, key string) (any, error) {
 	return nil, &ManifestException{Class: "TypeError", text: "'" + pyvalue.TypeName(value) + "' object is not subscriptable"}
 }
 
-// decodePythonJSON is json.loads over text that PythonJSONError has already accepted (as deep as
+// decodePythonJSON is json.loads over text that pyjson.ErrorWithLimit has already accepted (as deep as
 // frozenJSONDepth): NaN, Infinity and -Infinity are floats, an integer is exact (an int64, or a
 // *big.Int past it), a lone surrogate escape is kept, and a repeated key keeps its first place
 // and its last value.
