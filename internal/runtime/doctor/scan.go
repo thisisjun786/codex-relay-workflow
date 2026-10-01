@@ -14,8 +14,6 @@ import (
 
 	"github.com/BurntSushi/toml"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/definition"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
@@ -89,7 +87,7 @@ type stopSettings struct {
 }
 
 func (s *scan) unread(what string, err error) {
-	s.unreadable = append(s.unreadable, what+": "+store.PythonOSError(err))
+	s.unreadable = append(s.unreadable, what+": "+err.Error())
 }
 
 // unresolved lists a reference whose target this reading could not establish: what it runs is
@@ -286,7 +284,7 @@ func (s *scan) settingsRecord(path string) {
 	for _, key := range settingsKeys {
 		values, ok := texts(record.Get(value, key))
 		if !ok {
-			s.malformed(4, path, key, "the value is "+pyvalue.TypeName(record.Get(value, key))+", not a string or a list of strings")
+			s.malformed(4, path, key, "the value is "+reading.JSONKind(record.Get(value, key))+", not a string or a list of strings")
 		}
 		for i, text := range values {
 			name := key
@@ -389,20 +387,20 @@ func (s *scan) hookCommands(row int, path string, document Object, pluginRoot st
 	declared, present := record.Lookup(document, "hooks")
 	events, ok := declared.(Object)
 	if present && !ok {
-		bad("hooks", "hooks is "+pyvalue.TypeName(declared)+", not an object of events", true)
+		bad("hooks", "hooks is "+reading.JSONKind(declared)+", not an object of events", true)
 	}
 	for _, event := range events {
 		stop := event.Key == "Stop"
 		groups, ok := event.Value.([]any)
 		if !ok {
-			bad("hooks."+event.Key, "the event is "+pyvalue.TypeName(event.Value)+", not a list of groups", stop)
+			bad("hooks."+event.Key, "the event is "+reading.JSONKind(event.Value)+", not a list of groups", stop)
 			continue
 		}
 		for g, group := range groups {
 			at := "hooks." + event.Key + "[" + strconv.Itoa(g) + "]"
 			hooks, ok := record.Get(asObject(group), "hooks").([]any)
 			if !ok {
-				bad(at+".hooks", "the group's hooks are "+pyvalue.TypeName(record.Get(asObject(group), "hooks"))+", not a list", stop)
+				bad(at+".hooks", "the group's hooks are "+reading.JSONKind(record.Get(asObject(group), "hooks"))+", not a list", stop)
 				continue
 			}
 			for h, hook := range hooks {
@@ -414,13 +412,13 @@ func (s *scan) hookCommands(row int, path string, document Object, pluginRoot st
 				_, isNumber := number(timeout)
 				switch {
 				case !isObject:
-					bad(field, "the hook is "+pyvalue.TypeName(hook)+", not an object", stop)
+					bad(field, "the hook is "+reading.JSONKind(hook)+", not an object", stop)
 					continue
 				case !isText || (typed && kind != "command"):
-					bad(field, "the hook's command is "+pyvalue.TypeName(record.Get(one, "command"))+" and its type "+scope.PyStr(kind)+", not a command string", stop)
+					bad(field, "the hook's command is "+reading.JSONKind(record.Get(one, "command"))+" and its type "+reading.Text(kind)+", not a command string", stop)
 					continue
 				case timed && !isNumber:
-					bad(field, "the hook's timeout is "+pyvalue.TypeName(timeout)+", not a number", stop)
+					bad(field, "the hook's timeout is "+reading.JSONKind(timeout)+", not a number", stop)
 				}
 				judge := func() {
 					j := s.judge(row, path, field, "", s.expander(pluginRoot))
@@ -562,7 +560,7 @@ func (s *scan) pluginCache() {
 				declared, present := record.Lookup(document, "mcpServers")
 				servers, ok := declared.(Object)
 				if present && !ok {
-					s.malformed(5, path, "mcpServers", "mcpServers is "+pyvalue.TypeName(declared)+", not an object of servers")
+					s.malformed(5, path, "mcpServers", "mcpServers is "+reading.JSONKind(declared)+", not an object of servers")
 				}
 				for _, server := range servers {
 					entry := asObject(server.Value)
@@ -699,14 +697,14 @@ func (s *scan) stateDirectories() {
 		add(root)
 		entries, err := os.ReadDir(root)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			unknown(root, store.PythonOSError(err))
+			unknown(root, err.Error())
 		}
 		for _, entry := range entries {
 			directory := filepath.Join(root, entry.Name())
 			if info, err := os.Stat(directory); err == nil && info.IsDir() {
 				add(directory)
 			} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-				unknown(directory, store.PythonOSError(err))
+				unknown(directory, err.Error())
 			}
 		}
 	}
@@ -743,7 +741,7 @@ func (s *scan) stateDirectories() {
 		s.registries = append(s.registries, registry)
 		paths, err := listNamed(registry, func(name string) bool { return strings.HasSuffix(name, ".json") })
 		if err != nil {
-			unknown(registry, store.PythonOSError(err))
+			unknown(registry, err.Error())
 		}
 		for _, path := range paths {
 			read := reading.ReadJSON(path, "a scope claim", nil, nil)
@@ -759,7 +757,7 @@ func (s *scan) stateDirectories() {
 			if directory, _ := record.Get(document, "stateDir").(string); filepath.IsAbs(directory) {
 				add(directory)
 			} else if stated := record.Get(document, "stateDir"); stated != nil {
-				unknown(path, "its stateDir "+scope.PyStr(stated)+" is not an absolute path")
+				unknown(path, "its stateDir "+reading.Text(stated)+" is not an absolute path")
 			}
 		}
 	}
@@ -823,7 +821,7 @@ func (s *scan) alive(pid int, ticks any, boot any) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if ticks != nil && scope.PyStr(ticks) != scope.PyStr(now) {
+	if ticks != nil && reading.Text(ticks) != reading.Text(now) {
 		return false, nil
 	}
 	if boot != nil {
@@ -832,9 +830,9 @@ func (s *scan) alive(pid int, ticks any, boot any) (bool, error) {
 		path := filepath.Join(s.o.Proc, "sys", "kernel", "random", "boot_id")
 		raw, err := os.ReadFile(path)
 		if err != nil {
-			return false, errors.New("the current boot id could not be read to compare with the recorded one: " + store.PythonOSError(err))
+			return false, errors.New("the current boot id could not be read to compare with the recorded one: " + err.Error())
 		}
-		if scope.PyStr(boot) != strings.TrimSpace(string(raw)) {
+		if reading.Text(boot) != strings.TrimSpace(string(raw)) {
 			return false, nil
 		}
 	}
@@ -880,13 +878,13 @@ func (s *scan) daemons() map[int]bool {
 			if raw == nil {
 				continue
 			} else if !ok || n < 1 || n > math.MaxInt32 {
-				s.unreadable = append(s.unreadable, one.path+": row 3 "+key[0]+": "+pyvalue.TypeName(raw)+" "+scope.PyStr(raw)+" is not a pid, so the process the record names, and what it runs, is unknown")
+				s.unreadable = append(s.unreadable, one.path+": row 3 "+key[0]+": "+reading.JSONKind(raw)+" "+reading.Text(raw)+" is not a pid, so the process the record names, and what it runs, is unknown")
 				continue
 			}
 			pid := int(n)
 			alive, err := s.alive(pid, record.Get(one.document, key[1]), record.Get(one.document, "bootId"))
 			if err != nil {
-				s.unreadable = append(s.unreadable, one.path+": row 3 "+key[0]+" "+strconv.Itoa(pid)+": whether it is alive could not be read: "+store.PythonOSError(err))
+				s.unreadable = append(s.unreadable, one.path+": row 3 "+key[0]+" "+strconv.Itoa(pid)+": whether it is alive could not be read: "+err.Error())
 				continue
 			}
 			if !alive {
@@ -894,7 +892,7 @@ func (s *scan) daemons() map[int]bool {
 			}
 			pids[pid] = true
 			if err := s.readable(pid); err != nil && !errors.Is(err, errGone) {
-				s.unreadable = append(s.unreadable, one.path+": row 3 "+key[0]+" "+strconv.Itoa(pid)+": what the process runs could not be read: "+store.PythonOSError(err))
+				s.unreadable = append(s.unreadable, one.path+": row 3 "+key[0]+" "+strconv.Itoa(pid)+": what the process runs could not be read: "+err.Error())
 			}
 		}
 	}
@@ -919,7 +917,7 @@ func (s *scan) configToml(_ context.Context) {
 	}
 	servers, ok := document["mcp_servers"].(map[string]any)
 	if declared, present := document["mcp_servers"]; present && !ok {
-		s.malformed(10, path, "mcp_servers", "mcp_servers is "+pyvalue.TypeName(declared)+", not a table of servers")
+		s.malformed(10, path, "mcp_servers", "mcp_servers is "+reading.JSONKind(declared)+", not a table of servers")
 	}
 	names := make([]string, 0, len(servers))
 	for name := range servers {

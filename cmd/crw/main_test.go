@@ -92,7 +92,7 @@ func TestRun_doctor_dispatches_to_the_host_doctor(t *testing.T) {
 
 func TestRun_install_dispatches_to_the_installer(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	if code := run(context.Background(), "crw", []string{"install", "unpack"}, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "crw install: error: argument command: invalid choice: 'unpack'") {
+	if code := run(context.Background(), "crw", []string{"install", "unpack"}, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), `crw install: error: argument command: invalid choice: "unpack"`) {
 		t.Fatalf("an unknown install command: code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
 	stdout.Reset()

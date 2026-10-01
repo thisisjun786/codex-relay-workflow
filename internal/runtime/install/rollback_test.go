@@ -217,7 +217,7 @@ func TestARollbackReturnsToAPromotedRuntimeWhoseClaimNeverSettled(t *testing.T) 
 	h.mustInstall(t, "update", third)
 	write(t, staging.ClaimPath(a), string(record.Encode(staging.NewPayload(staging.Staging, "CRW-158", "1"))))
 	refused, code := install.Rollback(context.Background(), h.options(), a)
-	if code != install.Refused || !strings.Contains(text(at(refused, "refused")), "'STAGING'") {
+	if code != install.Refused || !strings.Contains(text(at(refused, "refused")), `"STAGING"`) {
 		t.Fatalf("a STAGING runtime nothing selects: exit %d\n%s", code, golden.Canon(refused))
 	}
 }

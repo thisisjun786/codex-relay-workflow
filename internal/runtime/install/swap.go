@@ -3,7 +3,6 @@ package install
 import (
 	"context"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/definition"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/pointer"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
@@ -34,7 +33,7 @@ func (s swapped) commitFailed() bool { return s.commitErr != nil || !s.committed
 // not reach runtime (as the caller names it) once placed.
 func (s swapped) placement(runtime string) string {
 	if s.placeErr != nil {
-		return "the pointer could not be placed: " + store.PythonOSError(s.placeErr)
+		return "the pointer could not be placed: " + s.placeErr.Error()
 	}
 	return "the pointer does not reach " + runtime + " after it was placed: " + s.why
 }

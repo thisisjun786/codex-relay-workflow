@@ -3439,3 +3439,42 @@ Evidence: internal/skill/command.go (`family`, `commandLine`), values.go (`decod
 `sortValues`, `notObject`); internal/skill/command_test.go (`TestSkillCommandLine`,
 `TestSkillDoubleDashPassesOptionLikePositionals`); the goldens of `TestSkillJSONShape` and the
 other renamed command tests; docs/port/known-defects.md.
+
+## R3R-4. The runtime's messages name a failure in Go's words and a value as JSON (refactor R3)
+
+Decision: `crw install`, `crw doctor` and the runtime packages under `internal/runtime` stop
+spelling a failure or a value as CPython did. What goes: CPython's OSError text
+(`store.PythonOSError`: `PermissionError: [Errno 13] Permission denied: '/x'`) and SQLite error
+text (`store.PythonSQLiteError`) in every detail, refusal and unreadable entry; Python type names
+(`found list`, `found NoneType`, `TOML ... it is str`) and repr() of values (`'other'`, `None`,
+`True`) in messages; `scope.PyStr` and `staging.repr`, Python's str() and repr() of decoded
+values; subprocess's `TimeoutExpired: Command '[...]' timed out after N seconds`; and the
+pathlib spellings the runtime compared paths by (`store.PathlibSpelling`). A failure is named by
+the Go error's own text (`lstat /x: permission denied`), a value by its JSON text
+(`reading.Show`), a kind by `reading.JSONKind` (`an array`, `null`) or `doctor.TOMLKind`, and a
+path is compared in a lexical form that drops repeated separators, "." and a trailing separator
+and keeps ".." (`reading.Spelling`). The record reader (`reading.Decode`) decodes with
+`pyjson.Loads` alone, its refusal in encoding/json's words, rather than first scanning with
+CPython's JSONDecodeError texts. `crw install` keeps refusing a HOME that holds ".." or starts
+with exactly two slashes, now said without pathlib.
+
+Consumer check: `git grep` of `plugins/crw/skills`, `docs/`, `contract/` and the product for the
+replaced words (`Errno`, `PermissionError`, `FileNotFoundError`, `TimeoutExpired`, `found str`,
+`NoneType`): no skill, doc command or product code reads a detail's prose; docs/runtime-install.md
+documents the four reading states, which are unchanged. `crw doctor declared-schema --json`, which
+another runtime's swap gate reads, keeps its fields; its `detail` is prose.
+
+What stays and why: every field, state, verdict and exit code; a reading refusal's `exception`
+field keeps its vocabulary (`FileNotFoundError`, `PermissionError`, `NotADirectoryError`,
+`OSError`, `UnicodeDecodeError`, `JSONDecodeError`, `TypeError`, `ValueError`), because a reader of
+the doctor's JSON may branch on it; the host record's bytes (`record.Encode`, json.dumps with
+indent 2 and sorted keys), a measured point's `appServer` (json.dumps of the structured content,
+compared across runs), the bridge record's execution policy path (absolute without folding "..",
+surrogate-escaped) and the Stop settings, because they are stored and compared; and Python's
+truthiness and equality where a decision reads a field.
+
+Evidence: internal/runtime/reading/{reading.go,value.go} (`classOf`, `Decode`, `JSONKind`,
+`Show`, `Text`, `Spelling`); internal/runtime/doctor/registration.go (`TOMLKind`);
+internal/runtime/install/cli.go (`fixedHome`); internal/runtime/scope/scope_test.go
+(`TestARelayTheDeadlineEndedIsUnreadable`); the goldens of `TestShapeRefusals`,
+`TestServiceStateReadings` and `TestCellsAndVerdicts`.

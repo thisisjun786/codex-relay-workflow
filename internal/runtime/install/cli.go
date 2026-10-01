@@ -8,12 +8,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/scope"
 )
@@ -114,7 +115,7 @@ func Main(ctx context.Context, args []string, env scope.Env, stdout, stderr io.W
 		return OK
 	default:
 		usage(stderr)
-		fmt.Fprintf(stderr, "crw install: error: argument command: invalid choice: %s (choose from %s)\n", pyvalue.StrRepr(command), "'"+strings.Join(Commands, "', '")+"'")
+		fmt.Fprintf(stderr, "crw install: error: argument command: invalid choice: %q (choose from %s)\n", command, "'"+strings.Join(Commands, "', '")+"'")
 		return Usage
 	}
 	positional, err := parse(flags, rest)
@@ -254,25 +255,20 @@ func options(env scope.Env, codexHome, recordPath, issue, socket, state string) 
 	return Options{Env: env, Dest: dest, CodexHome: codexHome, RecordPath: recordPath, Issue: issue, Socket: socket, State: state}, nil
 }
 
-// fixedHome is why home cannot carry the fixed destination: it must be absolute, UTF-8, and
-// spelled as pathlib and the kernel read it alike - no ".." (which pathlib keeps and a lexical
-// join folds, naming another directory behind a symbolic link) and no leading "//".
+// fixedHome is why home cannot carry the fixed destination: it must be absolute, UTF-8, and read
+// alike lexically and by the kernel - no ".." (which a lexical join folds, naming another
+// directory behind a symbolic link) and no leading "//" (implementation-defined in POSIX).
 func fixedHome(home string) string {
 	switch {
 	case !utf8.ValidString(home):
 		return notUTF8Detail("HOME", home)
 	case !filepath.IsAbs(home):
-		return "HOME is " + pyvalue.StrRepr(home) + ", which is not an absolute path, so the destination under it would be read wherever this command runs"
-	case pathlibHome(home) != filepath.Clean(home):
-		return "HOME is " + pyvalue.StrRepr(home) + ", which pathlib spells " + pyvalue.StrRepr(pathlibHome(home)) + " and a lexical join spells " + pyvalue.StrRepr(filepath.Clean(home)) + ", so the destination under it would not be one directory; set HOME to its plain absolute spelling"
+		return "HOME is " + strconv.Quote(home) + ", which is not an absolute path, so the destination under it would be read wherever this command runs"
+	case reading.Spelling(home) != filepath.Clean(home) || strings.HasPrefix(home, "//") && !strings.HasPrefix(home, "///"):
+		return "HOME is " + strconv.Quote(home) + ", whose \"..\" or leading \"//\" a lexical join and the kernel can read as different directories, so the destination under it would not be one directory; set HOME to its plain absolute spelling"
 	}
 	return ""
 }
-
-// pathlibHome is str(Path(home)) for an absolute home: pathlib keeps exactly two leading slashes
-// ("//" is implementation-defined in POSIX) and folds three or more, so a home starting with "//"
-// is spelled apart from its lexical join.
-func pathlibHome(home string) string { return store.PathlibSpelling(home) }
 
 // environOf is os.environ.get with presence over an explicit environment, the last entry winning.
 func environOf(env scope.Env) record.Environ {
@@ -304,7 +300,7 @@ func notUTF8(values []namedValue) string {
 // character and name a file that does not exist. The execution policy path is the one path
 // recorded surrogate-escaped, as runtime_install.py records it.
 func notUTF8Detail(name, value string) string {
-	return name + " holds a byte that is not UTF-8 (" + pyvalue.StrRepr(pyvalue.FSDecode(value)) + "), and crw install records only paths it can spell as UTF-8, so nothing was read or written; use a path whose name is UTF-8"
+	return name + " holds a byte that is not UTF-8 (" + strconv.Quote(value) + "), and crw install records only paths it can spell as UTF-8, so nothing was read or written; use a path whose name is UTF-8"
 }
 
 func absolute(path string) (string, error) {

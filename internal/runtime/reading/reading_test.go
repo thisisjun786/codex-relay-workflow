@@ -40,10 +40,10 @@ func TestReadJSONKeepsFourAnswers(t *testing.T) {
 		{filepath.Join(dir, "fifo"), reading.Unreadable, "", "this path is a named pipe, not a regular file"},
 		{filepath.Join(dir, "dangling"), reading.Unreadable, "FileNotFoundError", "a symbolic link whose target does not exist"},
 		{filepath.Join(dir, "loop"), reading.Unreadable, "OSError", "a symbolic link that loops"},
-		{write("broken.json", "{ not json"), reading.Unreadable, "JSONDecodeError", "could not read the thing (JSONDecodeError: Expecting property name enclosed in double quotes: line 1 column 3 (char 2))"},
+		{write("broken.json", "{ not json"), reading.Unreadable, "JSONDecodeError", "could not read the thing (invalid character 'o' in literal null (expecting 'u'))"},
 		{write("latin.json", "\xff"), reading.Unreadable, "UnicodeDecodeError", ""},
 		{filepath.Join(good, "child"), reading.AccessError, "NotADirectoryError", ""},
-		{"nul\x00path", reading.Unreadable, "ValueError", "this path cannot name a file (ValueError: embedded null byte)"},
+		{"nul\x00path", reading.Unreadable, "ValueError", "this path cannot name a file (embedded null byte)"},
 	} {
 		got := reading.ReadJSON(c.path, "the thing", nil, nil)
 		if got.State != c.state || got.Exception != c.exception || (c.detail != "" && got.Detail != c.detail) {
@@ -54,7 +54,7 @@ func TestReadJSONKeepsFourAnswers(t *testing.T) {
 		}
 	}
 	shaped := reading.ReadJSON(good, "the thing", nil, func(any) error { return reading.Fail("TypeError", "no") })
-	if shaped.State != reading.Unreadable || shaped.Exception != "TypeError" || shaped.Detail != "could not read the thing (TypeError: no)" || shaped.Identity == nil {
+	if shaped.State != reading.Unreadable || shaped.Exception != "TypeError" || shaped.Detail != "could not read the thing (no)" || shaped.Identity == nil {
 		t.Fatalf("a shape refusal: %+v", shaped)
 	}
 	refusal := shaped.Refusal()

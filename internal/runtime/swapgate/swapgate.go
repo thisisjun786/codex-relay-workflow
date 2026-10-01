@@ -123,15 +123,15 @@ func InflightCell(envelope, presence Object) Object {
 	command := record.Get(envelope, "command")
 	if presence != nil {
 		if !pyvalue.Truthy(record.Get(presence, "readable")) {
-			return Cell(reading.AccessError, false, "whether a store exists at the resolved selection could not be established: "+scope.PyStr(record.Get(presence, "detail")), record.Get(presence, "command"), nil)
+			return Cell(reading.AccessError, false, "whether a store exists at the resolved selection could not be established: "+reading.Text(record.Get(presence, "detail")), record.Get(presence, "command"), nil)
 		}
 		if record.Get(presence, "present") == false {
 			payload, _ := record.Get(envelope, "payload").(Object)
 			contents, _ := record.Get(payload, "contents").(Object)
 			if pyvalue.Truthy(record.Get(contents, "available")) {
-				return Cell(reading.Unreadable, false, "no store exists at "+scope.PyStr(record.Get(presence, "dbPath"))+" and the relay reports readable contents for it", command, nil)
+				return Cell(reading.Unreadable, false, "no store exists at "+reading.Text(record.Get(presence, "dbPath"))+" and the relay reports readable contents for it", command, nil)
 			}
-			return Cell(NoAttempts, true, "no store exists at "+scope.PyStr(record.Get(presence, "dbPath"))+", so no attempt can be open. That is established absence rather than a count nobody could read", record.Get(presence, "command"), NoAttempts)
+			return Cell(NoAttempts, true, "no store exists at "+reading.Text(record.Get(presence, "dbPath"))+", so no attempt can be open. That is established absence rather than a count nobody could read", record.Get(presence, "command"), NoAttempts)
 		}
 	}
 	if envelope == nil || !pyvalue.Truthy(record.Get(envelope, "ok")) {
@@ -145,7 +145,7 @@ func InflightCell(envelope, presence Object) Object {
 		if detail == nil {
 			detail = "the command failed"
 		}
-		return Cell(reading.AccessError, false, "the relay could not be asked for its contents: "+scope.PyStr(detail), command, nil)
+		return Cell(reading.AccessError, false, "the relay could not be asked for its contents: "+reading.Text(detail), command, nil)
 	}
 	payload, ok := record.Get(envelope, "payload").(Object)
 	if !ok {
@@ -157,15 +157,15 @@ func InflightCell(envelope, presence Object) Object {
 		if !pyvalue.Truthy(detail) {
 			detail = "no contents were reported"
 		}
-		return Cell(reading.Unreadable, false, "the store's contents could not be read: "+scope.PyStr(detail), command, nil)
+		return Cell(reading.Unreadable, false, "the store's contents could not be read: "+reading.Text(detail), command, nil)
 	}
 	open, ok := record.Get(contents, "openAttempts").(int64)
 	if !ok {
-		return Cell(reading.Unreadable, false, "the contents carry no integer openAttempts, found "+pyvalue.TypeName(record.Get(contents, "openAttempts")), command, nil)
+		return Cell(reading.Unreadable, false, "the contents carry no integer openAttempts, found "+reading.JSONKind(record.Get(contents, "openAttempts")), command, nil)
 	}
 	detail := "no attempt is open"
 	if open != 0 {
-		detail = scope.PyStr(open) + " attempts are still open, so a handover is in flight and the runtime under it is not replaced"
+		detail = reading.Text(open) + " attempts are still open, so a handover is in flight and the runtime under it is not replaced"
 	}
 	return Cell(open, true, detail, command, open)
 }
@@ -191,10 +191,10 @@ func SchemaCell(storeAnswer, candidate Object) Object {
 		return Cell(reading.Unreadable, false, "a schema reading did not return an answer", nil, nil)
 	}
 	if !pyvalue.Truthy(record.Get(candidate, "readable")) {
-		return Cell(reading.Unreadable, false, "the candidate's declared schema could not be read: "+scope.PyStr(record.Get(candidate, "detail")), record.Get(candidate, "command"), nil)
+		return Cell(reading.Unreadable, false, "the candidate's declared schema could not be read: "+reading.Text(record.Get(candidate, "detail")), record.Get(candidate, "command"), nil)
 	}
 	if !pyvalue.Truthy(record.Get(storeAnswer, "readable")) {
-		return Cell(reading.Unreadable, false, "the store's schema could not be read: "+scope.PyStr(record.Get(storeAnswer, "detail")), record.Get(storeAnswer, "command"), nil)
+		return Cell(reading.Unreadable, false, "the store's schema could not be read: "+reading.Text(record.Get(storeAnswer, "detail")), record.Get(storeAnswer, "command"), nil)
 	}
 	declared := schemaOf(record.Get(candidate, "objects"))
 	if declared == nil {
@@ -259,7 +259,7 @@ func Normalised(statement any) *string {
 	if statement == nil {
 		return nil
 	}
-	text := scope.PyStr(statement)
+	text := reading.Text(statement)
 	var out []rune
 	var quote rune
 	space := false
@@ -311,9 +311,9 @@ func Decide(cells map[string]Object) Object {
 		refuses := Blocking(name, cell)
 		switch {
 		case refuses == nil:
-			unread = append(unread, name+": "+scope.PyStr(record.Get(cell, "detail")))
+			unread = append(unread, name+": "+reading.Text(record.Get(cell, "detail")))
 		case *refuses:
-			blockers = append(blockers, name+": "+scope.PyStr(record.Get(cell, "detail")))
+			blockers = append(blockers, name+": "+reading.Text(record.Get(cell, "detail")))
 		}
 		if present && given != nil {
 			reported = append(reported, record.Object{{Key: name, Value: given}}...)
@@ -347,13 +347,13 @@ func Decide(cells map[string]Object) Object {
 func StorePresence(state, socket string) Object {
 	selection, err := store.ResolveStateDir(state, socket)
 	if err != nil {
-		return Object{{Key: "readable", Value: false}, {Key: "present", Value: nil}, {Key: "dbPath", Value: nil}, {Key: "detail", Value: store.PythonOSError(err)}, {Key: "command", Value: nil}}
+		return Object{{Key: "readable", Value: false}, {Key: "present", Value: nil}, {Key: "dbPath", Value: nil}, {Key: "detail", Value: err.Error()}, {Key: "command", Value: nil}}
 	}
 	database := selection.DBPath()
 	if _, err := os.Lstat(database); errors.Is(err, os.ErrNotExist) {
 		return Object{{Key: "readable", Value: true}, {Key: "present", Value: false}, {Key: "dbPath", Value: database}, {Key: "detail", Value: nil}, {Key: "command", Value: nil}}
 	} else if err != nil {
-		return Object{{Key: "readable", Value: false}, {Key: "present", Value: nil}, {Key: "dbPath", Value: database}, {Key: "detail", Value: store.PythonOSError(err)}, {Key: "command", Value: nil}}
+		return Object{{Key: "readable", Value: false}, {Key: "present", Value: nil}, {Key: "dbPath", Value: database}, {Key: "detail", Value: err.Error()}, {Key: "command", Value: nil}}
 	}
 	return Object{{Key: "readable", Value: true}, {Key: "present", Value: true}, {Key: "dbPath", Value: database}, {Key: "detail", Value: nil}, {Key: "command", Value: nil}}
 }
@@ -369,7 +369,7 @@ func StoreSchema(ctx context.Context, state, socket string) Object {
 	database := record.Get(presence, "dbPath")
 	objects, err := readCatalog(ctx, database.(string))
 	if err != nil {
-		return Object{{Key: "readable", Value: false}, {Key: "present", Value: true}, {Key: "dbPath", Value: database}, {Key: "objects", Value: nil}, {Key: "detail", Value: store.PythonSQLiteError(err)}, {Key: "command", Value: nil}}
+		return Object{{Key: "readable", Value: false}, {Key: "present", Value: true}, {Key: "dbPath", Value: database}, {Key: "objects", Value: nil}, {Key: "detail", Value: err.Error()}, {Key: "command", Value: nil}}
 	}
 	return Object{{Key: "readable", Value: true}, {Key: "present", Value: true}, {Key: "dbPath", Value: database}, {Key: "objects", Value: objects}, {Key: "detail", Value: nil}, {Key: "command", Value: nil}}
 }
@@ -413,7 +413,7 @@ func readCatalog(ctx context.Context, path string) (Object, error) {
 // prints for `crw doctor declared-schema --json`.
 func DeclaredSchema(ctx context.Context) Object {
 	unreadable := func(err error) Object {
-		return Object{{Key: "readable", Value: false}, {Key: "objects", Value: nil}, {Key: "schemaVersion", Value: store.SchemaVersion}, {Key: "detail", Value: store.PythonSQLiteError(err)}}
+		return Object{{Key: "readable", Value: false}, {Key: "objects", Value: nil}, {Key: "schemaVersion", Value: store.SchemaVersion}, {Key: "detail", Value: err.Error()}}
 	}
 	ddl, guards, err := store.SchemaStatements()
 	if err != nil {
@@ -493,7 +493,7 @@ func CandidateSchema(ctx context.Context, binary string) Object {
 		return fail("the candidate's declared tables were not answered: the candidate ended with " + ended + ", so nothing it printed is read as its schema" + diagnostics(stderr.String(), string(out)))
 	}
 	if err != nil {
-		return fail("the candidate's declared tables could not be asked: " + store.PythonOSError(err))
+		return fail("the candidate's declared tables could not be asked: " + err.Error())
 	}
 	value, decodeErr := reading.Decode(out)
 	answer, ok := value.(Object)

@@ -17,6 +17,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/definition"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 )
@@ -80,13 +81,13 @@ func policyPathComplaints(path any) []string {
 	}
 	var wrong []string
 	if p.Padded {
-		wrong = append(wrong, "the execution policy path "+pyvalue.Repr(p.Text)+" has leading or trailing whitespace, which the bridge would strip and so open a different file")
+		wrong = append(wrong, "the execution policy path "+reading.Show(p.Text)+" has leading or trailing whitespace, which the bridge would strip and so open a different file")
 	}
 	if p.Control {
-		wrong = append(wrong, "the execution policy path "+pyvalue.Repr(p.Text)+" contains a control character")
+		wrong = append(wrong, "the execution policy path "+reading.Show(p.Text)+" contains a control character")
 	}
 	if p.Relative {
-		wrong = append(wrong, "the execution policy path "+pyvalue.Repr(p.Text)+" must be absolute, because the packaged launcher runs from the installed package directory")
+		wrong = append(wrong, "the execution policy path "+reading.Show(p.Text)+" must be absolute, because the packaged launcher runs from the installed package directory")
 	}
 	return wrong
 }
@@ -129,13 +130,13 @@ func policyFileComplaints(reference any) []string {
 	var opening *os.PathError
 	switch {
 	case !encodable:
-		return []string{"the execution policy path " + pyvalue.Repr(path) + " names a surrogate os.fsencode refuses, so no launcher can open it"}
+		return []string{"the execution policy path " + reading.Show(path) + " names a surrogate os.fsencode refuses, so no launcher can open it"}
 	case errors.As(err, &opening) && opening.Op == "open":
-		return []string{"the execution policy " + path + " could not be opened (" + store.PythonOSError(err) + ")"}
+		return []string{"the execution policy " + path + " could not be opened (" + err.Error() + ")"}
 	case errors.Is(err, pluginwiring.ErrNotRegular):
 		return []string{"the execution policy " + path + " is not a regular file"}
 	case err != nil:
-		return []string{"the execution policy " + path + " could not be read (" + store.PythonOSError(err) + ")"}
+		return []string{"the execution policy " + path + " could not be read (" + err.Error() + ")"}
 	case actual != recorded:
 		return []string{"the execution policy " + path + " now hashes to " + actual + ", not the recorded " + recorded}
 	}
@@ -148,16 +149,16 @@ func policyFileComplaints(reference any) []string {
 func bridgeComplaints(found any) []string {
 	o, ok := found.(Object)
 	if !ok {
-		return []string{"the record is a " + pyvalue.TypeName(found) + ", not an object"}
+		return []string{"the record is " + reading.JSONKind(found) + ", not an object"}
 	}
 	read := pluginwiring.ReadBridgeRecord(o)
 	var wrong []string
 	if read.Version == 0 {
-		wrong = append(wrong, "recordVersion must be one of 1, 2, found "+pyvalue.Repr(read.VersionValue))
+		wrong = append(wrong, "recordVersion must be one of 1, 2, found "+reading.Show(read.VersionValue))
 	}
 	owner := read.Owner
 	if owner != OwnerUser && owner != OwnerPlugin {
-		wrong = append(wrong, "owner must be one of user, plugin, found "+pyvalue.Repr(owner))
+		wrong = append(wrong, "owner must be one of user, plugin, found "+reading.Show(owner))
 	}
 	switch {
 	case !read.IsString || strings.TrimSpace(read.Executable) == "":
@@ -263,7 +264,7 @@ func bridgeWrite(ctx context.Context, path string, wanted Object, apply bool) Ob
 		return append(record.Set(answer, "outcome", RecordPolicyChanged), field("detail", "the execution policy changed after it was read: "+strings.Join(stale, "; ")+". A record naming it would start no bridge, so nothing was written"), field("repair", "run register-mcp again against the file as it now stands"))
 	}
 	if err := record.AtomicWrite(path, record.Encode(wanted)); err != nil {
-		return append(answer, field("detail", "the record could not be written: "+store.PythonOSError(err)))
+		return append(answer, field("detail", "the record could not be written: "+err.Error()))
 	}
 	back := reading.ReadJSON(path, "the bridge MCP record", nil, nil)
 	readBack := back.OK() && pyjson.Dumps(back.Value, pyjson.Options{Compact: true, SortKeys: true, Unicode: true}) == pyjson.Dumps(wanted, pyjson.Options{Compact: true, SortKeys: true, Unicode: true})
@@ -332,12 +333,12 @@ func readServers(codexHome string) (servers, string, string) {
 	}
 	tables, ok := raw.(map[string]any)
 	if !ok {
-		return nil, path, "mcp_servers is a table of servers, found " + typeName(raw)
+		return nil, path, "mcp_servers is a table of servers, found " + doctor.TOMLKind(raw)
 	}
 	for name, entry := range tables {
 		table, ok := entry.(map[string]any)
 		if !ok {
-			return nil, path, "the registration for " + pyvalue.Repr(name) + " is a table, found " + typeName(entry)
+			return nil, path, "the registration for " + reading.Show(name) + " is a table, found " + doctor.TOMLKind(entry)
 		}
 		var server struct {
 			Command string
@@ -346,19 +347,19 @@ func readServers(codexHome string) (servers, string, string) {
 		if command, has := table["command"]; has {
 			text, ok := command.(string)
 			if !ok {
-				return nil, path, pyvalue.Repr(name) + " has a command that is not a string, it is " + typeName(command)
+				return nil, path, reading.Show(name) + " has a command that is not a string, it is " + doctor.TOMLKind(command)
 			}
 			server.Command = text
 		}
 		if args, has := table["args"]; has {
 			list, ok := args.([]any)
 			if !ok {
-				return nil, path, pyvalue.Repr(name) + " has args that are not a list of strings, they are " + typeName(args)
+				return nil, path, reading.Show(name) + " has args that are not a list of strings, they are " + doctor.TOMLKind(args)
 			}
 			for _, word := range list {
 				text, ok := word.(string)
 				if !ok {
-					return nil, path, pyvalue.Repr(name) + " has args that are not a list of strings"
+					return nil, path, reading.Show(name) + " has args that are not a list of strings"
 				}
 				server.Args = append(server.Args, text)
 			}
@@ -366,24 +367,6 @@ func readServers(codexHome string) (servers, string, string) {
 		out[name] = server
 	}
 	return out, path, ""
-}
-
-func typeName(v any) string {
-	switch v.(type) {
-	case string:
-		return "str"
-	case []any, []map[string]any:
-		return "list"
-	case map[string]any:
-		return "dict"
-	case bool:
-		return "bool"
-	case int64:
-		return "int"
-	case float64:
-		return "float"
-	}
-	return "value"
 }
 
 // startsThisBridge is runtime_install._starts_this_bridge: a table is recognised by the command
@@ -459,7 +442,7 @@ func secondOwners(codexHome, pointerPath string) (Object, string) {
 		return report, "the record at " + recordPath + " names the plugin as the bridge's owner and the Codex configuration also starts it as " + strings.Join(tables, ", ") + ", so the host runs two bridges; remove one owner first"
 	}
 	if server, ok := view[ServerName]; ok && !namesBridge(server.Command, bridgeEntry, pointerPath) {
-		return report, "the Codex configuration registers " + ServerName + " as " + pyvalue.Repr(server.Command) + ", not through the owned pointer (" + bridgeEntry + "), so after this promotion a host would still start a runtime this install does not select"
+		return report, "the Codex configuration registers " + ServerName + " as " + reading.Show(server.Command) + ", not through the owned pointer (" + bridgeEntry + "), so after this promotion a host would still start a runtime this install does not select"
 	}
 	names := make([]string, 0, len(view))
 	for name := range view {
@@ -470,7 +453,7 @@ func secondOwners(codexHome, pointerPath string) (Object, string) {
 		server := view[name]
 		for _, word := range append([]string{server.Command}, server.Args...) {
 			if rel, through := throughPointer(word, pointerPath); through && !goProvides(rel) {
-				return report, "the Codex configuration starts " + pyvalue.Repr(name) + " with " + word + ", which it reaches through the owned pointer, and the runtime about to be named provides no " + rel + ": after the swap that server would start nothing. Remove or repoint that table in " + configPath + " first"
+				return report, "the Codex configuration starts " + reading.Show(name) + " with " + word + ", which it reaches through the owned pointer, and the runtime about to be named provides no " + rel + ": after the swap that server would start nothing. Remove or repoint that table in " + configPath + " first"
 			}
 		}
 	}
@@ -483,7 +466,7 @@ func secondOwners(codexHome, pointerPath string) (Object, string) {
 	for _, command := range commands {
 		for _, word := range command.Words {
 			if rel, through := throughPointer(word, pointerPath); through && !goProvides(rel) {
-				return report, "the user hook file registers the Stop adapter as " + command.Identity + " (" + pyvalue.Repr(command.Command) + "), which runs " + word + " through the owned pointer, and the runtime about to be named provides no " + rel + ": after the swap that registration would run nothing, and the host reads the failure as a hook error, never as a judged Stop. The user-owned registration is retired with runtime_install.py and the plugin package declares the Stop hook, so this entry is the second owner: remove it from " + hookFile + " by hand, move " + settingsPath + " aside and run crw install hook --owner plugin, then rerun"
+				return report, "the user hook file registers the Stop adapter as " + command.Identity + " (" + reading.Show(command.Command) + "), which runs " + word + " through the owned pointer, and the runtime about to be named provides no " + rel + ": after the swap that registration would run nothing, and the host reads the failure as a hook error, never as a judged Stop. The user-owned registration is retired with runtime_install.py and the plugin package declares the Stop hook, so this entry is the second owner: remove it from " + hookFile + " by hand, move " + settingsPath + " aside and run crw install hook --owner plugin, then rerun"
 			}
 		}
 	}
@@ -515,15 +498,15 @@ type RegisterOptions struct {
 // and absolute, never resolved, '..' kept) and the digest of the bytes the parser accepted.
 func executionPolicyReading(value string) (Object, string) {
 	if path := pluginwiring.ReadPolicyPath(value); path.NotString || path.Padded || path.Control {
-		return nil, "the execution policy path " + pyvalue.Repr(value) + " is empty, padded with whitespace or contains a control character; the bridge strips the variable it reads, so such a path would be checked here as one file and opened there as another"
+		return nil, "the execution policy path " + reading.Show(value) + " is empty, padded with whitespace or contains a control character; the bridge strips the variable it reads, so such a path would be checked here as one file and opened there as another"
 	}
 	expanded, err := store.ExpandUser(value)
 	if err != nil {
-		return nil, "the execution policy path " + pyvalue.Repr(value) + " could not be expanded: " + err.Error()
+		return nil, "the execution policy path " + reading.Show(value) + " could not be expanded: " + err.Error()
 	}
 	candidate, err := pathlibAbsolute(expanded)
 	if err != nil {
-		return nil, "the execution policy path " + pyvalue.Repr(value) + " could not be made absolute: " + err.Error()
+		return nil, "the execution policy path " + reading.Show(value) + " could not be made absolute: " + err.Error()
 	}
 	if wrong := policyPathComplaints(candidate); len(wrong) > 0 {
 		return nil, strings.Join(wrong, "; ")
@@ -628,7 +611,7 @@ func RegisterMCP(ctx context.Context, o Options, r RegisterOptions) (Object, int
 // pluginOwnership is runtime_install._mcp_ownership for the plugin owner.
 func pluginOwnership(codexHome, recordPath, name string, wanted Object) string {
 	if name != ServerName {
-		return "the plugin owner registers the server the package declares, which is " + pyvalue.Repr(ServerName) + ", not " + pyvalue.Repr(name)
+		return "the plugin owner registers the server the package declares, which is " + reading.Show(ServerName) + ", not " + reading.Show(name)
 	}
 	if found, outcome, detail := readBridgeRecord(recordPath); found == nil && outcome != RecordAbsent {
 		return "the record at " + recordPath + " could not be acted on (" + detail + "), so who owns this server was not established"
@@ -642,7 +625,7 @@ func pluginOwnership(codexHome, recordPath, name string, wanted Object) string {
 		return "the Codex configuration already starts this bridge as " + strings.Join(aliased, ", ") + ", which is a user-owned registration carrying no ownership record; a plugin declaration beside it would run a second bridge. Remove that entry first"
 	}
 	if _, ok := view[name]; ok {
-		return "the Codex configuration already registers " + pyvalue.Repr(name) + ", which is the user-owned registration; a plugin declaration beside it would run a second bridge. Remove that entry first"
+		return "the Codex configuration already registers " + reading.Show(name) + ", which is the user-owned registration; a plugin declaration beside it would run a second bridge. Remove that entry first"
 	}
 	return ""
 }

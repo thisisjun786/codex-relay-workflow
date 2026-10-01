@@ -12,7 +12,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/pointer"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
@@ -81,7 +80,7 @@ func Survey(destination *string, pointerPath string, pointerOwnership any, prote
 	if err != nil || strings.ContainsRune(root, 0) {
 		said := "ValueError: embedded null byte"
 		if err != nil {
-			said = store.PythonOSError(err)
+			said = err.Error()
 		}
 		unread = append(unread, "the destination could not be listed: "+said)
 		finding := pointerFinding(pointerPath, pointerOwnership, root)
@@ -100,7 +99,7 @@ func Survey(destination *string, pointerPath string, pointerOwnership any, prote
 		}
 		info, err := os.Lstat(path)
 		if err != nil {
-			detail := "this entry could not be inspected: " + store.PythonOSError(err)
+			detail := "this entry could not be inspected: " + err.Error()
 			entries = append(entries, entry(path, Object{{Key: "decision", Value: NotScanned}, {Key: "reason", Value: detail}}))
 			unread = append(unread, path+": "+detail)
 			continue
@@ -186,7 +185,7 @@ func pointerFinding(pointerPath string, ownership any, destination string) Objec
 	if pointerPath == "" {
 		return Object{{Key: "path", Value: nil}, {Key: "finding", Value: NotScanned}, {Key: "residual", Value: false}, {Key: "detail", Value: "no pointer was named to read"}}
 	}
-	path := store.PathlibSpelling(pointerPath)
+	path := reading.Spelling(pointerPath)
 	if !reading.SameDirectory(filepath.Dir(path), destination) {
 		return Object{{Key: "path", Value: path}, {Key: "finding", Value: PointerOutsideDestination}, {Key: "residual", Value: false}, {Key: "destination", Value: destination},
 			{Key: "detail", Value: "this pointer sits under " + filepath.Dir(path) + " and this survey describes " + destination + ", so it belongs to another installation and nothing about it is reported here"}}
@@ -195,7 +194,7 @@ func pointerFinding(pointerPath string, ownership any, destination string) Objec
 	claimed := false
 	if record.PlacementRecorded(ownership) {
 		recorded, _ := record.Get(ownership.(Object), "path").(string)
-		claimed = store.PathlibSpelling(recorded) == path
+		claimed = reading.Spelling(recorded) == path
 	}
 	var target any
 	if read.State == pointer.Link {
@@ -215,7 +214,7 @@ func pointerFinding(pointerPath string, ownership any, destination string) Objec
 		return found
 	case !errors.Is(err, os.ErrNotExist):
 		found = record.Set(found, "finding", UnreadablePointerTarget)
-		return record.Set(found, "detail", "whether the target exists could not be established: "+store.PythonOSError(err)+", so whether this pointer still reaches a runtime was not established and it is reported rather than listed for removal")
+		return record.Set(found, "detail", "whether the target exists could not be established: "+err.Error()+", so whether this pointer still reaches a runtime was not established and it is reported rather than listed for removal")
 	}
 	if claimed {
 		found = record.Set(found, "finding", DanglingPointer)

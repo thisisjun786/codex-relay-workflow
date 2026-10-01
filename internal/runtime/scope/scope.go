@@ -15,14 +15,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 )
@@ -78,7 +75,7 @@ func ServiceState(envelope Object) Object {
 			detail = "the command failed"
 		}
 		return Object{{Key: "state", Value: reading.AccessError}, {Key: "running", Value: nil},
-			{Key: "detail", Value: "the service could not be asked: " + PyStr(detail)}}
+			{Key: "detail", Value: "the service could not be asked: " + reading.Text(detail)}}
 	}
 	payload, ok := record.Get(envelope, "payload").(Object)
 	if !ok {
@@ -88,7 +85,7 @@ func ServiceState(envelope Object) Object {
 	held, ok := record.Get(payload, "running").(bool)
 	if !ok {
 		return Object{{Key: "state", Value: reading.Unreadable}, {Key: "running", Value: nil},
-			{Key: "detail", Value: "the status carries no boolean 'running', found " + pyvalue.TypeName(record.Get(payload, "running"))}}
+			{Key: "detail", Value: "the status carries no boolean 'running', found " + reading.JSONKind(record.Get(payload, "running"))}}
 	}
 	state, words := Stopped, "not running"
 	if held {
@@ -108,28 +105,6 @@ func firstStated(o Object, keys ...string) any {
 	return nil
 }
 
-// PyStr is str() of a decoded JSON value.
-func PyStr(v any) string {
-	switch value := v.(type) {
-	case nil:
-		return "None"
-	case string:
-		return value
-	case bool:
-		if value {
-			return "True"
-		}
-		return "False"
-	case float64:
-		return pyjson.Float(value)
-	case int64:
-		return strconv.FormatInt(value, 10)
-	case int:
-		return strconv.Itoa(value)
-	}
-	return pyjson.Dumps(v, pyjson.Options{Unicode: true})
-}
-
 // Timeout is scope.relay's default per-command budget.
 var Timeout = 60 * time.Second
 
@@ -143,8 +118,8 @@ var WaitDelay = 5 * time.Second
 // recorded. With discovery, CODEX_SESSION_RELAY_STATE is removed and no --state passed; with a
 // state, both selectors are set together (OPS-3.3).
 //
-// A command the deadline ended is subprocess.run's TimeoutExpired: no exit status and nothing it
-// printed kept as its answer. A command that exited while a process it left behind kept its
+// A command the deadline ended has no exit status, and nothing it printed is kept as its
+// answer. A command that exited while a process it left behind kept its
 // output open past WaitDelay is not read either: what it printed may be incomplete, and Python,
 // which keeps reading until the deadline, would have waited for that process.
 func Relay(ctx context.Context, command []string, executable, socket, state string, env Env, discovery bool, timeout time.Duration) Object {
@@ -179,11 +154,11 @@ func Relay(ctx context.Context, command []string, executable, socket, state stri
 	case err != nil && ctx.Err() != nil:
 		return unreadable("the relay command was stopped before it finished: " + ctx.Err().Error())
 	case err != nil && run.Err() != nil:
-		return unreadable("TimeoutExpired: Command '" + pyvalue.Repr(commandValue) + "' timed out after " + seconds(timeout) + " seconds")
+		return unreadable("the relay command " + reading.Show(commandValue) + " did not finish within " + timeout.String())
 	case errors.Is(err, exec.ErrWaitDelay):
 		return unreadable("the relay exited, but a process it left behind kept its output open " + WaitDelay.String() + " past that, so what it printed is not read")
 	case err != nil && !errors.As(err, &exit):
-		return unreadable(store.PythonOSError(err))
+		return unreadable(err.Error())
 	}
 	code := returnCode(cmd.ProcessState)
 	var payload any
@@ -216,14 +191,6 @@ func returnCode(state *os.ProcessState) int {
 		return -int(status.Signal())
 	}
 	return state.ExitCode()
-}
-
-// seconds is str() of a timeout in seconds as Python's callers spell it: an int when whole.
-func seconds(d time.Duration) string {
-	if d%time.Second == 0 {
-		return strconv.FormatInt(int64(d/time.Second), 10)
-	}
-	return pyjson.Float(d.Seconds())
 }
 
 func nullable(s string) any {
@@ -307,10 +274,10 @@ func SiblingReading(payload Object) string {
 	o, ok := siblings.(Object)
 	if !ok {
 		// Python's sibling_reading raises on anything but an object; nothing in it was read.
-		return "not readable: siblingStores is a " + pyvalue.TypeName(siblings) + ", not an object, so the conflict inventory could not be read from it"
+		return "not readable: siblingStores is " + reading.JSONKind(siblings) + ", not an object, so the conflict inventory could not be read from it"
 	}
 	if record.Get(o, "checked") == false {
-		return "not checked: " + PyStr(record.Get(o, "reason"))
+		return "not checked: " + reading.Text(record.Get(o, "reason"))
 	}
 	return "checked"
 }

@@ -142,7 +142,7 @@ func TestAnUnreachablePointerNamesNothingEitherWay(t *testing.T) {
 	}
 	defer os.Chmod(filepath.Join(root, "locked"), 0o755)
 	got := pointer.Read(path)
-	if got.State != pointer.Unreachable || pointer.Usable(got.State) || !strings.Contains(got.Detail, "PermissionError") {
+	if got.State != pointer.Unreachable || pointer.Usable(got.State) || !strings.Contains(got.Detail, "permission denied") {
 		t.Fatalf("behind a directory without search permission: %+v", got)
 	}
 	if pointer.Names(path, filepath.Join(root, "env")) != nil {

@@ -93,8 +93,8 @@ func TestHookAndRegisterMCPNeedNoSingleValueSwitch(t *testing.T) {
 // A path holding a byte that is not UTF-8 - from HOME, CODEX_HOME, XDG_STATE_HOME or a path flag
 // - is refused as a usage error naming where it came from, never recorded with a replacement
 // character; a relative XDG_STATE_HOME is refused as well, never read against the working
-// directory, and so is a HOME pathlib spells apart from its lexical join (a "..", or exactly two
-// leading slashes). A document built from the environment (a marker root) is refused by its writer.
+// directory, and so is a HOME a lexical join and the kernel can read apart (a "..", or exactly
+// two leading slashes). A document built from the environment (a marker root) is refused by its writer.
 func TestPathsTheInstallerCannotSpellAreRefused(t *testing.T) {
 	h := newHost(t)
 	for name, tc := range map[string]struct {
@@ -107,7 +107,7 @@ func TestPathsTheInstallerCannotSpellAreRefused(t *testing.T) {
 		"XDG_STATE_HOME":            {env: h.env.With("XDG_STATE_HOME", h.home+"/s\xff"), args: []string{"status"}, want: "XDG_STATE_HOME"},
 		"a relative XDG_STATE_HOME": {env: h.env.With("XDG_STATE_HOME", "relstate"), args: []string{"status"}, want: "XDG_STATE_HOME"},
 		"HOME with ..":              {env: h.env.With("HOME", h.home+"/x/.."), args: []string{"status"}, want: "HOME"},
-		"HOME with a leading //":    {env: h.env.With("HOME", "/"+h.home), args: []string{"status"}, want: "which pathlib spells '/" + h.home + "'"},
+		"HOME with a leading //":    {env: h.env.With("HOME", "/"+h.home), args: []string{"status"}, want: `HOME is "/` + h.home + `", whose ".." or leading "//"`},
 		"--marker-root":             {env: h.env, args: []string{"hook", "--owner", "plugin", "--marker-root", h.home + "/m\xff"}, want: "--marker-root"},
 		"--bridge-arg":              {env: h.env, args: []string{"register-mcp", "--owner", "plugin", "--bridge-arg", "--state-dir=" + h.home + "/l\xff"}, want: "--bridge-arg"},
 	} {

@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/definition"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/pointer"
@@ -37,7 +36,7 @@ func Status(_ context.Context, o Options) (Object, int) {
 	entries, err := os.ReadDir(o.Dest)
 	var listing any
 	if err != nil {
-		listing = "the destination could not be listed: " + store.PythonOSError(err)
+		listing = "the destination could not be listed: " + err.Error()
 	}
 	var names []string
 	interrupted := []any{}

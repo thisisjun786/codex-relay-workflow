@@ -51,19 +51,19 @@ func Empty(definitionVersion int) Object {
 func Shape(v any) error {
 	record, ok := v.(Object)
 	if !ok {
-		return reading.Fail("TypeError", "a host record is an object, found "+pyvalue.TypeName(v))
+		return reading.Fail("TypeError", "a host record is an object, found "+reading.JSONKind(v))
 	}
 	components, has := Lookup(record, "components")
 	if has {
 		if _, ok := components.(Object); !ok {
-			return reading.Fail("TypeError", "components is an object, found "+pyvalue.TypeName(components))
+			return reading.Fail("TypeError", "components is an object, found "+reading.JSONKind(components))
 		}
 	}
 	all, _ := components.(Object)
 	for _, c := range all {
 		entry, ok := c.Value.(Object)
 		if !ok {
-			return reading.Fail("TypeError", "component "+c.Key+" is an object, found "+pyvalue.TypeName(c.Value))
+			return reading.Fail("TypeError", "component "+c.Key+" is an object, found "+reading.JSONKind(c.Value))
 		}
 		for _, key := range []string{"installs", "measuredPoints"} {
 			value, has := Lookup(entry, key)
@@ -72,28 +72,28 @@ func Shape(v any) error {
 			}
 			items, ok := value.([]any)
 			if !ok {
-				return reading.Fail("TypeError", c.Key+"."+key+" is a list, found "+pyvalue.TypeName(value))
+				return reading.Fail("TypeError", c.Key+"."+key+" is a list, found "+reading.JSONKind(value))
 			}
 			for _, item := range items {
 				if _, ok := item.(Object); !ok {
-					return reading.Fail("TypeError", "every entry in "+c.Key+"."+key+" is an object, found "+pyvalue.TypeName(item))
+					return reading.Fail("TypeError", "every entry in "+c.Key+"."+key+" is an object, found "+reading.JSONKind(item))
 				}
 			}
 		}
 	}
 	if selected := Get(record, "selected"); selected != nil {
 		if _, ok := selected.(Object); !ok {
-			return reading.Fail("TypeError", "selected is an object, found "+pyvalue.TypeName(selected))
+			return reading.Fail("TypeError", "selected is an object, found "+reading.JSONKind(selected))
 		}
 	}
 	if owned := Get(record, "pointer"); owned != nil {
 		entry, ok := owned.(Object)
 		if !ok {
-			return reading.Fail("TypeError", "pointer is an object, found "+pyvalue.TypeName(owned))
+			return reading.Fail("TypeError", "pointer is an object, found "+reading.JSONKind(owned))
 		}
 		if path, has := Lookup(entry, "path"); has {
 			if _, ok := path.(string); !ok {
-				return reading.Fail("TypeError", "pointer.path is a string, found "+pyvalue.TypeName(path))
+				return reading.Fail("TypeError", "pointer.path is a string, found "+reading.JSONKind(path))
 			}
 		}
 	}
