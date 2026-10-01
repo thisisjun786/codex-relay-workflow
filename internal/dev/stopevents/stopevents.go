@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 )
@@ -81,6 +82,6 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	reading := Read(parsed.Values["journal-root"], window, parsed.Values["codex-home"])
-	fmt.Fprintln(stdout, evidence.DumpsIndent(reading.Answer(), 2, true, true))
+	fmt.Fprintln(stdout, pyjson.Dumps(reading.Answer(), pyjson.Options{Indent: 2, SortKeys: true}))
 	return Exit[reading.Verdict()]
 }

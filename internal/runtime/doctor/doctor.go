@@ -24,6 +24,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/definition"
@@ -808,9 +809,9 @@ func Diagnose(ctx context.Context, o Options) Object {
 	}
 
 	measured := stamp(now())
-	installed := field("not_verified", "component classes: "+evidence.Dumps(classOf(components), false, false, true)+". Only 'own' is reusable (OPS-2.2).", "crw doctor", measured)
+	installed := field("not_verified", "component classes: "+pyjson.Dumps(classOf(components), pyjson.Options{})+". Only 'own' is reusable (OPS-2.2).", "crw doctor", measured)
 	if len(classes) > 0 && allOwn(classes) {
-		installed = field("verified", "component classes: "+evidence.Dumps(classOf(components), false, false, true)+". Only 'own' is reusable (OPS-2.2).", "crw doctor", measured)
+		installed = field("verified", "component classes: "+pyjson.Dumps(classOf(components), pyjson.Options{})+". Only 'own' is reusable (OPS-2.2).", "crw doctor", measured)
 	}
 	connect := record.Get(summary, "socketConnect")
 	connectedValue := "unknown"
@@ -825,7 +826,7 @@ func Diagnose(ctx context.Context, o Options) Object {
 		"installed":  installed,
 		"mcpExposed": field("not_verified", "the doctor's own session with the bridge is not Codex's: only a Codex session can show which tools it exposes, and a configuration entry alone never establishes this field.", nil, measured),
 		"connected": field(connectedValue, "doctor actorReachability.socketConnect = "+pyRepr(connect)+". A socket file existing on disk does not establish this.",
-			evidence.Dumps(record.Get(summary, "scopeCommand"), false, false, true), connectedAt),
+			pyjson.Dumps(record.Get(summary, "scopeCommand"), pyjson.Options{}), connectedAt),
 		"deliveryAccepted":     field("not_applicable", "no trial was requested. This field requires an attempt that recorded a returned turn id, which means creating work, and this command creates none.", nil, ""),
 		"verificationComplete": field("not_applicable", "OPS-6.4 is a property of a verdict at a head, not of an installation. This command observes no verdict and never infers one from a completed turn or a green check.", nil, ""),
 		"alwaysActive":         field("not_verified", "no supervised runtime was enabled and no host restart was observed. Installation is not activation; this command enables no daemon.", nil, ""),

@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/pyload"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
@@ -329,7 +330,7 @@ func TestFromISOFormatIsCPythons(t *testing.T) {
 		} else {
 			got = []any{"OK", at.UTC().Format("2006-01-02T15:04:05.000000"), aware}
 		}
-		answers.WriteString(evidence.StrRepr(input) + " " + evidence.Dumps(got, false, false, true) + "\n")
+		answers.WriteString(evidence.StrRepr(input) + " " + pyjson.Dumps(got, pyjson.Options{}) + "\n")
 	}
 	golden.Check(t, "answers", []byte(answers.String()))
 }

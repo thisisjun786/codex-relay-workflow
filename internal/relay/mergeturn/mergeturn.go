@@ -307,10 +307,8 @@ func recognizedGrant(entry store.MergeTurnLedgerRow, turn string, tenure int64) 
 	if entry.EvidenceKind != "grant" {
 		return nil
 	}
-	decoder := json.NewDecoder(strings.NewReader(entry.Evidence))
-	decoder.UseNumber()
-	var g map[string]any
-	if decoder.Decode(&g) != nil || g == nil || decoder.More() {
+	g := envelope(entry.Evidence)
+	if g == nil {
 		return nil
 	}
 	number, ok := g["sequence"].(json.Number)
@@ -720,10 +718,8 @@ func restatementEnvelope(entry store.MergeTurnLedgerRow, turn string) map[string
 	if entry.EvidenceKind != "landing_base_restated" || entry.Kind != "transition" || entry.FromState.String != "landed" || entry.ToState.String != "landed" {
 		return nil
 	}
-	decoder := json.NewDecoder(strings.NewReader(entry.Evidence))
-	decoder.UseNumber()
-	var envelope map[string]any
-	if decoder.Decode(&envelope) != nil || envelope == nil || decoder.More() || envelope["turnId"] != turn {
+	envelope := envelope(entry.Evidence)
+	if envelope == nil || envelope["turnId"] != turn {
 		return nil
 	}
 	sequence, ok := envelope["sequence"].(json.Number)

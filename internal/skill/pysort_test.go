@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 // TestPySortedMatchesLivePython sorts JSON lists with pySorted and holds the sorted lists, as
@@ -32,7 +32,7 @@ func TestPySortedMatchesLivePython(t *testing.T) {
 			got = err.Error()
 			errors++
 		} else {
-			got = evidence.Dumps(sorted, false, false, true)
+			got = pyjson.Dumps(sorted, pyjson.Options{})
 		}
 		sortedLines.WriteString(got + "\n")
 	}

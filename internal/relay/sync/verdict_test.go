@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/reception"
@@ -148,7 +149,7 @@ func verdictReplay(t *testing.T, names ...string) {
 			for _, row := range rows {
 				records = append(records, rowObject(row))
 			}
-			if evidence.Dumps(records, false, false, true) != evidence.Dumps(table.Value, false, false, true) {
+			if pyjson.Dumps(records, pyjson.Options{}) != pyjson.Dumps(table.Value, pyjson.Options{}) {
 				actualChanged = append(actualChanged, struct {
 					Key   string
 					Value any
@@ -156,8 +157,8 @@ func verdictReplay(t *testing.T, names ...string) {
 			}
 		}
 		key := fmt.Sprintf("%03d %s", index, text(reception.Get(call, "method")))
-		golden.Check(t, key+" answer", []byte(evidence.Dumps(actual, false, false, true)), golden.Substitute(pyDir, "<pytmp>"))
-		golden.Check(t, key+" written tables", []byte(evidence.Dumps(actualChanged, false, false, true)), golden.Substitute(pyDir, "<pytmp>"))
+		golden.Check(t, key+" answer", []byte(pyjson.Dumps(actual, pyjson.Options{})), golden.Substitute(pyDir, "<pytmp>"))
+		golden.Check(t, key+" written tables", []byte(pyjson.Dumps(actualChanged, pyjson.Options{})), golden.Substitute(pyDir, "<pytmp>"))
 		if e = s.Close(); e != nil {
 			t.Fatal(e)
 		}

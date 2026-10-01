@@ -10,8 +10,8 @@ import (
 	"strconv"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -293,7 +293,7 @@ func (d *Daemon) settle(ctx context.Context, r delivery.Relationship, turn store
 				}
 			}
 			if len(rows) > 0 {
-				detail := evidence.Dumps(contract.OrderedObject{{Key: "finalized", Value: finalized}, {Key: "suppressed", Value: suppressed}, {Key: "status", Value: turn.Status}}, false, false, true)
+				detail := pyjson.Dumps(contract.OrderedObject{{Key: "finalized", Value: finalized}, {Key: "suppressed", Value: suppressed}, {Key: "status", Value: turn.Status}}, pyjson.Options{})
 				if _, err = conn.ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES (?,'staged_resolved',?,?)", now, turn.TurnID, detail); err != nil {
 					return err
 				}

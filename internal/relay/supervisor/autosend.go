@@ -9,8 +9,8 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -130,7 +130,7 @@ func (c *Channel) deferAutoFault(ctx context.Context, id string, now float64, fa
 		if err != nil || n == 0 {
 			return err
 		}
-		detail := evidence.Dumps(contract.OrderedObject{{Key: "error", Value: label}, {Key: "retryAt", Value: when}}, false, false, true)
+		detail := pyjson.Dumps(contract.OrderedObject{{Key: "error", Value: label}, {Key: "retryAt", Value: when}}, pyjson.Options{})
 		_, err = c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_attempt_faulted',?,?)", at, id, detail)
 		return err
 	})

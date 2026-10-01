@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/faults"
@@ -100,7 +101,7 @@ func (c *Channel) refreshNotice(ctx context.Context, row store.SupervisorMessage
 	if err != nil {
 		return false, err
 	}
-	encoded := evidence.Dumps(packet, false, false, true)
+	encoded := pyjson.Dumps(packet, pyjson.Options{})
 	result, err := c.Store.Q(ctx).ExecContext(ctx, "UPDATE supervisor_messages SET packet=?,updated_at=? WHERE message_id=? AND state IN ('queued','deferred_busy','withheld_pre_send','sending') AND NOT EXISTS(SELECT 1 FROM supervisor_attempts WHERE message_id=? AND attempt_no<>? AND (send_attempted<>'no' OR retry_safe=0))", encoded, at, row.MessageID, row.MessageID, currentAttempt)
 	if err != nil {
 		return false, err
@@ -116,7 +117,7 @@ func (c *Channel) refreshNotice(ctx context.Context, row store.SupervisorMessage
 	if row.State == "sending" {
 		instant = "transport_start"
 	}
-	detail := evidence.Dumps(contract.OrderedObject{{Key: "fromEvent", Value: nil}, {Key: "toEvent", Value: nil}, {Key: "fromSubmission", Value: nil}, {Key: "toSubmission", Value: nil}, {Key: "at", Value: instant}, {Key: "reason", Value: "what notification " + store.PyRepr(row.ObligationID) + " says about its fault moved after it was staged"}}, false, false, true)
+	detail := pyjson.Dumps(contract.OrderedObject{{Key: "fromEvent", Value: nil}, {Key: "toEvent", Value: nil}, {Key: "fromSubmission", Value: nil}, {Key: "toSubmission", Value: nil}, {Key: "at", Value: instant}, {Key: "reason", Value: "what notification " + store.PyRepr(row.ObligationID) + " says about its fault moved after it was staged"}}, pyjson.Options{})
 	_, err = c.Store.Q(ctx).ExecContext(ctx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_restated',?,?)", at, row.MessageID, detail)
 	return true, err
 }

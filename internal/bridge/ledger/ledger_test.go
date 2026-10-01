@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 func TestFingerprint_whenPythonGenerated(t *testing.T) {
@@ -20,8 +22,9 @@ func TestFingerprint_whenPythonGenerated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// DecodeJSON, not encoding/json: the lone-surrogate goldens must survive the boundary.
-	decoded, err := DecodeJSON(raw)
+	// A reading that keeps a lone surrogate escape, not encoding/json's: the lone-surrogate
+	// goldens must survive the boundary.
+	decoded, err := pyjson.Loads(string(raw), pyjson.LoadOptions{Map: true, Numbers: pyjson.SpelledNumbers, Surrogates: true})
 	if err != nil {
 		t.Fatal(err)
 	}

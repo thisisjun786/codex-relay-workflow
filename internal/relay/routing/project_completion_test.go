@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
@@ -66,7 +66,7 @@ func projectCompletionReplay(t *testing.T, id string) {
 			}
 			return contract.OrderedObject{{Key: "state", Value: record.Args["fixed"]}}, nil
 		})
-		got := evidence.Dumps(answer, false, false, true)
+		got := pyjson.Dumps(answer, pyjson.Options{})
 		golden.Check(t, fmt.Sprintf("%02d wire", i), []byte(got), goldenPaths()...)
 	}
 }

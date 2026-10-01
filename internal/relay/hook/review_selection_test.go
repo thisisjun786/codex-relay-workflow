@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
@@ -93,14 +93,14 @@ func Test33ReviewD6(t *testing.T) {
 			}
 			// review_selection.py compare: the owner's refusal is the golden, which began as the
 			// Python CLI's, and the refusal recorded no observation.
-			golden.Check(t, "refusal", names.spell([]byte(evidence.DumpsIndent(got, 2, true, true)+"\n")), golden.Substitute(home, "<ROOT>"), golden.Substitute(testRoot, "<REPO>"))
+			golden.Check(t, "refusal", names.spell([]byte(pyjson.Dumps(got, pyjson.Options{Indent: 2, SortKeys: true})+"\n")), golden.Substitute(home, "<ROOT>"), golden.Substitute(testRoot, "<REPO>"))
 			if held, _ := filepath.Glob(filepath.Join(home, "markers", "*", "*", "hook", "*", "*", "*.json")); len(held) != 0 {
 				t.Fatalf("the refusal recorded an observation: %v", held)
 			}
 			// The in-process path uses this exact shared evaluator, not just the RPC mapping.
 			options.DefaultDBPath = ownerFallback(f.State, f.Socket, f.Program)
 			inprocess, err := evaluateOwner(ctx, stop, options)
-			if err != nil || evidence.Dumps(inprocess, true, false, true) != evidence.Dumps(got, true, false, true) {
+			if err != nil || pyjson.Dumps(inprocess, pyjson.Options{Compact: true}) != pyjson.Dumps(got, pyjson.Options{Compact: true}) {
 				t.Fatal(inprocess, err, got)
 			}
 			if name == "wrong_socket" {
@@ -260,7 +260,7 @@ func Test33ReviewD11(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	actual := evidence.Dumps(v, true, false, true) + "\n"
+	actual := pyjson.Dumps(v, pyjson.Options{Compact: true}) + "\n"
 	// The envelope and the observation and hold bytes are the golden, which began as Python's
 	// guard's with the same injected datetime over the same marker and store
 	// (review_selection.py clock).

@@ -10,16 +10,19 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // pythonJSON is json.dumps(value) with Python's default separators and ensure_ascii.
-func pythonJSON(v any) string { return evidence.Dumps(v, false, false, true) }
+func pythonJSON(v any) string { return pyjson.Dumps(v, pyjson.Options{}) }
 
 // canonicalJSON is json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).
-func canonicalJSON(v any) string { return evidence.Dumps(v, true, true, false) }
+func canonicalJSON(v any) string {
+	return pyjson.Dumps(v, pyjson.Options{Compact: true, SortKeys: true, Unicode: true})
+}
 
 func sha256Hex(text string) string {
 	sum := sha256.Sum256([]byte(text))

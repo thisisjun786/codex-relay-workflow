@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"io"
 	"strconv"
@@ -107,7 +108,7 @@ func (c *Channel) deferMessage(ctx context.Context, row store.SupervisorMessages
 }
 
 func (c *Channel) cancelTransport(ctx context.Context, id, requestID string, attemptNo int64, at string, next float64, reason, owner string) error {
-	record := evidence.Dumps(map[string]any{"requestId": requestID, "messageId": id, "attemptNo": attemptNo, "deliveryState": "withheld_pre_send", "sendAttempted": "no", "retrySafe": true, "reason": reason}, false, true, true)
+	record := pyjson.Dumps(map[string]any{"requestId": requestID, "messageId": id, "attemptNo": attemptNo, "deliveryState": "withheld_pre_send", "sendAttempted": "no", "retrySafe": true, "reason": reason}, pyjson.Options{SortKeys: true})
 	if err := c.Store.SettleSupervisorAttempt(ctx, requestID, "withheld_pre_send", "no", 1, sql.NullString{}, record, at); err != nil {
 		return err
 	}
@@ -134,7 +135,7 @@ func (c *Channel) holdUnaddressed(ctx context.Context, row store.SupervisorMessa
 			return err
 		}
 		if count == 1 {
-			detail := evidence.Dumps(contract.OrderedObject{{Key: "refusal", Value: refusal.Reason}, {Key: "detail", Value: refusal.Detail}}, false, false, true)
+			detail := pyjson.Dumps(contract.OrderedObject{{Key: "refusal", Value: refusal.Reason}, {Key: "detail", Value: refusal.Detail}}, pyjson.Options{})
 			_, err = c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_unaddressed',?,?)", at, row.MessageID, detail)
 		}
 		return err
@@ -233,7 +234,7 @@ func (c *Channel) claim(ctx context.Context, id string, r Resolution, now float6
 		} else if refusal != "" {
 			return Refusal{"paced", refusal}
 		}
-		_, err = c.Store.Q(tx).ExecContext(tx, "INSERT INTO supervisor_attempts(request_id,message_id,attempt_no,message,state,send_attempted,retry_safe,record,sent_at,observed_at,delivery_token) VALUES(?,?,?,?,'held_uncertain','unknown',0,?,?,?,?)", requestID, id, attemptNo, message, evidence.Dumps(map[string]any{"requestId": requestID, "messageId": id, "attemptNo": attemptNo, "deliveryState": "held_uncertain"}, false, true, true), at, at, token)
+		_, err = c.Store.Q(tx).ExecContext(tx, "INSERT INTO supervisor_attempts(request_id,message_id,attempt_no,message,state,send_attempted,retry_safe,record,sent_at,observed_at,delivery_token) VALUES(?,?,?,?,'held_uncertain','unknown',0,?,?,?,?)", requestID, id, attemptNo, message, pyjson.Dumps(map[string]any{"requestId": requestID, "messageId": id, "attemptNo": attemptNo, "deliveryState": "held_uncertain"}, pyjson.Options{SortKeys: true}), at, at, token)
 		return err
 	})
 	if err != nil {
@@ -258,7 +259,7 @@ func (c *Channel) holdObsoleteClaim(ctx context.Context, row store.SupervisorMes
 		if err := c.deferMessage(tx, row, row.State, "superseded_by_report", at, next); err != nil {
 			return err
 		}
-		_, err = c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_superseded',?,?)", at, row.MessageID, evidence.Dumps(map[string]any{"detail": detail}, false, true, true))
+		_, err = c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_superseded',?,?)", at, row.MessageID, pyjson.Dumps(map[string]any{"detail": detail}, pyjson.Options{SortKeys: true}))
 		return err
 	})
 }
@@ -345,7 +346,7 @@ func (c *Channel) attempt(ctx context.Context, id string, adapter SendAdapter, n
 		if err := c.deferMessage(ctx, row, "withheld_pre_send", "", delivery.ISOOf(now), now+60); err != nil {
 			return nil, err
 		}
-		detail := evidence.Dumps(contract.OrderedObject{{Key: "deliverable", Value: lifecycle.Deliverable}, {Key: "reason", Value: lifecycle.WithholdReason}}, false, false, true)
+		detail := pyjson.Dumps(contract.OrderedObject{{Key: "deliverable", Value: lifecycle.Deliverable}, {Key: "reason", Value: lifecycle.WithholdReason}}, pyjson.Options{})
 		_, err := c.Store.Q(ctx).ExecContext(ctx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_withheld',?,?)", at, id, string(detail))
 		return nil, err
 	}
@@ -364,7 +365,7 @@ func (c *Channel) attempt(ctx context.Context, id string, adapter SendAdapter, n
 			if reason == "role_policy_unconfigured" {
 				detailText = store.PyRepr(r.Recipient) + " is bound as 'supervisor' and this process cannot read a role policy to check its authorization against: CODEX_THREAD_BRIDGE_EXECUTION_POLICY is not set in this process, so no role policy can be read. Nothing was sent and no turn was started. Set the policy for this process and the held deliveries resume on the next pass."
 			}
-			detail := evidence.Dumps(contract.OrderedObject{{Key: "reason", Value: reason}, {Key: "detail", Value: detailText}}, false, false, true)
+			detail := pyjson.Dumps(contract.OrderedObject{{Key: "reason", Value: reason}, {Key: "detail", Value: detailText}}, pyjson.Options{})
 			_, e := c.Store.Q(ctx).ExecContext(ctx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_withheld',?,?)", at, id, detail)
 			return nil, e
 		}
@@ -411,14 +412,14 @@ func (c *Channel) attempt(ctx context.Context, id string, adapter SendAdapter, n
 			}
 			transportRefusal = Refusal{refusal.Reason, "the hierarchy this message names moved after its send was claimed and before its transport started: " + refusal.Detail + ". Nothing was sent, and the attempt is recorded as sending nothing, so staging it again re-addresses it to whoever the linkage names then"}
 			reason := "the hierarchy moved between the claim and the transport"
-			record := evidence.Dumps(map[string]any{"requestId": requestID, "messageId": id, "attemptNo": attemptNo, "deliveryState": "withheld_pre_send", "sendAttempted": "no", "retrySafe": true, "reason": reason, "refusal": refusal.Reason, "detail": refusal.Detail}, false, true, true)
+			record := pyjson.Dumps(map[string]any{"requestId": requestID, "messageId": id, "attemptNo": attemptNo, "deliveryState": "withheld_pre_send", "sendAttempted": "no", "retrySafe": true, "reason": reason, "refusal": refusal.Reason, "detail": refusal.Detail}, pyjson.Options{SortKeys: true})
 			if err := c.Store.SettleSupervisorAttempt(tx, requestID, "withheld_pre_send", "no", 1, sql.NullString{}, record, at); err != nil {
 				return err
 			}
 			if _, err := c.Store.SettleSupervisorMessage(tx, id, "queued", sql.NullFloat64{}, sql.NullString{}, at, "sending", attemptNo, sql.NullString{String: owner, Valid: true}); err != nil {
 				return err
 			}
-			_, err := c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_withheld',?,?)", at, id, evidence.Dumps(contract.OrderedObject{{Key: "requestId", Value: requestID}, {Key: "reason", Value: reason}, {Key: "refusal", Value: refusal.Reason}}, false, false, true))
+			_, err := c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_withheld',?,?)", at, id, pyjson.Dumps(contract.OrderedObject{{Key: "requestId", Value: requestID}, {Key: "reason", Value: reason}, {Key: "refusal", Value: refusal.Reason}}, pyjson.Options{}))
 			return err
 		}
 		if changed, err := c.refreshProposal(tx, current, r, at, attemptNo); err != nil {
@@ -435,14 +436,14 @@ func (c *Channel) attempt(ctx context.Context, id string, adapter SendAdapter, n
 				return getErr
 			}
 			detail := "message " + store.PyRepr(id) + " was staged from event " + nullableStringRepr(current.EventID) + " submission " + nullableIntRepr(current.SubmissionNo) + " and what is owed now is event " + nullableStringRepr(latest.EventID) + " submission " + nullableIntRepr(latest.SubmissionNo)
-			record := evidence.Dumps(map[string]any{"requestId": requestID, "messageId": id, "attemptNo": attemptNo, "deliveryState": "withheld_pre_send", "sendAttempted": "no", "retrySafe": true, "reason": "what is owed moved between the claim and the transport", "proposal": "restated", "detail": detail}, false, true, true)
+			record := pyjson.Dumps(map[string]any{"requestId": requestID, "messageId": id, "attemptNo": attemptNo, "deliveryState": "withheld_pre_send", "sendAttempted": "no", "retrySafe": true, "reason": "what is owed moved between the claim and the transport", "proposal": "restated", "detail": detail}, pyjson.Options{SortKeys: true})
 			if err := c.Store.SettleSupervisorAttempt(tx, requestID, "withheld_pre_send", "no", 1, sql.NullString{}, record, at); err != nil {
 				return err
 			}
 			if _, err := c.Store.SettleSupervisorMessage(tx, id, "queued", sql.NullFloat64{}, sql.NullString{}, at, "sending", attemptNo, sql.NullString{String: owner, Valid: true}); err != nil {
 				return err
 			}
-			_, err := c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_withheld',?,?)", at, id, evidence.Dumps(contract.OrderedObject{{Key: "requestId", Value: requestID}, {Key: "proposal", Value: "restated"}, {Key: "detail", Value: detail}, {Key: "reason", Value: "restated at the transport start; nothing was sent"}}, false, false, true))
+			_, err := c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_withheld',?,?)", at, id, pyjson.Dumps(contract.OrderedObject{{Key: "requestId", Value: requestID}, {Key: "proposal", Value: "restated"}, {Key: "detail", Value: detail}, {Key: "reason", Value: "restated at the transport start; nothing was sent"}}, pyjson.Options{}))
 			return err
 		}
 		if c.Settings == nil {
@@ -459,7 +460,7 @@ func (c *Channel) attempt(ctx context.Context, id string, adapter SendAdapter, n
 				if err := c.cancelTransport(tx, id, requestID, attemptNo, at, 0, reason, owner); err != nil {
 					return err
 				}
-				_, err := c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_withheld',?,?)", at, id, evidence.Dumps(contract.OrderedObject{{Key: "requestId", Value: requestID}, {Key: "reason", Value: reason}}, false, false, true))
+				_, err := c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_withheld',?,?)", at, id, pyjson.Dumps(contract.OrderedObject{{Key: "requestId", Value: requestID}, {Key: "reason", Value: reason}}, pyjson.Options{}))
 				return err
 			}
 		}
@@ -474,14 +475,14 @@ func (c *Channel) attempt(ctx context.Context, id string, adapter SendAdapter, n
 		} else if refused != "" {
 			transportRefusal = Refusal{"paced", refused}
 			reason := "the recipient's send budget refused this send at its transport start"
-			record := evidence.Dumps(map[string]any{"requestId": requestID, "messageId": id, "attemptNo": attemptNo, "deliveryState": "withheld_pre_send", "sendAttempted": "no", "retrySafe": true, "reason": reason, "refusal": refused}, false, true, true)
+			record := pyjson.Dumps(map[string]any{"requestId": requestID, "messageId": id, "attemptNo": attemptNo, "deliveryState": "withheld_pre_send", "sendAttempted": "no", "retrySafe": true, "reason": reason, "refusal": refused}, pyjson.Options{SortKeys: true})
 			if err := c.Store.SettleSupervisorAttempt(tx, requestID, "withheld_pre_send", "no", 1, sql.NullString{}, record, at); err != nil {
 				return err
 			}
 			if _, err := c.Store.SettleSupervisorMessage(tx, id, "queued", sql.NullFloat64{Float64: now + 5, Valid: true}, sql.NullString{}, at, "sending", attemptNo, sql.NullString{String: owner, Valid: true}); err != nil {
 				return err
 			}
-			_, err := c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_paced',?,?)", at, id, evidence.Dumps(contract.OrderedObject{{Key: "requestId", Value: requestID}, {Key: "refusal", Value: refused}}, false, false, true))
+			_, err := c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_paced',?,?)", at, id, pyjson.Dumps(contract.OrderedObject{{Key: "requestId", Value: requestID}, {Key: "refusal", Value: refused}}, pyjson.Options{}))
 			return err
 		}
 		transportAt := delivery.ISOOf(now)
@@ -532,7 +533,7 @@ func (c *Channel) attempt(ctx context.Context, id string, adapter SendAdapter, n
 		result["transportDeliveryState"] = transportDeliveryState
 		result["reason"] = "the recipient's thread reported an approval policy this transport cannot serve; nothing was started or stored for it, and the message is attempted again after its backoff"
 	}
-	encoded := evidence.Dumps(result, false, true, false)
+	encoded := pyjson.Dumps(result, pyjson.Options{SortKeys: true, Unicode: true})
 	err = c.Store.Transaction(ctx, func(tx context.Context, _ *sql.Conn) error {
 		if err := c.Store.SettleSupervisorAttempt(tx, requestID, facts.DeliveryState, facts.SendAttempted, int64(boolInt(facts.RetrySafe)), nullable(facts.TurnID), encoded, settledAt); err != nil {
 			return err
@@ -563,7 +564,7 @@ func (c *Channel) attempt(ctx context.Context, id string, adapter SendAdapter, n
 		if !moved {
 			reason = "this claim no longer held the message when its receipt arrived, so the receipt is recorded on its attempt and the message is left where it is"
 		}
-		detail := evidence.Dumps(contract.OrderedObject{{Key: "requestId", Value: requestID}, {Key: "attemptNo", Value: attemptNo}, {Key: "deliveryState", Value: state}, {Key: "sendAttempted", Value: facts.SendAttempted}, {Key: "turnId", Value: facts.TurnID}, {Key: "holdReason", Value: optionalText(hold)}, {Key: "messageMoved", Value: moved}, {Key: "messageState", Value: standing.State}, {Key: "reason", Value: reason}}, false, false, true)
+		detail := pyjson.Dumps(contract.OrderedObject{{Key: "requestId", Value: requestID}, {Key: "attemptNo", Value: attemptNo}, {Key: "deliveryState", Value: state}, {Key: "sendAttempted", Value: facts.SendAttempted}, {Key: "turnId", Value: facts.TurnID}, {Key: "holdReason", Value: optionalText(hold)}, {Key: "messageMoved", Value: moved}, {Key: "messageState", Value: standing.State}, {Key: "reason", Value: reason}}, pyjson.Options{})
 		_, err = c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_attempted',?,?)", settledAt, id, string(detail))
 		return err
 	})

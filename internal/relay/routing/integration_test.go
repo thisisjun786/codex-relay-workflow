@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/faults"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -43,7 +44,7 @@ func tablesJSON(ctx context.Context, s *store.Store) (string, error) {
 		}
 		tables[key] = values
 	}
-	return evidence.Dumps(tables, false, true, false), nil
+	return pyjson.Dumps(tables, pyjson.Options{SortKeys: true, Unicode: true}), nil
 }
 
 // retiredLedgerScenarios are the recorded PRD-13 scenarios that ran with the ledger contract
@@ -160,10 +161,10 @@ func integrationReplay(t *testing.T, property string) {
 					answer = Object{"error": "RuntimeError", "detail": detail}
 				}
 			}
-			reply = evidence.Dumps(answer, false, true, false)
+			reply = pyjson.Dumps(answer, pyjson.Options{SortKeys: true, Unicode: true})
 			commands := map[string]string{"router.register_product": "product-register", "router.bind": "product-bind", "router.set_policy": "route-policy", "router.show_products": "product-show", "router.intake": "route-intake", "router.classify": "route-classify", "router.reconcile": "route-reconcile", "router.evaluate_projects": "route-projects", "router.check_completion": "completion-check", "router.digest": "route-digest", "router.show": "route-show"}
 			if command := commands[record.Operation]; record.Wire && command != "" {
-				wire = evidence.Dumps(CommandRecord(command, answer), false, false, true)
+				wire = pyjson.Dumps(CommandRecord(command, answer), pyjson.Options{})
 			}
 			if record.Tables {
 				tables, err = tablesJSON(ctx, s)
@@ -178,7 +179,7 @@ func integrationReplay(t *testing.T, property string) {
 		opts := goldenPaths()
 		golden.Check(t, name+" reply", []byte(reply), opts...)
 		if record.TransactionReads {
-			golden.Check(t, name+" transaction reads", []byte(evidence.Dumps(reads, false, true, false)), opts...)
+			golden.Check(t, name+" transaction reads", []byte(pyjson.Dumps(reads, pyjson.Options{SortKeys: true, Unicode: true})), opts...)
 		}
 		if wire != "" {
 			golden.Check(t, name+" wire", []byte(wire), opts...)

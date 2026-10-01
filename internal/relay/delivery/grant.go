@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -81,7 +82,7 @@ func requiredForNotice(record Obj, reading evidence.RequiredReading) (string, st
 	for _, name := range reading.Required {
 		flags.WriteString(" --required=" + shellQuote(name))
 	}
-	return "requiredDeclared: " + evidence.Dumps(reading.Required, false, false, false) + " (" + source + ")", flags.String(),
+	return "requiredDeclared: " + pyjson.Dumps(reading.Required, pyjson.Options{Unicode: true}) + " (" + source + ")", flags.String(),
 		[]string{
 			"--required restates what the candidate's merge-evidence reading found the branch",
 			"rules require. The names are yours to declare; read them again with merge-evidence",

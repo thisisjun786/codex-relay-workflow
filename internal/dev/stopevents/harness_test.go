@@ -19,7 +19,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
@@ -384,4 +384,4 @@ func jsonMarshal(v any) []byte {
 }
 
 // evidenceDumps is a record's content in the writer's separators without its key order.
-func evidenceDumps(o hook.Object) string { return evidence.Dumps(o, false, false, true) }
+func evidenceDumps(o hook.Object) string { return pyjson.Dumps(o, pyjson.Options{}) }

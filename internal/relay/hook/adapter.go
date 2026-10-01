@@ -33,7 +33,7 @@ func VerdictOutput(verdict Object) (string, bool) {
 	if decision != "block" || get(answer, "decision") != "block" || get(answer, "continue") != true || !ok || strings.TrimSpace(reason) == "" {
 		return "", false
 	}
-	return evidence.Dumps(Object{{Key: "decision", Value: "block"}, {Key: "reason", Value: reason}, {Key: "continue", Value: true}}, false, false, true), true
+	return pyjson.Dumps(Object{{Key: "decision", Value: "block"}, {Key: "reason", Value: reason}, {Key: "continue", Value: true}}, pyjson.Options{}), true
 }
 
 type taskResult[T any] struct {
@@ -589,7 +589,7 @@ func HandleControl(ctx context.Context, conn net.Conn, ownerState string) (err e
 		// handler failure.
 		return answerHost(conn, err.Error())
 	}
-	_, err = io.WriteString(conn, evidence.Dumps(v, true, false, true)+"\n")
+	_, err = io.WriteString(conn, pyjson.Dumps(v, pyjson.Options{Compact: true})+"\n")
 	return err
 }
 

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/reception"
 	"golang.org/x/sys/unix"
@@ -80,7 +81,7 @@ func Test23_LedgerLockWaitsForItsHolderAndKeepsTheSidecar(t *testing.T) {
 	}
 	entry := reception.Get(reception.Get(read, "answered"), "msg")
 	if reception.Get(entry, "contentDigest") != "digest" || reception.Get(entry, "toldToAct") != true || reception.Get(entry, "applied") != false {
-		t.Fatal(evidence.Dumps(read, false, false, true))
+		t.Fatal(pyjson.Dumps(read, pyjson.Options{}))
 	}
 	after, e := os.Stat(path + ".lock")
 	if e != nil {

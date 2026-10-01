@@ -1,12 +1,11 @@
 package managed
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"flag"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -69,47 +68,11 @@ func runShow(ctx context.Context, services cli.Services, args cli.Args) (any, er
 	return contract.OrderedObject{{Key: "request", Value: request}, {Key: "lastObservation", Value: observation}, {Key: "readable", Value: read.Readable}, {Key: "detail", Value: nullableDetail(read.Detail)}}, nil
 }
 
-// decodeOrderedJSON retains the journal's Python insertion order in nested observations.
+// decodeOrderedJSON retains the journal's Python insertion order in nested observations: every
+// number a json.Number as spelled, a repeated key kept as a field of its own, and whatever
+// follows the value left unread.
 func decodeOrderedJSON(data []byte) (any, error) {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	return readOrdered(decoder)
-}
-func readOrdered(decoder *json.Decoder) (any, error) {
-	token, err := decoder.Token()
-	if err != nil {
-		return nil, err
-	}
-	switch token {
-	case json.Delim('{'):
-		result := contract.OrderedObject{}
-		for decoder.More() {
-			key, err := decoder.Token()
-			if err != nil {
-				return nil, err
-			}
-			value, err := readOrdered(decoder)
-			if err != nil {
-				return nil, err
-			}
-			result = append(result, contract.Field{Key: key.(string), Value: value})
-		}
-		_, err = decoder.Token()
-		return result, err
-	case json.Delim('['):
-		result := []any{}
-		for decoder.More() {
-			value, err := readOrdered(decoder)
-			if err != nil {
-				return nil, err
-			}
-			result = append(result, value)
-		}
-		_, err = decoder.Token()
-		return result, err
-	default:
-		return token, nil
-	}
+	return pyjson.Loads(string(data), pyjson.LoadOptions{Numbers: pyjson.SpelledNumbers, Repeats: true, Trailing: pyjson.TrailingAnything})
 }
 func nullableDetail(s string) any {
 	if s == "" {

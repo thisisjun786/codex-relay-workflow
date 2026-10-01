@@ -11,8 +11,8 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/daemon"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"golang.org/x/sys/unix"
 )
 
@@ -64,7 +64,7 @@ func (s *Service) Own(allow, requireIntent bool, lockFD, scopeFD *int) (*Owned, 
 		}
 		if !truth(get(claim, "ok")) {
 			_ = l.Close()
-			return nil, &Refused{text(get(claim, "reason")), evidence.Dumps(get(claim, "held_by"), false, false, true)}
+			return nil, &Refused{text(get(claim, "reason")), pyjson.Dumps(get(claim, "held_by"), pyjson.Options{})}
 		}
 	} else if s.Prepare != nil {
 		if err = s.Prepare(); err != nil {
@@ -162,7 +162,7 @@ func (s *Service) PublishWorkerPolicy(policy Object) error {
 	// The worker's python_compatibility_build is null for the reason NewRecord gives.
 	payload := obj("schemaVersion", 1, "policy", policy, "observedAt", stamp(), "worker", obj("pid", pid, "startTicks", StartTicks(pid), "bootId", BootID(), "python_compatibility_build", nil), "service", run)
 	// json.dump's default separators, unlike the indented supervisor record.
-	raw := evidence.Dumps(payload, false, false, true)
+	raw := pyjson.Dumps(payload, pyjson.Options{})
 	f, err := temporaryRecord(s.path("worker-policy.json"))
 	if err != nil {
 		return err

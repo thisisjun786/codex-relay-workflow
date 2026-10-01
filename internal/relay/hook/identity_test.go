@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
@@ -30,7 +31,7 @@ func Test33EventKeyGolden(t *testing.T) {
 		if !ok || len(values) != 4 {
 			t.Fatalf("case %d: %v", i, c)
 		}
-		keys = append(keys, Object{{Key: "bytes", Value: evidence.Dumps(append([]any{EventKeyTag}, values...), true, false, true)}, {Key: "digest", Value: EventKey(values[0], values[1], values[2], values[3])}})
+		keys = append(keys, Object{{Key: "bytes", Value: pyjson.Dumps(append([]any{EventKeyTag}, values...), pyjson.Options{Compact: true})}, {Key: "digest", Value: EventKey(values[0], values[1], values[2], values[3])}})
 	}
 	goldenDumps(t, "event keys", keys, false)
 }

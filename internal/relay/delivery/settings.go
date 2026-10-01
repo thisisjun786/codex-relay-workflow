@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -216,7 +217,7 @@ func pyReprValue(v any) string {
 	case int64:
 		return fmt.Sprint(t)
 	case float64:
-		return pyFloat(t)
+		return pyjson.Dumps(t, pyjson.Options{}) // NaN and the infinities spelled as JSON spells them
 	case []any:
 		parts := make([]string, len(t))
 		for i, x := range t {

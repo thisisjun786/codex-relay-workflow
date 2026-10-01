@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/definition"
@@ -200,7 +200,7 @@ func retiredIn(document Object) []string {
 // readsBackAs reports whether the document at path now reads as wanted.
 func readsBackAs(path string, wanted Object) bool {
 	back := reading.ReadJSON(path, "the completion hook configuration", nil, nil)
-	return back.OK() && evidence.Dumps(back.Value, true, true, false) == evidence.Dumps(wanted, true, true, false)
+	return back.OK() && pyjson.Dumps(back.Value, pyjson.Options{Compact: true, SortKeys: true, Unicode: true}) == pyjson.Dumps(wanted, pyjson.Options{Compact: true, SortKeys: true, Unicode: true})
 }
 
 // settingsOutcome is completion.config_outcome.
@@ -215,7 +215,7 @@ func settingsOutcome(path string, wanted Object) (string, Object) {
 		return ConfigUnreadable, nil
 	}
 	value, _ := found.Value.(Object)
-	if evidence.Dumps(found.Value, true, true, false) == evidence.Dumps(wanted, true, true, false) {
+	if pyjson.Dumps(found.Value, pyjson.Options{Compact: true, SortKeys: true, Unicode: true}) == pyjson.Dumps(wanted, pyjson.Options{Compact: true, SortKeys: true, Unicode: true}) {
 		return ConfigUnchanged, value
 	}
 	if value != nil && len(retiredIn(value)) > 0 && len(retiredIn(wanted)) == 0 {
@@ -243,7 +243,7 @@ func differing(found, wanted Object) any {
 	}
 	var out []string
 	for key := range keys {
-		if evidence.Dumps(record.Get(found, key), true, true, false) != evidence.Dumps(record.Get(wanted, key), true, true, false) {
+		if pyjson.Dumps(record.Get(found, key), pyjson.Options{Compact: true, SortKeys: true, Unicode: true}) != pyjson.Dumps(record.Get(wanted, key), pyjson.Options{Compact: true, SortKeys: true, Unicode: true}) {
 			out = append(out, key)
 		}
 	}
@@ -298,5 +298,5 @@ func scopeStr(v any) string {
 	if s, ok := v.(string); ok {
 		return s
 	}
-	return evidence.Dumps(v, false, false, true)
+	return pyjson.Dumps(v, pyjson.Options{})
 }

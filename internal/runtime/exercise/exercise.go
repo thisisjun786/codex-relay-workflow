@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
@@ -73,7 +74,7 @@ func (b Bridge) AppServer() *string {
 	if b.Err != nil || b.Connection == nil {
 		return nil
 	}
-	text := evidence.Dumps(b.Connection, false, false, true)
+	text := pyjson.Dumps(b.Connection, pyjson.Options{})
 	return &text
 }
 
@@ -272,7 +273,7 @@ func (s *session) call(method string, params any) (Object, error) {
 			continue
 		}
 		if failure, ok := record.Get(message, "error").(Object); ok {
-			return nil, fmt.Errorf("%s: the bridge answered with an error: %s", method, evidence.Dumps(failure, false, false, true))
+			return nil, fmt.Errorf("%s: the bridge answered with an error: %s", method, pyjson.Dumps(failure, pyjson.Options{}))
 		}
 		result, ok := record.Get(message, "result").(Object)
 		if !ok {
@@ -319,7 +320,7 @@ func (s *session) run() ([]string, any, error) {
 		return tools, nil, err
 	}
 	if evidence.Truthy(record.Get(called, "isError")) {
-		return tools, nil, errors.New("get_capabilities answered with an error: " + evidence.Dumps(record.Get(called, "content"), false, false, true))
+		return tools, nil, errors.New("get_capabilities answered with an error: " + pyjson.Dumps(record.Get(called, "content"), pyjson.Options{}))
 	}
 	connection := record.Get(called, "structuredContent")
 	if connection == nil {

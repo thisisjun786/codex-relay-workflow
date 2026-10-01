@@ -293,7 +293,7 @@ func runHookProbe(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		// print(json.dumps(decide(...), indent=2, sort_keys=True)), as observe prints.
-		fmt.Fprintln(stdout, evidence.DumpsIndent(got, 2, true, true))
+		fmt.Fprintln(stdout, pyjson.Dumps(got, pyjson.Options{Indent: 2, SortKeys: true}))
 		return 0
 	case "replay":
 		return replayHook(args[1:], stdout, stderr)
@@ -555,7 +555,7 @@ func checkHookOneKeys(label string, observation, expectedValue any, out io.Write
 		}
 	}
 	if len(mismatch) > 0 {
-		fmt.Fprintf(out, "FAIL %s: %s\n", label, evidence.Dumps(mismatch, false, true, true))
+		fmt.Fprintf(out, "FAIL %s: %s\n", label, pyjson.Dumps(mismatch, pyjson.Options{SortKeys: true}))
 		return false, nil
 	}
 	fmt.Fprintf(out, "ok   %s: %s %s (observed %s)\n", label, got["decision"], got["state"], got["observation"])
@@ -776,7 +776,7 @@ func observeHook(args []string, stdout, stderr io.Writer) int {
 	// print(json.dumps(report, indent=2, sort_keys=True)): non-ASCII escaped and
 	// floats spelled as Python spells them (1.0, 1e+19, Infinity), which
 	// encoding/json does not do.
-	fmt.Fprintln(stdout, evidence.DumpsIndent(report, 2, true, true))
+	fmt.Fprintln(stdout, pyjson.Dumps(report, pyjson.Options{Indent: 2, SortKeys: true}))
 	return 0
 }
 func sortedKeys(m map[string]any) []string {

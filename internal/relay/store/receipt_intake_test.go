@@ -8,6 +8,8 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 // test_receipts.py: ReadyForReview, ExecutionOnly, DaemonObservation, DuplicateAndRevision,
@@ -351,9 +353,9 @@ func TestReceiptIntake_python_path_binding_and_artifacts(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, field := range record.object {
-			if strings.HasPrefix(field.key, "_") {
-				t.Fatalf("internal field %q", field.key)
+		for _, field := range record.(pyjson.Object) {
+			if strings.HasPrefix(field.Key, "_") {
+				t.Fatalf("internal field %q", field.Key)
 			}
 		}
 	})

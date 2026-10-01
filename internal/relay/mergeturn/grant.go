@@ -15,8 +15,8 @@ import (
 	"fmt"
 	"math"
 	"strconv"
-	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -41,14 +41,22 @@ func text(r store.Row, name string) string {
 	return ""
 }
 
+// decode is the object a ledger entry's text holds, read as json.Decoder.Decode reads it (every
+// number a json.Number, what follows the value unread), or nil.
 func decode(raw string) map[string]any {
-	dec := json.NewDecoder(strings.NewReader(raw))
-	dec.UseNumber()
-	var v any
-	if dec.Decode(&v) != nil {
+	v, _ := pyjson.Loads(raw, pyjson.LoadOptions{Map: true, Numbers: pyjson.SpelledNumbers, Trailing: pyjson.TrailingAnything})
+	m, _ := v.(map[string]any)
+	return m
+}
+
+// envelope is the object a ledger entry's evidence holds with nothing after it but a closing
+// bracket (what json.Decoder.More answers false for), or nil.
+func envelope(raw string) map[string]any {
+	v, err := pyjson.Loads(raw, pyjson.LoadOptions{Map: true, Numbers: pyjson.SpelledNumbers, Trailing: pyjson.TrailingClose})
+	m, _ := v.(map[string]any)
+	if err != nil {
 		return nil
 	}
-	m, _ := v.(map[string]any)
 	return m
 }
 

@@ -5,7 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 // Relationship statuses and generation vocabulary shared with Python's registry.py.
@@ -39,8 +40,4 @@ func journal(ctx context.Context, conn *sql.Conn, kind, subject, detail, at stri
 	return nil
 }
 
-func quoteJSON(text string) string {
-	var buf strings.Builder
-	appendPythonString(&buf, text)
-	return buf.String()
-}
+func quoteJSON(text string) string { return pyjson.Dumps(text, pyjson.Options{}) }

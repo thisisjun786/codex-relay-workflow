@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 func Test33ControlRejectionBeforeDispatch(t *testing.T) {
@@ -79,7 +79,7 @@ func Test33RejectionIsNotRefusalOrEOF(t *testing.T) {
 			} else if err != nil {
 				t.Fatal(err)
 			} else if tc.name == "refused" && get(result, "error") != "refused" {
-				t.Fatal(evidence.Dumps(result, false, false, true))
+				t.Fatal(pyjson.Dumps(result, pyjson.Options{}))
 			}
 			if err = <-done; err != nil {
 				t.Fatal(err)

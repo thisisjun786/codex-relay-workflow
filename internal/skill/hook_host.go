@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 )
 
@@ -127,7 +128,7 @@ func hostPythonString(value any) string {
 		}
 		return "False"
 	case float64:
-		return evidence.Float(typed)
+		return pyjson.Float(typed)
 	case int64:
 		return fmt.Sprint(typed)
 	case string:

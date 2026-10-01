@@ -5,8 +5,8 @@ import (
 	"database/sql"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -45,7 +45,7 @@ func (c *Channel) deferBusy(ctx context.Context, row store.SupervisorMessagesRow
 		if err != nil || changed == 0 {
 			return err
 		}
-		detail := evidence.Dumps(contract.OrderedObject{{Key: "deferral", Value: next}, {Key: "holdReason", Value: holdValue}}, false, false, true)
+		detail := pyjson.Dumps(contract.OrderedObject{{Key: "deferral", Value: next}, {Key: "holdReason", Value: holdValue}}, pyjson.Options{})
 		_, err = c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_deferred',?,?)", at, row.MessageID, string(detail))
 		return err
 	})

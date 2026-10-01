@@ -1,6 +1,10 @@
-// Package pyjson is CPython's json.loads as far as the port reproduces it: the decoding of the
-// bytes it is given (DecodeBytes), and the JSONDecodeError, integer-limit and recursion
-// refusals its C scanner raises, with their messages and positions (Error, HookedError). It
+// Package pyjson is the one implementation of Python's JSON the product keeps: json.loads (the
+// decoding of the bytes it is given, DecodeBytes; the JSONDecodeError, integer-limit and
+// recursion refusals its C scanner raises, with their messages and positions, Error and
+// HookedError; and the values it reads, Loads), json.dumps with its keyword arguments (Dumps,
+// Encode), float.__repr__ (Float) and the insertion-ordered dict both carry (Object). Every
+// reader and writer of the relay, the bridge, the runtime and the development tools reads and
+// writes through it, with the options that keep the bytes each of them stored or hashed. It
 // imports nothing of the relay or the bridge, so both parse Python's documents alike.
 package pyjson
 

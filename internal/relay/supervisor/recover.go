@@ -4,9 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -63,10 +63,10 @@ func (c *Channel) recoverStranded(ctx context.Context, row store.SupervisorMessa
 				return nil
 			}
 			record := map[string]any{"requestId": attempt.RequestID, "messageId": row.MessageID, "attemptNo": row.AttemptCount, "deliveryState": "withheld_pre_send", "sendAttempted": "no", "retrySafe": true, "reason": "the claim's lease expired before its transport started, so nothing was sent"}
-			if e = c.Store.SettleSupervisorAttempt(tx, attempt.RequestID, "withheld_pre_send", "no", 1, sql.NullString{}, evidence.Dumps(record, false, true, true), at); e != nil {
+			if e = c.Store.SettleSupervisorAttempt(tx, attempt.RequestID, "withheld_pre_send", "no", 1, sql.NullString{}, pyjson.Dumps(record, pyjson.Options{SortKeys: true}), at); e != nil {
 				return e
 			}
-			detail := evidence.Dumps(contract.OrderedObject{{Key: "attemptNo", Value: row.AttemptCount}, {Key: "leaseOwner", Value: optionalText(row.LeaseOwner)}, {Key: "leaseUntil", Value: row.LeaseUntil.Float64}, {Key: "reason", Value: "the lease expired before the transport started, so nothing was sent and the report is queued again"}}, false, false, true)
+			detail := pyjson.Dumps(contract.OrderedObject{{Key: "attemptNo", Value: row.AttemptCount}, {Key: "leaseOwner", Value: optionalText(row.LeaseOwner)}, {Key: "leaseUntil", Value: row.LeaseUntil.Float64}, {Key: "reason", Value: "the lease expired before the transport started, so nothing was sent and the report is queued again"}}, pyjson.Options{})
 			_, e = c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_released',?,?)", at, row.MessageID, string(detail))
 			return e
 		}
@@ -78,7 +78,7 @@ func (c *Channel) recoverStranded(ctx context.Context, row store.SupervisorMessa
 		if err != nil || changed == 0 {
 			return err
 		}
-		_, err = c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_stranded',?,?)", at, row.MessageID, evidence.Dumps(contract.OrderedObject{{Key: "attemptNo", Value: row.AttemptCount}, {Key: "leaseOwner", Value: optionalText(row.LeaseOwner)}, {Key: "leaseUntil", Value: row.LeaseUntil.Float64}, {Key: "reason", Value: "the lease expired after the transport started and with no receipt, so what that send did is unknown and is not repeated"}}, false, false, true))
+		_, err = c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_stranded',?,?)", at, row.MessageID, pyjson.Dumps(contract.OrderedObject{{Key: "attemptNo", Value: row.AttemptCount}, {Key: "leaseOwner", Value: optionalText(row.LeaseOwner)}, {Key: "leaseUntil", Value: row.LeaseUntil.Float64}, {Key: "reason", Value: "the lease expired after the transport started and with no receipt, so what that send did is unknown and is not repeated"}}, pyjson.Options{}))
 		return err
 	})
 	if err != nil {

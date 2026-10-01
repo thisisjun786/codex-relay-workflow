@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"golang.org/x/sys/unix"
@@ -176,7 +177,7 @@ func SaveLedger(path string, ledger Obj) (err error) {
 		}
 	}()
 	var indented bytes.Buffer
-	if err = json.Indent(&indented, []byte(evidence.Dumps(ledger, true, true, true)), "", "  "); err != nil {
+	if err = json.Indent(&indented, []byte(pyjson.Dumps(ledger, pyjson.Options{Compact: true, SortKeys: true})), "", "  "); err != nil {
 		return errors.Join(err, f.Close())
 	}
 	if _, err = f.Write(indented.Bytes()); err != nil {

@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
@@ -45,9 +46,9 @@ func Test33D1SurrogateBinaryPython(t *testing.T) {
 		config := Object{{Key: "configVersion", Value: int64(1)}, {Key: "relayExecutable", Value: filepath.Join(home, "relay")},
 			{Key: "markerRoot", Value: filepath.Join(home, "marker")}, {Key: "dbPath", Value: filepath.Join(home, "state/relay.sqlite3")},
 			{Key: "mode", Value: "observe"}, {Key: "journalRoot", Value: filepath.Join(home, "journal")}}
-		writeTest(t, filepath.Join(home, ConfigName), []byte(evidence.Dumps(config, false, false, true)))
+		writeTest(t, filepath.Join(home, ConfigName), []byte(pyjson.Dumps(config, pyjson.Options{})))
 		transcript := filepath.Join(home, "transcript.jsonl")
-		quoted := evidence.Dumps(transcript, false, false, true)
+		quoted := pyjson.Dumps(transcript, pyjson.Options{})
 		writeTest(t, transcript, []byte(`{"type": "event_msg", "payload": {"type": "task_started", "turn_id": "turn"}}`+"\n"+
 			`{"type": "event_msg", "payload": {"type": "item_completed", "turn_id": "turn", "thread_id": `+c[0]+`, "item": {"type": "AgentMessage", "id": `+c[1]+`, "content": [{"type": "Text", "text": "DONE"}]}}}`+"\n"))
 		payload := `{"session_id": ` + c[0] + `, "turn_id": "turn", "stop_hook_active": false, "last_assistant_message": "DONE", "transcript_path": ` + quoted + `}`
@@ -56,7 +57,7 @@ func Test33D1SurrogateBinaryPython(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			if got, want := evidence.Dumps(get(object(get(frame, "params")), "stopInput"), false, true, true), canonicalJSON(t, []byte(payload)); got != want {
+			if got, want := pyjson.Dumps(get(object(get(frame, "params")), "stopInput"), pyjson.Options{SortKeys: true}), canonicalJSON(t, []byte(payload)); got != want {
 				return fmt.Errorf("stopInput %s, want %s", got, want)
 			}
 			_, err = io.WriteString(conn, release+"\n")
@@ -171,7 +172,7 @@ func Test33D3DialErrnosPython(t *testing.T) {
 			}
 			golden.CheckJSON(t, "row", map[string]any{"errno": get(row, "errno"), "detail": get(row, "detail")}, golden.Substitute(home, "<HOME>"))
 			if !NativePrescanUnreachable(row) {
-				t.Fatalf("Go reader rejected %s", evidence.Dumps(row, false, true, true))
+				t.Fatalf("Go reader rejected %s", pyjson.Dumps(row, pyjson.Options{SortKeys: true}))
 			}
 		})
 	}

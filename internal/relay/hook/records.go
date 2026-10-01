@@ -3,7 +3,7 @@ package hook
 import (
 	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 // The records the adapter leaves behind, stated once beside the writers for the readers of a
@@ -131,7 +131,7 @@ var (
 // newline (completion._record_bytes). A file holding the same content in other bytes was not
 // written by the adapter.
 func RecordBytes(document any) []byte {
-	return []byte(evidence.Dumps(document, false, true, true) + "\n")
+	return []byte(pyjson.Dumps(document, pyjson.Options{SortKeys: true}) + "\n")
 }
 
 // PathTheSystemTakes is whether the operating system takes this path at all: encodable, no

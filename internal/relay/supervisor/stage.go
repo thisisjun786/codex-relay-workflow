@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -54,7 +55,9 @@ func canonicalPacket(p Packet) (string, error) {
 }
 
 // pythonJSONSorted is json.dumps(sort_keys=True, ensure_ascii=False) for packet rows.
-func pythonJSONSorted(value any) string { return evidence.Dumps(value, false, true, false) }
+func pythonJSONSorted(value any) string {
+	return pyjson.Dumps(value, pyjson.Options{SortKeys: true, Unicode: true})
+}
 func (c *Channel) Stage(ctx context.Context, o Obligation, expectRecipient, at string) (StageResult, error) {
 	return c.StageWithReading(ctx, o, nil, expectRecipient, at)
 }
@@ -152,7 +155,7 @@ func (c *Channel) StageWithReading(ctx context.Context, o Obligation, reading ma
 				if _, err = c.Store.Q(tx).ExecContext(tx, "UPDATE supervisor_messages SET hold_reason=NULL,updated_at=? WHERE message_id=?", at, id); err != nil {
 					return err
 				}
-				detail := evidence.Dumps(contract.OrderedObject{{Key: "proposal", Value: "addressed"}, {Key: "reason", Value: "the hierarchy names this message's endpoints again, so the hierarchy_unresolved hold is released"}}, false, false, true)
+				detail := pyjson.Dumps(contract.OrderedObject{{Key: "proposal", Value: "addressed"}, {Key: "reason", Value: "the hierarchy names this message's endpoints again, so the hierarchy_unresolved hold is released"}}, pyjson.Options{})
 				if _, err = c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_reopened',?,?)", at, id, string(detail)); err != nil {
 					return err
 				}
@@ -201,7 +204,7 @@ func (c *Channel) StageWithReading(ctx context.Context, o Obligation, reading ma
 				}
 				from := map[string]any{"sender": existing.SenderTaskID, "recipient": existing.RecipientTaskID, "projectKey": optionalText(existing.ProjectKey)}
 				to := map[string]any{"sender": r.Sender, "recipient": r.Recipient, "projectKey": r.ProjectKey}
-				detail := evidence.Dumps(contract.OrderedObject{{Key: "from", Value: contract.OrderedObject{{Key: "sender", Value: from["sender"]}, {Key: "recipient", Value: from["recipient"]}, {Key: "projectKey", Value: from["projectKey"]}}}, {Key: "to", Value: contract.OrderedObject{{Key: "sender", Value: to["sender"]}, {Key: "recipient", Value: to["recipient"]}, {Key: "projectKey", Value: to["projectKey"]}}}, {Key: "releasedHold", Value: optionalText(existing.HoldReason)}, {Key: "releasedState", Value: existing.State}, {Key: "fromEvent", Value: optionalText(existing.EventID)}, {Key: "toEvent", Value: optionalText(nullString(eventID))}, {Key: "reason", Value: "the hierarchy moved before anything was sent"}}, false, false, true)
+				detail := pyjson.Dumps(contract.OrderedObject{{Key: "from", Value: contract.OrderedObject{{Key: "sender", Value: from["sender"]}, {Key: "recipient", Value: from["recipient"]}, {Key: "projectKey", Value: from["projectKey"]}}}, {Key: "to", Value: contract.OrderedObject{{Key: "sender", Value: to["sender"]}, {Key: "recipient", Value: to["recipient"]}, {Key: "projectKey", Value: to["projectKey"]}}}, {Key: "releasedHold", Value: optionalText(existing.HoldReason)}, {Key: "releasedState", Value: existing.State}, {Key: "fromEvent", Value: optionalText(existing.EventID)}, {Key: "toEvent", Value: optionalText(nullString(eventID))}, {Key: "reason", Value: "the hierarchy moved before anything was sent"}}, pyjson.Options{})
 				if _, err = c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_readdressed',?,?)", at, id, string(detail)); err != nil {
 					return err
 				}
@@ -222,7 +225,7 @@ func (c *Channel) StageWithReading(ctx context.Context, o Obligation, reading ma
 					return err
 				}
 				if moved == 1 {
-					detail := evidence.Dumps(contract.OrderedObject{{Key: "fromEvent", Value: optionalText(existing.EventID)}, {Key: "toEvent", Value: optionalText(nullString(eventID))}, {Key: "fromSubmission", Value: optionalNumber(existing.SubmissionNo)}, {Key: "toSubmission", Value: optionalNumber(submission)}, {Key: "reason", Value: "the child stated this " + o.Kind + " again before anything was sent, so the message now carries that statement"}}, false, false, true)
+					detail := pyjson.Dumps(contract.OrderedObject{{Key: "fromEvent", Value: optionalText(existing.EventID)}, {Key: "toEvent", Value: optionalText(nullString(eventID))}, {Key: "fromSubmission", Value: optionalNumber(existing.SubmissionNo)}, {Key: "toSubmission", Value: optionalNumber(submission)}, {Key: "reason", Value: "the child stated this " + o.Kind + " again before anything was sent, so the message now carries that statement"}}, pyjson.Options{})
 					if _, err = c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_restated',?,?)", at, id, detail); err != nil {
 						return err
 					}
@@ -250,7 +253,7 @@ func (c *Channel) StageWithReading(ctx context.Context, o Obligation, reading ma
 		}
 		row := store.SupervisorMessagesRow{MessageID: id, ObligationID: o.ID, ObligationKind: o.Kind, RelationshipID: o.RelationID, ProjectKey: nullString(r.ProjectKey), Purpose: purpose(o.Kind), Kind: packetKind(o.Kind), SenderTaskID: r.Sender, RecipientTaskID: r.Recipient, Subject: o.Subject, Packet: encoded, State: "queued", StagedAt: at, UpdatedAt: at, EventID: nullString(eventID)}
 		if reading != nil {
-			row.Reading = nullString(evidence.Dumps(reading, false, true, false))
+			row.Reading = nullString(pyjson.Dumps(reading, pyjson.Options{SortKeys: true, Unicode: true}))
 		}
 		if report.submission != 0 {
 			row.SubmissionNo = sql.NullInt64{Int64: report.submission, Valid: true}
@@ -260,7 +263,7 @@ func (c *Channel) StageWithReading(ctx context.Context, o Obligation, reading ma
 			return err
 		}
 		if staged {
-			detail := evidence.Dumps(contract.OrderedObject{{Key: "kind", Value: o.Kind}, {Key: "relationId", Value: o.RelationID}, {Key: "subject", Value: o.Subject}, {Key: "messageId", Value: id}, {Key: "note", Value: "staged on the supervisor channel"}}, false, false, true)
+			detail := pyjson.Dumps(contract.OrderedObject{{Key: "kind", Value: o.Kind}, {Key: "relationId", Value: o.RelationID}, {Key: "subject", Value: o.Subject}, {Key: "messageId", Value: id}, {Key: "note", Value: "staged on the supervisor channel"}}, pyjson.Options{})
 			_, err = c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal (at,kind,subject,detail) VALUES (?,'supervisor_report',?,?)", at, o.ID, string(detail))
 			if err != nil {
 				return err
@@ -372,8 +375,8 @@ func (c *Channel) StageStandingWithObservations(ctx context.Context, projectKey 
 
 func observationReadingKey(o Obligation, reading map[string]any) string {
 	selectors, _ := observationSelectors(reading)
-	return evidence.Dumps(map[string]any{
+	return pyjson.Dumps(map[string]any{
 		"obligation": map[string]any{"obligationId": o.ID, "kind": o.Kind, "relationId": o.RelationID, "subject": o.Subject, "executionGeneration": o.Generation, "revisionHash": o.Revision, "issueKey": o.Issue, "basis": o.Basis, "detail": o.Detail},
 		"selectors":  selectors,
-	}, false, true, true)
+	}, pyjson.Options{SortKeys: true})
 }

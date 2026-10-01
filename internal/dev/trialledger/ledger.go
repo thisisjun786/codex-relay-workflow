@@ -24,6 +24,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/pyload"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -115,10 +116,10 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		if !errors.As(err, &refused) {
 			refused = refuse("this run raised before it could report", "exception", exceptionName(err), "detail", exceptionText(err), "raisedAt", nil)
 		}
-		fmt.Fprintln(stdout, evidence.DumpsIndent(refused.record(), 2, true, true))
+		fmt.Fprintln(stdout, pyjson.Dumps(refused.record(), pyjson.Options{Indent: 2, SortKeys: true}))
 		return 2
 	}
-	fmt.Fprintln(stdout, evidence.DumpsIndent(document, 2, true, true))
+	fmt.Fprintln(stdout, pyjson.Dumps(document, pyjson.Options{Indent: 2, SortKeys: true}))
 	if failed {
 		return 1
 	}
@@ -329,7 +330,7 @@ func report(record object, path string) (object, error) {
 		}
 		if segmentName, has := evidence.Lookup(body, "segment"); has {
 			if _, text := segmentName.(string); !text {
-				return nil, refuse("a ledger line's segment has to be written as text", "line", number, "found", evidence.Dumps(segmentName, false, false, true))
+				return nil, refuse("a ledger line's segment has to be written as text", "line", number, "found", pyjson.Dumps(segmentName, pyjson.Options{}))
 			}
 		}
 		at, err := moment(get(body, "at"), "a ledger line's at")
@@ -480,7 +481,7 @@ func report(record object, path string) (object, error) {
 		// judgment walk could read a verdict from.
 		for _, name := range []string{"at", "actor", "target", "action"} {
 			if _, text := get(item, name).(string); !text {
-				return nil, refuse("a ledger line's "+name+" has to be written as text", "line", e.line, "found", evidence.Dumps(get(item, name), false, false, true))
+				return nil, refuse("a ledger line's "+name+" has to be written as text", "line", e.line, "found", pyjson.Dumps(get(item, name), pyjson.Options{}))
 			}
 		}
 		if computed == window {

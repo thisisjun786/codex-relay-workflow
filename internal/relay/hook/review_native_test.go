@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
@@ -56,7 +56,7 @@ func reviewPython(t *testing.T, id string) {
 		h := r.setup("large")
 		h.payload = append(h.payload, Field{Key: "padding", Value: strings.Repeat("x", 5<<20)})
 		stdin := filepath.Join(h.home, "prefilled-stdin.json")
-		writeTest(t, stdin, []byte(evidence.Dumps(h.payload, false, false, true)))
+		writeTest(t, stdin, []byte(pyjson.Dumps(h.payload, pyjson.Options{})))
 		r.pairInput(h, prefilledStdin(stdin), nil, 0o022, false, true)
 		t.Log("5 MiB prefilled stdin payload equal")
 	case "D10":
@@ -66,7 +66,7 @@ func reviewPython(t *testing.T, id string) {
 	}
 	// A snapshot that lists directories names the journal's day directory, the run's date: the
 	// golden spells it journal/<DAY>, so it holds on any day.
-	steps := journalDay.ReplaceAllString(evidence.DumpsIndent(r.steps, 2, true, true), "journal/<DAY>")
+	steps := journalDay.ReplaceAllString(pyjson.Dumps(r.steps, pyjson.Options{Indent: 2, SortKeys: true}), "journal/<DAY>")
 	golden.Check(t, id, []byte(steps+"\n"), golden.Substitute(base, "<BASE>"), golden.Substitute(testRoot, "<REPO>"))
 }
 
@@ -88,7 +88,7 @@ func (r *review) setup(name string) reviewHome {
 	cfg := Object{{Key: "configVersion", Value: int64(1)}, {Key: "mode", Value: "observe"}, {Key: "relayExecutable", Value: filepath.Join(home, "relay")},
 		{Key: "markerRoot", Value: filepath.Join(home, "markers")}, {Key: "dbPath", Value: filepath.Join(home, "state/relay.sqlite3")},
 		{Key: "timeoutSeconds", Value: int64(5)}, {Key: "journalRoot", Value: filepath.Join(home, "journal")}}
-	writeTest(t, filepath.Join(home, ConfigName), []byte(evidence.Dumps(cfg, false, false, true)))
+	writeTest(t, filepath.Join(home, ConfigName), []byte(pyjson.Dumps(cfg, pyjson.Options{})))
 	transcript := filepath.Join(home, "transcript.jsonl")
 	writeTest(t, transcript, []byte(`{"type": "event_msg", "payload": {"type": "task_started", "turn_id": "t"}}`+"\n"+
 		`{"type": "event_msg", "payload": {"type": "item_completed", "turn_id": "t", "thread_id": "s", "item": {"type": "AgentMessage", "id": "i", "content": [{"type": "Text", "text": "DONE"}]}}}`+"\n"))
@@ -115,7 +115,7 @@ func (h reviewHome) environ() []string {
 }
 
 func (h reviewHome) writeSettings(t *testing.T) {
-	writeTest(t, filepath.Join(h.home, ConfigName), []byte(evidence.Dumps(h.cfg, false, false, true)))
+	writeTest(t, filepath.Join(h.home, ConfigName), []byte(pyjson.Dumps(h.cfg, pyjson.Options{})))
 }
 
 // prefilledStdin is a Stop read from a file whose bytes and EOF exist before the hook starts.
@@ -138,7 +138,7 @@ func (r *review) invoke(h reviewHome, payload any, args []string, mask int) stri
 		defer stdin.Close()
 		command.Stdin = stdin
 	case Object:
-		command.Stdin = strings.NewReader(evidence.Dumps(p, false, false, true))
+		command.Stdin = strings.NewReader(pyjson.Dumps(p, pyjson.Options{}))
 	default:
 		t.Fatalf("payload %T", payload)
 	}
@@ -212,7 +212,7 @@ func serveReviewPeer(conn net.Conn, response Object) error {
 		}
 		return nil
 	}
-	_, err = io.WriteString(conn, evidence.Dumps(response, false, false, true)+"\n")
+	_, err = io.WriteString(conn, pyjson.Dumps(response, pyjson.Options{})+"\n")
 	return err
 }
 
@@ -348,7 +348,7 @@ func (r *review) paths(group string) {
 			t.Fatal(err)
 		}
 		path := filepath.Join(alt, "cfg.json")
-		writeTest(t, path, []byte(evidence.Dumps(h.cfg, false, false, true)))
+		writeTest(t, path, []byte(pyjson.Dumps(h.cfg, pyjson.Options{})))
 		var args []string
 		if name == "env" || name == "argv_over_env" || name == "empty_arg" {
 			h.env["CRW_COMPLETION_HOOK_CONFIG"] = path
@@ -410,24 +410,24 @@ func (r *review) constants() {
 		if err != nil {
 			t.Fatal(err)
 		}
-		writeTest(t, transcript, []byte(strings.ReplaceAll(string(raw), `"payload": {`, `"extra": `+evidence.Dumps(c.value, false, false, true)+`, "payload": {`)))
+		writeTest(t, transcript, []byte(strings.ReplaceAll(string(raw), `"payload": {`, `"extra": `+pyjson.Dumps(c.value, pyjson.Options{})+`, "payload": {`)))
 		h.payload = append(h.payload, Field{Key: "extra", Value: c.value})
 		result := r.pair(h, h.payload, nil, 0o022, false, true)
 		if get(object(get(object(get(object(get(result, "row")), "value")), "eventIdentity")), "established") != true {
-			t.Fatalf("%s: %s", c.name, evidence.Dumps(result, false, true, true))
+			t.Fatalf("%s: %s", c.name, pyjson.Dumps(result, pyjson.Options{SortKeys: true}))
 		}
 		for _, field := range []string{"session_id", "turn_id", "stop_hook_active"} {
 			clearReview(t, h.home)
 			altered := set(append(Object{}, h.payload...), field, c.value)
 			result = r.pair(h, altered, nil, 0o022, false, true)
 			if get(object(get(object(get(result, "row")), "value")), "adapterOutcome") != "guard_answered" {
-				t.Fatalf("%s %s: %s", c.name, field, evidence.Dumps(result, false, true, true))
+				t.Fatalf("%s %s: %s", c.name, field, pyjson.Dumps(result, pyjson.Options{SortKeys: true}))
 			}
 		}
 		// The same loader on guard stdin: full CLI bytes, including echoed constants.
 		args := []string{"guard-evaluate", "--marker-root", filepath.Join(h.home, "markers"), "--now", "2026-01-01T00:00:00Z", "--no-record"}
 		stop := Object{{Key: "session_id", Value: c.value}, {Key: "turn_id", Value: c.value}, {Key: "extra", Value: []any{c.value}}}
-		r.cli(h, args, evidence.Dumps(stop, false, false, true))
+		r.cli(h, args, pyjson.Dumps(stop, pyjson.Options{}))
 		t.Log(c.name, "all loaders equal")
 	}
 }
@@ -446,7 +446,7 @@ func (r *review) budgets() {
 		h.writeSettings(t)
 		result := r.pair(h, h.payload, nil, 0o022, false, true)
 		if (len(result) > 0) != (c.name == "7") {
-			t.Fatalf("budget %s: %s", c.name, evidence.Dumps(result, false, true, true))
+			t.Fatalf("budget %s: %s", c.name, pyjson.Dumps(result, pyjson.Options{SortKeys: true}))
 		}
 		t.Log(c.name, "equal")
 	}

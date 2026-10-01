@@ -15,7 +15,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -233,7 +233,7 @@ func dumpsUnescaped(b *strings.Builder, value any) bool {
 		if math.IsNaN(v) || math.IsInf(v, 0) {
 			return false
 		}
-		b.WriteString(evidence.Float(v))
+		b.WriteString(pyjson.Float(v))
 	case nil:
 		b.WriteString("null")
 	default: // bool, int64, json.Number

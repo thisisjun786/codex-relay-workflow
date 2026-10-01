@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 func Test33UnreachableErrnos(t *testing.T) {
@@ -56,7 +56,7 @@ func Test33UnreachableNoJournalPolicy(t *testing.T) {
 		t.Fatal(failure)
 	}
 	config = set(config, "journalPolicy", "no_journal")
-	writeTest(t, path, []byte(evidence.Dumps(config, false, false, true)))
+	writeTest(t, path, []byte(pyjson.Dumps(config, pyjson.Options{})))
 	out, err := hookCommand(t, home, `{}`).CombinedOutput()
 	if err != nil || len(out) != 0 {
 		t.Fatalf("%v %s", err, out)

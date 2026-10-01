@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -70,7 +71,7 @@ func Test24_SCH_21_LiveRecoveredClaim(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = s.DB.ExecContext(ctx, "INSERT INTO supervisor_attempts(request_id,message_id,attempt_no,message,state,send_attempted,retry_safe,record,sent_at,observed_at,delivery_token) VALUES(?,?,1,?,'held_uncertain','unknown',0,?,?,?,?)", request, id, message, evidence.Dumps(map[string]any{"requestId": request, "messageId": id, "attemptNo": 1, "deliveryState": "held_uncertain"}, false, true, false), captureAt21, captureAt21, token)
+		_, err = s.DB.ExecContext(ctx, "INSERT INTO supervisor_attempts(request_id,message_id,attempt_no,message,state,send_attempted,retry_safe,record,sent_at,observed_at,delivery_token) VALUES(?,?,1,?,'held_uncertain','unknown',0,?,?,?,?)", request, id, message, pyjson.Dumps(map[string]any{"requestId": request, "messageId": id, "attemptNo": 1, "deliveryState": "held_uncertain"}, pyjson.Options{SortKeys: true, Unicode: true}), captureAt21, captureAt21, token)
 		if err != nil {
 			t.Fatal(err)
 		}

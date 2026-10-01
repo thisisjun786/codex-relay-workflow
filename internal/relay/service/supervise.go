@@ -9,8 +9,8 @@ import (
 	"os/exec"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/daemon"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 )
 
 // SupervisionInputs allows a scripted clock/worker to exercise hours of segment
@@ -123,7 +123,7 @@ func (s *Service) Supervise(ctx context.Context, o Options, onStart func() error
 			return nil, e
 		}
 		if !truth(get(claim, "ok")) {
-			return nil, &Refused{text(get(claim, "reason")), evidence.Dumps(get(claim, "held_by"), false, false, true)}
+			return nil, &Refused{text(get(claim, "reason")), pyjson.Dumps(get(claim, "held_by"), pyjson.Options{})}
 		}
 	}
 	if err = s.WriteRecord(s.NewRecord(os.Getpid(), token)); err != nil {

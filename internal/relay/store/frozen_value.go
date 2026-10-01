@@ -10,10 +10,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 // The fence reads a manifest record's fields as whatever json.loads made of them and compares,
@@ -177,7 +177,7 @@ func pythonReprValue(value any) string {
 	case math.IsInf(number.real, -1):
 		return "-inf"
 	}
-	return pythonFloat(number.real)
+	return pyjson.Float(number.real)
 }
 
 // pythonTypeName is type(value).__name__.
@@ -379,194 +379,10 @@ func pythonSubscript(value any, key string) (any, error) {
 	return nil, &ManifestException{Class: "TypeError", text: "'" + pythonTypeName(value) + "' object is not subscriptable"}
 }
 
-// decodePythonJSON is json.loads over text that PythonJSONError has already accepted: NaN,
-// Infinity and -Infinity are floats, an integer is exact, a lone surrogate escape is kept, and a
-// repeated key keeps its first place and its last value.
+// decodePythonJSON is json.loads over text that PythonJSONError has already accepted (as deep as
+// frozenJSONDepth): NaN, Infinity and -Infinity are floats, an integer is exact (an int64, or a
+// *big.Int past it), a lone surrogate escape is kept, and a repeated key keeps its first place
+// and its last value.
 func decodePythonJSON(text string) (any, error) {
-	d := &pythonDecoder{text: text}
-	d.space()
-	value, err := d.value()
-	if err != nil {
-		return nil, err
-	}
-	if d.space(); d.at != len(d.text) {
-		return nil, fmt.Errorf("extra data at %d", d.at)
-	}
-	return value, nil
-}
-
-type pythonDecoder struct {
-	text string
-	at   int
-}
-
-func (d *pythonDecoder) space() {
-	for d.at < len(d.text) && strings.IndexByte(" \t\n\r", d.text[d.at]) >= 0 {
-		d.at++
-	}
-}
-
-func (d *pythonDecoder) literal(word string, value any) (any, bool) {
-	if !strings.HasPrefix(d.text[d.at:], word) {
-		return nil, false
-	}
-	d.at += len(word)
-	return value, true
-}
-
-func (d *pythonDecoder) value() (any, error) {
-	if d.at >= len(d.text) {
-		return nil, fmt.Errorf("unexpected end at %d", d.at)
-	}
-	switch d.text[d.at] {
-	case '{':
-		return d.object()
-	case '[':
-		return d.array()
-	case '"':
-		return d.str()
-	}
-	for _, constant := range []struct {
-		word  string
-		value any
-	}{{"null", nil}, {"true", true}, {"false", false}, {"NaN", math.NaN()}, {"Infinity", math.Inf(1)}, {"-Infinity", math.Inf(-1)}} {
-		if value, ok := d.literal(constant.word, constant.value); ok {
-			return value, nil
-		}
-	}
-	return d.number()
-}
-
-func (d *pythonDecoder) object() (any, error) {
-	object := contract.OrderedObject{}
-	// Where each key already stands, so a repeated key is found without walking the fields and a
-	// document with many keys decodes in time proportional to its length.
-	index := map[string]int{}
-	d.at++
-	for d.space(); d.at < len(d.text) && d.text[d.at] != '}'; d.space() {
-		key, err := d.str()
-		if err != nil {
-			return nil, err
-		}
-		if d.space(); d.at >= len(d.text) || d.text[d.at] != ':' {
-			return nil, fmt.Errorf("expected ':' at %d", d.at)
-		}
-		d.at++
-		d.space()
-		item, err := d.value()
-		if err != nil {
-			return nil, err
-		}
-		if at, repeated := index[key]; repeated {
-			object[at].Value = item
-		} else {
-			index[key] = len(object)
-			object = append(object, contract.Field{Key: key, Value: item})
-		}
-		if d.space(); d.at < len(d.text) && d.text[d.at] == ',' {
-			d.at++
-		}
-	}
-	d.at++
-	return object, nil
-}
-
-func (d *pythonDecoder) array() (any, error) {
-	array := []any{}
-	d.at++
-	for d.space(); d.at < len(d.text) && d.text[d.at] != ']'; d.space() {
-		item, err := d.value()
-		if err != nil {
-			return nil, err
-		}
-		array = append(array, item)
-		if d.space(); d.at < len(d.text) && d.text[d.at] == ',' {
-			d.at++
-		}
-	}
-	d.at++
-	return array, nil
-}
-
-func (d *pythonDecoder) number() (any, error) {
-	start := d.at
-	for d.at < len(d.text) && strings.IndexByte("+-0123456789.eE", d.text[d.at]) >= 0 {
-		d.at++
-	}
-	spelled := d.text[start:d.at]
-	number, ok := pythonNumberSpelled(spelled)
-	if !ok || spelled == "" {
-		return nil, fmt.Errorf("invalid number %q at %d", spelled, start)
-	}
-	if number.float {
-		return number.real, nil
-	}
-	if number.integer.IsInt64() {
-		return number.integer.Int64(), nil
-	}
-	return number.integer, nil
-}
-
-func (d *pythonDecoder) str() (string, error) {
-	if d.at >= len(d.text) || d.text[d.at] != '"' {
-		return "", fmt.Errorf("expected a string at %d", d.at)
-	}
-	var b strings.Builder
-	d.at++
-	for d.at < len(d.text) {
-		c := d.text[d.at]
-		switch {
-		case c == '"':
-			d.at++
-			return b.String(), nil
-		case c != '\\':
-			r, size := utf8.DecodeRuneInString(d.text[d.at:])
-			b.WriteRune(r)
-			d.at += size
-			continue
-		}
-		if d.at+1 >= len(d.text) {
-			break
-		}
-		escape := d.text[d.at+1]
-		d.at += 2
-		if simple := strings.IndexByte(`"\/bfnrt`, escape); simple >= 0 {
-			b.WriteByte("\"\\/\b\f\n\r\t"[simple])
-			continue
-		}
-		unit, err := d.hex()
-		if err != nil {
-			return "", err
-		}
-		if unit >= 0xd800 && unit <= 0xdbff && strings.HasPrefix(d.text[d.at:], `\u`) {
-			mark := d.at
-			d.at += 2
-			if low, err := d.hex(); err == nil && low >= 0xdc00 && low <= 0xdfff {
-				b.WriteRune(0x10000 + (unit-0xd800)<<10 + (low - 0xdc00))
-				continue
-			}
-			d.at = mark
-		}
-		if isSurrogate(unit) {
-			// A code point UTF-8 cannot carry, kept in its generalized three-byte form.
-			b.WriteByte(byte(0xe0 | unit>>12))
-			b.WriteByte(byte(0x80 | (unit>>6)&0x3f))
-			b.WriteByte(byte(0x80 | unit&0x3f))
-			continue
-		}
-		b.WriteRune(unit)
-	}
-	return "", fmt.Errorf("unterminated string at %d", d.at)
-}
-
-func (d *pythonDecoder) hex() (rune, error) {
-	if d.at+4 > len(d.text) {
-		return 0, fmt.Errorf("short unicode escape at %d", d.at)
-	}
-	value, err := strconv.ParseUint(d.text[d.at:d.at+4], 16, 16)
-	if err != nil {
-		return 0, fmt.Errorf("invalid unicode escape at %d", d.at)
-	}
-	d.at += 4
-	return rune(value), nil
+	return pyjson.Loads(text, pyjson.LoadOptions{Constants: true, Surrogates: true, Numbers: pyjson.BigNumbers, Deep: true})
 }

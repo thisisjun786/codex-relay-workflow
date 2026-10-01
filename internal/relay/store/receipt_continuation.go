@@ -10,6 +10,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 // ReasonRevisionLineageInvalid is errors.RefusalReason.REVISION_LINEAGE_INVALID.
@@ -27,18 +28,19 @@ func parseContinuation(raw []byte) (*continuationClaim, error) {
 		return nil, nil
 	}
 	value, err := decodeOrdered(raw)
-	if err != nil || value.isNull() {
+	if err != nil || value == nil {
 		if err == nil {
 			return nil, nil
 		}
 		return nil, refuse(ReasonMalformedReceipt, "a continuation claim is an object")
 	}
-	if value.kind != jsonObject {
+	object, isObject := value.(pyjson.Object)
+	if !isObject {
 		return nil, refuse(ReasonMalformedReceipt, "a continuation claim is an object")
 	}
 	var missing []string
 	for _, field := range []string{"anchorTurnId", "actor", "reason"} {
-		if _, ok := value.field(field); !ok {
+		if _, ok := object.Lookup(field); !ok {
 			missing = append(missing, field)
 		}
 	}
@@ -52,8 +54,7 @@ func parseContinuation(raw []byte) (*continuationClaim, error) {
 	}
 	claim := &continuationClaim{}
 	for _, field := range []string{"anchorTurnId", "actor", "reason"} {
-		v, _ := value.field(field)
-		text, ok := v.text()
+		text, ok := object.Get(field).(string)
 		if !ok || strings.TrimSpace(text) == "" {
 			return nil, refuse(ReasonMalformedReceipt, "continuation.%s must be a non-empty string", field)
 		}

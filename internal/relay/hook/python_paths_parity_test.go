@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
@@ -54,7 +54,7 @@ func TestAPathFromJSONReachesTheSystemAsPythonEncodesIt(t *testing.T) {
 	// The answers, each character position a codec error counts through root spelled relative to
 	// root's length (toRootPositions).
 	answers := Object{{Key: "reasons", Value: reasons}, {Key: "claim", Value: claim}, {Key: "row", Value: nullable(row)}}
-	golden.Check(t, "answers", toRootPositions([]byte(evidence.DumpsIndent(answers, 2, false, true)+"\n"), root), golden.Substitute(root, "<ROOT>"))
+	golden.Check(t, "answers", toRootPositions([]byte(pyjson.Dumps(answers, pyjson.Options{Indent: 2})+"\n"), root), golden.Substitute(root, "<ROOT>"))
 	after, err := os.ReadDir(root)
 	if err != nil {
 		t.Fatal(err)
@@ -164,7 +164,7 @@ func TestTheControlSocketIsDialledWhereItsSourceNamesIt(t *testing.T) {
 			t.Setenv("XDG_STATE_HOME", filepath.Join(home, "xdg"))
 			pinned, state := c.config(home)
 			config := Object{{Key: "configVersion", Value: int64(1)}, {Key: "mode", Value: "observe"}, {Key: "relayExecutable", Value: filepath.Join(home, "never-run")}, {Key: "markerRoot", Value: filepath.Join(home, "markers")}, {Key: "timeoutSeconds", Value: 5.0}, {Key: "journalRoot", Value: filepath.Join(home, "journal")}}
-			writeTest(t, filepath.Join(home, ConfigName), []byte(evidence.Dumps(append(config, pinned...), false, false, true)))
+			writeTest(t, filepath.Join(home, ConfigName), []byte(pyjson.Dumps(append(config, pinned...), pyjson.Options{})))
 			if err := os.MkdirAll(state, 0o700); err != nil {
 				t.Fatal(err)
 			}

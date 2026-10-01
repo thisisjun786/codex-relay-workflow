@@ -6,6 +6,7 @@ import (
 	"errors"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -99,7 +100,7 @@ func (r *Registry) RecordSettings(ctx context.Context, task string, settings con
 		now := r.now()
 		if _, err := q.ExecContext(ctx, "INSERT INTO authorized_settings (task_id, settings, source, recorded_at) VALUES (?,?,?,?)"+
 			" ON CONFLICT(task_id) DO UPDATE SET settings = excluded.settings,   source = excluded.source, recorded_at = excluded.recorded_at",
-			task, pyDumps(settings, true), source, now); err != nil {
+			task, pyjson.Dumps(settings, pyjson.Options{SortKeys: true}), source, now); err != nil {
 			return err
 		}
 		return journal(ctx, r.Store, "settings_recorded", task, contract.OrderedObject{{Key: "source", Value: source}}, r.now())

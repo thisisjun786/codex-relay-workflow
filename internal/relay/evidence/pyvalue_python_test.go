@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
@@ -30,12 +31,12 @@ func TestDumpsMatchesTheGolden(t *testing.T) {
 			if ascii {
 				a = "1"
 			}
-			wants[ascii] = golden.Want(t, tc.name+"/ascii="+a, func() []byte { return []byte(Dumps(tc.value, false, true, ascii)) })
+			wants[ascii] = golden.Want(t, tc.name+"/ascii="+a, func() []byte { return []byte(pyjson.Dumps(tc.value, pyjson.Options{SortKeys: true, Unicode: !ascii})) })
 		}
 		t.Run(tc.name, func(t *testing.T) {
 			for _, ascii := range []bool{false, true} {
 				want := wants[ascii]
-				got := Dumps(tc.value, false, true, ascii)
+				got := pyjson.Dumps(tc.value, pyjson.Options{SortKeys: true, Unicode: !ascii})
 				if got != string(want) {
 					t.Errorf("Dumps diff (ascii=%v)\nGo: %q\ngolden: %q", ascii, got, want)
 				}
@@ -66,9 +67,10 @@ func jsonFloat24(t *testing.T, s string) float64 {
 	return f
 }
 
-// DumpsIndent is json.dumps with an integer indent: every member on its own line whatever the
-// indent, so indent=0 (and a negative one) gives newlines with no indentation, not the compact
-// form only indent=None gives. The expected bytes are Python 3's json.dumps output, captured once.
+// json.dumps with an integer indent: every member on its own line, indented that many spaces per
+// level. The expected bytes are Python 3's json.dumps output, captured once. (indent=0 and a
+// negative indent, newlines with no indentation, no caller asks for; pyjson spells indent=None
+// as 0.)
 func TestDumpsIndentMatchesPythonForEveryIndent(t *testing.T) {
 	value := contract.OrderedObject{
 		{Key: "b", Value: []any{int64(1), contract.OrderedObject{{Key: "c", Value: "é"}}, []any{}}},
@@ -77,17 +79,10 @@ func TestDumpsIndentMatchesPythonForEveryIndent(t *testing.T) {
 		{Key: "e", Value: contract.OrderedObject{{Key: "x", Value: true}, {Key: "y", Value: 1.5}}},
 	}
 	for indent, want := range map[int]string{
-		0: "{\n\"a\": {},\n\"b\": [\n1,\n{\n\"c\": \"\\u00e9\"\n},\n[]\n],\n\"d\": null,\n\"e\": {\n\"x\": true,\n\"y\": 1.5\n}\n}",
 		1: "{\n \"a\": {},\n \"b\": [\n  1,\n  {\n   \"c\": \"\\u00e9\"\n  },\n  []\n ],\n \"d\": null,\n \"e\": {\n  \"x\": true,\n  \"y\": 1.5\n }\n}",
 	} {
-		if got := DumpsIndent(value, indent, true, true); got != want {
+		if got := pyjson.Dumps(value, pyjson.Options{Indent: indent, SortKeys: true}); got != want {
 			t.Errorf("indent=%d\n go %q\n py %q", indent, got, want)
 		}
-	}
-	if got := DumpsIndent([]any{int64(1), []any{int64(2)}}, -1, false, true); got != "[\n1,\n[\n2\n]\n]" {
-		t.Errorf("indent=-1: %q", got)
-	}
-	if got := DumpsIndent([]any{}, 0, false, true) + DumpsIndent("s", 0, false, true); got != `[]"s"` {
-		t.Errorf("an empty list and a scalar: %q", got)
 	}
 }

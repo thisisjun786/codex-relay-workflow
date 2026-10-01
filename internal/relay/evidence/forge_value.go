@@ -2,14 +2,11 @@ package evidence
 
 import (
 	"encoding/json"
-	"fmt"
-	"io"
 	"math"
 	"math/big"
-	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 )
@@ -227,7 +224,7 @@ func HashKey(value any) string {
 				return "num:" + Integer(v).String()
 			}
 		}
-		return "num:" + Float(v)
+		return "num:" + pyjson.Float(v)
 	}
 	panic(&PythonError{"TypeError", "unhashable type: '" + TypeName(value) + "'"})
 }
@@ -275,88 +272,24 @@ func forgeText(v any) string {
 	return Text(v)
 }
 
-// Decode reads stored JSON without discarding object order or numeric types.
-// Malformed stored documents fail as json.loads does, rather than becoming empty.
+// Decode reads stored JSON without discarding object order or numeric types (pyjson.Loads: an
+// integer a json.Number, any other number a float64). Malformed stored documents fail as
+// json.loads does, rather than becoming empty; NaN, the infinities and a number past float64's
+// range fail as encoding/json refuses them.
 func Decode(text string) any {
-	if detail := store.PythonJSONError(text); detail != "" {
-		panic(&PythonError{"JSONDecodeError", detail})
-	}
-	v, err := decodeForgeJSON(text)
+	value, err := pyjson.Loads(text, pyjson.LoadOptions{Python: true, RangeErrors: true})
 	if err != nil {
 		panic(&PythonError{"JSONDecodeError", err.Error()})
 	}
-	return v
+	return value
 }
 
-// Decode ordered objects and distinguish JSON ints from floats before str()/repr().
-// Otherwise a context containing a dict or 1e0 would acquire Go's ordering/spelling.
+// decodeForgeJSON reads what the forge printed as encoding/json reads it (pyjson.Loads): ordered
+// objects, an integer a json.Number, any other number a float64, a number past float64's range
+// refused; no output at all is null.
 func decodeForgeJSON(out string) (any, error) {
 	if out == "" {
 		out = "null"
 	}
-	d := json.NewDecoder(strings.NewReader(out))
-	d.UseNumber()
-	v, err := forgeJSONValue(d)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := d.Token(); err != io.EOF {
-		return nil, fmt.Errorf("trailing JSON data")
-	}
-	return v, nil
-}
-
-func forgeJSONValue(d *json.Decoder) (any, error) {
-	token, err := d.Token()
-	if err != nil {
-		return nil, err
-	}
-	switch v := token.(type) {
-	case json.Delim:
-		if v == '[' {
-			items := []any{}
-			for d.More() {
-				item, err := forgeJSONValue(d)
-				if err != nil {
-					return nil, err
-				}
-				items = append(items, item)
-			}
-			_, err = d.Token()
-			return items, err
-		}
-		o := contract.OrderedObject{}
-		for d.More() {
-			key, err := d.Token()
-			if err != nil {
-				return nil, err
-			}
-			item, err := forgeJSONValue(d)
-			if err != nil {
-				return nil, err
-			}
-			name := key.(string)
-			found := false
-			for i := range o {
-				if o[i].Key == name {
-					o[i].Value, found = item, true
-					break
-				}
-			}
-			if !found {
-				o = append(o, contract.Field{Key: name, Value: item})
-			}
-		}
-		_, err = d.Token()
-		return o, err
-	case json.Number:
-		if strings.ContainsAny(string(v), ".eE") {
-			f, err := v.Float64()
-			if err != nil {
-				return nil, err
-			}
-			return f, nil
-		}
-	}
-	return token, nil
+	return pyjson.Loads(out, pyjson.LoadOptions{RangeErrors: true})
 }

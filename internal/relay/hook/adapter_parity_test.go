@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
@@ -85,7 +86,7 @@ func nativeAdapterRun(t *testing.T, name string, response Object, base string) O
 	case "unreadable":
 		writeTest(t, filepath.Join(home, ConfigName), []byte("{"))
 	default:
-		writeTest(t, filepath.Join(home, ConfigName), []byte(evidence.Dumps(settings, false, false, true)))
+		writeTest(t, filepath.Join(home, ConfigName), []byte(pyjson.Dumps(settings, pyjson.Options{})))
 	}
 	fixture, err := decodeObject(golden.Fixture(t, "stop_event_r1.json"))
 	if err != nil {
@@ -102,7 +103,7 @@ func nativeAdapterRun(t *testing.T, name string, response Object, base string) O
 	payload := append(Object{}, object(get(stop, "payload"))...)
 	payload = set(payload, "transcript_path", within("transcript.jsonl"))
 	payload = set(payload, "cwd", spelled)
-	input := evidence.Dumps(payload, false, false, true)
+	input := pyjson.Dumps(payload, pyjson.Options{})
 	if name == "malformed" {
 		input = "not json"
 	}
@@ -251,8 +252,8 @@ func serveAdapterOwner(listener net.Listener, invocations int, timeout bool, pay
 				return fmt.Errorf("method %v", get(request, "method"))
 			}
 			stop := get(object(get(request, "params")), "stopInput")
-			if evidence.Dumps(stop, false, true, true) != evidence.Dumps(payload, false, true, true) {
-				return fmt.Errorf("stopInput %s", evidence.Dumps(stop, false, true, true))
+			if pyjson.Dumps(stop, pyjson.Options{SortKeys: true}) != pyjson.Dumps(payload, pyjson.Options{SortKeys: true}) {
+				return fmt.Errorf("stopInput %s", pyjson.Dumps(stop, pyjson.Options{SortKeys: true}))
 			}
 			if timeout {
 				rest, err := io.ReadAll(reader)
@@ -261,7 +262,7 @@ func serveAdapterOwner(listener net.Listener, invocations int, timeout bool, pay
 				}
 				return nil
 			}
-			_, err = io.WriteString(conn, evidence.Dumps(response, false, false, true)+"\n")
+			_, err = io.WriteString(conn, pyjson.Dumps(response, pyjson.Options{})+"\n")
 			return err
 		}()
 		if err != nil {

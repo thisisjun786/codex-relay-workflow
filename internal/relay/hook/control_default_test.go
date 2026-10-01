@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
@@ -86,11 +86,11 @@ func Test33ControlDefaultStorePython(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%v: %s", err, response)
 			}
-			if compact := evidence.Dumps(wire, true, false, true) + "\n"; string(response) != compact {
+			if compact := pyjson.Dumps(wire, pyjson.Options{Compact: true}) + "\n"; string(response) != compact {
 				t.Fatalf("wire %q, not compact %q", response, compact)
 			}
 			golden.Check(t, "wire", response, golden.Substitute(home, "<ROOT>"))
-			golden.Check(t, "stdout", []byte(evidence.DumpsIndent(wire, 2, false, true)+"\n"), golden.Substitute(home, "<ROOT>"))
+			golden.Check(t, "stdout", []byte(pyjson.Dumps(wire, pyjson.Options{Indent: 2})+"\n"), golden.Substitute(home, "<ROOT>"))
 			goldenCanonical(t, "marker files", markerFiles(t, filepath.Join(home, "markers")), golden.Substitute(home, "<ROOT>"))
 			if after := storesUnder(t, home); !reflect.DeepEqual(after, stores) {
 				t.Fatal("the Go guard changed a store")

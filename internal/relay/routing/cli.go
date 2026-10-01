@@ -4,13 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
-	"io"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -71,14 +71,8 @@ func routeJSON(value, what string) (any, error) {
 		}
 		raw = strings.ReplaceAll(strings.ReplaceAll(string(data), "\r\n", "\n"), "\r", "\n")
 	}
-	decoder := json.NewDecoder(strings.NewReader(raw))
-	decoder.UseNumber()
-	var out any
-	if err := decoder.Decode(&out); err != nil {
-		return nil, malformed("the " + what + " is not readable JSON: " + store.PythonJSONError(raw))
-	}
-	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
+	out, err := pyjson.Loads(raw, pyjson.LoadOptions{Map: true, Numbers: pyjson.SpelledNumbers})
+	if err != nil {
 		return nil, malformed("the " + what + " is not readable JSON: " + store.PythonJSONError(raw))
 	}
 	return out, nil

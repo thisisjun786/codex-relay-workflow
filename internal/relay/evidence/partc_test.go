@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
@@ -251,7 +252,7 @@ func sevDirectiveBytes(t *testing.T, correlationOnly bool) {
 
 func TestCaptureJSONStable(t *testing.T) {
 	var v any
-	if json.Unmarshal([]byte(`{"a":1}`), &v) != nil || !strings.Contains(Dumps(v, true, true, false), "a") {
+	if json.Unmarshal([]byte(`{"a":1}`), &v) != nil || !strings.Contains(pyjson.Dumps(v, pyjson.Options{Compact: true, SortKeys: true, Unicode: true}), "a") {
 		t.Fatal(v)
 	}
 }

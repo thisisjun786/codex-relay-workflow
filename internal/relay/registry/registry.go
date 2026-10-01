@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -65,7 +66,7 @@ func refuse(reason contract.RefusalReason, format string, args ...any) error {
 func journal(ctx context.Context, s *store.Store, kind, subject string, detail any, at string) error {
 	text, ok := detail.(string)
 	if !ok {
-		text = pyDumps(detail, false)
+		text = pyjson.Dumps(detail, pyjson.Options{})
 	}
 	_, err := s.Querier(ctx).ExecContext(ctx, "INSERT INTO journal (at, kind, subject, detail) VALUES (?,?,?,?)", at, kind, subject, text)
 	if err != nil {
@@ -538,7 +539,7 @@ func (r *Registry) registerInTransaction(ctx context.Context, rid string, in Reg
 			" updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,?,?)",
 			rid, in.IssueKey, Active, in.Parent.TaskID, in.Parent.HostID, in.Parent.Cwd, in.Parent.CXCSession,
 			in.Child.TaskID, in.Child.HostID, in.Child.Cwd, in.Child.CXCSession, 1,
-			pyDumps(in.ArtifactRoots, false), pyDumps(in.AllowedRecipients, false), in.ScopeRef, text(in.Supersedes), now, now); err != nil {
+			pyjson.Dumps(in.ArtifactRoots, pyjson.Options{}), pyjson.Dumps(in.AllowedRecipients, pyjson.Options{}), in.ScopeRef, text(in.Supersedes), now, now); err != nil {
 			return fmt.Errorf("insert relationship: %w", err)
 		}
 		anchor, bound := anchorFor(in.DispatchTurnID, now)

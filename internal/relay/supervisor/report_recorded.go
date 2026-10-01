@@ -6,7 +6,7 @@ import (
 	"errors"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 // RecordReport records a produced report, not a delivery. One obligation gets one
@@ -30,7 +30,7 @@ func (c *Channel) RecordReport(ctx context.Context, o Obligation, at string, mes
 		if note != nil {
 			text = *note
 		}
-		detail := evidence.Dumps(contract.OrderedObject{{Key: "kind", Value: o.Kind}, {Key: "relationId", Value: o.RelationID}, {Key: "subject", Value: o.Subject}, {Key: "messageId", Value: message}, {Key: "note", Value: text}}, false, false, true)
+		detail := pyjson.Dumps(contract.OrderedObject{{Key: "kind", Value: o.Kind}, {Key: "relationId", Value: o.RelationID}, {Key: "subject", Value: o.Subject}, {Key: "messageId", Value: message}, {Key: "note", Value: text}}, pyjson.Options{})
 		if _, err = conn.ExecContext(ctx, "INSERT INTO journal (at, kind, subject, detail) VALUES (?,?,?,?)", at, "supervisor_report", o.ID, string(detail)); err != nil {
 			return err
 		}
