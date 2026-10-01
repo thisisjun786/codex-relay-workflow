@@ -29,5 +29,4 @@ func init() {
 		supervisorShowCommand, showCommand, statusCommand, daemonCommand)
 	dispatch.Register(nil, serviceCommands()...)
 	dispatch.Register(nil, doctorCommand, storeIdentityCommand, storeChallengeCommand, guardEvaluateCommand, mergeEvidenceCommand)
-	dispatch.Delegate = familyDelegate
 }

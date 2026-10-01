@@ -6,6 +6,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/faults"
 )
 
@@ -36,7 +37,7 @@ func Test23ClassRegistryConcurrentRouterConstruction(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < 10; j++ {
-				faults.ExecuteAs(context.Background(), "codex-session-relay", []string{"--state", dir, "fault-policy", "--product", "v"}, io.Discard, io.Discard, nil)
+				dispatch.Execute(context.Background(), "codex-session-relay", []string{"--state", dir, "fault-policy", "--product", "v"}, io.Discard, io.Discard)
 			}
 		}()
 	}

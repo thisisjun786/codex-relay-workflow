@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -13,111 +12,61 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
-// SelectionCheck runs the relay CLI's selection refusal before a fault handler.
-type SelectionCheck func(store.StateSelection, string) error
-
-// Names lists implemented fault commands. It grows with the port, rather than
-// claiming an unsupported command succeeded.
 type cliClock struct{}
 
 func (cliClock) Now() float64 { return float64(time.Now().UnixMicro()) / 1e6 }
 func (cliClock) ISO() string  { return time.Now().UTC().Format("2006-01-02T15:04:05.000000+00:00") }
 
+// Names lists the fault commands, in cli.py's add_parser order.
 func Names() []string {
 	return append(append(append(append([]string{"fault-target", "fault-observe", "fault-fix", "fault-reverify", "fault-resolve", "fault-prune"}, dNames...), cNames...), f2Names...), f1Names...)
 }
 
-func ExecuteAs(ctx context.Context, prog string, argv []string, stdout, stderr io.Writer, check SelectionCheck) (int, bool) {
-	var state, socket string
-	var modules []string
-	i := 0
-	for ; i < len(argv); i++ {
-		name, value, has := strings.Cut(argv[i], "=")
-		switch name {
-		case "--json":
-			continue
-		case "--state", "--socket", "--kind-module":
-			if !has {
-				if i+1 >= len(argv) {
-					return 0, false
-				}
-				i++
-				value = argv[i]
-			}
-			switch name {
-			case "--state":
-				state = value
-			case "--socket":
-				socket = value
-			default:
-				modules = append(modules, value)
-			}
-			continue
-		}
-		break
+// readOnly is cli.py's READ_ONLY_COMMANDS among the fault commands; fault-policy and fault-limit
+// read when they name no class or kind to set (_read_only_command).
+var readOnly = map[string]func(dispatch.Args) bool{
+	"fault-show":          func(dispatch.Args) bool { return true },
+	"fault-next":          func(dispatch.Args) bool { return true },
+	"fault-attention":     func(dispatch.Args) bool { return true },
+	"fault-notifications": func(dispatch.Args) bool { return true },
+	"fault-policy":        func(args dispatch.Args) bool { return !args.Given("fault-class") },
+	"fault-limit":         func(args dispatch.Args) bool { return !args.Given("kind") },
+}
+
+func init() {
+	// Importing codex_session_relay.projects declares the product fault classes.
+	dispatch.OnKindModule("codex_session_relay.projects", InstallProductDeclarations)
+	var commands []dispatch.Command
+	for _, name := range Names() {
+		commands = append(commands, dispatch.Command{Name: name, ReadOnlyWhen: readOnly[name],
+			Run: func(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
+				return execute(ctx, name, services, args)
+			}})
 	}
-	if i >= len(argv) || !slices.Contains(Names(), argv[i]) {
-		return 0, false
+	dispatch.Register(nil, commands...)
+}
+
+// hostAnswer is the host envelope for err, answered whole whatever err is.
+func hostAnswer(err error) error {
+	return &dispatch.PayloadExit{Payload: contract.OrderedObject{{Key: "error", Value: "host"}, {Key: "detail", Value: hostText(err)}}, Code: contract.ExitHost}
+}
+
+// execute is cli.main for a fault command once the relay CLI checked the selected store: the
+// handler's own argument checks, its store, and its answer in the family's key order.
+func execute(ctx context.Context, name string, services dispatch.Services, line dispatch.Args) (any, error) {
+	args := map[string]string{}
+	for option, values := range line.Parsed.Values {
+		args["--"+option] = values[len(values)-1]
 	}
-	name := argv[i]
-	parsed, code, handled := faultParse(prog, name, argv[i+1:], stdout, stderr)
-	if handled {
-		return code, true
-	}
-	args := parsed.text
-	ctx = context.WithValue(ctx, numberArgsKey{}, parsed.numbers)
-	selection, err := store.ResolveStateDir(state, socket)
-	if err != nil {
-		return response(stdout, map[string]any{"error": "host", "detail": hostText(err)}, 3), true
-	}
-	if check != nil {
-		// The relay CLI's check also admits a writable command's store (its open can be
-		// refused like the one below).
-		if err = check(selection, socket); err != nil {
-			var payload interface {
-				ExitPayload() (contract.OrderedObject, int)
-			}
-			var refused *store.RefusedError
-			switch {
-			case errors.As(err, &payload):
-				body, code := payload.ExitPayload()
-				return response(stdout, body, code), true
-			case errors.As(err, &refused):
-				return response(stdout, map[string]any{"error": "refused", "reason": refused.Reason, "detail": refused.Detail}, 2), true
-			}
-			return response(stdout, map[string]any{"error": "host", "detail": hostText(err)}, 3), true
-		}
-	}
-	for _, module := range modules {
-		if module == "codex_session_relay.projects" {
-			InstallProductDeclarations()
-		}
-		if module == "" {
-			return response(stdout, map[string]any{"error": "host", "detail": "ValueError: Empty module name"}, 3), true
-		}
-		if strings.HasPrefix(module, ".") {
-			return response(stdout, map[string]any{"error": "host", "detail": "TypeError: the 'package' argument is required to perform a relative import for '" + module + "'"}, 3), true
-		}
-		if !RegisteredModule(module) {
-			missing := module
-			parts := strings.Split(module, ".")
-			for j := 1; j < len(parts); j++ {
-				prefix := strings.Join(parts[:j], ".")
-				if prefix == "codex_session_relay" || RegisteredModule(prefix) {
-					continue
-				}
-				missing = prefix
-				break
-			}
-			return response(stdout, map[string]any{"error": "usage", "detail": fmt.Sprintf("--kind-module '%s' could not be imported: No module named '%s'", module, missing)}, 4), true
-		}
-	}
+	ctx = context.WithValue(ctx, numberArgsKey{}, line.Parsed.Numbers)
 	// These Python handlers validate before their first lazy services.store access
 	// (cmd_fault_next reads --limit before it asks whether its store is read-only). Other
 	// fault commands deliberately retain their existing precedence.
+	var err error
 	switch name {
 	case "fault-show":
 		err = validateShow(ctx, args)
@@ -131,18 +80,14 @@ func ExecuteAs(ctx context.Context, prog string, argv []string, stdout, stderr i
 	if err != nil {
 		reason, detail, refused := strings.Cut(err.Error(), ": ")
 		if refused && strings.HasPrefix(reason, "fault_") {
-			return response(stdout, map[string]any{"error": "refused", "reason": reason, "detail": detail}, 2), true
+			return nil, &dispatch.PayloadExit{Payload: contract.OrderedObject{{Key: "error", Value: "refused"}, {Key: "reason", Value: reason}, {Key: "detail", Value: detail}}, Code: contract.ExitRefused}
 		}
-		return response(stdout, map[string]any{"error": "host", "detail": hostText(err)}, 3), true
+		return nil, hostAnswer(err)
 	}
-	s, err := store.Open(ctx, selection.DBPath(), socket)
+	s, err := store.Open(ctx, services.Selection.DBPath(), services.SocketPath)
 	if err != nil {
 		// A refusal keeps its reason and exit 2, as cli.main answers every RelayError.
-		var refused *store.RefusedError
-		if errors.As(err, &refused) {
-			return response(stdout, map[string]any{"error": "refused", "reason": refused.Reason, "detail": refused.Detail}, 2), true
-		}
-		return response(stdout, map[string]any{"error": "host", "detail": hostText(err)}, 3), true
+		return nil, err
 	}
 	defer s.Close()
 	l := &Ledger{Store: s, Clock: f1Clock(ctx)}
@@ -150,7 +95,7 @@ func ExecuteAs(ctx context.Context, prog string, argv []string, stdout, stderr i
 	if name == "fault-fix" || name == "fault-reverify" || name == "fault-resolve" || name == "fault-prune" {
 		alias, e := l.one(ctx, "SELECT fault_id FROM fault_aliases WHERE alias_id=?", args["--fault"])
 		if e != nil {
-			return response(stdout, map[string]any{"error": "host", "detail": hostText(e)}, 3), true
+			return nil, hostAnswer(e)
 		}
 		if alias != nil {
 			args["--fault"] = textRow(alias, "fault_id")
@@ -293,10 +238,10 @@ func ExecuteAs(ctx context.Context, prog string, argv []string, stdout, stderr i
 		}
 	}
 	value, code := faultAnswer(name, result, err)
-	if e := contract.Emit(stdout, value); e != nil {
-		return 3, true
+	if code != contract.ExitOk {
+		return nil, &dispatch.PayloadExit{Payload: value.(contract.OrderedObject), Code: code}
 	}
-	return code, true
+	return value, nil
 }
 
 // faultAnswer is cli.main's reply to a fault handler's ending: the printed object, in the
@@ -438,12 +383,6 @@ func ordered(value any) any {
 	default:
 		return value
 	}
-}
-func response(w io.Writer, value any, code int) int {
-	if err := contract.Emit(w, ordered(value)); err != nil {
-		return 3
-	}
-	return code
 }
 func textRow(row store.Row, key string) string {
 	if row == nil {

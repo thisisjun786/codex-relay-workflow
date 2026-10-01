@@ -85,10 +85,10 @@ func Test22_FLT_17_SchemaWholeOutput(t *testing.T) {
 	// Go: refused, and nothing in the store changes.
 	before := flt17Rows(t, ctx, gd)
 	var stdout, stderr bytes.Buffer
-	code, handled := executeAsCLI(ctx, append([]string{"--state", gd, "--json"}, target...), &stdout, &stderr)
+	code := executeAsCLI(ctx, append([]string{"--state", gd, "--json"}, target...), &stdout, &stderr)
 	const refused = "{\n  \"error\": \"host\",\n  \"detail\": \"ownership refused: required table missing: fault_ledger\"\n}\n"
-	if !handled || code != 3 || stdout.String() != refused || stderr.Len() != 0 {
-		t.Fatalf("Go on a store missing the fault tables: handled=%t exit %d\nstdout %q\nstderr %q\nwant exit 3 stdout %q", handled, code, stdout.String(), stderr.String(), refused)
+	if code != 3 || stdout.String() != refused || stderr.Len() != 0 {
+		t.Fatalf("Go on a store missing the fault tables: exit %d\nstdout %q\nstderr %q\nwant exit 3 stdout %q", code, stdout.String(), stderr.String(), refused)
 	}
 	if after := flt17Rows(t, ctx, gd); !reflect.DeepEqual(before, after) {
 		t.Fatalf("Go's refusal changed the store:\nbefore %v\nafter  %v", before, after)

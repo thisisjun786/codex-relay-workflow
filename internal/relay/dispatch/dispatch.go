@@ -112,9 +112,6 @@ func Names() []string {
 	return names
 }
 
-// Delegate runs a command of a family that still parses its own line, after the root parse.
-var Delegate func(ctx context.Context, argv0, prog string, root argparse.Result, stdout, stderr io.Writer) (int, bool)
-
 const parserExit = 2 // argparse's exit status for a command line it cannot parse
 
 // Execute is cli.main for one relay command line; argv0 is how the CLI was invoked (its base
@@ -183,11 +180,6 @@ func Execute(ctx context.Context, argv0 string, argv []string, stdout, stderr io
 		line = append(append([]string{}, parent.Unknown...), parent.Remaining[1:]...)
 	}
 	command := table[name]
-	if command == nil && Delegate != nil {
-		if code, handled := Delegate(ctx, argv0, prog, root, stdout, stderr); handled {
-			return code
-		}
-	}
 	if command == nil {
 		return parseError(stderr, prog, fmt.Sprintf("argument command: invalid choice: %s (choose from %s)", pyvalue.StrRepr(remaining[0]), choices()))
 	}
@@ -319,7 +311,9 @@ func CheckSelection(services Services) error {
 }
 
 // kindModules are the modules --kind-module can import: the relay's static stand-in for
-// importlib.import_module, each with what importing it installs.
+// importlib.import_module, each with what importing it installs. json and os.path are importable
+// standard-library probes; codex_session_relay.projects is the publication-kind declaration the
+// product-routing tests import.
 var kindModules = map[string]func(){"json": nil, "os.path": nil, "codex_session_relay.projects": nil}
 
 // OnKindModule makes importing module run install (the fault package installs the product

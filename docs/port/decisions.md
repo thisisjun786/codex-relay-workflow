@@ -1178,8 +1178,9 @@ not follow later bumps. The Go relay's installation identity is decision 34's: p
 (`faults.ExecutableInstallation`), which `crw install` records as the Go install entry's
 `location`, for the daemon's sweeper and the `fault-sweep` command alike.
 
-Evidence: `internal/relay/argparse/readonly.go` (`ReadOnlyForm`, read by the relay CLI and
-`registry.ExecuteAs`), `internal/relay/cli/readonly.go`, `internal/relay/store/hold.go`
+Evidence: the relay command table's read-only attributes (`ReadOnly`, `ReadOnlyWhen` in
+`internal/relay/dispatch`; refactor R2 moved them there from `argparse.ReadOnlyForm`),
+`internal/relay/store/hold.go`
 (`openForRead`, `OpenReadOnlyStore`, `Projection`),
 `internal/relay/faults/commands_c.go` (`cNext`), `internal/relay/store/diagnostic_probe.go`
 (`ownershipPreflight`), `internal/relay/store/diagnostic_read.go`, `internal/relay/cli/doctor.go`;
@@ -3373,15 +3374,21 @@ cli.py did:
 
 - A `--state` (or `CODEX_SESSION_RELAY_STATE`) that cannot be resolved because `~user` names no
   user, or `~` has no home, answers `RuntimeError: Could not determine home directory.` (exit 3).
-  The registry, linkage and merge-turn commands answered the wrapped Go text instead
+  The registry, linkage, merge-turn and fault commands answered the wrapped Go text instead
   (`cannot determine home directory for "x": ...`), the delivery and marker commands that text
   behind `OSError: `. Any other failure to resolve it (a relative `--state` under a working
   directory that is gone) reads as the command family's unclassified failure, as the handler's
   own failures do; the delivery and marker commands answered it behind `OSError: `.
-- The delivery and marker commands' own console (`delivery.ExecuteAs` without the relay CLI's
-  check, which only tests drove) is gone, and with it its copy of the selection refusal and of the
-  recovery lines (`internal/relay/delivery/selection.go`); the relay CLI's (`selection.Refusal`)
-  is the one, tested in `internal/relay/selection`.
+- A `--kind-module` that cannot be imported is named in Python's repr by every command. The fault
+  commands' read-only forms (`fault-show`, `fault-next`, `fault-attention`,
+  `fault-notifications`, and `fault-policy`/`fault-limit` naming no class or kind), which imported
+  the modules themselves, spelled a name holding a quote or a backslash between bare single
+  quotes.
+- The families' own consoles (`registry.ExecuteAs`, `delivery.ExecuteAs`, `faults.ExecuteAs`
+  without the relay CLI's check, which only tests drove) are gone, and with them the delivery
+  package's copy of the selection refusal and of the recovery lines
+  (`internal/relay/delivery/selection.go`); the relay CLI's (`selection.Refusal`) is the one,
+  tested in `internal/relay/selection`.
 
 Why: six entry paths served the relay CLI, each re-reading the global options and keeping its own
 copy of the selection refusal and of the ending-to-JSON classification; the copies had drifted
@@ -3389,4 +3396,5 @@ apart only where nothing looked. One table and one path keep the refusal order i
 
 Evidence: `internal/relay/dispatch` (`Execute`, `Command`, `emit`), the families' registrations
 (`internal/relay/cli/registry.go`, `internal/relay/registry/cli.go`, `external.go`,
-`internal/relay/delivery/cli.go`, `intent_cli.go`); every relay CLI golden compares unchanged.
+`internal/relay/delivery/cli.go`, `intent_cli.go`, `internal/relay/faults/cli.go`); every relay
+CLI golden compares unchanged.
