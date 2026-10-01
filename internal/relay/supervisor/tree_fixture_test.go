@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
@@ -170,6 +171,35 @@ func goldenKey(t testing.TB, what string) string {
 func treeGolden(t testing.TB, root string) []golden.Option {
 	t.Helper()
 	return []golden.Option{golden.Substitute(root, "<root>"), golden.Substitute(repoRoot(t), "<repo>")}
+}
+
+// fixtureGolden is the golden options for a value that names a stage fixture's directory
+// (fixture24) or the repository root.
+func fixtureGolden(t testing.TB, root string) []golden.Option {
+	t.Helper()
+	return []golden.Option{golden.Substitute(root, "<fixture>"), golden.Substitute(repoRoot(t), "<repo>")}
+}
+
+// goldenWallTimes substitutes the wall-clock times Go wrote into output - the times of the last
+// hour - for placeholders numbered in order of appearance, so a golden names none of them.
+func goldenWallTimes(output []byte) []golden.Option {
+	now := time.Now()
+	var options []golden.Option
+	seen := map[string]bool{}
+	for _, match := range isoTime.FindAll(output, -1) {
+		text := string(match)
+		if seen[text] {
+			continue
+		}
+		seen[text] = true
+		parts := isoTime.FindSubmatch(match)
+		at, err := time.Parse("2006-01-02T15:04:05Z07:00", string(parts[1])+string(parts[3]))
+		if err != nil || at.Before(now.Add(-time.Hour)) || at.After(now.Add(time.Minute)) {
+			continue
+		}
+		options = append(options, golden.Substitute(text, fmt.Sprintf("<go wall time %d>", len(options)+1)))
+	}
+	return options
 }
 
 // asJSON is value as JSON decodes it: objects as maps, numbers as float64.

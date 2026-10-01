@@ -3,16 +3,15 @@ package supervisor
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
-	"os/exec"
-	"path/filepath"
-	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
+// render's answer with each packet field set to every JSON value shape is the golden; it began
+// as what Python's SupervisorChannel.render answered.
 func Test24PacketAccessorPython(t *testing.T) {
 	f := fixture24(t)
 	_, staged := f.staged(t)
@@ -20,61 +19,55 @@ func Test24PacketAccessorPython(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, err := filepath.Abs("../../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	script := `import json,sys,copy
-from codex_session_relay import supervisorchannel as s
-s.relay_program=lambda: ["/usr/bin/codex-session-relay"]
-channel=object.__new__(s.SupervisorChannel)
-channel.state_directory=sys.argv[1];channel.socket_path=None
-packet=json.load(sys.stdin);out=[]
-for field in ("kind","sender","basis","evidence","observedAt","artifact","generation"):
- for value in [None,False,True,0,2,1.5,"","x",[],[1],{}, {"a":1}]:
-  p=copy.deepcopy(packet)
-  target=p if field in ("artifact","generation") else p["envelope"]
-  target[field]=value
-  try: result=channel.render(p,"request","token");error=None
-  except Exception as ex: result=None;error=type(ex).__name__+": "+str(ex)
-  out.append({"field":field,"value":value,"result":result,"error":error})
-print(json.dumps(out))`
-	raw := pythonOutput(t, "packet-accessors", func() ([]byte, error) {
-		cmd := exec.Command(filepath.Join(root, ".venv/bin/python"), "-c", script, f.c.StoreDirectory())
-		cmd.Stdin = strings.NewReader(row.Packet)
-		raw, err := cmd.CombinedOutput()
-		if err != nil {
-			return nil, fmt.Errorf("oracle: %v\n%s", err, raw)
-		}
-		return raw, nil
-	}, pyoracle.Substitute(f.c.StoreDirectory(), "<state>"))
+	raw := golden.Want(t, "packet-accessors", func() []byte { return packetAccessorRows(f, row.Packet) }, golden.Substitute(f.c.StoreDirectory(), "<state>"), golden.Substitute(repoRoot(t), "<repo>"))
 	for _, one := range evidence.Items(evidence.Decode(string(raw))) {
 		tc := evidence.Dict(one, false)
 		field := evidence.Text(tc["field"])
 		t.Run(field+"/"+evidence.Repr(tc["value"]), func(t *testing.T) {
-			p := Packet(evidence.Dict(evidence.Decode(row.Packet), false))
-			if field == "artifact" || field == "generation" {
-				p[field] = tc["value"]
-			} else {
-				envelope := evidence.Dict(p["envelope"], false)
-				envelope[field] = tc["value"]
-				p["envelope"] = envelope
-			}
-			var got any
-			err := func() (err error) {
-				defer evidence.RecoverPython(&err)
-				got = f.c.render(p, "request", "token")
-				return nil
-			}()
-			var failure any
-			if err != nil {
-				failure = err.Error()
-			}
-			if evidence.Dumps(failure, false, true, true) != evidence.Dumps(tc["error"], false, true, true) || (err == nil && got != tc["result"]) {
-				t.Fatalf("diff: Go=(%v,%v) Python=(%v,%v)", got, failure, tc["result"], tc["error"])
+			got, failure := packetAccessor(f, row.Packet, field, tc["value"])
+			if evidence.Dumps(failure, false, true, true) != evidence.Dumps(tc["error"], false, true, true) || (failure == nil && got != tc["result"]) {
+				t.Fatalf("diff: Go=(%v,%v) golden=(%v,%v)", got, failure, tc["result"], tc["error"])
 			}
 		})
 	}
+}
+
+// packetAccessorValues is every JSON value shape a packet field is set to.
+const packetAccessorValues = `[null, false, true, 0, 2, 1.5, "", "x", [], [1], {}, {"a": 1}]`
+
+// packetAccessorRows is render's answer with each field of packet set to each value shape, as
+// json.dumps renders the rows.
+func packetAccessorRows(f *stageFixture, packet string) []byte {
+	var rows []any
+	for _, field := range []string{"kind", "sender", "basis", "evidence", "observedAt", "artifact", "generation"} {
+		for _, value := range evidence.Items(evidence.Decode(packetAccessorValues)) {
+			result, failure := packetAccessor(f, packet, field, value)
+			rows = append(rows, contract.OrderedObject{{Key: "field", Value: field}, {Key: "value", Value: value}, {Key: "result", Value: result}, {Key: "error", Value: failure}})
+		}
+	}
+	return []byte(evidence.Dumps(rows, false, false, true) + "\n")
+}
+
+// packetAccessor renders packet with field set to value: the rendered message, or the refusal's
+// text (nil when none).
+func packetAccessor(f *stageFixture, packet, field string, value any) (result, failure any) {
+	p := Packet(evidence.Dict(evidence.Decode(packet), false))
+	if field == "artifact" || field == "generation" {
+		p[field] = value
+	} else {
+		envelope := evidence.Dict(p["envelope"], false)
+		envelope[field] = value
+		p["envelope"] = envelope
+	}
+	err := func() (err error) {
+		defer evidence.RecoverPython(&err)
+		result = f.c.render(p, "request", "token")
+		return nil
+	}()
+	if err != nil {
+		return nil, err.Error()
+	}
+	return result, nil
 }
 
 func Test24MalformedProposalRollsBackClaim(t *testing.T) {

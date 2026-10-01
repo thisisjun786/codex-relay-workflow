@@ -3,16 +3,13 @@ package supervisor
 import (
 	"bytes"
 	"context"
-	"encoding/json"
-	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"reflect"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 type ordChannelCapture struct {
@@ -25,44 +22,19 @@ type ordChannelCapture struct {
 	Tables    map[string][]map[string]any `json:"tables"`
 }
 
-// captureORDChannel runs one OnRequestSupervisor scenario through
-// testdata/onrequest_ord_capture.py, whose answer and staged.sqlite3 snapshot are recorded
-// (pythonTree).
-func captureORDChannel(t *testing.T, mode string) (string, ordChannelCapture) {
+// ordFixture restores the tree one Python OnRequestSupervisor scenario left (the former
+// testdata/onrequest_ord_capture.py): the staged.sqlite3 snapshot holding the one message the
+// scenario staged.
+func ordFixture(t *testing.T, mode string) string {
 	t.Helper()
-	repo := repoRoot(t)
 	root := t.TempDir()
-	script, err := filepath.Abs("testdata/onrequest_ord_capture.py")
-	if err != nil {
-		t.Fatal(err)
-	}
-	out := pythonTree(t, mode, root, func() ([]byte, error) {
-		cmd := exec.Command("uv", "run", "--no-sync", "python", script, mode, root)
-		cmd.Dir = filepath.Join(repo, "packages", "codex-session-relay")
-		home := filepath.Join(root, "home")
-		if err := os.MkdirAll(home, 0700); err != nil {
-			return nil, err
-		}
-		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "XDG_DATA_HOME="+filepath.Join(home, "data"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+os.TempDir(), "PYTHONPATH="+filepath.Join(repo, "packages", "codex-session-relay"))
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			return nil, fmt.Errorf("Python ORD %s: %v\n%s", mode, err, out)
-		}
-		if err := os.RemoveAll(home); err != nil {
-			return nil, err
-		}
-		return out, removeStoreFiles(filepath.Join(root, "tree", "state", "relay.sqlite3"))
-	})
-	var captured ordChannelCapture
-	if err := json.Unmarshal(out, &captured); err != nil {
-		t.Fatal(err)
-	}
-	return root, captured
+	treeFixture(t, mode, root)
+	return root
 }
 
 func replayORDChannel(t *testing.T, mode string) {
 	t.Helper()
-	root, want := captureORDChannel(t, mode)
+	root := ordFixture(t, mode)
 	dbPath := filepath.Join(root, "tree", "state", "relay.sqlite3")
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0700); err != nil {
 		t.Fatal(err)
@@ -94,7 +66,10 @@ func replayORDChannel(t *testing.T, mode string) {
 	TokenSource = bytes.NewReader(make([]byte, 32))
 	defer func() { TokenSource = previous }()
 
-	id := want.MessageID
+	var id string
+	if err := s.DB.QueryRow("SELECT message_id FROM supervisor_messages").Scan(&id); err != nil {
+		t.Fatal(err)
+	}
 	turnID := "turn-01supervisor-task-1"
 	host := &ordSendHost{sendHost: sendHost{status: "idle"}, turnID: turnID, startedAt: now + 1}
 	if mode == "folded" {
@@ -128,18 +103,8 @@ func replayORDChannel(t *testing.T, mode string) {
 	rows := got.Tables["supervisor_messages"]
 	got.Row = rows[len(rows)-1]
 	normalizeORDRows(got.Tables)
-	normalizeORDRows(want.Tables)
 	normalizeORDRow(got.Row)
-	normalizeORDRow(want.Row)
-
-	gotRaw, _ := json.Marshal(got)
-	wantRaw, _ := json.Marshal(want)
-	var normalizedGot, normalizedWant any
-	_ = json.Unmarshal(gotRaw, &normalizedGot)
-	_ = json.Unmarshal(wantRaw, &normalizedWant)
-	if !reflect.DeepEqual(normalizedGot, normalizedWant) {
-		t.Errorf("ORD %s differs from Python\nGo: %s\nPython: %s", mode, gotRaw, wantRaw)
-	}
+	golden.CheckJSON(t, "capture", asJSON(t, got), treeGolden(t, root)...)
 }
 
 type ordSendHost struct {

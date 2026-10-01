@@ -5,86 +5,49 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
-// The fixture runner also executes these inputs; this test pins the whole public JSON
-// against the Python binary under separate, isolated state roots.
+// The fixture runner also executes these inputs; this test pins the whole public JSON the built
+// binary answers under an isolated state root against the golden.
 func reportingCLIParity(t *testing.T, argv func(string) []string) (int, map[string]any, string, bool) {
 	t.Helper()
-	repo, err := filepath.Abs("../../..")
-	if err != nil {
-		t.Fatal(err)
-	}
 	binDir := t.TempDir()
 	relayBinary := filepath.Join(binDir, "codex-session-relay")
 	if err := os.Symlink(testsupport.CRW(t), relayBinary); err != nil {
 		t.Fatal(err)
 	}
-	type answer struct {
-		code    int
-		value   map[string]any
-		stderr  string
-		created bool
+	home := t.TempDir()
+	state := filepath.Join(home, "absent-state")
+	args := argv(home)
+	for i, v := range args {
+		args[i] = strings.ReplaceAll(v, "$STATE", state)
 	}
-	run := func(python bool) answer {
-		home := t.TempDir()
-		state := filepath.Join(home, "absent-state")
-		args := argv(home)
-		for i, v := range args {
-			args[i] = strings.ReplaceAll(v, "$STATE", state)
+	command := exec.Command(relayBinary, args...)
+	command.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "xdg"), "XDG_DATA_HOME="+filepath.Join(home, "data"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+os.TempDir())
+	out, err := command.Output()
+	code := 0
+	stderr := ""
+	if err != nil {
+		exit, ok := err.(*exec.ExitError)
+		if !ok {
+			t.Fatal(err)
 		}
-		var command *exec.Cmd
-		if python {
-			command = exec.Command("uv", append([]string{"run", "--no-sync", "python", "-m", "codex_session_relay.cli"}, args...)...)
-			command.Dir = filepath.Join(repo, "packages/codex-session-relay")
-		} else {
-			command = exec.Command(relayBinary, args...)
-		}
-		command.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "xdg"), "XDG_DATA_HOME="+filepath.Join(home, "data"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+os.TempDir())
-		out, err := command.Output()
-		code := 0
-		stderr := ""
-		if err != nil {
-			exit, ok := err.(*exec.ExitError)
-			if !ok {
-				t.Fatal(err)
-			}
-			code = exit.ExitCode()
-			stderr = string(exit.Stderr)
-		}
-		var value map[string]any
-		if len(out) > 0 && json.Unmarshal(out, &value) != nil {
-			t.Fatalf("bad JSON: %s", out)
-		}
-		_, stat := os.Stat(state)
-		return answer{code, value, stderr, stat == nil}
+		code = exit.ExitCode()
+		stderr = string(exit.Stderr)
 	}
-	// Python's answer is recorded (pythonJSON), its JSON as the text it printed.
-	var recorded struct {
-		Code    int    `json:"code"`
-		Value   string `json:"value"`
-		Stderr  string `json:"stderr"`
-		Created bool   `json:"created"`
-	}
-	pythonJSON(t, "reporting-cli", &recorded, func() (any, error) {
-		answer := run(true)
-		value, err := json.Marshal(answer.value)
-		return map[string]any{"code": answer.code, "value": string(value), "stderr": answer.stderr, "created": answer.created}, err
-	})
 	var value map[string]any
-	if err := json.Unmarshal([]byte(recorded.Value), &value); err != nil {
-		t.Fatal(err)
+	if len(out) > 0 && json.Unmarshal(out, &value) != nil {
+		t.Fatalf("bad JSON: %s", out)
 	}
-	py, goResult := answer{recorded.Code, value, recorded.Stderr, recorded.Created}, run(false)
-	if py.code != goResult.code || !reflect.DeepEqual(py.value, goResult.value) || py.created != goResult.created || py.stderr != goResult.stderr {
-		t.Errorf("Go exit=%d JSON=%s stderr=%q state=%t; Python exit=%d JSON=%s stderr=%q state=%t", goResult.code, jsonText(goResult.value), goResult.stderr, goResult.created, py.code, jsonText(py.value), py.stderr, py.created)
-	}
-	return goResult.code, goResult.value, goResult.stderr, goResult.created
+	_, stat := os.Stat(state)
+	created := stat == nil
+	golden.CheckJSON(t, "reporting-cli", map[string]any{"code": code, "value": value, "stderr": stderr, "created": created}, golden.Substitute(home, "<home>"), golden.Substitute(repoRoot(t), "<repo>"))
+	return code, value, stderr, created
 }
 func Test24_RCL_2_SelectorRefusals(t *testing.T) {
 	for _, tc := range []struct {

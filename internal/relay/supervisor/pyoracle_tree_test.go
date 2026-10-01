@@ -138,29 +138,6 @@ func canonicalWallTimes(data []byte, start, end time.Time) []byte {
 	})
 }
 
-// goWallTimes substitutes the wall-clock times Go wrote into output - the times of the last
-// hour - for placeholders numbered in order of appearance: a Python answer that reads them from
-// a store Go wrote names them too, and a replay puts back the times Go's own run wrote.
-func goWallTimes(output []byte) []pyoracle.Option {
-	now := time.Now()
-	var options []pyoracle.Option
-	seen := map[string]bool{}
-	for _, match := range isoTime.FindAll(output, -1) {
-		text := string(match)
-		if seen[text] {
-			continue
-		}
-		seen[text] = true
-		parts := isoTime.FindSubmatch(match)
-		at, err := time.Parse("2006-01-02T15:04:05Z07:00", string(parts[1])+string(parts[3]))
-		if err != nil || at.Before(now.Add(-time.Hour)) || at.After(now.Add(time.Minute)) {
-			continue
-		}
-		options = append(options, pyoracle.Substitute(text, fmt.Sprintf("<go wall time %d>", len(options)+1)))
-	}
-	return options
-}
-
 // pythonTempTree is a temporary tree a Python test fixture made for itself
 // (tests/support.py's tempfile.mkdtemp(prefix="relay-test-")) where no capture driver redirects
 // it: gone when the fixture is, but named in the rows and messages the fixture wrote.
@@ -208,27 +185,6 @@ func sameUpToRandomIDs(recorded, live []byte) bool {
 		})
 	}
 	return bytes.Equal(numbered(recorded), numbered(live))
-}
-
-// pythonJSON is pythonOutput for a run whose capture returns a value to record as JSON.
-func pythonJSON(t testing.TB, key string, out any, capture func() (any, error), opts ...pyoracle.Option) {
-	t.Helper()
-	raw := pythonOutput(t, key, func() ([]byte, error) {
-		value, err := capture()
-		if err != nil {
-			return nil, err
-		}
-		var encoded bytes.Buffer
-		encoder := json.NewEncoder(&encoded)
-		encoder.SetEscapeHTML(false)
-		err = encoder.Encode(value)
-		return bytes.TrimSuffix(encoded.Bytes(), []byte("\n")), err
-	}, opts...)
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	if err := decoder.Decode(out); err != nil {
-		t.Fatalf("pythonJSON %s: %v", key, err)
-	}
 }
 
 // treeRecord is one recorded Python run over a directory: what it printed and the files it left.

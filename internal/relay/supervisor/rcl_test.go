@@ -9,9 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 type rclAnswer struct {
@@ -21,28 +20,18 @@ type rclAnswer struct {
 	created bool
 }
 
-func runRCL(t *testing.T, python bool, binary, home string, argv func(string) []string) rclAnswer {
+func runRCL(t *testing.T, binary, home string, argv func(string) []string) rclAnswer {
 	t.Helper()
-	repo, err := filepath.Abs("../../..")
-	if err != nil {
-		t.Fatal(err)
-	}
 	state := filepath.Join(home, "absent-state")
 	args := argv(home)
 	for i := range args {
 		args[i] = strings.ReplaceAll(args[i], "$STATE", state)
 	}
-	var cmd *exec.Cmd
-	if python {
-		cmd = exec.Command("uv", append([]string{"run", "--no-sync", "python", "-m", "codex_session_relay.cli"}, args...)...)
-		cmd.Dir = filepath.Join(repo, "packages", "codex-session-relay")
-	} else {
-		cmd = exec.Command(binary, args...)
-	}
+	cmd := exec.Command(binary, args...)
 	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "xdg-state"), "XDG_DATA_HOME="+filepath.Join(home, "xdg-data"), "XDG_CONFIG_HOME="+filepath.Join(home, "xdg-config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+os.TempDir(), "CODEX_SESSION_RELAY_STATE=")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	err = cmd.Run()
+	err := cmd.Run()
 	code := 0
 	if err != nil {
 		exit, ok := err.(*exec.ExitError)
@@ -55,10 +44,9 @@ func runRCL(t *testing.T, python bool, binary, home string, argv func(string) []
 	return rclAnswer{code: code, stdout: stdout.Bytes(), stderr: stderr.Bytes(), created: statErr == nil}
 }
 
-// compareRCLBytes runs argv through live Python and the built Go binary with one home and
-// compares exit codes, stderr, state creation and stdout after normalize, which is told which
-// runtime answered.
-func compareRCLBytes(t *testing.T, argv func(string) []string, normalize func(raw []byte, python bool) []byte) rclAnswer {
+// compareRCLBytes runs argv through the built Go binary and compares its exit code, stderr, state
+// creation and stdout after normalize with the golden.
+func compareRCLBytes(t *testing.T, argv func(string) []string, normalize func(raw []byte) []byte) rclAnswer {
 	t.Helper()
 	built := testsupport.CRW(t)
 	binary := filepath.Join(t.TempDir(), "codex-session-relay")
@@ -66,36 +54,21 @@ func compareRCLBytes(t *testing.T, argv func(string) []string, normalize func(ra
 		t.Fatal(err)
 	}
 	home := t.TempDir()
-	// Python answered first in this home; its answer is recorded (pythonJSON).
-	var recorded struct {
-		Code    int    `json:"code"`
-		Stdout  string `json:"stdout"`
-		Stderr  string `json:"stderr"`
-		Created bool   `json:"created"`
-	}
-	pythonJSON(t, "rcl", &recorded, func() (any, error) {
-		answer := runRCL(t, true, binary, home, argv)
-		return map[string]any{"code": answer.code, "stdout": string(answer.stdout), "stderr": string(answer.stderr), "created": answer.created}, nil
-	}, pyoracle.Substitute(home, "<home>"))
-	python := rclAnswer{code: recorded.Code, stdout: []byte(recorded.Stdout), stderr: []byte(recorded.Stderr), created: recorded.Created}
-	golang := runRCL(t, false, binary, home, argv)
-	goOut, pyOut := normalize(golang.stdout, false), normalize(python.stdout, true)
-	if golang.code != python.code || !bytes.Equal(goOut, pyOut) || !bytes.Equal(golang.stderr, python.stderr) || golang.created != python.created {
-		t.Fatalf("Go exit=%d created=%t\nstdout=%q\nstderr=%q\nPython exit=%d created=%t\nstdout=%q\nstderr=%q", golang.code, golang.created, goOut, golang.stderr, python.code, python.created, pyOut, python.stderr)
-	}
+	golang := runRCL(t, binary, home, argv)
+	golden.CheckJSON(t, "rcl", map[string]any{"code": golang.code, "stdout": string(normalize(golang.stdout)), "stderr": string(golang.stderr), "created": golang.created}, golden.Substitute(home, "<home>"), golden.Substitute(repoRoot(t), "<repo>"))
 	return golang
 }
 
 func Test24_RCL_1_HelpWholeStdoutBytes(t *testing.T) {
 	t.Setenv("COLUMNS", "80")
-	answer := compareRCLBytes(t, func(string) []string { return []string{"reporting-show", "--help"} }, func(raw []byte, _ bool) []byte { return raw })
+	answer := compareRCLBytes(t, func(string) []string { return []string{"reporting-show", "--help"} }, func(raw []byte) []byte { return raw })
 	if answer.code != 0 {
 		t.Fatalf("exit %d", answer.code)
 	}
 }
 
 func Test24_RCL_3_UnmanagedObservationWholeStdoutBytes(t *testing.T) {
-	normalizeObservedAt := func(raw []byte, _ bool) []byte {
+	normalizeObservedAt := func(raw []byte) []byte {
 		var value map[string]any
 		if err := json.Unmarshal(raw, &value); err != nil {
 			t.Fatal(err)
@@ -117,32 +90,27 @@ func Test24_RCL_3_UnmanagedObservationWholeStdoutBytes(t *testing.T) {
 	}
 }
 
-// doctor's whole stdout is Python's but for the two runtime-identity fields decisions.md 31
-// documents: Go's trailing runtime block, and ownership.runtime_build, which names the
-// answering runtime. Each side's runtime_build is pinned to its own build (the fence's
-// pinned build for Python, `crw version` for Go) before both become one token.
+// doctor's whole stdout is the golden but for the runtime-identity fields decisions.md 31
+// documents: Go's trailing runtime block, and ownership.runtime_build, which names the answering
+// runtime's build (`crw version`) and becomes one token. The golden began as Python's stdout.
 func Test24_RCL_4_DoctorWholeStdoutBytes(t *testing.T) {
 	version, err := exec.Command(testsupport.CRW(t), "version").Output()
 	if err != nil {
 		t.Fatal(err)
 	}
 	goBuild := strings.TrimSpace(string(version))
-	normalizeRuntime := func(raw []byte, python bool) []byte {
+	normalizeRuntime := func(raw []byte) []byte {
 		var value map[string]any
 		if err := json.Unmarshal(raw, &value); err != nil {
 			t.Fatal(err)
 		}
-		if _, goOnly := value["runtime"]; goOnly == python {
-			t.Fatalf("python=%t: the runtime block is Go's alone (decisions.md 31)\n%s", python, raw)
+		if _, ok := value["runtime"]; !ok {
+			t.Fatalf("Go's doctor names no runtime block (decisions.md 31)\n%s", raw)
 		}
 		delete(value, "runtime")
 		block, _ := value["ownership"].(map[string]any)
-		want := goBuild
-		if python {
-			want = ownership.CompatibilityBuild
-		}
-		if block == nil || block["runtime_build"] != want {
-			t.Fatalf("python=%t: ownership.runtime_build must name the answering runtime's build %q\n%s", python, want, raw)
+		if block == nil || block["runtime_build"] != goBuild {
+			t.Fatalf("ownership.runtime_build must name the answering runtime's build %q\n%s", goBuild, raw)
 		}
 		block["runtime_build"] = "<answering runtime build>"
 		answer, err := json.MarshalIndent(value, "", "  ")
