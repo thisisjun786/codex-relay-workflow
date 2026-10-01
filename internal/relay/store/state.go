@@ -17,7 +17,12 @@ import (
 
 type StateSelection struct {
 	Path, Source, Detail, SocketScope string
-	Ambiguous, Unidentified           []string
+	// DefaultSocket is the default App Server socket (DefaultSocket) that scoped a selection
+	// discovery made without --socket, so the selected store can be checked against it; "" for
+	// --state, CODEX_SESSION_RELAY_STATE, a given socket, and the legacy default directory. It is
+	// never connected to and never stands in for --socket.
+	DefaultSocket           string
+	Ambiguous, Unidentified []string
 }
 
 func (s StateSelection) DBPath() string { return s.Path + "/relay.sqlite3" }
@@ -335,6 +340,9 @@ func DiscoverStateDir(socket string) (StateSelection, error) {
 	// two leading slashes pathlib keeps as a root of their own.
 	root := PathlibChild(absoluteBase, "codex-session-relay")
 	chosen := StateSelection{Path: PathlibChild(root, canonical), Source: source, Detail: detail, SocketScope: canonical}
+	if defaulted {
+		chosen.DefaultSocket = socket
+	}
 	found, err := discoveryExists(chosen.DBPath())
 	if err != nil {
 		return chosen, err
@@ -390,6 +398,8 @@ func DiscoverStateDir(socket string) (StateSelection, error) {
 		// What a command given no --socket read before discovery scoped it by the default socket.
 		chosen.Path = PathlibChild(root, LegacyDefaultScope)
 		chosen.SocketScope = LegacyDefaultScope
+		// The legacy directory was never scoped by any socket: it is not checked against one.
+		chosen.DefaultSocket = ""
 		chosen.Detail += "; kept the legacy default directory: it holds a store, the default socket's own directory holds none, and no other store records that socket"
 		chosen.Unidentified = nil
 		return chosen, nil

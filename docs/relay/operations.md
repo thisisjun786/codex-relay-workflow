@@ -69,13 +69,16 @@ used; the exemptions below own it.
 |---|---|---|
 | `ambiguous_state_directory` | default discovery would select a new database and two or more stores record this socket | either could be the right one, and choosing by sort order would serve one set of assignments today and the other after a rename |
 | `unidentified_state_directory` | default discovery would select a new database and a sibling store records no socket at all | its directory hash cannot be inverted, so it cannot be ruled out as this socket's. "Records no socket" also covers a store whose metadata is unreadable or malformed |
-| `state_directory_serves_another_socket` | the selected existing database records a different socket than the one requested | the service would claim and serve the new socket while the database went on attributing itself to the old one |
+| `state_directory_serves_another_socket` | the selected existing database records a different socket than the one requested, or, without `--socket`, than the default socket that scoped discovery | the service would claim and serve the new socket while the database went on attributing itself to the old one; a command given no `--socket` would read and write another installation's store |
 
 The first two are reached only after the canonical and legacy-spelling shortcuts have both
 failed to find a store, which is why an installation that is simply running never sees them.
 The third applies to any explicitly selected store, from `--state` or from
 `CODEX_SESSION_RELAY_STATE`, because choosing a directory is not choosing what is already
-inside it.
+inside it. Without `--socket` it applies to a discovered store too, compared with the default
+socket that scoped its directory; that socket is only compared, never connected to, a store that
+records no socket is admitted as before, and so is the legacy `default` directory, which no socket
+scoped.
 
 To recover, inspect before adopting. `doctor` names the candidates:
 

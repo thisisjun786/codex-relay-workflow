@@ -20,9 +20,19 @@ type Services struct {
 // Refusal is _selection_refusal: what is wrong with the selected store, or nil.
 func Refusal(services Services) (contract.OrderedObject, error) {
 	selection := services.Selection
-	if services.SocketPath != "" && fileExists(selection.DBPath()) {
+	// The socket the selected store must not contradict: --socket, or the default App Server
+	// socket that scoped a discovery made without one (decision 73). The second is compared only;
+	// nothing here or after it connects to it.
+	socket, detail := services.SocketPath, "this store records a different App Server socket; serving the requested"+
+		" one from it would expose one installation's assignments through another"
+	if socket == "" && selection.DefaultSocket != "" {
+		socket, detail = selection.DefaultSocket, "this store records a different App Server socket than the default one"+
+			" that scoped its directory; serving it to a command given no --socket would expose one"+
+			" installation's assignments through another"
+	}
+	if socket != "" && fileExists(selection.DBPath()) {
 		recorded := store.StoreSocket(selection.DBPath())
-		wanted, err := store.CanonicalSocket(services.SocketPath)
+		wanted, err := store.CanonicalSocket(socket)
 		if err != nil {
 			return nil, err
 		}
@@ -30,8 +40,7 @@ func Refusal(services Services) (contract.OrderedObject, error) {
 			return contract.OrderedObject{
 				{Key: "error", Value: "refused"},
 				{Key: "reason", Value: "state_directory_serves_another_socket"},
-				{Key: "detail", Value: "this store records a different App Server socket; serving the requested" +
-					" one from it would expose one installation's assignments through another"},
+				{Key: "detail", Value: detail},
 				{Key: "recordedSocket", Value: recorded},
 				{Key: "requestedSocket", Value: wanted},
 				{Key: "stateDirectory", Value: selection.Path},

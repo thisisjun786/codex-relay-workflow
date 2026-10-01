@@ -53,10 +53,14 @@ func TestDiscoveryWithoutASocketIsScopedByTheDefaultSocket(t *testing.T) {
 		if want := "; scoped by the default Codex App Server socket " + socket; !strings.HasSuffix(got.Detail, want) {
 			t.Fatalf("detail %q does not end with %q", got.Detail, want)
 		}
+		// The selection carries that socket for validation (selection.Refusal), and only then.
+		if got.DefaultSocket != socket {
+			t.Fatalf("DefaultSocket %q, want %q", got.DefaultSocket, socket)
+		}
 		// The directory a service started with --socket <the default socket> discovers.
 		explicit, err := DiscoverStateDir(socket)
 		must(t, err)
-		if explicit.Path != got.Path || explicit.SocketScope != got.SocketScope {
+		if explicit.Path != got.Path || explicit.SocketScope != got.SocketScope || explicit.DefaultSocket != "" {
 			t.Fatalf("--socket %s selects %+v, no socket %+v", socket, explicit, got)
 		}
 		if _, err := os.Stat(got.Path); !errors.Is(err, os.ErrNotExist) {
@@ -112,7 +116,7 @@ func TestDiscoveryWithoutASocketIsScopedByTheDefaultSocket(t *testing.T) {
 		makeStoreIn(t, root, base, LegacyDefaultScope, "")
 		kept, err := DiscoverStateDir("")
 		must(t, err)
-		if kept.Path != legacy || kept.SocketScope != LegacyDefaultScope || len(kept.Unidentified) != 0 || len(kept.Ambiguous) != 0 ||
+		if kept.Path != legacy || kept.SocketScope != LegacyDefaultScope || kept.DefaultSocket != "" || len(kept.Unidentified) != 0 || len(kept.Ambiguous) != 0 ||
 			!strings.Contains(kept.Detail, "; kept the legacy default directory") {
 			t.Fatalf("legacy selection %+v", kept)
 		}
@@ -176,12 +180,12 @@ func TestDiscoveryWithoutASocketIsScopedByTheDefaultSocket(t *testing.T) {
 		t.Setenv("CODEX_SESSION_RELAY_STATE", filepath.Join(root, "env"))
 		byEnv, err := ResolveStateDir("", "")
 		must(t, err)
-		if byEnv.Source != "env" || byEnv.Path != filepath.Join(root, "env") || byEnv.SocketScope != "" || byEnv.Detail != "CODEX_SESSION_RELAY_STATE="+filepath.Join(root, "env") {
+		if byEnv.Source != "env" || byEnv.Path != filepath.Join(root, "env") || byEnv.SocketScope != "" || byEnv.DefaultSocket != "" || byEnv.Detail != "CODEX_SESSION_RELAY_STATE="+filepath.Join(root, "env") {
 			t.Fatalf("env selection %+v", byEnv)
 		}
 		byFlag, err := ResolveStateDir(filepath.Join(root, "flag"), socket)
 		must(t, err)
-		if byFlag.Source != "flag" || byFlag.Path != filepath.Join(root, "flag") || byFlag.SocketScope != "" {
+		if byFlag.Source != "flag" || byFlag.Path != filepath.Join(root, "flag") || byFlag.SocketScope != "" || byFlag.DefaultSocket != "" {
 			t.Fatalf("flag selection %+v", byFlag)
 		}
 	})
