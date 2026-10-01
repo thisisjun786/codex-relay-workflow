@@ -13,6 +13,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -583,7 +584,7 @@ func (v *AssignmentView) verdictFor(ctx context.Context, event string) (contract
 	}
 	decoded, err := decodeJSON([]byte(colString(row, "record")))
 	if err != nil {
-		return nil, &HostError{Class: "JSONDecodeError", Detail: err.Error()}
+		return nil, &dispatch.HostError{Class: "JSONDecodeError", Detail: err.Error()}
 	}
 	record, _ := decoded.(contract.OrderedObject)
 	generation, _ := getField(record, "executionGeneration")

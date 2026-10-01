@@ -12,6 +12,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
@@ -97,7 +98,7 @@ func answerOf(value any, err error) any {
 		if errors.As(err, &refused) {
 			return map[string]any{"refused": map[string]any{"reason": refused.Reason, "detail": refused.Detail}}
 		}
-		var host *HostError
+		var host *dispatch.HostError
 		if errors.As(err, &host) {
 			return map[string]any{"host": host.Error()}
 		}

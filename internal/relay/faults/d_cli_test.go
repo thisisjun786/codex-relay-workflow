@@ -42,10 +42,7 @@ func TestDCLIOracle(t *testing.T) {
 			// The directory keeps the name the goldens were first taken with.
 			state := filepath.Join(home, "python")
 			var got, stderr bytes.Buffer
-			goCode, handled := executeAsCLI(context.Background(), append([]string{"--state", state, "--json"}, args...), &got, &stderr)
-			if !handled {
-				t.Fatal("unhandled")
-			}
+			goCode := executeAsCLI(context.Background(), append([]string{"--state", state, "--json"}, args...), &got, &stderr)
 			checkGolden(t, "relay "+strings.Join(args, " "), args, runPathsOf(t, home), cliGolden{Code: goCode, Stdout: got.String(), Created: created(t, state)})
 		})
 	}

@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
-
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
 )
 
 // VCU-13: closing the CLI's services releases what they opened and builds nothing just to
@@ -22,20 +22,20 @@ func TestVCU13_the_cli_closes_what_it_opened_and_builds_nothing_to_close(t *test
 	state := filepath.Join(home, "state")
 	var out, errw bytes.Buffer
 
-	code, handled := ExecuteCLI(context.Background(), []string{"--state", state, "ack-proof", "--event", "0123456789abcdef0123456789abcdef", "--turn", "t"}, &out, &errw)
-	if !handled || code != 0 {
+	code := dispatch.Execute(context.Background(), "codex-session-relay", []string{"--state", state, "ack-proof", "--event", "0123456789abcdef0123456789abcdef", "--turn", "t"}, &out, &errw)
+	if code != 0 {
 		t.Fatalf("ack-proof %d %s", code, out.String())
 	}
 	if _, err := os.Stat(filepath.Join(state, "relay.sqlite3")); !os.IsNotExist(err) {
 		t.Fatal("a command that needs no store built one")
 	}
 	out.Reset()
-	code, _ = ExecuteCLI(context.Background(), []string{"--state", state, "deliver"}, &out, &errw)
+	code = dispatch.Execute(context.Background(), "codex-session-relay", []string{"--state", state, "deliver"}, &out, &errw)
 	if code != 4 {
 		t.Fatalf("deliver without a socket is a usage error, got %d", code)
 	}
 	out.Reset()
-	code, _ = ExecuteCLI(context.Background(), []string{"--state", state, "criteria-register", "--relationship", "r", "--criterion", "c1=one"}, &out, &errw)
+	code = dispatch.Execute(context.Background(), "codex-session-relay", []string{"--state", state, "criteria-register", "--relationship", "r", "--criterion", "c1=one"}, &out, &errw)
 	if code != 0 {
 		t.Fatalf("criteria-register %d %s", code, out.String())
 	}

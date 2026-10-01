@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"os"
 	"slices"
@@ -14,6 +13,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor"
 )
@@ -232,7 +232,7 @@ func supervisorOutput(ctx context.Context, c *supervisor.Channel, answer map[str
 // interpreted by the obligation reader, not by the file decoder.
 func observationFile(path string) (any, error) {
 	unreadable := func(detail string) (any, error) {
-		return nil, &UsageError{Detail: "the observation at " + pyvalue.StrRepr(path) + " could not be read as a reporting-observation/1 record: " + detail, Code: contract.ExitUsage}
+		return nil, &dispatch.UsageError{Detail: "the observation at " + pyvalue.StrRepr(path) + " could not be read as a reporting-observation/1 record: " + detail, Code: contract.ExitUsage}
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -294,9 +294,9 @@ func observationMapSlice(values []any) []map[string]any {
 	return out
 }
 
-var supervisorStandingCommand = Command{Name: "supervisor-standing", Flags: func(f *flag.FlagSet) { f.String("project", "", ""); f.Var(new(stringsFlag), "observation", "") }, Run: func(ctx context.Context, services Services, args Args) (any, error) {
+var supervisorStandingCommand = dispatch.Command{Name: "supervisor-standing", ReadOnly: true, Run: func(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
 	project, _ := args.String("project")
-	paths := []string(*args.Flags.Lookup("observation").Value.(*stringsFlag))
+	paths := args.Strings("observation")
 	readings := make([]any, 0, len(paths))
 	for _, path := range paths {
 		reading, err := observationFile(path)
@@ -331,7 +331,7 @@ var supervisorStandingCommand = Command{Name: "supervisor-standing", Flags: func
 	return supervisorOutput(ctx, c, answer)
 }}
 
-var supervisorSelectCommand = Command{Name: "supervisor-select", Flags: func(f *flag.FlagSet) { f.String("event", "", ""); f.String("recipient", "", "") }, Run: func(ctx context.Context, services Services, args Args) (any, error) {
+var supervisorSelectCommand = dispatch.Command{Name: "supervisor-select", ReadOnly: true, Run: func(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
 	event, _ := args.String("event")
 	recipient, _ := args.String("recipient")
 	c, close, err := supervisorChannel(ctx, services)
@@ -349,16 +349,11 @@ var recordSupervisorReport = func(ctx context.Context, c *supervisor.Channel, o 
 	return c.RecordReport(ctx, o, at, message, note)
 }
 
-var supervisorReportRecordedCommand = Command{Name: "supervisor-report-recorded", Flags: func(f *flag.FlagSet) {
-	f.String("event", "", "")
-	f.String("observation", "", "")
-	f.String("message", "", "")
-	f.String("note", "", "")
-}, Run: func(ctx context.Context, services Services, args Args) (any, error) {
+var supervisorReportRecordedCommand = dispatch.Command{Name: "supervisor-report-recorded", Run: func(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
 	event, hasEvent := args.TruthyString("event")
 	observation, hasObservation := args.TruthyString("observation")
 	if !hasEvent && !hasObservation {
-		return nil, &UsageError{Detail: "one of the arguments --event --observation is required", Code: 2}
+		return nil, &dispatch.UsageError{Detail: "one of the arguments --event --observation is required", Code: 2}
 	}
 	var reading map[string]any
 	if hasObservation {
@@ -387,7 +382,7 @@ var supervisorReportRecordedCommand = Command{Name: "supervisor-report-recorded"
 		if hasObservation {
 			about = "the observation at " + pyvalue.StrRepr(observation)
 		}
-		return nil, &UsageError{Detail: about + " raises no obligation: an event has to be a completion, a new block or a decision the user owes, and an observation has to report state unreported. There is nothing here to record a report against", Code: contract.ExitUsage}
+		return nil, &dispatch.UsageError{Detail: about + " raises no obligation: an event has to be a completion, a new block or a decision the user owes, and an observation has to report state unreported. There is nothing here to record a report against", Code: contract.ExitUsage}
 	}
 	message, hasMessage := args.String("message")
 	note, hasNote := args.String("note")
@@ -406,7 +401,7 @@ var supervisorReportRecordedCommand = Command{Name: "supervisor-report-recorded"
 	return supervisorOrdered(result), nil
 }}
 
-func supervisorChannel(ctx context.Context, services Services) (*supervisor.Channel, func(), error) {
+func supervisorChannel(ctx context.Context, services dispatch.Services) (*supervisor.Channel, func(), error) {
 	opened, err := openStore(ctx, services)
 	if err != nil {
 		return nil, nil, err
@@ -421,31 +416,25 @@ func supervisorResult(err error) error {
 	return err
 }
 
-var supervisorStageCommand = Command{
+var supervisorStageCommand = dispatch.Command{
 	Name: "supervisor-stage",
-	Flags: func(f *flag.FlagSet) {
-		f.String("event", "", "")
-		f.String("project", "", "")
-		f.Var(new(stringsFlag), "observation", "")
-		f.String("recipient", "", "")
-	},
-	Run: func(ctx context.Context, services Services, args Args) (any, error) {
+	Run: func(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
 		event, hasEvent := args.TruthyString("event")
 		project, hasProject := args.TruthyString("project")
-		observations := []string(*args.Flags.Lookup("observation").Value.(*stringsFlag))
+		observations := args.Strings("observation")
 		hasObservation := len(observations) > 0
 		recipient, hasRecipient := args.TruthyString("recipient")
 		if hasEvent && hasProject {
-			return nil, &UsageError{Detail: "argument --project: not allowed with argument --event", Code: 2}
+			return nil, &dispatch.UsageError{Detail: "argument --project: not allowed with argument --event", Code: 2}
 		}
 		if hasEvent && hasObservation {
-			return nil, &UsageError{Detail: "--event and --observation are two different subjects: one obligation comes from an event in this store and the other from a turn that left no event at all. Name one", Code: contract.ExitUsage}
+			return nil, &dispatch.UsageError{Detail: "--event and --observation are two different subjects: one obligation comes from an event in this store and the other from a turn that left no event at all. Name one", Code: contract.ExitUsage}
 		}
 		if hasProject && hasRecipient {
-			return nil, &UsageError{Detail: "--recipient names the supervisor ONE message is addressed to, and --project stages every standing obligation, each resolved through its own relationship. Ignoring the one you typed is how a caller learns too late that it was never checked", Code: contract.ExitUsage}
+			return nil, &dispatch.UsageError{Detail: "--recipient names the supervisor ONE message is addressed to, and --project stages every standing obligation, each resolved through its own relationship. Ignoring the one you typed is how a caller learns too late that it was never checked", Code: contract.ExitUsage}
 		}
 		if !hasEvent && !hasProject && len(observations) > 1 {
-			return nil, &UsageError{Detail: "one obligation is one message, so a single staging takes one observation. Pass --project to stage several, where each reading is placed by the relationship it names", Code: contract.ExitUsage}
+			return nil, &dispatch.UsageError{Detail: "one obligation is one message, so a single staging takes one observation. Pass --project to stage several, where each reading is placed by the relationship it names", Code: contract.ExitUsage}
 		}
 		readings := make([]map[string]any, 0, len(observations))
 		for _, path := range observations {
@@ -457,7 +446,7 @@ var supervisorStageCommand = Command{
 			readings = append(readings, reading)
 		}
 		if !hasEvent && !hasProject && !hasObservation {
-			return nil, &UsageError{Detail: "supervisor-stage needs a subject: --event for one event's obligation, --project for everything a project owes, or one --observation for the obligation a turn left by ending without reporting", Code: contract.ExitUsage}
+			return nil, &dispatch.UsageError{Detail: "supervisor-stage needs a subject: --event for one event's obligation, --project for everything a project owes, or one --observation for the obligation a turn left by ending without reporting", Code: contract.ExitUsage}
 		}
 		c, close, err := supervisorChannel(ctx, services)
 		if err != nil {
@@ -491,7 +480,7 @@ var supervisorStageCommand = Command{
 			if hasObservation {
 				about = "the observation at " + pyvalue.StrRepr(observations[0])
 			}
-			return nil, &UsageError{Detail: about + " raises no obligation, so there is nothing to stage. An event has to be a completion, a new block or a decision the user owes, and an observation has to report state unreported", Code: contract.ExitUsage}
+			return nil, &dispatch.UsageError{Detail: about + " raises no obligation, so there is nothing to stage. An event has to be a completion, a new block or a decision the user owes, and an observation has to report state unreported", Code: contract.ExitUsage}
 		}
 		if hasObservation {
 			result, stageErr := c.StageWithReading(ctx, *o, readings[0], recipient, at)
@@ -501,7 +490,7 @@ var supervisorStageCommand = Command{
 		return supervisorOrdered(result), supervisorResult(err)
 	},
 }
-var supervisorShowCommand = Command{Name: "supervisor-show", Flags: func(f *flag.FlagSet) { f.String("message", "", "") }, Run: func(ctx context.Context, services Services, args Args) (any, error) {
+var supervisorShowCommand = dispatch.Command{Name: "supervisor-show", ReadOnly: true, Run: func(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
 	id, _ := args.String("message")
 	c, close, err := supervisorChannel(ctx, services)
 	if err != nil {
@@ -549,9 +538,9 @@ var supervisorShowCommand = Command{Name: "supervisor-show", Flags: func(f *flag
 	return supervisorOrdered(result), nil
 }}
 
-func requireSupervisorHost(services Services, name, why string) error {
+func requireSupervisorHost(services dispatch.Services, name, why string) error {
 	if services.SocketPath == "" {
-		return &UsageError{Detail: name + " needs --socket: " + why, Code: contract.ExitUsage}
+		return &dispatch.UsageError{Detail: name + " needs --socket: " + why, Code: contract.ExitUsage}
 	}
 	return nil
 }
@@ -564,12 +553,12 @@ var SupervisorHostCommand func(context.Context, string, string, string, string, 
 // the built-binary parity harness installs the same fixed clock as Python.
 var SupervisorClock = clockNow
 
-func runSupervisorHost(ctx context.Context, command string, services Services, args map[string]string) (any, error) {
+func runSupervisorHost(ctx context.Context, command string, services dispatch.Services, args map[string]string) (any, error) {
 	result, err := SupervisorHostCommand(ctx, command, services.Selection.Path, services.SocketPath, services.Program, args, SupervisorClock())
 	return supervisorOrdered(result), supervisorResult(err)
 }
 
-var supervisorSendCommand = Command{Name: "supervisor-send", Flags: func(f *flag.FlagSet) { f.String("message", "", "") }, Run: func(ctx context.Context, services Services, args Args) (any, error) {
+var supervisorSendCommand = dispatch.Command{Name: "supervisor-send", Run: func(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
 	if err := requireSupervisorHost(services, "supervisor-send", "a send observes the recipient's lifecycle and resumes its thread. Without a host every read fails, which reads as an unmeasured recipient and would record a withholding that describes this process rather than the task"); err != nil {
 		return nil, err
 	}
@@ -580,12 +569,7 @@ var supervisorSendCommand = Command{Name: "supervisor-send", Flags: func(f *flag
 // readbackNeedsHost is why supervisor-read refuses to run without --socket.
 const readbackNeedsHost = "a readback is checked against the host's own turn list and the recipient's transcript. Without a host it would record an unverified readback, which is a statement about this process and reads as one about the recipient"
 
-var supervisorReadCommand = Command{Name: "supervisor-read", Flags: func(f *flag.FlagSet) {
-	f.String("message", "", "")
-	f.String("turn", "", "")
-	f.String("proof", "", "")
-	f.String("as", "", "")
-}, Run: func(ctx context.Context, services Services, args Args) (any, error) {
+var supervisorReadCommand = dispatch.Command{Name: "supervisor-read", Run: func(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
 	if err := requireSupervisorHost(services, "supervisor-read", readbackNeedsHost); err != nil {
 		return nil, err
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"regexp"
 	"slices"
@@ -13,58 +12,65 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 )
 
 // The twelve delivery commands of `codex-session-relay` (cli.py: emit, deliver, reconcile,
 // recover, claim, ack-proof, ack, verdict, criteria-register, criteria-show, revision-head,
-// verify-acks), with argparse's parsing rules and main()'s JSON replies and exit codes.
+// verify-acks), registered in the relay command table with their argparse defaults; argparse's
+// parsing rules and main()'s JSON replies and exit codes are the table's.
 
-type flagSpec struct {
-	name     string
-	kind     string // store, int, append, true
-	required bool
-	choices  []string
-	def      any
-}
-
+// commandSpec is one relay command of this package: its registration and its handler.
 type commandSpec struct {
-	flags []flagSpec
-	run   func(*cliRun) (any, error)
-	// exempt is _reads_no_selected_store: the command answers without the store discovery picks,
-	// so the selection refusal is not asked.
-	exempt func(map[string]any) bool
+	dispatch.Command
+	run func(*cliRun) (any, error)
 }
 
-var deliveryCommands = map[string]commandSpec{
-	"emit": {flags: []flagSpec{{"--relationship", "store", true, nil, nil}, {"--generation", "int", true, nil, nil}, {"--attempt", "int", false, nil, int64(1)},
-		{"--outcome", "store", true, []string{"ready_for_review", "failed", "interrupted", "blocked_needs_input"}, nil}, {"--turn-thread", "store", true, nil, nil}, {"--turn-id", "store", true, nil, nil},
-		{"--turn-status", "store", false, []string{"completed", "failed", "interrupted", "inProgress"}, "inProgress"}, {"--artifact", "append", false, nil, nil}, {"--manifest-ref", "store", false, nil, nil},
-		{"--continues-anchor", "store", false, nil, nil}, {"--continuation-actor", "store", false, nil, nil}, {"--continuation-reason", "store", false, nil, nil}, {"--supersedes-revision", "store", false, nil, nil}, {"--no-enqueue", "true", false, nil, false}},
-		run: cmdEmit},
-	"deliver":     {flags: []flagSpec{{"--event", "store", false, nil, nil}, {"--limit", "int", false, nil, int64(4)}}, run: needsHost},
-	"reconcile":   {flags: []flagSpec{{"--request-id", "store", true, nil, nil}}, run: needsHost},
-	"recover":     {run: needsHost},
-	"claim":       {flags: []flagSpec{{"--event", "store", true, nil, nil}, {"--turn", "store", false, nil, nil}}, run: cmdClaim},
-	"ack-proof":   {flags: []flagSpec{{"--event", "store", true, nil, nil}, {"--turn", "store", true, nil, nil}}, run: cmdAckProof},
-	"ack":         {flags: []flagSpec{{"--event", "store", true, nil, nil}, {"--ack-turn", "store", true, nil, nil}, {"--ack-proof", "store", true, nil, nil}, {"--reject", "store", false, nil, nil}}, run: cmdAck},
-	"verify-acks": {flags: []flagSpec{{"--limit", "int", false, nil, int64(8)}}, run: needsHost},
-	"verdict": {flags: []flagSpec{{"--event", "store", true, nil, nil}, {"--verdict", "store", true, []string{"verified", "needs_changes", "unverified", "aborted"}, nil}, {"--verdict-turn", "store", true, nil, nil},
-		{"--criterion", "append", false, nil, nil}, {"--finding", "append", false, nil, nil}, {"--criteria", "store", false, nil, nil}, {"--restoration", "store", false, nil, nil}, {"--reason", "store", false, nil, nil}, {"--expect-criteria-digest", "store", false, nil, nil}},
-		run: cmdVerdict},
-	"criteria-register": {flags: []flagSpec{{"--relationship", "store", true, nil, nil}, {"--criterion", "append", true, nil, nil}, {"--optional", "append", false, nil, nil}, {"--source-ref", "store", false, nil, nil}}, run: cmdCriteriaRegister},
-	"criteria-show":     {flags: []flagSpec{{"--relationship", "store", true, nil, nil}}, run: cmdCriteriaShow},
-	"revision-head":     {flags: []flagSpec{{"--relationship", "store", true, nil, nil}, {"--generation", "int", false, nil, nil}}, run: cmdRevisionHead},
+var deliveryCommands = []commandSpec{
+	{dispatch.Command{Name: "emit", Defaults: map[string]any{"attempt": int64(1), "turn-status": "inProgress"}}, cmdEmit},
+	{dispatch.Command{Name: "deliver", Defaults: map[string]any{"limit": int64(4)}}, needsHost},
+	{dispatch.Command{Name: "reconcile"}, needsHost},
+	{dispatch.Command{Name: "recover"}, needsHost},
+	{dispatch.Command{Name: "claim"}, cmdClaim},
+	// ack-proof derives a proof from its two options alone: it resolves no state directory.
+	{dispatch.Command{Name: "ack-proof", Unselected: true, ReadOnly: true}, cmdAckProof},
+	{dispatch.Command{Name: "ack"}, cmdAck},
+	{dispatch.Command{Name: "verdict"}, cmdVerdict},
+	{dispatch.Command{Name: "criteria-register"}, cmdCriteriaRegister},
+	{dispatch.Command{Name: "criteria-show", ReadOnly: true}, cmdCriteriaShow},
+	{dispatch.Command{Name: "revision-head", ReadOnly: true}, cmdRevisionHead},
+	{dispatch.Command{Name: "verify-acks", Defaults: map[string]any{"limit": int64(8)}}, needsHost},
 }
 
-// usageError is SystemExit2: a JSON usage reply with its exit code.
-type usageError struct {
-	detail string
-	code   int
+// family is this package's commands' family: a failure no other ending classifies reads in
+// Python's words (hostDetail).
+var family = &dispatch.Family{HostDetail: hostDetail}
+
+func init() {
+	for _, spec := range append(deliveryCommands, intentCommands...) {
+		registration := spec.Command
+		registration.Run = func(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
+			return spec.execute(ctx, services, args)
+		}
+		dispatch.Register(family, registration)
+	}
 }
 
-func (u *usageError) Error() string { return u.detail }
+// execute runs the handler over the selected store's directory, once the relay CLI checked it.
+func (spec commandSpec) execute(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
+	run := &cliRun{command: spec.Name, ctx: ctx, args: argsOf(spec.Name, args), state: services.Selection.Path, socket: services.SocketPath, clock: cliClock}
+	if CommandClock != nil {
+		run.clock = CommandClock
+	}
+	defer func() {
+		if run.store != nil {
+			_ = run.store.Close()
+		}
+	}()
+	return spec.run(run)
+}
 
 // CommandClock is an optional composition/test seam; nil keeps SystemClock.
 var CommandClock Clock
@@ -104,171 +110,35 @@ func (c *cliRun) services() (*Service, *Ack, error) {
 	return d, NewAck(d), nil
 }
 
-// parseArgs adapts the shared argparse result to the existing handler values.
-func parseArgs(command string, spec commandSpec, argv []string) (map[string]any, argparse.Result) {
-	result := argparse.Parse(command, argv)
+// argsOf is the handlers' view of the line: every option of the command's parser under its
+// flag, as argparse would bind it (an int as its Python integer, an append as its list, a
+// store_true as a bool), or its default (nil when it has none).
+func argsOf(command string, args dispatch.Args) map[string]any {
 	out := map[string]any{}
-	for _, f := range spec.flags {
-		out[f.name] = f.def
-		values := result.Values[strings.TrimPrefix(f.name, "--")]
-		if len(values) == 0 {
+	for _, action := range argparse.Specs[command].Actions {
+		if len(action.Flags) == 0 || action.Kind == "_HelpAction" {
 			continue
 		}
-		value := values[len(values)-1]
-		switch f.kind {
-		case "int":
-			out[f.name] = result.Numbers[strings.TrimPrefix(f.name, "--")]
-		case "true":
-			out[f.name] = value == "true"
-		case "append":
-			out[f.name] = values
+		flag := action.Flags[len(action.Flags)-1]
+		name := strings.TrimPrefix(flag, "--")
+		switch {
+		case action.Kind == "_StoreTrueAction":
+			out[flag] = args.Bool(name)
+		case !args.Given(name):
+			out[flag] = args.Defaults[name]
+		case action.Type == "int":
+			out[flag] = args.Number(name)
+		case action.Kind == "_AppendAction":
+			out[flag] = args.Strings(name)
 		default:
-			out[f.name] = value
+			out[flag] = args.Text(name)
 		}
 	}
-	return out, result
+	return out
 }
 
-// SelectionCheck is cli._refuse_ambiguous_state for the resolved selection: nil, or an error
-// carrying the refusal payload (PayloadError). The relay CLI passes its own, so the recovery
-// lines name the program as it was invoked.
-type SelectionCheck func(selection store.StateSelection, socket string) error
-
-// PayloadError is an answer printed whole with its own exit code (cli.PayloadExit).
-type PayloadError interface {
-	error
-	ExitPayload() (contract.OrderedObject, int)
-}
-
-// ExecuteAs runs one delivery command of the relay CLI, as cli.main does for it: prog is the
-// program name argparse prints, check the selection refusal applied before the handler (nil
-// uses this package's). handled is false for any other command.
-func ExecuteAs(ctx context.Context, prog string, argv []string, stdout, stderr io.Writer, check SelectionCheck) (int, bool) {
-	var state, socket string
-	i := 0
-	for ; i < len(argv); i++ {
-		name, value, has := strings.Cut(argv[i], "=")
-		switch name {
-		case "--json":
-			continue
-		case "--state", "--socket", "--kind-module":
-			if !has {
-				if i+1 >= len(argv) {
-					return 0, false
-				}
-				i++
-				value = argv[i]
-			}
-			if name == "--state" {
-				state = value
-			} else if name == "--socket" {
-				socket = value
-			}
-			continue
-		}
-		break
-	}
-	if i >= len(argv) {
-		return 0, false
-	}
-	command := argv[i]
-	spec, ok := deliveryCommands[command]
-	if !ok {
-		return 0, false
-	}
-	parsed, parsing := parseArgs(command, spec, argv[i+1:])
-	if parsing.Help {
-		fmt.Fprint(stdout, argparse.Help(prog, command))
-		return 0, true
-	}
-	if parsing.Message != "" {
-		fmt.Fprint(stderr, parsing.Error(prog, command))
-		return 2, true
-	}
-	run := &cliRun{ctx: ctx, args: parsed, socket: socket, clock: cliClock}
-	run.command = command
-	if CommandClock != nil {
-		run.clock = CommandClock
-	}
-	if command == "ack-proof" && check != nil {
-		if err := check(store.StateSelection{}, socket); err != nil {
-			var payload PayloadError
-			if errors.As(err, &payload) {
-				body, code := payload.ExitPayload()
-				return reply(stdout, body, code), true
-			}
-			return reply(stdout, Obj{{Key: "error", Value: "host"}, {Key: "detail", Value: hostDetail(err)}}, contract.ExitHost), true
-		}
-	}
-	if command != "ack-proof" {
-		selection, err := store.ResolveStateDir(state, socket)
-		if err != nil {
-			return reply(stdout, Obj{{Key: "error", Value: "host"}, {Key: "detail", Value: "OSError: " + err.Error()}}, contract.ExitHost), true
-		}
-		exempt := spec.exempt != nil && spec.exempt(parsed)
-		// cli.py main: check_start before the selection refusal and the handler, for a
-		// command that is neither read-only nor answers without the selected store. Of the
-		// marker commands that is intent-declare recording this store and intent-register
-		// confirming against it, so another runtime's store refuses them before any
-		// marker fact is written; a legacy store passes, as it does for the fence.
-		if fencedMarker(command) && !exempt {
-			if err := store.CheckStartLikeFence(ctx, selection.DBPath()); err != nil {
-				var refused *store.RefusedError
-				if !errors.As(err, &refused) {
-					return reply(stdout, Obj{{Key: "error", Value: "host"}, {Key: "detail", Value: hostDetail(err)}}, contract.ExitHost), true
-				}
-				return reply(stdout, Obj{{Key: "error", Value: "refused"}, {Key: "reason", Value: refused.Reason}, {Key: "detail", Value: refused.Detail}}, contract.ExitRefused), true
-			}
-		}
-		if check != nil {
-			checked := selection
-			if exempt {
-				checked = store.StateSelection{}
-			}
-			// The relay CLI's check also admits a writable command's store (its open can be
-			// refused like the handler's own).
-			if err := check(checked, socket); err != nil {
-				value, code := answer(nil, err)
-				return reply(stdout, value, code), true
-			}
-		} else if refusal := selectionRefusal(selection, socket); !exempt && refusal != nil {
-			return reply(stdout, refusal, contract.ExitRefused), true
-		}
-		run.state = selection.Path
-	}
-	defer func() {
-		if run.store != nil {
-			_ = run.store.Close()
-		}
-	}()
-	result, err := spec.run(run)
-	value, code := answer(result, err)
-	return reply(stdout, value, code), true
-}
-
-// answer is cli.main's reply to a delivery handler's ending: the printed object and exit code.
-func answer(result any, err error) (any, int) {
-	var usage *usageError
-	var refused *store.RefusedError
-	var whole PayloadError
-	switch {
-	case errors.As(err, &usage):
-		return Obj{{Key: "error", Value: "usage"}, {Key: "detail", Value: usage.detail}}, usage.code
-	case errors.As(err, &whole):
-		return whole.ExitPayload()
-	case errors.As(err, &refused):
-		return Obj{{Key: "error", Value: "refused"}, {Key: "reason", Value: refused.Reason}, {Key: "detail", Value: refused.Detail}}, contract.ExitRefused
-	case err != nil:
-		return Obj{{Key: "error", Value: "host"}, {Key: "detail", Value: hostDetail(err)}}, contract.ExitHost
-	}
-	return result, contract.ExitOk
-}
-
-// hostError carries the Python exception class name of a host failure.
-type hostError struct{ kind, message string }
-
-func (h *hostError) Error() string { return h.kind + ": " + h.message }
-
+// hostDetail is the host envelope's detail, in Python's words, for a failure no other ending
+// classifies.
 func hostDetail(err error) string {
 	if encode := store.EncodeError(err); encode != nil {
 		return encode.HostDetail()
@@ -282,22 +152,10 @@ func hostDetail(err error) string {
 	if errors.As(err, &expired) {
 		return expired.Error()
 	}
-	var h *hostError
-	if errors.As(err, &h) {
-		return h.Error()
-	}
 	if detail, ok := store.PythonHostDetail(err); ok {
 		return detail
 	}
 	return "RuntimeError: " + err.Error()
-}
-
-func reply(w io.Writer, value any, code int) int {
-	if err := contract.Emit(w, value); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return contract.ExitHost
-	}
-	return code
 }
 
 // HostCommand is installed by the production adapter at executable composition time.
@@ -308,12 +166,12 @@ var HostCommand func(context.Context, string, string, string, map[string]any, Cl
 // error, as in Python; with it, the host adapter they drive is the bridge adapter port (todo 28).
 func needsHost(c *cliRun) (any, error) {
 	if c.socket == "" {
-		return nil, &usageError{"this command needs --socket to reach the host", contract.ExitUsage}
+		return nil, &dispatch.UsageError{Detail: "this command needs --socket to reach the host", Code: contract.ExitUsage}
 	}
 	if HostCommand != nil {
 		return HostCommand(c.ctx, c.command, c.state, c.socket, c.args, c.clock)
 	}
-	return nil, &hostError{"HostUnavailable", "the relay host adapter (bridge_adapter.py) is not ported to Go yet (todo 28)"}
+	return nil, &dispatch.HostError{Class: "HostUnavailable", Detail: "the relay host adapter (bridge_adapter.py) is not ported to Go yet (todo 28)"}
 }
 
 // Python re.match's $ also matches immediately before one final LF.
@@ -322,10 +180,10 @@ var eventIDPattern = regexp.MustCompile(`^[0-9a-f]{32}\n?$`)
 func cmdAckProof(c *cliRun) (any, error) {
 	event, turn := c.s("--event"), c.s("--turn")
 	if !eventIDPattern.MatchString(event) {
-		return nil, &hostError{"ValueError", "event id must be 32 lowercase hex characters"}
+		return nil, &dispatch.HostError{Class: "ValueError", Detail: "event id must be 32 lowercase hex characters"}
 	}
 	if pyvalue.Strip(turn) == "" {
-		return nil, &hostError{"ValueError", "ack_turn_id must be a non-empty string"}
+		return nil, &dispatch.HostError{Class: "ValueError", Detail: "ack_turn_id must be a non-empty string"}
 	}
 	return Obj{{Key: "eventId", Value: event}, {Key: "turnId", Value: turn}, {Key: "ackProof", Value: AckProof(event, turn)}}, nil
 }
@@ -357,10 +215,10 @@ func AckCommand(ctx context.Context, ack *Ack, rc *Reconciler, adapter Adapter, 
 	if adapter != nil && rc != nil {
 		// Python derives the proof before looking up the event or reading the host.
 		if !eventIDPattern.MatchString(event) {
-			return nil, &hostError{"ValueError", "event id must be 32 lowercase hex characters"}
+			return nil, &dispatch.HostError{Class: "ValueError", Detail: "event id must be 32 lowercase hex characters"}
 		}
 		if pyvalue.Strip(ackTurn) == "" {
-			return nil, &hostError{"ValueError", "ack_turn_id must be a non-empty string"}
+			return nil, &dispatch.HostError{Class: "ValueError", Detail: "ack_turn_id must be a non-empty string"}
 		}
 	}
 	if adapter != nil && rc != nil && proof == AckProof(event, ackTurn) {
@@ -499,13 +357,13 @@ func cmdVerdict(c *cliRun) (any, error) {
 		if strings.HasPrefix(raw, "@") {
 			content, err := os.ReadFile(raw[1:])
 			if err != nil {
-				return nil, &hostError{"FileNotFoundError", err.Error()}
+				return nil, &dispatch.HostError{Class: "FileNotFoundError", Detail: err.Error()}
 			}
 			text = string(content)
 		}
 		parsed, err := loads(text)
 		if err != nil {
-			return nil, &hostError{"JSONDecodeError", err.Error()}
+			return nil, &dispatch.HostError{Class: "JSONDecodeError", Detail: err.Error()}
 		}
 		switch v := parsed.(type) {
 		case []any:
@@ -515,13 +373,13 @@ func cmdVerdict(c *cliRun) (any, error) {
 				findings = append(findings, f.Key)
 			}
 		default:
-			return nil, &hostError{"TypeError", fmt.Sprintf("'%s' object is not iterable", pyvalue.TypeName(v))}
+			return nil, &dispatch.HostError{Class: "TypeError", Detail: fmt.Sprintf("'%s' object is not iterable", pyvalue.TypeName(v))}
 		}
 	}
 	if c.opt("--restoration") != nil {
 		wanted := strings.TrimSpace(c.s("--restoration"))
 		if wanted == "" {
-			return nil, &usageError{"--restoration names the criterion id whose finding carries the block, so it cannot be empty. Leave the option out to carry no block", contract.ExitUsage}
+			return nil, &dispatch.UsageError{Detail: "--restoration names the criterion id whose finding carries the block, so it cannot be empty. Leave the option out to carry no block", Code: contract.ExitUsage}
 		}
 		all := append(append([]any(nil), criteria...), findings...)
 		var marked []Obj
@@ -537,7 +395,7 @@ func cmdVerdict(c *cliRun) (any, error) {
 			}
 		}
 		if len(marked) == 0 && wellFormed {
-			return nil, &usageError{"--restoration names " + pyvalue.StrRepr(c.s("--restoration")) + ", which is not one of the findings this verdict carries. The block travels inside a finding, so it names one", contract.ExitUsage}
+			return nil, &dispatch.UsageError{Detail: "--restoration names " + pyvalue.StrRepr(c.s("--restoration")) + ", which is not one of the findings this verdict carries. The block travels inside a finding, so it names one", Code: contract.ExitUsage}
 		}
 		for _, list := range [][]any{criteria, findings} {
 			for i, item := range list {
@@ -550,7 +408,7 @@ func cmdVerdict(c *cliRun) (any, error) {
 				}
 				existing, present := get(o, "restoration")
 				if present && existing == false {
-					return nil, &usageError{"--restoration names " + pyvalue.StrRepr(wanted) + ", whose finding declares the restoration block false. One correction carries one block and says so once", contract.ExitUsage}
+					return nil, &dispatch.UsageError{Detail: "--restoration names " + pyvalue.StrRepr(wanted) + ", whose finding declares the restoration block false. One correction carries one block and says so once", Code: contract.ExitUsage}
 				}
 				if present && existing != nil {
 					if _, isBool := existing.(bool); !isBool {
@@ -576,9 +434,4 @@ func cmdVerdict(c *cliRun) (any, error) {
 		return nil, err
 	}
 	return append(record, F{Key: "_restoration", Value: restoration}), nil
-}
-
-// CommandNames are the relay subcommands this package serves, in cli.py's add_parser order.
-func CommandNames() []string {
-	return append([]string{"emit", "deliver", "reconcile", "recover", "claim", "ack-proof", "ack", "verdict", "criteria-register", "criteria-show", "revision-head", "verify-acks"}, intentCommandNames...)
 }

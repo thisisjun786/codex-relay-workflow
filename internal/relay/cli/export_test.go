@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -24,7 +25,7 @@ var FaultAttention = faultAttention
 // it directly: the store may have been replaced between that probe and this read.
 func AccessReceipt(ctx context.Context, state string, probed store.ProbeResult) contract.OrderedObject {
 	selection, _ := store.ResolveStateDir(state, "")
-	return accessReceipt(ctx, Services{Selection: selection}, probeStore(probed), probed.Access)
+	return accessReceipt(ctx, dispatch.Services{Selection: selection}, probeStore(probed), probed.Access)
 }
 
 // WorkerReadiness is rolepolicy.worker_readiness(observation, requirements,

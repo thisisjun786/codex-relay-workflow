@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -56,7 +57,7 @@ func cmdEmit(c *cliRun) (any, error) {
 	status, proof := c.s("--turn-status"), "claimed"
 	if c.socket != "" {
 		if ObserveTurn == nil {
-			return nil, &hostError{"HostUnavailable", "the relay host adapter (bridge_adapter.py) is not ported to Go yet (todo 28)"}
+			return nil, &dispatch.HostError{Class: "HostUnavailable", Detail: "the relay host adapter (bridge_adapter.py) is not ported to Go yet (todo 28)"}
 		}
 		status, err = ObserveTurn(c.ctx, c.state, c.socket, c.s("--turn-thread"), c.s("--turn-id"))
 		if err != nil {
@@ -68,14 +69,14 @@ func cmdEmit(c *cliRun) (any, error) {
 		status, proof = "inProgress", "unverified_staged"
 	}
 	if generation.Sign() < 1 {
-		return nil, &hostError{"ValueError", "generation must be a positive integer"}
+		return nil, &dispatch.HostError{Class: "ValueError", Detail: "generation must be a positive integer"}
 	}
 	if outcome == "ready_for_review" && digest == store.NoDeliverable {
-		return nil, &hostError{"ValueError", "a reviewable receipt cannot carry the no-deliverable sentinel"}
+		return nil, &dispatch.HostError{Class: "ValueError", Detail: "a reviewable receipt cannot carry the no-deliverable sentinel"}
 	}
 	event, err := store.EventIDBig(rid, generation, digest, outcome, c.s("--turn-id"), attempt)
 	if err != nil {
-		return nil, &hostError{"ValueError", "event identity: " + err.Error()}
+		return nil, &dispatch.HostError{Class: "ValueError", Detail: "event identity: " + err.Error()}
 	}
 	thread, turn := c.s("--turn-thread"), c.s("--turn-id")
 	payload := Obj{{Key: "eventId", Value: event}, {Key: "relationshipId", Value: rid}, {Key: "executionGeneration", Value: json.Number(generation.String())}, {Key: "attempt", Value: json.Number(attempt.String())},

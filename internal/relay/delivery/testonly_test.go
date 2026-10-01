@@ -5,19 +5,12 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
-	"io"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // Code the product no longer calls, kept for the tests that drive it (decision 52).
-
-// ExecuteCLI runs one delivery command as the codex-session-relay console script, with this
-// package's own selection refusal. handled is false for any other command.
-func ExecuteCLI(ctx context.Context, argv []string, stdout, stderr io.Writer) (int, bool) {
-	return ExecuteAs(ctx, "codex-session-relay", argv, stdout, stderr, nil)
-}
 
 // CompleteKeptAcknowledgement is _complete_kept_acknowledgement: before a verdict, a kept
 // acknowledgement's delivery is confirmed through its turn and the acknowledgement completed.

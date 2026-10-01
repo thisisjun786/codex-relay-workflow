@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -76,7 +77,7 @@ func requestedPredecessors(ctx context.Context, s *store.Store, rid string, gene
 	for _, row := range rows {
 		request, err := store.RevisionRequestEventID(rid, colString(row, "event_id"), colString(row, "verdict_turn_id"))
 		if err != nil {
-			return nil, &HostError{Class: "ValueError", Detail: err.Error()}
+			return nil, &dispatch.HostError{Class: "ValueError", Detail: err.Error()}
 		}
 		if colString(row, "request_id") == request && colString(row, "dispatch_request_id") == "revision-"+request {
 			hash := colString(row, "revision_hash")

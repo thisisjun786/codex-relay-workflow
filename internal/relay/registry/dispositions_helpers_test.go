@@ -13,6 +13,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
@@ -128,7 +129,7 @@ func runDispositionsFixture(t *testing.T, name string) map[string][2]string {
 			id = itoa(i)
 		}
 		var stdout, stderr bytes.Buffer
-		code := ExecuteAs(ctx(), "codex-session-relay", append([]string{"--state", state}, step.Argv...), &stdout, &stderr, nil)
+		code := dispatch.Execute(ctx(), "codex-session-relay", append([]string{"--state", state}, step.Argv...), &stdout, &stderr)
 		out[id] = [2]string{itoa(code), strings.ReplaceAll(stdout.String(), home, "<HOME>")}
 	}
 	return out

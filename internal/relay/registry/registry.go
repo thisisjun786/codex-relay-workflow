@@ -14,6 +14,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -334,7 +335,7 @@ func (r *Registry) Register(ctx context.Context, in Registration) (Relationship,
 	if encode := store.EncodeError(err); encode != nil {
 		return Relationship{}, encode
 	} else if err != nil {
-		return Relationship{}, &HostError{Class: "ValueError", Detail: identityDetail(in)}
+		return Relationship{}, &dispatch.HostError{Class: "ValueError", Detail: identityDetail(in)}
 	}
 	if err := validatedTurnID(in.DispatchTurnID); err != nil {
 		return Relationship{}, err
@@ -424,12 +425,6 @@ func identityDetail(in Registration) string {
 	}
 	return "invalid identity"
 }
-
-// HostError is an unexpected failure carrying Python's exception class name, so the CLI's host
-// envelope reads f"{type(error).__name__}: {error}".
-type HostError struct{ Class, Detail string }
-
-func (e *HostError) Error() string { return e.Class + ": " + e.Detail }
 
 func candidateRow(rid string, in Registration) *row {
 	return &row{ID: rid, Issue: in.IssueKey, Status: Active, ParentTask: in.Parent.TaskID, ChildTask: in.Child.TaskID,

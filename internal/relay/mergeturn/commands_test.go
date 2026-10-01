@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 )
 
 func Test26_MTG_7_restate_base_help_explains_observed_sha(t *testing.T) {
@@ -63,7 +64,7 @@ func Test26_CCL_1_merge_turn_commands_are_registered_offline_and_not_marker_comm
 		t.Fatalf("doctor reported no offlineCommands: %s", stdout.String())
 	}
 	for _, name := range pythonMergeTurnCommands {
-		if !cli.Registered(name) {
+		if !dispatch.Registered(name) {
 			t.Errorf("%s is not registered", name)
 		}
 		var help, errors bytes.Buffer

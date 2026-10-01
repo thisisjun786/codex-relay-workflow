@@ -2,30 +2,25 @@ package cli
 
 import (
 	"context"
-	"flag"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // Reporting observation belongs to todo 24. omitted.py was carried from todo 21.
-var reportingShowCommand = Command{
-	Name: "reporting-show", Exempt: true,
-	Flags: func(f *flag.FlagSet) {
-		for _, name := range []string{"marker-root", "workspace", "assignment", "session", "turn"} {
-			f.String(name, "", "")
-		}
-	},
-	Run: func(ctx context.Context, services Services, args Args) (any, error) {
+var reportingShowCommand = dispatch.Command{
+	Name: "reporting-show", Exempt: true, ReadOnly: true,
+	Run: func(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
 		if services.Selection.Source != "flag" {
-			return nil, &UsageError{Detail: "reporting-show requires explicit --state", Code: contract.ExitUsage}
+			return nil, &dispatch.UsageError{Detail: "reporting-show requires explicit --state", Code: contract.ExitUsage}
 		}
 		if services.SocketPath != "" {
-			return nil, &UsageError{Detail: "reporting-show does not take --socket", Code: contract.ExitUsage}
+			return nil, &dispatch.UsageError{Detail: "reporting-show does not take --socket", Code: contract.ExitUsage}
 		}
 		assignment, _ := args.String("assignment")
 		session, _ := args.String("session")
@@ -33,28 +28,23 @@ var reportingShowCommand = Command{
 		root, _ := args.String("marker-root")
 		workspace, _ := args.String("workspace")
 		if len(assignment) != 64 || !hexDispatch(assignment) {
-			return nil, &UsageError{Detail: "assignment must be a dispatch hash", Code: contract.ExitUsage}
+			return nil, &dispatch.UsageError{Detail: "assignment must be a dispatch hash", Code: contract.ExitUsage}
 		}
 		if !validSegment(session) || !validSegment(turn) {
-			return nil, &UsageError{Detail: "session and turn must be valid path segments", Code: contract.ExitUsage}
+			return nil, &dispatch.UsageError{Detail: "session and turn must be valid path segments", Code: contract.ExitUsage}
 		}
 		if root == "" || workspace == "" {
-			return nil, &UsageError{Detail: "marker root and workspace are required", Code: contract.ExitUsage}
+			return nil, &dispatch.UsageError{Detail: "marker root and workspace are required", Code: contract.ExitUsage}
 		}
 		return delivery.ObserveOmission(ctx, services.Selection, root, workspace, assignment, session, turn, delivery.ISOOf(clockNow()), 0), nil
 	},
 }
 
-var reportingDeriveCommand = Command{
-	Name: "reporting-derive", Exempt: true,
-	Flags: func(f *flag.FlagSet) {
-		f.String("relationship", "", "")
-		f.String("turn", "", "")
-		f.Float64("grace", 300, "")
-	},
-	Run: func(ctx context.Context, services Services, args Args) (any, error) {
+var reportingDeriveCommand = dispatch.Command{
+	Name: "reporting-derive", Exempt: true, ReadOnly: true, Defaults: map[string]any{"grace": 300.0},
+	Run: func(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
 		if services.SocketPath != "" {
-			return nil, &UsageError{Detail: "reporting-derive does not take --socket", Code: contract.ExitUsage}
+			return nil, &dispatch.UsageError{Detail: "reporting-derive does not take --socket", Code: contract.ExitUsage}
 		}
 		path := services.Selection.DBPath()
 		if _, err := os.Stat(path); os.IsNotExist(err) {
@@ -70,7 +60,7 @@ var reportingDeriveCommand = Command{
 		defer s.Close()
 		rid, _ := args.String("relationship")
 		turn, _ := args.String("turn")
-		grace := args.Flags.Lookup("grace").Value.(flag.Getter).Get().(float64)
+		grace := args.Float("grace")
 		return delivery.DeriveOmission(ctx, s, services.Selection.Path, rid, turn, delivery.ISOOf(clockNow()), grace), nil
 	},
 }

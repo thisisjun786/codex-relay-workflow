@@ -2,23 +2,13 @@ package cli
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
-
-// Services is cli.Services: the selection every command resolves before its handler runs, and
-// the global flags. Nothing here opens a Store; a handler that needs one opens it itself.
-type Services struct {
-	Selection        store.StateSelection
-	SocketPath       string
-	AdapterRequested bool
-	// Program is how the operator invoked this CLI, for printed recovery commands.
-	Program string
-}
 
 // selectionRecord is StateSelection.to_record.
 func selectionRecord(selection store.StateSelection) contract.OrderedObject {
@@ -81,7 +71,7 @@ func probeStore(result store.ProbeResult) store.Location {
 }
 
 // ledgerLocation is _ledger_location: where the transport ledger will actually live.
-func ledgerLocation(services Services) (contract.OrderedObject, error) {
+func ledgerLocation(services dispatch.Services) (contract.OrderedObject, error) {
 	if services.SocketPath == "" {
 		return contract.OrderedObject{
 			{Key: "configured", Value: false}, {Key: "directory", Value: nil},
@@ -114,7 +104,7 @@ func ledgerLocation(services Services) (contract.OrderedObject, error) {
 }
 
 // siblingStores is _sibling_stores.
-func siblingStores(services Services) (contract.OrderedObject, error) {
+func siblingStores(services dispatch.Services) (contract.OrderedObject, error) {
 	if services.Selection.Source == "flag" || services.Selection.Source == "env" {
 		return contract.OrderedObject{
 			{Key: "checked", Value: false},
@@ -139,7 +129,7 @@ func siblingStores(services Services) (contract.OrderedObject, error) {
 }
 
 // contents is _contents: counts read through the held descriptor, never through a Store.
-func contents(ctx context.Context, services Services, access store.ProbeAccess) contract.OrderedObject {
+func contents(ctx context.Context, services dispatch.Services, access store.ProbeAccess) contract.OrderedObject {
 	unavailable := func(detail string) contract.OrderedObject {
 		return contract.OrderedObject{
 			{Key: "available", Value: false}, {Key: "relationships", Value: nil},
@@ -169,21 +159,6 @@ func contents(ctx context.Context, services Services, access store.ProbeAccess) 
 		{Key: "available", Value: true}, {Key: "relationships", Value: relationships},
 		{Key: "openAttempts", Value: open}, {Key: "detail", Value: nil},
 	}
-}
-
-// program is the shell-rendered command prefix that invoked this relay.
-func program(argv0 string) string {
-	if argv0 == "crw relay" {
-		argv0 = os.Args[0]
-		if !strings.Contains(argv0, "/") {
-			argv0 = filepath.Base(argv0)
-		}
-		return shellQuote(argv0) + " relay"
-	}
-	if strings.Contains(argv0, "/") {
-		return shellQuote(argv0)
-	}
-	return shellQuote(filepath.Base(argv0))
 }
 
 // shellQuote is shlex.quote.

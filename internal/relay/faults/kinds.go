@@ -23,18 +23,6 @@ type KindPolicy struct {
 // kindPolicy keeps the built-in declarations and existing callers source-compatible.
 type kindPolicy = KindPolicy
 
-// RegisteredModule is the finite replacement for Python's importlib.import_module.
-// json and os.path are importable standard-library probes; projects is the
-// publication-kind declaration imported by the Python product-routing tests.
-func RegisteredModule(name string) bool {
-	switch name {
-	case "json", "os.path", "codex_session_relay.projects":
-		return true
-	default:
-		return false
-	}
-}
-
 // RegisterKind installs an implementation for a declared extension kind. The manifest
 // describes project_create, but without its todo 23 implementation it is not executable.
 func RegisterKind(name string, policy KindPolicy) error {

@@ -36,10 +36,7 @@ func TestF1ClaimCLIOracle(t *testing.T) {
 			for _, args := range steps {
 				var got, stderr bytes.Buffer
 				ctx := context.WithValue(context.Background(), f1InputsKey{}, f1Inputs{clock: &testClock{now: 100000}, entropy: bytes.NewReader([]byte{0, 1, 2, 3, 4, 5, 6, 7})})
-				exit, handled := executeAsCLI(ctx, append([]string{"--state", home + "/go", "--json"}, args...), &got, &stderr)
-				if !handled {
-					t.Fatal("unhandled")
-				}
+				exit := executeAsCLI(ctx, append([]string{"--state", home + "/go", "--json"}, args...), &got, &stderr)
 				checkGolden(t, "relay "+strings.Join(args, " "), args, runPathsOf(t, home), cliGolden{Code: exit, Stdout: got.String()})
 			}
 		})

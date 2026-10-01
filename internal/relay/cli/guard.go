@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"errors"
-	"flag"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,19 +12,13 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
-var guardEvaluateCommand = Command{Name: "guard-evaluate", Exempt: true, Flags: func(f *flag.FlagSet) {
-	f.String("marker-root", "", "")
-	f.String("stop-input", "-", "")
-	f.String("mode", "observe", "")
-	f.String("db-path", "", "")
-	f.String("now", "", "")
-	f.Bool("no-record", false, "")
-}, Run: func(ctx context.Context, s Services, a Args) (any, error) {
+var guardEvaluateCommand = dispatch.Command{Name: "guard-evaluate", Exempt: true, ReadOnly: true, Defaults: map[string]any{"stop-input": "-", "mode": "observe"}, Run: func(ctx context.Context, s dispatch.Services, a dispatch.Args) (any, error) {
 	path, _ := a.String("stop-input")
 	var raw []byte
 	var err error
@@ -38,7 +31,7 @@ var guardEvaluateCommand = Command{Name: "guard-evaluate", Exempt: true, Flags: 
 			_, err = store.DecodeUTF8(raw)
 		}
 		if err != nil {
-			return nil, &UsageError{Detail: "the Stop payload file could not be read: " + store.PythonOSErrorText(err), Code: contract.ExitUsage}
+			return nil, &dispatch.UsageError{Detail: "the Stop payload file could not be read: " + store.PythonOSErrorText(err), Code: contract.ExitUsage}
 		}
 	} else {
 		raw, err = io.ReadAll(os.Stdin)
@@ -46,20 +39,20 @@ var guardEvaluateCommand = Command{Name: "guard-evaluate", Exempt: true, Flags: 
 			return nil, err
 		}
 		if _, err := store.DecodeUTF8(raw); err != nil {
-			return nil, &HostError{Class: "UnicodeDecodeError", Detail: err.Error()}
+			return nil, &dispatch.HostError{Class: "UnicodeDecodeError", Detail: err.Error()}
 		}
 	}
 	v, err := hook.Decode(raw)
 	if err != nil {
-		return nil, &UsageError{Detail: "the Stop payload is not JSON: " + err.Error(), Code: contract.ExitUsage}
+		return nil, &dispatch.UsageError{Detail: "the Stop payload is not JSON: " + err.Error(), Code: contract.ExitUsage}
 	}
 	stop, ok := evidence.Object(v)
 	if !ok {
-		return nil, &UsageError{Detail: "the Stop payload must be a JSON object", Code: contract.ExitUsage}
+		return nil, &dispatch.UsageError{Detail: "the Stop payload must be a JSON object", Code: contract.ExitUsage}
 	}
 	mode, _ := a.String("mode")
 	if mode == hook.Hold && a.Bool("no-record") {
-		return nil, &UsageError{Detail: "--mode hold cannot be combined with --no-record: a hold that publishes no observation cannot be released, counted against the bounds, or audited", Code: contract.ExitUsage}
+		return nil, &dispatch.UsageError{Detail: "--mode hold cannot be combined with --no-record: a hold that publishes no observation cannot be released, counted against the bounds, or audited", Code: contract.ExitUsage}
 	}
 	rootArg, _ := a.String("marker-root")
 	root, err := delivery.ResolveMarkerRoot(rootArg)
@@ -89,9 +82,9 @@ var guardEvaluateCommand = Command{Name: "guard-evaluate", Exempt: true, Flags: 
 // Go's), the store's ownership is checked on the read-only Stop path (store.CheckStop) before
 // the caller evaluates. A Stop judged on its marker alone reads no store and is evaluated here
 // whoever owns one.
-func routeGuard(ctx context.Context, s Services, stop hook.Object, options hook.GuardOptions) (any, bool, error) {
+func routeGuard(ctx context.Context, s dispatch.Services, stop hook.Object, options hook.GuardOptions) (any, bool, error) {
 	receipt, err := hook.SelectedStore(ctx, stop, options)
-	var refusal *PayloadExit
+	var refusal *dispatch.PayloadExit
 	if errors.As(err, &refusal) {
 		return nil, true, err
 	}
@@ -145,12 +138,12 @@ func routeGuard(ctx context.Context, s Services, stop hook.Object, options hook.
 		}
 		return nil, false, nil
 	case answer.TimedOut:
-		return nil, true, &PayloadExit{Payload: contract.OrderedObject{{Key: "error", Value: "host"}, {Key: "detail", Value: answer.Detail}}, Code: contract.ExitHost}
+		return nil, true, &dispatch.PayloadExit{Payload: contract.OrderedObject{{Key: "error", Value: "host"}, {Key: "detail", Value: answer.Detail}}, Code: contract.ExitHost}
 	case !answer.Readable:
-		return nil, true, &PayloadExit{Payload: contract.OrderedObject{{Key: "error", Value: "host"}, {Key: "detail", Value: "the owner closed control.sock without a readable guard-evaluate answer"}}, Code: contract.ExitHost}
+		return nil, true, &dispatch.PayloadExit{Payload: contract.OrderedObject{{Key: "error", Value: "host"}, {Key: "detail", Value: "the owner closed control.sock without a readable guard-evaluate answer"}}, Code: contract.ExitHost}
 	case answer.Code != contract.ExitOk:
 		payload, _ := evidence.Object(answer.Answer)
-		return nil, true, &PayloadExit{Payload: payload, Code: answer.Code}
+		return nil, true, &dispatch.PayloadExit{Payload: payload, Code: answer.Code}
 	}
 	return answer.Answer, true, nil
 }

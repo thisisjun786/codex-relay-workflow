@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -23,7 +23,7 @@ func TestManagedStartReadsTheScopeTheServiceWrites(t *testing.T) {
 	}
 	spelled := filepath.Join(root, "link") + "/../scopes"
 	t.Setenv("CODEX_SESSION_RELAY_SCOPE_DIR", spelled)
-	observer, err := workerObserver(cli.Services{Selection: store.StateSelection{Path: filepath.Join(root, "S")}, SocketPath: filepath.Join(root, "app.sock")})
+	observer, err := workerObserver(dispatch.Services{Selection: store.StateSelection{Path: filepath.Join(root, "S")}, SocketPath: filepath.Join(root, "app.sock")})
 	if err != nil {
 		t.Fatal(err)
 	}
