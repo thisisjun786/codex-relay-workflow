@@ -8,6 +8,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -34,17 +36,45 @@ func runGit(root string, args ...string) ([]byte, error) {
 	return nil, fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
 }
 
-// resolve is path made absolute with its symbolic links resolved; a path that does not exist (or
-// cannot be resolved) is only made absolute, so a check judges it as missing.
+// resolve is path made absolute with its symbolic links followed as far as the path exists, the
+// missing remainder appended as written (os.path.realpath's non-strict reading). A missing tail is
+// judged where the links before it lead, so a containment check cannot be passed by naming a
+// file that does not exist yet below a link that points out of the tree.
 func resolve(path string) string {
-	absolute, err := filepath.Abs(path)
-	if err != nil {
-		return path
+	if !filepath.IsAbs(path) {
+		if wd, err := os.Getwd(); err == nil {
+			path = wd + "/" + path
+		}
 	}
-	if resolved, err := filepath.EvalSymlinks(absolute); err == nil {
-		return resolved
+	resolved := "/"
+	rest := strings.Split(strings.TrimPrefix(path, "/"), "/")
+	for hops := 0; len(rest) > 0; {
+		part := rest[0]
+		rest = rest[1:]
+		switch part {
+		case "", ".":
+			continue
+		case "..":
+			resolved = filepath.Dir(resolved)
+			continue
+		}
+		next := filepath.Join(resolved, part)
+		info, err := os.Lstat(next)
+		if err != nil || info.Mode()&fs.ModeSymlink == 0 {
+			resolved = next
+			continue
+		}
+		target, err := os.Readlink(next)
+		if hops++; err != nil || hops > 40 {
+			resolved = next
+			continue
+		}
+		if filepath.IsAbs(target) {
+			resolved = "/"
+		}
+		rest = append(strings.Split(target, "/"), rest...)
 	}
-	return absolute
+	return resolved
 }
 
 // isRelativeTo reports whether path is root or inside it.

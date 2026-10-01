@@ -68,7 +68,10 @@ func Test_a_number_written_as_a_string_is_read_as_the_number(t *testing.T) {
 		{map[string]any{"limit": "5"}, ""},
 		{map[string]any{"limit": " 7 "}, ""},
 		{map[string]any{"limit": 5.0}, ""},
+		{map[string]any{"limit": "5.0"}, ""},
 		{map[string]any{"limit": "5.5"}, "invalid arguments for list_threads: limit must be an integer"},
+		{map[string]any{"limit": "0.99999999999999999"}, "invalid arguments for list_threads: limit must be an integer"},
+		{map[string]any{"limit": "1e2"}, "invalid arguments for list_threads: limit must be an integer"},
 		{map[string]any{"limit": "five"}, "invalid arguments for list_threads: limit must be an integer"},
 		{map[string]any{"limit": true}, "invalid arguments for list_threads: limit must be an integer"},
 	} {

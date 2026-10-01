@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"math/big"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -132,12 +134,27 @@ func numberText(schema map[string]any, value any) (json.Number, bool) {
 	if !isString || kind != "integer" && kind != "number" {
 		return "", false
 	}
-	f, err := strconv.ParseFloat(strings.TrimSpace(text), 64)
+	text = strings.TrimSpace(text)
+	if kind == "integer" {
+		// An integer field reads the string's decimal digits exactly, so a fraction stays a
+		// fraction however close to an integer it is, and is refused.
+		match := integerText.FindStringSubmatch(text)
+		if match == nil {
+			return "", false
+		}
+		exact, _ := new(big.Int).SetString(match[1], 10)
+		return json.Number(exact.String()), true
+	}
+	f, err := strconv.ParseFloat(text, 64)
 	if err != nil || math.IsInf(f, 0) || math.IsNaN(f) {
 		return "", false
 	}
 	return json.Number(strconv.FormatFloat(f, 'f', -1, 64)), true
 }
+
+// integerText is a string an integer field reads: a signed decimal, with an optional fraction of
+// zeros ("5.0").
+var integerText = regexp.MustCompile(`^([+-]?[0-9]+)(?:\.0+)?$`)
 
 // valueProblem is why value does not validate against one field's schema, or "".
 func valueProblem(schema map[string]any, value any) string {
