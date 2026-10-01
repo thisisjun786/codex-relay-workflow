@@ -414,6 +414,36 @@ func (r *Registry) Register(ctx context.Context, in Registration) (Relationship,
 	return record, nil
 }
 
+// PrecheckScope is the project-scope decision Register makes after the child exists, asked while the child
+// does not: managed-start asks it before it arms a reservation and again before it creates the child thread,
+// so a request that will be refused creates nothing. It refuses with what Register refuses with for the same
+// parent, issue and project, and records the refusal in linkage_conflicts the same way; when nothing refuses
+// it writes nothing. A request naming no project has nothing to decide. Register stays the decision of
+// record: this one does not stop a binding that changes between the check and the effect.
+func (r *Registry) PrecheckScope(ctx context.Context, parentTask, issue, project string) error {
+	if project == "" {
+		return nil
+	}
+	now := r.now()
+	var refusal *linkRefusal
+	err := r.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
+		link := r.linkage()
+		_, pending, err := link.projectRefusal(ctx, &row{Issue: issue, Status: Active, ParentTask: parentTask}, project)
+		if err != nil || pending == nil {
+			return err
+		}
+		refusal = pending
+		return link.recordConflict(ctx, pending, now)
+	})
+	if err != nil {
+		return err
+	}
+	if refusal != nil {
+		return r.contestPending(ctx, refusal)
+	}
+	return nil
+}
+
 func identityDetail(in Registration) string {
 	for _, f := range []struct{ name, value string }{{"parent_task_id", in.Parent.TaskID}, {"child_task_id", in.Child.TaskID}, {"issue_key", in.IssueKey}} {
 		if strings.TrimSpace(f.value) == "" {

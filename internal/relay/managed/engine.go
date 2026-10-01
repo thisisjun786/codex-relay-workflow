@@ -159,6 +159,11 @@ func (m *Start) Run(ctx context.Context, raw []byte) (contract.OrderedObject, er
 		return answer(row, "refused", "intent", "intent_conflict")
 	}
 	if row.State == "reserved" {
+		// A reserved request has armed nothing, so no host effect can exist yet: one whose project scope
+		// will be refused stops here, and managed-release can still release its reservation.
+		if err := m.scopeRefusal(ctx, identity, req); err != nil {
+			return nil, err
+		}
 		row, err = reservation.Arm(ctx, identity.RequestID, identity.Fingerprint, row.Revision)
 		if err != nil {
 			return nil, err
@@ -178,6 +183,10 @@ func (m *Start) Run(ctx context.Context, raw []byte) (contract.OrderedObject, er
 		}
 		if readiness != "" {
 			return answer(row, "refused", "creation", readiness)
+		}
+		// Asked again right before the effect, as readiness is: the binding may have moved since the first ask.
+		if err := m.scopeRefusal(ctx, identity, req); err != nil {
+			return nil, err
 		}
 		child := obj(req["child"])
 		settings := obj(child["settings"])
@@ -488,6 +497,16 @@ func (m *Start) Run(ctx context.Context, raw []byte) (contract.OrderedObject, er
 	resultRow.BusinessTurnID = turn
 	return resultRow.Observe(ctx, m.Store, m.now(), "admitted", "business_accepted", "")
 }
+
+// scopeRefusal is the project-scope decision Register makes once the child exists, asked while it does
+// not. A request that names a project no parent is bound to, or one another task is the parent of, is
+// refused with Register's own refusal before anything is created. A request that names no project has
+// nothing to decide.
+func (m *Start) scopeRefusal(ctx context.Context, id Identity, req map[string]any) error {
+	reg := &registry.Registry{Store: m.Store, Now: m.now}
+	return reg.PrecheckScope(ctx, str(obj(req["parent"])["taskId"]), id.IssueKey, str(req["projectKey"]))
+}
+
 func deliveryValue(v any) any {
 	switch x := v.(type) {
 	case map[string]any:
