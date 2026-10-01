@@ -274,7 +274,13 @@ The request schema is `managed-start/1`. Required fields are `schema`, `requestI
 `parent`, `child`, `artifactRoots`, `allowedRecipients`, `criteria`, `criteriaSource`,
 `baselineRevision`, `scopeRef` and `prompt`; `projectKey` is optional. `parent` carries `taskId`,
 `hostId` and `settings`; `child` carries `hostId`, `title` and `settings`. Settings use the
-existing full settings record, including environments, approval policy and sandbox. Each
+existing full settings record, including environments, approval policy and sandbox. A settings
+record may carry `expectedPermissionProfile`: the whole profile object Codex reports for the thread
+(an `id` of text, an optional `extends` of null or text, kept as written, and no other key unless
+the host adds one, as text, a boolean or null; at most 16 keys and no number or nested value), or
+text. Every key and text value must be nonblank, free of NUL and at most 500 characters. The
+request is the only authority for it: the creation response's profile is checked against it and never
+copied into the child's record. Each
 criterion carries its `id`, `title` and boolean `required`. Unknown fields are refused. Both
 roles must have explicit permitted pairs, the parent must be an allowed recipient, and this
 local entry requires the same host, approval `never`, and existing absolute workspace paths.
