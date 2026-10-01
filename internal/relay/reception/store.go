@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
@@ -34,7 +33,7 @@ func (r Reader) Read(ctx context.Context, s *store.Store, receiver string, packe
 	}
 	fields, sources := Obj{}, Obj{}
 	if e := r.readStore(ctx, s, receiver, role, region, ledger, &fields, &sources, &notes); e != nil {
-		notes = append(notes, "the store could not be read: "+readingError(e))
+		notes = append(notes, "the store could not be read: "+e.Error())
 		return answer(), nil
 	}
 	for _, f := range fields {
@@ -44,17 +43,6 @@ func (r Reader) Read(ctx context.Context, s *store.Store, receiver string, packe
 		Set(&provenance, f.Key, f.Value)
 	}
 	return answer(), nil
-}
-func readingError(e error) string {
-	message := e.Error()
-	if strings.HasPrefix(message, "TypeError: ") || strings.HasPrefix(message, "IndexError: ") {
-		return message
-	}
-	for _, prefix := range []string{"query: ", "scan: ", "SQL logic error: "} {
-		message = strings.TrimPrefix(message, prefix)
-	}
-	message = strings.TrimSuffix(message, " (1)")
-	return "OperationalError: " + message
 }
 func (r Reader) readStore(ctx context.Context, s *store.Store, receiver, role string, region, ledger any, fields, sources *Obj, notes *[]string) error {
 	answer := func(k string, v any, source string) { Set(fields, k, v); Set(sources, k, source) }
@@ -206,7 +194,7 @@ func tenureStart(ctx context.Context, s *store.Store, rid string, current any, n
 			return nil, nil
 		}
 		if !numeric {
-			return nil, fmt.Errorf("TypeError: '<=' not supported between instances of 'int' and '%s'", pyvalue.TypeName(current))
+			return nil, fmt.Errorf("the current generation %s is not a number", pyvalue.Quote(current))
 		}
 		if generation <= now {
 			start = max(start, generation)
@@ -255,7 +243,7 @@ func readCriteria(ctx context.Context, s *store.Store, rid string, answer func(s
 	for _, row := range rows {
 		required, ok := evidence.PyInt(row.Get("required"))
 		if !ok || required != 0 && required != 1 {
-			*notes = append(*notes, "the registered criteria are not one valid set: stored required flag for "+pyvalue.Repr(row.Get("criterion_id"))+" is not 0 or 1")
+			*notes = append(*notes, "the registered criteria are not one valid set: stored required flag for "+pyvalue.Quote(row.Get("criterion_id"))+" is not 0 or 1")
 			return nil
 		}
 		criteria = append(criteria, delivery.Criterion{ID: str(row.Get("criterion_id")), Title: str(row.Get("title")), Required: required == 1})
@@ -263,7 +251,7 @@ func readCriteria(ctx context.Context, s *store.Store, rid string, answer func(s
 		digests[row.Get("set_digest")] = true
 	}
 	if len(criteria) == 0 || mode.Get("mode") != "managed" || len(sources) != 1 || len(digests) != 1 || !digests[delivery.SetDigest(criteria)] {
-		*notes = append(*notes, "the registered criteria are not one valid set: criteria for "+pyvalue.Repr(rid)+" are stored in a form ensure_registered will not replace or repair")
+		*notes = append(*notes, "the registered criteria are not one valid set: criteria for "+pyvalue.Quote(rid)+" are stored in a form ensure_registered will not replace or repair")
 		return nil
 	}
 	answer("criteriaDigest", rows[0].Get("set_digest"), "canonical_criteria (managed set)")
@@ -287,17 +275,17 @@ func (r Reader) readSettings(ctx context.Context, reg *registry.Registry, row st
 		}
 		rawSettings := str(raw.Get("settings"))
 		if problem := JSONSettingsDepthProblem([]byte(rawSettings)); problem != "" {
-			*notes = append(*notes, "the recorded settings of "+task+" are unreadable: RecursionError: "+problem)
+			*notes = append(*notes, "the recorded settings of "+task+" are unreadable: "+problem)
 			continue
 		}
 		decoded, e := registry.DecodeJSON(rawSettings)
 		if e != nil {
-			*notes = append(*notes, "the recorded settings of "+task+" are unreadable: JSONDecodeError: "+e.Error())
+			*notes = append(*notes, "the recorded settings of "+task+" are unreadable: "+e.Error())
 			continue
 		}
 		o, object := evidence.Object(decoded)
 		if !object && truth(decoded) {
-			*notes = append(*notes, "the recorded settings of "+task+" are unreadable: ValueError: dictionary update sequence element #0 has length 1; 2 is required")
+			*notes = append(*notes, "the recorded settings of "+task+" are unreadable: they are not a JSON object")
 			continue
 		}
 		settings[task] = o
@@ -384,10 +372,10 @@ func describeRole(finding Obj) string {
 		return "this host's execution policy declares no such role, so its authorization cannot be checked"
 	}
 	if Get(finding, "citedException") != nil && !Has(finding, "recorded") {
-		return "its record cites exception " + pyvalue.Repr(Get(finding, "citedException")) + ", which this policy does not authorize for that role with this pair and directory"
+		return "its record cites exception " + pyvalue.Quote(Get(finding, "citedException")) + ", which this policy does not authorize for that role with this pair and directory"
 	}
 	if Has(finding, "recorded") {
-		return "its recorded authorization is " + pyvalue.Repr(Get(finding, "recorded")) + " while the policy for that role is " + pyvalue.Repr(Get(finding, "expected"))
+		return "its recorded authorization is " + pyvalue.Quote(Get(finding, "recorded")) + " while the policy for that role is " + pyvalue.Quote(Get(finding, "expected"))
 	}
 	if d := Get(finding, "detail"); d != nil {
 		return str(d)

@@ -1,83 +1,38 @@
 package reception
 
 import (
-	"encoding/json"
-	"fmt"
 	"strconv"
-	"strings"
 	"unicode/utf16"
-	"unicode/utf8"
 )
 
-// CheckJSONText preserves JSON's unpaired UTF-16 escapes until the packet boundary rejects
-// them. encoding/json otherwise silently replaces them with U+FFFD before Check can see them.
-// The position is in Python's json.dumps(..., ensure_ascii=False) text, not its UTF-8 bytes.
+// CheckJSONText refuses a packet whose JSON text escapes a lone UTF-16 surrogate (a \ud800 to
+// \udfff escape without its pair): no reader can hash or render that text, and encoding/json
+// would read it as U+FFFD before Check could see it.
 func CheckJSONText(raw []byte) error {
-	var compact strings.Builder
 	inString := false
-	position := 0
-	for i := 0; i < len(raw); {
-		ch := raw[i]
-		if !inString {
-			if ch == ' ' || ch == '\n' || ch == '\r' || ch == '\t' {
+	for i := 0; i < len(raw); i++ {
+		c := raw[i]
+		switch {
+		case !inString:
+			inString = c == '"'
+		case c == '"':
+			inString = false
+		case c == '\\' && i+1 < len(raw) && raw[i+1] == 'u' && i+6 <= len(raw):
+			code, err := strconv.ParseUint(string(raw[i+2:i+6]), 16, 16)
+			if err != nil || !utf16.IsSurrogate(rune(code)) {
 				i++
 				continue
 			}
-			compact.WriteByte(ch)
-			position++
+			if code < 0xdc00 && i+12 <= len(raw) && string(raw[i+6:i+8]) == `\u` {
+				if low, err := strconv.ParseUint(string(raw[i+8:i+12]), 16, 16); err == nil && low >= 0xdc00 && low <= 0xdfff {
+					i += 11
+					continue
+				}
+			}
+			return malformed("the packet holds text that is not valid Unicode (the lone surrogate escape \\u%04x at byte %d), which no reader can hash or render", code, i)
+		case c == '\\':
 			i++
-			if ch == '"' {
-				inString = true
-			}
-			if ch == ',' || ch == ':' {
-				compact.WriteByte(' ')
-				position++
-			}
-			continue
 		}
-		if ch == '"' {
-			inString = false
-			compact.WriteByte(ch)
-			position++
-			i++
-			continue
-		}
-		if ch == '\\' && i+1 < len(raw) {
-			if raw[i+1] == 'u' && i+6 <= len(raw) {
-				code, e := strconv.ParseUint(string(raw[i+2:i+6]), 16, 16)
-				if e != nil {
-					return e
-				}
-				r := rune(code)
-				if r >= 0xd800 && r <= 0xdbff && i+12 <= len(raw) && string(raw[i+6:i+8]) == "\\u" {
-					low, e := strconv.ParseUint(string(raw[i+8:i+12]), 16, 16)
-					if e == nil && low >= 0xdc00 && low <= 0xdfff {
-						compact.WriteRune(utf16.DecodeRune(r, rune(low)))
-						position++
-						i += 12
-						continue
-					}
-				}
-				if r >= 0xd800 && r <= 0xdfff {
-					return malformed("the packet holds text that is not valid Unicode ('utf-8' codec can't encode character '\\u%04x' in position %d: surrogates not allowed), which no reader can hash or render", r, position)
-				}
-				compact.WriteRune(r)
-				position++
-				i += 6
-				continue
-			}
-			compact.Write(raw[i : i+2])
-			position += 2
-			i += 2
-			continue
-		}
-		_, n := utf8.DecodeRune(raw[i:])
-		compact.Write(raw[i : i+n])
-		position++
-		i += n
-	}
-	if !json.Valid(raw) {
-		return fmt.Errorf("invalid packet JSON")
 	}
 	return nil
 }

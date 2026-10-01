@@ -91,28 +91,17 @@ func ExecuteAs(ctx context.Context, prog string, argv []string, stdout, stderr i
 			return response(stdout, map[string]any{"error": "host", "detail": hostText(err)}, 3), true
 		}
 	}
+	// The modules are taken in order and the first refused one answers.
 	for _, module := range modules {
 		if module == "codex_session_relay.projects" {
 			InstallProductDeclarations()
 		}
-		if module == "" {
-			return response(stdout, map[string]any{"error": "host", "detail": "ValueError: Empty module name"}, 3), true
-		}
-		if strings.HasPrefix(module, ".") {
-			return response(stdout, map[string]any{"error": "host", "detail": "TypeError: the 'package' argument is required to perform a relative import for '" + module + "'"}, 3), true
-		}
-		if !RegisteredModule(module) {
-			missing := module
-			parts := strings.Split(module, ".")
-			for j := 1; j < len(parts); j++ {
-				prefix := strings.Join(parts[:j], ".")
-				if prefix == "codex_session_relay" || RegisteredModule(prefix) {
-					continue
-				}
-				missing = prefix
-				break
+		if code, detail, refused := KindModuleRefusal(module); refused {
+			kind := "usage"
+			if code == contract.ExitHost {
+				kind = "host"
 			}
-			return response(stdout, map[string]any{"error": "usage", "detail": fmt.Sprintf("--kind-module '%s' could not be imported: No module named '%s'", module, missing)}, 4), true
+			return response(stdout, map[string]any{"error": kind, "detail": detail}, code), true
 		}
 	}
 	// These Python handlers validate before their first lazy services.store access

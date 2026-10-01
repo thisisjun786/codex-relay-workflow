@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -37,8 +38,8 @@ func (e *EditRegions) checkRestater(ctx context.Context, repository, actor strin
 			return err
 		}
 	}
-	return refuse(contract.RefusalScopeRoleMismatch, "task "+pyvalue.StrRepr(actor)+" is the registered parent of no project holding an"+
-		" agreement in "+pyvalue.StrRepr(repository)+", so it cannot restate that repository's revision and reopen everybody's agreements")
+	return refuse(contract.RefusalScopeRoleMismatch, "task "+strconv.Quote(actor)+" is the registered parent of no project holding an"+
+		" agreement in "+strconv.Quote(repository)+", so it cannot restate that repository's revision and reopen everybody's agreements")
 }
 
 // unrelatedStart is EditRegions._unrelated_start.
@@ -202,7 +203,7 @@ func (e *EditRegions) Reaffirm(ctx context.Context, identifier, actor, revision 
 			return err
 		}
 		if r == nil {
-			return refuse(contract.RefusalUnregisteredScope, "no agreement "+pyvalue.StrRepr(identifier))
+			return refuse(contract.RefusalUnregisteredScope, "no agreement "+strconv.Quote(identifier))
 		}
 		repository := text(r, "repository")
 		_, acting, err := e.actingSide(ctx, r, actor, repository)
@@ -317,13 +318,13 @@ func (e *EditRegions) Followup(ctx context.Context, in Followup) (contract.Order
 			return nil, err
 		}
 		if owned == "" {
-			return nil, refuse(contract.RefusalScopeRoleMismatch, "task "+pyvalue.StrRepr(in.RecordedBy)+" owns neither side of agreement "+
-				pyvalue.StrRepr(in.Agreement)+", so it cannot append work to it")
+			return nil, refuse(contract.RefusalScopeRoleMismatch, "task "+strconv.Quote(in.RecordedBy)+" owns neither side of agreement "+
+				strconv.Quote(in.Agreement)+", so it cannot append work to it")
 		}
 	}
 	if in.AssigneeTask.String != "" && in.AssigneeTask.String != in.RecordedBy {
 		return nil, refuse(contract.RefusalScopeRoleMismatch, "a follow-up records its own author as the assignee or nobody; "+
-			pyvalue.StrRepr(in.RecordedBy)+" cannot accept it for "+pyvalue.StrRepr(in.AssigneeTask.String)+", who accepts it themselves")
+			strconv.Quote(in.RecordedBy)+" cannot accept it for "+strconv.Quote(in.AssigneeTask.String)+", who accepts it themselves")
 	}
 	// followup_id hashes the trigger first, and str.encode("utf-8") raises for one holding a
 	// surrogate escape (an argv byte that is not UTF-8).
@@ -338,7 +339,7 @@ func (e *EditRegions) Followup(ctx context.Context, in Followup) (contract.Order
 			return err
 		}
 		if found == nil {
-			return refuse(contract.RefusalUnregisteredScope, "no agreement "+pyvalue.StrRepr(in.Agreement))
+			return refuse(contract.RefusalUnregisteredScope, "no agreement "+strconv.Quote(in.Agreement))
 		}
 		taken := in.AssigneeTask.String != ""
 		state := followupOpen
@@ -363,7 +364,7 @@ func (e *EditRegions) followupContext(ctx context.Context, identifier, actor str
 		return nil, nil, "", nil, err
 	}
 	if item == nil {
-		return nil, nil, "", nil, refuse(contract.RefusalUnregisteredScope, "no follow-up "+pyvalue.StrRepr(identifier))
+		return nil, nil, "", nil, refuse(contract.RefusalUnregisteredScope, "no follow-up "+strconv.Quote(identifier))
 	}
 	agreement, err := e.one(ctx, "SELECT * FROM edit_agreements WHERE agreement_id = ?", text(item, "agreement_id"))
 	if err != nil {
@@ -416,7 +417,7 @@ func (e *EditRegions) AcceptFollowup(ctx context.Context, identifier, actor, pro
 // SettleFollowup is EditRegions.settle_followup: finish it or drop it.
 func (e *EditRegions) SettleFollowup(ctx context.Context, identifier, actor, disposition string, reason sql.NullString) (contract.OrderedObject, error) {
 	if !slices.Contains(followupDispositions, disposition) {
-		return nil, refuse(contract.RefusalLinkNotActive, "a follow-up disposition is "+strings.Join(followupDispositions, " or ")+", not "+pyvalue.StrRepr(disposition))
+		return nil, refuse(contract.RefusalLinkNotActive, "a follow-up disposition is "+strings.Join(followupDispositions, " or ")+", not "+strconv.Quote(disposition))
 	}
 	now := e.Now()
 	var decided *refusal

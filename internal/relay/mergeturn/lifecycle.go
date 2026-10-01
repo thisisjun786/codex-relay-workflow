@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -73,7 +74,7 @@ func (s *Service) promote(ctx context.Context, target, at string) (string, error
 
 func (s *Service) Release(ctx context.Context, turn, actor, disposition, reason, evidence string) (map[string]any, error) {
 	if disposition != "returned" && disposition != "cancelled" {
-		return nil, &store.RefusedError{Reason: string(contract.RefusalLinkNotActive), Detail: "a disposition is returned or cancelled, not " + pyvalue.StrRepr(disposition) + "; a landing is recorded with land, not chosen here"}
+		return nil, &store.RefusedError{Reason: string(contract.RefusalLinkNotActive), Detail: "a disposition is returned or cancelled, not " + strconv.Quote(disposition) + "; a landing is recorded with land, not chosen here"}
 	}
 	if strings.TrimSpace(reason) == "" {
 		return nil, &store.RefusedError{Reason: string(contract.RefusalMergeEvidenceRequired), Detail: "a release states why"}

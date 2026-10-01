@@ -126,7 +126,9 @@ func TestFaultObserveMalformedJSONMatchesPython(t *testing.T) {
 	}
 }
 
-func TestFaultKindModuleNestedImportErrorMatchesPython(t *testing.T) {
+// A dotted name under the relay's own package that is not codex_session_relay.projects is refused
+// like any other unknown kind module: exit 4, naming the value given.
+func TestAnUnknownKindModuleUnderTheRelayPackageIsRefused(t *testing.T) {
 	home := t.TempDir()
 	args := []string{"--state", filepath.Join(home, "relay"), "--json", "--kind-module", "codex_session_relay.not_real", "fault-attention"}
 	got := goFaultCLI(t, args...)

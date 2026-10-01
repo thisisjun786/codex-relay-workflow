@@ -129,7 +129,7 @@ func Ladder(ctx context.Context, s *store.Store, rid, subject string, observatio
 		return nil
 	}()
 	if err != nil {
-		detail := "the store could not be read: OperationalError"
+		detail := "the store could not be read: " + err.Error()
 		for _, n := range Progression {
 			if n != "read" && n != "linear_done" {
 				Set(&states, n, Stage("unmeasured", nil, detail))

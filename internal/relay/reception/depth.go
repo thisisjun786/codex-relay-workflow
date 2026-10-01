@@ -1,8 +1,12 @@
 package reception
 
-// JSONReaderDepthProblem mirrors the Python reader's recursion refusal at the JSON boundary: the
-// installed console script reaches the same CPython decoder boundary at every relay read.
-// Legitimate settings are bounded separately only where a value is copied into an answer.
+import (
+	"strconv"
+)
+
+// JSONReaderDepthProblem is why a JSON document whose containers nest deeper than a reader
+// follows (9,998 levels) is not read, or ""; JSONSettingsDepthProblem is the same for recorded
+// settings, whose bound is one level shallower.
 func JSONReaderDepthProblem(raw []byte) string   { return jsonDepthProblem(raw, 9998) }
 func JSONSettingsDepthProblem(raw []byte) string { return jsonDepthProblem(raw, 9997) }
 
@@ -26,11 +30,7 @@ func jsonDepthProblem(raw []byte, maximum int) string {
 		case '{', '[':
 			depth++
 			if depth > maximum {
-				kind := "array"
-				if c == '{' {
-					kind = "object"
-				}
-				return "maximum recursion depth exceeded while decoding a JSON " + kind + " from a unicode string"
+				return "the JSON nests deeper than " + strconv.Itoa(maximum) + " levels"
 			}
 		case '}', ']':
 			depth--

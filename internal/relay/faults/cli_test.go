@@ -32,7 +32,7 @@ func Test22_FLT_33_StaticKindModules(t *testing.T) {
 		}
 	}
 	code, reply := cliCall(t, dir, "--kind-module", "no_such_module_crw205", "fault-target", "--product", "crw", "--team", "team-relay")
-	if code != 4 || reply["error"] != "usage" || !strings.Contains(reply["detail"].(string), "No module named 'no_such_module_crw205'") {
+	if code != 4 || reply["error"] != "usage" || !strings.Contains(reply["detail"].(string), `"no_such_module_crw205"`) {
 		t.Fatalf("unregistered: %d %+v", code, reply)
 	}
 	for _, module := range []string{"", ".relative"} {

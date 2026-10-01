@@ -19,7 +19,7 @@ func answer(v map[string]any, err error) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return PythonOrder(v), nil
+	return plain(v), nil
 }
 
 // badInvocation is the PayloadExit cli.py raises for an argument a handler refuses.
@@ -108,7 +108,7 @@ func show(ctx context.Context, r *registry.Registry, p registry.Parsed) (any, er
 		}
 		result = target
 	}
-	return registry.WithEnforcement(r, PythonOrder(result).(contract.OrderedObject)), nil
+	return registry.WithEnforcement(r, plain(result).(contract.OrderedObject)), nil
 }
 
 func optional(p registry.Parsed, name string) string { return p.Optional(name).String }

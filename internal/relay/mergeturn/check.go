@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -55,7 +56,7 @@ func (s *Service) Check(ctx context.Context, turn, actor, head, base string, che
 		review = contract.OrderedObject{}
 	}
 	if problems := evidence.ReviewShapeProblems(review); len(problems) > 0 {
-		return nil, &store.RefusedError{Reason: string(contract.RefusalMergeEvidenceMalformed), Detail: "the review restated for turn " + pyvalue.StrRepr(turn) + " is malformed, so the turn and its target were not read and nothing was recorded for this check: " + strings.Join(evidence.Details(problems), "; ")}
+		return nil, &store.RefusedError{Reason: string(contract.RefusalMergeEvidenceMalformed), Detail: "the review restated for turn " + strconv.Quote(turn) + " is malformed, so the turn and its target were not read and nothing was recorded for this check: " + strings.Join(evidence.Details(problems), "; ")}
 	}
 	required = slices.Compact(slices.Sorted(slices.Values(required)))
 	if required == nil {

@@ -545,7 +545,7 @@ func (e *EditRegions) awaiting(ctx context.Context, record contract.OrderedObjec
 			task = parent
 			command = commandLine("region-settle", "--agreement", identifier, "--actor", parent, "--disposition", "accepted")
 		} else {
-			precondition = pyvalue.StrRepr(key) + " has no single registered parent; the parent that takes it runs " +
+			precondition = strconv.Quote(key) + " has no single registered parent; the parent that takes it runs " +
 				commandLine("region-settle", "--agreement", identifier) + " --actor <that task> --disposition accepted"
 		}
 		reason := notYetAccepted

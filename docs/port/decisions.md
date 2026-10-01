@@ -3319,3 +3319,92 @@ Compare; `CRW_GOLDEN`); 2,735 golden files and 507 fixtures under 36 packages' t
 sections of docs/port/oracles/g1.md to g5.md (per package goldens, fixtures and deleted
 recordings); `go list -deps -test ./... | grep pyoracle` is empty; `CRW_GOLDEN=update make test`
 leaves the tree unchanged.
+
+## R3D-1. A refusal the relay only returns names a value as Go quotes it; a stored or hashed one keeps repr() (refactor R3)
+
+Decision: in the domain packages (`internal/relay/{capacity, delivery, evidence, faults,
+mergeturn, reception, registry, routing, supervisor, sync}`) a refusal, usage or host error that
+the relay only returns to its caller names a string with Go's quoting (`strconv.Quote`, `%q`:
+`"x"`, an invisible character escaped as ` `) and any other value with
+`pyvalue.Quote` (its compact JSON), where it used Python's `repr()` (`'x'`, `True`, `None`,
+`[1, 2]`). A float in such a message is Go's spelling (`-1`, `NaN`, `+Inf`), not `float.__repr__`.
+Message prose only: every `error`, `reason`, `code`, field and exit stays.
+
+Consumers checked: `plugins/crw/skills`, `docs/` and `contract/` quote no relay detail with
+Python's quotes (the skills read `reason`, `error` and codes); the product's own parses of detail
+text (`adapter/cli.go` reads a `KeyError: ` prefix, `mergeturn/target.go` an `HTTP 404`,
+`delivery/reconcile.go` `not scanned`, `delivery/hostcheck.go` `unreadable`) read messages this
+entry does not change.
+
+What stays, and why: a message that is also written to disk or SQLite, or that feeds a hash,
+keeps its bytes, so a stored row reads the same whichever runtime wrote it. Which messages
+those are was settled two ways and their union kept: by running every relay, contract and skill
+test with `repr()` marked by its call site and the store's bound arguments, the hook's records,
+the marker files, the reception ledger, the frozen manifests and every SHA-256 input checked for
+the mark; and by the call graph (VTA) from the functions whose callers store an error's text
+(the hook and `control.sock`, which journal an evaluation's error; `delivery.Enqueue`, whose
+refusal the daemon stores in `delivery_intent.last_error`; `delivery.AuthorizedSettings`, whose
+refusal the send journals; `Reconciler.ReconcileAttempt`; the supervisor's `attempt`). Kept
+therefore: the contests recorded in `coordination_conflicts` and `linkage_conflicts` (capacity's
+and edit regions' `refusal`, merge-turn's `coordination` and `CoordinationRefusal`, registry's
+`linkRefusal`), the sync job problems stored as `sync_outbox.last_error`, the settings and role
+refusals a withheld send journals, the merge-turn grant's wake refusal (stored in the grant's
+evidence), a routing observation's detail (part of the fault's evidence digest) and the
+supervisor's held and withheld records.
+
+Evidence: `internal/pyvalue/quote.go`; the golden diffs of the R3D commits (message prose only).
+
+## R3D-2. merge-turn answers print a map's keys in sorted order; Python's key order is not rebuilt (refactor R3)
+
+Decision: `mergeturn.PythonOrder` and its table of eleven answer shapes, which re-sorted a map's
+keys into the order `mergeturn.py` inserted them, are deleted. A `merge-turn-*` answer built from
+a map prints its keys sorted (`mergeturn.plain`); every key, value and type is unchanged.
+
+Consumers checked: the skills and `crw` read merge-turn answers as JSON fields
+(`plugins/crw/skills/crw-run/references/merge-readiness.md`); no consumer reads them as bytes or
+by position. The answer is never stored or hashed: the stored grant evidence and the turn's
+ledger rows are written by their own encoders, which this entry leaves alone.
+
+Evidence: internal/relay/mergeturn/order.go; the contracttest goldens
+`TestMergeTurnCommands_*` (key order only).
+
+## R3D-3. `--kind-module` accepts three names and models no import (refactor R3)
+
+Decision: the relay accepts `--kind-module codex_session_relay.projects` (it registers routing's
+fault classes and the `project_create` kind in the process, docs/relay/product-routing.md), and
+`json` and `os.path`, which register nothing (docs/port/known-defects.md). The model of Python's
+import that refused anything else - the walk over a dotted name's prefixes for the first one
+"No module named" names, `ValueError: Empty module name`, the relative-import `TypeError` - is
+replaced by `faults.KindModuleRefusal`: an empty name is a host error (exit 3, "--kind-module
+names no module"), a relative one a host error (exit 3), any other unknown name a usage error
+(exit 4) naming the value given and the three accepted names. Exits are unchanged.
+
+Consumers checked: docs/relay/product-routing.md, docs/relay/faults.md and the holder protocol
+name only `codex_session_relay.projects`; no skill passes `--kind-module`.
+
+What stays: the relay CLI's own dispatch (`internal/relay/cli/registry.go` `importKindModules`)
+still words its refusal of a writable command's `--kind-module` as Python did; it is the relay
+CLI's code and moves with its restructuring (R3C), which can call `faults.KindModuleRefusal`.
+
+Evidence: internal/relay/faults/kinds.go, cli.go; Test22_FLT_33_StaticKindModules,
+TestAnUnknownKindModuleUnderTheRelayPackageIsRefused.
+
+## R3D-4. packet-check's text checks say what they found, not CPython's exception (refactor R3)
+
+Decision: `packet-check` and the reception reads it makes word their refusals without CPython's
+exception text: a packet holding a lone surrogate escape is refused (`malformed_receipt`, as
+before) naming the escape and its byte offset, where it quoted `'utf-8' codec can't encode
+character ... in position N` at a position in `json.dumps`' re-spelled text (the re-spelling is
+deleted); a document nested past the bound is refused naming the bound (the bound, 9,998 levels,
+and 9,997 for recorded settings, stays) instead of `RecursionError: maximum recursion depth
+exceeded while decoding a JSON array from a unicode string`; a file that cannot be read names Go's
+error; the `FileNotFoundError:`, `RecursionError:`, `JSONDecodeError:`, `TypeError:`,
+`OperationalError:` and `ValueError:` prefixes are gone from the reception notes and the sync
+host errors.
+
+Consumers checked: plugins/crw/skills/crw-run/references/{relay.md,task-packet.md} read
+packet-check's `verdict`, `disposition` and `act`, not the detail; nothing parses a reception note.
+The reception ledger's file format (written by `SaveLedger`) is unchanged.
+
+Evidence: internal/relay/reception/{unicode.go,depth.go,depth_test.go,store.go};
+internal/relay/sync/cli.go; the sync goldens (message prose only).
