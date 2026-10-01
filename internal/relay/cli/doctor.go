@@ -21,7 +21,7 @@ import (
 
 const policyVariable = "CODEX_THREAD_BRIDGE_EXECUTION_POLICY"
 
-var doctorCommand = dispatch.Command{Name: "doctor", Exempt: true, ReadOnly: true, Run: runDoctor}
+var doctorCommand = dispatch.Command{Name: "doctor", Exempt: true, ReportsMismatch: true, ReadOnly: true, Run: runDoctor}
 
 // runDoctor is cmd_doctor: what THIS process can actually do here, measured rather than
 // assumed. It constructs no Store.
@@ -116,6 +116,11 @@ func runDoctor(ctx context.Context, services dispatch.Services, args dispatch.Ar
 	}
 	if served != nil {
 		add("serviceStore", served)
+	}
+	// A store recording another socket than the one it must serve, which every other command
+	// refuses (decision 73).
+	if mismatch := dispatch.Mismatch(services); mismatch != nil {
+		add("socketMismatch", mismatch)
 	}
 	asked := expectations.StoreIDGiven || expectations.InodeGiven || expectations.LogGiven || nonceGiven
 	if (asked && comparison.SameStore != store.Proven) || (requiredWorker && !ready) {

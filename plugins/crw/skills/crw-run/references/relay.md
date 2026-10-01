@@ -207,9 +207,10 @@ serves:
 
 A `doctor` reading with `dbWritable: false` whose `access.detail` is a `store_owned_by_other`
 refusal of an unstamped store (no ownership stamp, no `write-gate.lock`) means the wrong store was
-selected, not that the relay is unavailable: no running relay serves such a store. Read again with
-`--socket "$SOCK"`, or run the `serviceStore.recover` line when the report carries one, before
-recording the mode.
+selected, not that the relay is unavailable: no running relay serves such a store. So does a
+`socketMismatch` block, a store that records another socket than the one asked for, which every
+other command refuses. Read again with `--socket "$SOCK"`, or run the `serviceStore.recover` or
+`socketMismatch.recover` line the report carries, before recording the mode.
 
 There are TWO selectors and they are set separately. `--state` chooses the relay's own store, and
 falls back to `state_dir()` when omitted. For ordinary delivery commands, the adapter's ledger,

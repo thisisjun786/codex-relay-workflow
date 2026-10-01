@@ -278,25 +278,37 @@ func TestOnlyAnUnstampedStoreGetsThePlainWords(t *testing.T) {
 }
 
 // The relay's default socket is the one the bridge defaults to (internal/bridge/mcp Defaults),
-// with CODEX_HOME unset, empty and set: the store a command given no --socket selects is the one
-// a relay service started on the bridge's socket serves.
+// with CODEX_HOME unset, empty and set, and the home that stands in for an unset or empty
+// CODEX_HOME read alike: HOME set, empty (the root), or absent (this user's passwd entry). The
+// store a command given no --socket selects is the one a relay service started on the bridge's
+// socket serves. Nothing here opens a path: both only compute it.
 func TestTheDefaultSocketIsTheBridges(t *testing.T) {
-	for _, c := range []struct {
-		set       bool
-		codexHome string
-	}{{false, ""}, {true, ""}, {true, "/c"}} {
-		t.Setenv("HOME", "/h")
-		env := map[string]string{"HOME": "/h"}
-		t.Setenv("CODEX_HOME", c.codexHome)
-		if c.set {
-			env["CODEX_HOME"] = c.codexHome
-		} else {
-			must(t, os.Unsetenv("CODEX_HOME"))
+	type variable struct {
+		set   bool
+		value string
+	}
+	for _, c := range []struct{ home, codexHome variable }{
+		{variable{true, "/h"}, variable{false, ""}},
+		{variable{true, "/h"}, variable{true, ""}},
+		{variable{true, "/h"}, variable{true, "/c"}},
+		{variable{true, "/h//"}, variable{true, ""}},
+		{variable{true, ""}, variable{true, ""}},
+		{variable{false, ""}, variable{true, ""}},
+		{variable{false, ""}, variable{false, ""}},
+	} {
+		env := map[string]string{}
+		for name, v := range map[string]variable{"HOME": c.home, "CODEX_HOME": c.codexHome} {
+			t.Setenv(name, v.value)
+			if v.set {
+				env[name] = v.value
+			} else {
+				must(t, os.Unsetenv(name))
+			}
 		}
 		relay, err := DefaultSocket()
 		must(t, err)
 		if bridge, _ := mcp.Defaults(env); bridge != relay {
-			t.Fatalf("CODEX_HOME %q (set %t): the bridge defaults to %s, the relay to %s", c.codexHome, c.set, bridge, relay)
+			t.Fatalf("HOME %+v, CODEX_HOME %+v: the bridge defaults to %s, the relay to %s", c.home, c.codexHome, bridge, relay)
 		}
 	}
 }

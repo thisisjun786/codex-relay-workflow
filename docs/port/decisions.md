@@ -4581,8 +4581,21 @@ it (`StateSelection.DefaultSocket`, empty for `--state`, `CODEX_SESSION_RELAY_ST
 store's recorded socket with it when no `--socket` was given: a store recording another socket is
 refused `state_directory_serves_another_socket`, exit 2, before a writing command is admitted or a
 read-only one reads it, as under an explicit `--socket`. A store recording no socket is admitted as
-before. The bridge's `Defaults` reads an empty `CODEX_HOME` as unset too, so the two runtimes name
-one default socket; taken as set, it named a socket relative to the working directory.
+before. The commands exempt from the ambiguous and unidentified discovery refusals
+(`dispatch.Command.Exempt`) keep that exemption but are held to this socket half
+(`selection.SocketMismatch`, `dispatch.CheckSocket`), whether `--socket` or the default socket is
+the one contradicted: the service family's writers (`enable`, `disable`, `stop`, `declare`,
+`start`, `restart`, `run`), `managed-start`, `managed-show` and `reporting-derive` are refused
+before their handler writes or reads anything (a socket that cannot be resolved leaves nothing to
+compare, and the command words that failure itself); `reporting-show` takes `--state` and no socket, so
+nothing is compared; `packet-check` consults the whole refusal itself where it reads the store.
+`doctor` and `service status` answer instead of refusing (`ReportsMismatch`): an explicit `--socket`
+mismatch was answered by both with exit 0, and they are how a mismatch is diagnosed, so each
+carries a trailing `socketMismatch` block, the refusal's fields without `error`, and exits 0. The bridge's `Defaults` reads an empty `CODEX_HOME` as unset too, so the two runtimes name
+one default socket; taken as set, it named a socket relative to the working directory. It reads
+the home as the relay does (`mcp.Home`, `ownership.UserHome`: HOME whenever set, an empty HOME
+the root, an absent one this user's passwd entry), and an empty `XDG_STATE_HOME` as unset for
+its ledger, which the relay's discovery also does.
 
 A store with no ownership stamp, no `takeover.json` and no ownership key in `schema_meta`, whose
 `write-gate.lock` does not exist, is refused in plain words: the `doctor` write probe, a writable
@@ -4614,14 +4627,17 @@ relay served and worded its refusal as an ownership dispute.
 Evidence: internal/relay/store/state.go (`DefaultSocket`, `SocketScope`, `DiscoverStateDir`,
 `LegacyDefaultScope`); internal/relay/store/diagnostic_probe.go (`UnstampedStoreDetail`,
 `writeGateRefusal`), stamp.go (`unstampedRefusal`), registration_hold.go;
-internal/relay/service/scope.go (`ServedStore`); internal/relay/cli/doctor.go (`serviceStore`),
-services.go (`siblingStores`); internal/relay/selection/selection.go (`Refusal`);
+internal/relay/service/scope.go (`ServedStore`); internal/relay/cli/doctor.go (`serviceStore`,
+`socketMismatch`), services.go (`siblingStores`), daemon.go (`service status`);
+internal/relay/selection/selection.go (`Refusal`, `SocketMismatch`, `Mismatch`);
+internal/relay/dispatch/dispatch.go (`CheckSocket`, `ReportsMismatch`, `ChecksOwnSelection`);
 internal/bridge/mcp/main.go (`Defaults`); tests
 internal/relay/store/default_socket_scope_test.go
 (`TestDiscoveryWithoutASocketIsScopedByTheDefaultSocket`, `TestTheDefaultSocketIsTheBridges`,
 `TestAnUnstampedStoreIsRefusedInPlainWords`, `TestOnlyAnUnstampedStoreGetsThePlainWords`),
 internal/relay/cli/doctor_service_store_test.go (`TestDoctorNamesTheServiceStoreDiscoveryDidNotSelect`,
-`TestANoSocketSelectionIsHeldToTheDefaultSocket`), internal/bridge/mcp/main_test.go (the empty
-`CODEX_HOME` case of `Defaults`) and internal/runtime/integration/isolated_home_test.go (IS-1's Stop dials the default socket's
-directory); docs/relay/operations.md (Where the state lives);
+`TestANoSocketSelectionIsHeldToTheDefaultSocket`, `TestExemptCommandsAreHeldToTheSocketTheStoreRecords`),
+internal/bridge/mcp/main_test.go (the empty `CODEX_HOME`, `XDG_STATE_HOME` and `HOME` cases of
+`Defaults`) and internal/runtime/integration/isolated_home_test.go (IS-1's Stop dials the default
+socket's directory); docs/relay/operations.md (Where the state lives);
 plugins/crw/skills/crw-run/references/relay.md (One shared state directory).
