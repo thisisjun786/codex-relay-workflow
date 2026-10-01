@@ -233,35 +233,44 @@ func (r *Registry) AuthorizedSettings(ctx context.Context, task string) (setting
 	if err := settings.RequireUsable(); err != nil {
 		return settings, false, err
 	}
-	role, contested, err := boundRole(ctx, r.Store, task)
+	_, settingsFree, err = CheckBoundRole(ctx, r.Store, task, settings.Data, r.Policy)
+	return settings, settingsFree, err
+}
+
+// CheckBoundRole is the role half of AuthorizedSettings, which every sender's pre-send check
+// runs: the role the task is bound to ("" when it is bound to none, which passes), refused when
+// the task holds more than one live role, when policy declares none, or when the recorded
+// settings are not authorized for the role under policy. settingsFree reports that a bound
+// task's pair was not derived from its role's declared pair, so a resume must transmit none.
+func CheckBoundRole(ctx context.Context, s *store.Store, task string, settings contract.OrderedObject, policy RolePolicy) (role string, settingsFree bool, err error) {
+	role, contested, err := boundRole(ctx, s, task)
 	if err != nil {
-		return settings, false, err
+		return "", false, err
 	}
 	if contested != nil {
-		return settings, false, refuse(contract.RefusalRoleBindingMismatch, "%s holds live bindings at %s, and one task holds one role. "+
+		return "", false, refuse(contract.RefusalRoleBindingMismatch, "%s holds live bindings at %s, and one task holds one role. "+
 			"Nothing was sent and no turn was started, because checking its authorization against "+
 			"either of them would report a clean answer derived from an arbitrary choice. Resolve "+
 			"the bindings first.", pyvalue.StrRepr(task), pyvalue.Repr(contested))
 	}
 	if role == "" {
-		return settings, false, nil
+		return "", false, nil
 	}
-	policy := r.Policy
 	if !policy.Declared {
-		return settings, false, refuse(contract.RefusalRolePolicyUnconfigured, "%s is bound as %s and this process cannot read a role policy to check "+
+		return role, false, refuse(contract.RefusalRolePolicyUnconfigured, "%s is bound as %s and this process cannot read a role policy to check "+
 			"its authorization against: %s. Nothing was sent and no turn was started. Set the policy for this process and the held deliveries resume on the next "+
 			"pass.", pyvalue.StrRepr(task), pyvalue.StrRepr(role), policy.Detail)
 	}
-	if finding := CheckRecord(settings.Data, role, policy); finding != nil {
+	if finding := CheckRecord(settings, role, policy); finding != nil {
 		recovery, ok := getField(finding, "recovery")
 		if !ok {
 			recovery = RoleRecovery
 		}
 		digest, _ := getField(finding, "digest")
-		return settings, false, refuse(contract.RefusalReason(findingText(finding, "code")), "%s is bound as %s: %s (policy %v). Nothing was sent and no turn was started. %v",
+		return role, false, refuse(contract.RefusalReason(findingText(finding, "code")), "%s is bound as %s: %s (policy %v). Nothing was sent and no turn was started. %v",
 			pyvalue.StrRepr(task), pyvalue.StrRepr(role), describe(finding), digest, recovery)
 	}
-	return settings, !derivedFromRolePair(settings.Data, role, policy), nil
+	return role, !derivedFromRolePair(settings, role, policy), nil
 }
 
 // derivedFromRolePair is whether the pair a record carries was derived from its role's declared
