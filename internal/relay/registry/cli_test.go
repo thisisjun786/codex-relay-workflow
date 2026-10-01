@@ -15,6 +15,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 type contractObject = contract.OrderedObject
@@ -32,11 +33,12 @@ type cliResult struct {
 	Stdout string `json:"stdout"`
 }
 
-// runCLICase replays one case of testdata/cli_cases.json through Execute, exactly as
-// gen_cli.py drives the Python CLI, and returns the results plus the case's state directory.
+// runCLICase replays one case of the registry CLI cases through Execute, exactly as gen_cli.py
+// drove the Python CLI, and returns the results plus the case's state directory. The case file is
+// internal/contracttest's fixture, which replays the same cases through the built crw.
 func runCLICase(t *testing.T, name string) ([]cliResult, string) {
 	t.Helper()
-	raw, err := os.ReadFile("testdata/cli_cases.json")
+	raw, err := os.ReadFile(filepath.Join("..", "..", "contracttest", "testdata", "fixtures", "registry-cli-cases.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,27 +84,11 @@ func runCLICase(t *testing.T, name string) ([]cliResult, string) {
 	return results, state
 }
 
-// sameCLIAsPython compares every step's exit code and whole stdout bytes with Python's.
-func sameCLIAsPython(t *testing.T, name string) ([]cliResult, string) {
+// sameCLIAsGolden compares every step's exit code and whole stdout bytes with the golden.
+func sameCLIAsGolden(t *testing.T, name string) ([]cliResult, string) {
 	t.Helper()
 	got, state := runCLICase(t, name)
-	raw, err := os.ReadFile("testdata/python_cli.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var all map[string][]cliResult
-	if err := json.Unmarshal(raw, &all); err != nil {
-		t.Fatal(err)
-	}
-	want := all[name]
-	if len(got) != len(want) {
-		t.Fatalf("%s: %d steps, python %d", name, len(got), len(want))
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("%s step %d differs from Python\n go (exit %d):\n%s\n py (exit %d):\n%s", name, i, got[i].Exit, got[i].Stdout, want[i].Exit, want[i].Stdout)
-		}
-	}
+	golden.CheckJSON(t, name, got)
 	return got, state
 }
 
@@ -130,15 +116,15 @@ func count(t *testing.T, state, query string) int {
 }
 
 func Test25_CLI14_register_records_both_endpoints_settings_and_settings_show_reads_them(t *testing.T) {
-	got, _ := sameCLIAsPython(t, "register_with_settings")
+	got, _ := sameCLIAsGolden(t, "register_with_settings")
 	if payload := stdoutJSON(t, got[0]); payload["authorizedSettings"].(map[string]any)["01parent-task"] != "recorded" {
 		t.Fatal(payload)
 	}
-	got, _ = sameCLIAsPython(t, "register_without_settings")
+	got, _ = sameCLIAsGolden(t, "register_without_settings")
 	if stdoutJSON(t, got[0])["authorizedSettings"] != nil || stdoutJSON(t, got[1])["usable"] != false {
 		t.Fatal(got)
 	}
-	got, _ = sameCLIAsPython(t, "settings_record_file")
+	got, _ = sameCLIAsGolden(t, "settings_record_file")
 	if stdoutJSON(t, got[0])["source"] != "creation_result" || stdoutJSON(t, got[1])["usable"] != true {
 		t.Fatal(got)
 	}
@@ -146,7 +132,7 @@ func Test25_CLI14_register_records_both_endpoints_settings_and_settings_show_rea
 
 func Test25_CLI15_settings_are_validated_where_written_and_nothing_is_stored(t *testing.T) {
 	for name, reason := range map[string]string{"settings_incomplete": SettingsIncomplete, "settings_mistyped": SettingsMistyped, "settings_untrusted": UnsupportedApprovalPolicy} {
-		got, _ := sameCLIAsPython(t, name)
+		got, _ := sameCLIAsGolden(t, name)
 		if got[0].Exit != 2 || stdoutJSON(t, got[0])["reason"] != reason {
 			t.Fatal(name, got[0])
 		}
@@ -155,7 +141,7 @@ func Test25_CLI15_settings_are_validated_where_written_and_nothing_is_stored(t *
 
 func Test25_CLI16_settings_show_separates_complete_from_deliverable(t *testing.T) {
 	for name, code := range map[string]string{"show_cwd_int": SettingsMistyped, "show_bare_sandbox": UnsupportedSandboxType} {
-		got, _ := sameCLIAsPython(t, name)
+		got, _ := sameCLIAsGolden(t, name)
 		shown := stdoutJSON(t, got[len(got)-1])
 		if shown["usable"] != true || shown["deliverable"] != false || shown["recordFinding"].(map[string]any)["code"] != code {
 			t.Fatal(name, shown)
@@ -164,7 +150,7 @@ func Test25_CLI16_settings_show_separates_complete_from_deliverable(t *testing.T
 }
 
 func Test25_CLI11_pause_refuses_and_resume_requires_the_restated_scope(t *testing.T) {
-	got, _ := sameCLIAsPython(t, "pause_resume")
+	got, _ := sameCLIAsGolden(t, "pause_resume")
 	if got[2].Exit != 2 || stdoutJSON(t, got[2])["reason"] != "relationship_not_active" || stdoutJSON(t, got[3])["status"] != "active" {
 		t.Fatal(got)
 	}
@@ -173,17 +159,17 @@ func Test25_CLI11_pause_refuses_and_resume_requires_the_restated_scope(t *testin
 // The generation, anchor, admission and status commands answer exactly as Python on success and
 // refusal (Domain/cli-shape for generation-open, generation-bind, admit-turn, relationship-status).
 func Test25_CLI_generation_anchor_admission_and_status_commands_match_python(t *testing.T) {
-	sameCLIAsPython(t, "generations_cli")
-	sameCLIAsPython(t, "register_refusals")
-	sameCLIAsPython(t, "argparse_stray_positional")
-	got, _ := sameCLIAsPython(t, "clear_and_cite")
+	sameCLIAsGolden(t, "generations_cli")
+	sameCLIAsGolden(t, "register_refusals")
+	sameCLIAsGolden(t, "argparse_stray_positional")
+	got, _ := sameCLIAsGolden(t, "clear_and_cite")
 	if got[0].Exit != 4 {
 		t.Fatal(got)
 	}
 }
 
 func Test25_SPR8_registration_refuses_an_invalid_row_rather_than_storing_it(t *testing.T) {
-	got, state := sameCLIAsPython(t, "settings_sandbox_list")
+	got, state := sameCLIAsGolden(t, "settings_sandbox_list")
 	if stdoutJSON(t, got[0])["reason"] != UnsupportedSandboxType || stdoutJSON(t, got[1])["settings"] != nil {
 		t.Fatal(got)
 	}
@@ -193,7 +179,7 @@ func Test25_SPR8_registration_refuses_an_invalid_row_rather_than_storing_it(t *t
 }
 
 func Test25_SPR13_settings_round_trip_and_a_re_record_replaces(t *testing.T) {
-	got, state := sameCLIAsPython(t, "re_record_replaces")
+	got, state := sameCLIAsGolden(t, "re_record_replaces")
 	if stdoutJSON(t, got[2])["settings"].(map[string]any)["cwd"] != "/b" {
 		t.Fatal(got[2])
 	}
@@ -205,7 +191,7 @@ func Test25_SPR13_settings_round_trip_and_a_re_record_replaces(t *testing.T) {
 // RAT-2: a registration refused by a linkage contest rolls back entirely, and the contest is
 // recorded exactly once per refusal (one conflict row, one journal line each time).
 func Test25_RAT2_a_contest_outlives_the_rolled_back_registration_exactly_once(t *testing.T) {
-	_, state := sameCLIAsPython(t, "contested_project")
+	_, state := sameCLIAsGolden(t, "contested_project")
 	for query, want := range map[string]int{
 		"SELECT COUNT(*) FROM relationships":                          0,
 		"SELECT COUNT(*) FROM generations":                            0,
@@ -238,7 +224,7 @@ func Test25_RAT2_a_contest_outlives_the_rolled_back_registration_exactly_once(t 
 // A registration with --project binds the child and scopes the issue; the lifecycle moves the
 // binding; the creation role is not rewritten later (role_binding_mismatch).
 func Test25_CLI_project_registration_binds_and_keeps_the_creation_role(t *testing.T) {
-	sameCLIAsPython(t, "project_attach")
+	sameCLIAsGolden(t, "project_attach")
 }
 
 func settingsFixture(cwd string) contractObject {
@@ -325,31 +311,26 @@ func Test25_RAT1_register_is_one_transaction_and_a_kill_before_commit_leaves_not
 
 // Host errors keep Python's envelope: exit 3, {"error": "host", "detail": "<Class>: <message>"}.
 func Test25_CLI_host_errors_carry_pythons_class_and_message(t *testing.T) {
-	sameCLIAsPython(t, "host_errors")
+	sameCLIAsGolden(t, "host_errors")
 }
 
-// The JSONDecodeError text a malformed --settings answers with is Python's, message and position.
+// The JSONDecodeError text a malformed --settings answers with is Python's, message and position,
+// for a table of broken documents; the golden holds each document with its answer.
 func Test25_CLI_settings_json_errors_read_like_pythons(t *testing.T) {
-	raw, err := os.ReadFile("testdata/python_jsonerr.json")
-	if err != nil {
-		t.Fatal(err)
+	var answers [][2]string
+	for _, doc := range []string{"", " ", "{not json", "{", "}", "[", "[1,", "[1,]", `{"a":1,}`, `{"a" 1}`, `{"a":}`,
+		`{"a":1 "b":2}`, `{"a":"x`, `"\q"`, `"\u12g4"`, "\"a\x01b\"", "tru", "nul", "01", "-", "1.", "1e", "1 2", "{}x",
+		`{"a":[1,2`, "\n\n  {\"a\": x}", `{"é": ?}`, "NaN", "-Infinity", "[1,\n2,\n]", "{\"a\":1}\n\n?", "[]]"} {
+		answers = append(answers, [2]string{doc, store.PythonJSONError(doc)})
 	}
-	var cases [][2]string
-	if err := json.Unmarshal(raw, &cases); err != nil {
-		t.Fatal(err)
-	}
-	for _, c := range cases {
-		if got := store.PythonJSONError(c[0]); got != c[1] {
-			t.Errorf("%q: go %q, python %q", c[0], got, c[1])
-		}
-	}
+	golden.CheckJSON(t, "errors", answers)
 }
 
 // CLI-6: a refusal exits 2 with {"error": "refused", "reason": <machine-readable reason>,
 // "detail"}, byte-identical to Python (exercised through this package's commands; the property's
 // own example, emit scope_escape, is todo 21's command).
 func Test25_CLI6_a_refusal_exits_two_with_a_machine_readable_reason(t *testing.T) {
-	got, _ := sameCLIAsPython(t, "register_refusals")
+	got, _ := sameCLIAsGolden(t, "register_refusals")
 	for _, step := range got[1:] {
 		payload := stdoutJSON(t, step)
 		if step.Exit != 2 || payload["error"] != "refused" || payload["reason"] == nil || len(payload) != 3 {

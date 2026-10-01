@@ -116,9 +116,7 @@ func TestIdentity_python_derivations(t *testing.T) {
 	})
 	t.Run("test_revision_request_id_cannot_collide_with_a_completion_id", func(t *testing.T) {
 		revision, _ := RevisionRequestEventID(rel, strings.Repeat("e", 32), "verdict-turn-1")
-		if want := pythonStoreValue(t, `from codex_session_relay import identity; print(",".join(identity.OUTCOMES))`); strings.Join(Outcomes, ",") != want {
-			t.Fatalf("outcomes %v, python %s", Outcomes, want)
-		}
+		checkText(t, "identity.OUTCOMES", strings.Join(Outcomes, ","))
 		for _, outcome := range Outcomes {
 			if outcome == "ready_for_review" {
 				continue

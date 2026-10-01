@@ -5,9 +5,7 @@ package service
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"os/user"
@@ -16,17 +14,20 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 	"golang.org/x/sys/unix"
 )
 
-// Audit finding 22: an isolated registry root is spelled as Python spells it
-// (expanduser, physical cwd, pathlib's lexical form with '..' kept), so K.lock and the
-// isolated scope key are the same file and key in both runtimes. Python is the oracle; its
-// answers are recorded (pyoracle), asked before the chdir below because a recording is found
-// relative to the package directory.
+// Audit finding 22: an isolated registry root is spelled as Python spelled it (expanduser,
+// physical cwd, pathlib's lexical form with '..' kept), so K.lock and the isolated scope key are
+// the same file and key in both runtimes. Each override's root and key are checked against the
+// golden, which began as the Python oracle's answers.
 func Test30IsolatedScopeRootMatchesPython(t *testing.T) {
 	current, err := user.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,41 +42,15 @@ func Test30IsolatedScopeRootMatchesPython(t *testing.T) {
 	}
 	socket := "/var/tmp/crw-scope-root/app.sock"
 	overrides := []string{"a/../b", "//x", "///x/./y/", "/x/./y/", "~", "~/", "~/a/../s", "~" + current.Username + "/s", "rel/./scopes/", "."}
-	// Each answer names its root and the key salted with it: the root is recorded with the
-	// temporary directory, $HOME (the suite's) and this user's home as placeholders, and the salt as <SALT>, which a
-	// replay derives again from the root it compares.
+	// Each answer names its root and the key salted with it: the golden spells the temporary
+	// directory, $HOME (the suite's) and this user's home as placeholders, and the salt as <SALT>.
 	answers := map[string][2]string{}
-	for _, override := range overrides {
-		key := strings.Replace(override, current.Username, "<USER>", 1)
-		raw := pyoracle.Answer(t, key, func() ([]byte, error) {
-			cmd := exec.Command(testPython[:len(testPython)-len("codex-session-relay")]+"python", "-c", "import json,sys\nfrom codex_session_relay import ownership, service\nroot, _ = service.resolve_scope_root()\nprint(json.dumps([str(root), ownership.scope_key(sys.argv[1])]))", socket)
-			// Python's getcwd is physical; a $PWD naming the link must not change the spelling.
-			cmd.Dir = link
-			cmd.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1", "PWD="+link, ScopeEnv+"="+override)
-			raw, err := cmd.Output()
-			if err != nil {
-				return nil, fmt.Errorf("%v: %s", err, raw)
-			}
-			var answer [2]string
-			if err = json.Unmarshal(raw, &answer); err != nil {
-				return nil, fmt.Errorf("%v: %s", err, raw)
-			}
-			answer[1] = strings.Replace(answer[1], "isolated-"+scopeSalt(answer[0])+"-", "isolated-<SALT>-", 1)
-			return marshalText(answer)
-		}, pyoracle.Substitute(cwd, "<CWD>"), pyoracle.Substitute(os.Getenv("HOME"), "<HOME>"), pyoracle.Substitute(current.HomeDir, "<USERHOME>"))
-		var want [2]string
-		if err = json.Unmarshal(raw, &want); err != nil {
-			t.Fatal(err, string(raw))
-		}
-		want[1] = strings.Replace(want[1], "<SALT>", scopeSalt(want[0]), 1)
-		answers[override] = want
-	}
+	// Python's getcwd is physical; a $PWD naming the link must not change the spelling.
 	t.Chdir(link)
 	t.Setenv("PWD", link)
 	for _, override := range overrides {
 		t.Run(override, func(t *testing.T) {
 			t.Setenv(ScopeEnv, override)
-			want := answers[override]
 			scope, err := ResolveScope()
 			if err != nil {
 				t.Fatal(err)
@@ -84,9 +59,10 @@ func Test30IsolatedScopeRootMatchesPython(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if scope.Root != want[0] || key != want[1] || scope.Key(socket) != want[1] {
-				t.Fatalf("Go root=%q key=%q registry=%q; Python root=%q key=%q", scope.Root, key, scope.Key(socket), want[0], want[1])
+			if scope.Key(socket) != key {
+				t.Fatalf("Go root=%q key=%q registry=%q", scope.Root, key, scope.Key(socket))
 			}
+			answers[override] = [2]string{scope.Root, strings.Replace(key, "isolated-"+scopeSalt(scope.Root)+"-", "isolated-<SALT>-", 1)}
 		})
 	}
 	// Review of finding 22: a '..' after a symlink is resolved by the kernel, never
@@ -144,6 +120,16 @@ func Test30IsolatedScopeRootMatchesPython(t *testing.T) {
 	}
 	if _, err := ownership.ScopeKey(socket); err == nil {
 		t.Fatal("unknown ~user produced a scope key")
+	}
+	// The golden is found from the package directory.
+	if err = os.Chdir(pkg); err != nil {
+		t.Fatal(err)
+	}
+	for _, override := range overrides {
+		if answer, ok := answers[override]; ok {
+			golden.CheckJSON(t, strings.Replace(override, current.Username, "<USER>", 1), answer,
+				golden.Substitute(cwd, "<CWD>"), golden.Substitute(os.Getenv("HOME"), "<HOME>"), golden.Substitute(current.HomeDir, "<USERHOME>"))
+		}
 	}
 }
 

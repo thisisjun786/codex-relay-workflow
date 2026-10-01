@@ -33,14 +33,6 @@ func TestMain(m *testing.M) {
 	}
 	os.Exit(code)
 }
-func python(t *testing.T) string {
-	t.Helper()
-	path := filepath.Join(testRoot, ".venv", "bin", "python")
-	if _, err := os.Stat(path); err != nil {
-		t.Fatal("locked workspace Python missing: run uv sync --locked")
-	}
-	return path
-}
 func binary(t *testing.T) string {
 	t.Helper()
 	return testsupport.CRW(t)

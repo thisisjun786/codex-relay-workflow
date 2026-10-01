@@ -4,9 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"io/fs"
 	"net"
 	"os"
@@ -14,9 +12,9 @@ import (
 	"reflect"
 	"testing"
 	"time"
-	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 func Test33ControlDefaultStorePython(t *testing.T) {
@@ -26,15 +24,12 @@ func Test33ControlDefaultStorePython(t *testing.T) {
 			home := hookHomeAt(t, canonicalRoot(t), 5)
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			// control_default.py prepare lays out a real owner's receipt store and asks the Python
-			// CLI; the fixture, its answer and the marker files it left are recorded
-			// (pythonFixture). Its iterdump of the stores is dropped: this test compares the
-			// stores before and after the Go owner itself.
-			raw, _ := pythonFixture(t, "prepare", home, func() ([]byte, error) {
-				return pythonScript(t, nil, nil, "testdata/control_default.py", "prepare", home, name)
-			}, func() error { return textFiles(home) })
+			// A real owner's receipt store and the request for it, as control_default.py prepare
+			// laid them out (a fixture). This test compares the stores before and after the Go
+			// owner itself.
+			raw, _ := layFixture(t, "control-default-"+name, home)
 			stores := storesUnder(t, home)
-			var fixture struct{ State, Decision, GuardState string }
+			var fixture struct{ State string }
 			if err := json.Unmarshal(raw, &fixture); err != nil {
 				t.Fatal(err)
 			}
@@ -84,31 +79,19 @@ func Test33ControlDefaultStorePython(t *testing.T) {
 			case <-ctx.Done():
 				t.Fatal(ctx.Err())
 			}
-			// control_default.py compare: the wire answer is the CLI's verdict, compact, and its
-			// indented envelope is the CLI's stdout byte for byte; the Go owner published the
-			// marker files the Python guard did and changed no store.
-			expected, err := os.ReadFile(filepath.Join(home, "python.stdout"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			verdict, err := Decode(expected)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if want := evidence.Dumps(verdict, true, false, true) + "\n"; string(response) != want {
-				t.Fatalf("wire %q, want %q", response, want)
-			}
+			// As control_default.py compare read the Python CLI's: the wire answer is the verdict,
+			// compact, and its indented envelope the CLI's stdout byte for byte; the Go owner
+			// published the marker files and changed no store.
 			wire, err := Decode(response)
-			if err != nil || evidence.DumpsIndent(wire, 2, false, true)+"\n" != string(expected) {
-				t.Fatalf("envelope %v:\n%s\nwant\n%s", err, evidence.DumpsIndent(wire, 2, false, true), expected)
-			}
-			pythonFiles, err := os.ReadFile(filepath.Join(home, "python.files.text.json"))
 			if err != nil {
-				t.Fatal(err)
+				t.Fatalf("%v: %s", err, response)
 			}
-			if got, want := canonicalJSON(t, markerFiles(t, filepath.Join(home, "markers"))), canonicalJSON(t, pythonFiles); got != want {
-				t.Fatalf("marker files\n go     %s\n python %s", got, want)
+			if compact := evidence.Dumps(wire, true, false, true) + "\n"; string(response) != compact {
+				t.Fatalf("wire %q, not compact %q", response, compact)
 			}
+			golden.Check(t, "wire", response, golden.Substitute(home, "<ROOT>"))
+			golden.Check(t, "stdout", []byte(evidence.DumpsIndent(wire, 2, false, true)+"\n"), golden.Substitute(home, "<ROOT>"))
+			goldenCanonical(t, "marker files", markerFiles(t, filepath.Join(home, "markers")), golden.Substitute(home, "<ROOT>"))
 			if after := storesUnder(t, home); !reflect.DeepEqual(after, stores) {
 				t.Fatal("the Go guard changed a store")
 			}
@@ -132,9 +115,10 @@ func Test33ControlDefaultStorePython(t *testing.T) {
 				}
 				awaitHost(t, serverDone)
 				rows := rowsAt(t, home)
-				if len(rows) != 1 || rows[0]["guardState"] != fixture.GuardState || rows[0]["guardDecision"] != fixture.Decision {
+				if len(rows) != 1 {
 					t.Fatal(rows)
 				}
+				golden.CheckJSON(t, "hook row", map[string]any{"guardState": rows[0]["guardState"], "guardDecision": rows[0]["guardDecision"]})
 			}
 		})
 	}
@@ -169,45 +153,4 @@ func markerFiles(t *testing.T, root string) []byte {
 		t.Fatal(err)
 	}
 	return out
-}
-
-// textFiles rewrites control_default.py prepare's python.files.json, each marker file's bytes in
-// hex, as python.files.text.json with each file's bytes as text, which a recording's
-// substitutions reach, and drops its iterdump of the stores (stores.json).
-func textFiles(home string) error {
-	raw, err := os.ReadFile(filepath.Join(home, "python.files.json"))
-	if err != nil {
-		return err
-	}
-	var files map[string]struct {
-		Bytes string `json:"bytes"`
-		Mode  int    `json:"mode"`
-	}
-	if err = json.Unmarshal(raw, &files); err != nil {
-		return err
-	}
-	out := map[string]map[string]any{}
-	for name, file := range files {
-		content, err := hex.DecodeString(file.Bytes)
-		if err != nil {
-			return err
-		}
-		if !utf8.Valid(content) {
-			return fmt.Errorf("%s is not UTF-8", name)
-		}
-		out[name] = map[string]any{"text": string(content), "mode": file.Mode}
-	}
-	encoded, err := encodeJSON(out)
-	if err != nil {
-		return err
-	}
-	if err = os.WriteFile(filepath.Join(home, "python.files.text.json"), encoded, 0o600); err != nil {
-		return err
-	}
-	for _, name := range []string{"python.files.json", "stores.json"} {
-		if err = os.Remove(filepath.Join(home, name)); err != nil {
-			return err
-		}
-	}
-	return nil
 }

@@ -7,13 +7,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 // deliverableStateCase stages one stored receipt's deliverable. refer, when set, is the frozen
@@ -29,8 +28,9 @@ type deliverableStateCase struct {
 // The Stop hook judges a stored receipt's deliverable by guard.deliverable_state's rule: a frozen
 // copy nobody could reach leaves it unverifiable with the reason named, one that was read and is
 // not a manifest is changed, answered with the exception the fence raised rather than merged into
-// the live problems, and one nested deeper than json.loads descends raises out of it. Every record, the stored receipt's and the frozen copy's, is read as the
-// values json.loads made of it. Each case is staged once and answered by both, word for word.
+// the live problems, and one nested deeper than json.loads descends raises out of it. Every
+// record, the stored receipt's and the frozen copy's, is read as the values json.loads made of
+// it. Each case's answer is its golden word for word, which began as guard.deliverable_state's.
 func TestDeliverableStateAnswersAsTheGuard(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root bypasses the permissions these cases depend on")
@@ -247,27 +247,12 @@ func TestDeliverableStateAnswersAsTheGuard(t *testing.T) {
 				record = c.claimed
 			}
 			raw := []byte(fmt.Sprintf(`{"payload": {"manifest": [%s], "revisionHash": %s}, "reference": %s, "roots": %s}`, record, quote(revision), quote(named), quote([]string{work})))
-			want := pyoracle.Answer(t, "deliverable_state", func() ([]byte, error) {
-				return pythonScript(t, nil, raw, "-c", `import json, sys
-from codex_session_relay.guard import deliverable_state
-spec = json.load(sys.stdin)
-try:
-    answer = list(deliverable_state(spec["payload"], spec["reference"], spec["roots"]))
-except Exception as error:
-    # An exception its except clauses do not name leaves deliverable_state.
-    answer = ["raised", type(error).__name__ + ": " + str(error)]
-print(json.dumps(answer))`)
-			}, pyoracle.Substitute(base, "<BASE>"))
 			spec, err := Decode(raw)
 			if err != nil {
 				t.Fatal(err)
 			}
 			o, _ := spec.(Object)
 			state, binding, detail, raised := DeliverableState(context.Background(), get(o, "payload"), named, get(o, "roots"))
-			var guard []any
-			if err := json.Unmarshal(want, &guard); err != nil {
-				t.Fatalf("%v: %s", err, want)
-			}
 			got := []any{state, nullable(binding), nullable(detail)}
 			if raised != nil {
 				var exception *store.ManifestException
@@ -276,9 +261,7 @@ print(json.dumps(answer))`)
 				}
 				got = []any{"raised", exception.PythonText()}
 			}
-			if !reflect.DeepEqual(got, guard) {
-				t.Fatalf("hook  %q\nguard %q", got, guard)
-			}
+			goldenDumps(t, "deliverable_state", got, false, golden.Substitute(base, "<BASE>"))
 		})
 	}
 }

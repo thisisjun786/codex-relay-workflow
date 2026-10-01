@@ -5,16 +5,14 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"os"
 	"path/filepath"
-	"reflect"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 // Fixture identities, as tests/support.py.
@@ -58,31 +56,7 @@ func fixture() Registration {
 	}
 }
 
-// python is testdata/python_registry.json, recorded from the real Python registry by
-// testdata/gen_python.py.
-var python = sync.OnceValues(func() (map[string][]map[string]any, error) {
-	raw, err := os.ReadFile("testdata/python_registry.json")
-	if err != nil {
-		return nil, err
-	}
-	var out map[string][]map[string]any
-	return out, json.Unmarshal(raw, &out)
-})
-
-func pythonSteps(t *testing.T, name string) []map[string]any {
-	t.Helper()
-	all, err := python()
-	if err != nil {
-		t.Fatal(err)
-	}
-	steps, ok := all[name]
-	if !ok {
-		t.Fatalf("no python scenario %q", name)
-	}
-	return steps
-}
-
-// outcome is one step as gen_python.py records it.
+// outcome is one step as its golden holds it: {"ok": value} or {"refused": {reason, detail}}.
 func outcome(t *testing.T, value any, err error) map[string]any {
 	t.Helper()
 	if err != nil {
@@ -118,20 +92,10 @@ type bytesBuffer []byte
 
 func (b *bytesBuffer) Write(p []byte) (int, error) { *b = append(*b, p...); return len(p), nil }
 
-// sameAsPython compares every step's whole JSON with Python's.
-func sameAsPython(t *testing.T, name string, got []map[string]any) {
+// sameAsGolden compares every step's whole JSON with the golden stored under name.
+func sameAsGolden(t *testing.T, name string, got []map[string]any) {
 	t.Helper()
-	want := pythonSteps(t, name)
-	if len(got) != len(want) {
-		t.Fatalf("%s: %d steps, python has %d", name, len(got), len(want))
-	}
-	for i := range want {
-		if !reflect.DeepEqual(got[i], want[i]) {
-			g, _ := json.MarshalIndent(got[i], "", " ")
-			w, _ := json.MarshalIndent(want[i], "", " ")
-			t.Errorf("%s step %d differs from Python\n go: %s\n py: %s", name, i, g, w)
-		}
-	}
+	golden.CheckJSON(t, name, got)
 }
 
 func refusalReason(err error) string {

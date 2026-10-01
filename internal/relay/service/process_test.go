@@ -110,14 +110,14 @@ func runtimeObject(t *testing.T, c capture) Object {
 	}
 	return r
 }
-func startServing(t *testing.T, home string, python bool) (*ProcessHandle, *ProcessHandle) {
+func startServing(t *testing.T, home string) (*ProcessHandle, *ProcessHandle) {
 	t.Helper()
-	enabled := invoke(t, home, python, "service", "enable")
+	enabled := invoke(t, home, "service", "enable")
 	if enabled.Code != 0 {
 		t.Fatal(enabled)
 	}
 	w := watchDir(t, filepath.Join(home, "state"))
-	start := invoke(t, home, python, "--socket", home+"/socket", "service", "start", "--allow-isolated-scope", "--segment-seconds", "600")
+	start := invoke(t, home, "--socket", home+"/socket", "service", "start", "--allow-isolated-scope", "--segment-seconds", "600")
 	if start.Code != 0 {
 		t.Fatal(start)
 	}
@@ -143,7 +143,7 @@ func startServing(t *testing.T, home string, python bool) (*ProcessHandle, *Proc
 // pythonPlainStops, the stop it answered.
 func Test29StartStopAndSecondStart(t *testing.T) {
 	home := t.TempDir()
-	supervisor, worker := startServing(t, home, false)
+	supervisor, worker := startServing(t, home)
 	recordPath := filepath.Join(home, "state", "daemon.json")
 	before, err := os.ReadFile(recordPath)
 	if err != nil {
@@ -153,7 +153,7 @@ func Test29StartStopAndSecondStart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	second := invoke(t, home, false, "--socket", home+"/socket", "service", "start", "--allow-isolated-scope")
+	second := invoke(t, home, "--socket", home+"/socket", "service", "start", "--allow-isolated-scope")
 	after, err := os.ReadFile(recordPath)
 	if err != nil {
 		t.Fatal(err)
@@ -167,7 +167,7 @@ func Test29StartStopAndSecondStart(t *testing.T) {
 	}
 	// Freezing forces worker escalation.
 	stopObserved(t, worker)
-	stop := invoke(t, home, false, "--socket", home+"/socket", "service", "stop")
+	stop := invoke(t, home, "--socket", home+"/socket", "service", "stop")
 	t.Logf("escalated stop: %+v supervisorExitObserved=%v workerExitObserved=%v", stop, supervisor.Wait(0), worker.Wait(0))
 	if err := plainStopProblem(true, stop, pythonPlainStops); err != nil {
 		t.Error(err)
@@ -180,7 +180,7 @@ func Test29StartStopAndSecondStart(t *testing.T) {
 // (The Python service's half of this test left with the Python runtime, todo 44.)
 func Test29OrphanKeepsInheritedLocks(t *testing.T) {
 	home := t.TempDir()
-	supervisor, worker := startServing(t, home, false)
+	supervisor, worker := startServing(t, home)
 	stopObserved(t, worker)
 	if !supervisor.Send(unix.SIGKILL) || !supervisor.Wait(5*time.Second) {
 		t.Fatal("supervisor did not exit")
@@ -195,12 +195,12 @@ func Test29OrphanKeepsInheritedLocks(t *testing.T) {
 	if !lockHeld(scope.path(home+"/socket", ".lock")) {
 		t.Fatal("supervisor released worker's scope lock")
 	}
-	status := invoke(t, home, false, "--socket", home+"/socket", "service", "status")
+	status := invoke(t, home, "--socket", home+"/socket", "service", "status")
 	r := runtimeObject(t, status)
 	if status.Code != 0 || status.Err != "" || get(r, "running") != true || get(r, "lock") != "held" {
 		t.Fatal(status)
 	}
-	second := invoke(t, home, false, "--socket", home+"/socket", "service", "start", "--allow-isolated-scope")
+	second := invoke(t, home, "--socket", home+"/socket", "service", "start", "--allow-isolated-scope")
 	if get(runtimeObject(t, second), "reason") != "already_running" {
 		t.Fatal(second)
 	}
@@ -214,7 +214,7 @@ func storeSelection(home string) store.StateSelection {
 }
 func Test29StopEscalatesAndRefusesForeign(t *testing.T) {
 	home := t.TempDir()
-	supervisor, worker := startServing(t, home, false)
+	supervisor, worker := startServing(t, home)
 	stopObserved(t, supervisor)
 	stopObserved(t, worker)
 	s, err := New(context.Background(), storeSelection(home), home+"/socket")
@@ -253,7 +253,7 @@ func Test42InterruptedSupervisorStopsItsWorker(t *testing.T) {
 	}{{"go", false}, {"go-interrupted-together", true}} {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
-			supervisor, worker := startServing(t, home, false)
+			supervisor, worker := startServing(t, home)
 			if !supervisor.Send(unix.SIGINT) {
 				t.Fatal(supervisor.Detail)
 			}

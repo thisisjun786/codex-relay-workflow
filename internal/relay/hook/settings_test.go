@@ -2,16 +2,10 @@ package hook
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
-	"reflect"
-	"strings"
 	"syscall"
 	"testing"
-
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 func Test33SettingsPython(t *testing.T) {
@@ -28,28 +22,14 @@ func Test33SettingsPython(t *testing.T) {
 		o = set(o, "timeoutSeconds", budget)
 		inputs = append(inputs, o)
 	}
-	raw := evidence.Dumps(inputs, false, false, true)
-	out := pyoracle.Answer(t, "complaints", func() ([]byte, error) {
-		return pythonScript(t, nil, []byte(raw), "-c", "import json,sys;sys.path.insert(0,sys.argv[1]);from crw_runtime.completion import complaints;print(json.dumps([complaints(v) for v in json.load(sys.stdin)]))", filepath.Join(testRoot, "scripts"))
-	})
-	var expected [][]string
-	if err := json.Unmarshal(out, &expected); err != nil {
-		t.Fatal(err)
+	// Each input's complaints are the golden, which began as completion.complaints's. Python
+	// also named the adapter keys the retired launchers ran; nothing reads them since decision 66,
+	// so its complaints about them were never this reader's.
+	var complaints []any
+	for _, v := range inputs {
+		complaints = append(complaints, Complaints(v))
 	}
-	for i, v := range inputs {
-		got := Complaints(v)
-		// Python named the adapter keys the retired launchers ran; nothing reads them since
-		// decision 66, so its complaints about them are not this reader's.
-		want := []string{}
-		for _, complaint := range expected[i] {
-			if !strings.HasPrefix(complaint, "adapterInterpreter ") && !strings.HasPrefix(complaint, "adapterEntryPoint ") {
-				want = append(want, complaint)
-			}
-		}
-		if !reflect.DeepEqual(got, want) {
-			t.Fatalf("case %d %s\nGo %v\nPython %v", i, evidence.Dumps(v, false, false, true), got, want)
-		}
-	}
+	goldenDumps(t, "complaints", complaints, false)
 }
 func Test33SettingsSpecialFiles(t *testing.T) {
 	home := t.TempDir()

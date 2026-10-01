@@ -19,8 +19,9 @@ import (
 // registryCommands are the relay commands todo 25 part A registers (cli.py:4045-4125, :4393).
 // No cli-shape fixture exercises them alone (every one also needs emit or dispositions-show),
 // so their CLI shape is proved here against the built crw binary: every case of
-// testdata/fixtures/registry-cli-cases.json (a copy of internal/relay/registry/testdata/cli_cases.json),
-// replayed through `crw relay`, must print the exact stdout bytes and exit code its golden holds.
+// testdata/fixtures/registry-cli-cases.json (which internal/relay/registry's own CLI tests replay
+// through Execute too), replayed through `crw relay`, must print the exact stdout bytes and exit
+// code its golden holds.
 var registryCommands = []string{"register", "settings-record", "settings-show", "generation-open",
 	"generation-bind", "admit-turn", "relationship-status", "relationship-resume"}
 

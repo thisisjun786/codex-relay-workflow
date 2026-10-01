@@ -3,12 +3,9 @@ package hook
 import (
 	"bytes"
 	"context"
-	"encoding/json"
-	"fmt"
 	"io"
 	"net"
 	"os"
-	"os/exec"
 	"os/user"
 	"path/filepath"
 	"slices"
@@ -18,16 +15,14 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 // A path the settings or the Stop payload name reaches the system as os.fsencode's bytes: a
 // surrogate escape (U+DCFF) is the byte it stands for, and a lone surrogate nothing encodes
-// (U+D800) is the ValueError Python's adapter catches. Each answer is Python's own function over
-// the same str: the transcript scan (stopadapter.event_identity), the claim
-// (stopadapter.claim_event) and the journal row (stopadapter.journal). Python's answers are
-// recorded (pyoracle) in this file's tests; the recording also holds the retired status
-// reading's journal cells (completion._journal_cell), which nothing compares any more.
+// (U+D800) is the ValueError Python's adapter catches. The answers are the golden, which began as
+// Python's own functions' over the same str: the transcript scan (stopadapter.event_identity),
+// the claim (stopadapter.claim_event) and the journal row (stopadapter.journal).
 func TestAPathFromJSONReachesTheSystemAsPythonEncodesIt(t *testing.T) {
 	root := t.TempDir()
 	journal := filepath.Join(root, "j\xff") // a directory whose name is not UTF-8
@@ -38,52 +33,28 @@ func TestAPathFromJSONReachesTheSystemAsPythonEncodesIt(t *testing.T) {
 	writeTest(t, filepath.Join(journal, "transcript.jsonl"), nil)
 	spelled := store.FSDecode(journal)      // the str Python holds for it, as JSON decodes "\udcff"
 	unencodable := spelled + "\xed\xa0\x80" // ... followed by U+D800, which os.fsencode refuses
-	script := `import json, os, sys
-sys.path.insert(0, os.path.join(sys.argv[1], "scripts"))
-from crw_runtime import completion
-from codex_session_relay import stopadapter
-journal = sys.argv[2]
-unencodable = journal + "\ud800"
-cells = []
-for root in (journal, unencodable):
-    cell = completion._journal_cell({"journalRoot": root, "journalPolicy": "every_invocation"})
-    cells.append([cell["value"], cell["evidence"], cell.get("journalRoot")])
-stop = {"session_id": "s", "turn_id": "t", "stop_hook_active": False, "last_assistant_message": "x"}
-reasons = [stopadapter.event_identity(dict(stop, transcript_path=path))[1]["reason"]
-           for path in (journal + "/transcript.jsonl", journal + "/missing.jsonl", unencodable)]
-claim = stopadapter.claim_event({"journalRoot": unencodable}, "k" * 64, {"answerItem": "i"}, stop, ("20260930", "b" * 32))
-row = stopadapter.journal({"journalRoot": unencodable}, {"adapterOutcome": "guard_answered"}, ("20260930", "c" * 32))
-print(json.dumps({"cells": cells, "reasons": reasons, "claim": claim[0], "row": row}))`
-	raw := fromRootPositions(pyoracle.Answer(t, "answers", func() ([]byte, error) {
-		out, err := pythonScript(t, append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1"), nil, "-c", script, testRoot, journal)
-		return toRootPositions(out, root), err
-	}, pyoracle.Substitute(root, "<ROOT>")), root)
-	decoded, err := Decode(raw) // keeps each "\udcXX" a lone surrogate, as Python's json does
-	if err != nil {
-		t.Fatalf("%v: %s", err, raw)
-	}
-	want, _ := evidence.Object(decoded)
 	before, err := os.ReadDir(root)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	stop := Object{{Key: "session_id", Value: "s"}, {Key: "turn_id", Value: "t"}, {Key: "stop_hook_active", Value: false}, {Key: "last_assistant_message", Value: "x"}}
-	reasons := get(want, "reasons").([]any)
-	for i, path := range []string{spelled + "/transcript.jsonl", spelled + "/missing.jsonl", unencodable} {
+	var reasons []any
+	for _, path := range []string{spelled + "/transcript.jsonl", spelled + "/missing.jsonl", unencodable} {
 		_, identity := EventIdentity(context.Background(), set(append(Object{}, stop...), "transcript_path", path))
-		if got := get(identity, "reason"); got != reasons[i] {
-			t.Errorf("transcript %q: %v, python %v", path, got, reasons[i])
-		}
+		reasons = append(reasons, get(identity, "reason"))
 	}
 	config := Object{{Key: "journalRoot", Value: unencodable}}
 	slot := Slot{"20260930", strings.Repeat("b", 32)}
-	if got, _ := ClaimEvent(context.Background(), config, strings.Repeat("k", 64), Object{{Key: "answerItem", Value: "i"}}, stop, slot, ""); got != get(want, "claim") {
-		t.Errorf("claim under %q: %v, python %v", unencodable, got, get(want, "claim"))
+	claim, _ := ClaimEvent(context.Background(), config, strings.Repeat("k", 64), Object{{Key: "answerItem", Value: "i"}}, stop, slot, "")
+	row, _ := Journal(context.Background(), config, Object{{Key: "adapterOutcome", Value: "guard_answered"}}, Slot{"20260930", strings.Repeat("c", 32)})
+	if row != "" {
+		t.Errorf("journal row under %q: %q", unencodable, row)
 	}
-	if row, _ := Journal(context.Background(), config, Object{{Key: "adapterOutcome", Value: "guard_answered"}}, Slot{"20260930", strings.Repeat("c", 32)}); row != "" || get(want, "row") != nil {
-		t.Errorf("journal row under %q: %q, python %v", unencodable, row, get(want, "row"))
-	}
+	// The answers, each character position a codec error counts through root spelled relative to
+	// root's length (toRootPositions).
+	answers := Object{{Key: "reasons", Value: reasons}, {Key: "claim", Value: claim}, {Key: "row", Value: nullable(row)}}
+	golden.Check(t, "answers", toRootPositions([]byte(evidence.DumpsIndent(answers, 2, false, true)+"\n"), root), golden.Substitute(root, "<ROOT>"))
 	after, err := os.ReadDir(root)
 	if err != nil {
 		t.Fatal(err)
@@ -93,14 +64,15 @@ print(json.dumps({"cells": cells, "reasons": reasons, "claim": claim[0], "row": 
 	}
 }
 
-// settingsOverride is the variable Python's configuration_path read, set as the recording was.
+// settingsOverride is the variable Python's configuration_path read.
 const settingsOverride = "CRW_COMPLETION_HOOK_CONFIG"
 
 // The settings path and the host ledger are the ones Python names: Path.home() when no Codex
 // home is set (an empty HOME is the root, an unset one the passwd entry), and a relative path
 // made absolute against the working directory the kernel names (os.path.abspath), not the $PWD
-// spelling that reached it through a symbolic link. (The settings override the adapter read,
-// CRW_COMPLETION_HOOK_CONFIG, is retired, decision 66; its recorded answer is not compared.)
+// spelling that reached it through a symbolic link: the paths are the golden, which began as the
+// paths Python named. (The settings override the adapter read, CRW_COMPLETION_HOOK_CONFIG, is
+// retired, decision 66.)
 func TestTheSettingsPathAndHostLedgerAreThePathsPythonNames(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -113,11 +85,6 @@ func TestTheSettingsPathAndHostLedgerAreThePathsPythonNames(t *testing.T) {
 		t.Fatal(err)
 	}
 	alias := filepath.Join(root, "alias", "wd")
-	script := `import json, os, sys
-sys.path.insert(0, os.path.join(sys.argv[1], "scripts"))
-from crw_runtime import completion
-from codex_session_relay import stopadapter
-print(json.dumps([str(completion.configuration_path()), str(stopadapter.host_ledger())]))`
 	unset := "(unset)"
 	cases := []struct{ name, home, codexHome, override string }{
 		{"an empty HOME", "", unset, ""},
@@ -128,38 +95,13 @@ print(json.dumps([str(completion.configuration_path()), str(stopadapter.host_led
 		{"the root as CODEX_HOME", filepath.Join(root, "home"), "/", ""},
 		{"a CODEX_HOME of two slashes alone", filepath.Join(root, "home"), "//", ""},
 	}
-	// Python's answers are asked for (and recorded, pyoracle) before the chdir below, which
-	// pyoracle's package-relative recordings do not follow; Python runs in alias itself. The
-	// passwd entry's home, which an unset HOME names, is recorded as <PASSWD_HOME>.
-	substitutions := []pyoracle.Option{pyoracle.Substitute(filepath.Join(root, "home"), "<ROOT_HOME>"), pyoracle.Substitute(root, "<ROOT>")}
-	if account, err := user.Current(); err == nil && account.HomeDir != "/" {
-		substitutions = append(substitutions, pyoracle.Substitute(account.HomeDir, "<PASSWD_HOME>"))
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
 	}
-	answers := map[string][]byte{}
-	for _, c := range cases {
-		answers[c.name] = pyoracle.Answer(t, c.name, func() ([]byte, error) {
-			env := slices.DeleteFunc(os.Environ(), func(kv string) bool {
-				key, _, _ := strings.Cut(kv, "=")
-				return key == "HOME" || key == "CODEX_HOME" || key == settingsOverride || key == "PWD"
-			})
-			for key, value := range map[string]string{"HOME": c.home, "CODEX_HOME": c.codexHome, settingsOverride: c.override} {
-				if value != unset {
-					env = append(env, key+"="+value)
-				}
-			}
-			command := exec.Command(python(t), "-c", script, testRoot)
-			command.Dir = alias
-			command.Env = append(env, "PYTHONDONTWRITEBYTECODE=1", "PWD="+alias)
-			raw, err := command.CombinedOutput()
-			if err != nil {
-				return nil, fmt.Errorf("python: %v\n%s", err, raw)
-			}
-			return raw, nil
-		}, substitutions...)
-	}
+	named := map[string][]string{}
 	t.Chdir(alias)
 	for _, c := range cases {
-		raw := answers[c.name]
 		t.Run(c.name, func(t *testing.T) {
 			for key, value := range map[string]string{"HOME": c.home, "CODEX_HOME": c.codexHome, settingsOverride: c.override} {
 				if value != unset {
@@ -171,19 +113,27 @@ print(json.dumps([str(completion.configuration_path()), str(stopadapter.host_led
 					t.Fatal(err)
 				}
 			}
-			var want []string
-			if err := json.Unmarshal(raw, &want); err != nil {
-				t.Fatalf("%v: %s", err, raw)
-			}
 			settings, err := configurationPath("", nil)
-			if err != nil || settings != want[0] {
-				t.Errorf("settings %q, python %q: %v", settings, want[0], err)
+			if err != nil {
+				t.Errorf("settings: %v", err)
 			}
-			if host, err := hostLedger(); err != nil || host != want[1] {
-				t.Errorf("host ledger %q, python %q: %v", host, want[1], err)
+			host, err := hostLedger()
+			if err != nil {
+				t.Errorf("host ledger: %v", err)
 			}
+			named[c.name] = []string{settings, host}
 		})
 	}
+	// The goldens are read and written in the package directory.
+	if err = os.Chdir(wd); err != nil {
+		t.Fatal(err)
+	}
+	// The passwd entry's home, which an unset HOME names, is spelled <PASSWD_HOME>.
+	goldenSubstitutions := []golden.Option{golden.Substitute(filepath.Join(root, "home"), "<ROOT_HOME>"), golden.Substitute(root, "<ROOT>")}
+	if account, err := user.Current(); err == nil && account.HomeDir != "/" {
+		goldenSubstitutions = append(goldenSubstitutions, golden.Substitute(account.HomeDir, "<PASSWD_HOME>"))
+	}
+	golden.CheckJSON(t, "paths", named, goldenSubstitutions...)
 }
 
 // The owner's control socket is dialled in the directory each source names. A dbPath is the

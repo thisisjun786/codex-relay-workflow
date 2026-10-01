@@ -285,28 +285,8 @@ func TestRouteIncidents_sequence_replace_and_keep_only_the_newest(t *testing.T) 
 }
 
 func TestRouteIncidents_keep_none_keeps_all_and_keep_zero_deletes_all_like_python(t *testing.T) {
-	// Given: Python's store_incident with keep=None and keep=0, three incidents each (routes.py:224).
-	root := t.TempDir()
-	t.Setenv("HOME", root)
-	t.Setenv("TMPDIR", root)
-	python := pythonStoreValue(t, `
-import os, sys
-from codex_session_relay.store import Store
-from codex_session_relay.clock import FakeClock
-from codex_session_relay import routes
-s = Store(os.path.join(sys.argv[1], "ri.sqlite3")); c = FakeClock()
-counts = []
-for keep in (None, 0):
-    fid = "f-" + str(keep)
-    with s.transaction() as db:
-        for key in ("a", "b", "c"):
-            routes.store_incident(db, c, fid, {"occurrenceKey": key}, keep=keep)
-    counts.append(str(s.db.execute("SELECT COUNT(*) FROM route_incidents WHERE fault_id = ?", (fid,)).fetchone()[0]))
-print(" ".join(counts))
-`, root)
-	if python != "3 0" {
-		t.Fatalf("Python kept %q incidents for keep=None, keep=0", python)
-	}
+	// Given: routes.store_incident (routes.py:224) keeps every incident for keep=None and none for
+	// keep=0.
 	// When: Go stores three incidents with keep nil and with keep 0.
 	s := recordStore(t)
 	ctx := context.Background()
@@ -319,8 +299,6 @@ print(" ".join(counts))
 	must(t, err)
 	none, err := s.RouteIncidents(ctx, "f-none")
 	must(t, err)
-	// Then: the same counts.
-	if got := fmt.Sprintf("%d %d", len(all), len(none)); got != python {
-		t.Fatalf("Go kept %q, Python %q", got, python)
-	}
+	// Then: keep=None keeps all three and keep=0 none, as routes.store_incident does.
+	checkText(t, "incidents kept for keep=None, keep=0", fmt.Sprintf("%d %d", len(all), len(none)))
 }

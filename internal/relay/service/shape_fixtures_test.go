@@ -45,7 +45,7 @@ func Test29ServiceDomainFixtureOracle(t *testing.T) {
 			if _, host := fixture.Given["host"]; host {
 				args = append([]string{"--socket", home + "/socket"}, args...)
 			}
-			actual := invoke(t, home, false, args...)
+			actual := invoke(t, home, args...)
 			if actual.Code != fixture.Expect.Exit {
 				t.Fatal(actual)
 			}

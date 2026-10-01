@@ -22,7 +22,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 	"golang.org/x/sys/unix"
 )
 
@@ -206,7 +206,8 @@ func Test30ControlDisconnectBeforeARequestIsNoFailure(t *testing.T) {
 
 // PR #185 4128954449, the rule it cites (control.py GuardServer._serve): nothing a peer or the
 // kernel does ends or fails the owner. Every frame below is one the retained Python owner
-// answers with its host record, and the Go owner answers it with the same bytes: among them the
+// answered with its host record, and the Go owner answers it with the same bytes (its golden
+// began as the Python owner's answers): among them the
 // nesting edge of GuardServer's serving thread (9996 containers decode, 9997 raise, and a
 // refusal raised within four levels of the edge, or a NaN or over-long integer at it, raises
 // RecursionError on the way), a naive deadline, a mode or now that is not a string, and a peer
@@ -434,53 +435,6 @@ func Test30ControlPeerFailuresAreAnsweredAsPythonAnswersThem(t *testing.T) {
 		}
 		return answers
 	}
-	// The Python owner's answers are recorded (pyoracle): control.py's GuardServer, served on
-	// its own control.sock, asked every frame above.
-	python := map[string][]byte{}
-	var recorded map[string]string
-	pyoracle.JSON(t, "answers", &recorded, func() (any, error) {
-		state := filepath.Join(home, "python")
-		if err := os.Mkdir(state, 0700); err != nil {
-			return nil, err
-		}
-		owner := exec.Command(filepath.Join(testRoot, ".venv/bin/python"), "-c", `import sys
-from codex_session_relay.control import GuardServer
-server = GuardServer(sys.argv[1])
-print("bound", flush=True)
-sys.stdin.read()
-server.close()`, state)
-		stdin, err := owner.StdinPipe()
-		if err != nil {
-			return nil, err
-		}
-		stdout, err := owner.StdoutPipe()
-		if err != nil {
-			return nil, err
-		}
-		var stderr bytes.Buffer
-		owner.Stderr = &stderr
-		if err = owner.Start(); err != nil {
-			return nil, err
-		}
-		if line, err := bufio.NewReader(stdout).ReadString('\n'); err != nil || line != "bound\n" {
-			_ = owner.Process.Kill()
-			_ = owner.Wait()
-			return nil, fmt.Errorf("the Python owner never bound control.sock: %q %v %s", line, err, stderr.String())
-		}
-		answers := served(t, controlPath(state))
-		_ = stdin.Close()
-		if err = owner.Wait(); err != nil {
-			return nil, fmt.Errorf("the Python owner: %v %s", err, stderr.String())
-		}
-		text := map[string]string{}
-		for name, answer := range answers {
-			text[name] = string(answer)
-		}
-		return text, nil
-	}, pyoracle.Substitute(home, "<HOME>"))
-	for name, answer := range recorded {
-		python[name] = []byte(answer)
-	}
 	t.Run("listener", func(t *testing.T) {
 		state := filepath.Join(home, "go")
 		if err := os.Mkdir(state, 0700); err != nil {
@@ -495,25 +449,30 @@ server.close()`, state)
 		answers := served(t, controlPath(state))
 		for _, failure := range failures {
 			want := `{"error": "host", "detail": "` + failure.detail + `"}` + "\n"
-			if string(python[failure.name]) != want {
-				t.Errorf("%s: the Python owner answered %q, not %q", failure.name, python[failure.name], want)
+			if string(answers[failure.name]) != want {
+				t.Errorf("%s: the Go owner answered %q, not %q", failure.name, answers[failure.name], want)
 			}
-			if string(answers[failure.name]) != string(python[failure.name]) {
-				t.Errorf("%s: the Go owner answered %q where the Python owner answered %q", failure.name, answers[failure.name], python[failure.name])
-			}
+		}
+		// The failing frames and the edge corpus are answered byte for byte as the golden holds
+		// them; the served frames with the same verdict (the golden began as the Python owner's
+		// answers, whose serializer spaced a verdict line its own way).
+		refusals := map[string]string{}
+		for _, failure := range failures {
+			refusals[failure.name] = string(answers[failure.name])
 		}
 		for name := range edge {
-			if string(answers["edge "+name]) != string(python["edge "+name]) {
-				t.Errorf("%s: the Go owner answered %q where the Python owner answered %q", name, answers["edge "+name], python["edge "+name])
-			}
+			refusals["edge "+name] = string(answers["edge "+name])
 		}
-		// The same verdict; each owner spaces its verdict line as its own serializer does.
+		verdicts := map[string]any{}
 		for name := range servedFrames {
-			var goVerdict, pythonVerdict any
-			if json.Unmarshal(answers[name], &goVerdict) != nil || json.Unmarshal(python[name], &pythonVerdict) != nil || !reflect.DeepEqual(goVerdict, pythonVerdict) {
-				t.Errorf("%s: the Go owner answered %q where the Python owner answered %q", name, answers[name], python[name])
+			var verdict any
+			if err := json.Unmarshal(answers[name], &verdict); err != nil {
+				t.Fatalf("%s: %v %q", name, err, answers[name])
 			}
+			verdicts[name] = verdict
 		}
+		golden.CheckJSON(t, "answers", refusals, golden.Substitute(home, "<HOME>"))
+		golden.CheckJSON(t, "verdicts", verdicts, golden.Substitute(home, "<HOME>"))
 		if err = server.Close(); err != nil {
 			t.Fatalf("a failed peer failed the listener: %v", err)
 		}
@@ -568,8 +527,9 @@ server.close()`, state)
 				t.Fatalf("the daemon never bound control.sock: %s %s", stdout.String(), stderr.String())
 			}
 		}
-		if answer := ask(t, path, frames["params not an object"]); string(answer) != string(python["params not an object"]) {
-			t.Errorf("the daemon answered %q where the Python owner answered %q", answer, python["params not an object"])
+		want := `{"error": "host", "detail": "TypeError: guard params must be an object"}` + "\n"
+		if answer := ask(t, path, frames["params not an object"]); string(answer) != want {
+			t.Errorf("the daemon answered %q, not %q", answer, want)
 		}
 		hangUp(t, path, frame(params(later, "")))
 		err := daemon.Wait()

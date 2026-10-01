@@ -12,7 +12,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"golang.org/x/sys/unix"
 )
 
@@ -33,8 +32,8 @@ func Test29D1PlainRoundTripTwenty(t *testing.T) {
 			// No state, scope inode or cleanup is shared across iterations. t.Run completes
 			// process() cleanup before returning.
 			home := t.TempDir()
-			supervisor, worker := startServing(t, home, false)
-			result := invoke(t, home, false, "--socket", home+"/socket", "service", "stop")
+			supervisor, worker := startServing(t, home)
+			result := invoke(t, home, "--socket", home+"/socket", "service", "stop")
 			shape, _ := json.Marshal(capture{Out: normalize(result.Out), Err: result.Err, Code: result.Code})
 			counts[string(shape)]++
 			t.Logf("stop=%s supervisorExitObserved=%v workerExitObserved=%v state=%s", shape, supervisor.Wait(0), worker.Wait(0), home)
@@ -108,7 +107,7 @@ func Test29D1EvidenceComparisonRules(t *testing.T) {
 	}
 }
 
-func declarePolicy(t *testing.T, home string, python bool) {
+func declarePolicy(t *testing.T, home string) {
 	t.Helper()
 	path := filepath.Join(home, "policy.json")
 	// Deliberately neither alphabetic nor the fixed supervisor/parent/child order.
@@ -116,7 +115,7 @@ func declarePolicy(t *testing.T, home string, python bool) {
 	if err := os.WriteFile(path, []byte(raw), 0666); err != nil {
 		t.Fatal(err)
 	}
-	if result := invoke(t, home, python, "service", "declare", "--execution-policy", path); result.Code != 0 {
+	if result := invoke(t, home, "service", "declare", "--execution-policy", path); result.Code != 0 {
 		t.Fatal(result)
 	}
 }
@@ -127,8 +126,8 @@ func declarePolicy(t *testing.T, home string, python bool) {
 // runtime, todo 44).
 func Test29D2DeclaredRoleOrder(t *testing.T) {
 	home := t.TempDir()
-	declarePolicy(t, home, false)
-	startServing(t, home, false)
+	declarePolicy(t, home)
+	startServing(t, home)
 	raw, err := os.ReadFile(filepath.Join(home, "state", "worker-policy.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -142,7 +141,7 @@ func Test29D2DeclaredRoleOrder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	doctor := runtimeObject(t, invoke(t, home, false, "--socket", home+"/socket", "doctor"))
+	doctor := runtimeObject(t, invoke(t, home, "--socket", home+"/socket", "doctor"))
 	observed, _ := get(doctor, "workerPolicy").(Object)
 	doctorPolicy, _ := get(observed, "policy").(Object)
 	encodedDoctor, err := encoded(doctorPolicy)
@@ -197,13 +196,13 @@ func Test29D3LaunchSnapshotTwenty(t *testing.T) {
 	for trial := 0; trial < 20; trial++ {
 		t.Run(fmt.Sprint(trial), func(t *testing.T) {
 			home := t.TempDir()
-			declarePolicy(t, home, false)
-			if r := invoke(t, home, false, "service", "enable"); r.Code != 0 {
+			declarePolicy(t, home)
+			if r := invoke(t, home, "service", "enable"); r.Code != 0 {
 				t.Fatal(r)
 			}
 			watch := watchDir(t, filepath.Join(home, "state"))
 			for _, action := range []string{"start", "restart"} {
-				result := invoke(t, home, false, "--socket", home+"/socket", "service", action, "--allow-isolated-scope", "--segment-seconds", "600")
+				result := invoke(t, home, "--socket", home+"/socket", "service", action, "--allow-isolated-scope", "--segment-seconds", "600")
 				shape, launched := launchSnapshotShape(action, result)
 				encodedShape, _ := json.Marshal(shape)
 				counts[action][string(encodedShape)]++
@@ -334,10 +333,10 @@ func Test29D4FileModes(t *testing.T) {
 			old := unix.Umask(mask)
 			defer unix.Umask(old)
 			home := t.TempDir()
-			declarePolicy(t, home, false)
-			startServing(t, home, false)
+			declarePolicy(t, home)
+			startServing(t, home)
 			// Stop creates stop.request and may replace daemon.json; inspect their modes.
-			result := invoke(t, home, false, "--socket", home+"/socket", "service", "stop")
+			result := invoke(t, home, "--socket", home+"/socket", "service", "stop")
 			t.Logf("mode-check stop: %+v", result)
 			if err := plainStopProblem(true, result, pythonPlainStops); err != nil {
 				t.Error(err)
@@ -408,30 +407,15 @@ func stateEntries(t *testing.T, home string) []string {
 	return entries
 }
 
-// Test29D5RefusalInitializesStore: a refused daemon leaves the state each runtime's refusal
-// leaves; Python's is recorded (pythonHalf).
+// Test29D5RefusalInitializesStore: a refused daemon leaves the state its golden, which began as
+// the retained Python's, holds.
 func Test29D5RefusalInitializesStore(t *testing.T) {
 	for _, flags := range [][]string{{}, {"--allow-isolated-scope", "--supervised-token", "test-run"}, {"--allow-isolated-scope", "--supervised-token", "test-run", "--supervised-lock-fd", "99", "--supervised-scope-fd", "98"}} {
 		t.Run(strings.Join(flags, "_"), func(t *testing.T) {
 			home := t.TempDir()
 			args := append([]string{"--socket", home + "/socket", "daemon", "--max-ticks", "0"}, flags...)
-			var want d5Answer
-			pythonHalf(t, home, "python", true, &want, func() (any, error) {
-				result := invoke(t, home, true, args...)
-				entries := stateEntries(t, home)
-				return d5Answer{pythonCapture(result), entries, tables(t, home, testsupport.Python)}, nil
-			})
-			if err := os.Remove(home + "/state/relay.sqlite3"); err != nil && !errors.Is(err, os.ErrNotExist) {
-				t.Fatal(err)
-			}
-			result := invoke(t, home, false, args...)
-			entries := stateEntries(t, home)
-			compare(t, want.Capture, result)
-			if !reflect.DeepEqual(want.Entries, entries) || want.Tables != tables(t, home, testsupport.Go) {
-				a, _ := json.Marshal(want.Entries)
-				b, _ := json.Marshal(entries)
-				t.Fatalf("refusal state: Python %s Go %s; full tables equal=%v", a, b, want.Tables == tables(t, home, testsupport.Go))
-			}
+			result := invoke(t, home, args...)
+			checkAnswer(t, home, "answer", d5Answer{normalizedCapture(result), stateEntries(t, home), tables(t, home)})
 		})
 	}
 }

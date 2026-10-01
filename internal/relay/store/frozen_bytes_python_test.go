@@ -1,16 +1,14 @@
 package store
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"reflect"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 func Test28FrozenByteCountExactPythonParity(t *testing.T) {
@@ -30,7 +28,6 @@ func Test28FrozenByteCountExactPythonParity(t *testing.T) {
 		{"null", "null", true},
 		{"missing", "", false},
 	}
-	repo, _ := filepath.Abs("../../..")
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			ref := t.TempDir()
@@ -52,15 +49,6 @@ func Test28FrozenByteCountExactPythonParity(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(ref, "MANIFEST.json"), []byte(manifest), 0600); err != nil {
 				t.Fatal(err)
 			}
-			want := pythonOracle(t, []string{"frozen-detailed", ref}, func() ([]byte, error) {
-				cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/store/testdata/frozen_detailed.py"), ref)
-				cmd.Dir = repo
-				want, err := cmd.CombinedOutput()
-				if err != nil {
-					return nil, fmt.Errorf("Python: %v\n%s", err, want)
-				}
-				return want, nil
-			})
 			result, problems, unreadable, goErr := VerifyFrozenDetailed(ref, nil)
 			got := map[string]any{}
 			if goErr != nil {
@@ -69,16 +57,11 @@ func Test28FrozenByteCountExactPythonParity(t *testing.T) {
 				got["result"] = []any{result, problems, unreadable}
 			}
 			raw, _ := json.Marshal(got)
-			var python, goValue any
-			if err := json.Unmarshal(want, &python); err != nil {
-				t.Fatal(err)
-			}
+			var goValue any
 			if err := json.Unmarshal(raw, &goValue); err != nil {
 				t.Fatal(err)
 			}
-			if !reflect.DeepEqual(goValue, python) {
-				t.Fatalf("bytes=%s\nGo %s\nPython %s", tc.token, raw, bytes.TrimSpace(want))
-			}
+			checkJSON(t, "answer", goValue, golden.Substitute(ref, "<REF>"))
 		})
 	}
 }

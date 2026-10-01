@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,7 +12,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
@@ -29,15 +27,11 @@ func environment(home string) []string {
 	}
 	return env
 }
-func invoke(t *testing.T, home string, python bool, args ...string) capture {
+func invoke(t *testing.T, home string, args ...string) capture {
 	t.Helper()
-	prepareParityOwnership(t, home, python, args)
+	prepareParityOwnership(t, home)
 	program := filepath.Join(filepath.Dir(testBinary), "codex-session-relay")
 	argv := append([]string{"--state", home + "/state"}, args...)
-	if python {
-		program = testPython
-		argv = append([]string{"--state", home + "/state"}, args...)
-	}
 	cmd := exec.Command(program, argv...)
 	cmd.Env = environment(home)
 	var out, stderr bytes.Buffer
@@ -53,30 +47,15 @@ func invoke(t *testing.T, home string, python bool, args ...string) capture {
 	return capture{out.String(), stderr.String(), cmd.ProcessState.ExitCode()}
 }
 
-// emptiedStores remembers each home whose fenced store resetRuntime emptied.
-var emptiedStores = map[string]bool{}
-
-// prepareParityOwnership puts the state directory into the ownership state a host running
-// the runtime under test has at this step, and nothing more:
-//   - an absent store stays absent: each runtime's own absent-store initializer creates it;
-//   - a store an earlier invocation left behind that the other runtime owns is that store after
-//     a completed takeover to the runtime under test;
-//   - the empty file resetRuntime leaves keeps the inode the worker receipt compares byte for
-//     byte. Python initializes that file itself, but Go cannot tell it from a legacy unfenced
-//     store, so Go's store is created in it as Go's initializer would have created it at Go's
-//     first invocation: bound to that invocation's socket, or unbound, in which case Go's first
-//     socketed writable open binds it (cutover.md Record, Socket binding), as the previous
-//     runtime's own store was bound.
+// prepareParityOwnership puts the state directory into the ownership state a host running Go
+// has at this step, and nothing more:
+//   - an absent store stays absent: Go's own absent-store initializer creates it;
+//   - a store an earlier invocation left behind is that store after a completed takeover to Go
+//     (a no-op on the store Go owns, which it still validates as fenced).
 //
 // The scope key a helper stamps is the one the runtime computes in the environment it runs in.
-func prepareParityOwnership(t *testing.T, home string, python bool, args []string) {
+func prepareParityOwnership(t *testing.T, home string) {
 	t.Helper()
-	socket := ""
-	for i, a := range args {
-		if a == "--socket" && i+1 < len(args) {
-			socket = parityCanonicalSocket(t, args[i+1])
-		}
-	}
 	path := filepath.Join(home, "state/relay.sqlite3")
 	info, err := os.Stat(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -84,20 +63,11 @@ func prepareParityOwnership(t *testing.T, home string, python bool, args []strin
 	} else if err != nil {
 		t.Fatal(err)
 	}
-	if info.Size() == 0 && (python || !emptiedStores[home]) {
+	if info.Size() == 0 {
 		return
 	}
 	defer inRuntimeScope(t, home)()
-	if info.Size() == 0 {
-		testsupport.Create(t, path, socket, "go")
-		delete(emptiedStores, home)
-		return
-	}
-	owner := "go"
-	if python {
-		owner = "python"
-	}
-	testsupport.HandOver(t, path, owner)
+	testsupport.HandOver(t, path, "go")
 }
 
 // inRuntimeScope gives this process the scope registry root environment(home) gives both
@@ -121,23 +91,6 @@ func inRuntimeScope(t *testing.T, home string) func() {
 	}
 }
 
-// parityCanonicalSocket is the spelling both runtimes store: absolute, symlinks resolved as far
-// as the path exists.
-func parityCanonicalSocket(t *testing.T, socket string) string {
-	t.Helper()
-	absolute, err := filepath.Abs(socket)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if real, err := filepath.EvalSymlinks(absolute); err == nil {
-		return real
-	}
-	parent, err := filepath.EvalSymlinks(filepath.Dir(absolute))
-	if err != nil {
-		return absolute
-	}
-	return filepath.Join(parent, filepath.Base(absolute))
-}
 func errorsAs(err error, target **exec.ExitError) bool {
 	e, ok := err.(*exec.ExitError)
 	if ok {
@@ -153,62 +106,14 @@ func normalize(raw string) string {
 	raw = stampPattern.ReplaceAllString(raw, "TIME")
 	return volatilePattern.ReplaceAllString(raw, `${1}"VOLATILE"`)
 }
-func compare(t *testing.T, want, got capture) {
-	t.Helper()
-	if want.Code != got.Code || normalize(want.Out) != normalize(got.Out) || want.Err != got.Err {
-		t.Fatalf("Python (%d)\n%s\nstderr %s\nGo (%d)\n%s\nstderr %s", want.Code, want.Out, want.Err, got.Code, got.Out, got.Err)
-	}
-}
-func resetRuntime(t *testing.T, home string) {
-	t.Helper()
-	// Reinitialize SQLite through the SAME inode. Device/inode values are not
-	// permitted normalizers and the worker receipt must compare byte for byte.
-	entries, err := os.ReadDir(filepath.Join(home, "state"))
-	if err != nil && !os.IsNotExist(err) {
-		t.Fatal(err)
-	}
-	delete(emptiedStores, home)
-	if _, e := os.Stat(filepath.Join(home, "state", "takeover.json")); e == nil {
-		if _, e = ownership.ReadRecord(filepath.Join(home, "state", "relay.sqlite3")); e != nil {
-			t.Fatal(e)
-		}
-		emptiedStores[home] = true
-	} else if !errors.Is(e, os.ErrNotExist) {
-		t.Fatal(e)
-	}
-	for _, entry := range entries {
-		path := filepath.Join(home, "state", entry.Name())
-		if entry.Name() == "relay.sqlite3" {
-			err = os.Truncate(path, 0)
-		} else {
-			err = os.RemoveAll(path)
-		}
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, name := range []string{"scopes", "xdg-state"} {
-		if err := os.RemoveAll(filepath.Join(home, name)); err != nil {
-			t.Fatal(err)
-		}
-	}
-}
 
 // processRecords are the files whose python_compatibility_build names the runtime that wrote
 // them (with scopes/*.json), the one value testsupport.RuntimeIdentityText neutralizes once it
 // is that runtime's own.
 var processRecords = map[string]bool{"daemon.json": true, "worker-policy.json": true}
 
-// writtenBy is the runtime an invoke(..., python, ...) ran.
-func writtenBy(python bool) testsupport.Runtime {
-	if python {
-		return testsupport.Python
-	}
-	return testsupport.Go
-}
-
-// files reads the state files writer, the runtime that ran against home, left behind.
-func files(t *testing.T, home string, writer testsupport.Runtime) map[string]string {
+// files reads the state files the runs against home left behind.
+func files(t *testing.T, home string) map[string]string {
 	t.Helper()
 	out := map[string]string{}
 	for _, name := range []string{"daemon.json", "daemon.log", "launch-policy.json", "service.json", "worker-policy.json"} {
@@ -216,7 +121,7 @@ func files(t *testing.T, home string, writer testsupport.Runtime) map[string]str
 		if err == nil {
 			text := string(raw)
 			if processRecords[name] {
-				text = testsupport.RuntimeIdentityText(t, writer, text)
+				text = testsupport.RuntimeIdentityText(t, testsupport.Go, text)
 			}
 			out[name] = normalize(text)
 		} else if !os.IsNotExist(err) {
@@ -232,19 +137,19 @@ func files(t *testing.T, home string, writer testsupport.Runtime) map[string]str
 		if err != nil {
 			t.Fatal(err)
 		}
-		out["scopes/"+filepath.Base(path)] = normalize(testsupport.RuntimeIdentityText(t, writer, string(raw)))
+		out["scopes/"+filepath.Base(path)] = normalize(testsupport.RuntimeIdentityText(t, testsupport.Go, string(raw)))
 	}
 	return out
 }
 
-// consoleAnswer is what one runtime's console run answered and the state files it left.
+// consoleAnswer is what one console run answered and the state files it left.
 type consoleAnswer struct {
 	Capture capture           `json:"capture"`
 	Files   map[string]string `json:"files"`
 }
 
-// Test29ConsoleParity runs each console command in both runtimes over the same home; Python's
-// answer and files are recorded (pythonHalf).
+// Test29ConsoleParity runs each console command over a fresh home and checks its answer and
+// files against the golden, which began as the retained Python console's.
 func Test29ConsoleParity(t *testing.T) {
 	cases := [][]string{{"service", "status"}, {"service", "enable", "--actor", "tester"}, {"service", "disable"}, {"service", "stop"}, {"service", "declare", "--forget-execution-policy"}, {"service", "start"}, {"service", "restart"}, {"service", "run"}, {"daemon"}, {"--socket", "/absent", "daemon", "--deadline", "nan"}, {"--socket", "/absent", "daemon", "--deadline", "0", "--deadline-monotonic", "0"}, {"--socket", "/absent", "daemon", "--deadline-monotonic", "0"}, {"--socket", "/absent", "daemon", "--max-ticks", "0", "--allow-isolated-scope"}, {"--socket", "/absent", "daemon", "--max-ticks", "1", "--allow-isolated-scope"}}
 	cases = append(cases,
@@ -257,19 +162,8 @@ func Test29ConsoleParity(t *testing.T) {
 	for i, args := range cases {
 		t.Run(fmt.Sprintf("%02d_%s", i, strings.Join(args, "_")), func(t *testing.T) {
 			home := t.TempDir()
-			var python consoleAnswer
-			pythonHalf(t, home, "python", true, &python, func() (any, error) {
-				want := invoke(t, home, true, args...)
-				return consoleAnswer{pythonCapture(want), files(t, home, testsupport.Python)}, nil
-			})
-			got := invoke(t, home, false, args...)
-			gf := files(t, home, testsupport.Go)
-			compare(t, python.Capture, got)
-			wb, _ := json.Marshal(python.Files)
-			gb, _ := json.Marshal(gf)
-			if !bytes.Equal(wb, gb) {
-				t.Fatalf("persisted files\nPython %s\nGo %s", wb, gb)
-			}
+			got := invoke(t, home, args...)
+			checkAnswer(t, home, "answer", consoleAnswer{normalizedCapture(got), files(t, home)})
 		})
 	}
 }
@@ -280,11 +174,7 @@ func Test29CLIShape(t *testing.T) {
 			args := append(append([]string{}, command...), suffix...)
 			t.Run(strings.Join(args, "_"), func(t *testing.T) {
 				home := t.TempDir()
-				var want capture
-				pythonHalf(t, home, "python", false, &want, func() (any, error) {
-					return pythonCapture(invoke(t, home, true, args...)), nil
-				})
-				compare(t, want, invoke(t, home, false, args...))
+				checkAnswer(t, home, "answer", normalizedCapture(invoke(t, home, args...)))
 			})
 		}
 	}

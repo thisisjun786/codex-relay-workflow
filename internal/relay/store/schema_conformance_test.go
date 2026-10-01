@@ -14,96 +14,20 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
-// pythonDeliveryRecords drives Python's DeliveryService/AckService through each conformance
-// scenario of test_schema_conformance.py (one fresh case per scenario) and returns the stores.
-const pythonDeliveryRecordsScript = `
-import json
-from tests.test_schema_conformance import Attempts, Acknowledgements, Verdicts, ReverseDirectionExclusion
-from tests.support import PARENT, CHILD
-from codex_session_relay import identity
-
-class Case(Attempts, Acknowledgements, Verdicts, ReverseDirectionExclusion):
-    def runTest(self): pass
-
-def fresh():
-    c = Case(); c.setUp(); return c
-
-out = []
-def done(c, kind, **fields):
-    c.store.close()
-    out.append(dict(kind=kind, db=str(c.store.path), **fields))
-
-for outcome, expected, issue in [(None,"dispatched","REL-dispatch"),("busy","deferred_busy","REL-busy"),("read_fail","withheld_pre_send","REL-read"),("resume_fail","withheld_pre_send","REL-resume"),("turn_start_fail","held_uncertain","REL-turnstart"),("initialize_fail","held_uncertain","REL-init"),("transport_unknown","held_uncertain","REL-transport"),("in_progress","held_uncertain","REL-unfinished"),("approval_policy","inbox_only","REL-inbox")]:
-    c = fresh()
-    r = c._attempt(outcome, issue=issue, approval="on-request" if outcome == "approval_policy" else "never")
-    done(c, "attempt", key=r["requestId"], expect=expected)
-c = fresh(); r = c._attempt("in_progress", issue="REL-recon")
-c.adapter.start_turn(PARENT, status="completed", text=f"...{r['requestId']}...")
-c.reconciler.reconcile_attempt(r["requestId"], c.adapter)
-done(c, "reconciled", key=r["requestId"], expect="turn_found")
-c = fresh(); _rel, ev, turn = c._dispatched("REL-ack-yes")
-c.ack.acknowledge(ev, ack_turn_id=turn.turn_id, ack_proof=identity.ack_proof(ev, turn.turn_id), accepted=True, adapter=c.adapter)
-done(c, "ack", key=ev, expect="accepted")
-c = fresh(); rel, ev, turn = c._dispatched("REL-ack-no")
-c.registry.open_generation(rel["relationshipId"], dispatch_request_id="later", reason="needs_changes_revision", dispatch_turn_id="later-turn")
-c.ack.acknowledge(ev, ack_turn_id=turn.turn_id, ack_proof=identity.ack_proof(ev, turn.turn_id), accepted=False, rejection_reason="stale_generation", adapter=c.adapter)
-done(c, "ack", key=ev, expect="stale_generation")
-for v in ("verified", "unverified", "aborted"):
-    c = fresh(); _r, e = c._acknowledged(f"REL-v-{v}")
-    c.ack.record_verdict(e, verdict=v, verdict_turn_id=f"verdict-{v}")
-    done(c, "verdict", key=e, expect=v)
-c = fresh(); rel, e = c._acknowledged("REL-v-needs", recipients=[PARENT, CHILD])
-c.ack.record_verdict(e, verdict="needs_changes", verdict_turn_id="verdict-needs")
-done(c, "verdict", key=e, expect="needs_changes", relationship=rel["relationshipId"], child=CHILD)
-print(json.dumps(out))
-`
-
+// deliveryRecordStore is the store one conformance scenario of test_schema_conformance.py left,
+// driven through the retired Python implementation's DeliveryService and AckService (one fresh
+// case per scenario): every row but schema_meta, with the record the scenario wrote and what it
+// expected of it, as the fixture delivery-records.json.gz holds it.
 type deliveryRecordStore struct {
-	Kind         string `json:"kind"`
-	DB           string `json:"db"`
-	Key          string `json:"key"`
-	Expect       string `json:"expect"`
-	Relationship string `json:"relationship"`
-	Child        string `json:"child"`
-	// Store is every row of the scenario's store (dumpStore), which Go reads back in a store of
-	// its own (restoreStore).
-	Store storeRows `json:"store"`
-}
-
-// pythonDeliveryRecords is what each scenario wrote, recorded (pythonOracle).
-func pythonDeliveryRecords(t *testing.T) []deliveryRecordStore {
-	t.Helper()
-	root := t.TempDir()
-	t.Setenv("HOME", root)
-	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
-	t.Setenv("TMPDIR", root)
-	package_ := filepath.Join(repositoryRoot(t), "packages/codex-session-relay")
-	isolated := isolatedEnv(t)
-	var stores []deliveryRecordStore
-	parts := append([]string{"delivery-records", package_, pythonDeliveryRecordsScript}, keptEnvironment()...)
-	jsonAnswer(t, parts, &stores, func() (any, error) {
-		raw, err := runPythonStore(t, isolated, package_, pythonDeliveryRecordsScript)
-		if err != nil {
-			return nil, err
-		}
-		out := strings.TrimSpace(string(raw))
-		var stores []deliveryRecordStore
-		if err := json.Unmarshal([]byte(out[strings.LastIndex(out, "\n")+1:]), &stores); err != nil {
-			return nil, fmt.Errorf("python output %q: %v", out, err)
-		}
-		for i := range stores {
-			if stores[i].Store, err = dumpStore(stores[i].DB); err != nil {
-				return nil, err
-			}
-			// Each scenario's store is a temporary directory of its own; the rows stand for it.
-			stores[i].DB = ""
-		}
-		return stores, nil
-	}, sameUpToNoise)
-	return stores
+	Kind         string    `json:"kind"`
+	Key          string    `json:"key"`
+	Expect       string    `json:"expect"`
+	Relationship string    `json:"relationship"`
+	Child        string    `json:"child"`
+	Store        storeRows `json:"store"`
 }
 
 func TestSchemaConformance_python_properties(t *testing.T) {
@@ -159,7 +83,7 @@ func TestSchemaConformance_python_properties(t *testing.T) {
 	// Receipts: every producer and outcome branch, as persisted by the Go intake.
 	test = "test_every_producer_and_outcome_branch_validates"
 	receipts := f.conformanceReceipts(t)
-	// In label order: the validator's recorded verdicts are asked for under the cases in order.
+	// In label order: the validator's verdicts (the fixture) follow the cases in order.
 	for _, label := range slices.Sorted(maps.Keys(receipts)) {
 		positive("completion-receipt", label, receipts[label])
 	}
@@ -187,10 +111,12 @@ func TestSchemaConformance_python_properties(t *testing.T) {
 	negative("completion-receipt", "daemon failed on an interrupted turn", mutated(t, daemon, func(r map[string]any) { r["turnRef"].(map[string]any)["turnStatus"] = "interrupted" }))
 
 	// Attempts, acknowledgements and verdicts are produced by the delivery layer (todo 21);
-	// here Go reads what the real Python services persisted (recorded rows, restored into a Go
-	// store) and validates the stored records.
+	// here Go reads what the real Python services persisted (the fixture's rows, restored into a
+	// Go store) and validates the stored records.
 	var dispatched, acceptedAck, verifiedVerdict string
-	for i, recorded := range pythonDeliveryRecords(t) {
+	var records []deliveryRecordStore
+	readFixture(t, "delivery-records.json", &records)
+	for i, recorded := range records {
 		s := restoreStore(t, filepath.Join(t.TempDir(), fmt.Sprintf("scenario-%d", i), "relay.sqlite3"), recorded.Store)
 		switch recorded.Kind {
 		case "attempt":
@@ -429,20 +355,8 @@ func TestRelationshipRecord_matches_python_contract_record(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Python reads the same database once Go has stopped and Python has taken it over.
-	if err := f.store.Close(); err != nil {
-		t.Fatal(err)
-	}
-	want := pythonStoreValueAfter(t, func() { testsupport.HandOver(t, f.store.Path, "python") }, `import json, sys
-from codex_session_relay.clock import FakeClock
-from codex_session_relay.registry import Registry, contract_record
-from codex_session_relay.store import Store
-store = Store(sys.argv[1])
-print(json.dumps(contract_record(Registry(store, FakeClock()).get(sys.argv[2]))))
-store.close()`, f.store.Path, f.relationship.ID)
-	if got != want {
-		t.Fatalf("go\n%s\npython\n%s", got, want)
-	}
+	// Python's registry.contract_record over the same database answered the same bytes (the golden).
+	checkText(t, "contract_record", got, golden.Substitute(f.tmp, "<ROOT>"))
 }
 
 func TestSchemaFiles_python_packaged_contract(t *testing.T) {

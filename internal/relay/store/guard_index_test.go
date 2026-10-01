@@ -3,181 +3,13 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
-	"fmt"
-	"maps"
 	"path/filepath"
-	"reflect"
-	"slices"
 	"strings"
 	"testing"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 	"modernc.org/sqlite"
 )
-
-// pythonGuardScript drives each guard index from Python two ways. Eight threads on separate
-// connections race the writer API that owns the table (bind_scope, register_supervision,
-// MergeTurn.request, Capacity.reserve, EditRegions.propose) into a second live row: every writer
-// decides under BEGIN IMMEDIATE, so each either refuses with a reason, queues or replays, and none
-// reaches the index. Then the one path that does reach it: a raw INSERT of a second live row, the
-// write test_linkage.py:1018 and test_managed_reservation.py:405 make, both bare and inside
-// Store.transaction(). It prints, per index, what escaped the race and what the raw write raised,
-// with the store path and the forced row so Go can write the same row into the same store.
-const pythonGuardScript = `
-import json, os, sys, threading, sqlite3
-from codex_session_relay.store import Store
-from codex_session_relay.clock import FakeClock
-from codex_session_relay.models import Endpoint
-from codex_session_relay.errors import RelayError
-from codex_session_relay.linkage import Linkage, PARENT
-from codex_session_relay.mergeturn import MergeTurn
-from codex_session_relay.capacity import Capacity
-from codex_session_relay.editregion import EditRegions
-root = sys.argv[1]
-a, b, z, sup = (Endpoint("task-alpha", "host-a", cwd="/a"), Endpoint("task-beta", "host-b", cwd="/b"),
-                Endpoint("task-zeta", "host-z", cwd="/z"), Endpoint("task-sup", "host-s", cwd="/s"))
-def supervised(l):
-    for key, ep in (("PRJ-A", a), ("PRJ-B", b)):
-        l.register_supervision(initiative_key="INIT-1", project_key=key, supervisor=sup, parent=ep)
-def peers(l):
-    for key, ep in (("PRJ-A", a), ("PRJ-B", b)):
-        l.bind_scope(role=PARENT, scope_key=key, endpoint=ep)
-    return l.register_peer(left_project="PRJ-A", left_parent=a, right_project="PRJ-B", right_parent=b)["linkId"]
-def propose(st, l, link):
-    return EditRegions(st, FakeClock(), l).propose(repository="repo", base_revision="rev1", path="src/x.py", region_kind="file", region_key="", region_class="source", regenerate_from=None, left_project="PRJ-A", right_project="PRJ-B", peer_link_id=link, proposer_task_id=a.task_id, constraint_text="keep it", issue_key="CRW-1", next_owner=b.task_id)
-def request(st, l, ep, proj):
-    return MergeTurn(st, FakeClock(), l).request(repository="repo", base_ref="main", project_key=proj, holder=ep, candidate_head="h1", ready=True)
-# index -> (setup(store, linkage) -> ctx, API racers [(fn(store, linkage, ctx))], table, where-first, overrides)
-cases = {
- "scope_bindings_one_live_owner": (lambda s, l: None,
-     [lambda st, l, c: l.bind_scope(role=PARENT, scope_key="PRJ-A", endpoint=a), lambda st, l, c: l.bind_scope(role=PARENT, scope_key="PRJ-A", endpoint=b)],
-     "scope_bindings", {"binding_id": "bnd-forced", "task_id": "task-forced"}),
- "scope_links_one_live_edge": (lambda s, l: None,
-     [lambda st, l, c: l.register_supervision(initiative_key="INIT-1", project_key="PRJ-A", supervisor=sup, parent=a), lambda st, l, c: l.register_supervision(initiative_key="INIT-1", project_key="PRJ-A", supervisor=sup, parent=b)],
-     "scope_links", {"link_id": "lnk-forced", "lower_task_id": "task-forced"}),
- "merge_turns_one_live_holder": (lambda s, l: supervised(l),
-     [lambda st, l, c: request(st, l, a, "PRJ-A"), lambda st, l, c: request(st, l, b, "PRJ-B")],
-     "merge_turns", {"turn_id": "mtn-forced", "holder_task_id": "task-forced", "state": "holding"}),
- "merge_turns_one_live_claim": (lambda s, l: supervised(l),
-     [lambda st, l, c: request(st, l, a, "PRJ-A"), lambda st, l, c: request(st, l, a, "PRJ-A")],
-     "merge_turns", {"turn_id": "mtn-forced", "tenure": 2, "state": "waiting"}),
- "execution_slots_one_live_subject": (lambda s, l: supervised(l),
-     [lambda st, l, c: Capacity(st, FakeClock(), l).reserve(subject_kind="assignment", subject_key="S1", parent_task_id=a.task_id, project_key="PRJ-A", reserved_by=a.task_id)] * 2,
-     "execution_slots", {"slot_id": "slt-forced", "tenure": 2}),
- "edit_agreements_one_live_per_region": (lambda s, l: peers(l),
-     [lambda st, l, c: propose(st, l, c)] * 2,
-     "edit_agreements", {"agreement_id": "agr-forced", "tenure": 2}),
-}
-def surface(e):
-    return {"type": type(e).__name__, "message": str(e), "code": getattr(e, "sqlite_errorcode", None)}
-out = {}
-for index, (setup, racers, table, overrides) in cases.items():
-    # One store per directory: a directory holds one ownership mirror (takeover.json).
-    path = os.path.join(root, index, index + ".sqlite3")
-    s = Store(path); l = Linkage(s, FakeClock()); ctx = setup(s, l)
-    # 1. The writer API, raced from separate connections, 8 threads: what escapes?
-    escaped = []
-    def run(fn):
-        st = Store(path)
-        try: fn(st, Linkage(st, FakeClock()), ctx)
-        except RelayError as e: escaped.append("RelayError:" + e.reason.value)
-        except BaseException as e: escaped.append(type(e).__name__ + ":" + str(e))
-        finally: st.close()
-    ts = [threading.Thread(target=run, args=(racers[i % len(racers)],)) for i in range(8)]
-    [t.start() for t in ts]; [t.join(60) for t in ts]
-    # 2. The raw write that reaches the index (what test_linkage.py:1018 does), bare and in a transaction.
-    s.db.row_factory = sqlite3.Row
-    first = dict(s.db.execute(f"SELECT * FROM {table} ORDER BY rowid LIMIT 1").fetchone())
-    row = dict(first, **overrides)
-    sql = f"INSERT INTO {table} ({', '.join(row)}) VALUES ({', '.join('?' * len(row))})"
-    raw = tx = None
-    try: s.db.execute(sql, tuple(row.values()))
-    except BaseException as e: raw = surface(e)
-    try:
-        with s.transaction() as db:
-            db.execute(sql, tuple(row.values()))
-    except BaseException as e: tx = surface(e)
-    live = s.db.execute(f"SELECT COUNT(*) FROM {table} WHERE rowid > 0").fetchone()[0]
-    forced = s.db.execute(f"SELECT COUNT(*) FROM {table} WHERE {next(iter(overrides))} = ?", (next(iter(overrides.values())),)).fetchone()[0]
-    s.close()
-    out[index] = {"db": path, "row": {k: v for k, v in row.items()}, "apiRace": sorted(set(x for x in escaped if not x.startswith("RelayError"))),
-                  "apiRefusals": sorted(set(x for x in escaped if x.startswith("RelayError"))),
-                  "raw": raw, "transaction": tx, "forcedRowsLeft": forced}
-print(json.dumps(out, sort_keys=True))
-`
-
-// pythonGuardSurface is what Python surfaced for one guard index.
-type pythonGuardSurface struct {
-	DB          string         `json:"db"`
-	Row         map[string]any `json:"row"`
-	APIRace     []string       `json:"apiRace"`
-	APIRefusals []string       `json:"apiRefusals"`
-	Raw         *pyError       `json:"raw"`
-	Transaction *pyError       `json:"transaction"`
-	ForcedLeft  int            `json:"forcedRowsLeft"`
-	// Store is every row of the index's store (dumpStore), which Go reads back in a store of its
-	// own (restoreStore).
-	Store storeRows `json:"store"`
-}
-
-type pyError struct {
-	Type    string `json:"type"`
-	Message string `json:"message"`
-	Code    int    `json:"code"`
-}
-
-// pythonGuardSurfaceOf is what Python surfaced for index, recorded (pythonOracle): the script
-// drives every index, and the one asked for is kept with the rows of its store.
-func pythonGuardSurfaceOf(t *testing.T, index string) pythonGuardSurface {
-	t.Helper()
-	root := t.TempDir()
-	t.Setenv("HOME", root)
-	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
-	t.Setenv("TMPDIR", root)
-	dir := repositoryRoot(t)
-	isolated := isolatedEnv(t)
-	var surface pythonGuardSurface
-	parts := append([]string{"guard-surface", dir, pythonGuardScript, index}, keptEnvironment()...)
-	jsonAnswer(t, append(parts, root), &surface, func() (any, error) {
-		raw, err := runPythonStore(t, isolated, dir, pythonGuardScript, root)
-		if err != nil {
-			return nil, err
-		}
-		out := strings.TrimSpace(string(raw))
-		var surfaces map[string]pythonGuardSurface
-		if err := json.Unmarshal([]byte(out[strings.LastIndex(out, "\n")+1:]), &surfaces); err != nil {
-			return nil, fmt.Errorf("python output %q: %v", out, err)
-		}
-		surface, ok := surfaces[index]
-		if !ok {
-			return nil, fmt.Errorf("python surfaced nothing for %s", index)
-		}
-		if surface.Store, err = dumpStore(surface.DB); err != nil {
-			return nil, err
-		}
-		surface.DB = ""
-		return surface, nil
-	}, sameGuardVerdict)
-	return surface
-}
-
-// sameGuardVerdict is check mode's comparison for a guard surface. Which racer wins, and so the
-// rows the store holds and the first row the forced one copies, differs from run to run by design;
-// what Python surfaced does not.
-var sameGuardVerdict = pyoracle.SameWhen(func(recorded, live []byte) bool {
-	verdict := func(raw []byte) (any, error) {
-		var s pythonGuardSurface
-		if err := json.Unmarshal(raw, &s); err != nil {
-			return nil, err
-		}
-		return []any{s.APIRace, s.APIRefusals, s.Raw, s.Transaction, s.ForcedLeft, slices.Sorted(maps.Keys(s.Row))}, nil
-	}
-	a, errA := verdict(recorded)
-	b, errB := verdict(live)
-	return errA == nil && errB == nil && reflect.DeepEqual(a, b)
-})
 
 // guardIndexes are store.py GUARD_INDEXES with the table each guards.
 var guardIndexes = map[string]string{
@@ -189,43 +21,43 @@ var guardIndexes = map[string]string{
 	"edit_agreements_one_live_per_region": "edit_agreements",
 }
 
-// runGuard proves Go surfaces a write that reaches index exactly as Python does.
+// guardFixture is what the retired Python implementation left for one guard index (the fixture
+// guard-<index>.json.gz): the rows of its store after its writer API was raced into a second live
+// row from eight connections (every racer refused with a reason, queued or replayed; none reached
+// the index), and the second live row it then wrote past the API, which raised
+// sqlite3.IntegrityError 2067, bare and inside Store.transaction(), keeping nothing.
+type guardFixture struct {
+	Row   map[string]any `json:"row"`
+	Store storeRows      `json:"store"`
+}
+
+// runGuard proves Go surfaces a write that reaches index as Python does (the golden).
 func runGuard(t *testing.T, index string) {
 	t.Helper()
 	table := guardIndexes[index]
-	// Given: Python's writer API, raced from eight connections, never reached the index (every
-	// racer refused with a reason, queued or replayed), and Python's raw write of the second live
-	// row raised sqlite3.IntegrityError 2067, bare and inside Store.transaction(), keeping nothing.
-	python := pythonGuardSurfaceOf(t, index)
-	if len(python.APIRace) != 0 {
-		t.Fatalf("Python's writer API reached %s under a race: %v", index, python.APIRace)
-	}
-	for _, surface := range []*pyError{python.Raw, python.Transaction} {
-		if surface == nil || surface.Type != "IntegrityError" || surface.Code != 2067 || !strings.HasPrefix(surface.Message, "UNIQUE constraint failed: "+table+".") {
-			t.Fatalf("Python raw write into %s: %+v", index, surface)
-		}
-	}
-	if python.ForcedLeft != 0 {
-		t.Fatalf("Python kept %d forced rows", python.ForcedLeft)
-	}
-	// When: Go opens a store holding the rows Python's store held and writes the same row
+	var fixture guardFixture
+	readFixture(t, "guard-"+strings.ReplaceAll(index, "_", "-")+".json", &fixture)
+	// When: Go opens a store holding the rows Python's store held and writes the row Python forced
 	// through the typed insert, bare and inside Transaction.
-	s := restoreStore(t, filepath.Join(t.TempDir(), "restored", "relay.sqlite3"), python.Store)
+	s := restoreStore(t, filepath.Join(t.TempDir(), "restored", "relay.sqlite3"), fixture.Store)
 	ctx := context.Background()
-	insert := guardInsert(t, table, python.Row)
+	insert := guardInsert(t, table, fixture.Row)
 	bare := insert(ctx, s)
 	transacted := s.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error { return insert(ctx, s) })
 	// Then: the same surface. The driver's constraint error with the same extended code and the
 	// same constraint text, never a refusal reason, and nothing written.
+	var surfaced []any
 	for _, err := range []error{bare, transacted} {
 		var driverErr *sqlite.Error
-		if !errors.As(err, &driverErr) || driverErr.Code() != python.Raw.Code || !strings.Contains(err.Error(), python.Raw.Message) || RefusalReason(err) != "" {
-			t.Fatalf("Go second live row in %s: %v, want Python's IntegrityError %d %q", index, err, python.Raw.Code, python.Raw.Message)
+		if !errors.As(err, &driverErr) || driverErr.Code() != 2067 || !strings.Contains(err.Error(), "UNIQUE constraint failed: "+table+".") || RefusalReason(err) != "" {
+			t.Fatalf("Go second live row in %s: %v, want the IntegrityError 2067 of the index", index, err)
 		}
+		surfaced = append(surfaced, map[string]any{"code": driverErr.Code(), "error": err.Error()})
 	}
+	checkJSON(t, "second live row, bare and in a transaction", surfaced)
 	var forced int
 	key := guardKeyColumn(table)
-	must(t, s.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table+" WHERE "+key+" = ?", python.Row[key]).Scan(&forced))
+	must(t, s.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table+" WHERE "+key+" = ?", fixture.Row[key]).Scan(&forced))
 	if forced != 0 {
 		t.Fatalf("Go kept the forced %s row", table)
 	}

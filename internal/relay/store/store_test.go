@@ -5,9 +5,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
-	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -18,38 +16,18 @@ import (
 )
 
 func TestOpen_matches_python_schema_when_fresh(t *testing.T) {
-	// Given: separate temporary state directories and the shipped Python Store.
+	// Given: a temporary state directory.
 	ctx := context.Background()
 	root := t.TempDir()
-	pythonDB := filepath.Join(root, "python", "relay.sqlite3")
 	goDB := filepath.Join(root, "go", "relay.sqlite3")
-	// Python's schema, as SQLite persists it, is recorded (pythonOracle).
-	var want []string
-	jsonAnswer(t, []string{"fresh-schema"}, &want, func() (any, error) {
-		cmd := exec.Command("uv", "run", "--no-sync", "python", "-c", "from codex_session_relay.store import Store; import sys; Store(sys.argv[1])", pythonDB)
-		cmd.Dir = repositoryRoot(t)
-		cmd.Env = append(os.Environ(), "HOME="+root, "XDG_STATE_HOME="+filepath.Join(root, "xdg"), "XDG_DATA_HOME="+filepath.Join(root, "data"), "XDG_CONFIG_HOME="+filepath.Join(root, "config"), "CODEX_HOME="+filepath.Join(root, "codex"), "PYTHONPATH="+filepath.Join(repositoryRoot(t), "packages/codex-session-relay/src"))
-		if output, err := cmd.CombinedOutput(); err != nil {
-			return nil, fmt.Errorf("python Store: %v: %s", err, output)
-		}
-		return master(t, pythonDB), nil
-	})
 	// When: Go initializes its own database.
 	store, err := fixtureOpen(ctx, goDB, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	// Then: SQLite's persisted CREATE text is byte-identical.
-	got := master(t, goDB)
-	if !reflect.DeepEqual(got, want) {
-		for i := range got {
-			if i >= len(want) || got[i] != want[i] {
-				t.Fatalf("sqlite_master object %d: Go %q, Python %q", i, got[i], want[i])
-			}
-		}
-		t.Fatalf("object counts: Go %d Python %d", len(got), len(want))
-	}
+	// Then: SQLite's persisted CREATE text is the one Python's Store persisted, byte for byte.
+	checkJSON(t, "sqlite_master", master(t, goDB))
 }
 func TestOpen_preserves_python_database_when_reopened(t *testing.T) {
 	// Given: a committed database made by the real Python Store.

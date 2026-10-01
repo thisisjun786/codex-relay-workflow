@@ -1,0 +1,15 @@
+{
+    "roles": {
+      "child": {
+        "model": "anthropic/claude-opus-5-5",
+        "reasoningEffort": "xhigh"
+      },
+      "parent": {
+        "model": "anthropic/claude-opus-5-5",
+        "reasoningEffort": "xhigh"
+      },
+      "supervisor": {
+        "expectation": "record"
+      }
+    }
+  }

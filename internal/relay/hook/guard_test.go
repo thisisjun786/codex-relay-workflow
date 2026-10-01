@@ -14,29 +14,17 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
-// guardCases are every case guard_compare.py lays out, in its order.
-var guardCases = []string{"unmanaged", "unclaimed", "uncorrelated", "unbound", "other", "unregistered",
-	"undeclared", "ready_missing", "ready_receipted", "ready_staged", "artifacts_changed",
-	"frozen", "generation", "dispatch", "generation_absent", "inactive", "foreign_turn",
-	"malformed_disposition", "unreadable_disposition", "malformed_marker", "bad_identity",
-	"active", "hold_spent", "generation_spent", "window_spent", "observe",
-	"in_progress", "blocked_needs_input", "interrupted", "failed", "no_record",
-	"frozen_at_depth", "frozen_past_depth"}
-
-// compareGuard replays real marker, store and receipt fixtures through the built Go CLI and
-// compares each full byte envelope, observation record and store with Python's guard.evaluate
-// (guard_compare.py). Python lays each case out and answers it (guard_compare.py prepare); both
-// are recorded (pythonFixture) under a fixed path, since a receipt's revision and event ids
-// digest the artifact paths.
+// compareGuard replays real marker, store and receipt fixtures (testdata/fixtures/guard-<case>,
+// which guard_compare.py prepare laid out) through the built Go CLI: each full byte envelope and
+// observation record is the case's golden, which began as Python's guard.evaluate's, and the
+// guard leaves the store as it was. The fixtures lie at a fixed path (canonicalRoot), since a
+// receipt's revision and event ids digest the artifact paths.
 func compareGuard(t *testing.T, cases string) {
 	t.Helper()
 	names := strings.Split(cases, ",")
-	if cases == "all" {
-		names = guardCases
-	}
 	root := canonicalRoot(t)
 	env := slices.DeleteFunc(os.Environ(), func(kv string) bool {
 		key, _, _ := strings.Cut(kv, "=")
@@ -48,22 +36,20 @@ func compareGuard(t *testing.T, cases string) {
 		if err := os.Mkdir(base, 0o700); err != nil {
 			t.Fatal(err)
 		}
-		out, _ := pythonFixture(t, name, base, func() ([]byte, error) {
-			return pythonScript(t, nil, nil, "testdata/guard_compare.py", "-", root, "prepare", name)
-		}, nil)
-		var python struct {
-			Stdout, Mode       string
-			NoRecord           bool
-			Record, RecordText *string
+		out, _ := layFixture(t, "guard-"+name, base)
+		var fixture struct {
+			Mode     string
+			NoRecord bool
+			Record   *string
 		}
-		if err := json.Unmarshal(out, &python); err != nil {
+		if err := json.Unmarshal(out, &fixture); err != nil {
 			t.Fatalf("%s: %v %s", name, err, out)
 		}
 		db := filepath.Join(base, "state", "relay.sqlite3")
 		before := storeRows(t, db)
 		args := []string{"relay", "--state", filepath.Join(base, "state"), "guard-evaluate", "--marker-root", filepath.Join(base, "markers"),
-			"--stop-input", filepath.Join(base, "stop.json"), "--mode", python.Mode, "--now", "2026-01-01T00:06:00+00:00"}
-		if python.NoRecord {
+			"--stop-input", filepath.Join(base, "stop.json"), "--mode", fixture.Mode, "--now", "2026-01-01T00:06:00+00:00"}
+		if fixture.NoRecord {
 			args = append(args, "--no-record")
 		}
 		command := exec.Command(binary(t), args...)
@@ -73,14 +59,13 @@ func compareGuard(t *testing.T, cases string) {
 			t.Fatalf("%s: %+v", name, got)
 		}
 		// The FULL byte envelope, key order included, as cached adapters consume it.
-		if got.Stdout != python.Stdout {
-			t.Fatalf("%s:\n go     %s\n python %s", name, got.Stdout, python.Stdout)
-		}
-		if python.Record != nil {
-			raw, err := os.ReadFile(filepath.Join(base, *python.Record))
-			if err != nil || string(raw) != *python.RecordText {
-				t.Fatalf("%s: record %v\n go     %s\n python %s", name, err, raw, *python.RecordText)
+		golden.Check(t, name+"/stdout", []byte(got.Stdout), golden.Substitute(root, "<ROOT>"))
+		if fixture.Record != nil {
+			raw, err := os.ReadFile(filepath.Join(base, *fixture.Record))
+			if err != nil {
+				t.Fatalf("%s: %v", name, err)
 			}
+			golden.Check(t, name+"/record", raw, golden.Substitute(root, "<ROOT>"))
 		}
 		if !slices.Equal(storeRows(t, db), before) {
 			t.Fatalf("%s: the guard changed relay evidence", name)
@@ -102,8 +87,8 @@ func Test33GuardFrozenCopyAtTheDecoderDepth(t *testing.T) {
 	compareGuard(t, "frozen_at_depth,frozen_past_depth")
 }
 
-// The legacy guard CLI's usage envelopes through the built multicall binary, byte for byte the
-// Python CLI's (guard_usage.py), whose answers are recorded (pyoracle).
+// The legacy guard CLI's usage envelopes through the built multicall binary, byte for byte their
+// goldens, which began as the Python CLI's (guard_usage.py).
 func Test33GuardUsagePython(t *testing.T) {
 	home := t.TempDir()
 	env := slices.DeleteFunc(os.Environ(), func(kv string) bool {
@@ -134,12 +119,7 @@ func Test33GuardUsagePython(t *testing.T) {
 			return runOutcome(t, cmd)
 		}
 		got := run(append([]string{binary(t), "relay", "guard-evaluate"}, c.args...)...)
-		want := pythonOutcome(t, strconv.Itoa(i), func() outcomeBytes {
-			return run(append([]string{python(t), "-m", "codex_session_relay.cli", "guard-evaluate"}, c.args...)...)
-		}, pyoracle.Substitute(home, "<HOME>"))
-		if got != want {
-			t.Fatalf("%q: Go %+v\nPython %+v", c.args, got, want)
-		}
+		goldenOutcome(t, strconv.Itoa(i), got, golden.Substitute(home, "<HOME>"))
 	}
 }
 

@@ -5,18 +5,16 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"maps"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 type reviewSelectionFixture struct {
@@ -25,22 +23,13 @@ type reviewSelectionFixture struct {
 	Stop                              json.RawMessage
 }
 
-// selectionEnv is the part of the environment review_selection.py prepare sets; the rest of the
-// fixture's environment is this process's.
-var selectionEnv = []string{"HOME", "CODEX_HOME", "XDG_STATE_HOME", "CODEX_SESSION_RELAY_STATE"}
-
-// prepareSelection lays review_selection.py prepare's fixture out under a new home: Python lays
-// it out and, for the refusal cases, answers them (expected.json); both are recorded
-// (pythonFixture), the fixture's environment reduced to what prepare set in it.
+// prepareSelection lays review_selection.py prepare's fixture out under a new home
+// (testdata/fixtures/review-selection-<name>), the fixture's environment what prepare set in it.
 func prepareSelection(t *testing.T, name string) (string, reviewSelectionFixture, *fixtureNames) {
 	t.Helper()
 	home := hookHome(t, 5)
 	environ := os.Environ()
-	_, names := pythonFixture(t, "prepare", home, func() ([]byte, error) {
-		return pythonScript(t, nil, nil, "testdata/review_selection.py", "prepare", home, name)
-	}, func() error {
-		return keepEnv(filepath.Join(home, "fixture.json"), selectionEnv, "env")
-	}, "app.sock", "other.sock", "link/app.sock", "real/app.sock")
+	_, names := layFixture(t, "review-selection-"+name, home, "app.sock", "other.sock", "link/app.sock", "real/app.sock")
 	raw, err := os.ReadFile(filepath.Join(home, "fixture.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -61,7 +50,7 @@ func prepareSelection(t *testing.T, name string) (string, reviewSelectionFixture
 func Test33ReviewD6(t *testing.T) {
 	for _, name := range []string{"wrong_socket", "ambiguous", "unidentified", "override"} {
 		t.Run(name, func(t *testing.T) {
-			home, f, _ := prepareSelection(t, name)
+			home, f, names := prepareSelection(t, name)
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			if err := os.MkdirAll(f.State, 0700); err != nil {
@@ -102,15 +91,9 @@ func Test33ReviewD6(t *testing.T) {
 			case <-ctx.Done():
 				t.Fatal(ctx.Err())
 			}
-			// review_selection.py compare: the owner's refusal is the Python CLI's (expected.json,
-			// recorded with the fixture), and the refusal recorded no observation.
-			expected, err := os.ReadFile(filepath.Join(home, "expected.json"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if g, w := evidence.Dumps(got, false, true, true), canonicalJSON(t, expected); g != w {
-				t.Fatalf("\n go     %s\n python %s", g, w)
-			}
+			// review_selection.py compare: the owner's refusal is the golden, which began as the
+			// Python CLI's, and the refusal recorded no observation.
+			golden.Check(t, "refusal", names.spell([]byte(evidence.DumpsIndent(got, 2, true, true)+"\n")), golden.Substitute(home, "<ROOT>"), golden.Substitute(testRoot, "<REPO>"))
 			if held, _ := filepath.Glob(filepath.Join(home, "markers", "*", "*", "hook", "*", "*", "*.json")); len(held) != 0 {
 				t.Fatalf("the refusal recorded an observation: %v", held)
 			}
@@ -278,9 +261,9 @@ func Test33ReviewD11(t *testing.T) {
 		t.Fatal(err)
 	}
 	actual := evidence.Dumps(v, true, false, true) + "\n"
-	// Python's guard with the same injected datetime over the same marker and store
-	// (review_selection.py clock ... python, after this evaluation's records are removed): its
-	// envelope and observation and hold bytes are recorded (pyoracle).
+	// The envelope and the observation and hold bytes are the golden, which began as Python's
+	// guard's with the same injected datetime over the same marker and store
+	// (review_selection.py clock).
 	files := map[string]string{}
 	paths, _ := filepath.Glob(filepath.Join(f.Root, "*", "*", "hook", "*", "*", "*.json"))
 	for _, path := range paths {
@@ -291,52 +274,14 @@ func Test33ReviewD11(t *testing.T) {
 		rel, _ := filepath.Rel(f.Root, path)
 		files[rel] = string(raw)
 	}
-	raw := names.answer(t, "clock", func() ([]byte, error) {
-		return pythonScript(t, nil, nil, "testdata/review_selection.py", "clock", home, "python")
-	}, pyoracle.Substitute(home, "<HOME>"))
-	var python struct {
-		Envelope string            `json:"envelope"`
-		Files    map[string]string `json:"files"`
+	if len(files) == 0 {
+		t.Fatal("the guard recorded nothing")
 	}
-	if err = json.Unmarshal(raw, &python); err != nil {
-		t.Fatalf("%v: %s", err, raw)
-	}
-	if python.Envelope != actual || !maps.Equal(python.Files, files) || len(files) == 0 {
-		t.Fatalf("go %s %v\npython %s %v", actual, files, python.Envelope, python.Files)
-	}
-}
-
-// keepEnv rewrites the environment objects named fields of the JSON document at path to hold only
-// keys: a fixture's copy of a whole process environment is this machine's. A field named with a
-// leading "-" is dropped whole.
-func keepEnv(path string, keys []string, fields ...string) error {
-	raw, err := os.ReadFile(path)
+	encoded, err := encodeJSON(map[string]any{"envelope": actual, "files": files})
 	if err != nil {
-		return err
+		t.Fatal(err)
 	}
-	var document map[string]any
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	if err = decoder.Decode(&document); err != nil {
-		return err
-	}
-	for _, field := range fields {
-		if name, drop := strings.CutPrefix(field, "-"); drop {
-			delete(document, name)
-			continue
-		}
-		env, _ := document[field].(map[string]any)
-		for key := range env {
-			if !slices.Contains(keys, key) {
-				delete(env, key)
-			}
-		}
-	}
-	out, err := encodeJSON(document)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, out, 0o600)
+	golden.Check(t, "clock", names.spell(encoded), golden.Substitute(home, "<HOME>"))
 }
 
 // withEnviron is environ with overrides applied, as a map.

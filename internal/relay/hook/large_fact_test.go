@@ -9,29 +9,22 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 // The deadline-bearing native hook classifies a valid large marker (a 5 MiB intent) as Python's
-// guard does. large_fact.py prepare lays the fixture out (late_verdict.py's, the intent padded,
-// the store handed to Go) and answers Python's guard verdict and records; both are recorded
-// (pythonFixture). The owned hook evaluates in-process, so the control socket sees no request.
+// guard did: the fixture is large_fact.py prepare's (late_verdict.py's, the intent padded, the
+// store handed to Go), and the hook's answer and the guard's records are the goldens, which began
+// as Python's guard verdict and records. The owned hook evaluates in-process, so the control
+// socket sees no request.
 func Test33LargeFactHookPython(t *testing.T) {
 	home := hookHome(t, 5)
 	built := binary(t) // built before the timeout starts, which is for the hook
-	out, _ := pythonFixture(t, "fixture", home, func() ([]byte, error) {
-		return pythonScript(t, nil, nil, "testdata/large_fact.py", "-", home, "prepare")
-	}, nil)
-	var python struct {
-		HookOutput string                    `json:"hook_output"`
-		Files      map[string]map[string]any `json:"files"`
-	}
-	if err := json.Unmarshal(out, &python); err != nil {
-		t.Fatalf("%v: %s", err, out)
-	}
+	layFixture(t, "large-fact", home)
 	listener, err := net.Listen("unix", filepath.Join(home, "state", "control.sock"))
 	if err != nil {
 		t.Fatal(err)
@@ -74,9 +67,7 @@ func Test33LargeFactHookPython(t *testing.T) {
 	case <-time.After(12 * time.Second):
 		t.Fatal("the hook never reached the control socket")
 	}
-	if got != (outcomeBytes{0, python.HookOutput, ""}) {
-		t.Fatalf("hook %+v, Python answered %q", got, python.HookOutput)
-	}
+	goldenOutcome(t, "hook", got, golden.Substitute(home, "<HOME>"))
 	rows := rowsAt(t, home)
 	if len(rows) != 1 || rows[0]["adapterOutcome"] != "guard_answered" || rows[0]["guardState"] != "receipt_missing" || rows[0]["held"] != true {
 		t.Fatal(rows)
@@ -95,10 +86,5 @@ func Test33LargeFactHookPython(t *testing.T) {
 		delete(record, "at") // independent real clocks
 		actual[filepath.Base(path)] = record
 	}
-	for _, record := range python.Files {
-		delete(record, "at")
-	}
-	if !reflect.DeepEqual(actual, python.Files) {
-		t.Fatalf("go %v\npython %v", actual, python.Files)
-	}
+	golden.CheckJSON(t, "files", actual, golden.Substitute(home, "<HOME>"))
 }

@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -15,7 +14,6 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // observationSeed is the fixture both runtimes' stores hold before the daemon ticks.
@@ -26,63 +24,41 @@ var observationSeed = []string{
 
 const observationStaged = "INSERT INTO events(event_id,relationship_id,execution_generation,revision_hash,outcome,producer,turn_thread_id,turn_id,turn_status,receipt,first_seen_at,last_seen_at,stage) VALUES('staged-event','r',1,'revision','ready_for_review','child','child','anchor','inProgress','{}','2023-11-14T22:13:20Z','2023-11-14T22:13:20Z','staged')"
 
-// seedObservation writes the fixture through the store writer of the runtime under test, into
-// the store that runtime owns: each store is its own runtime's from creation, so the two
-// stores' schema_meta differ by the owner alone.
-func seedObservation(t *testing.T, home, socket string, staged, python bool) {
+// seedObservation writes the fixture through Go's store writer into the store Go owns from its
+// creation.
+func seedObservation(t *testing.T, home, socket string, staged bool) {
 	t.Helper()
 	statements := append([]string{}, observationSeed...)
 	if staged {
 		statements = append(statements, observationStaged)
 	}
-	path := home + "/state/relay.sqlite3"
-	if !python {
-		prepareParityOwnership(t, home, false, []string{"--socket", socket})
-		defer inRuntimeScope(t, home)()
-		s, err := store.Open(context.Background(), path, socket)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, statement := range statements {
-			if _, err = s.DB.Exec(statement); err != nil {
-				t.Fatal(errors.Join(err, s.Close()))
-			}
-		}
-		if err = s.Close(); err != nil {
-			t.Fatal(err)
-		}
-		return
-	}
-	encoded, err := json.Marshal(statements)
+	prepareParityOwnership(t, home)
+	defer inRuntimeScope(t, home)()
+	s, err := store.Open(context.Background(), home+"/state/relay.sqlite3", socket)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(filepath.Join(testRoot, ".venv/bin/python"), "-c", `import json, sys
-from codex_session_relay.store import Store
-s=Store(sys.argv[1], socket_path=sys.argv[2])
-try:
- for statement in json.loads(sys.argv[3]):
-  s.db.execute(statement)
-finally:
- s.close()
-`, path, socket, string(encoded))
-	cmd.Env = environment(home)
-	if raw, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("seed: %v %s", err, raw)
+	for _, statement := range statements {
+		if _, err = s.DB.Exec(statement); err != nil {
+			t.Fatal(errors.Join(err, s.Close()))
+		}
+	}
+	if err = s.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 
-// observationAnswer is one runtime's daemon tick over the seeded store: its answer, its tables and
-// its state files.
+// observationAnswer is the daemon's tick over the seeded store: its answer, its tables and its
+// state files.
 type observationAnswer struct {
 	Capture capture           `json:"capture"`
 	Tables  string            `json:"tables"`
 	Files   map[string]string `json:"files"`
 }
 
-// Test29ObservationConsoleTables ticks the daemon of each runtime once over the same fixture on a
-// fixed clock; Python's half (its own store writer, its tick, its tables and files) is recorded
-// (pythonHalf).
+// Test29ObservationConsoleTables ticks the daemon once over the fixture on a fixed clock and checks
+// its answer, tables and files against the golden, which began as the retained Python's half (its
+// own store writer, its tick, its tables and files).
 func Test29ObservationConsoleTables(t *testing.T) {
 	invokeFixed := fixedClockRuntime(t)
 	for _, scenario := range []string{"completed", "absent", "failed", "interrupted", "staged-completed", "staged-failed"} {
@@ -114,25 +90,9 @@ func Test29ObservationConsoleTables(t *testing.T) {
 			})
 			host.Handle("thread/goal/get", func(json.RawMessage) fakehost.Reply { return fakehost.Reply{Result: map[string]any{"goal": nil}} })
 			args := []string{"--socket", host.SocketPath, "daemon", "--max-ticks", "1", "--allow-isolated-scope"}
-			var want observationAnswer
-			pythonHalf(t, home, "python", true, &want, func() (any, error) {
-				seedObservation(t, home, host.SocketPath, staged, true)
-				result := invokeFixed(home, true, args)
-				return observationAnswer{pythonCapture(result), withoutEvidenceDigests(t, home, tables(t, home, testsupport.Python)), files(t, home, testsupport.Python)}, nil
-			}, host.SocketPath)
-			seedObservation(t, home, host.SocketPath, staged, false)
-			got := invokeFixed(home, false, args)
-			gt := withoutEvidenceDigests(t, home, tables(t, home, testsupport.Go))
-			gf := files(t, home, testsupport.Go)
-			compare(t, want.Capture, got)
-			if want.Tables != gt {
-				t.Fatalf("table byte difference\nPython %s\nGo %s", want.Tables, gt)
-			}
-			for name, value := range want.Files {
-				if value != gf[name] {
-					t.Fatalf("%s\nPython %s\nGo %s", name, value, gf[name])
-				}
-			}
+			seedObservation(t, home, host.SocketPath, staged)
+			got := invokeFixed(home, args)
+			checkAnswer(t, home, "answer", observationAnswer{normalizedCapture(got), withoutEvidenceDigests(t, home, tables(t, home)), files(t, home)}, host.SocketPath)
 		})
 	}
 }
@@ -140,9 +100,8 @@ func Test29ObservationConsoleTables(t *testing.T) {
 // withoutEvidenceDigests spells each fault occurrence's evidence digest in text, a tables text of
 // home's store, as <EVIDENCE_DIGEST>, once it is proven to be the digest of that occurrence's
 // evidence (sha256 of json.dumps(evidence, sort_keys=True, separators=(",", ":"))). The evidence
-// names the installation's location and the home, so its digest changes with them: a recorded
-// Python digest names the paths it was recorded under. The evidence itself is still compared,
-// and each runtime's digest is proven the same function of it.
+// names the installation's location and the home, so its digest changes with them from run to
+// run. The evidence itself is still compared, and the digest is proven that function of it.
 func withoutEvidenceDigests(t *testing.T, home, text string) string {
 	t.Helper()
 	path := filepath.Join(home, "state", "relay.sqlite3")

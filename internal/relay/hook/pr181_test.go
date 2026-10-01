@@ -19,8 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 func Test33PR181ClaimWriteFailurePython(t *testing.T) {
@@ -60,29 +59,10 @@ func Test33PR181ClaimWriteFailurePython(t *testing.T) {
 				if answers[0] != `{"decision": "block", "reason": "verify", "continue": true}` || answers[1] != "" {
 					t.Fatal(answers)
 				}
-				// Python's adapter under the same failing write (pr181_claim_failure.py python): its
-				// answer and the journal and claim files it left, recorded (pyoracle).
-				raw := pyoracle.Answer(t, "python", func() ([]byte, error) {
-					out, err := pythonScript(t, nil, []byte(payload), "testdata/pr181_claim_failure.py", testRoot, home, role, strconv.Itoa(int(code)), "python")
-					if err != nil {
-						return nil, err
-					}
-					// Keys sorted: the script lists the files in the order of their random names.
-					return []byte(canonicalJSON(t, out)), nil
-				}, pyoracle.Substitute(home, "<NATIVE_HOME>")) // the script spells both homes <HOME> itself
-				var python struct {
-					First string          `json:"first_stdout"`
-					Files json.RawMessage `json:"files"`
-				}
-				if err := json.Unmarshal(raw, &python); err != nil {
-					t.Fatalf("%v: %s", err, raw)
-				}
-				if python.First != answers[0] {
-					t.Fatalf("Python answered %q, Go %q", python.First, answers[0])
-				}
-				if got, want := evidence.Dumps(adapterFiles(t, home), false, true, true), canonicalJSON(t, python.Files); got != want {
-					t.Fatalf("files\n go     %s\n python %s", got, want)
-				}
+				// The journal and claim files the hook left are the golden, which began as those
+				// Python's adapter left under the same failing write (pr181_claim_failure.py), its
+				// first answer the one above.
+				goldenDumps(t, "files", adapterFiles(t, home), true)
 			})
 		}
 	}
@@ -114,22 +94,13 @@ func Test33PR181StatusSymlinkPython(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			script := `import json,sys;sys.path.insert(0,sys.argv[1]);from crw_runtime import completion;v,f,d,r=completion.read_configuration(sys.argv[2]);print(json.dumps({'state':f or r.state,'value':v}))`
-			raw := pyoracle.Answer(t, "read_configuration", func() ([]byte, error) {
-				return pythonScript(t, nil, nil, "-c", script, filepath.Join(testRoot, "scripts"), path)
-			}, pyoracle.Substitute(home, "<HOME>"))
-			var expected map[string]any
-			if err := json.Unmarshal(raw, &expected); err != nil {
-				t.Fatal(err)
-			}
-			// read_configuration's state is its failure, or the reading's own state ("PRESENT").
+			// The state is the golden, which began as completion.read_configuration's: its
+			// failure, or the reading's own state ("PRESENT").
 			cfg, state, _ := ReadSettings(context.Background(), path)
 			if state == "" {
 				state = "PRESENT"
 			}
-			if state != expected["state"] {
-				t.Fatalf("Go %s Python %s", state, raw)
-			}
+			golden.Check(t, "state", []byte(state))
 			if name == "live" && len(cfg) == 0 {
 				t.Fatal("the live settings read as empty")
 			}
@@ -142,7 +113,8 @@ func Test33PR181NativeAndPythonRegistration(t *testing.T) {
 	native := filepath.Join(home, ".local/share/crw-runtime/current/bin/crw")
 	entry := filepath.Join(home, "completion_hook.py")
 	// The first registration names the workspace interpreter by path, as an installed Python
-	// adapter's did; the reader only reads the word.
+	// adapter's did; the reader only reads the word. (Python's completion.names_this_adapter
+	// named entry for it and nothing for the native ones until todo 44.)
 	interpreter := filepath.Join(testRoot, ".venv", "bin", "python")
 	commands := []string{interpreter + " " + entry + " /settings", `"$HOME/.local/share/crw-runtime/current/bin/crw" hook; exit 0`, `"` + native + `" hook`, `"` + native + `" relay`, `echo "` + native + `" hook`, `"` + native + `" hookish`}
 	for i, command := range commands {
@@ -157,41 +129,16 @@ func Test33PR181NativeAndPythonRegistration(t *testing.T) {
 			if !readable || (len(ours) == 1) != want {
 				t.Fatal(command, ours)
 			}
-			if !want {
-				return
-			}
-			script := `import json,sys;sys.path.insert(0,sys.argv[1]);from crw_runtime import completion;print(json.dumps(completion.names_this_adapter(sys.argv[2])))`
-			raw := pyoracle.Answer(t, "names_this_adapter", func() ([]byte, error) {
-				return pythonScript(t, nil, nil, "-c", script, filepath.Join(testRoot, "scripts"), command)
-			}, pyoracle.Substitute(home, "<HOME>"), pyoracle.Substitute(testRoot, "<REPO>"))
-			if i == 0 && strings.TrimSpace(string(raw)) != strconv.Quote(entry) {
-				t.Fatal(string(raw))
-			}
-			if i > 0 && strings.TrimSpace(string(raw)) != "null" {
-				t.Fatal(string(raw))
-			}
 		})
 	}
 }
 
-// The guard CLI when eager state selection cannot list roots answers as the Python CLI does
-// (pr181_guard_discovery.py). Python lays the fixture out and answers each case; both are
-// recorded (pyoracle), and the native CLI reads the recorded fixture.
+// The guard CLI when eager state selection cannot list roots answers each case as its golden
+// holds, which began as the Python CLI's answer (pr181_guard_discovery.py), over the fixture
+// pr181_guard_discovery.py prepare laid out.
 func Test33PR181GuardDiscoveryPython(t *testing.T) {
 	home := t.TempDir()
-	_, names := pythonFixture(t, "fixture", home, func() ([]byte, error) {
-		return pythonScript(t, nil, nil, "testdata/pr181_guard_discovery.py", "-", testRoot, "prepare", home)
-	}, nil)
-	raw := names.answer(t, "python", func() ([]byte, error) {
-		return pythonScript(t, nil, nil, "testdata/pr181_guard_discovery.py", "-", testRoot, "python", home)
-	}, pyoracle.Substitute(home, "<HOME>"))
-	var python map[string]struct {
-		Code           int
-		Stdout, Stderr string
-	}
-	if err := json.Unmarshal(raw, &python); err != nil {
-		t.Fatalf("%v: %s", err, raw)
-	}
+	layFixture(t, "pr181-guard-discovery", home)
 	for _, c := range []struct {
 		name      string
 		overrides map[string]string
@@ -219,9 +166,9 @@ func Test33PR181GuardDiscoveryPython(t *testing.T) {
 			command.Env = append(command.Env, key+"="+value)
 		}
 		got := runOutcome(t, command)
-		want := python[c.name]
-		if got != (outcomeBytes{want.Code, want.Stdout, want.Stderr}) || got.Code != c.code {
-			t.Fatalf("%s: Go %+v\nPython %+v", c.name, got, want)
+		goldenOutcome(t, c.name, got, golden.Substitute(home, "<HOME>"))
+		if got.Code != c.code {
+			t.Fatalf("%s: %+v", c.name, got)
 		}
 		if c.code == 0 {
 			// The explicit store was really read: an empty readable store answers

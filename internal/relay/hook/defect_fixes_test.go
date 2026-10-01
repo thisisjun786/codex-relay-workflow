@@ -19,12 +19,12 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 // D1: identities that decode to lone surrogates, through the real native hook, journal and
-// claim as the Python adapter's do. Python's side (defect_surrogates.py python: each case's row,
-// less its times and with its home spelled <HOME>, and its claim names) is recorded (pyoracle).
+// claim as the Python adapter's did (defect_surrogates.py): each case's row, less its times and
+// with its home spelled <HOME>, and its claim names are the case's golden.
 func Test33D1SurrogateBinaryPython(t *testing.T) {
 	base, err := os.MkdirTemp("", "d1-")
 	if err != nil {
@@ -35,22 +35,6 @@ func Test33D1SurrogateBinaryPython(t *testing.T) {
 	cases := [][2]string{{`"s"`, `"item"`}, {`"se\ud800ss"`, `"item"`}, {`"se\udfffss"`, `"item"`},
 		{`"s"`, `"\ud800item"`}, {`"s"`, `"mid\udc00dle"`}, {`"s"`, `"end\udbff"`},
 		{`"s\ud83d\ude00\udc00"`, `"\ud834\udd1e\ud800item"`}}
-	raw := pyoracle.Answer(t, "python", func() ([]byte, error) {
-		python, err := os.MkdirTemp("", "d1-python-")
-		if err != nil {
-			return nil, err
-		}
-		defer os.RemoveAll(python)
-		return pythonScript(t, nil, nil, "testdata/defect_surrogates.py", "-", testRoot, python, "python")
-	})
-	decoded, err := Decode(raw)
-	if err != nil {
-		t.Fatalf("%v: %s", err, raw)
-	}
-	want, ok := evidence.List(decoded)
-	if !ok || len(want) != len(cases) {
-		t.Fatalf("recorded %d cases: %s", len(want), raw)
-	}
 	release := `{"decision": "release", "state": "unmanaged", "hook_output": {}}`
 	for index, c := range cases {
 		home := filepath.Join(base, "go"+strconv.Itoa(index))
@@ -110,43 +94,28 @@ func Test33D1SurrogateBinaryPython(t *testing.T) {
 		for _, name := range names {
 			claims = append(claims, filepath.Base(name))
 		}
-		got := evidence.Dumps(Object{{Key: "row", Value: row}, {Key: "claims", Value: claims}}, false, true, true)
-		if expected := evidence.Dumps(want[index], false, true, true); got != expected {
-			t.Fatalf("case %d:\n go     %s\n python %s", index, got, expected)
-		}
+		goldenDumps(t, "case "+strconv.Itoa(index), Object{{Key: "row", Value: row}, {Key: "claims", Value: claims}}, true)
 	}
 }
 
+// Linux's errno numbers 1 to 132 by the names Python's errno.errorcode gives them, the golden
+// (the suites run on Linux); a number no name stands for (41, 58) is left out.
 func Test33D3ErrnoNamesPython(t *testing.T) {
-	out := pyoracle.Answer(t, "errno.errorcode", func() ([]byte, error) {
-		return pythonScript(t, nil, nil, "-c", "import errno,json;print(json.dumps(errno.errorcode))")
-	})
-	var names map[string]string
-	if err := json.Unmarshal(out, &names); err != nil {
-		t.Fatal(err)
-	}
-	numbers := make([]string, 0, len(names))
-	for number := range names {
-		numbers = append(numbers, number)
-	}
-	slices.Sort(numbers)
-	for _, number := range numbers {
-		want := names[number]
-		n, err := strconv.Atoi(number)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got := pythonErrnoName(syscall.Errno(n)); got != want {
-			t.Fatalf("errno %d: Go %s Python %s", n, got, want)
+	named := map[string]string{}
+	for n := 1; n <= 132; n++ {
+		if name := pythonErrnoName(syscall.Errno(n)); name != "" {
+			named[strconv.Itoa(n)] = name
 		}
 	}
+	golden.CheckJSON(t, "errno names", named)
 }
 
 // D3: a real nonblocking dial failure (the owner's backlog full, EAGAIN; its state directory a
-// file, ENOTDIR) is journaled with Python's errno spelling and detail: invoke_guard's answer to
-// the same OSError at the same endpoint is recorded (pyoracle). The row stays the native
-// pre-scan row the reader exempts (NativePrescanUnreachable). Python's own reader judged these
-// rows too until todo 44; the Go reader's contract is Test33NativeJournalReader's.
+// file, ENOTDIR) is journaled with Python's errno spelling and detail: the row's errno and detail
+// are the golden, which began as invoke_guard's answer to the same OSError at the same endpoint.
+// The row stays the native pre-scan row the reader exempts (NativePrescanUnreachable). Python's
+// own reader judged these rows too until todo 44; the Go reader's contract is
+// Test33NativeJournalReader's.
 func Test33D3DialErrnosPython(t *testing.T) {
 	for _, kind := range []string{"EAGAIN", "ENOTDIR"} {
 		t.Run(kind, func(t *testing.T) {
@@ -197,22 +166,10 @@ func Test33D3DialErrnosPython(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			answer := pyoracle.Answer(t, kind, func() ([]byte, error) {
-				return pythonScript(t, nil, nil, "-c", `import json,os,sys
-from unittest import mock
-from codex_session_relay import stopadapter
-config, number, endpoint = json.loads(sys.argv[1]), int(sys.argv[2]), sys.argv[3]
-with mock.patch.object(stopadapter.subprocess, 'Popen', side_effect=OSError(number, os.strerror(number), endpoint)):
-    python = stopadapter.invoke_guard(config, b'{}')
-print(json.dumps({'errno': python['errno'], 'detail': python['detail']}))`, string(settings), strconv.Itoa(int(number)), endpoint)
-			}, pyoracle.Substitute(home, "<HOME>"))
-			var python struct{ Errno, Detail string }
-			if err = json.Unmarshal(answer, &python); err != nil {
-				t.Fatalf("%v: %s", err, answer)
+			if get(row, "errno") != kind {
+				t.Fatalf("errno %v, want %s", get(row, "errno"), kind)
 			}
-			if get(row, "errno") != kind || python.Errno != kind || get(row, "detail") != python.Detail {
-				t.Fatalf("Go errno %v detail %v\nPython errno %s detail %s", get(row, "errno"), get(row, "detail"), python.Errno, python.Detail)
-			}
+			golden.CheckJSON(t, "row", map[string]any{"errno": get(row, "errno"), "detail": get(row, "detail")}, golden.Substitute(home, "<HOME>"))
 			if !NativePrescanUnreachable(row) {
 				t.Fatalf("Go reader rejected %s", evidence.Dumps(row, false, true, true))
 			}
@@ -312,16 +269,11 @@ func Test33D2FaultRowPython(t *testing.T) {
 					t.Fatalf("fault row contains %s", key)
 				}
 			}
-			// Python's row for the same guard fault (defect_fault.py, its BaseException path) is
-			// recorded (pyoracle) as its record bytes, the settings path and times aligned; every
-			// remaining byte is compared.
-			want := pyoracle.Answer(t, "python_row", func() ([]byte, error) {
-				return pythonScript(t, nil, []byte(payload), "testdata/defect_fault.py", testRoot, home, "-")
-			}, pyoracle.Substitute(home, "<HOME>"))
+			// The row's record bytes, less its times and with the settings path spelled
+			// <SETTINGS>, are the golden, which began as Python's row for the same guard fault
+			// (defect_fault.py, its BaseException path); every remaining byte is compared.
 			aligned := set(withoutKeys(row, "at", "elapsedMs", "identityScanMs"), "configuration", "<SETTINGS>")
-			if got := RecordBytes(aligned); !bytes.Equal(got, want) {
-				t.Fatalf("go     %s\npython %s", got, want)
-			}
+			golden.Check(t, "row", RecordBytes(aligned), golden.Substitute(home, "<HOME>"))
 		})
 	}
 }

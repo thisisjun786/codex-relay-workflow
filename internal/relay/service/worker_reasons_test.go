@@ -21,34 +21,22 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/service"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 	"golang.org/x/sys/unix"
 )
 
-// Every reason service.read_worker_policy gives, against the reason Python gave for the same
-// change (testdata/worker_reasons.json, captured once by worker_reasons_capture.py, so no
-// Python runs here). One live fixture per case: this test process is the serving worker - it
-// holds the daemon lock and the scope lock and has published its receipt - and each case
-// changes one thing. Three Go readers answer each case and must agree with Python: the
-// service's own, doctor's (the relay CLI entry point, with its pre-checks), and the one
-// managed-start admits through.
+// Every reason service.read_worker_policy gives, checked against the reason's golden, which
+// began as the reason Python gave for the same change (captured once by
+// worker_reasons_capture.py over the policy testdata/fixtures/worker_policy.json holds). One live
+// fixture per case: this test process is the serving worker - it holds the daemon lock and the
+// scope lock and has published its receipt - and each case changes one thing. Three Go readers
+// answer each case and must agree: the service's own, doctor's (the relay CLI entry point, with
+// its pre-checks), and the one managed-start admits through.
 
-type workerGolden struct {
-	Observations map[string]*string `json:"observations"`
-	Readiness    map[string]*string `json:"readiness"`
-	Policy       json.RawMessage    `json:"policy"`
-}
-
-func loadWorkerGolden(t *testing.T) workerGolden {
+// workerPolicy is the execution policy every case's worker serves, as the capture wrote it.
+func workerPolicy(t *testing.T) json.RawMessage {
 	t.Helper()
-	raw, err := os.ReadFile("testdata/worker_reasons.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var golden workerGolden
-	if err = json.Unmarshal(raw, &golden); err != nil {
-		t.Fatal(err)
-	}
-	return golden
+	return golden.Fixture(t, "worker_policy.json")
 }
 
 type workerFixture struct {
@@ -310,35 +298,32 @@ var workerChanges = map[string]func(f *workerFixture){
 const recordChanges = "record-changes"
 
 func TestWorkerPolicy_every_reason_is_pythons_in_every_reader(t *testing.T) {
-	golden := loadWorkerGolden(t)
-	if len(golden.Observations) != len(workerChanges)+1 {
-		t.Fatalf("golden has %d observation cases, the table %d", len(golden.Observations), len(workerChanges)+1)
-	}
+	policy := workerPolicy(t)
 	requirements := `[{"role":"parent","model":"anthropic/claude-opus-5-5","reasoningEffort":"xhigh"}]`
 	ctx := context.Background()
-	for name := range golden.Observations {
+	names := []string{recordChanges}
+	for name := range workerChanges {
+		names = append(names, name)
+	}
+	for _, name := range names {
 		t.Run(name, func(t *testing.T) {
-			want := golden.Observations[name]
-			f := newWorkerFixture(t, golden.Policy)
+			f := newWorkerFixture(t, policy)
 			if name == recordChanges {
 				restore := service.SetBeforeRecheck(func() {
 					f.edit(f.recordPath, func(r map[string]any) { r["token"] = "new-run" })
 				})
 				defer restore()
-			} else if change, ok := workerChanges[name]; ok {
-				change(f)
 			} else {
-				t.Fatalf("no Go change for Python's case %q", name)
+				workerChanges[name](f)
 			}
 			observation := f.service.ReadWorkerPolicy(ctx)
-			if got := observed(observation); !sameReason(got, want) {
-				t.Fatalf("service reader answered %v, Python %v: %s", show(got), show(want), encode(t, observation))
-			}
+			want := observed(observation)
+			golden.CheckJSON(t, "reason", want)
 			if name == recordChanges {
 				return
 			}
 			if _, reason := f.observer.Read(ctx); !sameReason(nullable(reason), want) {
-				t.Errorf("managed-start's reader answered %q, Python %v", reason, show(want))
+				t.Errorf("managed-start's reader answered %q, the service reader %v", reason, show(want))
 			}
 			var out, errOut bytes.Buffer
 			code := cli.Execute(ctx, []string{"--state", f.state, "--socket", f.socket, "--json", "doctor", "--require-worker-policy", requirements}, &out, &errOut)
@@ -358,7 +343,7 @@ func TestWorkerPolicy_every_reason_is_pythons_in_every_reader(t *testing.T) {
 				t.Fatal(err)
 			}
 			if !sameReason(readiness.Reason, want) {
-				t.Errorf("doctor's readiness answered %v, Python's observation %v", show(readiness.Reason), show(want))
+				t.Errorf("doctor's readiness answered %v, the observation %v", show(readiness.Reason), show(want))
 			}
 		})
 	}
@@ -406,10 +391,11 @@ func reindent(t *testing.T, value string) string {
 	return strings.ReplaceAll(value, "\n", "\n  ")
 }
 
-// managed-start's own readiness over the live observation answers the readiness reasons
-// Python's worker_readiness gives for the same change (the "readiness" golden cases).
+// managed-start's own readiness over the live observation answers the readiness reason each
+// case's golden holds (which began as the reason Python's worker_readiness gave for the same
+// change).
 func TestWorkerPolicy_managed_start_readiness_is_pythons(t *testing.T) {
-	golden := loadWorkerGolden(t)
+	policy := workerPolicy(t)
 	settings := func(model string) map[string]any {
 		return map[string]any{"settings": map[string]any{"model": model, "reasoningEffort": "xhigh"}}
 	}
@@ -436,7 +422,7 @@ func TestWorkerPolicy_managed_start_readiness_is_pythons(t *testing.T) {
 		"pair-mismatch-model": {func(*workerFixture) {}, "other-model", true},
 	} {
 		t.Run(name, func(t *testing.T) {
-			f := newWorkerFixture(t, golden.Policy)
+			f := newWorkerFixture(t, policy)
 			c.change(f)
 			caller := registry.ResolveRolePolicy(map[string]string{})
 			if c.callerPolicy {
@@ -446,9 +432,7 @@ func TestWorkerPolicy_managed_start_readiness_is_pythons(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if want := golden.Readiness[name]; !sameReason(nullable(reason), want) {
-				t.Fatalf("managed-start readiness %q, Python %v", reason, show(want))
-			}
+			golden.CheckJSON(t, "reason", nullable(reason))
 		})
 	}
 }
