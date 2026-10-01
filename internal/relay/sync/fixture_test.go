@@ -29,6 +29,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/reception"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 	_ "modernc.org/sqlite"
 )
@@ -85,8 +86,6 @@ func openSQLite(path, mode string) (*sql.DB, error) {
 	return db, nil
 }
 
-func quoteName(name string) string { return `"` + strings.ReplaceAll(name, `"`, `""`) + `"` }
-
 func readSchema(ctx context.Context, db *sql.DB) ([][4]*string, error) {
 	rows, err := db.QueryContext(ctx, "SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY rowid")
 	if err != nil {
@@ -120,7 +119,7 @@ var frozen struct {
 // frozenStore is the Python-produced empty store the contract freezes, and its schema.
 func frozenStore() ([]byte, [][4]*string, error) {
 	frozen.once.Do(func() {
-		frozen.raw, frozen.err = os.ReadFile(filepath.Join("..", "..", "..", "contract", "fixtures", "sqlite-ddl", "python-store.sqlite3"))
+		frozen.raw, frozen.err = testsupport.FrozenStore()
 		if frozen.err != nil {
 			return
 		}
@@ -238,7 +237,7 @@ func (dump *storeDump) restore(path string) (err error) {
 		if _, known := dump.Tables[name]; !known && fresh {
 			continue
 		}
-		if _, err = tx.ExecContext(ctx, "DELETE FROM "+quoteName(name)); err != nil {
+		if _, err = tx.ExecContext(ctx, "DELETE FROM "+testsupport.QuoteIdent(name)); err != nil {
 			return fmt.Errorf("%s: %w", name, err)
 		}
 		table, known := dump.Tables[name]
@@ -248,10 +247,10 @@ func (dump *storeDump) restore(path string) (err error) {
 		columns := []string{"rowid"}
 		marks := []string{"?"}
 		for _, column := range table.Columns {
-			columns = append(columns, quoteName(column))
+			columns = append(columns, testsupport.QuoteIdent(column))
 			marks = append(marks, "?")
 		}
-		statement := "INSERT INTO " + quoteName(name) + " (" + strings.Join(columns, ", ") + ") VALUES (" + strings.Join(marks, ", ") + ")"
+		statement := "INSERT INTO " + testsupport.QuoteIdent(name) + " (" + strings.Join(columns, ", ") + ") VALUES (" + strings.Join(marks, ", ") + ")"
 		for _, row := range table.Rows {
 			values := make([]any, len(row))
 			for i, value := range row {

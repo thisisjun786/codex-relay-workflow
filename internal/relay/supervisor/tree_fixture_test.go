@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
@@ -554,12 +555,12 @@ func loadRows(path string, dump *storeDump) (err error) {
 		}
 	}()
 	for _, name := range names {
-		if _, err := tx.ExecContext(ctx, `DROP TRIGGER "`+name+`"`); err != nil {
+		if _, err := tx.ExecContext(ctx, "DROP TRIGGER "+testsupport.QuoteIdent(name)); err != nil {
 			return err
 		}
 	}
 	for _, name := range tables {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM "`+name+`"`); err != nil {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM "+testsupport.QuoteIdent(name)); err != nil {
 			return err
 		}
 	}
@@ -586,14 +587,14 @@ func loadRows(path string, dump *storeDump) (err error) {
 		quoted := make([]string, len(columns))
 		marks := make([]string, len(columns))
 		for i, column := range columns {
-			quoted[i] = `"` + column + `"`
+			quoted[i] = testsupport.QuoteIdent(column)
 			marks[i] = "?"
 		}
 		quoted[0] = "rowid"
 		if name == "sqlite_sequence" {
 			quoted, marks = quoted[1:], marks[1:]
 		}
-		statement := `INSERT INTO "` + name + `" (` + strings.Join(quoted, ", ") + `) VALUES (` + strings.Join(marks, ", ") + `)`
+		statement := `INSERT INTO ` + testsupport.QuoteIdent(name) + ` (` + strings.Join(quoted, ", ") + `) VALUES (` + strings.Join(marks, ", ") + `)`
 		for _, row := range table.Rows {
 			values := make([]any, len(row))
 			for i, value := range row {

@@ -52,7 +52,7 @@ func allTables(t *testing.T, s *store.Store) map[string]any {
 	}
 	tables := map[string]any{}
 	for _, name := range names {
-		rows, err := s.Querier(ctx).QueryContext(ctx, `SELECT * FROM "`+name+`" ORDER BY rowid`)
+		rows, err := s.Querier(ctx).QueryContext(ctx, "SELECT * FROM "+testsupport.QuoteIdent(name)+" ORDER BY rowid")
 		if err != nil {
 			t.Fatal(err)
 		}

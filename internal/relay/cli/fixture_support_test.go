@@ -187,12 +187,6 @@ type sqliteImage struct {
 	Tables []sqliteTable `json:"tables"` // the tables that hold rows
 }
 
-// frozenStore is the empty store the Python relay creates (contract/fixtures/sqlite-ddl), the
-// schema every relay store has.
-func frozenStore() string {
-	return filepath.Join(repositoryRootPath(), "contract", "fixtures", "sqlite-ddl", "python-store.sqlite3")
-}
-
 var (
 	frozenOnce   sync.Once
 	frozenSchema [][2]string
@@ -203,7 +197,7 @@ var (
 func relaySchema() ([][2]string, error) {
 	frozenOnce.Do(func() {
 		var db *sql.DB
-		if db, frozenErr = sql.Open("sqlite", "file:"+frozenStore()+"?mode=ro&immutable=1"); frozenErr != nil {
+		if db, frozenErr = sql.Open("sqlite", "file:"+testsupport.FrozenStorePath()+"?mode=ro&immutable=1"); frozenErr != nil {
 			return
 		}
 		defer db.Close()
@@ -310,8 +304,6 @@ func dumpSQLite(path string) (sqliteImage, error) {
 	return image, nil
 }
 
-func quoteIdent(name string) string { return `"` + strings.ReplaceAll(name, `"`, `""`) + `"` }
-
 func dumpTable(db *sql.DB, name string) (sqliteTable, error) {
 	table := sqliteTable{Name: name, Rows: [][]string{}}
 	info, err := db.Query("SELECT name FROM pragma_table_info(?)", name)
@@ -329,10 +321,10 @@ func dumpTable(db *sql.DB, name string) (sqliteTable, error) {
 	info.Close()
 	var selected []string
 	for _, column := range table.Columns {
-		c := quoteIdent(column)
+		c := testsupport.QuoteIdent(column)
 		selected = append(selected, "typeof("+c+")", "CASE WHEN typeof("+c+") IN ('text','blob') THEN CAST("+c+" AS BLOB) ELSE "+c+" END")
 	}
-	rows, err := db.Query("SELECT " + strings.Join(selected, ", ") + " FROM " + quoteIdent(name))
+	rows, err := db.Query("SELECT " + strings.Join(selected, ", ") + " FROM " + testsupport.QuoteIdent(name))
 	if err != nil {
 		return table, err
 	}
@@ -512,7 +504,7 @@ func restoreSQLite(path string, image sqliteImage) (err error) {
 // restoreRelayStore rebuilds a store of the relay's own schema from the frozen empty store:
 // every table emptied, then the recorded rows put back.
 func restoreRelayStore(path string, image sqliteImage) (err error) {
-	raw, err := os.ReadFile(frozenStore())
+	raw, err := os.ReadFile(testsupport.FrozenStorePath())
 	if err != nil {
 		return err
 	}
@@ -549,7 +541,7 @@ func restoreRelayStore(path string, image sqliteImage) (err error) {
 		}
 	}()
 	for _, name := range tables {
-		if _, err = tx.Exec("DELETE FROM " + quoteIdent(name)); err != nil {
+		if _, err = tx.Exec("DELETE FROM " + testsupport.QuoteIdent(name)); err != nil {
 			return fmt.Errorf("%s: %w", name, err)
 		}
 	}
@@ -575,7 +567,7 @@ func restoreRelayStore(path string, image sqliteImage) (err error) {
 func insertRows(tx *sql.Tx, table sqliteTable) error {
 	columns := make([]string, len(table.Columns))
 	for i, column := range table.Columns {
-		columns[i] = quoteIdent(column)
+		columns[i] = testsupport.QuoteIdent(column)
 	}
 	for _, row := range table.Rows {
 		values := make([]any, len(row))
@@ -616,7 +608,7 @@ func insertRows(tx *sql.Tx, table sqliteTable) error {
 				return fmt.Errorf("value %q", value)
 			}
 		}
-		if _, err := tx.Exec("INSERT INTO "+quoteIdent(table.Name)+" ("+strings.Join(columns, ", ")+") VALUES ("+strings.Join(marks, ", ")+")", values...); err != nil {
+		if _, err := tx.Exec("INSERT INTO "+testsupport.QuoteIdent(table.Name)+" ("+strings.Join(columns, ", ")+") VALUES ("+strings.Join(marks, ", ")+")", values...); err != nil {
 			return err
 		}
 	}

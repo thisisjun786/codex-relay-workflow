@@ -172,7 +172,7 @@ func tables(t *testing.T, home string) string {
 	timeColumns := map[string]bool{"next_eligible_at": true, "next_retry_at": true, "lease_until": true, "last_send_at": true, "window_start": true}
 	data := map[string][][]any{}
 	for _, name := range tableNames {
-		rows, err := db.Query(`SELECT * FROM "` + name + `" ORDER BY rowid`)
+		rows, err := db.Query("SELECT * FROM " + testsupport.QuoteIdent(name) + " ORDER BY rowid")
 		if err != nil {
 			t.Fatal(err)
 		}

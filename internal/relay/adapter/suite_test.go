@@ -176,11 +176,7 @@ func seedIdentity(tables map[string]seedTable, work string) (string, string, err
 // writeSeedStore writes at path the frozen Python-produced empty store holding tables' rows.
 func writeSeedStore(path string, tables map[string]seedTable) error {
 	ctx := context.Background()
-	repo, err := filepath.Abs("../../..")
-	if err != nil {
-		return err
-	}
-	frozen, err := os.ReadFile(filepath.Join(repo, "contract/fixtures/sqlite-ddl/python-store.sqlite3"))
+	frozen, err := testsupport.FrozenStore()
 	if err != nil {
 		return err
 	}
@@ -205,9 +201,9 @@ func writeSeedStore(path string, tables map[string]seedTable) error {
 		table := tables[name]
 		columns := make([]string, len(table.Columns))
 		for i, column := range table.Columns {
-			columns[i] = quoted(column)
+			columns[i] = testsupport.QuoteIdent(column)
 		}
-		insert := `INSERT INTO ` + quoted(name) + ` (` + strings.Join(columns, ",") + `) VALUES (` + strings.TrimSuffix(strings.Repeat("?,", len(columns)), ",") + `)`
+		insert := `INSERT INTO ` + testsupport.QuoteIdent(name) + ` (` + strings.Join(columns, ",") + `) VALUES (` + strings.TrimSuffix(strings.Repeat("?,", len(columns)), ",") + `)`
 		for _, row := range table.Rows {
 			values := make([]any, len(row))
 			for i, value := range row {
@@ -256,11 +252,7 @@ func ownerNeutral(t *testing.T, writer testsupport.Runtime, tables any) {
 func preFenceFixture(t *testing.T, src, dst, socket string, statements ...string) {
 	t.Helper()
 	ctx := context.Background()
-	repo, err := filepath.Abs("../../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	frozen, err := os.ReadFile(filepath.Join(repo, "contract/fixtures/sqlite-ddl/python-store.sqlite3"))
+	frozen, err := testsupport.FrozenStore()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -309,7 +301,7 @@ func preFenceFixture(t *testing.T, src, dst, socket string, statements ...string
 		t.Fatal(err)
 	}
 	for _, name := range names {
-		rows, err := from.QueryContext(ctx, `SELECT * FROM "`+name+`" ORDER BY rowid`)
+		rows, err := from.QueryContext(ctx, "SELECT * FROM "+testsupport.QuoteIdent(name)+" ORDER BY rowid")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -319,9 +311,9 @@ func preFenceFixture(t *testing.T, src, dst, socket string, statements ...string
 		}
 		quoted := make([]string, len(columns))
 		for i, column := range columns {
-			quoted[i] = `"` + column + `"`
+			quoted[i] = testsupport.QuoteIdent(column)
 		}
-		insert := `INSERT INTO "` + name + `" (` + strings.Join(quoted, ",") + `) VALUES (` + strings.TrimSuffix(strings.Repeat("?,", len(columns)), ",") + `)`
+		insert := `INSERT INTO ` + testsupport.QuoteIdent(name) + ` (` + strings.Join(quoted, ",") + `) VALUES (` + strings.TrimSuffix(strings.Repeat("?,", len(columns)), ",") + `)`
 		for rows.Next() {
 			values := make([]any, len(columns))
 			pointers := make([]any, len(columns))

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // These tests use f1ReplayCLI, which runs each command line and compares exit status,
@@ -135,7 +136,7 @@ func flt17Rows(t *testing.T, ctx context.Context, dir string) map[string][]strin
 		}
 		for _, name := range names {
 			key := text(name, "name")
-			rows, err := s.All(ctx, `SELECT * FROM "`+key+`" ORDER BY rowid`)
+			rows, err := s.All(ctx, "SELECT * FROM "+testsupport.QuoteIdent(key)+" ORDER BY rowid")
 			if err != nil {
 				return err
 			}

@@ -21,7 +21,7 @@ import (
 // f1Twin is the frozen empty store in dir, fenced for Go.
 func f1Twin(t *testing.T, dir string) {
 	t.Helper()
-	fixture, err := os.ReadFile(filepath.Join(f1Root(), "contract", "fixtures", "sqlite-ddl", "python-store.sqlite3"))
+	fixture, err := testsupport.FrozenStore()
 	if err != nil {
 		t.Fatal(err)
 	}

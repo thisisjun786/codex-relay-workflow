@@ -196,13 +196,9 @@ func cliReplay(t *testing.T, mode string) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			tables, err = tablesJSON(ctx, s)
-			closeErr := s.Close()
-			if err != nil {
+			tables = tablesJSON(t, s)
+			if err := s.Close(); err != nil {
 				t.Fatal(err)
-			}
-			if closeErr != nil {
-				t.Fatal(closeErr)
 			}
 		}) {
 			return

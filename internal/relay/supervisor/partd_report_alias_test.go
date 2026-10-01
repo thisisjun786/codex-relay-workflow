@@ -93,27 +93,13 @@ func (r *rrResult) add(name string, got []byte) {
 }
 func rrTables(t *testing.T, s *store.Store) []byte {
 	t.Helper()
-	ctx := context.Background()
-	names, err := s.All(ctx, "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
-	if err != nil {
-		t.Fatal(err)
-	}
 	tables := map[string]any{}
-	for _, n := range names {
-		name := n.Get("name").(string)
-		rows, e := s.All(ctx, `SELECT * FROM "`+name+`" ORDER BY rowid`)
-		if e != nil {
-			t.Fatal(e)
+	for name, rows := range testsupport.TableRows(t, s.DB, "") {
+		list := make([]any, len(rows))
+		for i, row := range rows {
+			list[i] = row
 		}
-		out := []any{}
-		for _, r := range rows {
-			m := map[string]any{}
-			for _, c := range r {
-				m[c.Name] = c.Value
-			}
-			out = append(out, m)
-		}
-		tables[name] = out
+		tables[name] = list
 	}
 	rrOwnerNeutral(t, testsupport.Go, tables)
 	return rrBytes(t, tables)

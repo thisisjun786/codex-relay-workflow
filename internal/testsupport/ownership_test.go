@@ -34,12 +34,6 @@ const (
 // it is fixed so that the scope key derived from it is the same in a golden and in every run.
 const fixedSocket = "/crw-test/app.sock"
 
-func repositoryRoot(t *testing.T) string {
-	t.Helper()
-	_, current, _, _ := runtime.Caller(0)
-	return filepath.Clean(filepath.Join(filepath.Dir(current), "../.."))
-}
-
 // scopeKey is the scope key of fixedSocket as this process's environment derives it: namespaced by
 // CODEX_SESSION_RELAY_SCOPE_DIR when that overrides the registry root. A golden spells it
 // <SCOPE-KEY>, since the override differs from host to host.
@@ -141,7 +135,7 @@ func comparableMirror(record map[string]any) map[string]any {
 // complete schema with no ownership fence at all.
 func writeFixture(t *testing.T, path string) {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(repositoryRoot(t), "contract/fixtures/sqlite-ddl/python-store.sqlite3"))
+	raw, err := testsupport.FrozenStore()
 	if err != nil {
 		t.Fatal(err)
 	}

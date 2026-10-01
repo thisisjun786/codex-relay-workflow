@@ -100,30 +100,7 @@ func routeReplay(t *testing.T, property string) {
 			case "sql":
 				_, err = s.Q(ctx).ExecContext(ctx, text(args[0]), list(args[1])...)
 			case "tables":
-				tables := Object{}
-				var names []store.Row
-				names, err = s.All(ctx, "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name!='schema_meta' ORDER BY name")
-				if err != nil {
-					break
-				}
-				for _, row := range names {
-					name := text(row.Get("name"))
-					rows, e := s.All(ctx, "SELECT * FROM \""+name+"\" ORDER BY rowid")
-					if e != nil {
-						err = e
-						break
-					}
-					values := []any{}
-					for _, row := range rows {
-						value := Object{}
-						for _, column := range row {
-							value[column.Name] = column.Value
-						}
-						values = append(values, value)
-					}
-					tables[name] = values
-				}
-				answer = tables
+				answer = storeTables(t, s)
 			default:
 				t.Fatalf("unknown operation %s", record.Operation)
 			}

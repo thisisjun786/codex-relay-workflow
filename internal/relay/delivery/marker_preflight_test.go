@@ -84,7 +84,7 @@ func markerCases() []markerCase {
 		testsupport.HandOver(t, markerDB(s), other)
 	}
 	legacy := func(t *testing.T, s *cliSide, _, _ string) {
-		raw, err := os.ReadFile(filepath.Join(repoRoot(t), "contract", "fixtures", "sqlite-ddl", "python-store.sqlite3"))
+		raw, err := testsupport.FrozenStore()
 		mustDo(t, err)
 		mustDo(t, os.MkdirAll(s.state, 0o700))
 		mustDo(t, os.WriteFile(markerDB(s), raw, 0o600))

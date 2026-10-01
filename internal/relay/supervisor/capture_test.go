@@ -59,56 +59,7 @@ func jsonText(v any) string { b, _ := json.Marshal(v); return string(b) }
 // rowid order; a table without rows is absent.
 func supervisorTables(t *testing.T, s *store.Store) map[string][]map[string]any {
 	t.Helper()
-	got := make(map[string][]map[string]any)
-	names, err := s.DB.Query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT IN ('schema_meta','sqlite_sequence') ORDER BY name")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var tables []string
-	for names.Next() {
-		var name string
-		if err := names.Scan(&name); err != nil {
-			t.Fatal(err)
-		}
-		tables = append(tables, name)
-	}
-	if err := names.Err(); err != nil {
-		t.Fatal(err)
-	}
-	names.Close()
-	for _, name := range tables {
-		rows, err := s.DB.Query("SELECT * FROM " + name + " ORDER BY rowid")
-		if err != nil {
-			t.Fatal(err)
-		}
-		columns, err := rows.Columns()
-		if err != nil {
-			t.Fatal(err)
-		}
-		for rows.Next() {
-			fields := make([]any, len(columns))
-			pointers := make([]any, len(fields))
-			for i := range fields {
-				pointers[i] = &fields[i]
-			}
-			if err := rows.Scan(pointers...); err != nil {
-				t.Fatal(err)
-			}
-			row := make(map[string]any, len(fields))
-			for i, v := range fields {
-				if b, ok := v.([]byte); ok {
-					v = string(b)
-				}
-				row[columns[i]] = v
-			}
-			got[name] = append(got[name], row)
-		}
-		if err := rows.Err(); err != nil {
-			t.Fatal(err)
-		}
-		rows.Close()
-	}
-	return got
+	return testsupport.NonEmpty(testsupport.TableRows(t, s.DB, "name NOT IN ('schema_meta','sqlite_sequence')"))
 }
 func supervisorMirror(t *testing.T, id, snapshot string, body func(*Channel, *store.Store) []any) {
 	t.Helper()

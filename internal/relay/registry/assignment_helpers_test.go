@@ -45,7 +45,7 @@ func assignmentScenario(t *testing.T, name string) []checkpoint {
 // stamps a store (testsupport.Fence) before Go opens it.
 func loadCheckpoint(t *testing.T, path, dump string) {
 	t.Helper()
-	fixture, err := os.ReadFile(filepath.Join("..", "..", "..", "contract", "fixtures", "sqlite-ddl", "python-store.sqlite3"))
+	fixture, err := testsupport.FrozenStore()
 	if err != nil {
 		t.Fatal(err)
 	}

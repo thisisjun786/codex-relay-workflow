@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -547,12 +546,6 @@ func restamp(ctx context.Context, dbPath, owner string) (err error) {
 	return publish(ctx, path, record)
 }
 
-// frozenStore is the Python-produced empty store the contract freezes.
-func frozenStore() ([]byte, error) {
-	_, file, _, _ := runtime.Caller(0)
-	return os.ReadFile(filepath.Join(filepath.Dir(file), "../../contract/fixtures/sqlite-ddl/python-store.sqlite3"))
-}
-
 // canonicalSocket is store.py canonical_socket: expanded, absolute, symlinks resolved as far as
 // the path exists.
 func canonicalSocket(socket string) (string, error) {
@@ -601,7 +594,7 @@ func create(ctx context.Context, dbPath, socket, owner string) (err error) {
 			return fmt.Errorf("store is not absent: %s exists (%v)", name, e)
 		}
 	}
-	raw, err := frozenStore()
+	raw, err := FrozenStore()
 	if err != nil {
 		return err
 	}

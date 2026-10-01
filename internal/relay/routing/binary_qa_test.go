@@ -50,13 +50,9 @@ func binaryRoundTrips(t *testing.T, mode string) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				tables[i], err = tablesJSON(context.Background(), s)
-				closeErr := s.Close()
-				if err != nil {
+				tables[i] = tablesJSON(t, s)
+				if err := s.Close(); err != nil {
 					t.Fatal(err)
-				}
-				if closeErr != nil {
-					t.Fatal(closeErr)
 				}
 			}
 		}) {

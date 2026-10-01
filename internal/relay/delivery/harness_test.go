@@ -8,11 +8,11 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
-	"slices"
 	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
@@ -317,18 +317,9 @@ func at(v float64) *float64 { return &v }
 
 // tables dumps every non-empty table of the Go store, as the Python harness dumps its own.
 func (f *fixture) tables() map[string][]map[string]any {
-	names, err := all(f.ctx, f.store, "SELECT name FROM sqlite_master WHERE type='table' AND name NOT IN ('schema_meta','sqlite_sequence') ORDER BY name")
-	mustDo(f.t, err)
-	out := map[string][]map[string]any{}
-	for _, n := range names {
-		rows, err := all(f.ctx, f.store, "SELECT * FROM "+n.S("name")+" ORDER BY rowid")
-		mustDo(f.t, err)
-		if len(rows) == 0 || slices.Contains(f.skipTables, n.S("name")) {
-			continue
-		}
-		for _, r := range rows {
-			out[n.S("name")] = append(out[n.S("name")], map[string]any(r))
-		}
+	out := testsupport.NonEmpty(testsupport.TableRows(f.t, f.store.DB, "name NOT IN ('schema_meta','sqlite_sequence')"))
+	for _, name := range f.skipTables {
+		delete(out, name)
 	}
 	return out
 }
