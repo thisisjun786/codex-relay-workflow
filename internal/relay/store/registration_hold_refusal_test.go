@@ -10,11 +10,10 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
-// intent.registration_hold stats the store before the fence's Admission, so a store that does
-// not exist, whose directory does not, that sits below a regular file or behind a dangling
-// symlink is answered in str(OSError)'s words, and nothing is created. RegistrationHold, which
-// intent-register runs, answers the Python fence's bytes (the golden).
-func TestRegistrationHold_answers_an_unstattable_store_as_python_does(t *testing.T) {
+// RegistrationHold, which intent-register runs, stats the store before its write admission, so a
+// store that does not exist, whose directory does not, that sits below a regular file or behind
+// a dangling symlink is answered with the stat's error (the golden), and nothing is created.
+func TestRegistrationHold_answers_an_unstattable_store_with_the_stat_error(t *testing.T) {
 	root := t.TempDir()
 	file := filepath.Join(root, "a-file")
 	if err := os.WriteFile(file, nil, 0o600); err != nil {
@@ -66,12 +65,11 @@ func listTree(t *testing.T, root string) string {
 }
 
 // A writable opener that finds an existing D with no write gate reads it before deciding what
-// it is, as the fence's Store() does (ownership.py Admission, initialize=True): a D SQLite
-// cannot read as a database, or cannot read at all, fails with that error in Python's host
-// words, f"{type(error).__name__}: {error}", and neither runtime creates a gate or a sidecar for
-// it. A readable legacy D still goes to Go's admission, which refuses it without a gate:
-// Python's fence initializes it and Go never does (decisions.md 30).
-func TestOpen_reads_a_gateless_store_before_refusing_it_as_python_does(t *testing.T) {
+// it is: a D SQLite cannot read as a database, or cannot read at all, fails with that error as
+// the command's host error (the golden), and no gate or sidecar is created for it. A readable
+// legacy D still goes to the admission, which refuses it without a gate: Go never initializes
+// one (decisions.md 30).
+func TestOpen_reads_a_gateless_store_before_refusing_it(t *testing.T) {
 	t.Setenv("CRW_REFUSE_LIVE_STATE", "1")
 	for _, c := range []struct {
 		name  string

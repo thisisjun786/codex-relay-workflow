@@ -121,14 +121,10 @@ func (s *Service) Adopt(token *string, lockFD, scopeFD *int) error {
 	}
 	var want, got unix.Stat_t
 	if err := unix.Stat(s.path("daemon.lock"), &want); err != nil {
-		return fail("supervised_fd_unreadable", fmt.Sprintf("OSError: %v", err))
+		return fail("supervised_fd_unreadable", fmt.Sprintf("the daemon lock could not be read: %v", err))
 	}
 	if err := unix.Fstat(*lockFD, &got); err != nil {
-		detail := fmt.Sprintf("OSError: %v", err)
-		if errors.Is(err, unix.EBADF) {
-			detail = "OSError: [Errno 9] Bad file descriptor"
-		}
-		return fail("supervised_fd_unreadable", detail)
+		return fail("supervised_fd_unreadable", fmt.Sprintf("the inherited daemon lock descriptor could not be read: %v", err))
 	}
 	if want.Dev != got.Dev || want.Ino != got.Ino {
 		return fail("supervised_fd_mismatch", "the inherited descriptor is not this daemon lock")

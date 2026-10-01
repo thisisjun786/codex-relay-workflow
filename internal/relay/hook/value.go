@@ -34,9 +34,9 @@ func nullable(s string) any {
 
 // hookValues is how the hook reads a Stop payload and its records: Python's values (pyjson.Loads),
 // objects in order, an integer an int64 (a json.Number past it), NaN and the infinities floats,
-// and a lone surrogate, escaped or in the WTF-8 bytes a frame decoded with surrogatepass holds it
-// in, kept.
-var hookValues = pyjson.LoadOptions{Constants: true, Surrogates: true, RawSurrogates: true, Numbers: pyjson.Int64Numbers}
+// and a lone surrogate escape kept. The bytes are strict UTF-8 first (Decode), so no lone
+// surrogate arrives unescaped.
+var hookValues = pyjson.LoadOptions{Constants: true, Surrogates: true, Numbers: pyjson.Int64Numbers}
 
 // Decode is json.loads over bytes: strict UTF-8 (its UnicodeDecodeError), then json.loads'
 // language and refusals (its JSONDecodeError text), without panic paths.
@@ -48,9 +48,6 @@ func Decode(raw []byte) (any, error) {
 	options.Python = true
 	return pyjson.Loads(string(raw), options)
 }
-
-// decodeScanned is Decode past its checks: raw is text Python's JSON scanner accepted.
-func decodeScanned(raw []byte) (any, error) { return pyjson.Loads(string(raw), hookValues) }
 
 func decodeObject(raw []byte) (Object, error) {
 	v, err := Decode(raw)

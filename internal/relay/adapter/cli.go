@@ -9,6 +9,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
@@ -163,7 +164,10 @@ func hostCommand(ctx context.Context, command, state, socket string, args map[st
 			}
 			return contract.OrderedObject{{Key: "attempt", Value: value}}, nil
 		}
-		limit := int(args["--limit"].(int64))
+		limit, e := hostLimit(args["--limit"])
+		if e != nil {
+			return nil, e
+		}
 		rows, e := d.Eligible(ctx, clock.Now(), limit, limit, 0, nil)
 		if e != nil {
 			return nil, e
@@ -209,7 +213,19 @@ func hostCommand(ctx context.Context, command, state, socket string, args map[st
 	case "ack":
 		return delivery.AckCommand(ctx, ack, rc, a, text(args["--event"]), text(args["--ack-turn"]), text(args["--ack-proof"]), args["--reject"])
 	case "verify-acks":
-		return delivery.VerifyAcksCommand(ctx, ack, rc, a, int(args["--limit"].(int64)))
+		limit, e := hostLimit(args["--limit"])
+		if e != nil {
+			return nil, e
+		}
+		return delivery.VerifyAcksCommand(ctx, ack, rc, a, limit)
 	}
 	return nil, &HostUnavailable{"unknown host command: " + command}
+}
+
+// hostLimit is a host command's --limit as SQLite binds it: the *big.Int argparse parsed from
+// the argument, or the int64 default when none was given. One past int64 is the overflow the
+// command answers as a host error, exit 3.
+func hostLimit(value any) (int, error) {
+	n, err := argparse.SQLiteInteger(argparse.IntegerValue(value))
+	return int(n), err
 }

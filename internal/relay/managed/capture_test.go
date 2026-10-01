@@ -395,7 +395,7 @@ func Test27_MRS_2_PythonTwoConnectionsWholeOutputAndRows(t *testing.T) {
 	golden.CheckJSON(t, "outcomes", raceWinnerFirst(t, got, winner))
 	goLoser := obj(got[1])
 	goDetail := str(goLoser["detail"])
-	if goLoser["error"] != "RegistrationError" || !strings.HasPrefix(goDetail, "duplicate_assignment: issue 'REL-1' is already held by request") {
+	if goLoser["error"] != "RegistrationError" || !strings.HasPrefix(goDetail, `duplicate_assignment: issue "REL-1" is already held by request`) {
 		t.Fatalf("unexpected Go refusal: %v", goLoser)
 	}
 	var count int

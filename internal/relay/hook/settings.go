@@ -185,7 +185,7 @@ func ReadSettings(ctx context.Context, path string) (Object, string, string) {
 		return nil, "config_absent", "nothing exists at " + path
 	}
 	if err != nil {
-		return nil, "config_unreachable", "whether anything exists at " + path + " could not be established: " + store.PythonOSError(err)
+		return nil, "config_unreachable", "whether anything exists at " + path + " could not be established: " + err.Error()
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
 		info, err = os.Stat(path)
@@ -196,7 +196,7 @@ func ReadSettings(ctx context.Context, path string) (Object, string, string) {
 			return nil, "config_unreadable", "the configuration at " + path + " is a symbolic link that loops"
 		}
 		if err != nil {
-			return nil, "config_unreachable", "the configuration at " + path + " is a symbolic link whose target could not be resolved: " + store.PythonOSError(err)
+			return nil, "config_unreachable", "the configuration at " + path + " is a symbolic link whose target could not be resolved: " + err.Error()
 		}
 	}
 	if !info.Mode().IsRegular() {
@@ -217,7 +217,7 @@ func ReadSettings(ctx context.Context, path string) (Object, string, string) {
 	}
 	raw, err := readRegular(ctx, path, 1<<20)
 	if err != nil {
-		return nil, "config_unreachable", "the configuration at " + path + " could not be read: " + store.PythonOSError(err)
+		return nil, "config_unreachable", "the configuration at " + path + " could not be read: " + err.Error()
 	}
 	v, err := Decode(raw)
 	if err != nil {

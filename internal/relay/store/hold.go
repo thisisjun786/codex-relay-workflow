@@ -19,8 +19,8 @@ import (
 
 // holdStat is registration_hold's resolved.stat(), taken before the fence's Admission: the
 // store as Path(db_path).expanduser().absolute() spells it, symlinks followed. Its error names
-// that spelling, so PythonOSErrorText renders it as str(OSError) does, e.g.
-// "[Errno 2] No such file or directory: '<path>'" for a store or directory that does not exist.
+// that spelling, e.g. "stat <path>: no such file or directory" for a store or directory that
+// does not exist.
 // It precedes the live-state guard, which protects opens: a failed stat opens nothing.
 func holdStat(path string) error {
 	spelled, err := absoluteExpanded(path)
@@ -230,7 +230,7 @@ func partialStore(resolved string) error {
 	case errors.Is(err, unix.ENOENT):
 		return fenceRefused("partial store: write-gate.lock without a database")
 	case err != nil:
-		return fenceRefused("takeover record unreadable: " + PythonOSError(err))
+		return fenceRefused("takeover record unreadable: " + err.Error())
 	}
 	if why := MirrorRefusal(raw); why != "" {
 		return fenceRefused(why)
@@ -287,8 +287,8 @@ func OpenReadOnlyStore(ctx context.Context, path string) (*Store, error) {
 	}
 	if err = db.PingContext(ctx); err != nil {
 		_ = db.Close()
-		// Python's host envelope for the failed connect: f"{type(error).__name__}: {error}".
-		return nil, errors.New(PythonSQLiteError(err))
+		// The failed connect is the command's host error.
+		return nil, &hostError{cause: err}
 	}
 	return &Store{DB: db, Path: pathlibSpelling(path), readOnly: true}, nil
 }
