@@ -4618,10 +4618,10 @@ internal/relay/service/scope.go (`ServedStore`); internal/relay/cli/doctor.go (`
 services.go (`siblingStores`); internal/relay/selection/selection.go (`Refusal`);
 internal/bridge/mcp/main.go (`Defaults`); tests
 internal/relay/store/default_socket_scope_test.go
-(`TestDiscoveryWithoutASocketIsScopedByTheDefaultSocket`, `TestAnUnstampedStoreIsRefusedInPlainWords`,
-`TestOnlyAnUnstampedStoreGetsThePlainWords`), internal/relay/cli/doctor_service_store_test.go
-(`TestDoctorNamesTheServiceStoreDiscoveryDidNotSelect`, `TestANoSocketSelectionIsHeldToTheDefaultSocket`),
-internal/bridge/mcp/main_test.go (`Test_the_default_socket_is_the_one_the_relay_scopes_its_store_by`)
-and internal/runtime/integration/isolated_home_test.go (IS-1's Stop dials the default socket's
+(`TestDiscoveryWithoutASocketIsScopedByTheDefaultSocket`, `TestTheDefaultSocketIsTheBridges`,
+`TestAnUnstampedStoreIsRefusedInPlainWords`, `TestOnlyAnUnstampedStoreGetsThePlainWords`),
+internal/relay/cli/doctor_service_store_test.go (`TestDoctorNamesTheServiceStoreDiscoveryDidNotSelect`,
+`TestANoSocketSelectionIsHeldToTheDefaultSocket`), internal/bridge/mcp/main_test.go (the empty
+`CODEX_HOME` case of `Defaults`) and internal/runtime/integration/isolated_home_test.go (IS-1's Stop dials the default socket's
 directory); docs/relay/operations.md (Where the state lives);
 plugins/crw/skills/crw-run/references/relay.md (One shared state directory).

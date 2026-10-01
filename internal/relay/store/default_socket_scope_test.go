@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/mcp"
 )
 
 // Discovery given no --socket scopes the state directory by the default App Server socket, the
@@ -272,5 +274,29 @@ func TestOnlyAnUnstampedStoreGetsThePlainWords(t *testing.T) {
 	must(t, s.Close())
 	if err := writeGateRefusal(os.ErrNotExist, unstampedAt(ctx, copied)); err.Error() != "store_owned_by_other: ownership refused: write gate: file does not exist" {
 		t.Fatalf("a stamped store's missing gate: %v", err)
+	}
+}
+
+// The relay's default socket is the one the bridge defaults to (internal/bridge/mcp Defaults),
+// with CODEX_HOME unset, empty and set: the store a command given no --socket selects is the one
+// a relay service started on the bridge's socket serves.
+func TestTheDefaultSocketIsTheBridges(t *testing.T) {
+	for _, c := range []struct {
+		set       bool
+		codexHome string
+	}{{false, ""}, {true, ""}, {true, "/c"}} {
+		t.Setenv("HOME", "/h")
+		env := map[string]string{"HOME": "/h"}
+		t.Setenv("CODEX_HOME", c.codexHome)
+		if c.set {
+			env["CODEX_HOME"] = c.codexHome
+		} else {
+			must(t, os.Unsetenv("CODEX_HOME"))
+		}
+		relay, err := DefaultSocket()
+		must(t, err)
+		if bridge, _ := mcp.Defaults(env); bridge != relay {
+			t.Fatalf("CODEX_HOME %q (set %t): the bridge defaults to %s, the relay to %s", c.codexHome, c.set, bridge, relay)
+		}
 	}
 }

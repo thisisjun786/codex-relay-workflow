@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -16,7 +15,6 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // served runs Main over real OS-level pipes, as a host spawning `crw bridge` would, and
@@ -276,31 +274,6 @@ func Test_the_default_socket_and_ledger_follow_codex_home_and_xdg_state_home(t *
 		socket, state := Defaults(tc.env)
 		if socket != tc.socket || state != tc.state {
 			t.Fatalf("%v: %s %s", tc.env, socket, state)
-		}
-	}
-}
-
-// The bridge's default socket is the one the relay scopes a selection made without --socket by
-// (store.DefaultSocket, decision 73), with CODEX_HOME set, empty or unset.
-func Test_the_default_socket_is_the_one_the_relay_scopes_its_store_by(t *testing.T) {
-	for _, c := range []struct {
-		set       bool
-		codexHome string
-	}{{false, ""}, {true, ""}, {true, "/c"}} {
-		t.Setenv("HOME", "/h")
-		env := map[string]string{"HOME": "/h"}
-		t.Setenv("CODEX_HOME", c.codexHome)
-		if c.set {
-			env["CODEX_HOME"] = c.codexHome
-		} else if err := os.Unsetenv("CODEX_HOME"); err != nil {
-			t.Fatal(err)
-		}
-		relay, err := store.DefaultSocket()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if bridge, _ := Defaults(env); bridge != relay {
-			t.Fatalf("CODEX_HOME %v: the bridge defaults to %s, the relay to %s", env["CODEX_HOME"], bridge, relay)
 		}
 	}
 }
