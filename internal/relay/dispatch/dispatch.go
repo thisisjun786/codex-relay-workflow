@@ -51,6 +51,9 @@ type Command struct {
 	// OwnAdmission commands open their own admitted connection (service, daemon, managed-start
 	// and the marker commands), so dispatch admits no store before their handler.
 	OwnAdmission bool
+	// UsageHelp answers -h/--help with the usage line alone, never wrapped: the capacity and
+	// edit-region commands' help, which their goldens hold.
+	UsageHelp bool
 
 	family *Family
 }
@@ -189,6 +192,10 @@ func Execute(ctx context.Context, argv0 string, argv []string, stdout, stderr io
 		return parseError(stderr, prog, fmt.Sprintf("argument command: invalid choice: %s (choose from %s)", pyvalue.StrRepr(remaining[0]), choices()))
 	}
 	parsed := argparse.Parse(name, line)
+	if parsed.Help && command.UsageHelp {
+		fmt.Fprintln(stdout, strings.Join(append([]string{"usage:", prog, name}, argparse.Specs[name].Parts...), " "))
+		return contract.ExitOk
+	}
 	if parsed.Help {
 		fmt.Fprint(stdout, argparse.Help(prog, name))
 		return contract.ExitOk

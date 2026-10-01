@@ -15,7 +15,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pluginwiring"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/adapter"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/capacity"
+	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/capacity"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
@@ -111,16 +111,8 @@ func bridge(ctx context.Context, program string, args []string) int {
 	return mcp.Run(ctx, args)
 }
 
-// relay is the relay CLI. The capacity and edit-region commands (todo 27) parse their own line
-// first, as argparse would, and are then dispatched through the relay CLI's command list.
+// relay is the relay CLI.
 func relay(ctx context.Context, program string, args []string, stdout, stderr io.Writer) int {
-	prog := filepath.Base(program)
-	if program == "crw relay" {
-		prog = program
-	}
-	if code, handled := capacity.Precheck(prog, args, stdout, stderr); handled {
-		return code
-	}
 	return cli.ExecuteAs(ctx, program, args, stdout, stderr)
 }
 

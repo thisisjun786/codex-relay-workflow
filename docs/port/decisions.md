@@ -3318,3 +3318,39 @@ Compare; `CRW_GOLDEN`); 2,735 golden files and 507 fixtures under 36 packages' t
 sections of docs/port/oracles/g1.md to g5.md (per package goldens, fixtures and deleted
 recordings); `go list -deps -test ./... | grep pyoracle` is empty; `CRW_GOLDEN=update make test`
 leaves the tree unchanged.
+
+## Decision R2B-1. The capacity and edit-region commands parse their lines as every relay command does (refactor R2)
+
+(Placeholder heading: the next free number is given when the R2 groups merge.)
+
+Decision: the thirteen capacity and edit-region commands (`slot-reserve`, `slot-release`,
+`limit-declare`, `usage-observe`, `capacity-show`, `region-propose`, `region-settle`,
+`region-restate-revision`, `region-reaffirm`, `region-followup`, `region-followup-accept`,
+`region-followup-settle`, `region-show`) lose their own parser (`capacity.Precheck`, which
+`crw relay` ran before the relay CLI). Their lines are parsed by their argparse specs in the relay
+command table, as every other relay command's line already was, and as `cli.ExecuteAs` already
+parsed them for in-process callers. What a parsed line answers is unchanged, and so is their help:
+`-h`/`--help` still prints the usage line alone, unwrapped (`dispatch.Command.UsageHelp`), which
+the root parser sweep's goldens hold (in-process callers, who got argparse's full help, now get
+that line too). What changes is how a line the second parser rejected or cut short is answered:
+
+- `-hx` is help, as for any command, where it was an unrecognized argument.
+- An abbreviated option (`--subj` for `--subject`) is accepted, or refused as ambiguous, where it
+  was reported as missing its full spelling.
+- Unrecognized arguments name the root parser (`crw relay: error: unrecognized arguments: ...`
+  under the root usage) and a value that looks like an option (`--tenure -x`) is "expected one
+  argument", as argparse reports them; usage lines wrap at the terminal width.
+
+Why: two parsers answered the same thirteen command lines, and which answered depended on the
+entry point. The argparse spec is the contract every other relay command keeps (`--help` lists the
+flags); the second parser was the one deviation. No skill, document or golden depends on the
+second parser's error text; its help is the one answer a golden holds
+(`Test24BuiltBinaryRootParserParity`, `region-show --help`), and it is kept.
+
+Evidence: `internal/relay/capacity/cli.go`, `cmd/crw/main.go`;
+`Test27_CCL1_capacity_and_region_commands_are_registered_offline_and_not_marker_commands`,
+`TestCapacityCommands_the_built_crw_prints_what_python_printed`,
+`TestRegionCommands_the_built_crw_prints_what_python_printed`, `Test24BuiltBinaryRootParserParity`.
+A sweep of 278 capacity command lines through the built `crw relay` before and after found every
+difference in the classes above, none in a help answer and none in an answer to a line both
+parsers accepted.
