@@ -477,3 +477,40 @@ func TestScale_a_negative_limit_lists_nothing(t *testing.T) {
 		t.Errorf("a negative share: %d rows, %v", len(rows), err)
 	}
 }
+
+// An attempt that woke nobody (it failed before the send) is not a send: fourteen failed claims of one
+// relationship leave its hour untouched, and the next claim goes out.
+func TestScale_attempts_that_failed_before_the_send_do_not_spend_the_hour(t *testing.T) {
+	w := newScaleWorld(t, 1)
+	d := w.f.delivery
+	d.Policy.PresendBase, d.Policy.PresendMax, d.Policy.MaxAttempts = 0, 0, 100
+	event := w.emit(0)
+	rel := w.rels[0].rid
+	window := math.Floor(w.f.clock.Now()/3600) * 3600
+	failures := int(d.Policy.MaxSendsPerRelationshipPerHour) + 2
+	for i := 0; i < failures; i++ {
+		w.f.host.script = []string{"read_fail"}
+		w.f.clock.Advance(6)
+		if record := w.f.mustAttempt(event, at(w.f.clock.Now())); record != nil {
+			if state := str(record, "deliveryState"); state != WithheldPreSend {
+				t.Fatalf("failure %d settled as %s, want a failure before the send", i+1, state)
+			}
+		}
+	}
+	if n := w.f.count("SELECT COUNT(*) AS c FROM attempts WHERE event_id = ?", event); n != int64(failures) {
+		t.Fatalf("%d claims were made, want %d", n, failures)
+	}
+	spent, err := w.f.store.RelationshipSends(w.f.ctx, rel, scaleParent, window)
+	mustDo(t, err)
+	if spent != 0 {
+		t.Fatalf("%d failed claims spent %d of the relationship's hour, want 0", failures, spent)
+	}
+	w.f.clock.Advance(6)
+	record := w.f.mustAttempt(event, at(w.f.clock.Now()))
+	if record == nil || str(record, "deliveryState") != Dispatched {
+		t.Fatalf("the claim after the failures was not sent: %v", record)
+	}
+	if spent, err = w.f.store.RelationshipSends(w.f.ctx, rel, scaleParent, window); err != nil || spent != 1 {
+		t.Fatalf("the send spent %d, %v; want 1", spent, err)
+	}
+}

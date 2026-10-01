@@ -28,7 +28,9 @@ func SendStamp(at float64) string {
 // Two kinds of row are counted, and nothing is stored for the count:
 //
 //   - a delivery attempt (one per claim) of a delivery of that relationship to that recipient,
-//     by the stamp the claim wrote when the send started;
+//     by the stamp the claim wrote when the send started, unless it settled as a send that never
+//     left (withheld before the send, or the recipient found busy): a claim in flight and an unknown
+//     outcome count, a failure before the send woke nobody and does not;
 //   - a supervisor transport of a message of that relationship to that recipient, by the stamp of
 //     its transport start, and only when the attempt may have gone: it sent something or its
 //     retry was not shown safe. That is the repository's own test for "an attempt that pins its
@@ -38,7 +40,8 @@ func SendStamp(at float64) string {
 func RelationshipSendsSQL(relationship, recipient string) string {
 	return "((SELECT COUNT(*) FROM attempts sba JOIN deliveries sbd ON sbd.event_id = sba.event_id" +
 		" WHERE sbd.relationship_id = " + relationship + " AND sbd.recipient_task_id = " + recipient +
-		" AND sba.sent_at >= ? AND sba.sent_at < ?)" +
+		" AND sba.sent_at >= ? AND sba.sent_at < ?" +
+		" AND (sba.state IS NULL OR sba.state NOT IN ('withheld_pre_send', 'deferred_busy')))" +
 		" + (SELECT COUNT(*) FROM supervisor_attempts sbs JOIN supervisor_messages sbm ON sbm.message_id = sbs.message_id" +
 		" WHERE sbm.relationship_id = " + relationship + " AND sbm.recipient_task_id = " + recipient +
 		" AND sbs.transport_started_at >= ? AND sbs.transport_started_at < ?" +
@@ -55,7 +58,9 @@ func RelationshipSendsSQL(relationship, recipient string) string {
 const RelationshipSpentSQL = "(SELECT relationship_id, recipient_task_id, SUM(sends) AS spent FROM (" +
 	"SELECT sbd.relationship_id AS relationship_id, sbd.recipient_task_id AS recipient_task_id, COUNT(*) AS sends" +
 	" FROM attempts sba JOIN deliveries sbd ON sbd.event_id = sba.event_id" +
-	" WHERE sba.sent_at >= ? AND sba.sent_at < ? GROUP BY sbd.relationship_id, sbd.recipient_task_id" +
+	" WHERE sba.sent_at >= ? AND sba.sent_at < ?" +
+	" AND (sba.state IS NULL OR sba.state NOT IN ('withheld_pre_send', 'deferred_busy'))" +
+	" GROUP BY sbd.relationship_id, sbd.recipient_task_id" +
 	" UNION ALL SELECT sbm.relationship_id, sbm.recipient_task_id, COUNT(*)" +
 	" FROM supervisor_attempts sbs JOIN supervisor_messages sbm ON sbm.message_id = sbs.message_id" +
 	" WHERE sbs.transport_started_at >= ? AND sbs.transport_started_at < ?" +

@@ -882,8 +882,10 @@ K5ctl leg.
 The send budget has two owners (CRW-259). The recipient owns the gap: a task is woken at most once
 in `min_send_interval_seconds`, whoever sends, the parent-child queue or the supervisor channel. A
 relationship owns the hour: it may wake one recipient `max_sends_per_relationship_per_hour` times
-(12), counted over both queues from the attempts the relay already records, with nothing stored
-for it (I-225, I-475). The hour used to be one count per recipient, so a parent with ten children
+(12), counted over both queues from the attempts the relay already records, with no count stored
+for it (I-225, I-475). An attempt that woke nobody does not count: a delivery attempt that failed
+before the send or found the recipient busy, and a supervisor transport that sent nothing and may
+be retried; a claim still in flight, or one whose outcome is unknown, counts until it settles. The hour used to be one count per recipient, so a parent with ten children
 stopped receiving at twelve deliveries an hour in all; now it can receive 12 an hour from each
 child, a runaway relationship still stops at 12, and the gap holds the recipient to 720 an hour
 whatever the number of relationships.

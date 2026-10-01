@@ -26,6 +26,11 @@ func TestRelationshipSends_counts_one_relationship_to_one_recipient_in_one_windo
 			exec("INSERT INTO attempts (request_id, event_id, attempt_no, kind, internal_state, sent_at, observed_at) VALUES (?,?,?,?,'settled',?,?)", fmt.Sprintf("%s-%d", event, i+1), event, i+1, kind, stamp, stamp)
 		}
 	}
+	// attempt adds one attempt to a delivery with the state its settlement left.
+	attempt := func(event string, no int, state string) {
+		t.Helper()
+		exec("INSERT INTO attempts (request_id, event_id, attempt_no, kind, internal_state, state, sent_at, observed_at) VALUES (?,?,?,'completion','settled',?,?,?)", fmt.Sprintf("%s-%d", event, no), event, no, state, inside, inside)
+	}
 	message := func(id, relationship, recipient string) {
 		t.Helper()
 		exec("INSERT INTO supervisor_messages (message_id, obligation_id, obligation_kind, relationship_id, purpose, kind, sender_task_id, recipient_task_id, subject, packet, state, staged_at, updated_at) VALUES (?,?,'report',?,'p','k','sender',?,'s','{}','sent',?,?)", id, id, relationship, recipient, inside, inside)
@@ -39,6 +44,15 @@ func TestRelationshipSends_counts_one_relationship_to_one_recipient_in_one_windo
 	delivery("d-a-parent", "rel-a", "completion", "parent", inside, inside, inside, before, after)
 	delivery("d-a-child", "rel-a", "revision_request", "child", inside, inside)
 	delivery("d-b-parent", "rel-b", "merge_turn_grant", "parent", inside)
+	// A delivery whose attempts settled as sends that never left: two failed before the send and
+	// one found the recipient busy are not wakes; one still in flight and one whose outcome is
+	// unknown are counted; so is a delivered one.
+	delivery("d-c-parent", "rel-c", "completion", "parent")
+	attempt("d-c-parent", 1, "withheld_pre_send")
+	attempt("d-c-parent", 2, "withheld_pre_send")
+	attempt("d-c-parent", 3, "deferred_busy")
+	attempt("d-c-parent", 4, "held_uncertain")
+	attempt("d-c-parent", 5, "dispatched")
 	// Supervisor transports of relationship a to the parent: one that may have gone (counted), one that
 	// started and sent nothing and may be retried (not a wake), one with a retry not shown safe (counted),
 	// one never started, one an hour earlier.
@@ -58,7 +72,7 @@ func TestRelationshipSends_counts_one_relationship_to_one_recipient_in_one_windo
 		{"rel-a", "child", window, 2},
 		{"rel-b", "parent", window, 1},
 		{"rel-b", "child", window, 0},
-		{"rel-c", "parent", window, 0},
+		{"rel-c", "parent", window, 2},
 		{"rel-a", "parent", window - 3600, 1 + 1},
 		{"rel-a", "parent", window + 3600, 1},
 	} {
@@ -71,7 +85,7 @@ func TestRelationshipSends_counts_one_relationship_to_one_recipient_in_one_windo
 	// The expression the assignment view embeds in its own statement, with columns for operands,
 	// reads the same numbers as the method the delivery service and status use.
 	rows, err := s.All(ctx, "SELECT d.event_id AS event_id, d.relationship_id AS relationship_id, d.recipient_task_id AS recipient, "+RelationshipSendsSQL("d.relationship_id", "d.recipient_task_id")+" AS sends FROM deliveries d ORDER BY d.event_id", RelationshipSendsArgs(window)...)
-	if err != nil || len(rows) != 3 {
+	if err != nil || len(rows) != 4 {
 		t.Fatalf("embedded expression: %d rows, %v", len(rows), err)
 	}
 	for _, row := range rows {
@@ -95,12 +109,12 @@ func TestRelationshipSends_counts_one_relationship_to_one_recipient_in_one_windo
 		}
 		seen[relationship+">"+recipient] = true
 	}
-	for _, pair := range []string{"rel-a>parent", "rel-a>child", "rel-b>parent"} {
+	for _, pair := range []string{"rel-a>parent", "rel-a>child", "rel-b>parent", "rel-c>parent"} {
 		if !seen[pair] {
 			t.Errorf("the grouped form has no row for %s", pair)
 		}
 	}
-	if len(spent) != 3 {
-		t.Errorf("the grouped form has %d rows, want 3", len(spent))
+	if len(spent) != 3+1 {
+		t.Errorf("the grouped form has %d rows, want 4", len(spent))
 	}
 }
