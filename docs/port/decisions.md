@@ -4462,3 +4462,56 @@ Consumer check: no skill, doc or contract fixture reads these details; no golden
 
 Evidence: internal/relay/managed/{start_cli.go,start_cli_test.go}; internal/relay/sync/policy.go;
 internal/relay/dispatch/{answer.go,dispatch.go}.
+
+## Decision R3F-6. A test whose name says it compares with Python is named for what it holds (refactor R3, final sweep)
+
+Decision: 142 relay and contract-corpus tests whose names claimed a comparison with Python
+(`...MatchesPython`, `..._matches_python`, `...LivePython...`, `..._PythonScenario`,
+`..._is_pythons`, `..._as_python_does`, `..._like_python`, `...AgainstPython`,
+`..._python_whole_output`) and that compare with a Go golden are renamed, the claim dropped:
+sync's 43 `Test23_*_PythonScenario` are `Test23_*_Scenario`; supervisor's 26
+`Test24_*_WholeLivePython` are `Test24_*_WholeOutput`; merge-turn's 34 `Test26_*_python_*` and
+`Test26_CCL_1_withdraw_matches_python` lose the word; and 38 more in internal/relay/{cli,faults,
+registry,store} and internal/contracttest (for example `TestShow_on_every_scenario_event`,
+`TestDAttentionWholeOutput`, `Test_every_mcp_reply_equals_its_golden_whole_json`). Their 152
+golden files and the 69 fixtures named after them are renamed with identical content (git
+`R100`); the subtests' goldens, whose names carry a digest of the test's name, were regenerated
+and checked value for value against the old files before those were removed.
+docs/port/test-map.md and contract/notes/test_fence.md name the new tests; the port's historical
+records (these decisions, docs/port/oracles, the backlog's evidence) keep the names they had.
+
+Kept, and why:
+
+- Many goldens on one name: `TestLaunchPolicy_resolution_is_pythons_for_every_declaration` (78),
+  `TestCLI_marker_preflight_answers_what_python_answers` (27),
+  `TestWorkerPolicy_every_reason_is_pythons_in_every_reader` (26), the five contract-corpus
+  `Test*Commands_the_built_crw_prints_what_python_printed` (kept together; two hold 18 and 12),
+  `TestDoctor_ownership_block_matches_python_on_a_broken_store` (16),
+  `Test26_MTW_9_every_notice_row_matches_python` (15), `TestStatus_phases_match_python` (14),
+  `TestStatus_observation_health_matches_python` and `Test26_MTW_8_every_status_row_matches_python`
+  (12), `Test28FrozenByteCountExactPythonParity` (11), `TestUpdateWritesWhatPythonWrites` (7),
+  `TestArgumentRefusals_fall_where_the_python_fence_puts_them`,
+  `TestWorkerPolicy_managed_start_readiness_is_pythons`,
+  `TestAWrongSocketRecoveryResolvesThePinnedDirectoryAsPythonDoes` and
+  `Test33TranscriptIdentityPython` (6).
+- A name the golden's bytes depend on: delivery's `TestCLI_every_delivery_command_answers_byte_for_byte_like_python`,
+  `TestCLI_every_intent_command_answers_byte_for_byte_like_python`,
+  `TestCLI_intent_register_refuses_a_store_the_other_runtime_owns_like_python` and
+  `TestCLI_store_selection_refusals_match_python` lay their stores at a path fixed by the test's
+  name, which their receipts' event ids and the marker workspace keys digest.
+- Stored, hashed or deliberately Python-kept bytes, where "Python" names what the bytes still
+  are (decision R3R-8's rule): the Stop hook's `Test33*Python` journal tests, store's
+  `TestPythonParity_*` table rows, the coordination conflict rows and ids
+  (`Test26_Coordination*`), the stored labels and reprs (`Test28PythonErrorLabelsPersisted`,
+  `Test24ProviderReprPythonBytes`, `TestPathReprIsPythonsReprOfTheDecodedFilename`), the path
+  spellings the state-dir, scope and workspace keys are taken over (`TestLocate_*`,
+  `TestResolveStateDir_*`, `TestDiscoverySpellsEveryStoreItNamesAsPythonDoes`,
+  `TestAMarkerRootIsTheDirectoryPythonNames`, `TestTheScopeRootIsTheOnePythonResolves`, ...),
+  the policy digest, the readings decided by Python's truth and equality, and the runtime's and
+  the bridge's (decision R3R-8).
+- Names that say where a case came from: managed's `Test27_*_PythonFake...` and faults'
+  `Test22_FLT_*_Python...` scenarios, store's `..._python_properties` ports.
+- Tests that compare with literals, not a golden (for example
+  `TestExpandUser_matches_python_home_and_named_user`).
+
+Evidence: commit [R3F7]: every renamed golden and fixture is a git rename with identical content.

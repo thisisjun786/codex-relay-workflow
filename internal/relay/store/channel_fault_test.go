@@ -284,7 +284,7 @@ func TestRouteIncidents_sequence_replace_and_keep_only_the_newest(t *testing.T) 
 	}
 }
 
-func TestRouteIncidents_keep_none_keeps_all_and_keep_zero_deletes_all_like_python(t *testing.T) {
+func TestRouteIncidents_keep_none_keeps_all_and_keep_zero_deletes_all(t *testing.T) {
 	// Given: routes.store_incident (routes.py:224) keeps every incident for keep=None and none for
 	// keep=0.
 	// When: Go stores three incidents with keep nil and with keep 0.

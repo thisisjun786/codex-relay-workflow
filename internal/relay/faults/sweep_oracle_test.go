@@ -12,7 +12,7 @@ import (
 
 // Compare the complete presence verdict and memo table on a seeded disposable store with the
 // golden, which began as the Python source's answer.
-func Test22_OvertakenPresenceWholePythonPage(t *testing.T) {
+func Test22_OvertakenPresenceWholePage(t *testing.T) {
 	goldenParent(t)
 	for _, total := range []int{1, presentChecks + 1} {
 		t.Run(fmt.Sprint(total), func(t *testing.T) { testOvertakenPresenceWholePythonPage(t, total) })

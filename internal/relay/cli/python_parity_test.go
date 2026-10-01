@@ -127,7 +127,7 @@ func decode(t *testing.T, text string) map[string]any {
 	return value
 }
 
-func TestDoctor_matches_python_on_a_python_created_store(t *testing.T) {
+func TestDoctor_on_a_python_created_store(t *testing.T) {
 	home := tempHome(t)
 	state := filepath.Join(home, "state")
 	// Given: a store as the real Python relay's absent-store initializer creates it.
@@ -153,7 +153,7 @@ func TestDoctor_matches_python_on_a_python_created_store(t *testing.T) {
 // A store the answering runtime does not own is diagnosed the same way by both: identity from
 // a disposable copy, no live open and no probe file beside it, and the fence's refusal in the
 // access detail (store.py probe's check_start branch).
-func TestDoctor_matches_python_on_a_store_the_other_runtime_owns(t *testing.T) {
+func TestDoctor_on_a_store_the_other_runtime_owns(t *testing.T) {
 	home := tempHome(t)
 	_, alias := packageBinary(t)
 	state := filepath.Join(home, "state")
@@ -213,7 +213,7 @@ func asPythonReport(t *testing.T, stdout, pythonSawOwner string) string {
 // reports: this process's environment, the service's launch-policy.json, both naming one
 // file, a policy that declares no roles, and a worker-policy requirement. Every report is
 // byte-identical to Python's once the documented runtime block is removed.
-func TestDoctor_matches_python_with_a_declared_execution_policy(t *testing.T) {
+func TestDoctor_with_a_declared_execution_policy(t *testing.T) {
 	home := tempHome(t)
 	state := filepath.Join(home, "state")
 	pythonCreates(t, state)

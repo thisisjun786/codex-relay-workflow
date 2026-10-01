@@ -207,7 +207,7 @@ func unauthenticatedGH(t *testing.T) string {
 // store, whoever owns it and whatever phase it is in (cli.py:185-205, cutover.md Read-only
 // clients). Where Go may not write - another owner, a contended write gate - the Go reads change
 // no byte of the store. A Go store's mirror phase is no longer an input (decision 56).
-func TestReadOnlyForms_match_python_in_every_ownership_state(t *testing.T) {
+func TestReadOnlyForms_in_every_ownership_state(t *testing.T) {
 	home := tempHome(t)
 	recordedGH := unauthenticatedGH(t)
 	_, alias := packageBinary(t)
@@ -813,7 +813,7 @@ func TestPacketCheck_reports_the_live_state_refusal(t *testing.T) {
 // the fence's refused envelope, detail and exit 2 (cli.main answers every RelayError so),
 // including the fault commands and the write forms of the conditional read commands, and Go
 // changes no byte of the store it refused.
-func TestWriteForms_refuse_a_foreign_store_as_python_does(t *testing.T) {
+func TestWriteForms_refuse_a_foreign_store(t *testing.T) {
 	home := tempHome(t)
 	_, alias := packageBinary(t)
 	pythonOwned := filepath.Join(home, "python-owned")

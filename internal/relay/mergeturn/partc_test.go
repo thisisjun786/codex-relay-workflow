@@ -573,7 +573,7 @@ func Test26_MTN_24_landing_order_and_restatement_sequences_survive_odd_stores(t 
 	})
 }
 
-func Test26_CCL_1_withdraw_matches_python(t *testing.T) {
+func Test26_CCL_1_withdraw(t *testing.T) {
 	w := newFx(t)
 	w.claim(alpha, fxA, "head-a")
 	waiting := w.claim(beta, fxB, "head-b")["turnId"].(string)

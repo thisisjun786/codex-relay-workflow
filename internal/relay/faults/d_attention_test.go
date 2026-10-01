@@ -9,7 +9,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
-func TestDAttentionWholeOutputAgainstPython(t *testing.T) {
+func TestDAttentionWholeOutput(t *testing.T) {
 	home, e := os.MkdirTemp("/dev/shm", "fault-d-attention-")
 	if e != nil {
 		t.Fatal(e)

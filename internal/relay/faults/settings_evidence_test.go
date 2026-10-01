@@ -14,7 +14,7 @@ import (
 // A real withheld delivery and its settled settings refusal: compare the complete
 // derived observation, including its recovery, with the golden, which began as the Python
 // faultsweep source's.
-func Test22_SettingsHoldWholePythonObservation(t *testing.T) {
+func Test22_SettingsHoldWholeObservation(t *testing.T) {
 	goldenParent(t)
 	for _, held := range []bool{true, false} {
 		t.Run(fmt.Sprint(held), func(t *testing.T) { testSettingsHoldWholePythonObservation(t, held) })

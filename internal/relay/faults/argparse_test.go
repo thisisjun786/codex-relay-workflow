@@ -41,7 +41,7 @@ func TestFaultCommandsPrintTheirHelp(t *testing.T) {
 	}
 }
 
-func TestFaultObserveMalformedJSONMatchesPython(t *testing.T) {
+func TestFaultObserveMalformedJSON(t *testing.T) {
 	goldenParent(t)
 	for _, raw := range []string{"{not json", "[1,2"} {
 		t.Run(raw, func(t *testing.T) {
@@ -53,7 +53,7 @@ func TestFaultObserveMalformedJSONMatchesPython(t *testing.T) {
 	}
 }
 
-func TestFaultKindModuleNestedImportErrorMatchesPython(t *testing.T) {
+func TestFaultKindModuleRefusesAnUndeclaredNestedName(t *testing.T) {
 	home := t.TempDir()
 	args := []string{"--state", filepath.Join(home, "relay"), "--json", "--kind-module", "codex_session_relay.not_real", "fault-attention"}
 	got := goFaultCLI(t, args...)
