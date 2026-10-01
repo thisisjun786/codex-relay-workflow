@@ -3215,8 +3215,10 @@ program (a path with a space, a bare command on PATH, a relative path against `c
 a leading `~` or `$HOME` made) and searches it for CRW's names and the destination. The server's
 name counts; a map key is matched by spelling only; a number names nothing; a reading that fails
 reads as CRW's. The entry is listed only when that finds CRW in it, with the Stop settings it would
-leave unknown. An array of tables (`[[mcp_servers.x]]`) is judged table by table. Another program's
-entry that names nothing of CRW's is dropped, as a well-formed one already was.
+leave unknown. An array of tables (`[[mcp_servers.x]]`, or `x = [{...}]`) is judged table by
+table, each with its own `cwd` and `env`, and a table of an array is never the HTTP server whose
+`url` starts nothing. Another program's entry that names nothing of CRW's is dropped, as a
+well-formed one already was.
 
 `crw doctor` is not changed. It reads these files with `ReadRegistrations`, not with this
 reading, and as one document the way Codex accepts it: a server table with `args = 42`, whoever's

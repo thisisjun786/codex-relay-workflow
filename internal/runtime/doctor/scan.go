@@ -538,7 +538,7 @@ func (s *scan) server(row int, source, field string, get func(string) any, versi
 	default:
 		envOK = false
 	}
-	if get("command") == nil && get("url") != nil {
+	if get("command") == nil && get("url") != nil && entry.notTable == "" {
 		return // a server Codex reaches over HTTP starts nothing here
 	}
 	what := "its command, args, cwd or env is not a non-empty string, a list of strings, a string and an object of strings"
@@ -1001,15 +1001,33 @@ func (s *scan) configToml(_ context.Context) {
 	sort.Strings(names)
 	for _, name := range names {
 		field := "mcp_servers." + name
+		table := func(entry map[string]any, notTable string) {
+			s.server(10, path, field, func(key string) any { return entry[key] }, "", serverEntry{name: name, notTable: notTable, raw: entry})
+		}
+		other := func(value any) {
+			s.server(10, path, field, func(string) any { return nil }, "", serverEntry{name: name, raw: value})
+		}
+		const array = "it is one of an array of tables, not a table"
 		switch entry := servers[name].(type) {
 		case map[string]any:
-			s.server(10, path, field, func(key string) any { return entry[key] }, "", serverEntry{name: name, raw: entry})
+			table(entry, "")
 		case []map[string]any: // [[mcp_servers.name]]: each table starts a server with its own cwd and env
-			for _, table := range entry {
-				s.server(10, path, field, func(key string) any { return table[key] }, "", serverEntry{name: name, notTable: "it is one of an array of tables, not a table", raw: table})
+			for _, one := range entry {
+				table(one, array)
+			}
+		case []any: // name = [{...}], the inline form of the same array
+			for _, item := range entry {
+				if one, ok := item.(map[string]any); ok {
+					table(one, array)
+				} else {
+					other(item)
+				}
+			}
+			if len(entry) == 0 {
+				other(entry)
 			}
 		default:
-			s.server(10, path, field, func(string) any { return nil }, "", serverEntry{name: name, raw: entry})
+			other(entry)
 		}
 	}
 }
