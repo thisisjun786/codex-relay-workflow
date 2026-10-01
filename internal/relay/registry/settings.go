@@ -410,10 +410,40 @@ func (s TaskSettings) Mismatches(response any, transmitted, exactApprovalPolicy,
 	expectedProfile := s.get("expectedPermissionProfile")
 	if profile == nil && expectedProfile != nil {
 		found = append(found, finding(SettingUnobservable, "activePermissionProfile", expectedProfile, nil))
-	} else if profile != nil && canonical(profile) != canonical(expectedProfile) {
+	} else if profile != nil && canonical(profile) != canonical(expectedProfile) && (expectedProfile != nil || !s.isRecordedSandboxProfile(profile)) {
 		found = append(found, finding(UnverifiablePermissionProfile, "activePermissionProfile", expectedProfile, profile))
 	}
 	return found
+}
+
+// builtinProfiles is the host's built-in permission profile for each sandbox type, as Codex
+// 0.154 names them.
+var builtinProfiles = map[string]string{"readOnly": ":read-only", "workspaceWrite": ":workspace", "dangerFullAccess": ":danger-full-access"}
+
+// isRecordedSandboxProfile reports whether profile is the built-in profile of the recorded sandbox's
+// type and extends nothing. A host that reports one is running the recorded sandbox and no
+// profile beyond it, so a record that names no profile is verified by the sandbox comparison.
+// Codex 0.154 reports one on every thread it runs from a sandbox mode, so without this a record
+// made from a sandbox mode could never be resumed. A custom profile, or one that extends
+// another, grants what the sandbox does not show and stays unverifiable.
+func (s TaskSettings) isRecordedSandboxProfile(profile any) bool {
+	object, ok := profile.(contract.OrderedObject)
+	if !ok {
+		return false
+	}
+	for _, field := range object {
+		if field.Key == "extends" && field.Value == nil {
+			continue
+		}
+		if field.Key != "id" {
+			return false
+		}
+	}
+	id, _ := getField(object, "id")
+	kind, _ := getField(NormalisePolicy(s.get("sandbox")), "type")
+	kindText, _ := kind.(string)
+	builtin, ok := builtinProfiles[kindText]
+	return ok && id == builtin
 }
 
 func rootsWithin(returned, recorded []any) bool {
