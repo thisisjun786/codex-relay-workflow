@@ -65,7 +65,7 @@ func decodeRoute(row store.Row) (Object, error) {
 		}
 	}
 	if len(unknown) > 0 {
-		return nil, &Refusal{"route_state_conflict", fmt.Sprintf("route %s carries target keys %s", out["fault_id"], pyvalue.Repr(unknown))}
+		return nil, &Refusal{"route_state_conflict", fmt.Sprintf("route %s carries target keys %s", out["fault_id"], pyvalue.Quote(unknown))}
 	}
 	return out, nil
 }

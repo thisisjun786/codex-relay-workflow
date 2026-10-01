@@ -183,7 +183,7 @@ func ExecuteAs(ctx context.Context, prog string, argv []string, stdout, stderr i
 		var value any
 		value, err = loads(text)
 		if err != nil {
-			err = fmt.Errorf("fault_observation_malformed: the observation is not readable JSON: %s", store.PythonJSONError(text))
+			err = fmt.Errorf("fault_observation_malformed: the observation is not readable JSON: %v", err)
 			break
 		}
 		var o Observation

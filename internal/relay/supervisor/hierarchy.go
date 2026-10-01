@@ -173,7 +173,7 @@ func (c *Channel) ResolveRecipient(ctx context.Context, relationshipID, expected
 		return Resolution{}, err
 	}
 	if expected != "" && expected != resolved.Recipient {
-		return Resolution{}, Refusal{"recipient_not_authorized", fmt.Sprintf("the caller named %s and the linkage says project %s is supervised by %s; a disagreement about who the level above is is the finding, not something to resolve by picking one", pyvalue.StrRepr(expected), pyvalue.StrRepr(resolved.ProjectKey), pyvalue.StrRepr(resolved.Recipient))}
+		return Resolution{}, Refusal{"recipient_not_authorized", fmt.Sprintf("the caller named %q and the linkage says project %q is supervised by %q; a disagreement about who the level above is is the finding, not something to resolve by picking one", expected, resolved.ProjectKey, resolved.Recipient)}
 	}
 	return resolved, nil
 }

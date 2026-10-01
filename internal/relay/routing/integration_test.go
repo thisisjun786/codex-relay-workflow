@@ -159,7 +159,7 @@ func integrationReplay(t *testing.T, property string) {
 			reply = pyjson.Dumps(answer, pyjson.Options{SortKeys: true, Unicode: true})
 			commands := map[string]string{"router.register_product": "product-register", "router.bind": "product-bind", "router.set_policy": "route-policy", "router.show_products": "product-show", "router.intake": "route-intake", "router.classify": "route-classify", "router.reconcile": "route-reconcile", "router.evaluate_projects": "route-projects", "router.check_completion": "completion-check", "router.digest": "route-digest", "router.show": "route-show"}
 			if command := commands[record.Operation]; record.Wire && command != "" {
-				wire = pyjson.Dumps(CommandRecord(command, answer), pyjson.Options{})
+				wire = pyjson.Dumps(CommandRecord(answer), pyjson.Options{})
 			}
 			if record.Tables {
 				tables = tablesJSON(t, s)

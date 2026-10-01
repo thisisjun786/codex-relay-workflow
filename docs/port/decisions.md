@@ -3358,19 +3358,24 @@ supervisor's held and withheld records.
 
 Evidence: `internal/pyvalue/quote.go`; the golden diffs of the R3D commits (message prose only).
 
-## R3D-2. merge-turn answers print a map's keys in sorted order; Python's key order is not rebuilt (refactor R3)
+## R3D-2. merge-turn and routing answers print a map's keys in sorted order; Python's key order is not rebuilt (refactor R3)
 
 Decision: `mergeturn.PythonOrder` and its table of eleven answer shapes, which re-sorted a map's
 keys into the order `mergeturn.py` inserted them, are deleted. A `merge-turn-*` answer built from
-a map prints its keys sorted (`mergeturn.plain`); every key, value and type is unchanged.
+a map prints its keys sorted (`mergeturn.plain`); every key, value and type is unchanged. The
+same holds for the routing commands (`product-*`, `route-*`, `completion-check`):
+`routing.CommandRecord`, which carried each command's and each nested record's key order from
+`products.py`/`routing.py` (about 150 lines of order tables), now prints every map with its keys
+sorted.
 
-Consumers checked: the skills and `crw` read merge-turn answers as JSON fields
-(`plugins/crw/skills/crw-run/references/merge-readiness.md`); no consumer reads them as bytes or
-by position. The answer is never stored or hashed: the stored grant evidence and the turn's
-ledger rows are written by their own encoders, which this entry leaves alone.
+Consumers checked: the skills and `crw` read merge-turn and routing answers as JSON fields
+(`plugins/crw/skills/crw-run/references/merge-readiness.md`, docs/relay/product-routing.md); no
+consumer reads them as bytes or by position. The answers are never stored or hashed: the stored
+grant evidence, the turn's ledger rows and the routing records (`product_registry`,
+`incident_routes`) are written by their own encoders, which this entry leaves alone.
 
-Evidence: internal/relay/mergeturn/order.go; the contracttest goldens
-`TestMergeTurnCommands_*` (key order only).
+Evidence: internal/relay/mergeturn/order.go, internal/relay/routing/command_records.go; the
+contracttest goldens `TestMergeTurnCommands_*` and the routing goldens (key order only).
 
 ## R3D-3. `--kind-module` accepts three names and models no import (refactor R3)
 
@@ -3431,3 +3436,27 @@ Consumers checked: the skills pass settings documents written by `json.dumps` (n
 docs/port/known-defects.md's settings entry is updated.
 
 Evidence: internal/relay/registry/cli.go (settingsJSON); Test25_CLI_host_errors_exit_three_with_their_detail.
+
+## R3D-6. Fault and routing commands word unreadable input as Go reads it (refactor R3)
+
+Decision: `fault-observe --observation`, `fault-complete --observed` and `fault-sweep --readings`
+refuse text that is not JSON with `fault_observation_malformed: the ... is not readable JSON:
+<encoding/json's error>`, and the routing commands' `--incident`, `--classification` and
+`--registry` documents with `route_input_malformed: ... is not readable JSON: <encoding/json's
+error>`, where both quoted CPython's `JSONDecodeError` text (`store.PythonJSONError`) for a
+document their encoding/json reading had already refused; an `@file` that cannot be read names
+Go's error instead of `[Errno N] ...`. The reasons and exits are unchanged. The fault ledger's
+`f1Repr` (repr of a str, `None`, fmt for the rest) is deleted: its refusals name a value with
+`pyvalue.Quote` (R3D-1), and a choice list in a routing refusal is Go's `%q` of the list instead of
+a Python tuple's repr.
+
+Consumers checked: the holder protocol (docs/relay/product-routing.md, docs/relay/faults.md) reads
+the refusal's `reason`; no skill parses these details.
+
+What stays: the fault sweep's reading of the host record (`the host record at ... could not be read:
+OSError`) and the managed readings' `TypeError:`/`ValueError:` reasons, because a sweep's reading
+can become a recorded observation; the readback problems a publication's block carries are
+returned only and now quote as Go does.
+
+Evidence: internal/relay/faults/{cli.go,commands_f1.go}, internal/relay/routing/{cli.go,products.go};
+the faults and routing goldens (message prose only).

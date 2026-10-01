@@ -49,14 +49,12 @@ func ObservationObligation(reading map[string]any) *Obligation {
 }
 func validateObservation(o Obligation, reading map[string]any, directory string) error {
 	mismatch := ""
-	quoted := func(v any) string {
-		return pyvalue.Repr(v)
-	}
+	quoted := pyvalue.Quote
 	switch {
 	case reading["schema"] != "reporting-observation/1":
-		mismatch = "its schema is " + quoted(reading["schema"]) + ", not 'reporting-observation/1'"
+		mismatch = "its schema is " + quoted(reading["schema"]) + ", not \"reporting-observation/1\""
 	case reading["reportingState"] != "unreported":
-		mismatch = "it reports " + quoted(reading["reportingState"]) + ", not 'unreported'"
+		mismatch = "it reports " + quoted(reading["reportingState"]) + ", not \"unreported\""
 	case reading["relationshipId"] != o.RelationID:
 		mismatch = "it names relationship " + quoted(reading["relationshipId"]) + " and the obligation is for " + quoted(o.RelationID)
 	default:
