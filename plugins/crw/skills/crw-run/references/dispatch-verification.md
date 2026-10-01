@@ -160,12 +160,46 @@ a case whose owner has moved or been reworded before relying on it.
 | S16b | Where Loop is effective, the packet carries the literal installed-skill invocation, not only a workflow label | [Launch packet](task-packet.md#launch-packet) Loop branch | Default settings | unchanged |
 | S17 | A setting the creation path cannot apply is settled before the task exists, never silently downgraded | [Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution) settings bullet | Recovery | unchanged |
 | S18 | A mismatch found after creation is reconciled on that same task | Same bullet list | Recovery | unchanged |
-| S19 | A child writes its messages, commits, pull request text and receipts in English, while task titles, Linear records and reports to the user stay Korean | [Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution) language paragraph and the packets' `Language:` line | Default settings | added 2026-10-02 |
-| S20 | A relay-managed child that finishes on a goal-continuation or post-restart turn attaches a continuation claim naming the generation's anchor, read from the relay, and does not read the `unassigned_turn` refusal as a delivery defect; a turn of another task stays refused whatever it claims | [Launch packet](task-packet.md#launch-packet) relay bullet on which turn the receipt is emitted from, and [Completing on a later turn of the same child](relay.md#completing-on-a-later-turn-of-the-same-child) | Recovery | added 2026-10-02 |
+| S19 | A child writes its messages, commits, pull request text and receipts in English, while task titles, Linear records and reports to the user stay Korean | [Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution) language paragraph and the packets' `Language:` line | Default settings | added 2026-10-02; partly measured in P-CRW-115, inspected artifacts held, see below |
+| S20 | A relay-managed child that finishes on a goal-continuation or post-restart turn attaches a continuation claim naming the generation's anchor, read from the relay, and does not read the `unassigned_turn` refusal as a delivery defect; a turn of another task stays refused whatever it claims | [Launch packet](task-packet.md#launch-packet) relay bullet on which turn the receipt is emitted from, and [Completing on a later turn of the same child](relay.md#completing-on-a-later-turn-of-the-same-child) | Recovery | added 2026-10-02; did not occur in the receipts read in P-CRW-115, see below |
 S14 and S17 are the pair that is easiest to confuse. S14 removed the readiness turn; S17
 added a capability check the coordinator performs before creating the task. A check that
 happens on the coordinator's side, before anything exists to answer, is not a turn spent
 asking the child whether it is ready.
+
+S19 and S20 were read against the first relay-managed project run after they were written,
+P-CRW-115: its six issue children, whose pull requests are #271 to #276 (merges 14b01079,
+6b5ba199, 9fb54f4b, ca4316b4, 2ecad795 and 3a71c5d5), read on 2026-10-02 at dev 3a71c5d5.
+The receipts and relay records read for this are private and are not linked.
+
+S19 is partly measured. All six packets carried the `Language:` line, and what was inspected
+of what the children published is English: the titles and bodies of the six pull requests,
+their 34 commit messages and the 9 non-bot replies and comments on them contain no Korean,
+read through and searched for Hangul, and the seven receipt artifacts the children emitted
+read as English too. This is one run in which the line was always present, so it shows that
+the instruction held for those artifacts when it was given, not what a child without it
+would write. Two things were not measured. A child's own messages and final return, which
+the row also names, are not published and were not read. The CRW-255 child reported that its
+internal independent reviewers wrote their reports in Korean; those reports are in no pull
+request, commit or receipt and the report could not be checked, but the audit reviewer of
+the CRW-257 child, given an English prompt, also answered in Korean, so the line does not
+seem to reach a subagent's report. The line names the child's own messages and final return,
+its commit messages, its pull request text and its receipt text, not a subagent's report, so
+this does not change what was measured. Whether a reviewer's report should follow the same
+line is a change to the rule, not a finding about this run.
+
+S20 did not occur in the seven receipts read. All seven completion receipts of the six
+children (CRW-255's twice, because its first receipt drew a revision request) were emitted
+from a turn the relay had already admitted: the business turn managed-start delivered, in
+generation 1, and, for CRW-255's generation 2, the generation's anchor, which is the turn
+its revision request arrived in. Each receipt's turn was compared with that admitted turn as
+the relay reports it, so none needed a continuation claim (a receipt from an admitted turn
+is accepted without one) and the case the row decides, a child finishing on a
+goal-continuation or post-restart turn the relay did not admit, was not seen. The row rests
+on the tests and documentation of PR #272, not on a live run. The run does show one thing
+about the procedure: the generation-2 anchor is not the `standbyTurnId` of the routing
+record, which the managed-start routing text still tells a child to name for a continuation
+claim (an open entry in the refactor backlog's real-use run 3 list).
 
 ## Negative cases
 
