@@ -3957,7 +3957,8 @@ stderr look for `invalid choice` and `required`, which the parser still says.
 
 Removed with it, as tests that pinned only argparse's bytes: the formatter test over every spec
 at five widths, `Test24ArgparsePython`, the built-binary argparse, runtime and root-parser sweeps
-with their 2,000-case fixture, and the contract corpus's per-command argparse sweep. The
+with their 2,000-case fixture, the contract corpus's per-command argparse sweep and its sweep of
+the eleven routing commands' help and error lines at three widths (447 cases). The
 contract they shared is held instead by `TestParseReadsWhatTheSpecDeclares`,
 `TestTheRootParserStopsAtTheCommand`, `TestEveryParserListsItsOptions` (internal/relay/argparse)
 and `TestRun_every_relay_command_line_has_the_usage_contract` (cmd/crw: every registered
