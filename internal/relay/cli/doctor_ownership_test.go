@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -38,7 +37,7 @@ func ownershipBlock(t *testing.T, stdout string) string {
 // validate refuses it before asking who owns the store), the access block is the same too:
 // the probe's foreign branch, worded as check_start refuses (store.probe).
 func TestDoctor_ownership_block_matches_python_on_a_broken_store(t *testing.T) {
-	home := pythonHome(t)
+	home := tempHome(t)
 	_, alias := packageBinary(t)
 	write := func(path, text string) func(*testing.T) {
 		return func(t *testing.T) {
@@ -123,30 +122,35 @@ func TestDoctor_ownership_block_matches_python_on_a_broken_store(t *testing.T) {
 			state := filepath.Join(home, strings.ReplaceAll(c.name, " ", "-"))
 			pythonCreates(t, state)
 			c.break_(t, state)
-			// Both runtimes diagnose the very same broken store: no handover (which refuses a
-			// broken record) runs between them.
-			py := fence(t, "--state", state, "doctor")
-			got := binaryRun(t, alias, "--state", state, "doctor")
-			pyBlock, goBlock := ownershipBlock(t, py.stdout), ownershipBlock(t, got.stdout)
-			if pyBlock != goBlock || !strings.Contains(goBlock, c.ownership) {
-				t.Fatalf("want %s\npython:%s\ngo:%s", c.ownership, pyBlock, goBlock)
+			// The broken store is diagnosed as it is: no handover (which refuses a broken
+			// record) runs before.
+			argv := []string{"--state", state, "doctor"}
+			key := goldenKey(t, "fence "+keyLabel(argv...))
+			got := binaryRun(t, alias, argv...)
+			goBlock := ownershipBlock(t, got.stdout)
+			if !strings.Contains(goBlock, c.ownership) {
+				t.Fatalf("want %s\ngo:%s", c.ownership, goBlock)
 			}
-			if c.access == "" {
-				return
-			}
-			pyAccess, goAccess := decode(t, py.stdout)["access"], decode(t, got.stdout)["access"]
-			detail, _ := goAccess.(map[string]any)["detail"].(string)
-			if stampOnly[c.name] {
-				// The fence's validate refused this record for its mirror, which Go no longer
-				// judges (decision 56): Go's probe reads the stamp, which names Python.
-				if !strings.Contains(detail, "store_owned_by_other: the relay store belongs to another runtime") {
-					t.Fatalf("go access detail %q", detail)
+			// The ownership block, and the access block where the record is refused whoever
+			// reads it.
+			compared := map[string]any{"ownership": goBlock}
+			if c.access != "" {
+				goAccess := decode(t, got.stdout)["access"]
+				detail, _ := goAccess.(map[string]any)["detail"].(string)
+				if stampOnly[c.name] {
+					// The fence's validate refused this record for its mirror, which Go no longer
+					// judges (decision 56): Go's probe reads the stamp, which names Python.
+					if !strings.Contains(detail, "store_owned_by_other: the relay store belongs to another runtime") {
+						t.Fatalf("go access detail %q", detail)
+					}
+				} else {
+					if !strings.Contains(detail, c.access) {
+						t.Fatalf("access detail carrying %q\ngo:     %v", c.access, goAccess)
+					}
+					compared["access"] = goAccess
 				}
-				return
 			}
-			if !reflect.DeepEqual(pyAccess, goAccess) || !strings.Contains(detail, c.access) {
-				t.Fatalf("access detail carrying %q\npython: %v\ngo:     %v", c.access, pyAccess, goAccess)
-			}
+			expectOver(t, key, "", argv, compared)
 		})
 	}
 }
@@ -201,7 +205,7 @@ func rewriteMirror(t *testing.T, state, from, to string) {
 // holder identity (its version when no build is stamped), never the Python fence build, and
 // the production binary links no test support to learn it.
 func TestDoctor_runtime_build_is_the_answering_go_build(t *testing.T) {
-	home := pythonHome(t)
+	home := tempHome(t)
 	binary, alias := packageBinary(t)
 	version := strings.TrimSpace(binaryRun(t, binary, "version").stdout)
 	report := decode(t, binaryRun(t, alias, "--state", filepath.Join(home, "state"), "doctor").stdout)

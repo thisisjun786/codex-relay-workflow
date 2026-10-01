@@ -19,9 +19,9 @@ import (
 
 // The forge the merge-evidence tests collect from is a scripted gh on PATH. testdata/gh was the
 // scripted forge the Python oracle ran against (a Python script, deleted with the oracle drivers
-// in todo 44; the recorded answers are what Python said against it); fakeGH is the same script
-// in Go, which the Go side of those tests runs: this test binary, invoked through a link named gh
-// (TestMain dispatches on the name). The environment scripts it as it scripted testdata/gh:
+// in todo 44; the goldens began as what Python said against it); fakeGH is the same script in
+// Go, which those tests run: this test binary, invoked through a link named gh (TestMain
+// dispatches on the name). The environment scripts it as it scripted testdata/gh:
 // CRW_FORGE_SCENARIO, CRW_FORGE_RULES, CRW_FORGE_RULES_JSON, CRW_FORGE_PATCH and CRW_FORGE_LOG.
 
 var (

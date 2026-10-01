@@ -7,52 +7,28 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"reflect"
-	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
-// markerOps runs one list of marker/intent operations through the real Python modules
-// (testdata/markerops.py) and through this package over the SAME tree path, one after the
-// other, and returns both answer lists. Sharing the path keeps workspace keys, assignment
-// directories and every printed path identical, so the lists compare whole.
+// runMarkerOps runs one list of marker/intent operations through this package over tree and
+// checks the answers, normalized as JSON, against the golden under "markerops <digest of the
+// list>". The lists began as testdata/markerops.py's, run through the Python modules over the same
+// tree path.
 type markerOp = map[string]any
 
-func runMarkerOps(t *testing.T, env map[string]any, ops []markerOp) (python, golang []any) {
+func runMarkerOps(t *testing.T, tree string, env map[string]any, ops []markerOp) []any {
 	t.Helper()
-	tree := parityTree(t)
 	spec, err := json.Marshal(map[string]any{"ops": ops, "env": env})
 	mustDo(t, err)
 	home := t.TempDir()
 	sum := sha256.Sum256(spec)
-	output := pyAnswer(t, "markerops "+hex.EncodeToString(sum[:8]), func() ([]byte, error) {
-		root := repoRoot(t)
-		script, _ := filepath.Abs("testdata/markerops.py")
-		cmd := exec.Command("uv", "run", "--no-sync", "python", script, tree)
-		cmd.Dir = filepath.Join(root, "packages", "codex-session-relay")
-		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "xs"), "XDG_DATA_HOME="+filepath.Join(home, "data"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+home, "CODEX_SESSION_RELAY_MARKER_ROOT=", "PYTHONDONTWRITEBYTECODE=1")
-		cmd.Stdin = strings.NewReader(string(spec))
-		output, err := pythonOutput(cmd)
-		if err != nil {
-			return nil, fmt.Errorf("python marker ops: %w", err)
-		}
-		// A conflict names its writer's pid; requireSameOps compares it as one token.
-		return recordedPID.ReplaceAll(output, []byte("${1}<pid>${2}")), nil
-	}, pyoracle.Substitute(filepath.Join(tree, "home"), "<tree-home>"), pyoracle.Substitute(tree, "<tree>"), pyoracle.Substitute(home, "<home>"))
-	mustDo(t, json.Unmarshal(output, &python))
-	entries, err := os.ReadDir(tree)
-	mustDo(t, err)
-	for _, entry := range entries {
-		mustDo(t, os.RemoveAll(filepath.Join(tree, entry.Name())))
-	}
+	key := "markerops " + hex.EncodeToString(sum[:8])
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_STATE_HOME", filepath.Join(home, "xs"))
 	t.Setenv(MarkerEnv, "")
@@ -62,10 +38,12 @@ func runMarkerOps(t *testing.T, env map[string]any, ops []markerOp) (python, gol
 	d := &markerDriver{t: t, tree: tree, ctx: context.Background()}
 	defer d.close()
 	mustDo(t, os.MkdirAll(d.work(), 0o755))
-	for _, op := range ops {
-		golang = append(golang, d.answer(op))
+	answers := make([]any, len(ops))
+	for i, op := range ops {
+		answers[i] = withoutPID(normalizeJSON(t, jsonable(d.answer(op))))
 	}
-	return python, golang
+	golden.CheckJSON(t, key, answers, golden.Substitute(filepath.Join(tree, "home"), "<tree-home>"), golden.Substitute(tree, "<tree>"), golden.Substitute(home, "<home>"))
+	return answers
 }
 
 func setEnv(t *testing.T, name string, value any, tree string) {
@@ -386,29 +364,8 @@ func noneIfEmpty(s string) any {
 	return s
 }
 
-// recordedPID is a conflict's loserProcess in Python's JSON, escaped or not.
-var recordedPID = regexp.MustCompile(`(\\?"loserProcess\\?": \\?")\d+(\\?")`)
-
-// requireSameOps compares the two answer lists entry by entry, and returns Python's.
-func requireSameOps(t *testing.T, ops []markerOp, python, golang []any) []any {
-	t.Helper()
-	if len(python) != len(golang) {
-		t.Fatalf("python answered %d ops, go %d", len(python), len(golang))
-	}
-	for i := range ops {
-		p, g := normalizeJSON(t, python[i]), normalizeJSON(t, jsonable(golang[i]))
-		p, g = withoutPID(p), withoutPID(g)
-		if !reflect.DeepEqual(p, g) {
-			pb, _ := json.Marshal(p)
-			gb, _ := json.Marshal(g)
-			t.Errorf("op %d %v differs from Python\ngo:     %s\npython: %s", i, ops[i], gb, pb)
-		}
-	}
-	return python
-}
-
 // withoutPID replaces a conflict's loserProcess (the writer's own pid, str(os.getpid())) with one
-// token: the two sides are different processes, and nothing else in the record may differ.
+// token: a rerun is another process, and nothing else in the record may differ.
 func withoutPID(v any) any {
 	switch x := v.(type) {
 	case map[string]any:
@@ -432,7 +389,7 @@ func withoutPID(v any) any {
 	return v
 }
 
-// ok is the value an op returned on the Python side (Python is the reference).
+// ok is the value an op returned.
 func ok(t *testing.T, answer any) any {
 	t.Helper()
 	m, isMap := answer.(map[string]any)
@@ -453,9 +410,16 @@ func reasonOf(t *testing.T, answer any) string {
 	return reason
 }
 
-// sameOps runs ops on both sides, requires every answer to be equal, and returns Python's.
+// sameOps runs ops over a parityTree, checks their answers against the golden, and returns them.
+// The tree is fixed because a workspace key hashes the workspace's path, and answers name
+// assignment directories under it.
 func sameOps(t *testing.T, env map[string]any, ops ...markerOp) []any {
 	t.Helper()
-	python, golang := runMarkerOps(t, env, ops)
-	return requireSameOps(t, ops, python, golang)
+	return runMarkerOps(t, parityTree(t), env, ops)
+}
+
+// sameOpsIn is sameOps over tree, for op lists whose answers hold nothing derived from its path.
+func sameOpsIn(t *testing.T, tree string, env map[string]any, ops ...markerOp) []any {
+	t.Helper()
+	return runMarkerOps(t, tree, env, ops)
 }

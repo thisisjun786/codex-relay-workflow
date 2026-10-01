@@ -6,8 +6,8 @@ import (
 
 // test_on_request_delivery.py ORD-1..ORD-5 here; ORD-6..ORD-9 in onrequest_adapter_test.go.
 
-func runORD(t *testing.T, mode string, goSide func(f *fixture, out map[string]any)) {
-	tree := parityTree(t)
+// runORD runs mode's Go side over tree, a parityTree where the goldens hold ids hashing its paths.
+func runORD(t *testing.T, tree, mode string, goSide func(f *fixture, out map[string]any)) {
 	expected := expectScenario(t, tree, "ord", mode)
 	f := newFixture(t, tree)
 	out := map[string]any{}
@@ -27,7 +27,7 @@ func usable(data string) map[string]any {
 }
 
 func TestORD01_an_on_request_record_is_usable_and_untrusted_granular_or_missing_are_refused(t *testing.T) {
-	runORD(t, "record", func(f *fixture, out map[string]any) {
+	runORD(t, t.TempDir(), "record", func(f *fixture, out map[string]any) {
 		out["onRequest"] = usable(rawSettings("/parent", "on-request"))
 		var refused []any
 		for _, bad := range []string{
@@ -65,7 +65,7 @@ func TestORD02_resume_params_never_carry_an_approval_policy(t *testing.T) {
 }
 
 func TestORD03_an_on_request_parent_is_woken_once(t *testing.T) {
-	runORD(t, "woken", func(f *fixture, out map[string]any) {
+	runORD(t, parityTree(t), "woken", func(f *fixture, out map[string]any) {
 		event := f.queuedEvent(regOpts{parentSettings: rawSettings("/parent", "on-request")})
 		f.host.threads[parent].approvalPolicy = "on-request"
 		record := f.mustAttempt(event, nil)
@@ -79,7 +79,7 @@ func TestORD03_an_on_request_parent_is_woken_once(t *testing.T) {
 }
 
 func TestORD04_a_parent_waiting_on_its_approver_is_busy_then_woken_once(t *testing.T) {
-	runORD(t, "busy", func(f *fixture, out map[string]any) {
+	runORD(t, parityTree(t), "busy", func(f *fixture, out map[string]any) {
 		event := f.queuedEvent(regOpts{parentSettings: rawSettings("/parent", "on-request")})
 		f.host.threads[parent].approvalPolicy = "on-request"
 		f.host.script = []string{"busy"}
@@ -98,7 +98,7 @@ func TestORD04_a_parent_waiting_on_its_approver_is_busy_then_woken_once(t *testi
 }
 
 func TestORD05_a_folded_start_settles_once_across_restarts(t *testing.T) {
-	runORD(t, "folded", func(f *fixture, out map[string]any) {
+	runORD(t, parityTree(t), "folded", func(f *fixture, out map[string]any) {
 		event := f.queuedEvent(regOpts{parentSettings: rawSettings("/parent", "on-request")})
 		f.host.threads[parent].approvalPolicy = "on-request"
 		existing := f.host.startTurn(parent, "", "inProgress", "")

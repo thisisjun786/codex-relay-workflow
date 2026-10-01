@@ -12,8 +12,6 @@ import (
 	"regexp"
 	"strings"
 	"testing"
-
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
 // clockReading is a clock reading, which differs between the two runs of one registration.
@@ -25,10 +23,10 @@ var clockReading = regexp.MustCompile(`"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+\+00:
 // Go CLI refuses at the same point in the same words, so it never writes TEXT Python's sqlite3
 // cannot decode and never looks such a string up where Python raises; a reader Python lets the
 // error escape from raises it too. An argument Python stores inside JSON is written as json.dumps
-// writes it ("\udcff"), and a refusal that echoes it is its repr(). Both runtimes answer each argv
-// in a store of their own, the Go CLI as the built binary with every command family it carries;
-// the printed answers must be the same bytes. An artifact root, which the registration stores
-// inside JSON, is stored as the same TEXT, which Python's sqlite3 reads back from either store.
+// writes it ("\udcff"), and a refusal that echoes it is its repr(). The Go CLI, as the built
+// binary with every command family it carries, answers each argv in a store of its own, the bytes
+// its golden holds (the fence's answers, at first). An artifact root, which the registration
+// stores inside JSON, is stored as the TEXT Python's sqlite3 wrote and read back.
 func TestAnArgumentThatIsNotUTF8IsRefusedWherePythonEncodesIt(t *testing.T) {
 	_, relay := packageBinary(t)
 	root := t.TempDir()
@@ -89,37 +87,23 @@ func TestAnArgumentThatIsNotUTF8IsRefusedWherePythonEncodesIt(t *testing.T) {
 		{"--json", "fault-queue", "--fault", "v", "--kind", "x\xffy", "--trigger", "v"},
 		{"--json", "fault-policy", "--product", "x\xffy"},
 	}
-	var pythonArgvs [][]string
-	for _, argv := range argvs {
-		pythonArgvs = append(pythonArgvs, append([]string{"--state", filepath.Join(root, "python")}, argv...))
-	}
 	argvs = append(argvs, register("--artifact-root", "a\xff"))
-	pythonArgvs = append(pythonArgvs, append([]string{"--state", filepath.Join(root, "python")}, argvs[len(argvs)-1]...))
-	want := pythonCLI(t, pythonArgvs...)
-	// What Python's sqlite3 read back from the store Python registered in (recorded; see
-	// oracleRun). Go's store is read below, by Go, as TEXT.
-	stored := `import json, sqlite3, sys
-print(json.dumps([sqlite3.connect(path).execute("SELECT artifact_roots FROM relationships").fetchall() for path in sys.argv[1:]]))`
-	pythonDatabase := filepath.Join(root, "python", "relay.sqlite3")
-	pythonStored := oracleRun(t, "stored artifact roots", func() (run, error) {
-		command := exec.Command(filepath.Join(repositoryRoot(t), ".venv", "bin", "python"), "-c", stored, pythonDatabase)
-		command.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
-		raw, err := command.CombinedOutput()
-		if err != nil {
-			return run{}, fmt.Errorf("python reading its store: %v\n%s", err, raw)
-		}
-		return run{stdout: string(raw)}, nil
-	}, placeholders(pythonDatabase)...)
-	for i, argv := range argvs {
-		if i == len(argvs)-1 {
+	var goArgvs [][]string
+	for _, argv := range argvs {
+		goArgvs = append(goArgvs, append([]string{"--state", filepath.Join(root, "go")}, argv...))
+	}
+	key := batchKey(t, goArgvs...)
+	var answers []answer
+	for i, argv := range goArgvs {
+		if i == len(goArgvs)-1 {
 			// Printed back through Go's reader, which decodes the stored escape as U+FFFD
 			// (docs/port/known-defects.md): the stored TEXT is compared below instead.
-			if err := exec.Command(relay, append([]string{"--state", filepath.Join(root, "go")}, argv...)...).Run(); err != nil || want[i].code != 0 {
-				t.Fatalf("registering an artifact root that is not UTF-8: go %v, python %d %s", err, want[i].code, want[i].stdout)
+			if err := exec.Command(relay, argv...).Run(); err != nil {
+				t.Fatalf("registering an artifact root that is not UTF-8: %v", err)
 			}
 			break
 		}
-		command := exec.Command(relay, append([]string{"--state", filepath.Join(root, "go")}, argv...)...)
+		command := exec.Command(relay, argv...)
 		command.Env = os.Environ()
 		var stdout bytes.Buffer
 		command.Stdout = &stdout
@@ -132,14 +116,9 @@ print(json.dumps([sqlite3.connect(path).execute("SELECT artifact_roots FROM rela
 			code = exit.ExitCode()
 		}
 		got := answer{code, clockReading.ReplaceAllString(stdout.String(), `"<at>"`)}
-		want[i].stdout = clockReading.ReplaceAllString(want[i].stdout, `"<at>"`)
-		if got != want[i] {
-			t.Errorf("%q:\ngo     %d %s\npython %d %s", argv, got.code, got.stdout, want[i].code, want[i].stdout)
-		}
+		answers = append(answers, got)
 	}
-	if want := `[[["[\"a\\udcff\"]"]]]` + "\n"; pythonStored.stdout != want {
-		t.Errorf("stored artifact roots, Python's store: %s want %s", pythonStored.stdout, want)
-	}
+	expectAnswers(t, key, answers, goArgvs...)
 	database, err := sql.Open("sqlite", "file:"+filepath.Join(root, "go", "relay.sqlite3")+"?mode=ro")
 	if err != nil {
 		t.Fatal(err)
@@ -163,17 +142,7 @@ print(json.dumps([sqlite3.connect(path).execute("SELECT artifact_roots FROM rela
 func TestDoctorLookupsReadAStoreTheyCannotPrepareBeforeTheyBind(t *testing.T) {
 	_, relay := packageBinary(t)
 	root := t.TempDir()
-	// Each runtime's store is prepared with its own sqlite3: Go's here, Python's in the capture
-	// closure (see oracleRun), where the fence's answer is taken.
-	execute := func(python bool, path, statement string) error {
-		if python {
-			command := exec.Command(filepath.Join(repositoryRoot(t), ".venv", "bin", "python"), "-c",
-				"import sqlite3, sys; c = sqlite3.connect(sys.argv[1]); c.execute(sys.argv[2]); c.commit()", path, statement)
-			if raw, err := command.CombinedOutput(); err != nil {
-				return fmt.Errorf("%v\n%s", err, raw)
-			}
-			return nil
-		}
+	execute := func(path, statement string) error {
 		database, err := sql.Open("sqlite", "file:"+path)
 		if err != nil {
 			return err
@@ -182,14 +151,14 @@ func TestDoctorLookupsReadAStoreTheyCannotPrepareBeforeTheyBind(t *testing.T) {
 		return errors.Join(err, database.Close())
 	}
 	garbage := bytes.Repeat([]byte("not a database \x00\xff"), 256)
-	prepare := func(python bool, state, kind string) error {
+	prepare := func(state, kind string) error {
 		if err := os.MkdirAll(state, 0o700); err != nil {
 			return err
 		}
 		database := filepath.Join(state, "relay.sqlite3")
 		switch kind {
 		case "tables":
-			return execute(python, database, "create table t(x)")
+			return execute(database, "create table t(x)")
 		case "garbage":
 			return os.WriteFile(database, garbage, 0o600)
 		case "dropped":
@@ -200,31 +169,18 @@ func TestDoctorLookupsReadAStoreTheyCannotPrepareBeforeTheyBind(t *testing.T) {
 			if raw, err := registered.CombinedOutput(); err != nil {
 				return fmt.Errorf("%v\n%s", err, raw)
 			}
-			return execute(python, database, "drop table store_challenge")
+			return execute(database, "drop table store_challenge")
 		}
 		return nil
 	}
 	for _, flag := range []string{"--issue", "--expect-nonce"} {
 		for _, kind := range []string{"tables", "garbage", "dropped"} {
-			states := map[string]string{"python": filepath.Join(root, flag, kind, "python"), "go": filepath.Join(root, flag, kind, "go")}
-			if err := prepare(false, states["go"], kind); err != nil {
+			state := filepath.Join(root, flag, kind, "go")
+			if err := prepare(state, kind); err != nil {
 				t.Fatal(err)
 			}
-			argv := []string{"--json", "doctor", flag, "x\xffy"}
-			pythonArgv := append([]string{"--state", states["python"]}, argv...)
-			var recorded recordedRun
-			pyoracle.JSON(t, flag+" over "+kind, &recorded, func() (any, error) {
-				if err := prepare(true, states["python"], kind); err != nil {
-					return nil, err
-				}
-				answers, err := livePythonCLI(pythonArgv)
-				if err != nil {
-					return nil, err
-				}
-				return recordedRun{Code: answers[0].code, Stdout: answers[0].stdout}, nil
-			}, placeholders(pythonArgv...)...)
-			want := answer{recorded.Code, recorded.Stdout}
-			command := exec.Command(relay, append([]string{"--state", states["go"]}, argv...)...)
+			argv := append([]string{"--state", state}, "--json", "doctor", flag, "x\xffy")
+			command := exec.Command(relay, argv...)
 			var stdout bytes.Buffer
 			command.Stdout = &stdout
 			code := 0
@@ -235,9 +191,8 @@ func TestDoctorLookupsReadAStoreTheyCannotPrepareBeforeTheyBind(t *testing.T) {
 				}
 				code = exit.ExitCode()
 			}
-			if code != want.code || doctorLookup(t, stdout.String(), states["go"]) != doctorLookup(t, want.stdout, states["python"]) {
-				t.Errorf("%s over %s:\ngo     %d %s\npython %d %s", flag, kind, code, stdout.String(), want.code, want.stdout)
-			}
+			lookup := doctorLookup(t, stdout.String(), state)
+			expectJSON(t, flag+" over "+kind, map[string]any{"code": code, "lookup": lookup}, argv...)
 		}
 	}
 }

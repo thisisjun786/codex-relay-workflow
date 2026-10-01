@@ -3,12 +3,10 @@ package cli_test
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -17,9 +15,9 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
-// Decision 25 across the runtimes, in process: the Go producer and the Go drain against what the
-// retained Python fence answered (one Python process per batch, recorded: see pythonCLI). The
-// built-binary candidate drain is internal/relay/service Test31GoCandidateDrainsPythonQueuedEntriesBuiltCLI.
+// Decision 25 across the runtimes, in process: the Go CLI's answers against the goldens (what
+// the retained Python fence answered to the same forms, at first). The built-binary candidate
+// drain is internal/relay/service Test31GoCandidateDrainsPythonQueuedEntriesBuiltCLI.
 
 type answer struct {
 	code   int
@@ -34,83 +32,30 @@ func goCLI(t *testing.T, argv ...string) answer {
 	return answer{code, stdout.String()}
 }
 
-// pythonCLI is what the fence's cli.main answered for each argv, in one Python process, byte
-// for byte (argv that is not UTF-8 arrives surrogate-escaped, as on a command line); recorded,
-// see oracleRun.
-func pythonCLI(t *testing.T, argvs ...[]string) []answer {
+// batchKey is the golden key of a batch of answers to argvs: the label the fence's answers to
+// the batch were recorded under, which names the batch's size and its first argv.
+func batchKey(t *testing.T, argvs ...[]string) string {
+	t.Helper()
+	label := "cli.main"
+	if len(argvs) > 0 {
+		label += fmt.Sprintf(" x%d %s", len(argvs), keyLabel(argvs[0]...))
+	}
+	return goldenKey(t, label)
+}
+
+// expectAnswers checks a batch of answers (each one's exit and stdout) against the golden under
+// key, with the run's directories the argvs name as placeholders.
+func expectAnswers(t *testing.T, key string, answers []answer, argvs ...[]string) {
 	t.Helper()
 	var words []string
 	for _, argv := range argvs {
 		words = append(words, argv...)
 	}
-	label := "cli.main"
-	if len(argvs) > 0 {
-		label += fmt.Sprintf(" x%d %s", len(argvs), oracleLabel(argvs[0]...))
+	values := make([]map[string]any, len(answers))
+	for i, a := range answers {
+		values[i] = map[string]any{"code": a.code, "stdout": a.stdout}
 	}
-	var recorded []recordedRun
-	askOracle(t, oracleKey(t, label), &recorded, func() (any, error) {
-		answers, err := livePythonCLI(argvs...)
-		out := make([]recordedRun, len(answers))
-		for i, a := range answers {
-			out[i] = recordedRun{Code: a.code, Stdout: a.stdout}
-		}
-		return out, err
-	}, placeholders(words...)...)
-	if len(recorded) != len(argvs) {
-		t.Fatalf("%d answers for %d argvs", len(recorded), len(argvs))
-	}
-	out := make([]answer, len(recorded))
-	for i, r := range recorded {
-		out[i] = answer{r.Code, r.Stdout}
-	}
-	return out
-}
-
-// livePythonCLI runs each argv through the fence's cli.main in one live Python process. Only a
-// capture closure calls it.
-func livePythonCLI(argvs ...[]string) ([]answer, error) {
-	var encoded [][]string
-	for _, argv := range argvs {
-		var items []string
-		for _, a := range argv {
-			items = append(items, base64.StdEncoding.EncodeToString([]byte(a)))
-		}
-		encoded = append(encoded, items)
-	}
-	input, err := json.Marshal(encoded)
-	if err != nil {
-		return nil, err
-	}
-	script := `import base64, contextlib, io, json, os, sys
-from codex_session_relay import cli
-out = []
-for argv in json.load(sys.stdin):
-    printed = io.StringIO()
-    with contextlib.redirect_stdout(printed):
-        code = cli.main([os.fsdecode(base64.b64decode(a)) for a in argv])
-    out.append([code, printed.getvalue()])
-json.dump(out, sys.stdout)
-`
-	python := exec.Command(filepath.Join(repositoryRootPath(), ".venv", "bin", "python"), "-c", script)
-	python.Stdin = bytes.NewReader(input)
-	python.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
-	raw, err := python.Output()
-	if err != nil {
-		var exit *exec.ExitError
-		if errors.As(err, &exit) {
-			return nil, fmt.Errorf("%v: %s", err, exit.Stderr)
-		}
-		return nil, err
-	}
-	var decoded [][2]any
-	if err = json.Unmarshal(raw, &decoded); err != nil || len(decoded) != len(argvs) {
-		return nil, fmt.Errorf("%v %s", err, raw)
-	}
-	out := make([]answer, len(decoded))
-	for i, d := range decoded {
-		out[i] = answer{int(d[0].(float64)), d[1].(string)}
-	}
-	return out, nil
+	expectJSON(t, key, values, words...)
 }
 
 func object(t *testing.T, text string) map[string]any {
@@ -185,7 +130,7 @@ func snapshotQuery(t *testing.T, dbPath, query string, args ...any) []map[string
 // mismatched socket with the selection refusal. The Go side is the built binary, which registers
 // every command family (sync-target included).
 func Test31_check_start_precedes_the_selection_kind_module_and_handler_refusals(t *testing.T) {
-	home := pythonHome(t)
+	home := tempHome(t)
 	_, alias := packageBinary(t)
 	bound := filepath.Join(home, "bound.sock")
 	other := filepath.Join(home, "other.sock")
@@ -217,29 +162,28 @@ func Test31_check_start_precedes_the_selection_kind_module_and_handler_refusals(
 		{"no --socket", nil},
 		{"a --socket the store did not record", []string{"--socket", other}},
 	}
-	var fence [][]string
-	for _, scenario := range scenarios {
-		for _, command := range commands {
-			fence = append(fence, append(append([]string{"--state", stateGo}, scenario.globals...), command...))
-		}
-	}
 	own := []string{"--socket", other, "store-challenge", "--write"}
-	fence = append(fence, append([]string{"--state", statePython}, own...))
-	want := pythonCLI(t, fence...)
+	var argvs [][]string
+	var answers []answer
 	i := 0
 	for _, scenario := range scenarios {
 		for _, command := range commands {
-			ran := binaryRun(t, alias, append(append([]string{"--state", statePython}, scenario.globals...), command...)...)
+			argv := append(append([]string{"--state", statePython}, scenario.globals...), command...)
+			ran := binaryRun(t, alias, argv...)
 			got := answer{ran.code, ran.stdout}
-			if got != want[i] || got.code != 2 || object(t, got.stdout)["reason"] != "store_owned_by_other" {
-				t.Errorf("%s, %q:\n go     %d %s\n python %d %s", scenario.name, command, got.code, got.stdout, want[i].code, want[i].stdout)
+			argvs, answers = append(argvs, argv), append(answers, got)
+			if got.code != 2 || object(t, got.stdout)["reason"] != "store_owned_by_other" {
+				t.Errorf("%s, %q: %d %s", scenario.name, command, got.code, got.stdout)
 			}
 			i++
 		}
 	}
-	refused := binaryRun(t, alias, append([]string{"--state", stateGo}, own...)...)
-	if python := want[i]; refused.code != 2 || python.code != 2 || object(t, refused.stdout)["reason"] != "state_directory_serves_another_socket" || object(t, python.stdout)["reason"] != "state_directory_serves_another_socket" {
-		t.Fatalf("own owner:\n go     %+v\n python %+v", refused, python)
+	argv := append([]string{"--state", stateGo}, own...)
+	refused := binaryRun(t, alias, argv...)
+	argvs, answers = append(argvs, argv), append(answers, answer{refused.code, refused.stdout})
+	expectAnswers(t, batchKey(t, argvs...), answers, argvs...)
+	if refused.code != 2 || object(t, refused.stdout)["reason"] != "state_directory_serves_another_socket" {
+		t.Fatalf("own owner: %+v", refused)
 	}
 	if _, err := os.Stat(markers); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("a refused managed-start wrote its marker root: %v", err)

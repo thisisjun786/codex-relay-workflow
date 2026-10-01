@@ -2,8 +2,8 @@ package delivery
 
 import (
 	"context"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -27,19 +27,9 @@ func Test33LargeMarkerFactPython(t *testing.T) {
 	if unboundedState != state || !reflect.DeepEqual(value, unbounded) {
 		t.Fatal("deadline changed fact semantics")
 	}
-	out := pyAnswer(t, "read_fact", func() ([]byte, error) {
-		root, err := filepath.Abs("../../..")
-		if err != nil {
-			return nil, err
-		}
-		cmd := exec.CommandContext(ctx, filepath.Join(root, ".venv/bin/python"), "-c", `import json,sys;from codex_session_relay.marker import _read_fact;v,state=_read_fact(sys.argv[1]);assert state=='present';assert len(v['padding'])==5*1024*1024;print(json.dumps(v,separators=(',',':')))`, path)
-		return pythonCombined(cmd)
-	})
-	// Both decoders must preserve the entire large value, not only its class.
-	python, err := loads(strings.TrimSpace(string(out)))
-	if err != nil || !reflect.DeepEqual(value, python) {
-		t.Fatal("Python value mismatch", err)
-	}
+	// The whole large value, not only its class, is checked against the golden (it began as what
+	// the fence's _read_fact decoded).
+	golden.CheckJSON(t, "read_fact", normalizeJSON(t, jsonable(value)))
 	cancel()
 	if _, state := readFactContext(ctx, path); state != factUnreadable {
 		t.Fatal("cancelled read proceeded")

@@ -10,9 +10,7 @@ import (
 )
 
 func Test23FaultClassFreshProcessParity(t *testing.T) {
-	root, _ := filepath.Abs("../../..")
 	binary, alias := packageBinary(t)
-	python := filepath.Join(root, ".venv/bin/python")
 	observation, err := json.Marshal(map[string]any{
 		"schema": "fault-observation/1", "product": "v", "faultClass": "completion_mismatch",
 		"severity": "degraded", "signature": map[string]any{"x": "y"}, "occurrenceKey": "o",
@@ -40,20 +38,14 @@ func Test23FaultClassFreshProcessParity(t *testing.T) {
 				lead []string
 			}{{"codex-session-relay", alias, nil}, {"crw-relay", binary, []string{"relay"}}} {
 				t.Run(program.name, func(t *testing.T) {
-					pyState := filepath.Join(t.TempDir(), "python")
 					goState := filepath.Join(t.TempDir(), "go")
-					// Each runtime's fresh store: a read-only form never creates one (cutover.md Record).
-					testsupport.Create(t, filepath.Join(pyState, "relay.sqlite3"), "", "python")
+					// A fresh store: a read-only form never creates one (cutover.md Record).
 					testsupport.Create(t, filepath.Join(goState, "relay.sqlite3"), "", "go")
 					env := append(os.Environ(), "HOME="+t.TempDir(), "XDG_STATE_HOME="+t.TempDir())
-					wantArgs := append([]string{"-m", "codex_session_relay.cli", "--state", pyState}, tc.args...)
-					want := pythonProcess(t, "fresh process", env, "", python, wantArgs...)
 					gotArgs := append(append([]string{}, program.lead...), "--state", goState)
 					gotArgs = append(gotArgs, tc.args...)
 					got := runParityProcess(t, env, program.path, gotArgs...)
-					if got != want {
-						t.Fatalf("fresh-process difference\nGo=%+v\nPython=%+v", got, want)
-					}
+					expectRunErr(t, "fresh process", got.code, got.out, got.err, envAnchors(env, gotArgs...)...)
 				})
 			}
 		})

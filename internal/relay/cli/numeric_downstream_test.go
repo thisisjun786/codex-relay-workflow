@@ -17,28 +17,19 @@ import (
 // Each process starts from a byte copy of the same Python-created store.
 func Test24NumericDownstreamBytes(t *testing.T) {
 	t.Parallel()
-	root, _ := filepath.Abs("../../..")
 	_, alias := packageBinary(t)
-	home := fixedTree(t, t.Name())
-	env := append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home+"/xdg", "XDG_CONFIG_HOME="+home+"/config", "XDG_DATA_HOME="+home+"/data", "CODEX_HOME="+home+"/codex", "CRW_REFUSE_LIVE_STATE=", "PATH="+root+"/internal/relay/cli/testdata:"+os.Getenv("PATH"))
+	home := t.TempDir()
+	env := append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home+"/xdg", "XDG_CONFIG_HOME="+home+"/config", "XDG_DATA_HOME="+home+"/data", "CODEX_HOME="+home+"/codex", "CRW_REFUSE_LIVE_STATE=")
 	goEnv := append(append([]string{}, env...), goForgePath(t))
-	python := filepath.Join(root, ".venv/bin/python")
-	// The store Python's setup leaves is recorded (see pythonFixture) and rebuilt where Python
-	// does not run.
-	output := pythonFixture(t, "setup", home, []string{"state", "art"}, func() (string, error) {
-		setup := runParityProcess(t, env, python, filepath.Join(root, "internal/relay/cli/testdata/numeric_downstream.py"), home)
-		if setup.code != 0 {
-			return "", fmt.Errorf("setup: %+v", setup)
-		}
-		return setup.out, nil
-	})
+	// The store the Python relay's setup (numeric_downstream.py) left, and the ids it printed.
+	output := fixtureTree(t, "numeric-downstream.json", home)
 	var ids map[string]string
 	if err := json.Unmarshal([]byte(output), &ids); err != nil {
 		t.Fatal(err)
 	}
 	db := filepath.Join(home, "state", "relay.sqlite3")
 	// The setup left a store Python owns. Each run starts from a byte copy of it put back in
-	// place, whose mirror is rebuilt from the copy's own durable stamp (Rehome); the Go run then
+	// place, whose mirror is rebuilt from the copy's own durable stamp (Rehome); the run then
 	// follows a takeover, as on a host (runParityProcess hands the selected store to Go).
 	baseline, err := os.ReadFile(db)
 	if err != nil {
@@ -60,14 +51,9 @@ func Test24NumericDownstreamBytes(t *testing.T) {
 		t.Helper()
 		args = append([]string{"--state", filepath.Join(home, "state")}, args...)
 		restore(t)
-		want := pythonProcess(t, "python", env, "", python, append([]string{"-m", "codex_session_relay.cli"}, args...)...)
-		restore(t)
 		got := runParityProcess(t, goEnv, alias, args...)
-		want.out = evidenceTimestamp.ReplaceAllString(want.out, "<time>")
 		got.out = evidenceTimestamp.ReplaceAllString(got.out, "<time>")
-		if got != want {
-			t.Fatalf("downstream byte diff %v\nGo=%+v\nPython=%+v", args, got, want)
-		}
+		expectRunErr(t, "python", got.code, got.out, got.err, envAnchors(goEnv, args...)...)
 	}
 	value := func(a argparse.Action) string {
 		if len(a.Choices) > 0 {

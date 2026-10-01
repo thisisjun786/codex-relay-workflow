@@ -196,8 +196,8 @@ declaration's `required: false` lets the session go on without the bridge tools 
 native declaration. Whether the host ever starts an old declaration from a newer directory was not
 measured. The repository kept both launchers, byte for byte, beside the pre-native declarations in
 `internal/pluginwiring/testdata/pre-native-wiring` until todo 44 deleted them with the Python
-implementation; the declarations stay there, and the Go record contract is compared with the
-launcher's recorded answers. Neither the package nor `crw install` ships them.
+implementation; the declarations stay there, and the Go record contract is compared with
+goldens that began as the launcher's answers. Neither the package nor `crw install` ships them.
 
 Hooks ship as an array with one event per file. A single file carrying several events
 works too, but a hook's identity is positional, so adding an event to a shared file

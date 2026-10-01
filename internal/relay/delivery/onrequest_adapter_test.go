@@ -2,48 +2,35 @@ package delivery
 
 import (
 	"encoding/json"
-	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
-// ORD-6..ORD-9. Python drives its REAL adapter (the pinned bridge's guarded send over a fake
-// RPC endpoint) and its real supervisor channel; Go asserts the delivery-layer decisions those
-// paths rest on and compares them with Python's receipts:
+// ORD-6..ORD-9. The Python test drove its REAL adapter (the pinned bridge's guarded send over a
+// fake RPC endpoint) and its real supervisor channel; what the endpoint answered (the recorded
+// settings and the resumed thread, testdata/fixtures/ordadapter.json) is the input here, and the
+// delivery-layer decisions those paths rest on are checked against the golden, which began as the
+// Python receipts:
 //   - the resume the guarded send transmits (ResumeParams / the settings-free form),
 //   - the verification between resume and turn/start (VerifyResume: refusal, findings, notes),
 //   - the classification of the receipt (Classify), and
 //   - the chronology rule a folded turn is judged by (certainlyBefore, turn_predates_send).
 // The wire sequence of the adapter is todo 28's and the channel's record is todo 24's.
 
-func runOrdAdapter(t *testing.T, mode string) map[string]any {
+// ordAdapter is the named case of the fixture.
+func ordAdapter(t *testing.T, mode string) map[string]any {
 	t.Helper()
-	// The supervisor channel's message id is derived from the fixture's paths: a fixed tree.
-	home, tree := t.TempDir(), parityTree(t)
-	out := pyAnswer(t, "ordadapter "+mode, func() ([]byte, error) {
-		root := repoRoot(t)
-		script, _ := filepath.Abs("testdata/ordadapter.py")
-		cmd := exec.Command("uv", "run", "--no-sync", "python", script, tree, mode)
-		cmd.Dir = filepath.Join(root, "packages", "codex-session-relay")
-		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+home, "PYTHONPATH="+filepath.Join(root, "packages", "codex-session-relay", "src")+":"+filepath.Join(root, "packages", "codex-session-relay"))
-		out, err := pythonOutput(cmd)
-		if err != nil {
-			return nil, fmt.Errorf("python %s: %w", mode, err)
-		}
-		lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-		return []byte(lines[len(lines)-1]), nil
-	}, pyoracle.Substitute(tree, "<tree>"), pyoracle.Substitute(home, "<home>"))
-	var got map[string]any
-	mustDo(t, json.Unmarshal(out, &got))
-	return got
+	var cases map[string]map[string]any
+	mustDo(t, json.Unmarshal(golden.Fixture(t, "ordadapter.json"), &cases))
+	c, ok := cases[mode]
+	if !ok {
+		t.Fatalf("no case %s in ordadapter.json", mode)
+	}
+	return c
 }
 
 func toObj(t *testing.T, v any) any {
@@ -54,14 +41,14 @@ func toObj(t *testing.T, v any) any {
 	return o
 }
 
-func guarded(t *testing.T, python map[string]any) (Obj, []any) {
-	settings := TaskSettings{Data: toObj(t, python["settings"]).(Obj), SettingsFreeResume: python["settingsFree"] == true}
-	resumed := toObj(t, python["resumed"])
+func guarded(t *testing.T, input map[string]any) (Obj, []any) {
+	settings := TaskSettings{Data: toObj(t, input["settings"]).(Obj), SettingsFreeResume: input["settingsFree"] == true}
+	resumed := toObj(t, input["resumed"])
 	params := settings.ResumeParams("thread-1")
 	if settings.SettingsFreeResume {
 		params = Obj{{Key: "threadId", Value: "thread-1"}, {Key: "excludeTurns", Value: true}}
 	}
-	requireSameJSON(t, "resume params", []any{params}, python["resumes"])
+	golden.CheckJSON(t, "resumes", normalizeJSON(t, jsonable([]any{params})))
 	if _, present := get(params, "approvalPolicy"); present {
 		t.Fatal("the relay sent an approval policy")
 	}
@@ -77,8 +64,8 @@ func guarded(t *testing.T, python map[string]any) (Obj, []any) {
 		}
 		receipt = set(receipt, "turnId", "fake-turn-1")
 	}
-	requireSameJSON(t, "receipt", without(receipt, "turnId"), python["receipt"])
-	requireSameJSON(t, "methods", methods, python["methods"])
+	golden.CheckJSON(t, "receipt", normalizeJSON(t, jsonable(without(receipt, "turnId"))))
+	golden.CheckJSON(t, "methods", methods)
 	full := append(Obj(nil), receipt...)
 	full = set(full, "resumed", resumed)
 	return full, methods
@@ -87,9 +74,9 @@ func guarded(t *testing.T, python map[string]any) (Obj, []any) {
 func TestORD06_an_on_request_thread_is_started_and_its_difference_noted(t *testing.T) {
 	for _, route := range []string{"transmitted", "settings_free"} {
 		t.Run(route, func(t *testing.T) {
-			python := runOrdAdapter(t, route)
-			receipt, _ := guarded(t, python)
-			if f := Classify(receipt); f.DeliveryState != Dispatched || f.DeliveryState != python["delivery_state"] {
+			receipt, _ := guarded(t, ordAdapter(t, route))
+			golden.CheckJSON(t, "delivery_state", Classify(receipt).DeliveryState)
+			if f := Classify(receipt); f.DeliveryState != Dispatched {
 				t.Fatalf("classified %v", f)
 			}
 		})
@@ -97,9 +84,9 @@ func TestORD06_an_on_request_thread_is_started_and_its_difference_noted(t *testi
 }
 
 func TestORD07_untrusted_stays_stored_not_woken(t *testing.T) {
-	python := runOrdAdapter(t, "untrusted")
-	receipt, methods := guarded(t, python)
-	if f := Classify(receipt); f.DeliveryState != InboxOnly || f.DeliveryState != python["delivery_state"] || len(methods) != 2 {
+	receipt, methods := guarded(t, ordAdapter(t, "untrusted"))
+	golden.CheckJSON(t, "delivery_state", Classify(receipt).DeliveryState)
+	if f := Classify(receipt); f.DeliveryState != InboxOnly || len(methods) != 2 {
 		t.Fatalf("classified %v", f)
 	}
 }
@@ -107,13 +94,11 @@ func TestORD07_untrusted_stays_stored_not_woken(t *testing.T) {
 func TestORD08_a_supervisor_push_follows_the_same_policy_rule(t *testing.T) {
 	// The channel's own record (withheld_pre_send carrying transportDeliveryState inbox_only)
 	// is todo 24's; what it rests on here is the transport classification of the two answers.
-	for _, tc := range []struct{ mode, policy, transport, channel string }{
-		{"sup_on_request", "on-request", Dispatched, Dispatched},
-		{"sup_untrusted", "untrusted", InboxOnly, WithheldPreSend},
+	for _, tc := range []struct{ mode, policy, transport string }{
+		{"sup_on_request", "on-request", Dispatched},
+		{"sup_untrusted", "untrusted", InboxOnly},
 	} {
 		t.Run(tc.mode, func(t *testing.T) {
-			python := runOrdAdapter(t, tc.mode)
-			record := python["record"].(map[string]any)
 			settings := TaskSettings{Data: loadsObj(rawSettings("/supervisor", "never")), SettingsFreeResume: true}
 			resumed := loadsObj(rawResume("/supervisor", tc.policy))
 			rpcError, _, _ := verifyResume(settings, resumed, "idle")
@@ -122,12 +107,9 @@ func TestORD08_a_supervisor_push_follows_the_same_policy_rule(t *testing.T) {
 				receipt = Obj{{Key: "status", Value: FailedStatus}, {Key: "resumed", Value: resumed}, {Key: "rpcError", Value: rpcError}, {Key: "error", Value: "thread/resume: x"}}
 			}
 			state := Classify(receipt).DeliveryState
-			transport := record["deliveryState"]
-			if v, ok := record["transportDeliveryState"]; ok {
-				transport = v
-			}
-			if state != tc.transport || transport != tc.transport || python["state"] != tc.channel {
-				t.Fatalf("go %s python %v/%v", state, transport, python["state"])
+			golden.CheckJSON(t, "transport", state)
+			if state != tc.transport {
+				t.Fatalf("classified %s", state)
 			}
 		})
 	}
@@ -145,14 +127,12 @@ func rawResume(cwd, approval string) string {
 const TurnPredatesSend = "turn_predates_send"
 
 func TestORD09_a_push_folded_into_a_running_turn_is_not_a_completion(t *testing.T) {
-	python := runOrdAdapter(t, "folded")
-	started := python["turnStartedAt"].(float64)
-	if !certainlyBefore(started, python["sentAt"].(string)) || python["verified"] != TurnPredatesSend {
-		t.Fatalf("the folded turn predates the send: python %v", python)
-	}
-	record := python["record"].(map[string]any)
-	if python["state"] != Dispatched || record["deliveryState"] != Dispatched || python["resent"] != float64(0) {
-		t.Fatalf("stays dispatched and sends nothing more: %v", python)
+	// The readback of the folded push (turn_predates_send, the message staying dispatched and
+	// nothing resent) is the supervisor channel's, todo 24's; the chronology rule it rests on is
+	// judged here on the start and send times the Python channel read.
+	folded := ordAdapter(t, "folded")
+	if !certainlyBefore(folded["turnStartedAt"].(float64), folded["sentAt"].(string)) {
+		t.Fatalf("the folded turn predates the send: %v", folded)
 	}
 }
 
@@ -202,30 +182,19 @@ func without(o Obj, key string) Obj {
 
 // SPR-10: every settings refusal a resume answers with is a completed pre-send refusal
 // (withheld_pre_send, nothing sent, retry-safe, failed at thread/resume); an unrecognised code is
-// not one. Compared with transport.classify_operation_receipt's answers for a failed receipt
-// whose resume was answered and whose error carries the code.
+// not one. The facts of a failed receipt whose resume was answered and whose error carries the
+// code are checked against the golden, which began as transport.classify_operation_receipt's.
 func Test25_SPR10_every_settings_refusal_is_a_pre_send_refusal(t *testing.T) {
-	raw, err := os.ReadFile("testdata/python_classify.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var classified map[string]map[string]any
-	if err := json.Unmarshal(raw, &classified); err != nil {
-		t.Fatal(err)
-	}
-	if len(classified) < len(SettingsRefusals)+2 {
-		t.Fatalf("the recording classifies %d codes", len(classified))
-	}
-	for code, facts := range classified {
+	codes := append(slices.Clone(SettingsRefusals), "thread_busy", "unknown", "unsupported_approval_policy")
+	classified := map[string]any{}
+	for _, code := range codes {
 		receipt := Obj{{Key: "status", Value: FailedStatus}, {Key: "rpcError", Value: Obj{{Key: "code", Value: code}}},
 			{Key: "resumed", Value: Obj{{Key: "approvalPolicy", Value: "never"}}}}
 		got := Classify(receipt)
-		want := map[string]any{"deliveryState": got.DeliveryState, "sendAttempted": got.SendAttempted, "retrySafe": got.RetrySafe, "failedOperation": got.FailedOperation}
-		if fmt.Sprint(want) != fmt.Sprint(facts) {
-			t.Errorf("%s: Go %v, Python %v", code, want, facts)
-		}
+		classified[code] = map[string]any{"deliveryState": got.DeliveryState, "sendAttempted": got.SendAttempted, "retrySafe": got.RetrySafe, "failedOperation": got.FailedOperation}
 		if preSend, listed := got.DeliveryState == WithheldPreSend, slices.Contains(SettingsRefusals, code); preSend != listed {
 			t.Errorf("%s: withheld pre-send %v, listed as a settings refusal %v", code, preSend, listed)
 		}
 	}
+	golden.CheckJSON(t, "classified", classified)
 }

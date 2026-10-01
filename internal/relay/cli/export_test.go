@@ -7,7 +7,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
-// SetClock fixes status's clock for a comparison against Python run under the same FakeClock.
+// SetClock fixes status's clock at a scenario's FakeClock instant, which its golden was taken at.
 func SetClock(now float64) func() {
 	previous := clockNow
 	clockNow = func() float64 { return now }

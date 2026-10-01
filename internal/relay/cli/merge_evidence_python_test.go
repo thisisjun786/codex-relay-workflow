@@ -4,11 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -17,45 +14,6 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 )
 
-type pythonCLIResult struct {
-	Code    int            `json:"code"`
-	Payload map[string]any `json:"payload"`
-	Stdout  string         `json:"stdout"`
-	Stderr  string         `json:"stderr"`
-}
-
-// pythonCLI39 is what testdata/python_cli39.py answered (recorded: see askPython).
-func pythonCLI39(t *testing.T, scenario, restate string) pythonCLIResult {
-	t.Helper()
-	var result pythonCLIResult
-	askPython(t, scenario+" "+restate, &result, func() (any, error) { return livePythonCLI39(t, scenario, restate) })
-	return result
-}
-
-// livePythonCLI39 runs testdata/python_cli39.py. Only a capture closure calls it.
-func livePythonCLI39(t *testing.T, scenario, restate string) (pythonCLIResult, error) {
-	repo, _ := filepath.Abs("../../..")
-	script, _ := filepath.Abs("testdata/python_cli39.py")
-	args := []string{"run", "--no-sync", "python", script, scenario}
-	if restate == "<empty>" {
-		args = append(args, "")
-	} else if restate != "" {
-		args = append(args, restate)
-	}
-	cmd := exec.Command("uv", args...)
-	cmd.Dir = repo
-	home := t.TempDir()
-	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "CODEX_HOME="+home, "TMPDIR="+os.TempDir())
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return pythonCLIResult{}, fmt.Errorf("python %s: %v %s", scenario, err, out)
-	}
-	var result pythonCLIResult
-	if err = json.Unmarshal(out, &result); err != nil {
-		return result, fmt.Errorf("%v: %s", err, out)
-	}
-	return result, nil
-}
 func goCLI39(t *testing.T, scenario, restate string) (int, map[string]any, string, string) {
 	t.Helper()
 	s := scriptedForge{}
@@ -124,7 +82,7 @@ func normalizeCLI39(p map[string]any) {
 }
 func compareCLI39(t *testing.T, scenario string, restate bool) {
 	t.Helper()
-	var pyFile, goFile string
+	var goFile string
 	if restate {
 		_, goReady, _, _ := goCLI39(t, "ready", "")
 		goFile = filepath.Join(t.TempDir(), "go.json")
@@ -132,33 +90,10 @@ func compareCLI39(t *testing.T, scenario string, restate bool) {
 		goRecord["headSha"] = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 		raw, _ := json.Marshal(goRecord)
 		_ = os.WriteFile(goFile, raw, 0600)
-		pyFile = filepath.Join(t.TempDir(), "py.json")
 	}
-	// Python restates the handoff of its own ready answer (recorded with it: see askPython).
-	var py pythonCLIResult
-	askPython(t, scenario, &py, func() (any, error) {
-		if restate {
-			ready, err := livePythonCLI39(t, "ready", "")
-			if err != nil {
-				return nil, err
-			}
-			pyRecord := ready.Payload["handoff"].(map[string]any)
-			pyRecord["headSha"] = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-			raw, _ := json.Marshal(pyRecord)
-			if err = os.WriteFile(pyFile, raw, 0600); err != nil {
-				return nil, err
-			}
-		}
-		return livePythonCLI39(t, scenario, pyFile)
-	}, pyFile)
 	code, goPayload, _, _ := goCLI39(t, scenario, goFile)
-	normalizeCLI39(py.Payload)
 	normalizeCLI39(goPayload)
-	if code != py.Code || !reflect.DeepEqual(goPayload, py.Payload) {
-		a, _ := json.Marshal(goPayload)
-		b, _ := json.Marshal(py.Payload)
-		t.Fatalf("%s complete parity differs code go=%d python=%d\ngo=%s\npython=%s", scenario, code, py.Code, a, b)
-	}
+	expectGolden(t, scenario, map[string]any{"code": code, "payload": goPayload}, goFile)
 }
 func Test24_CLI_39_LivePythonWholePayload(t *testing.T) {
 	for _, tc := range []struct {
@@ -171,20 +106,9 @@ func Test24_CLI_39_LivePythonWholePayload(t *testing.T) {
 
 func Test24_MergeEvidenceEmptyRestateMatchesLivePython(t *testing.T) {
 	for _, restate := range []string{"", "<empty>"} {
-		py := pythonCLI39(t, "ready", restate)
 		code, got, goStdout, goStderr := goCLI39(t, "ready", restate)
-		normalizeCLI39(py.Payload)
 		normalizeCLI39(got)
-		if code != py.Code || !reflect.DeepEqual(got, py.Payload) {
-			a, _ := json.Marshal(got)
-			b, _ := json.Marshal(py.Payload)
-			t.Fatalf("%q --restate differs code go=%d python=%d\ngo=%s\npython=%s", restate, code, py.Code, a, b)
-		}
-		pyBytes := normalizeCLI39Bytes(t, py.Stdout)
-		goNormalized := normalizeCLI39Bytes(t, goStdout)
-		if py.Stderr != goStderr || pyBytes != goNormalized {
-			t.Fatalf("%q bytes differ\npython stderr=%q\ngo stderr=%q\npython=%s\ngo=%s", restate, py.Stderr, goStderr, pyBytes, goNormalized)
-		}
+		expectGolden(t, "ready "+restate, map[string]any{"code": code, "payload": got, "stdout": normalizeCLI39Bytes(t, goStdout), "stderr": goStderr})
 	}
 }
 

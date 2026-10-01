@@ -33,7 +33,7 @@ func TestRelayProgram_is_the_resolved_executable_and_relay(t *testing.T) {
 // starts `<crw> relay --state`, and with a codex-session-relay link beside crw it starts
 // `<link> --state`, the console-script form Python renders.
 func TestRelayProgram_renders_both_installation_shapes_through_the_binary(t *testing.T) {
-	found := pythonScenario(t, "test_a_closed_channel_is_queryable_rather_than_hidden")
+	found := scenarioOf(t, "test_a_closed_channel_is_queryable_rather_than_hidden")
 	bin := filepath.Join(t.TempDir(), "bin")
 	// A copy: whether a link sits beside the binary is read from where it runs.
 	crw := testsupport.CRWAt(t, filepath.Join(bin, "crw"))

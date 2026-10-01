@@ -2,36 +2,11 @@ package delivery
 
 import (
 	"encoding/json"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"reflect"
 	"testing"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
-func omissionPython(t *testing.T, facts map[string]any) map[string]any {
-	t.Helper()
-	raw, err := json.Marshal(facts)
-	if err != nil {
-		t.Fatal(err)
-	}
-	home := t.TempDir()
-	out := pyAnswer(t, "classify "+string(raw), func() ([]byte, error) {
-		repo, _ := filepath.Abs("../../..")
-		script, _ := filepath.Abs("testdata/omitted_classify.py")
-		cmd := exec.Command("uv", "run", "--no-sync", "python", script, string(raw))
-		cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
-		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "CODEX_HOME="+home, "TMPDIR="+os.TempDir(), "PYTHONPATH="+filepath.Join(repo, "packages/codex-session-relay/src"))
-		return pythonCombined(cmd)
-	}, pyoracle.Substitute(home, "<home>"))
-	var result map[string]any
-	if err = json.Unmarshal(out, &result); err != nil {
-		t.Fatal(err)
-	}
-	return result
-}
 func omissionGo(f map[string]any) map[string]any {
 	var witness *bool
 	if f["witness"] != nil {
@@ -48,10 +23,9 @@ func omissionGo(f map[string]any) map[string]any {
 }
 func omissionCase(t *testing.T, f map[string]any) {
 	t.Helper()
-	got, want := omissionGo(f), omissionPython(t, f)
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("go=%v python=%v", got, want)
-	}
+	raw, err := json.Marshal(f)
+	mustDo(t, err)
+	golden.CheckJSON(t, "classify "+string(raw), omissionGo(f))
 }
 func baseOmission() map[string]any {
 	return map[string]any{"witness": true, "admission": "admitted", "settlements": []any{map[string]any{"status": "completed", "at": "2026-01-01T00:00:00+00:00"}}, "label": "undeclared_turn_end", "executionReport": false, "receipted": false, "laterAdmitted": false, "now": "2026-01-01T00:10:00+00:00", "grace": float64(0)}

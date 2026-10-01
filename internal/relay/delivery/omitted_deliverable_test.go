@@ -1,18 +1,15 @@
 package delivery
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 // deliverableCase stages one stored receipt's deliverable: an artifact, its manifest, and the
@@ -188,7 +185,7 @@ func deliverableCases() []deliverableCase {
 // stageDeliverable returns the manifest, the revision, the frozen reference and the roots.
 func stageDeliverable(t *testing.T, c deliverableCase) ([]store.ManifestEntry, string, string, []string) {
 	t.Helper()
-	// The revision covers the artifact's path, and Python's answer is recorded: a fixed tree.
+	// The revision covers the artifact's path, and the golden holds answers naming it: a fixed tree.
 	base := parityTree(t)
 	work := filepath.Join(base, "work")
 	if err := os.Mkdir(work, 0o700); err != nil {
@@ -216,53 +213,13 @@ func stageDeliverable(t *testing.T, c deliverableCase) ([]store.ManifestEntry, s
 	return entries, revision, named, []string{work}
 }
 
-// guardDeliverableState is the fence's guard.deliverable_state over the same receipt:
-// [state, binding, detail].
-func guardDeliverableState(t *testing.T, entries []store.ManifestEntry, revision, reference string, roots []string) []any {
-	t.Helper()
-	records := []any{}
-	for _, e := range entries {
-		record := map[string]any{"path": e.Path, "sha256": e.SHA256}
-		if e.Bytes != nil {
-			record["bytes"] = *e.Bytes
-		}
-		records = append(records, record)
-	}
-	spec, err := json.Marshal(map[string]any{"payload": map[string]any{"manifest": records, "revisionHash": revision}, "reference": reference, "roots": roots})
-	if err != nil {
-		t.Fatal(err)
-	}
-	out := pyAnswer(t, "deliverable_state", func() ([]byte, error) {
-		repo, err := filepath.Abs("../../..")
-		if err != nil {
-			return nil, err
-		}
-		cmd := exec.Command("uv", "run", "--no-sync", "python", "-c", `import json, sys
-from codex_session_relay.guard import deliverable_state
-spec = json.load(sys.stdin)
-try:
-    answer = list(deliverable_state(spec["payload"], spec["reference"], spec["roots"]))
-except Exception as error:
-    # An exception its except clauses do not name leaves deliverable_state.
-    answer = ["raised", type(error).__name__ + ": " + str(error)]
-print(json.dumps(answer))`)
-		cmd.Dir = repo
-		cmd.Stdin = bytes.NewReader(spec)
-		return pythonOutput(cmd)
-	}, pyoracle.Substitute(filepath.Dir(roots[0]), "<base>"))
-	var answer []any
-	if err := json.Unmarshal(out, &answer); err != nil {
-		t.Fatalf("%v: %s", err, out)
-	}
-	return answer
-}
-
 // The omission reader replays guard.lookup_receipt, so a stored receipt's deliverable is judged
 // by guard.deliverable_state's rule: a frozen copy nobody could reach, like live bytes nobody
 // could read, leaves the deliverable unverifiable (the omission's receipt_unreadable), one that
 // was read and is not a manifest is a changed deliverable with the fence's exception words, and
 // one nested deeper than json.loads descends raises out of it (the omission's
-// evidence_unreadable, Test24_OMI_7b).
+// evidence_unreadable, Test24_OMI_7b). Each answer is checked against the golden, which began as
+// guard.deliverable_state's (an unverifiable one without its detail: the omission keeps none).
 func TestOmissionDeliverableAnswersAsTheGuard(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root bypasses the permissions these cases depend on")
@@ -283,16 +240,7 @@ func TestOmissionDeliverableAnswersAsTheGuard(t *testing.T) {
 			default:
 				got = []any{"changed", nil, detail}
 			}
-			want := guardDeliverableState(t, entries, revision, reference, roots)
-			if want[0] == "unverifiable" {
-				// The omission keeps no detail for it: the answer is receipt_unreadable.
-				want = want[:2]
-			}
-			gotJSON, _ := json.Marshal(got)
-			wantJSON, _ := json.Marshal(want)
-			if !bytes.Equal(gotJSON, wantJSON) {
-				t.Fatalf("omission reader %s (error %v)\nguard %s", gotJSON, err, wantJSON)
-			}
+			golden.CheckJSON(t, "deliverable_state", got, golden.Substitute(filepath.Dir(roots[0]), "<base>"))
 		})
 	}
 }

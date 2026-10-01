@@ -52,39 +52,41 @@ func runParityProcessInput(t *testing.T, env []string, input, path string, args 
 func Test24BuiltBinaryEvidenceDefectBytes(t *testing.T) {
 	t.Parallel()
 	t.Run("representative", func(t *testing.T) {
-		root, _ := filepath.Abs("../../..")
 		binary, alias := packageBinary(t)
 		home := t.TempDir()
-		env := append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home+"/state", "XDG_CONFIG_HOME="+home+"/config", "XDG_CACHE_HOME="+home+"/cache", "XDG_DATA_HOME="+home+"/data", "CODEX_HOME="+home+"/codex", "CRW_MARKER_ROOT="+home+"/markers", "CRW_REFUSE_LIVE_STATE=", "PATH="+root+"/internal/relay/cli/testdata:"+os.Getenv("PATH"))
-		assertEvidenceBytes(t, env, filepath.Join(root, ".venv/bin/python"), alias, binary, "rich", []string{"merge-evidence", "--repository", "owner/repo", "--pull-request", "7", "--page-size", "1", "--page-budget", "2"}, "")
+		env := append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home+"/state", "XDG_CONFIG_HOME="+home+"/config", "XDG_CACHE_HOME="+home+"/cache", "XDG_DATA_HOME="+home+"/data", "CODEX_HOME="+home+"/codex", "CRW_MARKER_ROOT="+home+"/markers", "CRW_REFUSE_LIVE_STATE=")
+		assertEvidenceBytes(t, env, alias, binary, "rich", []string{"merge-evidence", "--repository", "owner/repo", "--pull-request", "7", "--page-size", "1", "--page-budget", "2"}, "")
 	})
 }
 
-// assertEvidenceBytes compares the built binary, in both shapes, with what the Python CLI
-// answered (recorded: see pythonProcess) for args in env, the scripted forge scenario and input
-// on stdin. Python ran against testdata/gh and Go runs against its Go twin (fakeGH).
-func assertEvidenceBytes(t *testing.T, env []string, python, alias, binary, scenario string, args []string, input string) {
+// assertEvidenceBytes checks the built binary's answer, in both shapes, for args in env, the
+// scripted forge scenario (fakeGH) and input on stdin, against the goldens: exit, stdout with its
+// wall-clock instants masked, and stderr.
+func assertEvidenceBytes(t *testing.T, env []string, alias, binary, scenario string, args []string, input string) {
 	t.Helper()
 	runEnv := append(append([]string{}, env...), "CRW_FORGE_SCENARIO="+scenario)
 	goEnv := append(append([]string{}, runEnv...), goForgePath(t))
-	label := scenario + " " + oracleLabel(args...)
-	// Match the installed console entry point's C stack depth, not runpy (-m),
-	// which consumes another frame at CPython's JSON recursion boundary.
-	oracle := `import sys; from codex_session_relay.cli import main; sys.exit(main(sys.argv[1:]))`
-	want := pythonProcess(t, oracleKey(t, "console "+label), runEnv, input, python, append([]string{"-c", oracle}, args...)...)
-	want.out = evidenceTimestamp.ReplaceAllString(want.out, "<time>")
+	label := scenario + " " + keyLabel(args...)
+	keys := map[string]string{"alias": goldenKey(t, "console "+label), "multicall": goldenKey(t, "crw relay "+label)}
 	for _, shape := range []string{"alias", "multicall"} {
 		path, argv := alias, args
 		if shape == "multicall" {
 			path, argv = binary, append([]string{"relay"}, args...)
-			oracle := `import argparse,sys; from codex_session_relay import cli; p=cli.build_parser(); p.prog='crw relay'; children=next(a.choices for a in p._actions if isinstance(a,argparse._SubParsersAction)); [(setattr(c,'prog','crw relay '+n)) for n,c in children.items()]; cli.build_parser=lambda:p; sys.exit(cli.main(sys.argv[1:]))`
-			want = pythonProcess(t, oracleKey(t, "crw relay "+label), runEnv, input, python, append([]string{"-c", oracle}, args...)...)
-			want.out = evidenceTimestamp.ReplaceAllString(want.out, "<time>")
 		}
 		got := runParityProcessInput(t, goEnv, input, path, argv...)
 		got.out = evidenceTimestamp.ReplaceAllString(got.out, "<time>")
-		if got != want {
-			t.Fatalf("%s %v byte diff\nGo exit=%d stderr=%q\n%s\nPython exit=%d stderr=%q\n%s", shape, args, got.code, got.err, got.out, want.code, want.err, want.out)
+		expectRunErr(t, keys[shape], got.code, got.out, got.err, envAnchors(goEnv, args...)...)
+	}
+}
+
+// envAnchors are the placeholder anchors of a process run with args in env: its arguments and
+// each environment value that names a temporary or fixed directory.
+func envAnchors(env []string, args ...string) []string {
+	anchors := append([]string{}, args...)
+	for _, entry := range env {
+		if _, value, ok := strings.Cut(entry, "="); ok && (strings.Contains(value, os.TempDir()) || strings.Contains(value, fixedRoot)) {
+			anchors = append(anchors, value)
 		}
 	}
+	return anchors
 }

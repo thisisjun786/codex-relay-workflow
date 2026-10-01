@@ -14,7 +14,7 @@ import (
 // foreign owner). The fence's lock-free preflight decides before admission would take the
 // gate, so a controller's exclusive, non-blocking barrier cannot meet a reader's SH there.
 func TestReadOnlyForms_leave_a_foreign_write_gate_unopened(t *testing.T) {
-	home := pythonHome(t)
+	home := tempHome(t)
 	_, alias := packageBinary(t)
 	state := filepath.Join(home, "python-owned")
 	pythonCreates(t, state)

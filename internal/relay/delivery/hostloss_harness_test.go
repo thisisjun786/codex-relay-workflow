@@ -3,169 +3,26 @@ package delivery
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
-	"io/fs"
-	"os"
-	"os/exec"
 	"path/filepath"
-	"reflect"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
-// The Go mirror of tests/test_host_lost_turn.py's HostLossCase (and test_unknown_send_lost.py's
-// UnknownSendCase). testdata/capture.py runs every Python test of a module, each in its own tree
-// under one root, and records every value the test asserts (the first argument of assertEqual,
-// the expression of assertTrue, ...). The Go mirror of a test performs the same steps in the same
-// tree, records the value it produced at each of those assertions, and must produce the same
-// list; the delivery tables are compared row for row as well. So every asserted value, reason,
-// state and next-action word is compared with what Python computed, never with a constant.
+// The Go twins of tests/test_host_lost_turn.py's HostLossCase (and test_unknown_send_lost.py's
+// UnknownSendCase and the other modules mirror names). Each twin performs its Python test's steps
+// and records the value it produced at each of that test's assertions (the first argument of
+// assertEqual, the expression of assertTrue, ...); the list, the delivery tables row for row and
+// the host's sends are checked against the golden, which began as what the Python test asserted
+// (testdata/capture.py, removed with the Python implementation). So every asserted value, reason,
+// state and next-action word is a checked answer, never a constant of the test.
 
-type pyCapture struct {
-	Captures []any                       `json:"captures"`
-	Problems []string                    `json:"problems"`
-	Tables   map[string][]map[string]any `json:"tables"`
-	Sends    [][]any                     `json:"sends"`
-}
-
-var (
-	captureHomes = map[string]string{}
-	captureMu    sync.Mutex
-)
-
-// pythonCaptures runs capture.py for module over root once per test process and returns the home
-// it ran under.
-func pythonCaptures(t *testing.T, module, root string) string {
-	t.Helper()
-	captureMu.Lock()
-	defer captureMu.Unlock()
-	if home, ok := captureHomes[module]; ok {
-		return home
-	}
-	repo := repoRoot(t)
-	script, _ := filepath.Abs("testdata/capture.py")
-	home, err := os.MkdirTemp("", "crw-capture-home-")
-	mustDo(t, err)
-	registerCaptureCleanup(home)
-	source := pythonPackageCopy(t)
-	cmd := exec.Command("uv", "run", "--no-sync", "python", script, root, module)
-	cmd.Dir = filepath.Join(repo, "packages", "codex-session-relay")
-	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "XDG_DATA_HOME="+filepath.Join(home, "data"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+home,
-		"PYTHONPATH="+source+":"+filepath.Join(repo, "packages", "codex-session-relay"))
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("capture %s: %v\n%s", module, err, out)
-	}
-	captureHomes[module] = home
-	return home
-}
-
-// pythonPackageDir is the directory the captured Python runs its relay package from: a copy in
-// a fixed tree. The fault sweep names the package's resolved directory in every observation's
-// evidence (faultsweep.INSTALLATION) and digests that evidence, so a checkout's own path would
-// be in digests no substitution can move to another checkout; the Go sweeper is given this
-// same directory (sweeper).
-func pythonPackageDir(t testing.TB) string {
-	t.Helper()
-	return filepath.Join(processParityTree(t, "python-package"), "codex_session_relay")
-}
-
-var pythonPackageOnce sync.Once
-
-// pythonPackageCopy copies the relay package to pythonPackageDir, once, and returns the
-// directory to put first on PYTHONPATH.
-func pythonPackageCopy(t *testing.T) string {
-	t.Helper()
-	target := pythonPackageDir(t)
-	pythonPackageOnce.Do(func() {
-		source := filepath.Join(repoRoot(t), "packages", "codex-session-relay", "src", "codex_session_relay")
-		mustDo(t, filepath.WalkDir(source, func(path string, entry fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			rel, err := filepath.Rel(source, path)
-			if err != nil {
-				return err
-			}
-			if entry.IsDir() {
-				if entry.Name() == "__pycache__" {
-					return filepath.SkipDir
-				}
-				return os.MkdirAll(filepath.Join(target, rel), 0o755)
-			}
-			content, err := os.ReadFile(path)
-			if err != nil {
-				return err
-			}
-			return os.WriteFile(filepath.Join(target, rel), content, 0o644)
-		}))
-	})
-	return filepath.Dir(target)
-}
-
-// capturedTables are the Python tables a mirror of module compares: deliveryTables, the fault
-// tables requireSameFaultTables reads and, for the re-review module, the tables rrMirror reads.
-func capturedTables(module string) []string {
-	tables := append(append([]string{}, deliveryTables...), "fault_ledger", "fault_occurrences", "fault_timeline", "fault_publications", "fault_notifications")
-	if module == rrd {
-		tables = append(tables, reviewTables...)
-	}
-	return tables
-}
-
-// pythonCapture is what module's Class.method name asserted, its sends and the tables a mirror
-// compares, as recorded, and the fixed tree the Go mirror runs in (the one Python ran in).
-func pythonCapture(t *testing.T, module, name string) (string, pyCapture) {
-	t.Helper()
-	root := processParityTree(t, "capture/"+module)
-	tree := filepath.Join(root, name)
-	var home string
-	if pyoracle.Live() {
-		home = pythonCaptures(t, module, root)
-	}
-	raw := pyAnswer(t, module+"/"+name, func() ([]byte, error) {
-		raw, err := os.ReadFile(filepath.Join(tree, "capture.json"))
-		if err != nil {
-			return nil, err
-		}
-		var whole map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &whole); err != nil {
-			return nil, err
-		}
-		var tables map[string]json.RawMessage
-		if err := json.Unmarshal(whole["tables"], &tables); err != nil {
-			return nil, err
-		}
-		compared := capturedTables(module)
-		for table := range tables {
-			if !slices.Contains(compared, table) {
-				delete(tables, table)
-			}
-		}
-		if whole["tables"], err = json.Marshal(tables); err != nil {
-			return nil, err
-		}
-		return json.Marshal(whole)
-	}, pyoracle.Substitute(tree, "<tree>"), pyoracle.Substitute(root, "<root>"), pyoracle.Substitute(pythonPackageDir(t), "<python-package>"), pyoracle.Substitute(home, "<home>"))
-	var python pyCapture
-	mustDo(t, json.Unmarshal(raw, &python))
-	return tree, python
-}
-
-var (
-	captureCleanups []string
-	storeAcceptNone = store.AcceptOptions{}
-)
-
-func registerCaptureCleanup(path string) { captureCleanups = append(captureCleanups, path) }
-
-// hl is one mirrored test: the fixture in the Python test's own tree, the fake host, the
-// services, the daemon's in-memory state, and the capture list.
+// hl is one mirrored test: the fixture in its tree, the fake host, the services, the daemon's
+// in-memory state, and the capture list.
 type hl struct {
 	*fixture
 	name    string
@@ -175,8 +32,6 @@ type hl struct {
 	adapter Adapter
 	got     []any
 	policy  tickPolicy
-	// python is what the Python twin captured.
-	python pyCapture
 }
 
 // tickPolicy is the part of RetryPolicy the daemon's tick reads.
@@ -184,49 +39,64 @@ type tickPolicy struct{ maxTurnChecks, maxSendsTick, maxReconciles int }
 
 func defaultTick() tickPolicy { return tickPolicy{4, 4, 8} }
 
-// mirror runs body as the Go twin of module's Class.method and compares it with Python.
+// mirror runs body as the Go twin of module's Class.method name, in the tree that test ran in, and
+// checks every value it recorded (eq), the delivery and fault tables and the host's sends against
+// the golden, under "<module>/<name> captures", "... delivery tables", "... fault tables" and
+// "... sends".
 func mirror(t *testing.T, module, name string, body func(h *hl)) {
 	t.Helper()
-	tree, python := pythonCapture(t, module, name)
-	if len(python.Problems) > 0 {
-		t.Fatalf("the Python test itself failed: %s", python.Problems)
-	}
+	root, tree := captureTree(t, module, name)
 	f := newFixture(t, tree)
 	f.rid = ""
-	h := &hl{fixture: f, name: name, ack: NewAck(f.delivery), rc: NewReconciler(f.delivery), adapter: f.host, policy: defaultTick(), python: python}
+	h := &hl{fixture: f, name: name, ack: NewAck(f.delivery), rc: NewReconciler(f.delivery), adapter: f.host, policy: defaultTick()}
 	h.checks = &TurnChecks{Reconciler: h.rc, Budget: 4}
 	body(h)
-	requireSameCaptures(t, h.got, python.Captures)
-	requireSameDeliveryTables(t, f, python)
-	requireSameFaultTables(t, f, python)
-	requireSameJSON(t, "sends", sendsJSON(f.host), python.Sends)
+	key := module + "/" + name
+	opts := []golden.Option{golden.Substitute(tree, "<tree>"), golden.Substitute(root, "<root>"), golden.Substitute(installationDir(t), "<installation>")}
+	golden.CheckJSON(t, key+" captures", capturedValues(t, h.got), opts...)
+	golden.CheckJSON(t, key+" delivery tables", deliveryTableRows(t, f), opts...)
+	golden.CheckJSON(t, key+" fault tables", stalledFaultRows(t, f), opts...)
+	golden.CheckJSON(t, key+" sends", normalizeJSON(t, sendsJSON(f.host)), opts...)
 }
 
-func requireSameCaptures(t *testing.T, got, want []any) {
+// captureTree is the tree module's Class.method name runs in, and the root of every tree of
+// module: a process-lifetime parityTree, because the golden values hold ids derived from the
+// tree's paths.
+func captureTree(t *testing.T, module, name string) (string, string) {
 	t.Helper()
-	g := normalizeJSON(t, jsonable(got)).([]any)
-	for i := range g {
-		g[i] = sameStore(g[i])
-	}
-	w := normalizeJSON(t, want).([]any)
-	for i := 0; i < max(len(g), len(w)); i++ {
-		var gi, wi any = "<missing>", "<missing>"
-		if i < len(g) {
-			gi = g[i]
-		}
-		if i < len(w) {
-			wi = w[i]
-		}
-		if !reflect.DeepEqual(gi, wi) {
-			gb, _ := json.Marshal(gi)
-			wb, _ := json.Marshal(wi)
-			t.Errorf("assertion %d differs from Python\ngo:     %s\npython: %s", i+1, gb, wb)
-		}
-	}
+	root := processParityTree(t, "capture/"+module)
+	return root, filepath.Join(root, name)
 }
 
-// sameStore maps the Go store's directory onto Python's in a captured string: the two stores sit
-// side by side in one tree (gostate/ and state/), and a recovery command names its own.
+// installationDir is the installation directory the Go sweeper is given (sweeper): the fault sweep
+// names it in every observation's evidence and digests that evidence, so the golden holds a digest
+// of this path, which is therefore a fixed one. It began as the directory the captured Python ran
+// its relay package from, and keeps that tree's key.
+func installationDir(t testing.TB) string {
+	t.Helper()
+	return filepath.Join(processParityTree(t, "python-package"), "codex_session_relay")
+}
+
+var storeAcceptNone = store.AcceptOptions{}
+
+// capturedValues are the values a mirror recorded, normalized as JSON, with the Go store's
+// directory (gostate) spelled as the Python store's (state), as the twin test named it: the two
+// stores sat side by side in one tree.
+func capturedValues(t *testing.T, got []any) any {
+	t.Helper()
+	g := normalizeJSON(t, jsonable(got))
+	if g == nil {
+		return []any{}
+	}
+	values := g.([]any)
+	for i := range values {
+		values[i] = sameStore(values[i])
+	}
+	return values
+}
+
+// sameStore maps the Go store's directory (gostate) onto the Python store's (state) in a captured
+// string: a recovery command names its own store.
 func sameStore(v any) any {
 	switch x := v.(type) {
 	case string:
@@ -247,14 +117,15 @@ func sameStore(v any) any {
 // daemon's observation pass (poll_observations, its cursors) is todo 29's and is not mirrored.
 var deliveryTables = []string{"acks", "ack_evidence", "attempt_messages", "attempts", "deliveries", "events", "failed_operations", "generations", "journal", "reconcile_gate", "recipient_rate", "verdicts"}
 
-func requireSameDeliveryTables(t *testing.T, f *fixture, python pyCapture) {
+// deliveryTableRows are the rows of deliveryTables, normalized as JSON (an empty table is null).
+// A reconcile gate's fingerprint is shown without its receipt turn id, as the Python gate had
+// none; the Go-only regression tests verify that component.
+func deliveryTableRows(t *testing.T, f *fixture) map[string]any {
 	t.Helper()
 	got := normalizeJSON(t, f.tables()).(map[string]any)
-	want := normalizeJSON(t, python.Tables).(map[string]any)
+	out := map[string]any{}
 	for _, n := range deliveryTables {
 		if n == "reconcile_gate" && got[n] != nil {
-			// Python's gate omits the receipt turn id. Compare its other persisted fields
-			// unchanged while the Go-only regression tests verify the extra component.
 			for _, value := range got[n].([]any) {
 				row := value.(map[string]any)
 				if fingerprint, ok := row["fingerprint"].(string); ok {
@@ -268,15 +139,13 @@ func requireSameDeliveryTables(t *testing.T, f *fixture, python pyCapture) {
 				}
 			}
 		}
-		if !reflect.DeepEqual(got[n], want[n]) {
-			g, _ := json.MarshalIndent(got[n], "", " ")
-			w, _ := json.MarshalIndent(want[n], "", " ")
-			t.Errorf("table %s differs from Python\ngo:     %s\npython: %s", n, g, w)
-		}
+		out[n] = got[n]
 	}
+	return out
 }
 
-// eq records the value a Python assertEqual/assertNotEqual/assertIsNone/assertTrue asserted.
+// eq records the value the twin Python test's assertEqual/assertNotEqual/assertIsNone/assertTrue
+// asserted.
 func (h *hl) eq(values ...any) {
 	if len(values) == 1 {
 		h.got = append(h.got, values[0])
@@ -870,42 +739,34 @@ func preSendRejection(request string) Obj {
 	return Obj{{Key: "requestId", Value: request}, {Key: "status", Value: "failed"}, {Key: "error", Value: "thread/read: transport refused"}, {Key: "rpcError", Value: Obj{{Key: "code", Value: "internal"}, {Key: "message", Value: "refused"}}}}
 }
 
-// requireSameFaultTables compares the delivery_stalled rows of the fault tables; the other
-// classes come from sources todo 22 and todo 29 own (observation_stalled needs the daemon's
-// poll rows), and fault_cursors carries the wall clock.
-func requireSameFaultTables(t *testing.T, f *fixture, python pyCapture) {
+// stalledFaultRows are the delivery_stalled rows of the fault tables, without their seq, normalized
+// as JSON; the other classes come from sources todo 22 and todo 29 own (observation_stalled needs
+// the daemon's poll rows), and fault_cursors carries the wall clock.
+func stalledFaultRows(t *testing.T, f *fixture) map[string]any {
 	t.Helper()
-	got := normalizeJSON(t, f.tables()).(map[string]any)
-	want := normalizeJSON(t, python.Tables).(map[string]any)
-	stalled := func(tables map[string]any) map[string]bool {
-		ids := map[string]bool{}
-		rows, _ := tables["fault_ledger"].([]any)
-		for _, r := range rows {
-			if m := r.(map[string]any); m["fault_class"] == "delivery_stalled" {
-				ids[m["fault_id"].(string)] = true
-			}
+	return stalledRows(normalizeJSON(t, f.tables()).(map[string]any))
+}
+
+func stalledRows(tables map[string]any) map[string]any {
+	ids := map[string]bool{}
+	rows, _ := tables["fault_ledger"].([]any)
+	for _, r := range rows {
+		if m := r.(map[string]any); m["fault_class"] == "delivery_stalled" {
+			ids[m["fault_id"].(string)] = true
 		}
-		return ids
 	}
-	keep := func(tables map[string]any, name string, ids map[string]bool) []any {
-		out := []any{}
+	out := map[string]any{}
+	for _, name := range []string{"fault_ledger", "fault_occurrences", "fault_timeline", "fault_publications", "fault_notifications"} {
+		kept := []any{}
 		rows, _ := tables[name].([]any)
 		for _, r := range rows {
 			m := r.(map[string]any)
 			if ids[fmt.Sprint(m["fault_id"])] {
 				delete(m, "seq")
-				out = append(out, m)
+				kept = append(kept, m)
 			}
 		}
-		return out
+		out[name] = kept
 	}
-	gids, wids := stalled(got), stalled(want)
-	for _, name := range []string{"fault_ledger", "fault_occurrences", "fault_timeline", "fault_publications", "fault_notifications"} {
-		g, w := keep(got, name, gids), keep(want, name, wids)
-		if !reflect.DeepEqual(g, w) {
-			gb, _ := json.MarshalIndent(g, "", " ")
-			wb, _ := json.MarshalIndent(w, "", " ")
-			t.Errorf("table %s (delivery_stalled) differs from Python\ngo:     %s\npython: %s", name, gb, wb)
-		}
-	}
+	return out
 }

@@ -209,7 +209,7 @@ func TestDEL07_an_idle_recipient_gets_a_real_turn_and_a_steer_is_recorded(t *tes
 }
 
 func TestDEL08_dispatched_is_not_delivered(t *testing.T) {
-	tree := parityTree(t)
+	tree := t.TempDir()
 	expected := expectScenario(t, tree, "del08")
 	f := newFixture(t, tree)
 	event := f.queuedEvent(regOpts{})

@@ -13,11 +13,10 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
-// The live-Python parity tests let the two runtimes take turns on one store, which a host does
-// only across a takeover: each runtime refuses a store the other owns. Before a runtime's turn
-// the store it is about to use is therefore put into that runtime's ownership with
-// testsupport.HandOver, the state a completed takeover leaves. An absent store is left for the
-// runtime to create, and a test that copies a store Rehomes the copy itself.
+// A store the Python relay built (a fixture) or one a test stamped for Python is handed to Go
+// before Go uses it, as a host does only across a takeover: each runtime refuses a store the
+// other owns. testsupport.HandOver leaves the state a completed takeover leaves. An absent store
+// is left for the runtime to create, and a test that copies a store Rehomes the copy itself.
 
 // ownedBy hands the existing store at path to runtime ("python" or "go"). A store runtime already
 // owns is left as it is; an absent or empty file is left for runtime to create.
@@ -100,7 +99,7 @@ func selectedStoreID(t *testing.T, dir string, args []string) string {
 	return stamp.StoreID
 }
 
-// ownedTree hands every store under root to runtime: the stores an oracle run left there.
+// ownedTree hands every store under root to runtime.
 func ownedTree(t *testing.T, root, runtime string) {
 	t.Helper()
 	e := filepath.WalkDir(root, func(path string, d os.DirEntry, e error) error {

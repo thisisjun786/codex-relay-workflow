@@ -3,74 +3,29 @@ package delivery
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
-	"sync"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
-var cliSeedOnce sync.Once
-var cliSeedBytes []byte
-var cliSeedErr error
-
-// The Python registry creates the seed once (recorded by recordedStore in CLISeed.json). Each
-// CLI side gets its own database and workspace; only the seed's two workspace fields need
-// rebinding. Every CLI operation still executes independently in Go and, when recording or
-// checking, in live Python.
-//
-// Each copy is the Python-owned seed in a directory of its own. The runtime that serves the
-// side (python or go) owns its copy and rebinds it itself: Go's copy is the seed after a
-// takeover to Go.
-func copyCLISeed(t *testing.T, state, work string, python bool) {
+// copyCLISeed writes the CLI seed at state/relay.sqlite3 and binds it to work. The seed
+// (testdata/fixtures/cli-seed.sqlite3.gz) is the store the Python registry created through
+// testdata/cliseed.py before the Python implementation left: one registered relationship,
+// Python-owned. Each copy is published again from its own stamp (testsupport.Rehome), taken over
+// by Go, and its two workspace fields rebound to work.
+func copyCLISeed(t *testing.T, state, work string) {
 	t.Helper()
-	cliSeedOnce.Do(func() {
-		// The seed's own workspace path is written into the store: a fixed tree keeps it the same.
-		seedRoot := processParityTree(t, "cli-seed")
-		path := filepath.Join(seedRoot, "relay.sqlite3")
-		if pyoracle.Live() {
-			command := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(repoRoot(t), "internal/relay/delivery/testdata/cliseed.py"), seedRoot, filepath.Join(seedRoot, "work"))
-			command.Dir = filepath.Join(repoRoot(t), "packages", "codex-session-relay")
-			output, err := command.CombinedOutput()
-			if err != nil {
-				cliSeedErr = fmt.Errorf("Python CLI seed: %w: %s", err, output)
-				return
-			}
-			if !strings.HasPrefix(strings.TrimSpace(string(output)), "rel-") {
-				cliSeedErr = fmt.Errorf("unexpected Python CLI seed: %s", output)
-				return
-			}
-		}
-		recordedStore(namedTB{t, "CLISeed"}, "seed", path)
-		cliSeedBytes, cliSeedErr = os.ReadFile(path)
-	})
-	mustDo(t, cliSeedErr)
 	mustDo(t, os.MkdirAll(state, 0700))
 	mustDo(t, os.MkdirAll(work, 0700))
 	path := filepath.Join(state, "relay.sqlite3")
-	mustDo(t, os.WriteFile(path, cliSeedBytes, 0600))
+	mustDo(t, os.WriteFile(path, golden.Fixture(t, "cli-seed.sqlite3"), 0600))
 	testsupport.Rehome(t, path)
 	roots, err := json.Marshal([]string{work})
 	mustDo(t, err)
-	if python {
-		command := exec.Command("uv", "run", "--no-sync", "python", "-c", `import sys
-from contextlib import closing
-from codex_session_relay.store import Store
-with closing(Store(sys.argv[1])) as store:
-    store.db.execute("UPDATE relationships SET child_cwd = ?, artifact_roots = ?", (sys.argv[2], sys.argv[3]))
-`, path, work, string(roots))
-		command.Dir = filepath.Join(repoRoot(t), "packages", "codex-session-relay")
-		if output, err := command.CombinedOutput(); err != nil {
-			t.Fatalf("Python seed rebinding: %v: %s", err, output)
-		}
-		return
-	}
 	testsupport.HandOver(t, path, "go")
 	ctx := context.Background()
 	s, err := store.Open(ctx, path, "")
@@ -86,7 +41,7 @@ func TestCLI_seed_copies_are_independent(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		root := t.TempDir()
 		state, work := filepath.Join(root, "state"), filepath.Join(root, "work")
-		copyCLISeed(t, state, work, false)
+		copyCLISeed(t, state, work)
 		s, err := store.Open(ctx, filepath.Join(state, "relay.sqlite3"), "")
 		mustDo(t, err)
 		t.Cleanup(func() { mustDo(t, s.Close()) })

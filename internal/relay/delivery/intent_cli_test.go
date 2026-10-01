@@ -2,30 +2,28 @@ package delivery
 
 import (
 	"database/sql"
-	"os"
-	"os/exec"
+	"fmt"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
-
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
 )
 
-// The eight intent-* marker commands through the real processes: Python's codex-session-relay
-// and the built `crw relay`, each with its own home, marker root and seeded store, over one
-// shared workspace path (the workspace key hashes it). Every stdout is compared whole after the
-// wall-clock stamps, each side's home and each side's pid (loserProcess) become tokens; exit
-// codes are compared exactly.
+// The eight intent-* marker commands through the built `crw relay`, with its own home, marker root
+// and seeded store, over a fixed workspace path (a parityTree: the workspace key hashes it). Every
+// stdout is checked whole against the golden after the wall-clock stamps, the home and the pid
+// (loserProcess) become tokens, and so is every exit code. The goldens began as the Python console
+// script's answers over the same workspace path.
 
 var loserProcess = regexp.MustCompile(`"loserProcess": "\d+"`)
 
 func TestCLI_every_intent_command_answers_byte_for_byte_like_python(t *testing.T) {
-	work := filepath.Join(parityTree(t), "work")
-	py, gosd := newSide(t, true, work), newSide(t, false, work)
-	rid := regexp.MustCompile(`rel-[0-9a-f]{16}`).FindString(sqliteDump(t, py, "SELECT relationship_id FROM relationships"))
-	if rid == "" || !strings.Contains(sqliteDump(t, gosd, "SELECT relationship_id FROM relationships"), rid) {
-		t.Fatal("both sides are seeded with the same relationship")
+	side := newSide(t, filepath.Join(parityTree(t), "work"))
+	seeded := sqliteDump(t, side, "SELECT relationship_id FROM relationships")
+	side.expect("sqlite SELECT relationship_id FROM relationships", seeded)
+	rid := regexp.MustCompile(`rel-[0-9a-f]{16}`).FindString(seeded)
+	if rid == "" {
+		t.Fatal("the side is seeded with a relationship")
 	}
 	a1, a2 := AssignmentID("dispatch-1"), AssignmentID("dispatch-2")
 	cases := [][]string{
@@ -72,16 +70,9 @@ func TestCLI_every_intent_command_answers_byte_for_byte_like_python(t *testing.T
 		{"intent-show", "--workspace", "<work>", "--marker-root", "<home>/elsewhere"},
 		{"intent-show"},
 	}
-	for i, args := range cases {
+	for _, args := range cases {
 		if args[0] == "!sql" {
-			if pyoracle.Live() {
-				cmd := execUV(py, "python", "-c", "import sqlite3,sys;c=sqlite3.connect(sys.argv[1]);c.execute(sys.argv[2]);c.commit()", filepath.Join(py.state, "relay.sqlite3"), args[1])
-				out, err := cmd.CombinedOutput()
-				if err != nil {
-					t.Fatalf("%v: %s", err, out)
-				}
-			}
-			goSQLiteExec(t, filepath.Join(gosd.state, "relay.sqlite3"), args[1])
+			goSQLiteExec(t, filepath.Join(side.state, "relay.sqlite3"), args[1])
 			continue
 		}
 		expand := func(s *cliSide) []string {
@@ -96,50 +87,28 @@ func TestCLI_every_intent_command_answers_byte_for_byte_like_python(t *testing.T
 			}
 			return out
 		}
-		pout, pcode := py.run(expand(py)...)
-		gout, gcode := gosd.run(expand(gosd)...)
-		pn := loserProcess.ReplaceAllString(py.normal(pout), `"loserProcess": "<pid>"`)
-		gn := loserProcess.ReplaceAllString(gosd.normal(gout), `"loserProcess": "<pid>"`)
-		if os.Getenv("CRW_SHOW") != "" {
-			t.Logf("case %d exit %d\n%s", i, pcode, pn)
-		}
-		if pcode != gcode || pn != gn {
-			t.Errorf("case %d %v: exit python %d go %d\npython:\n%s\ngo:\n%s", i, args, pcode, gcode, pn, gn)
-		}
+		out, code := side.run(expand(side)...)
+		side.expect("run "+strings.Join(args, " "), fmt.Sprintf("%d\n%s", code, loserProcess.ReplaceAllString(side.normal(out), `"loserProcess": "<pid>"`)))
 	}
-	// The mirrored store records: the same rows on both sides.
+	// The mirrored store records.
 	for _, table := range []string{"reporting_sessions", "turn_declarations"} {
 		query := "SELECT * FROM " + table + " ORDER BY 1, 2, 3"
-		pr, gr := py.normal(sqliteDump(t, py, query)), gosd.normal(sqliteDump(t, gosd, query))
-		pr, gr = stamp.ReplaceAllString(pr, "<stamp>"), stamp.ReplaceAllString(gr, "<stamp>")
-		if pr != gr || !strings.Contains(pr, "01child-task") {
-			t.Errorf("%s differs\npython: %s\ngo:     %s", table, pr, gr)
+		rows := stamp.ReplaceAllString(side.normal(sqliteDump(t, side, query)), "<stamp>")
+		side.expect("sqlite "+query, rows)
+		if !strings.Contains(rows, "01child-task") {
+			t.Errorf("%s holds no row of the child: %s", table, rows)
 		}
 	}
 }
 
-func execUV(s *cliSide, args ...string) *exec.Cmd {
-	cmd := exec.Command("uv", append([]string{"run", "--no-sync"}, args...)...)
-	cmd.Dir = filepath.Join(repoRoot(s.t), "packages", "codex-session-relay")
-	cmd.Env = s.env
-	return cmd
-}
-
-// sqliteDump is json.dumps([list(r) for r in rows]) of what query selects from the side's store:
-// the Python side's as recorded, the Go side's read here.
+// sqliteDump is json.dumps([list(r) for r in rows]) of what query selects from the side's store.
 func sqliteDump(t *testing.T, s *cliSide, query string) string {
 	t.Helper()
-	if !s.python {
-		return goSQLiteDump(t, filepath.Join(s.state, "relay.sqlite3"), query)
-	}
-	return string(s.recorded("sqlite "+query, func() ([]byte, error) {
-		cmd := execUV(s, "python", "-c", "import sqlite3,sys,json;print(json.dumps([list(r) for r in sqlite3.connect(sys.argv[1]).execute(sys.argv[2])]))", filepath.Join(s.state, "relay.sqlite3"), query)
-		out, err := pythonOutput(cmd)
-		return []byte(liveNeutral(string(out))), err
-	}))
+	return goSQLiteDump(t, filepath.Join(s.state, "relay.sqlite3"), query)
 }
 
-// goSQLiteDump is what the Python one-liner sqliteDump runs prints, for a store read directly.
+// goSQLiteDump is what the Python one-liner json.dumps([list(r) for r in rows]) prints for a store
+// read directly.
 func goSQLiteDump(t *testing.T, path, query string) string {
 	t.Helper()
 	db, err := sql.Open("sqlite", path)

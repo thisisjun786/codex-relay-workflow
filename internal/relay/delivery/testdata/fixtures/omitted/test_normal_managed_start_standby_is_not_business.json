@@ -1,0 +1,38 @@
+{
+ "calls": [
+  {
+   "args": [
+    {
+     "path": "<root>/tree/relay-test-2/state",
+     "source": "flag"
+    },
+    "<root>/tree/relay-test-2/markers",
+    "<root>/tree/relay-test-2/work",
+    "c435a1749e0211d0ace1901faadbd6e4ee81de252cc5943fc3d11d54798e7704",
+    "child-new",
+    "standby",
+    "2026-01-01T00:06:00+00:00",
+    {}
+   ],
+   "snapshot": "<root>/call-0",
+   "writes": []
+  },
+  {
+   "args": [
+    {
+     "path": "<root>/tree/relay-test-2/state",
+     "source": "flag"
+    },
+    "<root>/tree/relay-test-2/markers",
+    "<root>/tree/relay-test-2/work",
+    "c435a1749e0211d0ace1901faadbd6e4ee81de252cc5943fc3d11d54798e7704",
+    "child-new",
+    "business",
+    "2026-01-01T00:06:00+00:00",
+    {}
+   ],
+   "snapshot": "<root>/call-1",
+   "writes": []
+  }
+ ]
+}

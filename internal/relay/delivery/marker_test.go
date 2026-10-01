@@ -12,7 +12,7 @@ import (
 // marker.py run over the same tree (testdata/markerops.py).
 
 func TestMRK01_the_first_writer_wins_and_the_rest_are_told_they_lost(t *testing.T) {
-	answers := sameOps(t, nil,
+	answers := sameOpsIn(t, t.TempDir(), nil,
 		markerOp{"op": "publish", "target": "<tree>/markers/a/intent.json", "payload": map[string]any{"one": 1}},
 		markerOp{"op": "publish", "target": "<tree>/markers/a/intent.json", "payload": map[string]any{"two": 2}},
 		markerOp{"op": "read_file", "target": "<tree>/markers/a/intent.json"},
@@ -55,7 +55,7 @@ func TestMRK01_the_first_writer_wins_and_the_rest_are_told_they_lost(t *testing.
 }
 
 func TestMRK02_publication_is_atomic_and_an_orphan_temp_is_not_a_fact(t *testing.T) {
-	answers := sameOps(t, nil,
+	answers := sameOpsIn(t, t.TempDir(), nil,
 		markerOp{"op": "publish", "target": "<tree>/markers/a/intent.json", "payload": map[string]any{"one": 1}},
 		markerOp{"op": "publish", "target": "<tree>/markers/a/intent.json", "payload": map[string]any{"two": 2}},
 		markerOp{"op": "listdir", "target": "<tree>/markers/a"},
@@ -79,7 +79,7 @@ func TestMRK02_publication_is_atomic_and_an_orphan_temp_is_not_a_fact(t *testing
 }
 
 func TestMRK03_the_fact_digest_reproduces_the_contract_vector_and_excludes_factid(t *testing.T) {
-	answers := sameOps(t, nil,
+	answers := sameOpsIn(t, t.TempDir(), nil,
 		markerOp{"op": "digest", "payload": map[string]any{"factId": "conflicts/0", "at": "2026-01-01T00:06:00+00:00"}},
 		markerOp{"op": "digest", "payload": map[string]any{"factId": "a", "x": 1}},
 		markerOp{"op": "digest", "payload": map[string]any{"factId": "b", "x": 1}},
@@ -91,7 +91,7 @@ func TestMRK03_the_fact_digest_reproduces_the_contract_vector_and_excludes_facti
 }
 
 func TestMRK04_nothing_names_nothing_and_two_unnamed_never_match(t *testing.T) {
-	answers := sameOps(t, nil,
+	answers := sameOpsIn(t, t.TempDir(), nil,
 		markerOp{"op": "named", "values": []any{nil, "", "   ", 3, []any{}, map[string]any{}, true, "a", " \u3000"}},
 		markerOp{"op": "same", "pairs": []any{[]any{nil, nil}, []any{"", ""}, []any{"  ", "  "}, []any{"a", nil}, []any{"a", "a"}}},
 	)
@@ -110,7 +110,7 @@ func TestMRK04_nothing_names_nothing_and_two_unnamed_never_match(t *testing.T) {
 }
 
 func TestMRK05_the_reader_assigns_factids_and_reports_what_it_could_not_read(t *testing.T) {
-	answers := sameOps(t, nil,
+	answers := sameOpsIn(t, t.TempDir(), nil,
 		markerOp{"op": "publish", "path": "intent.json", "payload": map[string]any{"issueKey": "REL-1"}},
 		markerOp{"op": "publish", "path": "attempts/0.json", "payload": map[string]any{"outcome": "accepted"}},
 		markerOp{"op": "publish", "path": "claims/sess/claim.json", "payload": map[string]any{"sessionId": "sess"}},
@@ -150,7 +150,7 @@ func TestMRK06_a_symlinked_workspace_reaches_the_same_assignment(t *testing.T) {
 }
 
 func TestMRK07_a_disposition_is_read_where_the_stop_identity_derives(t *testing.T) {
-	answers := sameOps(t, nil,
+	answers := sameOpsIn(t, t.TempDir(), nil,
 		markerOp{"op": "publish", "path": "dispositions/sess/turn-1.json", "payload": map[string]any{"sessionId": "sess", "turnId": "turn-1", "outcome": "interrupted"}},
 		markerOp{"op": "read_disposition", "session": "sess", "turn": "turn-1"},
 		markerOp{"op": "read_disposition", "session": "sess", "turn": "turn-2"},
@@ -169,7 +169,7 @@ func TestMRK07_a_disposition_is_read_where_the_stop_identity_derives(t *testing.
 }
 
 func TestMRK08_the_marker_root_is_flag_then_env_then_xdg_then_home_and_never_the_state_dir(t *testing.T) {
-	answers := sameOps(t, map[string]any{MarkerEnv: nil, "XDG_STATE_HOME": nil, "HOME": "<tree>/home"},
+	answers := sameOpsIn(t, t.TempDir(), map[string]any{MarkerEnv: nil, "XDG_STATE_HOME": nil, "HOME": "<tree>/home"},
 		markerOp{"op": "marker_root", "explicit": "/explicit/./x/"},
 		markerOp{"op": "set_env", "name": MarkerEnv, "value": "/from-env"},
 		markerOp{"op": "marker_root"},
