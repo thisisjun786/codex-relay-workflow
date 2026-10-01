@@ -73,7 +73,7 @@
           "stdout_json",
           "detail"
         ],
-        "value": "no relationship 'x\\xa0y'"
+        "value": "no relationship \"x\\u00a0y\""
       },
       {
         "kind": "eq",
@@ -92,7 +92,7 @@
           "stdout_json",
           "detail"
         ],
-        "value": "no relationship 'x\\u2028y'"
+        "value": "no relationship \"x\\u2028y\""
       },
       {
         "kind": "eq",
@@ -111,7 +111,7 @@
           "stdout_json",
           "detail"
         ],
-        "value": "no relationship 'x\\u200by'"
+        "value": "no relationship \"x\\u200by\""
       },
       {
         "kind": "eq",

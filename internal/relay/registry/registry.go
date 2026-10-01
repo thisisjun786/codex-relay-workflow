@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -214,7 +215,7 @@ func (r *Registry) toRecord(ctx context.Context, x *row) (Relationship, error) {
 			return record, nil
 		}
 	}
-	return Relationship{}, refuse(contract.RefusalUnknownGeneration, "%s points at generation %d which is not retained", pyvalue.StrRepr(x.ID), x.Generation)
+	return Relationship{}, refuse(contract.RefusalUnknownGeneration, "%s points at generation %d which is not retained", strconv.Quote(x.ID), x.Generation)
 }
 
 func endpointRecord(e Endpoint) contract.OrderedObject {
@@ -261,7 +262,7 @@ func (r *Registry) Get(ctx context.Context, rid string) (Relationship, error) {
 		return Relationship{}, err
 	}
 	if x == nil {
-		return Relationship{}, refuse(contract.RefusalUnregisteredRelationship, "no relationship %s", pyvalue.StrRepr(rid))
+		return Relationship{}, refuse(contract.RefusalUnregisteredRelationship, "no relationship %s", strconv.Quote(rid))
 	}
 	return r.toRecord(ctx, x)
 }
@@ -273,7 +274,7 @@ func (r *Registry) RequireActive(ctx context.Context, rid string) (Relationship,
 		return record, err
 	}
 	if record.Status != Active {
-		return record, refuse(contract.RefusalRelationshipNotActive, "relationship %s is %s and is never auto-resumed", pyvalue.StrRepr(rid), pyvalue.StrRepr(record.Status))
+		return record, refuse(contract.RefusalRelationshipNotActive, "relationship %s is %s and is never auto-resumed", strconv.Quote(rid), strconv.Quote(record.Status))
 	}
 	return record, nil
 }
@@ -297,7 +298,7 @@ func (r *Registry) GenerationOf(ctx context.Context, rid string, number any) (Ge
 // validatedTurnID is registry.validated_turn_id.
 func validatedTurnID(turn sql.NullString) error {
 	if turn.Valid && strings.TrimSpace(turn.String) == "" {
-		return refuse(contract.RefusalUnboundGeneration, "an anchor needs an exact dispatch turn id, not %s", pyvalue.StrRepr(turn.String))
+		return refuse(contract.RefusalUnboundGeneration, "an anchor needs an exact dispatch turn id, not %s", strconv.Quote(turn.String))
 	}
 	return nil
 }
@@ -334,7 +335,7 @@ func (r *Registry) Register(ctx context.Context, in Registration) (Relationship,
 	if encode := store.EncodeError(err); encode != nil {
 		return Relationship{}, encode
 	} else if err != nil {
-		return Relationship{}, &HostError{Class: "ValueError", Detail: identityDetail(in)}
+		return Relationship{}, errors.New(identityDetail(in))
 	}
 	if err := validatedTurnID(in.DispatchTurnID); err != nil {
 		return Relationship{}, err
@@ -362,7 +363,7 @@ func (r *Registry) Register(ctx context.Context, in Registration) (Relationship,
 		scopeSame := sameList(record.Roots, in.ArtifactRoots) && sameList(record.Recipients, in.AllowedRecipients)
 		same := scopeSame && existing.ParentHost == in.Parent.HostID && existing.ChildHost == in.Child.HostID
 		if !same && (isLive(existing.Status) || !scopeSame) {
-			return Relationship{}, refuse(contract.RefusalRelationshipConflict, "%s already exists with a different scope or hosts", pyvalue.StrRepr(rid))
+			return Relationship{}, refuse(contract.RefusalRelationshipConflict, "%s already exists with a different scope or hosts", strconv.Quote(rid))
 		}
 		if !isLive(existing.Status) {
 			returned, err := r.returningTenure(ctx, rid, in)
@@ -425,12 +426,6 @@ func identityDetail(in Registration) string {
 	return "invalid identity"
 }
 
-// HostError is an unexpected failure carrying Python's exception class name, so the CLI's host
-// envelope reads f"{type(error).__name__}: {error}".
-type HostError struct{ Class, Detail string }
-
-func (e *HostError) Error() string { return e.Class + ": " + e.Detail }
-
 func candidateRow(rid string, in Registration) *row {
 	return &row{ID: rid, Issue: in.IssueKey, Status: Active, ParentTask: in.Parent.TaskID, ChildTask: in.Child.TaskID,
 		ChildHost: in.Child.HostID, ChildCwd: in.Child.Cwd, ChildCXC: in.Child.CXCSession, Supersedes: text(in.Supersedes)}
@@ -440,7 +435,7 @@ func (r *Registry) attachExisting(ctx context.Context, rid string, in Registrati
 	var recorded string
 	err := r.Store.Querier(ctx).QueryRowContext(ctx, "SELECT project_key FROM relationship_scope WHERE relationship_id = ?", rid).Scan(&recorded)
 	if err == nil && recorded != in.ProjectKey {
-		return Relationship{}, refuse(contract.RefusalRelationshipConflict, "%s is already scoped to project %s, not %s", pyvalue.StrRepr(rid), pyvalue.StrRepr(recorded), pyvalue.StrRepr(in.ProjectKey))
+		return Relationship{}, refuse(contract.RefusalRelationshipConflict, "%s is already scoped to project %s, not %s", strconv.Quote(rid), strconv.Quote(recorded), strconv.Quote(in.ProjectKey))
 	}
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return Relationship{}, err
@@ -453,7 +448,7 @@ func (r *Registry) attachExisting(ctx context.Context, rid string, in Registrati
 			return err
 		}
 		if fresh == nil {
-			return refuse(contract.RefusalUnregisteredRelationship, "no relationship %s", pyvalue.StrRepr(rid))
+			return refuse(contract.RefusalUnregisteredRelationship, "no relationship %s", strconv.Quote(rid))
 		}
 		if err := r.guardManagedRegistration(ctx, in); err != nil {
 			return err
@@ -483,7 +478,7 @@ func (r *Registry) guardIssueReservation(ctx context.Context, issue string) erro
 	if err != nil {
 		return err
 	}
-	return refuse(contract.RefusalDuplicateAssignment, "issue %s is held by managed request %s (%s); raw registration cannot acquire it", pyvalue.StrRepr(issue), pyvalue.StrRepr(request), state)
+	return refuse(contract.RefusalDuplicateAssignment, "issue %s is held by managed request %s (%s); raw registration cannot acquire it", strconv.Quote(issue), strconv.Quote(request), state)
 }
 
 func (r *Registry) registerInTransaction(ctx context.Context, rid string, in Registration, now string) (Relationship, error) {
@@ -494,13 +489,13 @@ func (r *Registry) registerInTransaction(ctx context.Context, rid string, in Reg
 			var named string
 			err := q.QueryRowContext(ctx, "SELECT issue_key FROM relationships WHERE relationship_id = ?", in.Supersedes).Scan(&named)
 			if errors.Is(err, sql.ErrNoRows) {
-				return refuse(contract.RefusalUnregisteredRelationship, "supersedes names %s, which is not registered", pyvalue.StrRepr(in.Supersedes))
+				return refuse(contract.RefusalUnregisteredRelationship, "supersedes names %s, which is not registered", strconv.Quote(in.Supersedes))
 			}
 			if err != nil {
 				return err
 			}
 			if named != in.IssueKey {
-				return refuse(contract.RefusalRelationshipConflict, "supersedes names %s, which is assigned to issue %s, not %s; a successor replaces the assignment for its own issue", pyvalue.StrRepr(in.Supersedes), pyvalue.StrRepr(named), pyvalue.StrRepr(in.IssueKey))
+				return refuse(contract.RefusalRelationshipConflict, "supersedes names %s, which is assigned to issue %s, not %s; a successor replaces the assignment for its own issue", strconv.Quote(in.Supersedes), strconv.Quote(named), strconv.Quote(in.IssueKey))
 			}
 		}
 		outgoing, err := link.replaceableChild(ctx, in.Supersedes)
@@ -519,7 +514,7 @@ func (r *Registry) registerInTransaction(ctx context.Context, rid string, in Reg
 		}
 		if err == nil && rival.id != in.Supersedes {
 			return refuse(contract.RefusalDuplicateAssignment, "issue %s is already assigned to child %s under %s (%s, parent %s); reuse that assignment, or pass supersedes to replace it deliberately",
-				pyvalue.StrRepr(in.IssueKey), pyvalue.StrRepr(rival.child), pyvalue.StrRepr(rival.id), rival.status, pyvalue.StrRepr(rival.parent))
+				strconv.Quote(in.IssueKey), strconv.Quote(rival.child), strconv.Quote(rival.id), rival.status, strconv.Quote(rival.parent))
 		}
 		if in.Supersedes != "" {
 			var before sql.NullString
@@ -638,7 +633,7 @@ func (r *Registry) returningTenure(ctx context.Context, rid string, in Registrat
 			return err
 		}
 		if fresh == nil {
-			return refuse(contract.RefusalUnregisteredRelationship, "no relationship %s", pyvalue.StrRepr(rid))
+			return refuse(contract.RefusalUnregisteredRelationship, "no relationship %s", strconv.Quote(rid))
 		}
 		if isLive(fresh.Status) {
 			live = true
@@ -650,28 +645,28 @@ func (r *Registry) returningTenure(ctx context.Context, rid string, in Registrat
 				"  WHERE issue_key = ? AND status IN ('active','paused')    AND superseded_by IS NULL", in.IssueKey).Scan(&holder, &parent)
 			tail := "its issue is free, so the way back for this same parent, child and issue is relationship-resume, which restates the generation and the scope it re-authorizes"
 			if err == nil {
-				tail = "issue " + pyvalue.StrRepr(in.IssueKey) + " is held by " + pyvalue.StrRepr(holder) + " under parent " + pyvalue.StrRepr(parent) + ", so pass supersedes to take that tenure over deliberately"
+				tail = "issue " + strconv.Quote(in.IssueKey) + " is held by " + strconv.Quote(holder) + " under parent " + strconv.Quote(parent) + ", so pass supersedes to take that tenure over deliberately"
 			} else if !errors.Is(err, sql.ErrNoRows) {
 				return err
 			}
-			return refuse(contract.RefusalRelationshipConflict, "%s is %s and this registration names no predecessor; %s", pyvalue.StrRepr(rid), pyvalue.StrRepr(fresh.Status), tail)
+			return refuse(contract.RefusalRelationshipConflict, "%s is %s and this registration names no predecessor; %s", strconv.Quote(rid), strconv.Quote(fresh.Status), tail)
 		}
 		if in.Supersedes == rid {
-			return refuse(contract.RefusalRelationshipConflict, "%s cannot supersede itself into a new tenure", pyvalue.StrRepr(rid))
+			return refuse(contract.RefusalRelationshipConflict, "%s cannot supersede itself into a new tenure", strconv.Quote(rid))
 		}
 		var predIssue, predStatus string
 		err = q.QueryRowContext(ctx, "SELECT issue_key, status FROM relationships WHERE relationship_id = ?", in.Supersedes).Scan(&predIssue, &predStatus)
 		if errors.Is(err, sql.ErrNoRows) {
-			return refuse(contract.RefusalUnregisteredRelationship, "supersedes names %s, which is not registered", pyvalue.StrRepr(in.Supersedes))
+			return refuse(contract.RefusalUnregisteredRelationship, "supersedes names %s, which is not registered", strconv.Quote(in.Supersedes))
 		}
 		if err != nil {
 			return err
 		}
 		if predIssue != in.IssueKey {
-			return refuse(contract.RefusalRelationshipConflict, "supersedes names %s, which is assigned to issue %s, not %s; a successor replaces the assignment for its own issue", pyvalue.StrRepr(in.Supersedes), pyvalue.StrRepr(predIssue), pyvalue.StrRepr(in.IssueKey))
+			return refuse(contract.RefusalRelationshipConflict, "supersedes names %s, which is assigned to issue %s, not %s; a successor replaces the assignment for its own issue", strconv.Quote(in.Supersedes), strconv.Quote(predIssue), strconv.Quote(in.IssueKey))
 		}
 		if !isLive(predStatus) {
-			return refuse(contract.RefusalRelationshipConflict, "supersedes names %s, which is %s, so there is no tenure for %s to take over; a returning tenure replaces the assignment that holds the issue now", pyvalue.StrRepr(in.Supersedes), pyvalue.StrRepr(predStatus), pyvalue.StrRepr(rid))
+			return refuse(contract.RefusalRelationshipConflict, "supersedes names %s, which is %s, so there is no tenure for %s to take over; a returning tenure replaces the assignment that holds the issue now", strconv.Quote(in.Supersedes), strconv.Quote(predStatus), strconv.Quote(rid))
 		}
 		outgoing, err := link.replaceableChild(ctx, in.Supersedes)
 		if err != nil {
@@ -680,7 +675,7 @@ func (r *Registry) returningTenure(ctx context.Context, rid string, in Registrat
 		var replayed int64
 		err = q.QueryRowContext(ctx, "SELECT execution_generation FROM generations  WHERE relationship_id = ? AND dispatch_request_id = ?", rid, in.DispatchRequestID).Scan(&replayed)
 		if err == nil {
-			return refuse(contract.RefusalRelationshipConflict, "dispatch request %s already opened generation %d of %s, so it cannot open a returning tenure as well; a new tenure is a new dispatch", pyvalue.StrRepr(in.DispatchRequestID), replayed, pyvalue.StrRepr(rid))
+			return refuse(contract.RefusalRelationshipConflict, "dispatch request %s already opened generation %d of %s, so it cannot open a returning tenure as well; a new tenure is a new dispatch", strconv.Quote(in.DispatchRequestID), replayed, strconv.Quote(rid))
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
@@ -771,7 +766,7 @@ func supersedeOlderDeliveries(ctx context.Context, s *store.Store, rid string, n
 // OpenGeneration is registry.open_generation.
 func (r *Registry) OpenGeneration(ctx context.Context, rid, dispatchRequest, reason string, dispatchTurn sql.NullString) (Generation, error) {
 	if !contains(reasons, reason) {
-		return Generation{}, refuse(contract.RefusalUnknownGeneration, "bad reason %s", pyvalue.StrRepr(reason))
+		return Generation{}, refuse(contract.RefusalUnknownGeneration, "bad reason %s", strconv.Quote(reason))
 	}
 	if err := validatedTurnID(dispatchTurn); err != nil {
 		return Generation{}, err
@@ -801,7 +796,7 @@ func (r *Registry) OpenGeneration(ctx context.Context, rid, dispatchRequest, rea
 // OpenGenerationIn is registry.open_generation_in: inside the caller's transaction.
 func (r *Registry) OpenGenerationIn(ctx context.Context, rid, dispatchRequest, reason string, dispatchTurn sql.NullString) (int64, error) {
 	if !contains(reasons, reason) {
-		return 0, refuse(contract.RefusalUnknownGeneration, "bad reason %s", pyvalue.StrRepr(reason))
+		return 0, refuse(contract.RefusalUnknownGeneration, "bad reason %s", strconv.Quote(reason))
 	}
 	if err := validatedTurnID(dispatchTurn); err != nil {
 		return 0, err
@@ -820,13 +815,13 @@ func (r *Registry) OpenGenerationIn(ctx context.Context, rid, dispatchRequest, r
 	var supersededBy sql.NullString
 	err = q.QueryRowContext(ctx, "SELECT execution_generation, status, superseded_by FROM relationships WHERE relationship_id = ?", rid).Scan(&current, &status, &supersededBy)
 	if errors.Is(err, sql.ErrNoRows) {
-		return 0, refuse(contract.RefusalUnregisteredRelationship, "no relationship %s", pyvalue.StrRepr(rid))
+		return 0, refuse(contract.RefusalUnregisteredRelationship, "no relationship %s", strconv.Quote(rid))
 	}
 	if err != nil {
 		return 0, err
 	}
 	if status != Active || supersededBy.String != "" {
-		return 0, refuse(contract.RefusalRelationshipNotActive, "relationship %s is not active", pyvalue.StrRepr(rid))
+		return 0, refuse(contract.RefusalRelationshipNotActive, "relationship %s is not active", strconv.Quote(rid))
 	}
 	number = current + 1
 	now := r.now()
@@ -848,23 +843,23 @@ func (r *Registry) OpenGenerationIn(ctx context.Context, rid, dispatchRequest, r
 // BindAnchor is registry.bind_anchor.
 func (r *Registry) BindAnchor(ctx context.Context, rid string, number any, turn, source string) (Generation, error) {
 	if source != "dispatch_receipt" {
-		return Generation{}, refuse(contract.RefusalUnboundGeneration, "an anchor binds only from a dispatch receipt, not from %s", pyvalue.StrRepr(source))
+		return Generation{}, refuse(contract.RefusalUnboundGeneration, "an anchor binds only from a dispatch receipt, not from %s", strconv.Quote(source))
 	}
 	if strings.TrimSpace(turn) == "" {
-		return Generation{}, refuse(contract.RefusalUnboundGeneration, "an anchor needs an exact dispatch turn id, not %s", pyvalue.StrRepr(turn))
+		return Generation{}, refuse(contract.RefusalUnboundGeneration, "an anchor needs an exact dispatch turn id, not %s", strconv.Quote(turn))
 	}
 	current, ok, err := r.GenerationOf(ctx, rid, number)
 	if err != nil {
 		return Generation{}, err
 	}
 	if !ok {
-		return Generation{}, refuse(contract.RefusalUnknownGeneration, "%s has no generation %d", pyvalue.StrRepr(rid), number)
+		return Generation{}, refuse(contract.RefusalUnknownGeneration, "%s has no generation %d", strconv.Quote(rid), number)
 	}
 	if current.AnchorState == AnchorBound {
 		if current.DispatchTurnID.String == turn {
 			return current, nil
 		}
-		return Generation{}, refuse(contract.RefusalAnchorAlreadyBound, "generation %d is already bound to %s", number, pyvalue.Repr(nullable(current.DispatchTurnID)))
+		return Generation{}, refuse(contract.RefusalAnchorAlreadyBound, "generation %d is already bound to %s", number, pyvalue.Quote(nullable(current.DispatchTurnID)))
 	}
 	number = argparse.IntegerValue(number).Int64() // GenerationOf already bound this value to SQLite.
 	now := r.now()
@@ -885,7 +880,7 @@ func (r *Registry) BindAnchor(ctx context.Context, rid string, number any, turn,
 // SetStatus is registry.set_status: deactivation only.
 func (r *Registry) SetStatus(ctx context.Context, rid, status, actor string) (Relationship, error) {
 	if status != "paused" && status != "cancelled" && status != "archived" {
-		return Relationship{}, refuse(contract.RefusalRelationshipNotActive, "bad status %s", pyvalue.StrRepr(status))
+		return Relationship{}, refuse(contract.RefusalRelationshipNotActive, "bad status %s", strconv.Quote(status))
 	}
 	if _, err := r.Get(ctx, rid); err != nil {
 		return Relationship{}, err
@@ -898,7 +893,7 @@ func (r *Registry) SetStatus(ctx context.Context, rid, status, actor string) (Re
 			return err
 		}
 		if before.Valid && !isLive(before.String) && isLive(status) {
-			return refuse(contract.RefusalRelationshipNotActive, "%s is %s, so %s would bring it back to life. Restoring an assignment restates the generation and the scope it re-authorizes, which is relationship-resume; choosing a different live word does not make those checks optional", pyvalue.StrRepr(rid), pyvalue.StrRepr(before.String), pyvalue.StrRepr(status))
+			return refuse(contract.RefusalRelationshipNotActive, "%s is %s, so %s would bring it back to life. Restoring an assignment restates the generation and the scope it re-authorizes, which is relationship-resume; choosing a different live word does not make those checks optional", strconv.Quote(rid), strconv.Quote(before.String), strconv.Quote(status))
 		}
 		if _, err := q.ExecContext(ctx, "UPDATE relationships SET status = ?, updated_at = ? WHERE relationship_id = ?", status, now, rid); err != nil {
 			return err
@@ -924,7 +919,7 @@ func (r *Registry) Resume(ctx context.Context, rid string, expectGeneration any,
 			return err
 		}
 		if x == nil {
-			return refuse(contract.RefusalUnregisteredRelationship, "no relationship %s", pyvalue.StrRepr(rid))
+			return refuse(contract.RefusalUnregisteredRelationship, "no relationship %s", strconv.Quote(rid))
 		}
 		var mismatches []string
 		expected := argparse.IntegerValue(expectGeneration)
@@ -957,7 +952,7 @@ func (r *Registry) Resume(ctx context.Context, rid string, expectGeneration any,
 			x.Issue, rid).Scan(&owner.id, &owner.child, &owner.status)
 		if err == nil {
 			return refuse(contract.RefusalDuplicateAssignment, "issue %s is now assigned to child %s under %s (%s); resuming %s would leave the issue with two owners. Replace that assignment deliberately instead",
-				pyvalue.StrRepr(x.Issue), pyvalue.StrRepr(owner.child), pyvalue.StrRepr(owner.id), owner.status, pyvalue.StrRepr(rid))
+				strconv.Quote(x.Issue), strconv.Quote(owner.child), strconv.Quote(owner.id), owner.status, strconv.Quote(rid))
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err

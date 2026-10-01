@@ -9,9 +9,9 @@ import (
 	"io"
 	"math/big"
 	"os"
+	"strconv"
 	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/pyerr"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
@@ -317,7 +317,6 @@ func emit(stdout, stderr io.Writer, result any, err error) int {
 	code := contract.ExitOk
 	var refused *store.RefusedError
 	var bad *usage
-	var host *HostError
 	var payload PayloadError
 	var overflow *argparse.IntegerOverflow
 	switch {
@@ -336,8 +335,6 @@ func emit(stdout, stderr io.Writer, result any, err error) int {
 		result, code = contract.OrderedObject{{Key: "error", Value: "usage"}, {Key: "detail", Value: bad.detail}}, bad.code
 	case errors.As(err, &overflow):
 		result, code = contract.OrderedObject{{Key: "error", Value: "host"}, {Key: "detail", Value: overflow.Error()}}, contract.ExitHost
-	case errors.As(err, &host):
-		result, code = contract.OrderedObject{{Key: "error", Value: "host"}, {Key: "detail", Value: host.Error()}}, contract.ExitHost
 	default:
 		result, code = contract.OrderedObject{{Key: "error", Value: "host"}, {Key: "detail", Value: err.Error()}}, contract.ExitHost
 	}
@@ -354,24 +351,20 @@ func settingsJSON(raw string) (contract.OrderedObject, error) {
 	if path, ok := strings.CutPrefix(raw, "@"); ok {
 		content, err := os.ReadFile(path)
 		if err != nil {
-			if class, message, ok := pyerr.OSError(err); ok {
-				return nil, &HostError{Class: class, Detail: message}
-			}
 			return nil, err
 		}
 		data = content
 	}
 	if !store.ValidUTF8(data) {
-		return nil, &HostError{Class: "UnicodeDecodeError", Detail: "'utf-8' codec can't decode the settings"}
+		return nil, errors.New("the settings are not UTF-8 text")
 	}
-	decoded, err := pyjson.Loads(string(data), pyjson.LoadOptions{Python: true})
+	decoded, err := pyjson.Loads(string(data), pyjson.LoadOptions{})
 	if err != nil {
-		return nil, &HostError{Class: "JSONDecodeError", Detail: err.Error()}
+		return nil, fmt.Errorf("the settings are not JSON: %w", err)
 	}
 	object, ok := decoded.(contract.OrderedObject)
 	if !ok {
-		// dict(values) of a non-object: TypeError/ValueError in Python, a host error either way.
-		return nil, &HostError{Class: "TypeError", Detail: "the settings are " + pyvalue.TypeName(decoded) + ", not a JSON object"}
+		return nil, errors.New("the settings are not a JSON object")
 	}
 	return object, nil
 }
@@ -472,7 +465,7 @@ func (r *Registry) refuseRoleDisagreement(ctx context.Context, writes []settings
 			return err
 		}
 		if contested != nil {
-			return refuse(contract.RefusalRoleBindingMismatch, "%s holds live bindings at %s; one task holds one role, so there is no single role to register settings against", pyvalue.StrRepr(w.task), pyvalue.Repr(contested))
+			return refuse(contract.RefusalRoleBindingMismatch, "%s holds live bindings at %s; one task holds one role, so there is no single role to register settings against", strconv.Quote(w.task), pyvalue.Quote(contested))
 		}
 		target := bound
 		if target == "" {
@@ -520,10 +513,10 @@ func cmdAdmitTurn(ctx context.Context, r *Registry, p parsed) (any, error) {
 // AdmitExplicitly is admission.admit_explicitly.
 func (r *Registry) AdmitExplicitly(ctx context.Context, rid string, generation any, turn, actor, detail string) error {
 	if strings.TrimSpace(turn) == "" {
-		return &HostError{Class: "ValueError", Detail: "an admitted turn needs an exact turn id"}
+		return errors.New("an admitted turn needs an exact turn id")
 	}
 	if strings.TrimSpace(actor) == "" {
-		return &HostError{Class: "ValueError", Detail: "an explicit admission records who made it"}
+		return errors.New("an explicit admission records who made it")
 	}
 	now := r.now()
 	return r.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {

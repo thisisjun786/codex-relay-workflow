@@ -3334,7 +3334,11 @@ Consumers checked: `plugins/crw/skills`, `docs/` and `contract/` quote no relay 
 Python's quotes (the skills read `reason`, `error` and codes); the product's own parses of detail
 text (`adapter/cli.go` reads a `KeyError: ` prefix, `mergeturn/target.go` an `HTTP 404`,
 `delivery/reconcile.go` `not scanned`, `delivery/hostcheck.go` `unreadable`) read messages this
-entry does not change.
+entry does not change. The contract fixture
+`test_management_cli__test_an_argument_echoed_back_is_the_repr_of_its_str__relationship` pinned
+`relationship-status`'s `no relationship 'x\xa0y'`; it now pins Go's quoting
+(`no relationship "x\u00a0y"`), so an invisible character in an echoed argument is still shown
+escaped.
 
 What stays, and why: a message that is also written to disk or SQLite, or that feeds a hash,
 keeps its bytes, so a stored row reads the same whichever runtime wrote it. Which messages
@@ -3408,3 +3412,22 @@ The reception ledger's file format (written by `SaveLedger`) is unchanged.
 
 Evidence: internal/relay/reception/{unicode.go,depth.go,depth_test.go,store.go};
 internal/relay/sync/cli.go; the sync goldens (message prose only).
+
+## R3D-5. The registry's host errors are Go errors; `--settings` is read as encoding/json reads it (refactor R3)
+
+Decision: `registry.HostError`, which carried a Python exception class name so the host envelope
+read `<Class>: <message>`, is deleted. The registry's host errors are plain Go errors and still
+answer `{"error": "host", "detail": ...}` with exit 3: a settings file that cannot be read names
+Go's error (`open <path>: no such file or directory`), settings that are not UTF-8 say so, and
+`register --parent-settings`/`--child-settings` and `settings-record --settings` are decoded by
+encoding/json's reading (`pyjson.Loads` without `Python`, which only re-checked the document as
+`json.loads` would to word its refusal), so a refusal reads `the settings are not JSON:
+<encoding/json's error>` instead of CPython's `JSONDecodeError` text. Both readings decode a
+document they accept to the same values (constants were already refused), so
+`authorized_settings` and the settings' canonical bytes are unchanged. The test of `store.PythonJSONError`'s wording that lived in the registry's tests is deleted
+(it tested another package's emulation); the host-error test checks the envelope.
+
+Consumers checked: the skills pass settings documents written by `json.dumps` (no constants);
+docs/port/known-defects.md's settings entry is updated.
+
+Evidence: internal/relay/registry/cli.go (settingsJSON); Test25_CLI_host_errors_exit_three_with_their_detail.

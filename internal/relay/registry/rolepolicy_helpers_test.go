@@ -97,10 +97,6 @@ func answerOf(value any, err error) any {
 		if errors.As(err, &refused) {
 			return map[string]any{"refused": map[string]any{"reason": refused.Reason, "detail": refused.Detail}}
 		}
-		var host *HostError
-		if errors.As(err, &host) {
-			return map[string]any{"host": host.Error()}
-		}
 		return map[string]any{"error": err.Error()}
 	}
 	return map[string]any{"ok": value}

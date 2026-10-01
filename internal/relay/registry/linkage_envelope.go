@@ -2,6 +2,7 @@ package registry
 
 import (
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -33,12 +34,12 @@ func messageID(direction, relation, purpose, subject string) (string, error) {
 			directions = append(directions, d)
 		}
 		slices.Sort(directions)
-		return "", refuse(contract.RefusalMalformedReceipt, "%s is not a known direction; it is one of %s", pyvalue.StrRepr(direction), strings.Join(directions, ", "))
+		return "", refuse(contract.RefusalMalformedReceipt, "%s is not a known direction; it is one of %s", strconv.Quote(direction), strings.Join(directions, ", "))
 	}
 	if !slices.Contains(kinds, purpose) {
 		sorted := slices.Clone(kinds)
 		slices.Sort(sorted)
-		return "", refuse(contract.RefusalMalformedReceipt, "%s is not a purpose %s carries; it has %s", pyvalue.StrRepr(purpose), direction, strings.Join(sorted, ", "))
+		return "", refuse(contract.RefusalMalformedReceipt, "%s is not a purpose %s carries; it has %s", strconv.Quote(purpose), direction, strings.Join(sorted, ", "))
 	}
 	for _, field := range []struct{ name, value string }{{"relation_id", relation}, {"subject", subject}} {
 		if strings.TrimSpace(field.value) == "" {
