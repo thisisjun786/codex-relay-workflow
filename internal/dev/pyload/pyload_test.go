@@ -64,9 +64,6 @@ func corpus(t *testing.T) map[string][]byte {
 	for _, dir := range []string{"internal/relay/hook/testdata", "internal/dev/trialledger/testdata", "contract",
 		"internal/relay/evidence/testdata/merge_turn_oracle.json", "internal/relay/mergeturn/testdata/merge_turn_crossed_handoff.json"} {
 		err := filepath.WalkDir(filepath.Join(root, dir), func(path string, d os.DirEntry, err error) error {
-			if err == nil && d.IsDir() && d.Name() == "python-oracle" {
-				return filepath.SkipDir // recorded answers (internal/testsupport/pyoracle), not test data
-			}
 			if err != nil || d.IsDir() || !(strings.HasSuffix(path, ".json") || strings.HasSuffix(path, ".jsonl")) {
 				return err
 			}

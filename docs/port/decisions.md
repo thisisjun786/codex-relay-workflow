@@ -3280,3 +3280,41 @@ Evidence: .github/workflows/ci.yml (`dev-gate`); internal/dev/ci/workflow_test.g
 against written results, including a failed, cancelled and skipped job, unreadable results, a PR
 into main and a 240 KB result; the structural tests hold the needs list, `if: always()`, pinning,
 the legs and one run of each check); docs/CI.md.
+
+## 72. Expected test outputs are Go goldens regenerated with `CRW_GOLDEN=update`; Python's inputs are frozen fixtures (refactor R2)
+
+Decision: the Go tests no longer compare with answers the Python reference implementation gave.
+Every expected value a test read from a recording under `testdata/python-oracle` (through
+`internal/testsupport/pyoracle`) or from a frozen Python answer file (`python_*.json`,
+`goldens.json`, `mcp_python.json`, `worker_reasons.json` and the like) is a golden:
+`internal/testsupport/golden` keeps the test's own value, after the normalization its comparison
+applied, under a key the test names in `testdata/golden/<test>.json.gz`, compares with it by
+default, and rewrites it when `CRW_GOLDEN=update` is set. An intended change of output is one
+update run over the affected packages followed by a review of the goldens' diff. Goldens are
+host-independent: run-specific strings (temporary directories, ports, pids, instants, the
+journal's day directory) are stored as placeholders, so no golden holds the day or the host it was
+written on; the fixed directories under `/tmp` (`/tmp/crw-delivery-parity`, `/tmp/crw-cli-parity`,
+`/tmp/crw-oracle` in the hook tests) stay only where a golden holds a value derived from an
+absolute path: a hash of it, or a position in it. What Python produced for a test to start from,
+which Go cannot produce (stores, directory trees, scenario calls, CLI case files, a sweep's
+generated cases), is a fixture under `testdata/fixtures`, read with `golden.Fixture`; no mode
+rewrites a fixture. `internal/testsupport/pyoracle`, `CRW_PYTHON_ORACLE`, the capture closures and
+all 2,897 recordings are deleted.
+
+One fixture holds expected values and cannot be regenerated:
+`internal/relay/store/testdata/fixtures/draft7-verdicts.json.gz`, the Draft 7 validator's verdict
+on each record with the instance it judged. No Go Draft 7 validator is in use, so the test fails
+when a record's instance changes in substance until that instance is judged again.
+
+Why: Python left in todo 44, so its recorded answers could never be refreshed, and the next
+refactor step (P2, removing the Python-quirk emulation nobody consumes) changes outputs on
+purpose; every expected output had to become regenerable from Go first. Each golden was first
+written in a run that also held the test to its recording, so every golden began equal to Python's
+answer under the test's own normalization; the phase-A reports name the few keys that hold Go's
+answer where Python had none comparable.
+
+Evidence: internal/testsupport/golden/golden.go (Check, CheckJSON, Want, Fixture, Substitute,
+Compare; `CRW_GOLDEN`); 2,735 golden files and 507 fixtures under 36 packages' testdata; the R2
+sections of docs/port/oracles/g1.md to g5.md (per package goldens, fixtures and deleted
+recordings); `go list -deps -test ./... | grep pyoracle` is empty; `CRW_GOLDEN=update make test`
+leaves the tree unchanged.
