@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/reception"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
@@ -176,7 +177,9 @@ func readDocument(path, what string, packet bool) (any, error) {
 			}
 		}
 	}
-	v, e := registry.DecodeJSON(string(raw))
+	// encoding/json's reading: the same values json.loads gave a document both accept, and its
+	// own words for one it refuses.
+	v, e := pyjson.Loads(string(raw), pyjson.LoadOptions{})
 	if e != nil {
 		return nil, &dispatch.UsageError{Code: 4, Detail: fmt.Sprintf("the %s at %q could not be read: %v", what, path, e)}
 	}

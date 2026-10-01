@@ -3697,14 +3697,18 @@ and 9,997 for recorded settings, stays) instead of `RecursionError: maximum recu
 exceeded while decoding a JSON array from a unicode string`; a file that cannot be read names Go's
 error; the `FileNotFoundError:`, `RecursionError:`, `JSONDecodeError:`, `TypeError:`,
 `OperationalError:` and `ValueError:` prefixes are gone from the reception notes and the sync
-host errors.
+host errors. The packet, record and observation files packet-check reads are decoded by
+encoding/json's reading rather than re-checked as `json.loads` would (`registry.DecodeJSON`), so a
+file that is not JSON is refused (exit 4, as before) in encoding/json's words; a document both
+readings accept decodes to the same values, so its content digest is unchanged. The reception
+ledger, a file the relay itself writes and reads back, keeps its lenient reader.
 
 Consumers checked: plugins/crw/skills/crw-run/references/{relay.md,task-packet.md} read
 packet-check's `verdict`, `disposition` and `act`, not the detail; nothing parses a reception note.
 The reception ledger's file format (written by `SaveLedger`) is unchanged.
 
 Evidence: internal/relay/reception/{unicode.go,depth.go,depth_test.go,store.go};
-internal/relay/sync/cli.go; the sync goldens (message prose only).
+internal/relay/sync/cli.go, packet_read_test.go; the sync goldens (message prose only).
 
 ## Decision R3D-5. The registry's host errors are Go errors; `--settings` is read as encoding/json reads it (refactor R3)
 
