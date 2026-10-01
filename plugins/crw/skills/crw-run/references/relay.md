@@ -392,10 +392,11 @@ A `managed-start` request carries the same object. Each role's `settings` there 
 only a host that reports that same text; Codex 0.154 reports an object), and leaves it out for a task
 running its sandbox's built-in profile. The object needs an `id` of text and may carry an `extends`
 that is null or text, kept exactly as written: an absent `extends` and a null one stay different
-objects. Any other key must hold text, a boolean or null, with no number and nothing nested, and the
-object holds at most 16 keys; a request outside that is refused before anything is created. The record
-stores the object as given, with its keys sorted like the rest of the record, so the order you wrote
-them in does not matter and a request that differs only in that order is the same request.
+objects. Any other member must hold text, a boolean or null, with no number and nothing nested, and the
+object holds at most 16 keys. Every key and every text value, the text form included, must be nonblank,
+free of NUL and at most 500 characters. A request outside that is refused before anything is created.
+The record stores the object as given, with its keys sorted like the rest of the record, so the order
+you wrote them in does not matter and a request that differs only in that order is the same request.
 
 The request is the only authority for the profile. `managed-start` checks the creation response's
 `activePermissionProfile` against what the request names and refuses `creation_settings_unverified`
