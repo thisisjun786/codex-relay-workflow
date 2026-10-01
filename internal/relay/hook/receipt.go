@@ -134,7 +134,20 @@ func LookupReceipt(ctx context.Context, path string, fallback func() (string, er
 }
 
 // DeliverableState is guard.deliverable_state: store.DeliverableState, which the omission reader
-// calls as well, so a stored receipt is judged alike by both.
+// calls as well, so a stored receipt is judged alike by both. The store reads the values
+// DecodeRecord makes of a stored receipt; this exported entry has always also accepted values a
+// caller built without decoding (an object as a map, a manifest or the roots as a list of strings
+// or maps), so those are normalized here to the ordered objects and lists the store reads.
 func DeliverableState(ctx context.Context, payload any, reference string, rootsValue any) (string, string, string, error) {
+	if o, ok := evidence.Object(payload); ok {
+		normalized := append(Object(nil), o...)
+		if manifest, ok := evidence.List(get(o, "manifest")); ok {
+			normalized = set(normalized, "manifest", any(manifest))
+		}
+		payload = normalized
+	}
+	if roots, ok := evidence.List(rootsValue); ok {
+		rootsValue = roots
+	}
 	return store.DeliverableState(ctx, payload, reference, rootsValue)
 }

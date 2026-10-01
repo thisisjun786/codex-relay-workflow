@@ -265,3 +265,41 @@ func TestDeliverableStateAnswersAsTheGuard(t *testing.T) {
 		})
 	}
 }
+
+// The exported entry accepts values a caller built without decoding: a receipt as a map whose
+// manifest is a list of ordered records, and the roots as a list of strings. They are judged as the
+// decoded equivalents are, not answered as a receipt of the wrong shape (a map payload used to
+// reach the store as "AttributeError: ... has no attribute 'get'", and []string roots as
+// "TypeError: artifact roots are not a list").
+func TestDeliverableStateAcceptsValuesACallerBuilt(t *testing.T) {
+	base := t.TempDir()
+	work := filepath.Join(base, "work")
+	if err := os.Mkdir(work, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	artifact := filepath.Join(work, "deliver.txt")
+	if err := os.WriteFile(artifact, []byte("the delivered bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := store.BuildManifest([]string{artifact}, []string{work})
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision, err := store.ManifestRevision(entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := Object{{Key: "path", Value: entries[0].Path}, {Key: "sha256", Value: entries[0].SHA256}, {Key: "bytes", Value: *entries[0].Bytes}}
+	for name, built := range map[string]struct{ payload, roots any }{
+		"a map with a list of records and string roots": {map[string]any{"manifest": []any{record}, "revisionHash": revision}, []string{work}},
+		"a map and roots as a list of any":              {map[string]any{"manifest": []any{record}, "revisionHash": revision}, []any{work}},
+		"an ordered object and a list of any":           {Object{{Key: "manifest", Value: []any{record}}, {Key: "revisionHash", Value: revision}}, []any{work}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			state, binding, detail, raised := DeliverableState(context.Background(), built.payload, "", built.roots)
+			if raised != nil || state != "current" || binding != "live" || detail != "" {
+				t.Fatalf("%q %q %q %v", state, binding, detail, raised)
+			}
+		})
+	}
+}
