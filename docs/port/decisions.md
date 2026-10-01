@@ -678,9 +678,10 @@ other value reaches a verdict or the observation it records; `protocol` is compa
 Python compares it and `noRecord` read by its truth value; the 5 s read bound is on the whole
 request line, not on each read, so a peer that trickles its line is answered `TimeoutError: timed
 out` by both; and the scanner's recursion budget covers the calls that raise a refusal near its
-edge (`Test30ControlPeerFailuresAreAnsweredAsPythonAnswersThem`,
-`TestControlReadsEveryFrameAsControlPyReadsIt`, test_fence.py's
-`test_python_control_server_bounds_the_whole_request_line`). Tests: `Test33RoutedSelectionRefusals`,
+edge (test_fence.py's `test_python_control_server_bounds_the_whole_request_line`). Decision R3S-2
+ends the Go owner's reading of a request as `control.py` read it: it reads the line strictly, in
+Go's words, and keeps the 5 s bound on the whole line
+(`Test30ControlPeerFailuresAreAnsweredWithTheHostRecord`). Tests: `Test33RoutedSelectionRefusals`,
 `Test33OwnerEvaluatesOnlyItsOwnLocations`, and test_fence.py's
 `test_a_routed_stop_is_refused_by_the_owner_as_the_owners_fallback_refuses_it` and
 `test_the_owner_writes_only_under_its_own_marker_root_and_reads_only_its_own_store`.
@@ -3371,3 +3372,59 @@ internal/relay/{store,service,cli,delivery,registry,linkage,managed}; tests
 `TestGuardEvaluate_routes_to_the_owners_control_socket_as_the_fence_does`,
 `TestDoctor_ownership_block_matches_python_on_a_broken_store`,
 `Test27_MST_10_ManagedShowAbsentDoesNotCreateStore`.
+
+## Decision R3S-2. The owner reads a control.sock request strictly, in Go's words (refactor R3)
+
+Decision: `hook.HandleControl` no longer reads a guard request as the fence's `control.py`
+read it under CPython 3.13. Gone: `json.loads`' decoding of bytes (a UTF-8 byte order mark
+skipped, UTF-16 and UTF-32 detected), the C scanner's recursion budget near the nesting edge
+(`pyjson.ErrorWithBudget`), CPython's integer-digit limit, `protocol` compared with 1 as Python
+compares it (`1.0` and `true` were served), `noRecord` read by its truth value,
+`datetime.fromisoformat` as CPython 3.13 parses it (`hook/isoformat.go`, 382 lines), and the
+host details in Python's `<exception class>: <message>` words (`JSONDecodeError: Expecting value:
+line 1 column 1 (char 0)`, `KeyError: 'params'`, `TypeError: can't subtract offset-naive and
+offset-aware datetimes`, `TimeoutError: timed out`). The owner reads one line of at most 64 MiB,
+UTF-8, nested no deeper than 9996 containers (`controlDepth`, a plain count), as an object whose
+params hold an object `stopInput` and an RFC 3339 `deadline` still ahead (`time.Parse` with
+`time.RFC3339Nano`); it serves `protocol` the integer 1 and `method` `guard-evaluate`, reads
+`noRecord` as true only when it is `true`, and answers every request it cannot serve with the
+host record `{"error": "host", "detail": <why>}` in Go's words (`guard request is not JSON:
+invalid character ...`, `guard params must be an object`, `guard request deadline expired`,
+`guard request line not received in time`). A dispatch other than guard-evaluate at protocol 1 is
+still `{"protocol":1,"requestRejected":true}`.
+
+Kept, for the hook protocol: what a Go hook sends is served exactly as before. The hook writes the
+request with `pyjson.Dumps` (ASCII, one line), `protocol` 1, `noRecord` a boolean and the deadline
+`deadline.UTC().Format(time.RFC3339Nano)`, and it forwards the Stop payload it accepted from Codex
+as it read it, so the owner reads a request's values as the hook read that payload
+(`requestValues`: `NaN`, the infinities and a lone surrogate escape are values, objects keep their
+order, an integer is an int64) and refuses past the depth it always refused. The hook journals a
+host record as `guard_host_error` with no detail, so the new wording reaches no journal row, and
+the Stop payload's decoding, the EventKey and every journal row the hook writes are unchanged
+(the hook's own stdin reading is not touched). The one reading that differs for a request a hook
+could forward is a `NaN` or an infinity at exactly the 9996th container, which CPython's budget
+refused and the plain cap reads (docs/port/known-defects.md).
+
+Consumer check: the only clients of `control.sock` are the Go hook (`hook.RequestGuard`) and the
+routed `guard-evaluate` CLI (`hook.RouteGuard`), both of which write the request as above; no
+skill, doc command or contract fixture sends a frame or reads a host record's detail
+(`contract/fixtures` drive the hook against a guard peer, not the owner's reader). The control.sock
+request and response fields, the rejection frame, the 64 MiB and 5 s bounds and the answer to a
+peer that never finishes its line are unchanged.
+
+Tests: `TestControlReadsEveryFrameAsControlPyReadsIt`, its 28,321-frame fixture
+(`control-frames.json.gz`, 199 KB) and its 144 KB golden of Python's exception texts are deleted;
+`TestControlAnswersEveryRequestItCannotServeWithTheHostRecord` and
+`TestControlReadsNoRecordAsTheBooleanTheHookSends` (internal/relay/hook/control_request_test.go)
+hold the reading: every unservable frame answered with exactly the two-field host record, the
+rejection, and the served forms (a UTC or offset deadline, a payload holding constants and a lone
+surrogate escape, a payload nested to the cap). `Test30ControlPeerFailuresAreAnsweredAsPythonAnswersThem`
+is `Test30ControlPeerFailuresAreAnsweredWithTheHostRecord`: the listener, accept and daemon cases
+keep their properties (each failure answered with the host record, the whole-line read bound,
+a hang-up skipped, an accept retried, the next Stop served, a clean Close and exit 0), without the
+edge corpus of CPython's recursion texts and its golden.
+
+Evidence: internal/relay/hook/control.go (`controlDepth`, `requestValues`, `readRequest`,
+`guardParams`), internal/relay/hook/adapter.go (`HandleControl`), internal/relay/hook/route.go
+(`nesting`); internal/relay/hook/control_request_test.go; internal/relay/service/control_test.go;
+docs/port/cutover.md (the control server paragraph).
