@@ -421,11 +421,10 @@ func TestSEV08_LedgerIntegrity(t *testing.T) {
 			t.Fatal(state)
 		}
 	})
-	// A root that cannot be examined is named as str(OSError) names it: repr() of the path as
-	// Python holds it, so a character str.isprintable refuses is escaped and a byte that is not
-	// UTF-8 is the surrogate surrogateescape made of it. A root named in a message of the
-	// reader's own carries the path as str() holds it, which json.dumps writes as \udcXX.
-	t.Run("a root that cannot be examined is named as Python names it", func(t *testing.T) {
+	// A root that cannot be examined is named in the error's own words, and the path in them, as
+	// the root itself, is spelled as the records spell one: a byte that is not UTF-8 is its
+	// surrogate escape, written \udcXX.
+	t.Run("a root that cannot be examined is named in the error's own words", func(t *testing.T) {
 		if os.Geteuid() == 0 {
 			t.Skip("root is never refused a directory's search permission")
 		}
@@ -455,10 +454,10 @@ func TestSEV08_LedgerIntegrity(t *testing.T) {
 			t.Fatalf("exit %d: %s", code, errs.String())
 		}
 		for _, line := range []string{
-			`"detail": "[Errno 13] Permission denied: '` + locked + `/a\\xa0b'",`,
-			`"detail": "[Errno 13] Permission denied: '` + locked + `/a\\u2028b'",`,
-			`"detail": "[Errno 13] Permission denied: '` + locked + `/a\\udcffb'",`,
-			`"detail": "[Errno 13] Permission denied: '` + locked + `/a\\udced\\udca0\\udc80b'",`,
+			`"detail": "stat ` + locked + `/a\u00a0b: permission denied",`,
+			`"detail": "stat ` + locked + `/a\u2028b: permission denied",`,
+			`"detail": "stat ` + locked + `/a\udcffb: permission denied",`,
+			`"detail": "stat ` + locked + `/a\udced\udca0\udc80b: permission denied",`,
 			`"root": "` + locked + `/a\udced\udca0\udc80b",`,
 			`"detail": "` + base + `/r\udcffx/accepted is a link, which the adapter never makes",`,
 			`"root": "` + base + `/r\udcffx",`,
@@ -468,12 +467,12 @@ func TestSEV08_LedgerIntegrity(t *testing.T) {
 			}
 		}
 	})
-	// A root or Codex home is where os.path.abspath(Path(...).expanduser()) puts it: a ~ is HOME
-	// when HOME is set at all, the root when it is empty, and this user's passwd entry when it is
-	// unset; a relative path is joined to the directory the kernel reports, not $PWD's spelling of
-	// it through a link; and a working directory that is gone is the FileNotFoundError getcwd
-	// raises, the reader's fault.
-	t.Run("a root is read where Python reads it", func(t *testing.T) {
+	// A root or Codex home is where its expanded, absolute spelling puts it: a ~ is HOME when HOME
+	// is set at all, the root when it is empty, and this user's passwd entry when it is unset; a
+	// relative path is joined to the directory the kernel reports, not $PWD's spelling of it
+	// through a link. A ~ that cannot be expanded, or a working directory that is gone, is the
+	// reader's fault.
+	t.Run("a root is read where its expanded absolute path is", func(t *testing.T) {
 		me, err := user.Current()
 		if err != nil || me.HomeDir == "" {
 			t.Skip("no passwd entry names this user's home")
@@ -529,7 +528,7 @@ func TestSEV08_LedgerIntegrity(t *testing.T) {
 		}
 		for _, args := range [][]string{roots("~"), append(roots("/"+missing), "--codex-home", "~")} {
 			answer := reading(&tilde, args...)
-			if answer["readerFault"] != "RuntimeError: Could not determine home directory." || answer["verdict"] != "UNREADABLE" {
+			if fault, _ := answer["readerFault"].(string); !strings.HasPrefix(fault, `cannot expand "~": `) || answer["verdict"] != "UNREADABLE" {
 				t.Errorf("HOME=~x %v: readerFault %v, verdict %v", args, answer["readerFault"], answer["verdict"])
 			}
 		}
@@ -552,20 +551,17 @@ func TestSEV08_LedgerIntegrity(t *testing.T) {
 		}
 		for _, args := range [][]string{roots("rel"), append(roots("/"+missing), "--codex-home", "rel")} {
 			answer := reading(&base, args...)
-			if answer["readerFault"] != "FileNotFoundError: [Errno 2] No such file or directory" || answer["verdict"] != "UNREADABLE" {
+			if fault, _ := answer["readerFault"].(string); !strings.HasSuffix(fault, "absolute: getwd: no such file or directory") || answer["verdict"] != "UNREADABLE" {
 				t.Errorf("%v under a removed working directory: readerFault %v, verdict %v", args, answer["readerFault"], answer["verdict"])
 			}
 		}
 	})
-	// Python reads a root or a Codex home at Path(arg).expanduser(), and Path() spells the path
-	// before expanduser looks at it: "//" and "." collapse ("..", and exactly two leading
-	// separators, stay), so "./~" is "~", ".//~/x" is "~/x" and "~//x" is "~/x", each HOME's.
-	// Every row's exit status and output is the golden's, first taken as what
-	// scripts/stop_events.py printed for the same argv, HOME and working directory under
-	// CPython 3.14.
-	t.Run("a path is spelled as Path() spells it before its ~ is expanded", func(t *testing.T) {
+	// A ~ is expanded only where it leads the spelling, and the path is then cleaned: "~//x" is
+	// HOME's x, while "./~" and ".//~/x" name a directory called ~ under the working directory.
+	// Every row's exit status and output is the golden's.
+	t.Run("a ~ is expanded only where it leads the path", func(t *testing.T) {
 		h, _ := oneEvent(t)
-		// What a reading that took "./~" for a directory named ~ would read instead.
+		// The directory named ~ that "./~" names, which holds no journal.
 		if err := os.MkdirAll(h.root+"/~/journal", 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -579,18 +575,19 @@ func TestSEV08_LedgerIntegrity(t *testing.T) {
 			root    string
 			ledgers []string
 		}{
-			{h.journal, roots("./~"), 0, h.journal, []string{h.ledger}},
-			{h.journal, roots("./~/"), 0, h.journal, []string{h.ledger}},
-			{h.root, roots(".//~/journal"), 0, h.journal, []string{h.ledger}},
 			{h.journal, roots("~"), 0, h.journal, []string{h.ledger}},
+			{h.journal, roots("~/"), 0, h.journal, []string{h.ledger}},
+			{h.root, roots("~//journal"), 0, h.journal, []string{h.ledger}},
 			{h.journal, roots("journal"), 0, h.journal, []string{h.ledger}},
+			{h.journal, roots("./~"), 3, h.root + "/~", nil},
+			{h.root, roots(".//~/journal"), 3, h.root + "/~/journal", nil},
 			{"", roots("~//" + missing), 3, "/" + missing, nil},
-			{h.journal, roots("/" + h.journal), 0, "/" + h.journal, []string{h.ledger}},
-			{h.codex, homed("./~"), 0, h.journal, []string{h.ledger}},
-			{h.codex, homed("./~/"), 0, h.journal, []string{h.ledger}},
-			{h.root, homed(".//~/codex"), 0, h.journal, []string{h.ledger}},
+			{h.journal, roots("/" + h.journal), 0, h.journal, []string{h.ledger}},
 			{h.codex, homed("~"), 0, h.journal, []string{h.ledger}},
+			{h.codex, homed("~/"), 0, h.journal, []string{h.ledger}},
+			{h.root, homed("~//codex"), 0, h.journal, []string{h.ledger}},
 			{h.codex, homed("codex"), 0, h.journal, []string{h.ledger}},
+			{h.codex, homed("./~"), 0, h.journal, []string{h.root + "/~/" + strings.Join(hook.HostLedgerParts, "/"), h.ledger}},
 			{"", homed("~//" + missing), 0, h.journal, []string{missingLedger, h.ledger}},
 		}
 		// The goldens are checked back in this package's directory, where they are found.
@@ -697,7 +694,7 @@ func TestSEV09_RowIntegrity(t *testing.T) {
 			}
 		})
 	}
-	t.Run("a row the reader cannot finish reading is a reader fault, never TRUE", func(t *testing.T) {
+	t.Run("a legacy row naming its session by an array is counted, never TRUE", func(t *testing.T) {
 		h, _ := oneEvent(t)
 		legacy := h.journal + "/20000101/" + strings.Repeat("0", 32) + ".json"
 		if err := os.MkdirAll(filepath.Dir(legacy), 0o755); err != nil {
@@ -708,8 +705,8 @@ func TestSEV09_RowIntegrity(t *testing.T) {
 		}
 		code, answer := verify(t, roots(h.journal)...)
 		expectVerdict(t, code, answer, 3, "UNREADABLE")
-		if answer["readerFault"] != "TypeError: cannot use 'tuple' as a dict key (unhashable type: 'list')" {
-			t.Fatal(answer["readerFault"])
+		if _, fault := answer["readerFault"]; fault || answer["legacyRows"] != 1.0 {
+			t.Fatal(answer)
 		}
 	})
 }

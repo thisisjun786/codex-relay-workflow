@@ -6,16 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
 	"syscall"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/pyerr"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 )
 
@@ -44,7 +42,7 @@ func statIdentity(info os.FileInfo) identity {
 // identityOf is the identity a spelling reaches now, or nil.
 func identityOf(spelled string) *identity {
 	absolute, err := abspath(spelled)
-	if err != nil || strings.IndexByte(absolute, 0) >= 0 {
+	if err != nil {
 		return nil
 	}
 	info, err := os.Stat(absolute)
@@ -55,10 +53,9 @@ func identityOf(spelled string) *identity {
 	return &found
 }
 
-// recordedIdentity is _identity_of for a path a record names: the str is handed to the system as
-// os.fsencode gives it, so a byte that is not UTF-8, which the record spells as its surrogate
-// escape, is that byte again; a surrogate that escapes no byte cannot be encoded, and Python's
-// stat raises ValueError, which reaches nothing.
+// recordedIdentity is identityOf for a path a record names: a byte that is not UTF-8, which the
+// record spells as its surrogate escape, is handed to the system as that byte again; a surrogate
+// that escapes no byte names no path, which reaches nothing.
 func recordedIdentity(spelled string) *identity {
 	system, ok := pyvalue.FSEncode(spelled)
 	if !ok {
@@ -74,21 +71,22 @@ func sameIdentity(a, b *identity) bool {
 	return *a == *b
 }
 
-// expandUser is Path(spelled).expanduser() as Python 3.14 answers it. Path() spells the path
-// first (pathlibForm), so "./~", ".//~/x" and "~//x" are "~", "~/x" and "~/x" before any ~ is
-// looked at; then (record.ExpandUser) a leading ~ is HOME when HOME is set at all, an empty HOME
-// the root, and an unset one this user's passwd entry. Where pathlib raises, because nothing
-// answers the ~ or ~user or what answers it still starts with ~, it is that RuntimeError.
+// expandUser expands a leading ~ or ~user as the runtime does (record.ExpandUser: HOME when it
+// is set at all, an empty HOME the root, an unset one this user's passwd entry). A ~ nothing
+// answers, or one that still leaves a ~, is an error: the literal ~ would be read as a relative
+// path. Nothing else of the spelling is changed; "./~" names a directory called ~.
 func expandUser(spelled string) (string, error) {
-	spelled = pathlibForm(spelled)
 	expanded, err := record.ExpandUser(spelled, os.LookupEnv)
-	if err != nil || (strings.HasPrefix(spelled, "~") && strings.HasPrefix(expanded, "~")) {
-		return "", &evidence.PythonError{Class: "RuntimeError", Detail: "Could not determine home directory."}
+	if err != nil {
+		return "", fmt.Errorf("cannot expand %q: %w", spelled, err)
+	}
+	if strings.HasPrefix(spelled, "~") && strings.HasPrefix(expanded, "~") {
+		return "", fmt.Errorf("cannot expand %q: the home directory it names begins with ~", spelled)
 	}
 	return expanded, nil
 }
 
-// abspath is os.path.abspath(str(Path(spelled).expanduser())).
+// abspath is the absolute, normalized path a spelling given on the command line names.
 func abspath(spelled string) (string, error) {
 	expanded, err := expandUser(spelled)
 	if err != nil {
@@ -97,30 +95,20 @@ func abspath(spelled string) (string, error) {
 	return absolute(expanded)
 }
 
-// absolute is os.path.abspath: a relative path is joined to os.getcwd(), the directory the kernel
-// reports (os.Getwd would answer $PWD, a link's spelling of it), and a working directory the
-// kernel cannot report raises the OSError getcwd raises, which names no file.
+// absolute joins a relative path to the working directory the kernel reports (os.Getwd would
+// answer $PWD, a link's spelling of it) and cleans it.
 func absolute(p string) (string, error) {
 	if !isAbs(p) {
 		cwd, err := syscall.Getwd()
 		if err != nil {
-			return "", pythonOSError(err)
+			return "", fmt.Errorf("cannot make %q absolute: %w", p, os.NewSyscallError("getwd", err))
 		}
 		p = cwd + "/" + p
 	}
-	return normpath(p), nil
+	return filepath.Clean(p), nil
 }
 
-// pythonOSError is the OSError Python raises for a failed call: its class from the errno and
-// its str(). An error with no errno is a RuntimeError of its own text.
-func pythonOSError(err error) *evidence.PythonError {
-	if class, text, ok := pyerr.OSError(err); ok {
-		return &evidence.PythonError{Class: class, Detail: text}
-	}
-	return &evidence.PythonError{Class: "RuntimeError", Detail: err.Error()}
-}
-
-// join is str(Path(root) / name) for a normalized absolute root.
+// join is root/name... for a normalized absolute root.
 func join(root string, names ...string) string {
 	for _, name := range names {
 		if strings.HasSuffix(root, "/") {
@@ -132,40 +120,14 @@ func join(root string, names ...string) string {
 	return root
 }
 
-// shown is how Python spells a path it read from the system: an undecodable byte is the lone
-// surrogate surrogateescape gives it, which json.dumps writes as \udcXX.
+// shown is a path as the records spell one: a byte that is not UTF-8 is the lone surrogate
+// escape (\udcXX) the adapter's records give it, so a path read from the system and one a
+// record names compare and print alike.
 func shown(p string) string { return pyvalue.FSDecode(p) }
 
-// errorText is str(error) for what a stat or a listing raised.
-func errorText(err error, p string) string {
-	if strings.IndexByte(p, 0) >= 0 {
-		return "embedded null byte"
-	}
-	var plain *plainError
-	if errors.As(err, &plain) {
-		return shown(plain.text) // a path formatted into the message, as str() holds it
-	}
-	return store.PythonOSErrorText(err)
-}
-
-// plainError is an OSError raised with a message only, whose str() is that message.
-type plainError struct{ text string }
-
-func (e *plainError) Error() string { return e.text }
-
-// ledgerErrorText is str(error) for what a stat or a listing of a host ledger raised: an OSError
-// names the ledger as Python holds it, and a message-only one already spells it so.
-func ledgerErrorText(err error, ledger string) string {
-	var plain *plainError
-	if errors.As(err, &plain) {
-		return plain.text
-	}
-	var errno syscall.Errno
-	if errors.As(err, &errno) {
-		return store.PythonOSErrorText(errno) + ": " + pyvalue.StrRepr(ledger)
-	}
-	return store.PythonOSErrorText(err)
-}
+// errorText is the detail of a failed stat or listing: the error's own text, its path spelled as
+// the records spell one.
+func errorText(err error) string { return shown(err.Error()) }
 
 // entry is one root or host ledger as the reading reports it.
 type entry map[string]any
@@ -189,7 +151,7 @@ type row struct {
 	body        object
 }
 
-// reading is the answer being filled, in the order the Python reader fills it, so a reading that
+// reading is the answer being filled, in the order the reading fills it, so a reading that
 // cannot finish reports exactly what it had reached.
 type reading struct {
 	window                                                                                   Window
@@ -209,7 +171,7 @@ var sortedLists = []string{"eventsWithMoreThanOneAcceptance", "acceptedWithoutOu
 
 func (r *reading) add(list, value string) { r.addShown(list, shown(value)) }
 
-// addShown adds a path already spelled as Python holds it.
+// addShown adds a path already spelled as the records spell it.
 func (r *reading) addShown(list, value string) { r.lists[list] = append(r.lists[list], value) }
 
 // Answer is the reading as its JSON document.
@@ -257,14 +219,7 @@ func Read(roots []string, window Window, hosts []string) (r *reading) {
 	r = &reading{window: window, roots: []any{}, hostLedgers: []any{}, unjudged: map[string]any{}, lists: map[string][]string{}}
 	defer func() {
 		if p := recover(); p != nil {
-			var fault string
-			if python, ok := p.(*evidence.PythonError); ok {
-				fault = python.Error()
-			} else if err, ok := p.(error); ok {
-				fault = pythonOSError(err).Error()
-			} else {
-				fault = fmt.Sprintf("RuntimeError: %v", p)
-			}
+			fault := shown(fmt.Sprint(p))
 			r.verdict = verdictUnreadable
 			r.readerFault = &fault
 		}
@@ -301,18 +256,13 @@ func (r *reading) read(roots, hosts []string) {
 		}
 		e := entry{"root": shown(root), "state": nil}
 		r.roots = append(r.roots, map[string]any(e))
-		if strings.IndexByte(root, 0) >= 0 {
-			e["state"], e["detail"] = "unreadable", "embedded null byte"
-			listingFailed = true
-			continue
-		}
 		info, err := os.Stat(root)
 		if errors.Is(err, os.ErrNotExist) && !errors.Is(err, syscall.ENOTDIR) {
 			e["state"] = "absent"
 			continue
 		}
 		if err != nil {
-			e["state"], e["detail"] = "unreadable", errorText(err, root)
+			e["state"], e["detail"] = "unreadable", errorText(err)
 			listingFailed = true
 			continue
 		}
@@ -325,13 +275,13 @@ func (r *reading) read(roots, hosts []string) {
 		e["state"] = "read"
 		days, ledger, err := r.listRoot(root)
 		if err != nil {
-			e["state"], e["detail"] = "unreadable", errorText(err, root)
+			e["state"], e["detail"] = "unreadable", errorText(err)
 			listingFailed = true
 			continue
 		}
 		one := &rootRead{root: root, claims: map[string]object{}, outcomes: map[string]object{}, files: map[string]bool{}}
 		for _, name := range ledger {
-			if pyMatch(ledgerName, name) {
+			if ledgerName.MatchString(name) {
 				one.files[name[:len(name)-len(".json")]] = true
 			}
 		}
@@ -340,9 +290,9 @@ func (r *reading) read(roots, hosts []string) {
 			var key string
 			isOutcome := false
 			switch {
-			case pyMatch(outcomeName, name):
+			case outcomeName.MatchString(name):
 				key, isOutcome = name[:len(name)-len(hook.OutcomeSuffix)], true
-			case pyMatch(ledgerName, name):
+			case ledgerName.MatchString(name):
 				key = name[:len(name)-len(".json")]
 			default:
 				r.add("foreignLedgerEntries", p)
@@ -369,13 +319,13 @@ func (r *reading) read(roots, hosts []string) {
 			}
 			entries, err := os.ReadDir(join(root, d))
 			if err != nil {
-				e["state"], e["detail"] = "unreadable", errorText(err, join(root, d))
+				e["state"], e["detail"] = "unreadable", errorText(err)
 				listingFailed = true
 				break
 			}
 			var names []string
 			for _, found := range entries {
-				if found.Type().IsRegular() && pyMatch(journalName, found.Name()) {
+				if found.Type().IsRegular() && journalName.MatchString(found.Name()) {
 					names = append(names, found.Name())
 				} else {
 					r.add("foreignJournalEntries", join(root, d, found.Name()))
@@ -404,21 +354,21 @@ func (r *reading) read(roots, hosts []string) {
 	}
 
 	// The host ledgers: every one a claim names, and those of the Codex homes given. Each is keyed
-	// and named as Python holds it, a str, and handed to the system as os.fsencode gives it: one
-	// given on the command line is its bytes, which Python holds surrogateescaped, and one a claim
-	// names is its JSON string, where such a byte is its surrogate escape.
+	// and named as the records spell it (shown), and handed to the system as its bytes: one given
+	// on the command line is its bytes already, and one a claim names is its JSON string, where a
+	// byte that is not UTF-8 is its surrogate escape (pyvalue.FSEncode gives the byte back).
 	type wantedLedger struct {
 		spelled  string
 		recorded bool
 	}
 	var wanted []wantedLedger
 	for _, home := range hosts {
-		// Path(home).expanduser().joinpath(*HOST_LEDGER_PARTS), made absolute below.
+		// The home's host ledger, made absolute below.
 		expanded, err := expandUser(home)
 		if err != nil {
 			panic(err)
 		}
-		wanted = append(wanted, wantedLedger{spelled: join(pathlibForm(expanded), hook.HostLedgerParts...)})
+		wanted = append(wanted, wantedLedger{spelled: join(expanded, hook.HostLedgerParts...)})
 	}
 	for _, one := range read {
 		for _, key := range one.claimOrder {
@@ -430,11 +380,11 @@ func (r *reading) read(roots, hosts []string) {
 	ledgerIdentity := map[string]*identity{}
 	ledgersReached := map[identity]bool{}
 	for _, want := range wanted {
-		// ledger is the str, system the bytes the system is handed for it.
+		// ledger is the spelling, system the bytes the system is handed for it.
 		var ledger, system string
 		if want.recorded {
-			// Absolute, normalized and one the system takes (hostLedgerNamed), so abspath leaves
-			// it as it is and it encodes.
+			// Absolute, normalized and one the system takes (hostLedgerNamed), so it is read as
+			// it is spelled and it encodes.
 			ledger = want.spelled
 			system, _ = pyvalue.FSEncode(ledger)
 		} else {
@@ -450,18 +400,13 @@ func (r *reading) read(roots, hosts []string) {
 		ledgerIdentity[ledger] = nil
 		e := entry{"ledger": ledger, "state": nil}
 		r.hostLedgers = append(r.hostLedgers, map[string]any(e))
-		if strings.IndexByte(system, 0) >= 0 {
-			e["state"], e["detail"] = "unreadable", "embedded null byte"
-			listingFailed = true
-			continue
-		}
 		info, err := os.Stat(system)
 		if errors.Is(err, os.ErrNotExist) && !errors.Is(err, syscall.ENOTDIR) {
 			e["state"] = "absent"
 			continue
 		}
 		if err != nil {
-			e["state"], e["detail"] = "unreadable", ledgerErrorText(err, ledger)
+			e["state"], e["detail"] = "unreadable", errorText(err)
 			listingFailed = true
 			continue
 		}
@@ -473,20 +418,20 @@ func (r *reading) read(roots, hosts []string) {
 		}
 		var names []string
 		if !info.IsDir() {
-			err = &plainError{ledger + " is not a directory"}
+			err = fmt.Errorf("%s is not a directory", system)
 		} else {
 			names, err = listNamesOf(system)
 		}
 		if err != nil {
-			e["state"], e["detail"] = "unreadable", ledgerErrorText(err, ledger)
+			e["state"], e["detail"] = "unreadable", errorText(err)
 			listingFailed = true
 			continue
 		}
 		ledgersReached[id] = true
 		e["state"] = "read"
 		for _, name := range names {
-			p := join(ledger, shown(name)) // os.path.join(ledger, name)
-			if !pyMatch(ledgerName, name) {
+			p := join(ledger, shown(name))
+			if !ledgerName.MatchString(name) {
 				r.addShown("foreignLedgerEntries", p)
 				continue
 			}
@@ -538,7 +483,7 @@ func (r *reading) read(roots, hosts []string) {
 		body := one.body
 		chosen := r.inWindow(get(body, "at"), get(body, "sessionId"), get(body, "turnId"))
 		if chosen && pyvalue.Truthy(get(body, "sessionId")) && pyvalue.Truthy(get(body, "turnId")) {
-			pair := dictKey("tuple", get(body, "sessionId")) + "\x00" + dictKey("tuple", get(body, "turnId"))
+			pair := valueKey(get(body, "sessionId")) + "\x00" + valueKey(get(body, "turnId"))
 			if _, seen := pairs[pair]; !seen {
 				pairOrder = append(pairOrder, pair)
 			}
@@ -648,7 +593,7 @@ func (r *reading) read(roots, hosts []string) {
 					r.add("recordsThatDisagree", where)
 				}
 			}
-			// os.path.abspath of the claim's ledger is the ledger as it names it (hostLedgerNamed).
+			// The claim's ledger is keyed as it names it, absolute and normalized (hostLedgerNamed).
 			id := ledgerIdentity[get(claimedBy, "hostLedger").(string)]
 			holds := false
 			for _, file := range hostFiles[key] {
@@ -772,7 +717,7 @@ func (r *reading) listRoot(root string) (days, ledger []string, err error) {
 		if found.Name() == hook.LedgerDirectory {
 			continue
 		}
-		if found.IsDir() && pyMatch(journalDay, found.Name()) {
+		if found.IsDir() && journalDay.MatchString(found.Name()) {
 			days = append(days, found.Name())
 		} else {
 			r.add("foreignJournalEntries", join(root, found.Name()))
@@ -782,12 +727,12 @@ func (r *reading) listRoot(root string) (days, ledger []string, err error) {
 	info, err := os.Lstat(accepted)
 	switch {
 	case err == nil && info.Mode()&os.ModeSymlink != 0:
-		return nil, nil, &plainError{accepted + " is a link, which the adapter never makes"}
+		return nil, nil, fmt.Errorf("%s is a link, which the adapter never makes", accepted)
 	case err == nil && info.IsDir():
 		ledger, err = listNamesOf(accepted)
 		return days, ledger, err
 	case err == nil:
-		return nil, nil, &plainError{accepted + " is not a directory"}
+		return nil, nil, fmt.Errorf("%s is not a directory", accepted)
 	}
 	return days, nil, nil
 }
@@ -816,30 +761,4 @@ func readRow(root, named string) object {
 		return nil
 	}
 	return o
-}
-
-// pathlibForm is str(Path(p)): repeated separators and "." components collapse, ".." stays, a
-// trailing separator goes, and exactly two leading separators are kept.
-func pathlibForm(p string) string {
-	if p == "" {
-		return "."
-	}
-	prefix := ""
-	switch {
-	case strings.HasPrefix(p, "//") && !strings.HasPrefix(p, "///"):
-		prefix = "//"
-	case strings.HasPrefix(p, "/"):
-		prefix = "/"
-	}
-	var kept []string
-	for _, part := range strings.Split(p, "/") {
-		if part != "" && part != "." {
-			kept = append(kept, part)
-		}
-	}
-	joined := prefix + strings.Join(kept, "/")
-	if joined == "" {
-		return "."
-	}
-	return joined
 }

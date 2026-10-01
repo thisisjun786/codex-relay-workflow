@@ -3477,9 +3477,7 @@ What stays and why: the depth itself (57,900, past encoding/json's 10,000) and t
 NaN, the infinities, lone surrogate escapes and repeated keys, because the judges read stored
 records (journal rows, host ledgers, trial ledgers) that the Python writers wrote and a reader
 of stored data keeps accepting what an earlier writer wrote. The verdicts, exits and field names
-of both judges are unchanged. Their remaining Python emulation (surrogateescape spelling of
-paths, `os.path.realpath`, `str.splitlines`, the dict-key `TypeError`, the argparse parser) is
-left for a later pass and listed in the R3R report.
+of both judges are unchanged. Their remaining Python emulation is decided in R3R-7.
 
 Evidence: internal/dev/pyload/pyload.go (`MaxNesting`, `Loads`) and pyload_test.go;
 internal/dev/trialledger/moment.go (`parseMoment`), fs.go (`failure`), ledger_test.go
@@ -3645,3 +3643,46 @@ variable, which the bridge applies the same way.
 Evidence: internal/pluginwiring/{launch.go,record.go}; internal/pluginwiring/launch_test.go
 (`TestBridgeLaunch_answers_each_record_as_the_golden`,
 `TestBridgeLaunch_refuses_a_record_no_exec_could_start`).
+
+## R3R-7. The development judges fault, expand and name failures the Go way (refactor R3)
+
+Decision: `crw-dev stop-events`, `crw-dev trial-ledger` and `crw-dev skills link` stop modelling
+CPython's exceptions and pathlib. What goes from stop-events: the dict-key `TypeError` a value
+that is an array or object raised (a legacy row naming its session by an array, an outcome or
+acceptance that is not text) and the reader fault it made; such a row is now counted or judged
+like any other (a legacy row is still UNREADABLE, an unknown acceptance a row the writer never
+writes). The `RuntimeError: Could not determine home directory.` and getcwd's
+`FileNotFoundError` reader faults are the Go error's text (`cannot expand "~": ...`, `cannot make
+"rel" absolute: getwd: no such file or directory`). A root or host ledger that cannot be
+examined is detailed by the Go error (`stat <path>: permission denied`) instead of CPython's
+OSError and repr(), and a NUL in a path is the system's refusal instead of Python's `embedded
+null byte`. `pathlib.Path()`'s spelling before `expanduser` goes: a ~ is expanded only where it
+leads the path given, so "./~" and ".//~/x" name a directory called ~, and a path given on the
+command line is cleaned with `filepath.Clean` (a leading "//" is "/"). The `$`-before-a-newline
+match of Python's regular expressions goes: a file name ending in a newline is a foreign entry.
+From trial-ledger: the Python exception class of "this run raised before it could report"
+(`exception` is now "panic", `detail` the panic's value), which only a Go panic reaches. From
+skills link: `store.PathlibSpelling`; the destination drops repeated separators and "."
+components and keeps "..", without POSIX's "//" root.
+
+Consumer check: as R3R-2, `git grep` of `plugins/crw/skills`, `docs/`, `contract/` and the
+product for `stop-events`, `trial-ledger`, `readerFault`, `exception` and the faults' texts: the
+judges' JSON is read by a person (docs/runtime-install.md keeps it as a receipt, and names only
+the verdict and the exits); `crw-dev skills link`'s lines are read by a person.
+
+What stays and why: every verdict, exit and field, and the reading order that lets a reading
+that cannot finish report what it reached. The surrogate-escape spelling of a path (`shown`,
+`pyvalue.FSEncode`/`FSDecode`), because the adapter's records spell a byte that is not UTF-8 that
+way and a ledger a claim names is matched by that spelling; `normpath`'s "//" for a recorded path,
+which is checked against the form its writers gave it; `record.ExpandUser`'s HOME rules, the
+runtime's. Trial-ledger's grade document keeps `str.splitlines`, the non-strict
+`os.path.realpath` containment and the `Path()` spelling of the trial root and the ledger,
+because docs/live-trial.md promises a grade that compares byte for byte with a Python-era grade
+of the same trial, and they decide which lines and paths that document names. Both judges keep
+reading their command lines with internal/relay/argparse, which R3C owns.
+
+Evidence: internal/dev/stopevents/{judge.go,shape.go,stopevents.go} and stopevents_test.go
+(`TestSEV08_LedgerIntegrity`: "a root that cannot be examined is named in the error's own
+words", "a root is read where its expanded absolute path is", "a ~ is expanded only where it
+leads the path"; `TestSEV09_RowIntegrity`: "a legacy row naming its session by an array is
+counted, never TRUE"); internal/dev/trialledger/ledger.go; internal/dev/skills/link.go.
