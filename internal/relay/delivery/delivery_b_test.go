@@ -139,8 +139,9 @@ func TestDEL13_flood_bounds_cap_attempts_and_pace_sends(t *testing.T) {
 		f := newFixture(t, tree)
 		event := f.queuedEvent(regOpts{})
 		now := f.clock.Now()
-		_, err := execSQL(f.ctx, f.store, "INSERT INTO recipient_rate (recipient_task_id, window_start, sends, last_send_at) VALUES (?,?,?,?)", parent, math.Floor(now/3600)*3600, f.delivery.Policy.MaxSendsPerRecipientPerHour, 0)
+		_, err := execSQL(f.ctx, f.store, "INSERT INTO recipient_rate (recipient_task_id, window_start, sends, last_send_at) VALUES (?,?,?,?)", parent, math.Floor(now/3600)*3600, f.delivery.Policy.MaxSendsPerRelationshipPerHour, 0)
 		mustDo(t, err)
+		f.spendHour(f.rid, parent, int(f.delivery.Policy.MaxSendsPerRelationshipPerHour), now)
 		if again := f.mustAttempt(event, at(now)); again != nil || len(f.host.sends) != 0 {
 			t.Fatal("the hourly cap refuses the send")
 		}

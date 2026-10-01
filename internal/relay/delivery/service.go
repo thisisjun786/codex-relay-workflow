@@ -276,11 +276,31 @@ func (d *Service) ClearIntent(ctx context.Context, eventID string) error {
 	})
 }
 
-const eligibleWhere = " WHERE d.state IN (?,?,?) AND d.hold_reason IS NULL AND (d.next_eligible_at IS NULL OR d.next_eligible_at <= ?) AND r.status = 'active' AND r.superseded_by IS NULL AND e.stage = 'final'"
+// eligibleBase is what makes a delivery due: unsent, not held, past its own backoff, its relationship
+// live and its event final.
+const eligibleBase = " WHERE d.state IN (?,?,?) AND d.hold_reason IS NULL AND (d.next_eligible_at IS NULL OR d.next_eligible_at <= ?) AND r.status = 'active' AND r.superseded_by IS NULL AND e.stage = 'final'"
+
+// eligibleOrder is event creation order: when the relay first saw the event, then when its delivery
+// was queued, then the event id. A delivery queued late (a refused enqueue retried) keeps the place
+// its event was created in.
+const eligibleOrder = " ORDER BY e.first_seen_at, d.created_at, d.event_id"
+
+// eligibility is the predicate of a due delivery and its arguments at now. A delivery whose
+// relationship has already spent its hourly budget for the recipient is not due until the window
+// reopens: it would only be refused, and a runaway relationship's refused rows must not take the
+// attempts its calm siblings need. The count is read against the live policy cap, so a cap raised
+// mid-window takes effect on the next tick.
+func (d *Service) eligibility(now float64) (string, []any) {
+	window, _ := d.Policy.RateWindows(now)
+	where := eligibleBase + " AND " + store.RelationshipSendsSQL("d.relationship_id", "d.recipient_task_id") + " < ?"
+	args := append([]any{Queued, DeferredBusy, WithheldPreSend, now}, store.RelationshipSendsArgs(window)...)
+	return where, append(args, d.Policy.MaxSendsPerRelationshipPerHour)
+}
 
 // EligibleParents is eligible_parents.
 func (d *Service) EligibleParents(ctx context.Context, now float64) ([]string, error) {
-	rows, err := all(ctx, d.Store, "SELECT DISTINCT r.parent_task_id AS parent_task_id FROM deliveries d JOIN relationships r ON r.relationship_id = d.relationship_id JOIN events e ON e.event_id = d.event_id"+eligibleWhere+" ORDER BY r.parent_task_id", Queued, DeferredBusy, WithheldPreSend, now)
+	where, args := d.eligibility(now)
+	rows, err := all(ctx, d.Store, "SELECT DISTINCT r.parent_task_id AS parent_task_id FROM deliveries d JOIN relationships r ON r.relationship_id = d.relationship_id JOIN events e ON e.event_id = d.event_id"+where+" ORDER BY r.parent_task_id", args...)
 	var out []string
 	for _, r := range rows {
 		out = append(out, r.S("parent_task_id"))
@@ -288,18 +308,17 @@ func (d *Service) EligibleParents(ctx context.Context, now float64) ([]string, e
 	return out, err
 }
 
-func (d *Service) eligibleForParent(ctx context.Context, parent string, now float64, limit, offset int) ([]Row, error) {
-	return all(ctx, d.Store, "SELECT d.*, r.parent_task_id AS parent_task_id FROM deliveries d JOIN relationships r ON r.relationship_id = d.relationship_id JOIN events e ON e.event_id = d.event_id"+eligibleWhere+" AND r.parent_task_id = ? ORDER BY d.created_at LIMIT ? OFFSET ?", Queued, DeferredBusy, WithheldPreSend, now, parent, limit, offset)
+// EligibleRows is every due delivery of one parent, in event creation order. Each row carries the
+// event's first_seen_at, which the scheduler's refusal marker is keyed by.
+func (d *Service) EligibleRows(ctx context.Context, parent string, now float64) ([]Row, error) {
+	where, args := d.eligibility(now)
+	return all(ctx, d.Store, "SELECT d.*, r.parent_task_id AS parent_task_id, e.first_seen_at AS first_seen_at FROM deliveries d JOIN relationships r ON r.relationship_id = d.relationship_id JOIN events e ON e.event_id = d.event_id"+where+" AND r.parent_task_id = ?"+eligibleOrder, append(args, parent)...)
 }
 
-// EligibleCount is eligible_count.
-func (d *Service) EligibleCount(ctx context.Context, parent string, now float64) (int64, error) {
-	row, err := one(ctx, d.Store, "SELECT COUNT(*) AS c FROM deliveries d JOIN relationships r ON r.relationship_id = d.relationship_id JOIN events e ON e.event_id = d.event_id"+eligibleWhere+" AND r.parent_task_id = ?", Queued, DeferredBusy, WithheldPreSend, now, parent)
-	return row.I("c"), err
-}
-
-// Eligible is eligible: every eligible parent, then a bounded share each, dealt one at a time.
-func (d *Service) Eligible(ctx context.Context, now float64, limit, perParent, cursor int, offsets map[string]int) ([]Row, error) {
+// Eligible lists due deliveries: every eligible parent, then a bounded share of each parent's
+// oldest rows, dealt one at a time. The scheduler does not use it (it walks EligibleRows with its
+// refusal cursors); the deliver command lists with it.
+func (d *Service) Eligible(ctx context.Context, now float64, limit, perParent, cursor int) ([]Row, error) {
 	parents, err := d.EligibleParents(ctx, now)
 	if err != nil || len(parents) == 0 {
 		return nil, err
@@ -312,30 +331,11 @@ func (d *Service) Eligible(ctx context.Context, now float64, limit, perParent, c
 	order := append(slices.Clone(parents[start:]), parents[:start]...)
 	queues := map[string][]Row{}
 	for _, parent := range order {
-		offset := offsets[parent]
-		taken, err := d.eligibleForParent(ctx, parent, now, share, offset)
+		rows, err := d.EligibleRows(ctx, parent, now)
 		if err != nil {
 			return nil, err
 		}
-		if len(taken) < share && offset > 0 {
-			seen := map[string]bool{}
-			for _, r := range taken {
-				seen[r.S("event_id")] = true
-			}
-			again, err := d.eligibleForParent(ctx, parent, now, share, 0)
-			if err != nil {
-				return nil, err
-			}
-			for _, r := range again {
-				if len(taken) >= share {
-					break
-				}
-				if !seen[r.S("event_id")] {
-					taken = append(taken, r)
-				}
-			}
-		}
-		queues[parent] = taken
+		queues[parent] = rows[:min(share, len(rows))]
 	}
 	var selected []Row
 	for len(selected) < limit {
@@ -367,14 +367,15 @@ type superseded struct {
 
 func (s *superseded) Error() string { return "superseded: " + s.reason }
 
-// pacing reads send_pacing on the ctx-aware querier.
-func (d *Service) pacing(ctx context.Context, recipient string, now float64) (Obj, error) {
+// pacing reads send_pacing on the ctx-aware querier: the recipient's gap since its latest send of
+// any relationship, and the hour count of the relationship's own sends to that recipient.
+func (d *Service) pacing(ctx context.Context, relationship, recipient string, now float64) (Obj, error) {
 	window, earliest := d.Policy.RateWindows(now)
 	last, err := one(ctx, d.Store, "SELECT MAX(last_send_at) AS last FROM recipient_rate WHERE recipient_task_id = ? AND window_start BETWEEN ? AND ?", recipient, earliest, window)
 	if err != nil {
 		return nil, err
 	}
-	used, err := one(ctx, d.Store, "SELECT sends FROM recipient_rate WHERE recipient_task_id = ? AND window_start = ?", recipient, window)
+	sends, err := d.Store.RelationshipSends(ctx, relationship, recipient, window)
 	if err != nil {
 		return nil, err
 	}
@@ -383,18 +384,20 @@ func (d *Service) pacing(ctx context.Context, recipient string, now float64) (Ob
 		v := last.F("last")
 		lastAt = &v
 	}
-	return d.Policy.Pacing(now, used.I("sends"), lastAt), nil
+	return d.Policy.Pacing(now, sends, lastAt), nil
 }
 
-// SendRefusal is send_refusal: why recipient may not be woken at now, or "".
-func (d *Service) SendRefusal(ctx context.Context, recipient string, now float64) (string, error) {
-	p, err := d.pacing(ctx, recipient, now)
+// SendRefusal is send_refusal: why relationship may not wake recipient at now, or "".
+func (d *Service) SendRefusal(ctx context.Context, relationship, recipient string, now float64) (string, error) {
+	p, err := d.pacing(ctx, relationship, recipient, now)
 	return str(p, "reason"), err
 }
 
-// ReserveSend is reserve_send, inside the caller's claim transaction.
-func (d *Service) ReserveSend(ctx context.Context, recipient string, now float64) (string, error) {
-	refused, err := d.SendRefusal(ctx, recipient, now)
+// ReserveSend is reserve_send, inside the caller's claim transaction. It reads the relationship's
+// hour count before the caller writes its own attempt row, so the send being reserved is not
+// counted against itself, and it records the send on the recipient's row, where the gap lives.
+func (d *Service) ReserveSend(ctx context.Context, relationship, recipient string, now float64) (string, error) {
+	refused, err := d.SendRefusal(ctx, relationship, recipient, now)
 	if err != nil || refused != "" {
 		return refused, err
 	}
@@ -403,16 +406,16 @@ func (d *Service) ReserveSend(ctx context.Context, recipient string, now float64
 	return "", err
 }
 
-func (d *Service) rateLimited(ctx context.Context, recipient string, now float64) (bool, error) {
+func (d *Service) rateLimited(ctx context.Context, relationship, recipient string, now float64) (bool, error) {
 	if d.RateLimited != nil {
 		return d.RateLimited(recipient, now), nil
 	}
-	refused, err := d.SendRefusal(ctx, recipient, now)
+	refused, err := d.SendRefusal(ctx, relationship, recipient, now)
 	return refused != "", err
 }
 
-func (d *Service) pacedUntil(ctx context.Context, recipient string, now float64) (float64, error) {
-	p, err := d.pacing(ctx, recipient, now)
+func (d *Service) pacedUntil(ctx context.Context, relationship, recipient string, now float64) (float64, error) {
+	p, err := d.pacing(ctx, relationship, recipient, now)
 	if err != nil {
 		return 0, err
 	}
@@ -621,6 +624,15 @@ func (d *Service) claim(ctx context.Context, eventID string, now float64, owner,
 		if err != nil {
 			return err
 		}
+		// The budget is spent before this claim writes its own attempt row, so the count the
+		// refusal reads is the sends already made, not this one.
+		refused, err := d.ReserveSend(ctx, row.S("relationship_id"), recipient, now)
+		if err != nil {
+			return err
+		}
+		if refused != "" {
+			return errPaced
+		}
 		out.attemptNo = row.I("attempt_count")
 		if out.requestID, err = store.RequestID(eventID, int(out.attemptNo)); err != nil {
 			return err
@@ -658,13 +670,6 @@ func (d *Service) claim(ctx context.Context, eventID string, now float64, owner,
 			if err := d.journalRestorationAttempted(ctx, eventID, record, out.attemptNo); err != nil {
 				return err
 			}
-		}
-		refused, err := d.ReserveSend(ctx, recipient, now)
-		if err != nil {
-			return err
-		}
-		if refused != "" {
-			return errPaced
 		}
 		return nil
 	})
@@ -747,12 +752,12 @@ func (d *Service) Attempt(ctx context.Context, eventID string, adapter Adapter, 
 	if err := assertAssignmentDelivery(relationship, row.S("kind"), recipient, &thread, &eventRID, manifestPaths(event)); err != nil {
 		return nil, err
 	}
-	limited, err := d.rateLimited(ctx, recipient, at)
+	limited, err := d.rateLimited(ctx, row.S("relationship_id"), recipient, at)
 	if err != nil {
 		return nil, err
 	}
 	if limited {
-		when, err := d.pacedUntil(ctx, recipient, at)
+		when, err := d.pacedUntil(ctx, row.S("relationship_id"), recipient, at)
 		if err != nil {
 			return nil, err
 		}
@@ -787,7 +792,7 @@ func (d *Service) Attempt(ctx context.Context, eventID string, adapter Adapter, 
 	var gone *superseded
 	switch {
 	case errors.Is(err, errPaced):
-		when, err := d.pacedUntil(ctx, recipient, at)
+		when, err := d.pacedUntil(ctx, row.S("relationship_id"), recipient, at)
 		if err != nil {
 			return nil, err
 		}

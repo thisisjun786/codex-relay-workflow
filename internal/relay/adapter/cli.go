@@ -168,7 +168,7 @@ func hostCommand(ctx context.Context, command, state, socket string, args map[st
 		if e != nil {
 			return nil, e
 		}
-		rows, e := d.Eligible(ctx, clock.Now(), limit, limit, 0, nil)
+		rows, e := d.Eligible(ctx, clock.Now(), limit, limit, 0)
 		if e != nil {
 			return nil, e
 		}

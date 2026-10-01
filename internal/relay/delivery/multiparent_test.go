@@ -236,11 +236,12 @@ func TestMPI05_one_parents_limits_never_starve_the_other(t *testing.T) {
 	})
 	t.Run("A at the hourly recipient cap", func(t *testing.T) {
 		f := newFixture(t, "")
-		_, ai := f.twoParentAssignment("a", 1)
+		a, ai := f.twoParentAssignment("a", 1)
 		_, bi := f.twoParentAssignment("b", 3)
 		now := f.clock.Now()
-		_, err := execSQL(f.ctx, f.store, "INSERT INTO recipient_rate (recipient_task_id, window_start, sends, last_send_at) VALUES (?,?,?,?)", "01parent-a", math.Floor(now/3600)*3600, f.delivery.Policy.MaxSendsPerRecipientPerHour, now)
+		_, err := execSQL(f.ctx, f.store, "INSERT INTO recipient_rate (recipient_task_id, window_start, sends, last_send_at) VALUES (?,?,?,?)", "01parent-a", math.Floor(now/3600)*3600, f.delivery.Policy.MaxSendsPerRelationshipPerHour, now)
 		mustDo(t, err)
+		f.spendHour(a, "01parent-a", int(f.delivery.Policy.MaxSendsPerRelationshipPerHour), now)
 		sc := scheduler(f)
 		f.tick(sc)
 		sent := map[string]bool{}

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // Anchored is assignment.AssignmentView._anchored for the fields this package owns: the event,
@@ -21,14 +23,14 @@ func Anchored(ctx context.Context, d *Service, eventID any, generation int64) (O
 	row, err := one(ctx, d.Store, `SELECT e.stage AS stage, d.event_id AS delivered, d.state AS delivery_state, d.hold_reason AS hold_reason, d.dispatch_evidence AS dispatch_evidence, d.next_eligible_at AS next_eligible_at,
  a.request_id AS request_id, a.attempt_no AS attempt_no, a.state AS attempt_state, a.recipient_scan AS attempt_turn_check, v.last_reason AS ack_last_reason,
  (SELECT COUNT(*) FROM attempts h WHERE h.event_id = e.event_id AND h.state = 'host_lost_turn') AS host_lost_attempts,
- (SELECT sends FROM recipient_rate WHERE recipient_task_id = d.recipient_task_id AND window_start = ?) AS rate_sends,
+ `+store.RelationshipSendsSQL("d.relationship_id", "d.recipient_task_id")+` AS rate_sends,
  (SELECT MAX(last_send_at) FROM recipient_rate WHERE recipient_task_id = d.recipient_task_id AND window_start BETWEEN ? AND ?) AS rate_last,
  k.event_id AS acked, k.verified AS ack_verified, k.accepted AS ack_accepted, k.rejection_reason AS ack_rejection, v.tier AS ack_tier,
  r.status AS relationship_status, r.superseded_by AS superseded_by, sx.reason AS supersession_reason, sx.applied AS supersession_applied,
  (SELECT reason FROM refusals WHERE event_id = e.event_id ORDER BY id DESC LIMIT 1) AS refusal_reason
  FROM events e LEFT JOIN deliveries d ON d.event_id = e.event_id LEFT JOIN attempts a ON a.event_id = e.event_id AND a.attempt_no = d.attempt_count
  LEFT JOIN acks k ON k.event_id = e.event_id LEFT JOIN ack_evidence v ON v.event_id = e.event_id LEFT JOIN delivery_supersession sx ON sx.event_id = e.event_id
- LEFT JOIN relationships r ON r.relationship_id = e.relationship_id WHERE e.event_id = ?`, window, earliest, window, eventID)
+ LEFT JOIN relationships r ON r.relationship_id = e.relationship_id WHERE e.event_id = ?`, append(store.RelationshipSendsArgs(window), earliest, window, eventID)...)
 	if err != nil {
 		return nil, err
 	}

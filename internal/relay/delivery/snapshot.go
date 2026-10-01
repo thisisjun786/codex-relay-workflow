@@ -160,7 +160,7 @@ func (d *Service) SnapshotItem(ctx context.Context, eventID string) (Obj, error)
 	}
 	var pacing Obj
 	if (row.S("state") == Queued || row.S("state") == DeferredBusy || row.S("state") == WithheldPreSend) && row.S("hold_reason") == "" {
-		if pacing, err = d.pacing(ctx, row.S("recipient_task_id"), d.Clock.Now()); err != nil {
+		if pacing, err = d.pacing(ctx, row.S("relationship_id"), row.S("recipient_task_id"), d.Clock.Now()); err != nil {
 			return nil, err
 		}
 		if reopens, _ := get(pacing, "reopensAt"); pacing != nil && reopens != nil && !row.N("next_eligible_at") && row.F("next_eligible_at") > reopens.(float64) {

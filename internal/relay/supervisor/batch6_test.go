@@ -119,7 +119,7 @@ func Test24_SCH_67_TransportStartPacingDefers(t *testing.T) {
 	id := staged["messageId"].(string)
 	f.c.beforeTransport = func() {
 		service := delivery.NewService(f.s, delivery.SystemClock{})
-		if refused, err := service.ReserveSend(f.ctx, "supervisor", 1_700_000_000); err != nil || refused != "" {
+		if refused, err := service.ReserveSend(f.ctx, "other-relationship", "supervisor", 1_700_000_000); err != nil || refused != "" {
 			t.Fatalf("other sender %q %v", refused, err)
 		}
 	}

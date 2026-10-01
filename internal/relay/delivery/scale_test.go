@@ -55,12 +55,14 @@ func newScaleWorld(t *testing.T, n int) *scaleWorld {
 			parentCwd: "/repo-scale", child: child, childRoot: root, turn: turn, scopeRef: fmt.Sprintf("linear://scale-%d", k),
 			recipients: []string{scaleParent, child}, parentOnlySettings: k == 0})
 		w.rels = append(w.rels, &scaleRel{rid: rid, child: child, turn: turn, root: root})
+		// A request to the child is sent with the child's own authorized settings.
+		w.exec("INSERT INTO authorized_settings (task_id, settings, source, recorded_at) VALUES (?,?,?,?)", child, taskSettings(root), "creation_result", f.clock.ISO())
 	}
 	return w
 }
 
-// emit makes relationship i produce one more final completion event and queues its delivery.
-func (w *scaleWorld) emit(i int) string {
+// create makes relationship i produce one more final event without queueing its delivery.
+func (w *scaleWorld) create(i int) string {
 	w.t.Helper()
 	r := w.rels[i]
 	r.emitted++
@@ -78,10 +80,30 @@ func (w *scaleWorld) emit(i int) string {
 		{Key: "manifest", Value: []any{Obj{{Key: "path", Value: path}, {Key: "sha256", Value: entries[0].SHA256}, {Key: "bytes", Value: *entries[0].Bytes}}}}, {Key: "emittedAt", Value: w.f.clock.ISO()}}
 	_, err = w.f.accept(payload, store.AcceptOptions{})
 	mustDo(w.t, err)
-	_, err = w.f.delivery.Enqueue(w.f.ctx, event, "", "")
-	mustDo(w.t, err)
 	w.created = append(w.created, event)
 	return event
+}
+
+// queue queues the delivery of a created event: the completion to the parent, or with kind
+// Revision a request to the child.
+func (w *scaleWorld) queue(event, kind, recipient string) {
+	w.t.Helper()
+	_, err := w.f.delivery.Enqueue(w.f.ctx, event, kind, recipient)
+	mustDo(w.t, err)
+}
+
+// emit makes relationship i produce one more final completion event and queues its delivery.
+func (w *scaleWorld) emit(i int) string {
+	w.t.Helper()
+	event := w.create(i)
+	w.queue(event, "", "")
+	return event
+}
+
+func (w *scaleWorld) exec(query string, args ...any) {
+	w.t.Helper()
+	_, err := execSQL(w.f.ctx, w.f.store, query, args...)
+	mustDo(w.t, err)
 }
 
 // tick is one delivery pass at the current time, then the daemon's sleep.
@@ -110,13 +132,25 @@ func (w *scaleWorld) capHolds() int {
 		if row.S("state") == Dispatched || row.S("state") == Superseded {
 			continue
 		}
-		refusal, err := w.f.delivery.SendRefusal(w.f.ctx, row.S("recipient_task_id"), w.f.clock.Now())
+		refusal, err := w.f.delivery.SendRefusal(w.f.ctx, row.S("relationship_id"), row.S("recipient_task_id"), w.f.clock.Now())
 		mustDo(w.t, err)
 		if refusal == HourlyCap {
 			held++
 		}
 	}
 	return held
+}
+
+// sentTo is the events the host was sent for one recipient, in send order.
+func (w *scaleWorld) sentTo(thread string) []string {
+	w.t.Helper()
+	var out []string
+	for _, s := range w.f.host.sends {
+		if s.thread == thread {
+			out = append(out, w.f.one("SELECT event_id FROM attempts WHERE request_id = ?", s.requestID).S("event_id"))
+		}
+	}
+	return out
 }
 
 // sentOrder is the events the host was sent, in send order.
@@ -164,8 +198,8 @@ func TestScale_a_runaway_relationship_is_still_limited(t *testing.T) {
 			w.tick()
 		}
 		got := len(w.dispatched())
-		if got != int(w.f.delivery.Policy.MaxSendsPerRecipientPerHour) {
-			t.Errorf("a runaway relationship got %d sends in its hour, want the cap %d", got, w.f.delivery.Policy.MaxSendsPerRecipientPerHour)
+		if got != int(w.f.delivery.Policy.MaxSendsPerRelationshipPerHour) {
+			t.Errorf("a runaway relationship got %d sends in its hour, want the cap %d", got, w.f.delivery.Policy.MaxSendsPerRelationshipPerHour)
 		}
 		if w.capHolds() == 0 {
 			t.Error("nothing is waiting on the cap after the runaway")
@@ -196,7 +230,7 @@ func TestScale_a_runaway_relationship_is_still_limited(t *testing.T) {
 				runawaySends++
 			}
 		}
-		if want := int(w.f.delivery.Policy.MaxSendsPerRecipientPerHour); runawaySends != want {
+		if want := int(w.f.delivery.Policy.MaxSendsPerRelationshipPerHour); runawaySends != want {
 			t.Errorf("the runaway relationship got %d sends in its hour, want the cap %d", runawaySends, want)
 		}
 	})
@@ -229,5 +263,175 @@ func TestScale_a_busy_backlog_drains_in_creation_order(t *testing.T) {
 	}
 	if order := w.sentOrder(); !slices.Equal(order, w.created) {
 		t.Errorf("sent in order %v, want creation order %v", order, w.created)
+	}
+}
+
+// A delivery goes out in the order its event was created, not the order it was queued in: a
+// delivery refused at enqueue and queued again later keeps its place.
+func TestScale_deliveries_keep_event_creation_order_not_queueing_order(t *testing.T) {
+	w := newScaleWorld(t, 3)
+	var events []string
+	for i := 0; i < 3; i++ {
+		events = append(events, w.create(i))
+		w.f.clock.Advance(1)
+	}
+	for _, i := range []int{2, 0, 1} {
+		w.queue(events[i], "", "")
+		w.f.clock.Advance(1)
+	}
+	for k := 0; k < 3; k++ {
+		w.tick()
+	}
+	if order := w.sentOrder(); !slices.Equal(order, events) {
+		t.Errorf("sent in order %v, want event creation order %v", order, events)
+	}
+}
+
+// A request to a child is a different recipient from the parent's backlog: a busy parent does not
+// hold it back, and the parent's own backlog drains once the parent is free.
+func TestScale_a_busy_parent_does_not_hold_back_a_request_to_a_child(t *testing.T) {
+	w := newScaleWorld(t, 4)
+	w.f.host.threads[scaleParent].status = "active"
+	var backlog []string
+	for i := 0; i < 3; i++ {
+		backlog = append(backlog, w.emit(i))
+		w.f.clock.Advance(1)
+	}
+	request := w.create(3)
+	w.queue(request, Revision, w.rels[3].child)
+	w.tick()
+	if got := w.sentTo(w.rels[3].child); !slices.Equal(got, []string{request}) {
+		t.Fatalf("the child was sent %v on the first tick, want its request %s", got, request)
+	}
+	if len(w.sentTo(scaleParent)) != 0 {
+		t.Fatal("a message went to the busy parent")
+	}
+	w.f.host.threads[scaleParent].status = "idle"
+	for k := 0; k < len(backlog); k++ {
+		w.tick()
+	}
+	if got := w.sentTo(scaleParent); !slices.Equal(got, backlog) {
+		t.Errorf("the parent was sent %v, want its backlog in creation order %v", got, backlog)
+	}
+}
+
+// Recipients that cannot take a send (busy children with requests queued) cost an attempt each
+// and no more: the idle parent behind them is reached within ceil(recipients / share) ticks, and
+// keeps being reached.
+func TestScale_busy_recipients_do_not_keep_an_idle_one_waiting(t *testing.T) {
+	w := newScaleWorld(t, 6)
+	for i := 0; i < 5; i++ {
+		w.f.host.threads[w.rels[i].child].status = "active"
+		w.queue(w.create(i), Revision, w.rels[i].child)
+		w.f.clock.Advance(1)
+	}
+	var completions []string
+	for k := 0; k < 3; k++ {
+		completions = append(completions, w.emit(5))
+		w.f.clock.Advance(1)
+	}
+	// Six recipients under one parent, two attempts a tick: the parent is reached by the third tick.
+	for k := 0; k < 3; k++ {
+		w.tick()
+	}
+	if len(w.sentTo(scaleParent)) == 0 {
+		t.Fatal("the idle parent was not sent anything in three ticks behind five busy children")
+	}
+	for k := 0; k < 12; k++ {
+		w.tick()
+	}
+	if got := w.sentTo(scaleParent); !slices.Equal(got, completions[:len(got)]) || len(got) != len(completions) {
+		t.Errorf("the parent was sent %v, want its completions %v in creation order", got, completions)
+	}
+}
+
+// A delivery that is refused before it is claimed (here its relationship no longer lists the
+// parent as a recipient) keeps its state and holds nothing: the deliveries behind it, to the same
+// recipient, go out within ceil((refused + 1) / attempts) ticks, in creation order.
+func TestScale_a_refused_delivery_does_not_hold_the_ones_behind_it(t *testing.T) {
+	const refused, good = 3, 4
+	w := newScaleWorld(t, refused+good)
+	var behind []string
+	for i := 0; i < refused+good; i++ {
+		e := w.emit(i)
+		if i >= refused {
+			behind = append(behind, e)
+		}
+		w.f.clock.Advance(1)
+	}
+	for i := 0; i < refused; i++ {
+		w.exec("UPDATE relationships SET allowed_recipients = '[]' WHERE relationship_id = ?", w.rels[i].rid)
+	}
+	// attempts a tick for the parent: 2 (MaxSendsPerParentPerTick); the first good row is the
+	// fourth in the walk, so it goes by the second tick.
+	for k := 0; k < 2; k++ {
+		w.tick()
+	}
+	if got := w.sentTo(scaleParent); len(got) == 0 || got[0] != behind[0] {
+		t.Fatalf("after two ticks the parent was sent %v, want %s first", got, behind[0])
+	}
+	for k := 0; k < 4*(refused+1); k++ {
+		w.tick()
+	}
+	if got := w.sentTo(scaleParent); !slices.Equal(got, behind) {
+		t.Errorf("the parent was sent %v, want the deliveries behind the refused ones, in creation order %v", got, behind)
+	}
+	for i := 0; i < refused; i++ {
+		row := w.f.row(w.created[i])
+		if row.S("state") != Queued || !row.N("hold_reason") {
+			t.Errorf("a refused delivery was moved: state %s hold %v", row.S("state"), row.Opt("hold_reason"))
+		}
+	}
+}
+
+// A relationship that has spent its hour is not due until the window reopens: its queued rows
+// spend no attempt, and the calm sibling queued after them goes out on the first tick.
+func TestScale_a_relationship_at_its_cap_is_not_attempted_at_all(t *testing.T) {
+	w := newScaleWorld(t, 2)
+	w.f.spendHour(w.rels[0].rid, scaleParent, int(w.f.delivery.Policy.MaxSendsPerRelationshipPerHour), w.f.clock.Now())
+	var capped []string
+	for k := 0; k < 8; k++ {
+		capped = append(capped, w.emit(0))
+		w.f.clock.Advance(1)
+	}
+	calm := w.emit(1)
+	w.tick()
+	if got := w.sentTo(scaleParent); !slices.Equal(got, []string{calm}) {
+		t.Fatalf("the first tick sent %v, want only the calm sibling's %s", got, calm)
+	}
+	for _, e := range capped {
+		if n := w.f.count("SELECT COUNT(*) AS c FROM attempts WHERE event_id = ?", e); n != 0 {
+			t.Fatalf("a delivery of the capped relationship was attempted %d times", n)
+		}
+	}
+	// The window reopens: they are due again and go out one a tick, in creation order.
+	w.f.clock.T = math.Floor(w.f.clock.Now()/3600)*3600 + 3600
+	for k := 0; k < len(capped); k++ {
+		w.tick()
+	}
+	if got := w.sentTo(scaleParent)[1:]; !slices.Equal(got, capped) {
+		t.Errorf("after the window reopened the parent was sent %v, want %v", got, capped)
+	}
+}
+
+// A cursor value an older scheduler wrote (an index) is read as no pointer.
+func TestScale_a_legacy_scheduler_cursor_is_not_a_pointer(t *testing.T) {
+	w := newScaleWorld(t, 3)
+	for _, c := range [][2]string{{"deliver:" + scaleParent, "7"}, {"delivery_parents", "3"}} {
+		w.exec("INSERT INTO discovery_cursors (task_id, listing, cursor, updated_at) VALUES ('scheduler', ?, ?, ?)", c[0], c[1], w.f.clock.ISO())
+	}
+	var events []string
+	for i := 0; i < 3; i++ {
+		events = append(events, w.emit(i))
+		w.f.clock.Advance(1)
+	}
+	for k := 0; k < 3; k++ {
+		w.tick()
+	}
+	if order := w.sentOrder(); !slices.Equal(order, events) {
+		t.Errorf("sent in order %v, want creation order %v", order, events)
+	}
+	if got := w.f.one("SELECT cursor FROM discovery_cursors WHERE task_id = 'scheduler' AND listing = ?", "deliver:"+scaleParent).S("cursor"); got != scaleParent {
+		t.Errorf("the parent's pointer is %q, want the recipient last attempted %q", got, scaleParent)
 	}
 }
