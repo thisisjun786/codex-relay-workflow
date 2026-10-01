@@ -1355,9 +1355,9 @@ Go and Python first openers paused after placing the gate and racing unpaused),
 `Test30SocketBindingWaitsForWritersWithinTheBound`),
 `internal/relay/cli/fence_parity_test.go` (`TestSocketBinding_*` against the live fence),
 `TestWriteForms_refuse_a_foreign_store_as_python_does` (byte for byte),
-`internal/relay/store/registration_hold_python_test.go`
-(`TestOpen_reads_a_gateless_store_before_refusing_it_as_python_does`,
-`TestRegistrationHold_answers_an_unstattable_store_as_python_does`), `Test24_SOS_14_WholeOutputAndSQLite`,
+`internal/relay/store/registration_hold_refusal_test.go`
+(`TestOpen_reads_a_gateless_store_before_refusing_it`,
+`TestRegistrationHold_answers_an_unstattable_store_with_the_stat_error`), `Test24_SOS_14_WholeOutputAndSQLite`,
 `TestCLI_intent_register_refuses_a_store_the_other_runtime_owns_like_python`,
 `TestINT10_an_unreadable_missing_or_held_store_refuses_registration` (against the live fence);
 `.omo/evidence/task-30-crw-go-port.txt`.
@@ -2704,8 +2704,8 @@ forwarders into `store_forwarders_test.go`). Where nothing but its own tests use
 them:
 
 - the second registration hold, `store.HoldForWrite` and `registry.RegisterUnderHold`: the relay
-  registers under `store.RegistrationHold` only (its recorded fence answers stay covered by
-  `TestRegistrationHold_answers_an_unstattable_store_as_python_does`);
+  registers under `store.RegistrationHold` only (its refusals stay covered by
+  `TestRegistrationHold_answers_an_unstattable_store_with_the_stat_error`);
 - `delivery.VerifyResume` and `TaskSettings.Mismatches` with their helpers, a second copy of the
   resume check the bridge adapter runs through `registry.TaskSettings`; the delivery and
   supervisor tests that replayed Python's answers through the copy now run the adapter's
