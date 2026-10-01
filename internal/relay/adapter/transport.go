@@ -41,6 +41,22 @@ func plain(value any) any {
 	}
 }
 
+// ErrTransportClosing answers a read, HostCall or GetOperation that arrives after Close began.
+var ErrTransportClosing = errors.New("the relay transport is shutting down; the read was refused")
+
+// lease is the admission one unit of work holds. It travels in the work's context, so a read the
+// work makes while it lives (an in-flight send's guard calling HostCall) joins the work's
+// admission instead of arriving as a late read. A context kept past the work, passed through
+// context.WithoutCancel or handed to another goroutine carries an ended lease, which admits
+// nothing; so does a lease of another transport. ended is guarded by transport.mu and is set
+// before the work releases its pending count.
+type lease struct {
+	t     *transport
+	ended bool
+}
+
+type leaseKey struct{}
+
 type transport struct {
 	adapter    *Adapter
 	mu         sync.Mutex
@@ -58,7 +74,8 @@ func newTransport(a *Adapter) *transport {
 }
 
 // Close ends admission before draining, cancels unfinished work while the ledger is open,
-// and only then closes the connection and ledger. Every admitted caller receives an answer.
+// and only then closes the connection and ledger. Every admitted caller, a write or a read,
+// receives an answer: a read that arrives once Close began is refused with ErrTransportClosing.
 func (a *Adapter) Close() error {
 	t := a.transport
 	if t == nil {
@@ -90,6 +107,49 @@ func (a *Adapter) Close() error {
 	ledgerErr := a.ledger.Close()
 	close(t.done)
 	return errors.Join(rpcErr, ledgerErr)
+}
+
+// admit counts one caller in pending and returns a context that Close cancels when the drain
+// budget is spent, with the release that ends the count; call release exactly once. It refuses
+// once Close began, unless ctx carries a live lease of this transport: the caller is then nested
+// in work that is itself counted, so Close is still waiting on that work and Add cannot race
+// the Wait. A nested caller takes its own count and lease, so a read that outlives the work it
+// started in is still collected by Close.
+func (t *transport) admit(ctx context.Context) (context.Context, func(), bool) {
+	held := &lease{t: t}
+	t.mu.Lock()
+	parent, _ := ctx.Value(leaseKey{}).(*lease)
+	nested := parent != nil && parent.t == t && !parent.ended
+	if !t.accepting && !nested {
+		t.mu.Unlock()
+		return nil, nil, false
+	}
+	t.pending.Add(1)
+	t.mu.Unlock()
+	run, cancel := context.WithCancel(context.WithValue(ctx, leaseKey{}, held))
+	stop := context.AfterFunc(t.ctx, cancel)
+	return run, func() {
+		stop()
+		cancel()
+		t.mu.Lock()
+		held.ended = true
+		t.mu.Unlock()
+		t.pending.Done()
+	}, true
+}
+
+// admitRead admits one read, refusing it with ErrTransportClosing once Close began. An adapter
+// built without a ledger has no transport and nothing to close, so its reads run as called.
+func (a *Adapter) admitRead(ctx context.Context) (context.Context, func(), error) {
+	t := a.transport
+	if t == nil {
+		return ctx, func() {}, nil
+	}
+	run, release, ok := t.admit(ctx)
+	if !ok {
+		return nil, nil, ErrTransportClosing
+	}
+	return run, release, nil
 }
 
 func (a *Adapter) SendMessage(requestID, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
@@ -148,6 +208,7 @@ func (a *Adapter) Send(ctx context.Context, requestID, thread, message string, s
 	}
 	t.recipients[thread] = true
 	t.pending.Add(1)
+	held := &lease{t: t}
 	t.mu.Unlock()
 	executionBudget, callerBudget := a.Budgets(guardRequests)
 	type answer struct {
@@ -156,7 +217,7 @@ func (a *Adapter) Send(ctx context.Context, requestID, thread, message string, s
 	}
 	answerCh := make(chan answer, 1)
 	go func() {
-		work, stopWork := context.WithCancel(t.ctx)
+		work, stopWork := context.WithCancel(context.WithValue(t.ctx, leaseKey{}, held))
 		defer stopWork()
 		// Stops a call the caller no longer waits for. It runs on a goroutine of its own, so it
 		// decides nothing: an answer can land before it runs, and guardedSend asks the caller's
@@ -168,6 +229,7 @@ func (a *Adapter) Send(ctx context.Context, requestID, thread, message string, s
 		receipt, err := a.guardedSend(run, requestID, thread, message, settings, guard, ctx.Err)
 		t.mu.Lock()
 		delete(t.recipients, thread)
+		held.ended = true
 		t.mu.Unlock()
 		answerCh <- answer{receipt, err}
 		t.pending.Done()
@@ -222,7 +284,7 @@ func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message st
 		receipt["rpcError"] = rpc
 	}
 	action := func() error {
-		state, err := a.HostCall(ctx, "thread/read", map[string]any{"threadId": thread})
+		state, err := a.hostCall(ctx, "thread/read", map[string]any{"threadId": thread})
 		if err = awaited(err); err != nil {
 			return err
 		}

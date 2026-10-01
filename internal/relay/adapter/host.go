@@ -105,42 +105,63 @@ func (a *Adapter) RequireLedger(ctx context.Context, expected map[string]any) er
 	}
 	return nil
 }
-func (a *Adapter) Create(ctx context.Context, in bridge.CreateThread) (ledger.Receipt, error) {
+
+// admitCreate runs the preconditions of a create and admits it. Create and Managed.CreateThread
+// share it, so the receipt Managed reads back is read inside the admission of the create.
+func (a *Adapter) admitCreate(ctx context.Context) (context.Context, func(), error) {
 	if a.bridge == nil {
-		return nil, &HostUnavailable{"this adapter was built read-only, with no transport to create a thread on"}
+		return nil, nil, &HostUnavailable{"this adapter was built read-only, with no transport to create a thread on"}
 	}
 	if a.identity != nil {
 		if err := a.RequireLedger(ctx, a.identity); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
-	t := a.transport
-	t.mu.Lock()
-	if !t.accepting {
-		t.mu.Unlock()
-		return nil, errors.New("the relay transport is shutting down; nothing was sent")
+	run, release, ok := a.transport.admit(ctx)
+	if !ok {
+		return nil, nil, errors.New("the relay transport is shutting down; nothing was sent")
 	}
-	t.pending.Add(1)
-	t.mu.Unlock()
-	defer t.pending.Done()
-	run, cancel := context.WithCancel(ctx)
-	stop := context.AfterFunc(t.ctx, cancel)
-	defer func() { stop(); cancel() }()
+	return run, release, nil
+}
+func (a *Adapter) Create(ctx context.Context, in bridge.CreateThread) (ledger.Receipt, error) {
+	run, release, err := a.admitCreate(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	return a.bridge.CreateThread(run, in)
 }
-func (a *Adapter) reads() delivery.BridgeReads {
+
+// reads is the bridge's read seam over one admitted context. A scan makes several host calls and
+// takes them all under the admission its caller holds, so Close refuses or finishes it whole.
+func (a *Adapter) reads(ctx context.Context) delivery.BridgeReads {
 	return delivery.BridgeReads{Page: a.page, Call: func(method string, params delivery.Obj) (delivery.Obj, error) {
-		return a.callOrdered(context.Background(), method, plain(params).(map[string]any))
+		return a.callOrdered(ctx, method, plain(params).(map[string]any))
 	}}
 }
 func (a *Adapter) FindDispatchedTurn(thread, turn string, sentAt float64) (delivery.TurnPresence, error) {
-	return a.reads().FindDispatchedTurn(thread, turn, sentAt)
+	ctx, release, err := a.admitRead(context.Background())
+	if err != nil {
+		return delivery.TurnPresence{}, err
+	}
+	defer release()
+	return a.reads(ctx).FindDispatchedTurn(thread, turn, sentAt)
 }
 func (a *Adapter) FindTokenSince(thread, token string, older []string, limit int) (delivery.TokenScan, error) {
-	return a.reads().FindTokenSince(thread, token, older, limit)
+	ctx, release, err := a.admitRead(context.Background())
+	if err != nil {
+		return delivery.TokenScan{}, err
+	}
+	defer release()
+	return a.reads(ctx).FindTokenSince(thread, token, older, limit)
 }
 func (a *Adapter) FindTokenInTurn(thread, token, turn string, limit int) (delivery.TokenScan, error) {
-	return a.reads().FindTokenInTurn(thread, token, turn, limit)
+	ctx, release, err := a.admitRead(context.Background())
+	if err != nil {
+		return delivery.TokenScan{}, err
+	}
+	defer release()
+	return a.reads(ctx).FindTokenInTurn(thread, token, turn, limit)
 }
 
 var _ delivery.Adapter = (*Adapter)(nil)
@@ -150,15 +171,26 @@ var _ delivery.Adapter = (*Adapter)(nil)
 type Managed struct{ *Adapter }
 
 func (a Managed) CreateThread(ctx context.Context, in managed.CreateThreadRequest) (map[string]any, error) {
-	_, err := a.Create(ctx, bridge.CreateThread{RequestID: in.RequestID, CWD: in.CWD, Prompt: in.Prompt, Title: in.Title, Sandbox: in.Sandbox, Model: in.Model, Effort: in.ReasoningEffort, Role: in.Role, Roots: in.RuntimeWorkspaceRoots, Policy: in.ExpectedSandboxPolicy})
+	run, release, err := a.admitCreate(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	_, err = a.bridge.CreateThread(run, bridge.CreateThread{RequestID: in.RequestID, CWD: in.CWD, Prompt: in.Prompt, Title: in.Title, Sandbox: in.Sandbox, Model: in.Model, Effort: in.ReasoningEffort, Role: in.Role, Roots: in.RuntimeWorkspaceRoots, Policy: in.ExpectedSandboxPolicy})
 	if err != nil {
 		return nil, err
 	}
 	// Managed consumes decoded JSON lists, while Bridge.call uses []string for
 	// runtime roots internally. Read the actual retained receipt at this boundary.
-	return a.ledger.Get(ctx, in.RequestID)
+	// It is read inside the create's own admission: Close cannot end the ledger between the two.
+	return a.ledger.Get(run, in.RequestID)
 }
 func (a Managed) GetOperation(ctx context.Context, id string) (map[string]any, error) {
+	ctx, release, err := a.admitRead(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	r, err := a.ledger.Get(ctx, id)
 	if errors.Is(err, ledger.ErrUnknown) {
 		return nil, nil
