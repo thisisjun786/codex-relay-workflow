@@ -13,8 +13,9 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
-// Exercise every implemented numeric action beyond argparse and module loading.
-// Each process starts from a byte copy of the same Python-created store.
+// Exercise a representative int and float option of every implemented command past the parser
+// and module loading, with the extreme values the parser accepts and one it refuses. Each
+// process starts from a byte copy of the same Python-created store.
 func Test24NumericDownstreamBytes(t *testing.T) {
 	t.Parallel()
 	_, alias := packageBinary(t)
@@ -62,24 +63,24 @@ func Test24NumericDownstreamBytes(t *testing.T) {
 		if a.Type == "int" || a.Type == "float" {
 			return "1"
 		}
-		switch a.Dest {
+		switch a.Key() {
 		case "repository":
 			return "o/r"
 		case "relationship":
 			return ids["relationship"]
 		case "fault":
 			return ids["fault"]
-		case "request_id":
+		case "request-id":
 			return "request"
 		case "fingerprint":
 			return "fingerprint"
 		case "project":
 			return "PROJ"
-		case "task", "parent_task":
+		case "task", "parent-task":
 			return "P"
-		case "turn_thread":
+		case "turn-thread":
 			return "C"
-		case "turn_id":
+		case "turn-id":
 			return "turn"
 		}
 		return "v"
@@ -114,17 +115,17 @@ func Test24NumericDownstreamBytes(t *testing.T) {
 				if g.Required {
 					b := spec.Actions[g.Actions[0]]
 					base = append(base, b.Flags[len(b.Flags)-1])
-					if b.Kind != "_StoreTrueAction" {
+					if b.Kind != argparse.KindTrue {
 						base = append(base, value(b))
 					}
 				}
 			}
-			values := []string{"9999999999999999999999999"}
+			values := []string{"9223372036854775807", "-9223372036854775808", "9223372036854775808"}
 			if a.Type == "float" {
 				values = []string{"NaN"}
 			}
 			for i, v := range values {
-				t.Run(fmt.Sprintf("%s/%s/%d", name, a.Dest, i), func(t *testing.T) {
+				t.Run(fmt.Sprintf("%s/%s/%d", name, a.Key(), i), func(t *testing.T) {
 					args := append([]string{name}, base...)
 					args = append(args, a.Flags[len(a.Flags)-1]+"="+v)
 					assert(t, args)
@@ -132,16 +133,16 @@ func Test24NumericDownstreamBytes(t *testing.T) {
 			}
 		}
 	}
-	for _, v := range []string{"9999999999999999999999999", "١٢", "1_0", "NaN", "inf", " 60 "} {
+	for _, v := range []string{"9223372036854775807", "9223372036854775808", "١٢", "1_0", "NaN", "inf", " 60 "} {
 		t.Run("policy-write/"+v, func(t *testing.T) {
-			assert(t, []string{"fault-policy", "--product", "crw", "--fault-class", "report_omitted", "--severity", "degraded", "--reason=needs review", "--threshold=9999999999999999999999999", "--window=" + v})
+			assert(t, []string{"fault-policy", "--product", "crw", "--fault-class", "report_omitted", "--severity", "degraded", "--reason=needs review", "--threshold=9223372036854775807", "--window=" + v})
 		})
 		t.Run("limit-write/"+v, func(t *testing.T) {
-			assert(t, []string{"fault-limit", "--product", "crw", "--kind", "notification", "--max-count=9999999999999999999999999", "--window=" + v})
+			assert(t, []string{"fault-limit", "--product", "crw", "--kind", "notification", "--max-count=9223372036854775807", "--window=" + v})
 		})
 	}
 	for _, field := range []string{"generation", "attempt"} {
-		for _, v := range []string{"9999999999999999999999999", "-9999999999999999999999999"} {
+		for _, v := range []string{"9223372036854775807", "-9223372036854775808", "9223372036854775808"} {
 			t.Run("emit-execution/"+field+"/"+v, func(t *testing.T) {
 				assert(t, []string{"emit", "--relationship", ids["relationship"], "--generation=1", "--attempt=1", "--outcome=interrupted", "--turn-thread=C", "--turn-id=turn", "--turn-status=interrupted", "--no-enqueue", "--" + field + "=" + v})
 			})

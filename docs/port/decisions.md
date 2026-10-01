@@ -3409,3 +3409,89 @@ Evidence: `internal/relay/dispatch` (`Execute`, `Command`, `emit`), the families
 `TestRun_every_relay_parser_choice_is_registered`,
 `TestRun_unknown_user_state_is_a_python_host_error` (cmd/crw); every relay CLI golden compares
 unchanged.
+
+## Decision R3C-1. The relay CLI reads its command lines with its own parser, not an argparse emulation (refactor R3)
+
+(Placeholder heading: the next free number is given when the R3 groups merge.)
+
+Decision: `internal/relay/argparse` stops reproducing CPython 3.13's argparse and reads relay
+command lines with a parser of its own, driven by `specs.json`, which now declares each parser's
+options only: flag, whether it takes a value (`append` keeps every one, `true`/`false` take
+none), type (`int`, `float`), choices, required, its help line, the groups whose options exclude
+one another, and which parsers name a command with their first word (the root's and service's).
+The file went from 460 KB to 48 KB: the rendered usage parts, textwrap chunks, section tables,
+dests and headers argparse's formatter needed are gone. What goes:
+
+- Abbreviations: an option is its full flag (`--subj` for `--subject` is an unrecognized
+  argument, where argparse took a unique prefix and refused an ambiguous one). No skill, doc,
+  contract fixture or product subprocess call spells a relay flag short of its declaration;
+  only the argparse byte tests did.
+- `-hx` as help, and `--help=x`/`-h=x` read as help: help is `-h` or `--help` as a token of its own
+  (still wherever it stands among words the parser does not know).
+- argparse's prose and layout: usage and help are one line per option, never wrapped and never
+  depending on `COLUMNS` or the terminal; messages quote a value Go's way (`%q`), not with
+  Python's repr; an unknown command or option is reported by the parser that read it (the root
+  for a word before the command, the command's own after it, `crw relay service` for a service
+  word), where argparse reported every unrecognized word under the root parser; unrecognized
+  words are reported before a missing required option.
+- Python's number syntax: an int option is `strconv.ParseInt(text, 10, 64)` (no Unicode digits,
+  no underscores, no surrounding whitespace, nothing outside int64, see decision R3C-2) and a
+  float option is `strconv.ParseFloat`.
+
+What stays, because consumers read it: every command, flag and choice; exit 0 with the usage
+and every option on stdout for `-h`/`--help`; exit 2 with the usage line and the reason on
+stderr (nothing on stdout) for a line the parser cannot read, in the vocabulary the contract
+fixtures read (`invalid choice`, `the following arguments are required: <flags>`,
+`unrecognized arguments: <words>`, `expected one argument`, `not allowed with argument`); a
+value that looks like a negative number or holds a space is a value (`--session -1`,
+`--evidence "- merged by hand"`); global options before the command. The parsed result keeps its
+shape for the handlers (values by flag, an int as `*big.Int`, a float as `float64`), and the
+capacity and edit-region commands' help is still their usage line alone
+(`dispatch.Command.UsageHelp`). `argparse.ParseInt`/`ParseFloat` (Python's int()/float() of a
+text) stay for the packages that read stored or forge text with them; the parser does not use
+them. The development tools `crw-dev stop-events` and `crw-dev trial-ledger` read their lines
+with the same parser and change the same way.
+
+Consumer check: `git grep` over `plugins/crw/skills`, `plugins/crw/wiring`, `docs/` and
+`contract/` for every token that is a strict prefix of a declared flag finds none; the product's
+own relay argv (service's daemon launch, `crw doctor`/`install`/`exercise` through
+`scope.Relay`, the recovery and readback commands the relay prints) spells every flag in full;
+no Go caller and no skill reads a relay usage or help text; the two cli-shape fixtures that read
+stderr look for `invalid choice` and `required`, which the parser still says.
+
+Removed with it, as tests that pinned only argparse's bytes: the formatter test over every spec
+at five widths, `Test24ArgparsePython`, the built-binary argparse, runtime and root-parser sweeps
+with their 2,000-case fixture, and the contract corpus's per-command argparse sweep. The
+contract they shared is held instead by `TestParseReadsWhatTheSpecDeclares`,
+`TestTheRootParserStopsAtTheCommand`, `TestEveryParserListsItsOptions` (internal/relay/argparse)
+and `TestRun_every_relay_command_line_has_the_usage_contract` (cmd/crw: every registered
+command's help lists its options, an unknown option and a missing required option exit 2 with
+usage on stderr and nothing on stdout).
+
+Evidence: `internal/relay/argparse/argparse.go`, `specs.json`, `parse_test.go`;
+`internal/relay/dispatch/dispatch.go` (`Execute`, `parsedLine`); `cmd/crw/main_test.go`;
+`cmd/crw-dev/main_test.go`.
+
+## Decision R3C-2. An int option is a signed 64-bit integer; `deliver --limit` and `verify-acks --limit` no longer crash (refactor R3)
+
+(Placeholder heading: the next free number is given when the R3 groups merge.)
+
+Decision: the parser refuses an int option's value outside int64 as a usage error (exit 2,
+`argument --x: invalid int value: "..."`), and `dispatch.Args.Number` answers an int option as an
+`int64` whether the line gave it or its default stands. Before, the parser accepted any Python
+integer as a `*big.Int`, and `Args.Number` answered the given value as that `*big.Int` while a
+default was an `int64`; the host adapter's `deliver` and `verify-acks` read `--limit` as an
+`int64`, so `crw relay --socket S deliver --limit 3` (or `verify-acks --limit N`) panicked with
+an interface conversion before it reached the host, whether or not a host listened. A value
+beyond int64 used to reach the handler and answer a host error about SQLite's INTEGER
+(`OverflowError: Python int too large to convert to SQLite INTEGER`, exit 3) or, for a command
+that stored nothing, whatever the handler made of it; it is now refused before any handler
+runs.
+
+Consumer check: no skill, doc, fixture or product call passes an integer beyond int64 to a relay
+option; the numeric downstream test holds the extremes the parser accepts and one it refuses.
+
+Evidence: `internal/relay/argparse/argparse.go` (`convert`), `internal/relay/dispatch/args.go`
+(`Number`); `TestParseReadsWhatTheSpecDeclares`; `Test24NumericDownstreamBytes`
+(internal/relay/cli); the panic reproduced with `crw relay --state D --socket D/none.sock
+deliver --limit 3` before this change.

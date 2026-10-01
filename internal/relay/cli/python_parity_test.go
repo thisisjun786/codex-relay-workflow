@@ -287,20 +287,13 @@ func TestKindModule_matches_python_for_an_unimportable_module(t *testing.T) {
 		{"--kind-module", "a", "--kind-module", "b.c", "doctor"},
 		{"--kind-module", "", "status"},
 		{"--kind-module", "..x", "store-identity"},
-		// Parsing comes first: an unknown command is argparse's exit 2 before any import. The
-		// choices listed differ only by the commands this build does not register yet.
+		// Parsing comes first: an unknown command is the parser's exit 2 before any import.
 		{"--kind-module", "nosuch", "bogus"},
 	} {
 		argv := append([]string{"--state", state}, argv...)
 		key := answerKey(t, argv)
 		got := golang(t, home, argv...)
-		// The choices an unknown command lists differ by the commands this build registers: the
-		// line is compared up to them.
-		compared := lastLine(got.stderr)
-		if strings.Contains(compared, "invalid choice") {
-			compared = compared[:max(0, strings.Index(compared, "(choose"))]
-		}
-		expectJSON(t, key, map[string]any{"code": got.code, "stdout": got.stdout, "stderr": compared}, append([]string{home}, argv...)...)
+		expectJSON(t, key, map[string]any{"code": got.code, "stdout": got.stdout, "stderr": lastLine(got.stderr)}, append([]string{home}, argv...)...)
 	}
 }
 

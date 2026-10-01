@@ -651,7 +651,7 @@ codex-session-relay supervisor-stage --project <key> [--observation <file>]...
 codex-session-relay supervisor-stage --observation <file>
 
 # One attempt, through the same host rules a delivery obeys. --socket and --state are global,
-# so they come before the subcommand; after it argparse refuses.
+# so they come before the subcommand; after it the parser refuses them.
 codex-session-relay [--state <dir>] --socket <path> supervisor-send --message <id>
 
 # The recipient answering, with the line the message carries: it names the store the report

@@ -23,14 +23,14 @@ func scenarioFrom(t *testing.T, text string) Scenario {
 }
 
 func TestCLIRunner_observes_exit_stderr_and_step_results_of_the_built_crw(t *testing.T) {
-	// Given: a two-step scenario. The first step is an argparse refusal (exit 2, usage on
-	// stderr); the second references the first step's output and is Python's usage exit (4).
+	// Given: a two-step scenario. The first step is a parser refusal (exit 2, usage on stderr);
+	// the second references the first step's output and is a handler's usage exit (4).
 	scenario := scenarioFrom(t, `{"run":{"kind":"cli","steps":[
 		{"id":"first","argv":["store-challenge","--bogus"],"stdin":{"x":1}},
 		{"id":"second","argv":["store-challenge","--actor",{"$step":"first","path":["stderr"]}]}]},
 		"expect":{"exit":4,"checks":[
 			{"kind":"eq","path":["steps","first","exit"],"value":2},
-			{"kind":"contains","path":["steps","first","stderr"],"value":"crw relay: error: unrecognized arguments: --bogus"},
+			{"kind":"contains","path":["steps","first","stderr"],"value":"crw relay store-challenge: error: unrecognized arguments: --bogus"},
 			{"kind":"eq","path":["steps","first","stdout_json"],"value":null},
 			{"kind":"eq","path":["stdout_json","error"],"value":"usage"}]}}`)
 	// When

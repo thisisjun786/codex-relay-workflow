@@ -4,11 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // The Python CLIs this binary replaces are argparse programs: -h/--help and the bridge's
@@ -107,26 +111,12 @@ func TestRun_install_dispatches_to_the_installer(t *testing.T) {
 	}
 }
 
-// The relay command table is complete: every subcommand of the relay CLI's root parser (and of
-// service's) is registered, and every command the doctor lists as offline or host required is one.
+// The relay command table is complete: every command the relay CLI's root parser (and service's)
+// declares is registered, and every command the doctor lists as offline or host required is one.
 func TestRun_every_relay_parser_choice_is_registered(t *testing.T) {
-	subcommands := func(spec string) []string {
-		for _, action := range argparse.Specs[spec].Actions {
-			if action.Kind == "_SubParsersAction" {
-				return action.Choices
-			}
-		}
-		t.Fatalf("parser %q has no subcommands", spec)
-		return nil
-	}
-	for _, name := range subcommands("") {
+	for _, name := range append(argparse.Commands(""), argparse.Commands("service")...) {
 		if !dispatch.Registered(name) {
 			t.Errorf("relay command %s is not registered", name)
-		}
-	}
-	for _, name := range subcommands("service") {
-		if _, ok := dispatch.Lookup("service " + name); !ok {
-			t.Errorf("service %s is not registered", name)
 		}
 	}
 	var stdout, stderr bytes.Buffer
@@ -150,7 +140,7 @@ func TestRun_every_relay_parser_choice_is_registered(t *testing.T) {
 	}
 }
 
-// Every relay command a package registers on the relay CLI is parsed by its argparse spec; the
+// Every relay command a package registers on the relay CLI is read by its declared parser; the
 // CLI has no second parser to fall back on (wave R1).
 func TestRun_every_relay_command_has_an_argparse_spec(t *testing.T) {
 	names := dispatch.Names()
@@ -160,6 +150,74 @@ func TestRun_every_relay_command_has_an_argparse_spec(t *testing.T) {
 	for _, name := range names {
 		if _, ok := argparse.Specs[name]; !ok {
 			t.Errorf("relay command %s has no argparse spec", name)
+		}
+	}
+}
+
+// The relay command line's contract, for every command: --help prints the command's usage and
+// options on stdout and exits 0; a line its parser cannot read prints the usage and the reason on
+// stderr, nothing on stdout, and exits 2, naming the flag it is missing or the word it does not
+// know (decision R3C-1). The handler never runs for either.
+func TestRun_every_relay_command_line_has_the_usage_contract(t *testing.T) {
+	relay := func(args ...string) (int, string, string) {
+		var stdout, stderr bytes.Buffer
+		code := run(context.Background(), "crw", append([]string{"relay", "--state", t.TempDir()}, args...), &stdout, &stderr)
+		return code, stdout.String(), stderr.String()
+	}
+	for _, name := range dispatch.Names() {
+		words := strings.Fields(name)
+		spec := argparse.Specs[name]
+		code, stdout, stderr := relay(append(words, "--help")...)
+		if code != 0 || stderr != "" || !strings.HasPrefix(stdout, "usage: crw relay "+name) {
+			t.Errorf("%s --help: exit %d stdout %q stderr %q", name, code, stdout, stderr)
+		}
+		for _, action := range spec.Actions {
+			if !strings.Contains(stdout, action.Flags[0]) {
+				t.Errorf("%s --help does not list %s", name, action.Flags[0])
+			}
+		}
+		code, stdout, stderr = relay(append(words, "--definitely-not-a-flag")...)
+		if code != 2 || stdout != "" || !strings.HasPrefix(stderr, "usage: crw relay "+name) || !strings.Contains(stderr, "unrecognized arguments: --definitely-not-a-flag") {
+			t.Errorf("%s --definitely-not-a-flag: exit %d stdout %q stderr %q", name, code, stdout, stderr)
+		}
+		var required []string
+		for _, action := range spec.Actions {
+			if action.Required {
+				required = append(required, action.Flags[0])
+			}
+		}
+		if len(required) == 0 {
+			continue
+		}
+		code, stdout, stderr = relay(words...)
+		if code != 2 || stdout != "" || !strings.Contains(stderr, "the following arguments are required: "+strings.Join(required, ", ")) {
+			t.Errorf("%s with no options: exit %d stdout %q stderr %q", name, code, stdout, stderr)
+		}
+	}
+	for _, line := range [][]string{{"no-such-command"}, {"service", "no-such-command"}, {"--no-such-option", "doctor"}, {"--state"}} {
+		code, stdout, stderr := relay(line...)
+		if code != 2 || stdout != "" || !strings.Contains(stderr, "usage: crw relay") || !strings.Contains(stderr, "error: ") {
+			t.Errorf("%q: exit %d stdout %q stderr %q", line, code, stdout, stderr)
+		}
+	}
+}
+
+// An int option the line gives reaches a handler as the int64 its default is (decision R3C-2):
+// the host adapter's deliver and verify-acks read --limit as one, and panicked on the given
+// value before any host was asked.
+func TestRun_a_given_limit_reaches_the_host_commands(t *testing.T) {
+	crw := testsupport.CRW(t)
+	home := t.TempDir()
+	for _, command := range []string{"deliver", "verify-acks"} {
+		cmd := exec.Command(crw, "relay", "--state", filepath.Join(home, "state"), "--socket", filepath.Join(home, "absent.sock"), command, "--limit", "3")
+		cmd.Env = []string{"HOME=" + home, "XDG_STATE_HOME=" + filepath.Join(home, "xdg"), "CODEX_HOME=" + filepath.Join(home, ".codex"),
+			"CODEX_SESSION_RELAY_SCOPE_DIR=" + filepath.Join(home, "scopes"), "PATH=" + os.Getenv("PATH"), testsupport.RefuseLiveStateEnv + "=1"}
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		err := cmd.Run()
+		var answer map[string]any
+		if strings.Contains(stderr.String(), "panic") || json.Unmarshal(stdout.Bytes(), &answer) != nil {
+			t.Fatalf("%s --limit 3: %v stdout %q stderr %q", command, err, stdout.String(), stderr.String())
 		}
 	}
 }
