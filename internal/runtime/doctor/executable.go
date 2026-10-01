@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 )
@@ -240,7 +241,7 @@ func (c Classifier) sourced(path string, depth int) Executable {
 }
 
 func readLimited(path string, limit int64) ([]byte, error) {
-	file, err := os.Open(path)
+	file, err := openRegular(path)
 	if err != nil {
 		return nil, err
 	}
@@ -271,8 +272,32 @@ func validName(name string) bool {
 // headSize is how much of a file the kernel reads for its #! line (BINPRM_BUF_SIZE).
 const headSize = 256
 
+// errNotRegular is a file the reading will not open: only a regular file is read for its head or
+// its body.
+var errNotRegular = errors.New("not a regular file")
+
+// openRegular opens path for reading, or says it is not a regular file without waiting on it: a
+// FIFO opened for reading blocks until something writes to it, and the reading meets whatever
+// a registration names (a directory's bin/crw included). The file is opened without blocking and
+// checked on the descriptor it was opened as, so a file swapped in after a check cannot be read.
+func openRegular(path string) (*os.File, error) {
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOCTTY, 0)
+	if err != nil {
+		return nil, err
+	}
+	info, err := file.Stat()
+	if err == nil && !info.Mode().IsRegular() {
+		err = errNotRegular
+	}
+	if err != nil {
+		file.Close()
+		return nil, err
+	}
+	return file, nil
+}
+
 func readHead(path string) ([]byte, error) {
-	file, err := os.Open(path)
+	file, err := openRegular(path)
 	if err != nil {
 		return nil, err
 	}

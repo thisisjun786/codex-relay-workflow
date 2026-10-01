@@ -43,8 +43,10 @@ const processScope = "this host's process table, as this command's PID namespace
 // directory a live process runs out of (liveProcesses, and every daemon a daemon.json records
 // alive), and any directory a registration the host reads names a path inside
 // (doctor.RegisteredMatching: the Stop settings, the bridge record, config.toml's mcp_servers,
-// hooks.json and the cached plugin declarations), or holds something that
-// could not be read. An answer
+// hooks.json and the cached plugin declarations), or holds something that could not be read: in
+// hooks.json and config.toml only an entry that could be CRW's counts, a malformed one included
+// (decision 68), while a file that cannot be parsed or whose top-level structure is not what the
+// host reads always does. An answer
 // that removes names what its verdict rests on: the process table (processTable) and the relay
 // records it read (relayRecords: the scope registries and state directories of this
 // environment's relay, doctor.RecordedDaemons).
@@ -344,7 +346,8 @@ func outgoingHeld(rec Object, d *runtimeDir) bool {
 // process runs out of d (liveProcesses), a daemon a daemon.json records alive (its start time and
 // boot id matching this process table) does, or a relay daemon record could not be read; or a
 // registration the host reads names a path inside d (doctor.RegisteredMatching) or could not be
-// read or judged. nil when none does, with the relay records it read, as an answer names them:
+// read or judged (another program's entry in hooks.json or config.toml that names nothing of CRW's
+// is not counted, even when a field of it has the wrong type). nil when none does, with the relay records it read, as an answer names them:
 // the scope registries whose claims and the state directories whose daemon.json it read. What it
 // cannot see is processScope; the relay records are the ones the relay resolves in o.Env
 // (doctor.RecordedDaemons), so a relay isolated with CODEX_SESSION_RELAY_SCOPE_DIR has its own.

@@ -124,6 +124,89 @@ func TestRemoveRefusesARuntimeARegistrationStillNames(t *testing.T) {
 	}
 }
 
+// hooks.json and config.toml hold other programs' registrations too, and one of theirs with a
+// field of the wrong type (args = 42) names nothing of CRW's, so it cannot start a runtime and no
+// longer holds a removal back (decision 68, as CRW-251 amended it). A malformed entry that
+// names CRW - by its name or a path - still does, as does a file that cannot be parsed or whose
+// top-level structure is not what the host reads. Everything here is a temporary Codex home.
+func TestRemoveIgnoresAMalformedRegistrationThatIsNotCRWs(t *testing.T) {
+	h := newHost(t)
+	first, second := archive(t, "0.9.0", ""), archive(t, "0.9.1", "")
+	old := runtimeDir(h, "0.9.0", first, t)
+	h.mustInstall(t, "install", first)
+	h.mustInstall(t, "update", second)
+	config := filepath.Join(h.codex, "config.toml")
+	hooks := filepath.Join(h.codex, "hooks.json")
+	selected := filepath.Join(h.dest, "current", "bin")
+	hookOf := func(event, hook string) string {
+		return `{"hooks": {"` + event + `": [{"hooks": [` + hook + `]}]}}`
+	}
+	// Refused through unreadable: the entry is malformed and could be CRW's. The paths resolve to
+	// the selected runtime, not the directory under test, so nothing is found inside it.
+	for _, c := range []struct{ label, file, text, field string }{
+		{"a server whose command is the selected bridge and whose args are 42", config, "[mcp_servers.x]\ncommand = \"" + filepath.Join(selected, "codex-thread-bridge") + "\"\nargs = 42\n", "mcp_servers.x"},
+		{"the bridge's own name with a command that is not a string", config, "[mcp_servers.codex-thread-bridge]\ncommand = 5\n", "mcp_servers.codex-thread-bridge"},
+		{"a hook whose command is a list naming crw", hooks, hookOf("Stop", `{"type": "command", "command": ["`+filepath.Join(selected, "crw")+`", "hook"]}`), "hooks.Stop[0].hooks[0].command"},
+		{"a hook of another type running crw", hooks, hookOf("Stop", `{"type": "prompt", "command": "`+filepath.Join(selected, "crw")+` hook"}`), "hooks.Stop[0].hooks[0].command"},
+		{"a hook running crw with a timeout that is a string", hooks, hookOf("Stop", `{"type": "command", "command": "`+filepath.Join(selected, "crw")+` hook", "timeout": "10"}`), "hooks.Stop[0].hooks[0].command"},
+	} {
+		write(t, c.file, c.text)
+		refused, code := install.Remove(context.Background(), h.options(), old)
+		if code != install.Refused || at(refused, "applied") != false || !strings.Contains(strings.Join(strList(at(refused, "unreadable")), "\n"), c.file+": row") || !strings.Contains(strings.Join(strList(at(refused, "unreadable")), "\n"), " "+c.field+": ") {
+			t.Fatalf("%s: exit %d, want a refusal naming %s %s\n%s", c.label, code, c.file, c.field, golden.Canon(refused))
+		}
+		if _, err := os.Stat(old); err != nil || !listed(h.installsOf(t), old) {
+			t.Fatalf("%s: a refused remove removed the directory or its install entries", c.label)
+		}
+		if err := os.Remove(c.file); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Refused through registrations: the malformed entry also names a path inside the directory.
+	write(t, config, "[mcp_servers.x]\ncommand = \""+filepath.Join(old, "bin", "codex-thread-bridge")+"\"\nargs = 42\n")
+	if refused, code := install.Remove(context.Background(), h.options(), old); code != install.Refused || !strings.Contains(text(at(refused, "refused")), "names a path inside this directory") || len(golden.List(at(refused, "registrations"))) == 0 {
+		t.Fatalf("a malformed server naming the directory: exit %d\n%s", code, golden.Canon(refused))
+	}
+
+	// Refused: a file that cannot be read as a whole, or whose top-level structure is not what the host reads.
+	for _, c := range []struct{ label, file, text string }{
+		{"a config.toml that is not TOML", config, "[mcp_servers.x\ncommand = \"python3\"\n"},
+		{"mcp_servers that is not a table", config, "mcp_servers = 1\n"},
+		{"a hooks.json that is not JSON", hooks, `{"hooks": `},
+		{"a hooks.json whose root is not an object", hooks, `[]`},
+		{"hooks that is not an object", hooks, `{"hooks": ["x"]}`},
+	} {
+		write(t, c.file, c.text)
+		refused, code := install.Remove(context.Background(), h.options(), old)
+		if code != install.Refused || at(refused, "applied") != false || !strings.Contains(strings.Join(strList(at(refused, "unreadable")), "\n"), c.file) {
+			t.Fatalf("%s: exit %d, want a refusal naming %s\n%s", c.label, code, c.file, golden.Canon(refused))
+		}
+		if _, err := os.Stat(old); err != nil || !listed(h.installsOf(t), old) {
+			t.Fatalf("%s: a refused remove removed the directory or its install entries", c.label)
+		}
+		if err := os.Remove(c.file); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Another program's malformed registrations name nothing of CRW's: the removal goes through.
+	write(t, config, strings.Join([]string{
+		"[mcp_servers.other]\ncommand = \"python3\"\nargs = 42\n",
+		"[mcp_servers.third]\ncommand = 5\n",
+		"[mcp_servers.fourth]\ncommand = \"node\"\nargs = [\"server.js\"]\nenv = { PATH = 1 }\n",
+		"[mcp_servers.codex-thread-bridge]\ncommand = \"" + filepath.Join(selected, "codex-thread-bridge") + "\"\n",
+	}, "\n"))
+	write(t, hooks, `{"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": 42}, {"type": "command", "command": "herdr-session-start --json", "timeout": "10"}]}], "PreToolUse": {"hooks": []}, "Stop": [{"hooks": "true"}]}}`)
+	removed, code := install.Remove(context.Background(), h.options(), old)
+	if code != install.OK || at(removed, "removed") != true {
+		t.Fatalf("malformed registrations that are not CRW's: exit %d\n%s", code, golden.Canon(removed))
+	}
+	if _, err := os.Lstat(old); !os.IsNotExist(err) || listed(h.installsOf(t), old) {
+		t.Fatalf("%s or its install entries remain", old)
+	}
+}
+
 // The directory's install entries are dropped under the host record's lock before the
 // directory is removed, as runtime_install.py's release_candidate drops a candidate's before
 // removing it: a drop that cannot be written (another writer holds the record's lock) refuses

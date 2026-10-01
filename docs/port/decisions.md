@@ -3219,10 +3219,42 @@ destination, spelled literally, resolved, or from `$HOME`, `${HOME}` or `~`. Wha
 not read or judge of an entry that is not CRW's (and the Stop settings such an entry would leave
 unknown) is dropped rather than listed under `unreadable`, so it no longer refuses a removal. The
 rest is unchanged: a path any entry names inside the directory is still found and refuses; a
-`hooks.json` or `config.toml` that cannot be read or parsed, or holds a malformed entry, still
-refuses; the CRW files, the `crw-*.json` records (row 4) and the CRW plugin's cache (row 5), still
-refuse on anything they hold that cannot be judged. `doctor.ScanOptions.Foreign` keeps the dropped
-entries, for the tests of the reading's grammar.
+`hooks.json` or `config.toml` that cannot be read or parsed, or whose top-level structure is not
+what the host reads (`hooks` not an object, `mcp_servers` not a table), still refuses; the CRW
+files, the `crw-*.json` records (row 4) and the CRW plugin's cache (row 5), still refuse on
+anything they hold that cannot be judged. `doctor.ScanOptions.Foreign` keeps the dropped entries,
+for the tests of the reading's grammar.
+
+Amended by CRW-251 (refactor R1, Devin on PR #233): the first version of this decision also kept
+every malformed entry (a hook or MCP server with a field of the wrong type, an event or group that
+is not a list, a server that is not a table), listed unreadable before anyone asked whose it was,
+so another program's `args = 42` still refused a removal that named nothing of CRW's. The
+ownership judgment now applies to such an entry first. The part of it that can be read as a
+well-formed one is judged by the same code, under the entry's own `cwd`, `env` (HOME, CODEX_HOME,
+PATH) and a cached plugin's directory; then `ownsMalformed` reads every string value of the entry
+as a shell line (quotes, `sh -c`, `env`, `exec` and wrapper scripts followed) and as one literal
+program (a path with a space, a bare command on PATH, a relative path against `cwd`, each also with
+a leading `~` or `$HOME` made) and searches it for CRW's names and the destination. The server's
+name counts; a map key is matched by spelling only; a number names nothing; a reading that fails
+reads as CRW's. The entry is listed only when that finds CRW in it, with the Stop settings it would
+leave unknown. An array of tables (`[[mcp_servers.x]]`, or `x = [{...}]`) is judged table by
+table, each with its own `cwd` and `env`, and a table of an array is never the HTTP server whose
+`url` starts nothing. Another program's entry that names nothing of CRW's is dropped, as a
+well-formed one already was.
+
+`crw doctor` is not changed. It reads these files with `ReadRegistrations`, not with this
+reading, and as one document the way Codex accepts it: a server table with `args = 42`, whoever's
+it is, makes Codex refuse the whole `config.toml`, CRW's bridge registration in it included, so
+the doctor reports that registration unreadable; any Stop command of `hooks.json` may be the
+relay's hook, so a Stop command that is not a string is unreadable there, and a hook of another
+event is not read. The doctor asks whether the selected runtime is registered as the host reads it;
+remove asks whether any registration can name the directory it would delete. Dropping a foreign
+entry is right for the second question and wrong for the first.
+
+The classifier opened `<dir>/bin/crw` of any directory it classified without checking that it is
+a regular file, so a FIFO there blocked it forever. A malformed entry's `cwd` can name any
+directory, which made that reachable, so `readHead` and `readLimited` now open without blocking
+and refuse anything but a regular file.
 
 Why: todo 43's removal of the Python runtime directories refused on three registrations that were
 not CRW's and that the reading could not judge (another tool's `SessionStart` hook running
@@ -3234,7 +3266,13 @@ a path it computes itself, which the reading could not have established either.
 Evidence: `internal/runtime/doctor/scan.go` (`shared`, `crwWord`, `crwPath`), `references.go`;
 `TestRegisteredMatchingHoldsARemovalBackOnlyForCRWsRegistrations`,
 `TestRemoveRefusesARuntimeARegistrationStillNames` (fails with the narrowing disabled);
-docs/runtime-install.md "What remove reads".
+docs/runtime-install.md "What remove reads". The amendment: `internal/runtime/doctor/owner.go`
+(`ownsMalformed`), `scan.go` (`server`, `hookCommands`, `configToml`), `executable.go`
+(`openRegular`); `TestRegisteredMatchingHoldsARemovalBackForAMalformedEntryOnlyWhenItCouldBeCRWs`
+(13 foreign cases fail on the version before it), `TestRegisteredMatchingHoldsARemovalBackWhenAFileOrItsStructureCannotBeRead`,
+`TestRemoveIgnoresAMalformedRegistrationThatIsNotCRWs`, `TestClassifyDoesNotOpenAFifoWhereARuntimeBinaryBelongs`
+(blocks on the version before it) and, pinning the doctor,
+`TestDoctorKeepsReadingAnUnrelatedMalformedEntryAsUnreadable`.
 
 ## 69. `crw install hook` drops `--adapter` and `--event`; `--owner` defaults to plugin (refactor R1)
 

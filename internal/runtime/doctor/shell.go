@@ -273,12 +273,15 @@ func (j argvJudge) program(text string) {
 	}
 }
 
+// readingFailed begins the detail of an entry the scan's own reading of it failed on.
+const readingFailed = "this scan's reading of it failed"
+
 // recovered is deferred around the reading of one program or declaration (text): a failure of
 // the scan's own reading of it (a panic) becomes an unreadable entry naming that text, never
 // the end of the scan.
 func (j argvJudge) recovered(text string) {
 	if r := recover(); r != nil {
-		j.unreadable(snippet(text), fmt.Sprintf("this scan's reading of it failed (%v), so what it runs is unknown", r))
+		j.unreadable(snippet(text), fmt.Sprintf(readingFailed+" (%v), so what it runs is unknown", r))
 	}
 }
 
