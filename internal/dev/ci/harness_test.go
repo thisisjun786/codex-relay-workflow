@@ -11,26 +11,19 @@ import (
 	"reflect"
 	"runtime"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
-// crwDev is the crw-dev binary TestMain builds, so parity tests run the real command line.
+// crwDev is the crw-dev binary under test (testsupport.CRWDevPath), so parity tests run the real
+// command line.
 var crwDev string
 
 func TestMain(m *testing.M) {
-	dir, err := os.MkdirTemp("", "crw-dev-test-")
-	if err != nil {
-		panic(err)
-	}
-	crwDev = filepath.Join(dir, "crw-dev")
-	build := exec.Command("go", "build", "-tags", "dev", "-o", crwDev, "./cmd/crw-dev")
-	build.Dir = repoRoot()
-	build.Stderr = os.Stderr
-	if err := build.Run(); err != nil {
-		panic("building crw-dev: " + err.Error())
-	}
-	code := m.Run()
-	os.RemoveAll(dir)
-	os.Exit(code)
+	testsupport.Main(m, func(string) (cleanup func() error, err error) {
+		crwDev, err = testsupport.CRWDevPath()
+		return nil, err
+	})
 }
 
 // repoRoot is the checkout this package sits in.

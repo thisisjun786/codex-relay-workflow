@@ -173,25 +173,8 @@ func f1ReplayCLI(t *testing.T, ctx context.Context, gd string, args []string) ma
 		t.Fatal(e)
 	}
 	defer s.Close()
-	names, e := s.All(ctx, "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
-	if e != nil {
-		t.Fatal(e)
-	}
 	tables := map[string]any{}
-	for _, name := range names {
-		key := text(name, "name")
-		rows, e := s.All(ctx, "SELECT * FROM "+key+" ORDER BY rowid")
-		if e != nil {
-			t.Fatal(e)
-		}
-		entries := []any{}
-		for _, r := range rows {
-			m := map[string]any{}
-			for _, c := range r {
-				m[c.Name] = c.Value
-			}
-			entries = append(entries, m)
-		}
+	for key, entries := range testsupport.TableRows(t, s.DB, "") {
 		raw, e := json.Marshal(entries)
 		if e != nil {
 			t.Fatal(e)
@@ -202,7 +185,8 @@ func f1ReplayCLI(t *testing.T, ctx context.Context, gd string, args []string) ma
 		}
 		if key == "schema_meta" {
 			// The store names its owning runtime: compared as the runtime-neutral owner.
-			got = ownerNeutralRows(t, testsupport.Go, got)
+			rows, _ := got.([]any)
+			testsupport.OwnerNeutralRows(t, rows)
 		}
 		tables[key] = got
 	}

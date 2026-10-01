@@ -12,6 +12,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/faults"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
@@ -22,29 +23,23 @@ type integrationClock struct {
 
 func (c *integrationClock) ISO() string  { return c.stamp }
 func (c *integrationClock) Now() float64 { return c.now }
-func tablesJSON(ctx context.Context, s *store.Store) (string, error) {
-	names, err := s.All(ctx, "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name!='schema_meta' ORDER BY name")
-	if err != nil {
-		return "", err
-	}
+
+// tablesJSON is every table of s but schema_meta and SQLite's own, as the integration goldens
+// spell it.
+func tablesJSON(t *testing.T, s *store.Store) string {
+	t.Helper()
+	return pyjson.Dumps(storeTables(t, s), pyjson.Options{SortKeys: true, Unicode: true})
+}
+
+// storeTables is every table of s but schema_meta and SQLite's own, by name, each a list of its
+// rows in rowid order.
+func storeTables(t *testing.T, s *store.Store) Object {
+	t.Helper()
 	tables := Object{}
-	for _, name := range names {
-		key := text(name.Get("name"))
-		rows, err := s.All(ctx, "SELECT * FROM \""+key+"\" ORDER BY rowid")
-		if err != nil {
-			return "", err
-		}
-		values := []any{}
-		for _, row := range rows {
-			m := Object{}
-			for _, c := range row {
-				m[c.Name] = c.Value
-			}
-			values = append(values, m)
-		}
-		tables[key] = values
+	for name, rows := range testsupport.TableRows(t, s.DB, "name NOT LIKE 'sqlite_%' AND name!='schema_meta'") {
+		tables[name] = rows
 	}
-	return pyjson.Dumps(tables, pyjson.Options{SortKeys: true, Unicode: true}), nil
+	return tables
 }
 
 // retiredLedgerScenarios are the recorded PRD-13 scenarios that ran with the ledger contract
@@ -167,10 +162,7 @@ func integrationReplay(t *testing.T, property string) {
 				wire = pyjson.Dumps(CommandRecord(command, answer), pyjson.Options{})
 			}
 			if record.Tables {
-				tables, err = tablesJSON(ctx, s)
-				if err != nil {
-					t.Fatal(err)
-				}
+				tables = tablesJSON(t, s)
 			}
 		})
 		if !ok {

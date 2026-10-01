@@ -1161,10 +1161,11 @@ stop` of that service is refused by the fence's admission of a Go-owned store
 (`store_owned_by_other`; Go stops its daemon), and after a completed takeover to Python its
 `status`, `stop`, `doctor` and `service start` read the stopped Go records. That value and
 `schema_meta.owner` are the runtime identity, the only values a whole-state comparison of
-stores and process records normalizes (`testsupport.RuntimeIdentity`; `RuntimeIdentityText`
+stores and process records normalizes (`testsupport.OwnerNeutral`; `RuntimeIdentityText`
 for record bytes), and only once each side carries its own: the fence build and `python` from
 the Python side, null and `go` from the Go side. Any other value, the other runtime's
-included, fails the comparison, so a Go record naming the fence build is a difference.
+included, fails the comparison, so a Go record naming the fence build is a difference. (Since
+refactor R2 only the Go side is compared, and the two helpers accept Go's own values alone.)
 A service supervisor opens, and so creates, its store in recovery, as `cli.py` `_supervise`
 does, and publishes the identity it read into both records (`publish_store_identity`): a
 `service run` whose bound is already spent creates no store and records the identity read at

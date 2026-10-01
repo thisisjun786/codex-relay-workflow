@@ -208,22 +208,10 @@ func Test24_SCH_67_LivePacedAtTransport(t *testing.T) {
 	})
 }
 
-type capturePolicyHostSet4 struct {
-	*captureHost57
-	refused bool
-}
-
-func (h *capturePolicyHostSet4) SendMessage(id, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
-	if h.refused {
-		h.refused = false
-		return delivery.Obj{{Key: "status", Value: "failed"}, {Key: "resumed", Value: delivery.Obj{{Key: "approvalPolicy", Value: "untrusted"}}}, {Key: "rpcError", Value: delivery.Obj{{Key: "code", Value: "unsupported_approval_policy"}}}}, nil
-	}
-	return h.captureHost57.SendMessage(id, thread, message, settings)
-}
 func Test24_SCH_74_LivePolicyRefusal(t *testing.T) {
 	supervisorMirror(t, "WhatTheFourteenthIndependentReviewFound.test_a_push_the_recipients_policy_refuses_is_not_sent_and_goes_later", "event", func(c *Channel, s *store.Store) []any {
 		_, id := captureStage57(t, c, s)
-		h := &capturePolicyHostSet4{captureHost57: &captureHost57{&sendHost{status: "idle"}}, refused: true}
+		h := &policyRefusalHost{SendAdapter: &captureHost57{&sendHost{status: "idle"}}, refused: true}
 		answer := captureAttemptSet4(t, c, id, h, 1700000000, 0)
 		reach, err := c.Reach(context.Background(), id)
 		if err != nil {

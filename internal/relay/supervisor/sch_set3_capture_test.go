@@ -334,7 +334,7 @@ func Test24_SCH_52_Capture(t *testing.T) {
 		turn := result["turnId"].(string)
 		values := []any{}
 		for _, start := range []*float64{nil, func() *float64 { v := math.NaN(); return &v }(), func() *float64 { v := math.Inf(1); return &v }(), nil, nil} {
-			host := &invalidTurnStartHost{sendHost: &h.sendHost, started: start}
+			host := &turnStartHost{sendHost: &h.sendHost, started: start}
 			answer, err := c.ReadBack(ctx, id, turn, Proof(id, turn), "", host, 1700000000)
 			if err != nil {
 				t.Fatal(err)
@@ -348,14 +348,7 @@ func Test24_SCH_52_Capture(t *testing.T) {
 type captureSuccessorSet3 struct{ *captureHost4 }
 
 func (h *captureSuccessorSet3) SendMessage(id, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
-	h.sends = append(h.sends, message)
-	h.settings = settings
-	if h.items == nil {
-		h.items = map[string]string{}
-	}
-	turn := "turn-" + thread + "-1"
-	h.items[turn] = message
-	return delivery.Obj{{Key: "status", Value: "accepted"}, {Key: "requestId", Value: id}, {Key: "turnId", Value: turn}}, nil
+	return h.accept(id, "turn-"+thread+"-1", message, settings), nil
 }
 func Test24_SCH_51_Capture(t *testing.T) {
 	supervisorMirror(t, "WhatTheThirdIndependentReviewFound.test_a_handover_after_the_claim_and_before_the_transport_sends_nothing", "event", func(c *Channel, s *store.Store) []any {
@@ -392,12 +385,7 @@ func Test24_SCH_51_Capture(t *testing.T) {
 type unknownHostSet3 struct{ *captureHost4 }
 
 func (h *unknownHostSet3) SendMessage(id, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
-	h.sends = append(h.sends, message)
-	h.settings = settings
-	if h.items == nil {
-		h.items = map[string]string{}
-	}
-	h.items["turn-01supervisor-task-1"] = message
+	h.accept(id, "turn-01supervisor-task-1", message, settings)
 	return delivery.Obj{{Key: "status", Value: delivery.OutcomeUnknown}, {Key: "requestId", Value: id}}, nil
 }
 func Test24_SCH_50_Capture(t *testing.T) {

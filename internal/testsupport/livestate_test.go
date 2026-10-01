@@ -18,7 +18,7 @@ func TestInit_sets_the_live_state_refusal_in_a_test_binary(t *testing.T) {
 // IsolateRelayState keeps the refusal in force even where something cleared it before.
 func TestIsolateRelayState_sets_the_live_state_refusal(t *testing.T) {
 	// Given: every variable the isolation moves is restored after the test, and no refusal is set.
-	for _, key := range []string{"HOME", "XDG_STATE_HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "CODEX_HOME",
+	for _, key := range []string{"HOME", "XDG_STATE_HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "CODEX_HOME",
 		"CODEX_SESSION_RELAY_STATE", "CODEX_SESSION_RELAY_SCOPE_DIR", "CODEX_SESSION_RELAY_MARKER_ROOT",
 		"GOPATH", "GOMODCACHE", "GOCACHE", RefuseLiveStateEnv} {
 		t.Setenv(key, os.Getenv(key))

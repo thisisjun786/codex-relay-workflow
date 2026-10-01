@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // The FC properties of test_fault_contract.py are owned by the tests that compare Go's complete
@@ -315,27 +316,7 @@ func Test22_FC_26_PreIssueSavepointWholeOutput(t *testing.T) {
 // path through the store in gd produced with the golden.
 func fcComparePath(t *testing.T, ctx context.Context, s *store.Store, gd, action, variant string, replies, calls []any) {
 	t.Helper()
-	tables := map[string]any{}
-	names, err := s.All(ctx, "SELECT name FROM sqlite_master WHERE type='table' AND (name LIKE 'fault_%' OR name='journal' OR name LIKE 'supervisor_%') ORDER BY name")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range names {
-		key := text(name, "name")
-		rows, err := s.All(ctx, "SELECT * FROM "+key+" ORDER BY rowid")
-		if err != nil {
-			t.Fatal(err)
-		}
-		entries := []any{}
-		for _, r := range rows {
-			m := map[string]any{}
-			for _, c := range r {
-				m[c.Name] = c.Value
-			}
-			entries = append(entries, m)
-		}
-		tables[key] = entries
-	}
+	tables := testsupport.TableRows(t, s.DB, "name LIKE 'fault_%' OR name='journal' OR name LIKE 'supervisor_%'")
 	gotRaw, err := json.Marshal(map[string]any{"replies": replies, "calls": calls, "tables": tables})
 	if err != nil {
 		t.Fatal(err)

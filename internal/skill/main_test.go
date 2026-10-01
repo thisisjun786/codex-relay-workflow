@@ -1,22 +1,12 @@
 package skill
 
 import (
-	"fmt"
-	"os"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
-// TestMain removes the crw the tests may have built (testsupport.CRW), once per package run.
-func TestMain(m *testing.M) {
-	code := m.Run()
-	if err := testsupport.RemoveCRW(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		code = 1
-	}
-	os.Exit(code)
-}
+func TestMain(m *testing.M) { testsupport.Main(m) }
 
 // recordedCRW is the crw under test for a test whose goldens name its temporary directories by
 // number. Each such test built its own crw into its first t.TempDir when its answers were first

@@ -33,7 +33,7 @@ func TestOpen_preserves_python_database_when_reopened(t *testing.T) {
 	// Given: a committed database made by the real Python Store.
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "relay.sqlite3")
-	fixture, err := os.ReadFile(filepath.Join(repositoryRoot(t), "contract/fixtures/sqlite-ddl/python-store.sqlite3"))
+	fixture, err := testsupport.FrozenStore()
 	if err != nil {
 		t.Fatal(err)
 	}

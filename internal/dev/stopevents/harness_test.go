@@ -6,7 +6,6 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -29,14 +28,7 @@ import (
 // three Stops of one turn, the second and third with byte-identical payloads. A guard peer on the
 // host's control.sock stands in for the relay and answers every request it is asked.
 
-func TestMain(m *testing.M) {
-	code := m.Run()
-	if err := testsupport.RemoveCRW(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		code = 1
-	}
-	os.Exit(code)
-}
+func TestMain(m *testing.M) { testsupport.Main(m) }
 
 func repositoryRoot() string {
 	root, _ := filepath.Abs("../../..")

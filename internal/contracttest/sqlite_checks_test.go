@@ -239,7 +239,7 @@ func sqlitePeer(mode, path string) int {
 // copySQLiteFixture writes the committed Python store (contract/fixtures/sqlite-ddl) to path.
 func copySQLiteFixture(t *testing.T, path string) {
 	t.Helper()
-	fixture, err := os.ReadFile(filepath.Join(RootMust(t), "contract/fixtures/sqlite-ddl/python-store.sqlite3"))
+	fixture, err := testsupport.FrozenStore()
 	if err != nil {
 		t.Fatal(err)
 	}

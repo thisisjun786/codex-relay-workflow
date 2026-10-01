@@ -221,6 +221,3 @@ func decodeNumbers(raw []byte, out any) error {
 	decoder.UseNumber()
 	return decoder.Decode(out)
 }
-
-// quoted is a SQL identifier.
-func quoted(name string) string { return `"` + strings.ReplaceAll(name, `"`, `""`) + `"` }

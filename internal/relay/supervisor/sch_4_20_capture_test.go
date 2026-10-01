@@ -64,30 +64,14 @@ func (h *captureHost4) FindToken(thread, token string, limit int, all bool) (del
 	return h.sendHost.FindToken(thread, token, limit, all)
 }
 func (h *captureHost4) ReadTurn(_ string, id string) (*delivery.TurnInfo, error) {
-	if h.turns != nil {
-		if at, ok := h.turns[id]; ok {
-			return &delivery.TurnInfo{TurnID: id, StartedAt: &at}, nil
-		}
-		return nil, nil
-	}
-	if id != "turn-01supervisor-task-1" {
-		return nil, nil
-	}
-	at := float64(1700000000)
-	return &delivery.TurnInfo{TurnID: id, StartedAt: &at}, nil
+	return h.knownTurn(id, "turn-01supervisor-task-1", 1700000000)
 }
 func (h *captureHost4) SendMessage(id, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
-	h.sends = append(h.sends, message)
-	h.settings = settings
-	if h.items == nil {
-		h.items = map[string]string{}
-	}
 	turn := "turn-01supervisor-task-1"
 	if h.steered {
 		turn = "turn-01supervisor-task-2"
 	}
-	h.items[turn] = message
-	return delivery.Obj{{Key: "status", Value: "accepted"}, {Key: "requestId", Value: id}, {Key: "turnId", Value: turn}}, nil
+	return h.accept(id, turn, message, settings), nil
 }
 func captureSend4(t *testing.T, c *Channel, s *store.Store, h *captureHost4) (string, map[string]any) {
 	t.Helper()

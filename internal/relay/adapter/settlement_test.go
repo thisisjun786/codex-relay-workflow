@@ -52,7 +52,7 @@ func allTables(t *testing.T, s *store.Store) map[string]any {
 	}
 	tables := map[string]any{}
 	for _, name := range names {
-		rows, err := s.Querier(ctx).QueryContext(ctx, `SELECT * FROM "`+name+`" ORDER BY rowid`)
+		rows, err := s.Querier(ctx).QueryContext(ctx, "SELECT * FROM "+testsupport.QuoteIdent(name)+" ORDER BY rowid")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -136,7 +136,7 @@ func Test28_BAD_14_ShutdownSettlesClaimedDelivery(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := map[string]any{"result": plain(result), "tables": allTables(t, s)}
-	ownerNeutral(t, testsupport.Go, got["tables"])
+	ownerNeutral(t, got["tables"])
 	actual, _ := json.Marshal(got)
 	var settled any
 	if err := decodeNumbers(actual, &settled); err != nil {

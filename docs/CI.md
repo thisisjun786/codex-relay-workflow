@@ -32,7 +32,11 @@ selecting the rest by changed paths saved little and put a job before every othe
 `validate`, `secrets` and the `go-product` legs start at once and run on separate runners.
 `make test` builds one `crw` for the run (`dist/test/crw`, release-shaped with `-trimpath`) and
 passes it as `CRW_TEST_BINARY`, so no package links its own; `internal/testsupport` `CRW` builds
-one per test process when the variable is unset. The Makefile names the slowest packages as parts
+one per test process when the variable is unset, and `CRWDevPath` and `BuildCRW` build `crw-dev` and
+the seam builds a few tests need (a link-time clock, a build tag, an overlay) the same way. Every
+package's `TestMain` is `testsupport.Main`, which points the homes, the XDG directories and the
+relay's roots at one temporary tree, keeps `CRW_REFUSE_LIVE_STATE=1`, and removes the tree and every
+binary the process built after the tests. The Makefile names the slowest packages as parts
 and `rest` takes every other package plus the `dev`-tagged tests, so the parts are disjoint, add
 up to `make test`, and a new package lands in `rest`; a renamed package makes its part fail in
 `go list`, never skip. The `dist` leg builds the release binaries, then runs the isolated-home

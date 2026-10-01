@@ -33,32 +33,44 @@ func (h *sendHost) ListTurnIDs(string, int) ([]any, error) {
 	return []any{"turn-supervisor-1"}, nil
 }
 func (h *sendHost) ReadTurn(_ string, id string) (*delivery.TurnInfo, error) {
+	return h.knownTurn(id, "turn-supervisor-1", 1_700_000_001)
+}
+
+// knownTurn reads turn id on a host that knows one turn, known, started at start; with turns set,
+// the host knows the turns that map names instead.
+func (h *sendHost) knownTurn(id, known string, start float64) (*delivery.TurnInfo, error) {
 	if h.turns != nil {
 		if at, ok := h.turns[id]; ok {
 			return &delivery.TurnInfo{TurnID: id, StartedAt: &at}, nil
 		}
 		return nil, nil
 	}
-	at := float64(1_700_000_001)
-	if id != "turn-supervisor-1" {
+	if id != known {
 		return nil, nil
 	}
-	return &delivery.TurnInfo{TurnID: id, StartedAt: &at}, nil
+	return &delivery.TurnInfo{TurnID: id, StartedAt: &start}, nil
 }
 func (h *sendHost) SendMessage(id, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
 	if h.beforeSend != nil {
 		h.beforeSend()
 	}
+	receipt := h.accept(id, "turn-supervisor-1", message, settings)
+	if h.outcome == "unknown" {
+		return nil, errors.New("transport outcome unknown")
+	}
+	return receipt, nil
+}
+
+// accept records a send the host accepted as turn - the message, the settings it was sent with
+// and the turn's transcript item - and returns the receipt of an accepted send.
+func (h *sendHost) accept(id, turn, message string, settings *delivery.TaskSettings) delivery.Obj {
 	h.sends = append(h.sends, message)
 	h.settings = settings
 	if h.items == nil {
 		h.items = map[string]string{}
 	}
-	h.items["turn-supervisor-1"] = message
-	if h.outcome == "unknown" {
-		return nil, errors.New("transport outcome unknown")
-	}
-	return delivery.Obj{{Key: "status", Value: "accepted"}, {Key: "requestId", Value: id}, {Key: "turnId", Value: "turn-supervisor-1"}}, nil
+	h.items[turn] = message
+	return delivery.Obj{{Key: "status", Value: "accepted"}, {Key: "requestId", Value: id}, {Key: "turnId", Value: turn}}
 }
 func (h *sendHost) GetOperation(string) (delivery.Obj, error) { return nil, nil }
 func (h *sendHost) FindToken(_ string, token string, _ int, _ bool) (delivery.TokenScan, error) {

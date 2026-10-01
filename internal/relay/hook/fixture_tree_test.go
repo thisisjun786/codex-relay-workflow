@@ -23,6 +23,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
@@ -253,9 +254,9 @@ func sqliteRows(path string) (string, []string, error) {
 		}
 		quoted := make([]string, len(columns))
 		for i, column := range columns {
-			quoted[i] = "quote(" + sqlName(column) + ")"
+			quoted[i] = "quote(" + testsupport.QuoteIdent(column) + ")"
 		}
-		result, err := db.Query("SELECT 'INSERT INTO " + strings.ReplaceAll(sqlName(table), "'", "''") + " VALUES(' || " + strings.Join(quoted, " || ',' || ") + " || ')' FROM " + sqlName(table))
+		result, err := db.Query("SELECT 'INSERT INTO " + strings.ReplaceAll(testsupport.QuoteIdent(table), "'", "''") + " VALUES(' || " + strings.Join(quoted, " || ',' || ") + " || ')' FROM " + testsupport.QuoteIdent(table))
 		if err != nil {
 			return "", nil, err
 		}
@@ -273,8 +274,6 @@ func sqliteRows(path string) (string, []string, error) {
 	}
 	return schema, rows, nil
 }
-
-func sqlName(name string) string { return `"` + strings.ReplaceAll(name, `"`, `""`) + `"` }
 
 // sqliteSchema is the digest of a database's schema and its tables, by name.
 func sqliteSchema(db *sql.DB) (string, []string, error) {
@@ -313,12 +312,6 @@ func sqliteColumns(db *sql.DB, table string) ([]string, error) {
 		columns = append(columns, name)
 	}
 	return columns, result.Err()
-}
-
-// frozenStore is the frozen Python-produced empty store (contract/fixtures/sqlite-ddl), whose
-// schema a restored database takes before its rows are inserted.
-func frozenStore() string {
-	return filepath.Join(testRoot, "contract", "fixtures", "sqlite-ddl", "python-store.sqlite3")
 }
 
 // restoreTree lays a fixture tree out under root.
@@ -394,7 +387,7 @@ func restoreTree(t *testing.T, root string, tree map[string]fixtureEntry) error 
 // restoreDatabase writes the frozen empty store at path and inserts the fixture's rows. The
 // schema must be the one the rows were read from.
 func restoreDatabase(path string, entry fixtureEntry) error {
-	raw, err := os.ReadFile(frozenStore())
+	raw, err := os.ReadFile(testsupport.FrozenStorePath())
 	if err != nil {
 		return err
 	}
@@ -418,7 +411,7 @@ func restoreDatabase(path string, entry fixtureEntry) error {
 		return err
 	}
 	for _, table := range tables {
-		if _, err = tx.Exec("DELETE FROM " + sqlName(table)); err != nil {
+		if _, err = tx.Exec("DELETE FROM " + testsupport.QuoteIdent(table)); err != nil {
 			_ = tx.Rollback()
 			return err
 		}
