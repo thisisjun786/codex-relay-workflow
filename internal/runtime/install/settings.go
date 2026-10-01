@@ -171,7 +171,7 @@ func settingsWrite(ctx context.Context, path string, wanted Object, apply bool) 
 			field("repair", "rerun to decide against the file as it now stands"))
 	}
 	if err := writeSettings(path, record.Encode(wanted)); err != nil {
-		return append(record.Set(answer, "outcome", ConfigNotWritten), field("detail", "the settings could not be written, so the file stands as it was found: "+store.PythonOSError(err)))
+		return append(record.Set(answer, "outcome", ConfigNotWritten), field("detail", "the settings could not be written, so the file stands as it was found: "+err.Error()))
 	}
 	readBack := readsBackAs(path, wanted)
 	answer = append(record.Set(record.Set(answer, "applied", true), "wrote", true), field("readBack", readBack))

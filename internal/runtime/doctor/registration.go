@@ -14,9 +14,7 @@ import (
 	"github.com/BurntSushi/toml"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pluginwiring"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/definition"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
@@ -194,7 +192,7 @@ func (j judge) stopHooks(into *componentRegistrations, path string) {
 	}
 	byEvent, ok := events.(Object)
 	if !ok {
-		shape("hooks", "hooks is "+pyvalue.TypeName(events)+", not an object")
+		shape("hooks", "hooks is "+reading.JSONKind(events)+", not an object")
 		return
 	}
 	stop, present := record.Lookup(byEvent, "Stop")
@@ -203,14 +201,14 @@ func (j judge) stopHooks(into *componentRegistrations, path string) {
 	}
 	groups, ok := stop.([]any)
 	if !ok {
-		shape("hooks.Stop", "hooks.Stop is "+pyvalue.TypeName(stop)+", not a list")
+		shape("hooks.Stop", "hooks.Stop is "+reading.JSONKind(stop)+", not a list")
 		return
 	}
 	for g, raw := range groups {
 		groupField := fmt.Sprintf("hooks.Stop[%d]", g)
 		group, ok := raw.(Object)
 		if !ok {
-			shape(groupField, groupField+" is "+pyvalue.TypeName(raw)+", not an object")
+			shape(groupField, groupField+" is "+reading.JSONKind(raw)+", not an object")
 			continue
 		}
 		entries, present := record.Lookup(group, "hooks")
@@ -219,14 +217,14 @@ func (j judge) stopHooks(into *componentRegistrations, path string) {
 		}
 		list, ok := entries.([]any)
 		if !ok {
-			shape(groupField+".hooks", groupField+".hooks is "+pyvalue.TypeName(entries)+", not a list")
+			shape(groupField+".hooks", groupField+".hooks is "+reading.JSONKind(entries)+", not a list")
 			continue
 		}
 		for h, raw := range list {
 			field := fmt.Sprintf("%s.hooks[%d]", groupField, h)
 			entry, ok := raw.(Object)
 			if !ok {
-				shape(field, field+" is "+pyvalue.TypeName(raw)+", not an object")
+				shape(field, field+" is "+reading.JSONKind(raw)+", not an object")
 				continue
 			}
 			command, present := record.Lookup(entry, "command")
@@ -235,7 +233,7 @@ func (j judge) stopHooks(into *componentRegistrations, path string) {
 			}
 			text, ok := command.(string)
 			if !ok {
-				shape(field+".command", field+".command is "+pyvalue.TypeName(command)+", not a string")
+				shape(field+".command", field+".command is "+reading.JSONKind(command)+", not a string")
 				continue
 			}
 			j.stopCommand(into, path, field+".command", text)
@@ -317,19 +315,19 @@ func (j judge) pluginBridge(into *componentRegistrations, path string, document 
 	}
 	read := pluginwiring.ReadBridgeRecord(document)
 	if read.Version == 0 {
-		refuse("recordVersion", "it is version "+pyvalue.Repr(read.VersionValue)+", and the launcher reads versions 1 and 2")
+		refuse("recordVersion", "it is version "+reading.Show(read.VersionValue)+", and the launcher reads versions 1 and 2")
 		return
 	}
 	if read.ServerName != nil && read.ServerName != definition.Bridge {
-		refuse("serverName", "it names the server "+pyvalue.Repr(read.ServerName)+", and the package declares '"+definition.Bridge+"'")
+		refuse("serverName", "it names the server "+reading.Show(read.ServerName)+", and the package declares '"+definition.Bridge+"'")
 		return
 	}
 	if !read.IsString || !filepath.IsAbs(read.Executable) {
-		refuse("bridgeExecutable", "it must name bridgeExecutable as an absolute path, found "+pyvalue.Repr(read.ExecutableValue))
+		refuse("bridgeExecutable", "it must name bridgeExecutable as an absolute path, found "+reading.Show(read.ExecutableValue))
 		return
 	}
 	if !read.ArgsOK {
-		refuse("args", "it must list args as strings, found "+pyvalue.Repr(read.ArgsValue))
+		refuse("args", "it must list args as strings, found "+reading.Show(read.ArgsValue))
 		return
 	}
 	switch {
@@ -356,7 +354,7 @@ func (j judge) policy(into *componentRegistrations, path string, reference any, 
 	}
 	file := policy.File.Text
 	if !policy.File.OK() {
-		refuse("executionPolicy.path", "it must name the execution policy as an absolute path with no surrounding whitespace or control characters, found "+pyvalue.Repr(policy.File.Value))
+		refuse("executionPolicy.path", "it must name the execution policy as an absolute path with no surrounding whitespace or control characters, found "+reading.Show(policy.File.Value))
 		return false
 	}
 	if !policy.DigestOK {
@@ -370,7 +368,7 @@ func (j judge) policy(into *componentRegistrations, path string, reference any, 
 	var opening *os.PathError
 	switch {
 	case !encodable:
-		refuse("executionPolicy.path", "it names an execution policy path this system cannot encode, found "+pyvalue.Repr(file))
+		refuse("executionPolicy.path", "it names an execution policy path this system cannot encode, found "+reading.Show(file))
 		return false
 	case errors.As(err, &opening) && (errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOTDIR)):
 		refuse("executionPolicy.path", "the execution policy "+file+" does not exist")
@@ -379,7 +377,7 @@ func (j judge) policy(into *componentRegistrations, path string, reference any, 
 		refuse("executionPolicy.path", "the execution policy "+file+" is not a regular file")
 		return false
 	case err != nil:
-		into.unreadable(entry, nil, "the execution policy "+file+" the bridge record "+path+" names", store.PythonOSError(err))
+		into.unreadable(entry, nil, "the execution policy "+file+" the bridge record "+path+" names", err.Error())
 		return false
 	case actual != policy.Digest:
 		refuse("executionPolicy.digest", "the execution policy at "+file+" now hashes to "+actual+", and the record was written when it hashed to "+policy.Digest)
@@ -415,7 +413,7 @@ func (j judge) codexConfig(into *componentRegistrations, path string) {
 	}
 	servers, ok := raw.(map[string]any)
 	if !ok {
-		malformed("mcp_servers", "mcp_servers is a table of servers, found "+tomlType(raw))
+		malformed("mcp_servers", "mcp_servers is a table of servers, found "+TOMLKind(raw))
 		return
 	}
 	names := make([]string, 0, len(servers))
@@ -426,18 +424,18 @@ func (j judge) codexConfig(into *componentRegistrations, path string) {
 	for _, name := range names {
 		table, ok := servers[name].(map[string]any)
 		if !ok {
-			malformed("mcp_servers."+name, "the registration for "+pyvalue.Repr(name)+" is a table, found "+tomlType(servers[name]))
+			malformed("mcp_servers."+name, "the registration for "+reading.Show(name)+" is a table, found "+TOMLKind(servers[name]))
 			return
 		}
 		if command, present := table["command"]; present {
 			if _, ok := command.(string); !ok {
-				malformed("mcp_servers."+name+".command", pyvalue.Repr(name)+" has a command that is not a string, it is "+tomlType(command))
+				malformed("mcp_servers."+name+".command", reading.Show(name)+" has a command that is not a string, it is "+TOMLKind(command))
 				return
 			}
 		}
 		if args, present := table["args"]; present {
 			if _, ok := tomlStrings(args); !ok {
-				malformed("mcp_servers."+name+".args", pyvalue.Repr(name)+" has args that are not a list of strings, they are "+tomlType(args))
+				malformed("mcp_servers."+name+".args", reading.Show(name)+" has args that are not a list of strings, they are "+TOMLKind(args))
 				return
 			}
 		}
@@ -525,30 +523,30 @@ func tomlStrings(v any) ([]string, bool) {
 	return out, true
 }
 
-// tomlType is type(value).__name__ of what tomllib decodes for a TOML value.
-func tomlType(v any) string {
+// TOMLKind is a decoded TOML value's kind, as a message names it.
+func TOMLKind(v any) string {
 	switch t := v.(type) {
 	case string:
-		return "str"
+		return "a string"
 	case int64:
-		return "int"
+		return "an integer"
 	case float64:
-		return "float"
+		return "a float"
 	case bool:
-		return "bool"
+		return "a boolean"
 	case []any, []map[string]any:
-		return "list"
+		return "an array"
 	case map[string]any:
-		return "dict"
+		return "a table"
 	case time.Time:
 		// The decoder marks a local date or time by its location's name.
 		switch t.Location().String() {
 		case "date-local":
-			return "date"
+			return "a local date"
 		case "time-local":
-			return "time"
+			return "a local time"
 		}
-		return "datetime"
+		return "a datetime"
 	}
 	return fmt.Sprintf("%T", v)
 }

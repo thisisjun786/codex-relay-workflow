@@ -25,8 +25,6 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/definition"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/exercise"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/ownership"
@@ -212,7 +210,7 @@ func Runtime(pointerPath, from string, rec Object) Object {
 	}
 	unusable := []any{}
 	if present && !isObject {
-		unusable = append(unusable, "selected is "+pyvalue.TypeName(raw)+", not an object")
+		unusable = append(unusable, "selected is "+reading.JSONKind(raw)+", not an object")
 	}
 	for _, c := range definition.Components {
 		value, ok := record.Lookup(selected, c.Name)
@@ -221,7 +219,7 @@ func Runtime(pointerPath, from string, rec Object) Object {
 		case !ok:
 			unusable = append(unusable, c.Name+": no selection is recorded")
 		case !isString:
-			unusable = append(unusable, c.Name+": the selection is "+pyvalue.TypeName(value)+", not a path")
+			unusable = append(unusable, c.Name+": the selection is "+reading.JSONKind(value)+", not a path")
 		case location == "":
 			unusable = append(unusable, c.Name+": the selection is empty")
 		case !filepath.IsAbs(location):
@@ -295,12 +293,12 @@ func Runtime(pointerPath, from string, rec Object) Object {
 	}...)
 }
 
-// pointerEntryAbout is record.PointerEntryFor with both paths read through Path(), as the
-// Python diagnosis reads the recorded pointer: "/d/current/" and "/d/current" are one link.
+// pointerEntryAbout is record.PointerEntryFor with both paths read in their lexical form:
+// "/d/current/" and "/d/current" are one link.
 func pointerEntryAbout(entry any, path string) Object {
 	o, ok := entry.(Object)
 	recorded, _ := record.Get(o, "path").(string)
-	if ok && recorded != "" && store.PathlibSpelling(recorded) == store.PathlibSpelling(path) {
+	if ok && recorded != "" && reading.Spelling(recorded) == reading.Spelling(path) {
 		return o
 	}
 	return nil
@@ -348,7 +346,7 @@ func ReadSettings(codexHome, name string, keys []string, pointerPath string) Obj
 func jsonObject(what string) func(any) error {
 	return func(value any) error {
 		if _, ok := value.(Object); !ok {
-			return reading.Fail("ValueError", what+" is "+pyvalue.TypeName(value)+", not a JSON object")
+			return reading.Fail("ValueError", what+" is "+reading.JSONKind(value)+", not a JSON object")
 		}
 		return nil
 	}
@@ -435,7 +433,7 @@ func classifyGo(c definition.Component, target string, rec Object, recordUsable 
 				matches := recorded == digest
 				signals.DigestMatches = &matches
 			} else {
-				signals.Unreadable = append(signals.Unreadable, "the recorded binaryDigest of the Go install entry at "+location+" (found "+pyvalue.Repr(record.Get(install, "binaryDigest"))+")")
+				signals.Unreadable = append(signals.Unreadable, "the recorded binaryDigest of the Go install entry at "+location+" (found "+reading.Show(record.Get(install, "binaryDigest"))+")")
 			}
 		}
 	}
@@ -477,9 +475,9 @@ func classifyGo(c definition.Component, target string, rec Object, recordUsable 
 	// classification.
 	switch agrees := record.Get(pointerRead, "agrees"); {
 	case agrees == false:
-		signals.PointerConflict = "the owned pointer names " + scope.PyStr(record.Get(pointerRead, "target")) + ", which does not contain the runtime this host record selects, so the command a host reaches is not the one that was promoted"
+		signals.PointerConflict = "the owned pointer names " + reading.Text(record.Get(pointerRead, "target")) + ", which does not contain the runtime this host record selects, so the command a host reaches is not the one that was promoted"
 	case agrees == nil && recordUsable:
-		signals.Unreadable = append(signals.Unreadable, "whether the owned pointer "+scope.PyStr(record.Get(pointerRead, "target"))+" contains the runtime this host record selects ("+strings.Join(anyStrings(record.Get(pointerRead, "unusableSelections")), "; ")+")")
+		signals.Unreadable = append(signals.Unreadable, "whether the owned pointer "+reading.Text(record.Get(pointerRead, "target"))+" contains the runtime this host record selects ("+strings.Join(anyStrings(record.Get(pointerRead, "unusableSelections")), "; ")+")")
 	}
 	registered := registrations.of(c.Name)
 	signals.RegistrationConflict = strings.Join(registered.conflicts, "; ")
@@ -675,9 +673,9 @@ func Diagnose(ctx context.Context, o Options) Object {
 		unreadableDestination = append(unreadableDestination, "the host record's pointer path is not absolute ("+owned+"), so it names no link this command can read and no destination it can survey")
 		owned, from = "", "none"
 	case owned != "":
-		// Path(owned_pointer): a trailing '/' would make lstat follow the link, and the
-		// residue survey would take the pointer itself for its directory.
-		owned = store.PathlibSpelling(owned)
+		// A trailing '/' would make lstat follow the link, and the residue survey would take
+		// the pointer itself for its directory.
+		owned = reading.Spelling(owned)
 	case destination != "":
 		owned, from = pointer.Path(destination), "dest"
 	case o.Destination == nil:
@@ -739,7 +737,7 @@ func Diagnose(ctx context.Context, o Options) Object {
 		switch {
 		case selected == KindGoRuntime && target != "":
 			one = classifyGo(c, target, rec, host.Usable(), runtime, seen, registrations)
-			classes = append(classes, scope.PyStr(record.Get(one, "class")))
+			classes = append(classes, reading.Text(record.Get(one, "class")))
 		default:
 			one = Object{{Key: "component", Value: c.Name}, {Key: "class", Value: nil}, {Key: "reason", Value: "the pointer selects no runtime this command can classify"}}
 		}
@@ -786,7 +784,7 @@ func Diagnose(ctx context.Context, o Options) Object {
 		if _, err := os.Stat(candidate); err == nil {
 			relayExecutable = candidate
 		} else {
-			unreachable = "the selected runtime's relay " + candidate + " could not be reached (" + store.PythonOSError(err) + "), so no scope reading was made"
+			unreachable = "the selected runtime's relay " + candidate + " could not be reached (" + err.Error() + "), so no scope reading was made"
 		}
 	}
 	var summary Object
@@ -825,7 +823,7 @@ func Diagnose(ctx context.Context, o Options) Object {
 	fields := map[string]Object{
 		"installed":  installed,
 		"mcpExposed": field("not_verified", "the doctor's own session with the bridge is not Codex's: only a Codex session can show which tools it exposes, and a configuration entry alone never establishes this field.", nil, measured),
-		"connected": field(connectedValue, "doctor actorReachability.socketConnect = "+pyRepr(connect)+". A socket file existing on disk does not establish this.",
+		"connected": field(connectedValue, "doctor actorReachability.socketConnect = "+reading.Show(connect)+". A socket file existing on disk does not establish this.",
 			pyjson.Dumps(record.Get(summary, "scopeCommand"), pyjson.Options{}), connectedAt),
 		"deliveryAccepted":     field("not_applicable", "no trial was requested. This field requires an attempt that recorded a returned turn id, which means creating work, and this command creates none.", nil, ""),
 		"verificationComplete": field("not_applicable", "OPS-6.4 is a property of a verdict at a head, not of an installation. This command observes no verdict and never infers one from a completed turn or a green check.", nil, ""),
@@ -901,13 +899,4 @@ func allOwn(classes []string) bool {
 		}
 	}
 	return true
-}
-
-// pyRepr is repr() of the socketConnect a relay reported: a str is evidence.StrRepr (Python's
-// quote choice and its escapes), anything else as scope.PyStr spells it (None, a bool, a number).
-func pyRepr(v any) string {
-	if s, ok := v.(string); ok {
-		return pyvalue.StrRepr(s)
-	}
-	return scope.PyStr(v)
 }

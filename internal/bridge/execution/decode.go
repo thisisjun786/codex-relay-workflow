@@ -1,6 +1,7 @@
 package execution
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -82,38 +83,21 @@ type syntaxError struct{ detail string }
 
 func (e *syntaxError) Error() string { return e.detail }
 
-// isBlank is Python's `not value.strip()`.
+// isBlank is a value with nothing but white space in it (Python's `not value.strip()`, which
+// the policy's acceptance keeps).
 func isBlank(s string) bool { return pyvalue.Strip(s) == "" }
 
-// repr renders the Python repr() of the values the policy's messages quote.
+// repr is a value the policy's messages quote: a string Go-quoted, so a lone surrogate the
+// policy holds stays visible and two such names stay apart, anything else as its JSON text.
 func repr(value any) string {
-	switch v := value.(type) {
-	case nil:
-		return "None"
-	case string:
-		// settings.Repr: Python's quote choice and its escapes of every character
-		// str.isprintable() refuses, a lone surrogate included.
-		return pyvalue.StrRepr(v)
-	case []string:
-		parts := make([]string, len(v))
-		for i, s := range v {
-			parts[i] = repr(s)
-		}
-		return "[" + strings.Join(parts, ", ") + "]"
-	case bool:
-		if v {
-			return "True"
-		}
-		return "False"
-	case json.Number:
-		return v.String()
-	case []any:
-		parts := make([]string, len(v))
-		for i, s := range v {
-			parts[i] = repr(s)
-		}
-		return "[" + strings.Join(parts, ", ") + "]"
-	default:
-		return strconv.Quote(fmt.Sprint(v))
+	if s, ok := value.(string); ok {
+		return strconv.Quote(s)
 	}
+	var out bytes.Buffer
+	encoder := json.NewEncoder(&out)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(value); err != nil {
+		return fmt.Sprint(value)
+	}
+	return strings.TrimSuffix(out.String(), "\n")
 }

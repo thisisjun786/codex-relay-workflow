@@ -24,8 +24,6 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/definition"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/exercise"
@@ -171,7 +169,7 @@ func Install(ctx context.Context, o Options, command string, source Source) (Obj
 		var r *refusal
 		detail := err.Error()
 		if !errors.As(err, &r) {
-			detail = "the archive could not be resolved: " + store.PythonOSError(err)
+			detail = "the archive could not be resolved: " + err.Error()
 		}
 		return refusedResult(command, detail, "nothing was unpacked and nothing under the destination or in the host record was created or changed.")
 	}
@@ -261,7 +259,7 @@ func (r *run) take(rec Object) (Object, int, string) {
 		case staging.Adopt:
 			cleared := staging.ClearOwn(r.environment)
 			if err := os.Remove(r.environment); err != nil {
-				result, code := refusedResult(r.command, "the empty staging directory could not be taken over: "+store.PythonOSError(err), "nothing else was written.", append(standing, field("residualPaths", []any{r.environment}))...)
+				result, code := refusedResult(r.command, "the empty staging directory could not be taken over: "+err.Error(), "nothing else was written.", append(standing, field("residualPaths", []any{r.environment}))...)
 				return result, code, ""
 			}
 			r.step("take over an empty staging directory", true, field("detail", why), field("clearedOwnFiles", strs(cleared)))
@@ -270,18 +268,18 @@ func (r *run) take(rec Object) (Object, int, string) {
 			return result, code, ""
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
-		result, code := refusedResult(r.command, "whether "+r.environment+" exists could not be established: "+store.PythonOSError(err), "nothing was written.")
+		result, code := refusedResult(r.command, "whether "+r.environment+" exists could not be established: "+err.Error(), "nothing was written.")
 		return result, code, ""
 	}
 	held, err := staging.Create(r.environment, r.o.Issue, strconv.Itoa(os.Getpid()))
 	var notOwned *staging.NotOwned
 	if errors.As(err, &notOwned) {
-		result, code := refusedResult(r.command, "the runtime directory could not be created by this run: "+store.PythonOSError(notOwned.Err), "an existing runtime directory is never overwritten, and a run only removes a directory it created itself. Nothing was written to the host record.", field("environment", r.environment))
+		result, code := refusedResult(r.command, "the runtime directory could not be created by this run: "+notOwned.Err.Error(), "an existing runtime directory is never overwritten, and a run only removes a directory it created itself. Nothing was written to the host record.", field("environment", r.environment))
 		return result, code, ""
 	}
 	r.owned, r.held = true, held
 	if err != nil {
-		r.step("claim the runtime directory", false, field("detail", store.PythonOSError(err)))
+		r.step("claim the runtime directory", false, field("detail", err.Error()))
 		result, code := r.failed("claim the runtime directory", failure{})
 		held.Release()
 		return result, code, ""
@@ -321,7 +319,7 @@ func (r *run) installed(standing []contract.Field) (Object, int, string) {
 		for _, c := range definition.Components {
 			location, _ := record.Get(selected, c.Name).(string)
 			if location == "" || !record.Under(location, r.environment) {
-				elsewhere = append(elsewhere, c.Name+" selects "+pyvalue.Repr(record.Get(selected, c.Name)))
+				elsewhere = append(elsewhere, c.Name+" selects "+reading.Show(record.Get(selected, c.Name)))
 			}
 		}
 		return refuse("this runtime is installed and the owned pointer names it, but the host record selects only part of it ("+strings.Join(elsewhere, "; ")+"), so reporting it as installed would hide a split host",
@@ -393,7 +391,7 @@ func (r *run) reclaim(standing []contract.Field) (Object, int, bool) {
 	}
 	defer exclusive.Release()
 	if says, readable := claimSays(r.environment); !readable || says != staging.Staging {
-		return keep("the claim here changed while this run waited for the promotion lock (it now says "+pyvalue.Repr(says)+"), so it is not read as abandoned staging", "nothing was removed, built or written; rerun to decide on what is there now.")
+		return keep("the claim here changed while this run waited for the promotion lock (it now says "+reading.Show(says)+"), so it is not read as abandoned staging", "nothing was removed, built or written; rerun to decide on what is there now.")
 	}
 	if liveness, detail := staging.OwnerLiveness(r.environment); liveness != staging.Dead {
 		return keep("another run took this staging while this run waited: "+detail, "nothing was removed, built or written.")
@@ -405,7 +403,7 @@ func (r *run) reclaim(standing []contract.Field) (Object, int, bool) {
 	rec := fresh.Value.(Object)
 	d, err := identify(r.o.Dest, filepath.Base(r.environment))
 	if err != nil {
-		return keep("the destination "+r.o.Dest+" could not be read: "+store.PythonOSError(err), "nothing was removed, built or written.")
+		return keep("the destination "+r.o.Dest+" could not be read: "+err.Error(), "nothing was removed, built or written.")
 	}
 	if u := selectedOrPointed(rec, r.o.Dest, d); u != nil {
 		return keep("this staging's run is gone, but it is not abandoned: "+u.detail, "nothing was removed, built or written.", u.fields()...)
@@ -438,10 +436,10 @@ func (r *run) reclaim(standing []contract.Field) (Object, int, bool) {
 		return keep("the abandoned staging is not removed: "+err.Error(), "nothing was removed, built or written.", field("tombstone", filepath.Join(r.o.Dest, tombstonePrefix+filepath.Base(r.environment))))
 	}
 	if !free {
-		return keep("the abandoned staging could not be removed: "+store.PythonOSError(err), "nothing else was written.", field("residualPaths", []any{r.environment}))
+		return keep("the abandoned staging could not be removed: "+err.Error(), "nothing else was written.", field("residualPaths", []any{r.environment}))
 	}
 	if residue != "" {
-		r.step("delete the abandoned staging's tombstone", false, field("detail", store.PythonOSError(err)), field("residualPaths", []any{residue}),
+		r.step("delete the abandoned staging's tombstone", false, field("detail", err.Error()), field("residualPaths", []any{residue}),
 			field("recoveryRequires", "crw install remove "+residue+" finishes it"))
 	}
 	return nil, 0, true
@@ -485,7 +483,7 @@ func (r *run) build() (Object, int) {
 	binary := filepath.Join(r.environment, "bin", Binary)
 	digest, err := record.FileDigest(binary)
 	if err != nil {
-		r.step("read the installed binary's digest", false, field("detail", store.PythonOSError(err)))
+		r.step("read the installed binary's digest", false, field("detail", err.Error()))
 		return r.failed("read the installed binary's digest", failure{})
 	}
 	r.step("unpack the archive", true, field("bin", filepath.Join(r.environment, "bin")), field("binaryDigest", digest))
@@ -556,7 +554,7 @@ func (r *run) measure(installs Object, digest string) (Object, []record.Named) {
 	for _, op := range operations {
 		var words []string
 		for _, word := range record.Get(op.(Object), "command").([]any) {
-			words = append(words, scope.PyStr(word))
+			words = append(words, reading.Text(word))
 		}
 		methods = append(methods, strings.Join(words, " "))
 	}
@@ -901,7 +899,7 @@ func (r *run) failed(step string, cause failure) (Object, int) {
 			err = os.RemoveAll(r.environment)
 		}
 		if err != nil {
-			cleanupError = store.PythonOSError(err)
+			cleanupError = err.Error()
 		}
 		_, err = os.Lstat(r.environment)
 		removed = errors.Is(err, os.ErrNotExist)
@@ -1005,7 +1003,7 @@ func restorePointer(o Options, path string, before pointer.Answer, environment s
 		settled = true
 		wanted = ownedBefore
 		if err := pointer.Place(path, before.Target); err != nil {
-			residual, detail = path, "the previous target could not be put back: "+store.PythonOSError(err)
+			residual, detail = path, "the previous target could not be put back: "+err.Error()
 			break
 		}
 		names := pointer.Names(path, before.Target)

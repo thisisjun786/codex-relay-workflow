@@ -27,7 +27,7 @@ func TestRun_help_and_version_exit_like_the_python_clis(t *testing.T) {
 		{[]string{"version"}, 0, version, ""},
 		{[]string{"--version"}, 0, version, ""},
 		{nil, 2, "", "the following arguments are required: command"},
-		{[]string{"bogus"}, 2, "", "invalid choice: 'bogus'"},
+		{[]string{"bogus"}, 2, "", `invalid choice: "bogus"`},
 		{[]string{"relay"}, 2, "", "the following arguments are required: command"},
 	} {
 		var stdout, stderr bytes.Buffer
@@ -98,7 +98,7 @@ func TestRun_doctor_dispatches_to_the_host_doctor(t *testing.T) {
 
 func TestRun_install_dispatches_to_the_installer(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	if code := run(context.Background(), "crw", []string{"install", "unpack"}, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "crw install: error: argument command: invalid choice: 'unpack'") {
+	if code := run(context.Background(), "crw", []string{"install", "unpack"}, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), `crw install: error: argument command: invalid choice: "unpack"`) {
 		t.Fatalf("an unknown install command: code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
 	stdout.Reset()

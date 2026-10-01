@@ -40,8 +40,10 @@ func (h *host) runRegistrationCases(t *testing.T, cases []registrationCase) {
 			if at(report, "components", "codex-session-relay", "class") != c.relay || at(report, "components", "codex-thread-bridge", "class") != c.bridgeClass {
 				t.Fatalf("want relay %s, bridge %s\nrelay %s\nbridge %s", c.relay, c.bridgeClass, relay, bridge)
 			}
+			// A reason quoting a value spells it as JSON, whose quotes the canonical report escapes.
+			reasons := strings.ReplaceAll(relay+bridge, `\"`, `"`)
 			for _, want := range c.want {
-				if !strings.Contains(relay+bridge, want) {
+				if !strings.Contains(reasons, want) {
 					t.Errorf("no reason names %q:\nrelay %s\nbridge %s", want, relay, bridge)
 				}
 			}
@@ -131,11 +133,11 @@ func TestDoctorJudgesTheBridgeRecordAsTheLauncherAcceptsIt(t *testing.T) {
 	}
 	cases := []registrationCase{
 		refused("version 3", bridge(map[string]any{"recordVersion": 3}), "it is version 3, and the launcher reads versions 1 and 2"),
-		refused("no version", bridge(map[string]any{"recordVersion": nil}), "it is version None"),
+		refused("no version", bridge(map[string]any{"recordVersion": nil}), "it is version null"),
 		refused("args that are a string", bridge(map[string]any{"args": "--x"}), "it must list args as strings"),
 		refused("args holding a number", bridge(map[string]any{"args": []any{"bridge", 5}}), "it must list args as strings"),
 		refused("args that are an object", bridge(map[string]any{"args": map[string]any{"a": 1}}), "it must list args as strings"),
-		refused("another server name", bridge(map[string]any{"serverName": "other"}), "it names the server 'other'"),
+		refused("another server name", bridge(map[string]any{"serverName": "other"}), `it names the server "other"`),
 		refused("a version-1 record naming a policy", bridge(map[string]any{"executionPolicy": map[string]any{"path": policy, "digest": digest}}), "it is version 1 and names an execution policy"),
 		refused("a version-2 record naming no policy", bridge(map[string]any{"recordVersion": 2}), "must name executionPolicy as an object with exactly digest and path"),
 		refused("a policy with another key", v2(map[string]any{"path": policy, "digest": digest, "extra": 1}), "exactly digest and path"),
@@ -174,11 +176,11 @@ func TestDoctorReadsTheCodexConfigurationWhole(t *testing.T) {
 	h.runRegistrationCases(t, []registrationCase{
 		{name: "a good table", stop: goodStop, bridge: goodBridge, config: good, relay: "own", bridgeClass: "own"},
 		unreadable("args that are a string", "[mcp_servers.codex-thread-bridge]\ncommand = \""+filepath.Join(h.current(), "bin", "codex-thread-bridge")+"\"\nargs = \"--x\"\n",
-			"'codex-thread-bridge' has args that are not a list of strings, they are str"),
-		unreadable("mcp_servers that is not a table", "mcp_servers = 1\n", "mcp_servers is a table of servers, found int"),
-		unreadable("another server that is not a table", "[mcp_servers]\nother = \"x\"\n\n"+good, "the registration for 'other' is a table, found str"),
-		unreadable("another server's args", good+"\n[mcp_servers.other]\ncommand = \"x\"\nargs = 5\n", "'other' has args that are not a list of strings, they are int"),
-		unreadable("another server's command", good+"\n[mcp_servers.other]\ncommand = 5\n", "'other' has a command that is not a string, it is int"),
+			`"codex-thread-bridge" has args that are not a list of strings, they are a string`),
+		unreadable("mcp_servers that is not a table", "mcp_servers = 1\n", "mcp_servers is a table of servers, found an integer"),
+		unreadable("another server that is not a table", "[mcp_servers]\nother = \"x\"\n\n"+good, `the registration for "other" is a table, found a string`),
+		unreadable("another server's args", good+"\n[mcp_servers.other]\ncommand = \"x\"\nargs = 5\n", `"other" has args that are not a list of strings, they are an integer`),
+		unreadable("another server's command", good+"\n[mcp_servers.other]\ncommand = 5\n", `"other" has a command that is not a string, it is an integer`),
 	})
 }
 
@@ -257,7 +259,7 @@ func TestDoctorJudgesTheStopCommandsInHooksJSON(t *testing.T) {
 		{name: "the hook handed to an interpreter", stop: userStop, bridge: goodBridge, hooks: hooks("/usr/bin/python3 " + filepath.Join(current, "crw") + " hook"), relay: "conflict", bridgeClass: "own",
 			want: []string{"to /usr/bin/python3 as an argument"}},
 		{name: "an expansion the grammar does not make", stop: userStop, bridge: goodBridge, hooks: hooks("$RUNTIME/bin/crw hook"), relay: "unreadable", bridgeClass: "own",
-			want: []string{`it holds \"$RUNTIME/bin/crw\", which this scan cannot judge, so whether it starts the relay's hook cannot be told`}},
+			want: []string{`it holds "$RUNTIME/bin/crw", which this scan cannot judge, so whether it starts the relay's hook cannot be told`}},
 		{name: "a construct outside the grammar", stop: userStop, bridge: goodBridge, hooks: hooks("if true; then " + filepath.Join(current, "crw") + " hook; fi"), relay: "unreadable", bridgeClass: "own",
 			want: []string{"which this scan cannot judge"}},
 		{name: "the selected hook through exec", stop: userStop, bridge: goodBridge, hooks: hooks("exec " + filepath.Join(current, "crw") + " hook"), relay: "own", bridgeClass: "own"},
@@ -266,7 +268,7 @@ func TestDoctorJudgesTheStopCommandsInHooksJSON(t *testing.T) {
 		{name: "a script that may run the hook itself", stop: userStop, bridge: goodBridge, hooks: hooks(script), relay: "unreadable", bridgeClass: "own",
 			want: []string{"a script that may run the adapter with settings of its own"}},
 		{name: "a hooks.json that is not JSON", stop: userStop, bridge: goodBridge, hooks: `{"hooks": `, relay: "unreadable", bridgeClass: "own", want: []string{"hooks.json " + filepath.Join(h.codex, "hooks.json")}},
-		{name: "a Stop list that is not a list", stop: userStop, bridge: goodBridge, hooks: `{"hooks": {"Stop": {"hooks": []}}}`, relay: "unreadable", bridgeClass: "own", want: []string{"hooks.Stop is dict, not a list"}},
+		{name: "a Stop list that is not a list", stop: userStop, bridge: goodBridge, hooks: `{"hooks": {"Stop": {"hooks": []}}}`, relay: "unreadable", bridgeClass: "own", want: []string{"hooks.Stop is an object, not a list"}},
 		{name: "an old runtime's hook beside a plugin owner", stop: encodeJSON(t, h.stopSettings(t, nil)), bridge: goodBridge, hooks: hooks(filepath.Join(old, "bin", "crw-completion-hook")), relay: "conflict", bridgeClass: "own",
 			want: []string{filepath.Join(old, "bin", "crw")}},
 	}

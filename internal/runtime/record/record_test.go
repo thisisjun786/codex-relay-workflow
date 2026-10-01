@@ -194,7 +194,7 @@ func TestUpdateNeverReplacesAnUnreadableRecord(t *testing.T) {
 
 // Each record in the fixture shape-inputs.json is refused, or accepted, as the golden says
 // (which began as hostrecord.shape's answer).
-func TestShapeRefusesWhatPythonRefuses(t *testing.T) {
+func TestShapeRefusals(t *testing.T) {
 	for _, f := range fixtureObject(t, "shape-inputs.json") {
 		refusal := any(nil)
 		if err := record.Shape(f.Value); err != nil {

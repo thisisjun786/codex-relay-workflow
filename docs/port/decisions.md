@@ -1378,7 +1378,7 @@ Why: the port follows properties, not interpreter internals. Frames name
 checkout paths and Python line numbers that change with any edit and with the
 installation location, so they cannot be a stable contract.
 
-Evidence: 148 of the 2061 cases in `TestSkillJSONShapeLivePython`
+Evidence: 148 of the 2061 cases in `TestSkillJSONShapeLivePython` (`TestSkillJSONShape` since refactor R3)
 (`internal/skill/shape_matrix_test.go`) end in an uncaught Python exception and
 differ from Go only in traceback frames;
 `.omo/evidence/task-35-devin2-exception-matrix.json` lists them with matching
@@ -1404,7 +1404,7 @@ keeps one deterministic behaviour and the oracle is pinned to it. The pin change
 no Python output for valid input.
 
 Evidence: `oracleEnv` in `internal/skill/process_parity_test.go`;
-`TestSkillUnreadableInputsLivePython` passes under outer `LC_ALL=C`, `LC_ALL=C.UTF-8`
+`TestSkillUnreadableInputsLivePython` (`TestSkillUnreadableInputs` since refactor R3) passes under outer `LC_ALL=C`, `LC_ALL=C.UTF-8`
 and `LANG=en_US.UTF-8`, and fails under outer `LC_ALL=C` without the pin.
 
 ## 32. Native hook allocations bound waiting, not scheduling
@@ -2635,7 +2635,7 @@ Evidence: `internal/relay/service/takeover.go` (`NoPythonCandidate`, `Preflight`
 Decision: `internal/bridge/settings/generate`, the `go generate` program that ran `python3 -c` to
 read `str.isprintable()` of every code point under CPython 3.14's Unicode database (16.0.0) into
 `printable_generated.go`, is deleted with the `//go:generate` line. The generated table is kept as
-committed and is not regenerated: `TestPrintableIsCPython314sIsprintable` compares it with a
+committed and is not regenerated: `TestPrintableIsCPython314sIsprintable` (`TestPrintableIsTheFrozenTable` since refactor R3) compares it with a
 golden that began as that interpreter's answer.
 
 Why: the table's source of truth is the Python bridge's behaviour, which is frozen with the
@@ -3267,8 +3267,9 @@ unchanged), needs every other job, runs `if: always()`, and passes only when eve
 reports `success`; it still fails a pull request whose base is `main`. The job results reach its
 shell step as a file the step's own script writes from `toJSON(needs)`, never as an environment
 variable. The `tests` job, which ran the CI checks' Python twins' own tests, is removed too: its
-release cases are Go tests (R1D1), and the twins that stay (`plugin.py`, `validate.py`) are
-compared with their Go checks by `internal/dev/ci` in `make test` until todo 48. The dist leg's
+release cases are Go tests (R1D1), and the twins that stayed (`plugin.py`, `validate.py`) were
+compared with their Go checks by `internal/dev/ci` in `make test` until refactor R3 deleted them
+(decision R3R-1). The dist leg's
 second `crw-dev ci plugin` run is removed; the validate job runs it once.
 
 Why: the Go product legs, the longest, always ran whatever changed, so path selection only ever
@@ -3597,3 +3598,310 @@ service/policy.go (`ResolveLaunchPolicyAt`); internal/relay/store/registration_h
 `TestAnUnknownRequestFieldIsNamed` (internal/relay/managed/request_refusal_test.go, which was
 `TestAnUnknownRequestFieldIsNamedAsPythonReprsIt`); the goldens of
 internal/relay/{managed,service,sync}.
+
+## R3R-1. The CI checks read JSON, paths, URLs and flags the Go way; their Python twins are deleted (refactor R3)
+
+Decision: `crw-dev ci plugin`, `validate`, `operations` and `contracts` no longer reproduce
+CPython. What goes: the json.loads/json.dumps emulation of `internal/dev/ci` (`pyjson.go`,
+`pyjsondecode.go`, `pyvalue.go`: NaN and Infinity literals, Python dict order, int/float/bool
+equality, repr of values, CPython's JSONDecodeError and UnicodeDecodeError texts), the
+`urllib.parse.urlsplit` emulation (`urlsplit.go`: NFKC netloc and bracketed-host ValueErrors), the
+`os.path.realpath`, `str.isspace`, `str.splitlines` and Unicode `\d`/`\b` emulation, the
+CalledProcessError and `[Errno N]` texts, and the argparse-shaped option parser (unique prefixes).
+The checks decode with encoding/json (numbers as json.Number, so an integer timeout and a
+fraction stay apart; a nesting cap of encoding/json's own), resolve paths with
+`filepath.EvalSymlinks`, judge an https URL with `net/url`, split lines on `\n` (and `\r\n`), use
+ASCII `\d`, `\s` and `\b`, and parse flags with the standard `flag` package (`-h` lists every
+flag; a usage error exits 2). Messages name values as `%q` or compact JSON instead of repr. The
+Python twins `scripts/ci/plugin.py`, `scripts/ci/validate.py` and
+`scripts/check_operations_contract.py` are deleted with the parity tests that ran them; the tests
+now assert the Go check's own fragments and exits, and goldens hold the payload digests of fixed
+payloads and the `--payload --json` report. `scripts/dev/ALLOWED_PYTHON.txt` keeps the three port
+checkers.
+
+Consumer check: `git grep` of `plugins/crw/skills`, `docs/`, `contract/`, `.github/` and the
+Makefile for `crw-dev ci`, `plugin.py`, `validate.py` and `check_operations_contract`: CI's
+validate job runs `crw-dev ci validate|plugin|contracts` and reads only the exit status; nothing
+ran the twins outside `internal/dev/ci`'s tests; docs/plugin-packaging.md reads `stopHooks` and
+`hooksDigest` out of `crw-dev ci plugin --payload <dir> --json` with
+`sed -nE 's/^  "<field>": (.*[^,]),?$/\1/p'`, one top-level member per line two spaces in.
+
+What stays and why: the payload digest's framing (`<len>:<name> <mode> <sha256>` lines in name
+order, sha256) and the version elision, because the manifest records the digest's first twelve
+digits as its version suffix (`plugins/crw/.codex-plugin/plugin.json`); the recorded version of
+this checkout still verifies. The `--json` report keeps its field names, its sorted keys and its
+two-space indentation, which the doc's `field()` reads; it is byte-identical to the Python
+twin's for this checkout. `crw-dev ci validate`'s Python syntax check stays while the port
+checkers (`scripts/port/*.py`) remain, so CI's validate job keeps its Python setup.
+`scripts/port/check_test_map.py`, `check_inventory.py` and `check_cutover_doc.py` stay: each port
+step's verification runs the first two with `--final`, and they keep docs/port honest until todo
+48.
+
+Evidence: internal/dev/ci/{common.go,json.go,plugin.go,validate.go,operations.go};
+internal/dev/ci/plugin_test.go (`Test47_PLG_11_DigestIsFramedAndCoversMode`,
+`Test47_PLG_18_JSONReport`), validate_test.go, ci_test.go (`TestACheckListsItsFlags`);
+docs/port/inventory.md (Files deleted with evidence); scripts/dev/ALLOWED_PYTHON.txt.
+
+## R3R-2. The development judges read records to a fixed depth and times as RFC 3339 (refactor R3)
+
+Decision: `crw-dev stop-events` and `crw-dev trial-ledger` stop modelling CPython where the
+model was only Python's own wording. What goes: `internal/dev/pyload`'s model of the
+interpreter's stack edge (a `RecursionError` with CPython's message, raised past 57,900
+containers and turned into a reader fault or "this run raised before it could report"), its
+CPython JSONDecodeError and UnicodeDecodeError texts and its 4300-digit integer refusal; and
+`internal/dev/trialledger/isoformat.go`, a port of CPython 3.14's `datetime.fromisoformat`
+(separator rules, week dates, hour 24, `timedelta` repr in its refusals). A record nested past
+`pyload.MaxNesting` is a record the judge could not read, like any other undecodable one, and a
+decode refusal is in encoding/json's words; the trial ledger reads a time with `time.Parse` as
+RFC 3339 and refuses one that names no offset as before. The trial ledger's read failures name
+the system's error (`lstat <path>: permission denied`) instead of `PermissionError: [Errno 13]`.
+
+Consumer check: `git grep` of `plugins/crw/skills`, `docs/`, `contract/` and the product for
+`stop-events`, `trial-ledger`, `readerFault` and the judges' refusal texts: no skill, hook, doc
+command or product code runs the judges or reads their output; they are developer tools whose
+JSON a person reads.
+
+What stays and why: the depth itself (57,900, past encoding/json's 10,000) and the reading of
+NaN, the infinities, lone surrogate escapes and repeated keys, because the judges read stored
+records (journal rows, host ledgers, trial ledgers) that the Python writers wrote and a reader
+of stored data keeps accepting what an earlier writer wrote. The verdicts, exits and field names
+of both judges are unchanged. Their remaining Python emulation is decided in R3R-7.
+
+Evidence: internal/dev/pyload/pyload.go (`MaxNesting`, `Loads`) and pyload_test.go;
+internal/dev/trialledger/moment.go (`parseMoment`), fs.go (`failure`), ledger_test.go
+(`TestParseMomentReadsRFC3339`, `TestLedgerReadsRecordsAsDeepAsAWriterWrote`);
+internal/dev/stopevents/stopevents_test.go (`TestSEV12_OnDiskFormIsTheWriters`);
+docs/port/known-defects.md.
+
+## R3R-3. `crw skill` parses flags with Go's flag package and words its refusals the Go way (refactor R3)
+
+Decision: the `crw skill` commands (`hook-probe`, `parent-title`, `start-policy`) stop
+emulating the Python scripts they were ported from where only Python's own bytes were
+reproduced. What goes: the argparse emulation (`internal/skill/argparse.go` and the argparse help
+texts in `help_text.go`, with the stale program names `hook_probe.py`, `parent_title.py` and
+`start_policy.py`, unique-prefix abbreviation and repr() of a refused argument); `pySorted`
+(`pysort.go`, CPython's TimSort replayed comparison by comparison so the first unorderable pair
+raised the same `TypeError` and a NaN landed where CPython left it); the Python exception
+vocabulary (`AttributeError: 'list' object has no attribute 'get'`, `TypeError: ... is not
+iterable`, `unhashable type`, `UnicodeDecodeError`, `json.decoder.JSONDecodeError`); CPython's
+`[Errno N]` texts with repr() of a pathlib-spelled path; repr() of values in replay and host
+messages; and the U+2028/U+2029 unescaping of `parent-title`'s JSON. Each command now reads its
+flags with the flag package (`crw skill <family> <command> -h` lists every flag; a usage error
+exits 2); values sort by Go comparison of numbers, strings and arrays and a pair that cannot be
+ordered is refused; a refusal names the JSON kind it found (`expected a JSON object, found an
+array`), the system's error (`open <path>: no such file or directory`) or encoding/json's; and a
+message names a value as JSON. The fixtures, observations and requests decode with
+`pyjson.Loads` under explicit options rather than `hook.Decode`, so the relay hook's input
+decoding can change without moving the skills.
+
+Consumer check: `git grep` of `plugins/crw/skills`, `docs/` and `contract/` for `crw skill`,
+`hook-probe`, `parent-title` and `start-policy`: the skills run `hook-probe observe --sanitize`,
+`hook-probe replay`, `parent-title decide`/`replay` and `start-policy vocabulary`/`check`/
+`selftest` with fixed argv, read `parent-title decide`'s JSON fields and the exit codes, and copy
+`start-policy vocabulary`'s lines; `crw-dev ci contracts` runs the replays and the self-test in
+process and reads their exit and summary lines. None reads a refusal's prose.
+
+What stays and why: every exit code (0, 1, 2 and 3 for an unreadable file), every JSON field and
+summary line, the decision table and its return sites, the record values (NaN, the infinities
+and a lone surrogate escape still decode, because a committed fixture holds `"\ud800"`), and
+Python's truthiness and equality where the decision reads a field (`pyvalue.Truthy`,
+`pyvalue.ItemEqual`), because those decide verdicts, not wording. Three inputs answer otherwise:
+a trailing `--` after a command that takes no argument now ends its flags (exit 0) where argparse
+refused it (exit 2); and `hook-probe observe` reads the schemas a binary embeds as JSON, so one
+holding NaN or Infinity is not a schema (exit 3, "No embedded hook schemas found", where Python
+read it) and one holding an integer longer than 4300 digits is (Python refused it, exit 3).
+
+Evidence: internal/skill/command.go (`family`, `commandLine`), values.go (`decodeJSON`,
+`sortValues`, `notObject`); internal/skill/command_test.go (`TestSkillCommandLine`,
+`TestSkillDoubleDashPassesOptionLikePositionals`); the goldens of `TestSkillJSONShape` and the
+other renamed command tests; docs/port/known-defects.md.
+
+## R3R-4. The runtime's messages name a failure in Go's words and a value as JSON (refactor R3)
+
+Decision: `crw install`, `crw doctor` and the runtime packages under `internal/runtime` stop
+spelling a failure or a value as CPython did. What goes: CPython's OSError text
+(`store.PythonOSError`: `PermissionError: [Errno 13] Permission denied: '/x'`) and SQLite error
+text (`store.PythonSQLiteError`) in every detail, refusal and unreadable entry; Python type names
+(`found list`, `found NoneType`, `TOML ... it is str`) and repr() of values (`'other'`, `None`,
+`True`) in messages; `scope.PyStr` and `staging.repr`, Python's str() and repr() of decoded
+values; subprocess's `TimeoutExpired: Command '[...]' timed out after N seconds`; and the
+pathlib spellings the runtime compared paths by (`store.PathlibSpelling`). A failure is named by
+the Go error's own text (`lstat /x: permission denied`), a value by its JSON text
+(`reading.Show`), a kind by `reading.JSONKind` (`an array`, `null`) or `doctor.TOMLKind`, and a
+path is compared in a lexical form that drops repeated separators, "." and a trailing separator
+and keeps ".." (`reading.Spelling`). The record reader (`reading.Decode`) decodes with
+`pyjson.Loads` alone, its refusal in encoding/json's words, rather than first scanning with
+CPython's JSONDecodeError texts. `crw install` keeps refusing a HOME that holds ".." or starts
+with exactly two slashes, now said without pathlib.
+
+Consumer check: `git grep` of `plugins/crw/skills`, `docs/`, `contract/` and the product for the
+replaced words (`Errno`, `PermissionError`, `FileNotFoundError`, `TimeoutExpired`, `found str`,
+`NoneType`): no skill, doc command or product code reads a detail's prose; docs/runtime-install.md
+documents the four reading states, which are unchanged. `crw doctor declared-schema --json`, which
+another runtime's swap gate reads, keeps its fields; its `detail` is prose.
+
+What stays and why: every field, state, verdict and exit code; a reading refusal's `exception`
+field keeps its vocabulary (`FileNotFoundError`, `PermissionError`, `NotADirectoryError`,
+`OSError`, `UnicodeDecodeError`, `JSONDecodeError`, `TypeError`, `ValueError`), because a reader of
+the doctor's JSON may branch on it; the host record's bytes (`record.Encode`, json.dumps with
+indent 2 and sorted keys), a measured point's `appServer` (json.dumps of the structured content,
+compared across runs), the bridge record's execution policy path (absolute without folding "..",
+surrogate-escaped) and the Stop settings, because they are stored and compared; and Python's
+truthiness and equality where a decision reads a field.
+
+Evidence: internal/runtime/reading/{reading.go,value.go} (`classOf`, `Decode`, `JSONKind`,
+`Show`, `Text`, `Spelling`); internal/runtime/doctor/registration.go (`TOMLKind`);
+internal/runtime/install/cli.go (`fixedHome`); internal/runtime/scope/scope_test.go
+(`TestARelayTheDeadlineEndedIsUnreadable`); the goldens of `TestShapeRefusals`,
+`TestServiceStateReadings` and `TestCellsAndVerdicts`.
+
+## R3R-5. The bridge's MCP server is the SDK's outside the frozen tool listing; its messages name values the Go way (refactor R3)
+
+Decision: `crw bridge` (`codex-thread-bridge`) stops reproducing FastMCP and pydantic on the
+wire and CPython in its messages. What goes: `pythonWire` (FastMCP's initialize capabilities
+bytes and member order, its empty prompts/resources/templates lists, its answers to
+`logging/setLevel`, `completion/complete`, `prompts/get` and `resources/read`), `pythonTransport`
+(the MCP 1.30.0 low-level server's validation of every message: "Invalid request parameters" for a
+method outside ClientRequest, the `notifications/message` log for non-object params, dropped
+unknown notifications, the bare "Method not found"), pydantic's lax argument reading
+(`preParseArguments`: a JSON-shaped string decoded for a non-str field; `laxNumber`: a bool as 0
+or 1, underscores in numbers) and its refusal text (`N validation errors for <tool>Arguments`,
+`Input should be a valid ...`), CPython's OSError text in receipts, tool errors and policy refusals
+(`bridge/pyerr`), and repr() of values in findings, refusals and the policy's messages. The SDK
+answers every method outside tools/list and tools/call, a call's arguments are judged against the
+frozen input schema by the bridge's own checker, which names every problem in field order (`invalid
+arguments for <tool>: model is required; limit must be an integer`) so a refusal reads the same
+every time, and a value is named as Go quotes a string (`"x y"`, a lone surrogate's bytes
+visible) or as JSON. A receipt's error is the innermost error's type name and the Go error's text
+(`OpError: dial unix ...: connect: no such file or directory`).
+
+Consumer check: `git grep` of `plugins/crw/skills`, `docs/`, `contract/` and the relay for the
+MCP surface: the skills read tool results and their structured fields, the `isError` flag and the
+refusal codes (`execution_not_allowed` and the rest); contract/fixtures/mcp-tools checks errors,
+codes and fields; `internal/contracttest` holds tools/list to contract/schema/bridge-mcp-tools.json
+member for member (names, order, annotations, schemas, no extra member) and expects an unknown tool
+to be an error result. The relay reads a receipt's fields, never its error's prose. crw-run's
+bridge.md says a missing `turn_id` is a validation error, which it still is.
+
+What stays and why: the tool names, input and output schemas, annotations and instructions; the
+tools/list reply as the frozen contract has it (registration order, no idempotentHint, "tools" its
+only member: `frozenToolsList`); an unknown tool answered as an error result (`unknownTool`), which
+the contract corpus expects; every structured field and refusal code; a number field reading a
+string that holds the number ("5"), which a model writing a call sends and the bridge always
+accepted; the indented JSON text content beside the structured content; the execution policy's
+acceptance (its codec handling, duplicate-key refusal, depth and constants), because a host's
+policy file must keep loading; the ledger's request fingerprint (`ledger/canonical.go`) and the
+bridge record format; `bridge/settings.Printable`, frozen since decision 49, which `settings.Repr`
+and through it `pyvalue.StrRepr` use across the relay; and `bridge/pyerr`, which
+`internal/relay/registry` still calls.
+
+Evidence: internal/bridge/mcp/middleware.go (`frozenToolsList`, `unknownTool`,
+`checkedArguments`, `numberText`); internal/bridge/mcp/{wire_test.go,validate_test.go}
+(`Test_tools_list_is_the_frozen_listing`, `Test_a_refused_argument_is_an_error_result_the_same_way_every_time`,
+`Test_a_number_written_as_a_string_is_read_as_the_number`); internal/bridge/{bridge.go,show.go},
+execution/{decode.go,load.go}; internal/contracttest (`Test_a_live_tools_list_from_the_built_binary_equals_the_frozen_contract`,
+`Test_every_mcp_reply_equals_the_python_servers_whole_json`).
+
+## R3R-6. The bridge launcher names what it refuses the Go way (refactor R3)
+
+Decision: `codex-thread-bridge --plugin-launch` (`internal/pluginwiring`, the record contract of
+decision 26) keeps every check crw_bridge_mcp.py made, in its order, and stops wording them as
+CPython did. What goes: repr() of the values a refusal names (`'user'`, `None`, `'1'`); CPython's
+OSError text (`[Errno 2] No such file or directory: '<path>'`) and its UnicodeDecodeError and
+JSONDecodeError texts for an unreadable record; `sys.stderr`'s backslash escaping of a lone
+surrogate; and `pathlib.PurePosixPath`'s "//" root in the Codex home's spelling. A string is
+named as Go quotes it, any other value as JSON, a failure in the Go error's words (`open <path>:
+no such file or directory`), the record is decoded through `reading.Decode` (the runtime's reader
+of stored records) instead of the relay hook's decoder, and the home is spelled by
+`reading.Spelling`. The five launcher cases that only pinned repr()'s escapes (an owner holding a
+no-break space, a zero-width space, private-use characters or a lone surrogate, a server name
+holding a Mongolian vowel separator) are deleted.
+
+Consumer check: `git grep` of `plugins/crw/skills`, `docs/` and `contract/` for the launcher's
+refusals: the wiring (`wiring/crw-bridge.sh`) reads only its exit; docs/plugin-packaging.md and
+docs/runtime-install.md name the refusals' meaning, not their text; the doctor and the installer
+read a record through `ReadBridgeRecord` and word their own findings.
+
+What stays and why: every check and its order, exit 2 for a refusal, the record versions 1 and 2
+and their fields, a stored recordVersion read as the Python writer compared it (True is 1, 1.0
+is 1), a surrogate-escaped path or argument turned back into its byte (the Python installer
+recorded a byte that is not UTF-8 that way), the policy digest, and the stripping of the policy
+variable, which the bridge applies the same way.
+
+Evidence: internal/pluginwiring/{launch.go,record.go}; internal/pluginwiring/launch_test.go
+(`TestBridgeLaunch_answers_each_record_as_the_golden`,
+`TestBridgeLaunch_refuses_a_record_no_exec_could_start`).
+
+## R3R-7. The development judges fault, expand and name failures the Go way (refactor R3)
+
+Decision: `crw-dev stop-events`, `crw-dev trial-ledger` and `crw-dev skills link` stop modelling
+CPython's exceptions and pathlib. What goes from stop-events: the dict-key `TypeError` a value
+that is an array or object raised (a legacy row naming its session by an array, an outcome or
+acceptance that is not text) and the reader fault it made; such a row is now counted or judged
+like any other (a legacy row is still UNREADABLE, an unknown acceptance a row the writer never
+writes). The `RuntimeError: Could not determine home directory.` and getcwd's
+`FileNotFoundError` reader faults are the Go error's text (`cannot expand "~": ...`, `cannot make
+"rel" absolute: getwd: no such file or directory`). A root or host ledger that cannot be
+examined is detailed by the Go error (`stat <path>: permission denied`) instead of CPython's
+OSError and repr(), and a NUL in a path is the system's refusal instead of Python's `embedded
+null byte`. `pathlib.Path()`'s spelling before `expanduser` goes: a ~ is expanded only where it
+leads the path given, so "./~" and ".//~/x" name a directory called ~, and a path given on the
+command line is cleaned with `filepath.Clean` (a leading "//" is "/"). The `$`-before-a-newline
+match of Python's regular expressions goes: a file name ending in a newline is a foreign entry.
+From trial-ledger: the Python exception class of "this run raised before it could report"
+(`exception` is now "panic", `detail` the panic's value), which only a Go panic reaches. From
+skills link: `store.PathlibSpelling`; the destination drops repeated separators and "."
+components and keeps "..", without POSIX's "//" root.
+
+Consumer check: as R3R-2, `git grep` of `plugins/crw/skills`, `docs/`, `contract/` and the
+product for `stop-events`, `trial-ledger`, `readerFault`, `exception` and the faults' texts: the
+judges' JSON is read by a person (docs/runtime-install.md keeps it as a receipt, and names only
+the verdict and the exits); `crw-dev skills link`'s lines are read by a person.
+
+What stays and why: every verdict, exit and field, and the reading order that lets a reading
+that cannot finish report what it reached. The surrogate-escape spelling of a path (`shown`,
+`pyvalue.FSEncode`/`FSDecode`), because the adapter's records spell a byte that is not UTF-8 that
+way and a ledger a claim names is matched by that spelling; `normpath`'s "//" for a recorded path,
+which is checked against the form its writers gave it; `record.ExpandUser`'s HOME rules, the
+runtime's. Trial-ledger's grade document keeps `str.splitlines`, the non-strict
+`os.path.realpath` containment and the `Path()` spelling of the trial root and the ledger,
+because docs/live-trial.md promises a grade that compares byte for byte with a Python-era grade
+of the same trial, and they decide which lines and paths that document names. Both judges keep
+reading their command lines with internal/relay/argparse, which R3C owns.
+
+Evidence: internal/dev/stopevents/{judge.go,shape.go,stopevents.go} and stopevents_test.go
+(`TestSEV08_LedgerIntegrity`: "a root that cannot be examined is named in the error's own
+words", "a root is read where its expanded absolute path is", "a ~ is expanded only where it
+leads the path"; `TestSEV09_RowIntegrity`: "a legacy row naming its session by an array is
+counted, never TRUE"); internal/dev/trialledger/ledger.go; internal/dev/skills/link.go.
+
+## R3R-8. The last Python words in the runtime's and the bridge's messages (refactor R3)
+
+Decision: the messages R3R-4 and R3R-5 left in CPython's words take Go's. What goes: the App
+Server client's `JSONDecodeError: ` in the transport failure a frame that is not JSON causes
+(now `App Server transport failed: a frame is not JSON: <encoding/json's error>`); `ValueError:
+embedded null byte` in the pointer's and the residue scan's details (now "it holds a NUL byte");
+Python's list repr in the bridge's approval-policy refusal and the execution policy's
+supported-roles refusal (now `"never", "on-request", "untrusted"` and `"child", "parent",
+"supervisor"`). Seven tests whose names said their answers were Python's, where those answers
+are now the goldens' (`Test_round3_argument_refusals_read_as_their_goldens`,
+`Test_round3_destination_refusals_read_as_their_goldens`, the busy-thread, capabilities and
+worktree-receipt round-3 tests, `TestReceive_non_json_frame_fails_pending_request_as_a_transport_error`,
+`TestDecodeReadsUniversalNewlines`), are renamed; their goldens are unchanged but for the name.
+
+Consumer check: `git grep` of `plugins/crw/skills`, `docs/`, `contract/` and the product for
+`transport failed`, `embedded null byte`, `approval_policy must be one of` and `supported are`:
+no skill, doc command or product code matches the texts; the relay's own `embedded null byte`
+and `JSONDecodeError` details are the relay areas'.
+
+What stays and why: the transport failure's prefix and its error type, every refusal code
+(`execution_policy_unreadable`, the settings codes), the readings' `exception` vocabulary
+(R3R-4). Test names that say "Python" where they name where a case or a fixture came from (the
+re-expressed `test_settings.py` and `test_execution.py` cases, the Python-generated ledger
+fingerprint and receipt) or the stored bytes Python wrote (host record, Stop settings, bridge
+record, staging claim) keep it, because that is still what they hold.
+
+Evidence: internal/bridge/appserver/receive.go and receive_frame_test.go;
+internal/runtime/pointer/pointer.go; internal/runtime/residue/residue.go;
+internal/bridge/settings/settings.go, internal/bridge/mutations.go;
+internal/bridge/execution/roles.go (`TestAPolicyRefusalQuotesANameAsJSON`).

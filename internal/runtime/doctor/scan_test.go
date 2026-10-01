@@ -14,6 +14,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/golden"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/scope"
 )
@@ -46,7 +47,7 @@ func (h *host) registrationsAs(t *testing.T, dir string, foreign bool) ([]string
 		if record.Get(one, "surface") == nil {
 			t.Errorf("a registration names no surface: %s", golden.Canon(one))
 		}
-		out = append(out, scope.PyStr(record.Get(one, "row"))+":"+record.Text(one, "field")+":"+record.Text(one, "names"))
+		out = append(out, reading.Text(record.Get(one, "row"))+":"+record.Text(one, "field")+":"+record.Text(one, "names"))
 	}
 	sort.Strings(out)
 	return out, unreadable
@@ -548,7 +549,7 @@ func TestRegisteredMatchingDoesNotReadAnUnlistableDirectoryAsEmpty(t *testing.T)
 	}
 	_, unreadable := h.registrations(t, "")
 	for _, directory := range []string{h.codex, hooks} {
-		if !listed(unreadable, directory+": PermissionError") {
+		if !listed(unreadable, directory+": open "+directory+": permission denied") {
 			t.Errorf("%s unlistable: %v", directory, unreadable)
 		}
 	}
@@ -693,7 +694,7 @@ func TestRecordedDaemonsReadEveryRelayStateDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(filepath.Join(h.home, "scopes"), 0o755) })
-	if got := h.daemons(aliveProc(t)); !listed(got.Unreadable, filepath.Join(h.home, "scopes"), "PermissionError") {
+	if got := h.daemons(aliveProc(t)); !listed(got.Unreadable, filepath.Join(h.home, "scopes"), "permission denied") {
 		t.Errorf("an unlistable scope registry: %v", got.Unreadable)
 	}
 }

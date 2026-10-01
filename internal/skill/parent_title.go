@@ -1,7 +1,6 @@
 package skill
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,10 +16,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 )
 
 var bracket = regexp.MustCompile(`^(\[([^\]]*)\])(\s*)`)
@@ -243,31 +240,12 @@ func titleReadback(requested, observed any) string {
 	return "mismatch"
 }
 
-func emitUnicode(w io.Writer, v any) error {
-	var encoded bytes.Buffer
-	e := json.NewEncoder(&encoded)
+// emit prints a decision as indented JSON, its text unescaped.
+func emit(w io.Writer, v any) error {
+	e := json.NewEncoder(w)
 	e.SetEscapeHTML(false)
 	e.SetIndent("", "  ")
-	if err := e.Encode(v); err != nil {
-		return err
-	}
-	text := encoded.String()
-	var unescaped strings.Builder
-	for i := 0; i < len(text); i++ {
-		if text[i] == '\\' && i+1 < len(text) {
-			if strings.HasPrefix(text[i:], `\u2028`) || strings.HasPrefix(text[i:], `\u2029`) {
-				unescaped.WriteRune('\u2028' + rune(text[i+5]-'8'))
-				i += 5
-			} else {
-				unescaped.WriteString(text[i : i+2])
-				i++
-			}
-		} else {
-			unescaped.WriteByte(text[i])
-		}
-	}
-	_, err := io.WriteString(w, unescaped.String())
-	return err
+	return e.Encode(v)
 }
 func titleRequest(stdin io.Reader, stderr io.Writer) (any, int) {
 	raw, err := io.ReadAll(stdin)
@@ -275,23 +253,32 @@ func titleRequest(stdin io.Reader, stderr io.Writer) (any, int) {
 		fmt.Fprintf(stderr, "Title check failed: %s. Nothing was written.\n", err)
 		return nil, 3
 	}
-	decoded, err := pythonLoads(raw)
-	var failure *evidence.PythonError
-	if errors.As(err, &failure) && failure.Class == "UnicodeDecodeError" {
-		fmt.Fprintln(stderr, err)
+	decoded, err := decodeJSON(raw)
+	if errors.Is(err, errNotUTF8) {
+		fmt.Fprintln(stderr, "The request is "+err.Error())
 		return nil, 1
 	}
 	if err != nil {
-		fmt.Fprintln(stderr, "Unreadable request: "+pythonValueDetail(err))
+		fmt.Fprintln(stderr, "Unreadable request: "+err.Error())
 		return nil, 2
 	}
 	return orderedPlain(decoded), 0
 }
 func runParentTitle(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	if len(args) == 0 {
-		return argparseMissing(stderr, "crw skill parent-title", "command")
+	name, code, ok := parentTitle.command(args, stdout, stderr)
+	if !ok {
+		return code
 	}
-	switch args[0] {
+	if name != "replay" {
+		summary := "Read one request as JSON on stdin and print the decision."
+		if name == "readback" {
+			summary = "Read a rename readback as JSON on stdin and classify it: verified, mismatch or unread."
+		}
+		if _, code := newCommandLine("parent-title", name, summary).parse(args[1:], stdout, stderr); code >= 0 {
+			return code
+		}
+	}
+	switch name {
 	case "decide":
 		decoded, failed := titleRequest(stdin, stderr)
 		if failed != 0 {
@@ -302,7 +289,7 @@ func runParentTitle(args []string, stdin io.Reader, stdout, stderr io.Writer) in
 			fmt.Fprintln(stderr, "Unreadable request: "+e.Error())
 			return 2
 		}
-		_ = emitUnicode(stdout, v)
+		_ = emit(stdout, v)
 		if v["decision"] == "invalid" {
 			return 2
 		}
@@ -326,53 +313,45 @@ func runParentTitle(args []string, stdin io.Reader, stdout, stderr io.Writer) in
 			}
 		}
 		state := titleReadback(req, obs)
-		_ = emitUnicode(stdout, map[string]any{"readback": state})
+		_ = emit(stdout, map[string]any{"readback": state})
 		if state == "verified" {
 			return 0
 		}
 		return 1
-	case "replay":
-		return replayTitles(args[1:], stdout, stderr)
 	default:
-		return invalidChoice(stderr, "crw skill parent-title", "command", args[0], "decide", "readback", "replay")
+		return replayTitles(args[1:], stdout, stderr)
 	}
 }
 func replayTitles(args []string, stdout, stderr io.Writer) int {
+	line := newCommandLine("parent-title", "replay", "Run every fixture against its recorded expectation, and fail when a decision this module can reach has no fixture reaching it.")
+	given := line.String("fixtures", "", "the title fixtures to replay (default: the ones built into crw)")
+	allow := line.Bool("allow-unreached", false, "report unreached decisions without failing; for deliberate subset runs only. Fixture mismatches are never waived.")
+	if _, code := line.parse(args, stdout, stderr); code >= 0 {
+		return code
+	}
 	dir := defaultFixture("titles")
 	fixturesFS := bundledSkillFiles
 	fixtureDir := dir
-	allow := false
-	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "--fixtures":
-			i++
-			if i >= len(args) {
-				return argparseValue(stderr, "crw skill parent-title replay", "--fixtures")
-			}
-			dir = args[i]
-			fixturesFS = os.DirFS(dir)
-			fixtureDir = "."
-		case "--allow-unreached":
-			allow = true
-		default:
-			return invalidOption(stderr, "crw skill parent-title replay", args[i])
-		}
+	if *given != "" {
+		dir = *given
+		fixturesFS = os.DirFS(dir)
+		fixtureDir = "."
 	}
 	paths, _ := fs.Glob(fixturesFS, fixtureDir+"/*.json")
 	sort.Strings(paths)
-	// parent_title.load_fixtures reads and decodes every fixture before any is
-	// replayed: an OSError reaches main (exit 3), a decode error is uncaught.
+	// Every fixture is read and decoded before any is replayed: one that cannot be read
+	// stops the replay (exit 3), one that does not decode exits 1.
 	fixtures := make([]any, len(paths))
 	for i, p := range paths {
 		label := "/" + p
 		if fixtureDir == "." {
-			label = pythonPath(dir + "/" + p)
+			label = filepath.Join(dir, p)
 		}
-		decoded, e := pythonReadJSON(fixturesFS, p, label)
+		decoded, e := readJSON(fixturesFS, p, label)
 		if e != nil {
-			var osError *probeOSError
-			if errors.As(e, &osError) {
-				fmt.Fprintf(stderr, "Title check failed: %s. Nothing was written.\n", osError.detail)
+			var failure *readFailure
+			if errors.As(e, &failure) {
+				fmt.Fprintf(stderr, "Title check failed: %s. Nothing was written.\n", failure)
 				return 3
 			}
 			fmt.Fprintln(stderr, e)
@@ -381,15 +360,12 @@ func replayTitles(args []string, stdout, stderr io.Writer) int {
 		fixtures[i] = decoded
 	}
 	if len(paths) == 0 {
-		fmt.Fprintf(stderr, "No fixtures under %s; nothing was checked\n", settings.StderrText(pyvalue.FSDecode(dir)))
+		fmt.Fprintf(stderr, "No fixtures under %s; nothing was checked\n", dir)
 		return 1
 	}
-	// command_replay collects its failures and prints them only once every
-	// fixture has been replayed, so a fixture that raises prints none of them.
-	// Each fixture keeps its decoded order: expected is compared key by key in
-	// the order the fixture writes it, with Python's == and repr(). sys.stderr
-	// writes a lone surrogate that str() leaves in a line, in a subcommand or a
-	// key, as its \uXXXX escape.
+	// The failures are printed only once every fixture has been replayed, so a fixture that
+	// stops the replay prints none of them. expected is compared key by key in the order the
+	// fixture writes it.
 	var failures []string
 	reasons := map[string]bool{}
 	reads := map[string]bool{}
@@ -398,7 +374,7 @@ func replayTitles(args []string, stdout, stderr io.Writer) int {
 		name := filepath.Base(p)
 		fixture, ok := fixtures[i].(contract.OrderedObject)
 		if !ok {
-			fmt.Fprintln(stderr, pythonAttribute(fixtures[i], "get"))
+			fmt.Fprintln(stderr, name+": "+notObject(fixtures[i]).Error())
 			return 1
 		}
 		f := orderedPlain(fixture).(map[string]any)
@@ -426,25 +402,25 @@ func replayTitles(args []string, stdout, stderr io.Writer) int {
 		} else if sub == "readback" {
 			in, _ := f["input"].(map[string]any)
 			if pyvalue.Truthy(f["input"]) && in == nil {
-				fmt.Fprintln(stderr, pythonAttribute(f["input"], "get"))
+				fmt.Fprintln(stderr, name+": input: "+notObject(f["input"]).Error())
 				return 1
 			}
 			state := titleReadback(in["requested_title"], in["observed_title"])
 			reads[state] = true
 			got = map[string]any{"readback": state}
 		} else {
-			failures = append(failures, fmt.Sprintf("%s: unknown subcommand %s", name, pyvalue.Str(sub)))
+			failures = append(failures, fmt.Sprintf("%s: unknown subcommand %s", name, show(sub)))
 			continue
 		}
 		for _, field := range expected {
 			if !pyvalue.ItemEqual(got[field.Key], field.Value) {
-				failures = append(failures, fmt.Sprintf("%s: %s expected %s, got %s", name, field.Key, pyvalue.Repr(field.Value), pyvalue.Repr(got[field.Key])))
+				failures = append(failures, fmt.Sprintf("%s: %s expected %s, got %s", name, field.Key, show(field.Value), show(got[field.Key])))
 			}
 		}
 	}
 	fmt.Fprintf(stdout, "Replayed %d title fixtures against their recorded expectations.\n", len(paths))
 	for _, failure := range failures {
-		fmt.Fprintln(stderr, settings.StderrText(failure))
+		fmt.Fprintln(stderr, failure)
 	}
 	fail := len(failures) > 0
 	var missing []string
@@ -478,7 +454,7 @@ func replayTitles(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "No fixture reaches the branch: "+strings.Join(mm, ", "))
 	}
 	fmt.Fprintln(stdout, "Replay compares this module with its fixtures. It is not evidence that any title was written, displayed or read back on a host.")
-	if fail || (!allow && (len(missing) > 0 || len(mr) > 0 || len(mm) > 0)) {
+	if fail || (!*allow && (len(missing) > 0 || len(mr) > 0 || len(mm) > 0)) {
 		return 1
 	}
 	return 0

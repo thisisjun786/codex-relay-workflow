@@ -32,7 +32,7 @@ func probeState(o, marker hook.Object, malformed string, reached *hookReplayReac
 				names = append(names, pyvalue.Str(v))
 			}
 		default:
-			return "", "", pythonNotIterable(unreadable, false)
+			return "", "", notList(unreadable)
 		}
 		slices.Sort(names)
 		return answer(1, "state_unreadable", "Cannot read "+strings.Join(names, ", ")+".")

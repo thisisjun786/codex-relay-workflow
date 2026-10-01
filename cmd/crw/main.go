@@ -12,7 +12,6 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/mcp"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pluginwiring"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/adapter"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
@@ -31,8 +30,8 @@ import (
 
 var version = "dev"
 
-// parserExit is argparse's exit status for a command line it cannot parse; the Python CLIs
-// this binary replaces all exit 2 there, and 0 for -h/--help and the bridge's --version.
+// parserExit is the exit status for a command line that cannot be parsed; -h/--help and the
+// bridge's --version exit 0.
 const parserExit = 2
 
 func main() {
@@ -98,7 +97,7 @@ func runAt(ctx context.Context, program string, args []string, stdout, stderr io
 		return 0
 	default:
 		usage(stderr)
-		fmt.Fprintf(stderr, "crw: error: argument command: invalid choice: %s (choose from 'relay', 'bridge', 'hook', 'skill', 'doctor', 'install', 'help', 'version')\n", pyvalue.StrRepr(mode))
+		fmt.Fprintf(stderr, "crw: error: argument command: invalid choice: %q (choose from 'relay', 'bridge', 'hook', 'skill', 'doctor', 'install', 'help', 'version')\n", mode)
 		return parserExit
 	}
 }

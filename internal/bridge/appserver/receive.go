@@ -32,8 +32,8 @@ func (c *Client) receive(ws *websocket.Conn) {
 		}
 		var msg incoming
 		if err := json.Unmarshal(raw, &msg); err != nil {
-			// rpc.py:362: a frame that is not JSON reaches Python's generic handler.
-			failure = &TransportError{Reason: fmt.Sprintf("App Server transport failed: JSONDecodeError: %v", err)}
+			// A frame that is not JSON fails every pending request, as a transport failure.
+			failure = &TransportError{Reason: fmt.Sprintf("App Server transport failed: a frame is not JSON: %v", err)}
 			break
 		}
 		if msg.Method != "" {

@@ -11,15 +11,10 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-	"unicode"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/definition"
 	"github.com/thisisjun786/codex-relay-workflow/internal/skill"
 )
-
-func isLetterOrDigit(r rune) bool {
-	return unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsMark(r)
-}
 
 // contractCheck pairs a contract with the Go check that replays it. Every check is built into
 // crw-dev, so a component is present exactly when its contract is: no checker script has to sit
@@ -58,8 +53,8 @@ func isFile(path string) bool {
 // Contracts is `crw-dev ci contracts`: run each known offline contract check whose contract is
 // present in the checkout.
 func Contracts(args []string, stdout, stderr io.Writer) int {
-	if _, code := parseFlags("contracts", "Run known offline contract checks when their owning component is present.",
-		nil, args, stdout, stderr); code >= 0 {
+	if code := parseFlags(newFlags("contracts"), "Run known offline contract checks when their owning component is present.",
+		args, stdout, stderr); code >= 0 {
 		return code
 	}
 	root, err := repositoryRoot()
