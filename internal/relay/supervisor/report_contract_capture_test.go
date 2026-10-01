@@ -3,56 +3,16 @@ package supervisor
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"reflect"
 	"testing"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
-func pythonReportCapture(t *testing.T, id string) map[string]any {
-	t.Helper()
-	repo, err := filepath.Abs("../../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	root := t.TempDir()
-	script, err := filepath.Abs("testdata/report_capture.py")
-	if err != nil {
-		t.Fatal(err)
-	}
-	output := pythonOutput(t, id, func() ([]byte, error) {
-		cmd := exec.Command("uv", "run", "--no-sync", "python", script, id, filepath.Join(root, "capture"))
-		cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
-		cmd.Env = append(os.Environ(), "HOME="+root, "XDG_STATE_HOME="+root, "XDG_DATA_HOME="+root, "XDG_CONFIG_HOME="+root, "CODEX_HOME="+root, "TMPDIR="+os.TempDir())
-		output, err := cmd.CombinedOutput()
-		if err != nil {
-			return nil, fmt.Errorf("Python %s: %v: %s", id, err, output)
-		}
-		return output, nil
-	}, pyoracle.Substitute(root, "<root>"))
-	var result map[string]any
-	if err = json.Unmarshal(output, &result); err != nil {
-		t.Fatal(err)
-	}
-	return result
-}
+// compareReportCapture compares a report value, as JSON decodes it, with the golden under id; the
+// golden began as what the Python report test (the former testdata/report_capture.py) captured.
 func compareReportCapture(t *testing.T, id string, got any) {
 	t.Helper()
-	raw, err := json.Marshal(got)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var normalized any
-	if err = json.Unmarshal(raw, &normalized); err != nil {
-		t.Fatal(err)
-	}
-	want := pythonReportCapture(t, id)
-	if !reflect.DeepEqual(normalized, want) {
-		t.Errorf("%s Go=%s Python=%s", id, raw, jsonText(want))
-	}
+	golden.CheckJSON(t, id, asJSON(t, got), golden.Substitute(repoRoot(t), "<repo>"))
 }
 func Test24_SR_11_UnusableReading(t *testing.T) {
 	base := map[string]any{"schema": "reporting-observation/1", "reportingState": "unreported", "relationshipId": "rel-0123456789abcdef", "selectors": map[string]any{"turn": "turn-7"}}

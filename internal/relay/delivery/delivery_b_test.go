@@ -10,15 +10,15 @@ import (
 
 func TestDEL11_each_retry_opens_a_new_attempt_and_never_replays_the_first_request(t *testing.T) {
 	tree := parityTree(t)
-	python := runPython(t, tree, "del11")
+	expected := expectScenario(t, tree, "del11")
 	f := newFixture(t, tree)
 	event := f.queuedEvent(regOpts{})
 	f.host.script = []string{"busy"}
 	first := f.mustAttempt(event, nil)
 	f.clock.Advance(3600)
 	second := f.mustAttempt(event, at(f.clock.Now()))
-	requireSameJSON(t, "first", first, python.Out["first"])
-	requireSameJSON(t, "second", second, python.Out["second"])
+	expected.same("first", first)
+	expected.same("second", second)
 	if str(first, "requestId") == str(second, "requestId") || str(second, "deliveryState") != Dispatched {
 		t.Fatalf("records %v %v", first, second)
 	}
@@ -31,30 +31,32 @@ func TestDEL11_each_retry_opens_a_new_attempt_and_never_replays_the_first_reques
 	if replayed != 1 {
 		t.Fatalf("the first request id was sent %d times", replayed)
 	}
-	requireSameTables(t, f, python)
+	expected.tables(f)
 }
 
 func TestDEL12_a_dispatched_or_uncertain_delivery_is_never_claimed_again(t *testing.T) {
 	t.Run("dispatched", func(t *testing.T) {
 		tree := parityTree(t)
-		python := runPython(t, tree, "del12", "dispatched")
+		expected := expectScenario(t, tree, "del12", "dispatched")
 		f := newFixture(t, tree)
 		event := f.queuedEvent(regOpts{})
 		f.mustAttempt(event, nil)
 		f.clock.Advance(100000)
-		if again := f.mustAttempt(event, at(f.clock.Now())); again != nil || python.Out["again"] != nil {
+		again := f.mustAttempt(event, at(f.clock.Now()))
+		expected.same("again", again)
+		if again != nil {
 			t.Fatalf("claimed again: %v", again)
 		}
-		requireSameTables(t, f, python)
+		expected.tables(f)
 	})
 	t.Run("held_uncertain after 5 clock advances", func(t *testing.T) {
 		tree := parityTree(t)
-		python := runPython(t, tree, "del12", "uncertain")
+		expected := expectScenario(t, tree, "del12", "uncertain")
 		f := newFixture(t, tree)
 		event := f.queuedEvent(regOpts{})
 		f.host.script = []string{"turn_start_fail"}
 		first := f.mustAttempt(event, nil)
-		requireSameJSON(t, "first", first, python.Out["first"])
+		expected.same("first", first)
 		for i := 0; i < 5; i++ {
 			f.clock.Advance(86400)
 			if len(f.eligible()) != 0 || f.mustAttempt(event, at(f.clock.Now())) != nil {
@@ -64,14 +66,14 @@ func TestDEL12_a_dispatched_or_uncertain_delivery_is_never_claimed_again(t *test
 		if f.row(event).S("state") != HeldUncertain || f.count("SELECT COUNT(*) AS c FROM attempts") != 1 {
 			t.Fatal("one attempt, still held_uncertain")
 		}
-		requireSameTables(t, f, python)
+		expected.tables(f)
 	})
 }
 
 func TestDEL13_flood_bounds_cap_attempts_and_pace_sends(t *testing.T) {
 	t.Run("direct pre-send failures -> attempt_cap", func(t *testing.T) {
 		tree := parityTree(t)
-		python := runPython(t, tree, "del13", "direct")
+		expected := expectScenario(t, tree, "del13", "direct")
 		f := newFixture(t, tree)
 		event := f.queuedEvent(regOpts{})
 		var records []any
@@ -80,7 +82,7 @@ func TestDEL13_flood_bounds_cap_attempts_and_pace_sends(t *testing.T) {
 			f.clock.Advance(100000)
 			records = append(records, f.mustAttempt(event, at(f.clock.Now())))
 		}
-		requireSameJSON(t, "records", records, python.Out["records"])
+		expected.same("records", records)
 		if f.row(event).S("hold_reason") != AttemptCap {
 			t.Fatal("attempt_cap")
 		}
@@ -88,11 +90,11 @@ func TestDEL13_flood_bounds_cap_attempts_and_pace_sends(t *testing.T) {
 		if len(f.eligible()) != 0 {
 			t.Fatal("a capped delivery is not eligible")
 		}
-		requireSameTables(t, f, python)
+		expected.tables(f)
 	})
 	t.Run("reconciled pre-send failures -> attempt_cap", func(t *testing.T) {
 		tree := parityTree(t)
-		python := runPython(t, tree, "del13", "reconciled")
+		expected := expectScenario(t, tree, "del13", "reconciled")
 		f := newFixture(t, tree)
 		event := f.queuedEvent(regOpts{})
 		rc := NewReconciler(f.delivery)
@@ -110,28 +112,30 @@ func TestDEL13_flood_bounds_cap_attempts_and_pace_sends(t *testing.T) {
 			mustDo(t, err)
 			outcomes = append(outcomes, outcome)
 		}
-		requireSameJSON(t, "outcomes", outcomes, python.Out["outcomes"])
+		expected.same("outcomes", outcomes)
 		if f.row(event).S("hold_reason") != AttemptCap || f.count("SELECT COUNT(*) AS c FROM attempts") > f.delivery.Policy.MaxAttempts {
 			t.Fatal("the reconciled path obeys the cap")
 		}
-		requireSameTables(t, f, python)
+		expected.tables(f)
 	})
 	t.Run("min interval", func(t *testing.T) {
 		tree := parityTree(t)
-		python := runPython(t, tree, "del13", "interval")
+		expected := expectScenario(t, tree, "del13", "interval")
 		f := newFixture(t, tree)
 		event := f.queuedEvent(regOpts{})
 		f.host.script = []string{"read_fail"}
 		f.mustAttempt(event, nil)
 		mustDo(t, f.delivery.Reschedule(f.ctx, event, WithheldPreSend, f.clock.Now(), f.row(event).I("attempt_count")))
-		if again := f.mustAttempt(event, at(f.clock.Now()+1)); again != nil || python.Out["again"] != nil {
+		again := f.mustAttempt(event, at(f.clock.Now()+1))
+		expected.same("again", again)
+		if again != nil {
 			t.Fatal("the minimum interval refuses the send")
 		}
-		requireSameTables(t, f, python)
+		expected.tables(f)
 	})
 	t.Run("hourly cap", func(t *testing.T) {
 		tree := parityTree(t)
-		python := runPython(t, tree, "del13", "hourly")
+		expected := expectScenario(t, tree, "del13", "hourly")
 		f := newFixture(t, tree)
 		event := f.queuedEvent(regOpts{})
 		now := f.clock.Now()
@@ -140,7 +144,7 @@ func TestDEL13_flood_bounds_cap_attempts_and_pace_sends(t *testing.T) {
 		if again := f.mustAttempt(event, at(now)); again != nil || len(f.host.sends) != 0 {
 			t.Fatal("the hourly cap refuses the send")
 		}
-		requireSameTables(t, f, python)
+		expected.tables(f)
 	})
 }
 
@@ -161,26 +165,29 @@ func TestDEL14_host_lifecycle_withholds_are_deferrals_not_holds(t *testing.T) {
 	} {
 		t.Run(tc.mode, func(t *testing.T) {
 			tree := parityTree(t)
-			python := runPython(t, tree, "del14", tc.mode)
+			expected := expectScenario(t, tree, "del14", tc.mode)
 			f := newFixture(t, tree)
 			event := f.queuedEvent(regOpts{})
 			tc.apply(f.host.threads[parent], f.host)
+			status := f.one("SELECT status FROM relationships WHERE relationship_id = ?", f.rid).S("status")
+			expected.same("status", status)
 			record := f.mustAttempt(event, nil)
-			if record != nil || python.Out["record"] != nil || python.Out["status"] != "active" {
+			expected.same("record", record)
+			if record != nil || status != "active" {
 				t.Fatalf("withheld returns None: %v", record)
 			}
 			row := f.row(event)
 			if !row.N("hold_reason") || row.N("next_eligible_at") || lifecycleRow(f).S("withhold_reason") != tc.reason || len(f.host.sends) != 0 {
 				t.Fatalf("deferral: %v", row)
 			}
-			requireSameTables(t, f, python)
+			expected.tables(f)
 		})
 	}
 }
 
 func TestDEL15_an_unreadable_lifecycle_withholds_rather_than_guessing(t *testing.T) {
 	tree := parityTree(t)
-	python := runPython(t, tree, "del14", "unreadable")
+	expected := expectScenario(t, tree, "del14", "unreadable")
 	f := newFixture(t, tree)
 	event := f.queuedEvent(regOpts{})
 	f.host.readFailures["read_goal_status"] = true
@@ -191,14 +198,14 @@ func TestDEL15_an_unreadable_lifecycle_withholds_rather_than_guessing(t *testing
 	if observed.S("deliverable") != "unknown" || observed.S("withhold_reason") != LifecycleUnknown || len(f.host.sends) != 0 {
 		t.Fatalf("observed %v", observed)
 	}
-	requireSameTables(t, f, python)
+	expected.tables(f)
 }
 
 func TestDEL16_a_later_good_observation_releases_the_withheld_delivery(t *testing.T) {
 	for _, mode := range []string{"paused", "archived"} {
 		t.Run(mode, func(t *testing.T) {
 			tree := parityTree(t)
-			python := runPython(t, tree, "del16", mode)
+			expected := expectScenario(t, tree, "del16", mode)
 			f := newFixture(t, tree)
 			event := f.queuedEvent(regOpts{})
 			th := f.host.threads[parent]
@@ -212,13 +219,13 @@ func TestDEL16_a_later_good_observation_releases_the_withheld_delivery(t *testin
 				th.archived = boolp(false)
 			}
 			f.clock.Advance(f.delivery.Policy.LifecycleRecheck + 1)
-			requireSameJSON(t, "eligible", f.eligible(), python.Out["eligible"])
+			expected.same("eligible", f.eligible())
 			record := f.mustAttempt(event, at(f.clock.Now()))
-			requireSameJSON(t, "record", record, python.Out["record"])
+			expected.same("record", record)
 			if str(record, "deliveryState") != Dispatched {
 				t.Fatal("released and dispatched")
 			}
-			requireSameTables(t, f, python)
+			expected.tables(f)
 		})
 	}
 }
@@ -227,7 +234,7 @@ func TestDEL17_a_deactivation_between_precheck_and_claim_blocks_the_send(t *test
 	for _, mode := range []string{"paused", "archived", "supersede", "before"} {
 		t.Run(mode, func(t *testing.T) {
 			tree := parityTree(t)
-			python := runPython(t, tree, "del17", mode)
+			expected := expectScenario(t, tree, "del17", mode)
 			f := newFixture(t, tree)
 			event := f.queuedEvent(regOpts{})
 			if mode == "before" {
@@ -235,7 +242,7 @@ func TestDEL17_a_deactivation_between_precheck_and_claim_blocks_the_send(t *test
 				if len(f.eligible()) != 0 {
 					t.Fatal("a paused relationship is never eligible")
 				}
-				requireSameTables(t, f, python)
+				expected.tables(f)
 				return
 			}
 			f.host.onGoalRead = func(string) {
@@ -246,13 +253,15 @@ func TestDEL17_a_deactivation_between_precheck_and_claim_blocks_the_send(t *test
 					f.setStatus(mode)
 				}
 			}
-			if record := f.mustAttempt(event, nil); record != nil || python.Out["record"] != nil {
+			record := f.mustAttempt(event, nil)
+			expected.same("record", record)
+			if record != nil {
 				t.Fatalf("record %v", record)
 			}
 			if len(f.host.sends) != 0 || f.count("SELECT COUNT(*) AS c FROM attempts") != 0 {
 				t.Fatal("no send and no attempt")
 			}
-			requireSameTables(t, f, python)
+			expected.tables(f)
 		})
 	}
 }
@@ -261,12 +270,12 @@ func TestDEL18_a_deactivated_assignment_is_withheld_with_a_returned_record(t *te
 	for _, status := range []string{"cancelled", "paused", "archived"} {
 		t.Run(status, func(t *testing.T) {
 			tree := parityTree(t)
-			python := runPython(t, tree, "del18", status)
+			expected := expectScenario(t, tree, "del18", status)
 			f := newFixture(t, tree)
 			event := f.queuedEvent(regOpts{})
 			f.setStatus(status)
 			record := f.mustAttempt(event, nil)
-			requireSameJSON(t, "record", record, python.Out["record"])
+			expected.same("record", record)
 			if str(record, "withheldReason") != RelationshipNotActive || str(record, "relationshipStatus") != status || len(f.host.sends) != 0 {
 				t.Fatalf("record %v", record)
 			}
@@ -278,7 +287,7 @@ func TestDEL18_a_deactivated_assignment_is_withheld_with_a_returned_record(t *te
 			if entry == nil || !strings.Contains(entry.S("detail"), status) {
 				t.Fatal("the deactivation is journalled with its status")
 			}
-			requireSameTables(t, f, python)
+			expected.tables(f)
 		})
 	}
 }
@@ -306,7 +315,7 @@ func TestDEL19_a_stopped_assignment_reads_nothing_from_the_host(t *testing.T) {
 func TestDEL20_resuming_delivers_the_same_event_once_and_an_active_one_is_untouched(t *testing.T) {
 	t.Run("resume", func(t *testing.T) {
 		tree := parityTree(t)
-		python := runPython(t, tree, "del20", "resume")
+		expected := expectScenario(t, tree, "del20", "resume")
 		f := newFixture(t, tree)
 		event := f.queuedEvent(regOpts{})
 		f.setStatus("paused")
@@ -314,19 +323,19 @@ func TestDEL20_resuming_delivers_the_same_event_once_and_an_active_one_is_untouc
 		f.resume()
 		f.clock.Advance(f.delivery.Policy.LifecycleRecheck + 1)
 		record := f.mustAttempt(event, at(f.clock.Now()))
-		requireSameJSON(t, "record", record, python.Out["record"])
+		expected.same("record", record)
 		if str(record, "deliveryState") != Dispatched || len(f.host.sends) != 1 {
 			t.Fatal("delivered once")
 		}
-		requireSameTables(t, f, python)
+		expected.tables(f)
 	})
 	t.Run("active", func(t *testing.T) {
 		tree := parityTree(t)
-		python := runPython(t, tree, "del20", "active")
+		expected := expectScenario(t, tree, "del20", "active")
 		f := newFixture(t, tree)
 		event := f.queuedEvent(regOpts{})
 		record := f.mustAttempt(event, nil)
-		requireSameJSON(t, "record", record, python.Out["record"])
-		requireSameTables(t, f, python)
+		expected.same("record", record)
+		expected.tables(f)
 	})
 }

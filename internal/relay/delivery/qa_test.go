@@ -7,10 +7,11 @@ import (
 )
 
 // Todo 21 QA (happy path): emit -> deliver -> claim -> ack -> verdict on a temp state dir, every
-// row of the resulting store equal to the Python run of the same fixture.
+// row of the resulting store checked against the golden, which began as the Python run of the same
+// fixture.
 func TestQA_emit_deliver_claim_ack_round_trip_rows_equal_python(t *testing.T) {
 	tree := parityTree(t)
-	python := runPython(t, tree, "qa")
+	expected := expectScenario(t, tree, "qa")
 	f := newFixture(t, tree)
 	event := f.queuedEvent(regOpts{})
 	delivered := f.mustAttempt(event, nil)
@@ -26,13 +27,13 @@ func TestQA_emit_deliver_claim_ack_round_trip_rows_equal_python(t *testing.T) {
 	payload := f.readyPayload(f.rid, 1, []string{f.artifact("out.txt", "the deliverable")}, 1, assigned("completed"))
 	stored, err := f.accept(payload, store.AcceptOptions{})
 	mustDo(t, err)
-	requireSameJSON(t, "delivered", delivered, python.Out["delivered"])
-	requireSameJSON(t, "claim", claim, python.Out["claim"])
-	requireSameJSON(t, "ack", acked, python.Out["ack"])
-	requireSameJSON(t, "verdict", verdict, python.Out["verdict"])
-	dup := python.Out["duplicate"].(map[string]any)["ok"].(map[string]any)
-	if !stored.Duplicate || dup["_duplicate"] != true {
-		t.Fatal("a re-emitted revision is a duplicate on both sides")
+	expected.same("delivered", delivered)
+	expected.same("claim", claim)
+	expected.same("ack", acked)
+	expected.same("verdict", verdict)
+	expected.same("duplicate", stored.Duplicate)
+	if !stored.Duplicate {
+		t.Fatal("a re-emitted revision is a duplicate")
 	}
-	requireSameTables(t, f, python)
+	expected.tables(f)
 }

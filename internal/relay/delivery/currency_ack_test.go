@@ -20,14 +20,12 @@ func (v *vcu) verifyPending(now *float64) []any {
 
 func runVCUAck(t *testing.T, mode string, goSide func(v *vcu, out map[string]any)) {
 	tree := parityTree(t)
-	python := runPython(t, tree, "vcu_ack", mode)
+	expected := expectScenario(t, tree, "vcu_ack", mode)
 	v := newVCU(t, tree)
 	out := map[string]any{}
 	goSide(v, out)
-	for k, want := range python.Out {
-		requireSameJSON(t, mode+"."+k, out[k], want)
-	}
-	requireSameTables(t, v.fixture, python)
+	expected.out(out)
+	expected.tables(v.fixture)
 }
 
 func TestVCU11_an_offline_ack_is_recorded_intent_and_upgraded_by_a_host(t *testing.T) {

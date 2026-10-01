@@ -50,24 +50,24 @@ func resolveCase(t *testing.T, f *fixture, cases Obj, name string) map[string]an
 
 func TestDRL01_an_unwired_service_uses_the_relationship_row(t *testing.T) {
 	tree := parityTree(t)
-	python := runPythonOut(t, tree, "drl")
+	expected := expectScenario(t, tree, "drl")
 	f := newFixture(t, tree)
 	for _, kind := range []string{Completion, Revision} {
 		who, how, err := f.delivery.ResolveRecipient(f.ctx, relationFixture(), kind)
 		mustDo(t, err)
 		name := map[string]string{Completion: "unwired_completion", Revision: "unwired_revision"}[kind]
-		requireSameJSON(t, name, []any{who, how}, python.Out[name])
+		expected.same(name, []any{who, how})
 	}
 }
 
 func TestDRL02_an_agreeing_owner_resolves_verified_at_the_right_level(t *testing.T) {
 	tree := parityTree(t)
-	python := runPythonOut(t, tree, "drl")
+	expected := expectScenario(t, tree, "drl")
 	f := newFixture(t, tree)
 	cases := relationCases(t)
 	for _, name := range []string{"agree_completion", "agree_revision"} {
 		got := resolveCase(t, f, cases, name)
-		requireSameJSON(t, name, got, python.Out[name])
+		expected.same(name, got)
 		if got["ok"] == nil {
 			t.Fatalf("%s refused: %v", name, got)
 		}
@@ -76,7 +76,7 @@ func TestDRL02_an_agreeing_owner_resolves_verified_at_the_right_level(t *testing
 
 func TestDRL03_linkage_refusals_keep_distinct_reasons_and_never_fall_back(t *testing.T) {
 	tree := parityTree(t)
-	python := runPythonOut(t, tree, "drl")
+	expected := expectScenario(t, tree, "drl")
 	f := newFixture(t, tree)
 	cases := relationCases(t)
 	for name, reason := range map[string]string{
@@ -85,7 +85,7 @@ func TestDRL03_linkage_refusals_keep_distinct_reasons_and_never_fall_back(t *tes
 		"two_owners": DuplicateScopeOwner, "instruction_conflict": LinkConflict, "undefined_direction": NotClaimable,
 	} {
 		got := resolveCase(t, f, cases, name)
-		requireSameJSON(t, name, got, python.Out[name])
+		expected.same(name, got)
 		if got["reason"] != reason {
 			t.Fatalf("%s: %v", name, got)
 		}
@@ -94,10 +94,10 @@ func TestDRL03_linkage_refusals_keep_distinct_reasons_and_never_fall_back(t *tes
 
 func TestDRL04_a_retained_audit_conflict_does_not_block_a_healthy_delivery(t *testing.T) {
 	tree := parityTree(t)
-	python := runPythonOut(t, tree, "drl")
+	expected := expectScenario(t, tree, "drl")
 	f := newFixture(t, tree)
 	got := resolveCase(t, f, relationCases(t), "audit_only")
-	requireSameJSON(t, "audit_only", got, python.Out["audit_only"])
+	expected.same("audit_only", got)
 	if got["ok"] == nil {
 		t.Fatal("refused on an audit row")
 	}

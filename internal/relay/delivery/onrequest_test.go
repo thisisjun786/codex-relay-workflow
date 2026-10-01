@@ -8,15 +8,13 @@ import (
 
 func runORD(t *testing.T, mode string, goSide func(f *fixture, out map[string]any)) {
 	tree := parityTree(t)
-	python := runPython(t, tree, "ord", mode)
+	expected := expectScenario(t, tree, "ord", mode)
 	f := newFixture(t, tree)
 	out := map[string]any{}
 	goSide(f, out)
-	for k, want := range python.Out {
-		requireSameJSON(t, mode+"."+k, out[k], want)
-	}
+	expected.out(out)
 	if mode != "record" {
-		requireSameTables(t, f, python)
+		expected.tables(f)
 	}
 }
 
@@ -63,7 +61,7 @@ func TestORD02_resume_params_never_carry_an_approval_policy(t *testing.T) {
 			t.Fatalf("%s: resume carries approvalPolicy", policy)
 		}
 	}
-	// The whole params object is compared with Python's in ORD-1's "resume" row.
+	// The whole params object is checked against the golden in ORD-1's "resume" row.
 }
 
 func TestORD03_an_on_request_parent_is_woken_once(t *testing.T) {

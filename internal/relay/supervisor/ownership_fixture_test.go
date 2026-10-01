@@ -3,7 +3,6 @@ package supervisor
 import (
 	"encoding/json"
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -11,13 +10,12 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
-// Ownership states for this package's comparisons with live Python. Every store is fenced
-// (docs/port/decisions.md 14 and 30) and each runtime refuses one the other owns, so a comparison
-// puts the store each runtime reads into the state a real host would have for that step - the
-// runtime under test owns it - with the shared testsupport fixture API and nothing else:
+// Ownership states for this package's tests, which start from stores Python's test fixtures built
+// (tree fixtures). Every store is fenced (docs/port/decisions.md 14 and 30) and each runtime
+// refuses one the other owns, so a test puts the store it reads into the state a real host would
+// have for that step - Go owns it - with the shared testsupport fixture API and nothing else:
 //
 //   - restoreSnapshot: a captured snapshot copied back to where its run kept the store.
-//   - ownedCopy:       a copy of a store the other runtime owns, for a read by this one.
 //   - ownCopied:       a copy the test made itself, in a directory of its own.
 //
 // A snapshot taken with SQLite's backup API is a new file holding the durable stamp and no
@@ -85,46 +83,4 @@ func removeStore(t testing.TB, dbPath string) {
 			t.Fatal(e)
 		}
 	}
-}
-
-// ownedCopy copies the store at src - its database and its WAL as they stand, so the copy reads
-// what src reads - into a fresh directory of its own, and hands the copy to owner. The source is
-// left untouched and may stay open in its own runtime. It returns the copy's path, named like src.
-func ownedCopy(t testing.TB, src, owner string) string {
-	t.Helper()
-	dir := filepath.Join(t.TempDir(), "state")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(dir, filepath.Base(src))
-	for _, suffix := range []string{"", "-wal"} {
-		if err := copyFile(src+suffix, path+suffix); err != nil && !(suffix != "" && errors.Is(err, os.ErrNotExist)) {
-			t.Fatal(err)
-		}
-	}
-	ownCopied(t, path, owner)
-	return path
-}
-
-func copyFile(src, dst string) (err error) {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer func() { err = errors.Join(err, in.Close()) }()
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	_, err = io.Copy(out, in)
-	return errors.Join(err, out.Close())
-}
-
-// pythonCopy is the fixture's store as it stands, in a copy Python owns, for the Python half of
-// a comparison taken while the Go store stays open and owned by Go for the Go half. Every call
-// copies afresh, so Python reads what Go's store holds at that moment; what Python writes stays
-// in its copy, where the comparison's Python side reads it back.
-func pythonCopy(t testing.TB, f *stageFixture) string {
-	t.Helper()
-	return ownedCopy(t, filepath.Join(f.root, "state", "relay.sqlite3"), "python")
 }

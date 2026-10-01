@@ -3,11 +3,8 @@ package supervisor
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,39 +14,8 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
-
-// slfPython runs the assigned Python scenario live. The scenario emits one complete JSON value;
-// the comparison below never picks fields from it.
-func slfPython(t *testing.T, id string) any {
-	t.Helper()
-	raw := pythonOutput(t, id, func() ([]byte, error) {
-		repo := repoRoot(t)
-		script, err := filepath.Abs("testdata/slf_capture.py")
-		if err != nil {
-			return nil, err
-		}
-		home, err := os.MkdirTemp("", "crw-slf-")
-		if err != nil {
-			return nil, err
-		}
-		defer os.RemoveAll(home)
-		cmd := exec.Command("uv", "run", "--no-sync", "python", script, id)
-		cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
-		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "XDG_DATA_HOME="+home,
-			"XDG_CONFIG_HOME="+home, "CODEX_HOME="+home, "TMPDIR="+os.TempDir())
-		raw, err := cmd.CombinedOutput()
-		if err != nil {
-			return nil, fmt.Errorf("live Python %s: %v\n%s", id, err, raw)
-		}
-		return raw, nil
-	})
-	var out any
-	if err := json.Unmarshal(raw, &out); err != nil {
-		t.Fatalf("live Python %s JSON: %v\n%s", id, err, raw)
-	}
-	return out
-}
 
 func plainSLF(value any) any {
 	switch v := value.(type) {
@@ -89,14 +55,11 @@ func jsonValue(t *testing.T, value any) any {
 	return out
 }
 
+// slfSame compares a scenario's whole output, as JSON decodes it, with the golden under id; the
+// golden began as the assigned Python scenario's output (the former testdata/slf_capture.py).
 func slfSame(t *testing.T, id string, got any) {
 	t.Helper()
-	goValue, python := jsonValue(t, got), slfPython(t, id)
-	if !reflect.DeepEqual(goValue, python) {
-		g, _ := json.Marshal(goValue)
-		p, _ := json.Marshal(python)
-		t.Fatalf("%s whole output differs\nGo: %s\nPython: %s", id, g, p)
-	}
+	golden.CheckJSON(t, id, jsonValue(t, got), golden.Substitute(repoRoot(t), "<repo>"))
 }
 
 func slfObj(v any) any {

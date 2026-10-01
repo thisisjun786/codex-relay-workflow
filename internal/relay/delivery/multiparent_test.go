@@ -86,22 +86,22 @@ func (f *fixture) inParallel(work map[string]func(*Ack) (Obj, error)) (map[strin
 
 func TestMPI01_each_parent_keeps_its_scope_reference_and_project_key(t *testing.T) {
 	tree := parityTree(t)
-	python := runPython(t, tree, "mpi", "scope")
+	expected := expectScenario(t, tree, "mpi", "scope")
 	f := newFixture(t, tree)
 	a, _ := f.twoParentAssignment("a", 1)
 	b, _ := f.twoParentAssignment("b", 1)
 	ra, _ := LoadRelationship(f.ctx, f.store, a)
 	rb, _ := LoadRelationship(f.ctx, f.store, b)
-	requireSameJSON(t, "keys", []any{ProjectKey(ra), ProjectKey(rb)}, python.Out["keys"])
+	expected.same("keys", []any{ProjectKey(ra), ProjectKey(rb)})
 	if ra.ScopeRef != "linear://project-alpha" || rb.ScopeRef != "linear://project-beta" || ProjectKey(ra) != "/repo-a" {
 		t.Fatal("scope refs and project keys")
 	}
-	requireSameTables(t, f, python)
+	expected.tables(f)
 }
 
 func TestMPI02_two_parents_acknowledging_at_once_do_not_cross(t *testing.T) {
 	tree := parityTree(t)
-	python := runPythonOut(t, tree, "mpi", "acks")
+	expected := expectScenario(t, tree, "mpi", "acks")
 	f := newFixture(t, tree)
 	a, ai := f.twoParentAssignment("a", 1)
 	b, bi := f.twoParentAssignment("b", 1)
@@ -116,8 +116,9 @@ func TestMPI02_two_parents_acknowledging_at_once_do_not_cross(t *testing.T) {
 		}
 	}
 	results, errs := f.inParallel(work)
-	if len(errs) != 0 || len(python.Out["errors"].(map[string]any)) != 0 {
-		t.Fatalf("errors go %v python %v", errs, python.Out["errors"])
+	expected.same("errors", errs)
+	if len(errs) != 0 {
+		t.Fatalf("errors %v", errs)
 	}
 	for name, rid := range map[string]string{"a": a, "b": b} {
 		if v, _ := get(results[name], "accepted"); v != true {
@@ -132,7 +133,7 @@ func TestMPI02_two_parents_acknowledging_at_once_do_not_cross(t *testing.T) {
 
 func TestMPI03_two_parents_ruling_needs_changes_at_once_open_one_generation_each(t *testing.T) {
 	tree := parityTree(t)
-	python := runPythonOut(t, tree, "mpi", "verdicts")
+	expected := expectScenario(t, tree, "mpi", "verdicts")
 	f := newFixture(t, tree)
 	a, ai := f.twoParentAssignment("a", 1)
 	b, bi := f.twoParentAssignment("b", 1)
@@ -165,12 +166,12 @@ func TestMPI03_two_parents_ruling_needs_changes_at_once_open_one_generation_each
 			t.Fatalf("%s: generation %d revisions %v", name, r.Generation, revisions)
 		}
 	}
-	requireSameJSON(t, "next", next, python.Out["next"])
+	expected.same("next", next)
 }
 
 func TestMPI04_each_outbox_job_names_its_document_and_one_claim_cannot_complete_another(t *testing.T) {
 	tree := parityTree(t)
-	python := runPythonOut(t, tree, "mpi", "outbox")
+	expected := expectScenario(t, tree, "mpi", "outbox")
 	f := newFixture(t, tree)
 	ack := NewAck(f.delivery)
 	ack.Sync = VerdictSync(f.store, f.clock)
@@ -186,14 +187,14 @@ func TestMPI04_each_outbox_job_names_its_document_and_one_claim_cannot_complete_
 		mustDo(t, err)
 		jobs[tc.name] = f.one("SELECT sync_id FROM sync_outbox WHERE relationship_id = ?", rid).S("sync_id")
 	}
-	requireSameJSON(t, "jobs", jobs, python.Out["jobs"])
+	expected.same("jobs", jobs)
 	alpha, err := SyncClaim(f.ctx, f.store, f.clock, jobs["a"].(string), "worker-1", f.clock.Now())
 	mustDo(t, err)
 	_, err = SyncClaim(f.ctx, f.store, f.clock, jobs["b"].(string), "worker-1", f.clock.Now())
 	mustDo(t, err)
 	_, err = SyncFenced(f.ctx, f.store, jobs["b"].(string), str(alpha, "claimToken"))
 	requireReason(t, err, SyncNotClaimable)
-	requireSameJSON(t, "complete", refusalOf(err), python.Out["complete"])
+	expected.same("complete", refusalOf(err))
 }
 
 func (f *fixture) tick(sc *Scheduler) {

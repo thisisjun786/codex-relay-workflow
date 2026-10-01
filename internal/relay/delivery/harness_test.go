@@ -4,19 +4,16 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
 	"slices"
-	"sort"
 	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 // Fixture identities match Python's tests/support.py.
@@ -34,64 +31,49 @@ func repoRoot(t *testing.T) string {
 	return filepath.Join(filepath.Dir(file), "..", "..", "..")
 }
 
-// pyRun is one Python scenario over tree: its out block, every non-empty table, and its sends.
-type pyRun struct {
-	Out    map[string]any              `json:"out"`
-	Tables map[string][]map[string]any `json:"tables"`
-	Sends  [][]any                     `json:"sends"`
+// scenario is what one scenario test checks against its golden (testdata/golden). The scenarios
+// began as the Python test modules' cases, driven through the Python package over the same tree;
+// the expected values are now this package's own, rewritten with CRW_GOLDEN=update. Each value is
+// checked as JSON after normalizeJSON, under "<scenario> out.<name>"; the store's non-empty
+// tables under "<scenario> tables" and the host's sends under "<scenario> sends". The tree is a
+// parityTree: an artifact's declared path is part of its revision hash, so of the event id and
+// every id derived from it, and a golden holds those ids.
+type scenario struct {
+	t    *testing.T
+	key  string
+	opts []golden.Option
 }
 
-// runPython is what testdata/scenarios/<name>.py answered, driven through the real Python package
-// over tree (a parityTree), as recorded.
-func runPython(t *testing.T, tree, name string, args ...string) pyRun {
+// expectScenario starts the checks of scenario name (with args) over tree.
+func expectScenario(t *testing.T, tree, name string, args ...string) *scenario {
 	t.Helper()
-	return runScenario(t, tree, name, true, args...)
+	return &scenario{t: t, key: strings.Join(append([]string{name}, args...), " "), opts: []golden.Option{golden.Substitute(tree, "<tree>")}}
 }
 
-// runPythonOut is runPython for a test that reads only Python's out block and sends: the tables,
-// which it never compares, are not recorded.
-func runPythonOut(t *testing.T, tree, name string, args ...string) pyRun {
-	t.Helper()
-	return runScenario(t, tree, name, false, args...)
+// same checks got against the golden value name.
+func (s *scenario) same(name string, got any) {
+	s.t.Helper()
+	golden.CheckJSON(s.t, s.key+" out."+name, normalizeJSON(s.t, jsonable(got)), s.opts...)
 }
 
-func runScenario(t *testing.T, tree, name string, tables bool, args ...string) pyRun {
-	t.Helper()
-	home := t.TempDir()
-	raw := pyAnswer(t, strings.Join(append([]string{name}, args...), " "), func() ([]byte, error) {
-		root := repoRoot(t)
-		script, _ := filepath.Abs("testdata/pyscenario.py")
-		cmd := exec.Command("uv", append([]string{"run", "--no-sync", "python", script, tree, name}, args...)...)
-		cmd.Dir = filepath.Join(root, "packages", "codex-session-relay")
-		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "XDG_DATA_HOME="+filepath.Join(home, "data"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+home, "PYTHONPATH="+filepath.Join(root, "packages", "codex-session-relay", "src")+":"+filepath.Join(root, "packages", "codex-session-relay"))
-		output, err := pythonOutput(cmd)
-		if err != nil {
-			return nil, fmt.Errorf("python scenario %s: %w", name, err)
-		}
-		lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-		last := []byte(lines[len(lines)-1])
-		if tables {
-			return last, nil
-		}
-		var whole map[string]json.RawMessage
-		if err := json.Unmarshal(last, &whole); err != nil {
-			return nil, err
-		}
-		delete(whole, "tables")
-		return json.Marshal(whole)
-	}, pyoracle.Substitute(tree, "<tree>"), pyoracle.Substitute(home, "<home>"), pyoracle.SameWhen(sameJSON))
-	var run pyRun
-	if err := json.Unmarshal(raw, &run); err != nil {
-		t.Fatalf("python scenario %s output: %v\n%s", name, err, raw)
-	}
-	return run
+// out checks a scenario's whole answer map against the golden.
+func (s *scenario) out(out map[string]any) {
+	s.t.Helper()
+	golden.CheckJSON(s.t, s.key+" out", normalizeJSON(s.t, jsonable(out)), s.opts...)
 }
 
-// sameJSON compares two answers as JSON values: a dict filled by racing threads (MPI-3's next) may
-// list its keys in either order.
-func sameJSON(recorded, live []byte) bool {
-	var a, b any
-	return json.Unmarshal(recorded, &a) == nil && json.Unmarshal(live, &b) == nil && reflect.DeepEqual(a, b)
+// tables checks every non-empty table of f's store but skip against the golden.
+func (s *scenario) tables(f *fixture, skip ...string) {
+	s.t.Helper()
+	shown := *f
+	shown.skipTables = skip
+	golden.CheckJSON(s.t, s.key+" tables", normalizeJSON(s.t, shown.tables()), s.opts...)
+}
+
+// sends checks what the host was sent against the golden.
+func (s *scenario) sends(h *fakeHost) {
+	s.t.Helper()
+	golden.CheckJSON(s.t, s.key+" sends", normalizeJSON(s.t, sendsJSON(h)), s.opts...)
 }
 
 // fixture is DeliveryTestCase: a registered relationship, a final event, a fake host.
@@ -106,7 +88,7 @@ type fixture struct {
 	delivery *Service
 	host     *fakeHost
 	rid      string
-	// skipTables are left out of a table comparison (tableFilter).
+	// skipTables are left out of a table check (scenario.tables).
 	skipTables []string
 }
 
@@ -175,7 +157,7 @@ type regOpts struct {
 }
 
 // register writes what Registry.register and record_settings write for the fixture (the
-// registration port is todo 25; these are the same rows, compared with Python's below).
+// registration port is todo 25; these are the same rows, checked with the rest of the store).
 func (f *fixture) register(o regOpts) string {
 	if o.issue == "" {
 		o.issue = issue
@@ -358,38 +340,14 @@ func normalizeJSON(t *testing.T, v any) any {
 	return out
 }
 
-// requireSameTables compares the Go store with the Python one, every row of every table.
-func requireSameTables(t *testing.T, f *fixture, python pyRun) {
-	t.Helper()
-	got := normalizeJSON(t, f.tables()).(map[string]any)
-	want := normalizeJSON(t, python.Tables).(map[string]any)
-	var names []string
-	for n := range want {
-		names = append(names, n)
-	}
-	for n := range got {
-		if _, ok := want[n]; !ok {
-			names = append(names, n)
-		}
-	}
-	sort.Strings(names)
-	for _, n := range names {
-		if !reflect.DeepEqual(got[n], want[n]) {
-			g, _ := json.MarshalIndent(got[n], "", " ")
-			w, _ := json.MarshalIndent(want[n], "", " ")
-			t.Errorf("table %s differs from Python\ngo:     %s\npython: %s", n, g, w)
-		}
-	}
-}
-
-// requireSameJSON compares one Go value with the Python value of the same name.
+// requireSameJSON compares two values as JSON.
 func requireSameJSON(t *testing.T, what string, got any, want any) {
 	t.Helper()
 	g, w := normalizeJSON(t, jsonable(got)), normalizeJSON(t, want)
 	if !reflect.DeepEqual(g, w) {
 		gb, _ := json.Marshal(g)
 		wb, _ := json.Marshal(w)
-		t.Errorf("%s differs from Python\ngo:     %s\npython: %s", what, gb, wb)
+		t.Errorf("%s differs\ngot:  %s\nwant: %s", what, gb, wb)
 	}
 }
 
@@ -512,41 +470,6 @@ func (f *fixture) correctionAfterNeedsChanges() (string, string) {
 	correction := f.one("SELECT event_id FROM deliveries WHERE relationship_id = ? AND kind = ?", f.rid, Revision).S("event_id")
 	f.clock.Advance(1)
 	return event, correction
-}
-
-// requireSameTablesExcept compares every table but the named ones.
-func requireSameTablesExcept(t *testing.T, f *fixture, python pyRun, skip ...string) {
-	t.Helper()
-	for _, name := range skip {
-		delete(python.Tables, name)
-	}
-	g := &tableFilter{f, skip}
-	requireSameTables(t, g.fixture(), python)
-}
-
-type tableFilter struct {
-	f    *fixture
-	skip []string
-}
-
-func (tf *tableFilter) fixture() *fixture {
-	c := *tf.f
-	c.skipTables = tf.skip
-	return &c
-}
-
-// pythonValue is what one line of Python printed against the package, trimmed, as recorded.
-func pythonValue(t *testing.T, script string) string {
-	t.Helper()
-	home := t.TempDir()
-	out := pyAnswer(t, script, func() ([]byte, error) {
-		root := repoRoot(t)
-		cmd := exec.Command("uv", "run", "--no-sync", "python", "-c", script)
-		cmd.Dir = filepath.Join(root, "packages", "codex-session-relay")
-		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+home)
-		return pythonOutput(cmd)
-	}, pyoracle.Substitute(home, "<home>"))
-	return strings.TrimSpace(string(out))
 }
 
 // rawSettings is json.dumps(task_settings(cwd, approvalPolicy=...)) in its insertion order, as

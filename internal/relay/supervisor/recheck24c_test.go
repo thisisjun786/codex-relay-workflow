@@ -7,8 +7,6 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 )
 
-const r24cDeleteEvent = "DELETE FROM work_reports WHERE event_id='event-1'; DELETE FROM events WHERE event_id='event-1'"
-
 func TestR24C_OlderFirstVsDrift(t *testing.T) {
 	f := fixture24(t)
 	stagedID(t, f)
@@ -26,9 +24,8 @@ func TestR24C_OlderFirstVsDrift(t *testing.T) {
 	m2 := s2["messageId"].(string)
 	moveDevinSupervisor(t, f)
 	r := newBRun(t, f)
-	py := sweepPython(t, f, pyHost+"out.append(att(args[0],1700000000))\n", m2)
 	r.att(t, m2, 1700000000)
-	bCompare(t, r, py)
+	bCheck(t, r)
 }
 
 func TestR24C_ObsoleteAtClaimKeepsEligible(t *testing.T) {
@@ -36,13 +33,6 @@ func TestR24C_ObsoleteAtClaimKeepsEligible(t *testing.T) {
 	id := stagedID(t, f)
 	sweepExec(t, f, "UPDATE supervisor_messages SET state='withheld_pre_send',next_eligible_at=1699990000")
 	r := newBRun(t, f)
-	py := sweepPython(t, f, pyHost+`
-orig=channel._claim
-def hook(*a,**kw):
-    store.db.executescript("`+r24cDeleteEvent+`"); channel._claim=orig; return orig(*a,**kw)
-channel._claim=hook
-out.append(att(args[0],1700000000))
-`, id)
 	f.c.beforeClaimRead = func(tx context.Context) {
 		for _, statement := range []string{"DELETE FROM work_reports WHERE event_id='event-1'", "DELETE FROM events WHERE event_id='event-1'"} {
 			if _, err := f.s.Q(tx).ExecContext(tx, statement); err != nil {
@@ -55,7 +45,7 @@ out.append(att(args[0],1700000000))
 	// Go's transaction rolls the hook's fixture mutation back with the stale claim;
 	// Python's nested test hook commits it. Normalize that harness-only difference.
 	sweepExec(t, f, "DELETE FROM work_reports WHERE event_id='event-1'", "DELETE FROM events WHERE event_id='event-1'")
-	bCompare(t, r, py)
+	bCheck(t, r)
 }
 
 func TestR24C_SettingsStopStanding(t *testing.T) {
@@ -71,15 +61,6 @@ func TestR24C_SettingsStopStanding(t *testing.T) {
 		}
 		return &delivery.TaskSettings{}, nil
 	}
-	py := sweepPython(t, f, pyHost+`
-n=[0]
-def st(task,runtime=None):
-    n[0]+=1
-    if n[0]>1: raise DeliveryRefused(__import__('codex_session_relay.delivery',fromlist=['RefusalReason']).RefusalReason.SETTINGS_UNAVAILABLE,'gone')
-    return {}
-channel._settings=st
-out.append(att(args[0],1700000000))
-`, id)
 	r.att(t, id, 1700000000)
-	bCompare(t, r, py)
+	bCheck(t, r)
 }

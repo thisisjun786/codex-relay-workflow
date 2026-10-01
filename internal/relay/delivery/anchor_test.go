@@ -75,14 +75,12 @@ func (a *anb) bindPending() []any {
 
 func runANB(t *testing.T, mode string, goSide func(a *anb, out map[string]any)) {
 	tree := parityTree(t)
-	python := runPython(t, tree, "anb", mode)
+	expected := expectScenario(t, tree, "anb", mode)
 	a := newANB(t, tree)
 	out := map[string]any{}
 	goSide(a, out)
-	for k, want := range python.Out {
-		requireSameJSON(t, mode+"."+k, out[k], want)
-	}
-	requireSameTables(t, a.fixture, python)
+	expected.out(out)
+	expected.tables(a.fixture)
 }
 
 func (a *anb) dispatchRevision(script string) string {

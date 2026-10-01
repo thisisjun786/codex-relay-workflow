@@ -63,14 +63,12 @@ func (v *vcu) headOf(g int64) Obj {
 
 func runRVR(t *testing.T, mode string, goSide func(v *vcu, out map[string]any), args ...string) {
 	tree := parityTree(t)
-	python := runPython(t, tree, "rvr", append([]string{mode}, args...)...)
+	expected := expectScenario(t, tree, "rvr", append([]string{mode}, args...)...)
 	v := newVCU(t, tree)
 	out := map[string]any{}
 	goSide(v, out)
-	for k, want := range python.Out {
-		requireSameJSON(t, mode+"."+k, out[k], want)
-	}
-	requireSameTables(t, v.fixture, python)
+	expected.out(out)
+	expected.tables(v.fixture)
 }
 
 func TestRVR01_a_correction_by_the_same_child_supersedes_then_verifies_and_replays(t *testing.T) {

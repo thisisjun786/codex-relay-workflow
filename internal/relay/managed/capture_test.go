@@ -8,11 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"reflect"
 	"regexp"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -27,238 +24,68 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
-type managedCapture struct {
-	Receipts        []map[string]any            `json:"receipts"`
-	OrderedReceipts []string                    `json:"orderedReceipts"`
-	Effects         []int                       `json:"effects"`
-	Tables          map[string][]map[string]any `json:"tables"`
-	Scope           []map[string]any            `json:"scope"`
-	Ledger          struct {
-		Path   string `json:"path"`
-		Device uint64 `json:"device"`
-		Inode  uint64 `json:"inode"`
-	} `json:"ledger"`
-}
-
-func capturePythonManaged(t *testing.T, scenario string) (string, managedCapture) {
+// managedTree is the tree a scenario runs in: a fresh directory holding the workspace the request
+// names as its cwd.
+func managedTree(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
-	// Python's capture is recorded with the tree it ran in as <root> and the ledger file's
-	// physical identity as fixed numbers (canonicalLedger); the Go fake is handed that identity.
-	raw := pyoracle.Answer(t, scenario, func() ([]byte, error) {
-		home := t.TempDir()
-		_, file, _, _ := runtime.Caller(0)
-		repo := filepath.Clean(filepath.Join(filepath.Dir(file), "../../.."))
-		cmd := exec.Command("uv", "run", "--no-sync", "python", filepath.Join(repo, "internal/relay/managed/testdata/capture.py"), root, scenario)
-		cmd.Dir = repo
-		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "XDG_CONFIG_HOME="+home, "XDG_DATA_HOME="+home, "CODEX_HOME="+home, "PYTHONPATH="+filepath.Join(repo, "packages/codex-session-relay/src")+":"+filepath.Join(repo, "packages/codex-thread-bridge/src")+":"+filepath.Join(repo, "packages/codex-session-relay"))
-		if output, err := cmd.CombinedOutput(); err != nil {
-			return nil, fmt.Errorf("Python fake %s: %v\n%s", scenario, err, output)
-		}
-		raw, err := os.ReadFile(filepath.Join(root, "capture.json"))
-		if err != nil {
-			return nil, err
-		}
-		if scenario == "execution-cli" {
-			return canonicalStoreIdentity(raw, root)
-		}
-		if raw, err = canonicalLedger(raw); err != nil {
-			return nil, err
-		}
-		return canonicalFingerprints(raw), nil
-	}, captureOptions(t, root, scenario)...)
-	raw, err := rootDevice(raw, root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The workspace Python's run made in the tree; the Go side's request names it as its cwd.
 	if err := os.MkdirAll(filepath.Join(root, "workspace"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	var capture managedCapture
-	if err := json.Unmarshal(raw, &capture); err != nil {
-		t.Fatal(err)
-	}
-	return root, capture
+	return root
 }
 
-// captureOptions are the pyoracle options for a scenario's capture: the tree it ran in as
-// <root>; for execution-cli, the marker directory's workspace key, a digest of the workspace's
-// path in that tree; and, for the two thread races, the comparison check mode applies.
-func captureOptions(t *testing.T, root, scenario string) []pyoracle.Option {
+// checkManaged compares a scenario's value with its golden, with the scenario's tree as <root>.
+func checkManaged(t *testing.T, key string, value any, root string) {
 	t.Helper()
-	var options []pyoracle.Option
-	if scenario == "execution-cli" {
-		key, err := delivery.WorkspaceKey(filepath.Join(root, "execution-workspace"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		options = append(options, pyoracle.Substitute(key, "<execution workspace key>"))
-	}
-	options = append(options, pyoracle.Substitute(root, "<root>"))
-	if scenario == "reservation-threads" || scenario == "reservation-arm-release" {
-		return append(options, pyoracle.SameWhen(sameRace))
-	}
-	return options
+	golden.CheckJSON(t, key, value, golden.Substitute(root, "<root>"))
 }
 
-// canonicalLedgerDevice and canonicalLedgerInode stand for the device and inode of the ledger
-// file Python's fake host created, which differ on every run.
+// managedTables are the tables a managed start writes, each compared whole with its golden.
+var managedTables = []string{"managed_start_requests", "relationships", "generations", "canonical_criteria", "verification_mode", "authorized_settings", "generation_turns"}
+
+// ledgerDevice and ledgerInode are the physical identity of the operations ledger the fake host
+// reports; a replaced ledger is the same file with inode ledgerInode+1.
 const (
-	canonicalLedgerDevice = 4242
-	canonicalLedgerInode  = 777000
+	ledgerDevice = 4242
+	ledgerInode  = 777000
 )
 
-// canonicalLedger rewrites the ledger file's physical identity in a Python capture to the
-// canonical numbers, wherever the capture carries it: the ledger record and every receipt or row
-// that names it, as a JSON number or inside a JSON text. A replacement ledger (the inode Python's
-// replacement file got) is written as the canonical inode plus one, as the Go fake replaces it.
-func canonicalLedger(raw []byte) ([]byte, error) {
-	var probe struct {
-		Ledger struct {
-			Device uint64 `json:"device"`
-			Inode  uint64 `json:"inode"`
-		} `json:"ledger"`
-	}
-	if err := json.Unmarshal(raw, &probe); err != nil {
-		return nil, err
-	}
-	if probe.Ledger.Inode == 0 {
-		return raw, nil
-	}
-	text := string(raw)
-	replace := func(key string, from, to uint64) {
-		pattern := regexp.MustCompile(`(\\?"` + key + `\\?"\s*:\s*)` + strconv.FormatUint(from, 10) + `\b`)
-		text = pattern.ReplaceAllString(text, "${1}"+strconv.FormatUint(to, 10))
-	}
-	replace("device", probe.Ledger.Device, canonicalLedgerDevice)
-	replace("inode", probe.Ledger.Inode, canonicalLedgerInode)
-	// Any other inode a row names belongs to the file that replaced the ledger.
-	other := regexp.MustCompile(`(\\?"inode\\?"\s*:\s*)(\d+)\b`)
-	text = other.ReplaceAllStringFunc(text, func(match string) string {
-		parts := other.FindStringSubmatch(match)
-		if parts[2] == strconv.Itoa(canonicalLedgerInode) {
-			return match
-		}
-		return parts[1] + strconv.Itoa(canonicalLedgerInode+1)
-	})
-	return []byte(text), nil
+// ledgerIdentity is the operations ledger the fake host reports: a file in the workspace.
+func ledgerIdentity(root string, inode int64) map[string]any {
+	path := filepath.Join(root, "workspace", "test-operations-ledger")
+	return map[string]any{"path": path, "realPath": path, "device": int64(ledgerDevice), "inode": inode}
 }
 
-var requestFingerprint = regexp.MustCompile(`(\\?"(?:requestFingerprint|request_fingerprint)\\?"\s*:\s*\\?")[0-9a-f]{64}`)
-
-// canonicalFingerprints rewrites each request fingerprint, a digest of the physical request (its
-// paths, so of the tree the capture ran in), to 64 hex digits numbering the fingerprints in order
-// of appearance, wherever the capture names it. normalizedManaged compares fingerprints as
-// "<physical fingerprint>".
-func canonicalFingerprints(raw []byte) []byte {
-	text := string(raw)
-	seen := map[string]bool{}
-	var order []string
-	for _, match := range requestFingerprint.FindAllStringSubmatch(text, -1) {
-		value := match[0][len(match[1]):]
-		if !seen[value] {
-			seen[value] = true
-			order = append(order, value)
-		}
-	}
-	for i, value := range order {
-		text = strings.ReplaceAll(text, value, fmt.Sprintf("%064x", i+1))
-	}
-	return []byte(text)
-}
-
-// sameRace compares the capture of a race between two Python threads, whose winner a rerun may
-// change: a live answer is the same as the recorded one when it is equal, when it is equal with
-// the two racers' names exchanged (reservation-threads), or when it holds the same first
-// reservation and a winner and a loser of the kinds the test accepts (reservation-arm-release).
-func sameRace(recorded, live []byte) bool {
-	if bytes.Equal(recorded, live) {
-		return true
-	}
-	swapped := bytes.ReplaceAll(live, []byte("req-a"), []byte("req-?"))
-	swapped = bytes.ReplaceAll(swapped, []byte("req-b"), []byte("req-a"))
-	swapped = bytes.ReplaceAll(swapped, []byte("req-?"), []byte("req-b"))
-	if bytes.Equal(recorded, swapped) {
-		return true
-	}
-	var a, b managedCapture
-	if json.Unmarshal(recorded, &a) != nil || json.Unmarshal(live, &b) != nil || len(a.Receipts) != 4 || len(b.Receipts) != 4 {
-		return false
-	}
-	for _, c := range []managedCapture{a, b} {
-		winner, row := obj(c.Receipts[1]["ok"]), c.Receipts[3]
-		if c.Receipts[2]["error"] != "RegistrationError" || winner["state"] != row["state"] || row["state"] != "create_armed" && row["state"] != "released" {
-			return false
-		}
-	}
-	return reflect.DeepEqual(a.Receipts[0], b.Receipts[0])
-}
-
-// rootDeviceToken stands in a recorded capture for the device of the tree the capture ran in.
+// rootDeviceToken stands in a golden for the device of the tree the scenario ran in.
 const rootDeviceToken = "<root device>"
 
-var (
-	storeIDField     = regexp.MustCompile(`\\?"storeId\\?"\s*:\s*\\?"([0-9a-f]{32})\\?"`)
-	physicalInode    = regexp.MustCompile(`(\\?"(?:inode|logInode)\\?"\s*:\s*)(\d+)\b`)
-	physicalDevice   = regexp.MustCompile(`(\\?"(?:device|logDevice)\\?"\s*:\s*)(\d+)\b`)
-	canonicalInodeOf = func(i int) string { return strconv.Itoa(900000 + i) }
-)
-
-// canonicalStoreIdentity rewrites what a Python store's creation makes different on every run, in
-// the receipts of a capture that ran the real CLI on a real store (execution-cli): each store's
-// random storeId, the time the store was created and any other time the receipts carry, and the
-// inode of each file, to fixed values in order of appearance, and the device of the tree to
-// rootDeviceToken. normalizedExecution compares none of these but the device, which rootDevice
-// puts back as the device this run's tree lives on, where Go's store lives too.
-func canonicalStoreIdentity(raw []byte, root string) ([]byte, error) {
-	text := string(raw)
-	ids := map[string]string{}
-	for _, match := range storeIDField.FindAllStringSubmatch(text, -1) {
-		if _, ok := ids[match[1]]; !ok {
-			ids[match[1]] = fmt.Sprintf("%032x", len(ids)+1)
+// maskRootDevice replaces each device or logDevice that is the device of the scenario's tree
+// (device, in decimal) with rootDeviceToken.
+func maskRootDevice(v any, device string) any {
+	switch x := v.(type) {
+	case map[string]any:
+		out := map[string]any{}
+		for k, value := range x {
+			if f, ok := value.(float64); ok && (k == "device" || k == "logDevice") && strconv.FormatInt(int64(f), 10) == device {
+				out[k] = rootDeviceToken
+				continue
+			}
+			out[k] = maskRootDevice(value, device)
 		}
-	}
-	for id, canonical := range ids {
-		text = strings.ReplaceAll(text, id, canonical)
-	}
-	text = executionTime.ReplaceAllString(text, "2000-01-01T00:00:00Z")
-	inodes := map[string]string{}
-	text = physicalInode.ReplaceAllStringFunc(text, func(match string) string {
-		parts := physicalInode.FindStringSubmatch(match)
-		if parts[2] == "0" || parts[2] == strconv.Itoa(canonicalLedgerInode) || parts[2] == strconv.Itoa(canonicalLedgerInode+1) {
-			return match
+		return out
+	case []any:
+		out := make([]any, len(x))
+		for i, item := range x {
+			out[i] = maskRootDevice(item, device)
 		}
-		if _, ok := inodes[parts[2]]; !ok {
-			inodes[parts[2]] = canonicalInodeOf(len(inodes) + 1)
-		}
-		return parts[1] + inodes[parts[2]]
-	})
-	device, err := deviceOf(root)
-	if err != nil {
-		return nil, err
+		return out
+	default:
+		return v
 	}
-	text = physicalDevice.ReplaceAllStringFunc(text, func(match string) string {
-		parts := physicalDevice.FindStringSubmatch(match)
-		if parts[2] != device {
-			return match
-		}
-		return parts[1] + rootDeviceToken
-	})
-	return []byte(text), nil
-}
-
-// rootDevice puts the device of the tree this run's capture lives in where the recording names
-// rootDeviceToken.
-func rootDevice(raw []byte, root string) ([]byte, error) {
-	device, err := deviceOf(root)
-	if err != nil {
-		return nil, err
-	}
-	return bytes.ReplaceAll(raw, []byte(rootDeviceToken), []byte(device)), nil
 }
 
 func deviceOf(path string) (string, error) {
@@ -273,7 +100,8 @@ func deviceOf(path string) (string, error) {
 	return strconv.FormatUint(uint64(stat.Dev), 10), nil
 }
 
-func pythonFixture(root string) []byte {
+// scenarioRequest is the managed-start request every managed scenario starts from.
+func scenarioRequest(root string) []byte {
 	workspace := filepath.Join(root, "workspace")
 	settings := func() map[string]any {
 		return map[string]any{"sandbox": map[string]any{"type": "workspaceWrite", "writableRoots": []any{}, "networkAccess": false, "excludeTmpdirEnvVar": false, "excludeSlashTmp": false}, "approvalPolicy": "never", "cwd": workspace, "runtimeWorkspaceRoots": []any{workspace}, "model": "anthropic/claude-opus-5-5", "reasoningEffort": "xhigh", "environments": []any{}}
@@ -310,10 +138,15 @@ func normalizedManaged(v any) any {
 // MEX-1..3: the one instructed execution-cli sequence covers them all: the instructed
 // sequence, the restart from a marker (receipt 8) and the duplicate child (receipts 9 and 10).
 func Test27_MEX_1_PythonInstructedSequenceWholeOutput(t *testing.T) {
-	comparePythonExecutionCLI(t)
+	compareExecutionCLI(t)
 }
-func comparePythonExecutionCLI(t *testing.T) {
-	root, want := capturePythonManaged(t, "execution-cli")
+
+// compareExecutionCLI runs the instructed sequence through the real CLI on a real store and
+// compares every step's output with the golden, normalized by normalizedExecution; the device of
+// the tree the store lives in is <root device> and the marker directory's workspace key, a digest
+// of the workspace's path, is <execution workspace key>.
+func compareExecutionCLI(t *testing.T) {
+	root := managedTree(t)
 	state := filepath.Join(root, "goexecution")
 	marker := filepath.Join(root, "goexecution-markers")
 	workspace := filepath.Join(root, "execution-workspace")
@@ -344,54 +177,45 @@ func comparePythonExecutionCLI(t *testing.T) {
 	command("intent-show", "--assignment", assignment, "--marker-root", marker, "--workspace", workspace)
 	command("register", "--parent-task", "parent", "--parent-host", "host", "--child-task", "other-child", "--child-host", "host", "--issue", "REL-EXECUTION", "--artifact-root", workspace, "--allowed-recipient", "parent", "--dispatch-request-id", "dispatch-2", "--dispatch-turn-id", "standby")
 	command("assignment-find", "--issue", "REL-EXECUTION")
-	if len(got) != len(want.Receipts) {
-		t.Fatalf("Go steps=%d Python=%d", len(got), len(want.Receipts))
-	}
-	// doctor's ownership.runtime_build names the answering runtime, a documented divergence
-	// (decisions.md 31): the Python fence build from Python and Go's own build, never the fence
-	// build, from Go. Pinned per runtime here; normalizedExecution then compares it as
-	// answeringBuild, and only when it is that runtime's build.
+	// doctor's ownership.runtime_build names the answering runtime (decisions.md 31): Go's own
+	// build, never the fence build. normalizedExecution then compares it as answeringBuild.
 	for _, i := range []int{0, 6} {
 		goBuild := obj(obj(obj(got[i])["stdout"])["ownership"])["runtime_build"]
-		pythonBuild := obj(obj(obj(want.Receipts[i])["stdout"])["ownership"])["runtime_build"]
-		if goBuild != goRuntimeBuild() || goBuild == ownership.CompatibilityBuild || pythonBuild != ownership.CompatibilityBuild {
-			t.Errorf("step %d doctor runtime_build: Go %v (want %q), Python %v (want %q)", i, goBuild, goRuntimeBuild(), pythonBuild, ownership.CompatibilityBuild)
+		if goBuild != goRuntimeBuild() || goBuild == ownership.CompatibilityBuild {
+			t.Errorf("step %d doctor runtime_build: %v (want %q)", i, goBuild, goRuntimeBuild())
 		}
 	}
-	for i, expected := range want.Receipts {
-		g, p := normalizedExecution(t, testsupport.Go, got[i], goRuntimeBuild()), normalizedExecution(t, testsupport.Python, expected, ownership.CompatibilityBuild)
-		if !reflect.DeepEqual(g, p) {
-			t.Errorf("step %d Go=%v Python=%v", i, g, p)
-		}
+	steps := make([]any, len(got))
+	for i, step := range got {
+		steps[i] = normalizedExecution(t, testsupport.Go, step, goRuntimeBuild())
 	}
-	before := obj(obj(want.Receipts[0])["stdout"])
-	issue := obj(before["issue"])
+	device, err := deviceOf(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := delivery.WorkspaceKey(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	golden.CheckJSON(t, "steps", maskRootDevice(steps, device), golden.Substitute(key, "<execution workspace key>"), golden.Substitute(root, "<root>"))
 	goBefore := obj(obj(got[0])["stdout"])
 	goIssue := obj(goBefore["issue"])
-	if issue["readable"] != false || issue["holds"] != nil || obj(want.Receipts[1])["storeExists"] != false || goIssue["readable"] != false || goIssue["holds"] != nil || obj(got[1])["storeExists"] != false {
-		t.Fatal("pre-registration diagnosis created a store", before, goBefore)
+	if goIssue["readable"] != false || goIssue["holds"] != nil || obj(got[1])["storeExists"] != false {
+		t.Fatal("pre-registration diagnosis created a store", goBefore)
 	}
-	after := obj(obj(want.Receipts[6])["stdout"])
-	owner := obj(after["issue"])
-	if owner["holds"] != true || owner["responsibleChild"] != "child" || owner["storeAgreement"] != "same" || owner["storeId"] != obj(after["store"])["storeId"] {
-		t.Fatalf("Python diagnosis: %v", owner)
-	}
-	found := obj(obj(want.Receipts[7])["stdout"])
 	goAfter := obj(obj(got[6])["stdout"])
 	goOwner := obj(goAfter["issue"])
 	goFound := obj(obj(got[7])["stdout"])
-	if found["responsibleRelationship"] != owner["responsibleRelationship"] || len(found["assignments"].([]any)) != 1 || goOwner["holds"] != true || goOwner["responsibleChild"] != "child" || goOwner["storeAgreement"] != "same" || goOwner["storeId"] != obj(goAfter["store"])["storeId"] || goFound["responsibleRelationship"] != goOwner["responsibleRelationship"] || len(goFound["assignments"].([]any)) != 1 {
-		t.Fatalf("assignment mismatch Go=%v Python=%v", goFound, found)
+	if goOwner["holds"] != true || goOwner["responsibleChild"] != "child" || goOwner["storeAgreement"] != "same" || goOwner["storeId"] != obj(goAfter["store"])["storeId"] || goFound["responsibleRelationship"] != goOwner["responsibleRelationship"] || len(goFound["assignments"].([]any)) != 1 {
+		t.Fatalf("assignment mismatch: %v %v", goOwner, goFound)
 	}
-	markerBody := obj(obj(want.Receipts[8])["stdout"])
 	goMarkerBody := obj(obj(got[8])["stdout"])
-	if !strings.Contains(fmt.Sprint(markerBody), str(owner["responsibleRelationship"])) || !strings.Contains(fmt.Sprint(markerBody), filepath.Join(root, "execution", "relay.sqlite3")) || !strings.Contains(fmt.Sprint(goMarkerBody), str(goOwner["responsibleRelationship"])) || !strings.Contains(fmt.Sprint(goMarkerBody), filepath.Join(root, "goexecution", "relay.sqlite3")) {
-		t.Fatalf("marker restart Go=%v Python=%v", goMarkerBody, markerBody)
+	if !strings.Contains(fmt.Sprint(goMarkerBody), str(goOwner["responsibleRelationship"])) || !strings.Contains(fmt.Sprint(goMarkerBody), filepath.Join(root, "goexecution", "relay.sqlite3")) {
+		t.Fatalf("marker restart: %v", goMarkerBody)
 	}
-	duplicate := obj(obj(want.Receipts[9])["stdout"])
 	goDuplicate := obj(obj(got[9])["stdout"])
-	if obj(want.Receipts[9])["exit"] != float64(2) || duplicate["reason"] != "duplicate_assignment" || len(obj(obj(want.Receipts[10])["stdout"])["assignments"].([]any)) != 1 || obj(got[9])["exit"] != float64(2) || goDuplicate["reason"] != "duplicate_assignment" || len(obj(obj(got[10])["stdout"])["assignments"].([]any)) != 1 {
-		t.Fatalf("duplicate assignment Go=%v Python=%v", goDuplicate, duplicate)
+	if obj(got[9])["exit"] != float64(2) || goDuplicate["reason"] != "duplicate_assignment" || len(obj(obj(got[10])["stdout"])["assignments"].([]any)) != 1 {
+		t.Fatalf("duplicate assignment: %v", goDuplicate)
 	}
 }
 
@@ -468,45 +292,45 @@ func normalizedExecution(t *testing.T, writer testsupport.Runtime, v any, build 
 		return x
 	}
 }
-func Test27_MST_1_PythonFakeWholeReceiptAndRows(t *testing.T) { comparePythonManaged(t, "happy") }
+func Test27_MST_1_PythonFakeWholeReceiptAndRows(t *testing.T) { compareManaged(t, "happy", 2) }
 func Test27_MST_10_PythonShowAfterStartWholeOutputAndRows(t *testing.T) {
-	comparePythonManaged(t, "show-after-start")
+	compareManaged(t, "show-after-start", 2)
 }
 func Test27_MST_10_PythonShowAbsentWholeOutputAndRows(t *testing.T) {
-	comparePythonManaged(t, "show-absent")
+	compareManaged(t, "show-absent", 2)
 }
 func Test27_MST_9_PythonUnknownInputWholeOutputAndRows(t *testing.T) {
-	comparePythonManaged(t, "cli-unknown-input")
+	compareManaged(t, "cli-unknown-input", 2)
 }
 func Test27_MST_9_PythonMissingWorkerWholeOutputAndRows(t *testing.T) {
-	comparePythonManaged(t, "cli-missing-worker")
+	compareManaged(t, "cli-missing-worker", 2)
 }
 func Test27_MST_9_PythonMissingSelectorsWholeOutputAndRows(t *testing.T) {
-	comparePythonManaged(t, "cli-missing-selectors")
+	compareManaged(t, "cli-missing-selectors", 4)
 }
 func Test27_MRS_1_PythonReservationReplayWholeOutputAndRows(t *testing.T) {
-	comparePythonReservation(t, "reservation-replay")
+	compareReservation(t, "reservation-replay")
 }
 func Test27_MRS_1_PythonCheckpointReplayWholeOutputAndRows(t *testing.T) {
-	comparePythonReservation(t, "reservation-checkpoint")
+	compareReservation(t, "reservation-checkpoint")
 }
 func Test27_MRS_2_PythonReservationContentionWholeOutputAndRows(t *testing.T) {
-	comparePythonReservation(t, "reservation-contention")
+	compareReservation(t, "reservation-contention")
 }
 func Test27_MRS_2_PythonActiveOwnerWholeOutputAndRows(t *testing.T) {
-	comparePythonReservation(t, "reservation-active-owner")
+	compareReservation(t, "reservation-active-owner")
 }
 func Test27_MRS_2_PythonRawRegisterWholeOutputAndRows(t *testing.T) {
-	comparePythonReservation(t, "reservation-raw-register")
+	compareReservation(t, "reservation-raw-register")
 }
 func Test27_MRS_2_PythonUniqueIndexWholeOutputAndRows(t *testing.T) {
-	comparePythonReservation(t, "reservation-index")
+	compareReservation(t, "reservation-index")
 }
 func Test27_MRS_2_PythonResumeBlockedWholeOutputAndRows(t *testing.T) {
-	comparePythonReservation(t, "reservation-resume")
+	compareReservation(t, "reservation-resume")
 }
 func Test27_MRS_2_PythonTwoConnectionsWholeOutputAndRows(t *testing.T) {
-	root, want := capturePythonManaged(t, "reservation-threads")
+	root := managedTree(t)
 	ctx := context.Background()
 	s, err := store.Open(ctx, filepath.Join(root, "gostate", "relay.sqlite3"), "")
 	if err != nil {
@@ -546,28 +370,16 @@ func Test27_MRS_2_PythonTwoConnectionsWholeOutputAndRows(t *testing.T) {
 		got = append(got, outcome)
 	}
 	sort.Slice(got, func(i, j int) bool { return obj(got[i])["ok"] != nil })
-	if len(got) != len(want.Receipts) {
-		t.Fatalf("Go=%v Python=%v", got, want.Receipts)
+	if len(got) != 2 {
+		t.Fatalf("two racers, outcomes %v", got)
 	}
 	winner := str(obj(obj(got[0])["ok"])["request_id"])
-	pyWinner := str(obj(obj(want.Receipts[0])["ok"])["request_id"])
-	if winner != "req-a" && winner != "req-b" || pyWinner != "req-a" && pyWinner != "req-b" {
-		t.Fatalf("no winner Go=%v Python=%v", got, want.Receipts)
+	if winner != "req-a" && winner != "req-b" {
+		t.Fatalf("no winner: %v", got)
 	}
-	goWon := obj(obj(got[0])["ok"])
-	pyWon := obj(obj(want.Receipts[0])["ok"])
-	if !reflect.DeepEqual(goWon, normalizeRaceWinner(pyWon, winner)) {
-		t.Errorf("winner Go=%v Python=%v", goWon, pyWon)
-	}
-	goLoser, pyLoser := obj(got[1]), obj(want.Receipts[1])
-	if goLoser["error"] != pyLoser["error"] {
-		t.Fatalf("loser class Go=%v Python=%v", goLoser, pyLoser)
-	}
+	golden.CheckJSON(t, "outcomes", raceWinnerFirst(t, got, winner))
+	goLoser := obj(got[1])
 	goDetail := str(goLoser["detail"])
-	pyDetail := str(pyLoser["detail"])
-	if goDetail != strings.ReplaceAll(pyDetail, pyWinner, winner) {
-		t.Errorf("loser Go=%v Python=%v", goLoser, pyLoser)
-	}
 	if goLoser["error"] != "RegistrationError" || !strings.HasPrefix(goDetail, "duplicate_assignment: issue 'REL-1' is already held by request") {
 		t.Fatalf("unexpected Go refusal: %v", goLoser)
 	}
@@ -576,30 +388,40 @@ func Test27_MRS_2_PythonTwoConnectionsWholeOutputAndRows(t *testing.T) {
 		t.Fatalf("Go pending=%d err=%v", count, err)
 	}
 }
-func normalizeRaceWinner(row map[string]any, newID string) map[string]any {
-	out := map[string]any{}
-	for key, value := range row {
-		if key == "request_id" {
-			value = newID
-		}
-		out[key] = value
+
+// raceWinnerFirst is the two racers' outcomes, the winner's first, with the racers' names
+// exchanged when req-b won, so the golden reads the same whichever thread reserved first.
+func raceWinnerFirst(t *testing.T, outcomes []any, winner string) any {
+	t.Helper()
+	raw, err := json.Marshal(outcomes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if winner == "req-b" {
+		raw = bytes.ReplaceAll(raw, []byte("req-a"), []byte("req-?"))
+		raw = bytes.ReplaceAll(raw, []byte("req-b"), []byte("req-a"))
+		raw = bytes.ReplaceAll(raw, []byte("req-?"), []byte("req-b"))
+	}
+	var out any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatal(err)
 	}
 	return out
 }
 func Test27_MRS_3_PythonReservationReceiptsWholeOutputAndRows(t *testing.T) {
-	comparePythonReservation(t, "reservation-receipts")
+	compareReservation(t, "reservation-receipts")
 }
 func Test27_MRS_3_PythonReservationAttachWholeOutputAndRows(t *testing.T) {
-	comparePythonReservation(t, "reservation-attach")
+	compareReservation(t, "reservation-attach")
 }
 func Test27_MRS_3_PythonAttachConflictWholeOutputAndRows(t *testing.T) {
-	comparePythonReservation(t, "reservation-attach-conflict")
+	compareReservation(t, "reservation-attach-conflict")
 }
 func Test27_MRS_4_PythonReservationReleaseWholeOutputAndRows(t *testing.T) {
-	comparePythonReservation(t, "reservation-release")
+	compareReservation(t, "reservation-release")
 }
 func Test27_MRS_4_PythonArmReleaseRaceWholeOutputAndRows(t *testing.T) {
-	root, want := capturePythonManaged(t, "reservation-arm-release")
+	root := managedTree(t)
 	ctx := context.Background()
 	s, err := store.Open(ctx, filepath.Join(root, "gostate", "relay.sqlite3"), "")
 	if err != nil {
@@ -662,50 +484,43 @@ func Test27_MRS_4_PythonArmReleaseRaceWholeOutputAndRows(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if wins != 1 || losses != 1 || row.Revision != 1 || len(want.Receipts) != 4 {
-		t.Fatalf("Go wins=%d losses=%d row=%v Python=%v", wins, losses, row, want.Receipts)
+	if wins != 1 || losses != 1 || row.Revision != 1 {
+		t.Fatalf("Go wins=%d losses=%d row=%v", wins, losses, row)
 	}
 	if winner.action == "arm" && row.State != "create_armed" || winner.action == "release" && (row.State != "released" || row.ReleaseReason.String != "operator") {
 		t.Fatalf("winner=%v row=%v", winner.action, row)
-	}
-	pythonRow := obj(want.Receipts[3])
-	if pythonRow["revision"] != float64(1) || (pythonRow["state"] != "create_armed" && pythonRow["state"] != "released") {
-		t.Fatalf("Python retained invalid race row: %v", pythonRow)
 	}
 	gotRow := obj(orderedValue(t, reservationRecord(row)))
 	if gotRow["state"] != "create_armed" && gotRow["state"] != "released" {
 		t.Fatalf("Go retained invalid race row: %v", gotRow)
 	}
-	pythonWinner := obj(obj(want.Receipts[1])["ok"])
-	pythonLoser := obj(want.Receipts[2])
-	if pythonWinner["state"] != pythonRow["state"] || pythonLoser["error"] != "RegistrationError" {
-		t.Fatalf("Python race output: %v", want.Receipts)
-	}
-	if gotRow["state"] != pythonRow["state"] {
-		for key, value := range pythonRow {
-			if key == "state" || key == "release_reason" {
-				continue
-			}
-			if gotRow[key] != value {
-				t.Errorf("race row field %s Go=%v Python=%v", key, gotRow[key], value)
-			}
-		}
-	} else if !reflect.DeepEqual(gotRow, pythonRow) {
-		t.Errorf("race row Go=%v Python=%v", gotRow, pythonRow)
-	}
+	golden.CheckJSON(t, "row", raceRow(gotRow))
 	if !strings.Contains(loser.err.Error(), "relationship_conflict") {
-		t.Fatalf("Go loser=%v Python=%v", loser.err, pythonLoser)
+		t.Fatalf("Go loser=%v", loser.err)
 	}
 }
+
+// raceRow is a reservation row the arm/release race left, with the two columns whose value
+// depends on which racer won masked; the test checks them against the winner itself.
+func raceRow(row map[string]any) map[string]any {
+	out := map[string]any{}
+	for key, value := range row {
+		if key == "state" || key == "release_reason" {
+			value = "<the winner's>"
+		}
+		out[key] = value
+	}
+	return out
+}
 func Test27_MRS_5_PythonEnsureSettingsWholeOutputAndRows(t *testing.T) {
-	root, want := capturePythonManaged(t, "reservation-settings")
+	root := managedTree(t)
 	ctx := context.Background()
 	s, err := store.Open(ctx, filepath.Join(root, "gostate", "relay.sqlite3"), "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	req, err := ParseRequest(pythonFixture(root))
+	req, err := ParseRequest(scenarioRequest(root))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -734,11 +549,7 @@ func Test27_MRS_5_PythonEnsureSettingsWholeOutputAndRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	got = append(got, map[string]any{"taskId": "task-new", "source": source, "settings": settings})
-	for i, expected := range want.Receipts {
-		if !reflect.DeepEqual(got[i], expected) {
-			t.Errorf("receipt %d Go=%v Python=%v", i, got[i], expected)
-		}
-	}
+	checkManaged(t, "receipts", got, root)
 	rows, err := s.DB.QueryContext(ctx, "SELECT task_id,settings,source,recorded_at FROM authorized_settings ORDER BY rowid")
 	if err != nil {
 		t.Fatal(err)
@@ -757,12 +568,13 @@ func Test27_MRS_5_PythonEnsureSettingsWholeOutputAndRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	rows.Close()
-	if !reflect.DeepEqual(actual, want.Tables["authorized_settings"]) {
-		t.Errorf("settings rows Go=%v Python=%v", actual, want.Tables["authorized_settings"])
-	}
+	checkManaged(t, "table authorized_settings", actual, root)
 }
-func comparePythonReservation(t *testing.T, scenario string) {
-	root, want := capturePythonManaged(t, scenario)
+
+// compareReservation runs a reservation scenario on a fresh store and compares its receipts and
+// every managed table with the golden.
+func compareReservation(t *testing.T, scenario string) {
+	root := managedTree(t)
 	ctx := context.Background()
 	s, err := store.Open(ctx, filepath.Join(root, "gostate", "relay.sqlite3"), "")
 	if err != nil {
@@ -803,7 +615,7 @@ func comparePythonReservation(t *testing.T, scenario string) {
 			t.Fatal(e)
 		}
 		got = append(got, orderedValue(t, reservationRecord(row)))
-		compareReservationCapture(t, s, want, got)
+		checkReservation(t, s, got)
 		return
 	}
 	if scenario == "reservation-active-owner" {
@@ -825,7 +637,7 @@ func comparePythonReservation(t *testing.T, scenario string) {
 			}
 			got = append(got, map[string]any{"error": "RegistrationError", "detail": strings.TrimPrefix(e.Error(), "transaction body: ")})
 		}
-		compareReservationCapture(t, s, want, got)
+		checkReservation(t, s, got)
 		return
 	}
 	reserveCount := 2
@@ -993,20 +805,13 @@ func comparePythonReservation(t *testing.T, scenario string) {
 		}
 		got = append(got, orderedValue(t, reservationRecord(row)))
 	}
-	compareReservationCapture(t, s, want, got)
+	checkReservation(t, s, got)
 }
-func compareReservationCapture(t *testing.T, s *store.Store, want managedCapture, got []any) {
+func checkReservation(t *testing.T, s *store.Store, got []any) {
 	t.Helper()
 	ctx := context.Background()
-	if len(got) != len(want.Receipts) {
-		t.Fatalf("Go receipts %d Python %d", len(got), len(want.Receipts))
-	}
-	for i, expected := range want.Receipts {
-		if !reflect.DeepEqual(got[i], expected) {
-			t.Errorf("receipt %d Go=%v Python=%v", i, got[i], expected)
-		}
-	}
-	for table, expected := range want.Tables {
+	golden.CheckJSON(t, "receipts", got)
+	for _, table := range managedTables {
 		if table != "managed_start_requests" {
 			rows, err := s.DB.QueryContext(ctx, "SELECT * FROM "+table+" ORDER BY rowid")
 			if err != nil {
@@ -1046,13 +851,7 @@ func compareReservationCapture(t *testing.T, s *store.Store, want managedCapture
 				t.Fatal(err)
 			}
 			rows.Close()
-			wantRows := []any{}
-			for _, row := range expected {
-				wantRows = append(wantRows, row)
-			}
-			if !reflect.DeepEqual(actual, wantRows) {
-				t.Errorf("table %s Go=%v Python=%v", table, actual, wantRows)
-			}
+			golden.CheckJSON(t, "table "+table, actual)
 			continue
 		}
 		rows, err := s.DB.QueryContext(ctx, "SELECT request_id FROM managed_start_requests ORDER BY rowid")
@@ -1081,13 +880,7 @@ func compareReservationCapture(t *testing.T, s *store.Store, want managedCapture
 			}
 			actual = append(actual, orderedValue(t, reservationRecord(row)))
 		}
-		wantRows := []any{}
-		for _, row := range expected {
-			wantRows = append(wantRows, row)
-		}
-		if !reflect.DeepEqual(actual, wantRows) {
-			t.Errorf("managed rows Go=%v Python=%v", actual, wantRows)
-		}
+		golden.CheckJSON(t, "table managed_start_requests", actual)
 	}
 }
 func orderedValue(t *testing.T, value contract.OrderedObject) any {
@@ -1103,82 +896,81 @@ func orderedValue(t *testing.T, value contract.OrderedObject) any {
 	return result
 }
 func Test27_MST_2_PythonFakeNamingRecoveryWholeReceiptAndRows(t *testing.T) {
-	comparePythonManaged(t, "naming")
+	compareManaged(t, "naming", 2)
 }
 func Test27_MST_2_PythonRegisteredShellRecoveryWholeReceiptAndRows(t *testing.T) {
-	comparePythonManaged(t, "crash-criteria")
+	compareManaged(t, "crash-criteria", 2)
 }
 func Test27_MST_2_PythonBusinessReceiptReplayWholeReceiptAndRows(t *testing.T) {
-	comparePythonManaged(t, "crash-business")
+	compareManaged(t, "crash-business", 2)
 }
 func Test27_MST_3_PythonFakeUncertainFirstTurnWholeReceiptAndRows(t *testing.T) {
-	comparePythonManaged(t, "uncertain-turn")
+	compareManaged(t, "uncertain-turn", 2)
 }
 func Test27_MST_3_PythonFakeUnknownRecoveryWholeReceiptAndRows(t *testing.T) {
-	comparePythonManaged(t, "unknown-recovery")
+	compareManaged(t, "unknown-recovery", 2)
 }
 func Test27_MST_3_PythonFakePausedPartialWholeReceiptAndRows(t *testing.T) {
-	comparePythonManaged(t, "paused-partial")
+	compareManaged(t, "paused-partial", 2)
 }
 func Test27_MST_3_PythonFakeUnknownWholeReceiptAndRows(t *testing.T) {
-	comparePythonManaged(t, "unknown")
+	compareManaged(t, "unknown", 2)
 }
 func Test27_MST_3_PythonFakeStandbyWholeReceiptAndRows(t *testing.T) {
-	comparePythonManaged(t, "standby")
+	compareManaged(t, "standby", 2)
 }
 func Test27_MST_4_PythonFakeUnknownLedgerWholeErrorAndRows(t *testing.T) {
-	comparePythonManaged(t, "unknown-ledger")
+	compareManaged(t, "unknown-ledger", 1)
 }
 func Test27_MST_4_PythonFakeMissingWorkerWholeReceiptAndRows(t *testing.T) {
-	comparePythonManaged(t, "missing-worker")
+	compareManaged(t, "missing-worker", 1)
 }
 func Test27_MST_4_PythonFakeLedgerReplacementWholeErrorAndRows(t *testing.T) {
-	comparePythonManaged(t, "ledger-replaced")
+	compareManaged(t, "ledger-replaced", 1)
 }
 func Test27_MST_4_PythonFakeLedgerRetryWholeErrorAndRows(t *testing.T) {
-	comparePythonManaged(t, "ledger-retry")
+	compareManaged(t, "ledger-retry", 2)
 }
 func Test27_MST_4_PythonFakeUnsupportedPolicyWholeErrorAndRows(t *testing.T) {
-	comparePythonManaged(t, "unsupported-policy")
+	compareManaged(t, "unsupported-policy", 1)
 }
 func Test27_MST_6_PythonFakeScopeDirectionAndRecipients(t *testing.T) {
-	comparePythonManaged(t, "recipient-scope")
+	compareManaged(t, "recipient-scope", 1)
 }
 func Test27_MST_6_PythonFakePredeclaredRecipientWholeReceiptAndRows(t *testing.T) {
-	comparePythonManaged(t, "recipient-predeclared")
+	compareManaged(t, "recipient-predeclared", 1)
 }
 func Test27_MST_5_PythonFakeAllChangedInputsWholeReceiptAndRows(t *testing.T) {
-	comparePythonManaged(t, "input-changes")
+	compareManaged(t, "input-changes", 6)
 }
 func Test27_MST_5_PythonFakeOriginalSelectorSpellingsWholeReceiptAndRows(t *testing.T) {
-	comparePythonManaged(t, "selector-spellings")
+	compareManaged(t, "selector-spellings", 4)
 }
 func Test27_MST_5_PythonFakePromptChangeWholeReceiptAndRows(t *testing.T) {
-	comparePythonManaged(t, "prompt-changed")
+	compareManaged(t, "prompt-changed", 2)
 }
 func Test27_MST_7_PythonFakeSettingsDriftWholeReceiptAndRows(t *testing.T) {
-	comparePythonManaged(t, "settings-drift")
+	compareManaged(t, "settings-drift", 2)
 }
 func Test27_MST_7_PythonFakeRegistrationDriftWholeReceiptAndRows(t *testing.T) {
-	comparePythonManaged(t, "relationship-paused")
+	compareManaged(t, "relationship-paused", 2)
 }
 func Test27_MST_7_PythonFakeApprovalDriftWholeReceiptAndRows(t *testing.T) {
-	comparePythonManaged(t, "approval-drift")
+	compareManaged(t, "approval-drift", 1)
 }
 func Test27_MST_7_PythonFakeApprovalDriftPartialWholeReceiptAndRows(t *testing.T) {
-	comparePythonManaged(t, "approval-drift-partial")
+	compareManaged(t, "approval-drift-partial", 1)
 }
 func Test27_MST_7_PythonFakeEnvironmentWholeReceiptAndRows(t *testing.T) {
-	comparePythonManaged(t, "environment")
+	compareManaged(t, "environment", 1)
 }
 func Test27_MST_7_PythonFakePolicyRestorationWholeReceiptAndRows(t *testing.T) {
-	comparePythonManaged(t, "policy-disappears")
+	compareManaged(t, "policy-disappears", 2)
 }
-func Test27_MST_7_PythonFakePauseWholeReceiptAndRows(t *testing.T) { comparePythonManaged(t, "paused") }
+func Test27_MST_7_PythonFakePauseWholeReceiptAndRows(t *testing.T) { compareManaged(t, "paused", 1) }
 func Test27_MST_8_PythonHostReadyRefusalsWholeOutput(t *testing.T) {
 	for _, code := range []string{"recipient_archived", "lifecycle_unknown", "recipient_paused", "recipient_cannot_accept_input", "recipient_not_idle"} {
 		t.Run(code, func(t *testing.T) {
-			_, want := capturePythonManaged(t, "host-ready-"+code)
 			host := &managedFake{hostScenario: code}
 			gotCode, err := hostReady(context.Background(), host, "child-new")
 			if err != nil {
@@ -1191,9 +983,7 @@ func Test27_MST_8_PythonHostReadyRefusalsWholeOutput(t *testing.T) {
 				}
 				return calls
 			}(), "rpcBudget": float64(10)}
-			if !reflect.DeepEqual(got, want.Receipts[1]) {
-				t.Fatalf("Go=%v Python=%v", got, want.Receipts[1])
-			}
+			golden.CheckJSON(t, "guard", got)
 			root := t.TempDir()
 			ctx := context.Background()
 			s, err := store.Open(ctx, filepath.Join(root, "relay.sqlite3"), "")
@@ -1221,12 +1011,6 @@ func Test27_MST_8_PythonHostReadyRefusalsWholeOutput(t *testing.T) {
 func Test27_MST_8_PythonGuardCaptureAndGoScopeGuard(t *testing.T) {
 	for _, scenario := range []string{"guard-pause", "guard-budget", "guard-drift-parent", "guard-drift-host", "guard-drift-roots", "guard-drift-recipients"} {
 		t.Run(scenario, func(t *testing.T) {
-			_, want := capturePythonManaged(t, scenario)
-			if len(want.Receipts) != 2 {
-				t.Fatalf("Python guard capture: %v", want.Receipts)
-			}
-			outcome := want.Receipts[1]
-			guard := obj(outcome["guard"])
 			if scenario == "guard-budget" {
 				ctx := context.Background()
 				state := filepath.Join(t.TempDir(), "state")
@@ -1245,24 +1029,10 @@ func Test27_MST_8_PythonGuardCaptureAndGoScopeGuard(t *testing.T) {
 				if _, err := start.Run(ctx, raw); err != nil {
 					t.Fatal(err)
 				}
-				if float64(host.guardBudget) != outcome["rpcBudget"] {
-					t.Fatalf("Go guard budget=%d Python=%v", host.guardBudget, outcome["rpcBudget"])
-				}
-				calls := outcome["calls"].([]any)
-				if outcome["rpcBudget"] != float64(10) || len(calls) != 10 || guard != nil {
-					t.Fatal(outcome)
-				}
-				for i, call := range calls {
-					if i < 8 && call != "thread/list" || i == 8 && call != "thread/goal/get" || i == 9 && call != "thread/read" {
-						t.Fatalf("host RPC order: %v", calls)
-					}
-				}
+				golden.CheckJSON(t, "rpcBudget", host.guardBudget)
 				return
 			}
 			if scenario == "guard-pause" {
-				if guard["code"] != "recipient_paused" || outcome["workerFinished"] != true || outcome["workerError"] != nil {
-					t.Fatal(outcome)
-				}
 				ctx := context.Background()
 				state := filepath.Join(t.TempDir(), "state")
 				s, err := store.Open(ctx, filepath.Join(state, "relay.sqlite3"), "")
@@ -1293,20 +1063,20 @@ func Test27_MST_8_PythonGuardCaptureAndGoScopeGuard(t *testing.T) {
 					got[item.Key] = item.Value
 				}
 				if got["state"] == "admitted" || got["reason"] != "business_failed" || host.sent != 0 {
-					t.Fatalf("Go worker guard %v sent=%d Python=%v", got, host.sent, outcome)
+					t.Fatalf("Go worker guard %v sent=%d", got, host.sent)
 				}
 			} else {
-				if guard["code"] != "managed_scope_changed" {
-					t.Fatal(outcome)
-				}
 				change := map[string][2]string{"guard-drift-parent": {"parent_task_id", "replacement-parent"}, "guard-drift-host": {"child_host_id", "other-host"}, "guard-drift-roots": {"artifact_roots", `["/other-scope"]`}, "guard-drift-recipients": {"allowed_recipients", `["unrelated"]`}}[scenario]
 				checkManagedScopeDrift(t, change[0], change[1])
 			}
 		})
 	}
 }
-func comparePythonManaged(t *testing.T, scenario string) {
-	root, want := capturePythonManaged(t, scenario)
+
+// compareManaged runs a managed-start scenario of the given number of steps against the fake host
+// and compares its receipts, the host's effects and every managed table with the golden.
+func compareManaged(t *testing.T, scenario string, steps int) {
+	root := managedTree(t)
 	for _, key := range []string{"HOME", "XDG_STATE_HOME", "XDG_CONFIG_HOME", "CODEX_HOME"} {
 		t.Setenv(key, root)
 	}
@@ -1317,7 +1087,7 @@ func comparePythonManaged(t *testing.T, scenario string) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	raw := pythonFixture(root)
+	raw := scenarioRequest(root)
 	if scenario == "unsupported-policy" {
 		var request map[string]any
 		if err := json.Unmarshal(raw, &request); err != nil {
@@ -1337,13 +1107,8 @@ func comparePythonManaged(t *testing.T, scenario string) {
 	req, err := ParseRequest(raw)
 	if scenario == "unsupported-policy" && err != nil {
 		got := map[string]any{"error": "UntransmittableSetting", "detail": err.Error()}
-		if !reflect.DeepEqual(got, want.Receipts[0]) {
-			t.Fatalf("Go error=%v Python=%v", got, want.Receipts[0])
-		}
-		for table, rows := range want.Tables {
-			if len(rows) != 0 {
-				t.Fatalf("Python wrote %s: %v", table, rows)
-			}
+		checkManaged(t, "receipts", []any{got}, root)
+		for _, table := range managedTables {
 			var count int
 			if e := s.DB.QueryRowContext(ctx, "SELECT count(*) FROM "+table).Scan(&count); e != nil || count != 0 {
 				t.Fatalf("Go wrote %s: count=%d err=%v", table, count, e)
@@ -1354,7 +1119,7 @@ func comparePythonManaged(t *testing.T, scenario string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	host := &managedFake{operations: map[string]map[string]any{}, settings: obj(obj(req["child"])["settings"]), ledger: map[string]any{"path": want.Ledger.Path, "realPath": want.Ledger.Path, "device": int64(want.Ledger.Device), "inode": int64(want.Ledger.Inode)}, standby: "completed"}
+	host := &managedFake{operations: map[string]map[string]any{}, settings: obj(obj(req["child"])["settings"]), ledger: ledgerIdentity(root, ledgerInode), standby: "completed"}
 	if strings.HasPrefix(scenario, "host-ready-") {
 		host.hostScenario = strings.TrimPrefix(scenario, "host-ready-")
 	}
@@ -1378,7 +1143,7 @@ func comparePythonManaged(t *testing.T, scenario string) {
 	if scenario == "ledger-replaced" {
 		host.onGetOperation = func(id string) {
 			if strings.HasPrefix(id, "managed-create-") {
-				host.ledger = map[string]any{"path": want.Ledger.Path, "realPath": want.Ledger.Path, "device": int64(want.Ledger.Device), "inode": int64(want.Ledger.Inode) + 1}
+				host.ledger = ledgerIdentity(root, ledgerInode+1)
 			}
 		}
 	}
@@ -1419,7 +1184,7 @@ func comparePythonManaged(t *testing.T, scenario string) {
 		}
 	}
 	baseStart := start
-	for index := range len(want.Receipts) {
+	for index := range steps {
 		if scenario == "cli-missing-selectors" && index > 0 {
 			var selectors []string
 			switch index {
@@ -1531,7 +1296,7 @@ func comparePythonManaged(t *testing.T, scenario string) {
 			host.standby = "completed"
 		}
 		if scenario == "ledger-retry" && index == 1 {
-			host.ledger["inode"] = int64(want.Ledger.Inode) + 1
+			host.ledger["inode"] = int64(ledgerInode + 1)
 			host.operations = map[string]map[string]any{}
 		}
 		if scenario == "policy-disappears" && index == 1 {
@@ -1613,42 +1378,21 @@ func comparePythonManaged(t *testing.T, scenario string) {
 		orderedReceipts = append(orderedReceipts, compact.String())
 	}
 	if scenario == "happy" {
-		if len(want.OrderedReceipts) != len(got) {
-			t.Fatalf("ordered receipts missing")
-		}
+		// Each receipt as emitted, key order included; the request fingerprint, a digest of the
+		// physical request, is <fingerprint>.
+		ordered := make([]string, len(orderedReceipts))
 		for i, raw := range orderedReceipts {
-			python := want.OrderedReceipts[i]
-			// Only independently generated physical values differ; retain every JSON key
-			// and its position while normalizing those strings.
-			var goValue, pyValue any
-			if e := json.Unmarshal([]byte(raw), &goValue); e != nil {
+			var value any
+			if e := json.Unmarshal([]byte(raw), &value); e != nil {
 				t.Fatal(e)
 			}
-			if e := json.Unmarshal([]byte(python), &pyValue); e != nil {
-				t.Fatal(e)
-			}
-			goFingerprint := str(obj(goValue)["requestFingerprint"])
-			pyFingerprint := str(obj(pyValue)["requestFingerprint"])
-			raw = strings.ReplaceAll(raw, goFingerprint, "<fingerprint>")
-			python = strings.ReplaceAll(python, pyFingerprint, "<fingerprint>")
-			raw = strings.ReplaceAll(strings.ReplaceAll(raw, "gomarkers", "markers"), "gostate", "state")
-			if raw != python {
-				t.Errorf("ordered receipt %d Go=%s Python=%s", i, raw, python)
-			}
+			raw = strings.ReplaceAll(raw, str(obj(value)["requestFingerprint"]), "<fingerprint>")
+			ordered[i] = strings.ReplaceAll(strings.ReplaceAll(raw, "gomarkers", "markers"), "gostate", "state")
 		}
+		checkManaged(t, "ordered receipts", ordered, root)
 	}
-	var expected []any
-	for _, v := range want.Receipts {
-		expected = append(expected, v)
-	}
-	if !reflect.DeepEqual(normalizedManaged(got), normalizedManaged(expected)) {
-		a, _ := json.MarshalIndent(normalizedManaged(got), "", "  ")
-		b, _ := json.MarshalIndent(normalizedManaged(expected), "", "  ")
-		t.Errorf("complete receipts differ\nGo: %s\nPython: %s", a, b)
-	}
-	if host.created != want.Effects[0] || host.sent != want.Effects[1] {
-		t.Errorf("host effects Go=%d/%d Python=%v", host.created, host.sent, want.Effects)
-	}
+	checkManaged(t, "receipts", normalizedManaged(got), root)
+	golden.CheckJSON(t, "effects", []int{host.created, host.sent})
 	if scenario == "recipient-scope" {
 		var child, parent, recipients string
 		if e := s.DB.QueryRowContext(ctx, "SELECT child_task_id,parent_task_id,allowed_recipients FROM relationships WHERE issue_key='REL-MANAGED'").Scan(&child, &parent, &recipients); e != nil {
@@ -1670,20 +1414,14 @@ func comparePythonManaged(t *testing.T, scenario string) {
 				answer["result"] = "allowed"
 			} else {
 				answer["error"] = "ScopeError"
-				relationship := want.Receipts[0]["relationshipId"]
+				relationship := obj(got[0])["relationshipId"]
 				answer["detail"] = fmt.Sprintf("recipient_not_authorized: a revision_request for '%s' goes to its own child '%s', not to '%s'", relationship, child, step.recipient)
 			}
 			outcomes = append(outcomes, answer)
 		}
-		python := []any{}
-		for _, entry := range want.Scope {
-			python = append(python, entry)
-		}
-		if !reflect.DeepEqual(outcomes, python) {
-			t.Errorf("scope outcomes Go=%v Python=%v", outcomes, python)
-		}
+		golden.CheckJSON(t, "scope", outcomes)
 	}
-	for _, table := range []string{"managed_start_requests", "relationships", "generations", "canonical_criteria", "verification_mode", "authorized_settings", "generation_turns"} {
+	for _, table := range managedTables {
 		rows, err := s.DB.QueryContext(ctx, "SELECT * FROM "+table+" ORDER BY rowid")
 		if err != nil {
 			t.Fatal(err)
@@ -1722,14 +1460,6 @@ func comparePythonManaged(t *testing.T, scenario string) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		expected := []any{}
-		for _, v := range want.Tables[table] {
-			expected = append(expected, v)
-		}
-		if !reflect.DeepEqual(normalizedManaged(actual), normalizedManaged(expected)) {
-			a, _ := json.MarshalIndent(normalizedManaged(actual), "", "  ")
-			b, _ := json.MarshalIndent(normalizedManaged(expected), "", "  ")
-			t.Errorf("table %s differs\nGo: %s\nPython: %s", table, a, b)
-		}
+		checkManaged(t, "table "+table, normalizedManaged(actual), root)
 	}
 }

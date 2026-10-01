@@ -23,26 +23,23 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
+// sosOperation is one command or store derivation a Python SOS test made: its kind and arguments,
+// the pre-N tree it ran on and the clock it ran at.
 type sosOperation struct {
-	Kind         string                      `json:"kind"`
-	Args         []any                       `json:"args"`
-	Pre          string                      `json:"pre"`
-	Code         int                         `json:"code"`
-	Clock        string                      `json:"clock"`
-	Output       map[string]any              `json:"output"`
-	Tables       map[string][]map[string]any `json:"tables"`
-	Relationship string                      `json:"relationship"`
-	Project      string                      `json:"project"`
-	At           string                      `json:"at"`
-	Kwargs       map[string]any              `json:"kwargs"`
+	Kind         string         `json:"kind"`
+	Args         []any          `json:"args"`
+	Pre          string         `json:"pre"`
+	Clock        string         `json:"clock"`
+	Relationship string         `json:"relationship"`
+	Project      string         `json:"project"`
+	At           string         `json:"at"`
+	Kwargs       map[string]any `json:"kwargs"`
 }
 type sosCapture struct {
-	Operations []sosOperation              `json:"operations"`
-	Problems   []string                    `json:"problems"`
-	Tables     map[string][]map[string]any `json:"tables"`
+	Operations []sosOperation `json:"operations"`
 }
 
 var sosCases = map[string][]string{
@@ -67,36 +64,23 @@ var sosCases = map[string][]string{
 	"SOS-19": {"ARepairedAdmissionIsOrderedByWhenItWasAdmitted.test_a_legacy_turn_admitted_after_an_omitted_one_clears_it", "ARepairedAdmissionIsOrderedByWhenItWasAdmitted.test_a_repair_inside_the_same_millisecond_is_still_the_later_admission"},
 }
 
-func captureSOS(t *testing.T, method string) (string, sosCapture) {
+// captureSOS restores the tree a Python SOS test left (the former testdata/sos_capture.py): every
+// operation's pre-N tree snapshot and capture.json's list of operations. The workspace's marker
+// directory is a digest of the workspace's path under root and each receipt's revision hash a
+// digest of a manifest naming files under root, so both are derived anew; the golden options it
+// returns write them, the tree and the repository back as placeholders.
+func captureSOS(t *testing.T, method string) (string, sosCapture, []golden.Option) {
 	t.Helper()
 	root, err := os.MkdirTemp("", "crw-sos-")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(root) })
-	// capture.json and every operation's pre-N tree snapshot are recorded
-	// (supervisor.PythonTree).
-	supervisor.PythonTreeRevisions(t, method, root, func() ([]byte, error) {
-		repo, _ := filepath.Abs("../../..")
-		script, _ := filepath.Abs("testdata/sos_capture.py")
-		home := filepath.Join(root, "home")
-		if err := os.MkdirAll(home, 0700); err != nil {
-			return nil, err
-		}
-		cmd := exec.Command("uv", "run", "--no-sync", "python", script, root, method)
-		cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
-		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "state"), "XDG_DATA_HOME="+filepath.Join(home, "data"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+os.TempDir(), "PYTHONPATH="+filepath.Join(repo, "packages/codex-session-relay/src")+":"+filepath.Join(repo, "packages/codex-session-relay"))
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return nil, fmt.Errorf("live Python %s: %v\n%s", method, err, out)
-		}
-		// The final tree is not kept: every replay restores an operation's pre-tree first.
-		for _, gone := range []string{home, filepath.Join(root, "tree")} {
-			if err := os.RemoveAll(gone); err != nil {
-				return nil, err
-			}
-		}
-		return nil, nil
-	}, sosWorkspaceKey(t, root))
+	key, err := delivery.WorkspaceKey(filepath.Join(root, "tree", "work"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := supervisor.TreeFixtureRevisions(t, method, root, [2]string{key, "<workspace key>"})
 	raw, err := os.ReadFile(filepath.Join(root, "capture.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -105,21 +89,8 @@ func captureSOS(t *testing.T, method string) (string, sosCapture) {
 	if err := json.Unmarshal(raw, &got); err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Problems) > 0 {
-		t.Fatal(got.Problems)
-	}
-	return root, got
-}
-
-// sosWorkspaceKey substitutes the marker directory of the capture's workspace, a digest of its
-// path under root, which a replay in another root derives anew.
-func sosWorkspaceKey(t *testing.T, root string) pyoracle.Option {
-	t.Helper()
-	key, err := delivery.WorkspaceKey(filepath.Join(root, "tree", "work"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return pyoracle.Substitute(key, "<workspace key>")
+	opts = append(opts, golden.Substitute(key, "<workspace key>"))
+	return root, got, append(opts, supervisor.TreeGolden(t, root)...)
 }
 
 func sosRestore(t *testing.T, root, pre string) {
@@ -231,7 +202,12 @@ func sosPlain(v any) map[string]any {
 	return out
 }
 
-func replaySOS(t *testing.T, binary, root string, op sosOperation) {
+// sosResult is what one replayed operation answered and the complete store it left.
+type sosResult struct {
+	answer, tables any
+}
+
+func replaySOS(t *testing.T, binary, root string, op sosOperation, result *sosResult) {
 	t.Helper()
 	sosRestore(t, root, op.Pre)
 	var code int
@@ -269,26 +245,7 @@ func replaySOS(t *testing.T, binary, root string, op sosOperation) {
 		output = sosPlain(answer)
 		_ = s.Close()
 	} else if op.Kind == "derive" {
-		path := sosDB(root)
-		s, err := store.Open(context.Background(), path, "")
-		if err != nil {
-			t.Fatal(err)
-		}
-		state, _ := op.Kwargs["state_directory"].(string)
-		if state == "" && len(op.Args) > 0 {
-			state, _ = op.Args[0].(string)
-		}
-		now, _ := op.Kwargs["now"].(string)
-		if now == "" && len(op.Args) > 1 {
-			now, _ = op.Args[1].(string)
-		}
-		grace, _ := op.Kwargs["grace"].(float64)
-		if grace == 0 && len(op.Args) > 2 {
-			grace, _ = op.Args[2].(float64)
-		}
-		turn, _ := op.Kwargs["turn"].(string)
-		output = sosPlain(delivery.DeriveOmission(context.Background(), s, state, op.Relationship, turn, now, grace))
-		_ = s.Close()
+		output = sosDerive(t, root, op)
 	} else {
 		args := make([]string, 0, len(op.Args))
 		for _, arg := range op.Args {
@@ -314,23 +271,41 @@ func replaySOS(t *testing.T, binary, root string, op sosOperation) {
 			t.Logf("command stderr: %s", stderr.String())
 		}
 	}
-	if code != op.Code || !reflect.DeepEqual(output, op.Output) {
-		t.Errorf("operation output differs: go=(%d)%s python=(%d)%s", code, sosJSON(output), op.Code, sosJSON(op.Output))
-	}
+	result.answer = map[string]any{"code": code, "output": output}
 	got := sosRows(t, sosDB(root))
-	for _, tables := range []map[string][]map[string]any{got, op.Tables} {
-		for _, row := range tables["journal"] {
-			if text, ok := row["detail"].(string); ok {
-				var parsed any
-				if json.Unmarshal([]byte(text), &parsed) == nil {
-					row["detail"] = parsed
-				}
+	for _, row := range got["journal"] {
+		if text, ok := row["detail"].(string); ok {
+			var parsed any
+			if json.Unmarshal([]byte(text), &parsed) == nil {
+				row["detail"] = parsed
 			}
 		}
 	}
-	if !reflect.DeepEqual(got, op.Tables) {
-		t.Errorf("complete SQLite state differs:\ngo=%s\npython=%s", sosJSON(got), sosJSON(op.Tables))
+	result.tables = got
+}
+
+// sosDerive is delivery.DeriveOmission on the store of op's restored tree, with op's arguments.
+func sosDerive(t *testing.T, root string, op sosOperation) map[string]any {
+	t.Helper()
+	s, err := store.Open(context.Background(), sosDB(root), "")
+	if err != nil {
+		t.Fatal(err)
 	}
+	defer s.Close()
+	state, _ := op.Kwargs["state_directory"].(string)
+	if state == "" && len(op.Args) > 0 {
+		state, _ = op.Args[0].(string)
+	}
+	now, _ := op.Kwargs["now"].(string)
+	if now == "" && len(op.Args) > 1 {
+		now, _ = op.Args[1].(string)
+	}
+	grace, _ := op.Kwargs["grace"].(float64)
+	if grace == 0 && len(op.Args) > 2 {
+		grace, _ = op.Args[2].(float64)
+	}
+	turn, _ := op.Kwargs["turn"].(string)
+	return sosPlain(delivery.DeriveOmission(context.Background(), s, state, op.Relationship, turn, now, grace))
 }
 
 //go:linkname sosTokenSource github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor.TokenSource
@@ -358,19 +333,12 @@ var sosClockNow func() float64
 //go:linkname sosDeliveryClock github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery.cliClock
 var sosDeliveryClock delivery.Clock
 
+// sosExpectedClock is the instant op ran at, 0 when the capture names none. Where the Python run
+// named no clock, the capture holds the time the operation recorded (the last turn declaration
+// or reporting session it wrote).
 func sosExpectedClock(op sosOperation) float64 {
 	if at, err := time.Parse("2006-01-02T15:04:05.999999Z07:00", op.Clock); err == nil {
 		return float64(at.UnixMicro()) / 1e6
-	}
-	for _, table := range []string{"turn_declarations", "reporting_sessions"} {
-		rows := op.Tables[table]
-		if len(rows) == 0 {
-			continue
-		}
-		text, _ := rows[len(rows)-1]["recorded_at"].(string)
-		if at, err := time.Parse("2006-01-02T15:04:05.999999Z07:00", text); err == nil {
-			return float64(at.UnixMicro()) / 1e6
-		}
 	}
 	return 0
 }
@@ -380,44 +348,52 @@ func testSOSID(t *testing.T, id string) {
 	for _, method := range sosCases[id] {
 		method := method
 		t.Run(method, func(t *testing.T) {
-			root, capture := captureSOS(t, method)
+			root, capture, opts := captureSOS(t, method)
 			if len(capture.Operations) == 0 {
 				t.Fatal("original Python test exposed no replayable command or store derivation")
 			}
+			results := make([]*sosResult, len(capture.Operations))
 			for i, op := range capture.Operations {
 				op := op
-				t.Run(string(rune('a'+i)), func(t *testing.T) { replaySOS(t, binary, root, op) })
+				t.Run(string(rune('a'+i)), func(t *testing.T) {
+					result := &sosResult{}
+					replaySOS(t, binary, root, op, result)
+					results[i] = result
+				})
+			}
+			// Each operation's answer and store are compared with the golden in the method's
+			// test, so a method keeps one golden file.
+			for i, result := range results {
+				if result == nil {
+					continue
+				}
+				golden.CheckJSON(t, fmt.Sprintf("%c %s answer", 'a'+i, capture.Operations[i].Kind), result.answer, opts...)
+				golden.CheckJSON(t, fmt.Sprintf("%c %s tables", 'a'+i, capture.Operations[i].Kind), result.tables, opts...)
 			}
 		})
 	}
 }
 
-// These read-only CLI surfaces run on the Python SOS-5 store. The only time
-// alignment is feeding the built binary's observedAt back to Python's clock.
+// These read-only CLI surfaces run on the Python SOS-5 store, through the built binary as the
+// alias the packets name; observedAt is the instant the binary answered.
 func Test24_SOS_5_BuiltBinaryBytes(t *testing.T) {
-	root, captured := captureSOS(t, sosCases["SOS-5"][0])
+	root, captured, opts := captureSOS(t, sosCases["SOS-5"][0])
 	binary := testsupport.CRWAt(t, filepath.Join(t.TempDir(), "crw"))
 	alias := filepath.Join(filepath.Dir(binary), "codex-session-relay")
 	if err := os.Symlink(binary, alias); err != nil {
 		t.Fatal(err)
 	}
-	var op sosOperation
-	for _, candidate := range captured.Operations {
-		if len(candidate.Tables["supervisor_messages"]) > 0 {
-			op = candidate
-			break
-		}
-	}
-	if op.Pre == "" {
-		t.Fatal("SOS-5 captured no staged omission")
-	}
 	// Choose a pre-operation snapshot in which the staged message already exists.
+	var op sosOperation
 	for _, candidate := range captured.Operations {
 		sosRestore(t, root, candidate.Pre)
 		if len(sosRows(t, sosDB(root))["supervisor_messages"]) > 0 {
 			op = candidate
 			break
 		}
+	}
+	if op.Pre == "" {
+		t.Fatal("SOS-5 captured no staged omission")
 	}
 	sosRestore(t, root, op.Pre)
 	rows := sosRows(t, sosDB(root))
@@ -426,7 +402,6 @@ func Test24_SOS_5_BuiltBinaryBytes(t *testing.T) {
 		t.Fatal("no frozen omission snapshot")
 	}
 	state := filepath.Dir(sosDB(root))
-	repo, _ := filepath.Abs("../../..")
 	env := append(os.Environ(), "HOME="+filepath.Join(root, "home"), "XDG_STATE_HOME="+filepath.Join(root, "home/state"), "CODEX_HOME="+filepath.Join(root, "home/codex"))
 	for _, args := range [][]string{{"supervisor-show", "--message", messages[0]["message_id"].(string)}, {"reporting-derive", "--relationship", messages[0]["relationship_id"].(string), "--grace", "0"}} {
 		t.Run(args[0], func(t *testing.T) {
@@ -439,70 +414,36 @@ func Test24_SOS_5_BuiltBinaryBytes(t *testing.T) {
 				t.Fatalf("Go JSON: %v %s", err, got)
 			}
 			at, _ := answer["observedAt"].(string)
-			want, pyCode := sosPythonCLI(t, args[0], func() *exec.Cmd {
-				testsupport.HandOver(t, sosDB(root), "python")
-				py := exec.Command(filepath.Join(repo, ".venv/bin/python"), append([]string{"-c", `import sys
-from codex_session_relay import cli,clock,supervisorchannel
-clock.SystemClock.iso=lambda self: sys.argv[1]
-supervisorchannel.relay_program=lambda: (sys.argv[2],)
-raise SystemExit(cli.main(sys.argv[3:]))`, at, alias, "--state", state}, args...)...)
-				py.Env = env
-				return py
-			}, pyoracle.Substitute(alias, "<alias>"), pyoracle.Substitute(root, "<root>"), pyoracle.Substitute(at, "<observedAt>"))
-			sosCompareCodes(t, got, want, goErr, pyCode)
+			golden.CheckJSON(t, args[0], map[string]any{"code": sosExit(t, goErr), "output": string(got)}, append([]golden.Option{golden.Substitute(alias, "<alias>"), golden.Substitute(at, "<observedAt>")}, opts...)...)
 		})
 	}
 }
 
-// sosPythonCLI is the recorded combined output and exit code of the Python command command
-// makes (supervisor.PythonOutput).
-func sosPythonCLI(t *testing.T, key string, command func() *exec.Cmd, opts ...pyoracle.Option) ([]byte, int) {
+// sosExit is the exit code of a command that ended with err.
+func sosExit(t *testing.T, err error) int {
 	t.Helper()
-	raw := supervisor.PythonOutput(t, key, func() ([]byte, error) {
-		out, err := command().CombinedOutput()
-		code := 0
-		if err != nil {
-			exit, ok := err.(*exec.ExitError)
-			if !ok {
-				return nil, err
-			}
-			code = exit.ExitCode()
-		}
-		return json.Marshal(map[string]any{"code": code, "output": string(out)})
-	}, opts...)
-	var answer struct {
-		Code   int    `json:"code"`
-		Output string `json:"output"`
+	if err == nil {
+		return 0
 	}
-	if err := json.Unmarshal(raw, &answer); err != nil {
+	e, ok := err.(*exec.ExitError)
+	if !ok {
 		t.Fatal(err)
 	}
-	return []byte(answer.Output), answer.Code
-}
-
-// sosCompareCodes compares Go's exit code and output bytes with Python's recorded ones.
-func sosCompareCodes(t *testing.T, got, want []byte, goErr error, pyCode int) {
-	t.Helper()
-	goCode := 0
-	if goErr != nil {
-		e, ok := goErr.(*exec.ExitError)
-		if !ok {
-			t.Fatal(goErr)
-		}
-		goCode = e.ExitCode()
-	}
-	if goCode != pyCode || !bytes.Equal(got, want) {
-		t.Errorf("CLI byte diff\nGo(%d): %s\nPython(%d): %s", goCode, got, pyCode, want)
-	}
+	return e.ExitCode()
 }
 
 func Test24_ReportingShowCommandContext(t *testing.T) {
-	root, captured := captureSOS(t, sosCases["SOS-5"][0])
+	root, captured, _ := captureSOS(t, sosCases["SOS-5"][0])
+	// The first derivation that finds the report owed, on its restored snapshot.
 	var reading map[string]any
 	for _, op := range captured.Operations {
-		if op.Kind == "derive" && op.Output["owed"] == true {
+		if op.Kind != "derive" {
+			continue
+		}
+		sosRestore(t, root, op.Pre)
+		if derived := sosDerive(t, root, op); derived["owed"] == true {
 			sosRestore(t, root, op.Pre)
-			reading = op.Output
+			reading = derived
 			break
 		}
 	}
@@ -548,19 +489,10 @@ func Test24_ReportingShowCommandContext(t *testing.T) {
 func Test24_ObservationFilesBuiltBinaryBytes(t *testing.T) {
 	binary := testsupport.CRW(t)
 	root := t.TempDir()
-	repo, _ := filepath.Abs("../../..")
 	env := append(os.Environ(), "HOME="+root, "XDG_STATE_HOME="+root, "CODEX_HOME="+root)
-	// Both runtimes answer on this one state directory in turn. Whichever first opens the store
-	// creates it as its own; from then on each is handed the store before it answers.
+	// The commands answer on this one state directory in turn; the first to open the store
+	// creates it, and each is handed the store before it answers.
 	db := filepath.Join(root, "state", "relay.sqlite3")
-	handTo := func(t *testing.T, owner string) {
-		t.Helper()
-		if _, err := os.Stat(db); err == nil {
-			testsupport.HandOver(t, db, owner)
-		} else if !os.IsNotExist(err) {
-			t.Fatal(err)
-		}
-	}
 	for _, tc := range []struct{ name, data string }{{"missing", ""}, {"directory", ""}, {"list", "[]"}, {"truncated", "{\"a\":"}, {"invalid", "not json"}, {"utf8", string([]byte{0xff})}} {
 		path := filepath.Join(root, tc.name)
 		if tc.name == "directory" {
@@ -578,17 +510,15 @@ func Test24_ObservationFilesBuiltBinaryBytes(t *testing.T) {
 				if command == "supervisor-standing" {
 					args = append(args, "--project", "PRJ-1")
 				}
-				handTo(t, "go")
+				if _, err := os.Stat(db); err == nil {
+					testsupport.HandOver(t, db, "go")
+				} else if !os.IsNotExist(err) {
+					t.Fatal(err)
+				}
 				goCmd := exec.Command(binary, append([]string{"relay"}, args...)...)
 				goCmd.Env = env
 				got, goErr := goCmd.CombinedOutput()
-				want, pyCode := sosPythonCLI(t, command+"/"+tc.name, func() *exec.Cmd {
-					handTo(t, "python")
-					pyCmd := exec.Command(filepath.Join(repo, ".venv/bin/python"), append([]string{"-m", "codex_session_relay.cli"}, args...)...)
-					pyCmd.Env = env
-					return pyCmd
-				}, pyoracle.Substitute(root, "<root>"))
-				sosCompareCodes(t, got, want, goErr, pyCode)
+				golden.CheckJSON(t, "answer", map[string]any{"code": sosExit(t, goErr), "output": string(got)}, supervisor.TreeGolden(t, root)...)
 			})
 		}
 	}

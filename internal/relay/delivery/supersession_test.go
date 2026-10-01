@@ -59,14 +59,12 @@ func (f *fixture) item(event string) Obj {
 
 func runSUP(t *testing.T, mode string, goSide func(f *fixture, out map[string]any)) {
 	tree := parityTree(t)
-	python := runPython(t, tree, "sup", mode)
+	expected := expectScenario(t, tree, "sup", mode)
 	f := newFixture(t, tree)
 	out := map[string]any{}
 	goSide(f, out)
-	for k, want := range python.Out {
-		requireSameJSON(t, mode+"."+k, out[k], want)
-	}
-	requireSameTables(t, f, python)
+	expected.out(out)
+	expected.tables(f)
 }
 
 func TestSUP01_an_advanced_generation_annotates_older_deliveries_without_rewriting_them(t *testing.T) {
@@ -166,7 +164,7 @@ func TestSUP03_a_final_successor_annotates_its_predecessor(t *testing.T) {
 
 func TestSUP04_a_re_emitted_final_receipt_still_reports_its_stage(t *testing.T) {
 	tree := parityTree(t)
-	python := runPython(t, tree, "sup", "reemit")
+	expected := expectScenario(t, tree, "sup", "reemit")
 	f := newFixture(t, tree)
 	rid := f.register(regOpts{})
 	payload := f.readyPayload(rid, 1, []string{f.artifact("out.txt", "the deliverable")}, 1, assigned("completed"))
@@ -174,12 +172,11 @@ func TestSUP04_a_re_emitted_final_receipt_still_reports_its_stage(t *testing.T) 
 	mustDo(t, err)
 	again, err := f.accept(payload, store.AcceptOptions{})
 	mustDo(t, err)
-	want := python.Out["again"].(map[string]any)
-	if first.Stage != "final" || !again.Duplicate || again.Stage != "final" || want["_stage"] != "final" || want["_duplicate"] != true {
+	expected.same("again", map[string]any{"record": loadsObj(again.Record), "stage": again.Stage, "duplicate": again.Duplicate})
+	if first.Stage != "final" || !again.Duplicate || again.Stage != "final" {
 		t.Fatalf("again %+v", again)
 	}
-	requireSameJSON(t, "record", loadsObj(again.Record), withoutUnderscored(want))
-	requireSameTables(t, f, python)
+	expected.tables(f)
 }
 
 func TestSUP05_a_later_execution_only_outcome_survives_a_final_revision_head(t *testing.T) {

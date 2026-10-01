@@ -7,96 +7,32 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
-	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/pyoracle"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
-// standingPython replays the public project answer against the same persisted store, read by
-// Python through a copy it owns (pythonCopy).
-// Observations are input, not a normalization of either result.
-func standingPython(t *testing.T, f *stageFixture, project string, readings []any) {
+// checkStanding compares the public project answer on the fixture's store as it stands, as JSON
+// decodes it, with the golden. Observations are input, not a normalization of the result.
+func checkStanding(t *testing.T, f *stageFixture, project string, readings []any) {
 	t.Helper()
-	raw, err := json.Marshal(readings)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if readings == nil {
-		raw = []byte("[]")
-	}
-	output := selectionPython(t, f, "standing", string(raw), project, "<none>", "standing")
-	var want any
-	if err := json.Unmarshal(output, &want); err != nil {
-		t.Fatal(err)
-	}
 	got, err := f.c.Standing(context.Background(), project, readings)
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, err := json.Marshal(got)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var actual any
-	if err := json.Unmarshal(encoded, &actual); err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(actual, want) {
-		t.Errorf("Go=%s Python=%s", encoded, output)
-	}
+	golden.CheckJSON(t, goldenKey(t, "standing"), asJSON(t, got), fixtureGolden(t, f.root)...)
 }
 
-func statusPython(t *testing.T, f *stageFixture, project string, readings []any) {
+// checkStatus is checkStanding for the project status answer.
+func checkStatus(t *testing.T, f *stageFixture, project string, readings []any) {
 	t.Helper()
-	raw, err := json.Marshal(readings)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if readings == nil {
-		raw = []byte("[]")
-	}
-	output := selectionPython(t, f, "status", string(raw), project, "<none>", "status")
-	var want any
-	if err := json.Unmarshal(output, &want); err != nil {
-		t.Fatal(err)
-	}
 	got, err := f.c.StatusAnswer(context.Background(), project, readings)
 	if err != nil {
 		t.Fatal(err)
 	}
-	encoded, err := json.Marshal(got)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var actual any
-	if err := json.Unmarshal(encoded, &actual); err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(actual, want) {
-		t.Errorf("Go=%s Python=%s", encoded, output)
-	}
-}
-
-func envelopePython(t *testing.T, f *stageFixture, o Obligation, decision string) map[string]any {
-	t.Helper()
-	raw, err := json.Marshal(o)
-	if err != nil {
-		t.Fatal(err)
-	}
-	decisionArg := "<none>"
-	if decision != "" {
-		decisionArg = decision
-	}
-	output := selectionPython(t, f, "envelope", string(raw), decisionArg, "<none>", "envelope")
-	var answer map[string]any
-	if err := json.Unmarshal(output, &answer); err != nil {
-		t.Fatal(err)
-	}
-	return answer
+	golden.CheckJSON(t, goldenKey(t, "status"), asJSON(t, got), fixtureGolden(t, f.root)...)
 }
 
 func Test24_SR_16_EnvelopeCallerWholeOutput(t *testing.T) {
@@ -119,7 +55,6 @@ func Test24_SR_16_EnvelopeCallerWholeOutput(t *testing.T) {
 					o.Detail = ""
 				}
 			}
-			want := envelopePython(t, f, o, decision)
 			f.c.Program = "codex-session-relay"
 			r := Resolution{"01parent-task", "01supervisor-task", "PRJ-1", "INI-1", "linkage"}
 			packet, composeErr := f.c.Compose(context.Background(), o, r, f.at)
@@ -131,17 +66,7 @@ func Test24_SR_16_EnvelopeCallerWholeOutput(t *testing.T) {
 				region["evidence"] = []string{"codex-session-relay show --event " + o.Subject}
 				got["value"] = region
 			}
-			gotRaw, err := json.Marshal(got)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var normalized map[string]any
-			if err := json.Unmarshal(gotRaw, &normalized); err != nil {
-				t.Fatal(err)
-			}
-			if !reflect.DeepEqual(normalized, want) {
-				t.Errorf("Go=%s Python=%s", gotRaw, jsonText(want))
-			}
+			golden.CheckJSON(t, goldenKey(t, "envelope"), asJSON(t, got), fixtureGolden(t, f.root)...)
 		})
 	}
 }
@@ -159,55 +84,28 @@ func Test24_SR_15_LiveProjectStatusWholeOutput(t *testing.T) {
 	if err != nil || decision["report"] != false {
 		t.Fatalf("suppressed selection: %v %v", decision, err)
 	}
-	statusPython(t, f, "PRJ-1", nil)
+	checkStatus(t, f, "PRJ-1", nil)
 }
 
-func eventPython(t *testing.T, f *stageFixture, event string) {
+// checkEvent compares the obligation Channel.FromEvent reads from event, as JSON decodes it,
+// with the golden.
+func checkEvent(t *testing.T, f *stageFixture, event string) {
 	t.Helper()
-	output := selectionPython(t, f, "event", "<none>", event, "<none>", "event")
-	var want any
-	if err := json.Unmarshal(output, &want); err != nil {
-		t.Fatal(err)
-	}
 	got, err := f.c.FromEvent(context.Background(), event)
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := json.Marshal(got)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var actual any
-	if err = json.Unmarshal(raw, &actual); err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(actual, want) {
-		t.Errorf("Go=%s Python=%s", raw, output)
-	}
+	golden.CheckJSON(t, goldenKey(t, "event"), asJSON(t, got), fixtureGolden(t, f.root)...)
 }
 
-func selectEventPython(t *testing.T, f *stageFixture, event, recipient string, now float64) {
+// checkSelectEvent compares Channel.SelectEvent's answer, as JSON decodes it, with the golden.
+func checkSelectEvent(t *testing.T, f *stageFixture, event, recipient string, now float64) {
 	t.Helper()
-	out := selectionPython(t, f, "select_event", event, recipient, strconv.FormatFloat(now, 'f', 6, 64), "select_event")
-	var want any
-	if err := json.Unmarshal(out, &want); err != nil {
-		t.Fatal(err)
-	}
 	got, err := f.c.SelectEvent(context.Background(), event, recipient, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := json.Marshal(got)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var actual any
-	if err = json.Unmarshal(raw, &actual); err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(actual, want) {
-		t.Errorf("Go=%s Python=%s", raw, out)
-	}
+	golden.CheckJSON(t, goldenKey(t, "select_event"), asJSON(t, got), fixtureGolden(t, f.root)...)
 }
 
 func Test24_RCL_2_InvalidIdentityWholeOutput(t *testing.T) {
@@ -255,7 +153,7 @@ func Test24_SR_1_EventWholeOutput(t *testing.T) {
 			} else if _, err := f.s.DB.Exec("UPDATE work_reports SET cxc_status=? WHERE event_id='event-1'", tc.status); err != nil {
 				t.Fatal(err)
 			}
-			eventPython(t, f, "event-1")
+			checkEvent(t, f, "event-1")
 		})
 	}
 }
@@ -268,41 +166,41 @@ func Test24_SR_1_OrdinaryEventSelectionWholeOutput(t *testing.T) {
 	if _, err := f.s.DB.Exec("DELETE FROM work_reports WHERE event_id='event-1'"); err != nil {
 		t.Fatal(err)
 	}
-	selectEventPython(t, f, "event-1", "", 1700000000)
+	checkSelectEvent(t, f, "event-1", "", 1700000000)
 }
 func Test24_SR_7_DeliveryClockWholeOutput(t *testing.T) {
 	f := fixture24(t)
 	if _, err := f.s.DB.Exec("INSERT INTO recipient_lifecycle (task_id,deliverable,observed_at) VALUES (?,?,?)", "01supervisor-task", "yes", f.at); err != nil {
 		t.Fatal(err)
 	}
-	selectEventPython(t, f, "event-1", "01supervisor-task", 1700000000)
-	selectEventPython(t, f, "event-1", "01supervisor-task", 1700000961)
+	checkSelectEvent(t, f, "event-1", "01supervisor-task", 1700000000)
+	checkSelectEvent(t, f, "event-1", "01supervisor-task", 1700000961)
 }
 
 func Test24_SR_2_StableIdentityWholeOutput(t *testing.T) {
 	f := fixture24(t)
-	eventPython(t, f, "event-1")
-	eventPython(t, f, "event-1")
+	checkEvent(t, f, "event-1")
+	checkEvent(t, f, "event-1")
 	if _, err := f.s.DB.Exec("UPDATE relationships SET parent_task_id='successor' WHERE relationship_id='rel-1'"); err != nil {
 		t.Fatal(err)
 	}
-	eventPython(t, f, "event-1")
+	checkEvent(t, f, "event-1")
 }
 
 func Test24_SR_3_SelectionAfterProducedReportWholeOutput(t *testing.T) {
 	f := fixture24(t)
 	o := f.obligation(t)
-	compareSelectionPython(t, f, o, "", nil)
+	checkSelection(t, f, o, "", nil)
 	first, err := f.c.RecordReport(context.Background(), o, f.at, nil, nil)
 	if err != nil || first["recorded"] != true {
 		t.Fatalf("record: %v %v", first, err)
 	}
-	compareSelectionPython(t, f, o, "", nil)
+	checkSelection(t, f, o, "", nil)
 	second, err := f.c.RecordReport(context.Background(), o, f.at, nil, nil)
 	if err != nil || second["recorded"] != false {
 		t.Fatalf("repeat: %v %v", second, err)
 	}
-	compareSelectionPython(t, f, o, "", nil)
+	checkSelection(t, f, o, "", nil)
 }
 func Test24_SR_2_BlockCauseWholeOutput(t *testing.T) {
 	f := fixture24(t)
@@ -312,19 +210,19 @@ func Test24_SR_2_BlockCauseWholeOutput(t *testing.T) {
 	if _, err := f.s.DB.Exec("UPDATE work_reports SET cxc_status='BLOCKED',cxc_reason='waiting on API',summary='schema update' WHERE event_id='event-1'"); err != nil {
 		t.Fatal(err)
 	}
-	eventPython(t, f, "event-1")
+	checkEvent(t, f, "event-1")
 	if _, err := f.s.DB.Exec("INSERT INTO events (event_id,relationship_id,execution_generation,revision_hash,outcome,producer,turn_thread_id,turn_id,turn_status,receipt,first_seen_at,last_seen_at) SELECT 'event-2',relationship_id,execution_generation,revision_hash,outcome,producer,turn_thread_id,'turn-2',turn_status,receipt,first_seen_at,last_seen_at FROM events WHERE event_id='event-1'"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.s.DB.Exec("INSERT INTO work_reports (event_id,submission_no,relationship_id,execution_generation,revision_hash,repository,cxc_status,cxc_reason,contract_version,summary,next_action,recorded_at) SELECT 'event-2',submission_no,relationship_id,execution_generation,revision_hash,repository,cxc_status,cxc_reason,contract_version,summary,next_action,recorded_at FROM work_reports WHERE event_id='event-1'"); err != nil {
 		t.Fatal(err)
 	}
-	eventPython(t, f, "event-2")
+	checkEvent(t, f, "event-2")
 	if _, err := f.s.DB.Exec("UPDATE work_reports SET cxc_reason='waiting on',summary='API schema update' WHERE event_id='event-2'"); err != nil {
 		t.Fatal(err)
 	}
-	eventPython(t, f, "event-2")
-	standingPython(t, f, "PRJ-1", nil)
+	checkEvent(t, f, "event-2")
+	checkStanding(t, f, "PRJ-1", nil)
 }
 
 func Test24_SR_4_ArchivedStandingWholeOutput(t *testing.T) {
@@ -332,7 +230,7 @@ func Test24_SR_4_ArchivedStandingWholeOutput(t *testing.T) {
 	if _, err := f.s.DB.Exec("UPDATE relationships SET status='archived',superseded_by='rel-next' WHERE relationship_id='rel-1'"); err != nil {
 		t.Fatal(err)
 	}
-	standingPython(t, f, "PRJ-1", nil)
+	checkStanding(t, f, "PRJ-1", nil)
 }
 func Test24_SR_9_StandingGridWholeOutput(t *testing.T) {
 	f := fixture24(t)
@@ -355,7 +253,7 @@ func Test24_SR_9_StandingGridWholeOutput(t *testing.T) {
 					reading["schema"] = "something-else/1"
 					reading["reportingState"] = "reported"
 				}
-				standingPython(t, f, "PRJ-1", []any{reading})
+				checkStanding(t, f, "PRJ-1", []any{reading})
 			})
 		}
 	}
@@ -373,7 +271,7 @@ func Test24_SR_12_StandingDedupWholeOutput(t *testing.T) {
 		{"foreign", []any{foreign, foreign}}, {"coexisting", []any{good, bad, bad}},
 		{"non-object", []any{nil}}, {"malformed selectors", []any{map[string]any{"schema": "reporting-observation/1", "reportingState": "unreported", "relationshipId": "rel-1", "selectors": []any{"turn-7"}}}},
 	} {
-		t.Run(tc.name, func(t *testing.T) { standingPython(t, f, "PRJ-1", tc.readings) })
+		t.Run(tc.name, func(t *testing.T) { checkStanding(t, f, "PRJ-1", tc.readings) })
 	}
 }
 func Test24_SR_12_ContrastingReadingsWholeOutput(t *testing.T) {
@@ -386,7 +284,7 @@ func Test24_SR_12_ContrastingReadingsWholeOutput(t *testing.T) {
 		{base, map[string]any{"schema": "reporting-observation/1", "reportingState": "reported", "relationshipId": rid}},
 		{base, map[string]any{"schema": "reporting-observation/1", "reportingState": "unreported", "relationshipId": rid, "selectors": map[string]any{"turn": "turn-8"}}},
 	} {
-		standingPython(t, f, "PRJ-1", readings)
+		checkStanding(t, f, "PRJ-1", readings)
 	}
 }
 func Test24_SR_12_TwoEventsOneBlockWholeOutput(t *testing.T) {
@@ -403,7 +301,7 @@ func Test24_SR_12_TwoEventsOneBlockWholeOutput(t *testing.T) {
 	if _, err := f.s.DB.Exec("INSERT INTO work_reports (event_id,submission_no,relationship_id,execution_generation,revision_hash,repository,cxc_status,cxc_reason,contract_version,summary,next_action,recorded_at) SELECT 'event-2',submission_no,relationship_id,execution_generation,revision_hash,repository,cxc_status,cxc_reason,contract_version,summary,next_action,recorded_at FROM work_reports WHERE event_id='event-1'"); err != nil {
 		t.Fatal(err)
 	}
-	standingPython(t, f, "PRJ-1", nil)
+	checkStanding(t, f, "PRJ-1", nil)
 }
 func Test24_SR_13_ConfirmedOmissionWholeOutput(t *testing.T) {
 	f := fixture24(t)
@@ -417,8 +315,8 @@ func Test24_SR_13_ConfirmedOmissionWholeOutput(t *testing.T) {
 		}
 	}
 	o := ObservationObligation(reading)
-	compareSelectionPython(t, f, *o, "", nil)
-	standingPython(t, f, "PRJ-1", []any{reading})
+	checkSelection(t, f, *o, "", nil)
+	checkStanding(t, f, "PRJ-1", []any{reading})
 }
 func Test24_SR_5_AdditionalRulingWholeOutput(t *testing.T) {
 	f := fixture24(t)
@@ -434,71 +332,26 @@ func Test24_SR_5_AdditionalRulingWholeOutput(t *testing.T) {
 		if _, err := f.s.DB.Exec("INSERT INTO sync_outbox (sync_id,relationship_id,issue_key,target,target_ref,subject_kind,event_id,identity_digest,summary,state,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", r.id, "rel-1", "REL-1", "coordination_document", r.ref, r.kind, "event-1", "digest", "summary", r.state, "t", "t"); err != nil {
 			t.Fatal(err)
 		}
-		compareSelectionPython(t, f, o, "", nil)
+		checkSelection(t, f, o, "", nil)
 	}
 }
-func supervisorBinaryPython(t *testing.T, f *stageFixture, binary string, args ...string) map[string]any {
+
+// checkSupervisorBinary runs the built binary on the fixture's state and compares its exit code
+// and stdout with the golden, the wall-clock times it wrote as placeholders. It returns the
+// decoded answer.
+func checkSupervisorBinary(t *testing.T, f *stageFixture, binary string, args ...string) map[string]any {
 	t.Helper()
 	state := filepath.Join(f.root, "state")
-	// Python answers on a copy of the store as it stands before Go runs, taken only when Python
-	// is asked (pyoracle.Live).
-	pythonState := ""
-	if pyoracle.Live() {
-		pythonState = filepath.Join(t.TempDir(), "state")
-		if err := os.MkdirAll(pythonState, 0700); err != nil {
-			t.Fatal(err)
-		}
-		for _, suffix := range []string{"", "-wal", "-shm"} {
-			source := filepath.Join(state, "relay.sqlite3"+suffix)
-			data, err := os.ReadFile(source)
-			if os.IsNotExist(err) {
-				continue
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err = os.WriteFile(filepath.Join(pythonState, "relay.sqlite3"+suffix), data, 0600); err != nil {
-				t.Fatal(err)
-			}
-		}
-		ownCopied(t, filepath.Join(pythonState, "relay.sqlite3"), "python")
-	}
 	goCmd := exec.Command(binary, append([]string{"relay", "--state", state}, args...)...)
 	goCmd.Env = append(os.Environ(), "HOME="+f.root, "XDG_STATE_HOME="+f.root, "CODEX_HOME="+f.root)
 	actual, goErr := goCmd.Output()
 	goCode := commandExit24(t, goErr)
-	var python struct {
-		Code   int    `json:"code"`
-		Stdout string `json:"stdout"`
-	}
-	pythonJSON(t, pyKey(t, args[0]), &python, func() (any, error) {
-		cmd := exec.Command("uv", append([]string{"run", "--no-sync", "python", "-m", "codex_session_relay.cli", "--state", pythonState}, args...)...)
-		cmd.Dir = filepath.Join(repoRoot(t), "packages/codex-session-relay")
-		home := t.TempDir()
-		cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "CODEX_HOME="+home, "TMPDIR="+t.TempDir())
-		out, pyErr := cmd.Output()
-		code, err := exitCode(pyErr)
-		return map[string]any{"code": code, "stdout": string(out)}, err
-	}, append(goWallTimes(actual), pyoracle.Substitute(f.root, "<fixture>"))...)
-	if goCode != python.Code || string(actual) != python.Stdout {
-		t.Errorf("CLI bytes differ: Go exit=%d\n%s\nPython exit=%d\n%s", goCode, actual, python.Code, python.Stdout)
-	}
+	golden.CheckJSON(t, goldenKey(t, args[0]), map[string]any{"code": goCode, "stdout": string(actual)}, append(goldenWallTimes(actual), fixtureGolden(t, f.root)...)...)
 	var got map[string]any
 	if err := json.Unmarshal(actual, &got); err != nil {
 		t.Fatalf("Go JSON: %v %s", err, actual)
 	}
 	return got
-}
-
-// exitCode is a finished command's exit status, or the error that kept it from running.
-func exitCode(err error) (int, error) {
-	if err == nil {
-		return 0, nil
-	}
-	if exit, ok := err.(*exec.ExitError); ok {
-		return exit.ExitCode(), nil
-	}
-	return 0, err
 }
 
 func commandExit24(t *testing.T, err error) int {
@@ -513,7 +366,7 @@ func commandExit24(t *testing.T, err error) int {
 	return -1
 }
 
-func Test24_SupervisorEmptyStringTruthinessMatchesLivePython(t *testing.T) {
+func Test24_SupervisorEmptyStringTruthinessMatchesTheGolden(t *testing.T) {
 	binary := testsupport.CRW(t)
 	observation := filepath.Join(t.TempDir(), "empty-observation.json")
 	if err := os.WriteFile(observation, []byte("{}\n"), 0600); err != nil {
@@ -532,7 +385,6 @@ func Test24_SupervisorEmptyStringTruthinessMatchesLivePython(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
 			goState := filepath.Join(home, "go-state")
-			pythonState := filepath.Join(home, "python-state")
 			run := func(command *exec.Cmd) (int, []byte, []byte) {
 				t.Helper()
 				var stdout, stderr bytes.Buffer
@@ -543,40 +395,21 @@ func Test24_SupervisorEmptyStringTruthinessMatchesLivePython(t *testing.T) {
 			goCmd := exec.Command(binary, append([]string{"relay", "--state", goState}, tc.args...)...)
 			goCmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "xdg-state"), "XDG_CONFIG_HOME="+filepath.Join(home, "xdg-config"), "XDG_DATA_HOME="+filepath.Join(home, "xdg-data"), "XDG_CACHE_HOME="+filepath.Join(home, "xdg-cache"), "CODEX_HOME="+filepath.Join(home, "codex"), "COLUMNS=80", "TMPDIR="+os.TempDir())
 			goCode, goOut, goErr := run(goCmd)
-
-			var python struct {
-				Code   int    `json:"code"`
-				Stdout string `json:"stdout"`
-				Stderr string `json:"stderr"`
-			}
-			pythonJSON(t, tc.name, &python, func() (any, error) {
-				repo := repoRoot(t)
-				pyCmd := exec.Command("uv", append([]string{"run", "--no-sync", "--project", repo, "codex-session-relay", "--state", pythonState}, tc.args...)...)
-				pyCmd.Dir = repo
-				pyCmd.Env = goCmd.Env
-				var stdout, stderr bytes.Buffer
-				pyCmd.Stdout, pyCmd.Stderr = &stdout, &stderr
-				code, err := exitCode(pyCmd.Run())
-				return map[string]any{"code": code, "stdout": stdout.String(), "stderr": stderr.String()}, err
-			}, pyoracle.Substitute(observation, "<observation>"), pyoracle.Substitute(home, "<home>"))
-			pyCode, pyOut, pyErr := python.Code, []byte(python.Stdout), []byte(python.Stderr)
-			if goCode != pyCode || !bytes.Equal(goOut, pyOut) || !bytes.Equal(goErr, pyErr) {
-				t.Fatalf("Go exit=%d stdout=%q stderr=%q\nPython exit=%d stdout=%q stderr=%q", goCode, goOut, goErr, pyCode, pyOut, pyErr)
-			}
+			golden.CheckJSON(t, "answer", map[string]any{"code": goCode, "stdout": string(goOut), "stderr": string(goErr)}, golden.Substitute(observation, "<observation>"), golden.Substitute(home, "<home>"), golden.Substitute(repoRoot(t), "<repo>"))
 		})
 	}
 }
 
 func Test24_SR_18_RealBinarySelectWholeOutput(t *testing.T) {
 	f := fixture24(t)
-	supervisorBinaryPython(t, f, testsupport.CRW(t), "supervisor-select", "--event", "event-1")
+	checkSupervisorBinary(t, f, testsupport.CRW(t), "supervisor-select", "--event", "event-1")
 }
 func Test24_SR_18_RealBinaryRecordWholeOutput(t *testing.T) {
 	f := fixture24(t)
 	binary := testsupport.CRW(t)
-	supervisorBinaryPython(t, f, binary, "supervisor-report-recorded", "--event", "event-1", "--message", "m-1")
-	supervisorBinaryPython(t, f, binary, "supervisor-report-recorded", "--event", "event-1", "--message", "m-1")
-	supervisorBinaryPython(t, f, binary, "supervisor-select", "--event", "event-1")
+	checkSupervisorBinary(t, f, binary, "supervisor-report-recorded", "--event", "event-1", "--message", "m-1")
+	checkSupervisorBinary(t, f, binary, "supervisor-report-recorded", "--event", "event-1", "--message", "m-1")
+	checkSupervisorBinary(t, f, binary, "supervisor-select", "--event", "event-1")
 }
 func Test24_SR_19_RealBinaryOmissionWholeOutput(t *testing.T) {
 	f := fixture24(t)
@@ -586,8 +419,8 @@ func Test24_SR_19_RealBinaryOmissionWholeOutput(t *testing.T) {
 	if err := os.WriteFile(reading, []byte(data), 0600); err != nil {
 		t.Fatal(err)
 	}
-	supervisorBinaryPython(t, f, binary, "supervisor-report-recorded", "--observation", reading, "--message", "m-1")
-	supervisorBinaryPython(t, f, binary, "supervisor-report-recorded", "--observation", reading, "--message", "m-1")
+	checkSupervisorBinary(t, f, binary, "supervisor-report-recorded", "--observation", reading, "--message", "m-1")
+	checkSupervisorBinary(t, f, binary, "supervisor-report-recorded", "--observation", reading, "--message", "m-1")
 }
 func Test24_SR_19_StandingLiveBinaryWholeOutput(t *testing.T) {
 	f := fixture24(t)
@@ -599,7 +432,7 @@ func Test24_SR_19_StandingLiveBinaryWholeOutput(t *testing.T) {
 	if err := os.WriteFile(reading, []byte(data), 0600); err != nil {
 		t.Fatal(err)
 	}
-	supervisorBinaryPython(t, f, testsupport.CRW(t), "supervisor-standing", "--project", "PRJ-1", "--observation", reading)
+	checkSupervisorBinary(t, f, testsupport.CRW(t), "supervisor-standing", "--project", "PRJ-1", "--observation", reading)
 }
 func Test24_SR_19_StandingUnregisteredBinaryWholeOutput(t *testing.T) {
 	f := fixture24(t)
@@ -611,7 +444,7 @@ func Test24_SR_19_StandingUnregisteredBinaryWholeOutput(t *testing.T) {
 	if err := os.WriteFile(reading, []byte(data), 0600); err != nil {
 		t.Fatal(err)
 	}
-	supervisorBinaryPython(t, f, testsupport.CRW(t), "supervisor-standing", "--project", "PRJ-1", "--observation", reading)
+	checkSupervisorBinary(t, f, testsupport.CRW(t), "supervisor-standing", "--project", "PRJ-1", "--observation", reading)
 }
 func Test24_SR_20_UsageWholeOutput(t *testing.T) {
 	f := fixture24(t)
@@ -644,23 +477,7 @@ func Test24_SR_20_UsageWholeOutput(t *testing.T) {
 			goCmd.Env = append(os.Environ(), "HOME="+f.root, "XDG_STATE_HOME="+f.root, "CODEX_HOME="+f.root)
 			actual, goErr := goCmd.Output()
 			goCode := commandExit24(t, goErr)
-			var python struct {
-				Code   int    `json:"code"`
-				Stdout string `json:"stdout"`
-			}
-			pythonJSON(t, tc.name, &python, func() (any, error) {
-				cmd := exec.Command("uv", append([]string{"run", "--no-sync", "python", "-m", "codex_session_relay.cli", "--state", filepath.Dir(pythonCopy(t, f))}, tc.args...)...)
-				cmd.Dir = filepath.Join(repoRoot(t), "packages/codex-session-relay")
-				home := t.TempDir()
-				cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+home, "CODEX_HOME="+home, "TMPDIR="+t.TempDir())
-				out, err := cmd.Output()
-				code, err := exitCode(err)
-				return map[string]any{"code": code, "stdout": string(out)}, err
-			}, pyoracle.Substitute(f.root, "<fixture>"))
-			pyCode, out := python.Code, []byte(python.Stdout)
-			if goCode != pyCode || !bytes.Equal(actual, out) {
-				t.Errorf("CLI byte diff\nGo exit=%d\n%s\nPython exit=%d\n%s", goCode, actual, pyCode, out)
-			}
+			golden.CheckJSON(t, "answer", map[string]any{"code": goCode, "stdout": string(actual)}, fixtureGolden(t, f.root)...)
 		})
 	}
 }
@@ -671,7 +488,7 @@ func Test24_SR_6_UnreadableObservationWholeOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := float64(1700000000)
-	compareSelectionPython(t, f, o, "01supervisor-task", &now)
+	checkSelection(t, f, o, "01supervisor-task", &now)
 }
 func Test24_SR_23_RepointedTargetWholeOutput(t *testing.T) {
 	f := fixture24(t)
@@ -684,15 +501,15 @@ func Test24_SR_23_RepointedTargetWholeOutput(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	compareSelectionPython(t, f, o, "", nil)
+	checkSelection(t, f, o, "", nil)
 	if _, err := f.s.DB.Exec("UPDATE sync_targets SET target_ref='doc-2' WHERE relationship_id='rel-1'"); err != nil {
 		t.Fatal(err)
 	}
-	compareSelectionPython(t, f, o, "", nil)
+	checkSelection(t, f, o, "", nil)
 	if _, err := f.s.DB.Exec("UPDATE sync_targets SET target_ref='doc-1' WHERE relationship_id='rel-1'"); err != nil {
 		t.Fatal(err)
 	}
-	compareSelectionPython(t, f, o, "", nil)
+	checkSelection(t, f, o, "", nil)
 }
 func Test24_SR_23_CurrentRulingWholeOutput(t *testing.T) {
 	for _, newState := range []string{"failed", "confirmed"} {
@@ -707,7 +524,7 @@ func Test24_SR_23_CurrentRulingWholeOutput(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			compareSelectionPython(t, f, o, "", nil)
+			checkSelection(t, f, o, "", nil)
 		})
 	}
 }

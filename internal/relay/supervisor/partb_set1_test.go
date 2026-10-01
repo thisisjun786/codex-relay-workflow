@@ -2,50 +2,27 @@ package supervisor
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
-func set1Capture(t *testing.T, id string) (map[string]any, *store.Store) {
+// set1Fixture restores the store a Python report test left (the former
+// testdata/report_capture.py), holding the one event the test reported on, and opens it as Go's.
+func set1Fixture(t *testing.T, id string) (*store.Store, string) {
 	t.Helper()
 	root := t.TempDir()
-	repo, err := filepath.Abs("../../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	script, err := filepath.Abs("testdata/report_capture.py")
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The store Python's fixture left is recorded with the answer (pythonTree).
-	output := pythonTree(t, id, root, func() ([]byte, error) {
-		cmd := exec.Command("uv", "run", "--no-sync", "python", script, id, root)
-		cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
-		cmd.Env = append(os.Environ(), "HOME="+root, "XDG_STATE_HOME="+root, "CODEX_HOME="+root, "TMPDIR="+os.TempDir())
-		output, err := cmd.CombinedOutput()
-		if err != nil {
-			return nil, fmt.Errorf("capture: %v: %s", err, output)
-		}
-		return output, nil
-	})
-	var want map[string]any
-	if err := json.Unmarshal(output, &want); err != nil {
-		t.Fatal(err)
-	}
+	treeFixture(t, id, root)
 	ownCopied(t, filepath.Join(root, "relay.sqlite3"), "go")
 	s, err := store.Open(context.Background(), filepath.Join(root, "relay.sqlite3"), "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
-	return want, s
+	return s, root
 }
 
 type reportScriptHost struct {
@@ -67,8 +44,11 @@ func (h *reportScriptHost) SendMessage(id, thread, message string, settings *del
 }
 
 func Test24_RC_13_LivePreview(t *testing.T) {
-	want, s := set1Capture(t, "RC-13-preview")
-	event := want["eventId"].(string)
+	s, root := set1Fixture(t, "RC-13-preview")
+	var event string
+	if err := s.DB.QueryRow("SELECT event_id FROM events").Scan(&event); err != nil {
+		t.Fatal(err)
+	}
 	d := delivery.NewService(s, delivery.NewFakeClock())
 	before, err := d.PreviewMessage(context.Background(), event)
 	if err != nil {
@@ -100,20 +80,5 @@ func Test24_RC_13_LivePreview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	compareReportValues(t, map[string]any{"eventId": event, "requestId": request, "before": before, "sent": frozen.Get("message"), "after": after}, want)
-}
-
-func compareReportValues(t *testing.T, got, want any) {
-	t.Helper()
-	bytes, err := json.Marshal(got)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var normalized any
-	if err = json.Unmarshal(bytes, &normalized); err != nil {
-		t.Fatal(err)
-	}
-	if jsonText(normalized) != jsonText(want) {
-		t.Errorf("Go=%s\nPython=%s", jsonText(normalized), jsonText(want))
-	}
+	golden.CheckJSON(t, "preview", asJSON(t, map[string]any{"eventId": event, "requestId": request, "before": before, "sent": frozen.Get("message"), "after": after}), treeGolden(t, root)...)
 }

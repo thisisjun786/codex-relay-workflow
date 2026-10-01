@@ -12,7 +12,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
-// ---- a scripted host with an exact Python twin (pyHost below) ----
+// ---- a scripted host ----
 
 type bHost struct {
 	status string
@@ -80,44 +80,6 @@ func (h *bHost) FindTokenInTurn(string, string, string, int) (delivery.TokenScan
 }
 func (h *bHost) RecipientFingerprint(string) (string, error) { return "", nil }
 
-const pyHost = `
-from codex_session_relay.hostadapter import ThreadFacts, TurnInfo, TokenScan
-from codex_session_relay import supervisorchannel as _sc
-_sc.secrets.token_hex = lambda n: "00" * n
-class H:
-    def __init__(s): s.status='idle'; s.turns={}; s.items=[]; s.script=[]; s.n=0
-    def read_thread(s,t): return ThreadFacts(s.status, True)
-    def is_archived(s,t,cwd=None): return False
-    def read_goal_status(s,t): return None
-    def read_turn(s,thread,tid):
-        at=s.turns.get(thread+'|'+tid)
-        return None if at is None else TurnInfo(tid,'completed',at)
-    def send_message(s,rid,thread,msg,settings=None):
-        o=s.script.pop(0) if s.script else 'accepted'
-        if o=='resume_fail': return {'requestId':rid,'status':'failed','error':'thread/resume: boom'}
-        if o=='busy': return {'requestId':rid,'status':'failed','rpcError':{'code':'thread_busy'}}
-        if o=='unknown': return {'requestId':rid,'status':'outcome_unknown'}
-        s.n+=1; turn='turn-%s-%d'%(thread,s.n); s.turns[thread+'|'+turn]=clock.now(); s.items.append((thread,turn,msg))
-        return {'requestId':rid,'status':'accepted','turnId':turn}
-    def find_token(s,thread,token,limit=200,turn_id=None,message_only=False):
-        n=0
-        for th,tu,tx in reversed(s.items):
-            if th!=thread: continue
-            n+=1
-            if token in tx: return TokenScan(True,tu,True,n)
-        return TokenScan(False,None,True,n)
-host=H()
-channel=_sc.SupervisorChannel(store,Registry(store,clock),Linkage(store,clock),clock,state_directory=sys.argv[2],settings=lambda t,r=None:{'authorized':'x'})
-def at(t): clock._now=float(t)
-def att(mid,t):
-    at(t)
-    return refusal(lambda: channel.attempt(mid, host, now=t))
-def rb(mid,turn,t,asby=None):
-    at(t)
-    from codex_session_relay.identity import supervisor_read_proof
-    return refusal(lambda: channel.read_back(mid, read_turn_id=turn, proof=supervisor_read_proof(mid,turn), adapter=host, asserted_by=asby))
-`
-
 func sweepAnswer(t *testing.T, value any, err error) any {
 	t.Helper()
 	if err != nil {
@@ -162,9 +124,11 @@ func (r *bRun) rb(t *testing.T, id, turn string, now float64, as string) {
 	r.out = append(r.out, sweepAnswer(t, v, err))
 }
 
-func bCompare(t *testing.T, r *bRun, python supervisorCapture) {
-	compareSupervisorValues(t, r.out, python)
-	compareSupervisorTables(t, r.f.s, python)
+// bCheck compares a run's answers and the fixture's tables with the golden.
+func bCheck(t *testing.T, r *bRun) {
+	t.Helper()
+	checkSupervisorValues(t, r.out, fixtureGolden(t, r.f.root)...)
+	checkSupervisorTables(t, r.f.s, fixtureGolden(t, r.f.root)...)
 }
 func stagedID(t *testing.T, f *stageFixture) string {
 	_, s := f.staged(t)
@@ -176,16 +140,11 @@ func TestSweep24b_RetryWithheldCap(t *testing.T) {
 	f := fixture24(t)
 	id := stagedID(t, f)
 	r := newBRun(t, f)
-	py := sweepPython(t, f, pyHost+`
-host.script=['resume_fail']*8
-for i in range(8):
-    out.append(att(args[0], 1700000000+i*2000))
-`, id)
 	r.h.script = []string{"resume_fail", "resume_fail", "resume_fail", "resume_fail", "resume_fail", "resume_fail", "resume_fail", "resume_fail"}
 	for i := 0; i < 8; i++ {
 		r.att(t, id, 1_700_000_000+float64(i)*2000)
 	}
-	bCompare(t, r, py)
+	bCheck(t, r)
 }
 
 // B2: thread_busy receipt from the transport.
@@ -193,16 +152,11 @@ func TestSweep24b_BusyReceipt(t *testing.T) {
 	f := fixture24(t)
 	id := stagedID(t, f)
 	r := newBRun(t, f)
-	py := sweepPython(t, f, pyHost+`
-host.script=['busy','busy']
-for i in range(3):
-    out.append(att(args[0], 1700000000+i*2000))
-`, id)
 	r.h.script = []string{"busy", "busy"}
 	for i := 0; i < 3; i++ {
 		r.att(t, id, 1_700_000_000+float64(i)*2000)
 	}
-	bCompare(t, r, py)
+	bCheck(t, r)
 }
 
 // B3: busy lifecycle deferrals, then readdress, then busy again (count restarts).
@@ -210,12 +164,6 @@ func TestSweep24b_BusyCountAfterReaddress(t *testing.T) {
 	f := fixture24(t)
 	id := stagedID(t, f)
 	r := newBRun(t, f)
-	py := sweepPython(t, f, pyHost+`
-host.status='active'
-for i in range(3):
-    out.append(att(args[0], 1700000000+i*1000))
-out.append([dict(x) for x in store.all("SELECT state,next_eligible_at,hold_reason FROM supervisor_messages")])
-`, id)
 	r.h.status = "active"
 	for i := 0; i < 3; i++ {
 		r.att(t, id, 1_700_000_000+float64(i)*1000)
@@ -225,7 +173,7 @@ out.append([dict(x) for x in store.all("SELECT state,next_eligible_at,hold_reaso
 	var hr any
 	_ = f.s.DB.QueryRow("SELECT state,next_eligible_at,hold_reason FROM supervisor_messages").Scan(&st, &ne, &hr)
 	r.out = append(r.out, []any{map[string]any{"state": st, "next_eligible_at": ne, "hold_reason": hr}})
-	bCompare(t, r, py)
+	bCheck(t, r)
 }
 
 // B4: two supervisors: sent to A, handover to B, second fact sent to B; readbacks by each.
@@ -238,25 +186,8 @@ func TestSweep24b_ReadbackAcrossHandover(t *testing.T) {
 	sweepExec(t, f,
 		`INSERT INTO events (event_id,relationship_id,execution_generation,revision_hash,outcome,producer,turn_thread_id,turn_id,turn_status,receipt,first_seen_at,last_seen_at) VALUES ('event-2','rel-1',1,'def','ready_for_review','child','child','turn-2','completed','{}','2023-11-14T22:13:21.000000+00:00','2023-11-14T22:13:21.000000+00:00')`,
 		`INSERT INTO work_reports (event_id,submission_no,relationship_id,execution_generation,revision_hash,repository,cxc_status,cxc_reason,contract_version,summary,next_action,recorded_at) VALUES ('event-2',1,'rel-1',1,'def','thisisjun786/codex-relay-workflow','DONE','proved','v1','second','merge','2023-11-14T22:13:21.000000+00:00')`)
-	// Python replays from here: host state for the first send is rebuilt identically.
 	r0 := r.out
 	r.out = nil
-	pyPre := `
-host.n=1; host.turns={'supervisor|turn-supervisor-1':1700000000.0}
-host.items=[('supervisor','turn-supervisor-1',store.one("SELECT message FROM supervisor_attempts")['message'])]
-`
-	py := sweepPython(t, f, pyHost+pyPre+`
-at(1700000100); o=channel.stage_standing('PRJ-1'); out.append(o)
-mid2=[x['message_id'] for x in store.all("SELECT message_id FROM supervisor_messages WHERE message_id<>?",(args[0],))]
-out.append(mid2)
-m2=mid2[0] if mid2 else args[0]
-out.append(att(m2,1700000200))
-out.append(rb(args[0],'turn-supervisor-1',1700000300,'successor'))
-out.append(rb(args[0],'turn-supervisor-1',1700000301,'supervisor'))
-out.append(rb(m2,'turn-successor-2',1700000302,'successor'))
-out.append(rb(m2,'turn-supervisor-1',1700000303,'successor'))
-out.append(rb(args[0],'turn-successor-2',1700000304,'supervisor'))
-`, id)
 	r.now = 1_700_000_100
 	o, err := f.c.StageStanding(f.ctx, "PRJ-1", delivery.ISOOf(r.now))
 	r.out = append(r.out, sweepAnswer(t, o, err).(map[string]any)["ok"])
@@ -280,7 +211,7 @@ out.append(rb(args[0],'turn-successor-2',1700000304,'supervisor'))
 	r.rb(t, m2, "turn-supervisor-1", 1_700_000_303, "successor")
 	r.rb(t, id, "turn-successor-2", 1_700_000_304, "supervisor")
 	t.Logf("first send: %v", jsonText(r0))
-	bCompare(t, r, py)
+	bCheck(t, r)
 }
 
 // B5: held_uncertain whose attempt_count names an attempt that does not exist.
@@ -292,12 +223,8 @@ func TestSweep24b_UncertainNoAttemptRow(t *testing.T) {
 	r.att(t, id, 1_700_000_000)
 	sweepExec(t, f, "UPDATE supervisor_messages SET attempt_count=2")
 	r.out = nil
-	py := sweepPython(t, f, pyHost+`
-host.n=0
-out.append(rb(args[0],'turn-supervisor-1',1700000100,'supervisor'))
-`, id)
 	r.rb(t, id, "turn-supervisor-1", 1_700_000_100, "supervisor")
-	bCompare(t, r, py)
+	bCheck(t, r)
 }
 
 // B6: hierarchy_unresolved hold, endpoints unchanged: attempt directly.
@@ -306,9 +233,8 @@ func TestSweep24b_AttemptReleasesUnaddressedHold(t *testing.T) {
 	id := stagedID(t, f)
 	sweepExec(t, f, "UPDATE supervisor_messages SET hold_reason='hierarchy_unresolved'")
 	r := newBRun(t, f)
-	py := sweepPython(t, f, pyHost+`out.append(att(args[0],1700000000))`, id)
 	r.att(t, id, 1_700_000_000)
-	bCompare(t, r, py)
+	bCheck(t, r)
 }
 
 // B7: coordination-document record variants, then attempt.
@@ -317,11 +243,9 @@ func bConfirm(t *testing.T, stmts ...string) {
 	id := stagedID(t, f)
 	sweepExec(t, f, stmts...)
 	r := newBRun(t, f)
-	py := sweepPython(t, f, pyHost+`out.append(att(args[0],1700000000))
-out.append(att(args[0],1700000100))`, id)
 	r.att(t, id, 1_700_000_000)
 	r.att(t, id, 1_700_000_100)
-	bCompare(t, r, py)
+	bCheck(t, r)
 }
 
 const syncIns = `INSERT INTO sync_outbox (sync_id,relationship_id,issue_key,target,target_ref,subject_kind,event_id,identity_digest,summary,state,created_at,updated_at) VALUES `
@@ -354,9 +278,8 @@ func TestSweep24b_RestateAfterWithheldReceipt(t *testing.T) {
 	r.att(t, id, 1_700_000_000)
 	sweepExec(t, f, `INSERT INTO work_reports (event_id,submission_no,relationship_id,execution_generation,revision_hash,repository,cxc_status,cxc_reason,contract_version,summary,next_action,recorded_at) VALUES ('event-1',2,'rel-1',1,'abc123456789abcdef','thisisjun786/codex-relay-workflow','DONE','proved','v1','the work is done, corrected','merge','2023-11-14T22:13:20.000000+00:00')`)
 	r.out = nil
-	py := sweepPython(t, f, pyHost+`out.append(att(args[0],1700001000))`, id)
 	r.att(t, id, 1_700_001_000)
-	bCompare(t, r, py)
+	bCheck(t, r)
 }
 
 func TestSweep24b_D7RestatesCurrentClaimAtTransportStart(t *testing.T) {
@@ -364,15 +287,9 @@ func TestSweep24b_D7RestatesCurrentClaimAtTransportStart(t *testing.T) {
 	id := stagedID(t, f)
 	r := newBRun(t, f)
 	insert := `INSERT INTO work_reports (event_id,submission_no,relationship_id,execution_generation,revision_hash,repository,cxc_status,cxc_reason,contract_version,summary,next_action,recorded_at) VALUES ('event-1',2,'rel-1',1,'abc123456789abcdef','thisisjun786/codex-relay-workflow','DONE','proved','v1','corrected during claim','merge','2023-11-14T22:13:20.000000+00:00')`
-	py := sweepPython(t, f, pyHost+`
-orig=channel._start_transport
-def changed(*a,**kw):
- store.db.execute("`+insert+`"); channel._start_transport=orig; return orig(*a,**kw)
-channel._start_transport=changed
-out.append(att(args[0],1700000000))`, id)
 	f.c.beforeTransport = func() { sweepExec(t, f, insert); f.c.beforeTransport = nil }
 	r.att(t, id, 1700000000)
-	bCompare(t, r, py)
+	bCheck(t, r)
 }
 
 func TestSweep24b_D10FirstReportRestatementUsesNone(t *testing.T) {
@@ -381,15 +298,9 @@ func TestSweep24b_D10FirstReportRestatementUsesNone(t *testing.T) {
 	id := stagedID(t, f)
 	r := newBRun(t, f)
 	insert := `INSERT INTO work_reports (event_id,submission_no,relationship_id,execution_generation,revision_hash,repository,cxc_status,cxc_reason,contract_version,summary,next_action,recorded_at) VALUES ('event-1',1,'rel-1',1,'abc123456789abcdef','thisisjun786/codex-relay-workflow','DONE','proved','v1','first report during claim','merge','2023-11-14T22:13:20.000000+00:00')`
-	py := sweepPython(t, f, pyHost+`
-orig=channel._start_transport
-def changed(*a,**kw):
- store.db.execute("`+insert+`"); channel._start_transport=orig; return orig(*a,**kw)
-channel._start_transport=changed
-out.append(att(args[0],1700000000))`, id)
 	f.c.beforeTransport = func() { sweepExec(t, f, insert); f.c.beforeTransport = nil }
 	r.att(t, id, 1700000000)
-	bCompare(t, r, py)
+	bCheck(t, r)
 	var detail string
 	if err := f.s.DB.QueryRow("SELECT detail FROM journal WHERE kind='supervisor_message_withheld'").Scan(&detail); err != nil {
 		t.Fatal(err)
@@ -403,14 +314,6 @@ func TestSweep24b_D8DaemonSupersessionSettlesClaim(t *testing.T) {
 	f := fixture24(t)
 	id := stagedID(t, f)
 	r := newBRun(t, f)
-	py := sweepPython(t, f, pyHost+`
-orig=channel._start_transport
-def obsolete(*a,**kw):
- store.db.execute("DELETE FROM work_reports WHERE event_id='event-1'"); store.db.execute("DELETE FROM events WHERE event_id='event-1'"); channel._start_transport=orig; return orig(*a,**kw)
-channel._start_transport=obsolete
-try: result=channel.attempt(args[0],host,now=1700000000,owner='relay-daemon')
-except Exception as e: result={'error':e.__class__.__name__,'reason':getattr(getattr(e,'reason',None),'value',None),'detail':getattr(e,'detail',str(e))}
-out.append(result)`, id)
 	f.c.beforeTransport = func() {
 		sweepExec(t, f, "DELETE FROM work_reports WHERE event_id='event-1'", "DELETE FROM events WHERE event_id='event-1'")
 		f.c.beforeTransport = nil
@@ -427,10 +330,12 @@ out.append(result)`, id)
 		if row.State == "sending" {
 			t.Fatal("daemon claim remained sending")
 		}
-		// AutoSend records the refusal in its result rather than returning it; Python's daemon does the same.
-		r.out = py.Captures
+		// AutoSend records the refusal in its result rather than returning it, as Python's daemon
+		// did; only the store it left is compared.
+		checkSupervisorTables(t, f.s, fixtureGolden(t, f.root)...)
+		return
 	}
-	bCompare(t, r, py)
+	bCheck(t, r)
 }
 
 // B9: AutoSend-equivalent fault path: a message whose attempt refuses (older-first), defer_after_fault.
@@ -439,13 +344,6 @@ func TestSweep24b_DeferAfterFaultLabel(t *testing.T) {
 	id := stagedID(t, f)
 	moveDevinSupervisor(t, f)
 	r := newBRun(t, f)
-	py := sweepPython(t, f, pyHost+`
-at(1700000000)
-try:
-    channel.attempt(args[0], host, now=1700000000)
-except Exception as e:
-    out.append(str(e)); channel.defer_after_fault(args[0], 1700000000, e)
-`, id)
 	_, err := f.c.Attempt(f.ctx, id, r.h, 1_700_000_000)
 	var refusal Refusal
 	if errors.As(err, &refusal) {
@@ -454,7 +352,7 @@ except Exception as e:
 		r.out = append(r.out, fmt.Sprint(err))
 	}
 	_ = f.c.deferAutoFault(f.ctx, id, 1_700_000_000, err)
-	bCompare(t, r, py)
+	bCheck(t, r)
 }
 
 // B10: busy receipt, retried before and after its backoff.
@@ -462,16 +360,11 @@ func TestSweep24b_BusyReceiptBackoff(t *testing.T) {
 	f := fixture24(t)
 	id := stagedID(t, f)
 	r := newBRun(t, f)
-	py := sweepPython(t, f, pyHost+`
-host.script=['busy']
-for t in (1700000000,1700000006,1700000020):
-    out.append(att(args[0], t))
-`, id)
 	r.h.script = []string{"busy"}
 	for _, n := range []float64{1_700_000_000, 1_700_000_006, 1_700_000_020} {
 		r.att(t, id, n)
 	}
-	bCompare(t, r, py)
+	bCheck(t, r)
 }
 
 // B11: restate at claim, never attempted: new submission then attempt at a later clock.
@@ -480,9 +373,8 @@ func TestSweep24b_RestateAtClaimObservedAt(t *testing.T) {
 	id := stagedID(t, f)
 	sweepExec(t, f, `INSERT INTO work_reports (event_id,submission_no,relationship_id,execution_generation,revision_hash,repository,cxc_status,cxc_reason,contract_version,summary,next_action,recorded_at) VALUES ('event-1',2,'rel-1',1,'abc123456789abcdef','thisisjun786/codex-relay-workflow','DONE','proved','v1','corrected','merge','2023-11-14T22:13:20.000000+00:00')`)
 	r := newBRun(t, f)
-	py := sweepPython(t, f, pyHost+`out.append(att(args[0],1700001000))`, id)
 	r.att(t, id, 1_700_001_000)
-	bCompare(t, r, py)
+	bCheck(t, r)
 }
 
 // B12: preflight pacing: another recipient send 2s ago.
@@ -497,14 +389,8 @@ func TestSweep24b_PacedPreservesCurrentState(t *testing.T) {
 				if phase == "claim" {
 					f.c.skipPreflightRate = true
 				}
-				pyPhase := ""
-				if phase == "claim" {
-					pyPhase = "channel._rate_limited=lambda recipient,now: False\n"
-				}
-				py := sweepPython(t, f, pyHost+pyPhase+`
-out.append(att(args[0],1700000000))`, id)
 				r.att(t, id, 1700000000)
-				bCompare(t, r, py)
+				bCheck(t, r)
 			})
 		}
 	}
@@ -517,10 +403,6 @@ func TestSweep24b_ClaimRaceIsQuietForAutoSend(t *testing.T) {
 	f.c.beforeClaimRead = func(tx context.Context) {
 		_, _ = f.s.Q(tx).ExecContext(tx, "UPDATE supervisor_messages SET state='dispatched' WHERE message_id=?", id)
 	}
-	py := sweepPython(t, f, pyHost+`
-def raced(*a,**kw): raise _sc._NotClaimable()
-channel._claim=raced
-out.append(None if channel.attempt(args[0],host,now=1700000000,owner='relay-daemon') is None else 'sent')`, id)
 	got, err := f.c.AutoSend(f.ctx, r.h, 1700000000, 0, 1, "", "", "")
 	if err != nil {
 		t.Fatal(err)
@@ -529,7 +411,7 @@ out.append(None if channel.attempt(args[0],host,now=1700000000,owner='relay-daem
 		t.Fatalf("autosend %+v", got)
 	}
 	r.out = []any{nil}
-	bCompare(t, r, py)
+	bCheck(t, r)
 }
 
 type ownerObservingHost struct {
@@ -569,9 +451,8 @@ func TestSweep24b_PreflightPaced(t *testing.T) {
 	id := stagedID(t, f)
 	sweepExec(t, f, "INSERT INTO recipient_rate VALUES ('supervisor',1699999200,1,1699999998)")
 	r := newBRun(t, f)
-	py := sweepPython(t, f, pyHost+`out.append(att(args[0],1700000000))`, id)
 	r.att(t, id, 1_700_000_000)
-	bCompare(t, r, py)
+	bCheck(t, r)
 }
 
 // B13: a refused attempt (older message first) deferred after fault: journal label.
@@ -592,16 +473,9 @@ func TestSweep24b_FaultLabelOlderFirst(t *testing.T) {
 	m2 := s2["messageId"].(string)
 	_ = id
 	r := newBRun(t, f)
-	py := sweepPython(t, f, pyHost+`
-at(1700000000)
-try:
-    channel.attempt(args[0], host, now=1700000000)
-except Exception as e:
-    channel.defer_after_fault(args[0], 1700000000, e)
-`, m2)
 	_, err = f.c.Attempt(f.ctx, m2, r.h, 1_700_000_000)
 	_ = f.c.deferAutoFault(f.ctx, m2, 1_700_000_000, err)
-	bCompare(t, r, py)
+	bCheck(t, r)
 }
 
 // B14: busy deferrals, handover, readdress by staging, busy deferral again: counter restarts.
@@ -615,12 +489,6 @@ func TestSweep24b_BusyThenReaddressThenBusy(t *testing.T) {
 	}
 	moveDevinSupervisor(t, f)
 	r.out = nil
-	py := sweepPython(t, f, pyHost+`
-host.status='active'
-at(1700005000); out.append(channel.stage_standing('PRJ-1')['staged'])
-out.append(att(args[0],1700005000))
-out.append(att(args[0],1700006000))
-`, id)
 	r.now = 1_700_005_000
 	a, err := f.c.StageStanding(f.ctx, "PRJ-1", delivery.ISOOf(r.now))
 	if err != nil {
@@ -629,7 +497,7 @@ out.append(att(args[0],1700006000))
 	r.out = append(r.out, a["staged"])
 	r.att(t, id, 1_700_005_000)
 	r.att(t, id, 1_700_006_000)
-	bCompare(t, r, py)
+	bCheck(t, r)
 }
 
 // B15: outcome unknown, token lands in a turn at transport start; readback reconciles it.
@@ -644,13 +512,7 @@ func TestSweep24b_UncertainReconciled(t *testing.T) {
 	r.h.turns["supervisor|turn-x"] = 1_700_000_000
 	r.h.items = append(r.h.items, [3]string{"supervisor", "turn-x", msg})
 	r.out = nil
-	py := sweepPython(t, f, pyHost+`
-host.turns={'supervisor|turn-x':1700000000.0}
-host.items=[('supervisor','turn-x',store.one("SELECT message FROM supervisor_attempts")['message'])]
-out.append(rb(args[0],'turn-x',1700000100,'supervisor'))
-out.append(rb(args[0],'turn-x',1700000101,None))
-`, id)
 	r.rb(t, id, "turn-x", 1_700_000_100, "supervisor")
 	r.rb(t, id, "turn-x", 1_700_000_101, "")
-	bCompare(t, r, py)
+	bCheck(t, r)
 }

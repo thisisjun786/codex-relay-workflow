@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -20,15 +19,16 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
+// rrOperation is one operation a Python restoration-visibility or correction-form test made: its
+// kind and arguments, the clock and the snapshot of the store it ran on.
 type rrOperation struct {
-	Kind   string         `json:"kind"`
-	Args   map[string]any `json:"args"`
-	Now    float64        `json:"now"`
-	Pre    string         `json:"pre"`
-	Output string         `json:"output"`
-	Tables string         `json:"tables"`
+	Kind string         `json:"kind"`
+	Args map[string]any `json:"args"`
+	Now  float64        `json:"now"`
+	Pre  string         `json:"pre"`
 }
 
 // rrOrdered sorts only the outer capture representation. Stored JSON cells are strings:
@@ -80,17 +80,16 @@ func rrBytes(t *testing.T, v any) []byte {
 	}
 	return b.Bytes()
 }
-func rrCompare(t *testing.T, field string, got []byte, want string) {
-	t.Helper()
-	if bytes.Equal(got, []byte(want)) {
-		return
-	}
-	i := 0
-	for i < len(got) && i < len(want) && got[i] == want[i] {
-		i++
-	}
-	start := max(0, i-120)
-	t.Errorf("%s byte comparison diff at offset %d\nGo: %q\nPython: %q", field, i, got[start:min(len(got), i+260)], want[start:min(len(want), i+260)])
+
+// rrResult is one replayed operation's bytes, each under the name of what it is.
+type rrResult struct {
+	names  []string
+	values [][]byte
+}
+
+func (r *rrResult) add(name string, got []byte) {
+	r.names = append(r.names, name)
+	r.values = append(r.values, got)
 }
 func rrTables(t *testing.T, s *store.Store) []byte {
 	t.Helper()
@@ -121,9 +120,8 @@ func rrTables(t *testing.T, s *store.Store) []byte {
 }
 
 // rrOwnerNeutral applies the documented runtime-identity rule, testsupport.OwnerNeutral, to the
-// schema_meta rows of a table dump of a store writer stamped: the owner row of a store each
-// runtime stamped as its own reads "python" in one and "go" in the other, and must read writer's.
-// Nothing else in the dump is touched.
+// schema_meta rows of a table dump of a store writer stamped: the owner row of a store stamped as
+// writer's own reads "<runtime owner>". Nothing else in the dump is touched.
 func rrOwnerNeutral(t *testing.T, writer testsupport.Runtime, tables map[string]any) {
 	t.Helper()
 	rows, _ := tables["schema_meta"].([]any)
@@ -136,24 +134,9 @@ func rrOwnerNeutral(t *testing.T, writer testsupport.Runtime, tables map[string]
 	}
 }
 
-// rrPythonTables is Python's captured table dump under the same rule. The dump is decoded and
-// re-encoded by the emitter that renders Go's, which must first reproduce it byte for byte, so
-// the owner row is all that can change.
-func rrPythonTables(t *testing.T, raw string) string {
-	t.Helper()
-	decoder := json.NewDecoder(strings.NewReader(raw))
-	decoder.UseNumber()
-	var tables map[string]any
-	if err := decoder.Decode(&tables); err != nil {
-		t.Fatal(err)
-	}
-	if again := rrBytes(t, tables); !bytes.Equal(again, []byte(raw)) {
-		rrCompare(t, "re-encoded Python tables", again, raw)
-		t.Fatal("Python's table dump does not re-encode byte for byte")
-	}
-	rrOwnerNeutral(t, testsupport.Python, tables)
-	return string(rrBytes(t, tables))
-}
+// rrCapture restores the tree a Python restoration-visibility or correction-form test left (the
+// former testdata/res_rcf_capture.py): each operation's pre-N.sqlite3 snapshot and capture.json's
+// list of operations.
 func rrCapture(t *testing.T, module, method string) (string, []rrOperation) {
 	t.Helper()
 	root, err := os.MkdirTemp("", "crw-rr-")
@@ -165,38 +148,21 @@ func rrCapture(t *testing.T, module, method string) (string, []rrOperation) {
 			t.Error(err)
 		}
 	})
-	// capture.json and every operation's pre-N.sqlite3 snapshot are recorded
-	// (supervisor.PythonTree); Python's final store is not, as no operation reads it.
-	supervisor.PythonTree(t, module+" "+method, root, func() ([]byte, error) {
-		repo, err := filepath.Abs("../../..")
-		if err != nil {
-			return nil, err
-		}
-		script := filepath.Join(repo, "internal/relay/supervisor/testdata/res_rcf_capture.py")
-		cmd := exec.Command("uv", "run", "--no-sync", "python", script, root, module, method)
-		cmd.Dir = filepath.Join(repo, "packages/codex-session-relay")
-		cmd.Env = append(os.Environ(), "HOME="+root, "XDG_STATE_HOME="+root, "XDG_DATA_HOME="+root, "XDG_CONFIG_HOME="+root, "CODEX_HOME="+root, "TMPDIR="+os.TempDir(), "PYTHONPATH="+filepath.Join(repo, "packages/codex-session-relay"))
-		if out, e := cmd.CombinedOutput(); e != nil {
-			return nil, fmt.Errorf("live Python %s: %v\n%s", method, e, out)
-		}
-		return nil, supervisor.RemoveStoreFiles(filepath.Join(root, "tree", "state", "relay.sqlite3"))
-	})
+	supervisor.TreeFixture(t, module+" "+method, root)
 	raw, err := os.ReadFile(filepath.Join(root, "capture.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	var capture struct {
 		Operations []rrOperation `json:"operations"`
-		Problems   []string      `json:"problems"`
 	}
-	// Decode the transport envelope, never the expected output/table byte strings.
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
 	if err := dec.Decode(&capture); err != nil {
 		t.Fatal(err)
 	}
-	if len(capture.Problems) > 0 || len(capture.Operations) == 0 {
-		t.Fatalf("invalid capture: %v", capture.Problems)
+	if len(capture.Operations) == 0 {
+		t.Fatal("the capture lists no operation")
 	}
 	return root, capture.Operations
 }
@@ -250,12 +216,12 @@ func rrObjects(v any) any {
 func rrFindings(v any) []any                     { out, _ := rrObjects(v).([]any); return out }
 func rrString(m map[string]any, k string) string { v, _ := m[k].(string); return v }
 
-func rrReplay(t *testing.T, root string, op rrOperation) {
+func rrReplay(t *testing.T, root string, op rrOperation, result *rrResult) {
 	t.Helper()
 	ctx := context.Background()
 	// Each operation replays on its own copy of the Python snapshot, in a directory of its own,
-	// stamped as Go's own store (Restamp): the tables below include schema_meta, which then
-	// differs from Python's only in the owner row that rrOwnerNeutral neutralizes.
+	// stamped as Go's own store (Restamp): the tables below include schema_meta, whose owner row
+	// rrOwnerNeutral neutralizes.
 	path := filepath.Join(t.TempDir(), "go.sqlite3")
 	data, err := os.ReadFile(op.Pre)
 	if err != nil {
@@ -327,7 +293,7 @@ func rrReplay(t *testing.T, root string, op rrOperation) {
 		var stdout, stderr bytes.Buffer
 		code := cli.ExecuteAs(ctx, "codex-session-relay", argv, &stdout, &stderr)
 		sosDeliveryClock = previous
-		rrCompare(t, "stdout", stdout.Bytes(), op.Output)
+		result.add("stdout", stdout.Bytes())
 		if stderr.Len() != 0 {
 			t.Errorf("unexpected stderr (exit %d): %s", code, stderr.Bytes())
 		}
@@ -335,7 +301,7 @@ func rrReplay(t *testing.T, root string, op rrOperation) {
 		if e != nil {
 			t.Fatal(e)
 		}
-		rrCompare(t, "tables", rrTables(t, cliStore), rrPythonTables(t, op.Tables))
+		result.add("tables", rrTables(t, cliStore))
 		if e = cliStore.Close(); e != nil {
 			t.Fatal(e)
 		}
@@ -351,14 +317,15 @@ func rrReplay(t *testing.T, root string, op rrOperation) {
 		}
 		output = map[string]any{"error": "refused", "reason": refused.Reason, "detail": refused.Detail}
 	}
-	rrCompare(t, "output", rrBytes(t, output), op.Output)
-	rrCompare(t, "tables", rrTables(t, s), rrPythonTables(t, op.Tables))
+	result.add("output", rrBytes(t, output))
+	result.add("tables", rrTables(t, s))
 }
 func rrRun(t *testing.T, module string, methods []string) {
 	t.Helper()
 	for _, method := range methods {
 		t.Run(method, func(t *testing.T) {
 			root, ops := rrCapture(t, module, method)
+			results := make([]*rrResult, len(ops))
 			for i, op := range ops {
 				if op.Kind == "report" || op.Kind == "read" {
 					// Python's report.record and its read-back are recorded but not replayed: no
@@ -366,7 +333,21 @@ func rrRun(t *testing.T, module string, methods []string) {
 					// own snapshot, so the others do not depend on them.
 					continue
 				}
-				t.Run(fmt.Sprintf("%02d_%s", i, op.Kind), func(t *testing.T) { rrReplay(t, root, op) })
+				t.Run(fmt.Sprintf("%02d_%s", i, op.Kind), func(t *testing.T) {
+					result := &rrResult{}
+					rrReplay(t, root, op, result)
+					results[i] = result
+				})
+			}
+			// Each operation's bytes are compared with the golden in the method's test, so a
+			// method keeps one golden file.
+			for i, result := range results {
+				if result == nil {
+					continue
+				}
+				for j, name := range result.names {
+					golden.Check(t, fmt.Sprintf("%02d_%s %s", i, ops[i].Kind, name), result.values[j], supervisor.TreeGolden(t, root)...)
+				}
 			}
 		})
 	}
