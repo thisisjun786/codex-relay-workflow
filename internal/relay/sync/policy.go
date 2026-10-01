@@ -4,7 +4,7 @@ import (
 	"errors"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/service"
 )
@@ -16,11 +16,11 @@ import (
 func packetPolicy(state, environment string) (registry.RolePolicy, error) {
 	resolution := service.ResolveLaunchPolicyAt(state, environment)
 	if refusal := service.LaunchRefusal(resolution); refusal != nil {
-		return registry.RolePolicy{}, &cli.PayloadExit{Payload: refusal, Code: 2}
+		return registry.RolePolicy{}, &dispatch.PayloadExit{Payload: refusal, Code: 2}
 	}
 	value, recorded, err := service.LaunchVariable(resolution)
 	if errors.Is(err, service.ErrEmbeddedNUL) {
-		return registry.RolePolicy{}, &cli.HostError{Class: "ValueError", Detail: err.Error()}
+		return registry.RolePolicy{}, &dispatch.HostError{Class: "ValueError", Detail: err.Error()}
 	}
 	if recorded {
 		environment = value

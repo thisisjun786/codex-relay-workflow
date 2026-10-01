@@ -7,6 +7,7 @@ import (
 	"unicode"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 )
 
 // sqliteIntString is Python int(str, 10), followed by sqlite3's signed-64-bit
@@ -15,7 +16,7 @@ import (
 func sqliteIntString(value string) (any, error) {
 	text := strings.TrimSpace(value)
 	invalid := func() (any, error) {
-		return nil, &hostError{"ValueError", "invalid literal for int() with base 10: " + pyvalue.StrRepr(value)}
+		return nil, &dispatch.HostError{Class: "ValueError", Detail: "invalid literal for int() with base 10: " + pyvalue.StrRepr(value)}
 	}
 	var normalized strings.Builder
 	if len(text) > 0 && (text[0] == '+' || text[0] == '-') {
@@ -40,11 +41,11 @@ func sqliteIntString(value string) (any, error) {
 		return invalid()
 	}
 	if digits > 4300 {
-		return nil, &hostError{"ValueError", "Exceeds the limit (4300 digits) for integer string conversion: value has " + strconv.Itoa(digits) + " digits; use sys.set_int_max_str_digits() to increase the limit"}
+		return nil, &dispatch.HostError{Class: "ValueError", Detail: "Exceeds the limit (4300 digits) for integer string conversion: value has " + strconv.Itoa(digits) + " digits; use sys.set_int_max_str_digits() to increase the limit"}
 	}
 	n, _ := new(big.Int).SetString(normalized.String(), 10)
 	if !n.IsInt64() {
-		return nil, &hostError{"OverflowError", "Python int too large to convert to SQLite INTEGER"}
+		return nil, &dispatch.HostError{Class: "OverflowError", Detail: "Python int too large to convert to SQLite INTEGER"}
 	}
 	return n.Int64(), nil
 }

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
@@ -118,7 +119,7 @@ func fromJSON(v any) any {
 func (d *markerDriver) answer(op markerOp) any {
 	value, err := d.run(op)
 	var refused *store.RefusedError
-	var host *hostError
+	var host *dispatch.HostError
 	switch {
 	case errors.As(err, &refused):
 		return map[string]any{"reason": refused.Reason, "detail": refused.Detail}

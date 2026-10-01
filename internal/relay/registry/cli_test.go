@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
@@ -77,7 +78,7 @@ func runCLICase(t *testing.T, name string) ([]cliResult, string) {
 			argv = append(argv, strings.ReplaceAll(a, "${HOME}", home))
 		}
 		var stdout, stderr bytes.Buffer
-		code := Execute(ctx(), argv, &stdout, &stderr)
+		code := dispatch.Execute(ctx(), "codex-session-relay", argv, &stdout, &stderr)
 		text := strings.ReplaceAll(stamp.ReplaceAllString(stdout.String(), "<T>"), home, "<HOME>")
 		results = append(results, cliResult{code, text})
 	}

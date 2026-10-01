@@ -7,6 +7,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 )
 
 // External relay commands: a package this one cannot import (because it imports this one)
@@ -31,30 +32,25 @@ func (p Parsed) Values(name string) []string { return append([]string{}, p.p.val
 // Integer is a type=int argument's value.
 func (p Parsed) Integer(name string) *big.Int { return p.p.integer(name) }
 
-// AddCommand registers an external relay command; its argparse spec (argparse.Specs[name])
-// parses its arguments.
-func AddCommand(name string, run func(context.Context, *Registry, Parsed) (any, error)) {
-	AddCheckedCommand(name, nil, run)
+// AddCommand registers an external relay command (registration names it and its attributes);
+// its argparse spec (argparse.Specs[registration.Name]) parses its arguments.
+func AddCommand(registration dispatch.Command, run func(context.Context, *Registry, Parsed) (any, error)) {
+	AddCheckedCommand(registration, nil, run)
 }
 
 // AddCheckedCommand is AddCommand for a handler that refuses its own arguments before it touches
-// the store: precheck is that refusal, run where cli.main would reach it (see run in cli.go).
-func AddCheckedCommand(name string, precheck func(Parsed) error, run func(context.Context, *Registry, Parsed) (any, error)) {
-	c := command{name: name, run: func(ctx context.Context, r *Registry, p parsed) (any, error) { return run(ctx, r, Parsed{p}) }}
+// the store: precheck is that refusal, run where cli.main would reach it (see handle in cli.go).
+func AddCheckedCommand(registration dispatch.Command, precheck func(Parsed) error, run func(context.Context, *Registry, Parsed) (any, error)) {
+	c := command{Command: registration, run: func(ctx context.Context, r *Registry, p parsed) (any, error) { return run(ctx, r, Parsed{p}) }}
 	if precheck != nil {
 		c.precheck = func(p *parsed) error { return precheck(Parsed{*p}) }
 	}
-	commands = append(commands, c)
+	register(c)
 }
 
 // WithEnforcement is cli._with_enforcement.
 func WithEnforcement(r *Registry, answer contract.OrderedObject) contract.OrderedObject {
 	return withEnforcement(r, answer)
-}
-
-// PayloadExit is cli.PayloadExit for an external command: the whole answer, its own code.
-func PayloadExit(payload contract.OrderedObject, code int) error {
-	return &linkageExit{payload: payload, code: code}
 }
 
 // DecodeJSON is json.loads into Python-shaped values (objects ordered, integers exact); the

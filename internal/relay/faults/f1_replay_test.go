@@ -164,10 +164,7 @@ func f1ReplayCLI(t *testing.T, ctx context.Context, gd string, args []string) ma
 		ctx = context.WithValue(ctx, f1InputsKey{}, inputs)
 	}
 	var stdout, stderr bytes.Buffer
-	code, handled := executeAsCLI(ctx, append([]string{"--state", gd, "--json"}, args...), &stdout, &stderr)
-	if !handled {
-		t.Fatalf("not handled: %v", args)
-	}
+	code := executeAsCLI(ctx, append([]string{"--state", gd, "--json"}, args...), &stdout, &stderr)
 	s, e := store.Open(ctx, gd+"/relay.sqlite3", "")
 	if e != nil {
 		t.Fatal(e)

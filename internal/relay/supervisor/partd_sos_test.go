@@ -5,7 +5,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"io/fs"
@@ -18,8 +17,10 @@ import (
 	"time"
 	_ "unsafe"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
@@ -414,20 +415,17 @@ func Test24_ReportingShowCommandContext(t *testing.T) {
 		t.Fatal("SOS-5 produced no owed observation")
 	}
 	selectors := reading["selectors"].(map[string]any)
-	var command cli.Command
-	for _, candidate := range cli.Commands {
-		if candidate.Name == "reporting-show" {
-			command = candidate
-		}
+	command, ok := dispatch.Lookup("reporting-show")
+	if !ok {
+		t.Fatal("reporting-show is not registered")
 	}
-	flags := flag.NewFlagSet("reporting-show", flag.ContinueOnError)
-	command.Flags(flags)
 	args := []string{}
 	for _, pair := range [][2]string{{"marker-root", "markerRoot"}, {"workspace", "workspace"}, {"assignment", "assignment"}, {"session", "session"}, {"turn", "turn"}} {
 		args = append(args, "--"+pair[0], selectors[pair[1]].(string))
 	}
-	if err := flags.Parse(args); err != nil {
-		t.Fatal(err)
+	parsed := argparse.Parse("reporting-show", args)
+	if parsed.Message != "" {
+		t.Fatal(parsed.Message)
 	}
 	selection := store.StateSelection{Path: selectors["state"].(string), Source: "flag"}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -435,7 +433,7 @@ func Test24_ReportingShowCommandContext(t *testing.T) {
 	previous := sosClockNow
 	sosClockNow = func() float64 { return 1700001000 }
 	defer func() { sosClockNow = previous }()
-	got, err := command.Run(ctx, cli.Services{Selection: selection}, cli.Args{Flags: flags})
+	got, err := command.Run(ctx, dispatch.Services{Selection: selection}, dispatch.Args{Parsed: parsed})
 	if err != nil {
 		t.Fatal(err)
 	}

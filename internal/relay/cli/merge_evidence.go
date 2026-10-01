@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"flag"
 	"math"
 	"math/big"
 	"os"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -38,24 +38,15 @@ var forgeRunner = func(ctx context.Context) evidence.Runner {
 	}
 }
 
-var mergeEvidenceCommand = Command{Name: "merge-evidence", Exempt: true, Flags: func(f *flag.FlagSet) {
-	f.String("repository", "", "")
-	f.Int("pull-request", 0, "")
-	f.String("restate", "", "")
-	f.String("restate-head", "", "")
-	f.Int("page-size", 100, "")
-	f.Int("page-budget", 50, "")
-	f.Int("call-budget", 300, "")
-	f.Int("timeout", 60, "")
-}, Run: func(ctx context.Context, _ Services, args Args) (any, error) {
+var mergeEvidenceCommand = dispatch.Command{Name: "merge-evidence", Unselected: true, Exempt: true, ReadOnly: true, Defaults: map[string]any{"page-size": int64(100), "page-budget": int64(50), "call-budget": int64(300), "timeout": int64(60)}, Run: func(ctx context.Context, _ dispatch.Services, args dispatch.Args) (any, error) {
 	repository, _ := args.String("repository")
 	if _, _, err := evidence.SplitRepository(repository); err != nil {
-		return nil, &UsageError{Detail: err.Error(), Code: contract.ExitUsage}
+		return nil, &dispatch.UsageError{Detail: err.Error(), Code: contract.ExitUsage}
 	}
 	numberValue := args.Integer("pull-request")
 	number, err := evidence.PullRequestNumber(numberValue)
 	if err != nil {
-		return nil, &UsageError{Detail: err.Error(), Code: contract.ExitUsage}
+		return nil, &dispatch.UsageError{Detail: err.Error(), Code: contract.ExitUsage}
 	}
 	forge := evidence.NewForge(forgeRunner(ctx))
 	forge.PageSize = args.Integer("page-size")
@@ -70,23 +61,23 @@ var mergeEvidenceCommand = Command{Name: "merge-evidence", Exempt: true, Flags: 
 			// subprocess spawns before converting its timeout. Preserve missing-gh
 			// precedence, and keep a spent call budget from evaluating the timeout.
 			if _, err := exec.LookPath(argv[0]); err != nil {
-				return 0, "", "", &HostError{Class: "FileNotFoundError", Detail: "[Errno 2] No such file or directory: 'gh'"}
+				return 0, "", "", &dispatch.HostError{Class: "FileNotFoundError", Detail: "[Errno 2] No such file or directory: 'gh'"}
 			}
 			return 0, "", "", failure
 		}
 	}
 	snapshot, err := evidence.Collect(forge, repository, number)
 	if err != nil {
-		if host, ok := err.(*HostError); ok {
+		if host, ok := err.(*dispatch.HostError); ok {
 			return nil, host
 		}
 		if host, ok := err.(*evidence.PythonError); ok {
-			return nil, &HostError{Class: host.Class, Detail: host.Detail}
+			return nil, &dispatch.HostError{Class: host.Class, Detail: host.Detail}
 		}
 		if _, lookupErr := exec.LookPath("gh"); lookupErr != nil {
-			return nil, &HostError{Class: "FileNotFoundError", Detail: "[Errno 2] No such file or directory: 'gh'"}
+			return nil, &dispatch.HostError{Class: "FileNotFoundError", Detail: "[Errno 2] No such file or directory: 'gh'"}
 		}
-		return nil, &HostError{Class: "RuntimeError", Detail: err.Error()}
+		return nil, &dispatch.HostError{Class: "RuntimeError", Detail: err.Error()}
 	}
 	ready := snapshot["verdict"] == evidence.Ready
 	if source, given := args.TruthyString("restate"); given {
@@ -103,7 +94,7 @@ var mergeEvidenceCommand = Command{Name: "merge-evidence", Exempt: true, Flags: 
 			head = get(get(document, "pinned"), "headSha")
 		}
 		if !pyvalue.Truthy(head) {
-			return nil, &UsageError{Detail: "the record does not say which head it is about; pass --restate-head", Code: contract.ExitUsage}
+			return nil, &dispatch.UsageError{Detail: "the record does not say which head it is about; pass --restate-head", Code: contract.ExitUsage}
 		}
 		handoff := document
 		if h, ok := get(document, "handoff").(contract.OrderedObject); ok && len(h) > 0 {
@@ -119,7 +110,7 @@ var mergeEvidenceCommand = Command{Name: "merge-evidence", Exempt: true, Flags: 
 	}
 	payload := supervisorOrdered(snapshot).(contract.OrderedObject)
 	if !ready {
-		return nil, &PayloadExit{Payload: payload, Code: contract.ExitRefused}
+		return nil, &dispatch.PayloadExit{Payload: payload, Code: contract.ExitRefused}
 	}
 	return payload, nil
 }}
@@ -129,7 +120,7 @@ var mergeEvidenceCommand = Command{Name: "merge-evidence", Exempt: true, Flags: 
 // Negative finite seconds time out before reaching poll, but still convert to float.
 func subprocessTimeout(seconds *big.Int) (time.Duration, error) {
 	fail := func(detail string) (time.Duration, error) {
-		return 0, &HostError{Class: "OverflowError", Detail: detail}
+		return 0, &dispatch.HostError{Class: "OverflowError", Detail: detail}
 	}
 	value, _ := new(big.Float).SetInt(seconds).Float64()
 	if math.IsInf(value, 0) {
@@ -161,11 +152,11 @@ func readRestatement(source string) (contract.OrderedObject, error) {
 		raw, err = os.ReadFile(source)
 	}
 	if err != nil {
-		return nil, &UsageError{Detail: "the record to restate could not be read: " + store.PythonOSErrorText(err), Code: contract.ExitUsage}
+		return nil, &dispatch.UsageError{Detail: "the record to restate could not be read: " + store.PythonOSErrorText(err), Code: contract.ExitUsage}
 	}
 	text, err := store.DecodeUTF8(raw)
 	if err != nil {
-		return nil, &UsageError{Detail: "the record to restate could not be read: " + err.Error(), Code: contract.ExitUsage}
+		return nil, &dispatch.UsageError{Detail: "the record to restate could not be read: " + err.Error(), Code: contract.ExitUsage}
 	}
 	// Path.read_text uses universal newlines; sys.stdin retains CR bytes.
 	if source != "-" {
@@ -175,17 +166,17 @@ func readRestatement(source string) (contract.OrderedObject, error) {
 	// (the outer record plus 9997 nested values), independently of Python frames.
 	if message, recursion := store.PythonJSONErrorWithLimit(text, 9998); message != "" {
 		if recursion {
-			return nil, &HostError{Class: "RecursionError", Detail: message}
+			return nil, &dispatch.HostError{Class: "RecursionError", Detail: message}
 		}
-		return nil, &UsageError{Detail: "the record to restate is not JSON: " + message, Code: contract.ExitUsage}
+		return nil, &dispatch.UsageError{Detail: "the record to restate is not JSON: " + message, Code: contract.ExitUsage}
 	}
 	document, err := decodeJSON([]byte(text))
 	if err != nil {
-		return nil, &UsageError{Detail: "the record to restate is not JSON: " + err.Error(), Code: contract.ExitUsage}
+		return nil, &dispatch.UsageError{Detail: "the record to restate is not JSON: " + err.Error(), Code: contract.ExitUsage}
 	}
 	out, ok := document.(contract.OrderedObject)
 	if !ok {
-		return nil, &UsageError{Detail: "the record to restate is an object, not a " + pyvalue.TypeName(document), Code: contract.ExitUsage}
+		return nil, &dispatch.UsageError{Detail: "the record to restate is an object, not a " + pyvalue.TypeName(document), Code: contract.ExitUsage}
 	}
 	return out, nil
 }

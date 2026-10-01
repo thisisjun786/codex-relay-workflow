@@ -28,10 +28,7 @@ func TestCSeededCLIOracle(t *testing.T) {
 	for _, args := range [][]string{{"fault-show"}, {"fault-show", "--fault", id}, {"fault-show", "--publication", publication}, {"fault-next"}, {"fault-retry", "--publication", publication}, {"fault-stage", "--fault", id, "--stage", "accepted", "--ref", "r"}, {"fault-queue", "--fault", id, "--kind", "append_comment", "--trigger", "extra"}} {
 		t.Run(args[0]+"_"+args[len(args)-1], func(t *testing.T) {
 			var got, stderr bytes.Buffer
-			goCode, handled := executeAsCLI(context.Background(), append([]string{"--state", goDir, "--json"}, args...), &got, &stderr)
-			if !handled {
-				t.Fatal("unhandled")
-			}
+			goCode := executeAsCLI(context.Background(), append([]string{"--state", goDir, "--json"}, args...), &got, &stderr)
 			checkGolden(t, "relay "+strings.Join(args, " "), args, runPathsOf(t, home), cliGolden{Code: goCode, Stdout: got.String()})
 		})
 	}
