@@ -3615,3 +3615,33 @@ Evidence: internal/bridge/mcp/middleware.go (`frozenToolsList`, `unknownTool`,
 `Test_a_number_written_as_a_string_is_read_as_the_number`); internal/bridge/{bridge.go,show.go},
 execution/{decode.go,load.go}; internal/contracttest (`Test_a_live_tools_list_from_the_built_binary_equals_the_frozen_contract`,
 `Test_every_mcp_reply_equals_the_python_servers_whole_json`).
+
+## R3R-6. The bridge launcher names what it refuses the Go way (refactor R3)
+
+Decision: `codex-thread-bridge --plugin-launch` (`internal/pluginwiring`, the record contract of
+decision 26) keeps every check crw_bridge_mcp.py made, in its order, and stops wording them as
+CPython did. What goes: repr() of the values a refusal names (`'user'`, `None`, `'1'`); CPython's
+OSError text (`[Errno 2] No such file or directory: '<path>'`) and its UnicodeDecodeError and
+JSONDecodeError texts for an unreadable record; `sys.stderr`'s backslash escaping of a lone
+surrogate; and `pathlib.PurePosixPath`'s "//" root in the Codex home's spelling. A string is
+named as Go quotes it, any other value as JSON, a failure in the Go error's words (`open <path>:
+no such file or directory`), the record is decoded through `reading.Decode` (the runtime's reader
+of stored records) instead of the relay hook's decoder, and the home is spelled by
+`reading.Spelling`. The five launcher cases that only pinned repr()'s escapes (an owner holding a
+no-break space, a zero-width space, private-use characters or a lone surrogate, a server name
+holding a Mongolian vowel separator) are deleted.
+
+Consumer check: `git grep` of `plugins/crw/skills`, `docs/` and `contract/` for the launcher's
+refusals: the wiring (`wiring/crw-bridge.sh`) reads only its exit; docs/plugin-packaging.md and
+docs/runtime-install.md name the refusals' meaning, not their text; the doctor and the installer
+read a record through `ReadBridgeRecord` and word their own findings.
+
+What stays and why: every check and its order, exit 2 for a refusal, the record versions 1 and 2
+and their fields, a stored recordVersion read as the Python writer compared it (True is 1, 1.0
+is 1), a surrogate-escaped path or argument turned back into its byte (the Python installer
+recorded a byte that is not UTF-8 that way), the policy digest, and the stripping of the policy
+variable, which the bridge applies the same way.
+
+Evidence: internal/pluginwiring/{launch.go,record.go}; internal/pluginwiring/launch_test.go
+(`TestBridgeLaunch_answers_each_record_as_the_golden`,
+`TestBridgeLaunch_refuses_a_record_no_exec_could_start`).

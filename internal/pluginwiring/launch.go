@@ -7,26 +7,24 @@ import (
 	"os/user"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/mcp"
-	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 )
 
 // Flag is the first argument the plugin's declared commands pass to the bridge and `crw hook`.
 const Flag = "--plugin-launch"
 
 // The record contract of crw_bridge_mcp.py (decision 26), the Python launcher the package shipped
-// until todo 43. Its recorded answers are the oracle (the copy kept in testdata/pre-native-wiring
-// left with the Python implementation in todo 44): this reproduces its checks and their order,
-// and keeps its failure texts but for the repairs, which name the installer that writes the
-// record since todo 38 (RepairCommand).
+// until todo 43: this keeps its checks and their order; the failures name values the Go way, and
+// the repairs name the installer that writes the record since todo 38 (RepairCommand).
 const (
 	RecordName = "crw-bridge-mcp.json"
 	// RepairCommand writes the record (internal/runtime/install RegisterMCP).
@@ -49,27 +47,6 @@ func (r *refusal) Error() string { return r.message }
 
 func fail(message string) error { return &refusal{message} }
 
-// purePath is str(pathlib.PurePosixPath(p)): empty and "." components dropped, "//" kept as a root.
-func purePath(p string) string {
-	root := ""
-	switch {
-	case strings.HasPrefix(p, "//") && !strings.HasPrefix(p, "///"):
-		root = "//"
-	case strings.HasPrefix(p, "/"):
-		root = "/"
-	}
-	var parts []string
-	for _, part := range strings.Split(p, "/") {
-		if part != "" && part != "." {
-			parts = append(parts, part)
-		}
-	}
-	if root == "" && len(parts) == 0 {
-		return "."
-	}
-	return root + strings.Join(parts, "/")
-}
-
 func parent(p string) string {
 	i := strings.LastIndex(p, "/")
 	switch {
@@ -85,11 +62,11 @@ func parent(p string) string {
 // The declared cwd is the installed version directory, so the launcher is cwd/wiring/crw-bridge.sh.
 func codexHome(env map[string]string) (string, string) {
 	if named := env["CODEX_HOME"]; named != "" {
-		return purePath(named), "the CODEX_HOME environment variable"
+		return reading.Spelling(named), "the CODEX_HOME environment variable"
 	}
 	if cwd, err := os.Getwd(); err == nil {
 		if resolved, err := store.ResolvePath(cwd); err == nil {
-			here := purePath(resolved + "/wiring/" + launcherName)
+			here := reading.Spelling(resolved + "/wiring/" + launcherName)
 			depth := strings.Count(here, "/")
 			if depth > cacheDepth {
 				candidate := here
@@ -103,8 +80,8 @@ func codexHome(env map[string]string) (string, string) {
 			}
 		}
 	}
-	// Path.home() with HOME="" is "/", so the trailing separator is trimmed before joining.
-	return purePath(strings.TrimRight(pythonHome(env), "/") + "/.codex"), "the default home, because nothing else named one"
+	// An empty HOME is the root, so the trailing separator is trimmed before joining.
+	return reading.Spelling(strings.TrimRight(homeDirectory(env), "/") + "/.codex"), "the default home, because nothing else named one"
 }
 
 func exists(path string) bool {
@@ -112,8 +89,8 @@ func exists(path string) bool {
 	return err == nil
 }
 
-// pythonHome is Path.home(): HOME when set, else the password database.
-func pythonHome(env map[string]string) string {
+// homeDirectory is HOME when it is set at all, else the password database's.
+func homeDirectory(env map[string]string) string {
 	if home, ok := env["HOME"]; ok {
 		return home
 	}
@@ -123,9 +100,8 @@ func pythonHome(env map[string]string) string {
 	return ""
 }
 
-func osText(err error) string { return store.PythonOSErrorText(err) }
-
-// equalsInt is Python ==, where True == 1 and 1.0 == 1.
+// equalsInt is a stored recordVersion equal to n as the Python writer and reader compared it:
+// True == 1 and 1.0 == 1.
 func equalsInt(v any, n int64) bool {
 	switch x := v.(type) {
 	case bool:
@@ -138,7 +114,8 @@ func equalsInt(v any, n int64) bool {
 	return false
 }
 
-// inherited is crw_bridge_mcp.py inherited(): stripped, and empty reads as unset.
+// inherited is a variable the launcher inherited: stripped as the bridge strips it, and empty
+// reads as unset.
 func inherited(env map[string]string, name string) (string, bool) {
 	value := pyvalue.Strip(env[name])
 	return value, value != ""
@@ -165,22 +142,23 @@ func policyEnvironment(env map[string]string, record string, reference any) (str
 	}
 	if !policy.File.OK() {
 		return "", "", fail("the record at " + record + " must name the execution policy as an absolute" +
-			" path with no surrounding whitespace or control characters, found " + pyvalue.Repr(policy.File.Value))
+			" path with no surrounding whitespace or control characters, found " + reading.Show(policy.File.Value))
 	}
 	path, digest := policy.File.Text, policy.Digest
-	// What os.open and os.execve use: the path fs-encoded, a surrogate-escaped byte that byte again.
+	// What open and exec use: the path's bytes, a surrogate-escaped byte (as the Python installer
+	// recorded one) that byte again.
 	encoded, encodable := pyvalue.FSEncode(path)
 	if !encodable {
 		return "", "", fail("the record at " + record + " names an execution policy path this system" +
-			" cannot encode, found " + pyvalue.Repr(path))
+			" cannot encode, found " + strconv.Quote(path))
 	}
 	if !policy.DigestOK {
 		return "", "", fail("the record at " + record + " must name the execution policy digest as 64" +
 			" lowercase hexadecimal characters")
 	}
 	if named, set := inherited(env, execution.EnvPolicy); set && canonical(named) != canonical(encoded) {
-		return "", "", fail("the record at " + record + " names the execution policy " + pyvalue.Repr(path) +
-			" and this process was started with " + execution.EnvPolicy + "=" + pyvalue.Repr(named) +
+		return "", "", fail("the record at " + record + " names the execution policy " + strconv.Quote(path) +
+			" and this process was started with " + execution.EnvPolicy + "=" + strconv.Quote(named) +
 			". Unset the variable, or register the other file")
 	}
 	if expected, set := inherited(env, execution.EnvDigest); set && expected != digest {
@@ -189,9 +167,12 @@ func policyEnvironment(env map[string]string, record string, reference any) (str
 			". Unset the variable, or register the policy it names")
 	}
 	actual, _, err := PolicyDigest(path)
+	if errors.Is(err, ErrNotRegular) {
+		err = fmt.Errorf("%s: %w", path, err)
+	}
 	if err != nil {
 		return "", "", fail("the execution policy the record at " + record + " names could not be read (" +
-			path + ": " + osText(err) + "). The bridge is not started without it, because it" +
+			err.Error() + "). The bridge is not started without it, because it" +
 			" would then check no role." + repair)
 	}
 	if actual != digest {
@@ -203,13 +184,13 @@ func policyEnvironment(env map[string]string, record string, reference any) (str
 	return encoded, digest, nil
 }
 
-// Prepare is crw_bridge_mcp.py main() up to its exec: the record read and judged, then the bridge
-// arguments (the record's, fs-encoded, then the launcher's own) and the environment it starts
-// under. bridgeExecutable is checked as Python checks it, its execv included, and not executed: the
-// Go runtime behind the pointer is the bridge.
+// Prepare is the launcher up to its exec: the record read and judged, then the bridge arguments
+// (the record's, as bytes, then the launcher's own) and the environment it starts under.
+// bridgeExecutable is checked as an exec would take it, and not executed: the Go runtime behind
+// the pointer is the bridge.
 func Prepare(env map[string]string, extra []string) ([]string, map[string]string, error) {
 	home, how := codexHome(env)
-	record := purePath(home + "/" + RecordName)
+	record := reading.Spelling(home + "/" + RecordName)
 	raw, err := readRegular(record)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil, fail("no record at " + record + " (resolved from " + how + "). If the" +
@@ -218,12 +199,13 @@ func Prepare(env map[string]string, extra []string) ([]string, map[string]string
 			" start a second one. Either way this package never installs a runtime.")
 	}
 	if err != nil {
-		return nil, nil, fail("the record at " + record + " could not be read: " + osText(err))
-	}
-	if _, err := store.DecodeUTF8(raw); err != nil {
 		return nil, nil, fail("the record at " + record + " could not be read: " + err.Error())
 	}
-	value, err := hook.Decode(raw)
+	value, err := reading.Decode(raw)
+	var failure *reading.Failure
+	if errors.As(err, &failure) {
+		err = errors.New(failure.Message)
+	}
 	if err != nil {
 		return nil, nil, fail("the record at " + record + " could not be read: " + err.Error())
 	}
@@ -233,18 +215,18 @@ func Prepare(env map[string]string, extra []string) ([]string, map[string]string
 	}
 	read := ReadBridgeRecord(document)
 	if read.Version == 0 {
-		return nil, nil, fail("the record at " + record + " is version " + pyvalue.Repr(read.VersionValue) +
+		return nil, nil, fail("the record at " + record + " is version " + reading.Show(read.VersionValue) +
 			", and this package reads versions 1 and 2. Rewrite it with " + RepairCommand +
 			" rather than starting a runtime under a contract this launcher does not implement.")
 	}
 	if read.Owner != pluginOwner {
-		return nil, nil, fail("the record at " + record + " names " + pyvalue.Repr(read.Owner) +
+		return nil, nil, fail("the record at " + record + " names " + reading.Show(read.Owner) +
 			" as the owner of this server, so the Codex configuration registers it and this" +
 			" package must not start a second one")
 	}
 	if read.ServerName != nil && read.ServerName != declaredServer {
-		return nil, nil, fail("the record at " + record + " names the server " + pyvalue.Repr(read.ServerName) +
-			", and this package declares " + pyvalue.Repr(declaredServer) +
+		return nil, nil, fail("the record at " + record + " names the server " + reading.Show(read.ServerName) +
+			", and this package declares " + strconv.Quote(declaredServer) +
 			"; the record belongs to a registration this launcher does not start")
 	}
 	executable := read.Executable
@@ -274,19 +256,18 @@ func Prepare(env map[string]string, extra []string) ([]string, map[string]string
 		environment[execution.EnvPolicy] = path
 		environment[execution.EnvDigest] = digest
 	}
-	// os.execv then encodes the executable and each argument in turn (os.fsencode, which
-	// reading.FSEncode is: a lone surrogate in U+DC80..U+DCFF, how runtime_install.py's json.dumps
-	// records a byte that is not UTF-8, becomes that byte again), and a lone surrogate outside that
-	// range or a NUL raises there: a traceback, exit 1, and no bridge. The executable is not run
-	// here, but a record Python never starts is refused all the same.
+	// An exec takes the executable and each argument as bytes: a lone surrogate in U+DC80..U+DCFF,
+	// how the Python installer recorded a byte that is not UTF-8, becomes that byte again, and a
+	// lone surrogate outside that range, or a NUL, cannot be passed at all. The executable is not
+	// run here, but a record no exec could start is refused all the same.
 	if _, encodable := pyvalue.FSEncode(executable); !encodable || strings.ContainsRune(executable, 0) {
-		return nil, nil, fail("the record at " + record + " names bridgeExecutable " + pyvalue.Repr(executable) +
+		return nil, nil, fail("the record at " + record + " names bridgeExecutable " + strconv.Quote(executable) +
 			", which this system cannot pass to exec. Rewrite it with " + RepairCommand + ".")
 	}
 	for i, word := range arguments {
 		encoded, encodable := pyvalue.FSEncode(word)
 		if !encodable || strings.ContainsRune(word, 0) {
-			return nil, nil, fail("the record at " + record + " lists the argument " + pyvalue.Repr(word) +
+			return nil, nil, fail("the record at " + record + " lists the argument " + strconv.Quote(word) +
 				", which this system cannot pass to exec. Rewrite it with " + RepairCommand + ".")
 		}
 		arguments[i] = encoded
@@ -317,14 +298,14 @@ func Bridge(program string, args []string) int {
 			argv = append(argv, "bridge")
 		}
 		err = syscall.Exec(self, append(argv, arguments...), environ(os.Environ(), environment))
-		err = fail("could not start " + self + ": " + osText(err) + ". The installer's pointer names" +
+		err = fail("could not start " + self + ": " + err.Error() + ". The installer's pointer names" +
 			" the runtime; check that it is installed.")
 	}
 	var refused *refusal
 	if !errors.As(err, &refused) {
 		refused = &refusal{err.Error()}
 	}
-	fmt.Fprintln(os.Stderr, settings.StderrText("crw bridge launcher: "+refused.message))
+	fmt.Fprintln(os.Stderr, "crw bridge launcher: "+refused.message)
 	return 2
 }
 
