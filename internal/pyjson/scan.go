@@ -37,15 +37,6 @@ func ErrorWithLimit(doc string, maxDepth int) (message string, recursion bool) {
 	return scanError(&pyScan{s: []rune(doc), maxDepth: maxDepth}, doc)
 }
 
-// ErrorWithBudget is ErrorWithLimit where budget, the containers json.loads decodes, is all
-// the C recursion budget the scan has left, measured through the caller's own thread: at
-// budget open containers none is left. The calls CPython 3.13's scanner makes to raise a
-// refusal or to read a constant draw on the same budget, so near that edge they raise
-// RecursionError instead (budgetExceeded). Measured through control.py's GuardServer.
-func ErrorWithBudget(doc string, budget int) (message string, recursion bool) {
-	return scanError(&pyScan{s: []rune(doc), maxDepth: budget, budgeted: true}, doc)
-}
-
 // scanError is json.loads' refusal of doc, with the str argument's byte-order-mark check
 // unless the text was decoded from bytes (p.decoded).
 func scanError(p *pyScan, doc string) (message string, recursion bool) {
@@ -53,9 +44,6 @@ func scanError(p *pyScan, doc string) (message string, recursion bool) {
 		return p.format("Unexpected UTF-8 BOM (decode using utf-8-sig)", 0), false
 	}
 	end, msg, at := p.value(p.ws(0))
-	if msg != "" && p.recursionError == "" && p.budgeted {
-		p.recursionError = p.budgetExceeded(msg)
-	}
 	if p.recursionError != "" {
 		return p.recursionError, true
 	}
@@ -72,19 +60,6 @@ func scanError(p *pyScan, doc string) (message string, recursion bool) {
 	return "", false
 }
 
-// RawDecodePrefix is the text of the value json.JSONDecoder().raw_decode(doc) reads at the start
-// of doc, with whatever follows it left unread, or false where raw_decode raises ValueError: a
-// JSONDecodeError, or the integer-digit limit. As in Python, NaN, Infinity and -Infinity are
-// values, and no whitespace is skipped before the value.
-func RawDecodePrefix(doc string) (string, bool) {
-	p := &pyScan{s: []rune(doc)}
-	end, msg, _ := p.value(0)
-	if msg != "" || p.integerError != "" {
-		return "", false
-	}
-	return string(p.s[:end]), true
-}
-
 type pyScan struct {
 	s                            []rune
 	integerError, recursionError string
@@ -93,59 +68,13 @@ type pyScan struct {
 	// with RecursionError, and with hookKeys a repeated key refuses it at its close.
 	hookDepth int
 	hookKeys  bool
-	// budgeted: maxDepth is the whole budget, which the calls behind a refusal or a constant
-	// draw on too (ErrorWithBudget); refusedAt is the depth the scan's refusal was raised at.
-	budgeted  bool
-	refusedAt int
 	// decoded: the text json.loads decoded from bytes, which meets no byte-order-mark check
 	// (DecodedError).
 	decoded bool
 }
 
-// callExceeded is the RecursionError a C call raises with no budget left.
-const callExceeded = "maximum recursion depth exceeded while calling a Python object"
-
-// refuse raises the scanner's refusal msg at position at, at the current depth.
-func (p *pyScan) refuse(msg string, at int) (int, string, int) {
-	p.refusedAt = p.depth
-	return 0, msg, at
-}
-
-// budgetExceeded is the RecursionError that raising msg meets with the budget left at the
-// depth it was raised at, or "" when the budget holds it, as measured through GuardServer's
-// serving thread under CPython 3.13 (every refusal at 9989 to 9997 open containers, first
-// request and later ones alike). "Expecting value" (a StopIteration the scanner creates) and
-// the integer limit (a ValueError it creates) each make one C call, which raises with none
-// left. Every other refusal is raise_errmsg: its __import__ of json.decoder raises with none
-// left, entering JSONDecodeError.__init__'s frame after the class call raises with one or two
-// left ("maximum recursion depth exceeded", no call named), and the first C call inside that
-// frame raises with three left; four let the JSONDecodeError through.
-func (p *pyScan) budgetExceeded(msg string) string {
-	left := p.maxDepth - p.refusedAt
-	if msg == "Expecting value" || msg == p.integerError {
-		if left <= 0 {
-			return callExceeded
-		}
-		return ""
-	}
-	switch {
-	case left <= 0 || left == 3:
-		return callExceeded
-	case left <= 2:
-		return "maximum recursion depth exceeded"
-	}
-	return ""
-}
-
-// constant reads NaN, Infinity or -Infinity (width runes at i), which the scanner converts by
-// calling parse_constant: with the budget modelled and none left, that call raises.
-func (p *pyScan) constant(i, width int) (int, string, int) {
-	if p.budgeted && p.depth >= p.maxDepth {
-		p.recursionError = callExceeded
-		return 0, p.recursionError, i
-	}
-	return i + width, "", 0
-}
+// refuse raises the scanner's refusal msg at position at.
+func (p *pyScan) refuse(msg string, at int) (int, string, int) { return 0, msg, at }
 
 func (p *pyScan) format(msg string, pos int) string {
 	line := 1
@@ -218,11 +147,11 @@ func (p *pyScan) value(i int) (int, string, int) {
 	case c == 'f' && p.has(i, "false"):
 		return i + 5, "", 0
 	case c == 'N' && p.has(i, "NaN"):
-		return p.constant(i, 3)
+		return i + 3, "", 0
 	case c == 'I' && p.has(i, "Infinity"):
-		return p.constant(i, 8)
+		return i + 8, "", 0
 	case c == '-' && p.has(i, "-Infinity"):
-		return p.constant(i, 9)
+		return i + 9, "", 0
 	}
 	if end, ok := p.number(i); ok {
 		text := string(p.s[i:end])
