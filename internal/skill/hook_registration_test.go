@@ -9,9 +9,7 @@ import (
 )
 
 func TestHookRegistrationLivePython(t *testing.T) {
-	pythonOracleRoot(t)
-	t.Setenv("PYTHONDONTWRITEBYTECODE", "1")
-	root := repositoryRoot()
+	goldenRoot(t)
 	crw := recordedCRW(t)
 	for _, name := range []string{"declared and trusted", "no registration", "sanitized"} {
 		t.Run(name, func(t *testing.T) {
@@ -46,18 +44,15 @@ func TestHookRegistrationLivePython(t *testing.T) {
 			if name == "sanitized" {
 				args = append(args, "--sanitize")
 			}
-			// When both public command dispatchers observe the same fixture host.
-			python := exec.Command(filepath.Join(root, ".venv/bin/python"), append([]string{filepath.Join(root, "plugins/crw/skills/crw-run/scripts/hook_probe.py")}, args...)...)
-			python.Env = oracleEnv("PYTHONDONTWRITEBYTECODE=1")
-			want := pythonProcess(t, "", python)
-			if want.exit != 0 {
-				t.Fatalf("Python oracle failed: %+v", want)
-			}
+			// When the public command observes the fixture host.
 			command := exec.Command(crw, append([]string{"skill", "hook-probe"}, args...)...)
-			if got := captureSkillProcess(t, command); got != want {
-				t.Fatalf("registration mismatch\nPython: %+v\nGo: %+v", want, got)
+			got := captureSkillProcess(t, command)
+			if got.exit != 0 {
+				t.Fatalf("observe failed: %+v", got)
 			}
-			// Then the live oracle must actually have exercised active registration.
+			// Then it answers the golden (first taken as hook_probe.py's answer).
+			checkSkillAnswer(t, "", "", append([]string{"skill", "hook-probe"}, args...), got)
+			// And the observation must actually have exercised active registration.
 			if name == "declared and trusted" {
 				var report struct {
 					Registration struct {
@@ -66,11 +61,11 @@ func TestHookRegistrationLivePython(t *testing.T) {
 						HostRecordedEvents []string
 					}
 				}
-				if err := json.Unmarshal([]byte(want.stdout), &report); err != nil {
+				if err := json.Unmarshal([]byte(got.stdout), &report); err != nil {
 					t.Fatal(err)
 				}
 				if len(report.Registration.DeclaredBy) != 3 || len(report.Registration.DeclaredEvents) != 4 || len(report.Registration.HostRecordedEvents) != 2 {
-					t.Fatalf("oracle did not observe fixture registrations: %s", want.stdout)
+					t.Fatalf("observe did not see the fixture registrations: %s", got.stdout)
 				}
 			}
 		})

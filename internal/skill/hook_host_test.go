@@ -5,17 +5,17 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
 func TestHookHostMutationsLivePython(t *testing.T) {
-	pythonOracleRoot(t)
+	goldenRoot(t)
 	crw := recordedCRW(t)
-	inputs := pythonInputs(t)
-	host := filepath.Join(inputs, "host")
-	contractPath := filepath.Join(inputs, "hook-contract.md")
+	host := diskSkillPath(defaultFixture("host"))
+	contractPath := diskSkillPath(defaultContract("hook-contract.md"))
 	for _, name := range []string{"missing capability", "wrong pair", "wrong version", "missing required fields", "delivered fields", "missing types", "type fields", "unknown type", "missing rows", "extra row", "row question", "row status", "row observed", "row evidence", "unresolved row", "duplicate packet", "unreadable packet", "invalid observation"} {
 		t.Run(name, func(t *testing.T) {
 			dir := filepath.Join(t.TempDir(), "host")
@@ -98,36 +98,26 @@ func TestHookHostMutationsLivePython(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			args := []string{"replay", "--fixtures", filepath.Join(inputs, "decisions"), "--host-fixtures", dir, "--contract", contract}
-			python := runHookProbePython(t, args...)
-			if python.exit != 1 || !strings.Contains(python.stdout, "HOST OBSERVATION:") {
-				t.Fatalf("Python mutation was not rejected: %+v", python)
-			}
-			program := "import importlib.util,json,sys; s=importlib.util.spec_from_file_location('probe',sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); print(json.dumps(m.check_host_observations(sys.argv[2],sys.argv[3])))"
-			command := exec.Command(filepath.Join(repositoryRoot(), ".venv/bin/python"), "-c", program, filepath.Join(repositoryRoot(), "plugins/crw/skills/crw-run/scripts/hook_probe.py"), dir, contract)
-			command.Env = oracleEnv("PYTHONDONTWRITEBYTECODE=1")
-			var expected []json.RawMessage
-			if err := json.Unmarshal(pythonOutput(t, "check_host_observations", command), &expected); err != nil {
-				t.Fatal(err)
-			}
-			var count int
-			var problems []string
-			if err := json.Unmarshal(expected[0], &count); err != nil {
-				t.Fatal(err)
-			}
-			if err := json.Unmarshal(expected[1], &problems); err != nil {
-				t.Fatal(err)
-			}
+			args := []string{"replay", "--host-fixtures", dir, "--contract", contract}
+			// The host facts replay reads are the golden's (first taken as what hook_probe.py's
+			// check_host_observations answered).
 			contractFS, relative := explicitSkillFS(contract)
 			gotCount, gotProblems, hostErr := replayHostObservations(os.DirFS(dir), ".", contractFS, relative)
 			if hostErr != nil {
 				t.Fatal(hostErr)
 			}
-			if count != gotCount || !reflect.DeepEqual(problems, gotProblems) {
-				t.Fatalf("host facts differ: Python %d %q; Go %d %q", count, problems, gotCount, gotProblems)
+			facts, err := golden.Encode([]any{gotCount, gotProblems})
+			if err != nil {
+				t.Fatal(err)
 			}
+			options, _ := argsQuestion("", args)
+			checkSkillValue(t, "check_host_observations", facts, options...)
+			// And the command refuses the mutation, as the golden holds.
 			actual := captureSkillProcess(t, exec.Command(crw, append([]string{"skill", "hook-probe"}, args...)...))
-			requireHookProbeParity(t, python, hookProbeResult(actual))
+			checkSkillAnswer(t, "", "", append([]string{"skill", "hook-probe"}, args...), normalizedAnswer(actual))
+			if actual.exit != 1 || !strings.Contains(actual.stdout, "HOST OBSERVATION:") {
+				t.Fatalf("mutation was not rejected: %+v", actual)
+			}
 		})
 	}
 }

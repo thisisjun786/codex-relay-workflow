@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,19 +20,9 @@ type hookProbeResult struct {
 	stdout, stderr string
 }
 
-// runHookProbePython answers what hook_probe.py answered for args (recorded; see
-// python_oracle_test.go).
-func runHookProbePython(t *testing.T, args ...string) hookProbeResult {
-	t.Helper()
-	root := repositoryRoot()
-	command := exec.Command(
-		filepath.Join(root, ".venv", "bin", "python"),
-		append([]string{filepath.Join(root, "plugins", "crw", "skills", "crw-run", "scripts", "hook_probe.py")}, args...)...,
-	)
-	command.Env = oracleEnv("PYTHONDONTWRITEBYTECODE=1")
-	return hookProbeResult(pythonProcess(t, "", command))
-}
-
+// runHookProbeGo answers what `crw skill hook-probe` answered for args, and holds that answer,
+// each UNREACHED line reduced to its function, to the golden kept under args (first taken as
+// what hook_probe.py answered).
 func runHookProbeGo(t *testing.T, binary string, args ...string) hookProbeResult {
 	t.Helper()
 	command := exec.Command(binary, append([]string{"skill", "hook-probe"}, args...)...)
@@ -48,34 +37,18 @@ func runHookProbeGo(t *testing.T, binary string, args ...string) hookProbeResult
 		}
 		exit = failed.ExitCode()
 	}
-	return hookProbeResult{exit, stdout.String(), stderr.String()}
-}
-
-func requireHookProbeParity(t *testing.T, python, goResult hookProbeResult) {
-	t.Helper()
-	python.stdout, goResult.stdout = unreachedByFunction(python.stdout), unreachedByFunction(goResult.stdout)
-	if goResult != python {
-		t.Fatalf("live Python mismatch\nexit Python=%d Go=%d\nstdout %s\nstderr %s", python.exit, goResult.exit, firstHookProbeDifference(python.stdout, goResult.stdout), firstHookProbeDifference(python.stderr, goResult.stderr))
-	}
-}
-
-func firstHookProbeDifference(want, got string) string {
-	at := 0
-	for at < len(want) && at < len(got) && want[at] == got[at] {
-		at++
-	}
-	from := max(0, at-20)
-	return "at=" + fmt.Sprint(at) + " Python=" + fmt.Sprintf("%q", want[from:min(len(want), at+800)]) + " Go=" + fmt.Sprintf("%q", got[from:min(len(got), at+800)])
+	result := hookProbeResult{exit, stdout.String(), stderr.String()}
+	checkSkillAnswer(t, "", "", append([]string{"skill", "hook-probe"}, args...), normalizedAnswer(skillProcessResult(result)))
+	return result
 }
 
 func TestHookProbeReplayFailuresMatchLivePython(t *testing.T) {
-	pythonOracleRoot(t)
+	goldenRoot(t)
 	binary := recordedCRW(t)
 	root := repositoryRoot()
-	inputs := pythonInputs(t)
-	decisions := filepath.Join(inputs, "decisions")
-	contractPath := filepath.Join(inputs, "hook-contract.md")
-	host := filepath.Join(inputs, "host")
+	decisions := diskSkillPath(defaultFixture("decisions"))
+	contractPath := diskSkillPath(defaultContract("hook-contract.md"))
+	host := diskSkillPath(defaultFixture("host"))
 
 	t.Run("drifted documented trace", func(t *testing.T) {
 		fixtures := filepath.Join(t.TempDir(), "decisions")
@@ -100,21 +73,19 @@ func TestHookProbeReplayFailuresMatchLivePython(t *testing.T) {
 			t.Fatal("T29 fixture lookup found nothing")
 		}
 		args := []string{"replay", "--fixtures", fixtures, "--contract", contractPath, "--host-fixtures", host}
-		python := runHookProbePython(t, args...)
-		if python.exit != 1 || !strings.Contains(python.stdout, "DOCUMENTED WITHOUT A FIXTURE: T29") || !strings.Contains(python.stdout, "The contract advertises these traces and nothing exercises them.") {
-			t.Fatalf("Python oracle did not report trace drift: %+v", python)
+		answer := runHookProbeGo(t, binary, args...)
+		if answer.exit != 1 || !strings.Contains(answer.stdout, "DOCUMENTED WITHOUT A FIXTURE: T29") || !strings.Contains(answer.stdout, "The contract advertises these traces and nothing exercises them.") {
+			t.Fatalf("replay did not report trace drift: %+v", answer)
 		}
-		requireHookProbeParity(t, python, runHookProbeGo(t, binary, args...))
 	})
 
 	t.Run("missing explicit contract", func(t *testing.T) {
 		missing := filepath.Join(root, ".omo", "evidence", "missing-hook-contract.md")
 		args := []string{"replay", "--fixtures", decisions, "--contract", missing, "--host-fixtures", host}
-		python := runHookProbePython(t, args...)
-		if python.exit != 3 || !strings.Contains(python.stderr, "No such file or directory") {
-			t.Fatalf("Python oracle did not reject missing contract: %+v", python)
+		answer := runHookProbeGo(t, binary, args...)
+		if answer.exit != 3 || !strings.Contains(answer.stderr, "No such file or directory") {
+			t.Fatalf("replay did not reject missing contract: %+v", answer)
 		}
-		requireHookProbeParity(t, python, runHookProbeGo(t, binary, args...))
 	})
 
 	t.Run("unpaired host observation", func(t *testing.T) {
@@ -127,19 +98,18 @@ func TestHookProbeReplayFailuresMatchLivePython(t *testing.T) {
 			t.Fatal(err)
 		}
 		args := []string{"replay", "--fixtures", decisions, "--contract", contractPath, "--host-fixtures", hostFixtures}
-		python := runHookProbePython(t, args...)
-		if python.exit != 1 || !strings.Contains(python.stdout, "names a capability record that is not beside it") {
-			t.Fatalf("Python oracle did not reject unpaired host record: %+v", python)
+		answer := runHookProbeGo(t, binary, args...)
+		if answer.exit != 1 || !strings.Contains(answer.stdout, "names a capability record that is not beside it") {
+			t.Fatalf("replay did not reject unpaired host record: %+v", answer)
 		}
-		requireHookProbeParity(t, python, runHookProbeGo(t, binary, args...))
 	})
 
 }
 
 func TestHookProbeMalformedSelectionAndCountersMatchLivePython(t *testing.T) {
-	pythonOracleRoot(t)
+	goldenRoot(t)
 	binary := recordedCRW(t)
-	decisions := filepath.Join(pythonInputs(t), "decisions")
+	decisions := diskSkillPath(defaultFixture("decisions"))
 	raw, err := os.ReadFile(filepath.Join(decisions, "claim-whose-preimage-is-not-a-string.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -228,11 +198,10 @@ func assertDecideParity(t *testing.T, binary string, observation contract.Ordere
 	if err := os.WriteFile(path, raw.Bytes(), 0600); err != nil {
 		t.Fatal(err)
 	}
-	python := runHookProbePython(t, "decide", path)
-	if python.exit != 0 || !strings.Contains(python.stdout, `"state": "`+expectedState+`"`) {
-		t.Fatalf("Python oracle did not produce %s: %+v", expectedState, python)
+	answer := runHookProbeGo(t, binary, "decide", path)
+	if answer.exit != 0 || !strings.Contains(answer.stdout, `"state": "`+expectedState+`"`) {
+		t.Fatalf("decide did not produce %s: %+v", expectedState, answer)
 	}
-	requireHookProbeParity(t, python, runHookProbeGo(t, binary, "decide", path))
 }
 
 func assertDecideParityAnyState(t *testing.T, binary string, observation contract.OrderedObject) {
@@ -245,5 +214,5 @@ func assertDecideParityAnyState(t *testing.T, binary string, observation contrac
 	if err := os.WriteFile(path, raw.Bytes(), 0600); err != nil {
 		t.Fatal(err)
 	}
-	requireHookProbeParity(t, runHookProbePython(t, "decide", path), runHookProbeGo(t, binary, "decide", path))
+	runHookProbeGo(t, binary, "decide", path)
 }

@@ -1,6 +1,0 @@
-{
- "note": "Answers the Python reference implementation gave this test, recorded by internal/testsupport/pyoracle.",
- "answers": {
-  "all absent": "txt:{\"code\":0,\"stderr\":\"\",\"stdout\":\"hook: component absent; no coverage claimed\\noperations: component absent; no coverage claimed\\nruntime: component absent; no coverage claimed\\nstart policy: component absent; no coverage claimed\\nparent title: component absent; no coverage claimed\\n\"}"
- }
-}

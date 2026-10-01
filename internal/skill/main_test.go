@@ -18,9 +18,10 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// recordedCRW is the crw under test for a test whose recorded Python answers name its temporary
-// directories by number. Each such test built its own crw into its first t.TempDir; that
-// directory is still taken, so the numbers the recordings carry stay the same.
+// recordedCRW is the crw under test for a test whose goldens name its temporary directories by
+// number. Each such test built its own crw into its first t.TempDir when its answers were first
+// recorded from Python; that directory is still taken, so the numbers the goldens carry stay the
+// same.
 func recordedCRW(t *testing.T) string {
 	t.Helper()
 	_ = t.TempDir()

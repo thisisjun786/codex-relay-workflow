@@ -29,15 +29,13 @@ type shapeDirectory struct{}
 // read_text refuses with PermissionError.
 type shapeUnreadableFile string
 
-// One process-level matrix owns all JSON-shape surfaces, with Python as the oracle.
+// One process-level matrix owns all JSON-shape surfaces, each answer held to the golden (first
+// taken as the Python script's answer).
 func TestSkillJSONShapeLivePython(t *testing.T) {
-	pythonOracleRoot(t)
-	t.Setenv("PYTHONDONTWRITEBYTECODE", "1")
+	goldenRoot(t)
 	t.Setenv("TZ", "Pacific/Honolulu")
-	root := repositoryRoot()
 	binary := recordedCRW(t)
-	inputs := pythonInputs(t)
-	cases := append(hookShapeCases(t, inputs), titleShapeCases(t)...)
+	cases := append(hookShapeCases(t), titleShapeCases(t)...)
 	cases = append(cases, hostShapeCases()...)
 	cases = append(cases, observeShapeCases(t)...)
 	cases = append(cases, osErrorShapeCases()...)
@@ -84,25 +82,16 @@ func TestSkillJSONShapeLivePython(t *testing.T) {
 			for i, arg := range test.args {
 				args[i] = strings.ReplaceAll(arg, "$TMP", dir)
 			}
-			// A replay reads the frozen inputs wherever the case names no path of its own.
-			args = frozenReplayArgs(inputs, test.family, args)
 			input, err := json.Marshal(test.stdin)
 			if err != nil {
 				t.Fatal(err)
 			}
-			script := strings.ReplaceAll(test.family, "-", "_") + ".py"
-			python := exec.Command(filepath.Join(root, ".venv/bin/python"), append([]string{filepath.Join(root, "plugins/crw/skills/crw-run/scripts", script)}, args...)...)
-			python.Stdin = strings.NewReader(string(input))
-			// When the real Python and Go commands read exactly the same bytes.
-			want := pythonProcess(t, "", python)
+			// When the Go command reads those bytes.
 			command := exec.Command(binary, append([]string{"skill", test.family}, args...)...)
 			command.Stdin = strings.NewReader(string(input))
 			got := captureSkillProcess(t, command)
-			// Then compare all observable bytes, including refusals and exceptions;
-			// only Python's traceback frames are excluded (decision 29a).
-			if !skillProcessParity(want, got) {
-				t.Errorf("live Python mismatch\nPython exit=%d stdout=%q stderr=%q\nGo exit=%d stdout=%q stderr=%q", want.exit, want.stdout, want.stderr, got.exit, got.stdout, got.stderr)
-			}
+			// Then all observable bytes, refusals and exceptions included, are the golden's.
+			checkSkillAnswer(t, "", "", append([]string{"skill", test.family}, args...), normalizedAnswer(got))
 		})
 	}
 }
