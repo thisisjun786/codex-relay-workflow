@@ -4,15 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
-	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // The Python CLIs this binary replaces are argparse programs: -h/--help and the bridge's
@@ -198,26 +194,6 @@ func TestRun_every_relay_command_line_has_the_usage_contract(t *testing.T) {
 		code, stdout, stderr := relay(line...)
 		if code != 2 || stdout != "" || !strings.Contains(stderr, "usage: crw relay") || !strings.Contains(stderr, "error: ") {
 			t.Errorf("%q: exit %d stdout %q stderr %q", line, code, stdout, stderr)
-		}
-	}
-}
-
-// An int option the line gives reaches a handler as the int64 its default is (decision R3C-2):
-// the host adapter's deliver and verify-acks read --limit as one, and panicked on the given
-// value before any host was asked.
-func TestRun_a_given_limit_reaches_the_host_commands(t *testing.T) {
-	crw := testsupport.CRW(t)
-	home := t.TempDir()
-	for _, command := range []string{"deliver", "verify-acks"} {
-		cmd := exec.Command(crw, "relay", "--state", filepath.Join(home, "state"), "--socket", filepath.Join(home, "absent.sock"), command, "--limit", "3")
-		cmd.Env = []string{"HOME=" + home, "XDG_STATE_HOME=" + filepath.Join(home, "xdg"), "CODEX_HOME=" + filepath.Join(home, ".codex"),
-			"CODEX_SESSION_RELAY_SCOPE_DIR=" + filepath.Join(home, "scopes"), "PATH=" + os.Getenv("PATH"), testsupport.RefuseLiveStateEnv + "=1"}
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout, cmd.Stderr = &stdout, &stderr
-		err := cmd.Run()
-		var answer map[string]any
-		if strings.Contains(stderr.String(), "panic") || json.Unmarshal(stdout.Bytes(), &answer) != nil {
-			t.Fatalf("%s --limit 3: %v stdout %q stderr %q", command, err, stdout.String(), stderr.String())
 		}
 	}
 }

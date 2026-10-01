@@ -3660,29 +3660,28 @@ Evidence: `internal/relay/argparse/argparse.go`, `specs.json`, `parse_test.go`;
 `internal/relay/dispatch/dispatch.go` (`Execute`, `parsedLine`); `cmd/crw/main_test.go`;
 `cmd/crw-dev/main_test.go`.
 
-## Decision R3C-2. An int option is a signed 64-bit integer; `deliver --limit` and `verify-acks --limit` no longer crash (refactor R3)
+## Decision R3C-2. An int option is a signed 64-bit integer (refactor R3)
 
 (Placeholder heading: the next free number is given when the R3 groups merge.)
 
 Decision: the parser refuses an int option's value outside int64 as a usage error (exit 2,
 `argument --x: invalid int value: "..."`), and `dispatch.Args.Number` answers an int option as an
 `int64` whether the line gave it or its default stands. Before, the parser accepted any Python
-integer as a `*big.Int`, and `Args.Number` answered the given value as that `*big.Int` while a
-default was an `int64`; the host adapter's `deliver` and `verify-acks` read `--limit` as an
-`int64`, so `crw relay --socket S deliver --limit 3` (or `verify-acks --limit N`) panicked with
-an interface conversion before it reached the host, whether or not a host listened. A value
-beyond int64 used to reach the handler and answer a host error about SQLite's INTEGER
-(`OverflowError: Python int too large to convert to SQLite INTEGER`, exit 3) or, for a command
-that stored nothing, whatever the handler made of it; it is now refused before any handler
-runs.
+integer as a `*big.Int`, so a value beyond int64 reached the handler and answered a host error
+about SQLite's INTEGER (`OverflowError: Python int too large to convert to SQLite INTEGER`,
+exit 3) or, for a command that stored nothing, whatever the handler made of it; it is now refused
+before any handler runs. `Args.Number` answered a given int as that `*big.Int` while its default
+was an `int64`, which is how the host adapter's `deliver --limit`/`verify-acks --limit` came to
+panic; R3S5 fixed the adapter (`hostLimit`, `TestHostCommandsReadAGivenLimit`, whose out-of-range
+rows now expect this refusal), and `Number` now hands every caller one type. The parsed value
+stays a `*big.Int` in `Result.Numbers` for the handlers that read it there.
 
 Consumer check: no skill, doc, fixture or product call passes an integer beyond int64 to a relay
 option; the numeric downstream test holds the extremes the parser accepts and one it refuses.
 
 Evidence: `internal/relay/argparse/argparse.go` (`convert`), `internal/relay/dispatch/args.go`
 (`Number`); `TestParseReadsWhatTheSpecDeclares`; `Test24NumericDownstreamBytes`
-(internal/relay/cli); the panic reproduced with `crw relay --state D --socket D/none.sock
-deliver --limit 3` before this change.
+(internal/relay/cli); `TestHostCommandsReadAGivenLimit` (internal/relay/adapter).
 
 ## Decision R3C-3. `--kind-module` takes a declared kind module; every other name is one usage refusal (refactor R3)
 
