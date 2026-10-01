@@ -5,8 +5,8 @@ import (
 	"fmt"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 type Object = contract.OrderedObject
@@ -31,22 +31,12 @@ func nullable(s string) any {
 	return s
 }
 
-// hookValues is how the hook reads a Stop payload and its records: Python's values (pyjson.Loads),
-// objects in order, an integer an int64 (a json.Number past it), NaN and the infinities floats,
-// and a lone surrogate escape kept. The bytes are strict UTF-8 first (Decode), so no lone
-// surrogate arrives unescaped.
-var hookValues = pyjson.LoadOptions{Constants: true, Surrogates: true, Numbers: pyjson.Int64Numbers}
-
 // Decode is json.loads over bytes: strict UTF-8 (its UnicodeDecodeError), then json.loads'
-// language and refusals (its JSONDecodeError text), without panic paths.
-func Decode(raw []byte) (any, error) {
-	if _, err := pyjson.DecodeUTF8(raw); err != nil {
-		return nil, err
-	}
-	options := hookValues
-	options.Python = true
-	return pyjson.Loads(string(raw), options)
-}
+// language and refusals (its JSONDecodeError text), without panic paths. Python's values
+// (objects in order, an integer an int64 or a json.Number past it, NaN and the infinities floats, a
+// lone surrogate escape kept) are how the hook reads a Stop payload and its records, and how the
+// omission reader reads a stored receipt, so the reading is the store's (store.DecodeRecord).
+func Decode(raw []byte) (any, error) { return store.DecodeRecord(raw) }
 
 func decodeObject(raw []byte) (Object, error) {
 	v, err := Decode(raw)
