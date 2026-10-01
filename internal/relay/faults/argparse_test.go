@@ -44,10 +44,7 @@ type cliResult struct {
 func goFaultCLI(t *testing.T, args ...string) cliResult {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
-	code, handled := executeAsCLI(context.Background(), args, &stdout, &stderr)
-	if !handled {
-		t.Fatalf("not handled: %v", args)
-	}
+	code := executeAsCLI(context.Background(), args, &stdout, &stderr)
 	return cliResult{code, stdout.String(), stderr.String()}
 }
 
@@ -126,9 +123,7 @@ func TestFaultObserveMalformedJSONMatchesPython(t *testing.T) {
 	}
 }
 
-// A dotted name under the relay's own package that is not codex_session_relay.projects is refused
-// like any other unknown kind module: exit 4, naming the value given.
-func TestAnUnknownKindModuleUnderTheRelayPackageIsRefused(t *testing.T) {
+func TestFaultKindModuleNestedImportErrorMatchesPython(t *testing.T) {
 	home := t.TempDir()
 	args := []string{"--state", filepath.Join(home, "relay"), "--json", "--kind-module", "codex_session_relay.not_real", "fault-attention"}
 	got := goFaultCLI(t, args...)

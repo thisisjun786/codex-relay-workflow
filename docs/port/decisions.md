@@ -1179,8 +1179,9 @@ not follow later bumps. The Go relay's installation identity is decision 34's: p
 (`faults.ExecutableInstallation`), which `crw install` records as the Go install entry's
 `location`, for the daemon's sweeper and the `fault-sweep` command alike.
 
-Evidence: `internal/relay/argparse/readonly.go` (`ReadOnlyForm`, read by the relay CLI and
-`registry.ExecuteAs`), `internal/relay/cli/readonly.go`, `internal/relay/store/hold.go`
+Evidence: the relay command table's read-only attributes (`ReadOnly`, `ReadOnlyWhen` in
+`internal/relay/dispatch`; refactor R2 moved them there from `argparse.ReadOnlyForm`),
+`internal/relay/store/hold.go`
 (`openForRead`, `OpenReadOnlyStore`, `Projection`),
 `internal/relay/faults/commands_c.go` (`cNext`), `internal/relay/store/diagnostic_probe.go`
 (`ownershipPreflight`), `internal/relay/store/diagnostic_read.go`, `internal/relay/cli/doctor.go`;
@@ -3320,12 +3321,101 @@ sections of docs/port/oracles/g1.md to g5.md (per package goldens, fixtures and 
 recordings); `go list -deps -test ./... | grep pyoracle` is empty; `CRW_GOLDEN=update make test`
 leaves the tree unchanged.
 
+## Decision R2B-1. The capacity and edit-region commands parse their lines as every relay command does (refactor R2)
+
+(Placeholder heading: the next free number is given when the R2 groups merge.)
+
+Decision: the thirteen capacity and edit-region commands (`slot-reserve`, `slot-release`,
+`limit-declare`, `usage-observe`, `capacity-show`, `region-propose`, `region-settle`,
+`region-restate-revision`, `region-reaffirm`, `region-followup`, `region-followup-accept`,
+`region-followup-settle`, `region-show`) lose their own parser (`capacity.Precheck`, which
+`crw relay` ran before the relay CLI). Their lines are parsed by their argparse specs in the relay
+command table, as every other relay command's line already was, and as `cli.ExecuteAs` already
+parsed them for in-process callers. What a parsed line answers is unchanged, and so is their help:
+`-h`/`--help` still prints the usage line alone, unwrapped (`dispatch.Command.UsageHelp`), which
+the root parser sweep's goldens hold (in-process callers, who got argparse's full help, now get
+that line too). What changes is how a line the second parser rejected or cut short is answered:
+
+- `-hx` is help, as for any command, where it was an unrecognized argument.
+- An abbreviated option (`--subj` for `--subject`) is accepted, or refused as ambiguous, where it
+  was reported as missing its full spelling.
+- Unrecognized arguments name the root parser (`crw relay: error: unrecognized arguments: ...`
+  under the root usage) and a value that looks like an option (`--tenure -x`) is "expected one
+  argument", as argparse reports them; usage lines wrap at the terminal width.
+
+Why: two parsers answered the same thirteen command lines, and which answered depended on the
+entry point. The argparse spec is the contract every other relay command keeps (`--help` lists the
+flags); the second parser was the one deviation. No skill, document or golden depends on the
+second parser's error text; its help is the one answer a golden holds
+(`Test24BuiltBinaryRootParserParity`, `region-show --help`), and it is kept.
+
+Evidence: `internal/relay/capacity/cli.go`, `cmd/crw/main.go`;
+`Test27_CCL1_capacity_and_region_commands_are_registered_offline_and_not_marker_commands`,
+`TestCapacityCommands_the_built_crw_prints_what_python_printed`,
+`TestRegionCommands_the_built_crw_prints_what_python_printed`, `Test24BuiltBinaryRootParserParity`.
+A sweep of 278 capacity command lines through the built `crw relay` before and after found every
+difference in the classes above, none in a help answer and none in an answer to a line both
+parsers accepted.
+
+## Decision R2B-2. Every relay command takes one dispatch path; its endings read alike (refactor R2)
+
+(Placeholder heading: the next free number is given when the R2 groups merge.)
+
+Decision: the relay CLI keeps one command table (`internal/relay/dispatch`) and one path through
+it: the root parse (the global options are read there only), the command's argparse parse, the
+state directory, check_start for a write form, the selection refusal, then the writable store's
+admission (or `--kind-module` alone), the handler, and one emit. Each command's registration
+carries what that path reads: read-only (cli.py READ_ONLY_COMMANDS and `_read_only_command`),
+answers without a state directory (`merge-evidence`, `ack-proof`), answers without the selected
+store (`_reads_no_selected_store`, the marker commands), exempt from the selection refusal, admits
+its own store. The order of the checks is cli.main's for every family, as it was. The command
+families' own entry points and their re-parse of the global options are gone.
+
+The doctor's `offlineCommands` and `hostRequiredCommands` stay the doctor's own lists (cli.py's,
+in cli.py's order) rather than attributes of the table: the doctor answers them alike in every
+build, whichever command packages it links, while the table holds what the binary registered
+(in-process test builds link only some families, and the CLI package cannot link them all: the
+managed and routing packages' in-process tests import it). A test of the built command set holds
+every listed name to a registered command and every parser choice to a registration.
+
+Where the families answered the same ending differently, every command now answers it as cli.py
+did:
+
+- A `--state` (or `CODEX_SESSION_RELAY_STATE`) that cannot be resolved because `~user` names no
+  user, or `~` has no home, answers `RuntimeError: Could not determine home directory.` (exit 3).
+  The registry, linkage, merge-turn and fault commands answered the wrapped Go text instead
+  (`cannot determine home directory for "x": ...`), the delivery and marker commands that text
+  behind `OSError: `. Any other failure to resolve it (a relative `--state` under a working
+  directory that is gone) reads as the command family's unclassified failure, as the handler's
+  own failures do; the delivery and marker commands answered it behind `OSError: `.
+- A `--kind-module` that cannot be imported is named in Python's repr by every command. The fault
+  commands' read-only forms (`fault-show`, `fault-next`, `fault-attention`,
+  `fault-notifications`, and `fault-policy`/`fault-limit` naming no class or kind), which imported
+  the modules themselves, spelled a name holding a quote or a backslash between bare single
+  quotes.
+- The families' own consoles (`registry.ExecuteAs`, `delivery.ExecuteAs`, `faults.ExecuteAs`
+  without the relay CLI's check, which only tests drove) are gone, and with them the delivery
+  package's copy of the selection refusal and of the recovery lines
+  (`internal/relay/delivery/selection.go`); the relay CLI's (`selection.Refusal`) is the one,
+  tested in `internal/relay/selection`.
+
+Why: six entry paths served the relay CLI, each re-reading the global options and keeping its own
+copy of the selection refusal and of the ending-to-JSON classification; the copies had drifted
+apart only where nothing looked. One table and one path keep the refusal order in one place.
+
+Evidence: `internal/relay/dispatch` (`Execute`, `Command`, `emit`), the families' registrations
+(`internal/relay/cli/registry.go`, `internal/relay/registry/cli.go`, `external.go`,
+`internal/relay/delivery/cli.go`, `intent_cli.go`, `internal/relay/faults/cli.go`);
+`TestRun_every_relay_parser_choice_is_registered`,
+`TestRun_unknown_user_state_is_a_python_host_error` (cmd/crw); every relay CLI golden compares
+unchanged.
+
 ## R3D-1. A refusal the relay only returns names a value as Go quotes it; a stored or hashed one keeps repr() (refactor R3)
 
 Decision: in the domain packages (`internal/relay/{capacity, delivery, evidence, faults,
 mergeturn, reception, registry, routing, supervisor, sync}`) a refusal, usage or host error that
 the relay only returns to its caller names a string with Go's quoting (`strconv.Quote`, `%q`:
-`"x"`, an invisible character escaped as ` `) and any other value with
+`"x"`, an invisible character escaped as `\u00a0`) and any other value with
 `pyvalue.Quote` (its compact JSON), where it used Python's `repr()` (`'x'`, `True`, `None`,
 `[1, 2]`). A float in such a message is Go's spelling (`-1`, `NaN`, `+Inf`), not `float.__repr__`.
 Message prose only: every `error`, `reason`, `code`, field and exit stays.
@@ -3377,26 +3467,25 @@ grant evidence, the turn's ledger rows and the routing records (`product_registr
 Evidence: internal/relay/mergeturn/order.go, internal/relay/routing/command_records.go; the
 contracttest goldens `TestMergeTurnCommands_*` and the routing goldens (key order only).
 
-## R3D-3. `--kind-module` accepts three names and models no import (refactor R3)
+## R3D-3. `--kind-module`'s module model is the relay CLI's; the domain packages keep none (refactor R3)
 
-Decision: the relay accepts `--kind-module codex_session_relay.projects` (it registers routing's
-fault classes and the `project_create` kind in the process, docs/relay/product-routing.md), and
-`json` and `os.path`, which register nothing (docs/port/known-defects.md). The model of Python's
-import that refused anything else - the walk over a dotted name's prefixes for the first one
-"No module named" names, `ValueError: Empty module name`, the relative-import `TypeError` - is
-replaced by `faults.KindModuleRefusal`: an empty name is a host error (exit 3, "--kind-module
-names no module"), a relative one a host error (exit 3), any other unknown name a usage error
-(exit 4) naming the value given and the three accepted names. Exits are unchanged.
+Decision: the fault package no longer models Python's import for `--kind-module`
+(`faults.RegisteredModule`, the prefix walk for "No module named", the `ValueError` and
+`TypeError` texts): with the dispatch table (decision R2B-2) the check moved to
+`internal/relay/dispatch` (`importKindModules`, `OnKindModule`), which the relay CLI owns, and the
+fault package only installs its product declarations there
+(`dispatch.OnKindModule("codex_session_relay.projects", InstallProductDeclarations)`). This
+wave's first commit had simplified the fault package's copy; the merge of the dispatch table
+replaced that copy, so the simplification is left to the relay CLI's own wave (R3C): accept the
+three documented names (`codex_session_relay.projects`, which docs/relay/product-routing.md
+names, and `json` and `os.path`, which docs/port/known-defects.md names), refuse anything else
+with the same exits (3 for an empty or relative name, 4 for any other) in Go's words, naming the
+value given, without the prefix walk.
 
 Consumers checked: docs/relay/product-routing.md, docs/relay/faults.md and the holder protocol
 name only `codex_session_relay.projects`; no skill passes `--kind-module`.
 
-What stays: the relay CLI's own dispatch (`internal/relay/cli/registry.go` `importKindModules`)
-still words its refusal of a writable command's `--kind-module` as Python did; it is the relay
-CLI's code and moves with its restructuring (R3C), which can call `faults.KindModuleRefusal`.
-
-Evidence: internal/relay/faults/kinds.go, cli.go; Test22_FLT_33_StaticKindModules,
-TestAnUnknownKindModuleUnderTheRelayPackageIsRefused.
+Evidence: internal/relay/faults/cli.go (`dispatch.OnKindModule`); internal/relay/dispatch/dispatch.go.
 
 ## R3D-4. packet-check's text checks say what they found, not CPython's exception (refactor R3)
 

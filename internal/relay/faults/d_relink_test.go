@@ -51,8 +51,8 @@ func TestDRelinkRepointsBoundedWritesAgainstPython(t *testing.T) {
 	seed(goDir)
 	// The reply and the tracker reference the store then holds.
 	var got, stderr bytes.Buffer
-	code, handled := executeAsCLI(context.Background(), []string{"--state", goDir, "--json", "fault-relink", "--limit", "1"}, &got, &stderr)
-	if !handled || code != 0 {
+	code := executeAsCLI(context.Background(), []string{"--state", goDir, "--json", "fault-relink", "--limit", "1"}, &got, &stderr)
+	if code != 0 {
 		t.Fatalf("go %d %s; stderr %s", code, got.String(), stderr.String())
 	}
 	ref := trackerRef(goDir)

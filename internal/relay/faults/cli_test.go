@@ -13,10 +13,7 @@ func cliCall(t *testing.T, dir string, args ...string) (int, map[string]any) {
 	t.Helper()
 	argv := append([]string{"--state", dir}, args...)
 	var out, stderr bytes.Buffer
-	code, handled := executeAsCLI(context.Background(), argv, &out, &stderr)
-	if !handled {
-		t.Fatalf("not handled: %v", argv)
-	}
+	code := executeAsCLI(context.Background(), argv, &out, &stderr)
 	var payload map[string]any
 	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
 		t.Fatalf("%s (stderr: %s): %v", out.String(), stderr.String(), err)
@@ -32,7 +29,7 @@ func Test22_FLT_33_StaticKindModules(t *testing.T) {
 		}
 	}
 	code, reply := cliCall(t, dir, "--kind-module", "no_such_module_crw205", "fault-target", "--product", "crw", "--team", "team-relay")
-	if code != 4 || reply["error"] != "usage" || !strings.Contains(reply["detail"].(string), `"no_such_module_crw205"`) {
+	if code != 4 || reply["error"] != "usage" || !strings.Contains(reply["detail"].(string), "No module named 'no_such_module_crw205'") {
 		t.Fatalf("unregistered: %d %+v", code, reply)
 	}
 	for _, module := range []string{"", ".relative"} {

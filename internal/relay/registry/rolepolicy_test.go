@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 )
 
 // Every ROL test replays its scenario from testdata/fixtures/rolepolicy_scenarios.json against
@@ -301,7 +302,7 @@ func Test25_ROL20_the_policy_snapshot_is_this_process(t *testing.T) {
 	ResetRolePolicySnapshot()
 	t.Cleanup(ResetRolePolicySnapshot)
 	var stdout, stderr bytes.Buffer
-	ExecuteAs(ctx(), "codex-session-relay", []string{"--state", filepath.Join(dir, "state"), "settings-show", "--task", parent}, &stdout, &stderr, nil)
+	dispatch.Execute(ctx(), "codex-session-relay", []string{"--state", filepath.Join(dir, "state"), "settings-show", "--task", parent}, &stdout, &stderr)
 	started := EnvironmentRolePolicy().Digest()
 	write("devin/swe-2")
 	if started == "" || EnvironmentRolePolicy().Digest() != started {

@@ -295,10 +295,7 @@ func seedCLI(t *testing.T, now float64, dir string, args ...string) (int, map[st
 	t.Helper()
 	ctx := context.WithValue(context.Background(), f1InputsKey{}, f1Inputs{clock: &testClock{now: now}})
 	var out, stderr bytes.Buffer
-	code, handled := executeAsCLI(ctx, append([]string{"--state", dir}, args...), &out, &stderr)
-	if !handled {
-		t.Fatalf("not handled: %v", args)
-	}
+	code := executeAsCLI(ctx, append([]string{"--state", dir}, args...), &out, &stderr)
 	var payload map[string]any
 	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
 		t.Fatalf("%s (stderr: %s): %v", out.String(), stderr.String(), err)

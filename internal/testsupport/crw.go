@@ -122,9 +122,11 @@ var (
 // this one starts (a test binary rerun as a helper) then finds under env.
 func named(env, pkg string, flags ...string) (string, error) {
 	if named := os.Getenv(env); named != "" {
-		path, err := filepath.Abs(named)
-		if err != nil {
-			return "", err
+		// A relative override names a file from the package directory the process started in,
+		// whatever directory a test has changed into since.
+		path := named
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(startDir, path)
 		}
 		if _, err := os.Stat(path); err != nil {
 			return "", fmt.Errorf("testsupport: %s: %w", env, err)

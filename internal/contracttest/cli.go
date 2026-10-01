@@ -6,12 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-
-	// The todo 27 commands register themselves in the relay CLI when their package loads.
-	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/capacity"
-	relaycli "github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
-
-	// Registers the merge-turn-* commands, as cmd/crw does, so Registered agrees with the binary.
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,10 +14,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+
+	// The relay commands register in the relay command table when their packages load: these
+	// are the packages cmd/crw links, so Registered agrees with the binary.
+	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/capacity"
+	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/routing"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // runCLI is the `cli` family of contract/README.md: each step spawns `crw relay --state
@@ -62,7 +62,7 @@ func runCLI(t *testing.T, scenario Scenario) (map[string]any, error) {
 	// only ever be answered by the usage path.
 	for _, step := range steps {
 		if argv, _ := step["argv"].([]any); len(argv) > 0 {
-			if name, ok := argv[0].(string); ok && !relaycli.Registered(name) {
+			if name, ok := argv[0].(string); ok && !dispatch.Registered(name) {
 				return nil, fmt.Errorf("%w: %s/cli command %q is not a relay command", ErrFixture, scenario.Domain, name)
 			}
 		}

@@ -5,11 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"slices"
-	"strconv"
 	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
@@ -27,30 +24,6 @@ type KindPolicy struct {
 
 // kindPolicy keeps the built-in declarations and existing callers source-compatible.
 type kindPolicy = KindPolicy
-
-// kindModules are the --kind-module values the relay accepts. codex_session_relay.projects
-// registers routing's fault classes and the project_create kind in the process
-// (InstallProductDeclarations, docs/relay/product-routing.md); json and os.path register nothing
-// and stay accepted because a holder may name them (docs/port/known-defects.md).
-var kindModules = []string{"codex_session_relay.projects", "json", "os.path"}
-
-// RegisteredModule reports whether name is a --kind-module value the relay accepts.
-func RegisteredModule(name string) bool { return slices.Contains(kindModules, name) }
-
-// KindModuleRefusal is the answer to a --kind-module value the relay does not accept: exit 3 (a
-// host error) for an empty or relative name, exit 4 (a usage error) for any other, and the
-// detail. refused is false for an accepted value.
-func KindModuleRefusal(name string) (code int, detail string, refused bool) {
-	switch {
-	case RegisteredModule(name):
-		return 0, "", false
-	case name == "":
-		return contract.ExitHost, "--kind-module names no module", true
-	case strings.HasPrefix(name, "."):
-		return contract.ExitHost, "--kind-module " + strconv.Quote(name) + " is a relative module name", true
-	}
-	return contract.ExitUsage, "--kind-module " + strconv.Quote(name) + " is not a kind module this relay knows; it knows " + strings.Join(kindModules, ", "), true
-}
 
 // RegisterKind installs an implementation for a declared extension kind. The manifest
 // describes project_create, but without its todo 23 implementation it is not executable.

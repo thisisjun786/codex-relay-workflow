@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 )
 
@@ -24,7 +25,7 @@ func answer(v map[string]any, err error) (any, error) {
 
 // badInvocation is the PayloadExit cli.py raises for an argument a handler refuses.
 func badInvocation(detail string) error {
-	return registry.PayloadExit(contract.OrderedObject{{Key: "ok", Value: false}, {Key: "reason", Value: "bad_invocation"}, {Key: "detail", Value: detail}}, contract.ExitRefused)
+	return &dispatch.PayloadExit{Payload: contract.OrderedObject{{Key: "ok", Value: false}, {Key: "reason", Value: "bad_invocation"}, {Key: "detail", Value: detail}}, Code: contract.ExitRefused}
 }
 
 // jsonShape is cli._json_shape: decoded AND the shape begin_merge indexes into.
@@ -115,7 +116,9 @@ func optional(p registry.Parsed, name string) string { return p.Optional(name).S
 
 func init() {
 	reader := TargetReader{}
-	add := registry.AddCommand
+	add := func(name string, run func(context.Context, *registry.Registry, registry.Parsed) (any, error)) {
+		registry.AddCommand(dispatch.Command{Name: name}, run)
+	}
 	add("merge-turn-request",
 		func(ctx context.Context, r *registry.Registry, p registry.Parsed) (any, error) {
 			options := ClaimOptions{Relationship: p.Optional("relationship")}
@@ -177,5 +180,5 @@ func init() {
 		func(ctx context.Context, r *registry.Registry, p registry.Parsed) (any, error) {
 			return answer(service(r).Withdraw(ctx, p.Text("turn"), p.Text("actor")))
 		})
-	registry.AddCheckedCommand("merge-turn-show", showSelectors, show)
+	registry.AddCheckedCommand(dispatch.Command{Name: "merge-turn-show", ReadOnly: true}, showSelectors, show)
 }

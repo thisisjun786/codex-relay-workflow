@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
@@ -274,7 +275,7 @@ func runCLI(t *testing.T, w *world, argv ...string) (int, string, string) {
 	t.Helper()
 	t.Setenv("CODEX_THREAD_BRIDGE_EXECUTION_POLICY", "")
 	var stdout, stderr bytes.Buffer
-	code := registry.Execute(w.ctx, append([]string{"--state", filepath.Dir(w.path)}, argv...), &stdout, &stderr)
+	code := dispatch.Execute(w.ctx, "codex-session-relay", append([]string{"--state", filepath.Dir(w.path)}, argv...), &stdout, &stderr)
 	return code, stdout.String(), stderr.String()
 }
 

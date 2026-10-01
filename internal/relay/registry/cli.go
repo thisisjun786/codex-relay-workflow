@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math/big"
 	"os"
 	"strconv"
@@ -16,6 +15,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -51,14 +51,14 @@ func (p parsed) integer(name string) *big.Int {
 	return p.numbers[name].(*big.Int)
 }
 
-// command is one relay command of this package. Its arguments are parsed by its argparse spec
-// (argparse.Specs[name]); defaults are the argparse defaults of the options it reads unset.
+// command is one relay command of this package: its registration (its name names its argparse
+// spec, argparse.Specs[Name]; its defaults are the argparse defaults of the options it reads
+// unset) and how its handler reaches the store.
 type command struct {
-	name     string
-	defaults map[string]string
-	run      func(context.Context, *Registry, parsed) (any, error)
+	dispatch.Command
+	run func(context.Context, *Registry, parsed) (any, error)
 	// precheck is the part of a handler that refuses its own arguments before it touches the
-	// store. cli.main decides when that is (run): a write form refuses them only after
+	// store. cli.main decides when that is (handle): a write form refuses them only after
 	// _ownership_preflight opened the store, a read-only form before its lazy Services.store.
 	precheck func(*parsed) error
 	// read answers without constructing a Store (dispositions-show).
@@ -66,34 +66,34 @@ type command struct {
 }
 
 var commands = []command{
-	{name: "register", run: cmdRegister, precheck: registerPrecheck},
-	{name: "settings-record", defaults: map[string]string{"source": "creation_result"}, run: cmdSettingsRecord, precheck: settingsRecordPrecheck},
-	{name: "settings-show", run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
+	{Command: dispatch.Command{Name: "register"}, run: cmdRegister, precheck: registerPrecheck},
+	{Command: dispatch.Command{Name: "settings-record", Defaults: map[string]any{"source": "creation_result"}}, run: cmdSettingsRecord, precheck: settingsRecordPrecheck},
+	{Command: dispatch.Command{Name: "settings-show", ReadOnly: true}, run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
 		return r.SettingsShow(ctx, p.text("task"))
 	}},
-	{name: "generation-open", defaults: map[string]string{"reason": "needs_changes_revision"}, run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
+	{Command: dispatch.Command{Name: "generation-open", Defaults: map[string]any{"reason": "needs_changes_revision"}}, run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
 		g, err := r.OpenGeneration(ctx, p.text("relationship"), p.text("dispatch-request-id"), p.text("reason"), p.optional("dispatch-turn-id"))
 		return g.Record(), err
 	}},
-	{name: "generation-bind", defaults: map[string]string{"source": "dispatch_receipt"}, run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
+	{Command: dispatch.Command{Name: "generation-bind", Defaults: map[string]any{"source": "dispatch_receipt"}}, run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
 		g, err := r.BindAnchor(ctx, p.text("relationship"), p.integer("generation"), p.text("dispatch-turn-id"), p.text("source"))
 		return g.Record(), err
 	}},
-	{name: "admit-turn", run: cmdAdmitTurn},
-	{name: "relationship-status", run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
+	{Command: dispatch.Command{Name: "admit-turn"}, run: cmdAdmitTurn},
+	{Command: dispatch.Command{Name: "relationship-status"}, run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
 		x, err := r.SetStatus(ctx, p.text("relationship"), p.text("status"), p.text("actor"))
 		return x.ContractRecord(), err
 	}},
-	{name: "relationship-resume", run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
+	{Command: dispatch.Command{Name: "relationship-resume"}, run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
 		x, err := r.Resume(ctx, p.text("relationship"), p.integer("expect-generation"), p.values["expect-artifact-root"], p.values["expect-allowed-recipient"], p.text("actor"))
 		return x.ContractRecord(), err
 	}},
-	{name: "assignment-show", run: cmdAssignmentShow},
-	{name: "assignment-find", run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
+	{Command: dispatch.Command{Name: "assignment-show", ReadOnly: true}, run: cmdAssignmentShow},
+	{Command: dispatch.Command{Name: "assignment-find", ReadOnly: true}, run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
 		return assignmentView(r).ForIssue(ctx, p.text("issue"))
 	}},
-	{name: "dispositions-show", read: cmdDispositionsShow},
-	{name: "assignment-mark",
+	{Command: dispatch.Command{Name: "dispositions-show", ReadOnly: true}, read: cmdDispositionsShow},
+	{Command: dispatch.Command{Name: "assignment-mark"},
 		run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
 			return assignmentView(r).Mark(ctx, p.text("relationship"), p.text("mark"), p.text("evidence"), p.text("actor"), p.text("expected-event"))
 		}},
@@ -134,143 +134,45 @@ func cmdDispositionsShow(ctx context.Context, selection store.StateSelection, p 
 	return report, nil
 }
 
-type globalFlags struct{ state, socket string }
-
-func globals(argv []string) (globalFlags, []string, error) {
-	var g globalFlags
-	for i := 0; i < len(argv); i++ {
-		arg := argv[i]
-		name, value, inline := strings.Cut(arg, "=")
-		switch name {
-		case "--state", "--socket", "--kind-module":
-			if !inline {
-				if i+1 >= len(argv) {
-					return g, nil, fmt.Errorf("argument %s: expected one argument", name)
-				}
-				i++
-				value = argv[i]
-			}
-			if name == "--state" {
-				g.state = value
-			} else if name == "--socket" {
-				g.socket = value
-			}
-		case "--json":
-		default:
-			return g, argv[i:], nil
-		}
+// family is this package's commands' family: a failure no other ending classifies reads as
+// itself, an integer sqlite3 could not bind as its OverflowError however it was wrapped.
+var family = &dispatch.Family{HostDetail: func(err error) string {
+	var overflow *argparse.IntegerOverflow
+	if errors.As(err, &overflow) {
+		return overflow.Error()
 	}
-	return g, nil, nil
+	return err.Error()
+}}
+
+// register adds commands to the relay command table, each answered by handle.
+func register(commands ...command) {
+	for _, c := range commands {
+		registration := c.Command
+		registration.Run = func(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
+			return handle(ctx, services, c, parsedOf(args))
+		}
+		dispatch.Register(family, registration)
+	}
 }
 
-// usageError is argparse's exit: status 2, usage and message on stderr, nothing on stdout.
-type usageError struct{ usage, message string }
+func init() { register(append(commands, linkageCommands...)...) }
 
-func (e *usageError) Error() string { return e.message }
-
-func (c command) usage(prog string) string { return argparse.Usage(prog, c.name) }
-
-func (c command) parse(prog string, argv []string) (parsed, error) {
-	p := parsed{values: map[string][]string{}, set: map[string]bool{}}
-	result := argparse.Parse(c.name, argv)
-	if result.Help {
-		return p, &usageError{usage: c.usage(prog), message: "help"}
-	}
-	if result.Message != "" {
-		if result.Global {
-			return p, &usageError{argparse.Usage(prog, ""), "global:" + result.Message}
-		}
-		return p, &usageError{c.usage(prog), result.Message}
-	}
-	p.values, p.set, p.numbers = result.Values, result.Given, result.Numbers
-	for name, value := range c.defaults {
+// parsedOf is the handlers' view of the line: every value given, a declared default for each
+// option the line left out.
+func parsedOf(args dispatch.Args) parsed {
+	p := parsed{values: args.Parsed.Values, set: args.Parsed.Given, numbers: args.Parsed.Numbers}
+	for name, value := range args.Defaults {
 		if !p.set[name] {
-			p.values[name] = []string{value}
+			p.values[name] = []string{value.(string)}
 		}
 	}
-	return p, nil
+	return p
 }
 
-// usage is SystemExit2 printed as {"error": "usage", "detail"} with its own exit code.
-type usage struct {
-	detail string
-	code   int
-}
-
-func (e *usage) Error() string { return e.detail }
-
-// Names lists this package's relay commands, in cli.py's add_parser order.
-func Names() []string {
-	names := make([]string, len(commands))
-	for i, c := range commands {
-		names[i] = c.name
-	}
-	return names
-}
-
-// SelectionCheck is cli's _refuse_ambiguous_state for the resolved selection: nil, or an error
-// the caller's emit understands (a payload refusal). It runs before the handler, as in cli.main.
-type SelectionCheck func(selection store.StateSelection, socket string) error
-
-// Execute runs one of this package's commands as the codex-session-relay console script.
-func Execute(ctx context.Context, argv []string, stdout, stderr io.Writer) int {
-	return ExecuteAs(ctx, "codex-session-relay", argv, stdout, stderr, nil)
-}
-
-// ExecuteAs runs one of this package's relay commands, as cli.main does for it: prog is the
-// program name argparse prints, check the selection refusal the relay CLI applies first.
-func ExecuteAs(ctx context.Context, prog string, argv []string, stdout, stderr io.Writer, check SelectionCheck) int {
-	g, rest, err := globals(argv)
-	if err != nil || len(rest) == 0 {
-		fmt.Fprintln(stderr, "usage: "+prog+" [-h] [--state STATE] [--socket SOCKET] ...")
-		fmt.Fprintln(stderr, prog+": error: the following arguments are required: command")
-		return 2
-	}
-	var chosen *command
-	for i := range commands {
-		if commands[i].name == rest[0] {
-			chosen = &commands[i]
-		}
-	}
-	if chosen == nil {
-		fmt.Fprintln(stderr, prog+": error: argument command: invalid choice: "+pyvalue.StrRepr(rest[0]))
-		return 2
-	}
-	p, err := chosen.parse(prog, rest[1:])
-	var bad *usageError
-	if errors.As(err, &bad) {
-		if bad.message == "help" {
-			fmt.Fprint(stdout, argparse.Help(prog, chosen.name))
-			return 0
-		}
-		fmt.Fprintln(stderr, bad.usage)
-		who := prog + " " + chosen.name
-		message := bad.message
-		if detail, global := strings.CutPrefix(message, "global:"); global {
-			message, who = detail, prog
-		}
-		fmt.Fprintln(stderr, who+": error: "+message)
-		return 2
-	}
-	if argparse.ReadOnlyForm(rest) {
-		// Services.read_only, for this package's own console as for the relay CLI that
-		// already marked ctx: a read-only form never creates the store.
-		ctx = store.WithReadOnlyCommand(ctx)
-	}
-	result, err := run(ctx, g, *chosen, p, check)
-	return emit(stdout, stderr, result, err)
-}
-
-func run(ctx context.Context, g globalFlags, c command, p parsed, check SelectionCheck) (any, error) {
-	selection, err := store.ResolveStateDir(g.state, g.socket)
-	if err != nil {
-		return nil, err
-	}
-	if check != nil {
-		if err := check(selection, g.socket); err != nil {
-			return nil, err
-		}
-	}
+// handle is cli.main for one of this package's commands, once the relay CLI checked the
+// selected store (and admitted it, for a write form).
+func handle(ctx context.Context, services dispatch.Services, c command, p parsed) (any, error) {
+	selection := services.Selection
 	// A write form's store is opened before its handler reads its arguments, as the fence's
 	// cli.main does in _ownership_preflight (services.store): the store is admitted - initialized
 	// when absent (decision 30), refused when another runtime owns it - before any refusal of the
@@ -280,8 +182,9 @@ func run(ctx context.Context, g globalFlags, c command, p parsed, check Selectio
 	// and an absent store is refused store_absent only by a form that reaches the store
 	// (decision 31).
 	var s *store.Store
+	var err error
 	if !store.ReadOnlyCommand(ctx) && c.read == nil {
-		if s, err = store.Open(ctx, selection.DBPath(), g.socket); err != nil {
+		if s, err = store.Open(ctx, selection.DBPath(), services.SocketPath); err != nil {
 			return nil, err
 		}
 		defer s.Close()
@@ -298,51 +201,13 @@ func run(ctx context.Context, g globalFlags, c command, p parsed, check Selectio
 		return c.read(ctx, selection, p)
 	}
 	if s == nil {
-		if s, err = store.Open(ctx, selection.DBPath(), g.socket); err != nil {
+		if s, err = store.Open(ctx, selection.DBPath(), services.SocketPath); err != nil {
 			return nil, err
 		}
 		defer s.Close()
 	}
 	r := &Registry{Store: s, Policy: policy}
 	return c.run(ctx, r, p)
-}
-
-// PayloadError is an answer printed whole with its own exit code (cli.PayloadExit).
-type PayloadError interface {
-	error
-	ExitPayload() (contract.OrderedObject, int)
-}
-
-func emit(stdout, stderr io.Writer, result any, err error) int {
-	code := contract.ExitOk
-	var refused *store.RefusedError
-	var bad *usage
-	var payload PayloadError
-	var overflow *argparse.IntegerOverflow
-	switch {
-	case err == nil:
-	case errors.As(err, &payload):
-		result, code = payload.ExitPayload()
-	case store.EncodeError(err) != nil:
-		result, code = contract.OrderedObject{{Key: "error", Value: "host"}, {Key: "detail", Value: store.EncodeError(err).HostDetail()}}, contract.ExitHost
-	case errors.As(err, &refused):
-		var reason any
-		if refused.Reason != "" {
-			reason = refused.Reason
-		}
-		result, code = contract.OrderedObject{{Key: "error", Value: "refused"}, {Key: "reason", Value: reason}, {Key: "detail", Value: refused.Detail}}, contract.ExitRefused
-	case errors.As(err, &bad):
-		result, code = contract.OrderedObject{{Key: "error", Value: "usage"}, {Key: "detail", Value: bad.detail}}, bad.code
-	case errors.As(err, &overflow):
-		result, code = contract.OrderedObject{{Key: "error", Value: "host"}, {Key: "detail", Value: overflow.Error()}}, contract.ExitHost
-	default:
-		result, code = contract.OrderedObject{{Key: "error", Value: "host"}, {Key: "detail", Value: err.Error()}}, contract.ExitHost
-	}
-	if err := contract.Emit(stdout, result); err != nil {
-		fmt.Fprintln(stderr, err)
-		return contract.ExitHost
-	}
-	return code
 }
 
 // settingsJSON is cli._settings_json: a JSON object, or @path to a file holding one.
@@ -483,7 +348,7 @@ func (r *Registry) refuseRoleDisagreement(ctx context.Context, writes []settings
 
 func settingsRecordPrecheck(p *parsed) error {
 	if p.set["clear-exception"] && p.optional("exception").Valid {
-		return &usage{"--clear-exception drops the citation and --exception records one; state one", contract.ExitUsage}
+		return &dispatch.UsageError{Detail: "--clear-exception drops the citation and --exception records one; state one", Code: contract.ExitUsage}
 	}
 	return nil
 }

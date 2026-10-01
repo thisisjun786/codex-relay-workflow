@@ -3,7 +3,6 @@ package routing
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"os"
 	"strconv"
 	"strings"
@@ -11,8 +10,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -32,31 +30,20 @@ func WithClock(ctx context.Context, clock interface {
 	return context.WithValue(ctx, clockContextKey{}, clock)
 }
 func init() {
+	limits := map[string]int64{"route-reconcile": 50, "route-show": 20, "route-digest": 500}
+	var commands []dispatch.Command
 	for _, name := range CommandNames {
-		name := name
-		spec := argparse.Specs[name]
-		cli.Commands = append(cli.Commands, cli.Command{Name: name, Flags: func(f *flag.FlagSet) {
-			for _, action := range spec.Actions {
-				if len(action.Flags) == 0 || action.Kind == "_HelpAction" {
-					continue
-				}
-				key := strings.TrimPrefix(action.Flags[len(action.Flags)-1], "--")
-				if action.Kind == "_StoreTrueAction" {
-					f.Bool(key, false, "")
-				} else if action.Type == "int" {
-					fallback := int64(0)
-					if key == "limit" {
-						fallback = map[string]int64{"route-reconcile": 50, "route-show": 20, "route-digest": 500}[name]
-					}
-					f.Int64(key, fallback, "")
-				} else {
-					f.String(key, "", "")
-				}
-			}
-		}, Run: func(ctx context.Context, services cli.Services, args cli.Args) (any, error) {
-			return runCommand(ctx, services, args, name)
-		}})
+		var defaults map[string]any
+		if limit, ok := limits[name]; ok {
+			defaults = map[string]any{"limit": limit}
+		}
+		commands = append(commands, dispatch.Command{Name: name, Defaults: defaults,
+			ReadOnly: name == "product-show" || name == "route-show",
+			Run: func(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
+				return runCommand(ctx, services, args, name)
+			}})
 	}
+	dispatch.Register(nil, commands...)
 }
 func routeJSON(value, what string) (any, error) {
 	raw := value
@@ -73,7 +60,7 @@ func routeJSON(value, what string) (any, error) {
 	}
 	return out, nil
 }
-func runCommand(ctx context.Context, services cli.Services, args cli.Args, name string) (any, error) {
+func runCommand(ctx context.Context, services dispatch.Services, args dispatch.Args, name string) (any, error) {
 	s, err := store.Open(ctx, services.Selection.DBPath(), services.SocketPath)
 	if err != nil {
 		return nil, err
@@ -160,7 +147,7 @@ func runCommand(ctx context.Context, services cli.Services, args cli.Args, name 
 		detail := cleanError(err)
 		reason, message, _ := strings.Cut(detail, ":")
 		if strings.HasPrefix(reason, "route_") || strings.HasPrefix(reason, "fault_") {
-			return nil, &cli.PayloadExit{Payload: contract.OrderedObject{{Key: "error", Value: "refused"}, {Key: "reason", Value: reason}, {Key: "detail", Value: strings.TrimPrefix(message, " ")}}, Code: 2}
+			return nil, &dispatch.PayloadExit{Payload: contract.OrderedObject{{Key: "error", Value: "refused"}, {Key: "reason", Value: reason}, {Key: "detail", Value: strings.TrimPrefix(message, " ")}}, Code: 2}
 		}
 		return nil, err
 	}

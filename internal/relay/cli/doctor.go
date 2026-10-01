@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"flag"
 	"fmt"
 	"net"
 	"os"
@@ -18,6 +17,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/service"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
@@ -25,23 +25,11 @@ import (
 
 const policyVariable = "CODEX_THREAD_BRIDGE_EXECUTION_POLICY"
 
-var doctorCommand = Command{
-	Name:   "doctor",
-	Exempt: true,
-	Flags: func(f *flag.FlagSet) {
-		f.String("require-worker-policy", "", "JSON list (or @file) of {role,model,reasoningEffort}")
-		f.String("expect-store", "", "the store id another participant reported")
-		f.String("expect-inode", "", "the device:inode another participant reported")
-		f.String("expect-log", "", "the device:inode:name another participant reported for its write-ahead log")
-		f.String("expect-nonce", "", "a nonce another participant wrote here")
-		f.String("issue", "", "also answer whether this store holds an assignment for this issue identity")
-	},
-	Run: runDoctor,
-}
+var doctorCommand = dispatch.Command{Name: "doctor", Exempt: true, ReadOnly: true, Run: runDoctor}
 
 // runDoctor is cmd_doctor: what THIS process can actually do here, measured rather than
 // assumed. It constructs no Store.
-func runDoctor(ctx context.Context, services Services, args Args) (any, error) {
+func runDoctor(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
 	probed := store.Probe(ctx, services.Selection)
 	loc := probeStore(probed)
 	report := contract.OrderedObject{
@@ -98,7 +86,7 @@ func runDoctor(ctx context.Context, services Services, args Args) (any, error) {
 	if requiredWorker {
 		requirements, err := settingsJSON(requested)
 		if err != nil {
-			return nil, &UsageError{Detail: "invalid worker policy requirements: " + err.Error(), Code: contract.ExitUsage}
+			return nil, &dispatch.UsageError{Detail: "invalid worker policy requirements: " + err.Error(), Code: contract.ExitUsage}
 		}
 		readiness := workerReadiness(worker, requirements, caller)
 		ready = get(readiness, "ready") == true
@@ -135,10 +123,10 @@ func runDoctor(ctx context.Context, services Services, args Args) (any, error) {
 	add("runtime", runtimeBlock())
 	asked := expectations.StoreIDGiven || expectations.InodeGiven || expectations.LogGiven || nonceGiven
 	if (asked && comparison.SameStore != store.Proven) || (requiredWorker && !ready) {
-		return nil, &PayloadExit{Payload: report, Code: contract.ExitRefused}
+		return nil, &dispatch.PayloadExit{Payload: report, Code: contract.ExitRefused}
 	}
 	if issueKey != "" && get(issue, "readable") == true && get(issue, "storeAgreement") != "same" {
-		return nil, &PayloadExit{Payload: report, Code: contract.ExitRefused}
+		return nil, &dispatch.PayloadExit{Payload: report, Code: contract.ExitRefused}
 	}
 	return report, nil
 }
@@ -146,7 +134,7 @@ func runDoctor(ctx context.Context, services Services, args Args) (any, error) {
 // ownershipReport is ownership.report: the six schema_meta keys and the mirror's raw phase,
 // all or nothing. Any failure to read either half nulls every key and phase and names it in
 // detail; runtime_build is always the answering runtime's own build.
-func ownershipReport(ctx context.Context, services Services) contract.OrderedObject {
+func ownershipReport(ctx context.Context, services dispatch.Services) contract.OrderedObject {
 	meta, phase, detail := readOwnership(ctx, services.Selection.DBPath())
 	report := contract.OrderedObject{}
 	// A failed reading has no meta: every key is null beside its detail. The torn stamp
@@ -247,7 +235,7 @@ func nonceRecord(n store.NonceReading) contract.OrderedObject {
 }
 
 // reachability is _reachability.
-func reachability(services Services, access store.ProbeAccess) contract.OrderedObject {
+func reachability(services dispatch.Services, access store.ProbeAccess) contract.OrderedObject {
 	connect := "not configured"
 	if services.SocketPath != "" {
 		path, err := store.ExpandUser(services.SocketPath)
@@ -287,7 +275,7 @@ func socketFailure(err error) string {
 }
 
 // accessReceipt is _access_receipt: identity and participants from ONE read.
-func accessReceipt(ctx context.Context, services Services, loc store.Location, access store.ProbeAccess) contract.OrderedObject {
+func accessReceipt(ctx context.Context, services dispatch.Services, loc store.Location, access store.ProbeAccess) contract.OrderedObject {
 	recorded := contract.OrderedObject{{Key: "available", Value: false}, {Key: "participants", Value: contract.OrderedObject{}}, {Key: "detail", Value: nil}}
 	if access.DBReadable {
 		type row struct{ kind, taskID, settings, source, recordedAt any }
@@ -383,7 +371,7 @@ func sqlValue(v any) any {
 
 // issueReading is _issue_reading. Its error is the UnicodeEncodeError read_only_rows lets
 // escape for a key sqlite3 cannot bind, which cli.main answers as a host error.
-func issueReading(ctx context.Context, services Services, loc store.Location, access store.ProbeAccess, key string) (contract.OrderedObject, error) {
+func issueReading(ctx context.Context, services dispatch.Services, loc store.Location, access store.ProbeAccess, key string) (contract.OrderedObject, error) {
 	blank := func(readable bool, storeID any, agreement, detail string) contract.OrderedObject {
 		return contract.OrderedObject{
 			{Key: "key", Value: key}, {Key: "readable", Value: readable}, {Key: "holds", Value: nil},

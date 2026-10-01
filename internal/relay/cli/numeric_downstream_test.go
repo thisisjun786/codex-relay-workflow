@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
@@ -93,7 +93,7 @@ func Test24NumericDownstreamBytes(t *testing.T) {
 	slices.Sort(names)
 	for _, name := range names {
 		spec := argparse.Specs[name]
-		if !cli.Registered(name) || name == "slot-release" || name == "limit-declare" || name == "usage-observe" {
+		if !dispatch.Registered(name) || name == "slot-release" || name == "limit-declare" || name == "usage-observe" {
 			continue
 		}
 		for index, a := range spec.Actions {

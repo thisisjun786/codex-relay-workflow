@@ -18,6 +18,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -175,7 +176,7 @@ func WorkspaceDir(root, workspace string) (string, error) {
 // is not an assignment id is ValueError, as _checked_assignment raises it.
 func AssignmentDir(root, workspace string, assignment any) (string, error) {
 	if !ValidAssignment(assignment) {
-		return "", &hostError{"ValueError", "an assignment id is the hex sha256 of a dispatch request id, not " + pyReprValue(assignment)}
+		return "", &dispatch.HostError{Class: "ValueError", Detail: "an assignment id is the hex sha256 of a dispatch request id, not " + pyReprValue(assignment)}
 	}
 	directory, err := WorkspaceDir(root, workspace)
 	if err != nil {
@@ -373,7 +374,7 @@ func confined(path, root string) (string, error) {
 		return "", err
 	}
 	if resolvedPath != base && !strings.HasPrefix(resolvedPath, strings.TrimSuffix(base, "/")+"/") {
-		return "", &hostError{"ValueError", "refusing to write outside the marker root: " + resolvedPath + " is not under " + base}
+		return "", &dispatch.HostError{Class: "ValueError", Detail: "refusing to write outside the marker root: " + resolvedPath + " is not under " + base}
 	}
 	return resolvedPath, nil
 }
