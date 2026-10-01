@@ -30,18 +30,18 @@ func FromBytes(raw []byte, source string) (Policy, error) {
 
 // fromMapping is ExecutionPolicy.from_mapping over a decoded document.
 func fromMapping(value any, digest string) (Policy, error) {
-	data, ok := value.(*object)
+	data, ok := value.(object)
 	if !ok {
 		return Policy{}, &PolicyError{"the execution policy must be a JSON object"}
 	}
 	if err := only(data, []string{"allowed", "exceptions", "roles"}, "the execution policy"); err != nil {
 		return Policy{}, err
 	}
-	roles, err := parseRoles(data.values["roles"])
+	roles, err := parseRoles(data.Get("roles"))
 	if err != nil {
 		return Policy{}, err
 	}
-	allowed, err := parseAllowed(data.values["allowed"], len(roles) > 0)
+	allowed, err := parseAllowed(data.Get("allowed"), len(roles) > 0)
 	if err != nil {
 		return Policy{}, err
 	}
@@ -56,17 +56,17 @@ func fromMapping(value any, digest string) (Policy, error) {
 			}
 		}
 	}
-	declared := any(&object{values: map[string]any{}})
-	if data.has("exceptions") {
-		declared = data.values["exceptions"]
+	declared := any(object{})
+	if has(data, "exceptions") {
+		declared = data.Get("exceptions")
 	}
 	exceptions, err := parseExceptions(declared)
 	if err != nil {
 		return Policy{}, err
 	}
 	var roleOrder []string
-	if section, ok := data.values["roles"].(*object); ok {
-		roleOrder = append(roleOrder, section.keys...)
+	if section, ok := data.Get("roles").(object); ok {
+		roleOrder = append(roleOrder, keys(section)...)
 	}
 	return Policy{allowed: allowed, roles: roles, roleOrder: roleOrder, exceptions: exceptions, digest: digest}, nil
 }
@@ -81,17 +81,17 @@ func parseAllowed(entries any, rolesDeclared bool) (map[string][]string, error) 
 	}
 	allowed := map[string][]string{}
 	for _, item := range list {
-		entry, ok := item.(*object)
+		entry, ok := item.(object)
 		if !ok {
 			return nil, &PolicyError{"each allowed entry must be an object"}
 		}
 		if err := only(entry, []string{"efforts", "model"}, "an allowed entry"); err != nil {
 			return nil, err
 		}
-		if len(entry.keys) != 2 {
+		if len(entry) != 2 {
 			return nil, &PolicyError{"each allowed entry needs both model and efforts"}
 		}
-		model, err := identifier(entry.values["model"], "an allowed model", Maximum)
+		model, err := identifier(entry.Get("model"), "an allowed model", Maximum)
 		if err != nil {
 			return nil, err
 		}
@@ -99,7 +99,7 @@ func parseAllowed(entries any, rolesDeclared bool) (map[string][]string, error) 
 			return nil, &PolicyError{fmt.Sprintf("model %s is listed twice", repr(model))}
 		}
 		where := "efforts for " + repr(model)
-		efforts, ok := entry.values["efforts"].([]any)
+		efforts, ok := entry.Get("efforts").([]any)
 		if !ok || len(efforts) == 0 {
 			return nil, &PolicyError{where + " must be a non-empty list of efforts"}
 		}
@@ -120,39 +120,39 @@ func parseAllowed(entries any, rolesDeclared bool) (map[string][]string, error) 
 }
 
 func parseExceptions(value any) (map[string]exception, error) {
-	declared, ok := value.(*object)
+	declared, ok := value.(object)
 	if !ok {
 		return nil, &PolicyError{"exceptions must be an object"}
 	}
 	exceptions := map[string]exception{}
-	for _, name := range declared.keys {
+	for _, name := range keys(declared) {
 		if _, err := identifier(name, "an exception id", ExceptionIDMaximum); err != nil {
 			return nil, err
 		}
 		label := "exception " + repr(name)
-		entry, ok := declared.values[name].(*object)
+		entry, ok := declared.Get(name).(object)
 		if !ok {
 			return nil, &PolicyError{label + " must be an object"}
 		}
 		if err := only(entry, []string{"cwd", "model", "reason", "reasoningEffort", "role"}, label); err != nil {
 			return nil, err
 		}
-		if absent := entry.absent("cwd", "model", "reasoningEffort"); len(absent) > 0 {
+		if absent := absent(entry, "cwd", "model", "reasoningEffort"); len(absent) > 0 {
 			return nil, &PolicyError{fmt.Sprintf("%s is missing %s", label, repr(absent))}
 		}
-		scoped := entry.values["role"]
+		scoped := entry.Get("role")
 		if scoped != nil && !isRole(scoped) {
 			return nil, &PolicyError{fmt.Sprintf("%s role %s is not a role; supported are %s", label, repr(scoped), supportedRoles)}
 		}
-		roots, err := parseRoots(entry.values["cwd"], name, label)
+		roots, err := parseRoots(entry.Get("cwd"), name, label)
 		if err != nil {
 			return nil, err
 		}
-		model, err := identifier(entry.values["model"], "the model of "+label, Maximum)
+		model, err := identifier(entry.Get("model"), "the model of "+label, Maximum)
 		if err != nil {
 			return nil, err
 		}
-		effort, err := identifier(entry.values["reasoningEffort"], "the effort of "+label, Maximum)
+		effort, err := identifier(entry.Get("reasoningEffort"), "the effort of "+label, Maximum)
 		if err != nil {
 			return nil, err
 		}
@@ -209,9 +209,9 @@ func resolve(path string) (string, error) {
 	return filepath.Join(parent, filepath.Base(absolute)), nil
 }
 
-func only(entry *object, supported []string, where string) error {
+func only(entry object, supported []string, where string) error {
 	var unknown []string
-	for _, k := range entry.keys {
+	for _, k := range keys(entry) {
 		if !slices.Contains(supported, k) {
 			unknown = append(unknown, k)
 		}

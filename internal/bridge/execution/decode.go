@@ -2,8 +2,8 @@ package execution
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
-	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -12,20 +12,26 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
-// object is a decoded JSON object that keeps document order, because Python iterates the
-// policy's dicts in that order and reports the first failure it meets.
-type object struct {
-	keys   []string
-	values map[string]any
+// object is a decoded JSON object in document order, because Python iterates the policy's dicts
+// in that order and reports the first failure it meets.
+type object = pyjson.Object
+
+// keys is an object's keys in document order.
+func keys(o object) []string {
+	out := make([]string, len(o))
+	for i, field := range o {
+		out[i] = field.Key
+	}
+	return out
 }
 
-func (o *object) has(key string) bool { _, ok := o.values[key]; return ok }
+func has(o object, key string) bool { _, ok := o.Lookup(key); return ok }
 
 // present returns the given keys found in o, sorted like Python sorted(set & set).
-func (o *object) present(keys ...string) []string {
+func present(o object, keys ...string) []string {
 	var found []string
 	for _, k := range keys {
-		if o.has(k) {
+		if has(o, k) {
 			found = append(found, k)
 		}
 	}
@@ -33,10 +39,10 @@ func (o *object) present(keys ...string) []string {
 	return found
 }
 
-func (o *object) absent(keys ...string) []string {
+func absent(o object, keys ...string) []string {
 	var missing []string
 	for _, k := range keys {
-		if !o.has(k) {
+		if !has(o, k) {
 			missing = append(missing, k)
 		}
 	}
@@ -53,8 +59,9 @@ const PolicyDepth = 9998
 // as json.loads decodes bytes (UTF-8, UTF-16 or UTF-32 by pyjson.DecodeBytes, a byte order
 // mark read as the codec's own), then scanned as CPython scans them, so every refusal is the
 // one Python meets first, in its words: the codec error, the JSONDecodeError, the 4300-digit
-// integer limit, or the hook's duplicate key at the close of the object that repeats it.
-// NaN, Infinity and -Infinity are numbers, as json.loads reads them.
+// integer limit, or the hook's duplicate key at the close of the object that repeats it. The
+// values are pyjson's: objects in document order, every number a json.Number as spelled, NaN,
+// Infinity and -Infinity floats, and a lone surrogate escape kept.
 func decode(raw []byte) (any, error) {
 	text, err := pyjson.DecodeBytes(raw)
 	if err != nil {
@@ -63,125 +70,17 @@ func decode(raw []byte) (any, error) {
 	if message, duplicate, _ := pyjson.HookedError(text, PolicyDepth); message != "" && !duplicate {
 		return nil, &syntaxError{message}
 	}
-	// The scan read everything up to the first repeated key, which the build refuses as the
-	// hook does.
-	b := &builder{s: text}
-	return b.value()
+	value, err := pyjson.Loads(text, pyjson.LoadOptions{Constants: true, Surrogates: true, Numbers: pyjson.SpelledNumbers, Unique: true, Deep: true})
+	var repeated *pyjson.RepeatedKey
+	if errors.As(err, &repeated) {
+		return nil, &PolicyError{fmt.Sprintf("duplicate key %s in the execution policy", repr(repeated.Key))}
+	}
+	return value, err
 }
 
 type syntaxError struct{ detail string }
 
 func (e *syntaxError) Error() string { return e.detail }
-
-// builder reads a document pyjson has already scanned into the policy's values: *object in
-// document order, []any, string, json.Number, float64 for the three constants, bool and nil.
-type builder struct {
-	s string
-	i int
-}
-
-func (b *builder) ws() {
-	for b.i < len(b.s) && strings.IndexByte(" \t\n\r", b.s[b.i]) >= 0 {
-		b.i++
-	}
-}
-
-func (b *builder) value() (any, error) {
-	b.ws()
-	rest := b.s[b.i:]
-	switch {
-	case rest == "":
-		return nil, &syntaxError{"unexpected end of document"}
-	case rest[0] == '{':
-		b.i++
-		return b.object()
-	case rest[0] == '[':
-		b.i++
-		list := []any{}
-		for b.ws(); b.i < len(b.s) && b.s[b.i] != ']'; b.ws() {
-			item, err := b.value()
-			if err != nil {
-				return nil, err
-			}
-			list = append(list, item)
-			if b.ws(); b.i < len(b.s) && b.s[b.i] == ',' {
-				b.i++
-			}
-		}
-		b.i++
-		return list, nil
-	case rest[0] == '"':
-		return b.str()
-	}
-	for _, literal := range []struct {
-		text  string
-		value any
-	}{{"null", nil}, {"true", true}, {"false", false}, {"NaN", math.NaN()}, {"Infinity", math.Inf(1)}, {"-Infinity", math.Inf(-1)}} {
-		if strings.HasPrefix(rest, literal.text) {
-			b.i += len(literal.text)
-			return literal.value, nil
-		}
-	}
-	end := strings.IndexFunc(rest, func(r rune) bool { return !strings.ContainsRune("+-.0123456789eE", r) })
-	if end < 0 {
-		end = len(rest)
-	}
-	b.i += end
-	return json.Number(rest[:end]), nil
-}
-
-// str reads one string token as json.loads decodes it (pyjson.Unquote): a lone surrogate escape
-// ("\udcff") is that code point, held as WTF-8, so a refusal names it as repr() does and two
-// names escaped as different surrogates stay two names.
-func (b *builder) str() (string, error) {
-	start := b.i
-	for b.i++; b.i < len(b.s) && b.s[b.i] != '"'; b.i++ {
-		if b.s[b.i] == '\\' {
-			b.i++
-		}
-	}
-	b.i++
-	out, err := pyjson.Unquote(b.s[start:b.i])
-	if err != nil {
-		return "", &syntaxError{err.Error()}
-	}
-	return out, nil
-}
-
-// object reads the members after '{' and refuses a repeated key when the object closes, as
-// _no_duplicates does, so an inner duplicate is reported before an outer one.
-func (b *builder) object() (any, error) {
-	o := &object{values: map[string]any{}}
-	repeated, duplicate := "", false
-	for b.ws(); b.i < len(b.s) && b.s[b.i] != '}'; b.ws() {
-		key, err := b.str()
-		if err != nil {
-			return nil, err
-		}
-		b.ws()
-		b.i++ // ':'
-		value, err := b.value()
-		if err != nil {
-			return nil, err
-		}
-		if o.has(key) {
-			if !duplicate {
-				repeated, duplicate = key, true
-			}
-		} else {
-			o.keys = append(o.keys, key)
-			o.values[key] = value
-		}
-		if b.ws(); b.i < len(b.s) && b.s[b.i] == ',' {
-			b.i++
-		}
-	}
-	b.i++
-	if duplicate {
-		return nil, &PolicyError{fmt.Sprintf("duplicate key %s in the execution policy", repr(repeated))}
-	}
-	return o, nil
-}
 
 // isBlank is Python's `not value.strip()`.
 func isBlank(s string) bool { return pyvalue.Strip(s) == "" }

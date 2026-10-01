@@ -38,15 +38,15 @@ func parseRoles(declared any) (map[string]Role, error) {
 	if declared == nil {
 		return parsed, nil
 	}
-	section, ok := declared.(*object)
+	section, ok := declared.(object)
 	if !ok {
 		return nil, &PolicyError{"roles must be a JSON object keyed by role id"}
 	}
-	for _, name := range section.keys {
+	for _, name := range keys(section) {
 		if !isRole(name) {
 			return nil, &PolicyError{fmt.Sprintf("%s is not a role; supported are %s", repr(name), supportedRoles)}
 		}
-		entry, ok := section.values[name].(*object)
+		entry, ok := section.Get(name).(object)
 		if !ok {
 			return nil, &PolicyError{fmt.Sprintf("role %s must be an object", repr(name))}
 		}
@@ -62,13 +62,13 @@ func parseRoles(declared any) (map[string]Role, error) {
 	return parsed, nil
 }
 
-func parseRole(name string, entry *object) (Role, error) {
+func parseRole(name string, entry object) (Role, error) {
 	var expectation any = Pair
 	if name == Supervisor {
 		expectation = Record
 	}
-	if entry.has("expectation") {
-		expectation = entry.values["expectation"]
+	if has(entry, "expectation") {
+		expectation = entry.Get("expectation")
 	}
 	if expectation != any(Pair) && expectation != any(Record) {
 		return Role{}, &PolicyError{fmt.Sprintf("role %s expectation must be 'pair' or 'record'", repr(name))}
@@ -80,19 +80,19 @@ func parseRole(name string, entry *object) (Role, error) {
 		return Role{}, &PolicyError{fmt.Sprintf("role %s expectation must be 'pair': only 'supervisor' defers to the recorded authorization, and letting another role do so would exempt it from the role check", repr(name))}
 	}
 	if name == Supervisor {
-		if named := entry.present("model", "reasoningEffort"); len(named) > 0 {
+		if named := present(entry, "model", "reasoningEffort"); len(named) > 0 {
 			return Role{}, &PolicyError{fmt.Sprintf("role 'supervisor' cannot declare %s: its model and effort are the user's own selection, so its expectation is the recorded authorization", repr(named))}
 		}
 		return Role{Expectation: Record}, nil
 	}
-	if absent := entry.absent("model", "reasoningEffort"); len(absent) > 0 {
+	if absent := absent(entry, "model", "reasoningEffort"); len(absent) > 0 {
 		return Role{}, &PolicyError{fmt.Sprintf("role %s is missing %s", repr(name), repr(absent))}
 	}
-	model, err := identifier(entry.values["model"], "the model of role "+repr(name), Maximum)
+	model, err := identifier(entry.Get("model"), "the model of role "+repr(name), Maximum)
 	if err != nil {
 		return Role{}, err
 	}
-	effort, err := identifier(entry.values["reasoningEffort"], "the effort of role "+repr(name), Maximum)
+	effort, err := identifier(entry.Get("reasoningEffort"), "the effort of role "+repr(name), Maximum)
 	if err != nil {
 		return Role{}, err
 	}
