@@ -11,11 +11,9 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 )
 
-// The Python CLIs this binary replaces are argparse programs: -h/--help and the bridge's
-// --version print to stdout and exit 0, and a command line they cannot parse prints usage to
-// stderr and exits 2 (measured with `uv run --no-sync codex-thread-bridge --version|bogus` and
-// `codex-session-relay` with no command). crw's own help/version follow the same contract.
-func TestRun_help_and_version_exit_like_the_python_clis(t *testing.T) {
+// crw's help and version print to stdout and exit 0, and a command line it cannot read prints
+// usage to stderr and exits 2, as the relay's and the bridge's command lines do.
+func TestRun_help_and_version_exit_0_and_an_unreadable_line_exits_2(t *testing.T) {
 	for _, test := range []struct {
 		args   []string
 		code   int
@@ -39,9 +37,9 @@ func TestRun_help_and_version_exit_like_the_python_clis(t *testing.T) {
 	}
 }
 
-// Python's relay CLI has no --version: argparse refuses it with exit 2. The multi-call link
-// must answer the same, not print a version the Python CLI never printed.
-func TestRun_relay_link_has_no_version_flag_like_python(t *testing.T) {
+// The relay command line has no --version: its parser refuses it with exit 2, under the
+// codex-session-relay link too.
+func TestRun_relay_link_has_no_version_flag(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	if code := run(context.Background(), "/x/codex-session-relay", []string{"--version"}, &stdout, &stderr); code != 2 || stdout.Len() != 0 {
 		t.Fatalf("code=%d stdout=%q", code, stdout.String())
