@@ -3367,10 +3367,18 @@ admission (or `--kind-module` alone), the handler, and one emit. Each command's 
 carries what that path reads: read-only (cli.py READ_ONLY_COMMANDS and `_read_only_command`),
 answers without a state directory (`merge-evidence`, `ack-proof`), answers without the selected
 store (`_reads_no_selected_store`, the marker commands), exempt from the selection refusal, admits
-its own store. The order of the checks is cli.main's for every family,
-as it was. The command families' own entry points and their re-parse of the global options are
-gone. Where the families answered the same ending differently, every command now answers it as
-cli.py did:
+its own store. The order of the checks is cli.main's for every family, as it was. The command
+families' own entry points and their re-parse of the global options are gone.
+
+The doctor's `offlineCommands` and `hostRequiredCommands` stay the doctor's own lists (cli.py's,
+in cli.py's order) rather than attributes of the table: the doctor answers them alike in every
+build, whichever command packages it links, while the table holds what the binary registered
+(in-process test builds link only some families, and the CLI package cannot link them all: the
+managed and routing packages' in-process tests import it). A test of the built command set holds
+every listed name to a registered command and every parser choice to a registration.
+
+Where the families answered the same ending differently, every command now answers it as cli.py
+did:
 
 - A `--state` (or `CODEX_SESSION_RELAY_STATE`) that cannot be resolved because `~user` names no
   user, or `~` has no home, answers `RuntimeError: Could not determine home directory.` (exit 3).
@@ -3396,5 +3404,7 @@ apart only where nothing looked. One table and one path keep the refusal order i
 
 Evidence: `internal/relay/dispatch` (`Execute`, `Command`, `emit`), the families' registrations
 (`internal/relay/cli/registry.go`, `internal/relay/registry/cli.go`, `external.go`,
-`internal/relay/delivery/cli.go`, `intent_cli.go`, `internal/relay/faults/cli.go`); every relay
-CLI golden compares unchanged.
+`internal/relay/delivery/cli.go`, `intent_cli.go`, `internal/relay/faults/cli.go`);
+`TestRun_every_relay_parser_choice_is_registered`,
+`TestRun_unknown_user_state_is_a_python_host_error` (cmd/crw); every relay CLI golden compares
+unchanged.

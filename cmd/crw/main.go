@@ -10,21 +10,23 @@ import (
 	"syscall"
 	"time"
 
-	// The merge-turn-* relay commands register themselves on the relay CLI.
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/mcp"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pluginwiring"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/adapter"
-	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/capacity"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install"
+	"github.com/thisisjun786/codex-relay-workflow/internal/skill"
+
+	// The relay commands register in the relay command table when their packages load; cli
+	// brings its own and the registry, delivery and fault families.
+	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/capacity"
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/routing"
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/sync"
-	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
-	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install"
-	"github.com/thisisjun786/codex-relay-workflow/internal/skill"
 )
 
 var version = "dev"
