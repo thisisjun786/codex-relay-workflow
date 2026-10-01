@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 )
 
 // The Python CLIs this binary replaces are argparse programs: -h/--help and the bridge's
@@ -104,12 +104,13 @@ func TestRun_install_dispatches_to_the_installer(t *testing.T) {
 // Every relay command a package registers on the relay CLI is parsed by its argparse spec; the
 // CLI has no second parser to fall back on (wave R1).
 func TestRun_every_relay_command_has_an_argparse_spec(t *testing.T) {
-	if len(cli.Commands) < 50 {
-		t.Fatalf("only %d relay commands registered", len(cli.Commands))
+	names := dispatch.Names()
+	if len(names) < 50 {
+		t.Fatalf("only %d relay commands registered", len(names))
 	}
-	for _, command := range cli.Commands {
-		if _, ok := argparse.Specs[command.Name]; !ok {
-			t.Errorf("relay command %s has no argparse spec", command.Name)
+	for _, name := range names {
+		if _, ok := argparse.Specs[name]; !ok {
+			t.Errorf("relay command %s has no argparse spec", name)
 		}
 	}
 }

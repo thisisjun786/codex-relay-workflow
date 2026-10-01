@@ -2,26 +2,21 @@ package managed
 
 import (
 	"context"
-	"flag"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 func init() {
-	cli.Commands = append(cli.Commands,
-		cli.Command{Name: "managed-show", Flags: func(f *flag.FlagSet) { f.String("request-id", "", "") }, Exempt: true, Run: runShow},
-		cli.Command{Name: "managed-release", Flags: func(f *flag.FlagSet) {
-			f.String("request-id", "", "")
-			f.String("fingerprint", "", "")
-			f.Int64("revision", 0, "")
-			f.String("reason", "", "")
-		}, Run: runRelease})
+	dispatch.Register(nil,
+		dispatch.Command{Name: "managed-start", Exempt: true, OwnAdmission: true, Run: runStart},
+		dispatch.Command{Name: "managed-show", Exempt: true, ReadOnly: true, Run: runShow},
+		dispatch.Command{Name: "managed-release", Run: runRelease})
 }
-func runShow(ctx context.Context, services cli.Services, args cli.Args) (any, error) {
+func runShow(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
 	id, _ := args.String("request-id")
 	var row contract.OrderedObject
 	var observation any
@@ -80,7 +75,7 @@ func nullableDetail(s string) any {
 	}
 	return s
 }
-func runRelease(ctx context.Context, services cli.Services, args cli.Args) (any, error) {
+func runRelease(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
 	s, err := store.Open(ctx, services.Selection.DBPath(), services.SocketPath)
 	if err != nil {
 		return nil, err

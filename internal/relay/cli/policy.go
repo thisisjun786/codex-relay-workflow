@@ -13,6 +13,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/service"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -127,7 +128,7 @@ func workerReadiness(observation contract.OrderedObject, requirements any, calle
 // readWorkerPolicy is RelayService.read_worker_policy up to the checks this build can make
 // against a record another installation wrote. Every answer is an absence reason or an
 // observation; nothing is repaired.
-func readWorkerPolicy(services Services, loc store.Location) contract.OrderedObject {
+func readWorkerPolicy(services dispatch.Services, loc store.Location) contract.OrderedObject {
 	absent := func(reason string) contract.OrderedObject {
 		return contract.OrderedObject{{Key: "observed", Value: false}, {Key: "reason", Value: reason}, {Key: "policy", Value: nil}}
 	}

@@ -8,8 +8,8 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/service"
@@ -19,7 +19,7 @@ import (
 // managedStart is managed.HostStart: readiness, the store, the engine and every host call run
 // on the command's ctx, so an interrupt ends a start through the adapter's caller
 // cancellation (decision 39) instead of being ignored until the host answers.
-func managedStart(ctx context.Context, services cli.Services, args cli.Args, raw []byte) (out any, err error) {
+func managedStart(ctx context.Context, services dispatch.Services, args dispatch.Args, raw []byte) (out any, err error) {
 	request, err := managed.ParseRequest(raw)
 	if err != nil {
 		return nil, err
@@ -35,7 +35,7 @@ func managedStart(ctx context.Context, services cli.Services, args cli.Args, raw
 		return nil, err
 	}
 	if reason != "" {
-		return nil, &cli.PayloadExit{Code: contract.ExitRefused, Payload: contract.OrderedObject{{Key: "schema", Value: managed.Schema}, {Key: "state", Value: "refused"}, {Key: "stage", Value: "preflight"}, {Key: "requestId", Value: request["requestId"]}, {Key: "reason", Value: reason}}}
+		return nil, &dispatch.PayloadExit{Code: contract.ExitRefused, Payload: contract.OrderedObject{{Key: "schema", Value: managed.Schema}, {Key: "state", Value: "refused"}, {Key: "stage", Value: "preflight"}, {Key: "requestId", Value: request["requestId"]}, {Key: "reason", Value: reason}}}
 	}
 	bridgePolicy, err := execution.FromEnvironment(map[string]string{execution.EnvPolicy: os.Getenv(execution.EnvPolicy), execution.EnvDigest: os.Getenv(execution.EnvDigest)})
 	if err != nil {
@@ -61,7 +61,7 @@ func managedStart(ctx context.Context, services cli.Services, args cli.Args, raw
 		return nil, err
 	}
 	if field(answer, "state") != "admitted" {
-		return nil, &cli.PayloadExit{Payload: answer, Code: contract.ExitRefused}
+		return nil, &dispatch.PayloadExit{Payload: answer, Code: contract.ExitRefused}
 	}
 	return answer, nil
 }
@@ -69,7 +69,7 @@ func managedStart(ctx context.Context, services cli.Services, args cli.Args, raw
 // workerObserver is the worker-policy reader managed-start admits through, over the scope
 // registry the service itself resolves (service.ResolveScope, the scope directory as pathlib
 // spells it, as cmd_managed_start's _service_for does), and this executable's installation.
-func workerObserver(services cli.Services) (WorkerObservation, error) {
+func workerObserver(services dispatch.Services) (WorkerObservation, error) {
 	scope, err := service.ResolveScope()
 	if err != nil {
 		return WorkerObservation{}, err

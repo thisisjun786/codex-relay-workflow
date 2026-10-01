@@ -3,16 +3,17 @@ package adapter
 import (
 	"context"
 	"errors"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
+
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/daemon"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/faults"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor"
 )
 
-func daemonFactory(ctx context.Context, services cli.Services, s *store.Store) (*daemon.Daemon, error) {
+func daemonFactory(ctx context.Context, services dispatch.Services, s *store.Store) (*daemon.Daemon, error) {
 	selection, err := store.ResolveStateDir("", services.SocketPath)
 	if err != nil {
 		return nil, err

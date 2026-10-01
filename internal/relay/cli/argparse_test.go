@@ -3,11 +3,12 @@ package cli
 import (
 	"bytes"
 	"context"
-	"flag"
-	"io"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 )
 
 func Test24ArgparsePython(t *testing.T) {
@@ -47,38 +48,30 @@ func Test24ArgparsePython(t *testing.T) {
 			}
 			args := append([]string{"--state", filepath.Join(home, "state"), tc.name}, tail...)
 			// Parsing is tested apart from clocks and host I/O, with each real command's
-			// FlagSet: an accepted parse is checked by the values it consumed, a parser
+			// argparse spec: an accepted parse is checked by the values it consumed, a parser
 			// termination by its answer and the dispatcher's.
 			var compared map[string]any
 			t.Run(tc.name+"/"+mode, func(t *testing.T) {
-				var out, stderr bytes.Buffer
-				command := Command{}
-				for _, c := range Commands {
-					if c.Name == tc.name {
-						command = c
-						break
-					}
-				}
-				flags := newArgparseFlags(command)
-				given, code, done := parseRelayArgs("codex-session-relay", flags, tail, &out, &stderr)
-				if !done {
+				result := argparse.Parse(tc.name, tail)
+				if !result.Help && result.Message == "" {
 					accepted := map[string]string{}
-					for name := range given {
+					for name := range result.Given {
 						key := strings.ReplaceAll(name, "-", "_")
 						if name == "as" {
 							key = "asserted_by"
 						}
-						value := flags.Lookup(name).Value.String()
-						accepted[key] = value
+						accepted[key] = dispatch.Args{Parsed: result}.Text(name)
 					}
 					compared = map[string]any{"accepted": accepted}
 					return
 				}
-				parsed := map[string]any{"code": code, "stdout": out.String(), "stderr": stderr.String()}
+				parsed := map[string]any{"code": 0, "stdout": argparse.Help("codex-session-relay", tc.name), "stderr": ""}
+				if !result.Help {
+					parsed = map[string]any{"code": 2, "stdout": "", "stderr": result.Error("codex-session-relay", tc.name)}
+				}
 				// Exercise the actual dispatcher as well on parser terminations.
-				out.Reset()
-				stderr.Reset()
-				code = Execute(context.Background(), args, &out, &stderr)
+				var out, stderr bytes.Buffer
+				code := Execute(context.Background(), args, &out, &stderr)
 				compared = map[string]any{"parsed": parsed, "dispatched": map[string]any{"code": code, "stdout": out.String(), "stderr": stderr.String()}}
 			})
 			if compared != nil {
@@ -86,11 +79,4 @@ func Test24ArgparsePython(t *testing.T) {
 			}
 		}
 	}
-}
-
-func newArgparseFlags(command Command) *flag.FlagSet {
-	flags := flag.NewFlagSet(command.Name, flag.ContinueOnError)
-	flags.SetOutput(io.Discard)
-	command.Flags(flags)
-	return flags
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"slices"
@@ -14,7 +13,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -126,7 +125,7 @@ func cmdRegionPropose(ctx context.Context, s *store.Store, p parsed) (any, error
 // settleConditionRefusal is cli.cmd_region_settle's own refusal (cli.py:1433), printed whole
 // before the service is reached.
 func settleConditionRefusal() error {
-	return &cli.PayloadExit{Payload: contract.OrderedObject{{Key: "ok", Value: false}, {Key: "reason", Value: "bad_invocation"},
+	return &dispatch.PayloadExit{Payload: contract.OrderedObject{{Key: "ok", Value: false}, {Key: "reason", Value: "bad_invocation"},
 		{Key: "detail", Value: "an acceptance takes no condition and --condition would be dropped. State" +
 			" your condition when you propose, restate it with region-reaffirm" +
 			" --condition after a base move, or decline with the condition you would accept."}}, Code: contract.ExitRefused}
@@ -236,7 +235,7 @@ func globals(argv []string) (globalFlags, []string, error) {
 		return g, nil, errors.New(root.Message)
 	}
 	if root.Help || len(root.Unknown) > 0 {
-		return g, nil, nil // cli.ExecuteAs owns root help and errors.
+		return g, nil, nil // the relay CLI owns root help and errors.
 	}
 	if values := root.Values["state"]; len(values) > 0 {
 		g.state = values[0]
@@ -372,22 +371,20 @@ func Precheck(prog string, argv []string, stdout, stderr io.Writer) (code int, h
 }
 
 // relayCommands are this package's commands as the relay CLI registers them. Their lines were
-// already accepted by Precheck, so the flag set only has to carry the values through.
-func relayCommands() []cli.Command {
-	out := make([]cli.Command, len(commands))
+// already accepted by Precheck; argparse's parse only carries the values through.
+func relayCommands() []dispatch.Command {
+	out := make([]dispatch.Command, len(commands))
 	for i, c := range commands {
-		out[i] = cli.Command{
-			Name: c.name,
-			Flags: func(f *flag.FlagSet) {
-				for _, o := range c.options {
-					if o.flag {
-						f.Bool(o.name, false, "")
-					} else {
-						f.String(o.name, o.def, "")
-					}
-				}
-			},
-			Run: func(ctx context.Context, services cli.Services, args cli.Args) (any, error) {
+		defaults := map[string]any{}
+		for _, o := range c.options {
+			if o.def != "" {
+				defaults[o.name] = o.def
+			}
+		}
+		out[i] = dispatch.Command{
+			Name: c.name, Defaults: defaults,
+			ReadOnly: c.name == "capacity-show" || c.name == "region-show",
+			Run: func(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
 				p := parsed{values: map[string]string{}, set: map[string]bool{}}
 				for _, o := range c.options {
 					if o.flag {
@@ -413,5 +410,4 @@ func relayCommands() []cli.Command {
 	return out
 }
 
-// Registered in the relay CLI's command list, as later domain ports append theirs.
-func init() { cli.Commands = append(cli.Commands, relayCommands()...) }
+func init() { dispatch.Register(nil, relayCommands()...) }
