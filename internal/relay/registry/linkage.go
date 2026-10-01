@@ -147,75 +147,9 @@ func contestedOwner(kind, key string, owners []string, challenger string) *linkR
 
 // attachRefusal is linkage.attach_refusal: pure reads.
 func (l linkage) attachRefusal(ctx context.Context, x *row, project, replacing string) (*attachPlan, *linkRefusal, error) {
-	if err := exact(project, "a project key"); err != nil {
-		return nil, nil, err
-	}
-	if !isLive(x.Status) || x.SupersededBy.String != "" {
-		return nil, &linkRefusal{reason: contract.RefusalRelationshipNotActive,
-			detail:    "relationship " + pyvalue.StrRepr(x.ID) + " is " + pyvalue.StrRepr(x.Status) + ", so its issue cannot be attached to a project",
-			scopeKind: scopeProject, scopeKey: project, incumbent: x.ID, challenger: project}, nil
-	}
-	if x.ParentTask == x.ChildTask {
-		return nil, &linkRefusal{reason: contract.RefusalScopeCycle,
-			detail:    "relationship " + pyvalue.StrRepr(x.ID) + " has the same task as parent and child, which is a self-link rather than a level",
-			scopeKind: scopeIssue, scopeKey: x.Issue, incumbent: x.ParentTask, challenger: x.ChildTask}, nil
-	}
-	owners, err := l.liveOwners(ctx, scopeProject, project, roleParent)
-	if err != nil {
-		return nil, nil, err
-	}
-	if len(owners) > 1 {
-		return nil, contestedOwner(scopeProject, project, owners, x.ParentTask), nil
-	}
-	if len(owners) == 0 {
-		return nil, &linkRefusal{reason: contract.RefusalUnregisteredScope,
-			detail:    "project " + pyvalue.StrRepr(project) + " has no registered parent, so an issue cannot be attached to it yet",
-			scopeKind: scopeProject, scopeKey: project, challenger: x.ParentTask}, nil
-	}
-	holder := owners[0]
-	movingWithin := false
-	if x.Supersedes.String != "" {
-		_, taken, err := l.oneString(ctx, "SELECT 1 FROM relationships WHERE relationship_id = ? AND superseded_by = ?", x.Supersedes.String, x.ID)
-		if err != nil {
-			return nil, nil, err
-		}
-		child, err := l.replaceableChild(ctx, x.Supersedes.String)
-		if err != nil {
-			return nil, nil, err
-		}
-		if taken || child != "" {
-			_, movingWithin, err = l.oneString(ctx, "SELECT 1 FROM relationship_scope s  JOIN relationships r ON r.relationship_id = s.relationship_id"+
-				" WHERE s.relationship_id = ? AND s.project_key = ? AND r.issue_key = ?", x.Supersedes.String, project, x.Issue)
-			if err != nil {
-				return nil, nil, err
-			}
-		}
-	}
-	if holder != x.ParentTask && !movingWithin {
-		return nil, &linkRefusal{reason: contract.RefusalForeignScope,
-			detail: "issue " + pyvalue.StrRepr(x.Issue) + " is assigned under parent " + pyvalue.StrRepr(x.ParentTask) + ", but project " + pyvalue.StrRepr(project) +
-				" is executed by " + pyvalue.StrRepr(holder) + "; an issue belongs to its own project",
-			scopeKind: scopeProject, scopeKey: project, incumbent: holder, challenger: x.ParentTask}, nil
-	}
-	recorded, hasRecord, err := l.oneString(ctx, "SELECT project_key FROM relationship_scope WHERE relationship_id = ?", x.ID)
-	if err != nil {
-		return nil, nil, err
-	}
-	if hasRecord && recorded != project {
-		return nil, &linkRefusal{reason: contract.RefusalForeignScope,
-			detail:    "issue " + pyvalue.StrRepr(x.Issue) + " is already scoped to project " + pyvalue.StrRepr(recorded) + ", not " + pyvalue.StrRepr(project),
-			scopeKind: scopeIssue, scopeKey: x.Issue, incumbent: recorded, challenger: project}, nil
-	}
-	elsewhere, found, err := l.oneString(ctx, "SELECT s.project_key FROM relationship_scope s  JOIN relationships r ON r.relationship_id = s.relationship_id"+
-		" WHERE r.issue_key = ? AND s.project_key != ? AND s.relationship_id != ? LIMIT 1", x.Issue, project, x.ID)
-	if err != nil {
-		return nil, nil, err
-	}
-	if found {
-		return nil, &linkRefusal{reason: contract.RefusalForeignScope,
-			detail: "issue " + pyvalue.StrRepr(x.Issue) + " is already scoped to project " + pyvalue.StrRepr(elsewhere) +
-				" through another assignment, so it cannot also belong to " + pyvalue.StrRepr(project),
-			scopeKind: scopeIssue, scopeKey: x.Issue, incumbent: elsewhere, challenger: project}, nil
+	hasRecord, refusal, err := l.projectRefusal(ctx, x, project)
+	if err != nil || refusal != nil {
+		return nil, refusal, err
 	}
 	if err := exact(x.ChildTask, "the child task id"); err != nil {
 		return nil, nil, err
@@ -228,6 +162,85 @@ func (l linkage) attachRefusal(ctx context.Context, x *row, project, replacing s
 		return nil, refusal, err
 	}
 	return &attachPlan{binding: *plan, scopeRowMissing: !hasRecord}, nil, nil
+}
+
+// projectRefusal is attachRefusal's first half, in attachRefusal's own order: what the relationship's parent,
+// issue and project decide, from the project key to the issue already scoped elsewhere. It reports whether
+// the relationship already has a scope record. None of its refusals names the child, so a row with no id and
+// no child (a child that does not exist yet) is decided here by the same code: the self-link and supersedes
+// branches are inert for such a row, an empty id matches no scope record and excludes no other assignment.
+func (l linkage) projectRefusal(ctx context.Context, x *row, project string) (bool, *linkRefusal, error) {
+	if err := exact(project, "a project key"); err != nil {
+		return false, nil, err
+	}
+	if !isLive(x.Status) || x.SupersededBy.String != "" {
+		return false, &linkRefusal{reason: contract.RefusalRelationshipNotActive,
+			detail:    "relationship " + pyvalue.StrRepr(x.ID) + " is " + pyvalue.StrRepr(x.Status) + ", so its issue cannot be attached to a project",
+			scopeKind: scopeProject, scopeKey: project, incumbent: x.ID, challenger: project}, nil
+	}
+	if x.ParentTask == x.ChildTask {
+		return false, &linkRefusal{reason: contract.RefusalScopeCycle,
+			detail:    "relationship " + pyvalue.StrRepr(x.ID) + " has the same task as parent and child, which is a self-link rather than a level",
+			scopeKind: scopeIssue, scopeKey: x.Issue, incumbent: x.ParentTask, challenger: x.ChildTask}, nil
+	}
+	owners, err := l.liveOwners(ctx, scopeProject, project, roleParent)
+	if err != nil {
+		return false, nil, err
+	}
+	if len(owners) > 1 {
+		return false, contestedOwner(scopeProject, project, owners, x.ParentTask), nil
+	}
+	if len(owners) == 0 {
+		return false, &linkRefusal{reason: contract.RefusalUnregisteredScope,
+			detail:    "project " + pyvalue.StrRepr(project) + " has no registered parent, so an issue cannot be attached to it yet",
+			scopeKind: scopeProject, scopeKey: project, challenger: x.ParentTask}, nil
+	}
+	holder := owners[0]
+	movingWithin := false
+	if x.Supersedes.String != "" {
+		_, taken, err := l.oneString(ctx, "SELECT 1 FROM relationships WHERE relationship_id = ? AND superseded_by = ?", x.Supersedes.String, x.ID)
+		if err != nil {
+			return false, nil, err
+		}
+		child, err := l.replaceableChild(ctx, x.Supersedes.String)
+		if err != nil {
+			return false, nil, err
+		}
+		if taken || child != "" {
+			_, movingWithin, err = l.oneString(ctx, "SELECT 1 FROM relationship_scope s  JOIN relationships r ON r.relationship_id = s.relationship_id"+
+				" WHERE s.relationship_id = ? AND s.project_key = ? AND r.issue_key = ?", x.Supersedes.String, project, x.Issue)
+			if err != nil {
+				return false, nil, err
+			}
+		}
+	}
+	if holder != x.ParentTask && !movingWithin {
+		return false, &linkRefusal{reason: contract.RefusalForeignScope,
+			detail: "issue " + pyvalue.StrRepr(x.Issue) + " is assigned under parent " + pyvalue.StrRepr(x.ParentTask) + ", but project " + pyvalue.StrRepr(project) +
+				" is executed by " + pyvalue.StrRepr(holder) + "; an issue belongs to its own project",
+			scopeKind: scopeProject, scopeKey: project, incumbent: holder, challenger: x.ParentTask}, nil
+	}
+	recorded, hasRecord, err := l.oneString(ctx, "SELECT project_key FROM relationship_scope WHERE relationship_id = ?", x.ID)
+	if err != nil {
+		return false, nil, err
+	}
+	if hasRecord && recorded != project {
+		return false, &linkRefusal{reason: contract.RefusalForeignScope,
+			detail:    "issue " + pyvalue.StrRepr(x.Issue) + " is already scoped to project " + pyvalue.StrRepr(recorded) + ", not " + pyvalue.StrRepr(project),
+			scopeKind: scopeIssue, scopeKey: x.Issue, incumbent: recorded, challenger: project}, nil
+	}
+	elsewhere, found, err := l.oneString(ctx, "SELECT s.project_key FROM relationship_scope s  JOIN relationships r ON r.relationship_id = s.relationship_id"+
+		" WHERE r.issue_key = ? AND s.project_key != ? AND s.relationship_id != ? LIMIT 1", x.Issue, project, x.ID)
+	if err != nil {
+		return false, nil, err
+	}
+	if found {
+		return false, &linkRefusal{reason: contract.RefusalForeignScope,
+			detail: "issue " + pyvalue.StrRepr(x.Issue) + " is already scoped to project " + pyvalue.StrRepr(elsewhere) +
+				" through another assignment, so it cannot also belong to " + pyvalue.StrRepr(project),
+			scopeKind: scopeIssue, scopeKey: x.Issue, incumbent: elsewhere, challenger: project}, nil
+	}
+	return hasRecord, nil, nil
 }
 
 // bindingPlan is linkage.binding_plan.
