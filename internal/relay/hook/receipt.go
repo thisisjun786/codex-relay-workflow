@@ -5,10 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"os"
 	"slices"
-	"strings"
-	"syscall"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
@@ -117,191 +114,27 @@ func LookupReceipt(ctx context.Context, path string, fallback func() (string, er
 	if !delivery.SameIdentity(thread.String, session) || !delivery.SameIdentity(eventTurn.String, turn) {
 		return answer("head_belongs_to_another_turn")
 	}
-	rv, re := Decode([]byte(roots))
-	pv, pe := Decode([]byte(payload))
-	if re != nil || pe != nil {
-		e := re
-		if e == nil {
-			e = pe
-		}
-		return answer("stored_receipt_unreadable", Field{Key: "detail", Value: "JSONDecodeError: " + e.Error()}, Field{Key: "eventId", Value: id})
+	// The omission reader reads the same stored receipt through the same two functions.
+	rv, pv, unreadable := store.DecodeStoredReceipt(roots, payload)
+	if unreadable != "" {
+		return answer("stored_receipt_unreadable", Field{Key: "detail", Value: unreadable}, Field{Key: "eventId", Value: id})
 	}
-	state, binding, detail, err := DeliverableState(ctx, pv, manifest.String, rv)
+	state, binding, detail, err := store.DeliverableState(ctx, pv, manifest.String, rv)
 	if err != nil {
 		return nil, false, err
 	}
-	if state == "unverifiable" {
+	if state == store.DeliverableUnverifiable {
 		return append(set(base, "evidence", "deliverable_unverifiable"), Field{Key: "detail", Value: nullable(detail)}), false, nil
 	}
-	if state == "changed" {
+	if state == store.DeliverableChanged {
 		return answer("artifacts_changed_since_receipt", Field{Key: "detail", Value: nullable(detail)}, Field{Key: "eventId", Value: id}, Field{Key: "revisionHash", Value: nullable(revision.String)})
 	}
 	base = set(base, "atCurrentHead", true)
 	return answer("at_head", Field{Key: "eventId", Value: id}, Field{Key: "revisionHash", Value: nullable(revision.String)}, Field{Key: "stage", Value: stage}, Field{Key: "deliverableBinding", Value: binding})
 }
-func accessFailure(err error) bool {
-	var refused *store.RefusedError
-	if errors.As(err, &refused) && refused.Reason == store.ReasonUnverifiablePathBinding {
-		return true
-	}
-	var errno syscall.Errno
-	if errors.As(err, &errno) {
-		return errno != syscall.ELOOP && errno != syscall.ENOTDIR && errno != syscall.ENOENT && errno != syscall.ESTALE
-	}
-	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
-}
 
-// DeliverableState is guard.deliverable_state. The stored receipt's records and the frozen copy's
-// are read as the values json.loads made of them (store.FrozenManifestEntries), so a path, digest
-// or byte count of another type is compared, printed and refused as the fence does, and an
-// exception the fence raises is answered as its except clauses answer it (raisedState). The error
-// is the exception those clauses do not name (a *store.ManifestException whose RuntimeError holds),
-// which leaves deliverable_state and lookup_receipt, so the guard faults on it.
+// DeliverableState is guard.deliverable_state: store.DeliverableState, which the omission reader
+// calls as well, so a stored receipt is judged alike by both.
 func DeliverableState(ctx context.Context, payload any, reference string, rootsValue any) (string, string, string, error) {
-	o, ok := evidence.Object(payload)
-	if !ok && pyvalue.Truthy(payload) {
-		return "changed", "", "AttributeError: '" + pyvalue.TypeName(payload) + "' object has no attribute 'get'", nil
-	}
-	records, ok := evidence.List(get(o, "manifest"))
-	if !ok || len(records) == 0 {
-		return "changed", "", "the stored receipt carries no manifest to verify", nil
-	}
-	entries, err := store.FrozenManifestEntries(records)
-	if err != nil {
-		return raisedState(err)
-	}
-	revision, err := store.FrozenRevisionHash(entries)
-	if err != nil {
-		return raisedState(err)
-	}
-	claimed := get(o, "revisionHash")
-	if !pyvalue.Truthy(claimed) {
-		return "changed", "", "the stored receipt names no revision", nil
-	}
-	if claimed != revision {
-		return "changed", "", "the stored manifest hashes to " + revision + " but the receipt claims " + pyvalue.Str(claimed), nil
-	}
-	rootsList, ok := evidence.List(rootsValue)
-	if !ok {
-		return "changed", "", "TypeError: artifact roots are not a list", nil
-	}
-	roots := []string{}
-	for _, r := range rootsList {
-		s, ok := r.(string)
-		if !ok {
-			return "changed", "", "TypeError: artifact root is not a string", nil
-		}
-		roots = append(roots, s)
-	}
-	problems, unreadable := verifyEntries(ctx, entries, roots)
-	if len(problems) == 0 {
-		return "current", "live", "", nil
-	}
-	if reference != "" {
-		frozen, unreachable, err := verifyFrozen(ctx, reference, entries)
-		if err != nil {
-			return raisedState(err)
-		}
-		if len(frozen) == 0 {
-			return "current", "frozen", "", nil
-		}
-		if len(unreachable) > 0 {
-			return "unverifiable", "", strings.Join(unreachable[:min(3, len(unreachable))], "; "), nil
-		}
-		problems = append(problems, frozen...)
-	}
-	if len(unreadable) > 0 {
-		return "unverifiable", "", strings.Join(unreadable[:min(3, len(unreadable))], "; "), nil
-	}
-	return "changed", "", strings.Join(problems[:min(3, len(problems))], "; "), nil
-}
-
-// raisedState is guard.deliverable_state's except clauses: an OSError or a ScopeError could not
-// look (unverifiable), and a ValueError, KeyError, TypeError or AttributeError looked and found a
-// record that is not the shape a receipt is (changed), each named f"{type(error).__name__}:
-// {error}". A RecursionError is none of those, so it is returned, to leave deliverable_state.
-func raisedState(err error) (string, string, string, error) {
-	var answered *frozenAnswer
-	if errors.As(err, &answered) {
-		return answered.state, "", answered.detail, nil
-	}
-	var exception *store.ManifestException
-	if errors.As(err, &exception) {
-		switch {
-		case exception.RuntimeError():
-			return "", "", "", exception
-		case exception.OSError():
-			return "unverifiable", "", exception.StoredText(), nil
-		}
-		return "changed", "", exception.StoredText(), nil
-	}
-	return "unverifiable", "", "ScopeError: " + err.Error(), nil
-}
-
-// frozenAnswer is an exception the hook's own read of a frozen MANIFEST.json raises before the
-// store reads the document, with the state guard.deliverable_state's except clauses give it.
-type frozenAnswer struct{ state, detail string }
-
-func (e *frozenAnswer) Error() string { return e.detail }
-
-// verifyEntries is manifest.verify_against_disk_detailed over entries revision_hash accepted, so
-// each path and digest is a str; a byte count is compared as the value it is.
-func verifyEntries(ctx context.Context, entries []store.FrozenEntry, roots []string) ([]string, []string) {
-	problems, unreadable := []string{}, []string{}
-	for _, e := range entries {
-		path, _ := e.Path.(string)
-		claimed, _ := e.SHA256.(string)
-		digest, size, _, err := store.HashArtifactContext(ctx, path, roots, false)
-		message := ""
-		switch {
-		case err != nil:
-			message = path + ": " + err.Error()
-			if accessFailure(err) {
-				unreadable = append(unreadable, message)
-			}
-		case digest != claimed:
-			message = path + ": bytes hash to " + digest + " but the manifest claims " + claimed
-		case e.Bytes != nil && !pyvalue.Equal(e.Bytes, size):
-			message = fmt.Sprintf("%s: size %d but the manifest claims %s", path, size, pyvalue.Str(e.Bytes))
-		}
-		if message != "" {
-			problems = append(problems, message)
-		}
-	}
-	return problems, unreadable
-}
-
-// verifyFrozen is manifest.verify_frozen_detailed as guard.deliverable_state reads it, under the
-// hook's deadline: the problems, the subset that were failures to read, or what it raised instead
-// of answering, which raisedState answers as deliverable_state does. The document is read whole,
-// as the fence reads it, so the evidence bound (maxInputBytes) does not apply to it. A raised
-// exception is the whole answer: the fence's exception leaves before any live problem or
-// unreadable live file is weighed. The document is the path pathlib spells
-// (store.FrozenDocument), and what follows its read is the store's own reading of a frozen copy
-// (store.VerifyFrozenDocument), so the hook, the intake and the omission reader judge one frozen
-// copy alike.
-func verifyFrozen(ctx context.Context, reference string, entries []store.FrozenEntry) ([]string, []string, error) {
-	document := store.FrozenDocument(reference)
-	if strings.ContainsRune(document, 0) {
-		// os.stat refuses the name before any system call; the fence lets that ValueError out.
-		return nil, nil, &frozenAnswer{"changed", "ValueError: embedded null byte"}
-	}
-	// _frozen_document_access: absent, or out of reach. Only the second is a failure to read.
-	if info, err := os.Stat(document); err != nil || !info.Mode().IsRegular() {
-		message := reference + ": no MANIFEST.json in the frozen copy"
-		if err != nil && accessFailure(err) {
-			return []string{message}, []string{reference + ": the frozen manifest could not be reached: " + store.StoredOSErrorText(err)}, nil
-		}
-		return []string{message}, nil, nil
-	}
-	raw, err := readRegular(ctx, document, unbounded)
-	if err != nil {
-		// Reached and not read: the fence raises the OSError, a comparison that did not happen.
-		return nil, nil, &frozenAnswer{"unverifiable", store.StoredOSError(err)}
-	}
-	_, problems, unreadable, err := store.VerifyFrozenDocument(ctx, reference, raw, entries)
-	if err != nil {
-		return nil, nil, err
-	}
-	return problems, unreadable, nil
+	return store.DeliverableState(ctx, payload, reference, rootsValue)
 }

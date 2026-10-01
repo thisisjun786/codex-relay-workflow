@@ -129,7 +129,7 @@ func nesting(raw []byte) int {
 }
 
 // requestValues is how the owner reads a request: as the hook read the Stop payload it forwards
-// (hookValues), so NaN, the infinities and a lone surrogate escape the hook accepted from Codex
+// (store.DecodeRecord), so NaN, the infinities and a lone surrogate escape the hook accepted from Codex
 // reach the guard as the values the hook read; objects keep their order and an integer is an
 // int64. Nothing else of json.loads' reading is kept: the line is strict UTF-8 JSON.
 var requestValues = pyjson.LoadOptions{Constants: true, Surrogates: true, Numbers: pyjson.Int64Numbers}
