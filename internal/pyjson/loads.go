@@ -28,7 +28,8 @@ const (
 	// Int64FloatNumbers: an integer is an int64, or the float64 it rounds to past int64's range;
 	// any other number is a float64.
 	Int64FloatNumbers
-	// SpelledNumbers: every number, NaN and the infinities included, is a json.Number as spelled.
+	// SpelledNumbers: every number is a json.Number as spelled; NaN and the infinities are
+	// float64.
 	SpelledNumbers
 )
 
@@ -72,6 +73,10 @@ type LoadOptions struct {
 	Map bool
 	// Repeats keeps a repeated key as another field of the Object, where a dict keeps one.
 	Repeats bool
+	// Unique refuses a repeated key when the object that repeats it closes, as an
+	// object_pairs_hook refusing duplicates does, with a *RepeatedKey naming the first key the
+	// object repeats.
+	Unique bool
 	// Trailing is what may follow the value.
 	Trailing Trailing
 	// Deep reads a document however deeply its containers nest, as json.loads does up to its
@@ -137,6 +142,11 @@ func (d *decoder) open() error {
 	}
 	return nil
 }
+
+// RepeatedKey is a Unique reading's refusal of an object that repeats Key.
+type RepeatedKey struct{ Key string }
+
+func (e *RepeatedKey) Error() string { return "duplicate key " + strconv.Quote(e.Key) }
 
 // errSyntax marks a document the scan refuses; fail replaces it with the reader's own refusal.
 var errSyntax = errors.New("syntax")
@@ -205,9 +215,6 @@ func (d *decoder) constant(rest string) (any, error) {
 			return nil, constantRefusal(one.word)
 		}
 		d.i += len(one.word)
-		if d.o.Numbers == SpelledNumbers {
-			return json.Number(one.word), nil
-		}
 		return one.value, nil
 	}
 	return nil, errSyntax
@@ -230,6 +237,7 @@ func (d *decoder) object() (any, error) {
 	var fields Object
 	var fieldMap map[string]any
 	var index map[string]int
+	repeated, isRepeated := "", false
 	if d.o.Map {
 		fieldMap = map[string]any{}
 	} else {
@@ -258,6 +266,16 @@ func (d *decoder) object() (any, error) {
 		if err != nil {
 			return nil, err
 		}
+		if d.o.Unique && !isRepeated {
+			if d.o.Map {
+				_, isRepeated = fieldMap[key.(string)]
+			} else {
+				_, isRepeated = fields.Lookup(key.(string))
+			}
+			if isRepeated {
+				repeated = key.(string)
+			}
+		}
 		switch {
 		case d.o.Map:
 			fieldMap[key.(string)] = item
@@ -275,6 +293,9 @@ func (d *decoder) object() (any, error) {
 			d.i++
 		case '}':
 			d.i++
+			if isRepeated {
+				return nil, &RepeatedKey{Key: repeated}
+			}
 			return d.made(fields, fieldMap), nil
 		default:
 			return nil, errSyntax

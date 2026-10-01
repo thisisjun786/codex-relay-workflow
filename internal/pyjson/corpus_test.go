@@ -39,6 +39,7 @@ var readings = map[string]pyjson.LoadOptions{
 	"routing.routeJSON":         {Map: true, Numbers: pyjson.SpelledNumbers},
 	"mergeturn.decode":          {Map: true, Numbers: pyjson.SpelledNumbers, Trailing: pyjson.TrailingAnything},
 	"mergeturn.envelope":        {Map: true, Numbers: pyjson.SpelledNumbers, Trailing: pyjson.TrailingClose},
+	"execution.decode":          {Constants: true, Surrogates: true, Numbers: pyjson.SpelledNumbers, Unique: true, Deep: true},
 }
 
 var writings = map[string]pyjson.Options{
