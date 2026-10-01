@@ -160,6 +160,7 @@ a case whose owner has moved or been reworded before relying on it.
 | S16b | Where Loop is effective, the packet carries the literal installed-skill invocation, not only a workflow label | [Launch packet](task-packet.md#launch-packet) Loop branch | Default settings | unchanged |
 | S17 | A setting the creation path cannot apply is settled before the task exists, never silently downgraded | [Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution) settings bullet | Recovery | unchanged |
 | S18 | A mismatch found after creation is reconciled on that same task | Same bullet list | Recovery | unchanged |
+| S19 | A child writes its messages, commits, pull request text and receipts in English, while task titles, Linear records and reports to the user stay Korean | [Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution) language paragraph and the packets' `Language:` line | Default settings | added 2026-10-02 |
 S14 and S17 are the pair that is easiest to confuse. S14 removed the readiness turn; S17
 added a capability check the coordinator performs before creating the task. A check that
 happens on the coordinator's side, before anything exists to answer, is not a turn spent

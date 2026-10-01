@@ -1,6 +1,8 @@
 package delivery
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -227,7 +229,8 @@ func TestOmissionDeliverableAnswersAsTheGuard(t *testing.T) {
 	for _, c := range deliverableCases() {
 		t.Run(c.name, func(t *testing.T) {
 			entries, revision, reference, roots := stageDeliverable(t, c)
-			binding, detail, err := omissionDeliverable(entries, revision, reference, roots)
+			payload, rootsValue := storedReceiptValues(t, entries, revision, roots)
+			binding, detail, err := omissionDeliverable(context.Background(), payload, reference, rootsValue)
 			var got []any
 			var raised *store.ManifestException
 			switch {
@@ -243,4 +246,50 @@ func TestOmissionDeliverableAnswersAsTheGuard(t *testing.T) {
 			golden.CheckJSON(t, "deliverable_state", got, golden.Substitute(filepath.Dir(roots[0]), "<base>"))
 		})
 	}
+}
+
+// The omission reader hashes and reads under the context it was given, as the Stop hook does: a
+// comparison a ended context cut off did not happen, so the omission is left without a receipt
+// (receipt_unreadable), where the same receipt under a live context is current. A context that has
+// ended before omissionReceipt is called stops at its first SQL statement, so this is the path a
+// context that ends between the snapshot and the artifact reads takes.
+func TestOmissionDeliverableLeavesACutOffComparisonUnreadable(t *testing.T) {
+	entries, revision, reference, roots := stageDeliverable(t, deliverableCases()[0])
+	payload, rootsValue := storedReceiptValues(t, entries, revision, roots)
+
+	if binding, _, err := omissionDeliverable(context.Background(), payload, reference, rootsValue); err != nil || binding != "live" {
+		t.Fatalf("a live context: %q %v", binding, err)
+	}
+	ended, cancel := context.WithCancel(context.Background())
+	cancel()
+	binding, detail, err := omissionDeliverable(ended, payload, reference, rootsValue)
+	if err == nil || binding != "" || detail != "" {
+		t.Fatalf("an ended context: %q %q %v", binding, detail, err)
+	}
+	if got := omissionReceiptFailure(err); got != "receipt_unreadable" {
+		t.Fatalf("the omission is left %q", got)
+	}
+}
+
+// storedReceiptValues are the values the omission reader holds for a stored receipt over entries and
+// its relationship's roots: the JSON the store keeps, decoded as json.loads decodes it.
+func storedReceiptValues(t *testing.T, entries []store.ManifestEntry, revision string, roots []string) (payload, rootsValue any) {
+	t.Helper()
+	manifest := make([]map[string]any, len(entries))
+	for i, e := range entries {
+		manifest[i] = map[string]any{"path": e.Path, "sha256": e.SHA256, "bytes": *e.Bytes}
+	}
+	receipt, err := json.Marshal(map[string]any{"manifest": manifest, "revisionHash": revision})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootsText, err := json.Marshal(roots)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootsValue, payload, unreadable := store.DecodeStoredReceipt(string(rootsText), string(receipt))
+	if unreadable != "" {
+		t.Fatal(unreadable)
+	}
+	return payload, rootsValue
 }

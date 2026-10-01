@@ -37,21 +37,63 @@ const parserExit = 2
 func main() {
 	started := time.Now()
 	adapter.Register()
-	ctx, stop := cancelOn(context.Background(), os.Interrupt)
-	defer stop()
-	os.Exit(runAt(ctx, os.Args[0], os.Args[1:], os.Stdout, os.Stderr, started))
+	os.Exit(serve(os.Args[0], os.Args[1:], os.Stdout, os.Stderr, started))
 }
 
-// cancelOn is a context the first of signals cancels. The signals are handled only until then:
-// a second one gets its default disposition, so an operator whose interrupt is being honoured
-// slowly can still end the process at once.
+// serve is this process's whole run, from its SIGINT policy to the status it exits with: main is
+// its only caller and exits with what it returns, so a registration serve does not release is
+// held until the process ends. (A test that wants a command's answer runs run or runAt, which
+// register no SIGINT handling.)
+//
+// The first SIGINT cancels the run, and it is registered before the command line is read, as it
+// always was. Every line but a supervised worker's then gets SIGINT's default disposition back
+// (releaseAfterFirst): a second interrupt ends a process whose first is being honoured slowly. A
+// supervised worker is different (decision 42). One interrupt can reach it twice, by its process
+// group or a drain and again by its supervisor passing the interrupt on, and a default-handled
+// second copy would kill it before its cleanup, or after the run returned and before its exit
+// status was reported, which the supervisor then records as -1. So its registration is never
+// released: the catch stays until the process exits, and its hard stops stay SIGTERM, SIGKILL and
+// its supervisor's death (PR_SET_PDEATHSIG). An interrupt that lands before main, in the Go
+// runtime's start, meets the default disposition, as it always did.
+func serve(program string, args []string, stdout, stderr io.Writer, started time.Time) int {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	if !supervisedWorker(program, args) {
+		releaseAfterFirst(ctx, stop)
+	}
+	return runAt(ctx, program, args, stdout, stderr, started)
+}
+
+// workerLine is cli.SupervisedWorker, which a test replaces to act while serve decides.
+var workerLine = cli.SupervisedWorker
+
+// supervisedWorker reports whether this invocation is the relay CLI given a supervised worker's
+// line, reading which program it is as runAt does: by its name, or by its first word.
+func supervisedWorker(program string, args []string) bool {
+	switch filepath.Base(program) {
+	case "codex-session-relay":
+		return workerLine(args)
+	case "codex-thread-bridge":
+		return false
+	}
+	return len(args) > 0 && args[0] == "relay" && workerLine(args[1:])
+}
+
+// cancelOn is a context the first of signals cancels. The signals are handled only until then
+// (releaseAfterFirst).
 func cancelOn(parent context.Context, signals ...os.Signal) (context.Context, context.CancelFunc) {
 	ctx, stop := signal.NotifyContext(parent, signals...)
+	releaseAfterFirst(ctx, stop)
+	return ctx, stop
+}
+
+// releaseAfterFirst gives the signals their default disposition once ctx is done, which the first
+// of them brings about: a second one then ends the process, so an operator whose interrupt is
+// being honoured slowly can still end it at once. It starts that wait and returns.
+func releaseAfterFirst(ctx context.Context, stop context.CancelFunc) {
 	go func() {
 		<-ctx.Done()
 		stop()
 	}()
-	return ctx, stop
 }
 
 func run(ctx context.Context, program string, args []string, stdout, stderr io.Writer) int {
