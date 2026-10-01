@@ -931,7 +931,8 @@ the same from outside, and neither should be sent.
 **Every pending turn is reached, and staged claims are served first.** A turn is pending while the relay still
 has something to learn by reading it: a staged claim waits on it, or its assignment has no settlement for it (a
 generation's anchor, or an admitted turn). The daemon finds every pending turn of every active assignment with
-four queries on the stored rows and reads nothing else, so an assignment with nothing pending costs no host read,
+three set queries on the stored rows, plus one read of the poll history of each assignment that has a pending
+turn, and reads nothing else, so an assignment with nothing pending costs no host read,
 no load and no write, and is visited again the tick a staged claim, an admitted turn or a new generation gives it
 something. Observation reads are capped per tick (`max_turn_reads_per_tick`, 32) and a pass is bounded in time
 (`max_observe_seconds`, 10, measured on a monotonic clock).

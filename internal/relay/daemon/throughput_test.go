@@ -705,6 +705,11 @@ func TestAClockSetBackDoesNotPinTheSameTurnsAtTheFront(t *testing.T) {
 		{"three relationships, a budget of two", 3, 2, func(t *testing.T, s *store.Store) {
 			exec(t, s, "INSERT INTO poll_observations(relationship_id,execution_generation,turn_id,last_status,last_polled_at,last_attempt_at) SELECT relationship_id,execution_generation,dispatch_turn_id,'inProgress',?,? FROM generations", future, future)
 		}},
+		{"an older generation's read after the clock now", 3, 2, func(t *testing.T, s *store.Store) {
+			// The read loop stores a turn under the generation current when it is read, so an older generation's row
+			// for the same turn is not replaced by the valid stamp written under the current one.
+			exec(t, s, "INSERT INTO poll_observations(relationship_id,execution_generation,turn_id,last_status,last_polled_at,last_attempt_at) SELECT relationship_id,execution_generation+6,dispatch_turn_id,'inProgress',?,? FROM generations", future, future)
+		}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			ctx, s := throughputStore(t)

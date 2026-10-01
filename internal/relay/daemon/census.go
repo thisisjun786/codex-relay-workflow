@@ -48,7 +48,8 @@ type pending struct {
 	turns map[string]*pendingTurn
 }
 
-// The three reasons a turn is pending, and the reads already made.
+// The three reasons a turn is pending, and the reads already made. The latest read is the latest valid one: a stamp
+// from before a clock set-back must not hide a valid stamp written under another generation.
 const (
 	stagedTurns = `SELECT r.relationship_id AS rid, e.turn_id AS turn, e.first_seen_at AS since, 0 AS current
 FROM relationships r JOIN events e ON e.relationship_id=r.relationship_id AND e.turn_thread_id=r.child_task_id
@@ -72,8 +73,9 @@ WHERE r.status='active' AND r.superseded_by IS NULL AND g.dispatch_turn_id IS NO
   AND NOT EXISTS (SELECT 1 FROM assignment_settlements s WHERE s.relationship_id=r.relationship_id AND s.thread_id=r.child_task_id AND s.turn_id=t.turn_id)
 ORDER BY r.relationship_id, t.rowid`
 
-	// The reads of one relationship, by its primary key prefix: only a relationship with a pending turn is asked.
-	latestAttempts = `SELECT turn_id AS turn, MAX(last_attempt_at) AS attempt FROM poll_observations WHERE relationship_id=? GROUP BY turn_id`
+	// The reads of one relationship, by its primary key prefix: only a relationship with a pending turn is asked. One row
+	// per generation a turn was read under; each is judged on its own (see past) before the latest is taken.
+	attemptsOfARelationship = `SELECT turn_id AS turn, last_attempt_at AS attempt FROM poll_observations WHERE relationship_id=?`
 )
 
 // census returns the active relationships that have a pending turn, in relationship id order.
@@ -125,14 +127,14 @@ func (d *Daemon) census(ctx context.Context) ([]*pending, error) {
 	out := make([]*pending, 0, len(byID))
 	for _, id := range slices.Sorted(maps.Keys(byID)) {
 		p := byID[id]
-		attempts, err := d.Store.All(ctx, latestAttempts, id)
+		attempts, err := d.Store.All(ctx, attemptsOfARelationship, id)
 		if err != nil {
 			return nil, err
 		}
 		for _, row := range attempts {
 			if t := p.turns[row.Get("turn").(string)]; t != nil {
 				attempt, _ := row.Get("attempt").(string)
-				t.attempt = past(attempt)
+				t.attempt = max(t.attempt, past(attempt))
 			}
 		}
 		for _, t := range p.turns {
