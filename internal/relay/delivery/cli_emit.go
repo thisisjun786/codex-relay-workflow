@@ -3,7 +3,9 @@ package delivery
 import (
 	"context"
 	"encoding/json"
+	"errors"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -105,7 +107,7 @@ func cmdEmit(c *cliRun) (any, error) {
 	intake := store.ReceiptIntake{Store: d.Store, Now: c.clock.ISO, Minimum: store.BestEffortDetection}
 	stored, err := intake.AcceptChildReceiptWith(c.ctx, []byte(dumps(payload)), store.TurnReference{ThreadID: thread, TurnID: turn, Status: status}, options)
 	if err != nil {
-		return nil, err
+		return nil, withContinuationHint(err)
 	}
 	receipt := Obj{}
 	for _, f := range loadsObj(stored.Record) {
@@ -132,6 +134,20 @@ func cmdEmit(c *cliRun) (any, error) {
 		}
 	}
 	return result, nil
+}
+
+// withContinuationHint adds to the refusal of a turn the generation never admitted, when the
+// receipt carried no claim, how this command states the claim that would admit it. The reason,
+// the exit code and the shape of the refusal are the refusal's own; a refusal a claim would not
+// cure (a thread that is not the registered child, a claim naming another anchor, a generation
+// with no anchor) carries no marker and is returned as it came.
+func withContinuationHint(err error) error {
+	var need *store.ContinuationRequired
+	var refused *store.RefusedError
+	if !errors.As(err, &need) || !errors.As(err, &refused) {
+		return err
+	}
+	return store.RefusedBecause(refused.Reason, refused.Detail+"; to continue this generation from this turn, re-run this emit with --continues-anchor "+pyvalue.StrRepr(need.Anchor)+" --continuation-actor <your own task id> --continuation-reason <why this turn continues it>", err)
 }
 
 // rowObj is dict(sqlite3.Row) of a deliveries row, in the table's column order.
