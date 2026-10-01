@@ -337,7 +337,7 @@ func Test26_LNK26_the_one_live_owner_guard(t *testing.T) {
 		if err == nil {
 			t.Fatal("the database accepted a second live owner")
 		}
-		w.step(store.PythonSQLiteError(err), nil)
+		w.step(store.StoredSQLiteError(err), nil)
 		w.matchesGolden("lnk26_guard_index")
 	})
 	t.Run("unenforced", func(t *testing.T) {

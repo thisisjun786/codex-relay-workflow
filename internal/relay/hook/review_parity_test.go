@@ -24,7 +24,6 @@ func Test33ReviewD4(t *testing.T)      { reviewPython(t, "D4") }
 func Test33ReviewD5(t *testing.T)      { reviewPython(t, "D5") }
 func Test33ReviewD7(t *testing.T)      { reviewPython(t, "D7") }
 func Test33ReviewD9Large(t *testing.T) { reviewPython(t, "D9") }
-func Test33ReviewD10(t *testing.T)     { reviewPython(t, "D10") }
 
 // The settings path is the Codex home's, as the retired status reading's configuration cell named
 // it (completion.status), the golden. The settings override Python's status read

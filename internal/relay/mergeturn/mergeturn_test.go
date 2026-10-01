@@ -67,11 +67,11 @@ func Test26_target_derivation_matches_the_golden(t *testing.T) {
 	}
 }
 
-func Test26_python_claim_whole_JSON(t *testing.T) {
+func Test26_claim_whole_JSON(t *testing.T) {
 	s := setup(t)
 	matchesGoldenJSON(t, "claim", claim(t, s, "A", "p1", true))
 }
-func Test26_python_target_whole_JSON(t *testing.T) {
+func Test26_target_whole_JSON(t *testing.T) {
 	s := setup(t)
 	claim(t, s, "A", "p1", true)
 	target, err := s.Target(context.Background(), "/repo", "main")
@@ -80,12 +80,12 @@ func Test26_python_target_whole_JSON(t *testing.T) {
 	}
 	matchesGoldenJSON(t, "target", target)
 }
-func Test26_python_waiter_whole_JSON(t *testing.T) {
+func Test26_waiter_whole_JSON(t *testing.T) {
 	s := setup(t)
 	claim(t, s, "A", "p1", true)
 	matchesGoldenJSON(t, "waiter", claim(t, s, "B", "p2", true))
 }
-func Test26_python_ack_whole_JSON(t *testing.T) {
+func Test26_ack_whole_JSON(t *testing.T) {
 	s := setup(t)
 	a := claim(t, s, "A", "p1", true)
 	g := a["grant"].(map[string]any)["grantId"].(string)
@@ -95,7 +95,7 @@ func Test26_python_ack_whole_JSON(t *testing.T) {
 	}
 	matchesGoldenJSON(t, "ack", v)
 }
-func Test26_python_release_whole_JSON(t *testing.T) {
+func Test26_release_whole_JSON(t *testing.T) {
 	s := setup(t)
 	a := claim(t, s, "A", "p1", true)
 	claim(t, s, "B", "p2", true)

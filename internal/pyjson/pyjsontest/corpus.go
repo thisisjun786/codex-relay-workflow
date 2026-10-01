@@ -12,28 +12,20 @@
 //   - Sample: documents the Python reference implementation printed (the recorded answers its
 //     parity tests replayed), the ones of at most 2000 bytes, kept in testdata/sample.json.gz
 //     since the recordings themselves are gone.
-//
-// Recorded adds every document the goldens and fixtures of the checkout's tests hold (the
-// expected outputs and the inputs that replaced the recorded Python answers), for the proofs that
-// ran while a package's own copy of a reader or writer was being folded into internal/pyjson.
 package pyjsontest
 
 import (
 	"bytes"
 	"compress/gzip"
-	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"io"
 	"io/fs"
 	"math"
 	"math/big"
 	"os"
 	"path/filepath"
-	"reflect"
 	"runtime"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -167,94 +159,6 @@ func Sample(t testing.TB) []string {
 		t.Fatal(err)
 	}
 	return unique(append(docs, sample...))
-}
-
-// Recorded is Sample and every document the goldens and fixtures in this checkout hold: each
-// value of a golden (testdata/golden, internal/testsupport/golden's files) and each fixture
-// (testdata/fixtures, gzip-compressed or not) that is a JSON document or holds documents as
-// strings or lines. The goldens of internal/pyjson and internal/pyvalue are left out: they are
-// what the corpus itself gives.
-func Recorded(t testing.TB) []string {
-	t.Helper()
-	docs := Sample(t)
-	root := moduleRoot()
-	err := filepath.WalkDir(filepath.Join(root, "internal"), func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() {
-			if rel, _ := filepath.Rel(root, path); rel == filepath.Join("internal", "pyjson") || rel == filepath.Join("internal", "pyvalue") {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		kind := testdataKind(path)
-		if kind == "" {
-			return nil
-		}
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		if strings.HasSuffix(path, ".gz") {
-			if raw, err = gunzipped(raw); err != nil {
-				return fmt.Errorf("%s: %w", path, err)
-			}
-		}
-		if kind == "fixtures" {
-			docs = append(docs, held(string(raw))...)
-			return nil
-		}
-		var stored struct {
-			Values map[string]string `json:"values"`
-		}
-		if err := json.Unmarshal(raw, &stored); err != nil {
-			return fmt.Errorf("%s: %w", path, err)
-		}
-		keys := make([]string, 0, len(stored.Values))
-		for key := range stored.Values {
-			keys = append(keys, key)
-		}
-		slices.Sort(keys)
-		for _, key := range keys {
-			value := stored.Values[key]
-			if text, ok := strings.CutPrefix(value, "txt:"); ok {
-				docs = append(docs, held(text)...)
-			} else if encoded, ok := strings.CutPrefix(value, "b64:"); ok {
-				if data, err := base64.StdEncoding.DecodeString(encoded); err == nil {
-					docs = append(docs, held(string(data))...)
-				}
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return unique(docs)
-}
-
-// testdataKind is "golden" or "fixtures" for a file under a testdata/golden or testdata/fixtures
-// directory, at any depth below it, and "" for any other file.
-func testdataKind(path string) string {
-	parts := strings.Split(filepath.ToSlash(path), "/")
-	for i := len(parts) - 2; i > 0; i-- {
-		if parts[i-1] == "testdata" && (parts[i] == "golden" || parts[i] == "fixtures") {
-			return parts[i]
-		}
-	}
-	return ""
-}
-
-// held is the documents text is or holds: documentsIn of the text, and every document held as a
-// string inside it when it is JSON itself.
-func held(text string) []string {
-	docs := documentsIn(text)
-	var value any
-	if json.Unmarshal([]byte(text), &value) == nil {
-		docs = append(docs, stringsIn(value)...)
-	}
-	return docs
 }
 
 func gunzipped(raw []byte) ([]byte, error) {
@@ -420,69 +324,6 @@ func Same(a, b any) bool {
 	return false
 }
 
-// Decoded is what read makes of each document it accepts, and then Values: the values a writer
-// is held to.
-func Decoded(docs []string, read func(string) (any, error)) []any {
-	var values []any
-	for _, doc := range docs {
-		if value, err := read(doc); err == nil {
-			values = append(values, value)
-		}
-	}
-	return append(values, Values()...)
-}
-
-// Errors compares two readers' errors: both nil, or both errors with the same text.
-func Errors(a, b error) bool {
-	if a == nil || b == nil {
-		return a == nil && b == nil
-	}
-	return a.Error() == b.Error()
-}
-
-// Within reports whether every value inside v, v included, is of one of the given Go types
-// (named as fmt's %T names them: "pyjson.Object", "[]interface {}", "string", ...): the values
-// a writer whose callers build only those types is held to.
-func Within(v any, types ...string) bool {
-	if !slices.Contains(types, typeName(v)) {
-		return false
-	}
-	switch x := v.(type) {
-	case pyjson.Object:
-		for _, f := range x {
-			if !Within(f.Value, types...) {
-				return false
-			}
-		}
-	case map[string]any:
-		for _, item := range x {
-			if !Within(item, types...) {
-				return false
-			}
-		}
-	case []any:
-		for _, item := range x {
-			if !Within(item, types...) {
-				return false
-			}
-		}
-	case []map[string]any:
-		for _, item := range x {
-			if !Within(item, types...) {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-func typeName(v any) string {
-	if v == nil {
-		return "nil"
-	}
-	return reflect.TypeOf(v).String()
-}
-
 // Pairs is the pairs of values every == is held to: each value with itself and with its
 // neighbours, and the pairs Python's == answers against a Go reading (an int and a float, a bool
 // and an int, integers past float64's precision, NaN alone and inside containers, a dict's keys
@@ -505,101 +346,4 @@ func Pairs(values []any) [][2]any {
 		}
 	}
 	return pairs
-}
-
-// All reports whether keep holds for v and every value inside it.
-func All(v any, keep func(any) bool) bool {
-	if !keep(v) {
-		return false
-	}
-	switch x := v.(type) {
-	case pyjson.Object:
-		for _, f := range x {
-			if !All(f.Value, keep) {
-				return false
-			}
-		}
-	case map[string]any:
-		for _, item := range x {
-			if !All(item, keep) {
-				return false
-			}
-		}
-	case []any:
-		for _, item := range x {
-			if !All(item, keep) {
-				return false
-			}
-		}
-	case []map[string]any:
-		for _, item := range x {
-			if !All(item, keep) {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-// Types is a filter for All: the value is of one of the named Go types (as %T names them).
-func Types(types ...string) func(any) bool {
-	return func(v any) bool { return slices.Contains(types, typeName(v)) }
-}
-
-// Finite is a filter for All: the value is not a NaN or an infinite float64.
-func Finite(v any) bool {
-	f, ok := v.(float64)
-	return !ok || !math.IsNaN(f) && !math.IsInf(f, 0)
-}
-
-// IntegerNumbers is a filter for All: a json.Number is an integer spelling, as every reader that
-// reads a fraction into a float64 leaves it.
-func IntegerNumbers(v any) bool {
-	n, ok := v.(json.Number)
-	return !ok || !strings.ContainsAny(string(n), ".eE")
-}
-
-// Both is a filter for All that keeps what every one of keep keeps.
-func Both(keep ...func(any) bool) func(any) bool {
-	return func(v any) bool {
-		for _, k := range keep {
-			if !k(v) {
-				return false
-			}
-		}
-		return true
-	}
-}
-
-// SameText requires two spellings of each value in values that keep keeps throughout (All) to be
-// equal, naming the first that is not; a nil keep keeps every value.
-func SameText(t testing.TB, name string, values []any, keep func(any) bool, old, folded func(any) string) {
-	t.Helper()
-	for _, value := range values {
-		if keep != nil && !All(value, keep) {
-			continue
-		}
-		if want, got := old(value), folded(value); want != got {
-			t.Errorf("%s(%#v) = %q, folded %q", name, value, want, got)
-		}
-	}
-}
-
-// SameTruth is SameText for a predicate.
-func SameTruth(t testing.TB, name string, values []any, keep func(any) bool, old, folded func(any) bool) {
-	t.Helper()
-	SameText(t, name, values, keep, func(v any) string { return strconv.FormatBool(old(v)) }, func(v any) string { return strconv.FormatBool(folded(v)) })
-}
-
-// SameEquality requires two == to agree over Pairs(values), keep keeping both values of a pair.
-func SameEquality(t testing.TB, name string, values []any, keep func(any) bool, old, folded func(a, b any) bool) {
-	t.Helper()
-	for _, pair := range Pairs(values) {
-		if keep != nil && (!All(pair[0], keep) || !All(pair[1], keep)) {
-			continue
-		}
-		if want, got := old(pair[0], pair[1]), folded(pair[0], pair[1]); want != got {
-			t.Errorf("%s(%#v, %#v) = %v, folded %v", name, pair[0], pair[1], want, got)
-		}
-	}
 }

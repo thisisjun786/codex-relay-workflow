@@ -14,13 +14,13 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
-// Test_every_mcp_reply_equals_the_python_servers_whole_json replays the steps
+// Test_every_mcp_reply_equals_its_golden_whole_json replays the steps
 // gen_mcp_python.py drove (testdata/fixtures/mcp-steps.json) through the built `crw bridge`
 // against the Go port of the same FakeServer, and holds each whole reply -- isError, the text
 // content (parsed when it is JSON) and structuredContent -- to its golden, first taken as what the
 // Python server sent: every receipt, refusal and read reply the tools produce, success and failure
 // alike.
-func Test_every_mcp_reply_equals_the_python_servers_whole_json(t *testing.T) {
+func Test_every_mcp_reply_equals_its_golden_whole_json(t *testing.T) {
 	var steps []map[string]any
 	if err := json.Unmarshal(golden.Fixture(t, "mcp-steps.json"), &steps); err != nil {
 		t.Fatal(err)

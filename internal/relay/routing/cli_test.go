@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -101,7 +102,12 @@ type cliScenario struct {
 	Files   map[string]string
 }
 
-func Test23_ArgparseWidthsBuiltBinary(t *testing.T) {
+// Each routing command's help, through the built binary, is its golden, one per command: exit 0,
+// the usage and the options on stdout, nothing on stderr, and no store created. What a line the
+// parser cannot read answers is the relay parser's contract for every command (cmd/crw's
+// TestRun_every_relay_command_line_has_the_usage_contract, internal/relay/argparse). The cases
+// are the plain --help lines of the former argparse sweep's fixture, under their index in it.
+func Test23_EachRoutingCommandPrintsItsHelp(t *testing.T) {
 	binary := builtBinary(t)
 	state := filepath.Join(t.TempDir(), "state")
 	var cases []struct {
@@ -111,57 +117,29 @@ func Test23_ArgparseWidthsBuiltBinary(t *testing.T) {
 		Width   *string
 	}
 	scenarioInputs(t, "cli-argv.json", &cases, [2]string{state, "<state>"})
-	var accepted []struct {
-		Command string
-		Args    []string
-		Prog    string
-		Width   *string
-	}
-	scenarioInputs(t, "cli-accepted-argv.json", &accepted, [2]string{state, "<state>"})
-	parserCases := len(cases)
-	cases = append(cases, accepted...)
+	commands := map[string]bool{}
 	for index, tc := range cases {
-		label := tc.Command + "/" + tc.Prog + "/" + strings.Join(tc.Args, " ")
-		var reply cliReply
-		if !t.Run(label, func(t *testing.T) {
-			path := binary
-			args := []string{"relay", "--state", state, tc.Command}
-			if tc.Prog == "codex-session-relay" {
-				path = filepath.Join(filepath.Dir(binary), tc.Prog)
-				args = []string{"--state", state, tc.Command}
-			}
-			args = append(args, tc.Args...)
-			cmd := exec.Command(path, args...)
-			env := []string{}
-			for _, v := range os.Environ() {
-				if !strings.HasPrefix(v, "COLUMNS=") {
-					env = append(env, v)
-				}
-			}
-			if tc.Width != nil {
-				env = append(env, "COLUMNS="+*tc.Width)
-			}
-			cmd.Env = env
-			var stdout, stderr bytes.Buffer
-			cmd.Stdout, cmd.Stderr = &stdout, &stderr
-			code := 0
-			if err := cmd.Run(); err != nil {
-				if e, ok := err.(*exec.ExitError); ok {
-					code = e.ExitCode()
-				} else {
-					t.Fatal(err)
-				}
-			}
-			reply = cliReply{code, stdout.String(), stderr.String()}
-			if index < parserCases {
-				if _, err := os.Stat(filepath.Join(state, "relay.sqlite3")); !os.IsNotExist(err) {
-					t.Fatalf("parse error/help wrote store: %v", err)
-				}
-			}
-		}) {
+		if tc.Prog != "crw relay" || tc.Width != nil || !slices.Equal(tc.Args, []string{"--help"}) {
 			continue
 		}
-		golden.CheckJSON(t, fmt.Sprintf("%04d %s", index, label), reply, goldenPaths([2]string{state, "<state>"})...)
+		label := tc.Command + "/" + tc.Prog + "/" + strings.Join(tc.Args, " ")
+		cmd := exec.Command(binary, "relay", "--state", state, tc.Command, "--help")
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("%s: %v %s", label, err, stderr.String())
+		}
+		if stderr.Len() != 0 || !strings.HasPrefix(stdout.String(), "usage: crw relay "+tc.Command+" ") {
+			t.Fatalf("%s: %q %q", label, stdout.String(), stderr.String())
+		}
+		if _, err := os.Stat(filepath.Join(state, "relay.sqlite3")); !os.IsNotExist(err) {
+			t.Fatalf("%s: help wrote a store: %v", label, err)
+		}
+		golden.CheckJSON(t, fmt.Sprintf("%04d %s", index, label), cliReply{0, stdout.String(), ""}, goldenPaths([2]string{state, "<state>"})...)
+		commands[tc.Command] = true
+	}
+	if len(commands) != 11 {
+		t.Fatalf("help of %d routing commands", len(commands))
 	}
 }
 func Test23_CLIWholeRepliesAndTables(t *testing.T) { cliReplay(t, "qa") }

@@ -6,7 +6,7 @@ import (
 	"math"
 	"strconv"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // HostError is a host read or send that could not complete. Kind is the Python exception class
@@ -81,7 +81,7 @@ func HostTime(value any) *float64 {
 		}
 		seconds = number
 	case string:
-		number, ok := argparse.ParseFloat(v)
+		number, ok := pyvalue.ParseFloat(v)
 		if !ok {
 			return nil
 		}

@@ -64,7 +64,8 @@ func Refusal(services Services) (contract.OrderedObject, error) {
 	}, nil
 }
 
-// recoveryCommands is _recovery_commands for every caller but guard-evaluate.
+// recoveryCommands is _recovery_commands for every caller but the Stop guard's fallback
+// (GuardFallback), whose refusal says the Stop was released unjudged (stopRecovery).
 func recoveryCommands(services Services, contested bool) []any {
 	socket := ""
 	if services.SocketPath != "" {

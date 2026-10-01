@@ -49,8 +49,11 @@ func (e *UsageError) ExitPayload() (contract.OrderedObject, int) {
 	return contract.OrderedObject{{Key: "error", Value: "usage"}, {Key: "detail", Value: e.Detail}}, e.Code
 }
 
-// HostError is an unexpected failure the host envelope names with a class: "<Class>: <Detail>".
-// The relay CLI's own failures answer through Host instead.
+// HostError is a failure the host envelope names with a Python exception class:
+// "<Class>: <Detail>". Only the delivery domain raises it, where the same text is stored: the
+// lifecycle's integer reading (int() and SQLite's binding) and the marker path checks, whose
+// text the supervisor journals as an attempt's fault label (supervisor_attempt_faulted, decision
+// R3D-1). Every other failure answers through Host, in Go's words.
 type HostError struct {
 	Class  string
 	Detail string

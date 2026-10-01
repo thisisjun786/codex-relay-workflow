@@ -3,7 +3,7 @@ package faults
 import "testing"
 
 // Clock and entropy are inputs on both sides, never output substitutions.
-func TestDNotificationLifecyclePythonWholeReplies(t *testing.T) {
+func TestDNotificationLifecycleWholeReplies(t *testing.T) {
 	ctx, gd := f1ReplayStores(t)
 	check := func(args ...string) map[string]any { t.Helper(); return f1ReplayCLI(t, ctx, gd, args) }
 	observed := check("fault-observe", "--observation", `{"schema":"fault-observation/1","product":"crw","faultClass":"report_omitted","severity":"broken","signature":{"relationship":"r","turn":"t"},"occurrenceKey":"a","scope":{"projectKey":"CRW"}}`)

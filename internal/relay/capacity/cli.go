@@ -13,12 +13,12 @@ import (
 )
 
 // The relay CLI commands todo 27 part A owns (cli.py:5215-5262 capacity, :5271-5387 edit
-// regions). Their lines are parsed by their argparse specs, as every relay command's; their help
-// is the usage line alone (dispatch.Command.UsageHelp).
+// regions). Their lines are parsed by their argparse specs, and their help lists their options,
+// as every relay command's does.
 
 // command registers one capacity or edit-region command; run reads the store it is handed.
 func command(name string, defaults map[string]any, run func(context.Context, *store.Store, dispatch.Args) (any, error)) dispatch.Command {
-	return dispatch.Command{Name: name, Defaults: defaults, UsageHelp: true, ReadOnly: name == "capacity-show" || name == "region-show",
+	return dispatch.Command{Name: name, Defaults: defaults, ReadOnly: name == "capacity-show" || name == "region-show",
 		Run: func(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
 			// cli.cmd_region_settle refuses before services.edit_regions is reached, so that
 			// refusal leaves no store behind.

@@ -11,9 +11,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -248,7 +247,7 @@ func (sw *Sweeper) RecordAll(ctx context.Context, ledger *Ledger, batch Batch) (
 		var recorded bool
 		var err error
 		if !productName.MatchString(o.Product) {
-			err = fmt.Errorf("fault_observation_malformed: product %s is not a plain identifier (letters, digits, '.', '_', '-'); a ':' '@' or '|' would let one product's key read as another's", pyvalue.Quote(o.Product))
+			err = fmt.Errorf("fault_observation_malformed: product %s is not a plain identifier (letters, digits, '.', '_', '-'); a ':' '@' or '|' would let one product's key read as another's", quote.Value(o.Product))
 		} else {
 			recorded, err = ledger.Record(ctx, o)
 		}
@@ -856,9 +855,4 @@ func (sw *Sweeper) noteOvertaken(ctx context.Context, events []string) error {
 		}
 		return nil
 	})
-}
-
-// WallClockISO is faultsweep._now.
-func WallClockISO() string {
-	return time.Now().UTC().Format("2006-01-02T15:04:05.000000+00:00")
 }

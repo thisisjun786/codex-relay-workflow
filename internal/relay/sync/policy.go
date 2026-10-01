@@ -20,7 +20,7 @@ func packetPolicy(state, environment string) (registry.RolePolicy, error) {
 	}
 	value, recorded, err := service.LaunchVariable(resolution)
 	if errors.Is(err, service.ErrEmbeddedNUL) {
-		return registry.RolePolicy{}, &dispatch.HostError{Class: "ValueError", Detail: err.Error()}
+		return registry.RolePolicy{}, dispatch.Host("the launch declaration's execution policy path holds a NUL byte")
 	}
 	if recorded {
 		environment = value

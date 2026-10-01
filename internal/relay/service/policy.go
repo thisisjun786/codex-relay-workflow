@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -47,11 +48,11 @@ func launchRecord(path string) Object {
 	if err != nil {
 		return absent("the launch declaration could not be read: " + err.Error())
 	}
-	decoded, err := store.DecodeUTF8(raw)
+	decoded, err := pyjson.DecodeUTF8(raw)
 	if err != nil {
 		return absent("the launch declaration is not readable JSON: " + err.Error())
 	}
-	if message, _ := store.PythonJSONErrorWithLimit(decoded, launchDepth); message != "" {
+	if message, _ := pyjson.ErrorWithLimit(decoded, launchDepth); message != "" {
 		return absent("the launch declaration is not readable JSON: " + message)
 	}
 	data, err := store.LoadsJSON([]byte(decoded))

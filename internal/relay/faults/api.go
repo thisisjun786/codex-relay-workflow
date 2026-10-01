@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -61,7 +61,7 @@ func RegisterClass(name string, threshold int64) error {
 	classMu.Lock()
 	defer classMu.Unlock()
 	if existing, ok := classes[name]; ok && existing != policy {
-		return fmt.Errorf("%s is already registered with different terms; pick another name", pyvalue.Quote(name))
+		return fmt.Errorf("%s is already registered with different terms; pick another name", quote.Value(name))
 	}
 	classes[name] = policy
 	if threshold > 0 {

@@ -289,7 +289,7 @@ func Test22_FLT_1_PythonOriginalSignatureAssertion(t *testing.T) {
 	got := FaultID("crw", "report_omitted", map[string]any{"a": 1, "b": 2})
 	checkGolden(t, "assertions", nil, nil, []any{got})
 }
-func Test22_FLT_1_LivePythonWholeReceipt(t *testing.T) {
+func Test22_FLT_1_WholeReceipt(t *testing.T) {
 	o := map[string]any{"schema": SchemaObservation, "product": "crw", "faultClass": "report_omitted", "severity": Broken, "signature": map[string]any{"relationship": "rel-1", "turn": "turn-7"}, "occurrenceKey": "a", "scope": map[string]any{"projectKey": "CRW", "issueKey": "CRW-205"}, "detail": "an admitted turn settled without a report", "evidence": []any{map[string]any{"kind": "row", "ref": "events", "observed": map[string]any{"rows": 0}}}}
 	recordFault(t, o)
 }

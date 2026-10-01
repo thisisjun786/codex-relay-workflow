@@ -21,7 +21,7 @@ import (
 // captured once). The caller policy is the worker policy package service's worker-reason tests
 // serve (../service/testdata/fixtures/worker_policy.json); the observation readers' reasons are
 // pinned beside them there.
-func TestWorkerReadiness_every_reason_is_pythons(t *testing.T) {
+func TestWorkerReadiness_every_reason(t *testing.T) {
 	workerPolicy, err := os.ReadFile(filepath.Join("..", "service", "testdata", "fixtures", "worker_policy.json"))
 	if err != nil {
 		t.Fatal(err)

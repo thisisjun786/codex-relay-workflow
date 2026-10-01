@@ -570,13 +570,6 @@
   {"flag":"--assignment"},
   {"flag":"--session"},
   {"flag":"--now"}]},
-{"name":"guard-evaluate","options":[
-  {"flag":"--marker-root"},
-  {"flag":"--stop-input","help":"the Stop payload as JSON; - reads stdin"},
-  {"flag":"--mode","choices":["observe","hold"],"help":"observe classifies and records without ever holding, which is the default because holding depends on per-session write isolation the caller has to have granted"},
-  {"flag":"--db-path","help":"the relay store to read receipts from"},
-  {"flag":"--now"},
-  {"flag":"--no-record","kind":"true"}]},
 {"name":"merge-turn-request","options":[
   {"flag":"--repository","required":true},
   {"flag":"--base-ref","required":true},

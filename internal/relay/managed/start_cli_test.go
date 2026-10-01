@@ -89,3 +89,36 @@ func Test27_MST_9_MissingStateOrSocketUsage(t *testing.T) {
 		})
 	}
 }
+
+// A managed start this build cannot carry out is a host error in Go's words, after the input and
+// selector checks and before any store is opened: a socket that cannot be resolved, and a build
+// that registers no host adapter (this package's tests register none).
+func Test27_MST_9_AStartThisBuildCannotMakeIsAHostError(t *testing.T) {
+	dir := t.TempDir()
+	state := filepath.Join(dir, "state")
+	if err := os.MkdirAll(state, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(state, "relay.sqlite3"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	raw := requestFixture(t)
+	for _, c := range []struct{ socket, detail string }{
+		{"~crw_user_that_does_not_exist/socket", "the relay socket cannot be resolved: "},
+		{filepath.Join(dir, "socket"), "this build registers no host adapter, so it cannot start a managed task"},
+	} {
+		var out, stderr bytes.Buffer
+		code := cli.ExecuteAs(context.Background(), "codex-session-relay", []string{"--state", state, "--socket", c.socket, "managed-start", "--request", string(raw), "--marker-root", filepath.Join(dir, "markers")}, &out, &stderr)
+		var answer map[string]any
+		if err := json.Unmarshal(out.Bytes(), &answer); err != nil {
+			t.Fatalf("%s: %v %s", c.socket, err, &out)
+		}
+		detail, _ := answer["detail"].(string)
+		if code != 3 || answer["error"] != "host" || !strings.HasPrefix(detail, c.detail) {
+			t.Fatalf("%s: exit %d %s %s", c.socket, code, &out, &stderr)
+		}
+		if info, err := os.Stat(filepath.Join(state, "relay.sqlite3")); err != nil || info.Size() != 0 {
+			t.Fatalf("%s: the store was opened: %v", c.socket, err)
+		}
+	}
+}

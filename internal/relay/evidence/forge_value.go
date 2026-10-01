@@ -7,7 +7,6 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 )
@@ -192,7 +191,7 @@ func Integer(value any) *big.Int {
 			return n
 		}
 	case string:
-		if n, ok := argparse.ParseInt(v); ok {
+		if n, ok := pyvalue.ParseInt(v); ok {
 			return n
 		}
 		panic(&PythonError{"ValueError", "invalid literal for int() with base 10: " + pyvalue.Repr(v)})

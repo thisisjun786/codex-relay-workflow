@@ -9,7 +9,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
-func TestDRelinkOutstandingWriteSelectionAgainstPython(t *testing.T) {
+func TestDRelinkOutstandingWriteSelection(t *testing.T) {
 	home, e := os.MkdirTemp("/dev/shm", "fault-d-link-")
 	if e != nil {
 		t.Fatal(e)

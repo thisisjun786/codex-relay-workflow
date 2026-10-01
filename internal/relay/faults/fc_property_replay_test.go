@@ -22,14 +22,14 @@ import (
 //     and TestF2WholeOutput;
 //   - FC-2, 6-12, 14, 16-18, 24, 34, 38 (sweeps): the TestF1_FLT_18_21_22 / FLT_18_21 / FLT_21 /
 //     FLT_32 sweep tests, TestF1SweepBoundsAndScopeWholeCLI, TestF1SweepReadingsWholeCLI,
-//     Test22_OvertakenPresenceWholePythonPage and Test22_SettingsHoldWholePythonObservation;
+//     Test22_OvertakenPresenceWholePage and Test22_SettingsHoldWholeObservation;
 //   - FC-13, 19, 22, 27, 35, 36 (records): Test22_FLT_1_IdentityWholeOutput,
 //     Test22_FLT_2_3_4_14_RecordWholeOutput and Test22_FLT_5_6_7_8_19_23_24_LifecycleWholeOutput;
 //   - FC-15, 20, 21, 37 (budget, attention, notifications): the TestD policy, attention,
 //     notification-lifecycle, relationship-eligibility and notifications-page tests and
 //     Test22_FN_7_BudgetAndRefundWholeOutput;
-//   - FC-28, 30, 33 (relink): TestDRelinkRepointsBoundedWritesAgainstPython and
-//     TestDRelinkOutstandingWriteSelectionAgainstPython.
+//   - FC-28, 30, 33 (relink): TestDRelinkRepointsBoundedWrites and
+//     TestDRelinkOutstandingWriteSelection.
 
 // FC-39: scope conflicts and moves compare complete command outputs and rows.
 func Test22_FC_39_ScopeConflictWholeOutput(t *testing.T) {
