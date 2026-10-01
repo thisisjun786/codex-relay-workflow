@@ -34,7 +34,7 @@ type gitError struct {
 }
 
 func (e *gitError) Error() string {
-	return fmt.Sprintf("Command '%s' %s", pyReprList(append([]string{"git"}, e.args...)), e.status)
+	return fmt.Sprintf("Command '%s' %s", pyvalue.Repr(append([]string{"git"}, e.args...)), e.status)
 }
 
 func runGit(root string, args ...string) ([]byte, error) {

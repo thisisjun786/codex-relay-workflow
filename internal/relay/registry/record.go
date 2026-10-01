@@ -30,8 +30,6 @@ func findingRefusal(finding contract.OrderedObject) error {
 	return refuse(contract.RefusalReason(findingText(finding, "code")), "%s", findingText(finding, "detail"))
 }
 
-func rolesList(roles []string) string { return pyvalue.Repr(anyStrings(roles)) }
-
 // RecordSettings is registry.record_settings. role "" is None.
 func (r *Registry) RecordSettings(ctx context.Context, task string, settings contract.OrderedObject, source, role string, citation Citation) (contract.OrderedObject, error) {
 	settings = copyObject(settings)
@@ -91,7 +89,7 @@ func (r *Registry) RecordSettings(ctx context.Context, task string, settings con
 		}
 		if contested != nil {
 			return refuse(contract.RefusalRoleBindingMismatch, "%s holds live bindings at %s; one task holds one role, so there is no single role to record settings against",
-				pyvalue.StrRepr(task), rolesList(contested))
+				pyvalue.StrRepr(task), pyvalue.Repr(contested))
 		}
 		if bound != "" {
 			if finding := CheckBinding(citedRole(settings), bound, settings, r.Policy); finding != nil {
@@ -242,7 +240,7 @@ func (r *Registry) AuthorizedSettings(ctx context.Context, task string) (setting
 		return settings, false, refuse(contract.RefusalRoleBindingMismatch, "%s holds live bindings at %s, and one task holds one role. "+
 			"Nothing was sent and no turn was started, because checking its authorization against "+
 			"either of them would report a clean answer derived from an arbitrary choice. Resolve "+
-			"the bindings first.", pyvalue.StrRepr(task), rolesList(contested))
+			"the bindings first.", pyvalue.StrRepr(task), pyvalue.Repr(contested))
 	}
 	if role == "" {
 		return settings, false, nil

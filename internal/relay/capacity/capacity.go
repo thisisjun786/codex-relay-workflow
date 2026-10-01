@@ -449,7 +449,7 @@ func (c *Capacity) Release(ctx context.Context, in Release) (contract.OrderedObj
 				numbers[i] = t.Tenure
 			}
 			return refuse(contract.RefusalDispositionConflict, in.SubjectKind+" "+pyvalue.StrRepr(in.SubjectKey)+" has tenures "+
-				reprInts(numbers)+"; name the one this release settles, because the newest is not necessarily the one a"+
+				pyvalue.Repr(numbers)+"; name the one this release settles, because the newest is not necessarily the one a"+
 				" delayed notification is about")
 		case len(tenures) == 1:
 			row = &tenures[0]
@@ -616,14 +616,6 @@ func (c *Capacity) Observe(ctx context.Context, in Observation) (contract.Ordere
 		{Key: "observed", Value: in.Observed}, {Key: "observedBy", Value: in.ObservedBy}, {Key: "method", Value: in.Method},
 		{Key: "observedAt", Value: now},
 	}, nil
-}
-
-func reprInts(values []any) string {
-	parts := make([]string, len(values))
-	for i, v := range values {
-		parts[i] = strconv.FormatInt(v.(int64), 10)
-	}
-	return "[" + strings.Join(parts, ", ") + "]"
 }
 
 func reprNullable(v sql.NullString) string {

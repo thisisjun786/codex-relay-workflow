@@ -10,8 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf16"
-
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // jsonKV is one member of an ordered JSON object.
@@ -158,15 +156,6 @@ func pyJSONString(s string) string {
 	}
 	b.WriteByte('"')
 	return b.String()
-}
-
-// pyReprList is repr() of a list of str.
-func pyReprList(items []string) string {
-	parts := make([]string, len(items))
-	for i, s := range items {
-		parts[i] = pyvalue.StrRepr(s)
-	}
-	return "[" + strings.Join(parts, ", ") + "]"
 }
 
 // errorWriter is the stream a check prints its refusal on.

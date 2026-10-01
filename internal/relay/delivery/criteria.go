@@ -157,7 +157,7 @@ func NormaliseFindings(sources ...[]any) ([]any, error) {
 		}
 	}
 	if len(carriers) > 1 {
-		return nil, refuse(DispositionConflict, "%s each declare the restoration block. One correction carries one block, and two candidates is a block nobody can locate", reprList(carriers))
+		return nil, refuse(DispositionConflict, "%s each declare the restoration block. One correction carries one block, and two candidates is a block nobody can locate", pyvalue.Repr(carriers))
 	}
 	for _, e := range merged {
 		if v, _ := get(e, "restoration"); v == true {
@@ -390,7 +390,7 @@ func (c *Criteria) Coverage(ctx context.Context, rid, eventID, verdict string, f
 		}
 		sort.Strings(missing)
 		if len(missing) > 0 {
-			return nil, refuse(CriteriaNotCovered, "these required criteria are not recorded as verified: %s", reprList(missing))
+			return nil, refuse(CriteriaNotCovered, "these required criteria are not recorded as verified: %s", pyvalue.Repr(missing))
 		}
 	case "needs_changes":
 		ok := false

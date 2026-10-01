@@ -472,7 +472,7 @@ func (r *Registry) refuseRoleDisagreement(ctx context.Context, writes []settings
 			return err
 		}
 		if contested != nil {
-			return refuse(contract.RefusalRoleBindingMismatch, "%s holds live bindings at %s; one task holds one role, so there is no single role to register settings against", pyvalue.StrRepr(w.task), rolesList(contested))
+			return refuse(contract.RefusalRoleBindingMismatch, "%s holds live bindings at %s; one task holds one role, so there is no single role to register settings against", pyvalue.StrRepr(w.task), pyvalue.Repr(contested))
 		}
 		target := bound
 		if target == "" {

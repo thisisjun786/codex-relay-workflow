@@ -47,8 +47,9 @@ const (
 )
 
 // LoadOptions says which reading of a document Loads gives: json.loads' (Python) or
-// encoding/json's, and the Go values it is read into. Every reading keeps an object's key order
-// in an Object and gives a repeated key its first position and its last value, as a dict does.
+// encoding/json's, and the Go values it is read into. Unless Map, Repeats or Unique says
+// otherwise, a reading keeps an object's key order in an Object and gives a repeated key its
+// first position and its last value, as a dict does.
 type LoadOptions struct {
 	// Python refuses what json.loads refuses (with its JSONDecodeError text, Error) and nothing
 	// else. Without it what encoding/json's Decoder refuses is refused, with its error, and NaN,

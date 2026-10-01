@@ -24,14 +24,6 @@ func within(root, candidate string) bool {
 	return candidate == root || strings.HasPrefix(candidate, root+"/")
 }
 
-func reprList(items []string) string {
-	quoted := make([]string, len(items))
-	for i, s := range items {
-		quoted[i] = pyvalue.StrRepr(s)
-	}
-	return "[" + strings.Join(quoted, ", ") + "]"
-}
-
 // assertAssignmentDelivery is scope.assert_assignment_delivery: a delivery belongs to ONE
 // assignment and goes to that assignment's own endpoint.
 func assertAssignmentDelivery(r Relationship, kind, recipient string, recipientThread *string, eventRelationship *string, manifestPaths []string) error {
@@ -70,7 +62,7 @@ func assertAssignmentDelivery(r Relationship, kind, recipient string, recipientT
 			}
 		}
 		if !ok {
-			return refuse(ScopeEscape, "%s lies outside every authorized root %s", pyvalue.StrRepr(p), reprList(r.ArtifactRoots))
+			return refuse(ScopeEscape, "%s lies outside every authorized root %s", pyvalue.StrRepr(p), pyvalue.Repr(r.ArtifactRoots))
 		}
 	}
 	return nil

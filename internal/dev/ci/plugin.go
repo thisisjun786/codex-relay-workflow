@@ -786,7 +786,7 @@ func manifestErrors(m *pyDict, rootName, label string, p payload) []string {
 	if !isDict || !nonempty(author.get("name")) {
 		add("author.name is required")
 	} else if extra := without(author.sortedKeys(), authorKeys); len(extra) > 0 {
-		add("author carries unsupported keys " + pyReprList(extra))
+		add("author carries unsupported keys " + pyvalue.Repr(extra))
 	}
 	if isDict {
 		if author.has("email") && !nonempty(author.get("email")) {

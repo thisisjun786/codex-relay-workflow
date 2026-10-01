@@ -242,7 +242,7 @@ func DefaultRoleGate(ctx context.Context, s *store.Store, taskID string, _ *Task
 			roles[i] = r.S("role")
 		}
 		slices.Sort(roles)
-		return refuse(RoleBindingMismatch, "%s holds live bindings at %s, and one task holds one role. Nothing was sent and no turn was started, because checking its authorization against either of them would report a clean answer derived from an arbitrary choice. Resolve the bindings first.", pyvalue.StrRepr(taskID), reprList(roles))
+		return refuse(RoleBindingMismatch, "%s holds live bindings at %s, and one task holds one role. Nothing was sent and no turn was started, because checking its authorization against either of them would report a clean answer derived from an arbitrary choice. Resolve the bindings first.", pyvalue.StrRepr(taskID), pyvalue.Repr(roles))
 	}
 	return refuse(RolePolicyUnconfigured, "%s is bound as %s and this process cannot read a role policy to check its authorization against: CODEX_THREAD_BRIDGE_EXECUTION_POLICY is not set in this process, so no role policy can be read. Nothing was sent and no turn was started. Set the policy for this process and the held deliveries resume on the next pass.", pyvalue.StrRepr(taskID), pyvalue.StrRepr(rows[0].S("role")))
 }
