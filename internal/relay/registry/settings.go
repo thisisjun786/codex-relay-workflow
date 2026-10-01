@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -92,7 +93,7 @@ func NormalisePolicy(policy any) contract.OrderedObject {
 		case []any:
 			readable = textList(value)
 		default:
-			readable = pyTypeName(value) == pyTypeName(field.Value)
+			readable = pyvalue.TypeName(value) == pyvalue.TypeName(field.Value)
 		}
 		if !readable {
 			return nil
@@ -136,7 +137,7 @@ func shape(value any) string {
 				if one == nil {
 					return "a list holding None"
 				}
-				return "a list holding " + pyTypeName(one)
+				return "a list holding " + pyvalue.TypeName(one)
 			}
 		}
 		return "a list of str"
@@ -144,7 +145,7 @@ func shape(value any) string {
 	if value == nil {
 		return "absent"
 	}
-	return pyTypeName(value)
+	return pyvalue.TypeName(value)
 }
 
 // environmentsProblem is settings.environments_problem: (where, what) or ok=false when readable.
@@ -214,7 +215,7 @@ func (s TaskSettings) mistypedDetail(field string) string {
 		where, what, _ := environmentsProblem(value)
 		return "environments" + where + " " + what
 	}
-	return field + " is " + pyTypeName(value) + ", not str"
+	return field + " is " + pyvalue.TypeName(value) + ", not str"
 }
 
 // RequireUsable is TaskSettings.require_usable: nil, or the refusal with its reason and detail.
@@ -233,9 +234,9 @@ func (s TaskSettings) RequireUsable() error {
 	if text, ok := approval.(string); !ok || !contains(CarriedApprovalPolicies, text) {
 		quoted := make([]string, len(CarriedApprovalPolicies))
 		for i, p := range CarriedApprovalPolicies {
-			quoted[i] = pyStr(p)
+			quoted[i] = pyvalue.StrRepr(p)
 		}
-		return settingsRefusal(UnsupportedApprovalPolicy, "the recorded approvalPolicy is "+pyRepr(approval)+
+		return settingsRefusal(UnsupportedApprovalPolicy, "the recorded approvalPolicy is "+pyvalue.Repr(approval)+
 			"; this transport carries only "+strings.Join(quoted, " and ")+
 			", leaving every approval a turn raises with the thread's own approver")
 	}
@@ -243,11 +244,11 @@ func (s TaskSettings) RequireUsable() error {
 		recorded := s.get("sandbox")
 		object, ok := recorded.(contract.OrderedObject)
 		if !ok {
-			return settingsRefusal(UnsupportedSandboxType, "the recorded sandbox is "+pyTypeName(recorded)+
+			return settingsRefusal(UnsupportedSandboxType, "the recorded sandbox is "+pyvalue.TypeName(recorded)+
 				", not the policy object a creation result reports, so it does not record the full policy a resume would have to restore")
 		}
 		kind, _ := getField(object, "type")
-		return settingsRefusal(UnsupportedSandboxType, pyRepr(kind)+" has no ThreadResumeParams.sandbox mode, so it cannot be restored on a resume")
+		return settingsRefusal(UnsupportedSandboxType, pyvalue.Repr(kind)+" has no ThreadResumeParams.sandbox mode, so it cannot be restored on a resume")
 	}
 	if NormalisePolicy(s.get("sandbox")) == nil {
 		return settingsRefusal(UnsupportedSandboxType, "the recorded sandbox policy cannot be read in full, so no response could confirm it")
@@ -309,7 +310,7 @@ func (s TaskSettings) Mismatches(response any, transmitted, exactApprovalPolicy,
 	object, ok := response.(contract.OrderedObject)
 	if !ok {
 		return []contract.OrderedObject{finding(SettingUnobservable, "response", "a resume response object", nil,
-			contract.Field{Key: "returnedShape", Value: pyTypeName(response)})}
+			contract.Field{Key: "returnedShape", Value: pyvalue.TypeName(response)})}
 	}
 	returnedPolicy, _ := getField(object, "approvalPolicy")
 	if returnedPolicy == nil {
@@ -323,11 +324,11 @@ func (s TaskSettings) Mismatches(response any, transmitted, exactApprovalPolicy,
 	}
 	if exactApprovalPolicy && !jsonEqual(returnedPolicy, s.get("approvalPolicy")) {
 		return []contract.OrderedObject{finding(UnsupportedApprovalPolicy, "approvalPolicy", s.get("approvalPolicy"), label(),
-			contract.Field{Key: "returnedShape", Value: pyTypeName(returnedPolicy)})}
+			contract.Field{Key: "returnedShape", Value: pyvalue.TypeName(returnedPolicy)})}
 	}
 	if text, ok := returnedPolicy.(string); !ok || !contains(CarriedApprovalPolicies, text) {
 		return []contract.OrderedObject{finding(UnsupportedApprovalPolicy, "approvalPolicy", anyStrings(CarriedApprovalPolicies), label(),
-			contract.Field{Key: "returnedShape", Value: pyTypeName(returnedPolicy)})}
+			contract.Field{Key: "returnedShape", Value: pyvalue.TypeName(returnedPolicy)})}
 	}
 	var found []contract.OrderedObject
 	threadValue, _ := getField(object, "thread")
@@ -337,7 +338,7 @@ func (s TaskSettings) Mismatches(response any, transmitted, exactApprovalPolicy,
 	thread, ok := threadValue.(contract.OrderedObject)
 	if !ok {
 		return []contract.OrderedObject{finding(SettingUnobservable, "environments", s.get("environments"), nil,
-			contract.Field{Key: "returnedShape", Value: "thread is " + pyTypeName(threadValue)})}
+			contract.Field{Key: "returnedShape", Value: "thread is " + pyvalue.TypeName(threadValue)})}
 	}
 	returnedEnvironments, _ := getField(thread, "environments")
 	if returnedEnvironments == nil {
@@ -472,7 +473,7 @@ func contains(values []string, value string) bool {
 }
 
 func itoa(n int) string {
-	return strings.TrimSpace(strings.Replace(pyRepr(int64(n)), " ", "", -1))
+	return strings.TrimSpace(strings.Replace(pyvalue.Repr(int64(n)), " ", "", -1))
 }
 
 // RootsNarrowing is TaskSettings.roots_narrowing: a note for each place a resume reported fewer

@@ -6,6 +6,8 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // ComposeNotice ports only the packet shape used by fault notices. evidence is
@@ -65,7 +67,7 @@ func ComposeNotice(notice, live map[string]any, observedAt, evidence string) (ma
 		published = "an issue is published (its reference is on the fault)"
 	}
 	basis := strings.Join([]string{"fault " + noticeString(notice, "faultClass") + " (" + noticeString(notice, "product") + ") is " + noticeString(notice, "severity") + ", " + state, notification, published, "fault " + noticeString(notice, "faultId")}, "; ")
-	env := map[string]any{"version": "relay-envelope/1", "direction": "parent_to_supervisor", "kind": kind, "purpose": purpose, "messageId": sha256Hex("parent_to_supervisor|" + relation + "|" + purpose + "|" + noticeString(notice, "deliveryKey"))[:32], "relationId": relation, "relationRevision": absent("unknown", "the link revision was not read"), "sender": map[string]any{"role": "parent", "taskId": live["sender"]}, "recipient": map[string]any{"role": "supervisor", "taskId": live["recipient"]}, "subject": notice["deliveryKey"], "scope": scope, "basis": basis, "observedAt": observedAt, "evidence": []any{evidence}, "correlationId": absent("not_applicable", "this message answers nothing earlier"), "replyTo": absent("not_applicable", "no reply is directed at one message"), "answerOwedBy": owed, "decision": decision, "reach": reach}
+	env := map[string]any{"version": "relay-envelope/1", "direction": "parent_to_supervisor", "kind": kind, "purpose": purpose, "messageId": pyvalue.SHA256Hex("parent_to_supervisor|" + relation + "|" + purpose + "|" + noticeString(notice, "deliveryKey"))[:32], "relationId": relation, "relationRevision": absent("unknown", "the link revision was not read"), "sender": map[string]any{"role": "parent", "taskId": live["sender"]}, "recipient": map[string]any{"role": "supervisor", "taskId": live["recipient"]}, "subject": notice["deliveryKey"], "scope": scope, "basis": basis, "observedAt": observedAt, "evidence": []any{evidence}, "correlationId": absent("not_applicable", "this message answers nothing earlier"), "replyTo": absent("not_applicable", "no reply is directed at one message"), "answerOwedBy": owed, "decision": decision, "reach": reach}
 	return map[string]any{"version": "relay-packet/1", "envelope": env, "issue": notice["issueKey"], "generation": nil, "criteriaDigest": nil, "policy": nil, "callback": nil, "artifact": nil, "evidence": []any{evidence}, "body": nil, "activation": nil}, nil
 }
 

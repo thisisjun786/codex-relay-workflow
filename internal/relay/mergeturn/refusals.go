@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -15,7 +16,7 @@ import (
 func (s *Service) row(ctx context.Context, turn string) (store.MergeTurnsRow, error) {
 	r, err := s.Store.MergeTurn(ctx, turn)
 	if errors.Is(err, sql.ErrNoRows) {
-		return r, &store.RefusedError{Reason: string(contract.RefusalUnregisteredScope), Detail: "no merge turn " + pyRepr(turn)}
+		return r, &store.RefusedError{Reason: string(contract.RefusalUnregisteredScope), Detail: "no merge turn " + pyvalue.StrRepr(turn)}
 	}
 	return r, err
 }
@@ -26,36 +27,36 @@ func coordination(r store.MergeTurnsRow, reason contract.RefusalReason, detail, 
 
 // notHolder is MergeTurn._not_holder.
 func notHolder(r store.MergeTurnsRow, actor, what string) *registry.CoordinationRefusal {
-	return coordination(r, contract.RefusalMergeTurnNotHeld, "task "+pyRepr(actor)+" does not hold turn "+pyRepr(r.TurnID)+", which belongs to "+pyRepr(r.HolderTaskID)+", so it cannot "+what+" it", r.HolderTaskID, actor)
+	return coordination(r, contract.RefusalMergeTurnNotHeld, "task "+pyvalue.StrRepr(actor)+" does not hold turn "+pyvalue.StrRepr(r.TurnID)+", which belongs to "+pyvalue.StrRepr(r.HolderTaskID)+", so it cannot "+what+" it", r.HolderTaskID, actor)
 }
 
 // wrongState is MergeTurn._wrong_state.
 func wrongState(r store.MergeTurnsRow, actor, what string) *registry.CoordinationRefusal {
-	return coordination(r, contract.RefusalMergeTurnNotHeld, "turn "+pyRepr(r.TurnID)+" is "+r.State+", which does not admit "+what, r.State, actor)
+	return coordination(r, contract.RefusalMergeTurnNotHeld, "turn "+pyvalue.StrRepr(r.TurnID)+" is "+r.State+", which does not admit "+what, r.State, actor)
 }
 
 // staleOwner is MergeTurn._stale_owner; known is false for Python's None owner.
 func staleOwner(r store.MergeTurnsRow, owner string, known bool, actor string) *registry.CoordinationRefusal {
 	held := "None"
 	if known {
-		held = pyRepr(owner)
+		held = pyvalue.StrRepr(owner)
 	}
-	return coordination(r, contract.RefusalScopeRoleMismatch, "task "+pyRepr(actor)+" no longer owns project "+pyRepr(r.ProjectKey)+", which is held by "+held+"; the project changed hands after this claim was made", owner, actor)
+	return coordination(r, contract.RefusalScopeRoleMismatch, "task "+pyvalue.StrRepr(actor)+" no longer owns project "+pyvalue.StrRepr(r.ProjectKey)+", which is held by "+held+"; the project changed hands after this claim was made", owner, actor)
 }
 
 // unresolved is MergeTurn._unresolved.
 func unresolved(r store.MergeTurnsRow, actor string) *registry.CoordinationRefusal {
-	return coordination(r, contract.RefusalMergeTurnUnresolved, "turn "+pyRepr(r.TurnID)+" is "+r.State+" on target "+pyRepr(r.TargetKey)+". Its holder may already have merged, so no amount of waiting and no cancellation releases it. Record the outcome with land or report_unknown, then resolve_unknown with an observation of the target", r.HolderTaskID, actor)
+	return coordination(r, contract.RefusalMergeTurnUnresolved, "turn "+pyvalue.StrRepr(r.TurnID)+" is "+r.State+" on target "+pyvalue.StrRepr(r.TargetKey)+". Its holder may already have merged, so no amount of waiting and no cancellation releases it. Record the outcome with land or report_unknown, then resolve_unknown with an observation of the target", r.HolderTaskID, actor)
 }
 
 // paused is MergeTurn._paused.
 func paused(r store.MergeTurnsRow, actor, what string) *registry.CoordinationRefusal {
-	return coordination(r, contract.RefusalScopeRoleMismatch, "task "+pyRepr(actor)+" owns project "+pyRepr(r.ProjectKey)+" with a paused binding, so it keeps turn "+pyRepr(r.TurnID)+" and cannot "+what+" under it; resume the binding, or return the turn so a ready peer can proceed", r.HolderTaskID, actor)
+	return coordination(r, contract.RefusalScopeRoleMismatch, "task "+pyvalue.StrRepr(actor)+" owns project "+pyvalue.StrRepr(r.ProjectKey)+" with a paused binding, so it keeps turn "+pyvalue.StrRepr(r.TurnID)+" and cannot "+what+" under it; resume the binding, or return the turn so a ready peer can proceed", r.HolderTaskID, actor)
 }
 
 // unreadableTarget is MergeTurn._unreadable.
 func unreadableTarget(r store.MergeTurnsRow, actor, why, what string) *registry.CoordinationRefusal {
-	return coordination(r, contract.RefusalMergeTargetUnreadable, "the base branch "+pyRepr(r.BaseRef)+" of "+pyRepr(r.Repository)+" was not read, so "+what+": "+why, r.TurnID, actor)
+	return coordination(r, contract.RefusalMergeTargetUnreadable, "the base branch "+pyvalue.StrRepr(r.BaseRef)+" of "+pyvalue.StrRepr(r.Repository)+" was not read, so "+what+": "+why, r.TurnID, actor)
 }
 
 // mismatch is MergeTurn._mismatch.
@@ -64,7 +65,7 @@ func mismatch(r store.MergeTurnsRow, actor, stated string, tip Tip, what string,
 	if optional {
 		tail = ", or leave the statement out"
 	}
-	return coordination(r, contract.RefusalMergeBaseMismatch, "the base branch "+pyRepr(r.BaseRef)+" reads "+pyRepr(tip.SHA)+" ("+tip.Source+") and "+what+" states "+pyRepr(stated)+"; the relay records what the branch reads, so read it again and state it in full"+tail, tip.SHA, stated)
+	return coordination(r, contract.RefusalMergeBaseMismatch, "the base branch "+pyvalue.StrRepr(r.BaseRef)+" reads "+pyvalue.StrRepr(tip.SHA)+" ("+tip.Source+") and "+what+" states "+pyvalue.StrRepr(stated)+"; the relay records what the branch reads, so read it again and state it in full"+tail, tip.SHA, stated)
 }
 
 // parents is the task ids of the live parent bindings of a project, in owners() order.
@@ -133,7 +134,7 @@ func (s *Service) unansweredGrant(ctx context.Context, r store.MergeTurnsRow, ac
 	if !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
-	return coordination(r, contract.RefusalMergeTurnNotHeld, "turn "+pyRepr(r.TurnID)+" was granted "+pyRepr(current)+" and has not acknowledged it, so nothing records that this candidate was re-checked against the store rather than against what its holder remembers. Acknowledge the grant, then merge", current, actor), nil
+	return coordination(r, contract.RefusalMergeTurnNotHeld, "turn "+pyvalue.StrRepr(r.TurnID)+" was granted "+pyvalue.StrRepr(current)+" and has not acknowledged it, so nothing records that this candidate was re-checked against the store rather than against what its holder remembers. Acknowledge the grant, then merge", current, actor), nil
 }
 
 // latestLanding is MergeTurn._latest_landing_in: the landed turn whose recorded base the next

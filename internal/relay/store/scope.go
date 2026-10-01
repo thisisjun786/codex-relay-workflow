@@ -9,6 +9,8 @@ import (
 	"path"
 	"strings"
 	"syscall"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // NormalizeDeclaredPath is MANIFEST-CANON-01: absolute, normalized POSIX, no '~', no trailing
@@ -20,11 +22,11 @@ func NormalizeDeclaredPath(declared string) (string, error) {
 	case strings.ContainsRune(declared, 0):
 		return "", refuse(ReasonScopeEscape, "path must not contain NUL")
 	case !strings.HasPrefix(declared, "/"):
-		return "", refuse(ReasonScopeEscape, "path must be absolute: %s", PythonRepr(declared))
+		return "", refuse(ReasonScopeEscape, "path must be absolute: %s", pyvalue.StrRepr(declared))
 	case strings.Contains(declared, "~"):
-		return "", refuse(ReasonScopeEscape, "path must not contain '~': %s", PythonRepr(declared))
+		return "", refuse(ReasonScopeEscape, "path must not contain '~': %s", pyvalue.StrRepr(declared))
 	case declared != pythonNormpath(declared):
-		return "", refuse(ReasonScopeEscape, "path must already be normalized; %s normalizes to %s", PythonRepr(declared), PythonRepr(pythonNormpath(declared)))
+		return "", refuse(ReasonScopeEscape, "path must already be normalized; %s normalizes to %s", pyvalue.StrRepr(declared), pyvalue.StrRepr(pythonNormpath(declared)))
 	}
 	return declared, nil
 }
@@ -56,9 +58,9 @@ func assertWithin(candidate string, roots []string) (string, error) {
 	}
 	quoted := make([]string, len(roots))
 	for i, root := range roots {
-		quoted[i] = PythonRepr(root)
+		quoted[i] = pyvalue.StrRepr(root)
 	}
-	return "", refuse(ReasonScopeEscape, "%s lies outside every authorized root [%s]", PythonRepr(candidate), strings.Join(quoted, ", "))
+	return "", refuse(ReasonScopeEscape, "%s lies outside every authorized root [%s]", pyvalue.StrRepr(candidate), strings.Join(quoted, ", "))
 }
 
 // ArtifactBinding records how strongly one artifact read was bound to its declared path.
@@ -102,7 +104,7 @@ func HashArtifactContext(ctx context.Context, declared string, roots []string, a
 		return "", 0, ArtifactBinding{}, err
 	}
 	if actual != declared {
-		return "", 0, ArtifactBinding{}, refuse(ReasonPathRelocated, "descriptor for %s actually resolves to %s", PythonRepr(declared), PythonRepr(actual))
+		return "", 0, ArtifactBinding{}, refuse(ReasonPathRelocated, "descriptor for %s actually resolves to %s", pyvalue.StrRepr(declared), pyvalue.StrRepr(actual))
 	}
 	if _, err := assertWithin(actual, []string{root}); err != nil {
 		return "", 0, ArtifactBinding{}, err
@@ -112,7 +114,7 @@ func HashArtifactContext(ctx context.Context, declared string, roots []string, a
 		return "", 0, ArtifactBinding{}, &RefusedError{Reason: ReasonScopeEscape, Detail: declared, cause: err}
 	}
 	if mode&syscall.S_IFMT != syscall.S_IFREG {
-		return "", 0, ArtifactBinding{}, refuse(ReasonNotARegularFile, "%s is not a regular file", PythonRepr(declared))
+		return "", 0, ArtifactBinding{}, refuse(ReasonNotARegularFile, "%s is not a regular file", pyvalue.StrRepr(declared))
 	}
 	binding := ArtifactBinding{Mode: BestEffortDetection, Detail: "lease not attempted", Declared: declared, Root: root}
 	if allowLease {
@@ -135,7 +137,7 @@ func HashArtifactContext(ctx context.Context, declared string, roots []string, a
 		return "", 0, ArtifactBinding{}, err
 	}
 	if first != second || size != sizeAgain {
-		return "", 0, ArtifactBinding{}, refuse(ReasonArtifactMutated, "%s produced different bytes on two consecutive reads", PythonRepr(declared))
+		return "", 0, ArtifactBinding{}, refuse(ReasonArtifactMutated, "%s produced different bytes on two consecutive reads", pyvalue.StrRepr(declared))
 	}
 	if err := verifyStable(fd, declared, before, binding.Mode); err != nil {
 		return "", 0, ArtifactBinding{}, err
@@ -149,14 +151,14 @@ func verifyStable(fd int, declared string, before statSnapshot, mode PathBinding
 		return err
 	}
 	if actual != declared {
-		return refuse(ReasonPathRelocated, "%s moved to %s during the read", PythonRepr(declared), PythonRepr(actual))
+		return refuse(ReasonPathRelocated, "%s moved to %s during the read", pyvalue.StrRepr(declared), pyvalue.StrRepr(actual))
 	}
 	after, _, err := snapshotOf(fd)
 	if err != nil || after != before {
-		return refuse(ReasonArtifactMutated, "%s changed size or timestamps during the read", PythonRepr(declared))
+		return refuse(ReasonArtifactMutated, "%s changed size or timestamps during the read", pyvalue.StrRepr(declared))
 	}
 	if mode == LeaseEnforced && !leaseStillHeld(fd) {
-		return refuse(ReasonArtifactLeaseBroken, "the read lease on %s was broken during the read", PythonRepr(declared))
+		return refuse(ReasonArtifactLeaseBroken, "the read lease on %s was broken during the read", pyvalue.StrRepr(declared))
 	}
 	return nil
 }

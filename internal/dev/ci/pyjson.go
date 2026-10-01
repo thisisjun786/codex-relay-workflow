@@ -158,15 +158,6 @@ func pyJSONString(s string) string {
 	return b.String()
 }
 
-// pyReprList is repr() of a list of str.
-func pyReprList(items []string) string {
-	parts := make([]string, len(items))
-	for i, s := range items {
-		parts[i] = pyRepr(s)
-	}
-	return "[" + strings.Join(parts, ", ") + "]"
-}
-
 // errorWriter is the stream a check prints its refusal on.
 func failf(w io.Writer, format string, args ...any) int {
 	fmt.Fprintf(w, format+"\n", args...)

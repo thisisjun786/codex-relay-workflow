@@ -19,6 +19,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
@@ -163,8 +164,8 @@ func selectedObservationTrace(o hook.Object, reached *hookReplayReach) hook.Obje
 			continue
 		}
 		id := ""
-		if value := objGet(m, "assignmentId"); evidence.Truthy(value) {
-			id = evidence.Text(value)
+		if value := objGet(m, "assignmentId"); pyvalue.Truthy(value) {
+			id = pyvalue.Str(value)
 		}
 		rows = append(rows, row{*at, id, m, selectingClaimTrace(m, session, id, reached) || obstructedClaim(m, session)})
 	}
@@ -384,7 +385,7 @@ func replayHook(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, pythonAttribute(v, "get"))
 			return 1
 		}
-		if value := objGet(f, "steps"); evidence.Truthy(value) {
+		if value := objGet(f, "steps"); pyvalue.Truthy(value) {
 			steps, err := hostList(orderedPlain(value))
 			if err != nil {
 				fmt.Fprintln(stderr, pythonNotIterable(value, false))
@@ -418,7 +419,7 @@ func replayHook(args []string, stdout, stderr io.Writer) int {
 			continue
 		}
 		expectedValue := objGet(f, "expected")
-		if evidence.Truthy(expectedValue) {
+		if pyvalue.Truthy(expectedValue) {
 			if _, err := hostList(orderedPlain(expectedValue)); err != nil {
 				fmt.Fprintln(stderr, pythonNotIterable(expectedValue, true))
 				return 1
@@ -516,14 +517,14 @@ func checkHookOneTrace(label string, observation, expectedValue any, out io.Writ
 	return checkHookOneKeys(label, observation, expectedValue, out, reached, hookComparedKeys)
 }
 func checkHookOneKeys(label string, observation, expectedValue any, out io.Writer, reached *hookReplayReach, compared []string) (bool, error) {
-	if !evidence.Truthy(observation) {
+	if !pyvalue.Truthy(observation) {
 		observation = hook.Object{}
 	}
 	got, err := probeDecideTrace(observation, reached)
 	if err != nil {
 		return false, err
 	}
-	if !evidence.Truthy(expectedValue) {
+	if !pyvalue.Truthy(expectedValue) {
 		expectedValue = hook.Object{}
 	}
 	expected := asObject(expectedValue)
@@ -537,19 +538,19 @@ func checkHookOneKeys(label string, observation, expectedValue any, out io.Write
 	for _, f := range expected {
 		if f.Key == "record" {
 			want := asObject(f.Value)
-			if evidence.Truthy(f.Value) && want == nil {
+			if pyvalue.Truthy(f.Value) && want == nil {
 				return false, pythonAttribute(f.Value, "items")
 			}
 			record, _ := got["record"].(map[string]any)
 			for _, field := range want {
-				if !evidence.Equal(record[field.Key], field.Value) {
+				if !pyvalue.ItemEqual(record[field.Key], field.Value) {
 					mismatch["record."+field.Key] = []any{field.Value, record[field.Key]}
 				}
 			}
 			continue
 		}
 		if slices.Contains(compared, f.Key) {
-			if !evidence.Equal(got[f.Key], f.Value) {
+			if !pyvalue.ItemEqual(got[f.Key], f.Value) {
 				mismatch[f.Key] = []any{orderedPlain(f.Value), got[f.Key]}
 			}
 		}

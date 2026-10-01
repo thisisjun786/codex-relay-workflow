@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -20,7 +21,7 @@ const (
 // CoordinationExact validates a field before it enters a derived identity.
 func CoordinationExact(value, what string) (string, error) {
 	if strings.TrimSpace(value) == "" {
-		return "", refuse(contract.RefusalUnregisteredScope, "%s must be a non-empty string, not %s", what, pyStr(value))
+		return "", refuse(contract.RefusalUnregisteredScope, "%s must be a non-empty string, not %s", what, pyvalue.StrRepr(value))
 	}
 	if strings.Contains(value, "|") {
 		return "", refuse(contract.RefusalUnregisteredScope, "%s must not contain '|', which is the field separator", what)
@@ -30,7 +31,7 @@ func CoordinationExact(value, what string) (string, error) {
 
 // CoordinationID derives a relay-owned 128-bit identity from the defining fields in order.
 func CoordinationID(prefix string, fields ...string) string {
-	return prefix + "-" + sha256Hex(strings.Join(fields, "|"))[:32]
+	return prefix + "-" + pyvalue.SHA256Hex(strings.Join(fields, "|"))[:32]
 }
 
 // CoordinationRefusal is a decided refusal, committed as a conflict before returning its error.

@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -59,7 +60,7 @@ func (a *Ack) Evaluate(ctx context.Context, eventID string) (string, error) {
 		return "", err
 	}
 	if row != nil && row.S("kind") != Completion {
-		return "", refuse(WrongDeliveryKind, "%s is a %s, which is not acknowledged by a parent", store.PyRepr(eventID), row.S("kind"))
+		return "", refuse(WrongDeliveryKind, "%s is a %s, which is not acknowledged by a parent", pyvalue.StrRepr(eventID), row.S("kind"))
 	}
 	event, err := a.Delivery.eventRow(ctx, eventID)
 	if err != nil {
@@ -206,10 +207,10 @@ func (a *Ack) Acknowledge(ctx context.Context, eventID, ackTurn, proof string, a
 		return nil, err
 	}
 	if row == nil {
-		return nil, refuse(NotClaimable, "no delivery for %s", store.PyRepr(eventID))
+		return nil, refuse(NotClaimable, "no delivery for %s", pyvalue.StrRepr(eventID))
 	}
 	if row.S("kind") != Completion {
-		return nil, refuse(WrongDeliveryKind, "%s is a %s; contract v1 acknowledgements are parent-authored for a completion event", store.PyRepr(eventID), row.S("kind"))
+		return nil, refuse(WrongDeliveryKind, "%s is a %s; contract v1 acknowledgements are parent-authored for a completion event", pyvalue.StrRepr(eventID), row.S("kind"))
 	}
 	existing, err := one(ctx, a.Store, "SELECT * FROM acks WHERE event_id = ?", eventID)
 	if err != nil {
@@ -220,7 +221,7 @@ func (a *Ack) Acknowledge(ctx context.Context, eventID, ackTurn, proof string, a
 	}
 	state := row.S("state")
 	if !slices.Contains(append([]string{Dispatched, InboxOnly}, unconfirmed...), state) {
-		return nil, refuse(NotClaimable, "%s is %s; only a delivered event, or one whose send is still being confirmed, is acknowledged", store.PyRepr(eventID), store.PyRepr(state))
+		return nil, refuse(NotClaimable, "%s is %s; only a delivered event, or one whose send is still being confirmed, is acknowledged", pyvalue.StrRepr(eventID), pyvalue.StrRepr(state))
 	}
 	if proof != AckProof(eventID, ackTurn) {
 		return nil, refuse(AckProofMismatch, "the proof does not match this event and turn; quoting the delivered fields back cannot produce it")
@@ -256,7 +257,7 @@ func (a *Ack) Acknowledge(ctx context.Context, eventID, ackTurn, proof string, a
 			if fresh != nil {
 				what = fresh.S("state")
 			}
-			return refuse(NotClaimable, "%s became %s before this acknowledgement could be written", store.PyRepr(eventID), store.PyRepr(what))
+			return refuse(NotClaimable, "%s became %s before this acknowledgement could be written", pyvalue.StrRepr(eventID), pyvalue.StrRepr(what))
 		}
 		isUnconfirmed := slices.Contains(unconfirmed, fresh.S("state"))
 		kept := isUnconfirmed || basis(fresh) != basis(row)
@@ -363,7 +364,7 @@ func (a *Ack) verifyAckTurn(ctx context.Context, row Row, ackTurn string, adapte
 			dispatched = row.Opt("dispatch_turn_id")
 		}
 		if ackTurn != dispatched && certainlyBefore(*TurnStartedAt(turn), sentAt) {
-			return "", refuse(AckTurnUnverified, "turn %s started before the delivery, so it cannot be its acknowledgement", store.PyRepr(ackTurn))
+			return "", refuse(AckTurnUnverified, "turn %s started before the delivery, so it cannot be its acknowledgement", pyvalue.StrRepr(ackTurn))
 		}
 	}
 	return "verified", nil
@@ -410,7 +411,7 @@ func projectCap(findings []any) Obj {
 // one transaction, with currency decided inside it. No parameter bypasses the check.
 func (a *Ack) RecordVerdict(ctx context.Context, eventID, verdict, verdictTurn string, criteria, findings []any, reason, expected any) (Obj, error) {
 	if !slices.Contains(verdicts, verdict) {
-		return nil, refuse(DispositionConflict, "unknown verdict %s", store.PyRepr(verdict))
+		return nil, refuse(DispositionConflict, "unknown verdict %s", pyvalue.StrRepr(verdict))
 	}
 	normalised, err := NormaliseFindings(criteria, findings)
 	if err != nil {
@@ -434,17 +435,17 @@ func (a *Ack) RecordVerdict(ctx context.Context, eventID, verdict, verdictTurn s
 			return nil
 		}
 		if reReview && verdict != "verified" && verdict != "needs_changes" {
-			return refuse(DispositionConflict, "%s cannot replace the verified ruling this re-review is reopening: it would leave the assignment with no state to act on. Rule verified or needs_changes, or change the relationship's status", store.PyRepr(verdict))
+			return refuse(DispositionConflict, "%s cannot replace the verified ruling this re-review is reopening: it would leave the assignment with no state to act on. Rule verified or needs_changes, or change the relationship's status", pyvalue.StrRepr(verdict))
 		}
 		if reReview && expected == nil {
-			return refuse(CriteriaSetChanged, "%s was ruled against a different criteria set, so this is a re-review, and a re-review names the set it read: pass the reviewed digest explicitly", store.PyRepr(eventID))
+			return refuse(CriteriaSetChanged, "%s was ruled against a different criteria set, so this is a re-review, and a re-review names the set it read: pass the reviewed digest explicitly", pyvalue.StrRepr(eventID))
 		}
 		ack, err := one(ctx, a.Store, "SELECT * FROM acks WHERE event_id = ?", eventID)
 		if err != nil {
 			return err
 		}
 		if ack == nil || ack.I("accepted") == 0 || ack.S("verified") != "verified" {
-			return refuse(NotAcknowledged, "%s has no verified acceptance, so there is nothing to rule on", store.PyRepr(eventID))
+			return refuse(NotAcknowledged, "%s has no verified acceptance, so there is nothing to rule on", pyvalue.StrRepr(eventID))
 		}
 		event, err := a.Delivery.eventRow(ctx, eventID)
 		if err != nil {
@@ -464,7 +465,7 @@ func (a *Ack) RecordVerdict(ctx context.Context, eventID, verdict, verdictTurn s
 		}
 		current, _ := get(state, "current")
 		if (verdict == "verified" || verdict == "needs_changes") && current != true {
-			return refuse(currencyReasons[str(state, "reason")], "%s cannot be ruled %s: %s", store.PyRepr(eventID), store.PyRepr(verdict), str(state, "detail"))
+			return refuse(currencyReasons[str(state, "reason")], "%s cannot be ruled %s: %s", pyvalue.StrRepr(eventID), pyvalue.StrRepr(verdict), str(state, "detail"))
 		}
 		cover, err := a.Criteria.Coverage(ctx, event.S("relationship_id"), eventID, verdict, normalised, reason, expected)
 		if err != nil {
@@ -473,7 +474,7 @@ func (a *Ack) RecordVerdict(ctx context.Context, eventID, verdict, verdictTurn s
 		var projected Obj
 		if verdict == "needs_changes" {
 			if !slices.Contains(relationship.AllowedRecipients, relationship.Child.TaskID) {
-				return refuse(RecipientNotAuthorized, "child %s is not an allowed recipient, so a revision cannot be routed to it", store.PyRepr(relationship.Child.TaskID))
+				return refuse(RecipientNotAuthorized, "child %s is not an allowed recipient, so a revision cannot be routed to it", pyvalue.StrRepr(relationship.Child.TaskID))
 			}
 			projected = projectCap(normalised)
 			if o := str(projected, "outcome"); o == "truncated" || o == "budget_dropped" {
@@ -583,10 +584,10 @@ func OpenGenerationIn(ctx context.Context, s *store.Store, clock Clock, rid, dis
 		return 0, err
 	}
 	if current == nil {
-		return 0, refuse(UnregisteredRelationship, "no relationship %s", store.PyRepr(rid))
+		return 0, refuse(UnregisteredRelationship, "no relationship %s", pyvalue.StrRepr(rid))
 	}
 	if current.S("status") != "active" || truthy(current.Opt("superseded_by")) {
-		return 0, refuse(RelationshipNotActive, "relationship %s is not active", store.PyRepr(rid))
+		return 0, refuse(RelationshipNotActive, "relationship %s is not active", pyvalue.StrRepr(rid))
 	}
 	number := current.I("execution_generation") + 1
 	now := clock.ISO()
@@ -799,7 +800,7 @@ func BindAnchor(ctx context.Context, s *store.Store, clock Clock, rid string, nu
 		}
 		current := r.generation(number)
 		if current == nil {
-			return refuse(UnknownGeneration, "%s has no generation %d", store.PyRepr(rid), number)
+			return refuse(UnknownGeneration, "%s has no generation %d", pyvalue.StrRepr(rid), number)
 		}
 		if current.S("anchor_state") == "bound" {
 			if current.S("dispatch_turn_id") == turn {

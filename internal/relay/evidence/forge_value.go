@@ -6,6 +6,7 @@ import (
 	"math/big"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -33,7 +34,7 @@ func RecoverPython(err *error) {
 
 // Dict implements dict access, optionally after Python's `value or {}`.
 func Dict(v any, orEmpty bool) map[string]any {
-	if orEmpty && !Truthy(v) {
+	if orEmpty && !pyvalue.Truthy(v) {
 		return map[string]any{}
 	}
 	if m, ok := v.(map[string]any); ok {
@@ -46,7 +47,7 @@ func Dict(v any, orEmpty bool) map[string]any {
 		}
 		return m
 	}
-	panic(&PythonError{"AttributeError", "'" + TypeName(v) + "' object has no attribute 'get'"})
+	panic(&PythonError{"AttributeError", "'" + pyvalue.TypeName(v) + "' object has no attribute 'get'"})
 }
 
 func forgeObject(v any, orEmpty bool) map[string]any { return Dict(v, orEmpty) }
@@ -77,7 +78,7 @@ func Iter(v any) []any {
 		}
 		return out
 	}
-	panic(&PythonError{"TypeError", "'" + TypeName(v) + "' object is not iterable"})
+	panic(&PythonError{"TypeError", "'" + pyvalue.TypeName(v) + "' object is not iterable"})
 }
 
 func forgeItems(v any) []any { return Items(v) }
@@ -88,15 +89,15 @@ func Item(v any, key string) any {
 		if value, present := Lookup(o, key); present {
 			return value
 		}
-		panic(&PythonError{"KeyError", Repr(key)})
+		panic(&PythonError{"KeyError", pyvalue.Repr(key)})
 	}
-	switch TypeName(v) {
+	switch pyvalue.TypeName(v) {
 	case "str":
 		panic(&PythonError{"TypeError", "string indices must be integers, not 'str'"})
 	case "list":
 		panic(&PythonError{"TypeError", "list indices must be integers or slices, not str"})
 	default:
-		panic(&PythonError{"TypeError", "'" + TypeName(v) + "' object is not subscriptable"})
+		panic(&PythonError{"TypeError", "'" + pyvalue.TypeName(v) + "' object is not subscriptable"})
 	}
 }
 
@@ -111,7 +112,7 @@ func Len(v any) int {
 	if s, ok := v.(string); ok {
 		return len([]rune(s))
 	}
-	panic(&PythonError{"TypeError", "object of type '" + TypeName(v) + "' has no len()"})
+	panic(&PythonError{"TypeError", "object of type '" + pyvalue.TypeName(v) + "' has no len()"})
 }
 func Index(v any, index int) any {
 	if items, ok := List(v); ok {
@@ -128,9 +129,9 @@ func Index(v any, index int) any {
 		return string(r[index])
 	}
 	if _, ok := Object(v); ok {
-		panic(&PythonError{"KeyError", Text(index)})
+		panic(&PythonError{"KeyError", pyvalue.Str(index)})
 	}
-	panic(&PythonError{"TypeError", "'" + TypeName(v) + "' object is not subscriptable"})
+	panic(&PythonError{"TypeError", "'" + pyvalue.TypeName(v) + "' object is not subscriptable"})
 }
 func collectionItems(v any) []any {
 	v = Or(v, []any{})
@@ -153,7 +154,7 @@ func forgeRunID(v any) (n *big.Int, valid bool) {
 
 // Or returns Python's `value or fallback` without coercing either operand.
 func Or(value, fallback any) any {
-	if Truthy(value) {
+	if pyvalue.Truthy(value) {
 		return value
 	}
 	return fallback
@@ -194,7 +195,7 @@ func Integer(value any) *big.Int {
 		if n, ok := argparse.ParseInt(v); ok {
 			return n
 		}
-		panic(&PythonError{"ValueError", "invalid literal for int() with base 10: " + Repr(v)})
+		panic(&PythonError{"ValueError", "invalid literal for int() with base 10: " + pyvalue.Repr(v)})
 	case float64:
 		if math.IsNaN(v) {
 			panic(&PythonError{"ValueError", "cannot convert float NaN to integer"})
@@ -205,7 +206,7 @@ func Integer(value any) *big.Int {
 		n, _ := new(big.Float).SetFloat64(v).Int(nil)
 		return n
 	}
-	panic(&PythonError{"TypeError", "int() argument must be a string, a bytes-like object or a real number, not '" + TypeName(value) + "'"})
+	panic(&PythonError{"TypeError", "int() argument must be a string, a bytes-like object or a real number, not '" + pyvalue.TypeName(value) + "'"})
 }
 
 // HashKey preserves Python's scalar equality (True == 1 == 1.0) and rejects
@@ -226,50 +227,14 @@ func HashKey(value any) string {
 		}
 		return "num:" + pyjson.Float(v)
 	}
-	panic(&PythonError{"TypeError", "unhashable type: '" + TypeName(value) + "'"})
-}
-
-// Equal compares JSON values using Python equality, without Go interface panics.
-func Equal(a, b any) bool {
-	if x, ok := Object(a); ok {
-		y, ok := Object(b)
-		if !ok || len(x) != len(y) {
-			return false
-		}
-		for _, f := range x {
-			v, ok := Lookup(y, f.Key)
-			if !ok || !Equal(f.Value, v) {
-				return false
-			}
-		}
-		return true
-	}
-	if x, ok := List(a); ok {
-		y, ok := List(b)
-		if !ok || len(x) != len(y) {
-			return false
-		}
-		for i := range x {
-			if !Equal(x[i], y[i]) {
-				return false
-			}
-		}
-		return true
-	}
-	if _, ok := Object(b); ok {
-		return false
-	}
-	if _, ok := List(b); ok {
-		return false
-	}
-	return HashKey(a) == HashKey(b)
+	panic(&PythonError{"TypeError", "unhashable type: '" + pyvalue.TypeName(value) + "'"})
 }
 
 func forgeText(v any) string {
-	if !Truthy(v) {
+	if !pyvalue.Truthy(v) {
 		return ""
 	}
-	return Text(v)
+	return pyvalue.Str(v)
 }
 
 // Decode reads stored JSON without discarding object order or numeric types (pyjson.Loads: an

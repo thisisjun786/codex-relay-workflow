@@ -10,6 +10,8 @@ import (
 	"os"
 	"sort"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // ManifestRevision is MANIFEST-CANON-01: sorted byte-wise by path, "<path>:<sha256>" per entry,
@@ -33,7 +35,7 @@ func CanonicalPayload(entries []ManifestEntry) (string, error) {
 			return "", err
 		}
 		if !lowerDigest.MatchString(entry.SHA256) {
-			return "", refuse(ReasonManifestUnverified, "entry %s has a digest that is not 64 lowercase hex characters: %s", PythonRepr(declared), PythonRepr(entry.SHA256))
+			return "", refuse(ReasonManifestUnverified, "entry %s has a digest that is not 64 lowercase hex characters: %s", pyvalue.StrRepr(declared), pyvalue.StrRepr(entry.SHA256))
 		}
 		lines = append(lines, declared+":"+entry.SHA256)
 	}
@@ -89,7 +91,7 @@ func FreezeManifest(entries []ManifestEntry, destination string) error {
 	for _, entry := range entries {
 		// The digest names a file, so it is validated before it is ever joined to a path.
 		if !lowerDigest.MatchString(entry.SHA256) {
-			return refuse(ReasonManifestUnverified, "refusing to store bytes under a non-digest name %s", PythonRepr(entry.SHA256))
+			return refuse(ReasonManifestUnverified, "refusing to store bytes under a non-digest name %s", pyvalue.StrRepr(entry.SHA256))
 		}
 		blob := frozenPath(destination, "files", entry.SHA256)
 		if _, err := os.Stat(blob); errors.Is(err, os.ErrNotExist) {
@@ -106,10 +108,10 @@ func FreezeManifest(entries []ManifestEntry, destination string) error {
 			return err
 		}
 		if copied != entry.SHA256 {
-			return refuse(ReasonManifestUnverified, "frozen copy of %s hashes to %s, not %s", PythonRepr(entry.Path), copied, entry.SHA256)
+			return refuse(ReasonManifestUnverified, "frozen copy of %s hashes to %s, not %s", pyvalue.StrRepr(entry.Path), copied, entry.SHA256)
 		}
 		if entry.Bytes != nil && *entry.Bytes != size {
-			return refuse(ReasonManifestUnverified, "frozen copy of %s is %d bytes, not %d", PythonRepr(entry.Path), size, *entry.Bytes)
+			return refuse(ReasonManifestUnverified, "frozen copy of %s is %d bytes, not %d", pyvalue.StrRepr(entry.Path), size, *entry.Bytes)
 		}
 	}
 	revision, err := ManifestRevision(entries)

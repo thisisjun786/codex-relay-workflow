@@ -2,10 +2,8 @@ package capacity
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
 	"errors"
-	"fmt"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
@@ -74,9 +72,4 @@ func unwrapRefusal(err error) error {
 		return refused
 	}
 	return err
-}
-
-func sha256Hex(text string) string {
-	sum := sha256.Sum256([]byte(text))
-	return fmt.Sprintf("%x", sum)
 }

@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -72,7 +73,7 @@ func LookupReceipt(ctx context.Context, path string, fallback func() (string, er
 	if generation != nil {
 		n, ok := evidence.IntOf(generation)
 		if !ok || n != current {
-			return answer("registration_generation_mismatch", Field{Key: "detail", Value: "the assignment registered generation " + evidence.Text(generation) + " and the relationship now stands on generation " + fmt.Sprint(current)})
+			return answer("registration_generation_mismatch", Field{Key: "detail", Value: "the assignment registered generation " + pyvalue.Str(generation) + " and the relationship now stands on generation " + fmt.Sprint(current)})
 		}
 	}
 	if dispatch != nil {
@@ -95,7 +96,7 @@ func LookupReceipt(ctx context.Context, path string, fallback func() (string, er
 	if slices.Contains([]string{delivery.Fork, delivery.Cycle, delivery.UnknownPredecessor, delivery.Disconnected}, text(get(head, "evidence"))) {
 		return answer("head_" + text(get(head, "evidence")))
 	}
-	if !evidence.Truthy(get(head, "eventId")) {
+	if !pyvalue.Truthy(get(head, "eventId")) {
 		return answer("no_reviewable_revision")
 	}
 	var id, stage, producer, payload string
@@ -158,8 +159,8 @@ func accessFailure(err error) bool {
 // which leaves deliverable_state and lookup_receipt, so the guard faults on it.
 func DeliverableState(ctx context.Context, payload any, reference string, rootsValue any) (string, string, string, error) {
 	o, ok := evidence.Object(payload)
-	if !ok && evidence.Truthy(payload) {
-		return "changed", "", "AttributeError: '" + evidence.TypeName(payload) + "' object has no attribute 'get'", nil
+	if !ok && pyvalue.Truthy(payload) {
+		return "changed", "", "AttributeError: '" + pyvalue.TypeName(payload) + "' object has no attribute 'get'", nil
 	}
 	records, ok := evidence.List(get(o, "manifest"))
 	if !ok || len(records) == 0 {
@@ -174,11 +175,11 @@ func DeliverableState(ctx context.Context, payload any, reference string, rootsV
 		return raisedState(err)
 	}
 	claimed := get(o, "revisionHash")
-	if !evidence.Truthy(claimed) {
+	if !pyvalue.Truthy(claimed) {
 		return "changed", "", "the stored receipt names no revision", nil
 	}
 	if claimed != revision {
-		return "changed", "", "the stored manifest hashes to " + revision + " but the receipt claims " + evidence.Text(claimed), nil
+		return "changed", "", "the stored manifest hashes to " + revision + " but the receipt claims " + pyvalue.Str(claimed), nil
 	}
 	rootsList, ok := evidence.List(rootsValue)
 	if !ok {
@@ -260,8 +261,8 @@ func verifyEntries(ctx context.Context, entries []store.PythonEntry, roots []str
 			}
 		case digest != claimed:
 			message = path + ": bytes hash to " + digest + " but the manifest claims " + claimed
-		case e.Bytes != nil && !store.PythonEqual(e.Bytes, size):
-			message = fmt.Sprintf("%s: size %d but the manifest claims %s", path, size, store.PythonStr(e.Bytes))
+		case e.Bytes != nil && !pyvalue.Equal(e.Bytes, size):
+			message = fmt.Sprintf("%s: size %d but the manifest claims %s", path, size, pyvalue.Str(e.Bytes))
 		}
 		if message != "" {
 			problems = append(problems, message)

@@ -19,8 +19,8 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 var bracket = regexp.MustCompile(`^(\[([^\]]*)\])(\s*)`)
@@ -237,7 +237,7 @@ func titleReadback(requested, observed any) string {
 	if number, ok := observed.(float64); ok && math.IsNaN(number) {
 		return "mismatch"
 	}
-	if evidence.Equal(observed, requested) {
+	if pyvalue.ItemEqual(observed, requested) {
 		return "verified"
 	}
 	return "mismatch"
@@ -381,7 +381,7 @@ func replayTitles(args []string, stdout, stderr io.Writer) int {
 		fixtures[i] = decoded
 	}
 	if len(paths) == 0 {
-		fmt.Fprintf(stderr, "No fixtures under %s; nothing was checked\n", settings.StderrText(store.FSDecode(dir)))
+		fmt.Fprintf(stderr, "No fixtures under %s; nothing was checked\n", settings.StderrText(pyvalue.FSDecode(dir)))
 		return 1
 	}
 	// command_replay collects its failures and prints them only once every
@@ -425,7 +425,7 @@ func replayTitles(args []string, stdout, stderr io.Writer) int {
 			}
 		} else if sub == "readback" {
 			in, _ := f["input"].(map[string]any)
-			if evidence.Truthy(f["input"]) && in == nil {
+			if pyvalue.Truthy(f["input"]) && in == nil {
 				fmt.Fprintln(stderr, pythonAttribute(f["input"], "get"))
 				return 1
 			}
@@ -433,12 +433,12 @@ func replayTitles(args []string, stdout, stderr io.Writer) int {
 			reads[state] = true
 			got = map[string]any{"readback": state}
 		} else {
-			failures = append(failures, fmt.Sprintf("%s: unknown subcommand %s", name, evidence.Text(sub)))
+			failures = append(failures, fmt.Sprintf("%s: unknown subcommand %s", name, pyvalue.Str(sub)))
 			continue
 		}
 		for _, field := range expected {
-			if !evidence.Equal(got[field.Key], field.Value) {
-				failures = append(failures, fmt.Sprintf("%s: %s expected %s, got %s", name, field.Key, evidence.Repr(field.Value), evidence.Repr(got[field.Key])))
+			if !pyvalue.ItemEqual(got[field.Key], field.Value) {
+				failures = append(failures, fmt.Sprintf("%s: %s expected %s, got %s", name, field.Key, pyvalue.Repr(field.Value), pyvalue.Repr(got[field.Key])))
 			}
 		}
 	}

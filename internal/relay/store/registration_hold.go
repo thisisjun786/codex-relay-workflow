@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 )
 
@@ -30,7 +31,7 @@ const RegistrationTimeout = 2 * time.Second
 func RegistrationHold(ctx context.Context, dbPath string, run func(conn *sql.Conn, why string) error) error {
 	absolute, err := expandUser(dbPath)
 	if err != nil {
-		return run(nil, "the relay store path "+pythonRepr(dbPath)+" could not be read as a path")
+		return run(nil, "the relay store path "+pyvalue.StrRepr(dbPath)+" could not be read as a path")
 	}
 	if err = holdStat(dbPath); err != nil {
 		return run(nil, "the relay store could not be opened for writing: "+PythonOSErrorText(err))

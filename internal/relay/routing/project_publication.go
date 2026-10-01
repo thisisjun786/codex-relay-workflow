@@ -8,7 +8,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/faults"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -67,7 +67,7 @@ func (r *Router) EvaluateProjects(ctx context.Context, product string) (Object, 
 		return nil, err
 	}
 	if registry == nil {
-		return nil, routeRefused("route_product_unknown", fmt.Sprintf("%s is not a registered product", evidence.Repr(product)))
+		return nil, routeRefused("route_product_unknown", fmt.Sprintf("%s is not a registered product", pyvalue.Repr(product)))
 	}
 	return r.evaluateProjects(ctx, product)
 }
@@ -131,7 +131,7 @@ func (r *Router) evaluateProjects(ctx context.Context, product string) (Object, 
 			group := object(groups[goal])
 			criteria := sortedKeys(object(group["criteria"]))
 			if len(criteria) > 1 {
-				skipped = append(skipped, Object{"goal": goal, "reasons": []any{fmt.Sprintf("the held defects under %s declare different completion criteria %s; a project needs one", goal, evidence.Repr(criteria))}})
+				skipped = append(skipped, Object{"goal": goal, "reasons": []any{fmt.Sprintf("the held defects under %s declare different completion criteria %s; a project needs one", goal, pyvalue.Repr(criteria))}})
 				continue
 			}
 			payload := Object{"product": product, "workspace": group["workspace"], "team": registry["team"], "familyLabel": registry["familyLabel"], "goal": goal, "criteria": criteria[0], "name": fmt.Sprintf("%s · %s", registry["familyLabel"], goal), "members": sortedKeys(object(group["members"])), "components": sortedKeys(object(group["components"]))}
@@ -175,7 +175,7 @@ func (r *Router) evaluateProjects(ctx context.Context, product string) (Object, 
 			if _, err = r.Ledger.SetWorkspaceTarget(ctx, product, text(group["workspace"]), ProjectsScope, text(registry["team"]), ""); err != nil {
 				return err
 			}
-			o := faults.Observation{Product: product, FaultClass: "project_needed", Severity: "notice", Signature: Object{"goal": goal}, OccurrenceKey: trigger, Scope: scope(text(group["workspace"]), ProjectsScope), Detail: fmt.Sprintf("%d independent fixes share %s: {%s}", len(list(payload["members"])), goal, evidence.Repr(criteria[0]))}
+			o := faults.Observation{Product: product, FaultClass: "project_needed", Severity: "notice", Signature: Object{"goal": goal}, OccurrenceKey: trigger, Scope: scope(text(group["workspace"]), ProjectsScope), Detail: fmt.Sprintf("%d independent fixes share %s: {%s}", len(list(payload["members"])), goal, pyvalue.Repr(criteria[0]))}
 			if _, err = r.Ledger.RecordObservation(ctx, o, nil); err != nil {
 				return err
 			}

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"io"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -78,7 +79,7 @@ func (a *Ack) CompletePending(ctx context.Context, eventID string, adapter Adapt
 // SetMode is set_mode.
 func (c *Criteria) SetMode(ctx context.Context, rid, mode string) (Obj, error) {
 	if mode != Managed && mode != Legacy {
-		return nil, refuse(DispositionConflict, "unknown verification mode %s", store.PyRepr(mode))
+		return nil, refuse(DispositionConflict, "unknown verification mode %s", pyvalue.StrRepr(mode))
 	}
 	err := c.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error { return c.writeMode(ctx, rid, mode, c.Clock.ISO()) })
 	return Obj{{Key: "relationshipId", Value: rid}, {Key: "mode", Value: mode}}, err
@@ -171,15 +172,15 @@ func SyncClaim(ctx context.Context, s *store.Store, clock Clock, id, owner strin
 		}
 		switch {
 		case row == nil:
-			return refuse(SyncNotClaimable, "no synchronisation job %s", store.PyRepr(id))
+			return refuse(SyncNotClaimable, "no synchronisation job %s", pyvalue.StrRepr(id))
 		case row.S("state") == "confirmed":
-			return refuse(SyncNotClaimable, "%s is already confirmed", store.PyRepr(id))
+			return refuse(SyncNotClaimable, "%s is already confirmed", pyvalue.StrRepr(id))
 		case row.S("state") == "failed":
-			return refuse(SyncNotClaimable, "%s is failed after %d attempts; call retry to resume it deliberately", store.PyRepr(id), row.I("attempts"))
+			return refuse(SyncNotClaimable, "%s is failed after %d attempts; call retry to resume it deliberately", pyvalue.StrRepr(id), row.I("attempts"))
 		case !row.N("next_attempt_at") && row.F("next_attempt_at") > now:
-			return refuse(SyncNotClaimable, "%s is backing off until %s", store.PyRepr(id), pyStr(row.Opt("next_attempt_at")))
+			return refuse(SyncNotClaimable, "%s is backing off until %s", pyvalue.StrRepr(id), pyvalue.Str(row.Opt("next_attempt_at")))
 		case !row.N("lease_until") && row.F("lease_until") > now:
-			return refuse(SyncNotClaimable, "%s is leased by %s until %s", store.PyRepr(id), pyReprValue(row.Opt("lease_owner")), pyStr(row.Opt("lease_until")))
+			return refuse(SyncNotClaimable, "%s is leased by %s until %s", pyvalue.StrRepr(id), pyvalue.Repr(row.Opt("lease_owner")), pyvalue.Str(row.Opt("lease_until")))
 		}
 		_, err = execSQL(ctx, s, "UPDATE sync_outbox SET state = ?, lease_owner = ?, lease_until = ?, claim_token = ?, updated_at = ? WHERE sync_id = ?", "claimed", owner, now+syncLeaseSeconds, token, clock.ISO(), id)
 		return err
@@ -197,10 +198,10 @@ func SyncFenced(ctx context.Context, s *store.Store, id, token string) (Row, err
 		return nil, err
 	}
 	if row == nil {
-		return nil, refuse(SyncNotClaimable, "no synchronisation job %s", store.PyRepr(id))
+		return nil, refuse(SyncNotClaimable, "no synchronisation job %s", pyvalue.StrRepr(id))
 	}
 	if row.S("claim_token") != token {
-		return nil, refuse(SyncNotClaimable, "this claim token is not the one currently held for %s", store.PyRepr(id))
+		return nil, refuse(SyncNotClaimable, "this claim token is not the one currently held for %s", pyvalue.StrRepr(id))
 	}
 	return row, nil
 }

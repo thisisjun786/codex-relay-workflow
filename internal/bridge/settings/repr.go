@@ -3,14 +3,15 @@ package settings
 import (
 	"fmt"
 	"strings"
-	"unicode/utf8"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 // Repr is Python's repr() of a string: the quote Python picks and its escapes, so a message
 // built from it reads byte for byte like the f"{value!r}" it ports. Every character
 // str.isprintable() rejects (Cc, Cf, Cs, Co, Cn, Zl, Zp, and Zs other than the space) is
 // escaped, as \xNN below U+0100, \uNNNN in the rest of the BMP and \UNNNNNNNN above it. The code
-// points are read as CodePoint reads them, so a lone surrogate prints as \udXXX, as Python
+// points are read as pyjson.CodePoint reads them, so a lone surrogate prints as \udXXX, as Python
 // prints it, and never as raw bytes or U+FFFD. Printability is CPython 3.14's (Printable), so a
 // character assigned in a later Unicode version than that interpreter's is escaped as it is.
 func Repr(s string) string {
@@ -21,7 +22,7 @@ func Repr(s string) string {
 	var b strings.Builder
 	b.WriteString(quote)
 	for i := 0; i < len(s); {
-		r, size := CodePoint(s, i)
+		r, size := pyjson.CodePoint(s, i)
 		i += size
 		switch {
 		case r == '\\':
@@ -48,32 +49,14 @@ func Repr(s string) string {
 	return b.String()
 }
 
-// CodePoint is the Python str code point a Go string holds at s[i], and how many bytes it takes.
-// Two spellings reach a Go string for a code point UTF-8 cannot carry: a lone surrogate a JSON
-// decoder kept as its three-byte generalized UTF-8 form (ED A0..BF 80..BF, WTF-8), and a byte
-// outside any valid sequence, which a path or argv holds where Python's surrogateescape decoding
-// holds U+DC00 plus that byte. Both are read as the surrogate. A raw path that happens to hold
-// the three WTF-8 bytes of a surrogate reads as that one surrogate, where Python would read three
-// escaped bytes: a Go string does not record which of the two it came from.
-func CodePoint(s string, i int) (rune, int) {
-	if i+2 < len(s) && s[i] == 0xed && s[i+1] >= 0xa0 && s[i+1] <= 0xbf && s[i+2] >= 0x80 && s[i+2] <= 0xbf {
-		return 0xd000 | rune(s[i+1]&0x3f)<<6 | rune(s[i+2]&0x3f), 3
-	}
-	r, size := utf8.DecodeRuneInString(s[i:])
-	if r == utf8.RuneError && size == 1 {
-		return 0xdc00 + rune(s[i]), 1
-	}
-	return r, size
-}
-
 // StderrText is text as Python's sys.stderr writes it, which always uses
-// errors="backslashreplace": a lone surrogate, held as WTF-8 (CodePoint), is written as its
+// errors="backslashreplace": a lone surrogate, held as WTF-8 (pyjson.CodePoint), is written as its
 // \uXXXX escape and everything else as it stands. A path that holds one reaches a message
 // unescaped, as Python's str() of it does, and only the stream escapes it.
 func StderrText(text string) string {
 	var b strings.Builder
 	for i := 0; i < len(text); {
-		r, size := CodePoint(text, i)
+		r, size := pyjson.CodePoint(text, i)
 		if r >= 0xd800 && r <= 0xdfff {
 			fmt.Fprintf(&b, "\\u%04x", r)
 		} else {

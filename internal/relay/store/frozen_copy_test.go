@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // frozenSource is one artifact under a root of its own and its manifest entry.
@@ -65,7 +67,7 @@ func TestFreezeRehashesABlobItFindsUnderTheDigestName(t *testing.T) {
 	}
 	err := FreezeManifest(entries, destination)
 	requireReason(t, err, ReasonManifestUnverified)
-	if !strings.Contains(err.Error(), "frozen copy of "+PythonRepr(entries[0].Path)+" hashes to ") {
+	if !strings.Contains(err.Error(), "frozen copy of "+pyvalue.StrRepr(entries[0].Path)+" hashes to ") {
 		t.Fatalf("refused for another reason: %v", err)
 	}
 	requireNoManifest(t, destination)

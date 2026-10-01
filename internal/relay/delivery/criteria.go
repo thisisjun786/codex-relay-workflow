@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -80,7 +81,7 @@ func NormaliseCriteria(entries []any) ([]Criterion, error) {
 			return nil, refuse(CriteriaUnregistered, "each criterion needs a non-empty id and title")
 		}
 		if seen[id] {
-			return nil, refuse(CriteriaUnregistered, "duplicate criterion id %s", store.PyRepr(id))
+			return nil, refuse(CriteriaUnregistered, "duplicate criterion id %s", pyvalue.StrRepr(id))
 		}
 		seen[id] = true
 		required := true
@@ -135,10 +136,10 @@ func NormaliseFindings(sources ...[]any) ([]any, error) {
 			if flag, present := get(o, "restoration"); present && flag != nil {
 				b, isBool := flag.(bool)
 				if !isBool {
-					return nil, refuse(DispositionConflict, "a finding declares its restoration block with true or false, not %s", pyTypeName(flag))
+					return nil, refuse(DispositionConflict, "a finding declares its restoration block with true or false, not %s", pyvalue.TypeName(flag))
 				}
 				if declaredSet[id] && declared[id] != b {
-					return nil, refuse(DispositionConflict, "%s both declares and disclaims the restoration block; one correction carries one block and says so once", store.PyRepr(id))
+					return nil, refuse(DispositionConflict, "%s both declares and disclaims the restoration block; one correction carries one block and says so once", pyvalue.StrRepr(id))
 				}
 				declared[id], declaredSet[id] = b, true
 			}
@@ -156,12 +157,12 @@ func NormaliseFindings(sources ...[]any) ([]any, error) {
 		}
 	}
 	if len(carriers) > 1 {
-		return nil, refuse(DispositionConflict, "%s each declare the restoration block. One correction carries one block, and two candidates is a block nobody can locate", reprList(carriers))
+		return nil, refuse(DispositionConflict, "%s each declare the restoration block. One correction carries one block, and two candidates is a block nobody can locate", pyvalue.Repr(carriers))
 	}
 	for _, e := range merged {
 		if v, _ := get(e, "restoration"); v == true {
 			if _, hasNote := get(e, "note"); !hasNote {
-				return nil, refuse(DispositionConflict, "%s declares the restoration block and carries no note. The block is the note; a declaration without one names a carrier with nothing in it", store.PyRepr(str(e, "id")))
+				return nil, refuse(DispositionConflict, "%s declares the restoration block and carries no note. The block is the note; a declaration without one names a carrier with nothing in it", pyvalue.StrRepr(str(e, "id")))
 			}
 		}
 	}
@@ -214,7 +215,7 @@ func (c *Criteria) EnsureRegistered(ctx context.Context, rid string, entries []a
 		sorted := slices.Clone(cs)
 		sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].ID < sorted[j].ID })
 		if !slices.Equal(existing.criteria, sorted) || existing.digest != digest || existing.source != source || existing.mode != Managed {
-			return refuse(CriteriaSetChanged, "criteria for %s are already registered as %s; ensure_registered does not replace them", store.PyRepr(rid), existing.digest)
+			return refuse(CriteriaSetChanged, "criteria for %s are already registered as %s; ensure_registered does not replace them", pyvalue.StrRepr(rid), existing.digest)
 		}
 		return nil
 	})
@@ -247,14 +248,14 @@ func (c *Criteria) lockedSet(ctx context.Context, rid string) (*storedSet, error
 	sources, digests := map[any]bool{}, map[string]bool{}
 	for _, row := range rows {
 		if r := row.I("required"); r != 0 && r != 1 {
-			return nil, refuse(CriteriaSetChanged, "stored required flag for %s is not 0 or 1", store.PyRepr(row.S("criterion_id")))
+			return nil, refuse(CriteriaSetChanged, "stored required flag for %s is not 0 or 1", pyvalue.StrRepr(row.S("criterion_id")))
 		}
 		cs = append(cs, Criterion{row.S("criterion_id"), row.S("title"), row.I("required") == 1})
 		sources[row.Opt("source_ref")] = true
 		digests[row.S("set_digest")] = true
 	}
 	if len(cs) == 0 || mode == nil || mode.S("mode") != Managed || len(sources) != 1 || len(digests) != 1 || !digests[SetDigest(cs)] {
-		return nil, refuse(CriteriaSetChanged, "criteria for %s are stored in a form ensure_registered will not replace or repair", store.PyRepr(rid))
+		return nil, refuse(CriteriaSetChanged, "criteria for %s are stored in a form ensure_registered will not replace or repair", pyvalue.StrRepr(rid))
 	}
 	return &storedSet{cs, rows[0].S("set_digest"), rows[0].Opt("source_ref"), mode.S("mode")}, nil
 }
@@ -343,7 +344,7 @@ func (c *Criteria) Coverage(ctx context.Context, rid, eventID, verdict string, f
 	}
 	if registered == nil {
 		if mode == Managed {
-			return nil, refuse(CriteriaUnregistered, "%s is a managed assignment with no canonical criteria; a managed assignment cannot be completed against nothing", store.PyRepr(rid))
+			return nil, refuse(CriteriaUnregistered, "%s is a managed assignment with no canonical criteria; a managed assignment cannot be completed against nothing", pyvalue.StrRepr(rid))
 		}
 		return Obj{{Key: "coverage", Value: LegacyUnregistered}, {Key: "setDigest", Value: nil}, {Key: "boundDigest", Value: nil}, {Key: "findings", Value: findings}}, nil
 	}
@@ -374,7 +375,7 @@ func (c *Criteria) Coverage(ctx context.Context, rid, eventID, verdict string, f
 	for _, f := range findings {
 		o := f.(Obj)
 		if !known[str(o, "id")] {
-			return nil, refuse(UnknownCriterion, "%s is not in this assignment's canonical criteria", store.PyRepr(str(o, "id")))
+			return nil, refuse(UnknownCriterion, "%s is not in this assignment's canonical criteria", pyvalue.StrRepr(str(o, "id")))
 		}
 		byID[str(o, "id")] = o
 	}
@@ -389,7 +390,7 @@ func (c *Criteria) Coverage(ctx context.Context, rid, eventID, verdict string, f
 		}
 		sort.Strings(missing)
 		if len(missing) > 0 {
-			return nil, refuse(CriteriaNotCovered, "these required criteria are not recorded as verified: %s", reprList(missing))
+			return nil, refuse(CriteriaNotCovered, "these required criteria are not recorded as verified: %s", pyvalue.Repr(missing))
 		}
 	case "needs_changes":
 		ok := false

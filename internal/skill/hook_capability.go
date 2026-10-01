@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // probeSorted is sorted(value or []): Python's '<' in CPython's comparison
@@ -33,7 +34,7 @@ func probeCapabilityMatrix(titles []string, schemas map[string]contract.OrderedO
 			events[name] = entry
 		}
 		props := schema["properties"]
-		if !hostTruthy(props) {
+		if !pyvalue.Truthy(props) {
 			props = map[string]any{}
 		}
 		if kind == "input" {
@@ -52,7 +53,7 @@ func probeCapabilityMatrix(titles []string, schemas map[string]contract.OrderedO
 				return nil, pythonAttribute(props, "get")
 			}
 			defsValue := schema["definitions"]
-			if !hostTruthy(defsValue) {
+			if !pyvalue.Truthy(defsValue) {
 				defsValue = map[string]any{}
 			}
 			defs, ok := defsValue.(map[string]any)
@@ -60,7 +61,7 @@ func probeCapabilityMatrix(titles []string, schemas map[string]contract.OrderedO
 				return nil, pythonAttribute(defsValue, "get")
 			}
 			decision := defs["BlockDecisionWire"]
-			if !hostTruthy(decision) {
+			if !pyvalue.Truthy(decision) {
 				decision = defs["PreToolUseDecisionWire"]
 			}
 			additional := false
@@ -86,12 +87,12 @@ func probeCapabilityMatrix(titles []string, schemas map[string]contract.OrderedO
 						}
 					}
 				default:
-					if hostTruthy(properties) {
+					if pyvalue.Truthy(properties) {
 						return nil, pythonNotIterable(properties, true)
 					}
 				}
 			}
-			if !hostTruthy(decision) {
+			if !pyvalue.Truthy(decision) {
 				decision = map[string]any{}
 			}
 			decisionMap, ok := decision.(map[string]any)
@@ -113,7 +114,7 @@ func probeCapabilityMatrix(titles []string, schemas map[string]contract.OrderedO
 		entry := raw.(map[string]any)
 		output, ok := entry["output"].(map[string]any)
 		entry["canInfluence"] = ok
-		entry["blocksViaTopLevelDecision"] = ok && hostTruthy(output["topLevelDecisionValues"])
+		entry["blocksViaTopLevelDecision"] = ok && pyvalue.Truthy(output["topLevelDecisionValues"])
 	}
 	return events, nil
 }

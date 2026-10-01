@@ -21,7 +21,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 )
 
@@ -46,43 +46,24 @@ func Empty(definitionVersion int) Object {
 	}
 }
 
-// pyType is type(value).__name__ for a decoded JSON value.
-func pyType(v any) string {
-	switch v.(type) {
-	case nil:
-		return "NoneType"
-	case bool:
-		return "bool"
-	case string:
-		return "str"
-	case float64:
-		return "float"
-	case Object, map[string]any:
-		return "dict"
-	case []any:
-		return "list"
-	}
-	return "int"
-}
-
 // Shape is hostrecord.shape: reject a record whose containers are not what every consumer
 // assumes. Present-and-null is not absence.
 func Shape(v any) error {
 	record, ok := v.(Object)
 	if !ok {
-		return reading.Fail("TypeError", "a host record is an object, found "+pyType(v))
+		return reading.Fail("TypeError", "a host record is an object, found "+pyvalue.TypeName(v))
 	}
 	components, has := Lookup(record, "components")
 	if has {
 		if _, ok := components.(Object); !ok {
-			return reading.Fail("TypeError", "components is an object, found "+pyType(components))
+			return reading.Fail("TypeError", "components is an object, found "+pyvalue.TypeName(components))
 		}
 	}
 	all, _ := components.(Object)
 	for _, c := range all {
 		entry, ok := c.Value.(Object)
 		if !ok {
-			return reading.Fail("TypeError", "component "+c.Key+" is an object, found "+pyType(c.Value))
+			return reading.Fail("TypeError", "component "+c.Key+" is an object, found "+pyvalue.TypeName(c.Value))
 		}
 		for _, key := range []string{"installs", "measuredPoints"} {
 			value, has := Lookup(entry, key)
@@ -91,28 +72,28 @@ func Shape(v any) error {
 			}
 			items, ok := value.([]any)
 			if !ok {
-				return reading.Fail("TypeError", c.Key+"."+key+" is a list, found "+pyType(value))
+				return reading.Fail("TypeError", c.Key+"."+key+" is a list, found "+pyvalue.TypeName(value))
 			}
 			for _, item := range items {
 				if _, ok := item.(Object); !ok {
-					return reading.Fail("TypeError", "every entry in "+c.Key+"."+key+" is an object, found "+pyType(item))
+					return reading.Fail("TypeError", "every entry in "+c.Key+"."+key+" is an object, found "+pyvalue.TypeName(item))
 				}
 			}
 		}
 	}
 	if selected := Get(record, "selected"); selected != nil {
 		if _, ok := selected.(Object); !ok {
-			return reading.Fail("TypeError", "selected is an object, found "+pyType(selected))
+			return reading.Fail("TypeError", "selected is an object, found "+pyvalue.TypeName(selected))
 		}
 	}
 	if owned := Get(record, "pointer"); owned != nil {
 		entry, ok := owned.(Object)
 		if !ok {
-			return reading.Fail("TypeError", "pointer is an object, found "+pyType(owned))
+			return reading.Fail("TypeError", "pointer is an object, found "+pyvalue.TypeName(owned))
 		}
 		if path, has := Lookup(entry, "path"); has {
 			if _, ok := path.(string); !ok {
-				return reading.Fail("TypeError", "pointer.path is a string, found "+pyType(path))
+				return reading.Fail("TypeError", "pointer.path is a string, found "+pyvalue.TypeName(path))
 			}
 		}
 	}
@@ -285,7 +266,7 @@ func PointsFor(record Object, name string, wanted map[string]string) []Object {
 	var found []Object
 	for _, raw := range Get(entry, "measuredPoints").([]any) {
 		point, _ := raw.(Object)
-		if !evidence.Truthy(Get(point, "exercised")) {
+		if !pyvalue.Truthy(Get(point, "exercised")) {
 			continue
 		}
 		if Get(point, "digestMatchesDefinition") == false {

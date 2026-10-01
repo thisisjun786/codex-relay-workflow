@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -465,7 +465,7 @@ func (m *Start) Run(ctx context.Context, raw []byte) (contract.OrderedObject, er
 		status := "unknown"
 		if sent != nil {
 			if value, present := sent["status"]; present {
-				status = evidence.Text(value)
+				status = pyvalue.Str(value)
 			}
 		}
 		return answer(row, "incomplete", "business", "business_"+status)

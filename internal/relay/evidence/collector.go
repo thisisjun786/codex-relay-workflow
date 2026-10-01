@@ -2,7 +2,6 @@ package evidence
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // Runner is the read-only forge process seam. Tests feed the same scripted gh transcript to
@@ -44,7 +44,7 @@ func NewForge(run Runner) *Forge {
 }
 func (f *Forge) execute(argv []string, where string) (any, error) {
 	if countReached(len(f.Calls), f.CallBudget) {
-		return nil, &Unreadable{Where: where, Detail: fmt.Sprintf("the collection reached its budget of %s forge calls before it finished, so what it has is a prefix rather than an answer", Text(f.CallBudget))}
+		return nil, &Unreadable{Where: where, Detail: fmt.Sprintf("the collection reached its budget of %s forge calls before it finished, so what it has is a prefix rather than an answer", pyvalue.Str(f.CallBudget))}
 	}
 	full := append(slices.Clone(f.Command), argv...)
 	code, out, stderr, err := f.Run(full, f.Timeout)
@@ -126,7 +126,7 @@ func (f *Forge) GraphQL(document, where string, variables map[string]any) (map[s
 		return nil, err
 	}
 	o := forgeObject(raw, true)
-	if Truthy(o["errors"]) {
+	if pyvalue.Truthy(o["errors"]) {
 		return nil, &Unreadable{Where: where, Detail: "the forge refused the query for " + where + ": " + truncate(pyjson.Dumps(o["errors"], pyjson.Options{}), 400)}
 	}
 	return forgeObject(o["data"], true), nil
@@ -144,16 +144,16 @@ func graphqlText(v any) string {
 	if b, ok := v.(bool); ok {
 		return strconv.FormatBool(b)
 	}
-	return Text(v)
+	return pyvalue.Str(v)
 }
-func boolOf(v any) bool  { return Truthy(v) }
+func boolOf(v any) bool  { return pyvalue.Truthy(v) }
 func strOf(v any) string { return forgeText(v) }
 func idOf(v any) any     { return forgeObject(v, false)["id"] }
 
 func (f *Forge) enumerateREST(name, path, key string, params map[string]string, identify func(any) any) (Enumeration, error) {
 	return EnumerateConnection(name, f.PageBudget, func(token any) (Page, error) {
 		page := integer(Or(token, 1))
-		ordered := path + "?page=" + strconv.Itoa(page) + "&per_page=" + Text(f.PageSize)
+		ordered := path + "?page=" + strconv.Itoa(page) + "&per_page=" + pyvalue.Str(f.PageSize)
 		for _, key := range []string{"head_sha", "filter"} {
 			if value, ok := params[key]; ok {
 				ordered += "&" + key + "=" + url.QueryEscape(value)
@@ -176,7 +176,7 @@ func (f *Forge) enumerateREST(name, path, key string, params map[string]string, 
 func (f *Forge) enumerateArray(name, path string) (Enumeration, error) {
 	return EnumerateConnection(name, f.PageBudget, func(token any) (Page, error) {
 		page := integer(Or(token, 1))
-		raw, err := f.Rest(path, name, map[string]string{"page": strconv.Itoa(page), "per_page": Text(f.PageSize)})
+		raw, err := f.Rest(path, name, map[string]string{"page": strconv.Itoa(page), "per_page": pyvalue.Str(f.PageSize)})
 		if err != nil {
 			return Page{}, err
 		}
@@ -185,7 +185,7 @@ func (f *Forge) enumerateArray(name, path string) (Enumeration, error) {
 			items, ok = []any{}, true
 		}
 		if !ok {
-			return Page{}, &Unreadable{Where: name, Detail: "the the " + name + " endpoint answered with a " + TypeName(raw) + " where a list was expected"}
+			return Page{}, &Unreadable{Where: name, Detail: "the the " + name + " endpoint answered with a " + pyvalue.TypeName(raw) + " where a list was expected"}
 		}
 		var next any
 		if countReached(len(items), f.PageSize) {
@@ -205,7 +205,7 @@ func (f *Forge) enumerateGraphQL(label, document, field, owner, name string, num
 		var next any
 		if boolOf(info["hasNextPage"]) {
 			next = info["endCursor"]
-			if !Truthy(next) {
+			if !pyvalue.Truthy(next) {
 				return Page{}, &Unreadable{Where: label, Detail: "the " + label + " connection says another page exists and gives no cursor to reach it"}
 			}
 		}
@@ -228,7 +228,7 @@ func readEnumeration(found Enumeration, err error, problems *[]Problem) Enumerat
 }
 
 func candidate(f *Forge, owner, name string, number any) (map[string]any, error) {
-	raw, err := f.Rest(fmt.Sprintf("repos/%s/%s/pulls/%s", owner, name, Text(number)), "the pull request", nil)
+	raw, err := f.Rest(fmt.Sprintf("repos/%s/%s/pulls/%s", owner, name, pyvalue.Str(number)), "the pull request", nil)
 	if err != nil {
 		return nil, err
 	}
@@ -268,7 +268,7 @@ func collectReview(f *Forge, owner, name string, number any, problems *[]Problem
 		finding := threadFinding(item)
 		findings[i] = finding
 		resolved := boolOf(finding["resolved"])
-		if Truthy(finding["id"]) {
+		if pyvalue.Truthy(finding["id"]) {
 			key := HashKey(finding["id"])
 			before[key] = resolved
 			identifiers[key] = finding["id"]
@@ -297,7 +297,7 @@ func collectReview(f *Forge, owner, name string, number any, problems *[]Problem
 	}
 	seen := make([]string, 0, len(identifiers))
 	for _, id := range identifiers {
-		seen = append(seen, Text(id))
+		seen = append(seen, pyvalue.Str(id))
 	}
 	sort.Strings(seen)
 	var total any = len(seen)
@@ -343,7 +343,7 @@ func provider(n map[string]any) any {
 	if id == nil {
 		return nil
 	}
-	return Text(id)
+	return pyvalue.Str(id)
 }
 func collectChecks(f *Forge, owner, name, head string, problems *[]Problem, connections *[]any) ([]any, []any, []any) {
 	root := "repos/" + owner + "/" + name
@@ -443,7 +443,7 @@ func collectChecks(f *Forge, owner, name, head string, problems *[]Problem, conn
 	}
 	for _, raw := range published.Items {
 		n := mapOf(raw)
-		id := Text(n["id"])
+		id := pyvalue.Str(n["id"])
 		if jobIDs[HashKey(n["id"])] {
 			continue
 		}
@@ -481,7 +481,7 @@ func collectGates(f *Forge, owner, name string, base any, problems *[]Problem, c
 		var unread *Unreadable
 		if errors.As(err, &unread) && unread.Status == 404 {
 			g["baseRefExists"] = false
-			*problems = append(*problems, Problem{Code: BaseRefMissing, Detail: "the base branch " + StrRepr(ref) + " does not exist, so this candidate has no destination and its gates cannot be read from one"})
+			*problems = append(*problems, Problem{Code: BaseRefMissing, Detail: "the base branch " + pyvalue.StrRepr(ref) + " does not exist, so this candidate has no destination and its gates cannot be read from one"})
 		} else {
 			*problems = append(*problems, Problem{Code: UnreadableCode, Detail: err.Error()})
 		}
@@ -536,7 +536,7 @@ func collectGates(f *Forge, owner, name string, base any, problems *[]Problem, c
 						if _, exists := providers[context]; !exists {
 							providerOrder = append(providerOrder, context)
 						}
-						providers[context] = append(providers[context], Text(x["integration_id"]))
+						providers[context] = append(providers[context], pyvalue.Str(x["integration_id"]))
 					}
 				}
 			}
@@ -556,11 +556,10 @@ func collectGates(f *Forge, owner, name string, base any, problems *[]Problem, c
 	g["requiredDeclared"] = required
 	g["requiredProviders"] = providerAny
 	digestInput := map[string]any{"required": required, "providers": providerAny, "strictBase": g["strictBase"], "threadResolutionRequired": g["threadResolutionRequired"]}
-	sum := sha256String(pyjson.Dumps(digestInput, pyjson.Options{SortKeys: true}))
+	sum := pyvalue.SHA256Hex(pyjson.Dumps(digestInput, pyjson.Options{SortKeys: true}))
 	g["digest"] = sum
 	return g
 }
-func sha256String(s string) string { sum := sha256.Sum256([]byte(s)); return fmt.Sprintf("%x", sum) }
 
 func problemsJSON(problems []Problem) []any {
 	out := make([]any, len(problems))
@@ -587,13 +586,13 @@ func snapshotBase(f *Forge, owner, name string, number any, started string, prob
 	}
 	conflicting := []any{}
 	for _, raw := range listOf(required) {
-		name := Text(raw)
+		name := pyvalue.Str(raw)
 		if disabledSet[strings.ToLower(strings.TrimSpace(name))] {
 			conflicting = append(conflicting, name)
 		}
 	}
 	if len(conflicting) > 0 {
-		problems = append(problems, Problem{Code: RequiredGateConflict, Detail: "this branch declares " + StrRepr(Text(conflicting[0])) + " required, and that reviewer is disabled by policy; it stays in the required set because removing it here would hide a rule that needs an authorised correction"})
+		problems = append(problems, Problem{Code: RequiredGateConflict, Detail: "this branch declares " + pyvalue.StrRepr(pyvalue.Str(conflicting[0])) + " required, and that reviewer is disabled by policy; it stays in the required set because removing it here would hide a rule that needs an authorised correction"})
 	}
 	handoff := map[string]any{"isDraft": boolOf(pinned["isDraft"]), "baseVerifiedAt": f.Now(), "baseSha": pinned["baseSha"], "baseRef": pinned["baseRef"], "reviewCoverage": defaultMap(coverage), "checks": defaultList(checks), "requiredDeclared": required, "requiredProviders": gates["requiredProviders"], "threadDispositions": []any{}, "criterionEvidence": []any{}, "limitations": []any{}}
 	return map[string]any{"repository": owner + "/" + name, "number": number, "url": pinned["url"], "observation": map[string]any{"startedAt": started, "finishedAt": f.Now(), "atomic": false, "note": "this observation is not atomic with any merge that follows it; the exact-head guard at merge time and the late-finding path afterwards are what bound the window"}, "pinned": pinned, "reread": reread, "handoffGuidance": "this handoff carries the observed half of a completion report: the review coverage, the checks, the required gates, the draft flag and the base it was verified against. threadDispositions, criterionEvidence and limitations are left empty because they are judgements rather than observations; a candidate whose threads were seen needs a judged disposition for each of them before the report is submitted", "gates": gates, "supersededRuns": defaultList(superseded), "connections": defaultList(connections), "handoff": handoff, "findings": defaultList(findings), "checkDetail": defaultList(detail), "problems": problemsJSON(problems), "verdict": VerdictOf(problems), "provenance": map[string]any{"calls": f.Calls, "disabledReviewers": disabled, "conflictingRequiredReviewers": conflicting}}
@@ -661,8 +660,8 @@ func Collect(f *Forge, repository string, numberValue any) (snapshot map[string]
 		reread["verifiedAt"] = f.Now()
 		var moved []string
 		for _, field := range []string{"headSha", "baseSha", "baseRef", "state", "merged", "isDraft"} {
-			if !Equal(after[field], pinned[field]) {
-				moved = append(moved, field+": "+Repr(pinned[field])+" to "+Repr(after[field]))
+			if !pyvalue.ItemEqual(after[field], pinned[field]) {
+				moved = append(moved, field+": "+pyvalue.Repr(pinned[field])+" to "+pyvalue.Repr(after[field]))
 			}
 		}
 		if len(moved) > 0 {
@@ -689,7 +688,7 @@ func Collect(f *Forge, repository string, numberValue any) (snapshot map[string]
 func RestateProblems(head string, record, snapshot any) []Problem {
 	_, ok := Object(record)
 	if !ok {
-		return []Problem{{Code: Malformed, Detail: "a handoff record is an object, not a " + TypeName(record)}}
+		return []Problem{{Code: Malformed, Detail: "a handoff record is an object, not a " + pyvalue.TypeName(record)}}
 	}
 	r := mapOf(record)
 	snap := mapOf(snapshot)
@@ -698,13 +697,13 @@ func RestateProblems(head string, record, snapshot any) []Problem {
 	var problems []Problem
 	if providers != nil {
 		if _, ok := Object(providers); !ok {
-			problems = append(problems, Problem{Code: RecordInvalid, Detail: "the record states requiredProviders as a " + TypeName(providers) + ", not a mapping of context to the integration its rule names"})
+			problems = append(problems, Problem{Code: RecordInvalid, Detail: "the record states requiredProviders as a " + pyvalue.TypeName(providers) + ", not a mapping of context to the integration its rule names"})
 			providers = nil
 		}
 	}
 	required := r["requiredDeclared"]
 	checks := r["checks"]
-	if !Truthy(checks) {
+	if !pyvalue.Truthy(checks) {
 		checks = []any{}
 	}
 	// Restated checks are shape-validated, not iterated like a forge collection.
@@ -716,24 +715,24 @@ func RestateProblems(head string, record, snapshot any) []Problem {
 	}
 	gates := mapOf(snap["gates"])
 	fresh, stated := listOf(gates["requiredDeclared"]), listOf(required)
-	if gates["requiredDeclared"] != nil && required != nil && Repr(sortedTexts(fresh)) != Repr(sortedTexts(stated)) {
-		problems = append(problems, Problem{Code: GatesMoved, Detail: "the record was graded against required checks " + Repr(sortedTexts(stated)) + " and this branch now declares " + Repr(sortedTexts(fresh))})
+	if gates["requiredDeclared"] != nil && required != nil && pyvalue.Repr(sortedTexts(fresh)) != pyvalue.Repr(sortedTexts(stated)) {
+		problems = append(problems, Problem{Code: GatesMoved, Detail: "the record was graded against required checks " + pyvalue.Repr(sortedTexts(stated)) + " and this branch now declares " + pyvalue.Repr(sortedTexts(fresh))})
 	}
 	expected, recorded := providerObject(gates["requiredProviders"]), providerObject(providers)
 	if _, ok := Object(gates["requiredProviders"]); ok && pyjson.Dumps(expected, pyjson.Options{Compact: true, SortKeys: true, Unicode: true}) != pyjson.Dumps(recorded, pyjson.Options{Compact: true, SortKeys: true, Unicode: true}) {
 		said := "nothing"
 		if len(recorded) > 0 {
-			said = Repr(recorded)
+			said = pyvalue.Repr(recorded)
 		}
-		problems = append(problems, Problem{Code: GatesMoved, Detail: "the record states " + said + " about which integration answers for a required context and this branch declares " + Repr(expected)})
+		problems = append(problems, Problem{Code: GatesMoved, Detail: "the record states " + said + " about which integration answers for a required context and this branch declares " + pyvalue.Repr(expected)})
 	}
 	observed := strOf(pinned["headSha"])
 	if head != "" && observed != "" && head != observed {
-		problems = append(problems, Problem{Code: CandidateMoved, Detail: "the record is about head " + StrRepr(head) + " and the forge now reports " + StrRepr(observed) + ", so the record describes a commit that is no longer the candidate"})
+		problems = append(problems, Problem{Code: CandidateMoved, Detail: "the record is about head " + pyvalue.StrRepr(head) + " and the forge now reports " + pyvalue.StrRepr(observed) + ", so the record describes a commit that is no longer the candidate"})
 	}
 	base := strOf(r["baseSha"])
 	if base != "" && strOf(pinned["baseSha"]) != "" && base != strOf(pinned["baseSha"]) {
-		problems = append(problems, Problem{Code: CandidateMoved, Detail: "the record was verified against base " + StrRepr(base) + " and the candidate now targets " + StrRepr(strOf(pinned["baseSha"])) + ", so its checks cover a merge that is no longer the one being made"})
+		problems = append(problems, Problem{Code: CandidateMoved, Detail: "the record was verified against base " + pyvalue.StrRepr(base) + " and the candidate now targets " + pyvalue.StrRepr(strOf(pinned["baseSha"])) + ", so its checks cover a merge that is no longer the one being made"})
 	} else if base == "" {
 		problems = append(problems, Problem{Code: RecordInvalid, Detail: "the record does not name the base commit it was verified against, so a destination that moved under an unchanged head cannot be noticed"})
 	}
@@ -747,15 +746,15 @@ func RestateProblems(head string, record, snapshot any) []Problem {
 	}
 	seen := map[string]bool{}
 	for _, id := range listOf(mapOf(r["reviewCoverage"])["threadsSeen"]) {
-		seen[Text(id)] = true
+		seen[pyvalue.Str(id)] = true
 	}
 	var late []string
 	for _, raw := range listOf(snap["findings"]) {
 		one := mapOf(raw)
-		if one["kind"] == "reviewThread" && !seen[Text(one["id"])] {
+		if one["kind"] == "reviewThread" && !seen[pyvalue.Str(one["id"])] {
 			label := strOf(one["url"])
 			if label == "" {
-				label = Text(one["id"])
+				label = pyvalue.Str(one["id"])
 			}
 			late = append(late, label)
 		}
@@ -769,7 +768,7 @@ func RestateProblems(head string, record, snapshot any) []Problem {
 func sortedTexts(v []any) []string {
 	out := make([]string, len(v))
 	for i, x := range v {
-		out[i] = Text(x)
+		out[i] = pyvalue.Str(x)
 	}
 	sort.Strings(out)
 	return out

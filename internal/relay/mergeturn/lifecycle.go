@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -72,7 +73,7 @@ func (s *Service) promote(ctx context.Context, target, at string) (string, error
 
 func (s *Service) Release(ctx context.Context, turn, actor, disposition, reason, evidence string) (map[string]any, error) {
 	if disposition != "returned" && disposition != "cancelled" {
-		return nil, &store.RefusedError{Reason: string(contract.RefusalLinkNotActive), Detail: "a disposition is returned or cancelled, not " + pyRepr(disposition) + "; a landing is recorded with land, not chosen here"}
+		return nil, &store.RefusedError{Reason: string(contract.RefusalLinkNotActive), Detail: "a disposition is returned or cancelled, not " + pyvalue.StrRepr(disposition) + "; a landing is recorded with land, not chosen here"}
 	}
 	if strings.TrimSpace(reason) == "" {
 		return nil, &store.RefusedError{Reason: string(contract.RefusalMergeEvidenceRequired), Detail: "a release states why"}
@@ -308,9 +309,9 @@ func (s *Service) authority(ctx context.Context, r store.MergeTurnsRow, actor, w
 	}
 	which := ", and that project has no readable supervisor"
 	if supervisor != "" {
-		which = ", which is " + pyRepr(supervisor)
+		which = ", which is " + pyvalue.StrRepr(supervisor)
 	}
-	return &registry.CoordinationRefusal{Reason: contract.RefusalScopeRoleMismatch, Detail: "task " + pyRepr(actor) + " is neither the holder of turn " + pyRepr(r.TurnID) + " nor the supervisor above project " + pyRepr(r.ProjectKey) + which + ", so it cannot " + what, Domain: registry.DomainMergeTarget, Subject: r.TargetKey, Incumbent: r.HolderTaskID, Challenger: actor}, nil
+	return &registry.CoordinationRefusal{Reason: contract.RefusalScopeRoleMismatch, Detail: "task " + pyvalue.StrRepr(actor) + " is neither the holder of turn " + pyvalue.StrRepr(r.TurnID) + " nor the supervisor above project " + pyvalue.StrRepr(r.ProjectKey) + which + ", so it cannot " + what, Domain: registry.DomainMergeTarget, Subject: r.TargetKey, Incumbent: r.HolderTaskID, Challenger: actor}, nil
 }
 
 func field(o contract.OrderedObject, key string) any {

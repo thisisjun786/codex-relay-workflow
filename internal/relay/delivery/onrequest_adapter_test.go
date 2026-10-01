@@ -5,7 +5,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
@@ -151,12 +151,12 @@ func verifyResume(settings TaskSettings, resumed any, statusBefore string) (Obj,
 		code := str(first, "code")
 		expected, _ := get(first, "expected")
 		returned, _ := get(first, "returned")
-		message := code + ": " + str(first, "field") + " returned " + evidence.Repr(returned) + "; message withheld"
+		message := code + ": " + str(first, "field") + " returned " + pyvalue.Repr(returned) + "; message withheld"
 		if !transmitted {
 			if code == registry.SettingsNotPreserved {
 				code = registry.SettingsDifferAfterLoad
 			}
-			message = code + ": " + str(first, "field") + " is " + evidence.Repr(returned) + " on the loaded thread and " + evidence.Repr(expected) + " in the record; nothing was transmitted and no turn was started"
+			message = code + ": " + str(first, "field") + " is " + pyvalue.Repr(returned) + " on the loaded thread and " + pyvalue.Repr(expected) + " in the record; nothing was transmitted and no turn was started"
 		}
 		return Obj{{Key: "code", Value: code}, {Key: "message", Value: message}}, findings, nil
 	}

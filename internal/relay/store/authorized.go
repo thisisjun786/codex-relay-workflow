@@ -4,6 +4,8 @@ import (
 	"errors"
 	"os"
 	"syscall"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // IsWithin exposes scope.py's component containment to the adapter without another
@@ -42,14 +44,14 @@ func OpenAuthorized(declared string, roots []string, allowLease bool) (*Authoriz
 		return fail(err)
 	}
 	if actual != declared {
-		return fail(refuse(ReasonPathRelocated, "descriptor for %s actually resolves to %s", PythonRepr(declared), PythonRepr(actual)))
+		return fail(refuse(ReasonPathRelocated, "descriptor for %s actually resolves to %s", pyvalue.StrRepr(declared), pyvalue.StrRepr(actual)))
 	}
 	snapshot, mode, err := snapshotOf(fd)
 	if err != nil {
 		return fail(err)
 	}
 	if mode&syscall.S_IFMT != syscall.S_IFREG {
-		return fail(refuse(ReasonNotARegularFile, "%s is not a regular file", PythonRepr(declared)))
+		return fail(refuse(ReasonNotARegularFile, "%s is not a regular file", pyvalue.StrRepr(declared)))
 	}
 	binding := ArtifactBinding{Mode: BestEffortDetection, Detail: "lease not attempted", Declared: declared, Root: root}
 	if allowLease {
@@ -97,7 +99,7 @@ func HashAuthorized(h *AuthorizedFile, between func() error) (string, int64, err
 		return "", 0, err
 	}
 	if first != second || size != again {
-		return "", 0, refuse(ReasonArtifactMutated, "%s produced different bytes on two consecutive reads", PythonRepr(h.Binding.Declared))
+		return "", 0, refuse(ReasonArtifactMutated, "%s produced different bytes on two consecutive reads", pyvalue.StrRepr(h.Binding.Declared))
 	}
 	if err := h.VerifyStable(); err != nil {
 		return "", 0, err

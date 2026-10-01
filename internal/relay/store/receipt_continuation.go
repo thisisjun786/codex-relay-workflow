@@ -8,9 +8,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // ReasonRevisionLineageInvalid is errors.RefusalReason.REVISION_LINEAGE_INVALID.
@@ -48,7 +48,7 @@ func parseContinuation(raw []byte) (*continuationClaim, error) {
 		sort.Strings(missing)
 		quoted := make([]string, len(missing))
 		for i, m := range missing {
-			quoted[i] = PyRepr(m)
+			quoted[i] = pyvalue.StrRepr(m)
 		}
 		return nil, refuse(ReasonMalformedReceipt, "a continuation claim needs [%s]", strings.Join(quoted, ", "))
 	}
@@ -77,7 +77,7 @@ func parseContinuation(raw []byte) (*continuationClaim, error) {
 func (in ReceiptIntake) checkTurnIdentity(ctx context.Context, relationship Relationship, generation Generation, turn TurnReference, claim *continuationClaim) error {
 	s := in.Store
 	if turn.ThreadID != relationship.ChildTaskID {
-		return refuse(ReasonUnassignedTurn, "turnRef names thread %s, but the registered child of this relationship is %s", PyRepr(turn.ThreadID), PyRepr(relationship.ChildTaskID))
+		return refuse(ReasonUnassignedTurn, "turnRef names thread %s, but the registered child of this relationship is %s", pyvalue.StrRepr(turn.ThreadID), pyvalue.StrRepr(relationship.ChildTaskID))
 	}
 	anchor := generation.DispatchTurnID
 	if anchor.Valid && turn.TurnID == anchor.String {
@@ -93,16 +93,16 @@ func (in ReceiptIntake) checkTurnIdentity(ctx context.Context, relationship Rela
 	}
 	anchorRepr := "None"
 	if anchor.Valid {
-		anchorRepr = PyRepr(anchor.String)
+		anchorRepr = pyvalue.StrRepr(anchor.String)
 	}
 	unadmitted := func(detail string) error {
-		return refuse(ReasonUnassignedTurn, "turn %s is not admitted to generation %d (anchor %s): %s", PyRepr(turn.TurnID), generation.Number, anchorRepr, detail)
+		return refuse(ReasonUnassignedTurn, "turn %s is not admitted to generation %d (anchor %s): %s", pyvalue.StrRepr(turn.TurnID), generation.Number, anchorRepr, detail)
 	}
 	if claim == nil {
 		return unadmitted("a turn other than the anchor needs an explicit continuation admission naming the generation, its anchor, an actor and a reason")
 	}
 	if !anchor.Valid || claim.anchor != anchor.String {
-		return unadmitted(fmt.Sprintf("the continuation claims anchor %s, but generation %d is anchored to %s", PyRepr(claim.anchor), generation.Number, anchorRepr))
+		return unadmitted(fmt.Sprintf("the continuation claims anchor %s, but generation %d is anchored to %s", pyvalue.StrRepr(claim.anchor), generation.Number, anchorRepr))
 	}
 	detail := claim.actor + ": " + claim.reason + " | corroboration=not_corroborated"
 	return s.Transaction(ctx, func(ctx context.Context, conn *sql.Conn) error {
@@ -140,9 +140,3 @@ func recordLineage(ctx context.Context, conn *sql.Conn, relationshipID string, g
 	_, err := conn.ExecContext(ctx, `INSERT OR IGNORE INTO revision_lineage (relationship_id, execution_generation, event_id, revision_hash, supersedes_hash, declared_by, recorded_at) VALUES (?,?,?,?,?,?,?)`, relationshipID, generation, eventID, revision, declared, declaredBy, now)
 	return err
 }
-
-// PyRepr is Python's repr() of a str: settings.Repr, so every character str.isprintable() refuses
-// (U+00A0, U+2028, U+200B, an unassigned code point) is escaped as CPython 3.14 escapes it, and a
-// lone surrogate, as an argv byte that is not UTF-8 or the WTF-8 a JSON decoder keeps, prints
-// as \udXXX rather than as U+FFFD.
-func PyRepr(text string) string { return settings.Repr(text) }

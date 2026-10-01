@@ -12,10 +12,10 @@ import (
 	"syscall"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/pyerr"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
-	fspath "github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 )
 
@@ -60,7 +60,7 @@ func identityOf(spelled string) *identity {
 // escape, is that byte again; a surrogate that escapes no byte cannot be encoded, and Python's
 // stat raises ValueError, which reaches nothing.
 func recordedIdentity(spelled string) *identity {
-	system, ok := fspath.FSEncode(spelled)
+	system, ok := pyvalue.FSEncode(spelled)
 	if !ok {
 		return nil
 	}
@@ -134,7 +134,7 @@ func join(root string, names ...string) string {
 
 // shown is how Python spells a path it read from the system: an undecodable byte is the lone
 // surrogate surrogateescape gives it, which json.dumps writes as \udcXX.
-func shown(p string) string { return store.FSDecode(p) }
+func shown(p string) string { return pyvalue.FSDecode(p) }
 
 // errorText is str(error) for what a stat or a listing raised.
 func errorText(err error, p string) string {
@@ -162,7 +162,7 @@ func ledgerErrorText(err error, ledger string) string {
 	}
 	var errno syscall.Errno
 	if errors.As(err, &errno) {
-		return store.PythonOSErrorText(errno) + ": " + evidence.StrRepr(ledger)
+		return store.PythonOSErrorText(errno) + ": " + pyvalue.StrRepr(ledger)
 	}
 	return store.PythonOSErrorText(err)
 }
@@ -436,7 +436,7 @@ func (r *reading) read(roots, hosts []string) {
 			// Absolute, normalized and one the system takes (hostLedgerNamed), so abspath leaves
 			// it as it is and it encodes.
 			ledger = want.spelled
-			system, _ = fspath.FSEncode(ledger)
+			system, _ = pyvalue.FSEncode(ledger)
 		} else {
 			var err error
 			if system, err = absolute(want.spelled); err != nil {
@@ -537,7 +537,7 @@ func (r *reading) read(roots, hosts []string) {
 	for _, one := range rows {
 		body := one.body
 		chosen := r.inWindow(get(body, "at"), get(body, "sessionId"), get(body, "turnId"))
-		if chosen && evidence.Truthy(get(body, "sessionId")) && evidence.Truthy(get(body, "turnId")) {
+		if chosen && pyvalue.Truthy(get(body, "sessionId")) && pyvalue.Truthy(get(body, "turnId")) {
 			pair := dictKey("tuple", get(body, "sessionId")) + "\x00" + dictKey("tuple", get(body, "turnId"))
 			if _, seen := pairs[pair]; !seen {
 				pairOrder = append(pairOrder, pair)
@@ -560,7 +560,7 @@ func (r *reading) read(roots, hosts []string) {
 				identity, _ := asObject(get(body, "eventIdentity"))
 				label = hook.Unestablished + ":" + get(identity, "reason").(string)
 			} else {
-				label = "no_event:" + evidence.Text(get(body, "adapterOutcome"))
+				label = "no_event:" + pyvalue.Str(get(body, "adapterOutcome"))
 			}
 			n, _ := r.unjudged[label].(int)
 			r.unjudged[label] = n + 1
@@ -639,7 +639,7 @@ func (r *reading) read(roots, hosts []string) {
 			for _, file := range hostFiles[key] {
 				by, _ := asObject(get(file.body, "claimedBy"))
 				owner, _ := get(by, "journalRoot").(string)
-				if owner != "" && sameIdentity(recordedIdentity(owner), thisRoot) && (get(by, "attemptRow") != slotName || !evidence.Equal(get(by, "pid"), pid)) {
+				if owner != "" && sameIdentity(recordedIdentity(owner), thisRoot) && (get(by, "attemptRow") != slotName || !pyvalue.ItemEqual(get(by, "pid"), pid)) {
 					r.addShown("recordsThatDisagree", file.path)
 				}
 			}
@@ -692,7 +692,7 @@ func (r *reading) read(roots, hosts []string) {
 				r.add("acceptedRowsMissing", key)
 			} else {
 				for _, field := range []string{"adapterOutcome", "guardDecision", "guardState", "held"} {
-					if !evidence.Equal(get(namedRow, field), get(outcome, field)) {
+					if !pyvalue.ItemEqual(get(namedRow, field), get(outcome, field)) {
 						r.add("recordsThatDisagree", outcomePath)
 						break
 					}

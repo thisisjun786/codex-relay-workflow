@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 var f2Names = []string{"fault-fail", "fault-adopt", "fault-move", "fault-update"}
@@ -479,7 +480,7 @@ func f2Update(ctx context.Context, l *Ledger, f row, op string, value any, stamp
 	if f.Get("external_ref") == nil {
 		return nil, nil
 	}
-	trigger := fmt.Sprintf("update:%s:%s:%d", op, sha256Hex(dumps(value, true))[:12], integer(f, "cycle"))
+	trigger := fmt.Sprintf("update:%s:%s:%d", op, pyvalue.SHA256Hex(dumps(value, true))[:12], integer(f, "cycle"))
 	publication := publicationID(id, "update_record", trigger)
 	prior, e := l.one(ctx, "SELECT state FROM fault_publications WHERE publication_id=?", publication)
 	if e != nil {
@@ -508,7 +509,7 @@ func f2Notify(ctx context.Context, l *Ledger, r row, state, stamp string) error 
 		return e
 	}
 	reason := fmt.Sprintf("write:%s:%s", text(r, "publication_id"), state)
-	notification := sha256Hex(fmt.Sprintf("%s|decision|%s", id, reason))[:idWidth]
+	notification := pyvalue.SHA256Hex(fmt.Sprintf("%s|decision|%s", id, reason))[:idWidth]
 	_, e = l.exec(ctx, "INSERT INTO fault_notifications(notification_id,fault_id,product,kind,reason,cycle,ref,state,created_at,updated_at) VALUES(?,?,?,'decision',?,?,NULL,'pending',?,?) ON CONFLICT(notification_id) DO UPDATE SET state=excluded.state,last_error=NULL,updated_at=excluded.updated_at WHERE fault_notifications.state='withdrawn'", notification, id, text(fault, "product"), reason, integer(r, "cycle"), stamp, stamp)
 	return e
 }

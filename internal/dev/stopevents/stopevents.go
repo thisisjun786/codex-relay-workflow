@@ -22,8 +22,8 @@ import (
 	"io"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 )
 
 const usage = "usage: crw-dev stop-events [-h] --journal-root JOURNAL_ROOT [--since SINCE] [--until UNTIL] [--session SESSION] [--turn TURN] [--codex-home CODEX_HOME]"
@@ -46,7 +46,7 @@ var Exit = map[string]int{verdictTrue: 0, verdictFalse: 1, verdictUnreadable: 3}
 // records are compared with bounds as strings, which orders them only in whole UTC seconds.
 func WindowBound(value string) error {
 	if !stamp(value) {
-		return fmt.Errorf("a window bound is a UTC time in the records' own format, YYYY-MM-DDTHH:MM:SSZ, not %s", evidence.StrRepr(value))
+		return fmt.Errorf("a window bound is a UTC time in the records' own format, YYYY-MM-DDTHH:MM:SSZ, not %s", pyvalue.StrRepr(value))
 	}
 	return nil
 }

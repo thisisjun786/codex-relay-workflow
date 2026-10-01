@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
@@ -131,7 +132,7 @@ func (r Reader) readStore(ctx context.Context, s *store.Store, receiver, role st
 	if attachment == nil {
 		answer("relationRevision", nil, "relationship_scope: unscoped, so no link and no revision")
 	} else if link := Get(attachment, "link"); link == nil {
-		*notes = append(*notes, "the relationship is scoped to "+evidence.Text(Get(attachment, "projectKey"))+" but no execution link joins it, so its revision is unread")
+		*notes = append(*notes, "the relationship is scoped to "+pyvalue.Str(Get(attachment, "projectKey"))+" but no execution link joins it, so its revision is unread")
 	} else {
 		if Get(link, "revision") == nil {
 			return fmt.Errorf("IndexError: No item with that key")
@@ -140,11 +141,11 @@ func (r Reader) readStore(ctx context.Context, s *store.Store, receiver, role st
 		if status != "active" && status != "paused" || truth(Get(link, "supersededBy")) {
 			detail := ""
 			if truth(Get(link, "supersededBy")) {
-				detail = ", superseded by " + evidence.Text(Get(link, "supersededBy"))
+				detail = ", superseded by " + pyvalue.Str(Get(link, "supersededBy"))
 			}
 			*notes = append(*notes, "the execution link "+str(Get(link, "linkId"))+" is "+status+detail+", so it no longer answers for this relationship and its revision is unread")
 		} else if Get(Get(link, "lower"), "taskId") != row.Get("child_task_id") || Get(Get(link, "upper"), "taskId") != row.Get("parent_task_id") {
-			*notes = append(*notes, "the execution link "+str(Get(link, "linkId"))+" now joins "+evidence.Text(Get(Get(link, "upper"), "taskId"))+" and "+evidence.Text(Get(Get(link, "lower"), "taskId"))+", not this relationship's tasks, so it has been handed over and its revision is unread")
+			*notes = append(*notes, "the execution link "+str(Get(link, "linkId"))+" now joins "+pyvalue.Str(Get(Get(link, "upper"), "taskId"))+" and "+pyvalue.Str(Get(Get(link, "lower"), "taskId"))+", not this relationship's tasks, so it has been handed over and its revision is unread")
 		} else {
 			answer("relationRevision", Get(link, "revision"), "scope_links "+str(Get(link, "linkId")))
 		}
@@ -177,11 +178,11 @@ func (r Reader) readStore(ctx context.Context, s *store.Store, receiver, role st
 	}
 	entry := Get(Get(ledger, "assignments"), rid)
 	if truth(entry) && truth(Get(entry, "mode")) && dispatch != nil && equal(Get(entry, "dispatchRequestId"), dispatch) {
-		source := "ledger: assignment " + evidence.Text(Get(entry, "messageId"))
+		source := "ledger: assignment " + pyvalue.Str(Get(entry, "messageId"))
 		answer("mode", Get(entry, "mode"), source)
 		answer("workflow", Get(entry, "workflow"), source)
 	} else if truth(entry) {
-		*notes = append(*notes, "the reception ledger's assignment for "+rid+" was accepted under dispatch "+evidence.Text(Get(entry, "dispatchRequestId"))+", not the one whose registration began the current tenure, so this tenure's mode and workflow are unread")
+		*notes = append(*notes, "the reception ledger's assignment for "+rid+" was accepted under dispatch "+pyvalue.Str(Get(entry, "dispatchRequestId"))+", not the one whose registration began the current tenure, so this tenure's mode and workflow are unread")
 	} else if ledger != nil {
 		*notes = append(*notes, "the reception ledger holds no accepted assignment for "+rid+", so the mode and the workflow are unread")
 	}
@@ -205,7 +206,7 @@ func tenureStart(ctx context.Context, s *store.Store, rid string, current any, n
 			return nil, nil
 		}
 		if !numeric {
-			return nil, fmt.Errorf("TypeError: '<=' not supported between instances of 'int' and '%s'", evidence.TypeName(current))
+			return nil, fmt.Errorf("TypeError: '<=' not supported between instances of 'int' and '%s'", pyvalue.TypeName(current))
 		}
 		if generation <= now {
 			start = max(start, generation)
@@ -254,7 +255,7 @@ func readCriteria(ctx context.Context, s *store.Store, rid string, answer func(s
 	for _, row := range rows {
 		required, ok := evidence.PyInt(row.Get("required"))
 		if !ok || required != 0 && required != 1 {
-			*notes = append(*notes, "the registered criteria are not one valid set: stored required flag for "+evidence.Repr(row.Get("criterion_id"))+" is not 0 or 1")
+			*notes = append(*notes, "the registered criteria are not one valid set: stored required flag for "+pyvalue.Repr(row.Get("criterion_id"))+" is not 0 or 1")
 			return nil
 		}
 		criteria = append(criteria, delivery.Criterion{ID: str(row.Get("criterion_id")), Title: str(row.Get("title")), Required: required == 1})
@@ -262,7 +263,7 @@ func readCriteria(ctx context.Context, s *store.Store, rid string, answer func(s
 		digests[row.Get("set_digest")] = true
 	}
 	if len(criteria) == 0 || mode.Get("mode") != "managed" || len(sources) != 1 || len(digests) != 1 || !digests[delivery.SetDigest(criteria)] {
-		*notes = append(*notes, "the registered criteria are not one valid set: criteria for "+evidence.Repr(rid)+" are stored in a form ensure_registered will not replace or repair")
+		*notes = append(*notes, "the registered criteria are not one valid set: criteria for "+pyvalue.Repr(rid)+" are stored in a form ensure_registered will not replace or repair")
 		return nil
 	}
 	answer("criteriaDigest", rows[0].Get("set_digest"), "canonical_criteria (managed set)")
@@ -302,10 +303,10 @@ func (r Reader) readSettings(ctx context.Context, reg *registry.Registry, row st
 		settings[task] = o
 		value := func(name string) any {
 			v := Get(o, name)
-			if v == nil || evidence.TypeName(v) == "str" {
+			if v == nil || pyvalue.TypeName(v) == "str" {
 				return v
 			}
-			*notes = append(*notes, "the recorded "+name+" of "+task+" is a "+evidence.TypeName(v)+", not the text a writer records, so it is unread")
+			*notes = append(*notes, "the recorded "+name+" of "+task+" is a "+pyvalue.TypeName(v)+", not the text a writer records, so it is unread")
 			return nil
 		}
 		if task == child {
@@ -348,7 +349,7 @@ func (r Reader) readSettings(ctx context.Context, reg *registry.Registry, row st
 			continue
 		}
 		model, effort := Get(held, "model"), Get(held, "reasoningEffort")
-		if model != nil && evidence.TypeName(model) != "str" || effort != nil && evidence.TypeName(effort) != "str" {
+		if model != nil && pyvalue.TypeName(model) != "str" || effort != nil && pyvalue.TypeName(effort) != "str" {
 			*notes = append(*notes, "the recorded pair of "+task+" is not text, so whether it is authorised for "+role+" is unchecked")
 			continue
 		}
@@ -383,10 +384,10 @@ func describeRole(finding Obj) string {
 		return "this host's execution policy declares no such role, so its authorization cannot be checked"
 	}
 	if Get(finding, "citedException") != nil && !Has(finding, "recorded") {
-		return "its record cites exception " + evidence.Repr(Get(finding, "citedException")) + ", which this policy does not authorize for that role with this pair and directory"
+		return "its record cites exception " + pyvalue.Repr(Get(finding, "citedException")) + ", which this policy does not authorize for that role with this pair and directory"
 	}
 	if Has(finding, "recorded") {
-		return "its recorded authorization is " + evidence.Repr(Get(finding, "recorded")) + " while the policy for that role is " + evidence.Repr(Get(finding, "expected"))
+		return "its recorded authorization is " + pyvalue.Repr(Get(finding, "recorded")) + " while the policy for that role is " + pyvalue.Repr(Get(finding, "expected"))
 	}
 	if d := Get(finding, "detail"); d != nil {
 		return str(d)

@@ -16,8 +16,8 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
@@ -63,7 +63,7 @@ func nativeAdapterRun(t *testing.T, name string, response Object, base string) O
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	spelled := store.FSDecode(home) // the str Python holds for home
+	spelled := pyvalue.FSDecode(home) // the str Python holds for home
 	within := func(parts ...string) string { return spelled + "/" + strings.Join(parts, "/") }
 	env := slices.DeleteFunc(os.Environ(), func(kv string) bool {
 		key, _, _ := strings.Cut(kv, "=")

@@ -2,15 +2,14 @@ package mergeturn
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"errors"
 	"slices"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -22,11 +21,6 @@ func pythonJSON(v any) string { return pyjson.Dumps(v, pyjson.Options{}) }
 // canonicalJSON is json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).
 func canonicalJSON(v any) string {
 	return pyjson.Dumps(v, pyjson.Options{Compact: true, SortKeys: true, Unicode: true})
-}
-
-func sha256Hex(text string) string {
-	sum := sha256.Sum256([]byte(text))
-	return hex.EncodeToString(sum[:])
 }
 
 // checksDigest is mergeturn.checks_digest: the declared required set is inside the digest.
@@ -41,12 +35,12 @@ func checksDigest(required []string, checks []any) string {
 				fields = append(fields, "")
 				continue
 			}
-			fields = append(fields, evidence.Text(v))
+			fields = append(fields, pyvalue.Str(v))
 		}
 		lines = append(lines, strings.Join(fields, "|"))
 	}
 	slices.Sort(lines)
-	return sha256Hex(canonicalJSON(contract.OrderedObject{{Key: "required", Value: required}, {Key: "checks", Value: lines}}))
+	return pyvalue.SHA256Hex(canonicalJSON(contract.OrderedObject{{Key: "required", Value: required}, {Key: "checks", Value: lines}}))
 }
 
 func checkID(turn, head, base, digestChecks, digestReview string) string {
@@ -61,7 +55,7 @@ func (s *Service) Check(ctx context.Context, turn, actor, head, base string, che
 		review = contract.OrderedObject{}
 	}
 	if problems := evidence.ReviewShapeProblems(review); len(problems) > 0 {
-		return nil, &store.RefusedError{Reason: string(contract.RefusalMergeEvidenceMalformed), Detail: "the review restated for turn " + pyRepr(turn) + " is malformed, so the turn and its target were not read and nothing was recorded for this check: " + strings.Join(evidence.Details(problems), "; ")}
+		return nil, &store.RefusedError{Reason: string(contract.RefusalMergeEvidenceMalformed), Detail: "the review restated for turn " + pyvalue.StrRepr(turn) + " is malformed, so the turn and its target were not read and nothing was recorded for this check: " + strings.Join(evidence.Details(problems), "; ")}
 	}
 	required = slices.Compact(slices.Sorted(slices.Values(required)))
 	if required == nil {
@@ -72,7 +66,7 @@ func (s *Service) Check(ctx context.Context, turn, actor, head, base string, che
 		checks = []any{}
 	}
 	digestChecks := checksDigest(required, checks)
-	digestReview := sha256Hex(canonicalJSON(review))
+	digestReview := pyvalue.SHA256Hex(canonicalJSON(review))
 	id := checkID(turn, head, base, digestChecks, digestReview)
 	early, err := s.Store.MergeTurn(ctx, turn)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -100,7 +94,7 @@ func (s *Service) Check(ctx context.Context, turn, actor, head, base string, che
 		case row.State != Holding:
 			refusal = wrongState(row, actor, "beginning a merge")
 		case row.DeclaredReady != 1:
-			refuse(contract.RefusalMergeCandidateMoved, "turn "+pyRepr(turn)+" has not declared its candidate ready, so there is nothing saying "+pyRepr(row.CandidateHead)+" is the head it means to merge", row.CandidateHead, actor)
+			refuse(contract.RefusalMergeCandidateMoved, "turn "+pyvalue.StrRepr(turn)+" has not declared its candidate ready, so there is nothing saying "+pyvalue.StrRepr(row.CandidateHead)+" is the head it means to merge", row.CandidateHead, actor)
 		}
 		if refusal == nil {
 			held, e := s.parents(tx, row.ProjectKey)
@@ -130,13 +124,13 @@ func (s *Service) Check(ctx context.Context, turn, actor, head, base string, che
 			}
 		}
 		if refusal == nil && head != row.CandidateHead {
-			refuse(contract.RefusalMergeCandidateMoved, "the candidate head is "+pyRepr(row.CandidateHead)+" and the restated head is "+pyRepr(head)+"; the turn was granted for the first", row.CandidateHead, head)
+			refuse(contract.RefusalMergeCandidateMoved, "the candidate head is "+pyvalue.StrRepr(row.CandidateHead)+" and the restated head is "+pyvalue.StrRepr(head)+"; the turn was granted for the first", row.CandidateHead, head)
 		}
 		if refusal == nil && tip.SHA == "" {
 			refusal = unreadableTarget(row, actor, unread, "the restated base cannot be compared with it")
 		}
 		if refusal == nil && !SameCommit(base, tip.SHA) {
-			refuse(contract.RefusalMergeCurrencyStale, "the base branch "+pyRepr(row.BaseRef)+" reads "+pyRepr(tip.SHA)+" and this restates "+pyRepr(base)+"; restate the base the branch points at now, in full", tip.SHA, base)
+			refuse(contract.RefusalMergeCurrencyStale, "the base branch "+pyvalue.StrRepr(row.BaseRef)+" reads "+pyvalue.StrRepr(tip.SHA)+" and this restates "+pyvalue.StrRepr(base)+"; restate the base the branch points at now, in full", tip.SHA, base)
 		}
 		if refusal == nil {
 			landing, e := s.latestLanding(tx, row.TargetKey)
@@ -149,7 +143,7 @@ func (s *Service) Check(ctx context.Context, turn, actor, head, base string, che
 					holder, _ := landing.Get("holder_task_id").(string)
 					project, _ := landing.Get("project_key").(string)
 					landed, _ := landing.Get("turn_id").(string)
-					refuse(contract.RefusalMergeCurrencyStale, "the last landing on this target, turn "+pyRepr(landed)+", recorded base "+pyRepr(observed)+" and this restates "+pyRepr(base)+"; the base moved under the candidate. If that recorded base is wrong, the landing's holder "+pyRepr(holder)+" or the supervisor above project "+pyRepr(project)+" re-reads it with merge-turn-restate-base --turn "+landed, observed, base)
+					refuse(contract.RefusalMergeCurrencyStale, "the last landing on this target, turn "+pyvalue.StrRepr(landed)+", recorded base "+pyvalue.StrRepr(observed)+" and this restates "+pyvalue.StrRepr(base)+"; the base moved under the candidate. If that recorded base is wrong, the landing's holder "+pyvalue.StrRepr(holder)+" or the supervisor above project "+pyvalue.StrRepr(project)+" re-reads it with merge-turn-restate-base --turn "+landed, observed, base)
 				}
 			}
 		}
@@ -212,7 +206,7 @@ func (s *Service) relationshipRefusal(ctx context.Context, row store.MergeTurnsR
 	}
 	if o, ok := attachment.(contract.OrderedObject); ok {
 		if project := field(o, "projectKey"); project != nil && project != row.ProjectKey {
-			return nil, &registry.CoordinationRefusal{Reason: contract.RefusalForeignScope, Detail: "relationship " + pyRepr(rid) + " belongs to project " + evidence.Repr(project) + ", not " + pyRepr(row.ProjectKey), Domain: registry.DomainMergeTarget, Subject: row.TargetKey, Challenger: actor}, nil
+			return nil, &registry.CoordinationRefusal{Reason: contract.RefusalForeignScope, Detail: "relationship " + pyvalue.StrRepr(rid) + " belongs to project " + pyvalue.Repr(project) + ", not " + pyvalue.StrRepr(row.ProjectKey), Domain: registry.DomainMergeTarget, Subject: row.TargetKey, Challenger: actor}, nil
 		}
 	}
 	current, err := evidence.CurrentReportHeads(ctx, s.Store, rid)
@@ -224,10 +218,10 @@ func (s *Service) relationshipRefusal(ctx context.Context, row store.MergeTurnsR
 		return nil, nil, nil
 	}
 	if len(heads) > 1 {
-		return nil, &registry.CoordinationRefusal{Reason: contract.RefusalRevisionAmbiguous, Detail: "relationship " + pyRepr(rid) + " has work reports naming " + evidence.Repr(heads) + "; which one this candidate is cannot be read off them", Domain: registry.DomainMergeTarget, Subject: row.TargetKey, Incumbent: heads[0], Challenger: head}, nil
+		return nil, &registry.CoordinationRefusal{Reason: contract.RefusalRevisionAmbiguous, Detail: "relationship " + pyvalue.StrRepr(rid) + " has work reports naming " + pyvalue.Repr(heads) + "; which one this candidate is cannot be read off them", Domain: registry.DomainMergeTarget, Subject: row.TargetKey, Incumbent: heads[0], Challenger: head}, nil
 	}
 	if heads[0] != head {
-		return nil, &registry.CoordinationRefusal{Reason: contract.RefusalMergeCandidateMoved, Detail: "the work report for " + pyRepr(rid) + " names head " + pyRepr(heads[0]) + " and this restates " + pyRepr(head), Domain: registry.DomainMergeTarget, Subject: row.TargetKey, Incumbent: heads[0], Challenger: head}, nil
+		return nil, &registry.CoordinationRefusal{Reason: contract.RefusalMergeCandidateMoved, Detail: "the work report for " + pyvalue.StrRepr(rid) + " names head " + pyvalue.StrRepr(heads[0]) + " and this restates " + pyvalue.StrRepr(head), Domain: registry.DomainMergeTarget, Subject: row.TargetKey, Incumbent: heads[0], Challenger: head}, nil
 	}
 	return heads[0], nil, nil
 }

@@ -10,17 +10,17 @@ import (
 	"syscall"
 	"time"
 
+	// The merge-turn-* relay commands register themselves on the relay CLI.
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/mcp"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pluginwiring"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/adapter"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/capacity"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
-	// The merge-turn-* relay commands register themselves on the relay CLI.
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/routing"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/sync"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install"
@@ -96,7 +96,7 @@ func runAt(ctx context.Context, program string, args []string, stdout, stderr io
 		return 0
 	default:
 		usage(stderr)
-		fmt.Fprintf(stderr, "crw: error: argument command: invalid choice: %s (choose from 'relay', 'bridge', 'hook', 'skill', 'doctor', 'install', 'help', 'version')\n", store.PythonRepr(mode))
+		fmt.Fprintf(stderr, "crw: error: argument command: invalid choice: %s (choose from 'relay', 'bridge', 'hook', 'skill', 'doctor', 'install', 'help', 'version')\n", pyvalue.StrRepr(mode))
 		return parserExit
 	}
 }

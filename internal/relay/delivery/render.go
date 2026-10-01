@@ -2,9 +2,11 @@ package delivery
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // Message kinds (delivery.py).
@@ -19,23 +21,44 @@ const (
 
 var headings = []string{"VIOLATED CRITERION", "WHAT CHANGED", "FIX SCOPE", "PRESERVE", "REVERIFY AND RETURN", "TASK", "SCOPE", "MUST DO", "MUST NOT", "PROOF", "RETURN FORMAT", "DECISION BOUNDARY", "VERDICT"}
 
+// pyStr is str(v) as delivery has always spelled it: pyvalue.Str, except that a float that is
+// not finite keeps the JSON spelling (NaN, Infinity, -Infinity) delivery's text carried before
+// the shared pyvalue existed, and a list or object reads through pyReprValue, so no message
+// changes.
 func pyStr(v any) string {
 	switch t := v.(type) {
-	case nil:
-		return "None"
-	case string:
-		return t
-	case bool:
-		if t {
-			return "True"
-		}
-		return "False"
-	case int64:
-		return fmt.Sprint(t)
 	case float64:
-		return pyjson.Dumps(t, pyjson.Options{}) // NaN and the infinities spelled as JSON spells them
+		if math.IsNaN(t) || math.IsInf(t, 0) {
+			return pyjson.Dumps(t, pyjson.Options{})
+		}
+	case []any, Obj:
+		return pyReprValue(t)
 	}
-	return pyReprValue(v)
+	return pyvalue.Str(v)
+}
+
+// pyReprValue is repr(v) as delivery has always spelled it: pyvalue.Repr, except that a float
+// that is not finite, at any depth of a list or object, keeps the JSON spelling.
+func pyReprValue(v any) string {
+	switch t := v.(type) {
+	case float64:
+		if math.IsNaN(t) || math.IsInf(t, 0) {
+			return pyjson.Dumps(t, pyjson.Options{})
+		}
+	case []any:
+		parts := make([]string, len(t))
+		for i, x := range t {
+			parts[i] = pyReprValue(x)
+		}
+		return "[" + strings.Join(parts, ", ") + "]"
+	case Obj:
+		parts := make([]string, len(t))
+		for i, f := range t {
+			parts[i] = pyvalue.Repr(f.Key) + ": " + pyReprValue(f.Value)
+		}
+		return "{" + strings.Join(parts, ", ") + "}"
+	}
+	return pyvalue.Repr(v)
 }
 
 // splitlines is str.splitlines.

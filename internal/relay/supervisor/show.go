@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 )
 
@@ -37,7 +38,7 @@ func (c *Channel) Reach(ctx context.Context, id string) (map[string]any, error) 
 	if err == nil {
 		if r.Verified == "host_read" {
 			origin := readDetail(r)["turnOrigin"]
-			ladder["received"] = map[string]any{"state": "yes", "source": "supervisor_readbacks", "detail": "read back from turn " + r.ReadTurnID + " (" + evidence.Text(origin) + "): " + establishes(r.Verified, origin)}
+			ladder["received"] = map[string]any{"state": "yes", "source": "supervisor_readbacks", "detail": "read back from turn " + r.ReadTurnID + " (" + pyvalue.Str(origin) + "): " + establishes(r.Verified, origin)}
 		} else {
 			ladder["received"] = map[string]any{"state": "unmeasured", "source": nil, "detail": "a readback was recorded and did not verify: " + r.Verified}
 		}

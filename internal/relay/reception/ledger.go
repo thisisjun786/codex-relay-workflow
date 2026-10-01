@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"golang.org/x/sys/unix"
@@ -66,7 +67,7 @@ func LoadLedger(path, receiver string) (Obj, error) {
 		return nil, ledgerError("the file at %s is not a version 1 reception ledger", path)
 	}
 	if Get(ledger, "receiver") != receiver {
-		return nil, ledgerError("the reception ledger at %s belongs to %s, not %s; another receiver's answers are not this one's", path, evidence.Repr(Get(ledger, "receiver")), evidence.Repr(receiver))
+		return nil, ledgerError("the reception ledger at %s belongs to %s, not %s; another receiver's answers are not this one's", path, pyvalue.Repr(Get(ledger, "receiver")), pyvalue.Repr(receiver))
 	}
 	if p := entryProblem(ledger); p != "" {
 		return nil, ledgerError("the reception ledger at %s is damaged: %s; a ledger that cannot say what was answered is not read through", path, p)
@@ -80,11 +81,11 @@ func entryProblem(ledger Obj) string {
 		_, object := evidence.Object(entry)
 		_, applied := Get(entry, "applied").(bool)
 		_, told := Get(entry, "toldToAct").(bool)
-		if !object || evidence.TypeName(Get(entry, "contentDigest")) != "str" || !present(Get(entry, "contentDigest")) || !slices.Contains([]string{"accepted", "refused", "unavailable"}, str(Get(entry, "disposition"))) || !applied || !told {
-			return "answered entry " + evidence.Repr(f.Key) + " is not a content digest, a disposition, whether a check said act and whether it was applied"
+		if !object || pyvalue.TypeName(Get(entry, "contentDigest")) != "str" || !present(Get(entry, "contentDigest")) || !slices.Contains([]string{"accepted", "refused", "unavailable"}, str(Get(entry, "disposition"))) || !applied || !told {
+			return "answered entry " + pyvalue.Repr(f.Key) + " is not a content digest, a disposition, whether a check said act and whether it was applied"
 		}
 		if Get(entry, "applied") == true && (Get(entry, "toldToAct") != true || Get(entry, "disposition") != "accepted") {
-			return "answered entry " + evidence.Repr(f.Key) + " says applied for a packet it does not hold as accepted and told to act on"
+			return "answered entry " + pyvalue.Repr(f.Key) + " says applied for a packet it does not hold as accepted and told to act on"
 		}
 	}
 	assignments, _ := evidence.Object(Get(ledger, "assignments"))
@@ -92,12 +93,12 @@ func entryProblem(ledger Obj) string {
 		entry := f.Value
 		ok := slices.Contains(modes, str(Get(entry, "mode")))
 		for _, k := range []string{"workflow", "messageId", "dispatchRequestId"} {
-			if evidence.TypeName(Get(entry, k)) != "str" || !present(Get(entry, k)) {
+			if pyvalue.TypeName(Get(entry, k)) != "str" || !present(Get(entry, k)) {
 				ok = false
 			}
 		}
 		if !ok {
-			return "assignment entry " + evidence.Repr(f.Key) + " is not an execution mode, a workflow, the message id of the assignment and a dispatch id"
+			return "assignment entry " + pyvalue.Repr(f.Key) + " is not an execution mode, a workflow, the message id of the assignment and a dispatch id"
 		}
 	}
 	return ""
@@ -201,10 +202,10 @@ func SaveLedger(path string, ledger Obj) (err error) {
 func Observation(document any) (Obj, error) {
 	o, ok := evidence.Object(document)
 	if !ok {
-		return nil, malformed("an observation is an object naming its source, not a %s", evidence.TypeName(document))
+		return nil, malformed("an observation is an object naming its source, not a %s", pyvalue.TypeName(document))
 	}
 	source := Get(o, "source")
-	if evidence.TypeName(source) != "str" || strings.TrimSpace(str(source)) == "" {
+	if pyvalue.TypeName(source) != "str" || strings.TrimSpace(str(source)) == "" {
 		return nil, malformed("an observation names its source; a head with nowhere it was read is a value copied from somewhere, which is what this reading refuses to take")
 	}
 	unknown := []string{}
@@ -223,17 +224,17 @@ func Observation(document any) (Obj, error) {
 			continue
 		}
 		wanted := "str"
-		valid := evidence.TypeName(v) == "str" && present(v)
+		valid := pyvalue.TypeName(v) == "str" && present(v)
 		if k == "prNumber" {
 			wanted = "int"
 			n, ok := evidence.PyInt(v)
 			valid = ok && n > 0
 		}
 		if !valid {
-			return nil, malformed("%s in an observation is a %s, not %s", k, wanted, evidence.Repr(v))
+			return nil, malformed("%s in an observation is a %s, not %s", k, wanted, pyvalue.Repr(v))
 		}
 	}
-	if v := Get(o, "observedAt"); v != nil && evidence.TypeName(v) != "str" {
+	if v := Get(o, "observedAt"); v != nil && pyvalue.TypeName(v) != "str" {
 		return nil, malformed("observedAt in an observation is a timestamp string")
 	}
 	return slices.Clone(o), nil

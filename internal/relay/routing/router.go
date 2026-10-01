@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/faults"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -136,7 +136,7 @@ func (r *Router) RegisterProduct(ctx context.Context, value any) (Object, error)
 				test = test || b["test"] == true
 			}
 			if test {
-				return routeRefused("route_state_conflict", fmt.Sprintf("%s has simulated routes or test bindings on its test target %s; they would be left on a target the product no longer names", product, evidence.Repr(before["testTarget"])))
+				return routeRefused("route_state_conflict", fmt.Sprintf("%s has simulated routes or test bindings on its test target %s; they would be left on a target the product no longer names", product, pyvalue.Repr(before["testTarget"])))
 			}
 		}
 		target := object(registry["testTarget"])
@@ -204,7 +204,7 @@ func (r *Router) Bind(ctx context.Context, value any) (Object, error) {
 			return err
 		}
 		if registry == nil {
-			return routeRefused("route_product_unknown", fmt.Sprintf("%s is not a registered product; register it first", evidence.Repr(product)))
+			return routeRefused("route_product_unknown", fmt.Sprintf("%s is not a registered product; register it first", pyvalue.Repr(product)))
 		}
 		r.test.read(ctx, "binding")
 		binding, err = ReadBinding(value, registry)
@@ -280,7 +280,7 @@ func (r *Router) ShowProducts(ctx context.Context, product any) (Object, error) 
 	if product != nil {
 		registry, ok := registries[text(product)]
 		if !ok {
-			return nil, routeRefused("route_product_unknown", fmt.Sprintf("%s is not a registered product", evidence.Repr(product)))
+			return nil, routeRefused("route_product_unknown", fmt.Sprintf("%s is not a registered product", pyvalue.Repr(product)))
 		}
 		registries = map[string]Object{text(product): registry}
 	}

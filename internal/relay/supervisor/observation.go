@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 )
 
@@ -20,7 +21,7 @@ func observationSelectors(reading map[string]any) (map[string]any, bool) {
 		return nil, false
 	}
 	for _, key := range []string{"state", "markerRoot", "workspace", "assignment", "session", "turn"} {
-		if strings.TrimSpace(evidence.Text(evidence.Or(selectors[key], ""))) == "" {
+		if strings.TrimSpace(pyvalue.Str(evidence.Or(selectors[key], ""))) == "" {
 			return nil, false
 		}
 	}
@@ -49,7 +50,7 @@ func ObservationObligation(reading map[string]any) *Obligation {
 func validateObservation(o Obligation, reading map[string]any, directory string) error {
 	mismatch := ""
 	quoted := func(v any) string {
-		return evidence.Repr(v)
+		return pyvalue.Repr(v)
 	}
 	switch {
 	case reading["schema"] != "reporting-observation/1":
@@ -90,9 +91,9 @@ func observationRecheck(program string, reading map[string]any) any {
 		return nil
 	}
 	if reading["source"] == "relay_store" {
-		return programCommand(program, "--state", evidence.Text(selectors["state"]), "reporting-derive", "--relationship", evidence.Text(reading["relationshipId"]), "--turn", evidence.Text(selectors["turn"]))
+		return programCommand(program, "--state", pyvalue.Str(selectors["state"]), "reporting-derive", "--relationship", pyvalue.Str(reading["relationshipId"]), "--turn", pyvalue.Str(selectors["turn"]))
 	}
-	return programCommand(program, "--state", evidence.Text(selectors["state"]), "reporting-show", "--marker-root", evidence.Text(selectors["markerRoot"]), "--workspace", evidence.Text(selectors["workspace"]), "--assignment", evidence.Text(selectors["assignment"]), "--session", evidence.Text(selectors["session"]), "--turn", evidence.Text(selectors["turn"]))
+	return programCommand(program, "--state", pyvalue.Str(selectors["state"]), "reporting-show", "--marker-root", pyvalue.Str(selectors["markerRoot"]), "--workspace", pyvalue.Str(selectors["workspace"]), "--assignment", pyvalue.Str(selectors["assignment"]), "--session", pyvalue.Str(selectors["session"]), "--turn", pyvalue.Str(selectors["turn"]))
 }
 
 func (c *Channel) composeReading(ctx context.Context, o Obligation, r Resolution, at string, reading map[string]any) (Packet, error) {

@@ -2,6 +2,8 @@ package store
 
 import (
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // PyRepr is repr() of a str as CPython 3.14.4 prints it: its quote choice, its escapes of every
@@ -22,8 +24,8 @@ func TestPyReprIsPythonsReprOfAStr(t *testing.T) {
 		{"t\tn\nr\r\\\x01\x7f", `'t\tn\nr\r\\\x01\x7f'`},
 		{"\U0001f600\U000e0001", "'\U0001f600\\U000e0001'"},
 	} {
-		if got := PyRepr(c.text); got != c.want {
-			t.Errorf("PyRepr(%q) = %s, want %s", c.text, got, c.want)
+		if got := pyvalue.StrRepr(c.text); got != c.want {
+			t.Errorf("pyvalue.StrRepr(%q) = %s, want %s", c.text, got, c.want)
 		}
 	}
 }

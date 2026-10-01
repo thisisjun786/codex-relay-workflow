@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/service"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
@@ -86,9 +87,9 @@ func runDoctor(ctx context.Context, services Services, args Args) (any, error) {
 	workerPolicy := get(worker, "policy")
 	callerRecord := caller.summary()
 	agreement := "unknown"
-	if truthy(get(callerRecord, "digest")) && pyEqual(orEmpty(workerPolicy), callerRecord) {
+	if pyvalue.Truthy(get(callerRecord, "digest")) && pyEqual(orEmpty(workerPolicy), callerRecord) {
 		agreement = "same"
-	} else if truthy(get(callerRecord, "digest")) && truthy(get(workerPolicy, "digest")) {
+	} else if pyvalue.Truthy(get(callerRecord, "digest")) && pyvalue.Truthy(get(workerPolicy, "digest")) {
 		agreement = "different"
 	}
 	add("callerWorkerAgreement", agreement)
@@ -325,10 +326,10 @@ func accessReceipt(ctx context.Context, services Services, loc store.Location, a
 			switch {
 			case !pyEqual(sqlValue(seen), nullableText(loc.StoreID)):
 				recorded[2].Value = fmt.Sprintf("the store changed under this command: identity %s was measured, settings were read from %s",
-					pyRepr(nullableText(loc.StoreID)), pyRepr(sqlValue(seen)))
+					pyvalue.Repr(nullableText(loc.StoreID)), pyvalue.Repr(sqlValue(seen)))
 			case read.Device != loc.Device || read.Inode != loc.Inode:
 				recorded[2].Value = fmt.Sprintf("the store changed under this command: device:inode %s:%s was measured, rows were read from %d:%d",
-					pyRepr(nullableCount(loc.Device)), pyRepr(nullableCount(loc.Inode)), read.Device, read.Inode)
+					pyvalue.Repr(nullableCount(loc.Device)), pyvalue.Repr(nullableCount(loc.Inode)), read.Device, read.Inode)
 			default:
 				participants := contract.OrderedObject{}
 				for _, r := range rows {

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // Tip is the branch's current full object name, not a caller's restatement.
@@ -35,7 +35,7 @@ var invalidRef = regexp.MustCompile(`[\x00-\x20\x7f~^:?*\[\\]`)
 
 func branch(base string) error {
 	if base == "" || base != strings.TrimSpace(base) {
-		return unreadable("a base ref is a branch name without surrounding whitespace, not %s", pyRepr(base))
+		return unreadable("a base ref is a branch name without surrounding whitespace, not %s", pyvalue.StrRepr(base))
 	}
 	bad := invalidRef.MatchString(base) || strings.Contains(base, "..") || strings.Contains(base, "@{") || base == "@" || strings.HasPrefix(base, "-") || strings.HasSuffix(base, ".")
 	for _, part := range strings.Split(base, "/") {
@@ -44,7 +44,7 @@ func branch(base string) error {
 		}
 	}
 	if bad {
-		return unreadable("a base ref is a plain branch name; %s carries revision syntax or a form git refuses, so it names no branch this can read exactly", pyRepr(base))
+		return unreadable("a base ref is a plain branch name; %s carries revision syntax or a form git refuses, so it names no branch this can read exactly", pyvalue.StrRepr(base))
 	}
 	return nil
 }
@@ -63,7 +63,7 @@ type Reader interface {
 // relay with no target reader configured.
 func readTarget(ctx context.Context, reader Reader, repository, base string) (Tip, string) {
 	if reader == nil {
-		return Tip{}, "this relay has no target reader configured, so it cannot read where " + pyRepr(base) + " points"
+		return Tip{}, "this relay has no target reader configured, so it cannot read where " + pyvalue.StrRepr(base) + " points"
 	}
 	tip, err := reader.Tip(ctx, repository, base)
 	if err != nil {
@@ -71,9 +71,6 @@ func readTarget(ctx context.Context, reader Reader, repository, base string) (Ti
 	}
 	return tip, ""
 }
-
-// pyRepr is repr() of a str, as every refusal detail here spells an identifier.
-func pyRepr(s string) string { return settings.Repr(s) }
 
 type TargetReader struct {
 	Git string
@@ -88,11 +85,11 @@ func (r TargetReader) Tip(ctx context.Context, repository, base string) (Tip, er
 		if slug.MatchString(repository) {
 			return r.github(ctx, repository, base)
 		}
-		return Tip{}, unreadable("repository %s is neither an absolute local path nor owner/name, so there is no target this can read", pyRepr(repository))
+		return Tip{}, unreadable("repository %s is neither an absolute local path nor owner/name, so there is no target this can read", pyvalue.StrRepr(repository))
 	}
 	info, err := os.Stat(repository)
 	if err != nil || !info.IsDir() {
-		return Tip{}, unreadable("repository %s is not a directory here", pyRepr(repository))
+		return Tip{}, unreadable("repository %s is not a directory here", pyvalue.StrRepr(repository))
 	}
 	gitdir := filepath.Join(repository, ".git")
 	if _, err := os.Stat(gitdir); os.IsNotExist(err) {
@@ -123,11 +120,11 @@ func (r TargetReader) Tip(ctx context.Context, repository, base string) (Tip, er
 			return Tip{}, unreadable("git could not be started: %v", err)
 		}
 		detail = excerpt(detail)
-		return Tip{}, unreadable("git could not read %s in %s: %s", ref, pyRepr(repository), detail)
+		return Tip{}, unreadable("git could not read %s in %s: %s", ref, pyvalue.StrRepr(repository), detail)
 	}
 	sha := strings.TrimSpace(string(output))
 	if !shaFull.MatchString(sha) {
-		return Tip{}, unreadable("git answered %s for %s, which is not a full object name", pyRepr(excerpt(sha)), ref)
+		return Tip{}, unreadable("git answered %s for %s, which is not a full object name", pyvalue.StrRepr(excerpt(sha)), ref)
 	}
 	return Tip{SHA: sha, Source: "local_git", Reference: ref, Repository: repository}, nil
 }
@@ -136,7 +133,7 @@ func (r TargetReader) Tip(ctx context.Context, repository, base string) (Tip, er
 // and extends its observer. Only one read-only GET is performed, without a shell.
 func (r TargetReader) github(ctx context.Context, repository, base string) (Tip, error) {
 	if strings.ContainsAny(base, "?#%:`^\\") || strings.Contains(base, "..") || strings.HasPrefix(base, "/") {
-		return Tip{}, unreadable("a branch name is a path segment without traversal or query characters, not %s", pyRepr(base))
+		return Tip{}, unreadable("a branch name is a path segment without traversal or query characters, not %s", pyvalue.StrRepr(base))
 	}
 	reference := "refs/heads/" + base
 	gh := r.GH
@@ -155,7 +152,7 @@ func (r TargetReader) github(ctx context.Context, repository, base string) (Tip,
 		if e, ok := err.(*exec.ExitError); ok {
 			detail := excerpt(strings.TrimSpace(string(e.Stderr)))
 			if strings.Contains(detail, "HTTP 404") {
-				return Tip{}, unreadable("branch %s does not exist in %s", pyRepr(base), repository)
+				return Tip{}, unreadable("branch %s does not exist in %s", pyvalue.StrRepr(base), repository)
 			}
 			if strings.Contains(detail, "HTTP 409") {
 				return Tip{}, unreadable("%s is an empty repository", repository)

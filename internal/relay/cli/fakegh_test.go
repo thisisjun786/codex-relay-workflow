@@ -14,6 +14,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -308,7 +309,7 @@ func pySlice(list []any, start, stop int) []any {
 // applyForgePatch was testdata/gh's CRW_FORGE_PATCH: set or delete the value at path.
 func applyForgePatch(v any, patch contract.OrderedObject) any {
 	path, _ := evidence.Get(patch, "path").([]any)
-	remove := evidence.Truthy(evidence.Get(patch, "delete"))
+	remove := pyvalue.Truthy(evidence.Get(patch, "delete"))
 	value := func() any {
 		value, ok := evidence.Lookup(patch, "value")
 		if !ok {

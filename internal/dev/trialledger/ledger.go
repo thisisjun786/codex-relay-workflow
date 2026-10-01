@@ -25,10 +25,9 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/pyload"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
-	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 )
 
 const (
@@ -186,10 +185,10 @@ func loadStart(value string) (object, string, error) {
 	}
 	// The start record's path came from the command line, which Python holds surrogateescaped:
 	// it names the path that way wherever a refusal carries it.
-	shownStart := store.FSDecode(start)
+	shownStart := pyvalue.FSDecode(start)
 	state, detail, body := readJSON(start, "the start record")
 	if state != present {
-		return nil, "", refuse("the start record could not be read", "path", shownStart, "state", state, "detail", store.FSDecode(detail))
+		return nil, "", refuse("the start record could not be read", "path", shownStart, "state", state, "detail", pyvalue.FSDecode(detail))
 	}
 	record, ok := body.(object)
 	if !ok {
@@ -199,7 +198,7 @@ func loadStart(value string) (object, string, error) {
 		return nil, "", refuse("this file does not stamp itself as a live trial start record", "path", shownStart, "source", get(record, "source"))
 	}
 	version := get(record, "recordVersion")
-	if !slices.ContainsFunc(ledgerRecordVersions, func(v any) bool { return evidence.Equal(version, v) }) {
+	if !slices.ContainsFunc(ledgerRecordVersions, func(v any) bool { return pyvalue.ItemEqual(version, v) }) {
 		return nil, "", refuse("unsupported record version", "path", shownStart, "recordVersion", version, "supported", ledgerRecordVersions)
 	}
 	root, err := absolute(get(record, "trialRoot"), "trialRoot")
@@ -210,12 +209,12 @@ func loadStart(value string) (object, string, error) {
 	// it stands for, and a root holding one nothing encodes is not a directory, as is_dir()
 	// answers its UnicodeEncodeError. Refusals name the root as the record spells it, and a path
 	// derived from it as os.fsdecode spells that.
-	rootFS, encoded := reading.FSEncode(root)
+	rootFS, encoded := pyvalue.FSEncode(root)
 	if info, err := os.Stat(rootFS); !encoded || err != nil || !info.IsDir() {
 		return nil, "", refuse("the trial root is not a directory", "trialRoot", root)
 	}
 	if worktree := gitWorktreeOf(rootFS); worktree != "" {
-		return nil, "", refuse("the trial root is inside a git worktree, and operational state never lives inside a repository", "trialRoot", root, "worktree", store.FSDecode(worktree))
+		return nil, "", refuse("the trial root is inside a git worktree, and operational state never lives inside a repository", "trialRoot", root, "worktree", pyvalue.FSDecode(worktree))
 	}
 	if !within(start, rootFS) {
 		return nil, "", refuse("the start record itself is outside the trial root", "path", shownStart, "trialRoot", root)
@@ -224,11 +223,11 @@ func loadStart(value string) (object, string, error) {
 	// the same way rather than followed wherever a link points.
 	ledger := join(rootFS, "ledger.jsonl")
 	if !within(ledger, rootFS) {
-		return nil, "", refuse("the ledger resolves outside the trial root", "path", store.FSDecode(ledger), "trialRoot", root)
+		return nil, "", refuse("the ledger resolves outside the trial root", "path", pyvalue.FSDecode(ledger), "trialRoot", root)
 	}
 	for _, item := range []string{start, ledger} {
 		if nested := gitWorktreeOf(item); nested != "" {
-			return nil, "", refuse("a private trial record is inside a git worktree", "path", store.FSDecode(item), "worktree", store.FSDecode(nested))
+			return nil, "", refuse("a private trial record is inside a git worktree", "path", pyvalue.FSDecode(item), "worktree", pyvalue.FSDecode(nested))
 		}
 	}
 	return record, ledger, nil
@@ -254,7 +253,7 @@ func absolute(value any, what string) (string, error) {
 	s, ok := value.(string)
 	shown := value
 	if ok && what == "--start" {
-		shown = store.FSDecode(s) // the command line's, which Python holds surrogateescaped
+		shown = pyvalue.FSDecode(s) // the command line's, which Python holds surrogateescaped
 	}
 	if !ok || !strings.HasPrefix(s, "/") {
 		return "", refuse(what+" must be an absolute path", "value", shown)
@@ -277,10 +276,10 @@ func (e entry) get(key string) any { return get(e.body, key) }
 // moment is one timestamp, or a refusal naming what could not be read as one.
 func moment(value any, what string) (time.Time, error) {
 	s, ok := value.(string)
-	if !ok || pyStrip(s) == "" {
+	if !ok || pyvalue.Strip(s) == "" {
 		return time.Time{}, refuse(what+" is not a timestamp", "value", value)
 	}
-	text := pyStrip(s)
+	text := pyvalue.Strip(s)
 	if strings.HasSuffix(text, "Z") {
 		text = text[:len(text)-1] + "+00:00"
 	}
@@ -305,12 +304,12 @@ type segment struct {
 func report(record object, path string) (object, error) {
 	state, _, text := readText(path)
 	if state != present {
-		return nil, refuse("the ledger could not be read", "path", store.FSDecode(path), "state", state)
+		return nil, refuse("the ledger could not be read", "path", pyvalue.FSDecode(path), "state", state)
 	}
 	var entries []entry
 	for number, line := range pySplitLines(text) {
 		number++
-		if pyStrip(line) == "" {
+		if pyvalue.Strip(line) == "" {
 			continue
 		}
 		value, err := pyload.Loads([]byte(line))
@@ -367,7 +366,7 @@ func report(record object, path string) (object, error) {
 	if !dispatches[0].at.Equal(opens[0].at) {
 		return nil, refuse("the window does not open at the dispatch, so the interval between them is measured as preparation", "dispatchedAt", dispatches[0].get("at"), "opensAt", opens[0].get("at"))
 	}
-	if !evidence.Truthy(opens[0].get("segment")) || !evidence.Equal(opens[0].get("segment"), closes[0].get("segment")) {
+	if !pyvalue.Truthy(opens[0].get("segment")) || !pyvalue.ItemEqual(opens[0].get("segment"), closes[0].get("segment")) {
 		return nil, refuse("the window's open and close name different segments", "opensAt", opens[0].get("at"), "opensSegment", opens[0].get("segment"), "closesAt", closes[0].get("at"), "closesSegment", closes[0].get("segment"))
 	}
 	opened, closed := opens[0].at, closes[0].at
@@ -473,7 +472,7 @@ func report(record object, path string) (object, error) {
 		if !e.at.Before(opened) && !e.at.After(closed) {
 			computed = window
 		}
-		if claimed := e.get("claimed"); claimed != nil && !evidence.Equal(claimed, computed) {
+		if claimed := e.get("claimed"); claimed != nil && !pyvalue.ItemEqual(claimed, computed) {
 			return nil, refuse("a ledger line's claimed class disagrees with its own timestamp", "line", e.line, "at", e.get("at"), "claimed", claimed, "computed", computed)
 		}
 		item := o("at", e.get("at"), "actor", e.get("actor"), "target", e.get("target"), "action", e.get("action"), "class", computed, "line", e.line)
@@ -541,7 +540,7 @@ func report(record object, path string) (object, error) {
 	}
 	clean := len(inside) == 0
 	return o(
-		"source", source, "checkerVersion", checkerVersion, "ledger", store.FSDecode(path),
+		"source", source, "checkerVersion", checkerVersion, "ledger", pyvalue.FSDecode(path),
 		"preparation", o("interventions", len(prepared), "entries", orEmpty(prepared), "segments", segments, "failedSegments", failedSegments),
 		"window", o("opensAt", opens[0].get("at"), "closesAt", closes[0].get("at"), "provenance", provenance, "corroborated", compared, "corroboration", corroboration, "dispatchedAt", dispatches[0].get("at"), "interventions", len(inside), "entries", orEmpty(inside), "windowIsClean", clean, "passed", clean),
 		"note", note,

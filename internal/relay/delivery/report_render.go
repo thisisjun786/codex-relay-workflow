@@ -9,6 +9,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	py "github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -21,7 +22,7 @@ type reportSection struct {
 	last       bool
 }
 
-func reportString(value any) string { return py.Text(value) }
+func reportString(value any) string { return pyvalue.Str(value) }
 func reportValue(row map[string]any, key string) string {
 	if row[key] == nil {
 		return ""
@@ -187,11 +188,11 @@ func reportCompose(sections []reportSection, event string, budget int) (string, 
 }
 func workRestoreLines(r map[string]any) []string {
 	restoreLines := []string{}
-	if py.Truthy(r["restore"]) {
+	if pyvalue.Truthy(r["restore"]) {
 		restore := py.Dict(r["restore"], false)
 		restoreLines = []string{"", "workflow restore:"}
 		for _, entry := range [][2]string{{"mode", "mode"}, {"scope", "scope"}, {"phase", "phase"}, {"phaseObservedAt", "phase observed"}, {"plan", "plan"}, {"evidence", "evidence"}, {"remaining", "remaining"}} {
-			if value := reportValue(restore, entry[0]); py.Truthy(restore[entry[0]]) {
+			if value := reportValue(restore, entry[0]); pyvalue.Truthy(restore[entry[0]]) {
 				restoreLines = append(restoreLines, "  "+entry[1]+": "+value)
 			}
 		}
@@ -201,7 +202,7 @@ func workRestoreLines(r map[string]any) []string {
 			if pointer := pointers[reportString(raw)]; pointer != "" {
 				restoreLines = append(restoreLines, "  read: "+pointer)
 			} else {
-				panic(&py.PythonError{Class: "KeyError", Detail: py.Repr(py.Repr(raw) + " has no recorded owner; name the owning skill rather than sending a recipient to reload everything")})
+				panic(&py.PythonError{Class: "KeyError", Detail: pyvalue.Repr(pyvalue.Repr(raw) + " has no recorded owner; name the owning skill rather than sending a recipient to reload everything")})
 			}
 		}
 	}
@@ -268,12 +269,12 @@ func composeWorkCompletion(ctx context.Context, s *store.Store, row Row, receipt
 				if !present {
 					check = ""
 				}
-				line := "  " + py.Text(check)
+				line := "  " + pyvalue.Str(check)
 				if v["exitCode"] != nil {
 					line += " -> exit " + reportString(v["exitCode"])
 				}
-				if py.Truthy(v["detail"]) {
-					line += "  " + py.Text(v["detail"])
+				if pyvalue.Truthy(v["detail"]) {
+					line += "  " + pyvalue.Str(v["detail"])
 				}
 				evidence = append(evidence, line)
 			}
@@ -289,7 +290,7 @@ func composeWorkCompletion(ctx context.Context, s *store.Store, row Row, receipt
 				unresolved = append(unresolved, "  - "+unheaded(v))
 			} else {
 				v := py.Dict(raw, false)
-				unresolved = append(unresolved, strings.TrimRight("  - "+unheaded(py.Text(v["id"]))+": "+py.Text(py.Or(v["note"], "")), ": "))
+				unresolved = append(unresolved, strings.TrimRight("  - "+unheaded(pyvalue.Str(v["id"]))+": "+pyvalue.Str(py.Or(v["note"], "")), ": "))
 			}
 		}
 	}
@@ -329,7 +330,7 @@ func composeWorkCompletion(ctx context.Context, s *store.Store, row Row, receipt
 		for i, item := range required {
 			name, ok := item.(string)
 			if !ok {
-				panic(&py.PythonError{Class: "TypeError", Detail: fmt.Sprintf("sequence item %d: expected str instance, %s found", i, py.TypeName(item))})
+				panic(&py.PythonError{Class: "TypeError", Detail: fmt.Sprintf("sequence item %d: expected str instance, %s found", i, pyvalue.TypeName(item))})
 			}
 			names = append(names, name)
 		}
@@ -337,11 +338,11 @@ func composeWorkCompletion(ctx context.Context, s *store.Store, row Row, receipt
 		if len(names) > 0 {
 			declared = strings.Join(names, ", ")
 		}
-		handoff = []string{"", "merge readiness (restate these; do not collect them again):", "  head " + py.Text(r["head_sha"]) + " on base " + py.Text(r["base_sha"]) + " verified " + py.Text(h["baseVerifiedAt"]), "  required: " + declared + fmt.Sprintf(" - %d run(s) restated", py.Len(checks)), fmt.Sprintf("  review: %s thread(s) seen over %s page(s), %s unresolved", reportString(coverage["totalCount"]), reportString(coverage["pagesRead"]), reportString(coverage["unresolved"]))}
+		handoff = []string{"", "merge readiness (restate these; do not collect them again):", "  head " + pyvalue.Str(r["head_sha"]) + " on base " + pyvalue.Str(r["base_sha"]) + " verified " + pyvalue.Str(h["baseVerifiedAt"]), "  required: " + declared + fmt.Sprintf(" - %d run(s) restated", py.Len(checks)), fmt.Sprintf("  review: %s thread(s) seen over %s page(s), %s unresolved", reportString(coverage["totalCount"]), reportString(coverage["pagesRead"]), reportString(coverage["unresolved"]))}
 		for _, raw := range py.Items(h["thread_dispositions"]) {
 			item := py.Dict(raw, false)
 			if item["disposition"] == "accepted" {
-				confirmations = append(confirmations, fmt.Sprintf("    %s: %s - %s owns it, reopens on %s", py.Text(item["threadId"]), py.Text(item["addressedBy"]), py.Text(item["followUpOwner"]), py.Text(item["reopenTrigger"])))
+				confirmations = append(confirmations, fmt.Sprintf("    %s: %s - %s owns it, reopens on %s", pyvalue.Str(item["threadId"]), pyvalue.Str(item["addressedBy"]), pyvalue.Str(item["followUpOwner"]), pyvalue.Str(item["reopenTrigger"])))
 			}
 		}
 		if len(confirmations) > 0 {
@@ -349,11 +350,11 @@ func composeWorkCompletion(ctx context.Context, s *store.Store, row Row, receipt
 		}
 	}
 	manifest := []string{"", "deliverables: none (execution-only outcome)"}
-	if value := reportField(receipt, "manifest"); py.Truthy(value) {
+	if value := reportField(receipt, "manifest"); pyvalue.Truthy(value) {
 		manifest = []string{"", fmt.Sprintf("deliverables: %d", py.Len(value))}
 		for _, raw := range py.Items(value) {
 			item := py.Dict(raw, false)
-			line := "  " + py.Text(py.Item(raw, "path")) + "  sha256=" + py.Text(py.Item(raw, "sha256"))
+			line := "  " + pyvalue.Str(py.Item(raw, "path")) + "  sha256=" + pyvalue.Str(py.Item(raw, "sha256"))
 			if size := item["bytes"]; size != nil {
 				line += "  bytes=" + pyStr(size)
 			}

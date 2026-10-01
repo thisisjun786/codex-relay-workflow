@@ -2,13 +2,12 @@ package registry
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"errors"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -51,27 +50,22 @@ func (r *Registry) linkage() linkage { return linkage{r} }
 
 func (l linkage) q(ctx context.Context) store.Querier { return l.r.Store.Querier(ctx) }
 
-func sha256Hex(text string) string {
-	sum := sha256.Sum256([]byte(text))
-	return hex.EncodeToString(sum[:])
-}
-
 // encodedID is str.encode("utf-8") of the fields an identity hashes, joined as identity.sha256_hex
 // is handed them: a field holding a surrogate escape (an argv byte that is not UTF-8) raises
 // UnicodeEncodeError where Python derives the identity, before anything is read or written.
 func encodedID(fields ...string) error { return store.EncodeUTF8(strings.Join(fields, "|")) }
 
 func bindingID(role, kind, key, task string) string {
-	return "bnd-" + sha256Hex(strings.Join([]string{role, kind, key, task}, "|"))[:32]
+	return "bnd-" + pyvalue.SHA256Hex(strings.Join([]string{role, kind, key, task}, "|"))[:32]
 }
 
 func linkID(kind, upperKind, upperKey, lowerKind, lowerKey string) string {
-	return "lnk-" + sha256Hex(strings.Join([]string{kind, upperKind, upperKey, lowerKind, lowerKey}, "|"))[:32]
+	return "lnk-" + pyvalue.SHA256Hex(strings.Join([]string{kind, upperKind, upperKey, lowerKind, lowerKey}, "|"))[:32]
 }
 
 func exact(value, what string) error {
 	if strings.TrimSpace(value) == "" {
-		return refuse(contract.RefusalUnregisteredScope, "%s must be a non-empty string, not %s", what, pyStr(value))
+		return refuse(contract.RefusalUnregisteredScope, "%s must be a non-empty string, not %s", what, pyvalue.StrRepr(value))
 	}
 	if strings.Contains(value, "|") {
 		return refuse(contract.RefusalUnregisteredScope, "%s must not contain '|', which is the field separator", what)
@@ -139,10 +133,10 @@ func (l linkage) liveOwners(ctx context.Context, kind, key, role string) ([]stri
 func contestedOwner(kind, key string, owners []string, challenger string) *linkRefusal {
 	quoted := make([]string, len(owners))
 	for i, o := range owners {
-		quoted[i] = pyStr(o)
+		quoted[i] = pyvalue.StrRepr(o)
 	}
 	return &linkRefusal{reason: contract.RefusalDuplicateScopeOwner,
-		detail: kind + " " + pyStr(key) + " has more than one live owner (" + strings.Join(quoted, ", ") +
+		detail: kind + " " + pyvalue.StrRepr(key) + " has more than one live owner (" + strings.Join(quoted, ", ") +
 			"), so there is no owner to write under. The reading paths report this and the" +
 			" writing paths refuse it; repair the store rather than letting one of them win",
 		scopeKind: kind, scopeKey: key, incumbent: owners[0], challenger: challenger}
@@ -155,12 +149,12 @@ func (l linkage) attachRefusal(ctx context.Context, x *row, project, replacing s
 	}
 	if !isLive(x.Status) || x.SupersededBy.String != "" {
 		return nil, &linkRefusal{reason: contract.RefusalRelationshipNotActive,
-			detail:    "relationship " + pyStr(x.ID) + " is " + pyStr(x.Status) + ", so its issue cannot be attached to a project",
+			detail:    "relationship " + pyvalue.StrRepr(x.ID) + " is " + pyvalue.StrRepr(x.Status) + ", so its issue cannot be attached to a project",
 			scopeKind: scopeProject, scopeKey: project, incumbent: x.ID, challenger: project}, nil
 	}
 	if x.ParentTask == x.ChildTask {
 		return nil, &linkRefusal{reason: contract.RefusalScopeCycle,
-			detail:    "relationship " + pyStr(x.ID) + " has the same task as parent and child, which is a self-link rather than a level",
+			detail:    "relationship " + pyvalue.StrRepr(x.ID) + " has the same task as parent and child, which is a self-link rather than a level",
 			scopeKind: scopeIssue, scopeKey: x.Issue, incumbent: x.ParentTask, challenger: x.ChildTask}, nil
 	}
 	owners, err := l.liveOwners(ctx, scopeProject, project, roleParent)
@@ -172,7 +166,7 @@ func (l linkage) attachRefusal(ctx context.Context, x *row, project, replacing s
 	}
 	if len(owners) == 0 {
 		return nil, &linkRefusal{reason: contract.RefusalUnregisteredScope,
-			detail:    "project " + pyStr(project) + " has no registered parent, so an issue cannot be attached to it yet",
+			detail:    "project " + pyvalue.StrRepr(project) + " has no registered parent, so an issue cannot be attached to it yet",
 			scopeKind: scopeProject, scopeKey: project, challenger: x.ParentTask}, nil
 	}
 	holder := owners[0]
@@ -196,8 +190,8 @@ func (l linkage) attachRefusal(ctx context.Context, x *row, project, replacing s
 	}
 	if holder != x.ParentTask && !movingWithin {
 		return nil, &linkRefusal{reason: contract.RefusalForeignScope,
-			detail: "issue " + pyStr(x.Issue) + " is assigned under parent " + pyStr(x.ParentTask) + ", but project " + pyStr(project) +
-				" is executed by " + pyStr(holder) + "; an issue belongs to its own project",
+			detail: "issue " + pyvalue.StrRepr(x.Issue) + " is assigned under parent " + pyvalue.StrRepr(x.ParentTask) + ", but project " + pyvalue.StrRepr(project) +
+				" is executed by " + pyvalue.StrRepr(holder) + "; an issue belongs to its own project",
 			scopeKind: scopeProject, scopeKey: project, incumbent: holder, challenger: x.ParentTask}, nil
 	}
 	recorded, hasRecord, err := l.oneString(ctx, "SELECT project_key FROM relationship_scope WHERE relationship_id = ?", x.ID)
@@ -206,7 +200,7 @@ func (l linkage) attachRefusal(ctx context.Context, x *row, project, replacing s
 	}
 	if hasRecord && recorded != project {
 		return nil, &linkRefusal{reason: contract.RefusalForeignScope,
-			detail:    "issue " + pyStr(x.Issue) + " is already scoped to project " + pyStr(recorded) + ", not " + pyStr(project),
+			detail:    "issue " + pyvalue.StrRepr(x.Issue) + " is already scoped to project " + pyvalue.StrRepr(recorded) + ", not " + pyvalue.StrRepr(project),
 			scopeKind: scopeIssue, scopeKey: x.Issue, incumbent: recorded, challenger: project}, nil
 	}
 	elsewhere, found, err := l.oneString(ctx, "SELECT s.project_key FROM relationship_scope s  JOIN relationships r ON r.relationship_id = s.relationship_id"+
@@ -216,8 +210,8 @@ func (l linkage) attachRefusal(ctx context.Context, x *row, project, replacing s
 	}
 	if found {
 		return nil, &linkRefusal{reason: contract.RefusalForeignScope,
-			detail: "issue " + pyStr(x.Issue) + " is already scoped to project " + pyStr(elsewhere) +
-				" through another assignment, so it cannot also belong to " + pyStr(project),
+			detail: "issue " + pyvalue.StrRepr(x.Issue) + " is already scoped to project " + pyvalue.StrRepr(elsewhere) +
+				" through another assignment, so it cannot also belong to " + pyvalue.StrRepr(project),
 			scopeKind: scopeIssue, scopeKey: x.Issue, incumbent: elsewhere, challenger: project}, nil
 	}
 	if err := exact(x.ChildTask, "the child task id"); err != nil {
@@ -305,7 +299,7 @@ func (l linkage) bindingRefusal(ctx context.Context, role, kind, key string, end
 		kind, key, role, endpoint.TaskID, text(replacing)).Scan(&rival.id, &rival.task, &rival.status)
 	if err == nil {
 		return &linkRefusal{reason: contract.RefusalDuplicateScopeOwner,
-			detail: kind + " " + pyStr(key) + " is already owned by " + pyStr(rival.task) + " under " + rival.id + " (" + rival.status +
+			detail: kind + " " + pyvalue.StrRepr(key) + " is already owned by " + pyvalue.StrRepr(rival.task) + " under " + rival.id + " (" + rival.status +
 				"); hand it over deliberately instead of opening a second owner",
 			scopeKind: kind, scopeKey: key, incumbent: rival.task, challenger: endpoint.TaskID}, nil
 	}
@@ -317,7 +311,7 @@ func (l linkage) bindingRefusal(ctx context.Context, role, kind, key string, end
 		"    AND superseded_by IS NULL", endpoint.TaskID, role).Scan(&other.role, &other.kind, &other.key)
 	if err == nil {
 		return &linkRefusal{reason: contract.RefusalScopeRoleMismatch,
-			detail: "task " + pyStr(endpoint.TaskID) + " is already the " + other.role + " of " + other.kind + " " + pyStr(other.key) +
+			detail: "task " + pyvalue.StrRepr(endpoint.TaskID) + " is already the " + other.role + " of " + other.kind + " " + pyvalue.StrRepr(other.key) +
 				", so it cannot also be a " + role,
 			scopeKind: kind, scopeKey: key, incumbent: other.key, challenger: endpoint.TaskID}, nil
 	}
@@ -328,7 +322,7 @@ func (l linkage) bindingRefusal(ctx context.Context, role, kind, key string, end
 		"    AND status IN ('active','paused') AND superseded_by IS NULL", endpoint.TaskID, role, key).Scan(&other.kind, &other.key)
 	if err == nil {
 		return &linkRefusal{reason: contract.RefusalRoleAlreadyBound,
-			detail: "task " + pyStr(endpoint.TaskID) + " is already the " + role + " of " + other.kind + " " + pyStr(other.key) +
+			detail: "task " + pyvalue.StrRepr(endpoint.TaskID) + " is already the " + role + " of " + other.kind + " " + pyvalue.StrRepr(other.key) +
 				"; one task is bound to one Linear level, so a second " + kind + " needs its own " + role,
 			scopeKind: kind, scopeKey: key, incumbent: other.key, challenger: endpoint.TaskID}, nil
 	}
@@ -468,10 +462,10 @@ func (l linkage) applyRelationshipStatus(ctx context.Context, rid, status, previ
 		if !found || holder != x.parent {
 			shown := "nobody"
 			if found {
-				shown = pyStr(holder)
+				shown = pyvalue.StrRepr(holder)
 			}
-			return refusing(contract.RefusalForeignScope, "project "+pyStr(project)+" is now parented by "+shown+", not by "+pyStr(x.parent)+
-				", so restoring "+pyStr(rid)+" would reattach its issue under an owner the project no longer has; re-register the assignment under the current parent instead",
+			return refusing(contract.RefusalForeignScope, "project "+pyvalue.StrRepr(project)+" is now parented by "+shown+", not by "+pyvalue.StrRepr(x.parent)+
+				", so restoring "+pyvalue.StrRepr(rid)+" would reattach its issue under an owner the project no longer has; re-register the assignment under the current parent instead",
 				scopeProject, project, holder, x.parent)
 		}
 		rival, found, err := l.oneString(ctx, "SELECT task_id FROM scope_bindings  WHERE scope_kind = ? AND scope_key = ? AND role = ?"+
@@ -480,8 +474,8 @@ func (l linkage) applyRelationshipStatus(ctx context.Context, rid, status, previ
 			return err
 		}
 		if found {
-			return refusing(contract.RefusalDuplicateScopeOwner, "issue "+pyStr(x.issue)+" is now held by "+pyStr(rival)+", so restoring "+
-				pyStr(x.child)+" would leave it with two owners", scopeIssue, x.issue, rival, x.child)
+			return refusing(contract.RefusalDuplicateScopeOwner, "issue "+pyvalue.StrRepr(x.issue)+" is now held by "+pyvalue.StrRepr(rival)+", so restoring "+
+				pyvalue.StrRepr(x.child)+" would leave it with two owners", scopeIssue, x.issue, rival, x.child)
 		}
 		host, found, err := l.oneString(ctx, "SELECT host_id FROM scope_bindings  WHERE scope_kind = ? AND scope_key = ? AND role = ? AND task_id = ?"+
 			"    AND status IN ('active','paused') AND superseded_by IS NULL", scopeIssue, x.issue, roleChild, x.child)
@@ -489,8 +483,8 @@ func (l linkage) applyRelationshipStatus(ctx context.Context, rid, status, previ
 			return err
 		}
 		if found && host != x.childHost {
-			return refusing(contract.RefusalLinkConflict, "child "+pyStr(x.child)+" holds issue "+pyStr(x.issue)+" on host "+pyStr(host)+", but "+
-				pyStr(rid)+" records "+pyStr(x.childHost)+"; restoring it would reactivate an assignment whose routing endpoint is not where the child is",
+			return refusing(contract.RefusalLinkConflict, "child "+pyvalue.StrRepr(x.child)+" holds issue "+pyvalue.StrRepr(x.issue)+" on host "+pyvalue.StrRepr(host)+", but "+
+				pyvalue.StrRepr(rid)+" records "+pyvalue.StrRepr(x.childHost)+"; restoring it would reactivate an assignment whose routing endpoint is not where the child is",
 				scopeIssue, x.issue, host, x.childHost)
 		}
 		var b struct{ role, kind, key string }
@@ -501,8 +495,8 @@ func (l linkage) applyRelationshipStatus(ctx context.Context, rid, status, previ
 			if b.role == roleChild {
 				reason = contract.RefusalRoleAlreadyBound
 			}
-			return refusing(reason, "task "+pyStr(x.child)+" has since become the "+b.role+" of "+b.kind+" "+pyStr(b.key)+
-				", so it cannot be restored as the child of issue "+pyStr(x.issue)+" as well", scopeIssue, x.issue, b.key, x.child)
+			return refusing(reason, "task "+pyvalue.StrRepr(x.child)+" has since become the "+b.role+" of "+b.kind+" "+pyvalue.StrRepr(b.key)+
+				", so it cannot be restored as the child of issue "+pyvalue.StrRepr(x.issue)+" as well", scopeIssue, x.issue, b.key, x.child)
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
@@ -531,7 +525,7 @@ func (l linkage) applyRelationshipStatus(ctx context.Context, rid, status, previ
 func (r *Registry) BindScope(ctx context.Context, role, key string, endpoint Endpoint) (contract.OrderedObject, error) {
 	kind, known := roleScope[role]
 	if !known {
-		return nil, refuse(contract.RefusalScopeRoleMismatch, "a role is one of child, parent, supervisor, not %s", pyStr(role))
+		return nil, refuse(contract.RefusalScopeRoleMismatch, "a role is one of child, parent, supervisor, not %s", pyvalue.StrRepr(role))
 	}
 	for _, check := range []struct{ value, what string }{{key, "a scope key"}, {endpoint.TaskID, "a task id"}, {endpoint.HostID, "a host id"}} {
 		if err := exact(check.value, check.what); err != nil {

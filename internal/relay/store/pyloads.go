@@ -2,7 +2,6 @@ package store
 
 import (
 	"strings"
-	"unicode"
 
 	"golang.org/x/sys/unix"
 
@@ -16,12 +15,6 @@ import (
 // float64. A document json.loads refuses answers its JSONDecodeError text (PythonJSONError).
 func LoadsJSON(data []byte) (any, error) {
 	return pyjson.Loads(string(data), pyjson.LoadOptions{Python: true, Constants: true})
-}
-
-// PythonStrip is str.strip(): Unicode White_Space plus the ASCII information separators
-// U+001C..U+001F, which str.isspace counts and unicode.IsSpace does not.
-func PythonStrip(value string) string {
-	return strings.TrimFunc(value, func(r rune) bool { return unicode.IsSpace(r) || r >= 0x1c && r <= 0x1f })
 }
 
 // PathlibSpelling is str(Path(value)): empty and "." components collapse, ".." stays, and exactly

@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -88,7 +89,7 @@ func (s *Service) ledger(ctx context.Context, id, kind, from, to, evidence, acto
 		return err
 	}
 	if seen.Kind != wanted.Kind || seen.FromState != wanted.FromState || seen.ToState != wanted.ToState || seen.EvidenceKind != wanted.EvidenceKind || seen.ActorTaskID != wanted.ActorTaskID || seen.Evidence != wanted.Evidence {
-		return &store.RefusedError{Reason: string(contract.RefusalMergeEvidenceRequired), Detail: "turn " + pyRepr(id) + " already holds " + pyRepr(identity) + " as " + pyRepr(seen.EvidenceKind) + " by " + pyRepr(seen.ActorTaskID) + ", so recording " + pyRepr(evidence) + " under it would be discarded without anything saying so; this ledger is inconsistent and the operation is rolled back rather than half written"}
+		return &store.RefusedError{Reason: string(contract.RefusalMergeEvidenceRequired), Detail: "turn " + pyvalue.StrRepr(id) + " already holds " + pyvalue.StrRepr(identity) + " as " + pyvalue.StrRepr(seen.EvidenceKind) + " by " + pyvalue.StrRepr(seen.ActorTaskID) + ", so recording " + pyvalue.StrRepr(evidence) + " under it would be discarded without anything saying so; this ledger is inconsistent and the operation is rolled back rather than half written"}
 	}
 	return nil
 }
@@ -164,15 +165,15 @@ func (s *Service) ownership(ctx context.Context, project, subject, actor string)
 		}
 	}
 	if len(parents) == 0 {
-		return "", &registry.CoordinationRefusal{Reason: contract.RefusalUnregisteredScope, Detail: "project " + pyRepr(project) + " has no registered parent, so nobody can claim a merge turn for it", Domain: registry.DomainMergeTarget, Subject: subject, Challenger: actor}, nil
+		return "", &registry.CoordinationRefusal{Reason: contract.RefusalUnregisteredScope, Detail: "project " + pyvalue.StrRepr(project) + " has no registered parent, so nobody can claim a merge turn for it", Domain: registry.DomainMergeTarget, Subject: subject, Challenger: actor}, nil
 	}
 	if len(parents) > 1 {
 		slices.Sort(parents)
 		quoted := make([]string, len(parents))
 		for i, task := range parents {
-			quoted[i] = pyRepr(task)
+			quoted[i] = pyvalue.StrRepr(task)
 		}
-		return "", &registry.CoordinationRefusal{Reason: contract.RefusalDuplicateScopeOwner, Detail: "project " + pyRepr(project) + " has more than one live parent (" + strings.Join(quoted, ", ") + "), so there is no owner to hold a merge turn under; repair the store rather than letting one of them win", Domain: registry.DomainMergeTarget, Subject: subject, Incumbent: parents[0], Challenger: actor}, nil
+		return "", &registry.CoordinationRefusal{Reason: contract.RefusalDuplicateScopeOwner, Detail: "project " + pyvalue.StrRepr(project) + " has more than one live parent (" + strings.Join(quoted, ", ") + "), so there is no owner to hold a merge turn under; repair the store rather than letting one of them win", Domain: registry.DomainMergeTarget, Subject: subject, Incumbent: parents[0], Challenger: actor}, nil
 	}
 	return parents[0], nil, nil
 }
@@ -204,7 +205,7 @@ func (s *Service) Request(ctx context.Context, repository, base, project, holder
 		}
 		refusal = r
 		if refusal == nil && owner != holder {
-			refusal = &registry.CoordinationRefusal{Reason: contract.RefusalScopeRoleMismatch, Detail: "task " + pyRepr(holder) + " is not the registered parent of project " + pyRepr(project) + ", which is held by " + pyRepr(owner) + "; holding a merge turn is the project parent's, and saying it is your turn is not being its parent", Domain: registry.DomainMergeTarget, Subject: target, Incumbent: owner, Challenger: holder}
+			refusal = &registry.CoordinationRefusal{Reason: contract.RefusalScopeRoleMismatch, Detail: "task " + pyvalue.StrRepr(holder) + " is not the registered parent of project " + pyvalue.StrRepr(project) + ", which is held by " + pyvalue.StrRepr(owner) + "; holding a merge turn is the project parent's, and saying it is your turn is not being its parent", Domain: registry.DomainMergeTarget, Subject: target, Incumbent: owner, Challenger: holder}
 		}
 		if refusal != nil {
 			return s.Registry.RecordCoordinationConflict(tx, *refusal, at)
@@ -620,11 +621,11 @@ func (s *Service) Target(ctx context.Context, repository, base string) (map[stri
 func (s *Service) Attest(ctx context.Context, turn, kind, identity, actor, evidence string) (map[string]any, error) {
 	squatted := ""
 	if engineLedgerKind(kind) {
-		squatted = "evidence kind " + pyRepr(kind)
+		squatted = "evidence kind " + pyvalue.StrRepr(kind)
 	} else {
 		for _, prefix := range []string{"request:", "close:", "head:", "take:", "promote:", "merging:", "unknown:", "ready:", "grant:", "grant_acknowledged:", "restate-base:"} {
 			if strings.HasPrefix(identity, prefix) {
-				squatted = "idempotency key " + pyRepr(identity) + ", which is in the " + pyRepr(prefix) + " namespace"
+				squatted = "idempotency key " + pyvalue.StrRepr(identity) + ", which is in the " + pyvalue.StrRepr(prefix) + " namespace"
 				break
 			}
 		}
@@ -675,9 +676,9 @@ func (s *Service) Acknowledge(ctx context.Context, turn, actor, grant, evidence 
 		case r.State != Holding:
 			refusal = wrongState(r, actor, "acknowledging a grant")
 		case current == "":
-			refusal = coordination(r, contract.RefusalMergeTurnNotHeld, "turn "+pyRepr(turn)+" records no grant, so there is nothing here to acknowledge; a claim made before grants were recorded has none and needs none", r.HolderTaskID, actor)
+			refusal = coordination(r, contract.RefusalMergeTurnNotHeld, "turn "+pyvalue.StrRepr(turn)+" records no grant, so there is nothing here to acknowledge; a claim made before grants were recorded has none and needs none", r.HolderTaskID, actor)
 		case grant != current:
-			refusal = coordination(r, contract.RefusalMergeTurnNotHeld, "grant "+pyRepr(grant)+" is not the grant for tenure "+fmt.Sprint(r.Tenure)+" of turn "+pyRepr(turn)+", which is "+pyRepr(current)+"; the grant you read was returned before you acted on it", current, grant)
+			refusal = coordination(r, contract.RefusalMergeTurnNotHeld, "grant "+pyvalue.StrRepr(grant)+" is not the grant for tenure "+fmt.Sprint(r.Tenure)+" of turn "+pyvalue.StrRepr(turn)+", which is "+pyvalue.StrRepr(current)+"; the grant you read was returned before you acted on it", current, grant)
 		}
 		if refusal == nil {
 			owner, other, err := s.ownership(tx, r.ProjectKey, r.TargetKey, actor)

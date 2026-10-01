@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // fakeThread and fakeHost are fakehost.FakeHostAdapter: a deterministic host shaped like the
@@ -243,7 +245,7 @@ func (h *fakeHost) SendMessage(requestID, thread, message string, settings *Task
 		receipt = set(receipt, "status", Accepted)
 		receipt = set(receipt, "resumed", resumed)
 		receipt = set(receipt, "turnId", existing)
-		t.items = append(t.items, [3]string{pyStr(existing), message, "userMessage"})
+		t.items = append(t.items, [3]string{pyvalue.Str(existing), message, "userMessage"})
 	default:
 		turn := h.startTurn(thread, "", "inProgress", message)
 		receipt = set(receipt, "status", Accepted)

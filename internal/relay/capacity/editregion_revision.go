@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -36,8 +37,8 @@ func (e *EditRegions) checkRestater(ctx context.Context, repository, actor strin
 			return err
 		}
 	}
-	return refuse(contract.RefusalScopeRoleMismatch, "task "+repr(actor)+" is the registered parent of no project holding an"+
-		" agreement in "+repr(repository)+", so it cannot restate that repository's revision and reopen everybody's agreements")
+	return refuse(contract.RefusalScopeRoleMismatch, "task "+pyvalue.StrRepr(actor)+" is the registered parent of no project holding an"+
+		" agreement in "+pyvalue.StrRepr(repository)+", so it cannot restate that repository's revision and reopen everybody's agreements")
 }
 
 // unrelatedStart is EditRegions._unrelated_start.
@@ -89,9 +90,9 @@ func (e *EditRegions) unrelatedStart(ctx context.Context, repository, revision s
 	slices.Sort(ends)
 	quoted := make([]string, len(ends))
 	for i, end := range ends {
-		quoted[i] = repr(end)
+		quoted[i] = pyvalue.StrRepr(end)
 	}
-	return &refusal{contract.RefusalAgreementRevisionStale, "no live agreement in " + repr(repository) + " stands on " + repr(revision) +
+	return &refusal{contract.RefusalAgreementRevisionStale, "no live agreement in " + pyvalue.StrRepr(repository) + " stands on " + pyvalue.StrRepr(revision) +
 		" and no recorded move reaches it, so a move from it would start a chain no agreement follows. A first move starts at a live" +
 		" agreement's revision and a later one at the end of its recorded chain; the chains here end at [" + strings.Join(quoted, ", ") + "]",
 		domainEditRegion, repository, strings.Join(ends, ","), revision}, nil
@@ -126,10 +127,10 @@ func (e *EditRegions) RestateRevision(ctx context.Context, repository, from, to,
 			}
 			if !slices.Contains(chain, to) {
 				end := chain[len(chain)-1]
-				decided = &refusal{contract.RefusalAgreementRevisionStale, repr(from) + " was already restated to " +
-					repr(text(existing, "to_revision")) + " by " + repr(text(existing, "actor")) +
+				decided = &refusal{contract.RefusalAgreementRevisionStale, pyvalue.StrRepr(from) + " was already restated to " +
+					pyvalue.StrRepr(text(existing, "to_revision")) + " by " + pyvalue.StrRepr(text(existing, "actor")) +
 					"; one revision has one successor and a second would leave two chains nobody can order. A later move is recorded from" +
-					" the end of the recorded chain, which is " + repr(end) + ": " + commandLine("region-restate-revision", "--repository",
+					" the end of the recorded chain, which is " + pyvalue.StrRepr(end) + ": " + commandLine("region-restate-revision", "--repository",
 					repository, "--from-revision", end, "--to-revision", to, "--actor", actor),
 					domainEditRegion, repository, text(existing, "to_revision"), to}
 				return recordIn(ctx, e.Store, decided, now)
@@ -144,9 +145,9 @@ func (e *EditRegions) RestateRevision(ctx context.Context, repository, from, to,
 			if decided == nil && slices.Contains(reached, from) {
 				quoted := make([]string, len(reached))
 				for i, r := range reached {
-					quoted[i] = repr(r)
+					quoted[i] = pyvalue.StrRepr(r)
 				}
-				decided = &refusal{contract.RefusalAgreementRevisionStale, repr(to) + " already reaches " + repr(from) +
+				decided = &refusal{contract.RefusalAgreementRevisionStale, pyvalue.StrRepr(to) + " already reaches " + pyvalue.StrRepr(from) +
 					" through [" + strings.Join(quoted, ", ") + "], so this mark would close a cycle" +
 					" and leave no current revision for anything to stand on", domainEditRegion, repository, to, from}
 			}
@@ -201,7 +202,7 @@ func (e *EditRegions) Reaffirm(ctx context.Context, identifier, actor, revision 
 			return err
 		}
 		if r == nil {
-			return refuse(contract.RefusalUnregisteredScope, "no agreement "+repr(identifier))
+			return refuse(contract.RefusalUnregisteredScope, "no agreement "+pyvalue.StrRepr(identifier))
 		}
 		repository := text(r, "repository")
 		_, acting, err := e.actingSide(ctx, r, actor, repository)
@@ -210,7 +211,7 @@ func (e *EditRegions) Reaffirm(ctx context.Context, identifier, actor, revision 
 		}
 		decided = acting
 		if state := text(r, "state"); decided == nil && !slices.Contains(liveStates, state) {
-			decided = &refusal{contract.RefusalAgreementNotOpen, "agreement " + repr(identifier) + " is " + state +
+			decided = &refusal{contract.RefusalAgreementNotOpen, "agreement " + pyvalue.StrRepr(identifier) + " is " + state +
 				"; a closed agreement is not carried forward, it is proposed again", domainEditRegion, repository, state, actor}
 		}
 		if decided == nil && revision == text(r, "base_revision") {
@@ -226,8 +227,8 @@ func (e *EditRegions) Reaffirm(ctx context.Context, identifier, actor, revision 
 				terminal = chain[len(chain)-1]
 			}
 			if revision != terminal {
-				decided = &refusal{contract.RefusalAgreementRevisionStale, "this agreement stands on " + repr(text(r, "base_revision")) +
-					", whose recorded chain reaches " + repr(terminal) + ", not " + repr(revision) +
+				decided = &refusal{contract.RefusalAgreementRevisionStale, "this agreement stands on " + pyvalue.StrRepr(text(r, "base_revision")) +
+					", whose recorded chain reaches " + pyvalue.StrRepr(terminal) + ", not " + pyvalue.StrRepr(revision) +
 					". Restate the revision first, or name the one the chain reaches", domainEditRegion, repository, terminal, revision}
 			}
 		}
@@ -316,13 +317,13 @@ func (e *EditRegions) Followup(ctx context.Context, in Followup) (contract.Order
 			return nil, err
 		}
 		if owned == "" {
-			return nil, refuse(contract.RefusalScopeRoleMismatch, "task "+repr(in.RecordedBy)+" owns neither side of agreement "+
-				repr(in.Agreement)+", so it cannot append work to it")
+			return nil, refuse(contract.RefusalScopeRoleMismatch, "task "+pyvalue.StrRepr(in.RecordedBy)+" owns neither side of agreement "+
+				pyvalue.StrRepr(in.Agreement)+", so it cannot append work to it")
 		}
 	}
 	if in.AssigneeTask.String != "" && in.AssigneeTask.String != in.RecordedBy {
 		return nil, refuse(contract.RefusalScopeRoleMismatch, "a follow-up records its own author as the assignee or nobody; "+
-			repr(in.RecordedBy)+" cannot accept it for "+repr(in.AssigneeTask.String)+", who accepts it themselves")
+			pyvalue.StrRepr(in.RecordedBy)+" cannot accept it for "+pyvalue.StrRepr(in.AssigneeTask.String)+", who accepts it themselves")
 	}
 	// followup_id hashes the trigger first, and str.encode("utf-8") raises for one holding a
 	// surrogate escape (an argv byte that is not UTF-8).
@@ -337,7 +338,7 @@ func (e *EditRegions) Followup(ctx context.Context, in Followup) (contract.Order
 			return err
 		}
 		if found == nil {
-			return refuse(contract.RefusalUnregisteredScope, "no agreement "+repr(in.Agreement))
+			return refuse(contract.RefusalUnregisteredScope, "no agreement "+pyvalue.StrRepr(in.Agreement))
 		}
 		taken := in.AssigneeTask.String != ""
 		state := followupOpen
@@ -362,7 +363,7 @@ func (e *EditRegions) followupContext(ctx context.Context, identifier, actor str
 		return nil, nil, "", nil, err
 	}
 	if item == nil {
-		return nil, nil, "", nil, refuse(contract.RefusalUnregisteredScope, "no follow-up "+repr(identifier))
+		return nil, nil, "", nil, refuse(contract.RefusalUnregisteredScope, "no follow-up "+pyvalue.StrRepr(identifier))
 	}
 	agreement, err := e.one(ctx, "SELECT * FROM edit_agreements WHERE agreement_id = ?", text(item, "agreement_id"))
 	if err != nil {
@@ -384,16 +385,16 @@ func (e *EditRegions) AcceptFollowup(ctx context.Context, identifier, actor, pro
 		decided = acting
 		repository, state, assignee := text(agreement, "repository"), text(item, "state"), text(item, "assignee_task_id")
 		if decided == nil && project != text(agreement, side) {
-			decided = &refusal{contract.RefusalScopeRoleMismatch, "task " + repr(actor) + " owns " + repr(text(agreement, side)) +
-				", so its acceptance is recorded under that project, not " + repr(project), domainEditRegion, repository, text(agreement, side), project}
+			decided = &refusal{contract.RefusalScopeRoleMismatch, "task " + pyvalue.StrRepr(actor) + " owns " + pyvalue.StrRepr(text(agreement, side)) +
+				", so its acceptance is recorded under that project, not " + pyvalue.StrRepr(project), domainEditRegion, repository, text(agreement, side), project}
 		}
 		if decided == nil && (state == followupDone || state == followupDropped) {
-			decided = &refusal{contract.RefusalAgreementNotOpen, "follow-up " + repr(identifier) + " is " + state +
+			decided = &refusal{contract.RefusalAgreementNotOpen, "follow-up " + pyvalue.StrRepr(identifier) + " is " + state +
 				", which is terminal; a new follow-up records new work", domainEditRegion, repository, state, actor}
 		}
 		if decided == nil && assignee != "" && assignee != actor {
-			decided = &refusal{contract.RefusalScopeRoleMismatch, "follow-up " + repr(identifier) + " was already accepted by " +
-				repr(assignee) + "; taking it from them is not an acceptance", domainEditRegion, repository, assignee, actor}
+			decided = &refusal{contract.RefusalScopeRoleMismatch, "follow-up " + pyvalue.StrRepr(identifier) + " was already accepted by " +
+				pyvalue.StrRepr(assignee) + "; taking it from them is not an acceptance", domainEditRegion, repository, assignee, actor}
 		}
 		if decided != nil {
 			return recordIn(ctx, e.Store, decided, now)
@@ -415,7 +416,7 @@ func (e *EditRegions) AcceptFollowup(ctx context.Context, identifier, actor, pro
 // SettleFollowup is EditRegions.settle_followup: finish it or drop it.
 func (e *EditRegions) SettleFollowup(ctx context.Context, identifier, actor, disposition string, reason sql.NullString) (contract.OrderedObject, error) {
 	if !slices.Contains(followupDispositions, disposition) {
-		return nil, refuse(contract.RefusalLinkNotActive, "a follow-up disposition is "+strings.Join(followupDispositions, " or ")+", not "+repr(disposition))
+		return nil, refuse(contract.RefusalLinkNotActive, "a follow-up disposition is "+strings.Join(followupDispositions, " or ")+", not "+pyvalue.StrRepr(disposition))
 	}
 	now := e.Now()
 	var decided *refusal
@@ -427,16 +428,16 @@ func (e *EditRegions) SettleFollowup(ctx context.Context, identifier, actor, dis
 		decided = acting
 		repository, state, assignee := text(agreement, "repository"), text(item, "state"), text(item, "assignee_task_id")
 		if decided == nil && (state == followupDone || state == followupDropped) && state != disposition {
-			decided = &refusal{contract.RefusalAgreementNotOpen, "follow-up " + repr(identifier) + " was already settled as " +
+			decided = &refusal{contract.RefusalAgreementNotOpen, "follow-up " + pyvalue.StrRepr(identifier) + " was already settled as " +
 				state + "; that decision stands", domainEditRegion, repository, state, disposition}
 		}
 		if decided == nil && disposition == followupDone && assignee == "" {
-			decided = &refusal{contract.RefusalFollowupUnassigned, "follow-up " + repr(identifier) + " was never accepted by anybody, so" +
+			decided = &refusal{contract.RefusalFollowupUnassigned, "follow-up " + pyvalue.StrRepr(identifier) + " was never accepted by anybody, so" +
 				" nobody can report it done. Accept it first, or drop it", domainEditRegion, repository, "", actor}
 		}
 		if decided == nil && disposition == followupDone && assignee != actor {
-			decided = &refusal{contract.RefusalScopeRoleMismatch, "follow-up " + repr(identifier) + " was accepted by " +
-				repr(assignee) + ", so only they can report it done", domainEditRegion, repository, assignee, actor}
+			decided = &refusal{contract.RefusalScopeRoleMismatch, "follow-up " + pyvalue.StrRepr(identifier) + " was accepted by " +
+				pyvalue.StrRepr(assignee) + ", so only they can report it done", domainEditRegion, repository, assignee, actor}
 		}
 		if decided != nil {
 			return recordIn(ctx, e.Store, decided, now)

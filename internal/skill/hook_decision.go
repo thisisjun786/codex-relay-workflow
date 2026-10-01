@@ -4,8 +4,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 )
 
@@ -16,7 +16,7 @@ func probeState(o, marker hook.Object, malformed string, reached *hookReplayReac
 		markHookReplay(reached, "observe_state", n)
 		return state, reason, nil
 	}
-	if unreadable := objGet(o, "store_unreadable"); evidence.Truthy(unreadable) {
+	if unreadable := objGet(o, "store_unreadable"); pyvalue.Truthy(unreadable) {
 		var names []string
 		switch value := unreadable.(type) {
 		case string:
@@ -29,7 +29,7 @@ func probeState(o, marker hook.Object, malformed string, reached *hookReplayReac
 			}
 		case []any:
 			for _, v := range value {
-				names = append(names, evidence.Text(v))
+				names = append(names, pyvalue.Str(v))
 			}
 		default:
 			return "", "", pythonNotIterable(unreadable, false)
@@ -70,13 +70,13 @@ func probeState(o, marker hook.Object, malformed string, reached *hookReplayReac
 	if problem != "" {
 		return answer(10, "claim_uncorrelated", "This session is bound but its claim does not correlate with this assignment ("+problem+"). Released and recorded; every fact this reads is create-once, so it does not clear itself and no resolution consumed here will: correlation reads the claim and the intent, never the adjudications. Recovery is a new assignment, declared for a fresh dispatch request id.")
 	}
-	if !evidence.Truthy(objGet(marker, "relationship")) {
+	if !pyvalue.Truthy(objGet(marker, "relationship")) {
 		return answer(11, "managed_unregistered", "This workspace is managed but its relationship is not registered. Register it, or record a disposition explaining why it cannot be.")
 	}
 	receipt := asObject(objGet(o, "receipt"))
 	ev := objGet(receipt, "evidence")
 	if declaration == "receipt_missing" {
-		detail := evidence.Text(objGet(receipt, "detail"))
+		detail := pyvalue.Str(objGet(receipt, "detail"))
 		if ev == "generation_absent" {
 			return answer(12, declaration, "The relay's store holds no record of the generation it reports as current for this relationship: "+detail+". Nothing can be attributed to this assignment while the store cannot say which dispatch opened the generation it is on, and no receipt this session emits changes that. The relay's store is what needs repair.")
 		}
@@ -125,7 +125,7 @@ func probeDecision(o, marker hook.Object, malformed string, reached *hookReplayR
 		case count("holdsThisTurn") >= 1:
 			markHookReplay(reached, "decide", 3)
 			finalState, finalReason = "hold_in_flight", "This turn already took its one hold."
-		case evidence.Truthy(objGet(stop, "stop_hook_active")):
+		case pyvalue.Truthy(objGet(stop, "stop_hook_active")):
 			markHookReplay(reached, "decide", 4)
 			finalState, finalReason = "hold_in_flight", "A continuation is already running for this turn; the omission is recorded."
 		default:
@@ -147,15 +147,15 @@ func probeDecision(o, marker hook.Object, malformed string, reached *hookReplayR
 	}
 	if len(marker) > 0 {
 		record["assignmentState"] = delivery.DeriveAssignmentStateTrace(marker, objGet(o, "now"), reached)
-		if len(asObject(objGet(marker, "bound"))) > 0 && evidence.Truthy(objGet(marker, "relationship")) {
+		if len(asObject(objGet(marker, "bound"))) > 0 && pyvalue.Truthy(objGet(marker, "relationship")) {
 			record["assignmentState"] = "relationship_registered"
 		}
 		record["identityContested"] = delivery.IdentityContestedTrace(marker, reached)
 	}
 	receipt := asObject(objGet(o, "receipt"))
-	if evidence.Truthy(objGet(receipt, "evidence")) {
+	if pyvalue.Truthy(objGet(receipt, "evidence")) {
 		result["receiptEvidence"], record["receiptEvidence"] = orderedPlain(objGet(receipt, "evidence")), orderedPlain(objGet(receipt, "evidence"))
-		if evidence.Truthy(objGet(receipt, "detail")) {
+		if pyvalue.Truthy(objGet(receipt, "detail")) {
 			result["receiptDetail"], record["receiptDetail"] = orderedPlain(objGet(receipt, "detail")), orderedPlain(objGet(receipt, "detail"))
 		}
 	}

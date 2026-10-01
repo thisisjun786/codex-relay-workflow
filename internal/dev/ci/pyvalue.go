@@ -11,7 +11,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // pyDict is a decoded JSON object in Python's dict order (first occurrence, last value).
@@ -115,7 +115,7 @@ func pyReprValue(value any) string {
 		}
 		return pyFloatRepr(pyFloat(v))
 	case string:
-		return pyRepr(v)
+		return pyvalue.StrRepr(v)
 	case []any:
 		parts := make([]string, len(v))
 		for i, item := range v {
@@ -125,7 +125,7 @@ func pyReprValue(value any) string {
 	case *pyDict:
 		parts := make([]string, len(v.keys))
 		for i, key := range v.keys {
-			parts[i] = pyRepr(key) + ": " + pyReprValue(v.vals[key])
+			parts[i] = pyvalue.StrRepr(key) + ": " + pyReprValue(v.vals[key])
 		}
 		return "{" + strings.Join(parts, ", ") + "}"
 	}
@@ -198,10 +198,6 @@ func pyEqual(a, b any) bool {
 	}
 	return false
 }
-
-// pyRepr is repr() of a str: settings.Repr, whose printability is CPython 3.14's table rather
-// than Go's newer unicode.IsPrint, and which reads an argv byte that is not UTF-8 as its surrogate.
-func pyRepr(text string) string { return settings.Repr(text) }
 
 // utf8Subpart measures the undecodable sequence at data[i] the way CPython's UTF-8 decoder
 // does: the lead byte plus the continuation bytes that could still have completed it.

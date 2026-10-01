@@ -27,7 +27,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
@@ -100,7 +100,7 @@ func Payload(state, writtenBy string, issue, run any, pid int, host, writtenAt s
 func Shape(v any) error {
 	claim, ok := v.(record.Object)
 	if !ok {
-		return reading.Fail("TypeError", "a staging claim is an object, found "+evidence.TypeName(v))
+		return reading.Fail("TypeError", "a staging claim is an object, found "+pyvalue.TypeName(v))
 	}
 	writer := record.Get(claim, "writtenBy")
 	if writer != WrittenByGo {
@@ -122,7 +122,7 @@ func repr(v any) string {
 	case nil:
 		return "None"
 	case string:
-		return store.PythonRepr(value)
+		return pyvalue.StrRepr(value)
 	case bool:
 		if value {
 			return "True"

@@ -3,7 +3,7 @@ package reading
 import (
 	"testing"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // store.FSDecode spells each byte that is not part of UTF-8 as its surrogate escape (os.fsdecode with
@@ -17,17 +17,17 @@ func TestFSDecodeAndEncodeAreOSFsdecodeAndFsencode(t *testing.T) {
 		"/p/caf\xc3\xa9":     "/p/caf\xc3\xa9",
 		"/p/\xff":            "/p/\xed\xb3\xbf",
 	} {
-		if got := store.FSDecode(raw); got != want {
+		if got := pyvalue.FSDecode(raw); got != want {
 			t.Errorf("FSDecode(%q) = %q, want %q", raw, got, want)
 		}
-		if back, ok := FSEncode(store.FSDecode(raw)); !ok || back != raw {
-			t.Errorf("FSEncode(FSDecode(%q)) = %q %v", raw, back, ok)
+		if back, ok := pyvalue.FSEncode(pyvalue.FSDecode(raw)); !ok || back != raw {
+			t.Errorf("pyvalue.FSEncode(FSDecode(%q)) = %q %v", raw, back, ok)
 		}
 	}
-	if _, ok := FSEncode("/p/\xed\xa0\x80"); ok {
+	if _, ok := pyvalue.FSEncode("/p/\xed\xa0\x80"); ok {
 		t.Error("a high surrogate was encoded")
 	}
-	if _, ok := FSEncode("/p/\xed\xb0\x80"); ok {
+	if _, ok := pyvalue.FSEncode("/p/\xed\xb0\x80"); ok {
 		t.Error("U+DC00, which escapes no byte, was encoded")
 	}
 }

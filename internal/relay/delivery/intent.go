@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -845,7 +846,7 @@ func RecordAttempt(root, workspace string, assignment any, outcome, at string, t
 		valid = valid || o == outcome
 	}
 	if !valid {
-		return nil, registrationError(UnknownGeneration, "an attempt outcome is one of "+strings.Join(AttemptOutcomes, ", ")+", not "+store.PyRepr(outcome))
+		return nil, registrationError(UnknownGeneration, "an attempt outcome is one of "+strings.Join(AttemptOutcomes, ", ")+", not "+pyvalue.StrRepr(outcome))
 	}
 	directory, err := assignmentDirectory(root, workspace, assignment)
 	if err != nil {
@@ -1020,7 +1021,7 @@ func PublishDisposition(root, workspace string, assignment, sessionID, turnID an
 		known = known || o == outcome
 	}
 	if !known {
-		return nil, registrationError(OutcomeInconsistent, "a disposition outcome is one of "+strings.Join(DispositionOutcomes, ", ")+", not "+store.PyRepr(outcome))
+		return nil, registrationError(OutcomeInconsistent, "a disposition outcome is one of "+strings.Join(DispositionOutcomes, ", ")+", not "+pyvalue.StrRepr(outcome))
 	}
 	directory, err := assignmentDirectory(root, workspace, assignment)
 	if err != nil {

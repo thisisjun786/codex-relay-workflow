@@ -6,15 +6,8 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
-
-// pyStrip is str.strip(): Python includes the ASCII information separators in
-// addition to Unicode White_Space. Ack validation uses this without changing
-// the original string that enters the proof.
-func pyStrip(value string) string {
-	return strings.TrimFunc(value, func(r rune) bool { return unicode.IsSpace(r) || r >= 0x1c && r <= 0x1f })
-}
 
 // sqliteIntString is Python int(str, 10), followed by sqlite3's signed-64-bit
 // binding. int's parser does not accept the ASCII information separators that
@@ -22,7 +15,7 @@ func pyStrip(value string) string {
 func sqliteIntString(value string) (any, error) {
 	text := strings.TrimSpace(value)
 	invalid := func() (any, error) {
-		return nil, &hostError{"ValueError", "invalid literal for int() with base 10: " + store.PyRepr(value)}
+		return nil, &hostError{"ValueError", "invalid literal for int() with base 10: " + pyvalue.StrRepr(value)}
 	}
 	var normalized strings.Builder
 	if len(text) > 0 && (text[0] == '+' || text[0] == '-') {

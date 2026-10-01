@@ -5,7 +5,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // ResolveProduct never files a defect under the observer's product by default.
@@ -23,7 +23,7 @@ func ResolveProduct(registries map[string]Object, incident Object) (any, string)
 			return nil, declared + " is not a registered product"
 		}
 		if repository != "" && len(owners) > 0 && !slices.Contains(owners, declared) {
-			return nil, fmt.Sprintf("%s was declared, but repository %s is registered to %s", declared, repository, evidence.Repr(owners))
+			return nil, fmt.Sprintf("%s was declared, but repository %s is registered to %s", declared, repository, pyvalue.Repr(owners))
 		}
 		return declared, declared + " was declared by the source"
 	}
@@ -32,7 +32,7 @@ func ResolveProduct(registries map[string]Object, incident Object) (any, string)
 			return owners[0], fmt.Sprintf("repository %s is registered to %s", repository, owners[0])
 		}
 		if len(owners) > 0 {
-			return nil, fmt.Sprintf("repository %s is registered to several products: %s", repository, evidence.Repr(owners))
+			return nil, fmt.Sprintf("repository %s is registered to several products: %s", repository, pyvalue.Repr(owners))
 		}
 		return nil, fmt.Sprintf("repository %s is registered to no product", repository)
 	}
@@ -49,7 +49,7 @@ func WorkspaceFor(incident, registry Object) (string, error) {
 		return "unassigned", nil
 	}
 	if declared != "" && declared != registry["workspace"] {
-		return "", malformed(fmt.Sprintf("%s files in workspace %s; the incident declares %s", registry["product"], evidence.Repr(registry["workspace"]), evidence.Repr(declared)))
+		return "", malformed(fmt.Sprintf("%s files in workspace %s; the incident declares %s", registry["product"], pyvalue.Repr(registry["workspace"]), pyvalue.Repr(declared)))
 	}
 	return text(registry["workspace"]), nil
 }
@@ -152,7 +152,7 @@ func Decide(incident, registry Object, bindings []Object, runIssue any) Object {
 		}
 		reason := fmt.Sprintf("failure evidence for the current issue %s, from its own managed run", attached["ref"])
 		if len(others) > 0 {
-			reason += fmt.Sprintf("; linked to %s, which own the same symptom", evidence.Repr(others))
+			reason += fmt.Sprintf("; linked to %s, which own the same symptom", pyvalue.Repr(others))
 		}
 		return owned("attach_current", attached, registry, incident, reason, false, others)
 	}
@@ -169,13 +169,13 @@ func Decide(incident, registry Object, bindings []Object, runIssue any) Object {
 		return owned("accumulate", opens[0], registry, incident, fmt.Sprintf("%s is open for the same component and symptom", opens[0]["ref"]), false, nil)
 	}
 	if len(opens) > 1 {
-		return decision("held", nil, nil, "ambiguous_owner", nil, false, "several open issues claim this symptom: "+evidence.Repr(refs(opens)))
+		return decision("held", nil, nil, "ambiguous_owner", nil, false, "several open issues claim this symptom: "+pyvalue.Repr(refs(opens)))
 	}
 	if len(done) == 1 {
 		return owned("reopen", done[0], registry, incident, fmt.Sprintf("%s was completed and the same defect came back", done[0]["ref"]), true, nil)
 	}
 	if len(done) > 1 {
-		return decision("held", nil, nil, "ambiguous_owner", nil, false, "several completed issues claim this symptom: "+evidence.Repr(refs(done)))
+		return decision("held", nil, nil, "ambiguous_owner", nil, false, "several completed issues claim this symptom: "+pyvalue.Repr(refs(done)))
 	}
 	relate := []any{}
 	disposition := "new_issue"
@@ -193,7 +193,7 @@ func Decide(incident, registry Object, bindings []Object, runIssue any) Object {
 			disposition = "follow_up"
 			notes = append(notes, fmt.Sprintf("a regression of %s, which closed %s", regression, fixed[0]["ref"]))
 		} else {
-			notes = append(notes, fmt.Sprintf("regressionOf %s names no single completed issue, so nothing is linked without evidence", evidence.Repr(regression)))
+			notes = append(notes, fmt.Sprintf("regressionOf %s names no single completed issue, so nothing is linked without evidence", pyvalue.Repr(regression)))
 		}
 	}
 	project, hold, why := projectFor(incident, registry, usable)
@@ -256,7 +256,7 @@ func projectFor(incident, registry Object, bindings []Object) (any, any, string)
 		if len(chosen) == 1 {
 			return chosen[0]["ref"], nil, fmt.Sprintf("%s covers %s and %s", chosen[0]["ref"], component, goal)
 		}
-		return nil, "ambiguous_project", fmt.Sprintf("several projects cover %s: %s", component, evidence.Repr(refs(covering)))
+		return nil, "ambiguous_project", fmt.Sprintf("several projects cover %s: %s", component, pyvalue.Repr(refs(covering)))
 	}
 	if registry["triageProject"] != nil {
 		return registry["triageProject"], nil, "no project covers it; the triage project holds it until a project owns it"

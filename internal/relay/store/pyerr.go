@@ -74,28 +74,6 @@ func PythonOSErrorText(err error) string {
 	return text
 }
 
-// FSDecode is os.fsdecode as Go holds the result: the path's bytes, each byte that is not UTF-8
-// replaced by the lone surrogate surrogateescape makes of it (U+DC80..U+DCFF) in WTF-8, which
-// the JSON writers spell \udcXX as json.dumps does.
-func FSDecode(p string) string {
-	if utf8.ValidString(p) {
-		return p
-	}
-	var b strings.Builder
-	for i := 0; i < len(p); {
-		r, size := utf8.DecodeRuneInString(p[i:])
-		if r == utf8.RuneError && size == 1 {
-			v := 0xdc00 + rune(p[i])
-			b.Write([]byte{0xed, byte(0xa0 | (v>>6)&0x1f), byte(0x80 | v&0x3f)})
-			i++
-			continue
-		}
-		b.WriteString(p[i : i+size])
-		i += size
-	}
-	return b.String()
-}
-
 // PathRepr is repr() of a filename as Python holds one: os.fsdecode of its bytes, so a byte that
 // is not UTF-8 is the lone surrogate surrogateescape makes of it (U+DC80..U+DCFF), and then every
 // character str.isprintable refuses (controls, format characters, separators but the space, lone
@@ -138,13 +116,6 @@ func PathRepr(path string) string {
 	b.WriteString(quote)
 	return b.String()
 }
-
-// pythonRepr is repr() of a str (settings.Repr: Python's quote choice and its escapes of every
-// character str.isprintable() rejects, a lone surrogate included).
-func pythonRepr(text string) string { return settings.Repr(text) }
-
-// PythonRepr is pythonRepr for callers outside the package that echo a Python !r field.
-func PythonRepr(text string) string { return pythonRepr(text) }
 
 // pythonHostError is an OS or SQLite failure Python raises out of Store() unhandled: its text is
 // Python's host envelope detail, f"{type(error).__name__}: {error}", and the failure itself

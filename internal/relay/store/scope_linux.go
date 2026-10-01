@@ -12,6 +12,8 @@ import (
 	"syscall"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // pinnedOpen opens every component from "/" with O_NOFOLLOW so no symlink can redirect the
@@ -47,11 +49,11 @@ func walkError(err error, component, declared string) error {
 	errors.As(err, &errno)
 	switch errno {
 	case syscall.ELOOP, syscall.ENOTDIR:
-		return &RefusedError{Reason: ReasonSymlinkComponent, Detail: "component " + PythonRepr(component) + " of " + PythonRepr(declared) + " is a symlink or not a directory", cause: err}
+		return &RefusedError{Reason: ReasonSymlinkComponent, Detail: "component " + pyvalue.StrRepr(component) + " of " + pyvalue.StrRepr(declared) + " is a symlink or not a directory", cause: err}
 	case syscall.ENOENT, syscall.ESTALE:
-		return &RefusedError{Reason: ReasonPathChanged, Detail: "component " + PythonRepr(component) + " of " + PythonRepr(declared) + " disappeared during resolution", cause: err}
+		return &RefusedError{Reason: ReasonPathChanged, Detail: "component " + pyvalue.StrRepr(component) + " of " + pyvalue.StrRepr(declared) + " disappeared during resolution", cause: err}
 	default:
-		return &RefusedError{Reason: ReasonScopeEscape, Detail: "cannot open component " + PythonRepr(component) + " of " + PythonRepr(declared) + ": " + unix.ErrnoName(errno), cause: err}
+		return &RefusedError{Reason: ReasonScopeEscape, Detail: "cannot open component " + pyvalue.StrRepr(component) + " of " + pyvalue.StrRepr(declared) + ": " + unix.ErrnoName(errno), cause: err}
 	}
 }
 

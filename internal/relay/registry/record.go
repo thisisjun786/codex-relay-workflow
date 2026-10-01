@@ -7,6 +7,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -28,8 +29,6 @@ func settingsAnswer(task, source string, settings contract.OrderedObject) contra
 func findingRefusal(finding contract.OrderedObject) error {
 	return refuse(contract.RefusalReason(findingText(finding, "code")), "%s", findingText(finding, "detail"))
 }
-
-func rolesList(roles []string) string { return pyRepr(anyStrings(roles)) }
 
 // RecordSettings is registry.record_settings. role "" is None.
 func (r *Registry) RecordSettings(ctx context.Context, task string, settings contract.OrderedObject, source, role string, citation Citation) (contract.OrderedObject, error) {
@@ -63,7 +62,7 @@ func (r *Registry) RecordSettings(ctx context.Context, task string, settings con
 			carried := citedRole(previous)
 			if carried != nil && role != "" && carried != any(role) {
 				return refuse(contract.RefusalRoleBindingMismatch, "%s was created citing role %s and this record states %s. The creation role is not something a later write changes; correct whichever of the two is wrong at its source",
-					pyStr(task), pyRepr(carried), pyStr(role))
+					pyvalue.StrRepr(task), pyvalue.Repr(carried), pyvalue.StrRepr(role))
 			}
 			if carried != nil && role == "" {
 				settings = setField(settings, "citedRole", carried)
@@ -90,7 +89,7 @@ func (r *Registry) RecordSettings(ctx context.Context, task string, settings con
 		}
 		if contested != nil {
 			return refuse(contract.RefusalRoleBindingMismatch, "%s holds live bindings at %s; one task holds one role, so there is no single role to record settings against",
-				pyStr(task), rolesList(contested))
+				pyvalue.StrRepr(task), pyvalue.Repr(contested))
 		}
 		if bound != "" {
 			if finding := CheckBinding(citedRole(settings), bound, settings, r.Policy); finding != nil {
@@ -203,12 +202,12 @@ func describe(finding contract.OrderedObject) string {
 	}
 	_, hasRecorded := getField(finding, "recorded")
 	if cited, _ := getField(finding, "citedException"); cited != nil && !hasRecorded {
-		return "its record cites exception " + pyRepr(cited) + ", which this policy does not authorize for that role with this pair and directory"
+		return "its record cites exception " + pyvalue.Repr(cited) + ", which this policy does not authorize for that role with this pair and directory"
 	}
 	if hasRecorded {
 		recorded, _ := getField(finding, "recorded")
 		expected, _ := getField(finding, "expected")
-		return "its recorded authorization is " + pyRepr(recorded) + " while the policy for that role is " + pyRepr(expected)
+		return "its recorded authorization is " + pyvalue.Repr(recorded) + " while the policy for that role is " + pyvalue.Repr(expected)
 	}
 	if detail, ok := getField(finding, "detail"); ok {
 		if text, ok := detail.(string); ok {
@@ -228,7 +227,7 @@ func (r *Registry) AuthorizedSettings(ctx context.Context, task string) (setting
 	}
 	if !ok {
 		return settings, false, refuse(contract.RefusalSettingsUnavailable, "no authorized settings recorded for %s; register them from the"+
-			" creation result before a send can preserve them", pyStr(task))
+			" creation result before a send can preserve them", pyvalue.StrRepr(task))
 	}
 	if err := settings.RequireUsable(); err != nil {
 		return settings, false, err
@@ -241,7 +240,7 @@ func (r *Registry) AuthorizedSettings(ctx context.Context, task string) (setting
 		return settings, false, refuse(contract.RefusalRoleBindingMismatch, "%s holds live bindings at %s, and one task holds one role. "+
 			"Nothing was sent and no turn was started, because checking its authorization against "+
 			"either of them would report a clean answer derived from an arbitrary choice. Resolve "+
-			"the bindings first.", pyStr(task), rolesList(contested))
+			"the bindings first.", pyvalue.StrRepr(task), pyvalue.Repr(contested))
 	}
 	if role == "" {
 		return settings, false, nil
@@ -250,7 +249,7 @@ func (r *Registry) AuthorizedSettings(ctx context.Context, task string) (setting
 	if !policy.Declared {
 		return settings, false, refuse(contract.RefusalRolePolicyUnconfigured, "%s is bound as %s and this process cannot read a role policy to check "+
 			"its authorization against: %s. Nothing was sent and no turn was started. Set the policy for this process and the held deliveries resume on the next "+
-			"pass.", pyStr(task), pyStr(role), policy.Detail)
+			"pass.", pyvalue.StrRepr(task), pyvalue.StrRepr(role), policy.Detail)
 	}
 	if finding := CheckRecord(settings.Data, role, policy); finding != nil {
 		recovery, ok := getField(finding, "recovery")
@@ -259,7 +258,7 @@ func (r *Registry) AuthorizedSettings(ctx context.Context, task string) (setting
 		}
 		digest, _ := getField(finding, "digest")
 		return settings, false, refuse(contract.RefusalReason(findingText(finding, "code")), "%s is bound as %s: %s (policy %v). Nothing was sent and no turn was started. %v",
-			pyStr(task), pyStr(role), describe(finding), digest, recovery)
+			pyvalue.StrRepr(task), pyvalue.StrRepr(role), describe(finding), digest, recovery)
 	}
 	expectation, ok := policy.expectation(role)
 	model, effort := pairOf(settings.Data)

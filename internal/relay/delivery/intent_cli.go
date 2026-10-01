@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -134,7 +135,7 @@ func adjudicated(values []string) ([]Obj, error) {
 	for _, value := range values {
 		factID, digest, _ := strings.Cut(value, "=")
 		if factID == "" || digest == "" {
-			return nil, &usageError{"--adjudicate takes factId=digest, not " + store.PyRepr(value), contract.ExitUsage}
+			return nil, &usageError{"--adjudicate takes factId=digest, not " + pyvalue.StrRepr(value), contract.ExitUsage}
 		}
 		entries = append(entries, Obj{{Key: "factId", Value: factID}, {Key: "digest", Value: digest}})
 	}
@@ -431,7 +432,7 @@ func storeOf(facts Obj) any {
 		return nil
 	}
 	path, ok := fieldOf(declared, "dbPath").(string)
-	if !ok || store.PythonStrip(path) == "" {
+	if !ok || pyvalue.Strip(path) == "" {
 		return nil
 	}
 	return path

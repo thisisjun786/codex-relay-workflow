@@ -3,6 +3,8 @@ package delivery
 import (
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // test_intent.py properties INT-1..INT-23. Each runs one list of operations through the real
@@ -151,7 +153,7 @@ func TestINT08_the_dispatch_request_id_is_stored_only_as_its_hash(t *testing.T) 
 	}
 }
 
-func renderPlain(v any) string { return strings.ReplaceAll(pyReprValue(fromJSON(v)), " ", "") }
+func renderPlain(v any) string { return strings.ReplaceAll(pyvalue.Repr(fromJSON(v)), " ", "") }
 
 func TestINT09_registration_is_confirmed_against_the_relay_store(t *testing.T) {
 	answers := sameOps(t, nil,

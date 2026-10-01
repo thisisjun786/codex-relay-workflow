@@ -7,6 +7,8 @@ import (
 	"math/big"
 	"slices"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // Problem codes, mergeevidence.py:32-36.
@@ -48,12 +50,12 @@ func ReviewShapeProblems(review any) []Problem {
 	bad := func(detail string) { problems = append(problems, Problem{Code: Malformed, Detail: detail}) }
 	o, ok := Object(review)
 	if !ok {
-		bad("the review record is an object stating " + strings.Join(ReviewFields, ", ") + ", not a " + TypeName(review))
+		bad("the review record is an object stating " + strings.Join(ReviewFields, ", ") + ", not a " + pyvalue.TypeName(review))
 		return problems
 	}
 	if v, present := Lookup(o, "hasNextPage"); present {
 		if _, isBool := v.(bool); !isBool {
-			bad("hasNextPage is true or false, not a " + TypeName(v) + "; a truthy value of another type says nothing about pagination")
+			bad("hasNextPage is true or false, not a " + pyvalue.TypeName(v) + "; a truthy value of another type says nothing about pagination")
 		}
 	}
 	for _, name := range counts {
@@ -62,19 +64,19 @@ func ReviewShapeProblems(review any) []Problem {
 			continue
 		}
 		if n, isInt := Whole(v); !isInt {
-			bad(name + " is a whole number, not a " + TypeName(v))
+			bad(name + " is a whole number, not a " + pyvalue.TypeName(v))
 		} else if n.Sign() < 0 {
-			bad(name + " is " + Repr(v) + ", and a count is never negative")
+			bad(name + " is " + pyvalue.Repr(v) + ", and a count is never negative")
 		}
 	}
 	if seen, present := Lookup(o, "threadsSeen"); present {
 		items, isList := List(seen)
 		if !isList {
-			bad("threadsSeen is a list of thread identifiers, not a " + TypeName(seen) + "; a string would be counted one character at a time")
+			bad("threadsSeen is a list of thread identifiers, not a " + pyvalue.TypeName(seen) + "; a string would be counted one character at a time")
 		} else {
 			for position, one := range items {
 				if _, isStr := one.(string); !isStr {
-					bad("threadsSeen entry " + Text(int64(position)) + " is a thread identifier string, not a " + TypeName(one) + "; coercing it would let two different values agree")
+					bad("threadsSeen entry " + pyvalue.Str(int64(position)) + " is a thread identifier string, not a " + pyvalue.TypeName(one) + "; coercing it would let two different values agree")
 				}
 			}
 		}
@@ -96,7 +98,7 @@ func ReviewProblems(review any) []Problem {
 	}
 	var problems []Problem
 	incomplete := func(detail string) { problems = append(problems, Problem{Code: ReviewIncomplete, Detail: detail}) }
-	if Truthy(Get(o, "hasNextPage")) {
+	if pyvalue.Truthy(Get(o, "hasNextPage")) {
 		incomplete("hasNextPage is still true, so the review was not enumerated")
 	}
 	if pages := intOrZero(Get(o, "pagesRead")); pages.Sign() < 1 {
@@ -113,11 +115,11 @@ func ReviewProblems(review any) []Problem {
 	var identifiers []string
 	for _, one := range seen {
 		text := ""
-		if Truthy(one) {
-			text = Text(one)
+		if pyvalue.Truthy(one) {
+			text = pyvalue.Str(one)
 		}
 		if strings.TrimSpace(text) != "" {
-			identifiers = append(identifiers, Text(one))
+			identifiers = append(identifiers, pyvalue.Str(one))
 		}
 	}
 	distinct := map[string]bool{}
@@ -131,10 +133,10 @@ func ReviewProblems(review any) []Problem {
 		incomplete("threadsSeen repeats an identifier, so its length is not a count of threads actually seen")
 	}
 	if big.NewInt(int64(len(distinct))).Cmp(total) != 0 {
-		incomplete("totalCount is " + Text(total) + " and " + Text(int64(len(seen))) + " threads were seen")
+		incomplete("totalCount is " + pyvalue.Str(total) + " and " + pyvalue.Str(int64(len(seen))) + " threads were seen")
 	}
 	if intOrZero(Get(o, "unresolved")).Sign() != 0 {
-		incomplete(Text(Get(o, "unresolved")) + " threads are unresolved")
+		incomplete(pyvalue.Str(Get(o, "unresolved")) + " threads are unresolved")
 	}
 	return problems
 }
@@ -146,7 +148,7 @@ func intOrZero(v any) *big.Int { return Integer(Or(v, 0)) }
 func attempt(entry any) *big.Int {
 	o, _ := Object(entry)
 	v, present := Lookup(o, "attempt")
-	if !present || !Truthy(v) {
+	if !present || !pyvalue.Truthy(v) {
 		return big.NewInt(1)
 	}
 	return Integer(v)
@@ -158,7 +160,7 @@ func textField(entry any, name string) string {
 	if !present {
 		return ""
 	}
-	return Text(v)
+	return pyvalue.Str(v)
 }
 
 // ShapeProblems is mergeevidence.shape_problems. It must run before semantic predicates.
@@ -166,37 +168,37 @@ func ShapeProblems(review, checks, required any, head *string) []Problem {
 	var problems []Problem
 	bad := func(detail string) { problems = append(problems, Problem{Code: Malformed, Detail: detail}) }
 	if head != nil && strings.TrimSpace(*head) == "" {
-		bad("the head this evidence is about is a non-empty commit sha, not " + Repr(*head))
+		bad("the head this evidence is about is a non-empty commit sha, not " + pyvalue.Repr(*head))
 	}
 	problems = append(problems, ReviewShapeProblems(review)...)
 	if required != nil {
 		items, ok := List(required)
 		if !ok {
-			bad("the required check names are a list, not a " + TypeName(required))
+			bad("the required check names are a list, not a " + pyvalue.TypeName(required))
 		} else {
 			for _, one := range items {
 				if _, ok := one.(string); !ok {
-					bad("required check name " + Repr(one) + " is a string, not a " + TypeName(one))
+					bad("required check name " + pyvalue.Repr(one) + " is a string, not a " + pyvalue.TypeName(one))
 				}
 			}
 		}
 	}
 	items, ok := List(checks)
 	if !ok {
-		bad("the restated checks are a list of check runs, not a " + TypeName(checks))
+		bad("the restated checks are a list of check runs, not a " + pyvalue.TypeName(checks))
 		return problems
 	}
 	for position, entry := range items {
 		o, ok := Object(entry)
-		where := "check entry " + Text(int64(position))
+		where := "check entry " + pyvalue.Str(int64(position))
 		if !ok {
-			bad(where + " is an object naming its runId, name, headSha, conclusion and attempt, not a " + TypeName(entry))
+			bad(where + " is an object naming its runId, name, headSha, conclusion and attempt, not a " + pyvalue.TypeName(entry))
 			continue
 		}
 		for _, field := range []string{"runId", "name", "headSha", "conclusion"} {
 			if value, present := Lookup(o, field); present {
 				if _, ok := value.(string); !ok {
-					bad(where + " states " + field + " as a " + TypeName(value) + ", not a string; coercing it would let two different runs agree")
+					bad(where + " states " + field + " as a " + pyvalue.TypeName(value) + ", not a string; coercing it would let two different runs agree")
 				}
 			}
 		}
@@ -204,9 +206,9 @@ func ShapeProblems(review, checks, required any, head *string) []Problem {
 		if !present {
 			bad(where + " does not state attempt, so which attempt is newest cannot be decided; an omitted attempt is not evidence that this is the newest")
 		} else if n, ok := Whole(value); !ok {
-			bad(where + " states attempt " + Repr(value) + ", which is not a whole number, so which attempt is newest cannot be decided")
+			bad(where + " states attempt " + pyvalue.Repr(value) + ", which is not a whole number, so which attempt is newest cannot be decided")
 		} else if n.Sign() < 1 {
-			bad(where + " states attempt " + Repr(value) + ", and attempts are counted from one; a lower value is read as the first attempt and hides the newest one")
+			bad(where + " states attempt " + pyvalue.Repr(value) + ", and attempts are counted from one; a lower value is read as the first attempt and hides the newest one")
 		}
 	}
 	return problems
@@ -273,10 +275,10 @@ func ChecksProblemsWith(head string, required []string, checks []any, requireDec
 		}
 		o, _ := Object(entry)
 		if Get(o, "headSha") != any(head) {
-			return stale("check run "+StrRepr(run)+" reports head "+Repr(Get(o, "headSha"))+", not "+StrRepr(head), run)
+			return stale("check run "+pyvalue.StrRepr(run)+" reports head "+pyvalue.Repr(Get(o, "headSha"))+", not "+pyvalue.StrRepr(head), run)
 		}
 		if isRequired(textField(entry, "name")) && answers(entry, textField(entry, "name")) && Get(o, "conclusion") != "success" {
-			return stale("required check "+Repr(Get(o, "name"))+" (run "+StrRepr(run)+") concluded "+Repr(Get(o, "conclusion"))+" on its newest attempt", run)
+			return stale("required check "+pyvalue.Repr(Get(o, "name"))+" (run "+pyvalue.StrRepr(run)+") concluded "+pyvalue.Repr(Get(o, "conclusion"))+" on its newest attempt", run)
 		}
 	}
 	present := map[string]bool{}
@@ -306,7 +308,7 @@ func ChecksProblemsWith(head string, required []string, checks []any, requireDec
 		}
 	}
 	if len(unanswered) > 0 {
-		return stale("these required checks have no successful run from the integration the branch rule names: "+Repr(unanswered), incumbent)
+		return stale("these required checks have no successful run from the integration the branch rule names: "+pyvalue.Repr(unanswered), incumbent)
 	}
 	var missing []string
 	for _, name := range required {
@@ -321,10 +323,10 @@ func ChecksProblemsWith(head string, required []string, checks []any, requireDec
 				qualified = " from the provider the branch rule names"
 			}
 		}
-		return stale("these checks were declared required and are not present and successful in the restated set"+qualified+": "+Repr(missing), missing[0])
+		return stale("these checks were declared required and are not present and successful in the restated set"+qualified+": "+pyvalue.Repr(missing), missing[0])
 	}
 	if len(required) == 0 && len(present) == 0 {
-		return stale("no check declared required and nothing in the restated set succeeded on "+StrRepr(head)+", so nothing says this head is green", "")
+		return stale("no check declared required and nothing in the restated set succeeded on "+pyvalue.StrRepr(head)+", so nothing says this head is green", "")
 	}
 	return nil
 }
@@ -378,7 +380,7 @@ func ReviewStateProblems(reviews []any) []Problem {
 	slices.Sort(asking)
 	quoted := make([]string, len(asking))
 	for i, one := range asking {
-		quoted[i] = StrRepr(one)
+		quoted[i] = pyvalue.StrRepr(one)
 	}
 	return []Problem{{Code: ReviewChangesRequested, Detail: "these reviewers asked for changes and have not since approved or dismissed their own review: " + strings.Join(quoted, ", ")}}
 }
@@ -387,18 +389,18 @@ func ReviewStateProblems(reviews []any) []Problem {
 func CandidateProblems(candidate any, strictBase bool) []Problem {
 	o, ok := Object(candidate)
 	if !ok {
-		return []Problem{{Code: Malformed, Detail: "the candidate is an object stating state, isDraft and mergeStateStatus, not a " + TypeName(candidate)}}
+		return []Problem{{Code: Malformed, Detail: "the candidate is an object stating state, isDraft and mergeStateStatus, not a " + pyvalue.TypeName(candidate)}}
 	}
 	var out []Problem
 	state := strings.ToLower(forgeText(Get(o, "state")))
-	if Truthy(Get(o, "merged")) {
+	if pyvalue.Truthy(Get(o, "merged")) {
 		out = append(out, Problem{Code: CandidateNotOpen, Detail: "this pull request is already merged, so there is nothing left to hand over"})
 	} else if state != "" && state != "open" {
-		out = append(out, Problem{Code: CandidateNotOpen, Detail: "this pull request is " + StrRepr(state) + ", not open"})
+		out = append(out, Problem{Code: CandidateNotOpen, Detail: "this pull request is " + pyvalue.StrRepr(state) + ", not open"})
 	} else if state == "" {
 		out = append(out, Problem{Code: CandidateUnknown, Detail: "the candidate does not say whether it is open"})
 	}
-	if Truthy(Get(o, "isDraft")) {
+	if pyvalue.Truthy(Get(o, "isDraft")) {
 		out = append(out, Problem{Code: CandidateDraft, Detail: "the pull request is still a draft, so the review it reports was never actually requested; mark it ready for review before handing it over"})
 	}
 	status := strings.ToLower(textField(candidate, "mergeStateStatus"))
@@ -413,11 +415,11 @@ func CandidateProblems(candidate any, strictBase bool) []Problem {
 			out = append(out, Problem{Code: CandidateBehind, Detail: "the candidate is behind its base and this branch requires branches to be current before merging"})
 		}
 	case "draft":
-		if !Truthy(Get(o, "isDraft")) {
+		if !pyvalue.Truthy(Get(o, "isDraft")) {
 			out = append(out, Problem{Code: CandidateDraft, Detail: "the forge reports this candidate as a draft although the record says it is not"})
 		}
 	default:
-		out = append(out, Problem{Code: CandidateUnknown, Detail: "the forge reports merge state " + Repr(Get(o, "mergeStateStatus")) + ", which is not a state this rule recognises; an unrecognised merge state is unknown rather than clean, because a forge that adds one must not acquire a passing verdict by default"})
+		out = append(out, Problem{Code: CandidateUnknown, Detail: "the forge reports merge state " + pyvalue.Repr(Get(o, "mergeStateStatus")) + ", which is not a state this rule recognises; an unrecognised merge state is unknown rather than clean, because a forge that adds one must not acquire a passing verdict by default"})
 	}
 	return out
 }

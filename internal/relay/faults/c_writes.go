@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 func cRetryCancel(ctx context.Context, l *Ledger, name string, a map[string]string) (any, error) {
@@ -101,7 +103,7 @@ func cStage(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
 			return nil, fmt.Errorf("fault_state_conflict: %s follows a fix, and none is recorded this cycle", stage)
 		}
 	}
-	id := sha256Hex(fmt.Sprintf("%s|%d|%s|%s", text(f, "fault_id"), integer(f, "cycle"), stage, ref))[:idWidth]
+	id := pyvalue.SHA256Hex(fmt.Sprintf("%s|%d|%s|%s", text(f, "fault_id"), integer(f, "cycle"), stage, ref))[:idWidth]
 	recorded := false
 	e = l.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
 		n, e := l.exec(ctx, "INSERT OR IGNORE INTO fault_remediations(remediation_id,fault_id,cycle,kind,ref,method,outcome,detail,recorded_at) VALUES(?,?,?,?,?,NULL,NULL,?,?)", id, text(f, "fault_id"), integer(f, "cycle"), stage, ref, a["--detail"], l.Clock.ISO())

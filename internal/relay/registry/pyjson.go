@@ -1,14 +1,8 @@
 package registry
 
 import (
-	"encoding/json"
 	"errors"
-	"fmt"
-	"math"
-	"strconv"
-	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
@@ -65,83 +59,6 @@ func copyObject(object contract.OrderedObject) contract.OrderedObject {
 
 // canonical is settings._canonical: json.dumps(value, sort_keys=True), where 0 and false differ.
 func canonical(value any) string { return pyjson.Dumps(value, pyjson.Options{SortKeys: true}) }
-
-// pyTypeName is type(value).__name__ for a decoded JSON value.
-func pyTypeName(value any) string {
-	switch value.(type) {
-	case nil:
-		return "NoneType"
-	case bool:
-		return "bool"
-	case json.Number, int, int64:
-		return "int"
-	case float64:
-		return "float"
-	case string:
-		return "str"
-	case []any, []string:
-		return "list"
-	case contract.OrderedObject:
-		return "dict"
-	default:
-		return fmt.Sprintf("%T", value)
-	}
-}
-
-// pyRepr is repr() of a decoded JSON value.
-func pyRepr(value any) string {
-	switch v := value.(type) {
-	case nil:
-		return "None"
-	case bool:
-		if v {
-			return "True"
-		}
-		return "False"
-	case string:
-		return pyStr(v)
-	case json.Number:
-		return v.String()
-	case float64:
-		switch {
-		case math.IsNaN(v):
-			return "nan"
-		case math.IsInf(v, 1):
-			return "inf"
-		case math.IsInf(v, -1):
-			return "-inf"
-		}
-		return pyjson.Float(v)
-	case int:
-		return strconv.Itoa(v)
-	case int64:
-		return strconv.FormatInt(v, 10)
-	case []string:
-		parts := make([]string, len(v))
-		for i, s := range v {
-			parts[i] = pyStr(s)
-		}
-		return "[" + strings.Join(parts, ", ") + "]"
-	case []any:
-		parts := make([]string, len(v))
-		for i, item := range v {
-			parts[i] = pyRepr(item)
-		}
-		return "[" + strings.Join(parts, ", ") + "]"
-	case contract.OrderedObject:
-		parts := make([]string, len(v))
-		for i, field := range v {
-			parts[i] = pyStr(field.Key) + ": " + pyRepr(field.Value)
-		}
-		return "{" + strings.Join(parts, ", ") + "}"
-	default:
-		return fmt.Sprint(v)
-	}
-}
-
-// pyStr is repr() of a str (settings.Repr: Python's quote, its escapes of what str.isprintable()
-// refuses, and a lone surrogate as \udXXX).
-func pyStr(s string) string { return settings.Repr(s) }
 
 // textList is settings._text_list: a list whose every member is text.
 func textList(value any) bool {

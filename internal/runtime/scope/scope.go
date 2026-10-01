@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
@@ -72,7 +72,7 @@ func (e Env) Without(key string) Env {
 // ServiceState is scope.service_state: classify a service status reading, the invocation first.
 // Being unable to ask is never being told no.
 func ServiceState(envelope Object) Object {
-	if envelope == nil || !evidence.Truthy(record.Get(envelope, "ok")) {
+	if envelope == nil || !pyvalue.Truthy(record.Get(envelope, "ok")) {
 		detail := firstStated(envelope, "unreadable", "stderr")
 		if detail == nil {
 			detail = "the command failed"
@@ -88,7 +88,7 @@ func ServiceState(envelope Object) Object {
 	held, ok := record.Get(payload, "running").(bool)
 	if !ok {
 		return Object{{Key: "state", Value: reading.Unreadable}, {Key: "running", Value: nil},
-			{Key: "detail", Value: "the status carries no boolean 'running', found " + TypeName(record.Get(payload, "running"))}}
+			{Key: "detail", Value: "the status carries no boolean 'running', found " + pyvalue.TypeName(record.Get(payload, "running"))}}
 	}
 	state, words := Stopped, "not running"
 	if held {
@@ -101,7 +101,7 @@ func ServiceState(envelope Object) Object {
 // firstStated is `a or b` over two envelope keys: the first truthy value, else nil.
 func firstStated(o Object, keys ...string) any {
 	for _, key := range keys {
-		if v := record.Get(o, key); evidence.Truthy(v) {
+		if v := record.Get(o, key); pyvalue.Truthy(v) {
 			return v
 		}
 	}
@@ -128,25 +128,6 @@ func PyStr(v any) string {
 		return strconv.Itoa(value)
 	}
 	return pyjson.Dumps(v, pyjson.Options{Unicode: true})
-}
-
-// TypeName is type(value).__name__ of a decoded JSON value.
-func TypeName(v any) string {
-	switch v.(type) {
-	case nil:
-		return "NoneType"
-	case bool:
-		return "bool"
-	case string:
-		return "str"
-	case float64:
-		return "float"
-	case Object:
-		return "dict"
-	case []any:
-		return "list"
-	}
-	return "int"
 }
 
 // Timeout is scope.relay's default per-command budget.
@@ -198,7 +179,7 @@ func Relay(ctx context.Context, command []string, executable, socket, state stri
 	case err != nil && ctx.Err() != nil:
 		return unreadable("the relay command was stopped before it finished: " + ctx.Err().Error())
 	case err != nil && run.Err() != nil:
-		return unreadable("TimeoutExpired: Command '" + evidence.Repr(commandValue) + "' timed out after " + seconds(timeout) + " seconds")
+		return unreadable("TimeoutExpired: Command '" + pyvalue.Repr(commandValue) + "' timed out after " + seconds(timeout) + " seconds")
 	case errors.Is(err, exec.ErrWaitDelay):
 		return unreadable("the relay exited, but a process it left behind kept its output open " + WaitDelay.String() + " past that, so what it printed is not read")
 	case err != nil && !errors.As(err, &exit):
@@ -292,7 +273,7 @@ func Survey(ctx context.Context, executable, socket, state string, env Env) Obje
 
 func usable(readings Object, name string) Object {
 	answer, _ := record.Get(readings, name).(Object)
-	if !evidence.Truthy(record.Get(answer, "ok")) {
+	if !pyvalue.Truthy(record.Get(answer, "ok")) {
 		return Object{}
 	}
 	payload, _ := record.Get(answer, "payload").(Object)
@@ -304,7 +285,7 @@ func usable(readings Object, name string) Object {
 
 // StateDirectory is scope.state_directory across the shapes different builds emit.
 func StateDirectory(payload Object) any {
-	if v := record.Get(payload, "stateDirectory"); evidence.Truthy(v) {
+	if v := record.Get(payload, "stateDirectory"); pyvalue.Truthy(v) {
 		return v
 	}
 	selection, _ := record.Get(payload, "stateSelection").(Object)
@@ -326,7 +307,7 @@ func SiblingReading(payload Object) string {
 	o, ok := siblings.(Object)
 	if !ok {
 		// Python's sibling_reading raises on anything but an object; nothing in it was read.
-		return "not readable: siblingStores is a " + TypeName(siblings) + ", not an object, so the conflict inventory could not be read from it"
+		return "not readable: siblingStores is a " + pyvalue.TypeName(siblings) + ", not an object, so the conflict inventory could not be read from it"
 	}
 	if record.Get(o, "checked") == false {
 		return "not checked: " + PyStr(record.Get(o, "reason"))
@@ -404,7 +385,7 @@ func StoresSeen(readings Object, env Env) []any {
 		payload Object
 		how     string
 	}{{discovery, "discovery"}, {selected, "explicit --state"}} {
-		if path := StateDirectory(one.payload); evidence.Truthy(path) {
+		if path := StateDirectory(one.payload); pyvalue.Truthy(path) {
 			seen = append(seen, Object{{Key: "path", Value: path}, {Key: "foundBy", Value: one.how}})
 		}
 	}
@@ -426,7 +407,7 @@ func StoresSeen(readings Object, env Env) []any {
 		for i, u := range unique {
 			// A relay's doctor payload may carry any JSON value as a path, and Python compares
 			// lists and objects by value where Go's == would panic on them.
-			if evidence.Equal(record.Get(u, "path"), record.Get(entry, "path")) && evidence.Equal(record.Get(u, "database"), record.Get(entry, "database")) {
+			if pyvalue.ItemEqual(record.Get(u, "path"), record.Get(entry, "path")) && pyvalue.ItemEqual(record.Get(u, "database"), record.Get(entry, "database")) {
 				match = i
 				break
 			}
@@ -459,7 +440,7 @@ func Summarise(readings Object, env Env, service any) Object {
 	discovery := usable(readings, "discovery")
 	selected := usable(readings, "selected")
 	attempt, _ := record.Get(readings, "selected").(Object)
-	attempted := len(attempt) > 0 && !evidence.Truthy(record.Get(attempt, "skipped"))
+	attempted := len(attempt) > 0 && !pyvalue.Truthy(record.Get(attempt, "skipped"))
 	var primary Object
 	var answeredBy string
 	answering := ""
@@ -481,7 +462,7 @@ func Summarise(readings Object, env Env, service any) Object {
 		scopeCommand = record.Get(reading, "command")
 	}
 	databasePath := record.Get(storeInfo, "dbPath")
-	if !evidence.Truthy(databasePath) {
+	if !pyvalue.Truthy(databasePath) {
 		databasePath = record.Get(storeInfo, "realPath")
 	}
 	relationships, has := record.Lookup(contents, "relationships")

@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
@@ -100,7 +101,7 @@ func routeGuard(ctx context.Context, s Services, stop hook.Object, options hook.
 	selected := options.DBPath
 	if selected == "" {
 		selected = s.Selection.DBPath()
-		if workspace := evidence.Get(stop, "cwd"); evidence.Truthy(workspace) {
+		if workspace := evidence.Get(stop, "cwd"); pyvalue.Truthy(workspace) {
 			path, _ := workspace.(string)
 			_, facts, _, err := delivery.SelectAssignmentContext(ctx, options.Root, path, evidence.Get(stop, "session_id"))
 			if err != nil {

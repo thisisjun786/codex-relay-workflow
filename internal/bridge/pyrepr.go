@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // policyOrder is settings.py POLICY_DEFAULTS order: normalise_policy builds each policy dict
@@ -27,7 +27,7 @@ func pyRepr(value any) string {
 		}
 		return "False"
 	case string:
-		return pyString(v)
+		return pyvalue.StrRepr(v)
 	case json.Number:
 		return v.String()
 	case float64:
@@ -40,7 +40,7 @@ func pyRepr(value any) string {
 	case []string:
 		parts := make([]string, len(v))
 		for i, s := range v {
-			parts[i] = pyString(s)
+			parts[i] = pyvalue.StrRepr(s)
 		}
 		return "[" + strings.Join(parts, ", ") + "]"
 	case []any:
@@ -52,7 +52,7 @@ func pyRepr(value any) string {
 	case map[string]any:
 		parts := []string{}
 		for _, key := range mapOrder(v) {
-			parts = append(parts, pyString(key)+": "+pyRepr(v[key]))
+			parts = append(parts, pyvalue.StrRepr(key)+": "+pyRepr(v[key]))
 		}
 		return "{" + strings.Join(parts, ", ") + "}"
 	default:
@@ -82,8 +82,6 @@ func mapOrder(m map[string]any) []string {
 	}
 	return keys
 }
-
-func pyString(s string) string { return settings.Repr(s) }
 
 // findingText is bridge.py's "{code}: {field} returned {returned!r}, expected {expected!r}".
 func findingText(code, field string, returned, expected any) string {

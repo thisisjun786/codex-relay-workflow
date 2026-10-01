@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/scope"
@@ -113,7 +114,7 @@ func Main(ctx context.Context, args []string, env scope.Env, stdout, stderr io.W
 		return OK
 	default:
 		usage(stderr)
-		fmt.Fprintf(stderr, "crw install: error: argument command: invalid choice: %s (choose from %s)\n", store.PythonRepr(command), "'"+strings.Join(Commands, "', '")+"'")
+		fmt.Fprintf(stderr, "crw install: error: argument command: invalid choice: %s (choose from %s)\n", pyvalue.StrRepr(command), "'"+strings.Join(Commands, "', '")+"'")
 		return Usage
 	}
 	positional, err := parse(flags, rest)
@@ -261,9 +262,9 @@ func fixedHome(home string) string {
 	case !utf8.ValidString(home):
 		return notUTF8Detail("HOME", home)
 	case !filepath.IsAbs(home):
-		return "HOME is " + store.PythonRepr(home) + ", which is not an absolute path, so the destination under it would be read wherever this command runs"
+		return "HOME is " + pyvalue.StrRepr(home) + ", which is not an absolute path, so the destination under it would be read wherever this command runs"
 	case pathlibHome(home) != filepath.Clean(home):
-		return "HOME is " + store.PythonRepr(home) + ", which pathlib spells " + store.PythonRepr(pathlibHome(home)) + " and a lexical join spells " + store.PythonRepr(filepath.Clean(home)) + ", so the destination under it would not be one directory; set HOME to its plain absolute spelling"
+		return "HOME is " + pyvalue.StrRepr(home) + ", which pathlib spells " + pyvalue.StrRepr(pathlibHome(home)) + " and a lexical join spells " + pyvalue.StrRepr(filepath.Clean(home)) + ", so the destination under it would not be one directory; set HOME to its plain absolute spelling"
 	}
 	return ""
 }
@@ -303,7 +304,7 @@ func notUTF8(values []namedValue) string {
 // character and name a file that does not exist. The execution policy path is the one path
 // recorded surrogate-escaped, as runtime_install.py records it.
 func notUTF8Detail(name, value string) string {
-	return name + " holds a byte that is not UTF-8 (" + store.PythonRepr(store.FSDecode(value)) + "), and crw install records only paths it can spell as UTF-8, so nothing was read or written; use a path whose name is UTF-8"
+	return name + " holds a byte that is not UTF-8 (" + pyvalue.StrRepr(pyvalue.FSDecode(value)) + "), and crw install records only paths it can spell as UTF-8, so nothing was read or written; use a path whose name is UTF-8"
 }
 
 func absolute(path string) (string, error) {

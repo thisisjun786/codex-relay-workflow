@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -65,7 +65,7 @@ func decodeRoute(row store.Row) (Object, error) {
 		}
 	}
 	if len(unknown) > 0 {
-		return nil, &Refusal{"route_state_conflict", fmt.Sprintf("route %s carries target keys %s", out["fault_id"], evidence.Repr(unknown))}
+		return nil, &Refusal{"route_state_conflict", fmt.Sprintf("route %s carries target keys %s", out["fault_id"], pyvalue.Repr(unknown))}
 	}
 	return out, nil
 }

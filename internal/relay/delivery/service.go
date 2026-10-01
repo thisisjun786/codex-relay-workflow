@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -50,7 +51,7 @@ func NewService(s *store.Store, clock Clock) *Service {
 func (d *Service) Get(ctx context.Context, eventID string) (Row, error) {
 	row, err := d.Find(ctx, eventID)
 	if err == nil && row == nil {
-		err = refuse(NotClaimable, "no delivery queued for event %s", store.PyRepr(eventID))
+		err = refuse(NotClaimable, "no delivery queued for event %s", pyvalue.StrRepr(eventID))
 	}
 	return row, err
 }
@@ -107,11 +108,11 @@ func (d *Service) ResolveRecipient(ctx context.Context, r Relationship, kind str
 		return "", nil, err
 	}
 	if readable, _ := get(reading, "readable"); readable != true {
-		return "", nil, refuse(RelationUnreadable, "the linkage could not be read for relationship %s, so who owns its scope is unknown; the relationship row is not used as a fallback because an unreadable store has said nothing about the owner", store.PyRepr(rid))
+		return "", nil, refuse(RelationUnreadable, "the linkage could not be read for relationship %s, so who owns its scope is unknown; the relationship row is not used as a fallback because an unreadable store has said nothing about the owner", pyvalue.StrRepr(rid))
 	}
 	contention, _ := get(reading, "contention")
 	if state, _ := get(reading, "state"); state == "ambiguous" {
-		return "", nil, refuse(DuplicateScopeOwner, "the linkage reports more than one candidate for relationship %s; this reader will not choose between them: %s", store.PyRepr(rid), pyReprValue(contention))
+		return "", nil, refuse(DuplicateScopeOwner, "the linkage reports more than one candidate for relationship %s; this reader will not choose between them: %s", pyvalue.StrRepr(rid), pyReprValue(contention))
 	}
 	var live []any
 	items, _ := contention.([]any)
@@ -130,7 +131,7 @@ func (d *Service) ResolveRecipient(ctx context.Context, r Relationship, kind str
 		if drifting {
 			reason = RelationOwnerDrift
 		}
-		return "", nil, refuse(reason, "the linkage reports the hierarchy of relationship %s as inconsistent, so who owns its scope is not settled: %s. A resolved state with contention is not a resolved owner, and delivery waits for the hierarchy to settle rather than picking the side that happens to match the frozen row", store.PyRepr(rid), pyReprValue(live))
+		return "", nil, refuse(reason, "the linkage reports the hierarchy of relationship %s as inconsistent, so who owns its scope is not settled: %s. A resolved state with contention is not a resolved owner, and delivery waits for the hierarchy to settle rather than picking the side that happens to match the frozen row", pyvalue.StrRepr(rid), pyReprValue(live))
 	}
 	var wanted string
 	switch kind {
@@ -139,7 +140,7 @@ func (d *Service) ResolveRecipient(ctx context.Context, r Relationship, kind str
 	case Completion, MergeTurnGrant:
 		wanted = "project"
 	default:
-		return "", nil, refuse(NotClaimable, "%s is not a delivery direction, so it has no resolvable recipient", store.PyRepr(kind))
+		return "", nil, refuse(NotClaimable, "%s is not a delivery direction, so it has no resolvable recipient", pyvalue.StrRepr(kind))
 	}
 	var level Obj
 	levels, _ := get(reading, "levels")
@@ -154,7 +155,7 @@ func (d *Service) ResolveRecipient(ctx context.Context, r Relationship, kind str
 	owner, _ := get(level, "owner")
 	if level == nil || owner == nil {
 		gaps, _ := get(reading, "gaps")
-		return "", nil, refuse(UnregisteredScope, "the linkage records no live %s owner for relationship %s; gaps %s. Nothing found is reported as nothing found, never as a delivery that may proceed", wanted, store.PyRepr(rid), pyReprValue(gaps))
+		return "", nil, refuse(UnregisteredScope, "the linkage records no live %s owner for relationship %s; gaps %s. Nothing found is reported as nothing found, never as a delivery that may proceed", wanted, pyvalue.StrRepr(rid), pyReprValue(gaps))
 	}
 	current := ""
 	var revision any
@@ -166,7 +167,7 @@ func (d *Service) ResolveRecipient(ctx context.Context, r Relationship, kind str
 	}
 	scopeKey, _ := get(level, "scopeKey")
 	if current != frozen {
-		return "", nil, refuse(RelationOwnerDrift, "relationship %s names %s but the linkage says %s %s is owned by %s. A report that arrived after the relationship changed is held rather than credited to either task; re-register the assignment under the current owner and deliver that", store.PyRepr(rid), store.PyRepr(frozen), wanted, pyReprValue(scopeKey), store.PyRepr(current))
+		return "", nil, refuse(RelationOwnerDrift, "relationship %s names %s but the linkage says %s %s is owned by %s. A report that arrived after the relationship changed is held rather than credited to either task; re-register the assignment under the current owner and deliver that", pyvalue.StrRepr(rid), pyvalue.StrRepr(frozen), wanted, pyReprValue(scopeKey), pyvalue.StrRepr(current))
 	}
 	return current, Obj{{Key: "source", Value: "linkage"}, {Key: "verified", Value: true}, {Key: "scopeKind", Value: wanted}, {Key: "scopeKey", Value: scopeKey}, {Key: "revision", Value: revision}}, nil
 }
@@ -182,10 +183,10 @@ func (d *Service) Enqueue(ctx context.Context, eventID, kind, recipient string) 
 		return nil, err
 	}
 	if event == nil {
-		return nil, refuse(NotClaimable, "event %s was never accepted", store.PyRepr(eventID))
+		return nil, refuse(NotClaimable, "event %s was never accepted", pyvalue.StrRepr(eventID))
 	}
 	if event.S("stage") != "final" {
-		return nil, refuse(NotClaimable, "event %s is %s; only a final event may be delivered", store.PyRepr(eventID), store.PyRepr(event.S("stage")))
+		return nil, refuse(NotClaimable, "event %s is %s; only a final event may be delivered", pyvalue.StrRepr(eventID), pyvalue.StrRepr(event.S("stage")))
 	}
 	rid := event.S("relationship_id")
 	relationship, err := RequireActive(ctx, d.Store, rid)
@@ -629,7 +630,7 @@ func (d *Service) claim(ctx context.Context, eventID string, now float64, owner,
 			return err
 		}
 		if clash != nil && clash.S("event_id") != eventID {
-			return refuse(NotClaimable, "request id %s already belongs to event %s", store.PyRepr(out.requestID), store.PyRepr(clash.S("event_id")))
+			return refuse(NotClaimable, "request id %s already belongs to event %s", pyvalue.StrRepr(out.requestID), pyvalue.StrRepr(clash.S("event_id")))
 		}
 		record, err := d.Receipt(ctx, eventID)
 		if err != nil {

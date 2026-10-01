@@ -15,6 +15,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // pySpace is the class Python's str-pattern \s matches (str.isspace).
@@ -32,9 +34,8 @@ func pyIsSpace(r rune) bool {
 		(r >= 0x2000 && r <= 0x200a)
 }
 
-func pyStrip(s string) string  { return strings.TrimFunc(s, pyIsSpace) }
 func pyLStrip(s string) string { return strings.TrimLeftFunc(s, pyIsSpace) }
-func pyIsBlank(s string) bool  { return pyStrip(s) == "" }
+func pyIsBlank(s string) bool  { return pyvalue.Strip(s) == "" }
 func pyStripChars(s, chars string) string {
 	return strings.Trim(s, chars)
 }
@@ -129,7 +130,7 @@ func isRelativeTo(path, root string) bool {
 
 // pyScalar is validate.py's scalar(): a nonempty string, JSON-quoted, single-quoted or bare.
 func pyScalar(text string) (string, error) {
-	text = pyStrip(text)
+	text = pyvalue.Strip(text)
 	var value any = text
 	if strings.HasPrefix(text, `"`) {
 		decoded, err := pyJSONLoads(text)
@@ -162,7 +163,7 @@ func SkillMetadata(path string) error {
 		return valueError{"Missing frontmatter"}
 	}
 	fields := map[string]string{}
-	for _, line := range pySplitlines(pyStrip(parts[1])) {
+	for _, line := range pySplitlines(pyvalue.Strip(parts[1])) {
 		key, value, found := strings.Cut(line, ":")
 		if _, seen := fields[key]; !found || (key != "name" && key != "description") || seen {
 			return valueError{"Expected one name and one description field"}
@@ -190,9 +191,9 @@ func SkillMetadata(path string) error {
 			continue
 		}
 		if !strings.HasPrefix(line, " ") {
-			section = pyStrip(line)
+			section = pyvalue.Strip(line)
 		} else if section == "interface:" {
-			key, value, found := strings.Cut(pyStrip(line), ":")
+			key, value, found := strings.Cut(pyvalue.Strip(line), ":")
 			if _, seen := interfaceFields[key]; !found || seen {
 				return valueError{"Malformed interface metadata"}
 			}

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -22,7 +23,7 @@ func (c *Channel) latestStatement(ctx context.Context, o Obligation) (Obligation
 	if o.Kind != "blocked" && o.Kind != "decision_request" {
 		return o, nil
 	}
-	row := store.SupervisorMessagesRow{ObligationID: o.ID, ObligationKind: o.Kind, RelationshipID: o.RelationID, EventID: nullString(evidence.Text(o.Basis["eventId"]))}
+	row := store.SupervisorMessagesRow{ObligationID: o.ID, ObligationKind: o.Kind, RelationshipID: o.RelationID, EventID: nullString(pyvalue.Str(o.Basis["eventId"]))}
 	latest, err := c.newestRaising(ctx, row)
 	if err != nil || latest == nil {
 		return o, err
@@ -39,10 +40,10 @@ func (c *Channel) omissionWithdrawn(ctx context.Context, o Obligation, reading m
 		return ""
 	}
 	if derived["reportingState"] != "unreported" || derived["owed"] != true {
-		return "this store, which records this session's declarations, derives turn " + store.PyRepr(o.Subject) + " as " + store.PyRepr(evidence.Text(derived["reportingState"])) + " (" + evidence.Text(derived["reason"]) + ") and owed answers " + store.PyRepr(evidence.Text(derived["owedReason"])) + ", so nothing is owed through this message"
+		return "this store, which records this session's declarations, derives turn " + pyvalue.StrRepr(o.Subject) + " as " + pyvalue.StrRepr(pyvalue.Str(derived["reportingState"])) + " (" + pyvalue.Str(derived["reason"]) + ") and owed answers " + pyvalue.StrRepr(pyvalue.Str(derived["owedReason"])) + ", so nothing is owed through this message"
 	}
 	if reading["source"] == delivery.OmittedStoreSource && observationReadingKey(o, derived) != observationReadingKey(o, reading) {
-		return "this store derives turn " + store.PyRepr(o.Subject) + "'s omission differently from the reading frozen on this message"
+		return "this store derives turn " + pyvalue.StrRepr(o.Subject) + "'s omission differently from the reading frozen on this message"
 	}
 	return ""
 }
@@ -69,7 +70,7 @@ func (c *Channel) refreshProposal(ctx context.Context, row store.SupervisorMessa
 			var event string
 			err := c.Store.Q(ctx).QueryRowContext(ctx, "SELECT event_id FROM events WHERE relationship_id=? AND turn_id=? AND stage='final' ORDER BY rowid DESC LIMIT 1", row.RelationshipID, row.Subject).Scan(&event)
 			if err == nil {
-				return false, Refusal{"superseded_revision", "turn " + store.PyRepr(row.Subject) + " has a final receipt, event " + store.PyRepr(event) + ", accepted after this omission was staged; the turn reported, and what that event raises goes up as its own fact. Nothing is sent through this message; it is held as 'superseded_by_report', and staging the project stages what is owed now"}
+				return false, Refusal{"superseded_revision", "turn " + pyvalue.StrRepr(row.Subject) + " has a final receipt, event " + pyvalue.StrRepr(event) + ", accepted after this omission was staged; the turn reported, and what that event raises goes up as its own fact. Nothing is sent through this message; it is held as 'superseded_by_report', and staging the project stages what is owed now"}
 			}
 			if err != sql.ErrNoRows {
 				return false, err
@@ -88,9 +89,9 @@ func (c *Channel) refreshProposal(ctx context.Context, row store.SupervisorMessa
 		}
 		description := "nothing"
 		if raised != nil {
-			description = store.PyRepr(raised.Kind) + " obligation " + store.PyRepr(raised.ID)
+			description = pyvalue.StrRepr(raised.Kind) + " obligation " + pyvalue.StrRepr(raised.ID)
 		}
-		return false, Refusal{"superseded_revision", "no event raises obligation " + store.PyRepr(row.ObligationID) + " any more; event " + store.PyRepr(row.EventID.String) + " now raises " + description + ". Nothing is sent through this message; it is held as 'superseded_by_report', and staging the project stages what is owed now"}
+		return false, Refusal{"superseded_revision", "no event raises obligation " + pyvalue.StrRepr(row.ObligationID) + " any more; event " + pyvalue.StrRepr(row.EventID.String) + " now raises " + description + ". Nothing is sent through this message; it is held as 'superseded_by_report', and staging the project stages what is owed now"}
 	}
 	owed, _, err := c.ReportableCurrent(ctx, *o)
 	if err != nil {
@@ -312,5 +313,5 @@ func nullableStringRepr(s sql.NullString) string {
 	if !s.Valid {
 		return "None"
 	}
-	return store.PyRepr(s.String)
+	return pyvalue.StrRepr(s.String)
 }

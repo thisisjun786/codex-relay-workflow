@@ -2,8 +2,8 @@ package adapter
 
 import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 )
 
@@ -19,13 +19,13 @@ func verifyResume(settings delivery.TaskSettings, response any, status any) (con
 	if len(findings) > 0 {
 		first := findings[0].(contract.OrderedObject)
 		code := text(field(first, "code"))
-		returned := evidence.Repr(field(first, "returned"))
+		returned := pyvalue.Repr(field(first, "returned"))
 		message := code + ": " + text(field(first, "field")) + " returned " + returned + "; message withheld"
 		if !transmitted {
 			if code == registry.SettingsNotPreserved {
 				code = registry.SettingsDifferAfterLoad
 			}
-			message = code + ": " + text(field(first, "field")) + " is " + returned + " on the loaded thread and " + evidence.Repr(field(first, "expected")) + " in the record; nothing was transmitted and no turn was started"
+			message = code + ": " + text(field(first, "field")) + " is " + returned + " on the loaded thread and " + pyvalue.Repr(field(first, "expected")) + " in the record; nothing was transmitted and no turn was started"
 		}
 		return contract.OrderedObject{{Key: "code", Value: code}, {Key: "message", Value: message}}, findings, nil
 	}

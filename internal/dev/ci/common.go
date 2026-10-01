@@ -15,6 +15,8 @@ import (
 	"sort"
 	"strings"
 	"syscall"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // Helpers the CI checks share: the git runner, Python's error texts and the argparse-shaped flag
@@ -32,7 +34,7 @@ type gitError struct {
 }
 
 func (e *gitError) Error() string {
-	return fmt.Sprintf("Command '%s' %s", pyReprList(append([]string{"git"}, e.args...)), e.status)
+	return fmt.Sprintf("Command '%s' %s", pyvalue.Repr(append([]string{"git"}, e.args...)), e.status)
 }
 
 func runGit(root string, args ...string) ([]byte, error) {
@@ -110,7 +112,7 @@ func pyOSErrorText(err error) string {
 	text = fmt.Sprintf("[Errno %d] %s%s", int(errno), strings.ToUpper(text[:1]), text[1:])
 	var path *os.PathError
 	if errors.As(err, &path) {
-		text += ": " + pyRepr(path.Path)
+		text += ": " + pyvalue.StrRepr(path.Path)
 	}
 	return text
 }
@@ -171,7 +173,7 @@ func parseOptions(prog, description string, names, switches []string, args []str
 		present[match[0]] = true
 		if slices.Contains(switches, match[0]) {
 			if inline {
-				return fail(fmt.Sprintf("argument --%s: ignored explicit argument %s", match[0], pyRepr(value)))
+				return fail(fmt.Sprintf("argument --%s: ignored explicit argument %s", match[0], pyvalue.StrRepr(value)))
 			}
 			continue
 		}

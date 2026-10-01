@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // Port of scripts/check_operations_contract.py: the operations fixtures replayed against the
@@ -128,7 +130,7 @@ func checkResultRecord(contract string, record *pyDict, problems []string) ([]st
 	if len(declared) == 0 {
 		problems = append(problems, "OPS-6.1 declares no fields, so the check-result example cannot be verified")
 	} else if !sameSet(declared, present) {
-		problems = append(problems, "check-result fields "+pyReprList(sortedKeys(present))+" do not match OPS-6.1 "+pyReprList(sortedKeys(declared)))
+		problems = append(problems, "check-result fields "+pyvalue.Repr(sortedKeys(present))+" do not match OPS-6.1 "+pyvalue.Repr(sortedKeys(declared)))
 	}
 	for _, name := range fields.keys {
 		field, ok := dictItems(fields.get(name))

@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -99,7 +100,7 @@ func FaultIDInWorkspace(product, class string, signature map[string]any, workspa
 	if workspace != "" {
 		text += "|workspace=" + workspace
 	}
-	return sha256Hex(text)[:idWidth]
+	return pyvalue.SHA256Hex(text)[:idWidth]
 }
 
 func occurrenceID(identifier, key string, episode int64, cleared bool) string {
@@ -107,18 +108,18 @@ func occurrenceID(identifier, key string, episode int64, cleared bool) string {
 	if cleared {
 		direction = "cleared"
 	}
-	return sha256Hex(fmt.Sprintf("%s|%d|%s|%s", identifier, episode, direction, key))[:idWidth]
+	return pyvalue.SHA256Hex(fmt.Sprintf("%s|%d|%s|%s", identifier, episode, direction, key))[:idWidth]
 }
 
 func publicationID(identifier, kind, trigger string) string {
-	return sha256Hex(identifier + "|" + kind + "|" + trigger)[:idWidth]
+	return pyvalue.SHA256Hex(identifier + "|" + kind + "|" + trigger)[:idWidth]
 }
 
 func identityDigest(identifier, kind, trigger string, cycle int64) string {
-	return sha256Hex(fmt.Sprintf("%s|%s|%s|%d", identifier, kind, trigger, cycle))
+	return pyvalue.SHA256Hex(fmt.Sprintf("%s|%s|%s|%d", identifier, kind, trigger, cycle))
 }
 
-func evidenceDigest(evidence []any) string { return sha256Hex(dumps(evidence, true)) }
+func evidenceDigest(evidence []any) string { return pyvalue.SHA256Hex(dumps(evidence, true)) }
 
 func encodeScopePart(part string) string {
 	r := strings.NewReplacer("%", "%25", "|", "%7C", ":", "%3A", "@", "%40")
@@ -701,7 +702,7 @@ func (l *Ledger) notifyKind(ctx context.Context, identifier, kind string, cycle 
 	if err != nil {
 		return err
 	}
-	notification := sha256Hex(fmt.Sprintf("%s|%s|%d", identifier, kind, cycle))[:idWidth]
+	notification := pyvalue.SHA256Hex(fmt.Sprintf("%s|%s|%d", identifier, kind, cycle))[:idWidth]
 	_, err = l.exec(ctx, "INSERT INTO fault_notifications (notification_id, fault_id, product,  kind, reason, cycle, ref, state, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(notification_id) DO UPDATE SET state = excluded.state,   last_error = NULL, updated_at = excluded.updated_at WHERE fault_notifications.state = ?",
 		notification, identifier, text(fault, "product"), kind, nil, cycle, nil, pending, now, now, Withdrawn)
 	return err

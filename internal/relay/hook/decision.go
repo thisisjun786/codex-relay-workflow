@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 )
@@ -26,7 +27,7 @@ type Observation struct {
 }
 
 func ReceiptMatches(receipt, stop, marker Object) bool {
-	return evidence.Truthy(get(receipt, "atCurrentHead")) && delivery.SameIdentity(get(receipt, "sessionId"), get(stop, "session_id")) && delivery.SameIdentity(get(receipt, "turnId"), get(stop, "turn_id")) && delivery.SameIdentity(get(receipt, "relationshipId"), get(object(get(marker, "relationship")), "relationshipId"))
+	return pyvalue.Truthy(get(receipt, "atCurrentHead")) && delivery.SameIdentity(get(receipt, "sessionId"), get(stop, "session_id")) && delivery.SameIdentity(get(receipt, "turnId"), get(stop, "turn_id")) && delivery.SameIdentity(get(receipt, "relationshipId"), get(object(get(marker, "relationship")), "relationshipId"))
 }
 func ClassifyDeclaration(o Observation) string {
 	d, ok := evidence.Object(o.Disposition)
@@ -109,7 +110,7 @@ func ObserveState(o Observation) (string, string) {
 	}
 	ev := text(get(o.Receipt, "evidence"))
 	if declaration == "receipt_missing" && slices.Contains(generationEvidence, ev) {
-		detail := evidence.Text(get(o.Receipt, "detail"))
+		detail := pyvalue.Str(get(o.Receipt, "detail"))
 		if ev == "generation_absent" {
 			delivery.MarkReturn(o.Reached, "observe_state", 12)
 			return "receipt_missing", "The relay's store holds no record of the generation it reports as current for this relationship: " + detail + ". Nothing can be attributed to this assignment while the store cannot say which dispatch opened the generation it is on, and no receipt this session emits changes that. The relay's store is what needs repair."
@@ -149,7 +150,7 @@ func Decide(o Observation, counters Object, mode string) Object {
 			delivery.MarkReturn(o.Reached, "decide", 3)
 			finalState = "hold_in_flight"
 			finalReason = "This turn already took its one hold."
-		case evidence.Truthy(get(o.Stop, "stop_hook_active")):
+		case pyvalue.Truthy(get(o.Stop, "stop_hook_active")):
 			delivery.MarkReturn(o.Reached, "decide", 4)
 			finalState = "hold_in_flight"
 			finalReason = "A continuation is already running for this turn; the omission is recorded."
@@ -181,10 +182,10 @@ func Decide(o Observation, counters Object, mode string) Object {
 		record = set(record, "assignmentState", delivery.DeriveAssignmentStateTrace(marker, o.Now, o.Reached))
 		record = set(record, "identityContested", delivery.IdentityContestedTrace(marker, o.Reached))
 	}
-	if evidence.Truthy(get(o.Receipt, "evidence")) {
+	if pyvalue.Truthy(get(o.Receipt, "evidence")) {
 		record = set(record, "receiptEvidence", get(o.Receipt, "evidence"))
 		result = set(result, "receiptEvidence", get(o.Receipt, "evidence"))
-		if evidence.Truthy(get(o.Receipt, "detail")) {
+		if pyvalue.Truthy(get(o.Receipt, "detail")) {
 			record = set(record, "receiptDetail", get(o.Receipt, "detail"))
 			result = set(result, "receiptDetail", get(o.Receipt, "detail"))
 		}

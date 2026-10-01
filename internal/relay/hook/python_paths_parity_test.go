@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
@@ -31,7 +31,7 @@ func TestAPathFromJSONReachesTheSystemAsPythonEncodesIt(t *testing.T) {
 	}
 	writeTest(t, filepath.Join(journal, "20260930", strings.Repeat("a", 32)+".json"), []byte("{}\n"))
 	writeTest(t, filepath.Join(journal, "transcript.jsonl"), nil)
-	spelled := store.FSDecode(journal)      // the str Python holds for it, as JSON decodes "\udcff"
+	spelled := pyvalue.FSDecode(journal)    // the str Python holds for it, as JSON decodes "\udcff"
 	unencodable := spelled + "\xed\xa0\x80" // ... followed by U+D800, which os.fsencode refuses
 	before, err := os.ReadDir(root)
 	if err != nil {
@@ -148,7 +148,7 @@ func TestTheControlSocketIsDialledWhereItsSourceNamesIt(t *testing.T) {
 	}{
 		{"a dbPath from the settings", func(home string) (Object, string) {
 			state := filepath.Join(home, "s\xff")
-			return Object{{Key: "dbPath", Value: store.FSDecode(state) + "/relay.sqlite3"}}, state
+			return Object{{Key: "dbPath", Value: pyvalue.FSDecode(state) + "/relay.sqlite3"}}, state
 		}},
 		{"a state directory from the environment", func(home string) (Object, string) {
 			xdg := filepath.Join(home, "x\xed\xb3\xbf")

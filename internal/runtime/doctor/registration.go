@@ -14,7 +14,7 @@ import (
 	"github.com/BurntSushi/toml"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pluginwiring"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/definition"
@@ -194,7 +194,7 @@ func (j judge) stopHooks(into *componentRegistrations, path string) {
 	}
 	byEvent, ok := events.(Object)
 	if !ok {
-		shape("hooks", "hooks is "+scope.TypeName(events)+", not an object")
+		shape("hooks", "hooks is "+pyvalue.TypeName(events)+", not an object")
 		return
 	}
 	stop, present := record.Lookup(byEvent, "Stop")
@@ -203,14 +203,14 @@ func (j judge) stopHooks(into *componentRegistrations, path string) {
 	}
 	groups, ok := stop.([]any)
 	if !ok {
-		shape("hooks.Stop", "hooks.Stop is "+scope.TypeName(stop)+", not a list")
+		shape("hooks.Stop", "hooks.Stop is "+pyvalue.TypeName(stop)+", not a list")
 		return
 	}
 	for g, raw := range groups {
 		groupField := fmt.Sprintf("hooks.Stop[%d]", g)
 		group, ok := raw.(Object)
 		if !ok {
-			shape(groupField, groupField+" is "+scope.TypeName(raw)+", not an object")
+			shape(groupField, groupField+" is "+pyvalue.TypeName(raw)+", not an object")
 			continue
 		}
 		entries, present := record.Lookup(group, "hooks")
@@ -219,14 +219,14 @@ func (j judge) stopHooks(into *componentRegistrations, path string) {
 		}
 		list, ok := entries.([]any)
 		if !ok {
-			shape(groupField+".hooks", groupField+".hooks is "+scope.TypeName(entries)+", not a list")
+			shape(groupField+".hooks", groupField+".hooks is "+pyvalue.TypeName(entries)+", not a list")
 			continue
 		}
 		for h, raw := range list {
 			field := fmt.Sprintf("%s.hooks[%d]", groupField, h)
 			entry, ok := raw.(Object)
 			if !ok {
-				shape(field, field+" is "+scope.TypeName(raw)+", not an object")
+				shape(field, field+" is "+pyvalue.TypeName(raw)+", not an object")
 				continue
 			}
 			command, present := record.Lookup(entry, "command")
@@ -235,7 +235,7 @@ func (j judge) stopHooks(into *componentRegistrations, path string) {
 			}
 			text, ok := command.(string)
 			if !ok {
-				shape(field+".command", field+".command is "+scope.TypeName(command)+", not a string")
+				shape(field+".command", field+".command is "+pyvalue.TypeName(command)+", not a string")
 				continue
 			}
 			j.stopCommand(into, path, field+".command", text)
@@ -317,19 +317,19 @@ func (j judge) pluginBridge(into *componentRegistrations, path string, document 
 	}
 	read := pluginwiring.ReadBridgeRecord(document)
 	if read.Version == 0 {
-		refuse("recordVersion", "it is version "+evidence.Repr(read.VersionValue)+", and the launcher reads versions 1 and 2")
+		refuse("recordVersion", "it is version "+pyvalue.Repr(read.VersionValue)+", and the launcher reads versions 1 and 2")
 		return
 	}
 	if read.ServerName != nil && read.ServerName != definition.Bridge {
-		refuse("serverName", "it names the server "+evidence.Repr(read.ServerName)+", and the package declares '"+definition.Bridge+"'")
+		refuse("serverName", "it names the server "+pyvalue.Repr(read.ServerName)+", and the package declares '"+definition.Bridge+"'")
 		return
 	}
 	if !read.IsString || !filepath.IsAbs(read.Executable) {
-		refuse("bridgeExecutable", "it must name bridgeExecutable as an absolute path, found "+evidence.Repr(read.ExecutableValue))
+		refuse("bridgeExecutable", "it must name bridgeExecutable as an absolute path, found "+pyvalue.Repr(read.ExecutableValue))
 		return
 	}
 	if !read.ArgsOK {
-		refuse("args", "it must list args as strings, found "+evidence.Repr(read.ArgsValue))
+		refuse("args", "it must list args as strings, found "+pyvalue.Repr(read.ArgsValue))
 		return
 	}
 	switch {
@@ -356,7 +356,7 @@ func (j judge) policy(into *componentRegistrations, path string, reference any, 
 	}
 	file := policy.File.Text
 	if !policy.File.OK() {
-		refuse("executionPolicy.path", "it must name the execution policy as an absolute path with no surrounding whitespace or control characters, found "+evidence.Repr(policy.File.Value))
+		refuse("executionPolicy.path", "it must name the execution policy as an absolute path with no surrounding whitespace or control characters, found "+pyvalue.Repr(policy.File.Value))
 		return false
 	}
 	if !policy.DigestOK {
@@ -370,7 +370,7 @@ func (j judge) policy(into *componentRegistrations, path string, reference any, 
 	var opening *os.PathError
 	switch {
 	case !encodable:
-		refuse("executionPolicy.path", "it names an execution policy path this system cannot encode, found "+evidence.Repr(file))
+		refuse("executionPolicy.path", "it names an execution policy path this system cannot encode, found "+pyvalue.Repr(file))
 		return false
 	case errors.As(err, &opening) && (errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOTDIR)):
 		refuse("executionPolicy.path", "the execution policy "+file+" does not exist")
@@ -426,18 +426,18 @@ func (j judge) codexConfig(into *componentRegistrations, path string) {
 	for _, name := range names {
 		table, ok := servers[name].(map[string]any)
 		if !ok {
-			malformed("mcp_servers."+name, "the registration for "+evidence.Repr(name)+" is a table, found "+tomlType(servers[name]))
+			malformed("mcp_servers."+name, "the registration for "+pyvalue.Repr(name)+" is a table, found "+tomlType(servers[name]))
 			return
 		}
 		if command, present := table["command"]; present {
 			if _, ok := command.(string); !ok {
-				malformed("mcp_servers."+name+".command", evidence.Repr(name)+" has a command that is not a string, it is "+tomlType(command))
+				malformed("mcp_servers."+name+".command", pyvalue.Repr(name)+" has a command that is not a string, it is "+tomlType(command))
 				return
 			}
 		}
 		if args, present := table["args"]; present {
 			if _, ok := tomlStrings(args); !ok {
-				malformed("mcp_servers."+name+".args", evidence.Repr(name)+" has args that are not a list of strings, they are "+tomlType(args))
+				malformed("mcp_servers."+name+".args", pyvalue.Repr(name)+" has args that are not a list of strings, they are "+tomlType(args))
 				return
 			}
 		}

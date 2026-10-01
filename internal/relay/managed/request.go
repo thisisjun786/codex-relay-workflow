@@ -13,9 +13,9 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -170,20 +170,11 @@ func object(v any, required, optional []string, at string) (map[string]any, erro
 	if len(missing) > 0 || len(extra) > 0 {
 		sort.Strings(missing)
 		sort.Strings(extra)
-		return nil, fmt.Errorf("%s: missing %s, unknown %s", at, pythonTextList(missing), pythonTextList(extra))
+		return nil, fmt.Errorf("%s: missing %s, unknown %s", at, pyvalue.Repr(missing), pyvalue.Repr(extra))
 	}
 	return m, nil
 }
 
-// pythonTextList is repr() of a sorted list of str: each element settings.Repr, so a key holding a
-// quote, a backslash or a character str.isprintable() refuses reads as Python prints it.
-func pythonTextList(values []string) string {
-	parts := make([]string, len(values))
-	for i, value := range values {
-		parts[i] = settings.Repr(value)
-	}
-	return "[" + strings.Join(parts, ", ") + "]"
-}
 func text(v any, at string, limit int) error {
 	s, ok := v.(string)
 	if !ok || strings.TrimSpace(s) == "" || utf8.RuneCountInString(s) > limit || strings.ContainsRune(s, 0) {

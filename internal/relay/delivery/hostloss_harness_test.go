@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
@@ -635,7 +636,7 @@ func (h *hl) parentRecovery(action string, projection Obj) Obj {
 		reason = field(delivery, "state")
 	}
 	directory, _ := filepath.Abs(filepath.Dir(h.store.Path))
-	return Obj{{Key: "actor", Value: "parent"}, {Key: "reason", Value: reason}, {Key: "command", Value: recoveryCommand(directory, pyStr(field(anchored, "eventId")))}, {Key: "then", Value: parentRecoveryThen}}
+	return Obj{{Key: "actor", Value: "parent"}, {Key: "reason", Value: reason}, {Key: "command", Value: recoveryCommand(directory, pyvalue.Str(field(anchored, "eventId")))}, {Key: "then", Value: parentRecoveryThen}}
 }
 
 func (h *hl) completionDelivery() Obj {

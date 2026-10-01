@@ -12,6 +12,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -212,7 +213,7 @@ func finite(value float64, what string) error {
 // checkScope is Capacity._check_scope: the store scope has exactly one key.
 func checkScope(scopeKind, scopeKey string) error {
 	if scopeKind == scopeStore && scopeKey != scopeStore {
-		return refuse(contract.RefusalLinkNotActive, "the store scope has one key, "+repr(scopeStore)+", not "+repr(scopeKey)+
+		return refuse(contract.RefusalLinkNotActive, "the store scope has one key, "+pyvalue.StrRepr(scopeStore)+", not "+pyvalue.StrRepr(scopeKey)+
 			"; enforcement reads that key and a ceiling under any other would be recorded and never applied")
 	}
 	return nil
@@ -224,7 +225,7 @@ func checkScopeKind(scopeKind, what string) error {
 			return nil
 		}
 	}
-	return refuse(contract.RefusalLinkNotActive, "a "+what+" scope is one of "+strings.Join(scopes, ", ")+", not "+repr(scopeKind))
+	return refuse(contract.RefusalLinkNotActive, "a "+what+" scope is one of "+strings.Join(scopes, ", ")+", not "+pyvalue.StrRepr(scopeKind))
 }
 
 // checkDeclarer is Capacity._check_declarer: the declarer owns the scope it speaks for; the
@@ -236,7 +237,7 @@ func (c *Capacity) checkDeclarer(ctx context.Context, scopeKind, scopeKey, actor
 			"  WHERE task_id = ? AND role = 'supervisor'"+
 			"    AND status IN ('active','paused') AND superseded_by IS NULL", actor).Scan(&task)
 		if noRows(err) {
-			return refuse(contract.RefusalScopeRoleMismatch, "task "+repr(actor)+" holds no live supervisor binding, and the store"+
+			return refuse(contract.RefusalScopeRoleMismatch, "task "+pyvalue.StrRepr(actor)+" holds no live supervisor binding, and the store"+
 				" scope has no owner of its own to speak for it")
 		}
 		return err
@@ -254,10 +255,10 @@ func (c *Capacity) checkDeclarer(ctx context.Context, scopeKind, scopeKey, actor
 	}
 	which := ", which has " + strconv.Itoa(len(held)) + " live owners"
 	if len(held) == 1 {
-		which = ", which is held by " + repr(held[0])
+		which = ", which is held by " + pyvalue.StrRepr(held[0])
 	}
-	return refuse(contract.RefusalScopeRoleMismatch, "task "+repr(actor)+" is not the registered "+role+" of "+
-		scopeKind+" "+repr(scopeKey)+which+", so it cannot state a bound for it")
+	return refuse(contract.RefusalScopeRoleMismatch, "task "+pyvalue.StrRepr(actor)+" is not the registered "+role+" of "+
+		scopeKind+" "+pyvalue.StrRepr(scopeKey)+which+", so it cannot state a bound for it")
 }
 
 // Reservation is Capacity.reserve's keyword arguments; Detail invalid is None.
@@ -293,16 +294,16 @@ func (c *Capacity) Reserve(ctx context.Context, in Reservation) (contract.Ordere
 			sortStrings(sorted)
 			quoted := make([]string, len(sorted))
 			for i, t := range sorted {
-				quoted[i] = repr(t)
+				quoted[i] = pyvalue.StrRepr(t)
 			}
-			decided = &refusal{contract.RefusalDuplicateScopeOwner, "project " + repr(in.Project) + " has more than one live parent (" +
+			decided = &refusal{contract.RefusalDuplicateScopeOwner, "project " + pyvalue.StrRepr(in.Project) + " has more than one live parent (" +
 				strings.Join(quoted, ", ") + "), so there is no owner to reserve under", domainExecution, in.SubjectKey, sorted[0], in.ParentTask}
 		case len(parents) == 0:
-			decided = &refusal{contract.RefusalUnregisteredScope, "project " + repr(in.Project) + " has no registered parent",
+			decided = &refusal{contract.RefusalUnregisteredScope, "project " + pyvalue.StrRepr(in.Project) + " has no registered parent",
 				domainExecution, in.SubjectKey, "", in.ParentTask}
 		case parents[0] != in.ParentTask:
-			decided = &refusal{contract.RefusalScopeRoleMismatch, "task " + repr(in.ParentTask) + " is not the registered parent of project" +
-				" " + repr(in.Project) + ", which is held by " + repr(parents[0]), domainExecution, in.SubjectKey, parents[0], in.ParentTask}
+			decided = &refusal{contract.RefusalScopeRoleMismatch, "task " + pyvalue.StrRepr(in.ParentTask) + " is not the registered parent of project" +
+				" " + pyvalue.StrRepr(in.Project) + ", which is held by " + pyvalue.StrRepr(parents[0]), domainExecution, in.SubjectKey, parents[0], in.ParentTask}
 		}
 		if decided == nil {
 			row, err := c.Store.HeldExecutionSlot(ctx, in.SubjectKind, in.SubjectKey, held)
@@ -311,9 +312,9 @@ func (c *Capacity) Reserve(ctx context.Context, in Reservation) (contract.Ordere
 			case err != nil:
 				return err
 			case row.ParentTaskID != in.ParentTask || row.ProjectKey != in.Project:
-				decided = &refusal{contract.RefusalDispositionConflict, repr(in.SubjectKey) + " is already held by " +
-					repr(row.ParentTaskID) + " for project " + repr(row.ProjectKey) + ", not by " + repr(in.ParentTask) +
-					" for " + repr(in.Project), domainExecution, in.SubjectKey, row.ParentTaskID, in.ParentTask}
+				decided = &refusal{contract.RefusalDispositionConflict, pyvalue.StrRepr(in.SubjectKey) + " is already held by " +
+					pyvalue.StrRepr(row.ParentTaskID) + " for project " + pyvalue.StrRepr(row.ProjectKey) + ", not by " + pyvalue.StrRepr(in.ParentTask) +
+					" for " + pyvalue.StrRepr(in.Project), domainExecution, in.SubjectKey, row.ParentTaskID, in.ParentTask}
 			default:
 				existing = &row
 			}
@@ -389,7 +390,7 @@ func (c *Capacity) ceilingRefusal(ctx context.Context, project string, initiativ
 					return nil, err
 				}
 				if float64(used) >= row.Ceiling {
-					return &refusal{contract.RefusalCapacityExhausted, sc.kind + " " + repr(sc.key) + " already holds " +
+					return &refusal{contract.RefusalCapacityExhausted, sc.kind + " " + pyvalue.StrRepr(sc.key) + " already holds " +
 						strconv.FormatInt(used, 10) + " of " + pyjson.Float(row.Ceiling) + " runs", domainExecution, subject, sc.key, parent}, nil
 				}
 				continue
@@ -397,7 +398,7 @@ func (c *Capacity) ceilingRefusal(ctx context.Context, project string, initiativ
 			seen, err := c.Store.ExecutionUsage(ctx, sc.kind, sc.key, row.Dimension)
 			if noRows(err) {
 				return &refusal{contract.RefusalCapacityUnmeasured, "an enforced ceiling of " + pyjson.Float(row.Ceiling) + " " +
-					row.Unit + " is declared for " + repr(row.Dimension) + " on " + sc.kind + " " + repr(sc.key) +
+					row.Unit + " is declared for " + pyvalue.StrRepr(row.Dimension) + " on " + sc.kind + " " + pyvalue.StrRepr(sc.key) +
 					" and nothing has measured it. A count of running tasks is not a measurement of this dimension, so" +
 					" there is no basis to say whether the bound holds", domainExecution, subject, row.Dimension, parent}, nil
 			}
@@ -405,7 +406,7 @@ func (c *Capacity) ceilingRefusal(ctx context.Context, project string, initiativ
 				return nil, err
 			}
 			if seen.Observed >= row.Ceiling {
-				return &refusal{contract.RefusalCapacityExhausted, repr(row.Dimension) + " was observed at " + pyjson.Float(seen.Observed) +
+				return &refusal{contract.RefusalCapacityExhausted, pyvalue.StrRepr(row.Dimension) + " was observed at " + pyjson.Float(seen.Observed) +
 					" " + row.Unit + " against a ceiling of " + pyjson.Float(row.Ceiling), domainExecution, subject, row.Dimension, parent}, nil
 			}
 		}
@@ -447,14 +448,14 @@ func (c *Capacity) Release(ctx context.Context, in Release) (contract.OrderedObj
 			for i, t := range tenures {
 				numbers[i] = t.Tenure
 			}
-			return refuse(contract.RefusalDispositionConflict, in.SubjectKind+" "+repr(in.SubjectKey)+" has tenures "+
-				reprInts(numbers)+"; name the one this release settles, because the newest is not necessarily the one a"+
+			return refuse(contract.RefusalDispositionConflict, in.SubjectKind+" "+pyvalue.StrRepr(in.SubjectKey)+" has tenures "+
+				pyvalue.Repr(numbers)+"; name the one this release settles, because the newest is not necessarily the one a"+
 				" delayed notification is about")
 		case len(tenures) == 1:
 			row = &tenures[0]
 		}
 		if row == nil {
-			return refuse(contract.RefusalSlotUnknown, "no slot was ever reserved for "+in.SubjectKind+" "+repr(in.SubjectKey))
+			return refuse(contract.RefusalSlotUnknown, "no slot was ever reserved for "+in.SubjectKind+" "+pyvalue.StrRepr(in.SubjectKey))
 		}
 		if row.ParentTaskID != in.ReleasedBy {
 			supervisor, err := above(ctx, c.Store, row.ProjectKey)
@@ -462,13 +463,13 @@ func (c *Capacity) Release(ctx context.Context, in Release) (contract.OrderedObj
 				return err
 			}
 			if supervisor == nil || !supervisor.owned || supervisor.owner != in.ReleasedBy {
-				return refuse(contract.RefusalScopeRoleMismatch, "slot "+repr(row.SlotID)+" is held by "+
-					repr(row.ParentTaskID)+", so "+repr(in.ReleasedBy)+" cannot release it")
+				return refuse(contract.RefusalScopeRoleMismatch, "slot "+pyvalue.StrRepr(row.SlotID)+" is held by "+
+					pyvalue.StrRepr(row.ParentTaskID)+", so "+pyvalue.StrRepr(in.ReleasedBy)+" cannot release it")
 			}
 		}
 		if row.State == released {
 			if row.ReleaseReason.String != in.Reason {
-				decided = &refusal{contract.RefusalDispositionConflict, "slot " + repr(row.SlotID) + " was released as " +
+				decided = &refusal{contract.RefusalDispositionConflict, "slot " + pyvalue.StrRepr(row.SlotID) + " was released as " +
 					reprNullable(row.ReleaseReason) + " by " + reprNullable(row.ReleasedBy) +
 					"; a later notification restates that reason rather than replacing it",
 					domainExecution, in.SubjectKey, row.ReleaseReason.String, in.Reason}
@@ -617,19 +618,11 @@ func (c *Capacity) Observe(ctx context.Context, in Observation) (contract.Ordere
 	}, nil
 }
 
-func reprInts(values []any) string {
-	parts := make([]string, len(values))
-	for i, v := range values {
-		parts[i] = strconv.FormatInt(v.(int64), 10)
-	}
-	return "[" + strings.Join(parts, ", ") + "]"
-}
-
 func reprNullable(v sql.NullString) string {
 	if !v.Valid {
 		return "None"
 	}
-	return repr(v.String)
+	return pyvalue.StrRepr(v.String)
 }
 
 func sortStrings(values []string) {

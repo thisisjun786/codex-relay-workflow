@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // Remediate records an attempted fix or a check, retaining separate executions of the
@@ -49,7 +51,7 @@ func (l *Ledger) Remediate(ctx context.Context, identifier, kind, ref, method, o
 		if after != nil {
 			afterText = fmt.Sprint(after)
 		}
-		id = sha256Hex(fmt.Sprintf("%s|%d|%s|%s|%s|%s|%s", identifier, cycle, kind, ref, pythonNone(method), pythonNone(outcome), afterText))[:idWidth]
+		id = pyvalue.SHA256Hex(fmt.Sprintf("%s|%d|%s|%s|%s|%s|%s", identifier, cycle, kind, ref, pythonNone(method), pythonNone(outcome), afterText))[:idWidth]
 		n, err := l.exec(ctx, "INSERT OR IGNORE INTO fault_remediations (remediation_id, fault_id, cycle, kind, ref, method, outcome, detail, recorded_at) VALUES (?,?,?,?,?,?,?,?,?)", id, identifier, cycle, kind, ref, nilIfEmpty(method), nilIfEmpty(outcome), "", l.Clock.ISO())
 		if err != nil {
 			return err

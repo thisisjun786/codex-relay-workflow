@@ -6,7 +6,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -48,26 +48,6 @@ func textList(v any) bool {
 	return true
 }
 
-func pyTypeName(v any) string {
-	switch v.(type) {
-	case nil:
-		return "NoneType"
-	case bool:
-		return "bool"
-	case string:
-		return "str"
-	case int64:
-		return "int"
-	case float64:
-		return "float"
-	case Obj:
-		return "dict"
-	case []any:
-		return "list"
-	}
-	return fmt.Sprintf("%T", v)
-}
-
 func shapeOf(v any) string {
 	if a, ok := v.([]any); ok {
 		for _, one := range a {
@@ -75,7 +55,7 @@ func shapeOf(v any) string {
 				if one == nil {
 					return "a list holding None"
 				}
-				return "a list holding " + pyTypeName(one)
+				return "a list holding " + pyvalue.TypeName(one)
 			}
 		}
 		return "a list of str"
@@ -83,7 +63,7 @@ func shapeOf(v any) string {
 	if v == nil {
 		return "absent"
 	}
-	return pyTypeName(v)
+	return pyvalue.TypeName(v)
 }
 
 func environmentsProblem(v any) (string, string, bool) {
@@ -112,7 +92,7 @@ func environmentsProblem(v any) (string, string, bool) {
 func (t TaskSettings) mistyped() []string {
 	var wrong []string
 	for _, field := range []string{"cwd", "model", "reasoningEffort"} {
-		if v, _ := get(t.Data, field); pyTypeName(v) != "str" {
+		if v, _ := get(t.Data, field); pyvalue.TypeName(v) != "str" {
 			wrong = append(wrong, field)
 		}
 	}
@@ -134,7 +114,7 @@ func (t TaskSettings) mistypedDetail(field string) string {
 		where, what, _ := environmentsProblem(value)
 		return "environments" + where + " " + what
 	}
-	return field + " is " + pyTypeName(value) + ", not str"
+	return field + " is " + pyvalue.TypeName(value) + ", not str"
 }
 
 func (t TaskSettings) sandboxMode() (string, bool) {
@@ -192,7 +172,7 @@ func normalisePolicy(policy any) Obj {
 				return nil
 			}
 		default:
-			if pyTypeName(value) != pyTypeName(d.Value) {
+			if pyvalue.TypeName(value) != pyvalue.TypeName(d.Value) {
 				return nil
 			}
 		}
@@ -201,37 +181,6 @@ func normalisePolicy(policy any) Obj {
 		return nil
 	}
 	return merged
-}
-
-func pyReprValue(v any) string {
-	switch t := v.(type) {
-	case nil:
-		return "None"
-	case bool:
-		if t {
-			return "True"
-		}
-		return "False"
-	case string:
-		return store.PyRepr(t)
-	case int64:
-		return fmt.Sprint(t)
-	case float64:
-		return pyjson.Dumps(t, pyjson.Options{}) // NaN and the infinities spelled as JSON spells them
-	case []any:
-		parts := make([]string, len(t))
-		for i, x := range t {
-			parts[i] = pyReprValue(x)
-		}
-		return "[" + strings.Join(parts, ", ") + "]"
-	case Obj:
-		parts := make([]string, len(t))
-		for i, f := range t {
-			parts[i] = store.PyRepr(f.Key) + ": " + pyReprValue(f.Value)
-		}
-		return "{" + strings.Join(parts, ", ") + "}"
-	}
-	return fmt.Sprint(v)
 }
 
 // RequireUsable is TaskSettings.require_usable: shape before meaning, every offender named.
@@ -261,7 +210,7 @@ func (t TaskSettings) RequireUsable() error {
 		recorded, _ := get(t.Data, "sandbox")
 		o, isObj := recorded.(Obj)
 		if !isObj {
-			return refuse(UnsupportedSandboxType, "the recorded sandbox is %s, not the policy object a creation result reports, so it does not record the full policy a resume would have to restore", pyTypeName(recorded))
+			return refuse(UnsupportedSandboxType, "the recorded sandbox is %s, not the policy object a creation result reports, so it does not record the full policy a resume would have to restore", pyvalue.TypeName(recorded))
 		}
 		kind, _ := get(o, "type")
 		return refuse(UnsupportedSandboxType, "%s has no ThreadResumeParams.sandbox mode, so it cannot be restored on a resume", pyReprValue(kind))
@@ -293,9 +242,9 @@ func DefaultRoleGate(ctx context.Context, s *store.Store, taskID string, _ *Task
 			roles[i] = r.S("role")
 		}
 		slices.Sort(roles)
-		return refuse(RoleBindingMismatch, "%s holds live bindings at %s, and one task holds one role. Nothing was sent and no turn was started, because checking its authorization against either of them would report a clean answer derived from an arbitrary choice. Resolve the bindings first.", store.PyRepr(taskID), reprList(roles))
+		return refuse(RoleBindingMismatch, "%s holds live bindings at %s, and one task holds one role. Nothing was sent and no turn was started, because checking its authorization against either of them would report a clean answer derived from an arbitrary choice. Resolve the bindings first.", pyvalue.StrRepr(taskID), pyvalue.Repr(roles))
 	}
-	return refuse(RolePolicyUnconfigured, "%s is bound as %s and this process cannot read a role policy to check its authorization against: CODEX_THREAD_BRIDGE_EXECUTION_POLICY is not set in this process, so no role policy can be read. Nothing was sent and no turn was started. Set the policy for this process and the held deliveries resume on the next pass.", store.PyRepr(taskID), store.PyRepr(rows[0].S("role")))
+	return refuse(RolePolicyUnconfigured, "%s is bound as %s and this process cannot read a role policy to check its authorization against: CODEX_THREAD_BRIDGE_EXECUTION_POLICY is not set in this process, so no role policy can be read. Nothing was sent and no turn was started. Set the policy for this process and the held deliveries resume on the next pass.", pyvalue.StrRepr(taskID), pyvalue.StrRepr(rows[0].S("role")))
 }
 
 // AuthorizedSettings is delivery.authorized_settings.
@@ -305,7 +254,7 @@ func AuthorizedSettings(ctx context.Context, s *store.Store, taskID string, gate
 		return nil, err
 	}
 	if row == nil {
-		return nil, refuse(SettingsUnavailable, "no authorized settings recorded for %s; register them from the creation result before a send can preserve them", store.PyRepr(taskID))
+		return nil, refuse(SettingsUnavailable, "no authorized settings recorded for %s; register them from the creation result before a send can preserve them", pyvalue.StrRepr(taskID))
 	}
 	data := loadsObj(row.S("settings"))
 	settings := &TaskSettings{Data: data}

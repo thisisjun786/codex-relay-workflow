@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"net/url"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
 // ImportLegacy copies the supplied alias ledger atomically without replacing conflicts.
@@ -69,7 +69,7 @@ func (l *Ledger) ImportLegacy(ctx context.Context, path string) error {
 		}
 		if fp != r.fingerprint || string(equal) != string(other) {
 			//lint:ignore ST1005 ledger.py:149 caller-visible message kept byte-identical to Python
-			return fmt.Errorf("Conflicting retained request %s in legacy socket ledger %s; no requests will be dispatched. Preserve both ledgers.", settings.Repr(r.id), path)
+			return fmt.Errorf("Conflicting retained request %s in legacy socket ledger %s; no requests will be dispatched. Preserve both ledgers.", pyvalue.StrRepr(r.id), path)
 		}
 	}
 	return tx.Commit()

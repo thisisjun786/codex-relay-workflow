@@ -160,7 +160,7 @@ func v1(h launcherHost, overrides map[string]any) string {
 
 func literal(text string) func(launcherHost) string { return func(launcherHost) string { return text } }
 
-// char is the character r, for the non-printing ones Python's repr() escapes.
+// char is the character r, for the non-printing ones Python's pyvalue.Repr() escapes.
 func char(r rune) string { return string(r) }
 
 var escapeMark = regexp.MustCompile(`\[U\+([0-9A-F]{4})\]`)
@@ -258,7 +258,7 @@ var recordCases = []recordCase{
 	{name: "v1 args not UTF-8 start", record: func(h launcherHost) string {
 		return escapes(v1(h, map[string]any{"args": []string{"--state-dir", h.root + "/st[U+DC80]te", "--socket", h.root + "/s[U+DCFF].sock"}}))
 	}, starts: true},
-	// The same path missing: str() of it and the OSError's repr() both carry the surrogate, which
+	// The same path missing: str() of it and the OSError's pyvalue.Repr() both carry the surrogate, which
 	// the stream writes as its escape.
 	{name: "v2 policy path not UTF-8, missing", record: policyAt("/gone[U+DC80].json")},
 	{name: "v2 policy path with a surrogate outside the escape range", record: policyAt("/p[U+D800].json")},
@@ -267,7 +267,7 @@ var recordCases = []recordCase{
 			return h.env("CODEX_THREAD_BRIDGE_EXECUTION_POLICY=" + h.root + "/other\x80.json")
 		}},
 
-	// What repr() escapes: every character str.isprintable() rejects.
+	// What pyvalue.Repr() escapes: every character str.isprintable() rejects.
 	{name: "owner holding a no-break space", record: func(h launcherHost) string {
 		return v1(h, map[string]any{"owner": "a" + char(0xa0) + "b"})
 	}},
