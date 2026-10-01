@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"time"
@@ -60,14 +59,6 @@ func runDoctor(ctx context.Context, services dispatch.Services, args dispatch.Ar
 	add("rolePolicy", rolePolicyReport(caller))
 	worker := readWorkerPolicy(services, loc)
 	add("workerPolicy", worker)
-	ownership := get(report, "ownership").(contract.OrderedObject)
-	// Echoed raw, as cli.py reads each record's python_compatibility_build.
-	processes := contract.OrderedObject{
-		{Key: "supervisor", Value: get(readJSONFile(filepath.Join(services.Selection.Path, "daemon.json")), "python_compatibility_build")},
-		{Key: "worker", Value: get(get(worker, "worker"), "python_compatibility_build")},
-	}
-	ownership = append(ownership, contract.Field{Key: "processes", Value: processes})
-	report[fieldIndex(report, "ownership")].Value = ownership
 	add("launchPolicy", service.ResolveLaunchPolicyAt(services.Selection.Path, os.Getenv(policyVariable)))
 	workerPolicy := get(worker, "policy")
 	callerRecord := caller.summary()

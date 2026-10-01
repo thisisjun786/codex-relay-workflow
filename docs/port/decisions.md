@@ -3762,3 +3762,34 @@ Evidence: `internal/relay/dispatch/{answer.go (Host),dispatch.go (run)}`;
 `internal/relay/cli/{daemon.go,doctor.go,guard.go,merge_evidence.go,pyvalue.go (decodeInput),
 sandbox.go,show.go,supervisor.go}`; `TestRun_unknown_user_state_is_a_host_error` (cmd/crw); the
 goldens of internal/relay/cli, internal/relay/hook and internal/contracttest.
+
+## Decision R3C-5. The doctor no longer echoes the process records' `python_compatibility_build`; `guard-evaluate` stays for now (refactor R3)
+
+(Placeholder heading: the next free number is given when the R3 groups merge.)
+
+Decision: `doctor`'s `ownership` block loses `processes` (`{"supervisor": ..., "worker": ...}`),
+the raw echo of `daemon.json`'s and `worker-policy.json`'s `python_compatibility_build`, which
+named the Python fence build a process ran. A Go process writes that key as null (decision 31);
+with no Python runtime left (decision 48) the echo can only say null or repeat a stale record.
+The records keep the key (they are stored, and the store keeps reading what Python wrote), and
+the block's six stamp keys, `phase`, `runtime_build` and `detail` are unchanged. Decision 54
+deferred this here because about 140 recorded Python answers held the block; they are goldens now.
+
+Consumer check: no skill, doc, contract fixture, `crw doctor`/`install`/`exercise` reading or Go
+caller reads `ownership.processes`; `git grep processes` over `plugins/`, `docs/relay/` and
+`contract/` finds no reader.
+
+Not removed, although survey B-03 names it: the `guard-evaluate` command. No skill, wiring file
+or product path runs it (the Stop hook evaluates in process or through `control.sock`'s
+`guard-evaluate` method, which stays), and docs/relay/operations.md only describes its
+selection exemption. But it is the binary surface the hook package's guard tests drive
+(`Test33Guard*`, `Test33PR181GuardDiscoveryPython`, `Test33ReviewD10`), and its routing is the only
+caller of `hook.RouteGuard`, `hook.SelectedStore` and `store.CheckStop`: removing it means moving
+those tests onto the hook's own entry and deleting those functions, in the store side's packages.
+It is left for that change. The hidden `service run --takeover-candidate` flag that the takeover
+candidate used left the parser in refactor R1 (decision 54); nothing of it remains in
+`specs.json`.
+
+Evidence: `internal/relay/cli/doctor.go` (`runDoctor`); `TestDoctor_ownership_block_matches_python_on_a_broken_store`
+(its "non-string process builds" case goes with the echo); the doctor goldens of
+internal/relay/cli, internal/relay/managed and internal/relay/supervisor.

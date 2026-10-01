@@ -31,8 +31,8 @@ func ownershipBlock(t *testing.T, stdout string) string {
 
 // doctor's ownership block is ownership.report's all-or-nothing reading: a mirror or database
 // that cannot be read nulls every key and the phase and names the failure in detail; a
-// readable mirror's phase is echoed whatever its JSON type, as is each process record's
-// python_compatibility_build. Both runtimes answer the same block for the same broken store.
+// readable mirror's phase is echoed whatever its JSON type. Both runtimes answered the same
+// block for the same broken store.
 // Where the record is refused whichever runtime reads it (the mirror or ownership.py
 // validate refuses it before asking who owns the store), the access block is the same too:
 // the probe's foreign branch, worded as check_start refuses (store.probe).
@@ -108,9 +108,6 @@ func TestDoctor_ownership_block_matches_python_on_a_broken_store(t *testing.T) {
 			editMirror(t, state, func(r map[string]any) { r["storeId"] = "another" })
 		},
 			`"phase": "active",`, "store_owned_by_other: ownership record disagrees with the durable store"},
-		{"non-string process builds", func(t *testing.T, state string) {
-			write(filepath.Join(state, "daemon.json"), `{"python_compatibility_build": 7}`)(t)
-		}, `"supervisor": 7,`, ""},
 		// cutover.md Record: "initial stamp committed, mirror absent" keeps its six keys.
 		{"stamp without its mirror", func(t *testing.T, state string) {
 			if err := os.Remove(filepath.Join(state, "takeover.json")); err != nil {
