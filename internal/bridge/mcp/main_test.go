@@ -268,6 +268,8 @@ func Test_the_default_socket_and_ledger_follow_codex_home_and_xdg_state_home(t *
 	}{
 		{map[string]string{"HOME": "/h"}, "/h/.codex/app-server-control/app-server-control.sock", "/h/.local/state/codex-thread-bridge"},
 		{map[string]string{"HOME": "/h", "CODEX_HOME": "/c", "XDG_STATE_HOME": "/s"}, "/c/app-server-control/app-server-control.sock", "/s/codex-thread-bridge"},
+		// An empty CODEX_HOME is unset, never a socket relative to the working directory.
+		{map[string]string{"HOME": "/h", "CODEX_HOME": ""}, "/h/.codex/app-server-control/app-server-control.sock", "/h/.local/state/codex-thread-bridge"},
 	} {
 		socket, state := Defaults(tc.env)
 		if socket != tc.socket || state != tc.state {

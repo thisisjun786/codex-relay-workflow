@@ -24,11 +24,14 @@ const PackageVersion = appserver.BridgeVersion
 const description = "STDIO MCP entry point. No daemon startup or client configuration changes."
 
 // Defaults are server.py main()'s: the socket under CODEX_HOME (or ~/.codex) and the ledger
-// under XDG_STATE_HOME (or ~/.local/state). They are computed from env and never opened here.
+// under XDG_STATE_HOME (or ~/.local/state). They are computed from env and never opened here. An
+// empty CODEX_HOME is no CODEX_HOME, as the relay reads it (store.DefaultSocket, decision 73):
+// taken as set, it named a socket relative to the working directory, which is never the App
+// Server's, and the relay given no --socket would scope its store by another socket.
 func Defaults(env map[string]string) (socket, state string) {
 	home := env["HOME"]
-	codexHome, ok := env["CODEX_HOME"]
-	if !ok {
+	codexHome := env["CODEX_HOME"]
+	if codexHome == "" {
 		codexHome = filepath.Join(home, ".codex")
 	}
 	stateHome, ok := env["XDG_STATE_HOME"]

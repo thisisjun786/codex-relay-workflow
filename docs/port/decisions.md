@@ -4575,6 +4575,15 @@ the service, the hook with a `socketPath`) are unchanged, so the delivery ledger
 directory the store is in. `doctor`'s `siblingStores.claimingThisSocket` without `--socket` lists
 the stores recording the default socket.
 
+The default socket is also what a discovered selection is checked against. The selection carries
+it (`StateSelection.DefaultSocket`, empty for `--state`, `CODEX_SESSION_RELAY_STATE`, a given
+`--socket` and the kept `default` directory), and `selection.Refusal` compares the selected
+store's recorded socket with it when no `--socket` was given: a store recording another socket is
+refused `state_directory_serves_another_socket`, exit 2, before a writing command is admitted or a
+read-only one reads it, as under an explicit `--socket`. A store recording no socket is admitted as
+before. The bridge's `Defaults` reads an empty `CODEX_HOME` as unset too, so the two runtimes name
+one default socket; taken as set, it named a socket relative to the working directory.
+
 A store with no ownership stamp, no `takeover.json` and no ownership key in `schema_meta`, whose
 `write-gate.lock` does not exist, is refused in plain words: the `doctor` write probe, a writable
 open and a registration hold answer reason `store_owned_by_other` (unchanged) with the detail
@@ -4606,8 +4615,13 @@ Evidence: internal/relay/store/state.go (`DefaultSocket`, `SocketScope`, `Discov
 `LegacyDefaultScope`); internal/relay/store/diagnostic_probe.go (`UnstampedStoreDetail`,
 `writeGateRefusal`), stamp.go (`unstampedRefusal`), registration_hold.go;
 internal/relay/service/scope.go (`ServedStore`); internal/relay/cli/doctor.go (`serviceStore`),
-services.go (`siblingStores`); tests
-internal/relay/store/default_socket_scope_test.go (`TestDiscoveryWithoutASocketIsScopedByTheDefaultSocket`,
-`TestAnUnstampedStoreIsRefusedInPlainWords`, `TestOnlyAnUnstampedStoreGetsThePlainWords`) and
-internal/relay/cli/doctor_service_store_test.go; docs/relay/operations.md (Where the state
-lives); plugins/crw/skills/crw-run/references/relay.md (One shared state directory).
+services.go (`siblingStores`); internal/relay/selection/selection.go (`Refusal`);
+internal/bridge/mcp/main.go (`Defaults`); tests
+internal/relay/store/default_socket_scope_test.go
+(`TestDiscoveryWithoutASocketIsScopedByTheDefaultSocket`, `TestTheDefaultSocketIsTheBridges`,
+`TestAnUnstampedStoreIsRefusedInPlainWords`, `TestOnlyAnUnstampedStoreGetsThePlainWords`),
+internal/relay/cli/doctor_service_store_test.go (`TestDoctorNamesTheServiceStoreDiscoveryDidNotSelect`,
+`TestANoSocketSelectionIsHeldToTheDefaultSocket`), internal/bridge/mcp/main_test.go (the empty
+`CODEX_HOME` case of `Defaults`) and internal/runtime/integration/isolated_home_test.go (IS-1's Stop dials the default socket's
+directory); docs/relay/operations.md (Where the state lives);
+plugins/crw/skills/crw-run/references/relay.md (One shared state directory).
