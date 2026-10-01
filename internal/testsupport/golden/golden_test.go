@@ -70,6 +70,7 @@ func TestUpdate_then_check_passes_and_a_change_fails_with_the_first_difference(t
 
 func TestA_missing_value_names_the_file_the_key_and_the_update_mode(t *testing.T) {
 	fresh(t)
+	t.Setenv(ModeEnv, "")
 	message := fatalOf(t, func(tb testing.TB) { Check(tb, "absent", []byte("x")) })
 	if !strings.Contains(message, `"absent"`) || !strings.Contains(message, Directory) || !strings.Contains(message, ModeEnv+"=update") {
 		t.Fatalf("message %q", message)
