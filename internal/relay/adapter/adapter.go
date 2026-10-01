@@ -85,7 +85,20 @@ func New(options Options) *Adapter {
 	return a
 }
 
+// HostCall is one read of the host. It enters the transport's admission like every other read:
+// refused with ErrTransportClosing once Close began, unless ctx belongs to work the transport
+// already admitted, and cancelled when Close spends its drain budget.
 func (a *Adapter) HostCall(ctx context.Context, method string, params map[string]any) (map[string]any, error) {
+	ctx, release, err := a.admitRead(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	return a.hostCall(ctx, method, params)
+}
+
+// hostCall is the host read without admission, for work that is already admitted.
+func (a *Adapter) hostCall(ctx context.Context, method string, params map[string]any) (map[string]any, error) {
 	raw, err := a.rpc.Call(ctx, method, params)
 	if err != nil {
 		return nil, pythonConnectionError(err)
@@ -155,7 +168,12 @@ func rawEntries(page map[string]any) ([]any, error) {
 }
 
 func (a *Adapter) ReadThread(thread string) (delivery.ThreadFacts, error) {
-	r, err := a.HostCall(context.Background(), "thread/read", map[string]any{"threadId": thread})
+	ctx, release, err := a.admitRead(context.Background())
+	if err != nil {
+		return delivery.ThreadFacts{}, err
+	}
+	defer release()
+	r, err := a.hostCall(ctx, "thread/read", map[string]any{"threadId": thread})
 	if err != nil {
 		return delivery.ThreadFacts{}, err
 	}
@@ -174,7 +192,12 @@ func (a *Adapter) ReadThread(thread string) (delivery.ThreadFacts, error) {
 	return delivery.ThreadFacts{RuntimeStatus: runtime, CanAcceptInput: th["canAcceptDirectInput"]}, nil
 }
 func (a *Adapter) ReadGoalStatus(thread string) (any, error) {
-	r, err := a.HostCall(context.Background(), "thread/goal/get", map[string]any{"threadId": thread})
+	ctx, release, err := a.admitRead(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	r, err := a.hostCall(ctx, "thread/goal/get", map[string]any{"threadId": thread})
 	if err != nil {
 		return nil, err
 	}
@@ -182,7 +205,12 @@ func (a *Adapter) ReadGoalStatus(thread string) (any, error) {
 	return goal["status"], nil
 }
 func (a *Adapter) ListTurnIDs(thread string, limit int) ([]any, error) {
-	r, err := a.HostCall(context.Background(), "thread/turns/list", map[string]any{"threadId": thread, "limit": limit, "itemsView": "summary"})
+	ctx, release, err := a.admitRead(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	r, err := a.hostCall(ctx, "thread/turns/list", map[string]any{"threadId": thread, "limit": limit, "itemsView": "summary"})
 	if err != nil {
 		return nil, err
 	}
@@ -216,13 +244,18 @@ func turnInfo(row map[string]any) (*delivery.TurnInfo, error) {
 	return &delivery.TurnInfo{TurnID: id, Status: status, StartedAt: row["startedAt"]}, nil
 }
 func (a *Adapter) ReadTurn(thread, turn string) (*delivery.TurnInfo, error) {
+	ctx, release, err := a.admitRead(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	var cursor any
 	for range MaxPagesPerCheck {
 		params := map[string]any{"threadId": thread, "limit": a.page, "itemsView": "summary"}
 		if pyvalue.Truthy(cursor) {
 			params["cursor"] = cursor
 		}
-		r, err := a.HostCall(context.Background(), "thread/turns/list", params)
+		r, err := a.hostCall(ctx, "thread/turns/list", params)
 		if err != nil {
 			return nil, err
 		}
@@ -247,6 +280,11 @@ func (a *Adapter) ReadTurn(thread, turn string) (*delivery.TurnInfo, error) {
 	return nil, &HostUnavailable{fmt.Sprintf("turn '%s' not found within %d pages; the listing was not exhausted, so this is not evidence of absence", turn, MaxPagesPerCheck)}
 }
 func (a *Adapter) IsArchived(thread string, cwd any) (*bool, error) {
+	rpc, release, err := a.admitRead(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	checks := []struct {
 		name    string
 		filters map[string]any
@@ -275,7 +313,7 @@ func (a *Adapter) IsArchived(thread string, cwd any) (*bool, error) {
 			filters map[string]any
 		}{"unarchived_all", map[string]any{"archived": false}})
 	for _, check := range checks {
-		found, err := a.scanListing(thread, check.name, check.filters)
+		found, err := a.scanListing(rpc, thread, check.name, check.filters)
 		if err != nil {
 			return nil, err
 		}
@@ -286,7 +324,10 @@ func (a *Adapter) IsArchived(thread string, cwd any) (*bool, error) {
 	}
 	return nil, nil
 }
-func (a *Adapter) scanListing(thread, listing string, filters map[string]any) (bool, error) {
+
+// scanListing takes the admitted context for its host calls only. What it persists goes to the
+// relay's own store, which Close does not own, so that keeps a context that Close cannot cancel.
+func (a *Adapter) scanListing(rpc context.Context, thread, listing string, filters map[string]any) (bool, error) {
 	ctx := context.Background()
 	var cursor any
 	if a.store != nil {
@@ -321,7 +362,7 @@ func (a *Adapter) scanListing(thread, listing string, filters map[string]any) (b
 		if pyvalue.Truthy(cursor) {
 			params["cursor"] = cursor
 		}
-		page, err := a.HostCall(ctx, "thread/list", params)
+		page, err := a.hostCall(rpc, "thread/list", params)
 		if err != nil {
 			var shape *pythonError
 			if errors.As(err, &shape) {
@@ -381,14 +422,19 @@ func (a *Adapter) GetOperation(id string) (delivery.Obj, error) {
 	if a.ledger == nil {
 		return nil, nil
 	}
-	_, err := a.ledger.Get(context.Background(), id)
+	ctx, release, err := a.admitRead(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	_, err = a.ledger.Get(ctx, id)
 	if errors.Is(err, ledger.ErrUnknown) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	return a.receipt(context.Background(), id, false)
+	return a.receipt(ctx, id, false)
 }
 
 func pythonJSONNumbers(value any) any {
@@ -437,6 +483,11 @@ func itemKind(value any) string {
 	return text(item["type"])
 }
 func (a *Adapter) FindToken(thread, token string, limit int, messageOnly bool) (delivery.TokenScan, error) {
+	ctx, release, err := a.admitRead(context.Background())
+	if err != nil {
+		return delivery.TokenScan{}, err
+	}
+	defer release()
 	var cursor any
 	scanned := 0
 	for scanned < limit {
@@ -444,7 +495,7 @@ func (a *Adapter) FindToken(thread, token string, limit int, messageOnly bool) (
 		if pyvalue.Truthy(cursor) {
 			params["cursor"] = cursor
 		}
-		page, err := a.HostCall(context.Background(), "thread/items/list", params)
+		page, err := a.hostCall(ctx, "thread/items/list", params)
 		if err != nil {
 			return delivery.TokenScan{}, err
 		}
@@ -480,7 +531,12 @@ func (a *Adapter) FindToken(thread, token string, limit int, messageOnly bool) (
 	return delivery.TokenScan{Scanned: scanned}, nil
 }
 func (a *Adapter) RecipientFingerprint(thread string) (string, error) {
-	page, err := a.HostCall(context.Background(), "thread/items/list", map[string]any{"threadId": thread, "sortDirection": "desc", "limit": 8})
+	ctx, release, err := a.admitRead(context.Background())
+	if err != nil {
+		return "", err
+	}
+	defer release()
+	page, err := a.hostCall(ctx, "thread/items/list", map[string]any{"threadId": thread, "sortDirection": "desc", "limit": 8})
 	if err != nil {
 		return "", err
 	}

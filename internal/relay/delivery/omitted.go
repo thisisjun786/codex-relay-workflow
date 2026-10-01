@@ -621,24 +621,16 @@ func omissionReceipt(ctx context.Context, path, rid, session, turn string, gener
 	if event.S("turn_thread_id") != session || event.S("turn_id") != turn {
 		return set(base, "evidence", "head_belongs_to_another_turn"), nil
 	}
-	var roots []string
-	var payload struct {
-		Manifest []store.ManifestEntry `json:"manifest"`
-		Revision string                `json:"revisionHash"`
+	// The Stop hook reads the same stored receipt through the same two functions, so the two readers
+	// answer alike: a document that is not JSON is unreadable, and one that is JSON is compared as
+	// the values it holds, whatever their types.
+	rootsValue, payload, unreadable := store.DecodeStoredReceipt(relationship.S("artifact_roots"), event.S("receipt"))
+	if unreadable != "" {
+		base = set(base, "evidence", "stored_receipt_unreadable")
+		base = set(base, "detail", unreadable)
+		return set(base, "eventId", event.S("event_id")), nil
 	}
-	for _, item := range []struct {
-		text   string
-		target any
-	}{
-		{relationship.S("artifact_roots"), &roots}, {event.S("receipt"), &payload},
-	} {
-		if err := json.Unmarshal([]byte(item.text), item.target); err != nil {
-			base = set(base, "evidence", "stored_receipt_unreadable")
-			base = set(base, "detail", "JSONDecodeError: "+pyjson.Error(item.text))
-			return set(base, "eventId", event.S("event_id")), nil
-		}
-	}
-	binding, detail, err := omissionDeliverable(payload.Manifest, payload.Revision, event.S("manifest_ref"), roots)
+	binding, detail, err := omissionDeliverable(ctx, payload, event.S("manifest_ref"), rootsValue)
 	if err != nil {
 		return nil, err
 	}
@@ -655,51 +647,24 @@ func omissionReceipt(ctx context.Context, path, rid, session, turn string, gener
 	base = set(base, "stage", event.S("stage"))
 	return set(base, "deliverableBinding", binding), nil
 }
-func omissionDeliverable(entries []store.ManifestEntry, revision, reference string, roots []string) (string, string, error) {
-	if len(entries) == 0 {
-		return "", "the stored receipt carries no manifest to verify", nil
+
+// omissionDeliverable maps the shared judgment of a stored receipt, store.DeliverableState, which
+// the Stop hook answers by as well, onto what the omission keeps: the binding when the deliverable
+// stands, the detail when it changed, and an error when the comparison could not happen (a read of
+// the live bytes or of the frozen copy that did not happen, or a context that ended: never reported
+// as a revision that changed, and read by the omission as receipt_unreadable) or raised out of
+// guard.deliverable_state (omissionReceiptFailure names it).
+func omissionDeliverable(ctx context.Context, payload any, reference string, roots any) (string, string, error) {
+	state, binding, detail, err := store.DeliverableState(ctx, payload, reference, roots)
+	switch {
+	case err != nil:
+		return "", "", err
+	case state == store.DeliverableCurrent:
+		return binding, "", nil
+	case state == store.DeliverableUnverifiable:
+		return "", "", errors.New(detail)
 	}
-	digest, err := store.ManifestRevision(entries)
-	if err != nil {
-		return "", "ValueError: " + err.Error(), nil
-	}
-	if revision == "" {
-		return "", "the stored receipt names no revision", nil
-	}
-	if digest != revision {
-		return "", "the stored manifest hashes to " + digest + " but the receipt claims " + revision, nil
-	}
-	// guard.deliverable_state from here: a read that could not happen, of the live bytes or of the
-	// frozen copy that answers for them, is never reported as a revision that changed (the error,
-	// which the omission reads as receipt_unreadable), and a changed one never as unreadable.
-	problems, _, unreachableLive := store.VerifyAgainstDiskDetailed(entries, roots, false)
-	if len(problems) == 0 {
-		return "live", "", nil
-	}
-	if reference != "" {
-		_, frozen, unreachable, err := store.VerifyFrozenDetailed(reference, entries)
-		if err != nil {
-			// The fence raises here. An OSError or a ScopeError is a comparison that did not
-			// happen, and a RecursionError leaves deliverable_state (omissionReceiptFailure names
-			// both); anything else read the frozen copy and found no manifest in it.
-			var exception *store.ManifestException
-			if errors.As(err, &exception) && !exception.OSError() && !exception.RuntimeError() {
-				return "", exception.StoredText(), nil
-			}
-			return "", "", err
-		}
-		if len(frozen) == 0 {
-			return "frozen", "", nil
-		}
-		if len(unreachable) > 0 {
-			return "", "", errors.New(strings.Join(unreachable[:min(3, len(unreachable))], "; "))
-		}
-		problems = append(problems, frozen...)
-	}
-	if len(unreachableLive) > 0 {
-		return "", "", errors.New(strings.Join(unreachableLive[:min(3, len(unreachableLive))], "; "))
-	}
-	return "", strings.Join(problems[:min(3, len(problems))], "; "), nil
+	return "", detail, nil
 }
 
 // omissionReceiptFailure is the reason a receipt lookup that failed leaves the omission
