@@ -158,36 +158,46 @@ func TestPrecheckScope_AgreesWithRegister(t *testing.T) {
 	}
 }
 
-// A request the registry would take is not refused, and asking writes nothing.
+// A request the registry would take is not refused, and asking writes nothing: not for a bound
+// project, not for a request naming no project, and not for the project that already holds the issue.
 func TestPrecheckScope_CleanAskWritesNothing(t *testing.T) {
 	r := newRegistry(t)
 	bindProject(t, r, "P1", parent)
 	tables := []string{"linkage_conflicts", "journal", "scope_bindings", "scope_links", "relationships", "relationship_scope"}
-	before := map[string]int{}
-	for _, table := range tables {
-		before[table] = countRows(t, r, "SELECT * FROM "+table)
+	snapshot := func() map[string]int {
+		counts := map[string]int{}
+		for _, table := range tables {
+			counts[table] = countRows(t, r, "SELECT * FROM "+table)
+		}
+		return counts
 	}
+	unchanged := func(what string, before map[string]int) {
+		t.Helper()
+		after := snapshot()
+		for _, table := range tables {
+			if after[table] != before[table] {
+				t.Fatalf("%s wrote %s: %d -> %d rows", what, table, before[table], after[table])
+			}
+		}
+	}
+	before := snapshot()
 	if err := r.PrecheckScope(ctx(), parent, issue, "P1"); err != nil {
 		t.Fatalf("a bound project was refused: %v", err)
 	}
+	unchanged("asking about a bound project", before)
 	if err := r.PrecheckScope(ctx(), parent, issue, ""); err != nil {
 		t.Fatalf("a request with no project was refused: %v", err)
 	}
+	unchanged("asking with no project", before)
 	// The same project and issue already registered is the state a replay finds.
 	in := fixture()
 	in.ProjectKey = "P1"
 	if _, err := r.Register(ctx(), in); err != nil {
 		t.Fatal(err)
 	}
-	for _, table := range tables {
-		before[table] = countRows(t, r, "SELECT * FROM "+table)
-	}
+	before = snapshot()
 	if err := r.PrecheckScope(ctx(), parent, issue, "P1"); err != nil {
 		t.Fatalf("the project that already holds the issue was refused: %v", err)
 	}
-	for _, table := range tables {
-		if after := countRows(t, r, "SELECT * FROM "+table); after != before[table] {
-			t.Fatalf("%s rows %d -> %d", table, before[table], after)
-		}
-	}
+	unchanged("asking about the project that holds the issue", before)
 }

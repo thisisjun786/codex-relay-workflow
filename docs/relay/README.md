@@ -337,10 +337,11 @@ request's `parent` task (`linkage-bind --role parent`). The entry checks this tw
 host effect: before it arms the reservation, and again right before it creates the task. A project
 with no bound parent, or one that another task is the parent of, is refused as
 `unregistered_scope` or `foreign_scope`, the same refusal registration gives, with no task
-created. The first check leaves a reservation that was never armed, which `managed-release` can
-release; bind the project and retry the same request id and it creates its one task. The second
-check, which catches a binding that moved after the reservation was armed, leaves the request
-armed and not releasable; retry it with the same request id once the project is bound again.
+created. The first check leaves a reservation that was never armed. Bind the project and retry the
+same request id and it creates its one task; if you release that reservation with
+`managed-release` instead, its request id stays dead and the next attempt needs a new one. The
+second check, which catches a binding that moved after the reservation was armed, leaves the
+request armed and not releasable; retry it with the same request id once the project is bound again.
 Registration adds that retained child's ID to the declared recipients so the parent can
 return revision requests to its own child. Replay and pre-start checks verify this derived
 list; it does not authorize messages to an unrelated task.
