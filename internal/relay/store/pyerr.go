@@ -26,8 +26,8 @@ var errnoClass = map[syscall.Errno]string{
 	syscall.ECHILD: "ChildProcessError", syscall.EAGAIN: "BlockingIOError",
 }
 
-// pythonStrerror is os.strerror for the errnos whose glibc text Go spells differently.
-func pythonStrerror(errno syscall.Errno) string {
+// strerror is os.strerror for the errnos whose glibc text Go spells differently.
+func strerror(errno syscall.Errno) string {
 	text := errno.Error()
 	if text == "" {
 		return "Unknown error " + strconv.Itoa(int(errno))
@@ -35,21 +35,23 @@ func pythonStrerror(errno syscall.Errno) string {
 	return strings.ToUpper(text[:1]) + text[1:]
 }
 
-// PythonOSError renders err as Python's f"{type(error).__name__}: {error}" for an OSError, so a
-// field copied from the Python diagnosis keeps its text. Errors that carry no errno keep Go's text.
-// The relay keeps this wording, and PythonOSErrorText's, only where the text is stored: the Stop
-// journal's rows (whose guard_unreachable detail the hook's own reader parses back,
-// hook.NativePrescanUnreachable) and the guard answers and faults the hook journals.
-func PythonOSError(err error) string {
+// StoredOSError is an OS failure as the stored rows word it: Python's
+// f"{type(error).__name__}: {error}" for an OSError, the wording the Python relay stored and a
+// later reader meets. Errors that carry no errno keep Go's text. The relay words a failure this
+// way, and StoredOSErrorText's way, only where the text is stored: the Stop journal's rows (whose
+// guard_unreachable detail the hook's own reader parses back, hook.NativePrescanUnreachable), the
+// guard answers and faults the hook journals, and the intent records' store_unreadable detail.
+// Every message that is only shown names a failure in Go's words (decision R3S-1).
+func StoredOSError(err error) string {
 	var errno syscall.Errno
 	if !errors.As(err, &errno) {
 		return err.Error()
 	}
-	return pythonOSErrorClass(err) + ": " + PythonOSErrorText(err)
+	return osErrorClass(err) + ": " + StoredOSErrorText(err)
 }
 
-// pythonOSErrorClass is type(error).__name__ for the OSError Python raises for err's errno.
-func pythonOSErrorClass(err error) string {
+// osErrorClass is type(error).__name__ for the OSError Python raises for err's errno.
+func osErrorClass(err error) string {
 	var errno syscall.Errno
 	if errors.As(err, &errno) {
 		if class, known := errnoClass[errno]; known {
@@ -59,13 +61,14 @@ func pythonOSErrorClass(err error) string {
 	return "OSError"
 }
 
-// PythonOSErrorText is str(error) for an OSError: "[Errno N] text: 'path'".
-func PythonOSErrorText(err error) string {
+// StoredOSErrorText is the stored wording's text without its class: str(error) for an OSError,
+// "[Errno N] text: 'path'", the path as PathRepr spells it.
+func StoredOSErrorText(err error) string {
 	var errno syscall.Errno
 	if !errors.As(err, &errno) {
 		return err.Error()
 	}
-	text := fmt.Sprintf("[Errno %d] %s", int(errno), pythonStrerror(errno))
+	text := fmt.Sprintf("[Errno %d] %s", int(errno), strerror(errno))
 	var path *fs.PathError
 	if errors.As(err, &path) {
 		text += ": " + PathRepr(path.Path)
@@ -122,16 +125,19 @@ func PathRepr(path string) string {
 
 var sqliteCodeSuffix = regexp.MustCompile(` \(\d+\)( \(SQLITE_BUSY\))?$`)
 
-// PythonSQLiteError renders a SQLite failure as Python's f"{type(error).__name__}: {error}"
-// for the sqlite3 module: the class chosen from the primary result code, and the message
-// SQLite itself reported without the driver's "errstr: " prefix and " (code)" suffix.
-func PythonSQLiteError(err error) string {
+// StoredSQLiteError is a SQLite failure as the stored records word it: Python's
+// f"{type(error).__name__}: {error}" for the sqlite3 module, the class chosen from the primary
+// result code and the message SQLite itself reported without the driver's "errstr: " prefix and
+// " (code)" suffix. It words the intent records' store_unopenable and store_write_failed details
+// and the linkage readings' detail, which the supervisor stores with the reading; an OS failure
+// is StoredOSError's.
+func StoredSQLiteError(err error) string {
 	if encode := EncodeError(err); encode != nil {
 		return encode.HostDetail()
 	}
 	var failure *sqlite.Error
 	if !errors.As(err, &failure) {
-		return PythonOSError(err)
+		return StoredOSError(err)
 	}
 	class := "OperationalError"
 	switch failure.Code() & 0xff {
@@ -142,11 +148,11 @@ func PythonSQLiteError(err error) string {
 	case 21: // SQLITE_MISUSE
 		class = "ProgrammingError"
 	}
-	return class + ": " + PythonSQLiteMessage(err)
+	return class + ": " + sqliteMessage(err)
 }
 
-// PythonSQLiteMessage is str(error) for a sqlite3 error: SQLite's own message.
-func PythonSQLiteMessage(err error) string {
+// sqliteMessage is str(error) for a sqlite3 error: SQLite's own message.
+func sqliteMessage(err error) string {
 	var failure *sqlite.Error
 	if !errors.As(err, &failure) {
 		return err.Error()

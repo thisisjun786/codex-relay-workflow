@@ -20,9 +20,6 @@ const projectReadingLimits = "A reading of what this project's children report, 
 	"revision. unreadable, unregistered and ambiguous are three different answers and none of " +
 	"them means finished."
 
-// pythonErrorText is f"{type(error).__name__}: {error}" for a failed store read.
-func pythonErrorText(err error) string { return store.PythonSQLiteError(err) }
-
 // ProjectState is AssignmentView.project_state.
 func (r *Registry) ProjectState(ctx context.Context, project string) contract.OrderedObject {
 	return ProjectStateReading(ctx, project, r, NewAssignmentView(r).State)
@@ -57,7 +54,7 @@ func ProjectStateReading(ctx context.Context, project string, reader ProjectRead
 	}
 	if err != nil {
 		return reading("unreadable", false, []string{}, []string{},
-			contract.Field{Key: "basis", Value: "the project's assignments could not be read: " + pythonErrorText(err)})
+			contract.Field{Key: "basis", Value: "the project's assignments could not be read: " + store.StoredSQLiteError(err)})
 	}
 	if len(owners) > 1 {
 		competing := make([]string, len(owners))
@@ -77,7 +74,7 @@ func ProjectStateReading(ctx context.Context, project string, reader ProjectRead
 		state, err := stateOf(ctx, rid)
 		if err != nil {
 			return reading("unreadable", false, attached, outstanding,
-				contract.Field{Key: "basis", Value: "the unfinished set could not be expanded: " + pythonErrorText(err)})
+				contract.Field{Key: "basis", Value: "the unfinished set could not be expanded: " + store.StoredSQLiteError(err)})
 		}
 		unfinished = append(unfinished, contract.OrderedObject{{Key: "relationshipId", Value: rid}, {Key: "state", Value: field(state, "state")}})
 	}

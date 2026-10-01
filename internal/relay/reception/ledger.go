@@ -12,6 +12,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"golang.org/x/sys/unix"
@@ -67,7 +68,7 @@ func LoadLedger(path, receiver string) (Obj, error) {
 		return nil, ledgerError("the file at %s is not a version 1 reception ledger", path)
 	}
 	if Get(ledger, "receiver") != receiver {
-		return nil, ledgerError("the reception ledger at %s belongs to %s, not %s; another receiver's answers are not this one's", path, pyvalue.Quote(Get(ledger, "receiver")), pyvalue.Quote(receiver))
+		return nil, ledgerError("the reception ledger at %s belongs to %s, not %s; another receiver's answers are not this one's", path, quote.Value(Get(ledger, "receiver")), quote.Value(receiver))
 	}
 	if p := entryProblem(ledger); p != "" {
 		return nil, ledgerError("the reception ledger at %s is damaged: %s; a ledger that cannot say what was answered is not read through", path, p)
@@ -82,10 +83,10 @@ func entryProblem(ledger Obj) string {
 		_, applied := Get(entry, "applied").(bool)
 		_, told := Get(entry, "toldToAct").(bool)
 		if !object || pyvalue.TypeName(Get(entry, "contentDigest")) != "str" || !present(Get(entry, "contentDigest")) || !slices.Contains([]string{"accepted", "refused", "unavailable"}, str(Get(entry, "disposition"))) || !applied || !told {
-			return "answered entry " + pyvalue.Quote(f.Key) + " is not a content digest, a disposition, whether a check said act and whether it was applied"
+			return "answered entry " + quote.Value(f.Key) + " is not a content digest, a disposition, whether a check said act and whether it was applied"
 		}
 		if Get(entry, "applied") == true && (Get(entry, "toldToAct") != true || Get(entry, "disposition") != "accepted") {
-			return "answered entry " + pyvalue.Quote(f.Key) + " says applied for a packet it does not hold as accepted and told to act on"
+			return "answered entry " + quote.Value(f.Key) + " says applied for a packet it does not hold as accepted and told to act on"
 		}
 	}
 	assignments, _ := evidence.Object(Get(ledger, "assignments"))
@@ -98,7 +99,7 @@ func entryProblem(ledger Obj) string {
 			}
 		}
 		if !ok {
-			return "assignment entry " + pyvalue.Quote(f.Key) + " is not an execution mode, a workflow, the message id of the assignment and a dispatch id"
+			return "assignment entry " + quote.Value(f.Key) + " is not an execution mode, a workflow, the message id of the assignment and a dispatch id"
 		}
 	}
 	return ""
@@ -231,7 +232,7 @@ func Observation(document any) (Obj, error) {
 			valid = ok && n > 0
 		}
 		if !valid {
-			return nil, malformed("%s in an observation is a %s, not %s", k, wanted, pyvalue.Quote(v))
+			return nil, malformed("%s in an observation is a %s, not %s", k, wanted, quote.Value(v))
 		}
 	}
 	if v := Get(o, "observedAt"); v != nil && pyvalue.TypeName(v) != "str" {

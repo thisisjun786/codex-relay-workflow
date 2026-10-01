@@ -1,4 +1,4 @@
-package argparse
+package pyvalue
 
 import (
 	"math"
@@ -9,12 +9,10 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
-// ParseInt and ParseFloat read a number as Python's int() and float() read its text, for the
-// packages that still read stored or forge text that way (the command-line parser reads numbers
-// itself, Go's way). Accepted values are compared as typed numbers, not just successful parses,
-// which catches a converter that accepts Unicode or large integers but truncates them. The
-// golden began as what Python's int() and float() answered for the same texts (a float as its
-// IEEE bits).
+// ParseInt and ParseFloat read a number as Python's int() and float() read its text. Accepted
+// values are compared as typed numbers, not just successful parses, which catches a converter
+// that accepts Unicode or large integers but truncates them. The golden began as what Python's
+// int() and float() answered for the same texts (a float as its IEEE bits).
 func Test24NumericPythonBytes(t *testing.T) {
 	values := []string{"9999999999999999999999999", "٣", "١٢", "𝟡", "１_٢", "_1", "1_", "1__0", "1_0", " 2 ", "+3", "-0", "0x1p3", "nan", "+nan", "-NaN", "inf", "INFINITY", "-inf", "1e400", "1e-400", "١٢.٣", ".5", "1.", "1.e2", "1_e2", "1e_2", "\u20031\u2003", "\x1c1", "1\x00", "²", "−1", "", strings.Repeat("9", 4300), strings.Repeat("9", 4301), strings.Repeat("0", 4301)}
 	var got strings.Builder

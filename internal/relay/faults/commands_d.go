@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
+	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 )
 
 var dNames = []string{"fault-policy", "fault-limit", "fault-attention", "fault-relink", "fault-notifications", "fault-notification-raise", "fault-notification-reserve", "fault-notification-ack", "fault-notification-fail", "fault-notification-reconcile"}
@@ -34,7 +34,7 @@ func dBound(ctx context.Context, raw, field string, fallback, max int) (int, err
 }
 func dProduct(p string) error {
 	if !productName.MatchString(p) {
-		return fmt.Errorf("fault_observation_malformed: product %s is not a plain identifier (letters, digits, '.', '_', '-'); a ':' '@' or '|' would let one product's key read as another's", pyvalue.Quote(p))
+		return fmt.Errorf("fault_observation_malformed: product %s is not a plain identifier (letters, digits, '.', '_', '-'); a ':' '@' or '|' would let one product's key read as another's", quote.Value(p))
 	}
 	return nil
 }
@@ -44,7 +44,7 @@ func dFloat(ctx context.Context, raw string) (float64, error) {
 	if numbers, present := ctx.Value(numberArgsKey{}).(map[string]any); present {
 		v, ok = numbers["window"].(float64)
 	} else {
-		v, ok = argparse.ParseFloat(raw)
+		v, ok = pyvalue.ParseFloat(raw)
 	}
 	if !ok {
 		return 0, fmt.Errorf("fault_observation_malformed: window is 60..2592000s")
@@ -179,7 +179,7 @@ func dPolicies(ctx context.Context, l *Ledger, a map[string]string) (any, error)
 	}
 	after := a["--after"]
 	if after != "" && strings.TrimSpace(after) == "" {
-		return nil, fmt.Errorf("fault_observation_malformed: after is the name the last page returned, not %s", pyvalue.Quote(after))
+		return nil, fmt.Errorf("fault_observation_malformed: after is the name the last page returned, not %s", quote.Value(after))
 	}
 	names := classNames(after)
 	names = slices.DeleteFunc(names, func(c string) bool { return !dPythonClass(c) })
@@ -267,7 +267,7 @@ func dLimits(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
 	}
 	after := a["--after"]
 	if after != "" && strings.TrimSpace(after) == "" {
-		return nil, fmt.Errorf("fault_observation_malformed: after is the name the last page returned, not %s", pyvalue.Quote(after))
+		return nil, fmt.Errorf("fault_observation_malformed: after is the name the last page returned, not %s", quote.Value(after))
 	}
 	names := map[string]bool{"open_record": true, "append_comment": true, "update_record": true, "notification": true}
 	for k := range kinds {

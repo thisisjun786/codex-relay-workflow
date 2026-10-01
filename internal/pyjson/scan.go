@@ -1,11 +1,31 @@
-// Package pyjson is the one implementation of Python's JSON the product keeps: json.loads (the
-// decoding of the bytes it is given, DecodeBytes; the JSONDecodeError, integer-limit and
-// recursion refusals its C scanner raises, with their messages and positions, Error and
-// HookedError; and the values it reads, Loads), json.dumps with its keyword arguments (Dumps,
-// Encode), float.__repr__ (Float) and the insertion-ordered dict both carry (Object). Every
-// reader and writer of the relay, the bridge, the runtime and the development tools reads and
-// writes through it, with the options that keep the bytes each of them stored or hashed. It
-// imports nothing of the relay or the bridge, so both parse Python's documents alike.
+// Package pyjson keeps the JSON formats the Python relay stored and hashed: json.dumps with its
+// keyword arguments (Dumps, Encode), float.__repr__ (Float), json.loads (Loads over the text
+// DecodeBytes or DecodeUTF8 decoded) and the refusal texts json.loads raises (Error,
+// DecodedError, ErrorWithLimit, HookedError), with the insertion-ordered object both carry
+// (Object). Each caller names, in its options, the bytes it must keep:
+//
+//   - hashed: the hook's EventKey, the bridge ledger's request fingerprint, the managed request
+//     fingerprint, the registry's canonical settings bytes, the marker facts' digests, merge-turn's
+//     checks digest, the evidence and fault-evidence digests and the fault ids taken over dumped
+//     text;
+//   - stored: the authorized_settings and relationship rows' JSON columns, receipt records and
+//     refusal rows, journal rows (the relay's and the Stop hook's), the fault ledger's journal,
+//     the supervisor's staged packets and readings, the reception ledger, the host record
+//     (json.dump with indent 2 and sorted keys), the Stop settings and the worker policy and
+//     service records;
+//   - machine-read: the relay CLI's answers (contract.Emit, indent 2) and the control.sock frames;
+//   - read back: every reader of those documents keeps reading what any writer, Python or Go,
+//     stored (NaN and the infinities, lone surrogate escapes, repeated keys, deep nesting), and
+//     the Stop hook reads its stdin as json.loads did because the payload's values feed the
+//     EventKey and the journal;
+//   - stored refusals: json.loads' texts where a refusal is kept, the Stop journal's
+//     stdin_not_json detail, a frozen manifest's exception in a guard's journalled answer, and
+//     the execution policy's and the ownership mirror's readings.
+//
+// JSON that is only shown, or that a consumer reads as JSON without its bytes mattering, is
+// encoding/json's or a plain Dumps (quote.Value); the Python-only readings of external input
+// went in refactor R3. It imports nothing of the relay or the bridge, so every package reads a
+// stored document alike.
 package pyjson
 
 import (

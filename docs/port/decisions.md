@@ -4287,3 +4287,39 @@ the `%q` spelling now (its exits unchanged), and cli's `TestAnEchoedArgumentIsQu
 Evidence: `internal/relay/delivery/{cli.go,cli_emit.go,intent_cli.go}`;
 `internal/relay/dispatch/answer.go` (`Host`, `Detail`); the goldens of internal/relay/delivery,
 internal/relay/cli and internal/contracttest.
+
+## Decision R3F-2. What R3 left of the Python value helpers is named for the format it keeps (refactor R3, final sweep)
+
+Decision: the helpers that outlived the Python relay say what they keep.
+
+- `pyvalue.Quote`, the Go-native quoting decision R3D-1 added, is `quote.Value` in
+  `internal/quote`: it is how a relay message shows a value (a string as `%q`, any other value as
+  compact JSON), not Python's. Its bytes are unchanged.
+- `argparse.ParseInt`/`ParseFloat` (Python's `int()`/`float()` of a text) are
+  `pyvalue.ParseInt`/`ParseFloat`: the relay's parser stopped using them in R3C, and their readers
+  (delivery's `HostTime`, the evidence forge's numbers, the fault commands' text arguments) read a
+  number as Python did. `Test24NumericPythonBytes` and its golden moved with them, unchanged.
+- The store's helpers that word a failure as the stored rows word it are named for that role:
+  `PythonOSError`, `PythonOSErrorText` and `PythonSQLiteError` are `StoredOSError`,
+  `StoredOSErrorText` and `StoredSQLiteError`; `ManifestException.PythonText` is `StoredText`;
+  the frozen copy's value model (`PythonEntry`, `PythonEntries`, `PythonManifestEntries`,
+  `PythonRevisionHash`) is `FrozenEntry`, `FrozenEntries`, `FrozenManifestEntries` and
+  `FrozenRevisionHash`. `PythonHostDetail`, which words a failure in Go's since R3S-1, is
+  `HostDetail`. `PythonSQLiteMessage` is unexported. The pass-through wrappers
+  `store.PythonJSONError`, `PythonJSONErrorWithLimit`, `DecodeUTF8` and `ValidUTF8` are gone:
+  their callers call `pyjson.Error`, `pyjson.ErrorWithLimit`, `pyjson.DecodeUTF8` and
+  `utf8.Valid`.
+- The package comments of `internal/pyjson` and `internal/pyvalue` name the stored, hashed and
+  machine-read formats each keeps (decision R3S-3, R3R-4 and R3D-1 list them by package).
+- Kept under their names: `store.PathlibSpelling`, `PathlibChild`, `PathlibParent` and
+  `ownership.PathlibSpelling`, named for the rule they implement (`str(Path(...))`), which spells
+  the paths the state-dir key, the scope key and the managed request fingerprint are taken over
+  (decision R3S-3); `store.PathRepr`; and the packages' own names, since renaming `pyjson` and
+  `pyvalue` would touch about a hundred files for no change of meaning.
+
+Consumer check: renames inside the Go module only; no doc outside docs/port/decisions.md (which
+records them as they were) names a renamed symbol.
+
+Evidence: internal/quote/{quote.go,quote_test.go}; internal/pyvalue/{pyvalue.go,number.go,
+number_test.go}; internal/pyjson/scan.go; internal/relay/store/{pyerr.go,ownership.go,
+frozen_value.go,frozen_detailed.go}.
