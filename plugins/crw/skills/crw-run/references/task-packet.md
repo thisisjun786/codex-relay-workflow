@@ -219,6 +219,28 @@ Execution:
   lineage is read within one generation, so naming the previous generation's revision
   declares a predecessor this generation does not contain and leaves it with no
   current head at all.
+- [Only when a relay holds this assignment:] know which turn your receipt is emitted from.
+  The relay accepts a receipt from the generation's anchor turn (the dispatch turn it
+  bound for that generation) and from a turn already admitted against that anchor, which in
+  the first generation of a managed start includes the business turn that delivered this
+  assignment once managed-start has confirmed it. Under CXC Loop the work usually ends in a
+  different turn: a goal-continuation turn, or one a restarted App Server opened. An emit from
+  such a turn is refused `unassigned_turn` unless it carries a continuation claim, so attach
+  the claim to that first emit instead of learning it from the refusal:
+  `--continues-anchor <the generation's anchor turn> --continuation-actor <your own task id>
+  --continuation-reason '<why this turn continues the same execution>'`. Only
+  `--continues-anchor` is required; the actor defaults to the turn thread and the reason to a
+  generic text, so state both. Read the anchor from the relay, not from a value this packet or
+  your coordinator typed: `status --relationship <relationship id>` prints it as
+  `observation.anchors.<relationship id>.turnId` for the generation that is open now, the
+  managed routing record's `standbyTurnId` is the first generation's anchor and no other
+  generation's (a correction opens a new generation anchored to the turn its revision request
+  arrived in), and the `unassigned_turn` refusal names the anchor it expects.
+  `assignment-show` and `assignment-find` do not report it. The relay checks that the turn
+  belongs to your own task and that the claim names the anchor bound for that generation; it
+  records your actor and reason without verifying them, so the claim is a statement you answer
+  for, and a turn of another task is refused whatever it claims. A turn admitted once needs no
+  claim again within that generation.
 - [Only when a relay holds this assignment:] if you cannot emit because of the assignment's
   own state rather than your artifact, whether the issue lookup finds no assignment, the
   lookup is refused `store_absent` because no store exists there yet, or the
@@ -264,8 +286,10 @@ Verification:
 Return:
 - Actual task ID, worktree, branch, baseline SHA, and final commit SHA if committed.
   For diff-only delivery, return the frozen diff/file bundle path and SHA-256.
-- Where a relay holds the assignment and you emitted: receipt event id, revision hash, and
-  the generation it was emitted under.
+- Where a relay holds the assignment and you emitted: receipt event id, revision hash, the
+  generation it was emitted under and the turn it was emitted from. When that turn was
+  neither the generation's anchor nor one already admitted, also the anchor your continuation
+  claim named and where you read it.
 - Where no other task owns the assignment and you still could not emit: the completion marked
   UNEMITTED, the preserved artifact paths, your task id, the issue identity and the state
   directory, and what you actually saw. An empty lookup is reported as the lookup result itself,

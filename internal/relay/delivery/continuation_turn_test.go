@@ -108,6 +108,14 @@ func TestCRW255_a_later_turn_of_the_child_is_told_how_to_continue_and_is_admitte
 		t.Fatalf("the claim was recorded as %s", detail)
 	}
 
+	// An admitted turn needs no claim again within its generation, whatever it emits next.
+	secondFile := filepath.Join(work, "second.txt")
+	mustDo(t, os.WriteFile(secondFile, []byte("a second deliverable"), 0o644))
+	again, code := emit("1", child, "turn-loop-5", "--artifact", secondFile)
+	if code != 0 || again["stage"] != "staged" {
+		t.Fatalf("an admitted turn emitting again: %d %v", code, again)
+	}
+
 	// A needs_changes generation has its own anchor: status reports it, the claim must name it,
 	// and neither the first generation's anchor nor a turn admitted for the first generation
 	// carries over.
