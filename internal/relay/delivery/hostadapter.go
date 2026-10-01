@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-
 )
 
 // Host reading rules shared by every adapter (hostadapter.py).
