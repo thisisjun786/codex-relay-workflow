@@ -935,6 +935,19 @@ separate actions under their own authorization, and
 [OPS-2.4](references/operations.md#ops-24-update-and-recovery) owns the update
 path when one is actually authorized.
 
+### Close the project's merged assignments
+
+When a relay-managed project is finished, its parent closes the merged assignments it leaves live, so the next parent can take
+the project over with `linkage-handover` and the store stops counting finished work. Read `linkage-completion --project <key>`
+first and keep that reading as the completion evidence, because afterwards it reads `unregistered` while nothing is live. Run
+`relationship-close-merged --project <key> --actor <own task id>` without `--apply`, read `closable` and `kept`, then repeat
+it with `--apply`. A non-empty `kept` is not a finished project: report each kept assignment with its reason. For a supervised
+project read `supervisor-standing --project <key>` and do not apply while an entry for a `closable`
+assignment (its `relationId`) lacks a `decision.priorReport`, since a report not yet staged cannot be sent once its assignment
+is closed; entries of assignments already closed do not block.
+[Close the merged assignments](references/relay.md#close-the-merged-assignments-when-the-project-is-done) has the commands and
+the way back.
+
 ### Account for the resources this run leaves behind
 
 A later management read should be able to say which checkout and which branch a

@@ -152,6 +152,9 @@ func (s *Scheduler) DeclareRegions(ctx context.Context, plan, node, actor string
 	out := RegionDeclaration{PlanID: plan, NodeID: node, Regions: normal}
 	err = s.Store.Transaction(ctx, func(txCtx context.Context, _ *sql.Conn) error {
 		q := s.Store.Q(txCtx)
+		if err := s.fence(txCtx, q, plan, actor); err != nil {
+			return err
+		}
 		snap, _, err := dag.SnapshotAt(txCtx, q, plan, 0)
 		if err != nil {
 			return err
