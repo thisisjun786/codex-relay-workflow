@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -134,13 +135,7 @@ type Server struct {
 // Start listens on a fresh unix socket and stops the fake when the test ends.
 func Start(tb testing.TB) *Server {
 	tb.Helper()
-	// Not tb.TempDir: a long test name would push the socket path past the 108-byte limit.
-	dir, err := os.MkdirTemp("", "crw-fakehost-")
-	if err != nil {
-		tb.Fatalf("fakehost: temp dir: %v", err)
-	}
-	tb.Cleanup(func() { _ = os.RemoveAll(dir) })
-	path := filepath.Join(dir, "app.sock")
+	path := SocketPath(tb, "app.sock")
 	listener, err := net.Listen("unix", path)
 	if err != nil {
 		tb.Fatalf("fakehost: listen %s: %v", path, err)
@@ -166,6 +161,49 @@ func Start(tb testing.TB) *Server {
 	})
 	tb.Cleanup(s.Close)
 	return s
+}
+
+// socketPathBound is the longest unix socket path every platform the tests run on can bind or
+// dial: darwin refuses a path of 104 bytes or more and Linux one of 108 (Go rejects a path that
+// fills the sockaddr field), so the shared bound is 103 bytes.
+const socketPathBound = 103
+
+// shortSocketRoot is where a socket goes when TMPDIR leaves no room for one. /tmp exists on Linux
+// and darwin alike (/dev/shm does not exist on darwin).
+const shortSocketRoot = "/tmp"
+
+// SocketPath returns the path of a unix socket named base in a fresh directory that is removed
+// when the test ends. Not tb.TempDir: its path carries the test's name, and a long name or a long
+// TMPDIR would push the socket path past the bound a unix socket can be bound or dialled at
+// (socketPathBound), which fails with "invalid argument" and no hint that the length is the
+// cause. The directory is made under TMPDIR, so the tests' isolation root still collects it,
+// unless the socket's path would pass the bound; then it is made under /tmp and the reason is
+// logged. A path that fits nowhere fails the test with both lengths.
+func SocketPath(tb testing.TB, base string) string {
+	tb.Helper()
+	if base == "" || strings.ContainsRune(base, filepath.Separator) {
+		tb.Fatalf("fakehost: socket name %q is not a file name", base)
+	}
+	dir, err := os.MkdirTemp("", "crw-fakehost-")
+	if err != nil {
+		tb.Fatalf("fakehost: temp dir: %v", err)
+	}
+	if len(filepath.Join(dir, base)) > socketPathBound {
+		long := filepath.Join(dir, base)
+		_ = os.RemoveAll(dir)
+		if dir, err = os.MkdirTemp(shortSocketRoot, "crw-fakehost-"); err != nil {
+			tb.Fatalf("fakehost: a socket under TMPDIR would be %d bytes, over the %d-byte bound of a unix socket path, and %s has no directory for it: %v", len(long), socketPathBound, shortSocketRoot, err)
+		}
+		tb.Cleanup(func() { _ = os.RemoveAll(dir) })
+		path := filepath.Join(dir, base)
+		if len(path) > socketPathBound {
+			tb.Fatalf("fakehost: socket %s is %d bytes, over the %d-byte bound of a unix socket path, even under %s", path, len(path), socketPathBound, shortSocketRoot)
+		}
+		tb.Logf("fakehost: TMPDIR is too long for a unix socket (%s would be %d bytes, bound %d); the socket is %s", long, len(long), socketPathBound, path)
+		return path
+	}
+	tb.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return filepath.Join(dir, base)
 }
 
 // Close stops the listener, drops every connection and waits for their handlers.
