@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// The `crw skill` command line: a family (hook-probe, parent-title, start-policy), one of its
+// The `crw skill` command line: a family (hook-probe, parent-title, start-policy, base-refresh), one of its
 // commands, then the command's flags and positional arguments, read with the flag package. -h
 // or --help prints the usage on stdout and exits 0; a usage error prints it on stderr and exits 2.
 

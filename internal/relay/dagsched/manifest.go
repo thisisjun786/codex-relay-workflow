@@ -428,41 +428,55 @@ func frozenManifestPath(root string, canonical []byte) string {
 // its own (a link is refused, so nothing is written outside the root), and the file is read back through the relay's authorized open (inside the root, no link on the way, a regular file,
 // never blocking on a special file) and compared byte for byte: a copy that is not what was written is an error and never a manifest. An existing file is accepted only when it holds the same bytes.
 func FreezeManifest(root string, canonical []byte) (string, error) {
+	path, _, err := freezeManifestCopy(root, canonical)
+	return path, err
+}
+
+// freezeManifestCopy is FreezeManifest that also says whether this call created the file (the exclusive create succeeded): a file that already existed was reused, and is not the call's to take back.
+// created stays true when a later step of the freeze fails, so the caller can take back what it wrote.
+// A write that fails part way (a full disk) leaves a file that holds a strict prefix of the bytes: the caller takes it back too, see removeCopy.
+func freezeManifestCopy(root string, canonical []byte) (path string, created bool, err error) {
 	dir := filepath.Join(root, frozenManifestDir)
-	path := frozenManifestPath(root, canonical)
+	path = frozenManifestPath(root, canonical)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", fmt.Errorf("freeze the manifest: %w", err)
+		return "", false, fmt.Errorf("freeze the manifest: %w", err)
 	}
 	// Lstat does not follow a link, so a link to a directory is not a directory here
 	if info, err := os.Lstat(dir); err != nil || !info.IsDir() {
-		return "", fmt.Errorf("freeze the manifest: %s is not a directory of its own", dir)
+		return "", false, fmt.Errorf("freeze the manifest: %s is not a directory of its own", dir)
 	}
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
 	switch {
 	case err == nil:
-		_, werr := file.Write(canonical)
+		created = true
+		var werr error
+		if testFreezeWrite != nil {
+			werr = testFreezeWrite(file, canonical)
+		} else {
+			_, werr = file.Write(canonical)
+		}
 		if cerr := file.Close(); werr == nil {
 			werr = cerr
 		}
 		if werr != nil {
-			return "", fmt.Errorf("freeze the manifest: %w", werr)
+			return "", created, fmt.Errorf("freeze the manifest: %w", werr)
 		}
 	case !errors.Is(err, os.ErrExist):
-		return "", fmt.Errorf("freeze the manifest: %w", err)
+		return "", false, fmt.Errorf("freeze the manifest: %w", err)
 	}
 	opened, err := store.OpenAuthorized(path, []string{root}, false)
 	if err != nil {
-		return "", fmt.Errorf("freeze the manifest: %w", err)
+		return "", created, fmt.Errorf("freeze the manifest: %w", err)
 	}
 	defer opened.File.Close()
 	read, err := io.ReadAll(io.LimitReader(opened.File, int64(len(canonical))+1))
 	if err != nil {
-		return "", fmt.Errorf("freeze the manifest: %w", err)
+		return "", created, fmt.Errorf("freeze the manifest: %w", err)
 	}
 	if !bytes.Equal(read, canonical) {
-		return "", fmt.Errorf("freeze the manifest: %s holds other bytes than the manifest (%s, %s)", path, shaOf(read), shaOf(canonical))
+		return "", created, fmt.Errorf("freeze the manifest: %s holds other bytes than the manifest (%s, %s)", path, shaOf(read), shaOf(canonical))
 	}
-	return path, nil
+	return path, created, nil
 }
 
 func shaOf(b []byte) string {
