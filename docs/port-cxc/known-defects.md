@@ -34,3 +34,7 @@ Behavior of CXC v0.2.40 that looks unintended and that the recorded corpus ([con
 - `normalizeInterview` caps contradictions and assumptions without re-validating their entries, unlike `reconstructInterview`, so an entry with an invalid severity written in memory is persisted as is and corrected only on the next read (source `plugins/codexclaw/components/pabcd-state/src/interview.ts:367-368` against `:185-213`); port: kept.
 - A persisted assumption object with `recorded: true` whose `id` or `text` is not a string is reconstructed with an empty `id` or `text` and still counts as recorded, so readiness accepts an assumption whose content was lost (source `plugins/codexclaw/components/pabcd-state/src/interview.ts:202-204` and `:277`); port: kept.
 - When only a low- or medium-severity contradiction keeps an otherwise complete interview from being ready, the gate reports `interview is not ready (dimensions/assumptions incomplete)`, which names the wrong cause: that fallback is emitted only when no other warning exists, and only high-severity contradictions are counted (source `plugins/codexclaw/components/pabcd-state/src/interview.ts:315`, `:319` and `:339`); port: kept.
+
+## Found by the corpus replayer
+
+- Fixture `cli-help__top-level__no_arguments` stores its only step as `{}`: the recorder's JSON encoding drops an empty `cli` list, so the step no longer says it is a cli step (a defect of the recorder, not of the oracle). The replayer reads a step of no kind as a cli step without arguments (fixture `cli-help__top-level__no_arguments`); port: kept.
