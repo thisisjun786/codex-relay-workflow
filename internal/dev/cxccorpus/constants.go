@@ -63,7 +63,7 @@ type ConstantsFile struct {
 func (r *Recorder) ExtractConstants() (ConstantsFile, error) {
 	c, err := r.newCase(Scenario{ID: "constants"})
 	if c != nil {
-		defer func() { _ = removeTree(c.root) }()
+		defer func() { _ = removeTree(c.Root) }()
 	}
 	if err != nil {
 		return ConstantsFile{}, err
@@ -71,14 +71,14 @@ func (r *Recorder) ExtractConstants() (ConstantsFile, error) {
 	modules, _ := json.Marshal(ConstantModules)
 	plugin := filepath.Join(r.Oracle, "plugins", "codexclaw")
 	cmd := exec.Command(r.Node, "--input-type=module", "-e", constantsScript)
-	cmd.Dir = filepath.Join(c.root, "ws")
-	cmd.Env = append(append([]string{}, c.env...), "CXC_MODULES="+string(modules), "CXC_PLUGIN="+plugin)
+	cmd.Dir = filepath.Join(c.Root, "ws")
+	cmd.Env = append(append([]string{}, c.Env...), "CXC_MODULES="+string(modules), "CXC_PLUGIN="+plugin)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
 		return ConstantsFile{}, fmt.Errorf("import the modules: %w: %s", err, stderr.String())
 	}
-	text := r.Rules.NewSession(r.bindings(c)).Text(stdout.String())
+	text := r.Rules.NewSession(r.Bindings(c)).Text(stdout.String())
 	var modulesOut map[string]map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(text), &modulesOut); err != nil {
 		return ConstantsFile{}, err
