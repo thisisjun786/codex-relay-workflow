@@ -604,6 +604,14 @@ func TestTheRouteIsOnTheResumeAndOnTheRollbackToo(t *testing.T) {
 // The command line: --backup-state-to is on install, update and rollback, and nowhere else; an empty one names no
 // directory.
 func TestTheBackupFlagIsOnTheCommandsThatSwapAndNowhereElse(t *testing.T) {
+	// Main reads the Codex version from the codex on the process PATH (Options.CodexVersion is not reachable from the
+	// command line), so a host without one is given a stand-in that answers as the real one does.
+	fakeBin := t.TempDir()
+	write(t, filepath.Join(fakeBin, "codex"), "#!/bin/sh\necho codex-cli 0.154.0\n")
+	if err := os.Chmod(filepath.Join(fakeBin, "codex"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	h, _, second, _, next := zoneInstalled(t)
 	zoneStore(t, h)
 	common := []string{"--codex-home", h.codex, "--record", h.record, "--socket", h.fake.SocketPath, "--state", h.relayState}
