@@ -89,6 +89,12 @@ var commands = []command{
 		x, err := r.Resume(ctx, p.text("relationship"), p.integer("expect-generation"), p.values["expect-artifact-root"], p.values["expect-allowed-recipient"], p.text("actor"))
 		return x.ContractRecord(), err
 	}},
+	// relationship-close-merged is read-only unless --apply is given, as dag-ready is until --record: a dry run never
+	// creates a store and writes no relationship, link or journal row.
+	{Command: dispatch.Command{Name: "relationship-close-merged", ReadOnlyWhen: func(args dispatch.Args) bool { return !args.Bool("apply") }},
+		run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
+			return r.CloseMerged(ctx, p.text("project"), p.set["all"], p.text("actor"), p.set["apply"])
+		}},
 	{Command: dispatch.Command{Name: "assignment-show", ReadOnly: true}, run: cmdAssignmentShow},
 	{Command: dispatch.Command{Name: "assignment-find", ReadOnly: true}, run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
 		return assignmentView(r).ForIssue(ctx, p.text("issue"))
