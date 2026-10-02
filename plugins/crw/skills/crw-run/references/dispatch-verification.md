@@ -162,16 +162,25 @@ a case whose owner has moved or been reworded before relying on it.
 | S18 | A mismatch found after creation is reconciled on that same task | Same bullet list | Recovery | unchanged |
 | S19 | A child writes its messages, commits, pull request text and receipts in English, while task titles, Linear records and reports to the user stay Korean | [Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution) language paragraph and the packets' `Language:` line | Default settings | added 2026-10-02; partly measured in P-CRW-115, inspected artifacts held, see below |
 | S20 | A relay-managed child that finishes on a goal-continuation or post-restart turn attaches a continuation claim naming the generation's anchor, read from the relay, and does not read the `unassigned_turn` refusal as a delivery defect; a turn of another task stays refused whatever it claims | [Launch packet](task-packet.md#launch-packet) relay bullet on which turn the receipt is emitted from, and [Completing on a later turn of the same child](relay.md#completing-on-a-later-turn-of-the-same-child) | Recovery | added 2026-10-02; did not occur in the receipts read in P-CRW-115, see below |
+| S21 | An implementation issue the size check answers `split_recommended` for is not assigned and is reported with its draft; an exception the user explicitly approved passes with its record; `ok` changes nothing | [Check the size before dispatch](../SKILL.md#check-the-size-before-dispatch) and [Check the size of an issue](../../crw-plan/references/issue-boundaries.md#check-the-size-of-an-issue) | Preserved limits | added with CRW-273; the command is tested and was replayed over the recorded issues, no run has had a parent apply the step yet |
 | S22 | A candidate whose only block is BEHIND is updated by the parent itself with a guarded update-branch call, then proved again on the new head (the base-refresh check, every required job, the `Devin Review` status, the child's threads) before an expected-head merge; in a DAG-managed project the update comes before `dag-accept` | [Refresh the base yourself when only the base moved](merge-readiness.md#refresh-the-base-yourself-when-only-the-base-moved) | Recovery | added 2026-10-03; basis below |
 | S22b | What still goes back to the child: a conflict (the update did not happen, so the correction names the head the branch is at and has the child sync first when an earlier refresh already moved it); on the new head, a refusal from the check, a failed job or Devin status, a new thread or a blocking finding (the correction names the new head and has the child fast-forward its worktree first); and a base that moves after `dag-accept`. A job still pending is waited on, not returned | Same section, and [Restoration block](task-packet.md#restoration-block) | Recovery | added 2026-10-03; same basis, see below |
 | S23 | The packet's `Title:` names the Codex task, and the child titles its own pull request in English under the target repository's rules | [Child task titles](task-packet.md#child-task-titles) and the `Title:` line of the [Launch packet](task-packet.md#launch-packet) | Default settings | added 2026-10-03; measured on published pull request titles, not on a child that read the rule, see below |
 | S23b | A temporary directory the packet names is short enough for a Unix socket under it to bind, and the packet states the socket path limit | The `Capacity and large artifacts:` line of the [Launch packet](task-packet.md#launch-packet) and [First full assignment required fields](task-packet.md#first-full-assignment-required-fields) | Default settings | added 2026-10-03; limit measured on this Linux host and read for macOS, see below |
 | S23c | A make target, CI check or repository script a packet names under `Verification:` exists in the target repository, and the packet's writer confirmed it when writing the packet | The `Verification:` line of the [Launch packet](task-packet.md#launch-packet) and [First full assignment required fields](task-packet.md#first-full-assignment-required-fields) | Default settings | added 2026-10-03; failure mode measured at dev 53c7e4e8, see below |
+| S25 | Where a packet's `Delivery:` covers publication, the child pushes its task branch and opens the pull request without stopping for a push approval, because the packet carries the approval CXC `DEV-GIT-PUSH-01` requires, and it never merges, force-pushes, tags or pushes to `dev` or `main`; a packet that excludes publication carries none and the child pushes nothing | [Default dev integration](../../crw-plan/references/integrations.md#default-dev-integration), the publication bullet of the [Launch packet](task-packet.md#launch-packet) and [First full assignment required fields](task-packet.md#first-full-assignment-required-fields) | Approval context | added 2026-10-03; the rule text was read and the identifier search returned no match, a child at the push step was not observed, see below |
+| S25b | A child that needs something only a person can give does not call `request_user_input`, which CXC denies while a goal is active: it writes the question out, records `blocked_needs_input` on its turn and, where a relay holds the assignment, emits that outcome; where none does it returns the CXC status the case takes with the question | The same three places and [OPS-6.2](operations.md#ops-62-record-shape) | Recovery | added 2026-10-03; the hook denial was read in the CXC source, no child's use of the route was observed, see below |
+| S25c | `LOOP-DOCS-FIRST-01` applies to a CRW child as CXC states it, to the child's own issue: a single-cycle issue skips the docs-only first cycle, and a child that plans two or more work-phases opens with one, with CXC's roadmap debt for scope found later | [Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution) and the Loop bullet of the [Launch packet](task-packet.md#launch-packet) | Default settings | added 2026-10-03; read against recorded goalplans, the correction-generation and publication-phase cases are left open, see below |
 
 S14 and S17 are the pair that is easiest to confuse. S14 removed the readiness turn; S17
 added a capability check the coordinator performs before creating the task. A check that
 happens on the coordinator's side, before anything exists to answer, is not a turn spent
 asking the child whether it is ready.
+
+S21 is unobserved in a run. The command it relies on has Go tests over its answers, and the 33 recorded issues of five projects were replayed
+through it (the 31 that finished small answer `ok`, CRW-183 and CRW-184 answer `split_recommended`). Whether a parent runs it before
+`managed-start`, holds a flagged issue as `defer:size_check` and records an approved exception with the user's own statement is a reading of
+this text, not a measurement; the first project run after it lands is where to look.
 
 S19 and S20 were read against P-CRW-115, a relay-managed project run: its six issue
 children, whose pull requests are #271 to #276 (merges 14b01079, 6b5ba199, 9fb54f4b,
@@ -254,6 +263,46 @@ checkout the pattern `TestStart_bindsAndServes` without anchors lists
 package exits 0 with `[no tests to run]`. An empty listing means no matching top-level test in that
 build, since `-list` does not print subtests; a missing package, and a package whose files are all
 behind the `dev` tag listed without `-tags dev`, fail with exit 1.
+
+S25, S25b and S25c were read on 2026-10-03 against this checkout at dev ced7de60 and the CXC plugin
+0.2.40+codex.20260929183231. They decide what the packet and the integration text say. None was
+observed on a child that read the new wording: whether a child stops at the push step is to be
+observed in the next real-use run, and a test that matches the wording would show only that the text
+is present.
+
+S25: `DEV-GIT-PUSH-01` is skill prose in CXC's `cxc-dev` (the Safety rules bullet "Push requires
+explicit user approval", class ESCALATE). A search of the plugin's non-Markdown files, hooks and
+compiled components included, for the rule identifier returned no match. That shows no hook cites it
+by name, not that nothing equivalent exists, so the one mechanism found is the rule text itself: a
+child stops if it reads the rule and follows it. The coordinator's reading of the October child
+rollouts on 2026-10-03, which was not repeated here, found no child that stopped pushing because of
+it, so the conflict is latent: a change of model or effort could make a child that follows the rule
+to the letter report BLOCKED at the push step. The sentence is wording, so it is an early warning
+and no enforcement. A child can still read the CXC rule first and stop, and "never merge" rests on
+this text and on the coordinator's review of the pull request, with the merge gate that POLICY.md
+describes. Whether that gate is active on the server was not read back here.
+
+S25b: the CXC hook `hooks/pre-tool-use-guarding-interview-in-goal.json` denies the user-input
+request while a goal is active (the denial is implemented in the plugin's
+components/pabcd-state/dist/goal-gate.js, read as source and not observed on a host), which is real
+enforcement for the first half of the line. That a `blocked_needs_input` turn then reaches the
+parent is not shown: [OPS-8.1](operations.md#ops-81-parent-continuation-and-waiting) says whether
+anything enqueues a delivery for that disposition is a property of the installed runtime and
+unmeasured, which is why the line has the child emit the outcome over a file where a relay holds the
+assignment. No child's use of the route was observed.
+
+S25c: read-only over the working-tree goalplan files of this host's CRW child worktrees (private,
+not linked). Since 2026-10-01 they hold 33 plans with work-phases: 24 with one, 4 with two (three
+are a generation-2 correction, one is an implementation followed by a publication phase) and 5 with
+three or more, four of which record a docs-only roadmap phase first; an independent recount
+reproduced these figures and found three explicit generation-2 correction phases. A single-cycle
+issue opens no docs-only cycle in this record. Two cases are left open because CXC counts
+work-phases and not what a phase does: a correction or base-refresh generation, and a publication
+phase split off from the implementation. CXC says multi-cycle scope discovered later pays the
+roadmap debt in the next P, and none of the three recorded generation-2 corrections and the one
+recorded implementation-then-publication plan opened a docs-only phase. That is recorded practice,
+not permission. This change does not decide these cases. The CXC text stands, and whether CRW should
+state that a correction or a publication phase opens none is returned for a decision.
 
 ## Negative cases
 

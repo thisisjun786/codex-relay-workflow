@@ -152,7 +152,7 @@ func (c *Channel) StageWithReading(ctx context.Context, o Obligation, reading ma
 					return err
 				}
 			}
-			if existing.HoldReason.String == "hierarchy_unresolved" && existing.SenderTaskID == live.Sender && existing.RecipientTaskID == live.Recipient && (existing.State == "queued" || existing.State == "deferred_busy" || existing.State == "withheld_pre_send") {
+			if existing.HoldReason.String == "hierarchy_unresolved" && existing.SenderTaskID == live.Sender && existing.RecipientTaskID == live.Recipient && existing.Unsent() {
 				if _, err = c.Store.Q(tx).ExecContext(tx, "UPDATE supervisor_messages SET hold_reason=NULL,updated_at=? WHERE message_id=?", at, id); err != nil {
 					return err
 				}
@@ -182,17 +182,17 @@ func (c *Channel) StageWithReading(ctx context.Context, o Obligation, reading ma
 			}
 			restating := existing.EventID != nullString(eventID) || existing.SubmissionNo != submission
 			if existing.SenderTaskID != r.Sender || existing.RecipientTaskID != r.Recipient {
-				if existing.State != "queued" && existing.State != "deferred_busy" && existing.State != "withheld_pre_send" {
+				if !existing.Unsent() {
 					return Refusal{"relation_owner_drift", "message " + strconv.Quote(id) + " was staged from " + strconv.Quote(existing.SenderTaskID) + " to " + strconv.Quote(existing.RecipientTaskID) + " and has " + fmt.Sprint(existing.AttemptCount) + " attempt(s), state " + strconv.Quote(existing.State) + "; the linkage now says " + strconv.Quote(r.Sender) + " reports to " + strconv.Quote(r.Recipient) + ". A message an attempt may have sent is never re-addressed, because its attempts would then describe a recipient they were never sent to - it went to the supervisor who was live when its transport started - so " + strconv.Quote(r.Recipient) + " has not been told by this channel, and the obligation stands until the Linear record confirms it"}
 				}
 				var unsafe int
-				if err = c.Store.Q(tx).QueryRowContext(tx, "SELECT COUNT(*) FROM supervisor_attempts WHERE message_id=? AND (send_attempted<>'no' OR retry_safe=0)", id).Scan(&unsafe); err != nil {
+				if err = c.Store.Q(tx).QueryRowContext(tx, "SELECT COUNT(*) FROM supervisor_attempts WHERE message_id=? AND "+store.SupervisorAttemptMayHaveGoneSQL(""), id).Scan(&unsafe); err != nil {
 					return err
 				}
 				if unsafe != 0 {
 					return Refusal{"relation_owner_drift", "message " + strconv.Quote(id) + " was already attempted and is never re-addressed"}
 				}
-				update, err := c.Store.Q(tx).ExecContext(tx, "UPDATE supervisor_messages SET sender_task_id=?,recipient_task_id=?,project_key=?,packet=?,event_id=?,submission_no=?,state='queued',next_eligible_at=NULL,hold_reason=NULL,updated_at=? WHERE message_id=? AND sender_task_id=? AND recipient_task_id=? AND state IN ('queued','deferred_busy','withheld_pre_send') AND NOT EXISTS (SELECT 1 FROM supervisor_attempts a WHERE a.message_id=supervisor_messages.message_id AND (a.send_attempted<>'no' OR a.retry_safe=0))", r.Sender, r.Recipient, r.ProjectKey, encoded, nullString(eventID), submission, at, id, existing.SenderTaskID, existing.RecipientTaskID)
+				update, err := c.Store.Q(tx).ExecContext(tx, "UPDATE supervisor_messages SET sender_task_id=?,recipient_task_id=?,project_key=?,packet=?,event_id=?,submission_no=?,state='queued',next_eligible_at=NULL,hold_reason=NULL,updated_at=? WHERE message_id=? AND sender_task_id=? AND recipient_task_id=? AND "+store.SupervisorNeverSentSQL(), r.Sender, r.Recipient, r.ProjectKey, encoded, nullString(eventID), submission, at, id, existing.SenderTaskID, existing.RecipientTaskID)
 				if err != nil {
 					return err
 				}
@@ -217,7 +217,7 @@ func (c *Channel) StageWithReading(ctx context.Context, o Obligation, reading ma
 				return nil
 			}
 			if restating {
-				update, err := c.Store.Q(tx).ExecContext(tx, "UPDATE supervisor_messages SET packet=?,event_id=?,submission_no=?,updated_at=? WHERE message_id=? AND state IN ('queued','deferred_busy','withheld_pre_send') AND NOT EXISTS (SELECT 1 FROM supervisor_attempts a WHERE a.message_id=supervisor_messages.message_id AND (a.send_attempted<>'no' OR a.retry_safe=0))", encoded, nullString(eventID), submission, at, id)
+				update, err := c.Store.Q(tx).ExecContext(tx, "UPDATE supervisor_messages SET packet=?,event_id=?,submission_no=?,updated_at=? WHERE message_id=? AND "+store.SupervisorNeverSentSQL(), encoded, nullString(eventID), submission, at, id)
 				if err != nil {
 					return err
 				}

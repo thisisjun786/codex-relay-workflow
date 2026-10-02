@@ -127,7 +127,7 @@ func (c *Channel) holdUnaddressed(ctx context.Context, row store.SupervisorMessa
 		at = c.clockISO()
 	}
 	return c.Store.Transaction(ctx, func(tx context.Context, _ *sql.Conn) error {
-		result, err := c.Store.Q(tx).ExecContext(tx, "UPDATE supervisor_messages SET hold_reason='hierarchy_unresolved',updated_at=? WHERE message_id=? AND hold_reason IS NULL AND state IN ('queued','deferred_busy','withheld_pre_send')", at, row.MessageID)
+		result, err := c.Store.Q(tx).ExecContext(tx, "UPDATE supervisor_messages SET hold_reason='hierarchy_unresolved',updated_at=? WHERE message_id=? AND hold_reason IS NULL AND "+store.SupervisorUnsentSQL(""), at, row.MessageID)
 		if err != nil {
 			return err
 		}
@@ -163,6 +163,20 @@ type claimedMessage struct {
 	attemptNo          int64
 }
 
+// oldestAhead names the oldest message to recipient, other than id, that goes ahead of the one
+// staged at (stagedAt, id): staged earlier, and satisfying ahead, the SQL condition (binding now
+// twice) of the vantage that asks. Attempt asks it before any host work with
+// store.SupervisorAheadSQL, and the claim asks it again under its write lock with
+// store.SupervisorAheadInClaimSQL, because another writer can make an older message claimable in
+// between. found is false when nothing goes first.
+func (c *Channel) oldestAhead(ctx context.Context, recipient, stagedAt, id, ahead string, now float64) (older string, found bool, err error) {
+	err = c.Store.Q(ctx).QueryRowContext(ctx, "SELECT message_id FROM supervisor_messages WHERE recipient_task_id=? AND message_id<>? AND "+ahead+" AND "+store.SupervisorOlderThanSQL("")+" ORDER BY staged_at,message_id LIMIT 1", recipient, id, now, now, stagedAt, stagedAt, id).Scan(&older)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	return older, err == nil, err
+}
+
 // claim is the transaction-level operation shared by the send and its parity tests.
 func (c *Channel) claim(ctx context.Context, id string, r Resolution, now float64, at, owner string) (claimedMessage, error) {
 	service := delivery.NewService(c.Store, delivery.SystemClock{})
@@ -185,7 +199,7 @@ func (c *Channel) claim(ctx context.Context, id string, r Resolution, now float6
 		if live != r || current.RecipientTaskID != r.Recipient || current.SenderTaskID != r.Sender {
 			return errQuietNotClaimable
 		}
-		if current.State != "queued" && current.State != "deferred_busy" && current.State != "withheld_pre_send" {
+		if !current.Unsent() {
 			return errQuietNotClaimable
 		}
 		if changed, err := c.refreshProposal(tx, current, r, at, 0); err != nil {
@@ -196,12 +210,12 @@ func (c *Channel) claim(ctx context.Context, id string, r Resolution, now float6
 				return err
 			}
 		}
-		err = c.Store.Q(tx).QueryRowContext(tx, "SELECT message_id FROM supervisor_messages WHERE recipient_task_id=? AND message_id<>? AND hold_reason IS NULL AND ((state IN ('queued','deferred_busy','withheld_pre_send') AND (next_eligible_at IS NULL OR next_eligible_at<=?)) OR (state='sending' AND lease_until>?)) AND (staged_at<? OR (staged_at=? AND message_id<?)) ORDER BY staged_at,message_id LIMIT 1", r.Recipient, id, now, now, current.StagedAt, current.StagedAt, id).Scan(&message)
-		if err == nil {
-			return Refusal{"not_claimable", "message " + pyvalue.StrRepr(message) + " was staged for " + pyvalue.StrRepr(r.Recipient) + " first and can be sent now, so this one waits. Two facts reach the level above in the order they arose"}
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
+		older, found, err := c.oldestAhead(tx, r.Recipient, current.StagedAt, id, store.SupervisorAheadInClaimSQL(""), now)
+		if err != nil {
 			return err
+		}
+		if found {
+			return Refusal{"not_claimable", "message " + pyvalue.StrRepr(older) + " was staged for " + pyvalue.StrRepr(r.Recipient) + " first and can be sent now, so this one waits. Two facts reach the level above in the order they arose"}
 		}
 		attemptNo = current.AttemptCount + 1
 		requestID = "sup-" + id[:min(12, len(id))] + "-a" + strconv.FormatInt(attemptNo, 10)
@@ -292,16 +306,15 @@ func (c *Channel) attempt(ctx context.Context, id string, adapter SendAdapter, n
 			return nil, err
 		}
 	}
-	if row.HoldReason.Valid || row.State != "queued" && row.State != "deferred_busy" && row.State != "withheld_pre_send" || row.NextEligibleAt.Valid && row.NextEligibleAt.Float64 > now {
+	if !row.ClaimableAt(now) {
 		return nil, nil
 	}
-	var older string
-	err = c.Store.Q(ctx).QueryRowContext(ctx, "SELECT message_id FROM supervisor_messages WHERE recipient_task_id=? AND message_id<>? AND ((state IN ('queued','deferred_busy','withheld_pre_send') AND hold_reason IS NULL AND (next_eligible_at IS NULL OR next_eligible_at<=?)) OR (state='sending' AND lease_until IS NOT NULL AND lease_until>?)) AND (staged_at<? OR (staged_at=? AND message_id<?)) ORDER BY staged_at,message_id LIMIT 1", row.RecipientTaskID, id, now, now, row.StagedAt, row.StagedAt, id).Scan(&older)
-	if err == nil {
-		return nil, Refusal{"not_claimable", "message " + pyvalue.StrRepr(older) + " was staged for " + pyvalue.StrRepr(row.RecipientTaskID) + " first and can be sent now, so this one waits. Two facts reach the level above in the order they arose, which is not a property an ordered selection can have on its own while any caller may name any row"}
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
+	older, found, err := c.oldestAhead(ctx, row.RecipientTaskID, row.StagedAt, id, store.SupervisorAheadSQL(""), now)
+	if err != nil {
 		return nil, err
+	}
+	if found {
+		return nil, Refusal{"not_claimable", "message " + pyvalue.StrRepr(older) + " was staged for " + pyvalue.StrRepr(row.RecipientTaskID) + " first and can be sent now, so this one waits. Two facts reach the level above in the order they arose, which is not a property an ordered selection can have on its own while any caller may name any row"}
 	}
 	r, err := c.Resolve(ctx, row.RelationshipID)
 	if err != nil {

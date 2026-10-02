@@ -2,6 +2,8 @@ package delivery
 
 import (
 	"slices"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 )
 
 // The approval note of a resume response (settings.TaskSettings.approval_divergence). The rest of
@@ -10,7 +12,7 @@ import (
 // settings.go).
 
 // ApprovalDiffersFromRecord is the note's code.
-const ApprovalDiffersFromRecord = "approval_policy_differs_from_record"
+const ApprovalDiffersFromRecord = registry.ApprovalPolicyDiffersFromRecord
 
 // ApprovalDivergence is approval_divergence: a carried policy other than the recorded one.
 func (t TaskSettings) ApprovalDivergence(response any) any {
@@ -21,7 +23,7 @@ func (t TaskSettings) ApprovalDivergence(response any) any {
 	observed, _ := get(r, "approvalPolicy")
 	recorded, _ := get(t.Data, "approvalPolicy")
 	p, isText := observed.(string)
-	if observed == recorded || !isText || !slices.Contains(CarriedApprovalPolicies, p) {
+	if observed == recorded || !isText || !slices.Contains(registry.CarriedApprovalPolicies, p) {
 		return nil
 	}
 	return Obj{{Key: "code", Value: ApprovalDiffersFromRecord}, {Key: "field", Value: "approvalPolicy"}, {Key: "recorded", Value: recorded}, {Key: "observed", Value: observed}}

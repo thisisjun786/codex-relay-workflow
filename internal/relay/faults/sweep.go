@@ -28,6 +28,11 @@ const (
 	holdNamed     = "unknown_send_hold_named"
 )
 
+// scanWindow is how many rows of a source's key range one sweep scans, however few of them match, so
+// that a sweep costs the same over a long history as over a short one: 128 pages. A source with more
+// rows than that is read in steps, each sweep going on where the last one stopped.
+const scanWindow = 4096
+
 var (
 	settledDelivery  = []any{"dispatched", "inbox_only", "superseded"}
 	parentHolds      = []string{"host_lost_turn", "unknown_send_lost", "unknown_send_undecided"}
@@ -88,6 +93,8 @@ type Sweeper struct {
 	Selection       any
 	// Workspace is the scope under which this store's source rows are judged.
 	Workspace string
+	// ScanWindow overrides scanWindow for the sources read through it; zero keeps the default.
+	ScanWindow int
 }
 
 // Batch is the complete sweep answer, including the rotations to commit after recording.
@@ -101,6 +108,10 @@ type Batch struct {
 	ReadingsTotal   int
 	Limits          string
 	positions       map[string]any
+	// stored is what fault_cursors held when the sweep read it, a key per row that existed, so that
+	// recording writes only the cursors whose position moved. A Batch built without one has every
+	// cursor written.
+	stored map[string]any
 }
 
 type RecordedSweep struct {
@@ -226,7 +237,7 @@ func (sw *Sweeper) SweepReadings(ctx context.Context, product, project string, r
 			complete = append(complete, entry.name)
 		}
 	}
-	return Batch{Observations: derived, Clears: kept, Gaps: gaps, CompleteSources: complete, Cursors: positions, ReadingsNext: next, ReadingsTotal: total, Limits: "each source is read at most 32 rows per sweep, in rotations bounded by its upper key when the rotation started, so every rotation reaches the end; readings are reduced to the last per turn and read 32 at a time from readingsNext. A class this sweep does not derive is never cleared by its absence here", positions: positions}, nil
+	return Batch{Observations: derived, Clears: kept, Gaps: gaps, CompleteSources: complete, Cursors: positions, ReadingsNext: next, ReadingsTotal: total, Limits: "each source is read at most 32 rows per sweep, in rotations bounded by its upper key when the rotation started, so every rotation reaches the end; readings are reduced to the last per turn and read 32 at a time from readingsNext. A class this sweep does not derive is never cleared by its absence here", positions: positions, stored: cursors}, nil
 }
 
 // RecordAll is record_all: every observation recorded, then the cursors advanced.
@@ -282,7 +293,7 @@ func (sw *Sweeper) RecordAll(ctx context.Context, ledger *Ledger, batch Batch) (
 			}
 		}
 	}
-	if err := sw.writeCursors(ctx, batch.positions); err != nil {
+	if err := sw.writeCursors(ctx, batch.positions, batch.stored); err != nil {
 		return answer, err
 	}
 	return answer, nil
@@ -297,19 +308,34 @@ func (sw *Sweeper) readCursors(ctx context.Context) (map[string]any, error) {
 	return out, err
 }
 
-func (sw *Sweeper) writeCursors(ctx context.Context, positions map[string]any) error {
+// writeCursors stores the positions that differ from the ones the sweep started from, in one
+// transaction, and opens none when no cursor moved. A source with no row yet counts as moved, so
+// the first sweep of a store creates its rows. updated_at is when the position last moved, or the row was made.
+func (sw *Sweeper) writeCursors(ctx context.Context, positions, stored map[string]any) error {
+	sources := []string{"delivery_stalled", "record_sync_failed", "observation_stalled", "delivery_retrying", "delivery_refused", "managed_start_failed", "recovered"}
+	if _, ok := positions["managed_readings"]; ok {
+		sources = append(sources, "managed_readings")
+	}
+	moved := map[string]any{}
+	var order []string
+	for _, source := range sources {
+		var next any
+		if p := positions[source]; p != nil {
+			next = dumps(p, false)
+		}
+		if prior, ok := stored[source]; ok && prior == next {
+			continue
+		}
+		moved[source] = next
+		order = append(order, source)
+	}
+	if len(order) == 0 {
+		return nil
+	}
 	now := sw.Now()
 	return sw.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
-		sources := []string{"delivery_stalled", "record_sync_failed", "observation_stalled", "delivery_retrying", "delivery_refused", "managed_start_failed", "recovered"}
-		if _, ok := positions["managed_readings"]; ok {
-			sources = append(sources, "managed_readings")
-		}
-		for _, source := range sources {
-			var stored any
-			if p := positions[source]; p != nil {
-				stored = dumps(p, false)
-			}
-			if _, err := sw.Store.Q(ctx).ExecContext(ctx, "INSERT INTO fault_cursors (source, position, pages, updated_at) VALUES (?,?,0,?) ON CONFLICT(source) DO UPDATE SET position = excluded.position,   pages = 0, updated_at = excluded.updated_at", source, stored, now); err != nil {
+		for _, source := range order {
+			if _, err := sw.Store.Q(ctx).ExecContext(ctx, "INSERT INTO fault_cursors (source, position, pages, updated_at) VALUES (?,?,0,?) ON CONFLICT(source) DO UPDATE SET position = excluded.position,   pages = 0, updated_at = excluded.updated_at", source, moved[source], now); err != nil {
 				return err
 			}
 		}
@@ -408,6 +434,42 @@ func pageOf(obs []Observation, rows []row, key string, after, until any) page {
 		cursor = map[string]any{"at": rows[len(rows)-1].Get(key), "until": until}
 	}
 	return page{obs, cursor, after == nil && !filled}
+}
+
+// window is how many rows of a source one sweep scans.
+func (sw *Sweeper) window() int {
+	if sw.ScanWindow > 0 {
+		return sw.ScanWindow
+	}
+	return scanWindow
+}
+
+// scanEnd is the last key one sweep reads of a source whose rotation runs from after to until: the
+// window-th key past after when a key follows it, so that rows remain to be scanned, and until itself
+// when none does, which is when reached says this sweep ends the rotation. keys selects the keys of
+// the source within (after, until] in order, two of them from offset window-1, and takes the three
+// arguments after, until and window-1. Whether a key follows is what ends a rotation, not whether the
+// window's last key is until: a source counted in fewer rows than the range's keys, such as settled
+// attempts among all attempts, may have nothing after its window but keys it does not count.
+func (sw *Sweeper) scanEnd(ctx context.Context, keys string, after, until any) (end any, reached bool, err error) {
+	rows, err := sw.Store.All(ctx, keys, after, until, sw.window()-1)
+	if err != nil || len(rows) < 2 {
+		return until, true, err
+	}
+	return rows[0][0].Value, false, nil
+}
+
+// windowedPage is pageOf for a source read through scanEnd: a page that did not fill, in a scan that
+// stopped before the rotation's upper key, leaves the cursor where the scan stopped, so that the next
+// sweep goes on from there instead of starting the source again. A scan that reached the upper key
+// ends the rotation as pageOf says, and a source within one window is read as it always was.
+func windowedPage(obs []Observation, rows []row, key string, after, until, end any, reached bool) page {
+	p := pageOf(obs, rows, key, after, until)
+	if p.cursor == nil && !reached {
+		p.cursor = map[string]any{"at": end, "until": until}
+	}
+	p.complete = p.complete && reached
+	return p
 }
 
 func (sw *Sweeper) scopeOf(ctx context.Context, rid any, cache map[string]map[string]any) (map[string]any, error) {
@@ -578,8 +640,12 @@ func (sw *Sweeper) deliveryFaults(ctx context.Context, product string, cursor an
 		return page{complete: after == nil}, err
 	}
 	afterText, _ := after.(string)
+	end, reached, err := sw.scanEnd(ctx, "SELECT event_id FROM deliveries WHERE event_id > ? AND event_id <= ? ORDER BY event_id LIMIT 2 OFFSET ?", afterText, until)
+	if err != nil {
+		return page{}, err
+	}
 	rows, err := sw.Store.All(ctx, "SELECT d.event_id, d.relationship_id, d.recipient_task_id, d.state, d.hold_reason,       d.attempt_count, e.execution_generation AS generation, e.turn_id AS turn,       (SELECT a.request_id FROM attempts a WHERE a.event_id = d.event_id          AND a.internal_state = 'settled'         ORDER BY a.attempt_no DESC LIMIT 1) AS last_request,       (SELECT a.state FROM attempts a WHERE a.event_id = d.event_id          AND a.internal_state = 'settled'         ORDER BY a.attempt_no DESC LIMIT 1) AS last_state  FROM deliveries d LEFT JOIN events e ON e.event_id = d.event_id WHERE d.hold_reason IS NOT NULL AND d.hold_reason != ? AND d.state NOT IN (?,?,?)   AND "+notSuperseded+"   AND d.event_id > ? AND d.event_id <= ? ORDER BY d.event_id LIMIT ?",
-		append(append(pick(busyCap), settledDelivery...), afterText, until, sweepLimit)...)
+		append(append(pick(busyCap), settledDelivery...), afterText, end, sweepLimit)...)
 	if err != nil {
 		return page{}, err
 	}
@@ -639,7 +705,7 @@ func (sw *Sweeper) deliveryFaults(ctx context.Context, product string, cursor an
 					"the recipient is not given this delivery while the hold stands", []any{"read from settled attempts only; one still in flight is not counted"},
 					map[string]any{"event": r.Get("event_id"), "relationship": r.Get("relationship_id"), "generation": r.Get("generation"), "turn": r.Get("turn")}))})
 	}
-	return pageOf(obs, rows, "event_id", after, until), nil
+	return windowedPage(obs, rows, "event_id", after, until, end, reached), nil
 }
 
 func (sw *Sweeper) retryFaults(ctx context.Context, product string, cursor any) (page, error) {
@@ -648,7 +714,11 @@ func (sw *Sweeper) retryFaults(ctx context.Context, product string, cursor any) 
 		return page{complete: after == nil}, err
 	}
 	afterInt, _ := after.(int64)
-	args := append(append([]any(nil), settledDelivery...), "dispatched", "inbox_only", busyAttempt, unknownSendHolds[0], unknownSendHolds[1], afterInt, until, sweepLimit)
+	end, reached, err := sw.scanEnd(ctx, "SELECT rowid FROM attempts WHERE internal_state = 'settled' AND rowid > ? AND rowid <= ? ORDER BY rowid LIMIT 2 OFFSET ?", afterInt, until)
+	if err != nil {
+		return page{}, err
+	}
+	args := append(append([]any(nil), settledDelivery...), "dispatched", "inbox_only", busyAttempt, unknownSendHolds[0], unknownSendHolds[1], afterInt, end, sweepLimit)
 	rows, err := sw.Store.All(ctx, "SELECT a.rowid AS seq, a.request_id, a.state AS attempt_state, a.event_id,       a.attempt_no,       (SELECT MAX(x.attempt_no) FROM attempts x WHERE x.event_id = a.event_id          AND x.internal_state = 'settled') AS latest_settled,       d.relationship_id, d.recipient_task_id, d.state AS delivery_state,       d.hold_reason, d.attempt_count, e.execution_generation AS generation,       e.turn_id AS turn  FROM attempts a JOIN deliveries d ON d.event_id = a.event_id  LEFT JOIN events e ON e.event_id = a.event_id WHERE d.state NOT IN (?,?,?)   AND a.internal_state = 'settled'   AND a.state IS NOT NULL AND a.state NOT IN (?,?,?)   AND NOT (COALESCE(d.hold_reason, '') IN (?,?) AND a.attempt_no = d.attempt_count)   AND "+notSuperseded+"   AND a.rowid > ? AND a.rowid <= ? ORDER BY a.rowid LIMIT ?", args...)
 	if err != nil {
 		return page{}, err
@@ -693,7 +763,7 @@ func (sw *Sweeper) retryFaults(ctx context.Context, product string, cursor any) 
 				sw.facts("the attempt reaches "+recipient, "the attempt ended "+state, "the delivery is retried and has not reached its recipient", []any{"one occurrence per settled failed attempt; attempts in flight are not read"},
 					map[string]any{"event": r.Get("event_id"), "relationship": r.Get("relationship_id"), "generation": r.Get("generation"), "turn": r.Get("turn")}))})
 	}
-	return pageOf(obs, rows, "seq", after, until), nil
+	return windowedPage(obs, rows, "seq", after, until, end, reached), nil
 }
 
 // attemptSettingsCause is _attempt_settings_cause.
@@ -803,6 +873,13 @@ func (sw *Sweeper) recovered(ctx context.Context, product string, cursor any) ([
 	return clears, next, undeterminedGaps, nil
 }
 
+// stillPresentSQL is the page of deliveries still_present reads for one recipient and attempt state.
+// The unary plus on a2.internal_state keeps SQLite from answering the EXISTS through attempts_open, an
+// index on internal_state alone: nearly every attempt is settled, so that plan read every settled
+// attempt once per delivery asked about. Without it the lookup goes through the (event_id, attempt_no)
+// key, which is one delivery's attempts.
+const stillPresentSQL = "SELECT d.event_id FROM deliveries d WHERE d.recipient_task_id = ? AND d.state NOT IN (?,?,?)   AND " + notSuperseded + "   AND ((d.hold_reason IS NOT NULL AND d.hold_reason != ?         AND COALESCE((SELECT a.state FROM attempts a WHERE a.event_id = d.event_id                     AND a.internal_state = 'settled'                   ORDER BY a.attempt_no DESC LIMIT 1), '') = COALESCE(?, ''))        OR EXISTS (SELECT 1 FROM attempts a2 WHERE a2.event_id = d.event_id                     AND +a2.internal_state = 'settled' AND a2.state = ?)) AND NOT EXISTS (SELECT 1 FROM fault_overtaken_deliveries o                  WHERE o.event_id = d.event_id) AND d.event_id > ? ORDER BY d.event_id LIMIT ?"
+
 // stillPresent is still_present for delivery_stalled via _first_current. The overtaken-delivery
 // memo (fault_overtaken_deliveries) is written as Python writes it.
 func (sw *Sweeper) stillPresent(ctx context.Context, signature map[string]any) (bool, bool, error) {
@@ -810,7 +887,7 @@ func (sw *Sweeper) stillPresent(ctx context.Context, signature map[string]any) (
 		return false, false, nil
 	}
 	state := signature["attemptState"]
-	query := "SELECT d.event_id FROM deliveries d WHERE d.recipient_task_id = ? AND d.state NOT IN (?,?,?)   AND " + notSuperseded + "   AND ((d.hold_reason IS NOT NULL AND d.hold_reason != ?         AND COALESCE((SELECT a.state FROM attempts a WHERE a.event_id = d.event_id                     AND a.internal_state = 'settled'                   ORDER BY a.attempt_no DESC LIMIT 1), '') = COALESCE(?, ''))        OR EXISTS (SELECT 1 FROM attempts a2 WHERE a2.event_id = d.event_id                     AND a2.internal_state = 'settled' AND a2.state = ?)) AND NOT EXISTS (SELECT 1 FROM fault_overtaken_deliveries o                  WHERE o.event_id = d.event_id) AND d.event_id > ? ORDER BY d.event_id LIMIT ?"
+	query := stillPresentSQL
 	after, checked := "", 0
 	var overtaken []string
 	for {
