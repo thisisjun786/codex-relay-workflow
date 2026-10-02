@@ -340,6 +340,13 @@ through. The Go and Python runtimes execute the same schema statements
 ([decision 14](port/decisions.md)), and no Go release changes them before the commit point
 ([cutover](port/cutover.md#commit-point)).
 
+The one release that changes the schema is the one that adds the DAG zone ([DAG plans](relay/dag-plans.md#the-store), decision 74): its
+`dag_*` tables are created by the first write-open and are declared by that build. Installing it onto a store that has no zone therefore
+reads `EXTENDS`, and installing a build without the zone onto a store that build has opened reads `NARROWS`. Both are refusals, and each is
+its own decision under OPS-4.5 with a copy of the state directory taken first. The zone is additive, so a runtime without it still opens a store that
+has it; it is the gate, not the open, that stands in front of a rollback. Opening a store for writing with this build is itself the schema change, so
+run no write command of it against a live state directory before that decision is made.
+
 ### The order a swap commits in
 
 The selection in the host record and the pointer on disk are two truths, and both the order they
