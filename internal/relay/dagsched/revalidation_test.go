@@ -969,6 +969,25 @@ func TestAGenerationOpenedByHandIsBoundOnlyToTheManifestItWasOpenedFor(t *testin
 			t.Fatalf("the refusal offers a way on that is not there: %v", err)
 		}
 	})
+	t.Run("an input accepted again between the prepare and the recording", func(t *testing.T) {
+		k, _, ridC, prepared := rvHandKit(t)
+		rvOpenByHand(t, k, ridC, prepared.DispatchRequestID, true)
+		// A is revised and accepted a third time after C's manifest was prepared and its generation opened: the slice and the criteria of C are as they were, and the manifest names an acceptance of A that
+		// is superseded now. Binding it would let C report and be accepted on an input that was replaced before it began
+		var active string
+		if err := k.s.DB.QueryRow("SELECT acceptance_id FROM dag_acceptances WHERE plan_id = 'sr' AND node_id = 'A' AND state = 'active'").Scan(&active); err != nil {
+			t.Fatal(err)
+		}
+		k.invRevise("sr", "A", "sr-r3", invTitle("A revised again"))
+		inputs := invRealInputs(k, "sr", "A")
+		k.exec("UPDATE dag_acceptances SET state = 'superseded' WHERE acceptance_id = ?", active)
+		k.acceptNode("sr", "A", acceptOpts{Suffix: "-3", Inputs: inputs})
+		if _, err := k.sched.RecordCorrection(context.Background(), "sr", "C", "parent", prepared.ManifestDigest); refusalReason(err) != "disposition_conflict" || bound(k) != 0 {
+			t.Fatalf("correction = %v (%d bound)", err, bound(k))
+		} else if !strings.Contains(err.Error(), "does not rest on the inputs") || !strings.Contains(err.Error(), "open no further generation") {
+			t.Fatalf("the refusal does not say why or what to do: %v", err)
+		}
+	})
 	t.Run("a change of the criteria alone is revalidated, not corrected by hand", func(t *testing.T) {
 		k, accepted := rvSettledSharedRoot(t)
 		k.rvReregister("sr", "A", "sr-r2", accepted["A"].RelationshipID, dig("A's new criteria"), nil)

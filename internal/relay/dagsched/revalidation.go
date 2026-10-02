@@ -81,7 +81,8 @@ func (s *Scheduler) describeOpening(ctx context.Context, q store.Querier, plan, 
 //
 //   - the node's accepted result is stale and its route, without this generation, is a correction: a result that is current is corrected by a ruling, a change of the criteria alone is a revalidation and
 //     opens no generation, and a node that landed was refused before this;
-//   - the manifest is named (--manifest-digest) and is the one stored for this node at its current slice and criteria, as on the ruling route;
+//   - the manifest is named (--manifest-digest) and is the one stored for this node at its current slice and criteria, as on the ruling route, and its inputs are still the ones the node's edges are satisfied
+//     by now (VerifyManifest without the file bytes, as release checks its own intent): a predecessor accepted again after the prepare leaves another input than the one the child was told to consume;
 //   - the generation was opened under the dispatch request id derived from that manifest (CorrectionRequestID), so it was opened for this manifest and no other;
 //   - the generation is bound to a dispatch turn: the instruction line reached the child in it (a child reports in a bound generation only).
 //
@@ -123,6 +124,19 @@ func (s *Scheduler) recordHandOpened(ctx context.Context, q store.Querier, plan 
 	}
 	if body["node_slice_digest"] != n.SliceDigest || body["criteria_set_digest"] != n.CriteriaSetDigest {
 		return refuse(contract.RefusalDispositionConflict, "the manifest %s was prepared for another version of node %s than the plan holds now, so generation %d of %s cannot be bound to it: report this refusal and open no further generation", suppliedDigest, n.NodeID, rel.Generation, rel.ID)
+	}
+	// the manifest was built when the inputs of the node were as they were then: a predecessor accepted again, or a decision settled again, between the prepare and now leaves the slice and the criteria of this node
+	// as they were and the inputs the child is told to consume superseded. It is judged against the store as it stands, as release does when it records its own intent (the bytes of the files aside: the child
+	// verifies those against the digest and hash in the instruction line)
+	roots, err := relationshipRoots(ctx, q, rel.ID)
+	if err != nil {
+		return err
+	}
+	if findings, err := s.VerifyManifest(ctx, q, plan, snap, n, body, VerifyOptions{SkipFileBytes: true, ArtifactRoots: roots}); err != nil {
+		return err
+	} else if len(findings) > 0 {
+		return refuse(contract.RefusalDispositionConflict, "the manifest %s does not rest on the inputs of node %s as they stand now (%s %s: %s), so generation %d of %s cannot be bound to it: report this refusal and open no further generation",
+			suppliedDigest, n.NodeID, findings[0].Code, findings[0].Reason, findings[0].Detail, rel.Generation, rel.ID)
 	}
 	var request, anchor string
 	var turn sql.NullString
