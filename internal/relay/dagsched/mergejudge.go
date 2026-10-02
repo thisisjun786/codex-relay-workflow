@@ -38,11 +38,15 @@ const maxRounds = 2
 // completedConclusions are the answers a finished check gives; anything else (empty, pending, queued, in_progress) has not finished.
 var completedConclusions = map[string]bool{"success": true, "failure": true, "neutral": true, "skipped": true, "cancelled": true, "timed_out": true, "action_required": true, "startup_failure": true, "stale": true, "error": true}
 
+// checkKey names a run of a check across the readings of it: the name and the opaque run identity (never ordered), whatever attempt or time the reading is at.
+func checkKey(c Check) string { return c.Name + "|" + c.RunID }
+
 // requiredChecks classifies the checks the base branch requires for the exact head of the pull request, the way merge-evidence and the merge lane's own check read them: of every run
 // only its newest attempt counts, every such run of a required name (and of the provider the branch rule names for it) has to be a success, and no run ordering is guessed from the
 // opaque run ids. A required name with no run on that head, or with a run that has not finished, is pending; the runs that finished and are not a success are the failures. They count only
 // when every required check has finished, so one red job seen before its siblings finish never uses up the retry.
-func requiredChecks(pr PullRequest) (pending, failed []string) {
+func requiredChecks(pr PullRequest) (pending, failed []string, keys map[string]string) {
+	keys = map[string]string{}
 	newest := map[string]Check{}
 	for _, c := range pr.Checks {
 		if c.HeadSHA != pr.HeadSHA {
@@ -90,6 +94,7 @@ func requiredChecks(pr PullRequest) (pending, failed []string) {
 				if !seen[tuple] {
 					seen[tuple] = true
 					failed = append(failed, tuple)
+					keys[tuple] = checkKey(c)
 				}
 			}
 		}
@@ -103,7 +108,7 @@ func requiredChecks(pr PullRequest) (pending, failed []string) {
 	}
 	slices.Sort(pending)
 	slices.Sort(failed)
-	return pending, failed
+	return pending, failed, keys
 }
 
 // mergeable reads the relationship of an accepted result for a judgement: not cancelled or paused (contract 3.2), and the caller is its parent. An archived relationship is fine, its child's
@@ -245,6 +250,11 @@ func (s *Scheduler) Judge(ctx context.Context, plan, node, actor string, in Judg
 			out.CheckSeq, out.Replayed = seq, false
 			return err
 		}
+		for _, c := range pr.Checks {
+			if c.HeadSHA == pr.HeadSHA && c.Attempt < history.maxAttempt[checkKey(c)] {
+				return refuseCandidateMoved("the checks read for %s#%d are older than a judgement already recorded for this head (%s at attempt %d, after attempt %d): read the pull request again", forge, number, c.Name, c.Attempt, history.maxAttempt[checkKey(c)])
+			}
+		}
 		fresh, err := s.criteriaCurrent(txCtx, tx, cn, acc)
 		if err != nil {
 			return err
@@ -295,7 +305,7 @@ func (s *Scheduler) criteriaCurrent(ctx context.Context, q store.Querier, cn dag
 
 // judgeChecks applies the required-checks rule (5) to m, given the history of the same head.
 func (s *Scheduler) judgeChecks(m *mergeCheck, h mergeHistory) {
-	pending, failed := requiredChecks(m.Observed)
+	pending, failed, keys := requiredChecks(m.Observed)
 	if len(pending) == 0 {
 		// failures count only once every required check has finished; a red job seen beside a running one is not recorded
 		m.Failed = failed
@@ -312,7 +322,7 @@ func (s *Scheduler) judgeChecks(m *mergeCheck, h mergeHistory) {
 		}
 	case h.retries == 0:
 		m.Outcome, m.Round, m.Reason = OutcomeRetrySameSHA, 1, "required checks failed ("+strings.Join(failed, ", ")+"): run them again on the same head, once"
-	case subset(failed, h.failedBefore) && !h.rerunSeen:
+	case !h.isNewFailure(failed, keys):
 		// the snapshot the retry round was opened on, read again: it is not a second failure
 		m.Outcome, m.Round, m.Reason = OutcomeRetrySameSHA, 1, "required checks failed ("+strings.Join(failed, ", ")+") and the retry round is open: run them again on the same head, once"
 	default:
@@ -320,13 +330,15 @@ func (s *Scheduler) judgeChecks(m *mergeCheck, h mergeHistory) {
 	}
 }
 
-func subset(a, b []string) bool {
-	for _, x := range a {
-		if !slices.Contains(b, x) {
-			return false
+// isNewFailure is whether any of the failures is not the failure the retry round was opened on, read again: a tuple no judgement has seen, or a run that a judgement saw not failing (running
+// or passing) since it failed, whatever identity the forge gives its next failure. Another check running again says nothing about this one.
+func (h mergeHistory) isNewFailure(failed []string, keys map[string]string) bool {
+	for _, f := range failed {
+		if !slices.Contains(h.failedBefore, f) || h.rerun[keys[f]] {
+			return true
 		}
 	}
-	return true
+	return false
 }
 
 type historicRow struct {
@@ -341,8 +353,10 @@ type historicRow struct {
 type mergeHistory struct {
 	retries  int
 	failures int
-	// rerunSeen: after the retry round opened, a judgement saw the checks not failed (still running, or passing): a failure after that is a new failure, whatever identity the forge gives it
-	rerunSeen    bool
+	// rerun: runs (checkKey) that a judgement saw not failing after they had failed
+	rerun map[string]bool
+	// maxAttempt: the newest attempt of each run any judgement of the head read
+	maxAttempt   map[string]int64
 	failedBefore []string
 	evicted      *historicRow
 }
@@ -351,7 +365,8 @@ type mergeHistory struct {
 // does not tell owner/name apart by case) carried it: the checks ran on the commit, so a head that used up its retry or was evicted stays so when the node is accepted again at the same head.
 // The rows come in the order they were written.
 func loadMergeHistory(ctx context.Context, q store.Querier, plan, node, forge, head string) (mergeHistory, error) {
-	var h mergeHistory
+	h := mergeHistory{rerun: map[string]bool{}, maxAttempt: map[string]int64{}}
+	failedSeen := map[string]bool{}
 	rows, err := q.QueryContext(ctx, "SELECT c.check_seq, c.acceptance_id, c.outcome, c.reason, c.round_no, c.failed_required_json, c.checks_digest, c.evidence_json FROM dag_merge_checks c"+
 		" JOIN dag_acceptances a ON a.acceptance_id = c.acceptance_id JOIN dag_acceptance_forge f ON f.acceptance_id = a.acceptance_id"+
 		" WHERE a.plan_id = ? AND a.node_id = ? AND lower(f.forge_repository) = lower(?) AND c.observed_head_sha = ? ORDER BY c.rowid", plan, node, forge, head)
@@ -374,8 +389,19 @@ func loadMergeHistory(ctx context.Context, q store.Querier, plan, node, forge, h
 		}
 		if r.outcome == OutcomeRetrySameSHA {
 			h.retries++
-		} else if h.retries > 0 && (r.outcome == OutcomeChecksPending || r.outcome == OutcomeEligible) {
-			h.rerunSeen = true
+		}
+		seen, err := parseEvidenceChecks(evidence)
+		if err != nil {
+			return h, err
+		}
+		for _, c := range seen {
+			key := checkKey(Check{Name: c.Name, RunID: c.RunID})
+			h.maxAttempt[key] = max(h.maxAttempt[key], c.Attempt)
+			if completedConclusions[c.Conclusion] && c.Conclusion != "success" {
+				failedSeen[key] = true
+			} else if failedSeen[key] {
+				h.rerun[key] = true
+			}
 		}
 		if len(r.failed) > 0 {
 			h.failures++
@@ -497,9 +523,12 @@ func (s *Scheduler) RequestMergeTurn(ctx context.Context, plan, node, actor stri
 		if recomputed, err := RecomputeEvidenceDigest(evidence); err != nil || recomputed != digest {
 			return refuse(contract.RefusalRevisionMismatch, "the judgement of %s no longer digests to what was recorded, so no merge turn is requested", node)
 		}
-		conflicts := func() (n int64) {
-			_ = tx.QueryRowContext(txCtx, "SELECT COUNT(*) FROM coordination_conflicts").Scan(&n)
-			return n
+		// the lane records a coordination conflict as an insert or, for a contest it has recorded before, as an update of the row (a later time): either changes this
+		conflicts := func() (state string) {
+			var n int64
+			var latest sql.NullString
+			_ = tx.QueryRowContext(txCtx, "SELECT COUNT(*), MAX(at) FROM coordination_conflicts").Scan(&n, &latest)
+			return strconv.FormatInt(n, 10) + "|" + latest.String
 		}
 		before := conflicts()
 		t, err := service.Request(txCtx, acc.Repository, res.BaseRef, current.ProjectKey, actor, in.Host, acc.HeadSHA, true,
@@ -507,7 +536,7 @@ func (s *Scheduler) RequestMergeTurn(ctx context.Context, plan, node, actor stri
 		if err != nil {
 			// a refusal the lane recorded as a conflict (another project's claim, an owner that is paused) is an answer and its row is kept; a refusal with no row is the lane's own integrity
 			// check failing after it wrote part of a turn, and the whole transaction goes back
-			if answer, failure := asRefusal(err); failure == nil && conflicts() > before {
+			if answer, failure := asRefusal(err); failure == nil && conflicts() != before {
 				refused = answer
 				return nil
 			}

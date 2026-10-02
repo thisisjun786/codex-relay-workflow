@@ -121,6 +121,22 @@ func TestMergeEligibilityRetryOnceThenEvict(t *testing.T) {
 			t.Fatalf("failed again after running = %+v", r)
 		}
 	})
+	t.Run("another check running again is not another failure of this one", func(t *testing.T) {
+		k := newJudgeKit(t)
+		k.setChecks("A:1:1:failure", "B:2:1:success")
+		if r := k.judge(); r.Outcome != OutcomeRetrySameSHA {
+			t.Fatalf("first = %+v", r)
+		}
+		// B runs again while A still shows the one failure it had, then B passes
+		k.setChecks("A:1:1:failure", "B:2:1:")
+		if r := k.judge(); r.Outcome != OutcomeChecksPending {
+			t.Fatalf("B running = %+v", r)
+		}
+		k.setChecks("A:1:1:failure", "B:2:2:success")
+		if r := k.judge(); r.Outcome != OutcomeRetrySameSHA || r.Round != 1 {
+			t.Fatalf("A has failed once = %+v", r)
+		}
+	})
 	t.Run("a second failure evicts for good", func(t *testing.T) {
 		k := newJudgeKit(t)
 		k.setChecks("A:1:1:failure", "B:2:1:success")
@@ -551,4 +567,62 @@ func TestMergeRequestCheckedAgainInTheTransactionThatCreatesTheTurn(t *testing.T
 			t.Fatal("a half-written turn was committed")
 		}
 	})
+}
+
+// A reading that was in flight while a newer one was judged is older than the history and counts for nothing: an old failure that arrives after the retry passed neither evicts the head
+// nor takes back the eligibility. Nothing is written and the caller reads again.
+func TestAnOlderReadingCannotOverwriteANewerJudgement(t *testing.T) {
+	k := newJudgeKit(t)
+	k.setChecks("A:1:1:failure", "B:2:1:success")
+	k.judge()
+	old := k.forge.by["owner/repo#5"]
+	// while this judgement's read of the pull request is in flight, another judgement reads the retry's passing attempt and records it
+	k.forge.onRead = func() {
+		k.setChecks("A:1:2:success", "B:2:1:success")
+		if r := k.judge(); !r.Eligible() {
+			t.Errorf("the nested judgement = %+v", r)
+		}
+		k.forge.by["owner/repo#5"] = old
+	}
+	_, err := k.sched.Judge(context.Background(), "g", "I", "parent", JudgeInput{})
+	if refusalReason(err) != "merge_candidate_moved" {
+		t.Fatalf("the older reading = %v", err)
+	}
+	if got := strings.Join(k.history(), " "); got != "retry_same_sha:1 eligible:2" {
+		t.Fatalf("history = %s", got)
+	}
+}
+
+// A refusal the lane records as a conflict is an answer and its row is kept, and a repeat of the same contest updates the row (a later time) instead of adding one: that update is kept too.
+func TestMergeRequestKeepsTheLanesRecordOfARepeatedContest(t *testing.T) {
+	k := newJudgeKit(t)
+	// the project's binding changed hands after the relationship was made: the lane refuses the holder and records the contest
+	k.exec("UPDATE scope_bindings SET task_id = 'someone-else' WHERE scope_kind = 'project' AND scope_key = 'P-TEST'")
+	at := func() string {
+		var at string
+		if err := k.s.DB.QueryRow("SELECT at FROM coordination_conflicts WHERE reason = 'scope_role_mismatch' AND domain = 'merge_target'").Scan(&at); err != nil {
+			t.Fatalf("no recorded contest: %v", err)
+		}
+		return at
+	}
+	ask := func() error {
+		_, turn, err := k.sched.RequestMergeTurn(context.Background(), "g", "I", "parent", MergeRequestInput{Host: "host"})
+		if turn != nil {
+			t.Fatalf("a turn was granted to a project that another task holds: %v", turn)
+		}
+		return err
+	}
+	if err := ask(); refusalReason(err) != "scope_role_mismatch" {
+		t.Fatalf("first = %v", err)
+	}
+	first := at()
+	if err := ask(); refusalReason(err) != "scope_role_mismatch" {
+		t.Fatalf("second = %v", err)
+	}
+	if second := at(); second <= first {
+		t.Fatalf("the repeated contest left its row at %s, was %s", second, first)
+	}
+	if k.count("SELECT COUNT(*) FROM merge_turns") != 0 {
+		t.Fatal("a turn exists")
+	}
 }

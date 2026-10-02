@@ -222,7 +222,7 @@ func (g *isolated) mergeTree(ctx context.Context, left, right string) ([]string,
 	// the attributes are the ones committed in the left head (git 2.40 and newer read them from the commit named in GIT_ATTR_SOURCE; an older git reads none), never a working tree's
 	code, out, err := g.runWith(ctx, []string{"GIT_ATTR_SOURCE=" + left}, "merge-tree", "-z", "--write-tree", "--name-only", "--no-messages", left, right)
 	if code != 0 && code != 1 {
-		return nil, fmt.Errorf("git merge-tree could not merge %s and %s (git 2.38 or newer is needed): %w", left, right, err)
+		return nil, fmt.Errorf("git merge-tree could not merge %s and %s (git 2.38 or newer is needed, and 2.40 or newer to read the attributes committed in the commits): %w", left, right, err)
 	}
 	records := strings.Split(out, "\x00")
 	if len(records) == 0 || !treeIDPattern.MatchString(records[0]) {

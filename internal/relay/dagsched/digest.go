@@ -144,6 +144,28 @@ func RecomputeEvidenceDigest(evidenceJSON string) (string, error) {
 	return EvidenceDigest(b), nil
 }
 
+// parseEvidenceChecks reads the checks of a stored evidence body.
+func parseEvidenceChecks(evidenceJSON string) ([]CheckRow, error) {
+	var wire struct {
+		Checks []struct {
+			Name       string `json:"name"`
+			RunID      string `json:"run_id"`
+			HeadSHA    string `json:"head_sha"`
+			Conclusion string `json:"conclusion"`
+			Provider   string `json:"provider"`
+			Attempt    int64  `json:"attempt"`
+		} `json:"checks"`
+	}
+	if err := json.Unmarshal([]byte(evidenceJSON), &wire); err != nil {
+		return nil, err
+	}
+	rows := make([]CheckRow, 0, len(wire.Checks))
+	for _, c := range wire.Checks {
+		rows = append(rows, CheckRow{Name: c.Name, RunID: c.RunID, HeadSHA: c.HeadSHA, Conclusion: c.Conclusion, Provider: c.Provider, Attempt: c.Attempt})
+	}
+	return rows, nil
+}
+
 // ReleaseRequestID is the managed-start request id of one release: derived from the node and its manifest digest only (contract
 // 2.6, E-17, E-23), within the engine's 128 characters. It carries no attempt counter: a replay is the same request.
 func ReleaseRequestID(nodeID, manifestDigest string) string {
