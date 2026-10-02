@@ -369,8 +369,10 @@ lets go when it returns: `linkage-bind --role parent`, `linkage-handover --role 
 `linkage-supervise`. Such a writer waits for every start inside that span, and a start waits for it
 before it asks about the binding, so the binding cannot change between the last scope check, the
 creation and the registration (which would refuse a child whose thread already exists). Writers of
-other scopes (a child under an issue, a supervisor under an initiative) and of other projects take
-nothing and are not held up. The wait is bounded at 30 seconds: a start or a writer that waits that
+other scopes (a child under an issue, a supervisor under an initiative) take no lock, and a writer or
+a start of another project waits only for that project's own lock. The lock file is named after the
+store's real path, so two spellings of one store (a linked file or directory) share it. The wait is
+bounded at 30 seconds: a start or a writer that waits that
 long answers the retryable `LockWaitExpired` host error (the host envelope, exit 3, detail
 `LockWaitExpired: the project binding lock was not acquired within 30s; retry` for a writer) having
 changed nothing; a start stays armed and the same request id continues it. That is the one new ending

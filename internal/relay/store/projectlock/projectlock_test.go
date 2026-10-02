@@ -111,9 +111,13 @@ func TestThePathIsASidecarBesideTheStore(t *testing.T) {
 	state := t.TempDir()
 	store := filepath.Join(state, "relay.sqlite3")
 	sum := sha256.Sum256([]byte("P1"))
-	want := filepath.Join(state, "managed-start-project-"+hex.EncodeToString(sum[:])+".lock")
-	if got := Path(store, "P1"); got != want {
-		t.Fatalf("path %s, want %s", got, want)
+	realState, err := filepath.EvalSymlinks(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(realState, "managed-start-project-"+hex.EncodeToString(sum[:])+".lock")
+	if got, err := Path(store, "P1"); err != nil || got != want {
+		t.Fatalf("path %s (%v), want %s", got, err, want)
 	}
 	held, err := Shared(context.Background(), store, "P1")
 	if err != nil {
@@ -132,7 +136,41 @@ func TestAStoreWithoutAPathIsRefused(t *testing.T) {
 			t.Fatal("a lock was taken for a store with no path")
 		}
 	}
-	if _, err := os.Stat(Path("", "P1")); err == nil {
-		t.Fatal("a sidecar was left in the working directory")
+	if _, err := Path("", "P1"); err == nil {
+		t.Fatal("a path was made for a store with no path")
+	}
+}
+
+// Two spellings of one store name one lock file: a lock held through the store's real path is the lock a
+// writer meets when it reaches the same store through a link to the file, or through a linked directory.
+func TestTwoSpellingsOfOneStoreShareTheLock(t *testing.T) {
+	ctx := context.Background()
+	state := t.TempDir()
+	real := filepath.Join(state, "relay.sqlite3")
+	if err := os.WriteFile(real, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	aliases := t.TempDir()
+	fileLink := filepath.Join(aliases, "alias.sqlite3")
+	if err := os.Symlink(real, fileLink); err != nil {
+		t.Fatal(err)
+	}
+	dirLink := filepath.Join(aliases, "dir")
+	if err := os.Symlink(state, dirLink); err != nil {
+		t.Fatal(err)
+	}
+	saved := ownership.LockWait
+	ownership.LockWait = 150 * time.Millisecond
+	defer func() { ownership.LockWait = saved }()
+	held, err := Shared(ctx, real, "P1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held()
+	var expired *ownership.LockWaitExpired
+	for name, spelling := range map[string]string{"a link to the file": fileLink, "a linked directory": filepath.Join(dirLink, "relay.sqlite3")} {
+		if _, err := Exclusive(ctx, spelling, "P1"); !errors.As(err, &expired) {
+			t.Fatalf("%s did not meet the lock held through the real path: %v", name, err)
+		}
 	}
 }

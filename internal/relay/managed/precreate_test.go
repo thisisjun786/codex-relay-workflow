@@ -261,13 +261,17 @@ func TestPrecreate_BindingRemovedJustBeforeTheEffectCreatesNothing(t *testing.T)
 	}
 }
 
-// protocolLockPath is where the managed-start protocol keeps a project's lock: a sidecar beside the store.
-// A writer of the project's parent binding takes it exclusively, a managed start takes it shared for the
-// span from its last scope ask to the creation. The tests spell the path out so they hold the engine to the
-// protocol and not to its own helper.
+// protocolLockPath is where the managed-start protocol keeps a project's lock: a sidecar beside the store's
+// real directory. A writer of the project's parent binding takes it exclusively, a managed start takes it
+// shared from its last scope ask until its child is registered. The tests spell the path out so they hold
+// the engine to the protocol and not to its own helper.
 func protocolLockPath(storePath, project string) string {
 	sum := sha256.Sum256([]byte(project))
-	return filepath.Join(filepath.Dir(storePath), "managed-start-project-"+hex.EncodeToString(sum[:])+".lock")
+	dir, err := filepath.EvalSymlinks(filepath.Dir(storePath))
+	if err != nil {
+		panic(err)
+	}
+	return filepath.Join(dir, "managed-start-project-"+hex.EncodeToString(sum[:])+".lock")
 }
 
 // holdProject takes the project's lock exclusively without waiting, as a writer of the binding would. It

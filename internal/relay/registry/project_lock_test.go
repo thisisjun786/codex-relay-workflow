@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -241,3 +242,32 @@ func TestProjectParentWriters_LockWaitExpiredIsTheHostEnvelope(t *testing.T) {
 		t.Fatalf("after the start left: exit %d %q", code, out)
 	}
 }
+
+// Two spellings of one store are one lock: a start holds the project's lock through the store's real path,
+// and a writer that reached the same store through a link to the file waits for it.
+func TestProjectParentWriters_ALinkedSpellingOfTheStoreIsTheSameLock(t *testing.T) {
+	r := newRegistry(t)
+	link := filepath.Join(t.TempDir(), "alias.sqlite3")
+	if err := os.Symlink(r.Store.Path, link); err != nil {
+		t.Fatal(err)
+	}
+	other, err := store.Open(ctx(), link, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer other.Close()
+	aliased := &Registry{Store: other, Now: r.Now, Policy: r.Policy}
+	held, err := projectlock.Shared(ctx(), r.Store.Path, "P1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held()
+	shrinkLockWait(t)
+	var expired *ownership.LockWaitExpired
+	_, err = aliased.BindScopeAs(ctx(), roleParent, "P1", Endpoint{parent, host, ns("/parent"), ns("cxc-" + parent)}, Active)
+	if !errors.As(err, &expired) {
+		t.Fatalf("a writer reaching the store through a link did not meet the start's lock: %v", err)
+	}
+}
+
+// A store with no path has no place for the lock file: the writer refuses with a host error, and does not

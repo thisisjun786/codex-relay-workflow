@@ -2,11 +2,13 @@ package managed
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 )
 
 // These tests run the registry's real writers of a project's parent binding against managed starts that are
@@ -49,6 +51,22 @@ func stillRunning(t *testing.T, what string, done <-chan error) {
 	}
 }
 
+// reachedTheLock runs the writer once with the wait bound shrunk, while the start is parked: a writer that
+// gives up with the lock's own error has reached the lock and waited for it, which silence alone does not
+// show on a loaded host. It runs before the unbounded writer of the test starts, so the bound is never
+// read and written at once.
+func reachedTheLock(t *testing.T, what string, write func() error) {
+	t.Helper()
+	saved := ownership.LockWait
+	ownership.LockWait = 150 * time.Millisecond
+	err := write()
+	ownership.LockWait = saved
+	var expired *ownership.LockWaitExpired
+	if !errors.As(err, &expired) {
+		t.Fatalf("%s did not wait for the project lock while a start was inside the span: %v", what, err)
+	}
+}
+
 // parked is a start of project, request id and issue, held inside its CreateThread until release is called.
 func parkedStart(t *testing.T, x *scopeRun, host *spanHost, id, issue, parent, project string) (done <-chan startOutcome, release func()) {
 	t.Helper()
@@ -87,6 +105,7 @@ func TestPrecreate_RealHandoverWaitsForAStartInsideTheSpan(t *testing.T) {
 	host := newSpanHost(x.host.managedFake)
 	x.start.Adapter = host
 	doneA, release := parkedStart(t, x, host, "managed-A", "REL-A", "parent", scopeProject)
+	reachedTheLock(t, "the handover", func() error { return x.handover(scopeProject, "parent", "other-parent") })
 	write := writerDone(func() error { return x.handover(scopeProject, "parent", "other-parent") })
 	stillRunning(t, "the handover", write)
 	if got := x.parentOf(scopeProject); got != "parent" {
@@ -144,6 +163,7 @@ func TestPrecreate_RealHandoverWaitsForTheRegistration(t *testing.T) {
 	if _, err := x.store.DB.ExecContext(ctx, "INSERT INTO journal(at,kind,subject,detail) VALUES('2026-09-26T00:00:00.000000+00:00','test','probe','{}')"); err != nil {
 		t.Fatalf("the parked start holds the store: %v", err)
 	}
+	reachedTheLock(t, "the handover", func() error { return x.handover(scopeProject, "parent", "other-parent") })
 	write := writerDone(func() error { return x.handover(scopeProject, "parent", "other-parent") })
 	stillRunning(t, "the handover", write)
 	if got := x.parentOf(scopeProject); got != "parent" {
@@ -161,10 +181,12 @@ func TestPrecreate_RealBindWaitsForAStartInsideTheSpan(t *testing.T) {
 	host := newSpanHost(x.host.managedFake)
 	x.start.Adapter = host
 	doneA, release := parkedStart(t, x, host, "managed-A", "REL-A", "parent", scopeProject)
-	write := writerDone(func() error {
+	bind := func() error {
 		_, err := x.reg.BindScopeAs(x.ctx, "parent", scopeProject, registry.Endpoint{TaskID: "parent", HostID: "host"}, registry.Active)
 		return err
-	})
+	}
+	reachedTheLock(t, "the bind", bind)
+	write := writerDone(bind)
 	stillRunning(t, "the bind", write)
 	release()
 	admitted(t, "start", awaitStart(t, "start", doneA))
@@ -182,6 +204,7 @@ func TestPrecreate_OtherProjectsNeitherWaitNorAreWaitedFor(t *testing.T) {
 	host := newSpanHost(x.host.managedFake)
 	x.start.Adapter = host
 	doneA, release := parkedStart(t, x, host, "managed-A", "REL-A", "parent-A", "P-A")
+	reachedTheLock(t, "the handover of A", func() error { return x.handover("P-A", "parent-A", "other-A") })
 	writeA := writerDone(func() error { return x.handover("P-A", "parent-A", "other-A") })
 	stillRunning(t, "the handover of A", writeA)
 	rawB, _ := x.startFor(host, "managed-B", "REL-B", "parent-B", "P-B")
@@ -222,9 +245,17 @@ func TestPrecreate_TheProjectLockIsFreeAfterEveryEnding(t *testing.T) {
 			x.bind("parent")
 			x.host.creationEnvironmentChanged = true
 		}, want: "creation_settings_unverified"},
-		{name: "readiness refused", setup: func(x *scopeRun) {
+		// The preflight readiness passes; the one in the creation step, with the lock already held, refuses.
+		{name: "readiness refused once the lock is held", setup: func(x *scopeRun) {
 			x.bind("parent")
-			x.start.Readiness = func(context.Context, map[string]any) (string, error) { return "worker_policy_unconfigured", nil }
+			calls := 0
+			x.start.Readiness = func(context.Context, map[string]any) (string, error) {
+				calls++
+				if calls > 1 {
+					return "worker_policy_unconfigured", nil
+				}
+				return "", nil
+			}
 		}, want: "worker_policy_unconfigured"},
 	}
 	for _, c := range cases {

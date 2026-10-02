@@ -25,6 +25,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"os"
 	"path/filepath"
 
 	"golang.org/x/sys/unix"
@@ -32,11 +33,27 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 )
 
-// Path is the project's lock file: a sidecar beside the store, named by the project key's hash and apart
-// from every request lock (managed-start-<hash>.lock).
-func Path(storePath, project string) string {
+// Path is the project's lock file: a sidecar beside the store's real file, named by the project key's hash
+// and apart from every request lock (managed-start-<hash>.lock). The store's path is resolved through
+// symbolic links first, the way the store resolves its own sidecars, so that two spellings of one store (a
+// directory or a file reached through a link) name one lock file and not two; a path that cannot be
+// resolved is an error. A store file that does not exist yet is resolved through its directory.
+func Path(storePath, project string) (string, error) {
+	if storePath == "" {
+		return "", errors.New("the project lock is kept beside the store, and this store has no path")
+	}
+	real, err := filepath.EvalSymlinks(storePath)
+	if errors.Is(err, os.ErrNotExist) {
+		var dir string
+		if dir, err = filepath.EvalSymlinks(filepath.Dir(storePath)); err == nil {
+			real = filepath.Join(dir, filepath.Base(storePath))
+		}
+	}
+	if err != nil {
+		return "", err
+	}
 	digest := sha256.Sum256([]byte(project))
-	return filepath.Join(filepath.Dir(storePath), "managed-start-project-"+hex.EncodeToString(digest[:])+".lock")
+	return filepath.Join(filepath.Dir(real), "managed-start-project-"+hex.EncodeToString(digest[:])+".lock"), nil
 }
 
 // Shared takes the project's lock for a managed start, waiting at most ownership.LockWait. The returned
@@ -52,14 +69,13 @@ func Exclusive(ctx context.Context, storePath, project string) (func() error, er
 }
 
 func take(ctx context.Context, storePath, project string, exclusive bool, what string) (func() error, error) {
-	// A store with no path would put the sidecar in the working directory: refuse rather than run unlocked.
-	if storePath == "" {
-		return nil, errors.New("the project lock is kept beside the store, and this store has no path")
-	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	path := Path(storePath, project)
+	path, err := Path(storePath, project)
+	if err != nil {
+		return nil, err
+	}
 	fd, err := unix.Open(path, unix.O_CREAT|unix.O_RDWR|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0600)
 	if err != nil {
 		return nil, err
