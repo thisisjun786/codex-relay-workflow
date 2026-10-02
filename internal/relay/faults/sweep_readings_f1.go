@@ -107,10 +107,10 @@ func (sw *Sweeper) readingFaults(ctx context.Context, product, project string, r
 		}
 		switch state {
 		case "unreported":
-			// A reading that says nothing is owed for the turn (a later admitted turn holds the final receipt, the
-			// turn has its own receipt, or the report grace has not run out) is not an omission; the supervisor's
-			// readers skip it the same way. Only an explicit false skips: a reading with no owed field, as the
-			// managed observer produces, is filed as before.
+			// A reading that says nothing is owed for the turn (a later turn was admitted, the turn has its own
+			// receipt, or the report grace has not run out) is not an omission; the supervisor's readers skip it the
+			// same way. Only an explicit false skips: a reading with no owed field, as the managed observer
+			// produces, is filed as before.
 			if r["owed"] == false {
 				break
 			}

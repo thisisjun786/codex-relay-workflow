@@ -24,10 +24,12 @@ func crw263Reading(facts delivery.OmissionFacts, relationship string) map[string
 }
 
 // An unreported reading that says nothing is owed for it is not an omission. A later admitted turn
-// that holds a final receipt, or a receipt of the turn itself, is why the daemon deliberately did not
-// report the turn, and the supervisor's readers already skip such a reading; the sweep filed it as
-// report_omitted all the same. A genuine omission, and a reading that carries no owed field (what the
-// managed observer produces), are filed as they always were.
+// (the daemon does not report an earlier turn's end once a later turn holds a final receipt), or a
+// receipt of the turn itself, reads owed false, and the supervisor's readers already skip such a
+// reading; the sweep filed it as report_omitted all the same. The classifier decides what is owed,
+// so the readings below come from it with the fact set, not from a store holding a receipt. A
+// genuine omission, and a reading that carries no owed field (what the managed observer produces),
+// are filed as they always were.
 func TestCRW263SweepFilesAnUnreportedTurnOnlyWhenItIsOwed(t *testing.T) {
 	for _, c := range []struct {
 		name       string
@@ -35,7 +37,7 @@ func TestCRW263SweepFilesAnUnreportedTurnOnlyWhenItIsOwed(t *testing.T) {
 		owed       any // what the reading says; nil when it carries no owed field
 		owedReason any
 	}{
-		{"a later admitted turn holds the final receipt", func() map[string]any {
+		{"a later turn is admitted", func() map[string]any {
 			return crw263Reading(delivery.OmissionFacts{LaterAdmitted: true}, "rel")
 		}, false, delivery.OmittedLaterTurn},
 		{"the turn's own receipt exists", func() map[string]any {
