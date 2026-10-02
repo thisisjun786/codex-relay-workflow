@@ -285,18 +285,62 @@ const eligibleBase = " WHERE d.state IN (?,?,?) AND d.hold_reason IS NULL AND (d
 // its event was created in.
 const eligibleOrder = " ORDER BY e.first_seen_at, d.created_at, d.event_id"
 
+// busyHeadSQL is a derived table with one row per recipient: the oldest delivery to it (in eligibleOrder)
+// that is waiting out a busy backoff and that a claim could otherwise take. Only a busy backoff holds a
+// line. A delivery that waits for another reason (withheld before the send, paced, held at a cap, its
+// relationship paused or superseded) holds nothing back, so one relationship's trouble cannot keep its
+// siblings' deliveries to the same parent waiting (CRW-259), and neither does a delivery whose event is
+// of a generation the relationship has left, or whose relationship has spent its hourly send budget
+// for the recipient (the same count eligibility reads for a candidate): a claim would refuse those when
+// their backoff ended. next_eligible_at is always finite (at most BusyMax ahead), so no delivery holds
+// a line for longer than one backoff at a time.
+//
+// It takes, in text order, the four stamps of store.RelationshipSendsArgs (the spent join), then the
+// state DeferredBusy, now and the hourly cap: see busyHeadArgs. A candidate is behind the head when the
+// head's key is smaller than its own, compared as row values in the order eligibleOrder sorts.
+const busyHeadSQL = "(SELECT recipient_task_id, first_seen_at, created_at, event_id FROM (" +
+	"SELECT b.recipient_task_id AS recipient_task_id, be.first_seen_at AS first_seen_at, b.created_at AS created_at, b.event_id AS event_id," +
+	" ROW_NUMBER() OVER (PARTITION BY b.recipient_task_id ORDER BY be.first_seen_at, b.created_at, b.event_id) AS rn" +
+	" FROM deliveries b JOIN events be ON be.event_id = b.event_id JOIN relationships br ON br.relationship_id = b.relationship_id" +
+	" LEFT JOIN " + store.RelationshipSpentSQL + " bs ON bs.relationship_id = b.relationship_id AND bs.recipient_task_id = b.recipient_task_id" +
+	" WHERE b.state = ? AND b.hold_reason IS NULL AND b.next_eligible_at > ?" +
+	" AND br.status = 'active' AND br.superseded_by IS NULL AND be.stage = 'final'" +
+	" AND NOT (be.outcome NOT IN ('merge_turn_grant') AND be.execution_generation < br.execution_generation)" +
+	" AND COALESCE(bs.spent, 0) < ?) WHERE rn = 1)"
+
+// busyHeadArgs are the arguments of busyHeadSQL at now.
+func (d *Service) busyHeadArgs(now float64) []any {
+	window, _ := d.Policy.RateWindows(now)
+	return append(store.RelationshipSendsArgs(window), DeferredBusy, now, d.Policy.MaxSendsPerRelationshipPerHour)
+}
+
+// behindBusyHead reports whether an older delivery to this delivery's recipient is waiting out a busy
+// backoff at now: the one rule eligibility lists by and claim enforces, asked of one delivery.
+func (d *Service) behindBusyHead(ctx context.Context, eventID string, now float64) (bool, error) {
+	row, err := one(ctx, d.Store, "SELECT 1 AS behind FROM deliveries d JOIN events e ON e.event_id = d.event_id JOIN "+busyHeadSQL+" bh ON bh.recipient_task_id = d.recipient_task_id WHERE d.event_id = ? AND (bh.first_seen_at, bh.created_at, bh.event_id) < (e.first_seen_at, d.created_at, d.event_id)",
+		append(d.busyHeadArgs(now), eventID)...)
+	return row != nil, err
+}
+
 // eligibility is the join and predicate of a due delivery and their arguments at now (the four
-// stamps of the window's two counts, then the predicate's). A delivery whose relationship has
+// stamps of the window's two counts, the seven of the busy heads, then the predicate's). A delivery whose relationship has
 // already spent its hourly budget for the recipient is not due until the window reopens: it would
 // only be refused, and a runaway relationship's refused rows must not take the attempts its calm
 // siblings need. The count is read against the live policy cap, so a cap raised mid-window takes
 // effect on the next tick. The spent counts are one grouped read joined to the candidates, not an
 // expression evaluated for each of them.
+//
+// A delivery is also not due while an older delivery to the same recipient is waiting out a busy
+// backoff (busyHeadSQL): the recipient was found busy, so the older delivery is the one that goes
+// first when it turns idle, and a younger one must not take that place because the older one is
+// inside its backoff. The heads are one derived table too, one row per recipient.
 func (d *Service) eligibility(now float64) (string, string, []any) {
 	window, _ := d.Policy.RateWindows(now)
-	join := " LEFT JOIN " + store.RelationshipSpentSQL + " sbspent ON sbspent.relationship_id = d.relationship_id AND sbspent.recipient_task_id = d.recipient_task_id"
-	args := append(store.RelationshipSendsArgs(window), Queued, DeferredBusy, WithheldPreSend, now, d.Policy.MaxSendsPerRelationshipPerHour)
-	return join, eligibleBase + " AND COALESCE(sbspent.spent, 0) < ?", args
+	join := " LEFT JOIN " + store.RelationshipSpentSQL + " sbspent ON sbspent.relationship_id = d.relationship_id AND sbspent.recipient_task_id = d.recipient_task_id" +
+		" LEFT JOIN " + busyHeadSQL + " bh ON bh.recipient_task_id = d.recipient_task_id AND (bh.first_seen_at, bh.created_at, bh.event_id) < (e.first_seen_at, d.created_at, d.event_id)"
+	args := append(store.RelationshipSendsArgs(window), d.busyHeadArgs(now)...)
+	args = append(args, Queued, DeferredBusy, WithheldPreSend, now, d.Policy.MaxSendsPerRelationshipPerHour)
+	return join, eligibleBase + " AND COALESCE(sbspent.spent, 0) < ? AND bh.event_id IS NULL", args
 }
 
 // EligibleParents is eligible_parents.
@@ -618,8 +662,9 @@ func (d *Service) claim(ctx context.Context, eventID string, now float64, owner,
 		if late != "" {
 			return &superseded{reason: late, late: true}
 		}
-		changed, err := execSQL(ctx, d.Store, "UPDATE deliveries SET state = ?, lease_owner = ?, lease_until = ?, attempt_count = attempt_count + 1, updated_at = ? WHERE event_id = ? AND state IN (?,?,?) AND hold_reason IS NULL AND (next_eligible_at IS NULL OR next_eligible_at <= ?) AND EXISTS (SELECT 1 FROM relationships r WHERE r.relationship_id = deliveries.relationship_id AND r.status = 'active' AND r.superseded_by IS NULL) AND EXISTS (SELECT 1 FROM events e WHERE e.event_id = deliveries.event_id AND e.stage = 'final') AND NOT EXISTS (SELECT 1 FROM events ev JOIN relationships rr ON rr.relationship_id = ev.relationship_id WHERE ev.event_id = deliveries.event_id AND ev.outcome NOT IN ('merge_turn_grant') AND ev.execution_generation < rr.execution_generation)",
-			Sending, owner, now+d.Policy.Lease, d.Clock.ISO(), eventID, Queued, DeferredBusy, WithheldPreSend, now)
+		changed, err := execSQL(ctx, d.Store, "UPDATE deliveries SET state = ?, lease_owner = ?, lease_until = ?, attempt_count = attempt_count + 1, updated_at = ? WHERE event_id = ? AND state IN (?,?,?) AND hold_reason IS NULL AND (next_eligible_at IS NULL OR next_eligible_at <= ?) AND EXISTS (SELECT 1 FROM relationships r WHERE r.relationship_id = deliveries.relationship_id AND r.status = 'active' AND r.superseded_by IS NULL) AND EXISTS (SELECT 1 FROM events e WHERE e.event_id = deliveries.event_id AND e.stage = 'final') AND NOT EXISTS (SELECT 1 FROM events ev JOIN relationships rr ON rr.relationship_id = ev.relationship_id WHERE ev.event_id = deliveries.event_id AND ev.outcome NOT IN ('merge_turn_grant') AND ev.execution_generation < rr.execution_generation)"+
+			" AND NOT EXISTS (SELECT 1 FROM "+busyHeadSQL+" bh WHERE bh.recipient_task_id = deliveries.recipient_task_id AND (bh.first_seen_at, bh.created_at, bh.event_id) < ((SELECT ce.first_seen_at FROM events ce WHERE ce.event_id = deliveries.event_id), deliveries.created_at, deliveries.event_id))",
+			append([]any{Sending, owner, now + d.Policy.Lease, d.Clock.ISO(), eventID, Queued, DeferredBusy, WithheldPreSend, now}, d.busyHeadArgs(now)...)...)
 		if err != nil {
 			return err
 		}
@@ -747,6 +792,15 @@ func (d *Service) Attempt(ctx context.Context, eventID string, adapter Adapter, 
 		return d.WithholdInactive(ctx, eventID, relationship, at, row.I("attempt_count"))
 	}
 	if !row.N("next_eligible_at") && row.F("next_eligible_at") > at {
+		return nil, nil
+	}
+	// An older delivery to this recipient is waiting out a busy backoff: it is not this one's turn, and
+	// the recipient is not asked, so this delivery meets no busy answer of its own.
+	behind, err := d.behindBusyHead(ctx, eventID, at)
+	if err != nil {
+		return nil, err
+	}
+	if behind {
 		return nil, nil
 	}
 	event, err := d.eventRow(ctx, eventID)
@@ -941,28 +995,45 @@ func (d *Service) reschedule(ctx context.Context, eventID, state string, when fl
 	})
 }
 
+// busyAnswers is how many times a delivery has found its recipient busy: the answers a busy recipient
+// gave before any claim, which deferBusy journals one each (attempt_count cannot count them: only a
+// claim raises it, and a recipient that is busy at the lifecycle read is never claimed against), and
+// the attempts the transport settled as busy. Both are durable, so the count survives a restart. A read
+// inside a transaction sees that transaction's writes.
+func (d *Service) busyAnswers(ctx context.Context, eventID string) (int64, error) {
+	row, err := one(ctx, d.Store, "SELECT (SELECT COUNT(*) FROM journal WHERE kind = 'delivery_deferred_busy' AND subject = ?) + (SELECT COUNT(*) FROM attempts WHERE event_id = ? AND state = ?) AS answers", eventID, eventID, DeferredBusy)
+	if err != nil || row == nil {
+		return 0, err
+	}
+	return row.I("answers"), nil
+}
+
+// deferBusy is a busy recipient's answer to a delivery that was not claimed: the delivery waits the
+// backoff of its answer number and, on the BusyMaxAttempts-th answer, is held at busy_cap. The count,
+// the guarded update and the journal row that makes this answer count are one write, so an answer the
+// guard refused (the row moved under the read, or another path held it) is neither counted nor lost.
 func (d *Service) deferBusy(ctx context.Context, eventID string, row Row, now float64) error {
 	attempts := row.I("attempt_count")
-	var hold any
-	if attempts >= d.Policy.BusyMaxAttempts {
-		hold = d.Policy.CapReason("busy")
-	}
-	when := now + d.Policy.DelayFor(attempts+1, "busy")
 	return d.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
 		stamp := d.Clock.ISO()
-		changed, err := execSQL(ctx, d.Store, "UPDATE deliveries SET state = ?, next_eligible_at = ?, hold_reason = ?, updated_at = ? WHERE event_id = ? AND state IN (?,?,?) AND attempt_count = ?", DeferredBusy, when, hold, stamp, eventID, Queued, DeferredBusy, WithheldPreSend, attempts)
+		seen, err := d.busyAnswers(ctx, eventID)
 		if err != nil {
 			return err
 		}
-		if changed == 1 {
-			if err := d.recordFailureIn(ctx, eventID, "parent_busy", stamp, "the recipient is mid-turn and is never interrupted", row.S("relationship_id"), nil, nil, nil, nil, when); err != nil {
-				return err
-			}
+		answers := seen + 1
+		var hold any
+		if answers >= d.Policy.BusyMaxAttempts {
+			hold = d.Policy.CapReason("busy")
 		}
-		if row.S("state") != DeferredBusy {
-			return journal(ctx, d.Store, "delivery_deferred_busy", eventID, "", d.Clock.ISO())
+		when := now + d.Policy.DelayFor(answers, "busy")
+		changed, err := execSQL(ctx, d.Store, "UPDATE deliveries SET state = ?, next_eligible_at = ?, hold_reason = ?, updated_at = ? WHERE event_id = ? AND state IN (?,?,?) AND hold_reason IS NULL AND attempt_count = ?", DeferredBusy, when, hold, stamp, eventID, Queued, DeferredBusy, WithheldPreSend, attempts)
+		if err != nil || changed != 1 {
+			return err
 		}
-		return nil
+		if err := d.recordFailureIn(ctx, eventID, "parent_busy", stamp, "the recipient is mid-turn and is never interrupted", row.S("relationship_id"), nil, nil, nil, nil, when); err != nil {
+			return err
+		}
+		return journal(ctx, d.Store, "delivery_deferred_busy", eventID, "", d.Clock.ISO())
 	})
 }
 
