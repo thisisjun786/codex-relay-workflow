@@ -237,8 +237,13 @@ func TestTheEndsAPassHasReadAreSettledWhenItStopsEarly(t *testing.T) {
 		}
 		d := New(s, host, &delivery.FakeClock{T: 1700000000}, nil)
 		d.Policy.MaxTurnReads, d.Policy.MaxSends = 3, -1
-		if _, err := d.Tick(cancelled); err == nil {
+		report, err := d.Tick(cancelled)
+		if err == nil {
 			t.Fatal("a cancelled tick returned no error")
+		}
+		// The waiting end is not attempted, so the report carries no failed settlement either.
+		if failed := notesSaying(report.Notes, "lookup failed") + notesSaying(report.Notes, "rolled back"); failed != 0 {
+			t.Errorf("notes %q: a settlement was attempted on a cancelled context", report.Notes)
 		}
 		if len(host.reads) != 2 || host.reads[0] != "anchor" {
 			t.Fatalf("reads %v, want the anchor and then the read that cancelled", host.reads)
@@ -262,6 +267,31 @@ func TestTheEndsAPassHasReadAreSettledWhenItStopsEarly(t *testing.T) {
 			t.Errorf("daemon observations of anchor: %d", n)
 		}
 	})
+}
+
+// The ends a pass kept waiting are settled in the order the pass read them, however many there are.
+func TestTheDeferredEndsAreSettledInTheOrderTheyWereRead(t *testing.T) {
+	ctx, s := lateStore(t)
+	host := &observationHost{statuses: map[string]string{"anchor": "interrupted", "business": "failed", "continuation": "interrupted"}}
+	d := New(s, host, &delivery.FakeClock{T: 1700000000}, nil)
+	d.Policy.MaxTurnReads, d.Policy.MaxSends = 3, -1
+	if _, err := d.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := s.All(ctx, "SELECT turn_id FROM assignment_settlements ORDER BY rowid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var settled []string
+	for _, row := range rows {
+		settled = append(settled, row.Get("turn_id").(string))
+	}
+	if len(host.reads) != 3 || !slices.Equal(settled, host.reads) {
+		t.Errorf("read %v, settled %v: want the same turns in the same order", host.reads, settled)
+	}
+	if n := count(t, s, "SELECT COUNT(*) FROM events WHERE producer='daemon_observation'"); n != 3 {
+		t.Errorf("daemon observations: %d, want one for each end", n)
+	}
 }
 
 // The check that a later receipt silences the end of an earlier turn is made again in the transaction that
