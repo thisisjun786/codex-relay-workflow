@@ -141,9 +141,15 @@ func rvVerified() delivery.Obj {
 // rvPrepare is dag-correct --prepare for a node: the manifest rebuilt from the store as it is now and the instruction line the ruling carries.
 func (k *releaseKit) rvPrepare(plan, node string) Prepared {
 	k.t.Helper()
-	notes := writeFile(k.t, k.root, "rework-"+plan+"-"+node+".md", "the notes of the rework")
+	return k.rvPrepareNotes(plan, node, "the notes of the rework")
+}
+
+// rvPrepareNotes is rvPrepare with the notes the correction snapshots: another text is another volatile input, so another manifest of the same node at the same slice.
+func (k *releaseKit) rvPrepareNotes(plan, node, text string) Prepared {
+	k.t.Helper()
+	notes := writeFile(k.t, k.root, "rework-"+plan+"-"+node+"-"+shaOf([]byte(text))[:8]+".md", text)
 	p, err := k.sched.PrepareCorrection(context.Background(), plan, node, "parent", ManifestInput{RuleVersion: k.request(false).RuleVersion,
-		Volatile: []Volatile{{Source: "linear:comment", SnapshotURI: notes, SHA256: shaOf([]byte("the notes of the rework")), CapturedAt: "2026-10-02T00:00:00Z"}}}, VerifyOptions{ArtifactRoots: []string{k.root}})
+		Volatile: []Volatile{{Source: "linear:comment", SnapshotURI: notes, SHA256: shaOf([]byte(text)), CapturedAt: "2026-10-02T00:00:00Z"}}}, VerifyOptions{ArtifactRoots: []string{k.root}})
 	if err != nil {
 		k.t.Fatalf("prepare %s: %v", node, err)
 	}
@@ -874,11 +880,11 @@ func TestAGenerationOpenedByHandIsBoundOnlyToTheManifestItWasOpenedFor(t *testin
 		k.invRevise("sr", "C", "sr-r3", invTitle("C revised after the prepare"))
 		if _, err := k.sched.RecordCorrection(context.Background(), "sr", "C", "parent", prepared.ManifestDigest); refusalReason(err) != "disposition_conflict" || bound(k) != 0 {
 			t.Fatalf("correction = %v (%d bound)", err, bound(k))
-		} else if !strings.Contains(err.Error(), "prepare it again") {
+		} else if !strings.Contains(err.Error(), "open no further generation") {
 			t.Fatalf("the refusal does not say why: %v", err)
 		}
-		// generation 2 stays open and unrecorded; preparing again names generation 3, and opening that one is refused at the gap with the relay's own words: no further generation is opened for the node
-		// and nothing is bound, so the coordinator reports the refusal and stops
+		// the procedure is to report the refusal and open no further generation. A coordinator that disregards it finds generation 2 still open and unrecorded: preparing again names generation 3, and
+		// recording that one is refused at the gap with the relay's own words, so nothing is bound either way
 		again := k.rvPrepare("sr", "C")
 		if again.ManifestDigest == prepared.ManifestDigest || !strings.Contains(again.Instruction, "generation 3") {
 			t.Fatalf("the second prepare = %+v", again)
@@ -923,6 +929,41 @@ func TestAGenerationOpenedByHandIsBoundOnlyToTheManifestItWasOpenedFor(t *testin
 			t.Fatalf("correction = %v (%d bound)", err, bound(k))
 		} else if !strings.Contains(err.Error(), "not stored for node") {
 			t.Fatalf("the refusal does not say why: %v", err)
+		}
+	})
+	t.Run("opened for one manifest, bound to another valid one", func(t *testing.T) {
+		k, _, ridC, first := rvHandKit(t)
+		second := k.rvPrepareNotes("sr", "C", "a second set of notes")
+		if second.ManifestDigest == first.ManifestDigest || second.DispatchRequestID == first.DispatchRequestID {
+			t.Fatalf("two manifests of one node and slice must differ: %+v %+v", first, second)
+		}
+		rvOpenByHand(t, k, ridC, first.DispatchRequestID, true)
+		if _, err := k.sched.RecordCorrection(context.Background(), "sr", "C", "parent", second.ManifestDigest); refusalReason(err) != "disposition_conflict" || bound(k) != 0 {
+			t.Fatalf("correction with the other manifest = %v (%d bound)", err, bound(k))
+		} else if !strings.Contains(err.Error(), "not opened for this manifest") {
+			t.Fatalf("the refusal does not say why: %v", err)
+		}
+		if res, err := k.sched.RecordCorrection(context.Background(), "sr", "C", "parent", first.ManifestDigest); err != nil || res.ManifestDigest != first.ManifestDigest {
+			t.Fatalf("correction with the manifest it was opened for = %v %+v", err, res)
+		}
+	})
+	t.Run("a correction already recorded is not skipped by opening another beside it", func(t *testing.T) {
+		k, _, ridC, prepared := rvHandKit(t)
+		rvOpenByHand(t, k, ridC, prepared.DispatchRequestID, true)
+		if _, err := k.sched.RecordCorrection(context.Background(), "sr", "C", "parent", prepared.ManifestDigest); err != nil {
+			t.Fatal(err)
+		}
+		next := k.rvPrepare("sr", "C")
+		if !strings.Contains(next.Instruction, "generation 3") {
+			t.Fatalf("the second prepare = %+v", next)
+		}
+		reg := &registry.Registry{Store: k.s}
+		if _, err := reg.OpenGeneration(context.Background(), ridC, next.DispatchRequestID, "needs_changes_revision", sql.NullString{String: "turn-dispatch-3", Valid: true}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := k.sched.RecordCorrection(context.Background(), "sr", "C", "parent", next.ManifestDigest); refusalReason(err) != "disposition_conflict" || !strings.Contains(err.Error(), "already open") ||
+			k.count("SELECT COUNT(*) FROM dag_node_executions WHERE node_id = 'C' AND execution_generation = 3") != 0 {
+			t.Fatalf("a second correction beside the open one = %v", err)
 		}
 	})
 	t.Run("a change of the criteria alone is revalidated, not corrected by hand", func(t *testing.T) {

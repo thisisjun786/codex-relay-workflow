@@ -77,7 +77,7 @@ func (s *Scheduler) describeOpening(ctx context.Context, q store.Querier, plan, 
 // recordHandOpened binds a generation the coordinator opened by hand (the relay's generation-open, store-only, then generation-bind to the turn that carried the instruction line to the child) to the manifest
 // dag-correct --prepare made for it. It is the way a correction reaches the same child when no needs_changes ruling can open the generation: the relay's verdict writer answers a replay to a second ruling on
 // a head it ruled verified unless the criteria registered for the relationship changed (a node whose consumed input was replaced, its criteria untouched). The verdict writer is not touched, and the route
-// is bounded so that it cannot make a rerun or bind a manifest nobody was told:
+// is bounded so that it cannot make a rerun or bind a manifest other than the one the generation was opened for:
 //
 //   - the node's accepted result is stale and its route, without this generation, is a correction: a result that is current is corrected by a ruling, a change of the criteria alone is a revalidation and
 //     opens no generation, and a node that landed was refused before this;
@@ -104,6 +104,13 @@ func (s *Scheduler) recordHandOpened(ctx context.Context, q store.Querier, plan 
 	} else if action != ActionCorrect {
 		return refuse(contract.RefusalDispositionConflict, "%s, and the route of %s is %s, not a correction by hand: %s", notRuled, n.NodeID, action, detail)
 	}
+	// the generation recorded now is the one right after the generation the acceptance stands on: a correction that is already open and recorded is not skipped by opening another beside it
+	if acc, has, err := loadActiveAcceptance(ctx, q, plan, n.NodeID); err != nil {
+		return err
+	} else if has && acc.ExecutionGeneration != rel.Generation-1 {
+		return refuse(contract.RefusalDispositionConflict, "%s, and the accepted result of %s stands on generation %d, so a correction of it is already open (generation %d is recorded for it): wait for its report and accept it, or report this refusal; another generation is not opened beside it",
+			notRuled, n.NodeID, acc.ExecutionGeneration, rel.Generation-1)
+	}
 	if suppliedDigest == "" {
 		return refuse(contract.RefusalDispositionConflict, "%s: a generation opened by hand is bound to the manifest it was opened for, so name it with --manifest-digest", notRuled)
 	}
@@ -115,7 +122,7 @@ func (s *Scheduler) recordHandOpened(ctx context.Context, q store.Querier, plan 
 		return refuse(contract.RefusalDispositionConflict, "the manifest %s is not stored for node %s of %s", suppliedDigest, n.NodeID, n.IssueKey)
 	}
 	if body["node_slice_digest"] != n.SliceDigest || body["criteria_set_digest"] != n.CriteriaSetDigest {
-		return refuse(contract.RefusalDispositionConflict, "the manifest %s was prepared for another version of node %s than the plan holds now: prepare it again and open the generation again", suppliedDigest, n.NodeID)
+		return refuse(contract.RefusalDispositionConflict, "the manifest %s was prepared for another version of node %s than the plan holds now, so generation %d of %s cannot be bound to it: report this refusal and open no further generation", suppliedDigest, n.NodeID, rel.Generation, rel.ID)
 	}
 	var request, anchor string
 	var turn sql.NullString
