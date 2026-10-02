@@ -143,20 +143,24 @@ func criteriaOnly(n dag.SnapNode, snap dag.Snapshot, body map[string]any) bool {
 	return dag.SliceDigest(probe, edgesInto(snap, n.NodeID)) == textOf(body["node_slice_digest"])
 }
 
-// seedOf is the seed reading of an accepted node, or nil when it is not a seed: its own slice is not the one its consumed manifest recorded, or an acceptance it consumed is no longer the active
-// one of its node. The cause of a changed slice comes from the consumed inputs' edge ids against the current incoming edges: an edge added (the first, by id), an edge retired, else the
-// spec. A change of the criteria alone is a seed only until the same output is re-verified against them (the effective criteria of the acceptance are the plan's), contract E-11 and E-21.
+// seedOf is the seed reading of an accepted node, or nil when it is not a seed: its own slice is not the one its consumed manifest recorded, the criteria its output stands on are not the plan's,
+// or an acceptance it consumed is no longer the active one of its node. The cause of a changed slice comes from the consumed inputs' edge ids against the current incoming edges: an edge added
+// (the first, by id), an edge retired, else the spec. The criteria are a seed only until the same output is re-verified against them (the effective criteria of the acceptance are the plan's),
+// contract E-11 and E-21; they are asked whether or not the slice moved, because a plan that went back to the criteria the acceptance was made with has the consumed slice again while the output
+// still stands on the criteria it was last re-verified against.
 func (s *Scheduler) seedOf(ctx context.Context, q store.Querier, plan string, n dag.SnapNode, snap dag.Snapshot, c *consumedOf) (*Stale, error) {
 	consumed := textOf(c.body["node_slice_digest"])
+	effective, err := effectiveCriteria(ctx, q, c.acc)
+	if err != nil {
+		return nil, err
+	}
+	// a blank criteria digest is an incomplete acceptance, which the edges report (standing); it is not a change of the criteria
+	criteriaMoved := effective != "" && effective != n.CriteriaSetDigest
 	if consumed != "" && consumed != n.SliceDigest {
 		st := &Stale{Cause: CauseSliceChanged, Seed: n.NodeID, ConsumedSlice: consumed, CurrentSlice: n.SliceDigest, ConsumedManifest: c.acc.ManifestDigest}
 		resolved := false
 		if criteriaOnly(n, snap, c.body) {
-			effective, err := effectiveCriteria(ctx, q, c.acc)
-			if err != nil {
-				return nil, err
-			}
-			if effective != n.CriteriaSetDigest {
+			if criteriaMoved {
 				st.Cause = CauseCriteriaChanged
 				st.Text = fmt.Sprintf("the node's criteria changed after it consumed its inputs (its slice was %s, the plan's is %s) and the same output has not been re-verified against them", short(consumed), short(n.SliceDigest))
 				return st, nil
@@ -201,6 +205,9 @@ func (s *Scheduler) seedOf(ctx context.Context, q store.Querier, plan string, n 
 			}
 			return st, nil
 		}
+	} else if consumed != "" && criteriaMoved {
+		return &Stale{Cause: CauseCriteriaChanged, Seed: n.NodeID, ConsumedSlice: consumed, CurrentSlice: n.SliceDigest, ConsumedManifest: c.acc.ManifestDigest,
+			Text: fmt.Sprintf("the node's criteria are %s and its output stands on %s, the criteria it was last re-verified against: its slice is the one it consumed its inputs at (%s), and the same output has not been re-verified against the plan's criteria", short(n.CriteriaSetDigest), short(effective), short(consumed))}, nil
 	}
 	// an acceptance the node consumed is no longer the active acceptance of its node (a predecessor accepted again, contract 3.1 and E-25): the node rests on a version nobody accepts now. A node
 	// that landed is exempt (E-20), which is also what keeps B-14 reachable behind it
@@ -549,7 +556,16 @@ func (s *Scheduler) stalePredecessorReading(ctx context.Context, q store.Querier
 	return st, nil
 }
 
-// stalePredecessor is the gate on an artifact edge (contract 8.2, E-25): the accepted result of a stale predecessor opens nothing, so a node is never released onto it. It names the edge and the
+// refuseStale refuses an action that needs a current result (contract 8.2: a stale result never merges) with disposition_conflict, naming the stale reason, before anything is written.
+func (s *Scheduler) refuseStale(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, n dag.SnapNode) error {
+	st, err := s.staleOf(ctx, q, plan, snap, n)
+	if err != nil || st == nil {
+		return err
+	}
+	return refuse(contract.RefusalDispositionConflict, "the accepted result of %s is stale (%s): %s; a stale result is not judged for merge", n.NodeID, st.Reason(), st.Text)
+}
+
+// stalePredecessor is the gate on an edge (contract 8.2, E-25): the accepted result of a stale predecessor opens nothing, so a node is never released onto it. It names the edge and the
 // predecessor version in the detail.
 func (s *Scheduler) stalePredecessor(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, e dag.SnapEdge, from dag.SnapNode) (*EdgeStatus, error) {
 	st, err := s.staleOf(ctx, q, plan, snap, from)

@@ -128,7 +128,7 @@ func (s *Scheduler) edgeStatus(ctx context.Context, q store.Querier, plan string
 		}
 		return s.artifactVerified(ctx, q, plan, snap, e, from)
 	case dag.EdgeIntegrated:
-		st, err := s.integratedEdge(ctx, q, plan, e, from)
+		st, err := s.integratedEdge(ctx, q, plan, snap, e, from)
 		if err != nil {
 			return EdgeStatus{}, err
 		}
@@ -372,7 +372,7 @@ func (s *Scheduler) integratedAt(ctx context.Context, q store.Querier, plan stri
 	return out, err
 }
 
-func (s *Scheduler) integratedEdge(ctx context.Context, q store.Querier, plan string, e dag.SnapEdge, from dag.SnapNode) (EdgeStatus, error) {
+func (s *Scheduler) integratedEdge(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, e dag.SnapEdge, from dag.SnapNode) (EdgeStatus, error) {
 	a, found, err := loadActiveAcceptance(ctx, q, plan, e.FromNodeID)
 	if err != nil {
 		return EdgeStatus{}, err
@@ -400,6 +400,11 @@ func (s *Scheduler) integratedEdge(ctx context.Context, q store.Querier, plan st
 	}
 	switch {
 	case at.Satisfied:
+		// the result is in this target, but a result the plan no longer stands behind that has not landed in every one of its targets (one that has is never stale, E-20) hands nothing over,
+		// wherever its head landed: a stale predecessor opens no edge (contract 8.2, E-25), whichever kind the edge is
+		if st, err := s.stalePredecessor(ctx, q, plan, snap, e, from); err != nil || st != nil {
+			return valueOf(st), err
+		}
 		return EdgeStatus{Satisfied: true, Since: at.Since, AcceptanceID: a.AcceptanceID, ObservationID: at.Observation}, nil
 	case at.Unprovable:
 		return blocked(BlockedIntegrationUnprovable, "a merge landed this head but the target does not contain it (a squash or rebase landing)"), nil

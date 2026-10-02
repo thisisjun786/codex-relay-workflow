@@ -56,7 +56,8 @@ func mergeable(ctx context.Context, q store.Querier, acc Acceptance, actor strin
 
 // Judge decides whether the accepted pull request of an implementation node may go to the merge lane (criterion c8). The relay reads the pull request and the base branch itself, outside any
 // transaction, and then one transaction applies the rules in order, the first decisive one winning, and appends the judgement to the node's history of merge checks (a judgement that
-// restates the latest one writes nothing):
+// restates the latest one writes nothing). A stale result (invalidation.go: the plan moved under what the accepted result consumed) is not judged at all: a stale result never merges
+// (contract 8.2), so the call is refused disposition_conflict, naming the stale reason, and writes nothing. The refusal comes before every rule below, an evicted head included:
 //
 //  0. an evicted head is evicted for good: nothing later can bring that head back, a new head needs a new acceptance;
 //  1. stale_criteria: the plan's or the relationship's criteria are no longer the ones the acceptance stands on;
@@ -155,6 +156,9 @@ func (s *Scheduler) Judge(ctx context.Context, plan, node, actor string, in Judg
 			return refuse(contract.RefusalDispositionConflict, "the accepted result of %s changed while its pull request was being judged", node)
 		}
 		if err := mergeable(txCtx, tx, acc, actor); err != nil {
+			return err
+		}
+		if err := s.refuseStale(txCtx, tx, plan, current, cn); err != nil {
 			return err
 		}
 		if now, err := judgementVersion(txCtx, tx, plan, node); err != nil {
@@ -334,6 +338,9 @@ func (s *Scheduler) RequestMergeTurn(ctx context.Context, plan, node, actor stri
 			return err
 		} else if !landed {
 			return refuse(contract.RefusalDispositionConflict, "%s: %s, so no merge turn is requested", node, why)
+		}
+		if err := s.refuseStale(txCtx, tx, plan, current, cn); err != nil {
+			return err
 		}
 		// the judgement the turn rests on is the latest one, it is of this acceptance and head, and the evidence it recorded is what it digests to
 		var latest, observed, accepted, digest, evidence string
