@@ -71,14 +71,15 @@ func TestCaptureTrees_ofOneModuleAreHeldTogether(t *testing.T) {
 }
 
 // A tree another holder has (another process holding it is another open file description, as the
-// holder here is) is waited for, and is empty when it is got: that is the exclusion the goldens'
-// fixed paths need.
+// holder here is) is waited for, and is empty when it is got, though its last holder left a file
+// in it: that is the exclusion the goldens' fixed paths need.
 func TestCaptureTree_waitsForAnotherHolderOfTheSameTree(t *testing.T) {
 	module := lockTestModule(t)
 	treeKey := "capture/" + module + "/a"
 	root := filepath.Join(parityRoot, parityDigest("capture/"+module))
-	other, err := lockParityTree(treeKey, filepath.Join(root, "a"))
+	other, err := lockFile(parityLockPath(treeKey), syscall.LOCK_EX)
 	mustDo(t, err)
+	mustDo(t, os.MkdirAll(filepath.Join(root, "a"), 0o700))
 	mustDo(t, os.WriteFile(filepath.Join(root, "a", "left-behind"), nil, 0o600))
 	var release func()
 	var tree string
@@ -86,10 +87,10 @@ func TestCaptureTree_waitsForAnotherHolderOfTheSameTree(t *testing.T) {
 		_, tree, release, err = lockCaptureTree(module, "a")
 	})
 	if settled {
-		other()
+		unlockFile(other)
 		t.Fatal("the tree was got while another holder had it")
 	}
-	other()
+	unlockFile(other)
 	wait()
 	mustDo(t, err)
 	defer release()
