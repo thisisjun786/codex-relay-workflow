@@ -105,6 +105,11 @@ func (s *Scheduler) Judge(ctx context.Context, plan, node, actor string, in Judg
 	if s.PRs == nil || s.Tips == nil || s.Ancestry == nil {
 		return out, fmt.Errorf("this scheduler has no pull request reader, target reader or ancestry check, so it cannot judge a merge")
 	}
+	// what the node's judgements were before the forge is read: a judgement that lands while the read is in flight makes the read older than the history, and nothing is judged from it
+	version, err := judgementVersion(ctx, q, plan, node)
+	if err != nil {
+		return out, err
+	}
 	pr, err := s.PRs(ctx, forge, number)
 	if err != nil {
 		return out, err
@@ -151,6 +156,11 @@ func (s *Scheduler) Judge(ctx context.Context, plan, node, actor string, in Judg
 		}
 		if err := mergeable(txCtx, tx, acc, actor); err != nil {
 			return err
+		}
+		if now, err := judgementVersion(txCtx, tx, plan, node); err != nil {
+			return err
+		} else if now != version {
+			return refuseCandidateMoved("another judgement of %s was recorded while its pull request was being read, so that reading is older than the history: read the pull request again", node)
 		}
 		history, err := loadMergeHistory(txCtx, tx, plan, node, forge, pr.HeadSHA)
 		if err != nil {
@@ -209,6 +219,13 @@ func (s *Scheduler) Judge(ctx context.Context, plan, node, actor string, in Judg
 		return nil
 	})
 	return out, err
+}
+
+// judgementVersion is the newest judgement row any acceptance of the node has: it changes whenever a judgement of the node is recorded.
+func judgementVersion(ctx context.Context, q store.Querier, plan, node string) (int64, error) {
+	var version int64
+	_, err := queryOne(ctx, q, "SELECT COALESCE(MAX(c.rowid), 0) FROM dag_merge_checks c JOIN dag_acceptances a ON a.acceptance_id = c.acceptance_id WHERE a.plan_id = ? AND a.node_id = ?", []any{plan, node}, &version)
+	return version, err
 }
 
 // criteriaCurrent is whether the plan's criteria for the node and the criteria registered for its relationship are both the ones the acceptance stands on now.

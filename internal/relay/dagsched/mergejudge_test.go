@@ -703,3 +703,57 @@ func TestRunKeysAreNotJoinedTexts(t *testing.T) {
 		t.Fatalf("stored and read back = %v %v", round, err)
 	}
 }
+
+// A reading of the pull request that was in flight while another judgement of the node was recorded is older than the history, whatever it contains: it is discarded, nothing is written, and
+// nothing reaches the lane. An older success cannot hide a newer run's failure, and a delayed "still running" cannot be taken for a retry that never happened.
+func TestAReadingInFlightWhileAnotherJudgementLandsIsDiscarded(t *testing.T) {
+	t.Run("an older success that lacks the newer run", func(t *testing.T) {
+		k := newJudgeKit(t)
+		k.setChecks("A:11:1:success", "B:2:1:success")
+		old := k.forge.by["owner/repo#5"]
+		k.forge.onRead = func() {
+			k.setChecks("A:11:1:success", "A:12:1:failure", "B:2:1:success")
+			if r := k.judge(); r.Outcome != OutcomeRetrySameSHA {
+				t.Errorf("the nested judgement = %+v", r)
+			}
+			k.forge.by["owner/repo#5"] = old
+		}
+		_, turn, err := k.sched.RequestMergeTurn(context.Background(), "g", "I", "parent", MergeRequestInput{Host: "host"})
+		if refusalReason(err) != "merge_candidate_moved" || turn != nil {
+			t.Fatalf("the older reading = %v %v", err, turn)
+		}
+		if got := strings.Join(k.history(), " "); got != "retry_same_sha:1" || k.count("SELECT COUNT(*) FROM merge_turns") != 0 {
+			t.Fatalf("history = %s, turns %d", got, k.count("SELECT COUNT(*) FROM merge_turns"))
+		}
+	})
+	t.Run("a delayed running reading after the failure was recorded", func(t *testing.T) {
+		k := newJudgeKit(t)
+		k.setChecks("A:1:1:", "B:2:1:success")
+		running := k.forge.by["owner/repo#5"]
+		k.forge.onRead = func() {
+			k.setChecks("A:1:1:failure", "B:2:1:success")
+			if r := k.judge(); r.Outcome != OutcomeRetrySameSHA {
+				t.Errorf("the nested judgement = %+v", r)
+			}
+			k.forge.by["owner/repo#5"] = running
+		}
+		if _, err := k.sched.Judge(context.Background(), "g", "I", "parent", JudgeInput{}); refusalReason(err) != "merge_candidate_moved" {
+			t.Fatalf("the delayed reading = %v", err)
+		}
+		// the one failure read again is still the one failure
+		k.setChecks("A:1:1:failure", "B:2:1:success")
+		if r := k.judge(); r.Outcome != OutcomeRetrySameSHA || !r.Replayed {
+			t.Fatalf("the failure read again = %+v", r)
+		}
+	})
+}
+
+// The same instant in two spellings is one time: ordering and failure identity use the instant, and text that is not a time cannot be ordered.
+func TestStampsAreInstantsNotSpellings(t *testing.T) {
+	if !laterStamp("2026-10-02T09:00:05+09:00", "2026-10-02T00:00:01Z") || laterStamp("2026-10-02T09:00:01+09:00", "2026-10-02T00:00:01Z") || laterStamp("soon", "2026-10-02T00:00:01Z") || laterStamp("", "") {
+		t.Fatal("stamps are compared as text")
+	}
+	if normalStamp("2026-10-02T09:00:01+09:00") != normalStamp("2026-10-02T00:00:01Z") || normalStamp("soon") != "soon" {
+		t.Fatalf("normal forms: %q %q", normalStamp("2026-10-02T09:00:01+09:00"), normalStamp("2026-10-02T00:00:01Z"))
+	}
+}

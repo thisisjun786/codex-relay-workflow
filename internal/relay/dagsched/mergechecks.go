@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
@@ -21,7 +22,22 @@ func keyOf(c Check) runKey { return runKey{c.Name, c.RunID} }
 // newerReading is whether a reading of a run is newer than another: a later attempt, or, in the same attempt, a later time the forge last changed the run (a check run can be reset in
 // place). Readings that carry no time cannot be told apart in one attempt, and the first stays.
 func newerReading(a, b Check) bool {
-	return a.Attempt > b.Attempt || (a.Attempt == b.Attempt && a.Stamp != "" && b.Stamp != "" && a.Stamp > b.Stamp)
+	return a.Attempt > b.Attempt || (a.Attempt == b.Attempt && laterStamp(a.Stamp, b.Stamp))
+}
+
+// laterStamp is whether the time a is after the time b; times that do not parse, or are absent, cannot be told apart.
+func laterStamp(a, b string) bool {
+	x, errA := time.Parse(time.RFC3339Nano, a)
+	y, errB := time.Parse(time.RFC3339Nano, b)
+	return errA == nil && errB == nil && x.After(y)
+}
+
+// normalStamp is a time as the forge gave it, written in UTC, so the same instant in two spellings is one failure; text that is not a time stays as it was.
+func normalStamp(s string) string {
+	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+		return t.UTC().Format(time.RFC3339Nano)
+	}
+	return s
 }
 
 // reduceRuns keeps, of every run of the head, its newest reading. Everything that decides a judgement (the pending and failed checks, what an earlier judgement saw, whether a reading is

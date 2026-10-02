@@ -179,3 +179,15 @@ func TestACheckRunResetInPlaceIsASecondFailure(t *testing.T) {
 		t.Fatalf("the same check run reset and failed again = %+v", second)
 	}
 }
+
+// The time the forge gives a run is projected as an instant in UTC, whatever zone it was written in.
+func TestProjectedStampsAreInstants(t *testing.T) {
+	k := newJudgeKit(t)
+	required := []any{map[string]any{"context": "dev-gate", "integration_id": 42}}
+	g := collectorScript(k.feature, required, checkRunAt(11, "dev-gate", k.feature, "failure", 42, "2026-10-02T09:00:01+09:00"))
+	g.pulls = []map[string]any{g.pull(k.feature)}
+	pr := g.read(t)
+	if len(pr.Checks) != 1 || pr.Checks[0].Stamp != "2026-10-02T00:00:01Z" {
+		t.Fatalf("checks = %+v", pr.Checks)
+	}
+}

@@ -79,9 +79,9 @@ func projectSnapshot(snapshot map[string]any, repository string, number int64) P
 	for _, item := range details {
 		d, _ := item.(map[string]any)
 		if stamp := textOf(d["updatedAt"]); stamp != "" {
-			stamps[textOf(d["runId"])] = stamp
+			stamps[textOf(d["runId"])] = normalStamp(stamp)
 		} else if stamp := textOf(d["completedAt"]); stamp != "" {
-			stamps[textOf(d["runId"])] = stamp
+			stamps[textOf(d["runId"])] = normalStamp(stamp)
 		}
 	}
 	checkItems, _ := handoff["checks"].([]any)
