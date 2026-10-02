@@ -31,6 +31,16 @@ do not use a primary issue to hide a combined delivery. If no issue is linked,
 use the known project name instead of inventing an issue number and reconcile
 the mapping through `crw-plan` before new implementation dispatch.
 
+The title names the Codex task and nothing else. The packet's `Title:` field carries it so
+that the creation call and its read-back have one value to compare, and it is not the pull
+request's title. The child titles its own pull request in English, as `Language:` requires,
+under the rules of the repository it targets; where those rules state no format, the packet
+names one, such as `CRW-275: <short English summary>`. Put that into the packet beside the
+`Title:` line, because a child handed a Korean title and no sentence on what it names can
+publish it as the pull request's title: six of the pull requests #278 to #294 carry the
+Korean task title (#282, #285, #287, #292, #293 and #294), recorded as S23 in
+[Dispatch verification](dispatch-verification.md).
+
 The coordinator passes the title through the creation tool's supported title/name
 field and includes it in the packet. Prompt text alone does not prove the app title
 was set. Read back the actual title using the returned task ID. If the host generates
@@ -64,7 +74,11 @@ Supervisor: [the initiative ID and task ID of THIS project's designated executio
 Issue/PR mapping: [one implementation issue ID, target repository, and intended PR scope
   or existing PR URL; related issues are dependencies, not additional deliveries.
   For non-PR work, state the result and how it will be verified]
-Title: [issue ID · descriptive title of up to 20 characters, following Child task titles]
+Title: [the Codex task title: issue ID · descriptive title of up to 20 characters, following
+  Child task titles]
+  This names the Codex task only. Your pull request's title is yours to write, in English as
+  the `Language:` line requires and under the repository's rules for titles; it is never a
+  copy of this field
 Workflow: [effective workflow per Default independent execution]
 Language: English for everything you write: your messages and final return, commit messages,
   the pull request's title, body and review replies, and receipt text. Keep exact identifiers,
@@ -146,7 +160,13 @@ Workspace ownership:
   never by `GIT_DIR`, a throwaway clone, an improvised proxy commit or reset/stash]
 - Capacity and large artifacts: [the destination volume to check before a large clone,
   install, build or download, and the permitted shared read-only originals, per-task
-  temporary paths and other volumes to use instead of copying a large original in here]
+  temporary paths and other volumes to use instead of copying a large original in here.
+  A temporary directory the packet names for a tool, such as `TMPDIR`, is a short path (for
+  example `/var/tmp/crw-<n>`, on a volume with free space), and the packet states why: a Unix
+  socket's whole path must stay under 104 bytes, since Linux refuses a path of 108 bytes or
+  more and macOS one of 104 or more, and a test that binds a socket under `TMPDIR` adds its own
+  directory and file names to it, so a per-task scratch path used as `TMPDIR` is already too
+  long. Large disposable output goes under a scratch path the packet names separately]
 - Resource delta to report at close: [measured against the baseline above, what this task
   created, changed, retained, shared or cleaned, each with its owner, release condition and
   next action; the working directory, purpose, handle and running state of any process it
@@ -281,7 +301,10 @@ Execution:
   role settings to match the requested model.
 
 Verification:
-[Specific commands, invariants, negative cases, and real UI/API behavior]
+[Specific commands, invariants, negative cases, and real UI/API behavior. Name only commands
+that exist in the target repository's Makefile, CI workflow or CI document, each confirmed
+against the packet's baseline commit when the packet is written, and say so where an issue
+text or an earlier packet names a command that does not exist]
 [Allowed test data and runtime boundaries]
 
 Return:
@@ -312,8 +335,8 @@ Return:
 - Delivery artifact: [PR URL, pushed head SHA, and the state of its required checks and
   reviews, including how each finding was resolved; or the frozen diff bundle for a
   restricted or narrowed delivery].
-- For a pull request: URL, base and head SHAs, `isDraft`, the review receipts for the
-  current head, and any unresolved finding. Record the relay receipt's own outcome
+- For a pull request: URL, title as published, base and head SHAs, `isDraft`, the review
+  receipts for the current head, and any unresolved finding. Record the relay receipt's own outcome
   separately; `ready_for_review` there is not `isDraft=false` here.
 - Merge-readiness handoff, for a pull request you are handing over: the repository and pull
   request number, the head all of this evidence is about, the base you verified and when,
@@ -368,6 +391,23 @@ field in brackets where that reduced shape names it differently.
 - Language — `Language:`, the same in both shapes: what the child writes is English from its
   first message, since a later correction cannot rewrite the commits and pull request text
   already published.
+- Title — `Title:`, in both shapes: the Codex task title. In a pull request packet a sentence
+  follows it saying that it is not the pull request's title, which the child writes in English
+  under the target repository's rules ([Child task titles](#child-task-titles)), and the pull
+  request's title comes back in `Return:`.
+- Temporary path — a `TMPDIR` or other temporary directory the packet names is short, and the
+  packet states the socket path limit, in the `Capacity and large artifacts:` line.
+- Verification commands — every command under `Verification:` was confirmed to exist when the
+  packet was written, against the checkout at the packet's baseline commit. A make target is
+  confirmed by its rule in the Makefile or in a file the Makefile includes. Read `make -n
+  <target>` beside it as supporting evidence: `No rule to make target` means the name is no
+  target, and `Nothing to be done for '<target>'` with exit status 0 means make found nothing
+  to run, which is what a name without a rule prints when a file or directory of that name
+  exists. `make contract` did that beside a `contract/` directory, and a gate that ran it passed
+  with nothing checked. A target with a recipe prints it, or `'<target>' is up to date`. A CI
+  check is confirmed by the command in the workflow file or the repository's CI document, run
+  with its help or dry-run mode where it has one. A command nobody could confirm is replaced by
+  the real one, or the packet says that check has no command; it is not passed along.
 
 One obligation is new rather than a restatement. Where a workflow with its own goal and
 state is effective, the child's first execution leaves its own activation evidence and
@@ -505,7 +545,8 @@ that file; link-only completion has no manifest and is not a valid ready receipt
 
 ```text
 Task: [one stable issue ID, bounded result, existing owner]
-Title: [issue ID · descriptive title of up to 20 characters, following Child task titles]
+Title: [the Codex task title: issue ID · descriptive title of up to 20 characters, following
+  Child task titles]
 Coordinator: [actual task/host IDs if delegated; project ID only if one exists]
 Scope: [accepted question/outcome, exclusions, dependencies and write authority]
 Input baseline: [source IDs, revisions/updated-at evidence and known gaps]

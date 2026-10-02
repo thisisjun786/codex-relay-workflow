@@ -386,6 +386,10 @@ Apply [Child task titles](references/task-packet.md#child-task-titles):
 spaces; exclude the issue code and separator). Supply the title through the supported
 creation field, verify the actual title by task ID, and correct it on the same
 managed task when supported. The packet's title alone is not app-state evidence.
+That title names the Codex task, not the pull request, which the child titles in English under
+`Language:` ([Child task titles](references/task-packet.md#child-task-titles)). A temporary
+directory the packet names is short, and every verification command in it was confirmed to exist
+when the packet was written ([First full assignment required fields](references/task-packet.md#first-full-assignment-required-fields)).
 
 Apply [Independent implementation tasks](#independent-implementation-tasks) even
 when no new branch or worktree is needed. Non-PR work uses its permitted working

@@ -162,6 +162,10 @@ a case whose owner has moved or been reworded before relying on it.
 | S18 | A mismatch found after creation is reconciled on that same task | Same bullet list | Recovery | unchanged |
 | S19 | A child writes its messages, commits, pull request text and receipts in English, while task titles, Linear records and reports to the user stay Korean | [Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution) language paragraph and the packets' `Language:` line | Default settings | added 2026-10-02; partly measured in P-CRW-115, inspected artifacts held, see below |
 | S20 | A relay-managed child that finishes on a goal-continuation or post-restart turn attaches a continuation claim naming the generation's anchor, read from the relay, and does not read the `unassigned_turn` refusal as a delivery defect; a turn of another task stays refused whatever it claims | [Launch packet](task-packet.md#launch-packet) relay bullet on which turn the receipt is emitted from, and [Completing on a later turn of the same child](relay.md#completing-on-a-later-turn-of-the-same-child) | Recovery | added 2026-10-02; did not occur in the receipts read in P-CRW-115, see below |
+| S23 | The packet's `Title:` names the Codex task, and the child titles its own pull request in English under the target repository's rules | [Child task titles](task-packet.md#child-task-titles) and the `Title:` line of the [Launch packet](task-packet.md#launch-packet) | Default settings | added 2026-10-03; measured on published pull request titles, not on a child that read the rule, see below |
+| S23b | A temporary directory the packet names is short enough for a Unix socket under it to bind, and the packet states the socket path limit | The `Capacity and large artifacts:` line of the [Launch packet](task-packet.md#launch-packet) and [First full assignment required fields](task-packet.md#first-full-assignment-required-fields) | Default settings | added 2026-10-03; limit measured on this Linux host and read for macOS, see below |
+| S23c | A verification command the packet names exists in the target repository's Makefile or CI, and the packet's writer confirmed it when writing the packet | The `Verification:` line of the [Launch packet](task-packet.md#launch-packet) and [First full assignment required fields](task-packet.md#first-full-assignment-required-fields) | Default settings | added 2026-10-03; failure mode measured at dev 53c7e4e8, see below |
+
 S14 and S17 are the pair that is easiest to confuse. S14 removed the readiness turn; S17
 added a capability check the coordinator performs before creating the task. A check that
 happens on the coordinator's side, before anything exists to answer, is not a turn spent
@@ -201,6 +205,34 @@ on the tests and documentation of PR #272, not on a live run. The run does show 
 about the procedure: the generation-2 anchor is not the `standbyTurnId` of the routing
 record, which the managed-start routing text still tells a child to name for a continuation
 claim (an open entry in the refactor backlog's real-use run 3 list).
+
+S23, S23b and S23c were read on 2026-10-03 against the pull requests #278 to #294 as GitHub
+showed them and this checkout at dev 53c7e4e8. They measure published artifacts and this host.
+None of them measures a child that read the new wording, which waits for the next run, and
+a title alone does not show why a child chose it.
+
+S23: the seventeen titles were read with `gh pr view N --json title` and tested for Hangul. Six
+are the Korean task title in the task-title shape: #282, #285, #287, #292, #293 and #294. The
+other eleven are English, in several shapes (`CRW-263: ...`, `fix(relay): [CRW-271] ...`,
+`CRW-270 · per-parent due cap and parent-id rotation`). CONTRIBUTING.md and POLICY.md of this
+repository state no title format, so the rule defers to the rules of the target repository and
+has the packet name a shape where there is none. The packets of those children are not in the
+repository: the refactor backlog records that the packets of #282 and #285 carried a `Language:`
+line naming the pull request's title, and nobody checked it for the other four.
+
+S23b: on this Linux host a Unix socket bound at a path of 107 bytes and failed with `AF_UNIX path
+too long` at 108, probed with a Python `bind` in a temporary directory. The macOS bound of 104 is
+read from internal/bridge/appserver/fakehost/fakehost.go (lines 166 to 169) and from the body of
+PR #285, not measured. The rule gives no length for `TMPDIR` itself: the test adds its own
+directory and file names, and the body of PR #280 reports a socket path of 111 bytes, set by a
+test's own name, under a `TMPDIR` already shorter than the one that failed elsewhere.
+
+S23c: at dev 53c7e4e8 `make -n contract` prints `make: Nothing to be done for 'contract'.` and
+exits 0, because the Makefile has no `contract` rule (`.PHONY` on line 23 lists build, test,
+test-binary, test-part, lint, dist and crw-dev) and a directory `contract/` exists, while
+`make -n nosuchtarget` prints `No rule to make target` and exits 2. A gate that ran `make
+contract` would have passed with nothing checked; the bodies of PRs #281 and #282 both report
+the missing target.
 
 ## Negative cases
 
