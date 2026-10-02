@@ -39,6 +39,9 @@ func (s *Scheduler) RecordDecision(ctx context.Context, plan, actor string, in D
 	}
 	err := s.Store.Compose(ctx, func(txCtx context.Context, _ *sql.Conn) error {
 		tx := s.Store.Q(txCtx)
+		if err := s.fence(txCtx, tx, plan, actor); err != nil {
+			return err
+		}
 		snap, _, err := dag.SnapshotAt(txCtx, tx, plan, 0)
 		if err != nil {
 			return err
@@ -74,8 +77,8 @@ func (s *Scheduler) RecordDecision(ctx context.Context, plan, actor string, in D
 			}
 			out.SupersededID = activeID
 		}
-		_, err = tx.ExecContext(txCtx, "INSERT INTO dag_decisions (decision_id, plan_id, subject, digest, disposition, authority_kind, authority_ref, revision, state, recorded_by_task_id, coordinator_epoch, recorded_at) VALUES (?,?,?,?,?,?,?,?,'active',?,0,?)",
-			out.DecisionID, plan, in.Subject, in.Digest, in.Disposition, in.AuthorityKind, in.AuthorityRef, out.Revision, actor, s.now())
+		_, err = tx.ExecContext(txCtx, "INSERT INTO dag_decisions (decision_id, plan_id, subject, digest, disposition, authority_kind, authority_ref, revision, state, recorded_by_task_id, coordinator_epoch, recorded_at) VALUES (?,?,?,?,?,?,?,?,'active',?,?,?)",
+			out.DecisionID, plan, in.Subject, in.Digest, in.Disposition, in.AuthorityKind, in.AuthorityRef, out.Revision, actor, s.ExpectedEpoch, s.now())
 		return err
 	})
 	return out, err

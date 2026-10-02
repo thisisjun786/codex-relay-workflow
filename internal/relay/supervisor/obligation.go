@@ -49,70 +49,102 @@ func hash32(text string) string {
 	return hex.EncodeToString(digest[:])[:32]
 }
 
+// eventFacts is what one event, its newest work report and its relationship's issue say: the
+// input of the judgment whichever way they were read, one event at a time (FromEvent) or a
+// project's at once (projectObligations).
+type eventFacts struct {
+	eventID, relation, revision, outcome, producer, stage string
+	generation                                            int64
+	suppressed                                            sql.NullString
+	report                                                workReportFact
+	issue                                                 sql.NullString
+}
+
+// eventRaises is whether an event can raise an obligation at all: a final, unsuppressed fact of
+// a child or of the daemon's observation of one. projectEventsSQL selects on exactly this.
+func eventRaises(stage string, suppressed sql.NullString, producer string) bool {
+	return stage == "final" && !suppressed.Valid && (producer == "child" || producer == "daemon_observation")
+}
+
+// obligationKind is what a work-report status, else the outcome the turn ended with, makes of an
+// event: a completion, a block, a decision only the user can make, or nothing.
+func obligationKind(reportStatus, outcome string) string {
+	switch reportStatus {
+	case "DONE", "NOOP":
+		return "completion"
+	case "BLOCKED", "BUDGET_EXHAUSTED":
+		return "blocked"
+	case "UNSAFE", "NEEDS_HUMAN":
+		return "decision_request"
+	}
+	switch outcome {
+	case "ready_for_review":
+		return "completion"
+	case "blocked_needs_input":
+		return "blocked"
+	}
+	return ""
+}
+
+// obligationFrom is supervision.from_event's judgment on facts already read: a final, unsuppressed
+// child fact with an upward outcome or work-report status raises one obligation. Ordinary failure
+// does not.
+func obligationFrom(f eventFacts) *Obligation {
+	if !eventRaises(f.stage, f.suppressed, f.producer) {
+		return nil
+	}
+	kind := obligationKind(f.report.status, f.outcome)
+	if kind == "" {
+		return nil
+	}
+	subject := f.eventID
+	if kind != "completion" {
+		cause := pyjson.Dumps([]string{firstNonempty(f.report.status, f.outcome), f.report.reason, f.report.summary}, pyjson.Options{Compact: true, Unicode: true})
+		subject = fmt.Sprintf("g%d:%s", f.generation, hash32(cause)[:16])
+	}
+	detail := f.report.summary
+	if detail == "" {
+		detail = "the turn ended " + f.outcome
+	}
+	var status any
+	if f.report.status != "" {
+		status = f.report.status
+	}
+	revision := f.revision
+	basis := map[string]any{"table": "events", "eventId": f.eventID, "outcome": f.outcome, "cxcStatus": status}
+	result := &Obligation{Schema: "supervisor-obligation/1", ID: hash32(kind + "|" + f.relation + "|" + subject), Kind: kind, RelationID: f.relation, Subject: subject, Generation: f.generation, Revision: &revision, Basis: basis, Detail: detail}
+	if f.issue.Valid {
+		issue := f.issue.String
+		result.Issue = &issue
+	}
+	return result
+}
+
 // FromEvent is supervision.from_event: a final, unsuppressed child fact with an
 // upward outcome or work-report status raises one obligation. Ordinary failure does not.
 func (c *Channel) FromEvent(ctx context.Context, eventID string) (*Obligation, error) {
-	var relation, revision, outcome, producer, stage string
-	var generation int64
-	var suppressed sql.NullString
-	err := c.Store.Q(ctx).QueryRowContext(ctx, "SELECT relationship_id, execution_generation, revision_hash, outcome, producer, stage, suppressed_reason FROM events WHERE event_id = ?", eventID).Scan(&relation, &generation, &revision, &outcome, &producer, &stage, &suppressed)
+	f := eventFacts{eventID: eventID}
+	err := c.Store.Q(ctx).QueryRowContext(ctx, "SELECT relationship_id, execution_generation, revision_hash, outcome, producer, stage, suppressed_reason FROM events WHERE event_id = ?", eventID).Scan(&f.relation, &f.generation, &f.revision, &f.outcome, &f.producer, &f.stage, &f.suppressed)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	if stage != "final" || suppressed.Valid || (producer != "child" && producer != "daemon_observation") {
+	if !eventRaises(f.stage, f.suppressed, f.producer) {
 		return nil, nil
 	}
-	report, err := currentReport(ctx, c.Store, eventID)
-	if err != nil {
+	if f.report, err = currentReport(ctx, c.Store, eventID); err != nil {
 		return nil, err
 	}
-	kind := ""
-	switch report.status {
-	case "DONE", "NOOP":
-		kind = "completion"
-	case "BLOCKED", "BUDGET_EXHAUSTED":
-		kind = "blocked"
-	case "UNSAFE", "NEEDS_HUMAN":
-		kind = "decision_request"
-	}
-	if kind == "" {
-		switch outcome {
-		case "ready_for_review":
-			kind = "completion"
-		case "blocked_needs_input":
-			kind = "blocked"
-		}
-	}
-	if kind == "" {
+	if obligationKind(f.report.status, f.outcome) == "" {
 		return nil, nil
 	}
-	subject := eventID
-	if kind != "completion" {
-		cause := pyjson.Dumps([]string{firstNonempty(report.status, outcome), report.reason, report.summary}, pyjson.Options{Compact: true, Unicode: true})
-		subject = fmt.Sprintf("g%d:%s", generation, hash32(cause)[:16])
-	}
-	var issue sql.NullString
-	err = c.Store.Q(ctx).QueryRowContext(ctx, "SELECT issue_key FROM relationships WHERE relationship_id = ?", relation).Scan(&issue)
+	err = c.Store.Q(ctx).QueryRowContext(ctx, "SELECT issue_key FROM relationships WHERE relationship_id = ?", f.relation).Scan(&f.issue)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
-	detail := report.summary
-	if detail == "" {
-		detail = "the turn ended " + outcome
-	}
-	var status any
-	if report.status != "" {
-		status = report.status
-	}
-	basis := map[string]any{"table": "events", "eventId": eventID, "outcome": outcome, "cxcStatus": status}
-	result := &Obligation{Schema: "supervisor-obligation/1", ID: hash32(kind + "|" + relation + "|" + subject), Kind: kind, RelationID: relation, Subject: subject, Generation: generation, Revision: &revision, Basis: basis, Detail: detail}
-	if issue.Valid {
-		result.Issue = &issue.String
-	}
-	return result, nil
+	return obligationFrom(f), nil
 }
 func firstNonempty(a, b string) string {
 	if a != "" {
