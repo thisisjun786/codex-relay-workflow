@@ -717,11 +717,21 @@ func TestRunCharacterization_RegistrationChangedBeforeReadbackIsRefused(t *testi
 		}
 		return stamp(calls)
 	}
-	done := make(chan map[string]any, 1)
-	go func() { done <- x.run() }()
+	type outcome struct {
+		out contract.OrderedObject
+		err error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		out, err := x.runRaw()
+		done <- outcome{out, err}
+	}()
 	select {
 	case got := <-done:
-		checkAnswer(t, got, "refused", "readback", "managed_scope_changed")
+		if got.err != nil {
+			t.Fatalf("Run: %v", got.err)
+		}
+		checkAnswer(t, fieldsOf(got.out), "refused", "readback", "managed_scope_changed")
 	case <-time.After(30 * time.Second):
 		t.Fatal("Run did not return")
 	}
@@ -806,5 +816,27 @@ func TestRunCharacterization_ProjectLockIsLetGoAtRegistrationAndRequestLockIsKep
 	}
 	if atCreation != "held" || afterRegistration != "free" {
 		t.Fatalf("project lock at the creation: %s, after the registration: %s", atCreation, afterRegistration)
+	}
+}
+
+// The final guard compares the relationship with the parent the start registered, the one the request named
+// when the child was registered. A request that a readiness callback changes afterwards does not move it: the
+// start goes on to send, and the registration that is read back after the send is the one that disagrees.
+func TestRunCharacterization_GuardKeepsTheParentRegisteredWithTheChild(t *testing.T) {
+	x := newCharRun(t)
+	x.start.Readiness = func(ctx context.Context, req map[string]any) (string, error) {
+		if tagOf(ctx) == "guard" {
+			changed := map[string]any{}
+			for key, value := range obj(req["parent"]) {
+				changed[key] = value
+			}
+			changed["taskId"] = "other-parent"
+			req["parent"] = changed
+		}
+		return "", nil
+	}
+	checkAnswer(t, x.run(), "incomplete", "business_accepted", "managed_scope_changed")
+	if x.fake.sent != 1 {
+		t.Fatalf("sent %d, want 1", x.fake.sent)
 	}
 }

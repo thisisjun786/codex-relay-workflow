@@ -84,8 +84,7 @@ func (r *startRun) guardRelationship(ctx context.Context, read *store.ReadOnly) 
 	if json.Unmarshal([]byte(rootsJSON), &roots) != nil || json.Unmarshal([]byte(recipientsJSON), &allowed) != nil {
 		return "managed_scope_changed"
 	}
-	parent := obj(r.req["parent"])
-	if issue != r.identity.IssueKey || parentTask != str(parent["taskId"]) || parentHost != str(parent["hostId"]) || childTask != r.task || childHost != str(obj(r.req["child"])["hostId"]) || scope != str(r.req["scopeRef"]) || !jsonSame(roots, stringsOf(r.req["artifactRoots"])) || !jsonSame(allowed, r.recipients) {
+	if issue != r.identity.IssueKey || parentTask != str(r.parent["taskId"]) || parentHost != str(r.parent["hostId"]) || childTask != r.task || childHost != str(obj(r.req["child"])["hostId"]) || scope != str(r.req["scopeRef"]) || !jsonSame(roots, stringsOf(r.req["artifactRoots"])) || !jsonSame(allowed, r.recipients) {
 		return "managed_scope_changed"
 	}
 	return ""
@@ -112,7 +111,7 @@ func (r *startRun) guardSettings(ctx context.Context, read *store.ReadOnly) stri
 	for _, role := range []string{"parent", "child"} {
 		who := r.task
 		if role == "parent" {
-			who = str(obj(r.req["parent"])["taskId"])
+			who = str(r.parent["taskId"])
 		}
 		var current string
 		if read.QueryRowContext(ctx, "SELECT settings FROM authorized_settings WHERE task_id=?", who).Scan(&current) != nil {

@@ -37,11 +37,13 @@ type startRun struct {
 
 	receipt       map[string]any // the host's creation receipt, with what the standby recovery added to it
 	task, standby string         // the child's task id and its standby turn
+	parent        map[string]any // the request's parent as it was when the child was registered
 	childSettings map[string]any
 	recipients    []string
 	reg           *registry.Registry
 	record        registry.Relationship
 	sent          map[string]any // the host's receipt for the business send
+	turn          string         // the business turn the host accepted
 }
 
 // A step settles the request or hands over to the next one. It settles it with the answer Observe gives
@@ -289,10 +291,10 @@ func (r *startRun) bindMarker(ctx context.Context) (contract.OrderedObject, erro
 // register registers the child under the parent. The project's lock is let go right after Register, before
 // its error is looked at, so it is never held past the registration however that ended.
 func (r *startRun) register(ctx context.Context) (contract.OrderedObject, error) {
-	parent := obj(r.req["parent"])
+	r.parent = obj(r.req["parent"])
 	r.recipients = recipientsWith(r.req, r.task)
 	r.reg = &registry.Registry{Store: r.m.Store, Now: r.m.now}
-	record, err := r.reg.Register(ctx, registry.Registration{Parent: registry.Endpoint{TaskID: str(parent["taskId"]), HostID: str(parent["hostId"]), Cwd: nullableSQL(str(obj(parent["settings"])["cwd"]))}, Child: registry.Endpoint{TaskID: r.task, HostID: str(obj(r.req["child"])["hostId"]), Cwd: nullableSQL(r.identity.Workspace), CXCSession: nullableSQL(r.task)}, IssueKey: r.identity.IssueKey, ArtifactRoots: stringsOf(r.req["artifactRoots"]), AllowedRecipients: r.recipients, ScopeRef: nullableSQL(str(r.req["scopeRef"])), DispatchRequestID: r.identity.DispatchRequestID, DispatchTurnID: nullableSQL(r.standby), ProjectKey: str(r.req["projectKey"]), ManagedRequestID: r.identity.RequestID})
+	record, err := r.reg.Register(ctx, registry.Registration{Parent: registry.Endpoint{TaskID: str(r.parent["taskId"]), HostID: str(r.parent["hostId"]), Cwd: nullableSQL(str(obj(r.parent["settings"])["cwd"]))}, Child: registry.Endpoint{TaskID: r.task, HostID: str(obj(r.req["child"])["hostId"]), Cwd: nullableSQL(r.identity.Workspace), CXCSession: nullableSQL(r.task)}, IssueKey: r.identity.IssueKey, ArtifactRoots: stringsOf(r.req["artifactRoots"]), AllowedRecipients: r.recipients, ScopeRef: nullableSQL(str(r.req["scopeRef"])), DispatchRequestID: r.identity.DispatchRequestID, DispatchTurnID: nullableSQL(r.standby), ProjectKey: str(r.req["projectKey"]), ManagedRequestID: r.identity.RequestID})
 	r.projectLock()
 	if err != nil {
 		return nil, err
@@ -311,11 +313,10 @@ func (r *startRun) registerCriteria(ctx context.Context) (contract.OrderedObject
 
 // authorizeSettings records the settings the parent and the child were started with.
 func (r *startRun) authorizeSettings(ctx context.Context) (contract.OrderedObject, error) {
-	parent := obj(r.req["parent"])
 	for _, entry := range []struct {
 		task, role string
 		settings   map[string]any
-	}{{str(parent["taskId"]), "parent", obj(parent["settings"])}, {r.task, "child", r.childSettings}} {
+	}{{str(r.parent["taskId"]), "parent", obj(r.parent["settings"])}, {r.task, "child", r.childSettings}} {
 		if _, err := EnsureSettings(ctx, r.m.Store, entry.task, settingsWithRole(entry.settings, entry.role), "managed_start", r.m.now()); err != nil {
 			return nil, err
 		}
@@ -418,7 +419,8 @@ func (r *startRun) checkBusiness(ctx context.Context) (contract.OrderedObject, e
 		}
 		return r.answer(ctx, "incomplete", "business", "business_"+status)
 	}
-	if !delivery.ValidSegment(str(r.sent["turnId"])) || str(r.sent["threadId"]) != r.task {
+	r.turn = str(r.sent["turnId"])
+	if !delivery.ValidSegment(r.turn) || str(r.sent["threadId"]) != r.task {
 		return r.answer(ctx, "incomplete", "business", "business_identity_unobserved")
 	}
 	return nil, nil
@@ -438,12 +440,11 @@ func (r *startRun) confirmRegistration(ctx context.Context) (contract.OrderedObj
 
 // admit records the business turn as admitted for the child and answers with it.
 func (r *startRun) admit(ctx context.Context) (contract.OrderedObject, error) {
-	turn := str(r.sent["turnId"])
-	if err := r.reg.AdmitExplicitly(ctx, r.record.ID, r.row.ExecutionGeneration.Int64, turn, str(obj(r.req["parent"])["taskId"]), "managed business dispatch confirmed by its retained bridge receipt"); err != nil {
+	if err := r.reg.AdmitExplicitly(ctx, r.record.ID, r.row.ExecutionGeneration.Int64, r.turn, str(r.parent["taskId"]), "managed business dispatch confirmed by its retained bridge receipt"); err != nil {
 		return nil, err
 	}
 	admitted := r.result()
-	admitted.BusinessTurnID = turn
+	admitted.BusinessTurnID = r.turn
 	return admitted.Observe(ctx, r.m.Store, r.m.now(), "admitted", "business_accepted", "")
 }
 
