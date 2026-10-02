@@ -5,50 +5,16 @@ package cxccorpus
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"sort"
 	"strings"
 )
 
-// CoverageFile is contract/schema/cxc/coverage.json: every contract item of the Wave 0 analysis
-// with how this corpus holds it.
-type CoverageFile struct {
-	Description string            `json:"description"`
-	Statuses    map[string]string `json:"statuses"`
-	// PathLengthDependent are the fixtures holding a byte count or a cut over an expanded
-	// case-root or plugin path: a replay compares them only at the recording's path lengths.
-	PathLengthDependent []string       `json:"path_length_dependent"`
-	Items               []CoverageItem `json:"items"`
-}
-
-// CoverageItem is one contract item. Recorded items list the fixtures whose covers name them
-// (kept in sync by `crw-dev cxc record`); extracted items name the data file that holds them;
-// pending items carry the exact spec to record (scenarios in the specs' grammar, or for an item
-// that is not a scenario the extraction method); not-recordable items say why.
-type CoverageItem struct {
-	ID       string     `json:"id"`
-	Contract string     `json:"contract"`
-	Source   string     `json:"source,omitempty"`
-	Status   string     `json:"status"`
-	Fixtures []string   `json:"fixtures,omitempty"`
-	Evidence string     `json:"evidence,omitempty"`
-	Reason   string     `json:"reason,omitempty"`
-	Method   string     `json:"method,omitempty"`
-	Spec     []Scenario `json:"spec,omitempty"`
-}
-
 var statuses = []string{"recorded", "extracted", "pending", "not-recordable"}
-
-// LoadCoverage reads the coverage index.
-func LoadCoverage(root string) (CoverageFile, error) {
-	var file CoverageFile
-	err := readStrict(filepath.Join(root, Coverage), &file)
-	return file, err
-}
 
 // FixtureCovers maps each fixture ID to its covers, from the fixture files.
 func FixtureCovers(root string) (map[string][]string, error) {
@@ -256,138 +222,18 @@ func sameJSON(a, b any) bool {
 	return err1 == nil && err2 == nil && bytes.Equal(x, y)
 }
 
-// SubstitutionFile is contract/schema/cxc/name-substitution.json: the ordered CXC -> CRW rename
-// rules a Go replayer applies to a fixture's expected text (never to the fixture file itself).
-type SubstitutionFile struct {
-	Description string             `json:"description"`
-	Source      string             `json:"source"`
-	Apply       []string           `json:"apply"`
-	Rules       []SubstitutionRule `json:"rules"`
-	CLI         []CLIRename        `json:"cli"`
-	Never       []NeverRule        `json:"never"`
-	InputSide   []InputSideRule    `json:"input_side"`
-	Env         []EnvRename        `json:"env"`
-	Skills      []SkillRename      `json:"skills"`
-}
-
-// SubstitutionRule is one ordered rule. Kind "regex" is applied with Go regexp; a "resolver"
-// rule is applied the same way to the expectation, and its note says what the replay does to its
-// own output; a "rewrite" rule is not textual, and the replayer follows its note. Repeat applies a
-// rule until the text stops changing.
-type SubstitutionRule struct {
-	ID      string `json:"id"`
-	Kind    string `json:"kind"`
-	Regex   string `json:"regex,omitempty"`
-	Replace string `json:"replace,omitempty"`
-	Repeat  bool   `json:"repeat,omitempty"`
-	Note    string `json:"note,omitempty"`
-	Site    string `json:"site,omitempty"`
-}
-
-// CLIRename maps the argv prefix of a cxc step to the crw command; a null crw is a dropped verb.
-type CLIRename struct {
-	CXC  []string `json:"cxc"`
-	CRW  []string `json:"crw"`
-	Note string   `json:"note,omitempty"`
-}
-
-// NeverRule is text no rule may change.
-type NeverRule struct {
-	Text string `json:"text"`
-	Why  string `json:"why"`
-}
-
-// InputSideRule is a recognizer whose rename changes what is accepted.
-type InputSideRule struct {
-	Site   string `json:"site"`
-	Before string `json:"before"`
-	After  string `json:"after"`
-	Hazard string `json:"hazard,omitempty"`
-}
-
-// EnvRename is one environment variable.
-type EnvRename struct {
-	CXC  string `json:"cxc"`
-	CRW  string `json:"crw"`
-	Note string `json:"note,omitempty"`
-}
-
-// SkillRename is one skill name.
-type SkillRename struct {
-	CXC       string `json:"cxc"`
-	CRW       string `json:"crw,omitempty"`
-	Treatment string `json:"treatment"`
-}
-
-// Substituter is the compiled regex rules, in order.
-type Substituter struct {
-	File  SubstitutionFile
-	rules []*regexp.Regexp
-}
-
-// LoadSubstitution reads and compiles the table: every regex rule must be RE2.
-func LoadSubstitution(root string) (*Substituter, error) {
-	var file SubstitutionFile
-	if err := readStrict(filepath.Join(root, Substitution), &file); err != nil {
-		return nil, err
+// validID is the fixture filename rule: lowercase words joined by - _ and the __ separator.
+func validID(id string) error {
+	if id == "" || len(id) > 160 {
+		return errors.New("empty or longer than 160 bytes")
 	}
-	s := &Substituter{File: file}
-	seen := map[string]bool{}
-	for _, r := range file.Rules {
-		if seen[r.ID] {
-			return nil, fmt.Errorf("rule %s twice", r.ID)
-		}
-		seen[r.ID] = true
-		if r.Kind != "regex" && r.Kind != "resolver" && r.Kind != "rewrite" {
-			return nil, fmt.Errorf("rule %s: kind %q", r.ID, r.Kind)
-		}
-		if r.Kind != "regex" && r.Note == "" {
-			return nil, fmt.Errorf("rule %s: a %s rule needs a note", r.ID, r.Kind)
-		}
-		re, err := regexp.Compile(r.Regex)
-		if err != nil {
-			return nil, fmt.Errorf("rule %s: %w", r.ID, err)
-		}
-		if r.Kind == "rewrite" {
-			re = nil
-		}
-		s.rules = append(s.rules, re)
-	}
-	return s, nil
-}
-
-// Apply runs the regex and resolver rules over an expected text in order; rewrite rules are
-// skipped (the replayer handles them as their notes say).
-func (s *Substituter) Apply(text string) string {
-	for i, re := range s.rules {
-		if re == nil {
-			continue
-		}
-		rule := s.File.Rules[i]
-		for {
-			next := re.ReplaceAllString(text, rule.Replace)
-			if next == text || !rule.Repeat {
-				text = next
-				break
-			}
-			text = next
+	for _, r := range id {
+		if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.') {
+			return fmt.Errorf("character %q is outside [a-z0-9._-]", r)
 		}
 	}
-	return text
-}
-
-// MapArgv is the crw argv for a cxc step's argv: the longest matching cli prefix replaced, the
-// rest kept. ok is false for a dropped verb or an argv no row covers.
-func (s *Substituter) MapArgv(argv []string) (out []string, ok bool) {
-	best := -1
-	for i, row := range s.File.CLI {
-		if len(row.CXC) <= len(argv) && slices.Equal(row.CXC, argv[:len(row.CXC)]) && (best < 0 || len(row.CXC) > len(s.File.CLI[best].CXC)) {
-			best = i
-		}
+	if !strings.Contains(id, "__") {
+		return errors.New("has no __ separating its surface from its case")
 	}
-	if best < 0 || s.File.CLI[best].CRW == nil {
-		return nil, false
-	}
-	row := s.File.CLI[best]
-	return append(slices.Clone(row.CRW), argv[len(row.CXC):]...), true
+	return nil
 }
