@@ -933,7 +933,8 @@ the project over with `linkage-handover` and the store stops counting finished w
 first and keep that reading as the completion evidence, because afterwards it reads `unregistered` while nothing is live. Run
 `relationship-close-merged --project <key> --actor <own task id>` without `--apply`, read `closable` and `kept`, then repeat
 it with `--apply`. A non-empty `kept` is not a finished project: report each kept assignment with its reason. For a supervised
-project read `supervisor-standing` first, since a report not yet staged cannot be sent once its assignment is closed.
+project read `supervisor-standing --project <key>` first and leave active every assignment whose entry has no
+`decision.priorReport`, since a report not yet staged cannot be sent once its assignment is closed.
 [Close the merged assignments](references/relay.md#close-the-merged-assignments-when-the-project-is-done) has the commands and
 the way back.
 

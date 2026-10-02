@@ -1045,9 +1045,11 @@ when it would otherwise strand it; the sweep below closes them without a handove
     codex-session-relay --state "$RELAY_STATE" relationship-close-merged --project <key> --actor <own task id> --apply
 
 Read `linkage-completion` first and keep that reading as the completion evidence: once nothing is live it reads
-`unregistered`, which says that nothing is attached, not that everything finished. Read `supervisor-standing` first for a
-supervised project only, because a report that was never staged cannot be sent once its assignment is closed. The first
-`relationship-close-merged` is the dry run. It writes nothing and names `closable` and `kept`, each kept assignment with its
+`unregistered`, which says that nothing is attached, not that everything finished. For a supervised project (a live
+initiative link over it) read `supervisor-standing --project <key>` first and close only the assignments whose entry carries a
+`decision.priorReport`: an entry without one is a report not yet staged, which cannot be sent once its assignment is closed, so
+that assignment stays active until it is. A project with no supervisor stages nothing, and there that list is not a stop
+condition. The first `relationship-close-merged` is the dry run. It changes no relationship, link, binding or journal row and names `closable` and `kept`, each kept assignment with its
 state and the reason it stays: it is not merged, a delivery or a supervisor message of it is still owed, or its plan node has
 no active acceptance of the current head and criteria. Apply only when every `closable` entry is work this run integrated.
 A non-empty `kept` means the project is not closed: report each one with its reason.

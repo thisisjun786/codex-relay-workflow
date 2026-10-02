@@ -629,10 +629,13 @@ func Test_CRW288_settled_boundaries(t *testing.T) {
 				t.Fatalf("closable %v, want closable=%v for %s: %v", closable, c.closable, rid, answer)
 			}
 			if !c.closable {
-				for _, item := range answer["kept"].([]any) {
-					if objectOf(t, item)["reason"] == "" {
-						t.Errorf("a kept relationship names no reason: %v", item)
-					}
+				kept := answer["kept"].([]any)
+				if len(kept) != 1 {
+					t.Fatalf("kept %v, want exactly %s with a reason", kept, rid)
+				}
+				entry := objectOf(t, kept[0])
+				if reason, ok := entry["reason"].(string); entry["relationshipId"] != rid || !ok || reason == "" {
+					t.Errorf("the kept relationship must be %s and name a reason: %v", rid, entry)
 				}
 			}
 			_, applied := w.closeMerged("--project", project, "--apply")
