@@ -277,14 +277,17 @@ func TestCapRead_a_first_parent_whose_rows_vanish_costs_no_one_a_second_turn(t *
 }
 
 // CRW-270 measurement: one parent holds ten thousand due rows. The tick reads what its turn can
-// attempt, and what it costs is logged (go test -v) for the pull request.
+// attempt, and what it costs is logged (go test -v). The rows are synthetic: they are due and of the
+// delivery direction the contract defines, but they are not events the relay produced, so an attempt
+// on one is refused, which is the same cost before and after the change. The number of rows the tick
+// reads is the measurement; the time is only bounded.
 func TestCapRead_a_backlog_of_ten_thousand_rows_is_not_read_by_the_tick(t *testing.T) {
 	const backlog = 10000
 	w := newScaleWorld(t, 2)
 	runaway := w.rels[0]
 	stamp := w.f.clock.ISO()
 	w.exec("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?) INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status, receipt, first_seen_at, last_seen_at) SELECT 'bulk-' || printf('%05d', i), ?, 1, 'h', 'ready_for_review', 'child', ?, ?, 'completed', '{}', ?, ? FROM n", backlog, runaway.rid, runaway.child, runaway.turn, stamp, stamp)
-	w.exec("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?) INSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id, recipient_thread_id, state, attempt_count, created_at, updated_at) SELECT 'bulk-' || printf('%05d', i), ?, 'completion', ?, ?, 'queued', 0, ?, ? FROM n", backlog, runaway.rid, scaleParent, scaleParent, stamp, stamp)
+	w.exec("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ?) INSERT INTO deliveries (event_id, relationship_id, kind, recipient_task_id, recipient_thread_id, state, attempt_count, created_at, updated_at) SELECT 'bulk-' || printf('%05d', i), ?, ?, ?, ?, 'queued', 0, ?, ? FROM n", backlog, runaway.rid, Completion, scaleParent, scaleParent, stamp, stamp)
 	now := w.f.clock.Now()
 	var seen reads
 	seen.watch(w.f.delivery)
