@@ -3,6 +3,10 @@ package dagsched
 import (
 	"context"
 	"errors"
+	"io"
+	"os"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
@@ -111,8 +115,36 @@ func runSummaryClaim(ctx context.Context, services dispatch.Services, args dispa
 			{Key: "empty_container", Value: op.EmptyContainer}, {Key: "block", Value: op.Block}, {Key: "container", Value: op.Container}, {Key: "protocol", Value: protocol}}}}, nil
 }
 
+// maxSummaryDocumentBytes is the largest document text the commands read. A longer one is refused as a usage error: a text cut at a limit could hide a duplicate or an unclosed marker
+// beyond the cut and read as clean.
+const maxSummaryDocumentBytes = 8 << 20
+
+// readSummaryDocument is a document option's value: the text itself, or @file. It never truncates: a document over the limit, or text that is not valid UTF-8, is a usage error.
+func readSummaryDocument(input string) ([]byte, error) {
+	var raw []byte
+	if strings.HasPrefix(input, "@") {
+		file, err := os.Open(input[1:])
+		if err != nil {
+			return nil, usage(err.Error())
+		}
+		defer file.Close()
+		if raw, err = io.ReadAll(io.LimitReader(file, maxSummaryDocumentBytes+1)); err != nil {
+			return nil, usage(err.Error())
+		}
+	} else {
+		raw = []byte(input)
+	}
+	if len(raw) > maxSummaryDocumentBytes {
+		return nil, usage("the document is larger than 8 MiB: the relay reads a document whole or not at all")
+	}
+	if !utf8.Valid(raw) {
+		return nil, usage("the document is not valid UTF-8 text")
+	}
+	return raw, nil
+}
+
 func runSummaryReconcile(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
-	observed, err := readDocument(args.Text("observed"))
+	observed, err := readSummaryDocument(args.Text("observed"))
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +158,7 @@ func runSummaryReconcile(ctx context.Context, services dispatch.Services, args d
 		return nil, summaryFailure(err)
 	}
 	return contract.OrderedObject{{Key: "ok", Value: true}, {Key: "schema", Value: "dag-summary-reconcile/1"}, {Key: "summary_id", Value: r.SummaryID}, {Key: "state", Value: r.State},
-		{Key: "outcome", Value: r.Outcome}, {Key: "detail", Value: r.Detail}, {Key: "writable", Value: r.Writable}, {Key: "again", Value: r.Again}, {Key: "container", Value: r.Container},
+		{Key: "outcome", Value: r.Outcome}, {Key: "detail", Value: r.Detail}, {Key: "writable", Value: r.Writable}, {Key: "again", Value: r.Again}, {Key: "repair", Value: r.Repair}, {Key: "container", Value: r.Container},
 		{Key: "document_summary_id", Value: optionalText(r.DocumentSummaryID)}, {Key: "document_seq", Value: optionalSeq(r.DocumentSeq)}, {Key: "relation", Value: optionalText(r.Relation)},
 		{Key: "previous_block", Value: optionalText(r.PreviousBlock)}}, nil
 }
@@ -139,7 +171,7 @@ func optionalSeq(n int64) any {
 }
 
 func runSummaryComplete(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
-	readback, err := readDocument(args.Text("readback"))
+	readback, err := readSummaryDocument(args.Text("readback"))
 	if err != nil {
 		return nil, err
 	}

@@ -301,10 +301,11 @@ type SummaryClaim struct {
 }
 
 var summaryProtocol = []string{
-	"read the document and locate this plan's container, the text from the container start marker to the container end marker",
-	"no container yet: create it ONCE, empty (the empty_container text), appended to the document. If that response is lost, read again before creating anything: a negative read is not proof that an earlier write cannot still land",
-	"run reconcile on what you read: already_written means the block is there, so confirm with complete and write nothing; absent or stale means write; duplicate or malformed means the container needs repair by one replacement",
-	"write with ONE atomic conditional replacement of the container's exact current text with the container text: Linear save_document with patch [{op: replace, old_string: <the container's current text, markers included>, new_string: <the container text>}], never a whole-document content save, an append or an insert. If the container changed since you read it, the replacement is refused whole: read again and retry this entry",
+	"read the document (get_document) and keep that one text: everything below is judged on it and writes only against it",
+	"run reconcile on that text. Do not write when writable is false or relation is newer: the entry was overtaken, so take the newest entry (status). already_written: confirm with complete and write nothing",
+	"repair says how to write. replace_container (the document has the plan's container once): ONE atomic conditional replacement of that read's container text, markers included, with this claim's container text: Linear save_document with patch [{op: replace, old_string: <the container text from your read>, new_string: <the container text>}], replace_all off",
+	"repair initialize (the document has no container): ONE atomic conditional replacement of the WHOLE document text you read with that same text followed by a blank line and the empty_container: patch [{op: replace, old_string: <the document as you read it>, new_string: <the document as you read it, a blank line, the empty_container>}]. If anything changed since your read the replacement is refused whole, so two claimants cannot make two containers. Never an append, an insert or a whole-document content save for a summary or its container, since none of them is conditioned. Then read again and start at reconcile. A document created for the summary should be created with the empty_container as its content",
+	"repair manual (malformed: a block or container that is not closed, two containers, or a block outside its container): write nothing. Record the failure with fail, naming the document and what reconcile says, and report it to a person: the relay never confirms a corrupt document, and one replacement cannot repair markers that appear twice or text outside the container",
 	"read the document back and pass the whole text to complete with the claim token and this document",
 	"on any failure record it with fail and claim the same entry again; take no other entry, and do not re-run a child or re-send a correction",
 }
@@ -372,7 +373,11 @@ type SummaryReconciliation struct {
 	// Writable: the entry is open (pending or claimed), so the parent may write it. A superseded or confirmed entry is not.
 	Writable bool
 	// Again: the entry is the confirmed newest and the document no longer carries it; enqueue --again records the summary anew.
-	Again             bool
+	Again bool
+	// Repair is how the entry is written into this document: replace_container (the plan's one container is there: one conditional replacement of its text), initialize (no container:
+	// one conditional replacement of the whole document with the empty container appended), manual (the document is malformed and no replacement can repair it: a person does) or
+	// none (nothing to write: the block is there, the entry was overtaken, or it is confirmed).
+	Repair            string
 	Container         string // present or absent
 	DocumentSummaryID string
 	DocumentSeq       int64
@@ -387,28 +392,37 @@ func reconcileDocument(e SummaryEntry, observed string) SummaryReconciliation {
 	if d.containerN > 0 {
 		r.Container = "present"
 	}
-	finish := func(outcome, detail string) SummaryReconciliation {
-		r.Outcome, r.Detail = outcome, detail
+	finish := func(outcome, repair, detail string) SummaryReconciliation {
+		r.Outcome, r.Repair, r.Detail = outcome, repair, detail
 		r.Again = e.State == SummaryConfirmed && outcome != "already_written"
+		switch {
+		case e.State == SummarySuperseded:
+			r.Repair, r.Detail = "none", "this entry is superseded by a newer summary of the plan: do not write it, take the newest entry (dag-summary-status). The document: "+detail
+		case r.Again:
+			r.Repair, r.Detail = "none", detail+" This entry is confirmed: enqueue --again records the plan's state as a new entry."
+		}
 		return r
 	}
 	switch {
 	case len(d.problems) > 0:
-		return finish("malformed", strings.Join(d.problems, "; ")+": repair the container with one conditional replacement, never an append")
+		return finish("malformed", "manual", strings.Join(d.problems, "; ")+": write nothing, record the failure and ask a person to remove the surplus markers or text so that one container holding at most one block remains")
 	case len(d.containers) > 1:
-		return finish("malformed", "the document holds more than one container of this plan: repair it with one conditional replacement")
+		return finish("malformed", "manual", "the document holds more than one container of this plan: write nothing, record the failure and ask a person to remove all but one")
 	}
 	for _, b := range d.blocks {
 		if b.container < 0 {
-			return finish("malformed", "a summary block of this plan lies outside its container ("+b.id+"): repair it with one conditional replacement")
+			return finish("malformed", "manual", "a summary block of this plan lies outside its container ("+b.id+"): write nothing, record the failure and ask a person to remove it")
 		}
 	}
 	switch len(d.blocks) {
 	case 0:
-		return finish("absent", "no summary block of this plan is in the document: write this entry by the conditional replacement of the container's current text")
+		if r.Container == "absent" {
+			return finish("absent", "initialize", "the document has no container of this plan: add the empty container by one conditional replacement of the whole document, read again, then write this entry")
+		}
+		return finish("absent", "replace_container", "no summary block of this plan is in the document: write this entry by the conditional replacement of the container's current text")
 	case 1:
 	default:
-		return finish("duplicate", "more than one summary block of this plan is in the document, which is not one successful unique record: repair it with one conditional replacement")
+		return finish("duplicate", "replace_container", "more than one summary block of this plan is in the container, which is not one successful unique record: replace the container's current text with this entry's")
 	}
 	b := d.blocks[0]
 	r.DocumentSummaryID, r.PreviousBlock = b.id, b.text
@@ -417,23 +431,23 @@ func reconcileDocument(e SummaryEntry, observed string) SummaryReconciliation {
 		switch {
 		case r.DocumentSeq > e.Seq:
 			r.Relation = "newer"
-			return finish("stale", "the document already holds a newer summary of this plan (#"+strconv.FormatInt(r.DocumentSeq, 10)+"): do not write this entry")
+			return finish("stale", "none", "the document already holds a newer summary of this plan (#"+strconv.FormatInt(r.DocumentSeq, 10)+"): do not write this entry, take the newest entry")
 		case r.DocumentSeq < e.Seq:
 			r.Relation = "older"
-			return finish("stale", "the document holds an older summary of this plan (#"+strconv.FormatInt(r.DocumentSeq, 10)+"): replace the container's current text with this entry's")
+			return finish("stale", "replace_container", "the document holds an older summary of this plan (#"+strconv.FormatInt(r.DocumentSeq, 10)+"): replace the container's current text with this entry's")
 		}
 		r.Relation = "same"
-		return finish("stale", "the document holds a block of this plan with this sequence number and another identity: replace the container's current text with this entry's")
+		return finish("stale", "replace_container", "the document holds a block of this plan with this sequence number and another identity: replace the container's current text with this entry's")
 	}
 	if canonText(b.text) != canonText(summaryBlock(e)) {
 		r.Relation = "same"
-		return finish("stale", "the block in the document is not this entry's block (a header or the text differs): replace the container's current text with this entry's")
+		return finish("stale", "replace_container", "the block in the document is not this entry's block (a header or the text differs): replace the container's current text with this entry's")
 	}
 	if d.containerBody(b.container) != canonText(b.text) {
 		r.Relation = "same"
-		return finish("stale", "the container holds more than this entry's block: replace the container's current text with this entry's")
+		return finish("stale", "replace_container", "the container holds more than this entry's block: replace the container's current text with this entry's")
 	}
-	return finish("already_written", "this entry's block is in the document: confirm it with complete and do not write again")
+	return finish("already_written", "none", "this entry's block is in the document: confirm it with complete and do not write again")
 }
 
 // ReconcileSummary says what a document holds of an entry. It writes nothing, and any entry can be asked about: it describes the document, and says whether the entry may be written.

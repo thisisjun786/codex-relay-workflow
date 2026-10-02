@@ -1204,16 +1204,23 @@ summary once and pass it as `--document` every time (its id or URL, one line).
 
         codex-session-relay --state "$RELAY_STATE" dag-summary-claim --summary <id> --actor <you>
 
-3. **Read and reconcile.** Read the document (`get_document`) and locate the plan's container, the text from `container_start` to `container_end`. No container yet: create it ONCE, empty (`empty_container`), with one
-   `append` operation of `patch` (the only unconditional write of this procedure), and read again; if that response is lost, read again before creating anything. Then ask the relay what the document holds, before any write:
+3. **Read and reconcile.** Read the document (`get_document`) and keep that one text: everything below is judged on it and written only against it. Ask the relay what it holds, before any write:
 
         codex-session-relay --state "$RELAY_STATE" dag-summary-reconcile --summary <id> --observed @doc.txt
 
-   `already_written`: the block is there, so confirm (step 5) and write nothing. `absent` or `stale` with `relation` older or same: write. `stale` with `relation` newer: do not write this entry, take the newest.
-   `duplicate` or `malformed`: write the container text by one replacement of the container's current text, never an append.
+   Stop, write nothing, take the newest entry (`dag-summary-status`) when `writable` is false or `relation` is newer: the entry was overtaken, and a write now would pass the connector's condition and put an
+   older summary over a newer one. `already_written`: the block is there, so confirm (step 5) and write nothing. Otherwise `repair` says how to write:
 
-4. **Write.** One call: `save_document` on the document with `patch`, one operation:
-   `[{ "op": "replace", "old_string": <the container's exact current text, markers included>, "new_string": <operation.container> }]`. The connector applies a patch to the current content atomically and
+   * `replace_container`: the document has the plan's container once: step 4.
+   * `initialize`: the document has no container. Add it with ONE `save_document` `patch` that replaces the WHOLE document text you read with that same text, a blank line and the `empty_container`:
+     `[{ "op": "replace", "old_string": <the document as you read it>, "new_string": <the document as you read it, a blank line, the empty_container> }]`. If anything changed since your read it is refused whole, so two sessions
+     cannot make two containers. Never an `append`, an `insert` or a `content` save for this (none is conditioned). Then read again and reconcile again. A document created for the summary is best created with the
+     `empty_container` as its content. If the whole document cannot be matched although nobody edited it, stop and ask a person to add the container.
+   * `manual`: the document is malformed (a block or container that is not closed, two containers, a block outside its container). Write nothing: record it with `dag-summary-fail`, naming the document and what
+     `detail` says, and report it to a person. The relay never confirms a corrupt document and one replacement cannot repair markers that appear twice.
+
+4. **Write.** One call, for `replace_container`: `save_document` on the document with `patch`, one operation:
+   `[{ "op": "replace", "old_string": <the container text from the read you reconciled, markers included>, "new_string": <operation.container> }]`. The connector applies a patch to the current content atomically and
    refuses it whole unless `old_string` matches exactly once, so a write prepared before a newer summary landed, or before someone edited the container, is refused instead of overwriting it. Never write a summary
    with `content` (whole-document replacement), an append, an insert or `replace_all`: none of them is conditioned on what the document holds.
 
@@ -1222,8 +1229,8 @@ summary once and pass it as `--document` every time (its id or URL, one line).
         codex-session-relay --state "$RELAY_STATE" dag-summary-complete --summary <id> --actor <you> --claim-token <token> \
           --document <doc> --readback @doc.txt
 
-   It confirms only when the plan's container holds this entry's block and nothing else (`readback_mismatch` names the difference and leaves the entry claimed: repair the container by one replacement and
-   read again). `replayed: true` means it was already confirmed.
+   It confirms only when the plan's container holds this entry's block and nothing else (`readback_mismatch` names the difference and leaves the entry claimed: reconcile the readback and act on its
+   `repair`, then read again). `replayed: true` means it was already confirmed.
 
 6. **Failure: retry only that entry.** A refused write (the container changed since you read it: a concurrent edit or a newer summary), a connector error, a lost response or a readback you cannot repair is recorded
    with `dag-summary-fail --summary <id> --actor <you> --claim-token <token> --error '<text>'`. Then claim the same entry again and start at step 3: after a lost response the reconcile finds the block in the

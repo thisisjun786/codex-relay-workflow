@@ -55,9 +55,11 @@ Three layers keep it, and the first two are the relay's:
 2. **The zone.** The same rules are enforced where the rows live, so a writer that skips the commands is refused too (`internal/relay/store/dag_zone.go`): an entry is appended pending, with the next sequence
    number of its stream and a plan revision that does not go back; there is one open entry per stream (a partial unique index), so older entries are superseded before a newer one is appended; only the legal moves
    above are allowed; an entry that has a newer sibling is never claimed or confirmed; a confirmed or superseded entry never changes; nothing is deleted.
-3. **The document.** The write itself is one atomic conditional replacement of the plan's container text. The parent's connector is Linear's `save_document` with `patch`: its description says the edits are applied to the
+3. **The document.** The write itself is one atomic conditional replacement of the plan's container text, and so is the creation of the container (a replacement of the whole document text that was read with that text and
+   the empty container: two claimants that both found no container cannot make two). The parent's connector is Linear's `save_document` with `patch`: its description says the edits are applied to the
    current content in order and atomically, and an `old_string` must match the current content exactly once. So a write prepared before a newer summary landed no longer matches (the container changed) and is refused whole.
-   This layer belongs to the connector. The relay states the exact text to write and checks what was read back; it cannot make Linear conditional.
+   The parent also writes only against the one read it reconciled, and never when `writable` is false or the document already holds a newer summary (`relation: newer`): a claimant that reads the document after a newer summary
+   landed would otherwise match what it just read. This layer belongs to the connector and to the parent's procedure. The relay states the exact text to write and checks what was read back; it cannot make Linear conditional.
 
 What the relay cannot close: a write that is not conditioned (a whole-document `content` save, an append) by a writer outside this procedure can put an older summary over a newer one. The next `dag-summary-reconcile` of the newest
 confirmed entry reports it (`outcome: stale`, `relation: older`, `again: true`) and `dag-summary-enqueue --again` writes the summary anew. The relay's tests model the connector as the conditional replacement and show the
@@ -65,15 +67,15 @@ effect of a writer that is not (the overwrite is counted, detected and repaired)
 
 ## The commands
 
-All are relay commands (`codex-session-relay [--state DIR] <command>`); output is JSON on stdout. Exit 0 is an answer, 2 a refusal with its reason, 3 the host's failure (a plan or a progress that disagrees with itself), 4 a usage
-error (an option missing, a `@file` that cannot be read). The write commands name the task that acts (`--actor`): it must be the one registered parent of the plan's project.
+All are relay commands (`codex-session-relay [--state DIR] <command>`); output is JSON on stdout. Exit 0 is an answer, 2 a refusal with its reason (JSON), or the parser's refusal of a missing option (usage on stderr, nothing on stdout), 3 the host's failure (a plan or a progress that disagrees with itself), 4 a usage
+error of the command (a `@file` that cannot be read, a document over 8 MiB or not valid UTF-8: a document is read whole or not at all). The write commands name the task that acts (`--actor`): it must be the one registered parent of the plan's project.
 
 | Command | Reads or writes | Answer | Refusals |
 | --- | --- | --- | --- |
 | `dag-summary-enqueue --plan P --actor A --document D [--again]` | reads the plan's progress and writes the entry in one transaction | `dag-summary-enqueue/1`: `replayed`, `superseded` (ids) and the `entry` | `unregistered_scope` (no such plan), `scope_role_mismatch`, `malformed_receipt` (a document that is empty, padded, over-long or not one line) |
 | `dag-summary-status --plan P [--document D] [--history]` | reads only, store opened read-only | `dag-summary-status/1`: per document the newest entry, `owed`, `up_to_date`, `counts` per state and, with `--history`, every entry | `unregistered_scope`, `store_absent` |
 | `dag-summary-claim --summary S --actor A` | claimed, a fresh token | `dag-summary-claim/1`: `claim_token`, the `entry` and the `operation` (document, container markers, `empty_container`, `block`, `container`, `protocol`) | `unregistered_scope`, `scope_role_mismatch`, `sync_not_claimable` (confirmed, superseded, failed, or not the newest) |
-| `dag-summary-reconcile --summary S --observed TEXT or @file` | reads only, store opened read-only | `dag-summary-reconcile/1`: `outcome`, `detail`, `writable`, `again`, `container`, and the block the document holds (`document_summary_id`, `document_seq`, `relation`, `previous_block`) | `unregistered_scope` |
+| `dag-summary-reconcile --summary S --observed TEXT or @file` | reads only, store opened read-only | `dag-summary-reconcile/1`: `outcome`, `detail`, `writable`, `again`, `repair`, `container`, and the block the document holds (`document_summary_id`, `document_seq`, `relation`, `previous_block`) | `unregistered_scope` |
 | `dag-summary-complete --summary S --actor A --claim-token K --document D --readback TEXT or @file` | confirmed | `dag-summary-complete/1`: `replayed` and the `entry` | `unregistered_scope`, `scope_role_mismatch`, `sync_not_claimable` (the token is not the one held, or the entry was superseded), `sync_target_mismatch` (another document), `readback_mismatch` |
 | `dag-summary-fail --summary S --actor A --claim-token K --error TEXT` | pending (or failed), the claim gone | `dag-summary-fail/1`: the `entry` | `unregistered_scope`, `scope_role_mismatch`, `sync_not_claimable`, `malformed_receipt` (an empty or over-long error) |
 | `dag-summary-retry --summary S --actor A` | failed back to pending | `dag-summary-retry/1`: `replayed` and the `entry` | `unregistered_scope`, `scope_role_mismatch`, `sync_not_claimable` (the entry is final) |
@@ -85,20 +87,22 @@ readback does not carry this job's record; `sync_target_mismatch`: the right tex
 `replayed: true`, whatever state it is in. `--again` makes a new entry even then, but only when the newest entry is confirmed: an entry that is still owed is never doubled. `status` says whether the plan has moved on since the newest
 entry (`up_to_date`), so the parent enqueues when a document is owed nothing and is out of date.
 
-**Claim** gives the operation: the exact `block`, the exact `container` text that the document's current container is replaced with, the `empty_container` to create once when the document has none, and the protocol
+**Claim** gives the operation: the exact `block`, the exact `container` text that the document's current container is replaced with, the `empty_container` that `initialize` adds to a document that has none, and the protocol
 as the relay states it. A second claim of the same entry is allowed at once (the answer of the first may be lost): it issues a new token and the old one is dead.
 
-**Reconcile** describes a document against an entry and is how a lost response is resolved without writing twice:
+**Reconcile** describes a document against an entry and is how a lost response is resolved without writing twice. `repair` says how the entry is written into that document:
 
-| Outcome | The document holds | The parent |
-| --- | --- | --- |
-| `already_written` | this entry's block, and nothing else in the plan's container | confirms with `complete`; writes nothing |
-| `absent` | no block of this plan (the container may be there, empty, or not at all) | writes |
-| `stale` | the plan's one block, but another entry's (`relation` older: replace it; newer: this entry must not be written), or this entry's with other text, or a container with more than the block | writes (older, same) or takes the newest entry (newer) |
-| `duplicate` | more than one block of this plan | repairs the container by one replacement |
-| `malformed` | a block or container that is not closed, a block outside the container, or two containers | repairs the container by one replacement, never an append |
+| Outcome | The document holds | `repair` | The parent |
+| --- | --- | --- | --- |
+| `already_written` | this entry's block, and nothing else in the plan's container | `none` | confirms with `complete`; writes nothing |
+| `absent` | no block of this plan | `initialize` when there is no container, else `replace_container` | writes |
+| `stale` | the plan's one block, but another entry's (`relation` older: replace it; newer: this entry must not be written), or this entry's with other text, or a container with more than the block | `replace_container`, or `none` for `relation: newer` | writes, or takes the newest entry |
+| `duplicate` | more than one block of this plan, all inside the plan's one container | `replace_container` | replaces the container's text |
+| `malformed` | a block or container that is not closed, a block outside the container, or two containers | `manual` | writes nothing, records the failure and asks a person: markers that appear twice cannot be replaced by an exact-once replacement |
 
-`writable` says whether the entry is open (pending or claimed). `again` is true when the entry is confirmed and the document no longer carries it.
+`replace_container` is one conditional replacement of the container text that was read (the markers appear once, so it matches once). `initialize` is one conditional replacement of the whole document text that was read with that text
+and the empty container. `writable` says whether the entry is open (pending or claimed): an entry that is superseded or confirmed is not written, and its `repair` is `none` whatever the document holds. `again` is true when the
+entry is confirmed and the document no longer carries it.
 
 **Complete** takes the whole document as read back. It confirms only if reconcile would say `already_written`; otherwise it refuses with `readback_mismatch`, keeps the problem in `last_error` and leaves the entry claimed. Completing a
 confirmed entry answers its record (`replayed: true`) and checks nothing more: a confirmation is monotonic.
@@ -143,9 +147,10 @@ The procedure is in the crw-run skill (`references/relay.md`, "The Linear summar
 
 1. `dag-summary-status --plan P`: a document whose newest entry is owed, or is not up to date, needs a turn. If the plan has moved on, `dag-summary-enqueue --plan P --actor A --document D` first.
 2. `dag-summary-claim --summary S --actor A`: take the newest open entry.
-3. Read the document from Linear. Create the plan's container once, empty, if it is not there. `dag-summary-reconcile` on what was read. `already_written`: go to 5.
-4. Write: one `save_document` with `patch` [`{op: replace, old_string: <the container's current text>, new_string: <the container text>}`]. On any failure: `dag-summary-fail` with the claim token and the error, and go back to 2 for the same entry.
-5. Read the document back and `dag-summary-complete` with the claim token, the document and the whole text. `readback_mismatch`: repair and read again. `sync_not_claimable` after a newer summary was enqueued: take the newest entry.
+3. Read the document from Linear and keep that one text. `dag-summary-reconcile` on it. `writable: false` or `relation: newer`: stop, the entry was overtaken, take the newest entry. `already_written`: go to 5.
+4. Write as `repair` says: `replace_container`: one `save_document` with `patch` [`{op: replace, old_string: <the container text from that read>, new_string: <the container text>}`]; `initialize`: one `patch` that replaces the whole document
+   text that was read with that text, a blank line and the empty container, then read again and reconcile again; `manual`: write nothing, record the failure and report it to a person. On any failure: `dag-summary-fail` with the claim token and the error, and go back to 2 for the same entry.
+5. Read the document back and `dag-summary-complete` with the claim token, the document and the whole text. `readback_mismatch`: reconcile the readback and act on its `repair`. `sync_not_claimable` after a newer summary was enqueued: take the newest entry.
 
 Everything in this loop touches the summary table only. A lost response (the write landed and its answer did not) is a failure to the parent, and the next turn finds the block in the document (`already_written`) and confirms it
 without a second write; a concurrent edit makes the replacement refuse whole, and the retry reads the document as it is then; a replaced parent is refused at the relay, and the one write it had prepared is refused by the
@@ -157,6 +162,8 @@ connector once the container changed.
   [the scheduler's parent turn](dag-scheduler.md#the-goal-free-parents-turn)).
 * A store that still owes a repair the writable opener makes (a settlement backfilled from an observation, an index that was dropped) gets it at the first write-open of any write command, the five write commands here included.
   That is the opener's behaviour and not summary recovery: `status` and `reconcile` open the store read-only and change nothing.
+* A summary is only as good as the document it is written into. A document with markers that appear twice, an unclosed block or container, or a block outside its container is `malformed` and no exact-once replacement can repair it:
+  the relay never confirms such a document, and a person removes the surplus text. Two sessions of the parent that both initialise a container are made safe by the conditional replacement of the whole document, not by the relay.
 * A failure has no backoff. The eighth parks the entry, so a parent that fails in a loop cannot burn more than eight attempts on one entry, and they can all be spent in one turn.
 * A change of the progress document's content between builds gives a different digest: one extra entry after an upgrade, never a wrong one.
 * Progress replay, stale handling, coordinator fencing and the parent's base refresh are later issues. An epoch check on these writers is CRW-285's; the column is there.

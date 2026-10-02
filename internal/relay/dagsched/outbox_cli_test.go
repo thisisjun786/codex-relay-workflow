@@ -195,3 +195,49 @@ func TestCLISummaryRefusals(t *testing.T) {
 	}
 	sameStore(t, "refused summary commands", before, dumpStore(t, db))
 }
+
+// A document is read whole or refused: a copy cut at a limit could hide a second container or an unclosed marker beyond the cut and read as clean. The document here carries the entry's
+// block at the start and a second container after 1.5 MiB of text; a reader that stopped at 1 MiB would say already_written. A document over the limit is a usage error (exit 4), and an option that is missing is the
+// parser's (exit 2, usage on stderr, nothing on stdout).
+func TestCLISummaryDocumentsAreReadWholeOrRefused(t *testing.T) {
+	state := summaryState(t)
+	enq := summaryRun(t, state, 0, "dag-summary-enqueue", "--plan", "p1", "--actor", "parent", "--document", "doc-1")
+	id := objectOf(t, enq, "entry")["summary_id"].(string)
+	claim := summaryRun(t, state, 0, "dag-summary-claim", "--summary", id, "--actor", "parent")
+	token := claim["claim_token"].(string)
+	container := objectOf(t, claim, "operation")["container"].(string)
+	dir := t.TempDir()
+	file := func(name, text string) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return "@" + path
+	}
+	clean := file("clean.txt", "# page\n\n"+container+"\n")
+	if out := summaryRun(t, state, 0, "dag-summary-reconcile", "--summary", id, "--observed", clean); out["outcome"] != "already_written" || out["repair"] != "none" {
+		t.Fatalf("%v", out)
+	}
+	padding := strings.Repeat("a line of text that is not a marker\n", 45000) // 1.6 MiB
+	long := file("long.txt", "# page\n\n"+container+"\n\n"+padding+container+"\n")
+	if len(padding) < 1<<20+1<<19 {
+		t.Fatalf("the padding is only %d bytes", len(padding))
+	}
+	out := summaryRun(t, state, 0, "dag-summary-reconcile", "--summary", id, "--observed", long)
+	if out["outcome"] != "malformed" || out["repair"] != "manual" || out["container"] != "present" {
+		t.Fatalf("a second container beyond 1 MiB was not seen: %v", out)
+	}
+	refused := summaryRun(t, state, 2, "dag-summary-complete", "--summary", id, "--actor", "parent", "--claim-token", token, "--document", "doc-1", "--readback", long)
+	if refused["reason"] != "readback_mismatch" {
+		t.Fatalf("a readback with a second container was confirmed: %v", refused)
+	}
+	if out, code := crw(t, state, "dag-summary-reconcile", "--summary", id, "--observed", file("huge.txt", strings.Repeat("x", 8<<20+1))); code != 4 {
+		t.Fatalf("a document over 8 MiB: exit %d\n%.200s", code, out)
+	}
+	if out, code := crw(t, state, "dag-summary-reconcile", "--summary", id, "--observed", "@"+filepath.Join(dir, "absent.txt")); code != 4 {
+		t.Fatalf("a document that cannot be read: exit %d\n%.200s", code, out)
+	}
+	if out, code := crw(t, state, "dag-summary-claim", "--actor", "parent"); code != 2 || out != "" {
+		t.Fatalf("a missing option: exit %d, stdout %q", code, out)
+	}
+}

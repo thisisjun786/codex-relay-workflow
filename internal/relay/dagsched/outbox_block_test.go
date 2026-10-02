@@ -70,22 +70,23 @@ func TestSummaryReconcileReadsTheDocument(t *testing.T) {
 		outcome   string
 		container string
 		relation  string
+		repair    string
 	}{
-		{"no container", page, "absent", "absent", ""},
-		{"an empty container", page + op.EmptyContainer + "\n", "absent", "present", ""},
-		{"the entry's block", page + op.Container + "\nAfter.\n", "already_written", "present", ""},
-		{"carriage returns and trailing blanks (a connector that normalises)", strings.ReplaceAll(page+op.Container+"\n", "\n", "  \r\n"), "already_written", "present", ""},
-		{"the block with a line changed", page + strings.Replace(op.Container, "projectKey: P-TEST", "projectKey: P-TESX", 1) + "\n", "stale", "present", "same"},
-		{"the block twice", page + strings.Replace(op.Container, op.ContainerEnd, op.Block+"\n"+op.ContainerEnd, 1) + "\n", "duplicate", "present", ""},
-		{"a block that is not closed", page + strings.Replace(op.Container, "<!-- /relay-dag-summary:"+e1.SummaryID+" -->", "", 1) + "\n", "malformed", "present", ""},
-		{"a container that is not closed", page + op.ContainerStart + "\n" + op.Block + "\n", "malformed", "present", ""},
-		{"the block outside the container", page + op.EmptyContainer + "\n" + op.Block + "\n", "malformed", "present", ""},
-		{"two containers", page + op.Container + "\n" + op.Container + "\n", "malformed", "present", ""},
+		{"no container", page, "absent", "absent", "", "initialize"},
+		{"an empty container", page + op.EmptyContainer + "\n", "absent", "present", "", "replace_container"},
+		{"the entry's block", page + op.Container + "\nAfter.\n", "already_written", "present", "", "none"},
+		{"carriage returns and trailing blanks (a connector that normalises)", strings.ReplaceAll(page+op.Container+"\n", "\n", "  \r\n"), "already_written", "present", "", "none"},
+		{"the block with a line changed", page + strings.Replace(op.Container, "projectKey: P-TEST", "projectKey: P-TESX", 1) + "\n", "stale", "present", "same", "replace_container"},
+		{"the block twice", page + strings.Replace(op.Container, op.ContainerEnd, op.Block+"\n"+op.ContainerEnd, 1) + "\n", "duplicate", "present", "", "replace_container"},
+		{"a block that is not closed", page + strings.Replace(op.Container, "<!-- /relay-dag-summary:"+e1.SummaryID+" -->", "", 1) + "\n", "malformed", "present", "", "manual"},
+		{"a container that is not closed", page + op.ContainerStart + "\n" + op.Block + "\n", "malformed", "present", "", "manual"},
+		{"the block outside the container", page + op.EmptyContainer + "\n" + op.Block + "\n", "malformed", "present", "", "manual"},
+		{"two containers", page + op.Container + "\n" + op.Container + "\n", "malformed", "present", "", "manual"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			rec := reconcile(t, f, e1.SummaryID, c.doc)
-			if rec.Outcome != c.outcome || rec.Container != c.container || rec.Relation != c.relation || rec.Detail == "" {
+			if rec.Outcome != c.outcome || rec.Container != c.container || rec.Relation != c.relation || rec.Repair != c.repair || rec.Detail == "" {
 				t.Fatalf("%+v", rec)
 			}
 			if rec.State != SummaryClaimed || !rec.Writable {

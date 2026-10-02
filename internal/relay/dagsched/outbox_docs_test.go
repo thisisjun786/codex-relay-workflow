@@ -46,6 +46,11 @@ func TestSummaryPageSkillAndSpecsNameTheSameCommands(t *testing.T) {
 			t.Errorf("the page or the skill does not describe the outcome %s", outcome)
 		}
 	}
+	for _, repair := range []string{"replace_container", "initialize", "manual"} {
+		if !strings.Contains(page, "`"+repair+"`") || !strings.Contains(skill, repair) {
+			t.Errorf("the page or the skill does not describe the repair %s", repair)
+		}
+	}
 	for _, name := range []string{"dag_summary_outbox", "dag_summary_outbox_open", "dag_summary_outbox_order", "dag_summary_outbox_newest", "dag_summary_outbox_no_delete"} {
 		if !strings.Contains(page, name) {
 			t.Errorf("the page does not name the zone object %s", name)
