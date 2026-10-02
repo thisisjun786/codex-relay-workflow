@@ -137,9 +137,15 @@ func TestNormalizeCapsOversizedArrays(t *testing.T) {
 	if len(tr.Contradictions) != MaxTrackerArray+9 || Normalize(nil) != nil {
 		t.Error("Normalize must not modify its argument, and nil stays nil")
 	}
-	bad := Normalize(&Tracker{RoundID: -2, ScanRounds: -4, Dimensions: Dimensions{Goal: DimensionScore{Level: "ZZ", Known: []string{"a"}, Confidence: 9}}})
-	if bad.RoundID != 0 || bad.ScanRounds != 0 || bad.Dimensions.Goal.Level != LevelLow || bad.Dimensions.Goal.Confidence != 0 || strings.Contains(marshal(bad), "null") {
+	bad := Normalize(&Tracker{RoundID: -2, ScanRounds: -4, AutoResolveCount: 2, ConsecutiveAutoResolves: 1, LastScanRoundID: 5,
+		Dimensions:     Dimensions{Goal: DimensionScore{Level: "ZZ", Known: []string{"a"}, Confidence: 9}},
+		OntologySchema: []OntologyEntity{{Name: ""}, {Name: "E", Relationships: []OntologyRelationship{{Kind: "k"}}}}})
+	if bad.RoundID != 0 || bad.ScanRounds != 0 || bad.AutoResolveCount != 2 || bad.ConsecutiveAutoResolves != 1 || bad.LastScanRoundID != 5 ||
+		bad.Dimensions.Goal.Level != LevelLow || bad.Dimensions.Goal.Confidence != 0 || strings.Contains(marshal(bad), "null") {
 		t.Errorf("Normalize must fail closed per score and leave no null: %s", marshal(bad))
+	}
+	if want := []OntologyEntity{{Name: "E", Fields: []string{}, Relationships: []OntologyRelationship{}}}; !reflect.DeepEqual(bad.OntologySchema, want) {
+		t.Errorf("Normalize must clean the ontology schema: %+v", bad.OntologySchema)
 	}
 }
 
@@ -153,6 +159,9 @@ func TestRoundIDIsANonNegativeInteger(t *testing.T) {
 	if DefaultInterview(0).RoundID != 0 || DefaultInterview(-3).RoundID != 0 {
 		t.Error("DefaultInterview must give a non-negative round")
 	}
+	if r := ReconstructInterview(fromJSON(t, `{"autoResolveCount":2,"consecutiveAutoResolves":3,"scanRounds":4,"lastScanRoundId":5}`)); r.AutoResolveCount != 2 || r.ConsecutiveAutoResolves != 3 || r.ScanRounds != 4 || r.LastScanRoundID != 5 {
+		t.Errorf("each counter must be read from its own key: %+v", r)
+	}
 }
 
 // A counter or confidence accepts a finite JSON number (float64, json.Number, int or int64)
@@ -160,7 +169,7 @@ func TestRoundIDIsANonNegativeInteger(t *testing.T) {
 func TestNumberCoercionFailsClosed(t *testing.T) {
 	negZero := math.Copysign(0, -1)
 	for in, want := range map[any]int64{7.9: 7, -1.0: 0, negZero: 0, math.NaN(): 0, math.Inf(1): 0, json.Number("12"): 12, json.Number("1e400"): 0,
-		json.Number("abc"): 0, 5: 5, int64(-5): 0, int64(math.MaxInt64): math.MaxInt64, 1e30: math.MaxInt64, "5": 0, true: 0, nil: 0} {
+		json.Number("abc"): 0, 5: 5, -5: 0, int64(-5): 0, int64(math.MaxInt64): math.MaxInt64, 1e30: math.MaxInt64, "5": 0, true: 0, nil: 0} {
 		if got := roundIDNum(in); got != want {
 			t.Errorf("roundIDNum(%#v) = %d, want %d", in, got, want)
 		}

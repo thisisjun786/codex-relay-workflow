@@ -102,8 +102,7 @@ type Contradiction struct {
 }
 
 // Assumption is an assumption the interview made; readiness needs every one recorded.
-// Severity is carried over from the originating contradiction and RequiresUserReview marks a
-// recorded assumption the user still has to review.
+// RequiresUserReview marks a recorded assumption the user still has to review.
 type Assumption struct {
 	ID                 string                `json:"id"`
 	Text               string                `json:"text"`
@@ -125,11 +124,9 @@ type OntologyEntity struct {
 	Relationships []OntologyRelationship `json:"relationships"`
 }
 
-// Tracker is the interview tracker persisted in the session state. RoundID is monotonic per
-// interview; AutoResolveCount is capped by MaxAutoRounds and ConsecutiveAutoResolves resets
-// when a contradiction escalates or resolves; ScanRounds counts the recorded contradiction
-// scans and LastScanRoundID is the RoundID of the latest (0 = none). OntologySchema is absent
-// unless non-empty.
+// Tracker is the interview tracker persisted in the session state. ScanRounds counts the
+// recorded contradiction scans and LastScanRoundID is the RoundID of the latest (0 = none);
+// AutoResolveCount is capped by MaxAutoRounds. OntologySchema is absent unless non-empty.
 type Tracker struct {
 	RoundID                 int64            `json:"roundId"`
 	Dimensions              Dimensions       `json:"dimensions"`
