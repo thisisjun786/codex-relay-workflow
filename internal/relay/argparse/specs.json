@@ -759,6 +759,8 @@
   {"flag":"--plan","required":true},
   {"flag":"--record","kind":"true","help":"keep this reading as a pass (dag_passes); needs --actor"},
   {"flag":"--actor","help":"the task asking for the recorded pass"}]},
+{"name":"dag-progress","summary":"how far a DAG plan has come, read from the relay store alone and opened read-only: the live nodes partitioned into stages (waiting on a predecessor, a decision or a resource, ready, releasing, running, reported, verifying, correcting, accepted, integrated, stale, paused and the rest), a blocked overlay with one closed reason per node, cumulative accepted and integrated counts kept apart from the stages, the denominator at every plan revision and whether it changed, and the exact relationship, thread and pull request of each node. Writes nothing and reads no clock, artifact or forge","options":[
+  {"flag":"--plan","required":true}]},
 {"name":"dag-region-declare","summary":"declares the edit regions of an implementation node before it is released: repository, path, kind (tree, file, symbol) and change (edit, rename, delete) for 1 to 64 regions. A node with no declaration counts as overlapping everything; renames, deletes and hotspots are exclusive. An identical declaration is a replay","options":[
   {"flag":"--plan","required":true},
   {"flag":"--node","required":true},

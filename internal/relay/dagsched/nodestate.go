@@ -118,8 +118,7 @@ func (s *Scheduler) bound(ctx context.Context, q store.Querier, plan string, sna
 	}
 	// The relay's state word for the relationship. The view is told the time is always zero: the word does not depend on it, and the reading, which
 	// reads no clock, throws away the time-based projection the view also builds.
-	view := registry.NewAssignmentView(&registry.Registry{Store: s.Store})
-	view.Clock = func() float64 { return 0 }
+	view := s.assignmentView(ctx)
 	answer, err := view.State(ctx, rel.ID)
 	if err != nil {
 		return nodeState{}, err
@@ -236,6 +235,17 @@ func (s *Scheduler) accepted(ctx context.Context, q store.Querier, plan string, 
 
 // errNoAcceptance is returned by loadAcceptanceByID for an id the store does not hold.
 var errNoAcceptance = errors.New("no such acceptance")
+
+// assignmentView is the view the reading asks for a relationship's state word. Under the store-only mark (a progress read) its recovery commands, which the reading discards, are spelled with a
+// fixed program name instead of resolving the relay's executable.
+func (s *Scheduler) assignmentView(ctx context.Context) *registry.AssignmentView {
+	view := registry.NewAssignmentView(&registry.Registry{Store: s.Store})
+	view.Clock = func() float64 { return 0 }
+	if storeOnly(ctx) {
+		view.Program = progressProgram
+	}
+	return view
+}
 
 // loadAcceptanceByID reads one acceptance of any state.
 func loadAcceptanceByID(ctx context.Context, q store.Querier, id string) (Acceptance, error) {
