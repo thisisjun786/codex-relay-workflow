@@ -35,7 +35,8 @@ store lives outside repositories; caller-selected receipt and artifact locations
 | frozen-schema conformance | implemented | `internal/relay/store`; the corpus's `records` domain |
 | DAG plans: validated, append-only revision log and its additive store zone | implemented | [DAG plans](dag-plans.md); `internal/relay/dag`, `internal/relay/store` |
 | DAG scheduler: ready set, edit regions, capacity and pass records; release of a ready node to a Codex child; acceptance, integration, decisions and corrections; merge eligibility, conflict observations and cap basis | implemented (coordinator fencing, invalidation and installed proof are later issues) | [DAG scheduler](dag-scheduler.md); `internal/relay/dagsched` |
-| DAG progress: a read-only query of a plan's stage distribution, cumulative accepted and integrated counts, denominator per revision, a reason per blocked or stale node, and links | implemented (cursor and snapshot reconstruction and the Linear summary are later issues) | [DAG progress](dag-progress.md); `internal/relay/dagsched` |
+| DAG progress: a read-only query of a plan's stage distribution, cumulative accepted and integrated counts, denominator per revision, a reason per blocked or stale node, and links | implemented (cursor and snapshot reconstruction is a later issue) | [DAG progress](dag-progress.md); `internal/relay/dagsched` |
+| DAG summary outbox: the project-level queue of a plan's Linear summaries (ordered per plan and document, an older summary never over a newer one), drained by the parent with its own connector: claim, write, read back, confirm, retry only that entry. The relay holds no Linear credential | implemented | [DAG summary outbox](dag-outbox.md); `internal/relay/dagsched`, `internal/relay/store` |
 
 Until todo 44 each row's proof was a test of the Python package under
 `packages/codex-session-relay/tests`; [the test map](../port/test-map.md) names where each one's

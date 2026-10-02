@@ -315,6 +315,8 @@ retain the task's private recovery receipt. Keep raw launch
 receipts and sensitive evidence in an appropriate private location; local
 snapshots point to the Linear document and are not another planning source.
 Do not store project state or credentials inside this installed skill.
+A DAG plan's Linear summary is the plan's own queue in the relay, drained by the parent with its own connector: take an entry, write it, read it back, confirm it, retry only
+that entry ([The Linear summary of a DAG plan](references/relay.md#the-linear-summary-of-a-dag-plan)).
 
 Before assigning a checkout, apply the shared
 [repository resolution](../crw-plan/references/integrations.md#resolve-the-implementation-repository)

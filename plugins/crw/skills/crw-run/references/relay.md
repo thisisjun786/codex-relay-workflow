@@ -1180,6 +1180,58 @@ A failed summary write is retried on its own and never re-runs a verification or
 correction; `sync-status` and `sync-retry` manage the queue, and
 `sync-progress --relationship <rel>` queues a progress summary between verdicts.
 
+## The Linear summary of a DAG plan
+
+A DAG plan's own Linear summary is a project-level queue that is separate from the relationship job above: `dag_summary_outbox`, one table of the relay's DAG zone, with seven commands
+(the relay's `docs/relay/dag-outbox.md` is the reference). The relay still holds no Linear credential and calls no Linear: the parent writes with its own connector. The queue is per plan and
+document, and only the newest entry is ever written: when the plan has moved on, the entries not yet confirmed are superseded for you, so an older summary can never be put over a newer one. Every command
+below writes the summary table and nothing else, so recovering a summary re-runs no child, re-sends no correction and makes no second summary.
+
+You are the project's registered parent: every write command takes `--actor` with your task id, and a replaced parent is refused (`scope_role_mismatch`). Choose the Linear document that holds the plan's
+summary once and pass it as `--document` every time (its id or URL, one line).
+
+1. **Look.** `dag-summary-status --plan <plan>` lists each document with its newest entry, `owed` (that entry is not confirmed) and `up_to_date` (it states the plan as the store reads it now).
+   Nothing owed and up to date: stop. The plan moved on, or there is no entry: `dag-summary-enqueue --plan <plan> --actor <you> --document <doc>`. The same state of the plan is the same entry, so asking again
+   after a wake, a compaction or a restart is safe.
+
+        codex-session-relay --state "$RELAY_STATE" dag-summary-status --plan <plan>
+        codex-session-relay --state "$RELAY_STATE" dag-summary-enqueue --plan <plan> --actor <you> --document <doc>
+
+2. **Take.** `dag-summary-claim --summary <id> --actor <you>` answers a `claim_token` and the `operation`: the exact `block`, the exact `container` text, the `empty_container` and the protocol. A second claim of the same
+   entry is allowed at once (the answer of the first may have been lost) and kills the first token. `sync_not_claimable` means this is not the entry to write: the entry was superseded or confirmed, so run
+   `dag-summary-status` and take the newest one; an entry that failed eight times says so, and `dag-summary-retry --summary <id> --actor <you>` reopens that entry only.
+
+        codex-session-relay --state "$RELAY_STATE" dag-summary-claim --summary <id> --actor <you>
+
+3. **Read and reconcile.** Read the document (`get_document`) and locate the plan's container, the text from `container_start` to `container_end`. No container yet: create it ONCE, empty (`empty_container`), with one
+   `append` operation of `patch` (the only unconditional write of this procedure), and read again; if that response is lost, read again before creating anything. Then ask the relay what the document holds, before any write:
+
+        codex-session-relay --state "$RELAY_STATE" dag-summary-reconcile --summary <id> --observed @doc.txt
+
+   `already_written`: the block is there, so confirm (step 5) and write nothing. `absent` or `stale` with `relation` older or same: write. `stale` with `relation` newer: do not write this entry, take the newest.
+   `duplicate` or `malformed`: write the container text by one replacement of the container's current text, never an append.
+
+4. **Write.** One call: `save_document` on the document with `patch`, one operation:
+   `[{ "op": "replace", "old_string": <the container's exact current text, markers included>, "new_string": <operation.container> }]`. The connector applies a patch to the current content atomically and
+   refuses it whole unless `old_string` matches exactly once, so a write prepared before a newer summary landed, or before someone edited the container, is refused instead of overwriting it. Never write a summary
+   with `content` (whole-document replacement), an append, an insert or `replace_all`: none of them is conditioned on what the document holds.
+
+5. **Read back and confirm.** Read the document again (`get_document`) and pass the whole text:
+
+        codex-session-relay --state "$RELAY_STATE" dag-summary-complete --summary <id> --actor <you> --claim-token <token> \
+          --document <doc> --readback @doc.txt
+
+   It confirms only when the plan's container holds this entry's block and nothing else (`readback_mismatch` names the difference and leaves the entry claimed: repair the container by one replacement and
+   read again). `replayed: true` means it was already confirmed.
+
+6. **Failure: retry only that entry.** A refused write (the container changed since you read it: a concurrent edit or a newer summary), a connector error, a lost response or a readback you cannot repair is recorded
+   with `dag-summary-fail --summary <id> --actor <you> --claim-token <token> --error '<text>'`. Then claim the same entry again and start at step 3: after a lost response the reconcile finds the block in the
+   document (`already_written`) and the entry is confirmed without a second write. Do not enqueue to retry; the entry is the unit. A failure the relay refuses with `sync_not_claimable` came after a newer summary
+   superseded the entry: take the newest.
+
+If the confirmed summary is no longer in the document (a person removed it, or something outside this procedure replaced it: `dag-summary-reconcile` of the newest confirmed entry answers `again: true`),
+`dag-summary-enqueue --plan <plan> --actor <you> --document <doc> --again` records the plan's state as a new entry and you write it as above.
+
 ## Not owned here
 
 The wire and record protocol, the invariants, and the relay internals live with the relay's

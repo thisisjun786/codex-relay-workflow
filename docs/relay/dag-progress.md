@@ -5,8 +5,8 @@ revision and whether it changed, why every node that is not moving is not moving
 it writes nothing. It follows the DAG execution contract (CRW-182) sections 1.3, 3.1, 7.4, 8 and 8.6; the plan is [the plan store](dag-plans.md) and the nodes' states are
 [the scheduler's reading](dag-scheduler.md), which this page projects and never derives again.
 
-The relay's log is the canonical plan and the execution records are the relay's (contract 1.3, decision D-13). This command is a read-only projection of them. Linear is a projection the later
-summary issue builds from this one: nothing here reads Linear.
+The relay's log is the canonical plan and the execution records are the relay's (contract 1.3, decision D-13). This command is a read-only projection of them. Linear is a projection that
+[the summary outbox](dag-outbox.md) builds from this one: nothing here reads Linear.
 
 ## The command
 
@@ -165,6 +165,6 @@ The scheduler's reading guarantees none of these happens; the check is what make
 
 ## What is not here
 
-* Cursor and snapshot reconstruction of the progress view, and the Linear summary, are later issues that call the functions above.
+* Cursor and snapshot reconstruction of the progress view is a later issue that calls the functions above. The Linear summary is [the summary outbox](dag-outbox.md): it reads `Scheduler.Progress` in the transaction that appends its entry and writes its own table.
 * The metrics contract 8.6 records for the evaluation (makespan, idle slot minutes, wake latencies) are not derived here, and no figure here is a target.
 * The byte checks of the artifacts are `dag-ready`'s ([the scheduler](dag-scheduler.md#input-checks)).

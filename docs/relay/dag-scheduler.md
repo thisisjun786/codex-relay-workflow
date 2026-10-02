@@ -19,7 +19,9 @@ The parent holds no goal and runs no loop. When a relay result, a block or a dec
 2. For each ready node, `dag-release` (a node that is already owned is `skip:already_owned` in the reading and a replay in the release: no second child).
 3. For a result that is reported and verified: `dag-accept`; for a correction: `dag-correct --prepare`, the `needs_changes` ruling carrying the line, `dag-correct`; for a decision edge: `dag-decision-record`.
 4. For an accepted pull request: `dag-merge-request`, the merge lane's own commands, `assignment-mark merged`, `dag-integration-observe`.
-5. End the turn. Nothing is resident: the scheduler is a library the relay's commands call over the relay's one store; it adds no daemon, no listener and no database of its own
+5. For the plan's Linear summary: `dag-summary-status --plan P`; when a document is owed or out of date, `dag-summary-enqueue` and the claim, write, read back and confirm of [the summary outbox](dag-outbox.md). It writes the summary table only, so it never
+   re-runs a child or re-sends a correction.
+6. End the turn. Nothing is resident: the scheduler is a library the relay's commands call over the relay's one store; it adds no daemon, no listener and no database of its own
    (`TestNoNewStoreOrDaemon`, `TestForkJoinLeavesNoStoreOfItsOwn`).
 
 The scheduler re-implements no I-17 loop or skill, and contract section 10 names no I-17 output that this issue needs.
@@ -402,6 +404,7 @@ project's registered parent records, and a basis is not rewritten.
 | `dag-merge-request --plan P --node N --actor A --host H [--repository OWNER/NAME --pull-request N]` | the judgement as above; asks the merge lane for a turn (`merge_turns`) when eligible | the judgement and the turn |
 | `dag-conflict-observe --plan P --actor A --repository PATH --left-node N --right-node M --left-head SHA --right-head SHA` | writes `dag_conflict_observations` | the number of conflicting files and their names |
 | `dag-cap-basis-record --limit L --revision R --w-minutes W --w-source S --s-minutes S --s-source S --actor A` | writes `dag_cap_basis` | the basis recorded |
+| `dag-summary-enqueue`, `dag-summary-status`, `dag-summary-claim`, `dag-summary-reconcile`, `dag-summary-complete`, `dag-summary-fail`, `dag-summary-retry` | the project summary queue: `dag_summary_outbox` (`status` and `reconcile` read only) | the entry, the queue, the claim and the confirmation ([DAG summary outbox](dag-outbox.md)) |
 | `dag-progress --plan P` | reads only, and opens the store read-only | the progress of the plan: stage distribution, cumulative counts, denominator per revision, a reason per blocked or stale node, links ([DAG progress](dag-progress.md)) |
 
 Refusals use the relay's existing reasons: `unregistered_scope` (a plan or node that is not there), `malformed_receipt` (a region or a request that is not valid),
@@ -411,7 +414,7 @@ Refusals use the relay's existing reasons: `unregistered_scope` (a plan or node 
 
 The scheduler adds tables to the DAG zone ([DAG plans](dag-plans.md#the-store)) as appended statements. `dag_passes` and `dag_node_regions` are described above; `dag_release_requests` freezes the request of a release with its intent; `dag_release_recoveries` holds the closure of an abandoned release and the successor release of a closed one (see Recovering an abandoned release);
 `dag_conflict_observations` holds the merge-tree conflict counts of parallel branches; `dag_merge_checks`, `dag_acceptance_revalidations` and `dag_acceptance_forge` hold what the relay observed of an accepted pull request, re-verification of an accepted
-output under new criteria, and the forge identity of an accepted implementation node.
+output under new criteria, and the forge identity of an accepted implementation node. `dag_summary_outbox` is the queue of the project's Linear summaries (see [DAG summary outbox](dag-outbox.md)).
 
 ## How the acceptance path is verified
 
