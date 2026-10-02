@@ -37,6 +37,14 @@ const (
 	OpRetireNode  = "retire_node"
 	OpAddEdge     = "add_edge"
 	OpRetireEdge  = "retire_edge"
+
+	// The lifecycle changes (CRW-281, lifecycle.go): pause, resume, cancel and archive a node, and pause or resume the plan.
+	OpPauseNode   = "pause_node"
+	OpResumeNode  = "resume_node"
+	OpCancelNode  = "cancel_node"
+	OpArchiveNode = "archive_node"
+	OpPausePlan   = "pause_plan"
+	OpResumePlan  = "resume_plan"
 )
 
 // The graph-size limits a revision is validated against. They bound what one plan may hold; they
@@ -77,8 +85,9 @@ type Edge struct {
 }
 
 // Change is one typed change of a revision. Node is set for add_node, update_node and replace_node,
-// Edge for add_edge, NodeID for retire_node, EdgeID for retire_edge, and SupersedesNodeID for
-// replace_node (the live node the new one replaces).
+// Edge for add_edge, NodeID for retire_node and the four node lifecycle changes, EdgeID for retire_edge,
+// and SupersedesNodeID for replace_node (the live node the new one replaces). pause_plan and
+// resume_plan carry nothing but their op.
 type Change struct {
 	Op               string
 	Node             *Node
@@ -124,6 +133,9 @@ type State struct {
 	Revision   int64
 	Nodes      []NodeVersion
 	Edges      []EdgeRow
+	// Lifecycle is the history of the plan's and the nodes' lifecycle states (lifecycle.go): not a row of a table, the fold of the lifecycle
+	// changes of the log.
+	Lifecycle []LifeRow
 }
 
 // SnapNode and SnapEdge are the live rows at a revision, as a snapshot carries them.
@@ -132,6 +144,8 @@ type SnapNode struct {
 	SliceDigest      string
 	SupersedesNodeID string
 	IntroducedRev    int64
+	// Lifecycle is "" for an active node, else LifePaused, LifeCancelled or LifeArchived. It is no part of the node's slice digest.
+	Lifecycle string
 }
 
 type SnapEdge struct {
@@ -148,6 +162,8 @@ type Snapshot struct {
 	Nodes       []SnapNode
 	Edges       []SnapEdge
 	StateDigest string
+	// PlanState is "" while the plan is active, else LifePaused.
+	PlanState string
 }
 
 // Event is a committed revision: the durable event of the log. Its position (RevisionNo) is the
