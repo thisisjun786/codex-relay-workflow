@@ -359,13 +359,19 @@ const dueFrom = " FROM deliveries d JOIN relationships r ON r.relationship_id = 
 
 // EligibleParents is eligible_parents.
 func (d *Service) EligibleParents(ctx context.Context, now float64) ([]string, error) {
-	join, where, args := d.eligibility(now)
-	rows, err := all(ctx, d.Store, "SELECT DISTINCT r.parent_task_id AS parent_task_id"+dueFrom+join+where+" ORDER BY r.parent_task_id", args...)
+	query, args := d.eligibleParentsQuery(now)
+	rows, err := all(ctx, d.Store, query, args...)
 	var out []string
 	for _, r := range rows {
 		out = append(out, r.S("parent_task_id"))
 	}
 	return out, err
+}
+
+// eligibleParentsQuery is the statement EligibleParents runs at now, and its arguments.
+func (d *Service) eligibleParentsQuery(now float64) (string, []any) {
+	join, where, args := d.eligibility(now)
+	return "SELECT DISTINCT r.parent_task_id AS parent_task_id" + dueFrom + join + where + " ORDER BY r.parent_task_id", args
 }
 
 // EligibleRows is the oldest limit due deliveries of one parent, in event creation order. Each row

@@ -831,9 +831,16 @@ func generationRecord(g Row) Obj {
 		{Key: "dispatchTurnId", Value: g.Opt("dispatch_turn_id")}, {Key: "openedAt", Value: g.S("opened_at")}, {Key: "boundAt", Value: g.Opt("bound_at")}, {Key: "reason", Value: g.Opt("reason")}}
 }
 
+// pendingAnchorsSQL reads the dispatched revision requests whose generation still waits for its anchor,
+// oldest update first; its arguments are Revision, Dispatched, Acknowledged, "anchor_pending" and a limit.
+const pendingAnchorsSQL = "SELECT d.event_id FROM deliveries d JOIN events e ON e.event_id = d.event_id JOIN generations g ON g.relationship_id = e.relationship_id AND g.execution_generation = e.execution_generation WHERE d.kind = ? AND d.state IN (?,?) AND d.dispatch_turn_id IS NOT NULL AND g.anchor_state = ? ORDER BY d.updated_at LIMIT ?"
+
+// pendingAnchorsLimit is how many anchors one recovery pass binds.
+const pendingAnchorsLimit = 50
+
 // BindPendingAnchors is bind_pending_anchors: recovery over state, never moving a bound anchor.
 func (a *Ack) BindPendingAnchors(ctx context.Context) ([]any, error) {
-	rows, err := all(ctx, a.Store, "SELECT d.event_id FROM deliveries d JOIN events e ON e.event_id = d.event_id JOIN generations g ON g.relationship_id = e.relationship_id AND g.execution_generation = e.execution_generation WHERE d.kind = ? AND d.state IN (?,?) AND d.dispatch_turn_id IS NOT NULL AND g.anchor_state = ? ORDER BY d.updated_at LIMIT ?", Revision, Dispatched, Acknowledged, "anchor_pending", 50)
+	rows, err := a.pendingAnchors(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -852,4 +859,9 @@ func (a *Ack) BindPendingAnchors(ctx context.Context) ([]any, error) {
 		}
 	}
 	return bound, nil
+}
+
+// pendingAnchors is the read of BindPendingAnchors: the events of the revision requests it would bind, in order.
+func (a *Ack) pendingAnchors(ctx context.Context) ([]Row, error) {
+	return all(ctx, a.Store, pendingAnchorsSQL, Revision, Dispatched, Acknowledged, "anchor_pending", pendingAnchorsLimit)
 }

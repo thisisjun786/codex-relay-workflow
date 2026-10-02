@@ -30,9 +30,12 @@ func (rc *Reconciler) OpenAttemptCount(ctx context.Context, parent string) (int,
 	return int(row.I("c")), nil
 }
 
+// openParentsSQL is the statement OpenParents runs; its arguments are HeldUncertain, HeldUncertain, Sending.
+const openParentsSQL = "SELECT DISTINCT r.parent_task_id AS parent_task_id FROM attempts a JOIN deliveries d ON d.event_id = a.event_id JOIN relationships r ON r.relationship_id = d.relationship_id" + unresolvedWhere + " ORDER BY r.parent_task_id"
+
 // OpenParents is open_parents.
 func (rc *Reconciler) OpenParents(ctx context.Context) ([]string, error) {
-	rows, err := all(ctx, rc.Store, "SELECT DISTINCT r.parent_task_id AS parent_task_id FROM attempts a JOIN deliveries d ON d.event_id = a.event_id JOIN relationships r ON r.relationship_id = d.relationship_id"+unresolvedWhere+" ORDER BY r.parent_task_id", HeldUncertain, HeldUncertain, Sending)
+	rows, err := all(ctx, rc.Store, openParentsSQL, HeldUncertain, HeldUncertain, Sending)
 	out := make([]string, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, r.S("parent_task_id"))
