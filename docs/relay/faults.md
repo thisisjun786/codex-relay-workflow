@@ -886,12 +886,25 @@ re-points what was waiting. Filing into a guessed project would be worse than wa
 The daemon's tick sweeps the store and records what it finds, so a fault is detected and queued
 without anybody asking. The pass is bounded like every other pass — each source reads at most
 `SWEEP_LIMIT` rows — and it ROTATES: `fault_cursors` remembers where each source stopped and the
-upper key it captured when its rotation started, the next sweep resumes there, and a short page
-ends the rotation. Every row present when a rotation starts is read within that rotation, however
-many full pages it takes; a row behind the cursor or past the captured bound is read by the next
-one (invariant 14, `faultsweep._rotation()`). A fixed prefix re-read on every tick would have
-starved everything behind it forever, and a cursor that wrapped after a fixed number of full
+upper key it captured when its rotation started, the next sweep resumes there, and a rotation ends
+when a scan reaches that upper key. Every row present when a rotation starts is read within that
+rotation, however many full pages it takes; a row behind the cursor or past the captured bound is
+read by the next one (invariant 14, `faultsweep._rotation()`). A fixed prefix re-read on every tick would
+have starved everything behind it forever, and a cursor that wrapped after a fixed number of full
 pages starved everything past them. The scan over open faults rotates too, for the same reason.
+
+The two sources that grow with the store's whole history, deliveries and settled attempts, are also
+scanned at most `SCAN_WINDOW` (4096) of their rows per sweep, however few of those rows match. A page
+that does not fill inside the window leaves the cursor where the scan stopped, so the next sweep
+goes on from there, and the rotation ends only when a scan reaches the captured upper key: a sweep
+costs the same over a long history as over a short one, where a short page used to start the source
+again and read all of it every tick. A source of no more rows than a window is read whole in one
+sweep, as before. What this costs is detection latency: a delivery that becomes held while the scan
+is elsewhere is read when the rotation next reaches it, at most ceil(rows / 4096) ticks later
+instead of the next tick. The presence check of an open `delivery_stalled` fault reaches a delivery's
+attempts through their (event, attempt number) key, so it is linear in the deliveries and not in the
+deliveries times the attempts.
+
 Given the store selection, the tick also reads the relay's own managed turns through the CRW-180
 projection, a few per tick ([Collection](#collection)).
 
@@ -1042,7 +1055,7 @@ happened is the work the fix cycle exists for.
 | `fault_publications` | the outbox: what must be written to Linear, and how far it got |
 | `fault_targets` | the team a scope's fault issues are filed with |
 | `fault_target_projects` | the product that owns a scope's target, and the project its issue creates are filed in |
-| `fault_cursors` | each source's rotation position: where it stopped and the upper key captured when the rotation started (`pages` is no longer read) |
+| `fault_cursors` | each source's rotation position: where it stopped and the upper key captured when the rotation started (`pages` is no longer read); a row is written when its position moves, so `updated_at` is when it last moved (or the row was made), and a sweep that moves no cursor writes nothing |
 | `fault_publication_payloads` | a write's payload, the project it was queued with, and why it was last held |
 | `fault_publication_attempts` | every claim of a write: owner, takeover, claim and issue times, outcome |
 | `fault_links` | the project an owned issue is linked to as read back, and the link revision |
