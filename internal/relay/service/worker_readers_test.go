@@ -175,6 +175,24 @@ func TestWorkerPolicy_corrupted_files_have_one_answer_in_both_readers(t *testing
 	}
 }
 
+// A host that refuses pidfd_open (a seccomp filter, a kernel without it) leaves the service's
+// handle on the worker without a descriptor. The service holds a pidfd to the worker it observes
+// and refuses one it cannot hold; managed-start's reader never held one, and answers from the
+// worker's /proc entry alone, as it always did.
+func TestWorkerPolicy_a_refused_pidfd_is_the_services_refusal_only(t *testing.T) {
+	f := newWorkerFixture(t, workerPolicy(t))
+	restore := service.SetOpenProcess(func(pid int) *service.ProcessHandle {
+		return &service.ProcessHandle{PID: pid, FD: -1, Detail: "pidfd_open: function not implemented"}
+	})
+	defer restore()
+	if got, want := observed(f.service.ReadWorkerPolicy(context.Background())), nullable("worker_policy_process_unavailable"); !sameReason(got, want) {
+		t.Errorf("service reader answered %s, want %s", show(got), show(want))
+	}
+	if _, reason := f.observer.Read(context.Background()); reason != "" {
+		t.Errorf("managed-start's reader answered %s, want observed", reason)
+	}
+}
+
 // A change made after both locks were checked and before the final look (the seam is where Python
 // patches service.record): each reader gets a fresh fixture, since the first to run would be the
 // only one to see the original files.
