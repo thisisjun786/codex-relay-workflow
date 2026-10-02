@@ -237,9 +237,12 @@ func TestScale_a_runaway_relationship_is_still_limited(t *testing.T) {
 	})
 }
 
-// CRW-259 c3: deliveries that pile up while the parent is busy go out as soon as its turn ends,
-// oldest first. A tick sends at most one message to a recipient (the minimum gap between two
-// sends), so n deliveries take n ticks, and the first goes on the first tick.
+// CRW-259 c3: deliveries that pile up while the parent is busy go out once its turn ends, oldest first.
+// A tick sends at most one message to a recipient (the minimum gap between two sends), so n deliveries
+// take n ticks. CRW-261: the busy backoff grows with each busy answer, and only the oldest delivery
+// meets the busy parent while it waits (the ones behind it are not attempted), so the first goes at the
+// first tick on or after the end of the oldest delivery's backoff, which is at most BusyMax away; the
+// others follow one a tick, in creation order.
 func TestScale_a_busy_backlog_drains_in_creation_order(t *testing.T) {
 	const backlog = 10
 	w := newScaleWorld(t, backlog)
@@ -256,10 +259,17 @@ func TestScale_a_busy_backlog_drains_in_creation_order(t *testing.T) {
 		t.Fatalf("%d messages went to a busy parent", sent)
 	}
 	w.f.host.threads[scaleParent].status = "idle"
-	for k := 0; k < backlog; k++ {
+	waited := 0
+	for len(w.dispatched()) == 0 {
+		if waited++; float64(waited)*scaleTick > w.f.delivery.Policy.BusyMax+scaleTick {
+			t.Fatalf("a free parent was sent nothing in %.0f s, longer than the busy backoff's ceiling %.0f s", float64(waited)*scaleTick, w.f.delivery.Policy.BusyMax)
+		}
+		w.tick()
+	}
+	for k := 1; k < backlog; k++ {
 		w.tick()
 		if got := len(w.dispatched()); got != k+1 {
-			t.Fatalf("after %d ticks of a free parent %d deliveries went out, want %d", k+1, got, k+1)
+			t.Fatalf("%d ticks after the first delivery went out %d deliveries had gone, want %d", k, got, k+1)
 		}
 	}
 	if order := w.sentOrder(); !slices.Equal(order, w.created) {

@@ -1,6 +1,7 @@
 package managed
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -9,6 +10,8 @@ import (
 	"syscall"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/projectlock"
 )
 
 // Lock acquires managed.py:311-333's nonblocking per-request flock. The sidecar is
@@ -44,4 +47,14 @@ func joinClose(first, second error) error {
 		return first
 	}
 	return second
+}
+
+// LockProject is the project's lock held shared by a managed start (internal/relay/store/projectlock): from
+// before its last project-scope ask until its child is registered. Every writer of the project's parent
+// binding takes the same file exclusively, so a writer waits for every start in that span and a start waits
+// for a writer before it asks about the binding; starts do not hold each other up, and nothing of another
+// project is held up by it. The wait is bounded at 30 s: past it the retryable LockWaitExpired host error
+// answers, nothing has changed, and a retry with the same request id continues the request.
+func LockProject(ctx context.Context, storePath, project string) (func() error, error) {
+	return projectlock.Shared(ctx, storePath, project)
 }

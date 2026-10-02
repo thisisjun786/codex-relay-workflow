@@ -31,7 +31,7 @@ const (
 )
 
 // Note is residue.NOTE.
-const Note = "residue is what the installer's own decision would reclaim (staging.Removes), so this is that decision rather than a second opinion about the same directory. It is not guaranteed to be the same SET as a later install's, and the difference is stated rather than implied: this command asks about the pointer the host RECORD names, and crw install install asks about the destination it acts on. Those are the same directory on an ordinary host and not on one whose recorded pointer lies elsewhere, where this command is the conservative of the two -- it protects an environment the recorded pointer still reaches. Which of the two questions the installer should ask is a decision about the installer, and it is not this issue's to make. A failed install's residualPaths is a different reading: it is what THAT RUN left, and this is what is on the destination now. It is also not a snapshot: the claim, the lock, the contents, the host record and the pointer are read at different moments, so a host changing underneath this command is described in pieces. Every decision is conservative in the same direction, so an error costs a path being kept rather than one being missed. What it does NOT promise is that a listed path is still residue when this payload is read: this survey takes no lock, so an install can reclaim and rebuild a path between the reading and the reading being acted on. Entries can go stale, and a path is only safely clearable under the installer lock -- which is why the recovery text names the install rather than a removal."
+const Note = "residue is what the installer's own decision would reclaim (staging.Removes), so this is that decision rather than a second opinion about the same directory. It is not guaranteed to be the same SET as a later install's, and the difference is stated rather than implied: this command asks about the pointer the host RECORD names, and crw install install asks about the destination it acts on. Those are the same directory on an ordinary host and not on one whose recorded pointer lies elsewhere, where this command is the conservative of the two -- it protects an environment the recorded pointer still reaches. Which of the two questions the installer should ask is a decision about the installer, and it is not this issue's to make. A failed install's residualPaths is a different reading: it is what THAT RUN left, and this is what is on the destination now. It is also not a snapshot: the claim, the lock, the contents, the host record and the pointer are read at different moments, so a host changing underneath this command is described in pieces. Every decision is conservative in the same direction, so an error costs a path being kept rather than one being missed. What it does NOT promise is that a listed path is still residue when this payload is read: this survey takes no lock, so an install can reclaim and rebuild a path between the reading and the reading being acted on. Entries can go stale, and a path is only safely clearable under the installer lock -- which is why the recovery text names an install command and never a removal by hand: the next install of the same combination for an abandoned staging, and crw install remove, which takes the locks itself, for the tombstone of an interrupted removal."
 
 // Protection is the caller's ownership reading of one directory: protected (conservative) and
 // selected (the record was read and names it).
@@ -144,7 +144,15 @@ func Survey(destination *string, pointerPath string, pointerOwnership any, prote
 		switch {
 		case isResidual:
 			residual = append(residual, path)
-			recovery = append(recovery, "let the next install of this same combination reclaim "+path+", which takes the lock this reading did not: "+reason+". Removing it by hand means re-reading it first, because this survey holds no lock and an install may have started building there since it looked")
+			if _, removal := staging.TombstoneOf(filepath.Base(path)); removal {
+				// An interrupted removal's tombstone: an install reclaims the directory under a
+				// runtime's own name, never a tombstone for its own sake. crw install remove
+				// finishes it, under the locks this reading did not take, and it is what crw
+				// install status names for it.
+				recovery = append(recovery, staging.RemovalRecovery(path))
+			} else {
+				recovery = append(recovery, "let the next install of this same combination reclaim "+path+", which takes the lock this reading did not: "+reason+". Removing it by hand means re-reading it first, because this survey holds no lock and an install may have started building there since it looked")
+			}
 		case !claim.Usable():
 			unread = append(unread, path+": "+claim.Detail)
 		case liveness == staging.Unknown:

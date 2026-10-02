@@ -303,3 +303,98 @@ func TestDeliverableStateAcceptsValuesACallerBuilt(t *testing.T) {
 		})
 	}
 }
+
+// A caller that builds a receipt without decoding it may build the manifest's records as maps too
+// (a []map[string]any, or a []any holding them). They are read as the ordered objects the store
+// reads, so an unchanged artifact answers current, while the rest of the answer stays what it
+// was: a changed artifact is changed, naming the digest the manifest claims, and a record that is
+// not a map is still the TypeError the store raises for it.
+func TestDeliverableStateAcceptsMapManifestRecords(t *testing.T) {
+	type staged struct {
+		work, path, digest, revision string
+		size                         int64
+	}
+	// stage builds a manifest over one artifact and then, when later is set, replaces the
+	// artifact's bytes with those, so the manifest describes the bytes the artifact had.
+	stage := func(t *testing.T, later string) staged {
+		t.Helper()
+		work := filepath.Join(t.TempDir(), "work")
+		if err := os.Mkdir(work, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		artifact := filepath.Join(work, "deliver.txt")
+		if err := os.WriteFile(artifact, []byte("the delivered bytes"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		entries, err := store.BuildManifest([]string{artifact}, []string{work})
+		if err != nil {
+			t.Fatal(err)
+		}
+		revision, err := store.ManifestRevision(entries)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if later != "" {
+			if err := os.WriteFile(artifact, []byte(later), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return staged{work: work, path: entries[0].Path, digest: entries[0].SHA256, revision: revision, size: *entries[0].Bytes}
+	}
+	shapes := []struct {
+		name     string
+		manifest func(staged) any
+	}{
+		{"a []map[string]any", func(s staged) any {
+			return []map[string]any{{"path": s.path, "sha256": s.digest, "bytes": s.size}}
+		}},
+		{"a []any holding maps", func(s staged) any {
+			return []any{map[string]any{"path": s.path, "sha256": s.digest, "bytes": s.size}}
+		}},
+		{"a map with an int byte count", func(s staged) any {
+			return []any{map[string]any{"path": s.path, "sha256": s.digest, "bytes": int(s.size)}}
+		}},
+		{"a map without a byte count", func(s staged) any {
+			return []any{map[string]any{"path": s.path, "sha256": s.digest}}
+		}},
+	}
+	receipts := []struct {
+		name  string
+		build func(manifest any, revision string) any
+	}{
+		{"a map receipt", func(manifest any, revision string) any {
+			return map[string]any{"manifest": manifest, "revisionHash": revision}
+		}},
+		{"an ordered receipt", func(manifest any, revision string) any {
+			return Object{{Key: "manifest", Value: manifest}, {Key: "revisionHash", Value: revision}}
+		}},
+	}
+	for _, shape := range shapes {
+		for _, receipt := range receipts {
+			t.Run("unchanged "+shape.name+" in "+receipt.name, func(t *testing.T) {
+				s := stage(t, "")
+				state, binding, detail, raised := DeliverableState(context.Background(), receipt.build(shape.manifest(s), s.revision), "", []string{s.work})
+				if raised != nil || state != "current" || binding != "live" || detail != "" {
+					t.Fatalf("%q %q %q %v", state, binding, detail, raised)
+				}
+			})
+			// The same length, so only the digest tells the bytes apart. The detail is what separates
+			// this from a record the store could not read, which is changed as well.
+			t.Run("changed "+shape.name+" in "+receipt.name, func(t *testing.T) {
+				s := stage(t, "THE DELIVERED BYTES")
+				state, binding, detail, raised := DeliverableState(context.Background(), receipt.build(shape.manifest(s), s.revision), "", []string{s.work})
+				if raised != nil || state != "changed" || binding != "" ||
+					!strings.Contains(detail, ": bytes hash to ") || !strings.HasSuffix(detail, " but the manifest claims "+s.digest) {
+					t.Fatalf("%q %q %q %v", state, binding, detail, raised)
+				}
+			})
+		}
+	}
+	t.Run("a record that is not a map is still refused", func(t *testing.T) {
+		s := stage(t, "")
+		state, binding, detail, raised := DeliverableState(context.Background(), map[string]any{"manifest": []any{"deliver.txt"}, "revisionHash": s.revision}, "", []string{s.work})
+		if raised != nil || state != "changed" || binding != "" || detail != "TypeError: string indices must be integers, not 'str'" {
+			t.Fatalf("%q %q %q %v", state, binding, detail, raised)
+		}
+	})
+}
