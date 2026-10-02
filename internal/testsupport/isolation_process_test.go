@@ -63,10 +63,8 @@ func TestIsolationHelperProcess(t *testing.T) {
 // removed its tree no crw-relay-test-* directory is left in TMPDIR (before this change the
 // helper's stayed: relay/cli, relay/dag, relay/registry and runtime/install left six per run).
 func TestAHelperKilledAfterIsolatingLeavesNoRoot(t *testing.T) {
-	restoreIsolationEnv(t)
-	tmp := t.TempDir()
-	t.Setenv("TMPDIR", tmp)
-	// Given: the starter's own isolation, in a TMPDIR nothing else uses.
+	// Given: the starter's own isolation, in a TMPDIR nothing else uses and with no isolation inherited.
+	tmp := privateTMPDIR(t)
 	root, err := isolate()
 	if err != nil {
 		t.Fatal(err)

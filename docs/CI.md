@@ -80,15 +80,15 @@ were nested left about six per full run. To see the ones in `TMPDIR` that are mo
 one may belong to a run in progress), which removes nothing:
 
 ```sh
-find "${TMPDIR:-/tmp}" -maxdepth 1 -type d -name 'crw-relay-test-*' -mtime +0
+find -H "${TMPDIR:-/tmp}" -mindepth 1 -maxdepth 1 -type d -name 'crw-relay-test-*' -mtime +0
 ```
 
 To remove them, repairing permissions first because a tree may hold read-only directories, once you have
 checked the list and no test run of yours is still going:
 
 ```sh
-find "${TMPDIR:-/tmp}" -maxdepth 1 -type d -name 'crw-relay-test-*' -mtime +0 \
-  -exec sh -c 'chmod -R u+w -- "$@" && rm -rf -- "$@"' sh {} +
+find -H "${TMPDIR:-/tmp}" -mindepth 1 -maxdepth 1 -type d -name 'crw-relay-test-*' -mtime +0 \
+  -exec sh -c 'chmod -R u+rwX -- "$@" && rm -rf -- "$@"' sh {} +
 ```
 
 ## Plugin package
