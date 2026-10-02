@@ -307,7 +307,8 @@ Verification:
 CI check and repository script it names exists, confirmed against the packet's baseline
 commit when the packet is written; say so where an issue text or an earlier packet names one
 that does not exist. A command that runs a tool directly, such as a focused `go test` run,
-is fine once the writer has confirmed that the package and test it names exist]
+is fine once the writer has confirmed that the top-level test it names exists in the same
+build, with an anchored listing such as `go test -list '^Name$' ./pkg` that prints it]
 [Allowed test data and runtime boundaries]
 
 Return:
@@ -412,8 +413,16 @@ field in brackets where that reduced shape names it differently.
   check is confirmed by the command in the workflow file or the repository's CI document, run
   with its help or dry-run mode where it has one. A target nobody could confirm is replaced by
   the real one, or the packet says that check has no command; it is not passed along. A command
-  that runs a tool directly, such as a focused `go test ./pkg -run Name`, is not a target and is
-  allowed: confirm that its package and test exist (`go test -list Name ./pkg` lists them).
+  that runs a tool directly, such as a focused `go test ./pkg -run '^Name$'`, is not a target and
+  is allowed once its test is confirmed to exist. Confirm it with an anchored listing run with the
+  verification's own package and build tags (the Makefile passes `-tags dev` for
+  `./cmd/crw-dev/...` and `./internal/dev/...`): `go test -list '^Name$' ./pkg` must succeed and
+  print `Name`. `-list` and `-run` take a regular expression, so an unanchored `Name` also lists
+  `NameOld`. An empty listing (only the `ok` line) means no matching top-level test function in
+  that build, and a listing that fails (a missing package, a build error) confirms nothing. The
+  listing does not print subtests: confirm one from the source or by running it with each
+  slash-separated part of `-run` anchored. A `-run` that matches nothing still exits 0 with
+  `[no tests to run]`, so the packet gives the anchored pattern.
 
 One obligation is new rather than a restatement. Where a workflow with its own goal and
 state is effective, the child's first execution leaves its own activation evidence and

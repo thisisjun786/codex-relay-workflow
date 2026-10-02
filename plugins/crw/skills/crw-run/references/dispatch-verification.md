@@ -232,7 +232,14 @@ exits 0, because the Makefile has no `contract` rule (`.PHONY` on line 23 lists 
 test-binary, test-part, lint, dist and crw-dev) and a directory `contract/` exists, while
 `make -n nosuchtarget` prints `No rule to make target` and exits 2. A gate that ran `make
 contract` would have passed with nothing checked; the bodies of PRs #281 and #282 both report
-the missing target.
+the missing target. A focused test is confirmed with an anchored `go test -list '^Name$' ./pkg`,
+run with the verification's own package and tags. In `./internal/bridge/appserver/fakehost` of this
+checkout the pattern `TestStart_bindsAndServes` without anchors lists
+`TestStart_bindsAndServes_whenTMPDIRIsLong` although no test has that exact name, the anchored
+`^TestStart_bindsAndServes$` lists nothing for it, and `go test -run '^TestNoSuchTest$'` on the same
+package exits 0 with `[no tests to run]`. An empty listing means no matching top-level test in that
+build, since `-list` does not print subtests; a missing package, and a package whose files are all
+behind the `dev` tag listed without `-tags dev`, fail with exit 1.
 
 ## Negative cases
 
