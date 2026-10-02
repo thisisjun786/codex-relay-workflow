@@ -403,8 +403,9 @@ func frozenParent(ctx context.Context, q store.Querier, plan, node string) (stri
 	if err != nil || !found {
 		return "", err
 	}
-	var raw string
-	if has, err := queryOne(ctx, q, "SELECT request_json FROM dag_release_requests WHERE plan_id = ? AND node_id = ? AND manifest_digest = ?", []any{plan, node, row.Digest}, &raw); err != nil || !has {
+	// the open intent's own frozen request: the one of the release, or of the successor a release after a close recorded
+	frozen, has, err := frozenRequestOf(ctx, q, plan, node, row)
+	if err != nil || !has {
 		return "", err
 	}
 	var request struct {
@@ -412,7 +413,7 @@ func frozenParent(ctx context.Context, q store.Querier, plan, node string) (stri
 			TaskID string `json:"taskId"`
 		} `json:"parent"`
 	}
-	if json.Unmarshal([]byte(raw), &request) != nil {
+	if json.Unmarshal([]byte(frozen.Raw), &request) != nil {
 		return "", nil
 	}
 	return request.Parent.TaskID, nil
@@ -428,7 +429,7 @@ func (s *Scheduler) resumeOf(ctx context.Context, q store.Querier, plan, actor s
 		}
 		switch {
 		case n.Reason == BlockedReleaseAbandoned:
-			out.Resume, out.ResumeDetail = ResumeNeedsOperator, "the managed start was released before it created a child: a plan revision that changes the slice, or the operator's slot-release, is the way on"
+			out.Resume, out.ResumeDetail = ResumeNeedsOperator, "the managed start was released before it created a child: dag-release-close ends that intent (it takes the manifest digest and the request id, --request-id, which dag-ready names in the node's detail) and the node can then be released again"
 		case parent != "" && parent != actor:
 			out.Resume, out.ResumeDetail = ResumeNeedsOperator, "the request frozen with the release names "+parent+" as the parent, so it cannot continue under "+actor
 		default:
