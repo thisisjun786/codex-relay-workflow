@@ -214,7 +214,7 @@ func (s *Scheduler) Release(ctx context.Context, plan, node, actor string, req R
 	if err != nil {
 		return out, err
 	}
-	if err := s.freshness(ctx, preds); err != nil {
+	if err := s.freshness(ctx, plan, actor, preds); err != nil {
 		return out, err
 	}
 	if s.testAfterFreshness != nil {

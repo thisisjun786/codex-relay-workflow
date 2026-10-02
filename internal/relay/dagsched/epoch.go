@@ -68,8 +68,25 @@ func (s *Scheduler) ClaimEpoch(ctx context.Context, plan string, in ClaimInput) 
 			return refuse(contract.RefusalMalformedReceipt, "plan %s belongs to project %s, not %s", plan, header, project)
 		case hasHeader:
 			project = header
-		case project == "":
-			return refuse(contract.RefusalMalformedReceipt, "plan %s has no revision yet, so it has no project: name it with --project", plan)
+		}
+		if !hasHeader {
+			// a plan that has no revision has no project of its own, but a claim already made for it was made under a parent binding of one: that project is the plan's, and a claim for another is refused
+			// (a second project cannot take over the plan before its first revision)
+			if first, claimed, err := dag.LatestClaim(txCtx, tx, plan); err != nil {
+				return err
+			} else if claimed {
+				var claimedProject string
+				if _, err := queryOne(txCtx, tx, "SELECT scope_key FROM scope_bindings WHERE binding_id = ?", []any{first.BindingID}, &claimedProject); err != nil {
+					return err
+				}
+				if project != "" && project != claimedProject {
+					return refuse(contract.RefusalMalformedReceipt, "plan %s was claimed under project %s and has no revision yet: it is not claimed for %s", plan, claimedProject, project)
+				}
+				project = claimedProject
+			}
+			if project == "" {
+				return refuse(contract.RefusalMalformedReceipt, "plan %s has no revision yet, so it has no project: name it with --project", plan)
+			}
 		}
 		out.ProjectKey = project
 		binding, revision, live, err := dag.LiveParentBinding(txCtx, tx, project, in.Actor)
