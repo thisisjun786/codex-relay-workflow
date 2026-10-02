@@ -26,6 +26,10 @@ func init() {
 		dispatch.Command{Name: "dag-region-declare", Run: runRegionDeclare},
 		// dag-release starts a managed task: like managed-start it opens its own admitted connection and needs the explicit --state and --socket.
 		dispatch.Command{Name: "dag-release", OwnAdmission: true, Exempt: true, Run: runRelease},
+		dispatch.Command{Name: "dag-accept", Run: runAccept},
+		dispatch.Command{Name: "dag-integration-observe", Run: runObserve},
+		dispatch.Command{Name: "dag-decision-record", Run: runDecision},
+		dispatch.Command{Name: "dag-correct", Run: runCorrect},
 	)
 }
 
@@ -180,4 +184,122 @@ func runRelease(ctx context.Context, services dispatch.Services, args dispatch.A
 		return nil, &dispatch.PayloadExit{Payload: result.Object(), Code: contract.ExitRefused}
 	}
 	return result.Object(), nil
+}
+
+func runAccept(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
+	raw, err := readDocument(args.Text("rule-version"))
+	if err != nil {
+		return nil, err
+	}
+	var rule VerifierRule
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&rule); err != nil {
+		return nil, usage("--rule-version is {skills_digest, model, effort}: " + err.Error())
+	}
+	input := AcceptInput{Event: args.Text("event"), Supersedes: args.Text("supersedes"), RuleVersion: rule}
+	if args.Given("repository") || args.Given("pull-request") {
+		if !args.Given("repository") || !args.Given("pull-request") {
+			return nil, usage("--repository and --pull-request name a pull request together")
+		}
+		input.PullRequest = &PRRef{Repository: args.Text("repository"), Number: args.Integer("pull-request").Int64()}
+	}
+	sched, closeStore, err := openScheduler(ctx, services)
+	if err != nil {
+		return nil, err
+	}
+	defer closeStore()
+	sched.PRs = ForgePullRequestReader(ExecRunner)
+	result, err := sched.Accept(ctx, args.Text("plan"), args.Text("node"), args.Text("actor"), input)
+	if err != nil {
+		return nil, hostFailure(err)
+	}
+	return contract.OrderedObject{{Key: "ok", Value: true}, {Key: "schema", Value: "dag-accept/1"}, {Key: "plan_id", Value: result.PlanID}, {Key: "node_id", Value: result.NodeID},
+		{Key: "acceptance_id", Value: result.AcceptanceID}, {Key: "relationship_id", Value: optionalText(result.RelationshipID)}, {Key: "execution_generation", Value: result.Generation},
+		{Key: "replayed", Value: result.Replayed}, {Key: "revalidated", Value: result.Revalidated}, {Key: "superseded_acceptance_id", Value: optionalText(result.SupersededID)},
+		{Key: "head_sha", Value: optionalText(result.HeadSHA)}, {Key: "evidence_digest", Value: optionalText(result.EvidenceDigest)}, {Key: "slot_released", Value: result.SlotReleased}}, nil
+}
+
+func runObserve(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
+	var targets []Target
+	for _, spelled := range args.Strings("target") {
+		repository, ref, ok := strings.Cut(spelled, "@")
+		if !ok || repository == "" || ref == "" {
+			return nil, usage("--target is repository@ref, not " + spelled)
+		}
+		targets = append(targets, Target{Repository: repository, BaseRef: ref})
+	}
+	sched, closeStore, err := openScheduler(ctx, services)
+	if err != nil {
+		return nil, err
+	}
+	defer closeStore()
+	sched.Tips = mergeturn.TargetReader{}
+	sched.Ancestry = GitAncestry{}.Ancestry
+	result, err := sched.ObserveIntegration(ctx, args.Text("plan"), args.Text("node"), args.Text("actor"), targets)
+	if err != nil {
+		return nil, hostFailure(err)
+	}
+	list := make([]any, len(result.Observations))
+	for i, o := range result.Observations {
+		list[i] = contract.OrderedObject{{Key: "observation_id", Value: o.ObservationID}, {Key: "repository", Value: o.Repository}, {Key: "base_ref", Value: o.BaseRef}, {Key: "subject_sha", Value: o.SubjectSHA},
+			{Key: "tip_sha", Value: o.TipSHA}, {Key: "is_ancestor", Value: o.IsAncestor}, {Key: "method", Value: o.Method}, {Key: "merge_turn_id", Value: optionalText(o.MergeTurnID)},
+			{Key: "observed_seq", Value: o.Seq}, {Key: "replayed", Value: o.Replayed}}
+	}
+	return contract.OrderedObject{{Key: "ok", Value: true}, {Key: "schema", Value: "dag-integration-observe/1"}, {Key: "plan_id", Value: result.PlanID}, {Key: "node_id", Value: result.NodeID},
+		{Key: "acceptance_id", Value: result.AcceptanceID}, {Key: "observations", Value: list}, {Key: "integrated", Value: result.Integrated}, {Key: "mark_present", Value: result.MarkPresent},
+		{Key: "slot_released", Value: result.SlotReleased}}, nil
+}
+
+func runDecision(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
+	sched, closeStore, err := openScheduler(ctx, services)
+	if err != nil {
+		return nil, err
+	}
+	defer closeStore()
+	result, err := sched.RecordDecision(ctx, args.Text("plan"), args.Text("actor"), DecisionInput{Subject: args.Text("subject"), Digest: args.Text("digest"), Disposition: args.Text("disposition"),
+		AuthorityKind: args.Text("authority-kind"), AuthorityRef: args.Text("authority-ref")})
+	if err != nil {
+		return nil, hostFailure(err)
+	}
+	return contract.OrderedObject{{Key: "ok", Value: true}, {Key: "schema", Value: "dag-decision-record/1"}, {Key: "plan_id", Value: result.PlanID}, {Key: "decision_id", Value: result.DecisionID},
+		{Key: "subject", Value: result.Subject}, {Key: "revision", Value: result.Revision}, {Key: "replayed", Value: result.Replayed}, {Key: "superseded_decision_id", Value: optionalText(result.SupersededID)}}, nil
+}
+
+func runCorrect(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
+	sched, closeStore, err := openScheduler(ctx, services)
+	if err != nil {
+		return nil, err
+	}
+	defer closeStore()
+	if args.Bool("prepare") {
+		raw, err := readDocument(args.Text("manifest-request"))
+		if err != nil {
+			return nil, err
+		}
+		var wire struct {
+			Base          *BaseRef    `json:"base"`
+			RuleVersion   RuleVersion `json:"rule_version"`
+			Volatile      []Volatile  `json:"volatile"`
+			ArtifactRoots []string    `json:"artifact_roots"`
+		}
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&wire); err != nil {
+			return nil, usage("--manifest-request is {base, rule_version, volatile, artifact_roots}: " + err.Error())
+		}
+		prepared, err := sched.PrepareCorrection(ctx, args.Text("plan"), args.Text("node"), args.Text("actor"), ManifestInput{Base: wire.Base, Volatile: wire.Volatile, RuleVersion: wire.RuleVersion},
+			VerifyOptions{ArtifactRoots: wire.ArtifactRoots})
+		if err != nil {
+			return nil, hostFailure(err)
+		}
+		return contract.OrderedObject{{Key: "ok", Value: true}, {Key: "schema", Value: "dag-correct/1"}, {Key: "manifest_digest", Value: prepared.ManifestDigest}, {Key: "instruction", Value: prepared.Instruction}}, nil
+	}
+	result, err := sched.RecordCorrection(ctx, args.Text("plan"), args.Text("node"), args.Text("actor"), args.Text("manifest-digest"))
+	if err != nil {
+		return nil, hostFailure(err)
+	}
+	return contract.OrderedObject{{Key: "ok", Value: true}, {Key: "schema", Value: "dag-correct/1"}, {Key: "plan_id", Value: result.PlanID}, {Key: "node_id", Value: result.NodeID},
+		{Key: "relationship_id", Value: result.RelationshipID}, {Key: "execution_generation", Value: result.Generation}, {Key: "manifest_digest", Value: result.ManifestDigest},
+		{Key: "replayed", Value: result.Replayed}, {Key: "carried_over", Value: result.CarriedOver}}, nil
 }

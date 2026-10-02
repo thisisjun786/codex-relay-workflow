@@ -197,3 +197,47 @@ func countRows(f *fixture) rowCounts {
 		merges:     f.count("SELECT COUNT(*) FROM dag_merge_checks"),
 	}
 }
+
+// A forged completed: the child's turn is completed on the host, a daemon wrote a failed event, a receipt is only staged. None of these is a verified result, so the node is never accepted and its
+// successor is never released: a child's completion, a transport answer and a statement in a report open no edge by themselves (contract 2.0).
+func TestForgedCompletedOpensNothing(t *testing.T) {
+	k := newRealKit(t)
+	releasePlan(k.fixture, "rp")
+	res, err := k.sched.Release(context.Background(), "rp", "A", "parent", k.request())
+	if err != nil || !res.Bound {
+		t.Fatalf("release = %v %+v", err, res)
+	}
+	accept := func() error {
+		_, err := k.sched.Accept(context.Background(), "rp", "A", "parent", AcceptInput{RuleVersion: verifier})
+		return err
+	}
+	// the host says the business turn is completed (the scripted turns/list answers completed for every turn): no report exists
+	if err := accept(); refusalReason(err) != "not_acknowledged" {
+		t.Fatalf("a completed turn with no report = %v", err)
+	}
+	// a failure the daemon observed is not a report either
+	k.exec("INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at)"+
+		" VALUES ('evt-failed', ?, 1, ?, 'failed', 'relay', 'real-child', 'business', 'failed', '{}', 'final', 'a', 'a')", res.RelationshipID, dig("failed"))
+	if err := accept(); refusalReason(err) != "not_acknowledged" {
+		t.Fatalf("a daemon-written failure = %v", err)
+	}
+	// a child's receipt that is only staged (its turn has not ended normally)
+	k.exec("INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at)"+
+		" VALUES ('evt-staged', ?, 1, ?, 'ready_for_review', 'child', 'real-child', 'business', 'inProgress', '{}', 'staged', 'b', 'b')", res.RelationshipID, dig("staged"))
+	if err := accept(); refusalReason(err) != "not_acknowledged" {
+		t.Fatalf("a staged receipt = %v", err)
+	}
+	if k.count("SELECT COUNT(*) FROM dag_acceptances") != 0 {
+		t.Fatal("a forged completion was accepted")
+	}
+	reading := k.read("rp")
+	if b := reading.node("B"); b.Reason != WaitEdge("ab") {
+		t.Fatalf("B = %+v: a forged completion opened the successor's edge", b)
+	}
+	if _, err := k.sched.Release(context.Background(), "rp", "B", "parent", k.request()); refusalReason(err) != "disposition_conflict" {
+		t.Fatalf("release of B = %v", err)
+	}
+	if k.host.Count("thread/start") != 1 {
+		t.Fatalf("the host created %d threads", k.host.Count("thread/start"))
+	}
+}

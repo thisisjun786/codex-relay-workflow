@@ -202,7 +202,9 @@ type acceptOpts struct {
 // seed-versus-writer equivalence is pinned by TestSeedMatchesRealWriters in 040): a relationship with its bound generation, the final
 // ready_for_review event and its lineage, the confirmed ack and its evidence, the verified verdict and its context, the registered criteria, the
 // execution row, the stored manifest and the acceptance.
-func (f *fixture) acceptNode(plan, node string, o acceptOpts) accepted {
+// reportNode seeds a verified result without accepting it: the relationship bound to the execution, the final report, its acknowledgement and evidence, the ruling and its currency, the
+// criteria, the manifest and the execution row. Accept reads exactly these.
+func (f *fixture) reportNode(plan, node string, o acceptOpts) accepted {
 	f.t.Helper()
 	snap := f.snapshot(plan)
 	n, ok := nodeOf(snap, node)
@@ -275,6 +277,14 @@ func (f *fixture) acceptNode(plan, node string, o acceptOpts) accepted {
 	manifest := f.putManifest(snap, node, inputs)
 	f.exec("INSERT INTO dag_node_executions (plan_id, node_id, relationship_id, execution_generation, manifest_digest, kind, managed_request_id) VALUES (?, ?, ?, 1, ?, 'initial', ?)",
 		plan, node, rid, manifest, ReleaseRequestID(node, manifest))
+	return accepted{Acceptance: Acceptance{RelationshipID: rid, EventID: event, RevisionHash: revision, ManifestDigest: manifest}, Event: event, Manifest: manifest, Root: root, Files: files}
+}
+
+func (f *fixture) acceptNode(plan, node string, o acceptOpts) accepted {
+	f.t.Helper()
+	r := f.reportNode(plan, node, o)
+	n, _ := nodeOf(f.snapshot(plan), node)
+	rid, event, revision, manifest := r.Acceptance.RelationshipID, r.Event, r.Acceptance.RevisionHash, r.Manifest
 	a := Acceptance{PlanID: plan, NodeID: node, ManifestDigest: manifest, RelationshipID: rid, ExecutionGeneration: 1, EventID: event, RevisionHash: revision,
 		CriteriaSetDigest: n.CriteriaSetDigest, Verdict: "verified", HeadSHA: o.HeadSHA, Repository: o.Repository, PRNumber: o.PR,
 		AckTier: "host_read", VerdictTurnID: "verdict-turn", RuleVersionJSON: "{}", AcceptedByTask: "parent", AcceptedAt: f.clock(), State: "active"}
@@ -286,7 +296,7 @@ func (f *fixture) acceptNode(plan, node string, o acceptOpts) accepted {
 	if o.Forge != "" {
 		f.exec("INSERT INTO dag_acceptance_forge (acceptance_id, forge_repository, pr_number) VALUES (?, ?, ?)", a.AcceptanceID, o.Forge, o.PR)
 	}
-	return accepted{Acceptance: a, Event: event, Manifest: manifest, Root: root, Files: files}
+	return accepted{Acceptance: a, Event: event, Manifest: manifest, Root: r.Root, Files: r.Files}
 }
 
 func nullable(s string) any {
@@ -447,5 +457,70 @@ func (f *fixture) holdSlotsOf(n int, project, initiative string) {
 			InitiativeKey: nullText(initiative), Tenure: 1, State: "held", ReservedBy: "other-parent", ReservedAt: f.clock()}); err != nil {
 			f.t.Fatal(err)
 		}
+	}
+}
+
+// seedReport adds, to a relationship that already exists (a release made it), the report, acknowledgement and ruling a verified result leaves, as the writers shape them.
+func (f *fixture) seedReport(relationship, node, plan string) {
+	f.t.Helper()
+	n, _ := nodeOf(f.snapshot(plan), node)
+	now := f.clock()
+	root := f.t.TempDir()
+	var roots string
+	if err := f.s.DB.QueryRow("SELECT artifact_roots FROM relationships WHERE relationship_id = ?", relationship).Scan(&roots); err == nil {
+		var list []string
+		if json.Unmarshal([]byte(roots), &list) == nil && len(list) > 0 {
+			root = list[0]
+		}
+	}
+	file := filepath.Join(root, node+"-result.md")
+	content := []byte("result of " + node + "\n")
+	if err := os.WriteFile(file, content, 0o600); err != nil {
+		f.t.Fatal(err)
+	}
+	sum := sha256.Sum256(content)
+	size := int64(len(content))
+	entries := []store.ManifestEntry{{Path: file, SHA256: hex.EncodeToString(sum[:]), Bytes: &size}}
+	revision, err := store.ManifestRevision(entries)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	event := "evt-" + relationship
+	receipt := fmt.Sprintf(`{"manifest":[{"path":%s,"sha256":"%s","bytes":%d}]}`, jsonString(file), hex.EncodeToString(sum[:]), size)
+	f.exec("INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at)"+
+		" VALUES (?, ?, 1, ?, 'ready_for_review', 'child', 'child', 'turn-1', 'completed', ?, 'final', ?, ?)", event, relationship, revision, receipt, now, now)
+	f.exec("INSERT INTO revision_lineage (relationship_id, execution_generation, event_id, revision_hash, declared_by, recorded_at) VALUES (?, 1, ?, ?, 'child', ?)", relationship, event, revision, now)
+	f.exec("INSERT INTO acks (event_id, record, ack_turn_id, accepted, verified, ack_at) VALUES (?, '{}', 'ack-turn', 1, 'verified', ?)", event, now)
+	f.exec("INSERT INTO ack_evidence (event_id, tier, observed_at) VALUES (?, 'host_read', ?)", event, now)
+	f.exec("INSERT INTO verdicts (event_id, record, verdict, verdict_turn_id, decided_at) VALUES (?, '{}', 'verified', 'verdict-turn', ?)", event, now)
+	f.exec("INSERT INTO verdict_context (event_id, set_digest, coverage, currency, head_event_id, head_revision, ack_evidence, recorded_at) VALUES (?, ?, '{}', 'current', ?, ?, '{}', ?)", event, n.CriteriaSetDigest, event, revision, now)
+}
+
+// supersedeReport adds a later revision of the report of a relationship (its lineage names the first revision it replaces), acknowledged and ruled verified: the head moves to it.
+func (f *fixture) supersedeReport(relationship, node, plan, label string) {
+	f.t.Helper()
+	n, _ := nodeOf(f.snapshot(plan), node)
+	now := f.clock()
+	var previous string
+	if err := f.s.DB.QueryRow("SELECT revision_hash FROM events WHERE relationship_id = ? ORDER BY first_seen_at DESC LIMIT 1", relationship).Scan(&previous); err != nil {
+		f.t.Fatal(err)
+	}
+	revision := dig("revision " + label + relationship)
+	event := "evt-" + label + "-" + relationship
+	f.exec("INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at)"+
+		" VALUES (?, ?, 1, ?, 'ready_for_review', 'child', 'child', 'turn-2', 'completed', '{}', 'final', ?, ?)", event, relationship, revision, now, now)
+	f.exec("INSERT INTO revision_lineage (relationship_id, execution_generation, event_id, revision_hash, supersedes_hash, declared_by, recorded_at) VALUES (?, 1, ?, ?, ?, 'child', ?)", relationship, event, revision, previous, now)
+	f.exec("INSERT INTO acks (event_id, record, ack_turn_id, accepted, verified, ack_at) VALUES (?, '{}', 'ack-turn', 1, 'verified', ?)", event, now)
+	f.exec("INSERT INTO ack_evidence (event_id, tier, observed_at) VALUES (?, 'host_read', ?)", event, now)
+	f.exec("INSERT INTO verdicts (event_id, record, verdict, verdict_turn_id, decided_at) VALUES (?, '{}', 'verified', 'verdict-turn-2', ?)", event, now)
+	f.exec("INSERT INTO verdict_context (event_id, set_digest, coverage, currency, head_event_id, head_revision, ack_evidence, recorded_at) VALUES (?, ?, '{}', 'current', ?, ?, '{}', ?)", event, n.CriteriaSetDigest, event, revision, now)
+}
+
+// holdSlotsFor records a held slot of a node as its release made it.
+func (f *fixture) holdSlotsFor(plan, node string) {
+	f.t.Helper()
+	if err := f.s.InsertExecutionSlot(context.Background(), store.ExecutionSlotsRow{SlotID: "slot-" + plan + "-" + node, SubjectKind: SlotSubjectKind, SubjectKey: SlotSubjectKey(plan, node), ParentTaskID: "parent", ProjectKey: "P-TEST",
+		Tenure: 1, State: "held", ReservedBy: "parent", ReservedAt: f.clock()}); err != nil {
+		f.t.Fatal(err)
 	}
 }

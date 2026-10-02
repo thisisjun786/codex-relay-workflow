@@ -173,6 +173,46 @@ A node that is owned already is `duplicate_assignment`, an unmeasured ceiling `c
 A volatile snapshot is a file the node reads that can change (a Linear document, an issue) captured before dispatch: it must be an absolute path under one of the child's artifact roots (B-05), exist (B-03) and hash to
 the digest the manifest names (B-04). It is part of the manifest digest, so a later edit is a different manifest.
 
+## Accepting a result
+
+`crw relay dag-accept --plan P --node N --actor A --rule-version @file [--repository OWNER/NAME --pull-request N] [--event E] [--supersedes ID]` records that the parent accepted a node's result (contract 4.3).
+The child's end of task, its report, the transport acknowledgement and the parent's acceptance are four records, and only the last one opens an edge. The acceptance is written when P-AV-1 holds **now**, read from the rows in one transaction:
+
+1. the result is the one head of its generation: a final, unsuppressed `ready_for_review` event (the `--event` the parent names must be that head; an older event is `superseded_revision`, an event of another generation `stale_generation`);
+2. its acknowledgement was accepted, verified by the host, and rests on evidence above the `unverified` tier;
+3. the parent's ruling on it is `verified`, still current, and made under managed verification;
+4. the criteria registered for the relationship are the ones the ruling was made against, and the plan's criteria for the node are the same set;
+5. the relationship is active, and the caller is its parent.
+
+For an implementation node the head is never given: the relay reads the named pull request from the forge itself and accepts only an open, non-draft pull request whose snapshot is consistent. The accepted head, the pull request and the forge identity are recorded
+(P-AV-2); a statement in a child's report never becomes the head. A plan revision that changes the node while the pull request is being read refuses the acceptance, because the verification no longer describes the plan.
+
+The same output accepted again is a replay. The same output ruled again under re-registered criteria is a **revalidation** of the same acceptance (`dag_acceptance_revalidations`, contract E-11): no second acceptance, generation or child. A new output replaces a node's active
+acceptance only with `--supersedes <that acceptance>`; without it the call is `disposition_conflict`. The acceptance digest names the plan, node, execution, revision, criteria, head and evidence, so a changed row reads as `blocked:acceptance_tampered`.
+The rule version (skills digest, model, effort) is recorded with the acceptance and left out of its identity. A non-PR node's slot is returned by its acceptance; an implementation node's slot is held until it is integrated.
+
+## Integration
+
+`crw relay dag-integration-observe --plan P --node N --actor A [--target REPOSITORY@REF ...]` records whether the accepted head is contained in the branches it has to land on, as a fact the relay reads: `git merge-base --is-ancestor` against a local checkout, the
+compare API (`behind_by` 0) for a forge repository. The parent's order is accept, merge, `assignment-mark merged`, observe. The required targets are those of the node's outgoing `integrated` and code-pinned edges, every target the acceptance already has an
+observation for (a negative one included, so observing a subset never completes a node) and the ones observed now; a terminal node names its target with `--target`. A node is **integrated** when every required target contains the head and the `merged` mark exists on
+the same revision of the same generation. The observation alone, or the mark alone, integrates nothing. A squashed or rebased landing leaves a head that is not an ancestor, and the reading says `blocked:integration_unprovable` rather than guessing.
+Observations are append-only: an identical reading (same head, same tip, same answer) is a replay, and any change is the next observation. A paused or cancelled relationship records none (contract 3.2); observations already written stay. The node's slot is returned when it integrates.
+
+## Decisions
+
+`crw relay dag-decision-record --plan P --actor A --subject S --digest D --disposition approved|rejected --authority-kind K --authority-ref R` writes the decision a `decision` edge waits for. Only the project's one registered parent records. Recording is not authority: the
+edge compares the authority kind with the kinds it names and reads the digest, so a decision by another authority or about another digest records and opens nothing. The text of the authority is opaque (D-09). The same decision again is a replay; any other decision of the subject
+supersedes the active one and keeps the history, so a rejection after an approval is a fact.
+
+## Corrections
+
+A correction goes back to the same child (contract 3.2): a `needs_changes` ruling opens the next generation of the same relationship and the existing verdict writer sends the correction message in the same transaction, so a manifest cannot be placed in that
+generation afterwards. The protocol therefore puts the manifest into the one text the relay itself sends. `dag-correct --prepare --manifest-request @file` rebuilds and verifies the node's input manifest as the store holds it now, stores it, and prints an English
+instruction line that names the manifest; the parent submits that line as the **restoration** finding of its `needs_changes` ruling. After the ruling, `dag-correct` (without `--prepare`) binds the generation the ruling opened to the manifest that finding names
+(`dag_node_executions`, kind `correction`). The bound digest is derived from what the child was told: a digest in an ordinary finding does not bind, a ruling without the block leaves the previous manifest in force (`carried_over`), and a `--manifest-digest` that differs
+is refused. The previous acceptance stays active and reads `blocked:stale_head` until the parent accepts the corrected result with `--supersedes`; invalidating what depends on it is a later issue.
+
 ## Commands
 
 | Command | Reads or writes | Answer |
@@ -180,6 +220,10 @@ the digest the manifest names (B-04). It is part of the manifest digest, so a la
 | `dag-ready --plan P [--record --actor A]` | reads; writes one `dag_passes` row with `--record` | the reading: `plan_id`, `plan_revision`, `state_digest`, `input_digest`, `pass`, `ready`, `nodes` |
 | `dag-region-declare --plan P --node N --actor A --regions R` | writes `dag_node_regions` | the declaration in force and whether it replayed |
 | `dag-release --plan P --node N --actor A --request R --marker-root D` | writes the intent (`dag_releases`, `dag_release_requests`, `dag_input_manifests`), reserves a slot, starts a managed task, binds it (`dag_node_executions`) | the release: manifest digest, request id, slot, relationship, generation and child; exit 2 with the managed engine's answer nested under `managed` when the start was refused or incomplete |
+| `dag-accept --plan P --node N --actor A --rule-version R [--repository R --pull-request N --event E --supersedes ID]` | writes `dag_acceptances` (and `dag_acceptance_forge`, or a revalidation); returns a non-PR node's slot | the acceptance: `acceptance_id`, `replayed`, `revalidated`, `superseded_acceptance_id`, `head_sha`, `evidence_digest`, `slot_released` |
+| `dag-integration-observe --plan P --node N --actor A [--target REPO@REF]` | appends `dag_integration_observations`; returns an implementation node's slot when it is integrated | the observations, `integrated`, `mark_present`, `slot_released` |
+| `dag-decision-record --plan P --actor A --subject S --digest D --disposition X --authority-kind K --authority-ref R` | writes `dag_decisions` | the decision id and revision, `replayed`, the decision it superseded |
+| `dag-correct --plan P --node N --actor A [--prepare --manifest-request R] [--manifest-digest D]` | `--prepare` stores a manifest; otherwise writes `dag_node_executions` (kind `correction`) | the instruction line and manifest digest, or the generation bound and `carried_over` |
 
 Refusals use the relay's existing reasons: `unregistered_scope` (a plan or node that is not there), `malformed_receipt` (a region or a request that is not valid),
 `disposition_conflict` (a node that edits no repository, or whose regions are held, or that is not ready), and the reasons of the table above. Exit codes are the relay's: 0, 2 refusal, 3 host, 4 usage.
