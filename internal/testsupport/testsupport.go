@@ -13,6 +13,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,6 +26,24 @@ import (
 // test that forgets isolation is still refused, and every process such a test starts inherits it
 // (decisions.md 46). A test that exercises the product's default clears it for itself.
 const RefuseLiveStateEnv = "CRW_REFUSE_LIVE_STATE"
+
+// IsolationRootEnv names the isolation root of a tree of test processes. The first test binary to
+// isolate exports it, and every process it starts with its environment inherits it. A test binary
+// that finds it naming an existing crw-relay-test-* directory makes its own root inside that
+// directory instead of in TMPDIR (inheritedRoot), so a helper process of the test binary (a crash
+// child, a lock holder) leaves nothing behind however it ends: the process that made the
+// directory removes it with everything below. The variable keeps naming the first process's
+// root, so a helper's helper nests there too. It is internal to the test binaries: set it by
+// hand and the next run nests in whatever directory it names.
+const IsolationRootEnv = "CRW_TEST_ISOLATION_ROOT"
+
+// KeepRootEnv, when set to anything but "" or "0", keeps the isolation roots after the tests, so a
+// failing run can be examined, and prints each kept root's path to stderr. It is for local
+// debugging: nothing removes what it keeps (docs/CI.md has the command).
+const KeepRootEnv = "CRW_TEST_KEEP_ROOT"
+
+// rootPrefix starts the name of every isolation root made directly in TMPDIR.
+const rootPrefix = "crw-relay-test-"
 
 func init() {
 	if testing.Testing() {
@@ -150,22 +169,42 @@ func IsolateRelayState() (func() error, error) {
 	if err != nil {
 		return nil, err
 	}
-	return func() error { return RemoveTempTree(root) }, nil
+	return func() error { return removeRoot(root) }, nil
+}
+
+// removeRoot removes an isolation root with everything below it, unless KeepRootEnv asks to keep it.
+func removeRoot(root string) error {
+	if keep := os.Getenv(KeepRootEnv); keep != "" && keep != "0" {
+		fmt.Fprintf(os.Stderr, "testsupport: %s is set, keeping the isolation root %s\n", KeepRootEnv, root)
+		return nil
+	}
+	return RemoveTempTree(root)
 }
 
 // isolate makes the isolation root and points the homes, the XDG directories and the relay's
 // state, scope and marker roots below it. The Go toolchain keeps the module and build caches it
 // had before (GOPATH, GOMODCACHE, GOCACHE), so a go command a test runs is not cold.
+//
+// The root is made in TMPDIR, unless the process was started by a test process that isolated
+// (IsolationRootEnv): then it is made inside that process's root, which that process removes.
 func isolate() (string, error) {
 	toolchain, err := toolchainDirs()
 	if err != nil {
 		return "", err
 	}
-	root, err := os.MkdirTemp("", "crw-relay-test-")
+	top, nested := inheritedRoot()
+	var root string
+	if nested {
+		root, err = os.MkdirTemp(top, "h-")
+	} else {
+		root, err = os.MkdirTemp("", rootPrefix)
+		top = root
+	}
 	if err != nil {
 		return "", err
 	}
 	env := map[string]string{
+		IsolationRootEnv:                  top,
 		"HOME":                            filepath.Join(root, "home"),
 		"XDG_STATE_HOME":                  filepath.Join(root, "xdg-state"),
 		"XDG_DATA_HOME":                   filepath.Join(root, "xdg-data"),
@@ -186,6 +225,20 @@ func isolate() (string, error) {
 		return "", errors.Join(err, RemoveTempTree(root))
 	}
 	return root, nil
+}
+
+// inheritedRoot is the isolation root a test process that started this one exported, when the
+// variable names one that exists: an absolute path to a directory called crw-relay-test-*.
+// Anything else (unset, relative, missing, not a directory, another name) is not a root to nest in.
+func inheritedRoot() (string, bool) {
+	root := os.Getenv(IsolationRootEnv)
+	if !filepath.IsAbs(root) || !strings.HasPrefix(filepath.Base(root), rootPrefix) {
+		return "", false
+	}
+	if info, err := os.Stat(root); err != nil || !info.IsDir() {
+		return "", false
+	}
+	return root, true
 }
 
 // toolchainDirs are the Go toolchain's module and build cache directories as this process has
@@ -222,8 +275,10 @@ type Setup func(root string) (cleanup func() error, err error)
 // setup in order, runs the tests, then runs the setups' cleanups (the last first), removes the
 // isolation root and every binary this process built (CRW, CRWDevPath, BuildCRW), and exits with
 // the tests' code, or 1 when isolation, a setup or a cleanup failed. A package whose test binary
-// also runs as a helper process (a crash child, a lock holder) starts the helper before calling
-// Main: the helper inherits its parent's isolation.
+// also runs as a helper process (a crash child, a lock holder) may start the helper before calling
+// Main: the helper then inherits its parent's isolation and makes no root. A helper that does go
+// through Main makes its root inside its parent's (IsolationRootEnv), which the parent removes, so
+// a helper that ends by a signal or os.Exit before its own cleanup leaves nothing behind.
 func Main(m *testing.M, setups ...Setup) {
 	os.Exit(run(m, setups))
 }
@@ -234,7 +289,7 @@ func run(m *testing.M, setups []Setup) (code int) {
 		fmt.Fprintln(os.Stderr, "testsupport: isolate the relay state:", err)
 		return 1
 	}
-	cleanups := []func() error{removeBuilds, func() error { return RemoveTempTree(root) }}
+	cleanups := []func() error{removeBuilds, func() error { return removeRoot(root) }}
 	defer func() {
 		var errs []error
 		for i := len(cleanups) - 1; i >= 0; i-- {
