@@ -266,8 +266,9 @@ package exits 0 with `[no tests to run]`. An empty listing means no matching top
 build, since `-list` does not print subtests; a missing package, and a package whose files are all
 behind the `dev` tag listed without `-tags dev`, fail with exit 1.
 
-S24 to S24e were read on 2026-10-03 against this checkout at dev ced7de60. They rest on a reading of
-the text and of the code the rules lean on, and on one experiment; none has been seen working in a
+S24 to S24e were read on 2026-10-03 against this checkout at dev ced7de60, and the code they cite
+(the base-refresh helper, the merge-evidence reading and the emit command) was unchanged when dev
+moved to 6071bc8a. They rest on a reading of the text and of that code, and on one experiment; none has been seen working in a
 run, and no child or parent has read the new wording yet, which waits for the next real-use run. The
 observations that motivated the rules are the issue's own analysis of 27 issues: two of the three
 defects a parent sent back had been rated High by the child's own review and rejected without a
