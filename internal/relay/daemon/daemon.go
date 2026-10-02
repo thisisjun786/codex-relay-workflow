@@ -69,6 +69,9 @@ type Daemon struct {
 	// mono is the clock the observation time limit runs on; nil is time.Now, whose monotonic reading no wall
 	// clock step can change. Tests move it by hand.
 	mono func() time.Time
+	// beforeSettle is called, when set, once the end of a turn is judged and before the settlement commits.
+	// Tests move the store in that gap by hand; production leaves it nil.
+	beforeSettle func(store.TurnReference)
 }
 
 func New(s *store.Store, host Host, clock delivery.Clock, channel *supervisor.Channel) *Daemon {

@@ -4648,7 +4648,13 @@ the one contradicted: the service family's writers (`enable`, `disable`, `stop`,
 `start`, `restart`, `run`), `managed-start`, `managed-show` and `reporting-derive` are refused
 before their handler writes or reads anything (a socket that cannot be resolved leaves nothing to
 compare, and the command words that failure itself); `reporting-show` takes `--state` and no socket, so
-nothing is compared; `packet-check` consults the whole refusal itself where it reads the store.
+a valid line has nothing to compare; `packet-check` consults the whole refusal itself where it reads the store.
+The reporting forms judge those selectors first (`dispatch.Command.Validate`, run after `check_start` and
+before the selection refusal): `reporting-show` without `--state`, and either form given `--socket`, answer
+the usage error, exit 4, whatever socket the selected store records. They answered
+`state_directory_serves_another_socket`, exit 2, when it recorded another one, though the line wrote
+nothing either way (CRW-264). That selector error also comes before a `--kind-module` the relay cannot import, as
+the store's refusals do. A valid `reporting-derive` line given no socket is held to the default socket as before.
 `doctor` and `service status` answer instead of refusing (`ReportsMismatch`): an explicit `--socket`
 mismatch was answered by both with exit 0, and they are how a mismatch is diagnosed, so each
 carries a trailing `socketMismatch` block, the refusal's fields without `error`, and exits 0. The bridge's `Defaults` reads an empty `CODEX_HOME` as unset too, so the two runtimes name
