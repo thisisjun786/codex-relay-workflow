@@ -178,6 +178,13 @@ func ReadOnlyCommand(ctx context.Context) bool {
 // Store(read_only=True) instead. It never creates, initializes or binds a store: an absent
 // one is refused as Python's Services.store refuses it, reason store_absent (cutover.md Record,
 // Read-only clients).
+//
+// The writer-form open a read command gets takes no SQLite write lock when the store is whole:
+// its identity rows, the settlements-backfill marker and its indexes are all there, as in every
+// store the relay creates, and seedMetadata then writes nothing, so the read neither waits for
+// the daemon's write transaction nor holds up the daemon's next one. The one open that does
+// write is the first of a store from before the marker (settlements still to backfill, once) or
+// one with an index still to install; both are completed here as they always were.
 func openForRead(ctx context.Context, path, socket string) (*Store, error) {
 	resolved, err := refuseLiveState(path)
 	if err != nil {

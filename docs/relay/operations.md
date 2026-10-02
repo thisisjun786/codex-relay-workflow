@@ -508,6 +508,15 @@ what the observation scheduler and this health block ask. Without it every other
 on a shared turn looked permanently unsettled, was re-polled on every round and spent
 observation budget forever.
 
+A store from before that table gains it with the backfill an open runs: every observation that
+names an assignment is given its settlement, once. The open records that it ran in `schema_meta`,
+under the key `backfill:assignment_settlements` (value `1`). A store the relay creates carries the
+key from its first moment, and an open that finds it runs the backfill no more: with the identity
+rows and the indexes there as well it writes nothing, so a read-only command neither waits for the
+write lock nor holds it. The daemon writes a settlement in the transaction of the observation it
+belongs to, so no observation the backfill would cover arrives after the key. The backfill and the
+key are written in one transaction.
+
 So is the work itself. Staged claims are selected and settled per assignment, because a child
 thread can serve several and a claim on one of its turns belongs to exactly one of them.
 Selecting by thread alone put a paused assignment's claim into an active assignment's ring,

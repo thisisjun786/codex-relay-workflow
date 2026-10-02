@@ -2,14 +2,18 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"hash"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -195,33 +199,211 @@ func readGateless(ctx context.Context, resolved string) error {
 	return nil
 }
 
+// requiredTable is a table the frozen v1 DDL declares, with the columns it declares for it.
+type requiredTable struct {
+	name    string
+	columns []string
+}
+
+var (
+	// columnPattern finds the columns a CREATE TABLE body declares.
+	columnPattern = regexp.MustCompile(`(?:^|,)\s*([A-Za-z_][A-Za-z_0-9]*)\s+(?:TEXT|INTEGER|REAL|BLOB)\b`)
+
+	requiredOnce   sync.Once
+	requiredTables []requiredTable
+	requiredErr    error
+
+	// validatedSchemas holds the digests of schemas this process found whole (schemaDigest). A
+	// schema is judged from its tables' text alone, so one that was found whole is whole in every
+	// database that has the same digest. Only successes are kept: a refusal is judged again.
+	validatedSchemas sync.Map
+)
+
+// shippedSchemaDigest is the digest of the tables as the embedded DDL creates them, which is what
+// a store made by this runtime or by the Python relay holds byte for byte. A store with that
+// digest is whole without reading its columns. TestShippedSchemaDigest applies the embedded DDL
+// to a fresh database, requires the full validation to accept it and requires its digest to be
+// this one, so a change to the frozen tables fails there, with the value to put here.
+const shippedSchemaDigest = "44382c20d136f1b584eb6400050e4a8fea212191e8feb5be8132d194a97d1685"
+
+// requiredSchema is the tables and columns the embedded DDL declares, in the DDL's order. The DDL is
+// part of the binary, so it is parsed once.
+func requiredSchema() ([]requiredTable, error) {
+	requiredOnce.Do(func() {
+		raw, err := schema.ReadFile("relay-sqlite.sql")
+		if err != nil {
+			requiredErr = err
+			return
+		}
+		ddl := strings.SplitN(string(raw), guardMarker, 2)[0]
+		var lines []string
+		for _, line := range strings.Split(ddl, "\n") {
+			code, _, _ := strings.Cut(line, "--")
+			lines = append(lines, code)
+		}
+		ddl = strings.Join(lines, "\n")
+		for _, statement := range strings.Split(ddl, ";") {
+			start := strings.Index(statement, "CREATE TABLE IF NOT EXISTS ")
+			if start < 0 {
+				continue
+			}
+			definition := strings.TrimSpace(statement[start+len("CREATE TABLE IF NOT EXISTS "):])
+			name, body, ok := strings.Cut(definition, "(")
+			if !ok {
+				continue
+			}
+			table := requiredTable{name: strings.TrimSpace(name)}
+			for _, match := range columnPattern.FindAllStringSubmatch(body, -1) {
+				table.columns = append(table.columns, match[1])
+			}
+			requiredTables = append(requiredTables, table)
+		}
+	})
+	return requiredTables, requiredErr
+}
+
 // ValidateOwnershipSchema requires every table and column of the frozen v1 DDL.
 // It does not repair a store or accept version=1 as proof of compatibility.
+//
+// What it judges is the text of the required tables, so the answer is kept per schema digest: the
+// sha256 of each required table's name and CREATE text. A schema this build ships, or one this
+// process already found whole, is accepted after one read of the catalog. Any other schema is
+// read once more, in one statement that returns each table's text with its columns, and judged
+// in the DDL's order, so the first refusal and its words are the ones the per-table reads gave.
+//
+// The digest speaks only for plain tables of the main database. When a required table is missing,
+// is spelled with another case or is a view (whose columns come from other objects), the answer is
+// not a function of the text and the per-table read of every table decides, uncached.
 func ValidateOwnershipSchema(ctx context.Context, db ownership.Queryer) error {
-	raw, err := schema.ReadFile("relay-sqlite.sql")
+	required, err := requiredSchema()
 	if err != nil {
 		return err
 	}
-	ddl := strings.SplitN(string(raw), guardMarker, 2)[0]
-	var lines []string
-	for _, line := range strings.Split(ddl, "\n") {
-		code, _, _ := strings.Cut(line, "--")
-		lines = append(lines, code)
+	digest, plain, err := catalogDigest(ctx, db, required)
+	if err != nil {
+		return err
 	}
-	ddl = strings.Join(lines, "\n")
-	columnPattern := regexp.MustCompile(`(?:^|,)\s*([A-Za-z_][A-Za-z_0-9]*)\s+(?:TEXT|INTEGER|REAL|BLOB)\b`)
-	for _, statement := range strings.Split(ddl, ";") {
-		start := strings.Index(statement, "CREATE TABLE IF NOT EXISTS ")
-		if start < 0 {
-			continue
-		}
-		definition := strings.TrimSpace(statement[start+len("CREATE TABLE IF NOT EXISTS "):])
-		name, body, ok := strings.Cut(definition, "(")
+	if !plain {
+		return validateByTableInfo(ctx, db, required)
+	}
+	if digest == shippedSchemaDigest {
+		return nil
+	}
+	if _, whole := validatedSchemas.Load(digest); whole {
+		return nil
+	}
+	columns, digest, err := catalogColumns(ctx, db, required)
+	if err != nil {
+		return err
+	}
+	for _, table := range required {
+		present, ok := columns[table.name]
 		if !ok {
+			return &ownership.Refused{Detail: "required table missing: " + table.name}
+		}
+		for _, column := range table.columns {
+			if !slices.Contains(present, column) {
+				return &ownership.Refused{Detail: "required column missing: " + table.name + "." + column}
+			}
+		}
+	}
+	validatedSchemas.Store(digest, struct{}{})
+	return nil
+}
+
+// schemaDigest hashes the required tables' names and CREATE text, in name order, as the catalog
+// statements return them.
+type schemaDigest struct{ hash.Hash }
+
+func newSchemaDigest() schemaDigest { return schemaDigest{sha256.New()} }
+
+func (d schemaDigest) add(name string, createText []byte) {
+	d.Write([]byte(name))
+	d.Write([]byte{0})
+	d.Write(createText)
+	d.Write([]byte{0})
+}
+
+func (d schemaDigest) sum() string { return hex.EncodeToString(d.Sum(nil)) }
+
+// requiredNames is the set of required table names.
+func requiredNames(required []requiredTable) map[string]bool {
+	names := make(map[string]bool, len(required))
+	for _, table := range required {
+		names[table.name] = true
+	}
+	return names
+}
+
+// catalogDigest reads the main database's tables and views and returns the digest of the required
+// tables, and whether the schema is plain: every required table is there as a table under the
+// DDL's own spelling and none is shadowed by a view.
+func catalogDigest(ctx context.Context, db ownership.Queryer, required []requiredTable) (string, bool, error) {
+	names := requiredNames(required)
+	rows, err := db.QueryContext(ctx, "SELECT type, name, sql FROM sqlite_master WHERE type IN ('table', 'view') ORDER BY name")
+	if err != nil {
+		return "", false, err
+	}
+	digest := newSchemaDigest()
+	seen := 0
+	plain := true
+	for rows.Next() {
+		var kind, name string
+		var createText sql.RawBytes
+		if err = rows.Scan(&kind, &name, &createText); err != nil {
+			break
+		}
+		if !names[name] {
 			continue
 		}
-		name = strings.TrimSpace(name)
-		rows, e := db.QueryContext(ctx, `PRAGMA table_info("`+name+`")`)
+		if kind != "table" {
+			plain = false
+			continue
+		}
+		seen++
+		digest.add(name, createText)
+	}
+	if err = errors.Join(err, rows.Err(), rows.Close()); err != nil {
+		return "", false, err
+	}
+	return digest.sum(), plain && seen == len(names), nil
+}
+
+// catalogColumns reads, in one statement, the CREATE text of every table of the main database
+// with the names of its columns (nil-separated: no identifier holds a NUL), and returns the
+// columns of each required table with the digest of the very text it read, so what is judged and
+// what is remembered are one snapshot.
+func catalogColumns(ctx context.Context, db ownership.Queryer, required []requiredTable) (map[string][]string, string, error) {
+	names := requiredNames(required)
+	rows, err := db.QueryContext(ctx, "SELECT m.name, m.sql, group_concat(p.name, char(0)) FROM sqlite_master m JOIN pragma_table_info(m.name, 'main') p WHERE m.type = 'table' GROUP BY m.name ORDER BY m.name")
+	if err != nil {
+		return nil, "", err
+	}
+	columns := make(map[string][]string, len(names))
+	digest := newSchemaDigest()
+	for rows.Next() {
+		var name, list string
+		var createText sql.RawBytes
+		if err = rows.Scan(&name, &createText, &list); err != nil {
+			break
+		}
+		if !names[name] {
+			continue
+		}
+		digest.add(name, createText)
+		columns[name] = strings.Split(list, "\x00")
+	}
+	if err = errors.Join(err, rows.Err(), rows.Close()); err != nil {
+		return nil, "", err
+	}
+	return columns, digest.sum(), nil
+}
+
+// validateByTableInfo is the validation as it was before the digest: one PRAGMA table_info per
+// required table, which resolves the name as SQLite does (any case, a view, a temporary table).
+func validateByTableInfo(ctx context.Context, db ownership.Queryer, required []requiredTable) error {
+	for _, table := range required {
+		rows, e := db.QueryContext(ctx, `PRAGMA table_info("`+table.name+`")`)
 		if e != nil {
 			return e
 		}
@@ -240,12 +422,11 @@ func ValidateOwnershipSchema(ctx context.Context, db ownership.Queryer) error {
 			return e
 		}
 		if len(columns) == 0 {
-			return &ownership.Refused{Detail: "required table missing: " + name}
+			return &ownership.Refused{Detail: "required table missing: " + table.name}
 		}
-		for _, match := range columnPattern.FindAllStringSubmatch(body, -1) {
-			column := match[1]
+		for _, column := range table.columns {
 			if !columns[column] {
-				return &ownership.Refused{Detail: "required column missing: " + name + "." + column}
+				return &ownership.Refused{Detail: "required column missing: " + table.name + "." + column}
 			}
 		}
 	}

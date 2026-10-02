@@ -193,12 +193,14 @@ func storeReplay(t *testing.T, names ...string) {
 		}
 		var beforeRows []store.Row
 		tableRows := map[string][]store.Row{}
-		var beforeDB *store.ReadOnly
-		if hasDatabase {
-			beforeDB, e = store.OpenReadOnly(context.Background(), db, time.Second)
+		// snapshot reads the schema and every table's rows as the command will find them.
+		snapshot := func() {
+			beforeDB, e := store.OpenReadOnly(context.Background(), db, time.Second)
 			if e != nil {
 				t.Fatal(e)
 			}
+			beforeRows = nil
+			clear(tableRows)
 			e = beforeDB.ReadSnapshot(context.Background(), func(ctx context.Context, s *store.Store) error {
 				var e error
 				beforeRows, e = s.All(ctx, "SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'dag\\_%' ESCAPE '\\' ORDER BY name")
@@ -220,6 +222,9 @@ func storeReplay(t *testing.T, names ...string) {
 			if e = beforeDB.Close(); e != nil {
 				t.Fatal(e)
 			}
+		}
+		if hasDatabase {
+			snapshot()
 		}
 		for path, encoded := range c.Files {
 			if encoded == nil {
@@ -263,6 +268,10 @@ func storeReplay(t *testing.T, names ...string) {
 				t.Fatal(err)
 			}
 			defer held.Close()
+			// The live open records the settlements backfill's marker in a store from before it,
+			// which is the holder's doing and not the command's: the command is judged against the
+			// store as the live holder leaves it.
+			snapshot()
 			stateBefore, err = os.ReadDir(state)
 			if err != nil {
 				t.Fatal(err)
