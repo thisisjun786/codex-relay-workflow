@@ -307,6 +307,7 @@ func readSections(body string) (sections []section, unread []string, err error) 
 	var openMark byte
 	openLen := 0
 	listParagraph := false // the lines since the last blank one continue a list item
+	itemText := 0          // the column where the text of the open top-level list item starts; 0 when none is open
 	for i := 0; i < len(lines); i++ {
 		switch mark, n, rest := fenceRun(lines[i]); {
 		case openMark != 0:
@@ -317,26 +318,38 @@ func readSections(body string) (sections []section, unread []string, err error) 
 			}
 		case mark != 0:
 			fenced[i], openMark, openLen = true, mark, n
+			if col, _ := indentOf(lines[i]); col < itemText {
+				itemText = 0 // a fence indented less than the item's text ends the item
+			}
 		default:
 			col, text := indentOf(lines[i])
+			inItem := itemText > 0 && col >= itemText // indented to the open item's text, so part of that item
 			switch m := headingLine.FindStringSubmatch(lines[i]); {
 			case text == "":
 				listParagraph = false
 			case m != nil:
 				headings = append(headings, heading{i, 1, len(m[1]), plainText(m[2])})
-				listParagraph = false
-			case !listParagraph && i+1 < len(lines) && paragraphLine(lines[i]) && setextRule.MatchString(lines[i+1]):
+				listParagraph, itemText = false, 0
+			case !listParagraph && !inItem && i+1 < len(lines) && paragraphLine(lines[i]) && setextRule.MatchString(lines[i+1]):
 				level := 1
 				if strings.HasPrefix(strings.TrimSpace(lines[i+1]), "-") {
 					level = 2
 				}
 				headings = append(headings, heading{i, 2, level, plainText(strings.TrimSpace(lines[i]))})
 				i++
-				listParagraph = false
+				listParagraph, itemText = false, 0
 			case col <= 3 && thematicBreak.MatchString(text):
-				listParagraph = false // a rule ends the item, and what follows it starts a new paragraph
+				listParagraph = false // a rule ends the item's paragraph, and what follows it starts a new one
+				if !inItem {
+					itemText = 0
+				}
 			case col <= 3 && listLine.MatchString(text):
 				listParagraph = true
+				if item := listLine.FindStringSubmatch(text); !inItem {
+					itemText = col + len(item[1]) + markerGap(item[2])
+				}
+			case !listParagraph && !inItem:
+				itemText = 0 // text that neither continues the item's paragraph nor sits in it ends the item
 			}
 		}
 	}
