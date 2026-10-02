@@ -88,7 +88,7 @@ func afterBackup(gate Object, note string) string {
 	if record.Get(backup, "made") != true {
 		return note
 	}
-	return note + " The copy of the state directory taken before this step stays at " + record.Text(backup, "destination") + " (with its manifest beside it), and a rerun needs a new destination."
+	return strings.Replace(note, "nothing was written", "nothing but the backup was written", 1) + " The copy of the state directory taken before this step stays at " + record.Text(backup, "destination") + " (with its manifest beside it), and a rerun needs a new destination."
 }
 
 // refusedAfterGate is a refusal of the swap after the gate answered: it carries the gate, and with it the backup.
