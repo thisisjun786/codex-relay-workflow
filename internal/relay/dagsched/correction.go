@@ -29,6 +29,9 @@ func CorrectionInstruction(issue string, generation int64, digest, path, fileSHA
 // Prepared is what PrepareCorrection returns.
 type Prepared struct {
 	ManifestDigest, Instruction, FrozenPath string
+	// DispatchRequestID is the dispatch request id a coordinator opens the generation with when it opens it by hand (generation-open): derived from the manifest, so the generation names the manifest
+	// it was opened for (revalidation.go).
+	DispatchRequestID string
 }
 
 // PrepareCorrection rebuilds and verifies the node's input manifest from the store as it is now (the inputs may have moved since the first release), stores it, keeps a copy of its
@@ -46,6 +49,10 @@ func (s *Scheduler) PrepareCorrection(ctx context.Context, plan, node, actor str
 		return out, refuse(contract.RefusalUnregisteredScope, "plan %s has no live node %s", plan, node)
 	}
 	if err := lifecycleRefusal(snap, n, "correcting it", false); err != nil {
+		return out, err
+	}
+	// a node that landed is never run again (revalidation.go)
+	if err := s.refuseLanded(ctx, q, plan, snap, n); err != nil {
 		return out, err
 	}
 	rel, found, err := currentRelationshipOf(ctx, q, plan, node)
@@ -117,6 +124,7 @@ func (s *Scheduler) PrepareCorrection(ctx context.Context, plan, node, actor str
 	out.ManifestDigest = digest
 	out.FrozenPath = path
 	out.Instruction = CorrectionInstruction(n.IssueKey, rel.Generation+1, digest, path, shaOf(canonical))
+	out.DispatchRequestID = CorrectionRequestID(plan, node, digest, rel.Generation+1)
 	return out, nil
 }
 
@@ -125,6 +133,9 @@ type CorrectionResult struct {
 	PlanID, NodeID, RelationshipID, ManifestDigest string
 	Generation                                     int64
 	Replayed, CarriedOver                          bool
+	// OpenedBy is how the generation was opened: "ruling" (the relay's needs_changes ruling) or "generation_open" (opened by hand); empty for a generation that is not a correction. For one opened by hand
+	// DispatchRequestID and DispatchTurnID are how the instruction reached the child: the request id the generation was opened under and the turn it was dispatched in (revalidation.go).
+	OpenedBy, DispatchRequestID, DispatchTurnID string
 }
 
 var manifestNamePattern = regexp.MustCompile(`manifest ([0-9a-f]{64})`)
@@ -175,7 +186,11 @@ func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, sup
 			if suppliedDigest != "" && suppliedDigest != latest {
 				return refuse(contract.RefusalDispositionConflict, "generation %d of %s is bound to manifest %s and the digest given is %s", rel.Generation, rel.ID, latest, suppliedDigest)
 			}
-			return nil
+			return s.describeOpening(txCtx, tx, plan, node, rel, &out)
+		}
+		// a new generation is bound to a node that did not land: one that did is never run again, and the generation the relay opened for it is not recorded as its own (revalidation.go)
+		if err := s.refuseLanded(txCtx, tx, plan, snap, n); err != nil {
+			return err
 		}
 		if !recorded.Valid || recorded.Int64 != rel.Generation-1 {
 			return refuse(contract.RefusalDispositionConflict, "generation %d of %s follows generation %d, and the last recorded execution of %s is %d", rel.Generation, rel.ID, rel.Generation-1, node, recorded.Int64)
@@ -196,7 +211,8 @@ func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, sup
 			return err
 		}
 		if !ruled {
-			return refuse(contract.RefusalDispositionConflict, "no needs_changes ruling on generation %d of %s opened generation %d", rel.Generation-1, rel.ID, rel.Generation)
+			// nothing ruled it: the coordinator may have opened it by hand, for a result that is stale and cannot be ruled again (revalidation.go)
+			return s.recordHandOpened(txCtx, tx, plan, snap, n, rel, suppliedDigest, &out)
 		}
 		var previous string
 		if _, err := queryOne(txCtx, tx, "SELECT manifest_digest FROM dag_node_executions WHERE plan_id = ? AND node_id = ? AND relationship_id = ? AND execution_generation = ?", []any{plan, node, rel.ID, rel.Generation - 1}, &previous); err != nil {
@@ -242,7 +258,7 @@ func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, sup
 		if suppliedDigest != "" && suppliedDigest != digest {
 			return refuse(contract.RefusalDispositionConflict, "the digest given (%s) is not the one the child was told (%s)", suppliedDigest, digest)
 		}
-		out.ManifestDigest = digest
+		out.ManifestDigest, out.OpenedBy = digest, OpenedByRuling
 		_, err = tx.ExecContext(txCtx, "INSERT INTO dag_node_executions (plan_id, node_id, relationship_id, execution_generation, manifest_digest, kind, managed_request_id) VALUES (?,?,?,?,?,'correction',NULL)",
 			plan, node, rel.ID, rel.Generation, digest)
 		return err

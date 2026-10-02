@@ -849,7 +849,13 @@ the unsent message is held as `hierarchy_unresolved` so later reports to the sam
 do not wait behind it. The
 obligation keeps standing and `supervisor-standing` keeps listing it; through this channel it
 goes out only if it is staged and sent before the assignment is archived. A superseded
-assignment is not affected, because its successor holds the edge.
+assignment is not affected, because its successor holds the edge. The daemon's pass does not
+read the events of an archived assignment whose issue has neither a live owner nor a live
+execution edge above it (CRW-299): nothing can be addressed for it, so the pass neither raises
+its reports nor re-addresses a message already held for it. When the issue is taken again, by
+the successor or by a new registration for the issue, the assignment is read again and its
+report goes up as before. A parent staging by hand (`supervisor-stage --project`) and
+`supervisor-standing` read it either way.
 
 A push the recipient's policy refuses is not a send here. The transport answers `inbox_only`
 when the recipient's thread reports an approval policy it cannot serve (anything but `never` and
@@ -896,9 +902,10 @@ rather than woken and keeps the obligation, an unloaded one is loaded with nothi
 and compared with its record before any turn, and a message another caller has claimed is left
 alone. It is bounded like the daemon's other passes, by `max_supervisor_projects_per_tick` and
 `max_supervisor_sends_per_tick`, project keys are read a page at a time, and a project whose
-messages have all gone out costs reads and no write. Within a project it reads the project's
-whole history, the read `supervisor-standing` makes, so it is bounded in projects and sends per
-tick and not in the length of one project's history.
+messages have all gone out costs reads and no write. Within a project it reads the final events
+of every relationship that can still report, in one read for the project (an archived assignment
+nothing can be addressed for is left out, see above; `supervisor-standing` reads the whole project), so it
+is bounded in projects and sends per tick and not in the length of one project's history.
 
 The commands stay valid and are what a parent runs when it wants an answer now:
 `supervisor-stage`, `supervisor-send`, `supervisor-read` and `supervisor-show`, beside the

@@ -312,7 +312,8 @@ func runCorrect(ctx context.Context, services dispatch.Services, args dispatch.A
 		if err != nil {
 			return nil, hostFailure(err)
 		}
-		return contract.OrderedObject{{Key: "ok", Value: true}, {Key: "schema", Value: "dag-correct/1"}, {Key: "manifest_digest", Value: prepared.ManifestDigest}, {Key: "instruction", Value: prepared.Instruction}}, nil
+		return contract.OrderedObject{{Key: "ok", Value: true}, {Key: "schema", Value: "dag-correct/1"}, {Key: "manifest_digest", Value: prepared.ManifestDigest}, {Key: "instruction", Value: prepared.Instruction},
+			{Key: "dispatch_request_id", Value: prepared.DispatchRequestID}}, nil
 	}
 	result, err := sched.RecordCorrection(ctx, args.Text("plan"), args.Text("node"), args.Text("actor"), args.Text("manifest-digest"))
 	if err != nil {
@@ -320,7 +321,8 @@ func runCorrect(ctx context.Context, services dispatch.Services, args dispatch.A
 	}
 	return contract.OrderedObject{{Key: "ok", Value: true}, {Key: "schema", Value: "dag-correct/1"}, {Key: "plan_id", Value: result.PlanID}, {Key: "node_id", Value: result.NodeID},
 		{Key: "relationship_id", Value: result.RelationshipID}, {Key: "execution_generation", Value: result.Generation}, {Key: "manifest_digest", Value: result.ManifestDigest},
-		{Key: "replayed", Value: result.Replayed}, {Key: "carried_over", Value: result.CarriedOver}}, nil
+		{Key: "replayed", Value: result.Replayed}, {Key: "carried_over", Value: result.CarriedOver}, {Key: "opened_by", Value: optionalText(result.OpenedBy)},
+		{Key: "dispatch_request_id", Value: optionalText(result.DispatchRequestID)}, {Key: "dispatch_turn_id", Value: optionalText(result.DispatchTurnID)}}, nil
 }
 
 // namedPullRequest is the optional --repository/--pull-request pair of the merge commands.
