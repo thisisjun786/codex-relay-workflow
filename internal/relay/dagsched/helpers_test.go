@@ -422,3 +422,30 @@ func (r Reading) brief() string {
 func contextBackground() context.Context { return context.Background() }
 
 func nullText(s string) sql.NullString { return sql.NullString{String: s, Valid: true} }
+
+// initiativeAbove puts an initiative above the plan's project: a supervisor for the initiative and the execution link capacity.Reserve walks up.
+func (f *fixture) initiativeAbove(initiative string) {
+	f.t.Helper()
+	ctx := context.Background()
+	now := f.clock()
+	if err := storeseed.InsertScopeBinding(ctx, f.s, store.ScopeBindingsRow{BindingID: "bind-sup", Role: "supervisor", ScopeKind: "initiative", ScopeKey: initiative, TaskID: "supervisor", HostID: "host",
+		Status: "active", Revision: 1, CreatedAt: now, UpdatedAt: now}); err != nil {
+		f.t.Fatal(err)
+	}
+	if err := storeseed.InsertScopeLink(ctx, f.s, store.ScopeLinksRow{LinkID: "lnk-" + initiative, LinkKind: "execution", UpperKind: "initiative", UpperKey: initiative, UpperTaskID: "supervisor",
+		LowerKind: "project", LowerKey: "P-TEST", LowerTaskID: "parent", Status: "active", Revision: 1, CreatedAt: now, UpdatedAt: now}); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+// holdSlotsOf records n held slots of another project that count against an initiative.
+func (f *fixture) holdSlotsOf(n int, project, initiative string) {
+	f.t.Helper()
+	for i := 0; i < n; i++ {
+		key := fmt.Sprintf("other-%s-%d", project, i)
+		if err := f.s.InsertExecutionSlot(context.Background(), store.ExecutionSlotsRow{SlotID: "slot-" + key, SubjectKind: "dag_node", SubjectKey: key, ParentTaskID: "other-parent", ProjectKey: project,
+			InitiativeKey: nullText(initiative), Tenure: 1, State: "held", ReservedBy: "other-parent", ReservedAt: f.clock()}); err != nil {
+			f.t.Fatal(err)
+		}
+	}
+}

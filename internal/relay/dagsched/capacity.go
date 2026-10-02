@@ -125,9 +125,10 @@ func (s *Scheduler) initiativeOf(ctx context.Context, q store.Querier, project s
 	return "", nil
 }
 
-// projectParents are the live parent bindings of a project scope.
+// projectParents are the live parent bindings of a project scope: active or paused, as registry.Owners (and so capacity.Reserve) counts them. A paused parent still owns the
+// project and still sits under its initiative's ceiling.
 func projectParents(ctx context.Context, q store.Querier, project string) ([]string, error) {
-	rows, err := q.QueryContext(ctx, "SELECT task_id FROM scope_bindings WHERE role = 'parent' AND scope_kind = 'project' AND scope_key = ? AND status = 'active' AND superseded_by IS NULL ORDER BY task_id", project)
+	rows, err := q.QueryContext(ctx, "SELECT task_id FROM scope_bindings WHERE role = 'parent' AND scope_kind = 'project' AND scope_key = ? AND status IN ('active','paused') AND superseded_by IS NULL ORDER BY task_id", project)
 	if err != nil {
 		return nil, err
 	}

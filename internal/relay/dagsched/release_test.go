@@ -308,3 +308,71 @@ func TestSlotKeysOfDifferentNodesNeverCollide(t *testing.T) {
 		t.Fatalf("created %d", created)
 	}
 }
+
+// R3-H1 (audit): a managed start released before it created a child is a tombstone; replaying its release reserves no slot and starts nothing.
+func TestReleaseReplayOfAReleasedRequestReclaimsNoSlot(t *testing.T) {
+	k := newReleaseKit(t)
+	releasePlan(k.fixture, "rp")
+	started := 0
+	real := k.sched.Start
+	k.sched.Start = func(ctx context.Context, raw []byte) (StartAnswer, error) {
+		started++
+		if started == 1 {
+			return StartAnswer{}, context.DeadlineExceeded // the engine never got as far as arming anything
+		}
+		return real(ctx, raw)
+	}
+	if _, err := k.release("rp", "A"); err == nil {
+		t.Fatal("the first start was expected to fail")
+	}
+	var request string
+	if err := k.s.DB.QueryRow("SELECT managed_request_id FROM dag_releases").Scan(&request); err != nil {
+		t.Fatal(err)
+	}
+	k.managedRow(request, "CRW-A", "released", "")
+	if _, err := (&capacity.Capacity{Store: k.s, Now: k.clock}).Release(context.Background(), capacity.Release{SubjectKind: SlotSubjectKind, SubjectKey: SlotSubjectKey("rp", "A"), ReleasedBy: "parent", Reason: "operator"}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := k.release("rp", "A")
+	if refusalReason(err) != "disposition_conflict" || !strings.Contains(err.Error(), BlockedReleaseAbandoned) {
+		t.Fatalf("replay = %v", err)
+	}
+	if started != 1 || k.count("SELECT COUNT(*) FROM execution_slots WHERE subject_kind = 'dag_node' AND state = 'held'") != 0 {
+		t.Fatalf("started %d, held slots %d: a tombstone reclaimed a slot", started, k.count("SELECT COUNT(*) FROM execution_slots WHERE state = 'held'"))
+	}
+}
+
+// R3-H2 (audit): a paused parent still owns its project and still sits under the initiative's ceiling. The reader and the replay must apply the standing cap to the initiative exactly where
+// capacity.Reserve counts it, or a replay is the way around the cap.
+func TestInitiativeClampAppliesWhileTheParentIsPaused(t *testing.T) {
+	k := newReleaseKit(t)
+	releasePlan(k.fixture, "rp")
+	k.initiativeAbove("INIT-1")
+	k.declareLimit("initiative", "INIT-1", "runs", 20)
+	k.holdSlotsOf(6, "OTHER", "INIT-1")
+	k.host.loseFirstCreation = true
+	// before anything is held the first release is judged under the clamp too
+	for _, status := range []string{"active", "paused"} {
+		k.exec("UPDATE scope_bindings SET status = ? WHERE binding_id = 'bind-parent'", status)
+		if c := k.capacityNow(); c.Ceiling != 6 || c.Source != "clamped_no_basis" || c.Free != 0 {
+			t.Fatalf("parent %s: capacity = %+v, want the initiative's 20 clamped to 6 with 6 held by another project", status, c)
+		}
+	}
+	// the replay of an unbound intent whose slot was returned
+	k.exec("UPDATE scope_bindings SET status = 'active' WHERE binding_id = 'bind-parent'")
+	k.exec("DELETE FROM execution_slots WHERE subject_key LIKE 'other-%'")
+	if res, err := k.release("rp", "A"); err != nil || res.Bound {
+		t.Fatalf("first call = %v %+v", err, res)
+	}
+	if _, err := (&capacity.Capacity{Store: k.s, Now: k.clock}).Release(context.Background(), capacity.Release{SubjectKind: SlotSubjectKind, SubjectKey: SlotSubjectKey("rp", "A"), ReleasedBy: "parent", Reason: "operator"}); err != nil {
+		t.Fatal(err)
+	}
+	k.holdSlotsOf(6, "OTHER", "INIT-1")
+	k.exec("UPDATE scope_bindings SET status = 'paused' WHERE binding_id = 'bind-parent'")
+	if _, err := k.release("rp", "A"); refusalReason(err) != "capacity_exhausted" {
+		t.Fatalf("replay with a paused parent above a full initiative = %v", err)
+	}
+	if k.count("SELECT COUNT(*) FROM execution_slots WHERE subject_key = ? AND state = 'held'", SlotSubjectKey("rp", "A")) != 0 {
+		t.Fatal("the replay reserved a slot above the initiative's cap")
+	}
+}

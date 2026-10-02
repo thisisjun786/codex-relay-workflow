@@ -531,6 +531,14 @@ func (s *Scheduler) replay(ctx context.Context, plan, node, actor string, row re
 		out.Bound, out.RelationshipID, out.Generation, out.ChildTaskID, out.State = true, rid, generation, child, "admitted"
 		return out, nil
 	}
+	// A managed start that was released before it created anything is a tombstone: the engine refuses its request id forever, so no slot is reserved for it and nothing is started.
+	var managedState string
+	if _, err := queryOne(ctx, q, "SELECT state FROM managed_start_requests WHERE request_id = ?", []any{row.Request}, &managedState); err != nil {
+		return out, err
+	}
+	if managedState == "released" {
+		return out, refuse(contract.RefusalDispositionConflict, "%s: the managed start %s of the release of %s was released before it created a child; a plan revision that changes the slice is the way on", BlockedReleaseAbandoned, row.Request, node)
+	}
 	if slot == "" {
 		// the slot of an unbound intent was returned (an operator's slot-release, say): no child is created without one, and the reservation is made again under the same ceilings.
 		var project string
