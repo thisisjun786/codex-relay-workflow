@@ -85,13 +85,17 @@ func BenchmarkFaultSweepStillPresent(b *testing.B) {
 
 // BenchmarkFaultSweepTick is one daemon tick of the sweep over a history with nothing to
 // report: the reads that find every source's page short, then the cursors written back. The
-// first tick of a store creates its cursor rows and is left out of the measurement.
+// first tick of a store creates its cursor rows and is left out of the measurement. The clock
+// moves 20 s a tick, as the daemon's does, so a cursor row written again is a changed row: written
+// with the same bytes, SQLite leaves the page alone and the write costs nothing.
 func BenchmarkFaultSweepTick(b *testing.B) {
 	for _, deliveries := range []int{5000, 10000, historyDeliveries} {
 		b.Run(fmt.Sprintf("deliveries=%d", deliveries), func(b *testing.B) {
 			l, sw := syntheticHistory(b, deliveries, false)
 			ctx := context.Background()
+			clock := l.Clock.(*testClock)
 			tick := func() {
+				clock.now += 20
 				batch, err := sw.Sweep(ctx, "crw")
 				if err != nil {
 					b.Fatal(err)
@@ -130,6 +134,7 @@ func BenchmarkFaultSweepReads(b *testing.B) {
 
 // BenchmarkFaultSweepCursorWrite is the recording step of a tick that moved no cursor: the batch is
 // swept after the cursor rows exist, as every later tick's is, and holds the positions they stand at.
+// The clock moves 20 s a tick, as the daemon's does (see BenchmarkFaultSweepTick).
 func BenchmarkFaultSweepCursorWrite(b *testing.B) {
 	l, sw := syntheticHistory(b, 1, false)
 	ctx := context.Background()
@@ -144,8 +149,10 @@ func BenchmarkFaultSweepCursorWrite(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
+	clock := l.Clock.(*testClock)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
+		clock.now += 20
 		if _, err := sw.RecordAll(ctx, l, batch); err != nil {
 			b.Fatal(err)
 		}
