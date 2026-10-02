@@ -525,10 +525,42 @@ next row within the tick's attempts, and the next tick starts after it. Without 
 that fails before changing its own state stays due, stays oldest and blocks every later delivery for
 that parent indefinitely. A tick that refuses nothing clears the marker, so with nothing refused a
 recipient's deliveries go out in creation order: a backlog that built up while the parent was busy
-leaves one a tick, oldest first, as soon as its turn ends. Both are keys, not positions, because a
+leaves one a tick, oldest first, once its turn has ended and the oldest delivery's busy backoff (below)
+has run out. Both are keys, not positions, because a
 position into a list that changes between ticks drifts when rows leave and come back; a cursor an
 older scheduler wrote (an index) reads as no pointer. A relationship that has spent its hour is
 not due (see "When the send budget holds a delivery"), so its queued rows spend no attempt.
+
+A recipient that is mid-turn is never interrupted, and a delivery to it waits out a backoff that counts
+the recipient's busy answers. Each answer a delivery meets before it is claimed is journaled
+(`delivery_deferred_busy`, one row per answer, written in the transaction of the update that deferred
+it, so an answer the update refused is not counted), and the attempts the transport settled as busy
+count with them; the count is read from those rows, so it survives a restart. After a pre-claim answer the
+delivery's next try is `BusyBase` (15 s) doubled for each answer, up to `BusyMax` (300 s), and the first
+pre-claim answer at or after the `BusyMaxAttempts`-th (the 40th) holds it with `busy_cap`; a reconciliation
+does not lift that hold unless it finds the message was sent. An attempt the transport settles as busy keeps
+its own attempt-number backoff (the first waits 30 s), and a streak of such answers alone is held by the
+attempt cap, as before. `attempt_count` could not do this: only a claim raises it, and a
+recipient that is busy at the lifecycle read is never claimed against, so the backoff used to stay at its
+base and the cap used to be out of reach. A journal row the previous implementation left (it wrote one
+when a delivery first met a busy recipient, and in a rare race one more) counts as an answer, so a delivery
+that was already waiting when this was installed starts one step ahead.
+
+While an older delivery to a recipient waits out a busy backoff, a younger delivery to the same recipient
+is not due: not listed by the tick, not taken by a direct `deliver --event` (it returns nothing and does not
+read the recipient), and refused inside the claim. Order is kept per recipient, not per relationship,
+because busy is a fact about the recipient and the guarantee above is across the relationships that
+write to one parent. Only a busy backoff holds a line: a delivery that waits for any other reason (a
+hold, a withhold before the send, the send budget), whose relationship is paused or superseded, whose
+event is of an earlier generation, or whose relationship has spent its hourly budget for the recipient
+holds nothing back, so one relationship's trouble cannot keep its siblings waiting (CRW-259). A delivery
+that supervision has overtaken (an obsolete merge-turn grant, a superseded revision) is only found when it
+is attempted, so it can still head a line until its backoff ends. A line is
+held for one backoff at a time, at most `BusyMax` ahead; a recipient that turns idle is reached when the
+oldest waiting delivery's backoff ends, up to five minutes and a tick later, and a delivery held at
+`busy_cap` stops holding. Two limits remain: a refusal marker an earlier tick left still starts the next
+walk after the refused row, and a relay CLI `deliver` can still send a delivery ahead of one that is
+sending under a live lease.
 
 A delivery that has reached its busy or pre-send attempt cap is annotated when its generation
 advances. Once a cap sets a hold, `attempt` returns before the pre-send supersession check, so
