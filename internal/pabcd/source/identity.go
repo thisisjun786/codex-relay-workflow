@@ -65,8 +65,8 @@ const (
 // unavailable; a failing rev-parse (no commit yet) only leaves CommitSha empty, as that tree is worth hashing.
 //
 // Pass the repository (worktree) root. Git reports entry paths relative to the root and they are read under cwd, so
-// below the root an entry has no content and an edit that keeps its status letters does not move the hash: an
-// oracle defect that is kept.
+// below the root an entry has no content or another file's (same relative path), and an edit can leave the hash
+// unchanged: an oracle defect that is kept.
 func Capture(cwd string, o Options) Identity { return captureWithLimit(cwd, o, maxGitOutput) }
 
 func captureWithLimit(cwd string, o Options, limit int) Identity {
