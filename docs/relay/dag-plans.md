@@ -168,7 +168,8 @@ additive zone is a follow-up decision, not made here.
 * `dag_input_manifests` has a digest function and a minimal write/read (`internal/relay/dag`: `ManifestDigest`, `PutManifest`,
   `ReadManifest`) so the table has an owner now. A manifest is checked for the fields 4.2 requires and for their types (ids and digests are text, a
   generation or revision is a whole number, an artifact or snapshot has its uri, digest and size); whether a base is required depends on the node's
-  kind, which a manifest does not carry. Building a manifest and judging it fit to release (the blocked paths of contract 4.4) is the scheduler's.
+  kind, which a manifest does not carry. A null is a missing value (4.1), so a manifest that writes an absent optional field as null is the same
+  record as one that omits it. Building a manifest and judging it fit to release (the blocked paths of contract 4.4) is the scheduler's.
 
 ## What a consumer reads
 

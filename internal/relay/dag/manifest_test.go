@@ -105,7 +105,7 @@ func TestManifestShapeIsStrict(t *testing.T) {
 		"artifact needs event":  {func(d doc) { d["inputs"].([]any)[1].(doc)["event_id"] = "" }, RuleMissingField, "$.inputs[1].event_id"},
 		"generation as text":    {func(d doc) { d["inputs"].([]any)[1].(doc)["execution_generation"] = "one" }, RuleWrongType, "$.inputs[1].execution_generation"},
 		"acceptance as number":  {func(d doc) { d["inputs"].([]any)[0].(doc)["acceptance_id"] = 7 }, RuleMissingField, "$.inputs[0].acceptance_id"},
-		"base is null":          {func(d doc) { d["base"] = nil }, RuleNotAnObject, "$.base"},
+		"base is a list":        {func(d doc) { d["base"] = []any{} }, RuleNotAnObject, "$.base"},
 		"base without a sha":    {func(d doc) { delete(d["base"].(doc), "sha") }, RuleMissingField, "$.base.sha"},
 		"artifact not a digest": {func(d doc) { d["inputs"].([]any)[1].(doc)["artifacts"].([]any)[0].(doc)["sha256"] = "x" }, RuleBadDigest, "$.inputs[1].artifacts[0].sha256"},
 		"artifact bytes text":   {func(d doc) { d["inputs"].([]any)[1].(doc)["artifacts"].([]any)[0].(doc)["bytes"] = "two" }, RuleWrongType, "$.inputs[1].artifacts[0].bytes"},
@@ -136,6 +136,43 @@ func TestManifestShapeIsStrict(t *testing.T) {
 	d["inputs"] = []any{}
 	if vs := CheckManifest(parseBody(t, d)); len(vs) != 0 {
 		t.Errorf("a node with no incoming edge: %v", vs)
+	}
+}
+
+// A null is a missing value (4.1): a manifest that spells an absent optional field null is accepted and is the same record as one
+// that omits it.
+func TestManifestNullIsAbsent(t *testing.T) {
+	r, s, _ := newRepo(t)
+	ctx := context.Background()
+	omitted := manifestBody()
+	delete(omitted, "base")
+	delete(omitted, "volatile")
+	delete(omitted["inputs"].([]any)[1].(doc), "artifacts")
+	nulled := manifestBody()
+	nulled["base"], nulled["volatile"] = nil, nil
+	nulled["inputs"].([]any)[1].(doc)["artifacts"] = nil
+	nulled["inputs"].([]any)[1].(doc)["head_sha"] = nil
+	if vs := CheckManifest(parseBody(t, nulled)); len(vs) != 0 {
+		t.Fatalf("null optional fields: %v", vs)
+	}
+	put := func(d doc) string {
+		b, _ := json.Marshal(d)
+		digest, err := r.PutManifest(ctx, b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return digest
+	}
+	first, second := put(omitted), put(nulled)
+	if first != second {
+		t.Fatalf("a null optional field changed the digest: %s vs %s", first, second)
+	}
+	var n int
+	if err := s.DB.QueryRow("SELECT count(*) FROM dag_input_manifests").Scan(&n); err != nil || n != 1 {
+		t.Fatalf("manifests: %d (%v), want 1: the two spellings are one record", n, err)
+	}
+	if _, found, err := r.ReadManifest(ctx, first); err != nil || !found {
+		t.Fatalf("read back: %v %v", found, err)
 	}
 }
 

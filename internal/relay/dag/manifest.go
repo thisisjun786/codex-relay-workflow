@@ -71,7 +71,8 @@ func CheckManifest(body map[string]any) []Violation {
 	if rv, ok := body["rule_version"].(map[string]any); !ok || len(rv) == 0 {
 		add(RuleMissingField, "$.rule_version", "required object is missing or empty")
 	}
-	if base, present := body["base"]; present {
+	// 4.1: a missing value and a null are the same thing, so a null optional field is an absent one.
+	if base := body["base"]; base != nil {
 		obj, ok := base.(map[string]any)
 		if !ok {
 			add(RuleNotAnObject, "$.base", "must be a JSON object with repository, ref and sha")
@@ -104,7 +105,7 @@ func CheckManifest(body map[string]any) []Violation {
 		for _, f := range rule.ints {
 			whole(in, path, f, 0)
 		}
-		if artifacts, present := in["artifacts"]; present {
+		if artifacts := in["artifacts"]; artifacts != nil {
 			list, ok := artifacts.([]any)
 			if !ok {
 				add(RuleWrongType, path+".artifacts", "must be a list")
@@ -123,7 +124,7 @@ func CheckManifest(body map[string]any) []Violation {
 			}
 		}
 	}
-	if volatile, present := body["volatile"]; present {
+	if volatile := body["volatile"]; volatile != nil {
 		list, ok := volatile.([]any)
 		if !ok {
 			add(RuleWrongType, "$.volatile", "must be a list")
@@ -160,9 +161,21 @@ func sortedBy(list []any, fields ...string) []any {
 	return out
 }
 
+// dropNil is a copy of m without the keys whose value is null: for the digest a null is a missing value (4.1).
+func dropNil(m map[string]any) map[string]any {
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		if v != nil {
+			out[k] = v
+		}
+	}
+	return out
+}
+
 // ManifestDigest is the digest of a manifest body: canonical JSON of the fields 4.2 marks as included
 // (rule version, the plan revision, the epoch, the author and the times are recorded but left out, so
-// they never change what the manifest is), with inputs ordered by edge id and artifacts by uri.
+// they never change what the manifest is), with inputs ordered by edge id and artifacts by uri. A null
+// value is a missing value (4.1), so a manifest that spells an absent field null digests like one that omits it.
 func ManifestDigest(body map[string]any) string {
 	inputs, _ := body["inputs"].([]any)
 	ordered := make([]any, 0, len(inputs))
@@ -172,31 +185,34 @@ func ManifestDigest(body map[string]any) string {
 			ordered = append(ordered, item)
 			continue
 		}
-		copied := map[string]any{}
-		for k, v := range in {
-			copied[k] = v
-		}
-		if artifacts, ok := in["artifacts"].([]any); ok {
-			copied["artifacts"] = sortedBy(artifacts, "uri")
+		copied := dropNil(in)
+		if artifacts, ok := copied["artifacts"].([]any); ok {
+			kept := make([]any, 0, len(artifacts))
+			for _, a := range sortedBy(artifacts, "uri") {
+				if m, ok := a.(map[string]any); ok {
+					a = dropNil(m)
+				}
+				kept = append(kept, a)
+			}
+			copied["artifacts"] = kept
 		}
 		ordered = append(ordered, copied)
 	}
 	included := map[string]any{"inputs": ordered}
-	for _, f := range []string{"schema", "node_id", "issue_key", "node_slice_digest", "criteria_set_digest", "base"} {
-		if v, ok := body[f]; ok {
+	for _, f := range []string{"schema", "node_id", "issue_key", "node_slice_digest", "criteria_set_digest"} {
+		if v := body[f]; v != nil {
 			included[f] = v
 		}
+	}
+	if base, ok := body["base"].(map[string]any); ok {
+		included["base"] = dropNil(base)
 	}
 	if volatile, ok := body["volatile"].([]any); ok {
 		kept := make([]any, 0, len(volatile))
 		for _, item := range sortedBy(volatile, "source", "snapshot_uri") {
 			if m, ok := item.(map[string]any); ok {
-				copied := map[string]any{}
-				for k, v := range m {
-					if k != "captured_at" {
-						copied[k] = v
-					}
-				}
+				copied := dropNil(m)
+				delete(copied, "captured_at")
 				kept = append(kept, copied)
 			}
 		}
