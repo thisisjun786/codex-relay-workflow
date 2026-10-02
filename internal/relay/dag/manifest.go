@@ -252,12 +252,21 @@ func (r *Repo) PutManifest(ctx context.Context, raw []byte) (string, error) {
 // ReadManifest returns a stored manifest body and verifies it: the digest of the body read must be the
 // key it is stored under.
 func (r *Repo) ReadManifest(ctx context.Context, digest string) (map[string]any, bool, error) {
-	var stored string
+	var body map[string]any
 	var found bool
 	err := r.readTx(ctx, func(q Queryer) (err error) {
-		found, err = scanOne(ctx, q, "SELECT body_json FROM dag_input_manifests WHERE manifest_digest = ?", []any{digest}, &stored)
+		body, found, err = ReadManifestOn(ctx, q, digest)
 		return err
 	})
+	return body, found, err
+}
+
+// ReadManifestOn is ReadManifest on a reader the caller already holds: a transaction's connection, where
+// opening another would wait for the store's one connection (the release path reads a manifest inside the
+// transaction that writes its intent). It needs only QueryContext, so a store.Querier is accepted as is.
+func ReadManifestOn(ctx context.Context, q Queryer, digest string) (map[string]any, bool, error) {
+	var stored string
+	found, err := scanOne(ctx, q, "SELECT body_json FROM dag_input_manifests WHERE manifest_digest = ?", []any{digest}, &stored)
 	if err != nil || !found {
 		return nil, false, err
 	}

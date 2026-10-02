@@ -1,0 +1,108 @@
+package dagsched
+
+import (
+	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+)
+
+// The limit that decided a pass (dag_passes.deciding_limit): the one that cut the highest-ranked candidate it deferred.
+const (
+	LimitNone               = "none"
+	LimitNoCapacity         = "no_capacity"
+	LimitEditOverlap        = "edit_overlap"
+	LimitCapacityUnmeasured = "capacity_unmeasured"
+)
+
+// Rank is why a ready node stands where it does: the hop count of the longest chain it starts, the live nodes below it, and the stored time
+// it became ready (contract 7.5, criterion c2).
+type Rank struct {
+	CriticalPath, Descendants int
+	ReadySince                string
+}
+
+// NodeReading is what a reading says of one live node: its derived state (contract 3.1), one disposition and, for every node that is not ready,
+// one reason from the closed set (contract 7.1).
+type NodeReading struct {
+	NodeID, IssueKey, Kind string
+	State                  string
+	Disposition            string // ready | wait | defer | blocked | skip | done
+	Reason                 string // empty for a ready node
+	Detail                 string
+	Rank                   *Rank // candidates only
+}
+
+// PassSummary is the capacity side of one reading.
+type PassSummary struct {
+	FreeSlots, Ceiling, Held, ReadyCount int
+	CeilingSource                        string
+	DecidingLimit                        string
+}
+
+// Reading is the ready set of one plan at one revision, computed from stored rows only. Ready is in release order; Nodes holds every live
+// node, sorted by node id. Two readings of one store state are equal, byte for byte (no clock is read).
+type Reading struct {
+	PlanID       string
+	PlanRevision int64
+	StateDigest  string
+	InputDigest  string
+	Pass         PassSummary
+	Ready        []NodeReading
+	Nodes        []NodeReading
+}
+
+func (n NodeReading) object() contract.OrderedObject {
+	o := contract.OrderedObject{
+		{Key: "node_id", Value: n.NodeID}, {Key: "issue_key", Value: n.IssueKey}, {Key: "kind", Value: n.Kind},
+		{Key: "state", Value: n.State}, {Key: "disposition", Value: n.Disposition},
+		{Key: "reason", Value: optionalText(n.Reason)}, {Key: "detail", Value: optionalText(n.Detail)},
+	}
+	if n.Rank != nil {
+		o = append(o, contract.Field{Key: "rank", Value: n.Rank.object()})
+	}
+	return o
+}
+
+func (r Rank) object() contract.OrderedObject {
+	return contract.OrderedObject{{Key: "critical_path", Value: r.CriticalPath}, {Key: "descendants", Value: r.Descendants}, {Key: "ready_since", Value: optionalText(r.ReadySince)}}
+}
+
+func optionalText(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+// Object is the reading as the relay prints it (dag-ready).
+func (r Reading) Object() contract.OrderedObject {
+	ready := make([]any, len(r.Ready))
+	for i, n := range r.Ready {
+		ready[i] = n.object()
+	}
+	nodes := make([]any, len(r.Nodes))
+	for i, n := range r.Nodes {
+		nodes[i] = n.object()
+	}
+	return contract.OrderedObject{
+		{Key: "ok", Value: true}, {Key: "schema", Value: SchemaReading},
+		{Key: "plan_id", Value: r.PlanID}, {Key: "plan_revision", Value: r.PlanRevision},
+		{Key: "state_digest", Value: r.StateDigest}, {Key: "input_digest", Value: r.InputDigest},
+		{Key: "pass", Value: contract.OrderedObject{
+			{Key: "free_slots", Value: r.Pass.FreeSlots}, {Key: "ceiling", Value: r.Pass.Ceiling}, {Key: "ceiling_source", Value: r.Pass.CeilingSource},
+			{Key: "held", Value: r.Pass.Held}, {Key: "ready_count", Value: r.Pass.ReadyCount}, {Key: "deciding_limit", Value: r.Pass.DecidingLimit},
+		}},
+		{Key: "ready", Value: ready}, {Key: "nodes", Value: nodes},
+	}
+}
+
+// SchemaReading names the document dag-ready prints.
+const SchemaReading = "dag-ready/1"
+
+// find is one node's reading.
+func (r Reading) find(id string) (NodeReading, bool) {
+	for _, n := range r.Nodes {
+		if n.NodeID == id {
+			return n, true
+		}
+	}
+	return NodeReading{}, false
+}

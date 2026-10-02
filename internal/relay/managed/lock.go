@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +14,10 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/projectlock"
 )
+
+// ErrBusy is the answer of a start whose request another caller is advancing: nothing was changed and the same request can be tried again. It is a value so a caller
+// that runs the same request concurrently (a scheduler waking twice) can tell it from a failure; its text is the one the lock has always answered with.
+var ErrBusy = errors.New("this managed request is already being advanced")
 
 // Lock acquires managed.py:311-333's nonblocking per-request flock. The sidecar is
 // never removed: replacing a lock inode would allow two independent holders.
@@ -33,7 +38,7 @@ func Lock(storePath, requestID string) (func() error, error) {
 	}
 	if err = unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB); err != nil {
 		if err == syscall.EWOULDBLOCK || err == syscall.EAGAIN {
-			return closeOnError(fmt.Errorf("this managed request is already being advanced"))
+			return closeOnError(ErrBusy)
 		}
 		return closeOnError(err)
 	}
