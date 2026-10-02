@@ -1,0 +1,329 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/bg/list",
+    "K7/bg",
+    "K8/ws/.codexclaw/bg",
+    "A/bg-wake/cli.test.ts"
+  ],
+  "note": "An empty registry lists '백그라운드 작업 없음'; a seeded registry (delivered, undelivered failed, running reconciled from its exit file, foreign session) lists every job with status, exit, duration and delivery mark, and --json prints the reconciled records.",
+  "given": {
+    "files": {
+      "ws/.codexclaw/bg/a3.exit": "0\n"
+    },
+    "json": {
+      "ws/.codexclaw/bg/a1.json": {
+        "id": "a1",
+        "sessionId": "rec-s1",
+        "adoptedBy": null,
+        "cwd": "${WS}",
+        "command": [
+          "npm",
+          "run",
+          "build"
+        ],
+        "note": null,
+        "pid": null,
+        "startToken": null,
+        "status": "complete",
+        "exitCode": 0,
+        "startedAt": "2025-12-31T23:50:00.000Z",
+        "endedAt": "2025-12-31T23:54:12.000Z",
+        "deliveredAt": "2025-12-31T23:55:00.000Z"
+      },
+      "ws/.codexclaw/bg/a2.json": {
+        "id": "a2",
+        "sessionId": "rec-s1",
+        "adoptedBy": null,
+        "cwd": "${WS}",
+        "command": [
+          "sh",
+          "-c",
+          "exit 2"
+        ],
+        "note": null,
+        "pid": null,
+        "startToken": null,
+        "status": "failed",
+        "exitCode": 2,
+        "startedAt": "2025-12-31T22:00:00.000Z",
+        "endedAt": "2025-12-31T22:00:09.000Z",
+        "deliveredAt": null
+      },
+      "ws/.codexclaw/bg/a3.json": {
+        "id": "a3",
+        "sessionId": "rec-s1",
+        "adoptedBy": null,
+        "cwd": "${WS}",
+        "command": [
+          "npm",
+          "run",
+          "build"
+        ],
+        "note": null,
+        "pid": null,
+        "startToken": null,
+        "status": "running",
+        "exitCode": null,
+        "startedAt": "2025-12-31T23:50:00.000Z",
+        "endedAt": null,
+        "deliveredAt": null
+      },
+      "ws/.codexclaw/bg/a4.json": {
+        "id": "a4",
+        "sessionId": "rec-s9",
+        "adoptedBy": null,
+        "cwd": "${WS}",
+        "command": [
+          "npm",
+          "run",
+          "build"
+        ],
+        "note": "other session",
+        "pid": null,
+        "startToken": null,
+        "status": "complete",
+        "exitCode": 0,
+        "startedAt": "2025-12-31T23:50:00.000Z",
+        "endedAt": "2025-12-31T23:54:12.000Z",
+        "deliveredAt": null
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "bg",
+          "list"
+        ]
+      },
+      {
+        "cli": [
+          "bg",
+          "list",
+          "--json"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "- a1 (complete, exit 0, 4m12s) — npm run build  [전달됨]\n- a2 (failed, exit 2, 9s) — sh -c exit 2  [미전달]\n- a3 (complete, exit 0, 10m00s) — npm run build  [미전달]\n- a4 (complete, exit 0, 4m12s) — npm run build  [미전달]\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": [
+          {
+            "id": "a1",
+            "sessionId": "rec-s1",
+            "adoptedBy": null,
+            "cwd": "${WS}",
+            "command": [
+              "npm",
+              "run",
+              "build"
+            ],
+            "note": null,
+            "pid": null,
+            "startToken": null,
+            "status": "complete",
+            "exitCode": 0,
+            "startedAt": "<TS>",
+            "endedAt": "<TS>",
+            "deliveredAt": "<TS>"
+          },
+          {
+            "id": "a2",
+            "sessionId": "rec-s1",
+            "adoptedBy": null,
+            "cwd": "${WS}",
+            "command": [
+              "sh",
+              "-c",
+              "exit 2"
+            ],
+            "note": null,
+            "pid": null,
+            "startToken": null,
+            "status": "failed",
+            "exitCode": 2,
+            "startedAt": "<TS>",
+            "endedAt": "<TS>",
+            "deliveredAt": null
+          },
+          {
+            "id": "a3",
+            "sessionId": "rec-s1",
+            "adoptedBy": null,
+            "cwd": "${WS}",
+            "command": [
+              "npm",
+              "run",
+              "build"
+            ],
+            "note": null,
+            "pid": null,
+            "startToken": null,
+            "status": "complete",
+            "exitCode": 0,
+            "startedAt": "<TS>",
+            "endedAt": "<TS>",
+            "deliveredAt": null
+          },
+          {
+            "id": "a4",
+            "sessionId": "rec-s9",
+            "adoptedBy": null,
+            "cwd": "${WS}",
+            "command": [
+              "npm",
+              "run",
+              "build"
+            ],
+            "note": "other session",
+            "pid": null,
+            "startToken": null,
+            "status": "complete",
+            "exitCode": 0,
+            "startedAt": "<TS>",
+            "endedAt": "<TS>",
+            "deliveredAt": null
+          }
+        ],
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/bg": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/bg/a1.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "id": "a1",
+          "sessionId": "rec-s1",
+          "adoptedBy": null,
+          "cwd": "${WS}",
+          "command": [
+            "npm",
+            "run",
+            "build"
+          ],
+          "note": null,
+          "pid": null,
+          "startToken": null,
+          "status": "complete",
+          "exitCode": 0,
+          "startedAt": "<TS>",
+          "endedAt": "<TS>",
+          "deliveredAt": "<TS>"
+        }
+      },
+      "ws/.codexclaw/bg/a2.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "id": "a2",
+          "sessionId": "rec-s1",
+          "adoptedBy": null,
+          "cwd": "${WS}",
+          "command": [
+            "sh",
+            "-c",
+            "exit 2"
+          ],
+          "note": null,
+          "pid": null,
+          "startToken": null,
+          "status": "failed",
+          "exitCode": 2,
+          "startedAt": "<TS>",
+          "endedAt": "<TS>",
+          "deliveredAt": null
+        }
+      },
+      "ws/.codexclaw/bg/a3.exit": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": 0
+      },
+      "ws/.codexclaw/bg/a3.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty",
+        "json": {
+          "id": "a3",
+          "sessionId": "rec-s1",
+          "adoptedBy": null,
+          "cwd": "${WS}",
+          "command": [
+            "npm",
+            "run",
+            "build"
+          ],
+          "note": null,
+          "pid": null,
+          "startToken": null,
+          "status": "complete",
+          "exitCode": 0,
+          "startedAt": "<TS>",
+          "endedAt": "<TS>",
+          "deliveredAt": null
+        }
+      },
+      "ws/.codexclaw/bg/a4.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "id": "a4",
+          "sessionId": "rec-s9",
+          "adoptedBy": null,
+          "cwd": "${WS}",
+          "command": [
+            "npm",
+            "run",
+            "build"
+          ],
+          "note": "other session",
+          "pid": null,
+          "startToken": null,
+          "status": "complete",
+          "exitCode": 0,
+          "startedAt": "<TS>",
+          "endedAt": "<TS>",
+          "deliveredAt": null
+        }
+      },
+      "ws/.codexclaw/bg/ledger.jsonl": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "at": "<TS>",
+          "event": "completed",
+          "id": "a3",
+          "exitCode": 0
+        }
+      }
+    },
+    "calls": []
+  }
+}

@@ -1,0 +1,67 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/session",
+    "A/pabcd-state/session-binding.test.ts"
+  ],
+  "note": "Without CODEX_THREAD_ID: current reports no native identity (hooksVerified false) and bind refuses.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "session",
+          "current"
+        ]
+      },
+      {
+        "cli": [
+          "session",
+          "current",
+          "--json"
+        ]
+      },
+      {
+        "cli": [
+          "session",
+          "bind",
+          "--json"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 1,
+    "steps": [
+      {
+        "exit": 1,
+        "stdout_form": "text",
+        "stdout": "CODEX_THREAD_ID is absent. Run this command inside the native Codex session.\nhooksVerified: false\n",
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "ok": false,
+          "error": "CODEX_THREAD_ID is absent. Run this command inside the native Codex session.",
+          "hooksVerified": false
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "ok": false,
+          "error": "CODEX_THREAD_ID is absent. Run this command inside the native Codex session.",
+          "hooksVerified": false
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

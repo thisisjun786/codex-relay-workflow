@@ -1,0 +1,172 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/bg/status",
+    "K6/bg/off",
+    "K6/bg/on",
+    "K8/ws/.codexclaw/bg",
+    "A/bg-wake/cli.test.ts"
+  ],
+  "note": "status (ON), off (writes disabled + ledger), status (OFF with since), on (removes disabled, writes enabled-at), on again (already ON, gate not moved), status.",
+  "given": {
+    "json": {
+      "ws/.codexclaw/bg/c1.json": {
+        "id": "c1",
+        "sessionId": "rec-s1",
+        "adoptedBy": null,
+        "cwd": "${WS}",
+        "command": [
+          "npm",
+          "run",
+          "build"
+        ],
+        "note": null,
+        "pid": null,
+        "startToken": null,
+        "status": "complete",
+        "exitCode": 0,
+        "startedAt": "2025-12-31T23:50:00.000Z",
+        "endedAt": "2025-12-31T23:54:12.000Z",
+        "deliveredAt": null
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "bg",
+          "status"
+        ]
+      },
+      {
+        "cli": [
+          "bg",
+          "off"
+        ]
+      },
+      {
+        "cli": [
+          "bg",
+          "status"
+        ]
+      },
+      {
+        "cli": [
+          "bg",
+          "on"
+        ]
+      },
+      {
+        "cli": [
+          "bg",
+          "on"
+        ]
+      },
+      {
+        "cli": [
+          "bg",
+          "status"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "wake: ON\n  파일 플래그: on\n  CXC_BGWAKE: unset/on\n  작업 1건\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "bg wake OFF (이 워크트리). 다시 켜려면: cxc bg on\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "wake: OFF\n  파일 플래그: off (<TS>)\n  CXC_BGWAKE: unset/on\n  작업 1건\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "bg wake ON. 꺼져 있는 동안 끝난 작업은 웨이크하지 않고 cxc bg list 에만 남습니다.\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "bg wake 이미 ON\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "wake: ON\n  파일 플래그: on\n  CXC_BGWAKE: unset/on\n  작업 1건\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/bg": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/bg/c1.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "id": "c1",
+          "sessionId": "rec-s1",
+          "adoptedBy": null,
+          "cwd": "${WS}",
+          "command": [
+            "npm",
+            "run",
+            "build"
+          ],
+          "note": null,
+          "pid": null,
+          "startToken": null,
+          "status": "complete",
+          "exitCode": 0,
+          "startedAt": "<TS>",
+          "endedAt": "<TS>",
+          "deliveredAt": null
+        }
+      },
+      "ws/.codexclaw/bg/enabled-at": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "<TS>\n"
+      },
+      "ws/.codexclaw/bg/ledger.jsonl": {
+        "type": "file",
+        "mode": "0644",
+        "form": "jsonl",
+        "jsonl": [
+          {
+            "at": "<TS>",
+            "event": "disabled"
+          },
+          {
+            "at": "<TS>",
+            "event": "enabled"
+          }
+        ]
+      }
+    },
+    "calls": []
+  }
+}

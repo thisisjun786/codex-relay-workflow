@@ -1,6 +1,6 @@
 ---
 name: crw-run
-description: "Coordinate one Linear project through independent issue children, parallel delivery, verification, integration and successors. The project parent holds no goal by default: it ends its turn when only waiting remains and a delivered relay event resumes it. Also supervises an initiative's approved projects through their existing parents, and handles binding/recovery and explicit narrower operations. Use crw-loop only where the user explicitly wants a parent goal, crw-plan for planning, and crw-check for intent drift. Formerly linear-run."
+description: "Coordinate one Linear project through independent issue children, parallel delivery, verification, integration and successors. The project parent holds no goal by default: it ends its turn when only waiting remains and a delivered relay event resumes it. Also supervises an initiative's approved projects through their existing parents, and handles binding/recovery and explicit narrower operations. Use crw-loop only where the user explicitly wants a parent goal, crw-plan for planning, and crw-check for intent drift."
 ---
 
 # CRW Run

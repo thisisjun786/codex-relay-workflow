@@ -1,0 +1,35 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/subagents/help",
+    "K6/exit-codes",
+    "A/plugin/cli-usage.test.mjs"
+  ],
+  "note": "`cxc subagents register --help`: whether the subcommand treats --help as help, and what it writes.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "subagents",
+          "register",
+          "--help"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 1,
+    "steps": [
+      {
+        "exit": 1,
+        "stdout_form": "text",
+        "stdout": "subagents: usage: subagents register executor|architect\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

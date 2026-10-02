@@ -1,0 +1,160 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/pre-tool-use-attaching-skills",
+    "K5/hook-rendered",
+    "A/subagent-config/spawn-attach-hook.test.ts"
+  ],
+  "note": "Conservative line-based normalisation: inline code, fenced code, unknown folders, boundary-extended and mixed-case tokens, and a bare mention sharing a line with a link stay verbatim (step 0); a line that is exactly one known-skill link with a broken target is atomically replaced by the canonical link, also behind a list-marker prefix, while an unknown-folder link stays verbatim (step 1).",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "pre-tool-use-attaching-skills",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "spawn_agent",
+          "tool_input": {
+            "message": "inline `$cxc-orchestrate` stays\n```\n$cxc-orchestrate in a fence\n```\n$cxc-nosuch is unknown\n$cxc-orchestrate_x is boundary-extended\n$CXC-orchestrate is mixed case\nsee [docs](https://example.invalid) and $cxc-orchestrate",
+            "agent_type": "explorer"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-attaching-skills",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "spawn_agent",
+          "tool_input": {
+            "message": "[$cxc-orchestrate](skill:///nowhere/SKILL.md)\n- [$codexclaw:cxc-goalplan](broken-target)\n[$cxc-nosuch](skill:///nowhere/SKILL.md)",
+            "agent_type": "explorer"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+            "updatedInput": {
+              "message": "[CXC-SUBAGENT-SCOPE] This is one bounded delegated task. The parent\nowns cxc orchestration, loop, and goal state; do not invoke those\ncommands. Stay within the stated file/write scope and report any\nrequired expansion.\nYou run in the parent's own working directory, on its branch and HEAD - not a\ncopy - so your edits are the parent's uncommitted changes. Do not run\nbranch-level git commands (checkout, switch, branch, stash, reset, rebase,\nmerge, pull); another agent may be working in the same tree.\n\ninline `$cxc-orchestrate` stays\n```\n$cxc-orchestrate in a fence\n```\n$cxc-nosuch is unknown\n$cxc-orchestrate_x is boundary-extended\n$CXC-orchestrate is mixed case\nsee [docs](https://example.invalid) and $cxc-orchestrate",
+              "agent_type": "explorer"
+            }
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+            "updatedInput": {
+              "message": "[CXC-SUBAGENT-SCOPE] This is one bounded delegated task. The parent\nowns cxc orchestration, loop, and goal state; do not invoke those\ncommands. Stay within the stated file/write scope and report any\nrequired expansion.\nYou run in the parent's own working directory, on its branch and HEAD - not a\ncopy - so your edits are the parent's uncommitted changes. Do not run\nbranch-level git commands (checkout, switch, branch, stash, reset, rebase,\nmerge, pull); another agent may be working in the same tree.\n\n[$cxc-orchestrate](skill://${PLUGIN_ROOT}/skills/orchestrate/SKILL.md)\n- [$cxc-goalplan](skill://${PLUGIN_ROOT}/skills/goalplan/SKILL.md)\n[$cxc-nosuch](skill:///nowhere/SKILL.md)",
+              "agent_type": "explorer"
+            }
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      }
+    },
+    "calls": [
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

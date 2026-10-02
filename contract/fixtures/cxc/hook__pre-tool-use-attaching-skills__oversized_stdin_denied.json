@@ -1,0 +1,57 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/pre-tool-use-attaching-skills",
+    "A/subagent-config/spawn-attach-hook.test.ts"
+  ],
+  "note": "Hook stdin over 4 MiB is denied before JSON parsing (the payload is one valid JSON document padded with spaces) and no hook observation is recorded.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "pre-tool-use-attaching-skills",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "spawn_agent",
+          "tool_input": {
+            "message": "big",
+            "agent_type": "explorer"
+          },
+          "tool_use_id": "rec-call-1"
+        },
+        "stdin_pad": 4194305
+      }
+    ],
+    "observe": [
+      "ws",
+      "codex",
+      "cxc",
+      "home",
+      "tmp",
+      "codex/codexclaw/hook-observations"
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "codexclaw spawn policy input exceeded 4 MiB; refusing to bypass the recursion and trust boundary"
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

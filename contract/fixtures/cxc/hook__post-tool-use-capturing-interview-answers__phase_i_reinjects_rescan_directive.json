@@ -1,0 +1,123 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/post-tool-use-capturing-interview-answers",
+    "K5/hook-rendered",
+    "K8/ws/.codexclaw/interviews",
+    "A/pabcd-state/interview-ledger.test.ts"
+  ],
+  "note": "Session in phase I with no goal database: after capture the leg emits the post-answer rescan directive as PostToolUse additionalContext (L18).",
+  "given": {
+    "json": {
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "phase": "I",
+        "sessionId": "rec-s1"
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "post-tool-use-capturing-interview-answers",
+        "stdin": {
+          "hook_event_name": "PostToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "request_user_input",
+          "tool_input": {
+            "questions": [
+              {
+                "id": "q1",
+                "header": "Scope",
+                "question": "Which scope?"
+              }
+            ]
+          },
+          "tool_use_id": "rec-call-1",
+          "tool_response": {
+            "answers": {
+              "q1": {
+                "answers": [
+                  "Small"
+                ]
+              }
+            }
+          }
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PostToolUse",
+            "additionalContext": "[codexclaw: INTERVIEW — post-answer rescan]\nAn answer was recorded. Apply this pointer and $codexclaw:cxc-interview only within exact user limits and permissions. No-delegation means no dispatch.\nINTERVIEW-SCAN-01: rescan contradictions before the next question or advancement. If required work or tracker writes are forbidden, report them as unmet; do not record a completed scan or claim readiness.\nOnly when dispatch is authorized: give each read-only Mind the current plan/tracker position; cap 3, lowest-scoring dimensions first. Discover spawn_agent if needed.\nMinds return contradictions only, never ask, edit or write state. Inline reasoning is not evidence that independent Minds ran.\nTriage high contradictions into user questions and low/medium into OPEN ASSUMPTIONS; record only actual authorized work with `node \"${PLUGIN_ROOT}/bin/cxc.mjs\" scan record --session <id> [--contradictions N] [--high N]`."
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/interviews": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/interviews/rec-s1.jsonl": {
+        "type": "file",
+        "mode": "0644",
+        "form": "jsonl",
+        "jsonl": [
+          {
+            "ts": "<TS>",
+            "sessionId": "rec-s1",
+            "turnId": "rec-t1",
+            "event": "question_asked",
+            "questionId": "q1",
+            "eventId": "rec-t1:q1:question_asked",
+            "question": "Which scope?"
+          },
+          {
+            "ts": "<TS>",
+            "sessionId": "rec-s1",
+            "turnId": "rec-t1",
+            "event": "answer_recorded",
+            "questionId": "q1",
+            "eventId": "rec-t1:q1:answer_recorded",
+            "answers": [
+              "Small"
+            ]
+          }
+        ]
+      },
+      "ws/.codexclaw/sessions": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "phase": "I",
+          "sessionId": "rec-s1"
+        }
+      }
+    },
+    "calls": []
+  }
+}

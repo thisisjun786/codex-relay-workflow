@@ -1,0 +1,47 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/status/run",
+    "K12/codex"
+  ],
+  "note": "`cxc status` when `codex features list` exits 1: the thrown error is unhandled, so Node prints a stack trace and the status is 1.",
+  "given": {
+    "stubs": {
+      "codex": {
+        "stderr": "codex: config parse error\n",
+        "exit": 1
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "status"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 1,
+    "steps": [
+      {
+        "exit": 1,
+        "stdout_form": "empty",
+        "stderr": "file://${PLUGIN_ROOT}/components/config-guard/dist/features.js:82\n    throw new Error(`codex features list failed (exit ${res.exitCode}): ${res.stderr.trim()}`);\n          ^\n\nError: codex features list failed (exit 1): codex: config parse error\n    at readDeclaredState (file://${PLUGIN_ROOT}/components/config-guard/dist/features.js:82:11)\n    at main (file://${PLUGIN_ROOT}/components/config-guard/dist/cli.js:259:21)\n    at file://${PLUGIN_ROOT}/components/config-guard/dist/cli.js:288:16\n    at ModuleJob.run (node:internal/modules/esm/module_job:561:25)\n    at async node:internal/modules/esm/loader:647:26\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)\n\nNode.js v24.20.0\n"
+      }
+    ],
+    "tree": {},
+    "calls": [
+      {
+        "cmd": "codex",
+        "argv": [
+          "features",
+          "list"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

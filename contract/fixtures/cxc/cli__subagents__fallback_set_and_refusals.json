@@ -1,0 +1,186 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/subagents/set",
+    "K7/subagents",
+    "K8/cxc-home/subagents.json",
+    "A/subagent-config/fallback-config.test.ts"
+  ],
+  "note": "Fallback flags: set a first fallback with effort; --clear-fallback combined with a fallback flag is refused; a fallback equal to the primary model is refused; an effort-only fallback without a model is refused; --clear-fallback clears it.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "subagents",
+          "set",
+          "executor",
+          "--mode",
+          "model",
+          "--model",
+          "rec/exec-primary",
+          "--fallback-model",
+          "rec/exec-fallback",
+          "--fallback-effort",
+          "low",
+          "--global"
+        ]
+      },
+      {
+        "cli": [
+          "subagents",
+          "set",
+          "executor",
+          "--clear-fallback",
+          "--fallback-model",
+          "rec/other",
+          "--global"
+        ]
+      },
+      {
+        "cli": [
+          "subagents",
+          "set",
+          "executor",
+          "--fallback-model",
+          "rec/exec-primary",
+          "--global"
+        ]
+      },
+      {
+        "cli": [
+          "subagents",
+          "set",
+          "reviewer",
+          "--fallback-effort",
+          "low",
+          "--global"
+        ]
+      },
+      {
+        "cli": [
+          "subagents",
+          "set",
+          "executor",
+          "--fallback-effort",
+          "inherit",
+          "--global"
+        ]
+      },
+      {
+        "cli": [
+          "subagents",
+          "set",
+          "executor",
+          "--clear-fallback",
+          "--global"
+        ]
+      },
+      {
+        "cli": [
+          "subagents",
+          "get",
+          "executor",
+          "--global"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-pretty",
+        "stdout_json": {
+          "mode": "model",
+          "model": "rec/exec-primary",
+          "effort": null,
+          "promptOverride": null,
+          "fallback": {
+            "model": "rec/exec-fallback",
+            "effort": "low"
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "text",
+        "stdout": "subagents: --clear-fallback cannot be combined with fallback settings\n",
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "text",
+        "stdout": "subagents: fallback model must differ from the primary model\n",
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "text",
+        "stdout": "subagents: fallback requires a non-empty model id\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-pretty",
+        "stdout_json": {
+          "mode": "model",
+          "model": "rec/exec-primary",
+          "effort": null,
+          "promptOverride": null,
+          "fallback": {
+            "model": "rec/exec-fallback",
+            "effort": null
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-pretty",
+        "stdout_json": {
+          "mode": "model",
+          "model": "rec/exec-primary",
+          "effort": null,
+          "promptOverride": null,
+          "fallback": null
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-pretty",
+        "stdout_json": {
+          "mode": "model",
+          "model": "rec/exec-primary",
+          "effort": null,
+          "promptOverride": null,
+          "fallback": null
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "cxc/subagents.json": {
+        "type": "file",
+        "mode": "0600",
+        "form": "json-pretty",
+        "json": {
+          "roles": {
+            "executor": {
+              "mode": "model",
+              "model": "rec/exec-primary",
+              "effort": null,
+              "promptOverride": null,
+              "fallback": null
+            }
+          }
+        }
+      }
+    },
+    "calls": []
+  }
+}

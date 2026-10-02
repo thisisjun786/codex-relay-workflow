@@ -1,0 +1,27 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/top-level/help"
+  ],
+  "note": "No verb defaults to help.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {}
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "cxc — codexclaw operator CLI\n\nUsage:\n  cxc <command> [args]\n  cxc --help\n\nCore:\n  enable                         activate declared Codex feature flags\n  disable | uninstall            revert flags codexclaw enabled when safe\n  status                         show declared feature-flag state\n  doctor                         run plugin health checks\n  reset                          remove scoped .codexclaw state/generated files\n  hooks retrust                  re-trust plugin hook hashes after editing hook JSONs\n\nPABCD / loop:\n  session current|bind           verify native identity or recover missing FSM state\n  orchestrate <verb>             drive IPABCD state (try: cxc orchestrate --help)\n  freeze                         freeze the interview plan and show goal handoff\n  loop <verb>                     manage the full project-local goalplan verb set\n  goalplan <verb>                 deprecated alias for loop <verb>\n  plan init <slug> [--phases N]   scaffold the devlog/_plan unit the P>A gate verifies\n  receipt test -- <command>       produce the test receipt a bound C>D requires\n  evidence resolve               settle an unverified subagent verdict (needs --receipt)\n  review-round open|show|abort    the opt-in A-gate plan-audit round\n  scan record|show                record interview coverage and contradiction scans\n  metric                         record/show objective metrics\n  divergence                     record divergence mode and candidate archive state\n\nWorkspace intelligence:\n  map [dir]                      generate a ranked repo structure map\n  chat search \"query\"             search Codex chat history\n  memory search \"query\"           search Codex memories\n  memory allow-write --session <id> grant one cwd-scoped memory write\n  skill search|show              search and display dormant skills\n\nOperations:\n  subagents                      read/write per-role subagent model+prompt config\n  provider                       show read-only opencodex provider status\n  bg run|list|get|off            background tasks + completion wake (cxc bg removal to uninstall)\n  serve                          run the bridge server\n  service                        install/uninstall/status the serve daemon\n  gui                            launch the web dashboard\n\nAgent notes:\n  Mutating PABCD commands require the current session id: cxc orchestrate P --session <id>\n  Every --attest object names the edge it advances: {\"from\":\"<phase>\",\"to\":\"<phase>\",\"did\":\"...\"}\n  plus that edge's keys. Run cxc orchestrate --help for the per-edge examples.\n  Use --json only on subcommands that document it, such as orchestrate status --json.\n  For command-specific help, start with: cxc orchestrate --help or cxc map --help.\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

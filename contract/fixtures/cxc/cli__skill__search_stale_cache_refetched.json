@@ -1,0 +1,79 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/skill/search",
+    "K14/skill-search",
+    "K8/cxc-home/skill-cache",
+    "K13/CODEXCLAW_HOME"
+  ],
+  "note": "A stale jaw cache with a reachable registry: the catalog is refetched, the cache file is rewritten with the new text, and the new row is answered.",
+  "given": {
+    "files": {
+      "cxc/skill-cache/jaw-aHR0cHM6Ly9yYXcuZ2l0aHVi.cache": "{\n  \"skills\": {\n    \"telegram-send\": {\n      \"name\": \"Telegram Send\",\n      \"description\": \"send telegram messages\",\n      \"category\": \"communication\",\n      \"requires\": {\n        \"bins\": [\n          \"curl\"\n        ]\n      }\n    },\n    \"tdd\": {\n      \"name\": \"TDD\",\n      \"description\": \"test driven development loop\",\n      \"superseded_by\": \"dev-testing\"\n    },\n    \"dev-testing\": {\n      \"name\": \"Dev Testing\",\n      \"description\": \"testing discipline for development\",\n      \"status\": \"active\"\n    }\n  }\n}\n"
+    },
+    "mtimes": {
+      "cxc/skill-cache/jaw-aHR0cHM6Ly9yYXcuZ2l0aHVi.cache": "2025-12-31T00:00:00Z"
+    },
+    "fetch": {
+      "https://raw.githubusercontent.com/lidge-jun/cli-jaw-skills/main/registry.json": {
+        "status": 200,
+        "body": "{\"skills\": {\"telegram-send\": {\"name\": \"Telegram Send\", \"description\": \"send telegram messages v2\"}}}\n"
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "skill",
+          "search",
+          "telegram",
+          "--json"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-pretty",
+        "stdout_json": [
+          {
+            "id": "telegram-send",
+            "source": "jaw",
+            "name": "Telegram Send",
+            "description": "send telegram messages v2",
+            "rawUrl": "https://raw.githubusercontent.com/lidge-jun/cli-jaw-skills/main/telegram-send/SKILL.md",
+            "score": 11
+          }
+        ],
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "cxc/skill-cache": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "cxc/skill-cache/jaw-aHR0cHM6Ly9yYXcuZ2l0aHVi.cache": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "{\"skills\": {\"telegram-send\": {\"name\": \"Telegram Send\", \"description\": \"send telegram messages v2\"}}}\n"
+      }
+    },
+    "calls": [
+      {
+        "cmd": "fetch",
+        "argv": [
+          "GET",
+          "https://raw.githubusercontent.com/lidge-jun/cli-jaw-skills/main/registry.json"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

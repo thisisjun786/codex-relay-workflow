@@ -1,0 +1,162 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/pre-tool-use-linting-apply-patch",
+    "K5/hook-rendered",
+    "A/pabcd-state/comment-lint.test.ts"
+  ],
+  "note": "Issue #196: prose targets (.md, uppercase .TXT, Move to .md) are exempt; a mixed patch is still denied for its source hunk; an added line with no known target is scanned; a CRLF source patch denies.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "pre-tool-use-linting-apply-patch",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "apply_patch",
+          "tool_input": {
+            "command": "*** Begin Patch\n*** Add File: docs/report.md\n+This bug was filed as any other report, and eval (the word) is fine.\n*** End Patch\n"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-linting-apply-patch",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "apply_patch",
+          "tool_input": {
+            "command": "*** Add File: NOTES.TXT\n+use debugger statements sparingly\n"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-linting-apply-patch",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "apply_patch",
+          "tool_input": {
+            "command": "*** Move to: docs/moved.md\n+as any reader knows\n"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-linting-apply-patch",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "apply_patch",
+          "tool_input": {
+            "command": "*** Add File: docs/report.md\n+as any reader knows\n*** Update File: src/x.ts\n+const v = foo as any;\n"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-linting-apply-patch",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "apply_patch",
+          "tool_input": {
+            "command": "+const v = foo as any;\n"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-linting-apply-patch",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "apply_patch",
+          "tool_input": {
+            "command": "*** Add File: src/x.ts\r\n+debugger;\r\n"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "[codexclaw comment-lint] `as any` cast — use a precise type or add a trailing `// justified: <reason>` to opt out (line: const v = foo as any;)"
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "[codexclaw comment-lint] `as any` cast — use a precise type or add a trailing `// justified: <reason>` to opt out (line: const v = foo as any;)"
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "[codexclaw comment-lint] `debugger` statement — remove before committing or add `// justified: <reason>` (line: debugger;)"
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      }
+    },
+    "calls": []
+  }
+}

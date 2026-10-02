@@ -1,0 +1,142 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/bg/get",
+    "K8/ws/.codexclaw/bg",
+    "A/bg-wake/cli.test.ts"
+  ],
+  "note": "`bg get <id>` prints the record line and the output tail (default 20, --tail N), --tail 0 prints only the record; a missing id exits 1.",
+  "given": {
+    "files": {
+      "ws/.codexclaw/bg/b1.out": "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10\nline 11\nline 12\nline 13\nline 14\nline 15\nline 16\nline 17\nline 18\nline 19\nline 20\nline 21\nline 22\nline 23\nline 24\nline 25\n"
+    },
+    "json": {
+      "ws/.codexclaw/bg/b1.json": {
+        "id": "b1",
+        "sessionId": "rec-s1",
+        "adoptedBy": null,
+        "cwd": "${WS}",
+        "command": [
+          "npm",
+          "run",
+          "build"
+        ],
+        "note": null,
+        "pid": null,
+        "startToken": null,
+        "status": "complete",
+        "exitCode": 0,
+        "startedAt": "2025-12-31T23:50:00.000Z",
+        "endedAt": "2025-12-31T23:54:12.000Z",
+        "deliveredAt": null
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "bg",
+          "get",
+          "b1"
+        ]
+      },
+      {
+        "cli": [
+          "bg",
+          "get",
+          "b1",
+          "--tail",
+          "3"
+        ]
+      },
+      {
+        "cli": [
+          "bg",
+          "get",
+          "b1",
+          "--tail",
+          "0"
+        ]
+      },
+      {
+        "cli": [
+          "bg",
+          "get",
+          "nope"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 1,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "- b1 (complete, exit 0, 4m12s) — npm run build\n\nline 7\nline 8\nline 9\nline 10\nline 11\nline 12\nline 13\nline 14\nline 15\nline 16\nline 17\nline 18\nline 19\nline 20\nline 21\nline 22\nline 23\nline 24\nline 25\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "- b1 (complete, exit 0, 4m12s) — npm run build\n\nline 24\nline 25\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "- b1 (complete, exit 0, 4m12s) — npm run build\n",
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "text",
+        "stdout": "없는 id: nope\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/bg": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/bg/b1.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "id": "b1",
+          "sessionId": "rec-s1",
+          "adoptedBy": null,
+          "cwd": "${WS}",
+          "command": [
+            "npm",
+            "run",
+            "build"
+          ],
+          "note": null,
+          "pid": null,
+          "startToken": null,
+          "status": "complete",
+          "exitCode": 0,
+          "startedAt": "<TS>",
+          "endedAt": "<TS>",
+          "deliveredAt": null
+        }
+      },
+      "ws/.codexclaw/bg/b1.out": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10\nline 11\nline 12\nline 13\nline 14\nline 15\nline 16\nline 17\nline 18\nline 19\nline 20\nline 21\nline 22\nline 23\nline 24\nline 25\n"
+      }
+    },
+    "calls": []
+  }
+}

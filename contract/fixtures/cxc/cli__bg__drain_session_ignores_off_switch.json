@@ -1,0 +1,185 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/bg/drain",
+    "K7/bg",
+    "K8/ws/.codexclaw/bg",
+    "A/bg-wake/cli.test.ts"
+  ],
+  "note": "`bg drain --session` collects and stamps undelivered completions even while the wake is off (--json envelope), then reports none left; without --session it prints usage and exits 1.",
+  "given": {
+    "files": {
+      "ws/.codexclaw/bg/disabled": "2025-12-31T00:00:00.000Z\n"
+    },
+    "json": {
+      "ws/.codexclaw/bg/e1.json": {
+        "id": "e1",
+        "sessionId": "rec-s1",
+        "adoptedBy": null,
+        "cwd": "${WS}",
+        "command": [
+          "npm",
+          "run",
+          "build"
+        ],
+        "note": null,
+        "pid": null,
+        "startToken": null,
+        "status": "complete",
+        "exitCode": 0,
+        "startedAt": "2025-12-31T23:50:00.000Z",
+        "endedAt": "2025-12-31T23:54:12.000Z",
+        "deliveredAt": null
+      },
+      "ws/.codexclaw/bg/e2.json": {
+        "id": "e2",
+        "sessionId": "rec-s2",
+        "adoptedBy": null,
+        "cwd": "${WS}",
+        "command": [
+          "npm",
+          "run",
+          "build"
+        ],
+        "note": null,
+        "pid": null,
+        "startToken": null,
+        "status": "complete",
+        "exitCode": 0,
+        "startedAt": "2025-12-31T23:50:00.000Z",
+        "endedAt": "2025-12-31T23:54:12.000Z",
+        "deliveredAt": null
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "bg",
+          "drain",
+          "--session",
+          "rec-s1",
+          "--json"
+        ]
+      },
+      {
+        "cli": [
+          "bg",
+          "drain",
+          "--session",
+          "rec-s1"
+        ]
+      },
+      {
+        "cli": [
+          "bg",
+          "drain"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 1,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "delivered": true,
+          "text": "[codexclaw bg] 백그라운드 작업 1건이 끝났습니다.\n- e1 (complete, exit 0, 4m12s) — npm run build\n출력은 `cxc bg get <id> --tail 40`으로 봅니다. 전체 목록은 `cxc bg list`.\n결과를 확인하고 필요한 후속 작업을 이어가세요."
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "미전달 완료 없음\n",
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "text",
+        "stdout": "cxc bg run [--note \"...\"] -- <command...>   백그라운드로 실행하고 id를 반환\ncxc bg list [--json]                        이 디렉터리의 백그라운드 작업\ncxc bg get <id> [--tail N]                  상태와 출력 꼬리\ncxc bg cancel <id>                          중지\ncxc bg off | on | status                    완료 웨이크 스위치 (이 워크트리)\ncxc bg drain --session <id> [--json]        미전달 완료를 받아가고 전달 표시\ncxc bg removal                              제거 체크리스트\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/bg": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/bg/disabled": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "<TS>\n"
+      },
+      "ws/.codexclaw/bg/e1.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty",
+        "json": {
+          "id": "e1",
+          "sessionId": "rec-s1",
+          "adoptedBy": null,
+          "cwd": "${WS}",
+          "command": [
+            "npm",
+            "run",
+            "build"
+          ],
+          "note": null,
+          "pid": null,
+          "startToken": null,
+          "status": "complete",
+          "exitCode": 0,
+          "startedAt": "<TS>",
+          "endedAt": "<TS>",
+          "deliveredAt": "<TS>"
+        }
+      },
+      "ws/.codexclaw/bg/e2.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "id": "e2",
+          "sessionId": "rec-s2",
+          "adoptedBy": null,
+          "cwd": "${WS}",
+          "command": [
+            "npm",
+            "run",
+            "build"
+          ],
+          "note": null,
+          "pid": null,
+          "startToken": null,
+          "status": "complete",
+          "exitCode": 0,
+          "startedAt": "<TS>",
+          "endedAt": "<TS>",
+          "deliveredAt": null
+        }
+      },
+      "ws/.codexclaw/bg/ledger.jsonl": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "at": "<TS>",
+          "event": "delivered",
+          "id": "e1",
+          "sessionId": "rec-s1"
+        }
+      }
+    },
+    "calls": []
+  }
+}

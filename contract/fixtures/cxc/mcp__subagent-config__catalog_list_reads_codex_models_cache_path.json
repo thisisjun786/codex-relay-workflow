@@ -1,0 +1,134 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K10/tools/call/catalog_list",
+    "K13/CODEX_MODELS_CACHE_PATH"
+  ],
+  "note": "With ocx absent, catalog_list reads the native catalog at CODEX_MODELS_CACHE_PATH instead of CODEX_HOME/models_cache.json (catalog.ts:60).",
+  "given": {
+    "files": {
+      "tmp/elsewhere/models.json": "{\"models\":[{\"slug\":\"rec-model-from-env-path\",\"display_name\":\"Rec Env Model\",\"supported_reasoning_levels\":[{\"effort\":\"low\"},{\"effort\":\"high\"}]}]}\n"
+    },
+    "env": {
+      "CODEX_MODELS_CACHE_PATH": "${TMP}/elsewhere/models.json"
+    },
+    "stubs": {
+      "ocx": null
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "mcp": [
+          {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {}
+          },
+          {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+              "name": "catalog_list",
+              "arguments": {}
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "jsonl",
+        "stdout_jsonl": [
+          {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+              "protocolVersion": "2024-11-05",
+              "capabilities": {
+                "tools": {}
+              },
+              "serverInfo": {
+                "name": "codexclaw-subagent-config",
+                "version": "0.1.1"
+              }
+            }
+          },
+          {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"state\":\"native-catalog\",\"entries\":[{\"id\":\"rec-model-from-env-path\",\"source\":\"native\",\"label\":\"rec-model-from-env-path\",\"reasoningEfforts\":[\"low\",\"high\"]}],\"status\":\"fresh\",\"source\":\"native\",\"fetchedAt\":\"<TS>\"}"
+                }
+              ]
+            }
+          }
+        ],
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "cxc/model-catalog.json": {
+        "type": "file",
+        "mode": "0600",
+        "form": "json-line",
+        "json": {
+          "key": "<CATALOGKEY_1>",
+          "catalog": {
+            "state": "native-catalog",
+            "entries": [
+              {
+                "id": "rec-model-from-env-path",
+                "source": "native",
+                "label": "rec-model-from-env-path",
+                "reasoningEfforts": [
+                  "low",
+                  "high"
+                ]
+              }
+            ],
+            "status": "fresh",
+            "source": "native",
+            "fetchedAt": "<TS>"
+          }
+        }
+      },
+      "tmp/elsewhere": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "tmp/elsewhere/models.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "models": [
+            {
+              "slug": "rec-model-from-env-path",
+              "display_name": "Rec Env Model",
+              "supported_reasoning_levels": [
+                {
+                  "effort": "low"
+                },
+                {
+                  "effort": "high"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "calls": []
+  }
+}

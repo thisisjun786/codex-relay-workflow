@@ -1,0 +1,189 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/subagent-stop-verifying-evidence",
+    "K5/hook-rendered",
+    "K8/ws/.codexclaw/evidence-attempts",
+    "K8/ws/.codexclaw/evidence-unrecordable",
+    "A/pabcd-state/subagent-evidence.test.ts"
+  ],
+  "note": "An executor without an evidence receipt is blocked three times, then released with a tombstone.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "subagent-stop-verifying-evidence",
+        "stdin": {
+          "hook_event_name": "SubagentStop",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "agent_id": "rec-a1",
+          "agent_type": "executor",
+          "last_assistant_message": "Done.",
+          "stop_hook_active": false
+        }
+      },
+      {
+        "hook": "subagent-stop-verifying-evidence",
+        "stdin": {
+          "hook_event_name": "SubagentStop",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "agent_id": "rec-a1",
+          "agent_type": "executor",
+          "last_assistant_message": "Done.",
+          "stop_hook_active": false
+        }
+      },
+      {
+        "hook": "subagent-stop-verifying-evidence",
+        "stdin": {
+          "hook_event_name": "SubagentStop",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "agent_id": "rec-a1",
+          "agent_type": "executor",
+          "last_assistant_message": "Done.",
+          "stop_hook_active": false
+        }
+      },
+      {
+        "hook": "subagent-stop-verifying-evidence",
+        "stdin": {
+          "hook_event_name": "SubagentStop",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "agent_id": "rec-a1",
+          "agent_type": "executor",
+          "last_assistant_message": "Done.",
+          "stop_hook_active": false
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json",
+        "stdout_json": {
+          "decision": "block",
+          "reason": "Your completion is unverified — no evidence receipt was recorded. This is attempt 1 of 3. Actually run the relevant checks (build/tests/commands), write the output and your judgement to a file under `.codexclaw/evidence/`, and make the LAST line of your reply exactly `EVIDENCE_RECORDED: <path>` pointing at that file. Do not claim done without it. If you were dispatched READ-ONLY and cannot write there, say so plainly in your final message: your parent must re-dispatch you as an `explorer` (read-only lanes are not evidence-gated). Do not keep repeating the same answer — this budget is bounded."
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json",
+        "stdout_json": {
+          "decision": "block",
+          "reason": "Your completion is unverified — no evidence receipt was recorded. This is attempt 2 of 3. Actually run the relevant checks (build/tests/commands), write the output and your judgement to a file under `.codexclaw/evidence/`, and make the LAST line of your reply exactly `EVIDENCE_RECORDED: <path>` pointing at that file. Do not claim done without it. If you were dispatched READ-ONLY and cannot write there, say so plainly in your final message: your parent must re-dispatch you as an `explorer` (read-only lanes are not evidence-gated). Do not keep repeating the same answer — this budget is bounded."
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json",
+        "stdout_json": {
+          "decision": "block",
+          "reason": "Your completion is unverified — no evidence receipt was recorded. This is attempt 3 of 3. Actually run the relevant checks (build/tests/commands), write the output and your judgement to a file under `.codexclaw/evidence/`, and make the LAST line of your reply exactly `EVIDENCE_RECORDED: <path>` pointing at that file. Do not claim done without it. If you were dispatched READ-ONLY and cannot write there, say so plainly in your final message: your parent must re-dispatch you as an `explorer` (read-only lanes are not evidence-gated). Do not keep repeating the same answer — this budget is bounded."
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/.gitignore": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n"
+      },
+      "ws/.codexclaw/evidence-attempts": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/evidence-attempts/rec-s1-rec-a1-rec-t1-aa4873d5ee32c85eed08eafe4ad2059e.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "attempts": 3
+        }
+      },
+      "ws/.codexclaw/sessions": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty-nonl",
+        "json": {
+          "phase": "IDLE",
+          "sessionId": "rec-s1",
+          "slug": "",
+          "updatedAt": "<TS>",
+          "flags": {
+            "interview": false,
+            "auditPassed": false,
+            "checkPassed": false
+          },
+          "supersededBy": null,
+          "injectedTurns": [],
+          "lastInjectedPhase": null,
+          "orchestrationActive": false,
+          "interview": null,
+          "stopBlockPhase": null,
+          "stopBlockCount": 0,
+          "stopBlockWorkPhaseId": null,
+          "stopMetricCursor": 0,
+          "stopBlockTotal": 0,
+          "stopBlockTurnId": null,
+          "stopBlockCapNotified": false,
+          "loopArmSeen": false,
+          "idleEditNudges": 0,
+          "memoryWriteRequested": false,
+          "memoryWriteTurn": null,
+          "memoryWriteGrant": false,
+          "unverifiedSubagents": [
+            {
+              "agentId": "rec-a1",
+              "turnId": "rec-t1",
+              "agentType": "executor",
+              "attempts": 3,
+              "receiptClaimed": "",
+              "recordedAt": "<TS>",
+              "resolvable": true
+            }
+          ],
+          "unverifiedCorrupt": false,
+          "phaseEntrySource": null,
+          "planUnit": null,
+          "planEpoch": null,
+          "checkEpoch": null,
+          "dcloseRecovery": null
+        }
+      }
+    },
+    "calls": []
+  }
+}

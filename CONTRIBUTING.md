@@ -45,6 +45,13 @@ git diff --check
 Changes to the runtime (`cmd/`, `internal/`, `contract/`) also need `make lint test`;
 [CI operation](docs/CI.md) lists the parts CI splits that into.
 
+The CXC v0.2.40 behaviour corpus (`contract/fixtures/cxc`) is recorded, not written by hand:
+edit a spec under `contract/schema/cxc/specs/` and run
+`go run -tags dev ./cmd/crw-dev cxc record --oracle <extracted v0.2.40 tree>`, which drives
+the Node oracle in an isolated temporary root and refuses to write a fixture whose two
+recordings differ; `ci contracts` runs `cxc lint` over it. See
+[the corpus README](contract/schema/cxc/README.md).
+
 The Python packages the runtime was ported from left the repository in todo 44; what stays of
 them is the bridge's licence and provenance under `packages/codex-thread-bridge` and the relay's
 documents under `docs/relay`. The CI checks are Go only (`crw-dev ci`); their Python twins left in

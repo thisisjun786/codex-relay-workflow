@@ -1,0 +1,475 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/review-round",
+    "K3/subagent-stop-observing-review",
+    "A/pabcd-state/review-deadlock.test.ts",
+    "K12/git"
+  ],
+  "note": "A reviewer exit without a sign-off and one naming an unknown launch are noted in the goalplan ledger, then the round is aborted.",
+  "given": {
+    "files": {
+      "ws/devlog/_plan/260101_demo/000_plan.md": "# 000 - demo plan\n",
+      "ws/devlog/_plan/260101_demo/010_phase1.md": "# 010 - phase 1\n"
+    },
+    "json": {
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "phase": "IDLE",
+        "sessionId": "rec-s1",
+        "slug": "",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "flags": {
+          "interview": false,
+          "auditPassed": false,
+          "checkPassed": false
+        },
+        "supersededBy": null,
+        "injectedTurns": [],
+        "lastInjectedPhase": null,
+        "orchestrationActive": false,
+        "interview": null,
+        "stopBlockPhase": null,
+        "stopBlockCount": 0,
+        "stopBlockWorkPhaseId": null,
+        "stopMetricCursor": 0,
+        "stopBlockTotal": 0,
+        "stopBlockTurnId": null,
+        "stopBlockCapNotified": false,
+        "loopArmSeen": false,
+        "idleEditNudges": 0,
+        "memoryWriteRequested": false,
+        "memoryWriteTurn": null,
+        "memoryWriteGrant": false,
+        "unverifiedSubagents": [],
+        "unverifiedCorrupt": false,
+        "phaseEntrySource": null,
+        "planUnit": null,
+        "planEpoch": null,
+        "checkEpoch": null,
+        "dcloseRecovery": null
+      }
+    },
+    "git": {
+      "commit": "initial"
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "loop",
+          "init",
+          "--objective",
+          "Ship the export feature",
+          "--session",
+          "rec-s1",
+          "--cwd",
+          "${WS}"
+        ]
+      },
+      {
+        "cli": [
+          "loop",
+          "add-work-phase",
+          "--session",
+          "rec-s1",
+          "--id",
+          "wp1",
+          "--title",
+          "Exporter",
+          "--cwd",
+          "${WS}"
+        ]
+      },
+      {
+        "cli": [
+          "orchestrate",
+          "P",
+          "--session",
+          "rec-s1",
+          "--cwd",
+          "${WS}"
+        ]
+      },
+      {
+        "cli": [
+          "orchestrate",
+          "A",
+          "--session",
+          "rec-s1",
+          "--cwd",
+          "${WS}",
+          "--attest",
+          "{\"from\":\"P\",\"to\":\"A\",\"did\":\"planned\",\"planUnit\":\"devlog/_plan/260101_demo\",\"workPhaseId\":\"wp1\"}"
+        ]
+      },
+      {
+        "cli": [
+          "review-round",
+          "open",
+          "--session",
+          "rec-s1",
+          "--plan-path",
+          "devlog/_plan/260101_demo/000_plan.md",
+          "--cwd",
+          "${WS}"
+        ]
+      },
+      {
+        "hook": "subagent-stop-observing-review",
+        "stdin": {
+          "hook_event_name": "SubagentStop",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "agent_id": "rec-reviewer",
+          "agent_type": "explorer",
+          "last_assistant_message": "Looks fine to me.",
+          "stop_hook_active": false
+        }
+      },
+      {
+        "hook": "subagent-stop-observing-review",
+        "stdin": {
+          "hook_event_name": "SubagentStop",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "agent_id": "rec-reviewer",
+          "agent_type": "explorer",
+          "last_assistant_message": "Reviewed.\nLAUNCH: r9-20260101000000\nVERDICT: PASS",
+          "stop_hook_active": false
+        }
+      },
+      {
+        "cli": [
+          "review-round",
+          "abort",
+          "--session",
+          "rec-s1",
+          "--reason",
+          "reviewer unavailable",
+          "--cwd",
+          "${WS}"
+        ]
+      },
+      {
+        "cli": [
+          "review-round",
+          "show",
+          "--session",
+          "rec-s1",
+          "--cwd",
+          "${WS}"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "[codexclaw loop: ship-the-export-feature]\nobjective: Ship the export feature\nhost: armed=false source=none\nworkPhases: 0 (remaining 0)\ncriteria: 0 (unmet 0)\ncomplete: true\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "[codexclaw loop: ship-the-export-feature]\nobjective: Ship the export feature\nhost: armed=false source=none\nworkPhases: 1 (remaining 1)\ncriteria: 0 (unmet 0)\ncomplete: false\n  - wp1 [pending] Exporter\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "orchestrate P: current=IDLE -> P (IDLE → P, session rec-s1) [formal P: architect proposal -> main executable plan -> same-architect reflection before A (cxc-pabcd phase-plan)]\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "orchestrate A: current=P -> A (P → A, session rec-s1)\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "r1-<STAMP>\n\nRound r1 is in flight over 1 file(s).\nDispatch an independent reviewer (agent_type \"reviewer\" if exposed; otherwise agent_type \"explorer\" with CXC-ROLE: reviewer before TASK:; if the host has no agent_type field, omit agent_type and prepend CXC-ROLE: reviewer before TASK:) and require it to end its\nfinal message with exactly these two lines:\n\n  LAUNCH: r1-<STAMP>\n  VERDICT: PASS | NEAR-PASS | FAIL\n\nThe verdict is recorded when that reviewer exits. There is no way to write it here.\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "review-round abort: r1 closed as inconclusive\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "review-round r1: status=inconclusive staleness=fresh verdict=- launch=r1-<STAMP>\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/goalplans": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "ws/.codexclaw/goalplans/ship-the-export-feature": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "ws/.codexclaw/goalplans/ship-the-export-feature/goalplan.json": {
+        "type": "file",
+        "mode": "0600",
+        "form": "json-pretty-nonl",
+        "json": {
+          "objective": "Ship the export feature",
+          "slug": "ship-the-export-feature",
+          "createdAt": "<TS>",
+          "updatedAt": "<TS>",
+          "activeWorkPhaseId": null,
+          "workPhases": [
+            {
+              "id": "wp1",
+              "title": "Exporter",
+              "status": "pending",
+              "tasks": [],
+              "criteriaIds": []
+            }
+          ],
+          "criteria": [],
+          "host": {
+            "armed": false,
+            "armedAt": null,
+            "source": "none"
+          },
+          "reviewRounds": [
+            {
+              "roundId": "r1",
+              "purpose": "plan_audit",
+              "planPath": "devlog/_plan/260101_demo",
+              "planSha256": "64b841242befaf36312595f3904d8fed5f58c1ab66872882951ec82d8cec3924",
+              "status": "inconclusive",
+              "lane": {
+                "launchId": "r1-<STAMP>",
+                "reviewerSession": "aborted: reviewer unavailable"
+              },
+              "openedAt": "<TS>",
+              "ownerSessionId": "rec-s1",
+              "workPhaseId": "wp1",
+              "planUnit": "devlog/_plan/260101_demo",
+              "planEpoch": "<NONCE_1>",
+              "planFiles": [
+                {
+                  "path": "devlog/_plan/260101_demo/000_plan.md",
+                  "sha256": "393fbb47932f998d23ee47f13197def2918bef6ae3d627611452853c6fbf45a7"
+                }
+              ],
+              "closedAt": "<TS>"
+            }
+          ],
+          "schemaVersion": 1,
+          "steeringLog": [
+            {
+              "idempotencyKey": "add-work-phase-09ae6d9b5003",
+              "rationale": "cxc loop add-work-phase",
+              "evidence": "wp1: Exporter",
+              "appliedAt": "<TS>",
+              "summary": "1 op(s): add-work-phase"
+            }
+          ]
+        }
+      },
+      "ws/.codexclaw/goalplans/ship-the-export-feature/ledger.jsonl": {
+        "type": "file",
+        "mode": "0600",
+        "form": "jsonl",
+        "jsonl": [
+          {
+            "ts": "<TS>",
+            "slug": "ship-the-export-feature",
+            "event": "created",
+            "detail": "init objective=\"Ship the export feature\" criteria=0"
+          },
+          {
+            "ts": "<TS>",
+            "slug": "ship-the-export-feature",
+            "event": "steered",
+            "detail": "add-work-phase-09ae6d9b5003: 1 op(s): add-work-phase — cxc loop add-work-phase"
+          },
+          {
+            "ts": "<TS>",
+            "slug": "ship-the-export-feature",
+            "event": "review_signoff_unparsed",
+            "detail": "a subagent exited with no parseable sign-off while a plan_audit round was in flight; the closing two lines must be exactly LAUNCH then VERDICT"
+          },
+          {
+            "ts": "<TS>",
+            "slug": "ship-the-export-feature",
+            "event": "review_signoff_ignored",
+            "detail": "pass sign-off named launch r9-<STAMP>, which belongs to no plan_audit round",
+            "launchId": "r9-<STAMP>"
+          }
+        ]
+      },
+      "ws/.codexclaw/ledger.jsonl": {
+        "type": "file",
+        "mode": "0644",
+        "form": "jsonl",
+        "jsonl": [
+          {
+            "ts": "<TS>",
+            "sessionId": "rec-s1",
+            "from": "IDLE",
+            "to": "P",
+            "reason": "cli"
+          },
+          {
+            "ts": "<TS>",
+            "sessionId": "rec-s1",
+            "from": "P",
+            "to": "A",
+            "reason": "cli",
+            "evidence": "planned"
+          }
+        ]
+      },
+      "ws/.codexclaw/render-observations.jsonl": {
+        "type": "file",
+        "mode": "0644",
+        "form": "empty"
+      },
+      "ws/.codexclaw/sessions": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty-nonl",
+        "json": {
+          "phase": "A",
+          "sessionId": "rec-s1",
+          "slug": "ship-the-export-feature",
+          "updatedAt": "<TS>",
+          "flags": {
+            "interview": false,
+            "auditPassed": false,
+            "checkPassed": false
+          },
+          "supersededBy": null,
+          "injectedTurns": [],
+          "lastInjectedPhase": "A",
+          "orchestrationActive": true,
+          "interview": null,
+          "stopBlockPhase": null,
+          "stopBlockCount": 0,
+          "stopBlockWorkPhaseId": null,
+          "stopMetricCursor": 0,
+          "stopBlockTotal": 0,
+          "stopBlockTurnId": null,
+          "stopBlockCapNotified": false,
+          "loopArmSeen": false,
+          "idleEditNudges": 0,
+          "memoryWriteRequested": false,
+          "memoryWriteTurn": null,
+          "memoryWriteGrant": false,
+          "unverifiedSubagents": [],
+          "unverifiedCorrupt": false,
+          "phaseEntrySource": null,
+          "planUnit": "devlog/_plan/260101_demo",
+          "planEpoch": "<NONCE_1>",
+          "checkEpoch": null,
+          "dcloseRecovery": null
+        }
+      },
+      "ws/.git": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/devlog": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/devlog/_plan": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/devlog/_plan/260101_demo": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/devlog/_plan/260101_demo/000_plan.md": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "# 000 - demo plan\n"
+      },
+      "ws/devlog/_plan/260101_demo/010_phase1.md": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "# 010 - phase 1\n"
+      }
+    },
+    "calls": [
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "HEAD"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "status",
+          "--porcelain=v1",
+          "-z",
+          "--untracked-files=all"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "HEAD"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "status",
+          "--porcelain=v1",
+          "-z",
+          "--untracked-files=all"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

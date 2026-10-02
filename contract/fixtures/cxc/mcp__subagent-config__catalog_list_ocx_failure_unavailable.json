@@ -1,0 +1,155 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K10/tools/call/catalog_list",
+    "K12/ocx",
+    "A/subagent-config/mcp.test.ts"
+  ],
+  "note": "catalog_list with the default ocx stub (exits 127, so not ENOENT) never falls back to the native cache: it reports unavailable with the OCX discovery message, and ocx was invoked as `ocx models live --json`.",
+  "given": {
+    "json": {
+      "codex/models_cache.json": {
+        "models": [
+          {
+            "slug": "gpt-5.5",
+            "supported_reasoning_levels": [
+              {
+                "effort": "low"
+              },
+              {
+                "effort": "medium"
+              },
+              {
+                "effort": "high"
+              }
+            ]
+          },
+          {
+            "slug": "kiro/claude-opus-4.6"
+          },
+          {
+            "slug": "hidden-model",
+            "visibility": "hide"
+          },
+          {
+            "slug": "gpt-5.5"
+          }
+        ]
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "mcp": [
+          {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+              "protocolVersion": "2024-11-05",
+              "capabilities": {},
+              "clientInfo": {
+                "name": "rec",
+                "version": "0"
+              }
+            }
+          },
+          {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+              "name": "catalog_list"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "jsonl",
+        "stdout_jsonl": [
+          {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+              "protocolVersion": "2024-11-05",
+              "capabilities": {
+                "tools": {}
+              },
+              "serverInfo": {
+                "name": "codexclaw-subagent-config",
+                "version": "0.1.1"
+              }
+            }
+          },
+          {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"state\":\"unavailable\",\"entries\":[],\"status\":\"unavailable\",\"source\":\"ocx\",\"fetchedAt\":null,\"message\":\"OCX model discovery failed. Check OCX and refresh.\"}"
+                }
+              ]
+            }
+          }
+        ],
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/models_cache.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "models": [
+            {
+              "slug": "gpt-5.5",
+              "supported_reasoning_levels": [
+                {
+                  "effort": "low"
+                },
+                {
+                  "effort": "medium"
+                },
+                {
+                  "effort": "high"
+                }
+              ]
+            },
+            {
+              "slug": "kiro/claude-opus-4.6"
+            },
+            {
+              "slug": "hidden-model",
+              "visibility": "hide"
+            },
+            {
+              "slug": "gpt-5.5"
+            }
+          ]
+        }
+      }
+    },
+    "calls": [
+      {
+        "cmd": "ocx",
+        "argv": [
+          "models",
+          "live",
+          "--json"
+        ],
+        "cwd": "${PLUGIN_ROOT}"
+      }
+    ]
+  }
+}

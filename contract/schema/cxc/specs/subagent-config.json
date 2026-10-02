@@ -1,0 +1,4632 @@
+{
+  "group": "subagent-config",
+  "scenarios": [
+    {
+      "id": "hook__pre-tool-use-attaching-skills__v1_mentions_normalised_leaf_skill_inlined",
+      "covers": [
+        "K3/pre-tool-use-attaching-skills",
+        "K5/hook-rendered",
+        "A/subagent-config/spawn-attach-hook.test.ts"
+      ],
+      "note": "v1 spawn (no task_name/fork_turns): bare $cxc-kwrite and plugin-prefixed $codexclaw:cxc-orchestrate on unambiguous lines become canonical skill:// links; the leaf-safe kwrite body is inlined once inside <skill name=\"cxc-kwrite\">, orchestrate (not leaf-safe) is linked but never inlined; the v1 scope block is prepended and unrelated tool_input fields survive.",
+      "given": {},
+      "steps": [
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "message": "$cxc-kwrite polish the release note\nthen follow $codexclaw:cxc-orchestrate\n$cxc-kwrite again",
+              "agent_type": "explorer",
+              "trace_id": "v1"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__pre-tool-use-attaching-skills__v1_mention_protection_and_link_repair",
+      "covers": [
+        "K3/pre-tool-use-attaching-skills",
+        "K5/hook-rendered",
+        "A/subagent-config/spawn-attach-hook.test.ts"
+      ],
+      "note": "Conservative line-based normalisation: inline code, fenced code, unknown folders, boundary-extended and mixed-case tokens, and a bare mention sharing a line with a link stay verbatim (step 0); a line that is exactly one known-skill link with a broken target is atomically replaced by the canonical link, also behind a list-marker prefix, while an unknown-folder link stays verbatim (step 1).",
+      "given": {},
+      "steps": [
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "message": "inline `$cxc-orchestrate` stays\n```\n$cxc-orchestrate in a fence\n```\n$cxc-nosuch is unknown\n$cxc-orchestrate_x is boundary-extended\n$CXC-orchestrate is mixed case\nsee [docs](https://example.invalid) and $cxc-orchestrate",
+              "agent_type": "explorer"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        },
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "message": "[$cxc-orchestrate](skill:///nowhere/SKILL.md)\n- [$codexclaw:cxc-goalplan](broken-target)\n[$cxc-nosuch](skill:///nowhere/SKILL.md)",
+              "agent_type": "explorer"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__pre-tool-use-attaching-skills__link_unsafe_skills_root_uses_plugin_token",
+      "covers": [
+        "K3/pre-tool-use-attaching-skills",
+        "K5/hook-rendered",
+        "A/subagent-config/spawn-attach-hook.test.ts",
+        "K13/CXC_SKILLS_DIR"
+      ],
+      "note": "When the skills root (CXC_SKILLS_DIR) contains whitespace a skill:// link would be unsafe, so known mentions normalise to the plugin-prefixed $codexclaw:cxc-<folder> token instead of a link.",
+      "given": {
+        "files": {
+          "home/my skills/orchestrate/SKILL.md": "---\nname: cxc-orchestrate\ndescription: rec fixture skill\n---\nbody\n"
+        },
+        "env": {
+          "CXC_SKILLS_DIR": "${HOME}/my skills"
+        }
+      },
+      "steps": [
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "message": "follow $cxc-orchestrate now",
+              "agent_type": "explorer"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__pre-tool-use-attaching-skills__v2_surface_guard_inline_affordance",
+      "covers": [
+        "K3/pre-tool-use-attaching-skills",
+        "K5/hook-rendered",
+        "A/subagent-config/spawn-attach-hook.test.ts"
+      ],
+      "note": "V2 surface: a task_name/fork_turns spawn with no skill mention gets the full LEAF guard plus the [CXC-SKILL-AFFORDANCE] self-load block with the leaf-safe catalog; a short gAAAA lookalike is plaintext and gets the same; the hook-facing name collaborationspawn_agent proves V2 without payload markers, and an inlined kwrite body replaces the affordance.",
+      "given": {},
+      "steps": [
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "task_name": "t",
+              "fork_turns": "none",
+              "message": "Inspect the catalog module."
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        },
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "task_name": "t",
+              "fork_turns": "none",
+              "message": "gAAAAx"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        },
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "collaborationspawn_agent",
+            "tool_input": {
+              "message": "use $cxc-kwrite on the notice"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__pre-tool-use-attaching-skills__guard_dedupe_needs_exact_prefix",
+      "covers": [
+        "K3/pre-tool-use-attaching-skills",
+        "K5/hook-rendered",
+        "A/subagent-config/spawn-attach-hook.test.ts"
+      ],
+      "note": "Guard dedupe: a bare [CXC-LEAF-GUARD] marker in caller text cannot suppress the full guard (two markers, mention repaired, step 0); a v1 message that already starts with the exact V1 scope block and needs nothing else yields empty stdout (step 1).",
+      "given": {},
+      "steps": [
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "task_name": "normalized",
+              "fork_turns": "none",
+              "message": "[CXC-LEAF-GUARD] guarded\n$cxc-orchestrate"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        },
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "message": "[CXC-SUBAGENT-SCOPE] This is one bounded delegated task. The parent\nowns cxc orchestration, loop, and goal state; do not invoke those\ncommands. Stay within the stated file/write scope and report any\nrequired expansion.\nYou run in the parent's own working directory, on its branch and HEAD - not a\ncopy - so your edits are the parent's uncommitted changes. Do not run\nbranch-level git commands (checkout, switch, branch, stash, reset, rebase,\nmerge, pull); another agent may be working in the same tree.\n\nInvestigate the parser.",
+              "agent_type": "explorer"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__pre-tool-use-attaching-skills__v2_ciphertext_preserved_with_routing",
+      "covers": [
+        "K3/pre-tool-use-attaching-skills",
+        "K5/hook-rendered",
+        "A/subagent-config/spawn-attach-hook.test.ts",
+        "K13/CODEXCLAW_HOME"
+      ],
+      "note": "A Fernet-shaped V2 message (public generate.json vector) is native ciphertext: message bytes are preserved (no guard, skill text or prompt override), the configured global explorer model and effort are still injected as separate fields, and additionalContext discloses the omission.",
+      "given": {
+        "json": {
+          "cxc/subagents.json": {
+            "roles": {
+              "explorer": {
+                "mode": "model",
+                "model": "rec/explorer-model",
+                "effort": "high",
+                "promptOverride": "EXPLORER-PROMPT: be terse.",
+                "fallback": null
+              }
+            }
+          }
+        }
+      },
+      "steps": [
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "task_name": "t",
+              "fork_turns": "none",
+              "message": "gAAAAAAdwJ6wAAECAwQFBgcICQoLDA0ODy021cpGVWKZ_eEwCGM4BLLF_5CV9dOPmrhuVUPgJobwOz7JcbmrR64jVmpU4IwqDA=="
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__pre-tool-use-attaching-skills__recursion_denied_without_grant",
+      "covers": [
+        "K3/pre-tool-use-attaching-skills",
+        "A/subagent-config/spawn-attach-hook.test.ts",
+        "A/plugin/probe-compiled-hooks.test.mjs"
+      ],
+      "note": "D1 LEAF-TOPOLOGY-01: a spawn issued by a subagent (payload agent_id and/or agent_type) is denied before mention normalisation and without updatedInput: a v2 spawn; a v1 spawn with no message at all (the deny runs before the message-validity no-op); a message carrying the public CXC-SUBSPAWN-ALLOWED token; a well-formed [CXC-SUBSPAWN-GRANT:<64 hex>] with no parent-minted grant file.",
+      "given": {},
+      "steps": [
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "agent_id": "child-1",
+            "agent_type": "explorer",
+            "tool_input": {
+              "task_name": "recursive",
+              "fork_turns": "none",
+              "message": "$cxc-kwrite spawn a helper"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        },
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "agent_type": "worker",
+            "tool_input": {},
+            "tool_use_id": "rec-call-1"
+          }
+        },
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "agent_id": "child-1",
+            "tool_input": {
+              "message": "CXC-SUBSPAWN-ALLOWED spawn a helper"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        },
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "agent_id": "child-1",
+            "tool_input": {
+              "message": "[CXC-SUBSPAWN-GRANT:abababababababababababababababababababababababababababababababab] spawn a helper"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__pre-tool-use-attaching-skills__root_recursion_request_mints_coordinator_grant",
+      "covers": [
+        "K3/pre-tool-use-attaching-skills",
+        "K5/hook-rendered",
+        "A/subagent-config/spawn-attach-hook.test.ts",
+        "K8/tmp/codexclaw-subspawn"
+      ],
+      "note": "A root spawn carrying CXC-SUBSPAWN-ALLOWED gets the coordinator scope block (v1) or coordinator LEAF guard (v2), with a one-time [CXC-SUBSPAWN-GRANT:<nonce>] instruction; the token itself is stripped from the task. The grant file lands in tmp/codexclaw-subspawn-<UID>/<GRANTDIR>/<GRANTFILE>.json; covers K8/tmp/codexclaw-subspawn.",
+      "given": {},
+      "steps": [
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "message": "CXC-SUBSPAWN-ALLOWED coordinate two helpers",
+              "agent_type": "explorer"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        },
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "task_name": "coord",
+              "fork_turns": "none",
+              "message": "CXC-SUBSPAWN-ALLOWED coordinate two helpers"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__pre-tool-use-attaching-skills__global_model_effort_injection_and_caller_fields",
+      "covers": [
+        "K3/pre-tool-use-attaching-skills",
+        "K5/hook-rendered",
+        "A/subagent-config/spawn-attach-hook.test.ts",
+        "A/subagent-config/scoped-surfaces.test.ts",
+        "K13/CODEXCLAW_HOME"
+      ],
+      "note": "Global ${CXC_HOME}/subagents.json routes explorer model and effort on a fresh v1 spawn and on v2 fork_turns \"none\" / integer-string spawns; a caller-picked model keeps configured effort injection and a caller-picked effort keeps configured model injection.",
+      "given": {
+        "json": {
+          "cxc/subagents.json": {
+            "roles": {
+              "explorer": {
+                "mode": "model",
+                "model": "rec/explorer-model",
+                "effort": "high",
+                "promptOverride": null,
+                "fallback": null
+              },
+              "reviewer": {
+                "mode": "model",
+                "model": "rec/reviewer-model",
+                "effort": "low",
+                "promptOverride": null,
+                "fallback": null
+              },
+              "executor": {
+                "mode": "model",
+                "model": "rec/executor-model",
+                "effort": "medium",
+                "promptOverride": null,
+                "fallback": null
+              },
+              "architect": {
+                "mode": "model",
+                "model": "rec/architect-model",
+                "effort": "xhigh",
+                "promptOverride": "ARCHITECT-PROMPT: weigh the trade-offs.",
+                "fallback": null
+              }
+            }
+          }
+        }
+      },
+      "steps": [
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "message": "map the parser",
+              "agent_type": "explorer"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        },
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "task_name": "t",
+              "fork_turns": "none",
+              "message": "map the parser",
+              "agent_type": "explorer"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        },
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "task_name": "t",
+              "fork_turns": "3",
+              "message": "map the parser",
+              "agent_type": "explorer"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        },
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "message": "map the parser",
+              "agent_type": "explorer",
+              "model": "caller/model"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        },
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "message": "map the parser",
+              "agent_type": "explorer",
+              "reasoning_effort": "low"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__pre-tool-use-attaching-skills__default_mode_injects_effort_only",
+      "covers": [
+        "K3/pre-tool-use-attaching-skills",
+        "K5/hook-rendered",
+        "A/subagent-config/spawn-attach-hook.test.ts",
+        "K13/CODEXCLAW_HOME"
+      ],
+      "note": "A default-mode role with a configured effort injects reasoning_effort but no model.",
+      "given": {
+        "json": {
+          "cxc/subagents.json": {
+            "roles": {
+              "explorer": {
+                "mode": "default",
+                "model": null,
+                "effort": "low",
+                "promptOverride": null,
+                "fallback": null
+              }
+            }
+          }
+        }
+      },
+      "steps": [
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "message": "map the parser",
+              "agent_type": "explorer"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__pre-tool-use-attaching-skills__full_history_fork_skips_model_keeps_prompt",
+      "covers": [
+        "K3/pre-tool-use-attaching-skills",
+        "K5/hook-rendered",
+        "A/subagent-config/spawn-attach-hook.test.ts",
+        "K13/CODEXCLAW_HOME"
+      ],
+      "note": "Full-history forks (v2 fork_turns omitted or \"all\", v1 fork_context true) get no model/effort injection, but the guard and the configured promptOverride (message text) are still applied between guard and task.",
+      "given": {
+        "json": {
+          "cxc/subagents.json": {
+            "roles": {
+              "explorer": {
+                "mode": "model",
+                "model": "rec/explorer-model",
+                "effort": "high",
+                "promptOverride": "EXPLORER-PROMPT: be terse.",
+                "fallback": null
+              }
+            }
+          }
+        }
+      },
+      "steps": [
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "task_name": "t",
+              "message": "map the parser",
+              "agent_type": "explorer"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        },
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "task_name": "t",
+              "fork_turns": "all",
+              "message": "map the parser",
+              "agent_type": "explorer"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        },
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "message": "map the parser",
+              "agent_type": "explorer",
+              "fork_context": true
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__pre-tool-use-attaching-skills__prompt_override_between_guard_and_task",
+      "covers": [
+        "K3/pre-tool-use-attaching-skills",
+        "K5/hook-rendered",
+        "A/subagent-config/spawn-attach-hook.test.ts",
+        "K13/CODEXCLAW_HOME"
+      ],
+      "note": "A configured promptOverride is inserted after the guard block and before the task on v1 and v2, and is not injected when null (reviewer).",
+      "given": {
+        "json": {
+          "cxc/subagents.json": {
+            "roles": {
+              "explorer": {
+                "mode": "default",
+                "model": null,
+                "effort": null,
+                "promptOverride": "EXPLORER-PROMPT: be terse.",
+                "fallback": null
+              },
+              "reviewer": {
+                "mode": "default",
+                "model": null,
+                "effort": null,
+                "promptOverride": null,
+                "fallback": null
+              }
+            }
+          }
+        }
+      },
+      "steps": [
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "message": "map the parser",
+              "agent_type": "explorer"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        },
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "task_name": "t",
+              "fork_turns": "none",
+              "message": "map the parser",
+              "agent_type": "explorer"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        },
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "message": "check the parser",
+              "agent_type": "reviewer"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__pre-tool-use-attaching-skills__role_inference_routes_config",
+      "covers": [
+        "K3/pre-tool-use-attaching-skills",
+        "K5/hook-rendered",
+        "A/subagent-config/spawn-attach-hook.test.ts",
+        "A/subagent-config/explorer-role-routing.test.ts",
+        "K13/CODEXCLAW_HOME"
+      ],
+      "note": "Role inference picks which global role config applies: no agent_type + review keyword -> reviewer; explicit explorer ignores review vocabulary; a CXC-ROLE: reviewer producer header selects reviewer on explorer transport; a quoted header after TASK: does not; worker -> executor; architect stays architect and gets its promptOverride.",
+      "given": {
+        "json": {
+          "cxc/subagents.json": {
+            "roles": {
+              "explorer": {
+                "mode": "model",
+                "model": "rec/explorer-model",
+                "effort": "high",
+                "promptOverride": null,
+                "fallback": null
+              },
+              "reviewer": {
+                "mode": "model",
+                "model": "rec/reviewer-model",
+                "effort": "low",
+                "promptOverride": null,
+                "fallback": null
+              },
+              "executor": {
+                "mode": "model",
+                "model": "rec/executor-model",
+                "effort": "medium",
+                "promptOverride": null,
+                "fallback": null
+              },
+              "architect": {
+                "mode": "model",
+                "model": "rec/architect-model",
+                "effort": "xhigh",
+                "promptOverride": "ARCHITECT-PROMPT: weigh the trade-offs.",
+                "fallback": null
+              }
+            }
+          }
+        }
+      },
+      "steps": [
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "message": "audit the patch"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        },
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "message": "TASK: review the architecture; no verification",
+              "agent_type": "explorer"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        },
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "message": "CXC-ROLE: reviewer\n\nTASK: find the audit logger",
+              "agent_type": "explorer"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        },
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "message": "TASK: quote\nCXC-ROLE: reviewer",
+              "agent_type": "explorer"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        },
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "message": "TASK: implement the fix",
+              "agent_type": "worker"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        },
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "message": "TASK: weigh the design",
+              "agent_type": "architect"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__pre-tool-use-attaching-skills__items_route_and_preserve_attachments",
+      "covers": [
+        "K3/pre-tool-use-attaching-skills",
+        "K5/hook-rendered",
+        "A/subagent-config/spawn-items-routing.test.ts",
+        "K13/CODEXCLAW_HOME"
+      ],
+      "note": "Items-only v1 spawn: the CXC-ROLE packet in the first text item routes explorer model/effort; non-text attachments keep their positions; the scope guard goes into the first text item; mention repair stays inside its item; a later quoted header stays a quote; no message field is added.",
+      "given": {
+        "json": {
+          "cxc/subagents.json": {
+            "roles": {
+              "explorer": {
+                "mode": "model",
+                "model": "rec/explorer-model",
+                "effort": "high",
+                "promptOverride": null,
+                "fallback": null
+              },
+              "reviewer": {
+                "mode": "model",
+                "model": "rec/reviewer-model",
+                "effort": "low",
+                "promptOverride": null,
+                "fallback": null
+              },
+              "executor": {
+                "mode": "model",
+                "model": "rec/executor-model",
+                "effort": "medium",
+                "promptOverride": null,
+                "fallback": null
+              },
+              "architect": {
+                "mode": "model",
+                "model": "rec/architect-model",
+                "effort": "xhigh",
+                "promptOverride": "ARCHITECT-PROMPT: weigh the trade-offs.",
+                "fallback": null
+              }
+            }
+          }
+        }
+      },
+      "steps": [
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "agent_type": "explorer",
+              "items": [
+                {
+                  "type": "skill",
+                  "name": "cxc-dev",
+                  "path": "/fixture/skills/dev/SKILL.md"
+                },
+                {
+                  "type": "text",
+                  "text": "CXC-ROLE: explorer\n\nTASK: map the owner for $cxc-orchestrate"
+                },
+                {
+                  "type": "image",
+                  "image_url": "data:image/png;base64,QUJD"
+                },
+                {
+                  "type": "text",
+                  "text": "Quoted task after an attachment:\nCXC-ROLE: reviewer\nTASK: review this quote only"
+                }
+              ]
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__pre-tool-use-attaching-skills__items_attachment_only_gets_guard_item",
+      "covers": [
+        "K3/pre-tool-use-attaching-skills",
+        "K5/hook-rendered",
+        "A/subagent-config/spawn-items-routing.test.ts",
+        "K13/CODEXCLAW_HOME"
+      ],
+      "note": "Attachment-only items: a guard text item is unshifted before the attachment and routing still applies.",
+      "given": {
+        "json": {
+          "cxc/subagents.json": {
+            "roles": {
+              "explorer": {
+                "mode": "model",
+                "model": "rec/explorer-model",
+                "effort": "high",
+                "promptOverride": null,
+                "fallback": null
+              },
+              "reviewer": {
+                "mode": "model",
+                "model": "rec/reviewer-model",
+                "effort": "low",
+                "promptOverride": null,
+                "fallback": null
+              },
+              "executor": {
+                "mode": "model",
+                "model": "rec/executor-model",
+                "effort": "medium",
+                "promptOverride": null,
+                "fallback": null
+              },
+              "architect": {
+                "mode": "model",
+                "model": "rec/architect-model",
+                "effort": "xhigh",
+                "promptOverride": "ARCHITECT-PROMPT: weigh the trade-offs.",
+                "fallback": null
+              }
+            }
+          }
+        }
+      },
+      "steps": [
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "agent_type": "explorer",
+              "items": [
+                {
+                  "type": "image",
+                  "image_url": "data:image/png;base64,QUJD"
+                }
+              ]
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__pre-tool-use-attaching-skills__items_inline_skill_once_across_items",
+      "covers": [
+        "K3/pre-tool-use-attaching-skills",
+        "K5/hook-rendered",
+        "A/subagent-config/spawn-items-boundaries.test.ts"
+      ],
+      "note": "Items mentioning the same leaf-safe skill in two text items get exactly one inlined body, appended to the last text item.",
+      "given": {},
+      "steps": [
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "agent_type": "explorer",
+              "items": [
+                {
+                  "type": "text",
+                  "text": "first $cxc-kwrite"
+                },
+                {
+                  "type": "image",
+                  "image_url": "data:image/png;base64,QUJD"
+                },
+                {
+                  "type": "text",
+                  "text": "second $cxc-kwrite"
+                }
+              ]
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__pre-tool-use-attaching-skills__items_recursive_and_malformed",
+      "covers": [
+        "K3/pre-tool-use-attaching-skills",
+        "A/subagent-config/spawn-items-routing.test.ts"
+      ],
+      "note": "An items-only spawn from a subagent is denied before attachment handling; malformed items (non-string text) are left to native validation (empty stdout).",
+      "given": {},
+      "steps": [
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "agent_id": "child-1",
+            "tool_input": {
+              "items": [
+                {
+                  "type": "text",
+                  "text": "spawn a helper"
+                }
+              ]
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        },
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "agent_type": "explorer",
+              "items": [
+                {
+                  "type": "text",
+                  "text": 5
+                }
+              ]
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__pre-tool-use-attaching-skills__fail_open_noops",
+      "covers": [
+        "K3/pre-tool-use-attaching-skills",
+        "A/subagent-config/spawn-attach-hook.test.ts"
+      ],
+      "note": "Fail-open paths emit nothing and exit 0: a non-spawn tool name, a non-PreToolUse event, malformed JSON, a whitespace-only message, and a dotted look-alike tool name the hook does not accept.",
+      "given": {},
+      "steps": [
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "shell",
+            "tool_input": {
+              "message": "x"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        },
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PostToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "message": "x"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        },
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": "{not json"
+        },
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "message": "   ",
+              "agent_type": "explorer"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        },
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "multi_agent_v1.spawn_agent",
+            "tool_input": {
+              "message": "x"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__pre-tool-use-attaching-skills__oversized_stdin_denied",
+      "covers": [
+        "K3/pre-tool-use-attaching-skills",
+        "A/subagent-config/spawn-attach-hook.test.ts"
+      ],
+      "note": "Hook stdin over 4 MiB is denied before JSON parsing (the payload is one valid JSON document padded with spaces) and no hook observation is recorded.",
+      "given": {},
+      "steps": [
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "message": "big",
+              "agent_type": "explorer"
+            },
+            "tool_use_id": "rec-call-1"
+          },
+          "stdin_pad": 4194305
+        }
+      ],
+      "observe": [
+        "ws",
+        "codex",
+        "cxc",
+        "home",
+        "tmp",
+        "codex/codexclaw/hook-observations"
+      ]
+    },
+    {
+      "id": "hook__pre-tool-use-attaching-skills__final_gate_missing_test_receipt_denied",
+      "covers": [
+        "K3/pre-tool-use-attaching-skills",
+        "A/subagent-config/final-gate-guard.test.ts"
+      ],
+      "note": "A [CXC-FINAL-GATE] spawn whose goalplan finalGate names a test receipt that does not exist is denied, through spawn_agent and the dotted collaboration.spawn_agent name; an unmarked spawn in the same workspace is allowed.",
+      "given": {
+        "json": {
+          "ws/.codexclaw/sessions/rec-s1.json": {
+            "sessionId": "rec-s1",
+            "slug": "demo"
+          },
+          "ws/.codexclaw/goalplans/demo/goalplan.json": {
+            "finalGate": {
+              "testReceiptPath": ".codexclaw/evidence/test.json"
+            },
+            "criteria": [
+              {
+                "id": "c1",
+                "surface": "logic"
+              }
+            ]
+          }
+        }
+      },
+      "steps": [
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "message": "[CXC-FINAL-GATE] please review the final gate"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        },
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "collaboration.spawn_agent",
+            "tool_input": {
+              "message": "[CXC-FINAL-GATE] please review the final gate"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        },
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "message": "please review the diff",
+              "agent_type": "reviewer"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__pre-tool-use-attaching-skills__final_gate_web_criterion_requires_qa",
+      "covers": [
+        "K3/pre-tool-use-attaching-skills",
+        "A/subagent-config/final-gate-guard.test.ts"
+      ],
+      "note": "A web criterion demands a QA receipt: with the test receipt present (no git, so identity is unavailable and never stale) and no QA path recorded, the spawn is denied naming only the QA gap.",
+      "given": {
+        "json": {
+          "ws/.codexclaw/sessions/rec-s1.json": {
+            "sessionId": "rec-s1",
+            "slug": "demo"
+          },
+          "ws/.codexclaw/goalplans/demo/goalplan.json": {
+            "finalGate": {
+              "testReceiptPath": ".codexclaw/evidence/test.json"
+            },
+            "criteria": [
+              {
+                "id": "c1",
+                "surface": "web"
+              }
+            ]
+          },
+          "ws/.codexclaw/evidence/test.json": {
+            "kind": "test",
+            "sourceIdentity": {
+              "kind": "resolved",
+              "commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "dirty": false
+            }
+          }
+        }
+      },
+      "steps": [
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "message": "[CXC-FINAL-GATE] please review the final gate"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__pre-tool-use-attaching-skills__final_gate_prerequisites_present_allowed",
+      "covers": [
+        "K3/pre-tool-use-attaching-skills",
+        "K5/hook-rendered",
+        "A/subagent-config/final-gate-guard.test.ts"
+      ],
+      "note": "With a non-empty test receipt and no visual criterion the marked spawn is allowed (guard only); a corrupt goalplan elsewhere would fail open too.",
+      "given": {
+        "json": {
+          "ws/.codexclaw/sessions/rec-s1.json": {
+            "sessionId": "rec-s1",
+            "slug": "demo"
+          },
+          "ws/.codexclaw/goalplans/demo/goalplan.json": {
+            "finalGate": {
+              "testReceiptPath": ".codexclaw/evidence/test.json"
+            },
+            "criteria": [
+              {
+                "id": "c1",
+                "surface": "logic"
+              }
+            ]
+          },
+          "ws/.codexclaw/evidence/test.json": {
+            "kind": "test",
+            "sourceIdentity": {
+              "kind": "resolved",
+              "commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "dirty": false
+            }
+          }
+        }
+      },
+      "steps": [
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "message": "[CXC-FINAL-GATE] please review the final gate"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__pre-tool-use-attaching-skills__final_gate_stale_receipt_denied",
+      "covers": [
+        "K3/pre-tool-use-attaching-skills",
+        "A/subagent-config/final-gate-guard.test.ts"
+      ],
+      "note": "In a git workspace (fixed identity and dates, so the HEAD sha is deterministic) a receipt produced against another commit is denied and the reason shows both short shas.",
+      "given": {
+        "json": {
+          "ws/.codexclaw/sessions/rec-s1.json": {
+            "sessionId": "rec-s1",
+            "slug": "demo"
+          },
+          "ws/.codexclaw/goalplans/demo/goalplan.json": {
+            "finalGate": {
+              "testReceiptPath": ".codexclaw/evidence/test.json"
+            },
+            "criteria": []
+          },
+          "ws/.codexclaw/evidence/test.json": {
+            "kind": "test",
+            "sourceIdentity": {
+              "kind": "resolved",
+              "commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "dirty": false
+            }
+          }
+        },
+        "git": {
+          "commit": "initial"
+        }
+      },
+      "steps": [
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "message": "[CXC-FINAL-GATE] please review the final gate"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__pre-tool-use-attaching-skills__final_gate_corrupt_source_binding_denied",
+      "covers": [
+        "K3/pre-tool-use-attaching-skills",
+        "A/subagent-config/final-gate-guard.test.ts"
+      ],
+      "note": "A corrupt session source binding (ws/.codexclaw/sources/<session>.json) makes source identity unresolvable, and the marked final-gate spawn is refused with the SOURCE-ROOT reason instead of failing open.",
+      "given": {
+        "json": {
+          "ws/.codexclaw/sessions/rec-s1.json": {
+            "sessionId": "rec-s1",
+            "slug": "demo"
+          },
+          "ws/.codexclaw/goalplans/demo/goalplan.json": {
+            "finalGate": {
+              "testReceiptPath": ".codexclaw/evidence/test.json"
+            },
+            "criteria": []
+          },
+          "ws/.codexclaw/evidence/test.json": {
+            "kind": "test",
+            "sourceIdentity": {
+              "kind": "resolved",
+              "commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "dirty": false
+            }
+          }
+        },
+        "files": {
+          "ws/.codexclaw/sources/rec-s1.json": "{not json\n"
+        }
+      },
+      "steps": [
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "message": "[CXC-FINAL-GATE] please review the final gate"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__pre-tool-use-attaching-skills__final_gate_items_marker_denied",
+      "covers": [
+        "K3/pre-tool-use-attaching-skills",
+        "A/subagent-config/spawn-items-managed.test.ts"
+      ],
+      "note": "The final-gate marker inside an items text item enforces the same missing-receipt denial as the message form.",
+      "given": {
+        "json": {
+          "ws/.codexclaw/sessions/rec-s1.json": {
+            "sessionId": "rec-s1",
+            "slug": "demo"
+          },
+          "ws/.codexclaw/goalplans/demo/goalplan.json": {
+            "finalGate": {
+              "testReceiptPath": ".codexclaw/evidence/test.json"
+            },
+            "criteria": []
+          }
+        }
+      },
+      "steps": [
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "agent_type": "reviewer",
+              "items": [
+                {
+                  "type": "text",
+                  "text": "[CXC-FINAL-GATE] please review the final gate"
+                },
+                {
+                  "type": "image",
+                  "image_url": "data:image/png;base64,QUJD"
+                }
+              ]
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__pre-tool-use-attaching-skills__managed_dispatch_marker_issues_once",
+      "covers": [
+        "K3/pre-tool-use-attaching-skills",
+        "K5/hook-rendered",
+        "K8/ws/.codexclaw/dispatches",
+        "A/subagent-config/fallback-dispatch.test.ts",
+        "K13/CODEXCLAW_HOME"
+      ],
+      "note": "A claimed attempt's [CXC-DISPATCH:one:att-1] marker: the hook allows with the candidate model/effort (overriding caller fields), records spawnIssued and the tool_use_id; a repeat with the same tool_use_id is idempotent; a different tool_use_id is denied.",
+      "given": {
+        "json": {
+          "cxc/subagents.json": {
+            "roles": {
+              "executor": {
+                "mode": "model",
+                "model": "rec/exec-primary",
+                "effort": "high",
+                "promptOverride": null,
+                "fallback": {
+                  "model": "rec/exec-fallback",
+                  "effort": null
+                }
+              }
+            }
+          },
+          "ws/.codexclaw/dispatches/rec-s1/one.json": {
+            "version": 1,
+            "sessionId": "rec-s1",
+            "id": "one",
+            "role": "executor",
+            "candidates": [
+              {
+                "model": "rec/exec-primary",
+                "effort": "high"
+              },
+              {
+                "model": "rec/exec-fallback",
+                "effort": null
+              }
+            ],
+            "attempts": [
+              {
+                "id": "att-1",
+                "candidate": {
+                  "model": "rec/exec-primary",
+                  "effort": "high"
+                },
+                "claimed": true,
+                "agentId": null,
+                "observedModel": null,
+                "code": null,
+                "taskFailure": null,
+                "status": "claimed",
+                "reconciliation": null,
+                "spawnIssued": false,
+                "toolUseId": null
+              }
+            ],
+            "status": "active"
+          }
+        }
+      },
+      "steps": [
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "message": "[CXC-DISPATCH:one:att-1]\nTASK: implement the fix",
+              "agent_type": "worker",
+              "model": "caller/model"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        },
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "message": "[CXC-DISPATCH:one:att-1]\nTASK: implement the fix",
+              "agent_type": "worker"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        },
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_use_id": "rec-call-2",
+            "tool_input": {
+              "message": "[CXC-DISPATCH:one:att-1]\nTASK: implement the fix",
+              "agent_type": "worker"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__pre-tool-use-attaching-skills__managed_fallback_candidate_null_effort",
+      "covers": [
+        "K3/pre-tool-use-attaching-skills",
+        "K5/hook-rendered",
+        "A/subagent-config/spawn-items-managed.test.ts",
+        "A/subagent-config/fallback-dispatch.test.ts",
+        "K13/CODEXCLAW_HOME"
+      ],
+      "note": "Items form with a claimed fallback attempt whose effort is null: the candidate model is set and reasoning_effort is deleted (not reinjected from the primary config), with single native issuance recorded.",
+      "given": {
+        "json": {
+          "cxc/subagents.json": {
+            "roles": {
+              "executor": {
+                "mode": "model",
+                "model": "rec/exec-primary",
+                "effort": "high",
+                "promptOverride": null,
+                "fallback": {
+                  "model": "rec/exec-fallback",
+                  "effort": null
+                }
+              }
+            }
+          },
+          "ws/.codexclaw/dispatches/rec-s1/one.json": {
+            "version": 1,
+            "sessionId": "rec-s1",
+            "id": "one",
+            "role": "executor",
+            "candidates": [
+              {
+                "model": "rec/exec-primary",
+                "effort": "high"
+              },
+              {
+                "model": "rec/exec-fallback",
+                "effort": null
+              }
+            ],
+            "attempts": [
+              {
+                "id": "att-1",
+                "candidate": {
+                  "model": "rec/exec-primary",
+                  "effort": "high"
+                },
+                "claimed": true,
+                "agentId": null,
+                "observedModel": null,
+                "code": "insufficient_quota",
+                "taskFailure": null,
+                "status": "failed",
+                "reconciliation": "native tool rejected before creation",
+                "spawnIssued": false,
+                "toolUseId": null
+              },
+              {
+                "id": "att-2",
+                "candidate": {
+                  "model": "rec/exec-fallback",
+                  "effort": null
+                },
+                "claimed": true,
+                "agentId": null,
+                "observedModel": null,
+                "code": null,
+                "taskFailure": null,
+                "status": "claimed",
+                "reconciliation": null,
+                "spawnIssued": false,
+                "toolUseId": null
+              }
+            ],
+            "status": "active"
+          }
+        }
+      },
+      "steps": [
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "agent_type": "worker",
+              "reasoning_effort": "high",
+              "items": [
+                {
+                  "type": "text",
+                  "text": "[CXC-DISPATCH:one:att-2]\nTASK: implement the fix"
+                },
+                {
+                  "type": "image",
+                  "image_url": "data:image/png;base64,QUJD"
+                }
+              ]
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__pre-tool-use-attaching-skills__managed_dispatch_refusals",
+      "covers": [
+        "K3/pre-tool-use-attaching-skills",
+        "A/subagent-config/fallback-dispatch.test.ts",
+        "A/subagent-config/spawn-items-boundaries.test.ts",
+        "K13/CODEXCLAW_HOME"
+      ],
+      "note": "Managed markers fail closed: an attempt that is not claimed, a dispatch record that does not exist, a full-history fork, and an already-issued attempt replayed by a host that sends no tool_use_id are each denied with a managed-dispatch reason.",
+      "given": {
+        "json": {
+          "cxc/subagents.json": {
+            "roles": {
+              "executor": {
+                "mode": "model",
+                "model": "rec/exec-primary",
+                "effort": "high",
+                "promptOverride": null,
+                "fallback": {
+                  "model": "rec/exec-fallback",
+                  "effort": null
+                }
+              }
+            }
+          },
+          "ws/.codexclaw/dispatches/rec-s1/one.json": {
+            "version": 1,
+            "sessionId": "rec-s1",
+            "id": "one",
+            "role": "executor",
+            "candidates": [
+              {
+                "model": "rec/exec-primary",
+                "effort": "high"
+              },
+              {
+                "model": "rec/exec-fallback",
+                "effort": null
+              }
+            ],
+            "attempts": [
+              {
+                "id": "att-1",
+                "candidate": {
+                  "model": "rec/exec-primary",
+                  "effort": "high"
+                },
+                "claimed": false,
+                "agentId": null,
+                "observedModel": null,
+                "code": null,
+                "taskFailure": null,
+                "status": "ready",
+                "reconciliation": null,
+                "spawnIssued": false,
+                "toolUseId": null
+              }
+            ],
+            "status": "active"
+          },
+          "ws/.codexclaw/dispatches/rec-s1/two.json": {
+            "version": 1,
+            "sessionId": "rec-s1",
+            "id": "two",
+            "role": "executor",
+            "candidates": [
+              {
+                "model": "rec/exec-primary",
+                "effort": "high"
+              },
+              {
+                "model": "rec/exec-fallback",
+                "effort": null
+              }
+            ],
+            "attempts": [
+              {
+                "id": "att-1",
+                "candidate": {
+                  "model": "rec/exec-primary",
+                  "effort": "high"
+                },
+                "claimed": true,
+                "agentId": null,
+                "observedModel": null,
+                "code": null,
+                "taskFailure": null,
+                "status": "claimed",
+                "reconciliation": null,
+                "spawnIssued": true,
+                "toolUseId": null
+              }
+            ],
+            "status": "active"
+          }
+        }
+      },
+      "steps": [
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "message": "[CXC-DISPATCH:one:att-1]\nTASK: implement",
+              "agent_type": "worker"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        },
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "message": "[CXC-DISPATCH:nope:att-9]\nTASK: implement",
+              "agent_type": "worker"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        },
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "task_name": "t",
+              "fork_turns": "all",
+              "message": "[CXC-DISPATCH:one:att-1]\nTASK: implement",
+              "agent_type": "worker"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        },
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "message": "[CXC-DISPATCH:two:att-1]\nTASK: implement",
+              "agent_type": "worker"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__pre-tool-use-attaching-skills__direct_spawn_with_fallback_gets_notice",
+      "covers": [
+        "K3/pre-tool-use-attaching-skills",
+        "K5/hook-rendered",
+        "A/subagent-config/fallback-dispatch.test.ts",
+        "K13/CODEXCLAW_HOME"
+      ],
+      "note": "A direct (unmanaged) spawn for a role with a configured fallback keeps caller routing and gets the unmanaged-spawn notice with DISPATCH_GUIDANCE in additionalContext.",
+      "given": {
+        "json": {
+          "cxc/subagents.json": {
+            "roles": {
+              "executor": {
+                "mode": "model",
+                "model": "rec/exec-primary",
+                "effort": "high",
+                "promptOverride": null,
+                "fallback": {
+                  "model": "rec/exec-fallback",
+                  "effort": null
+                }
+              }
+            }
+          }
+        }
+      },
+      "steps": [
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "message": "TASK: implement the fix",
+              "agent_type": "worker"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__session-start-announcing-subagent-fallback__fallback_configured_protocol_precedes_card",
+      "covers": [
+        "K3/session-start-announcing-subagent-fallback",
+        "K5/hook-rendered",
+        "A/subagent-config/fallback-dispatch-cli.test.ts",
+        "A/subagent-config/dispatch-card.test.ts",
+        "K13/CODEXCLAW_HOME"
+      ],
+      "note": "With a global executor fallback the SessionStart context is the first-fallback protocol line followed by the unresolved-family dispatch card.",
+      "given": {
+        "json": {
+          "cxc/subagents.json": {
+            "roles": {
+              "executor": {
+                "mode": "model",
+                "model": "rec/exec-primary",
+                "effort": "high",
+                "promptOverride": null,
+                "fallback": {
+                  "model": "rec/exec-fallback",
+                  "effort": null
+                }
+              }
+            }
+          }
+        }
+      },
+      "steps": [
+        {
+          "hook": "session-start-announcing-subagent-fallback",
+          "stdin": {
+            "hook_event_name": "SessionStart",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "source": "startup",
+            "model": "gpt-5.5",
+            "transcript_path": null
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__session-start-announcing-subagent-fallback__spawn_v1_card",
+      "covers": [
+        "K3/session-start-announcing-subagent-fallback",
+        "K5/hook-rendered",
+        "A/subagent-config/dispatch-card.test.ts",
+        "K13/CODEXCLAW_SPAWN_V1"
+      ],
+      "note": "CODEXCLAW_SPAWN_V1=1 selects the V1 card with the nested multi_agent_v1 helper names.",
+      "given": {
+        "env": {
+          "CODEXCLAW_SPAWN_V1": "1"
+        }
+      },
+      "steps": [
+        {
+          "hook": "session-start-announcing-subagent-fallback",
+          "stdin": {
+            "hook_event_name": "SessionStart",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "source": "startup",
+            "model": "gpt-5.5",
+            "transcript_path": null
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__session-start-announcing-subagent-fallback__aliases_verified_in_local_catalog",
+      "covers": [
+        "K3/session-start-announcing-subagent-fallback",
+        "K5/hook-rendered",
+        "A/subagent-config/dispatch-card.test.ts"
+      ],
+      "note": "Aliases whose target id is in ${CODEX_HOME}/models_cache.json are marked verified in local catalog; the others stay unverified with the map date.",
+      "given": {
+        "json": {
+          "codex/models_cache.json": {
+            "models": [
+              {
+                "slug": "gpt-6-sol"
+              },
+              {
+                "slug": "devin/swe-2"
+              },
+              {
+                "slug": "gpt-5.5"
+              }
+            ]
+          }
+        }
+      },
+      "steps": [
+        {
+          "hook": "session-start-announcing-subagent-fallback",
+          "stdin": {
+            "hook_event_name": "SessionStart",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "source": "startup",
+            "model": "gpt-5.5",
+            "transcript_path": null
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__session-start-announcing-subagent-fallback__subagent_and_malformed_are_silent",
+      "covers": [
+        "K3/session-start-announcing-subagent-fallback",
+        "A/subagent-config/fallback-dispatch-cli.test.ts",
+        "K13/CODEXCLAW_HOME"
+      ],
+      "note": "A SessionStart for a subagent (agent_id set) and a malformed payload both print nothing and exit 0.",
+      "given": {
+        "json": {
+          "cxc/subagents.json": {
+            "roles": {
+              "executor": {
+                "mode": "model",
+                "model": "rec/exec-primary",
+                "effort": "high",
+                "promptOverride": null,
+                "fallback": {
+                  "model": "rec/exec-fallback",
+                  "effort": null
+                }
+              }
+            }
+          }
+        }
+      },
+      "steps": [
+        {
+          "hook": "session-start-announcing-subagent-fallback",
+          "stdin": {
+            "hook_event_name": "SessionStart",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "source": "startup",
+            "model": "gpt-5.5",
+            "transcript_path": null,
+            "agent_id": "child-1"
+          }
+        },
+        {
+          "hook": "session-start-announcing-subagent-fallback",
+          "stdin": "{"
+        }
+      ]
+    },
+    {
+      "id": "cli__subagents__help",
+      "covers": [
+        "K6/subagents/help",
+        "A/subagent-config/cli.test.ts"
+      ],
+      "note": "help, --help and -h print the usage text; an unknown subcommand prints an error and exits 1.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "subagents",
+            "help"
+          ]
+        },
+        {
+          "cli": [
+            "subagents",
+            "--help"
+          ]
+        },
+        {
+          "cli": [
+            "subagents",
+            "-h"
+          ]
+        },
+        {
+          "cli": [
+            "subagents",
+            "bogus"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli__subagents__list_global_defaults",
+      "covers": [
+        "K6/subagents/list",
+        "K7/subagents",
+        "A/subagent-config/cli.test.ts"
+      ],
+      "note": "list --global with an empty CXC home prints all four roles defaulted; get --global prints one role.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "subagents",
+            "list",
+            "--global"
+          ]
+        },
+        {
+          "cli": [
+            "subagents",
+            "get",
+            "architect",
+            "--global"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli__subagents__set_get_roundtrip_global",
+      "covers": [
+        "K6/subagents/set",
+        "K6/subagents/get",
+        "K7/subagents",
+        "K8/cxc-home/subagents.json",
+        "A/subagent-config/cli.test.ts"
+      ],
+      "note": "set --global persists mode/model/effort/prompt to ${CXC_HOME}/subagents.json (0600, two-space JSON) and get/list read it back; architect is set without touching reviewer.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "subagents",
+            "set",
+            "explorer",
+            "--mode",
+            "model",
+            "--model",
+            "rec/explorer-model",
+            "--effort",
+            "high",
+            "--prompt",
+            "Be terse.",
+            "--global"
+          ]
+        },
+        {
+          "cli": [
+            "subagents",
+            "set",
+            "architect",
+            "--mode",
+            "model",
+            "--model",
+            "rec/architect-model",
+            "--global"
+          ]
+        },
+        {
+          "cli": [
+            "subagents",
+            "get",
+            "explorer",
+            "--global"
+          ]
+        },
+        {
+          "cli": [
+            "subagents",
+            "list",
+            "--global"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli__subagents__set_clear_effort_and_prompt",
+      "covers": [
+        "K6/subagents/set",
+        "K7/subagents",
+        "K8/cxc-home/subagents.json",
+        "A/subagent-config/cli.test.ts",
+        "K13/CODEXCLAW_HOME"
+      ],
+      "note": "--clear-effort and --clear-prompt reset those fields to null; --mode default drops the model; unrelated top-level and per-role JSON fields in the file are preserved.",
+      "given": {
+        "json": {
+          "cxc/subagents.json": {
+            "note": "keep me",
+            "roles": {
+              "explorer": {
+                "mode": "model",
+                "model": "rec/explorer-model",
+                "effort": "high",
+                "promptOverride": "Be terse.",
+                "fallback": null,
+                "extra": "keep"
+              }
+            }
+          }
+        }
+      },
+      "steps": [
+        {
+          "cli": [
+            "subagents",
+            "set",
+            "explorer",
+            "--clear-effort",
+            "--clear-prompt",
+            "--global"
+          ]
+        },
+        {
+          "cli": [
+            "subagents",
+            "set",
+            "explorer",
+            "--mode",
+            "default",
+            "--global"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli__subagents__refusals",
+      "covers": [
+        "K6/subagents/set",
+        "K6/subagents/get",
+        "A/subagent-config/cli.test.ts"
+      ],
+      "note": "Parse and store refusals exit 1 with a 'subagents:' line and leave the store unwritten: unknown role, invalid --effort, --mode model without --model, set with no flags, unknown flag, reset with an extra argument.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "subagents",
+            "get",
+            "nobody",
+            "--global"
+          ]
+        },
+        {
+          "cli": [
+            "subagents",
+            "set",
+            "explorer",
+            "--effort",
+            "max",
+            "--global"
+          ]
+        },
+        {
+          "cli": [
+            "subagents",
+            "set",
+            "explorer",
+            "--mode",
+            "model",
+            "--global"
+          ]
+        },
+        {
+          "cli": [
+            "subagents",
+            "set",
+            "explorer",
+            "--global"
+          ]
+        },
+        {
+          "cli": [
+            "subagents",
+            "set",
+            "explorer",
+            "--color",
+            "red",
+            "--global"
+          ]
+        },
+        {
+          "cli": [
+            "subagents",
+            "reset",
+            "explorer",
+            "extra",
+            "--global"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli__subagents__reset_global_role",
+      "covers": [
+        "K6/subagents/reset",
+        "K7/subagents",
+        "K8/cxc-home/subagents.json",
+        "A/subagent-config/cli.test.ts",
+        "K13/CODEXCLAW_HOME"
+      ],
+      "note": "reset --global removes only that role's override; the next read inherits the default while the other role stays in the file.",
+      "given": {
+        "json": {
+          "cxc/subagents.json": {
+            "roles": {
+              "explorer": {
+                "mode": "model",
+                "model": "rec/explorer-model",
+                "effort": "high",
+                "promptOverride": null,
+                "fallback": null
+              },
+              "reviewer": {
+                "mode": "model",
+                "model": "rec/reviewer-model",
+                "effort": "low",
+                "promptOverride": null,
+                "fallback": null
+              }
+            }
+          }
+        }
+      },
+      "steps": [
+        {
+          "cli": [
+            "subagents",
+            "reset",
+            "explorer",
+            "--global"
+          ]
+        },
+        {
+          "cli": [
+            "subagents",
+            "list",
+            "--global"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli__subagents__fallback_set_and_refusals",
+      "covers": [
+        "K6/subagents/set",
+        "K7/subagents",
+        "K8/cxc-home/subagents.json",
+        "A/subagent-config/fallback-config.test.ts"
+      ],
+      "note": "Fallback flags: set a first fallback with effort; --clear-fallback combined with a fallback flag is refused; a fallback equal to the primary model is refused; an effort-only fallback without a model is refused; --clear-fallback clears it.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "subagents",
+            "set",
+            "executor",
+            "--mode",
+            "model",
+            "--model",
+            "rec/exec-primary",
+            "--fallback-model",
+            "rec/exec-fallback",
+            "--fallback-effort",
+            "low",
+            "--global"
+          ]
+        },
+        {
+          "cli": [
+            "subagents",
+            "set",
+            "executor",
+            "--clear-fallback",
+            "--fallback-model",
+            "rec/other",
+            "--global"
+          ]
+        },
+        {
+          "cli": [
+            "subagents",
+            "set",
+            "executor",
+            "--fallback-model",
+            "rec/exec-primary",
+            "--global"
+          ]
+        },
+        {
+          "cli": [
+            "subagents",
+            "set",
+            "reviewer",
+            "--fallback-effort",
+            "low",
+            "--global"
+          ]
+        },
+        {
+          "cli": [
+            "subagents",
+            "set",
+            "executor",
+            "--fallback-effort",
+            "inherit",
+            "--global"
+          ]
+        },
+        {
+          "cli": [
+            "subagents",
+            "set",
+            "executor",
+            "--clear-fallback",
+            "--global"
+          ]
+        },
+        {
+          "cli": [
+            "subagents",
+            "get",
+            "executor",
+            "--global"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli__subagents__malformed_global_config",
+      "covers": [
+        "K6/subagents/list",
+        "K6/subagents/set",
+        "K8/cxc-home/subagents.json",
+        "A/subagent-config/global-home.test.ts",
+        "K13/CODEXCLAW_HOME"
+      ],
+      "note": "A global config whose roles is not an object reads as defaults, but set refuses to overwrite it and the bytes are preserved.",
+      "given": {
+        "files": {
+          "cxc/subagents.json": "{\"roles\":[]}\n"
+        }
+      },
+      "steps": [
+        {
+          "cli": [
+            "subagents",
+            "list",
+            "--global"
+          ]
+        },
+        {
+          "cli": [
+            "subagents",
+            "set",
+            "explorer",
+            "--effort",
+            "low",
+            "--global"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli__subagents__cxc_home_ignores_legacy_codex_store",
+      "covers": [
+        "K6/subagents/list",
+        "K6/subagents/set",
+        "K8/cxc-home/subagents.json",
+        "A/subagent-config/global-home.test.ts"
+      ],
+      "note": "With CODEXCLAW_HOME set, the legacy ${CODEX_HOME}/codexclaw/subagents.json is never read or imported: list shows defaults and set writes only ${CXC_HOME}/subagents.json.",
+      "given": {
+        "json": {
+          "codex/codexclaw/subagents.json": {
+            "roles": {
+              "explorer": {
+                "mode": "model",
+                "model": "rec/legacy-model",
+                "effort": "high",
+                "promptOverride": null,
+                "fallback": null
+              }
+            }
+          }
+        }
+      },
+      "steps": [
+        {
+          "cli": [
+            "subagents",
+            "list",
+            "--global"
+          ]
+        },
+        {
+          "cli": [
+            "subagents",
+            "set",
+            "reviewer",
+            "--effort",
+            "low",
+            "--global"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli__subagents__legacy_store_without_cxc_home",
+      "covers": [
+        "K6/subagents/list",
+        "K6/subagents/set",
+        "K6/subagents/reset",
+        "K8/home/.codexclaw/subagents.json",
+        "A/subagent-config/global-home.test.ts",
+        "K13/CODEXCLAW_HOME"
+      ],
+      "note": "Without CODEXCLAW_HOME the global store is ${HOME}/.codexclaw/subagents.json and, while it is absent, the legacy ${CODEX_HOME}/codexclaw/subagents.json is read; set writes the canonical file preserving legacy roles, reset removes a role there, and the legacy file is never resurrected.",
+      "given": {
+        "json": {
+          "codex/codexclaw/subagents.json": {
+            "roles": {
+              "explorer": {
+                "mode": "model",
+                "model": "rec/legacy-model",
+                "effort": "high",
+                "promptOverride": null,
+                "fallback": null
+              },
+              "architect": {
+                "mode": "default",
+                "model": null,
+                "effort": "low",
+                "promptOverride": null,
+                "fallback": null
+              }
+            }
+          }
+        }
+      },
+      "steps": [
+        {
+          "cli": [
+            "subagents",
+            "list",
+            "--global"
+          ],
+          "unset": [
+            "CODEXCLAW_HOME"
+          ]
+        },
+        {
+          "cli": [
+            "subagents",
+            "set",
+            "reviewer",
+            "--effort",
+            "low",
+            "--global"
+          ],
+          "unset": [
+            "CODEXCLAW_HOME"
+          ]
+        },
+        {
+          "cli": [
+            "subagents",
+            "reset",
+            "explorer",
+            "--global"
+          ],
+          "unset": [
+            "CODEXCLAW_HOME"
+          ]
+        },
+        {
+          "cli": [
+            "subagents",
+            "list",
+            "--global"
+          ],
+          "unset": [
+            "CODEXCLAW_HOME"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli__subagents__register_executor_fresh_then_idempotent",
+      "covers": [
+        "K6/subagents/register",
+        "K8/codex-home/agents",
+        "A/subagent-config/role-registration.test.ts"
+      ],
+      "note": "register executor publishes ${CODEX_HOME}/agents/executor.toml with the codexclaw-managed digest header and without the model = \"default\" sentinel; a second run reports Already registered.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "subagents",
+            "register",
+            "executor"
+          ]
+        },
+        {
+          "cli": [
+            "subagents",
+            "register",
+            "executor"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli__subagents__register_architect_conflict_preserved",
+      "covers": [
+        "K6/subagents/register",
+        "K8/codex-home/agents",
+        "A/subagent-config/role-registration.test.ts"
+      ],
+      "note": "An existing user-edited architect.toml that is neither managed nor the template body is refused (exit 1) and preserved.",
+      "given": {
+        "files": {
+          "codex/agents/architect.toml": "name = \"architect\"\n# my own edits\n"
+        }
+      },
+      "steps": [
+        {
+          "cli": [
+            "subagents",
+            "register",
+            "architect"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli__subagents__register_refuses_symlinks",
+      "covers": [
+        "K6/subagents/register",
+        "A/subagent-config/role-registration.test.ts",
+        "K13/CODEX_HOME"
+      ],
+      "note": "A symlinked role file and a symlinked agents directory are both refused without following them.",
+      "given": {
+        "files": {
+          "ws/target.toml": "name = \"executor\"\n"
+        },
+        "dirs": [
+          "ws/agents-elsewhere"
+        ],
+        "symlinks": {
+          "codex/agents/executor.toml": "${WS}/target.toml",
+          "home/codex2/agents": "${WS}/agents-elsewhere"
+        }
+      },
+      "steps": [
+        {
+          "cli": [
+            "subagents",
+            "register",
+            "executor"
+          ]
+        },
+        {
+          "cli": [
+            "subagents",
+            "register",
+            "architect"
+          ],
+          "env": {
+            "CODEX_HOME": "${HOME}/codex2"
+          }
+        }
+      ]
+    },
+    {
+      "id": "cli__subagents__register_upgrades_managed_prompt_with_backup",
+      "covers": [
+        "K6/subagents/register",
+        "K8/codex-home/agents",
+        "A/subagent-config/role-registration.test.ts"
+      ],
+      "note": "An intact managed executor.toml from an older template is upgraded (Updated) and its exact previous bytes are kept in executor.toml.backup-<sha256>.",
+      "given": {
+        "files": {
+          "codex/agents/executor.toml": "# codexclaw-managed: 5a07e07ec4942f99a395e56ba1232e81ab29462531280eb3b6cf391dff63b3f3\nname = \"executor\"\ndeveloper_instructions = \"old managed prompt\"\n"
+        }
+      },
+      "steps": [
+        {
+          "cli": [
+            "subagents",
+            "register",
+            "executor"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli__subagents__register_abandoned_lock_fails_closed",
+      "covers": [
+        "K6/subagents/register",
+        "A/subagent-config/role-registration.test.ts"
+      ],
+      "note": "An abandoned .executor-update.lock makes an upgrade fail closed (exit 1) and the managed file is preserved.",
+      "given": {
+        "files": {
+          "codex/agents/executor.toml": "# codexclaw-managed: 5a07e07ec4942f99a395e56ba1232e81ab29462531280eb3b6cf391dff63b3f3\nname = \"executor\"\ndeveloper_instructions = \"old managed prompt\"\n"
+        },
+        "dirs": [
+          "codex/agents/.executor-update.lock"
+        ]
+      },
+      "steps": [
+        {
+          "cli": [
+            "subagents",
+            "register",
+            "executor"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli__subagents__register_usage_errors",
+      "covers": [
+        "K6/subagents/register",
+        "A/subagent-config/role-registration.test.ts"
+      ],
+      "note": "register accepts only executor or architect with no extra arguments (trailing --global included).",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "subagents",
+            "register",
+            "explorer"
+          ]
+        },
+        {
+          "cli": [
+            "subagents",
+            "register",
+            "executor",
+            "--global"
+          ]
+        },
+        {
+          "cli": [
+            "subagents",
+            "register"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli__subagents__dispatch_start_and_status",
+      "covers": [
+        "K6/subagents/dispatch",
+        "K7/subagents",
+        "K8/ws/.codexclaw/dispatches",
+        "A/subagent-config/fallback-dispatch-cli.test.ts",
+        "K13/CODEXCLAW_HOME"
+      ],
+      "note": "dispatch start snapshots the global executor primary + fallback candidates into ws/.codexclaw/dispatches/<session>/<id>.json (creating .codexclaw with its .gitignore); status reads it back; a second start is refused; changing the role's fallback afterwards does not change the stored candidates.",
+      "given": {
+        "json": {
+          "cxc/subagents.json": {
+            "roles": {
+              "executor": {
+                "mode": "model",
+                "model": "rec/exec-primary",
+                "effort": "high",
+                "promptOverride": null,
+                "fallback": {
+                  "model": "rec/exec-fallback",
+                  "effort": null
+                }
+              }
+            }
+          }
+        }
+      },
+      "steps": [
+        {
+          "cli": [
+            "subagents",
+            "dispatch"
+          ],
+          "stdin": {
+            "action": "start",
+            "sessionId": "rec-s1",
+            "dispatchId": "one",
+            "role": "executor"
+          }
+        },
+        {
+          "cli": [
+            "subagents",
+            "dispatch"
+          ],
+          "stdin": {
+            "action": "status",
+            "sessionId": "rec-s1",
+            "dispatchId": "one"
+          }
+        },
+        {
+          "cli": [
+            "subagents",
+            "dispatch"
+          ],
+          "stdin": {
+            "action": "start",
+            "sessionId": "rec-s1",
+            "dispatchId": "one",
+            "role": "executor"
+          }
+        },
+        {
+          "cli": [
+            "subagents",
+            "set",
+            "executor",
+            "--fallback-model",
+            "rec/changed-fallback",
+            "--global"
+          ]
+        },
+        {
+          "cli": [
+            "subagents",
+            "dispatch"
+          ],
+          "stdin": {
+            "action": "status",
+            "sessionId": "rec-s1",
+            "dispatchId": "one"
+          }
+        }
+      ]
+    },
+    {
+      "id": "cli__subagents__dispatch_claim_fail_handoff",
+      "covers": [
+        "K6/subagents/dispatch",
+        "K7/subagents",
+        "K8/ws/.codexclaw/dispatches",
+        "A/subagent-config/fallback-dispatch.test.ts",
+        "A/subagent-config/fallback-dispatch-cli.test.ts"
+      ],
+      "note": "On a seeded ready attempt: claim returns spawn with the candidate and the CXC-DISPATCH marker; a second claim reconciles; a fallback-eligible provider failure (host-rewritten quota text) before creation hands off to the next candidate (ready).",
+      "given": {
+        "json": {
+          "ws/.codexclaw/dispatches/rec-s1/one.json": {
+            "version": 1,
+            "sessionId": "rec-s1",
+            "id": "one",
+            "role": "executor",
+            "candidates": [
+              {
+                "model": "rec/exec-primary",
+                "effort": "high"
+              },
+              {
+                "model": "rec/exec-fallback",
+                "effort": null
+              }
+            ],
+            "attempts": [
+              {
+                "id": "att-1",
+                "candidate": {
+                  "model": "rec/exec-primary",
+                  "effort": "high"
+                },
+                "claimed": false,
+                "agentId": null,
+                "observedModel": null,
+                "code": null,
+                "taskFailure": null,
+                "status": "ready",
+                "reconciliation": null,
+                "spawnIssued": false,
+                "toolUseId": null
+              }
+            ],
+            "status": "active"
+          }
+        }
+      },
+      "steps": [
+        {
+          "cli": [
+            "subagents",
+            "dispatch"
+          ],
+          "stdin": {
+            "action": "claim",
+            "sessionId": "rec-s1",
+            "dispatchId": "one",
+            "attemptId": "att-1"
+          }
+        },
+        {
+          "cli": [
+            "subagents",
+            "dispatch"
+          ],
+          "stdin": {
+            "action": "claim",
+            "sessionId": "rec-s1",
+            "dispatchId": "one",
+            "attemptId": "att-1"
+          }
+        },
+        {
+          "cli": [
+            "subagents",
+            "dispatch"
+          ],
+          "stdin": {
+            "action": "report",
+            "sessionId": "rec-s1",
+            "dispatchId": "one",
+            "attemptId": "att-1",
+            "outcome": "failed",
+            "error": "Quota exceeded. Check your plan and billing details.",
+            "executionState": "not_created",
+            "reconciliation": "native tool rejected before creation"
+          }
+        }
+      ]
+    },
+    {
+      "id": "cli__subagents__dispatch_created_complete",
+      "covers": [
+        "K6/subagents/dispatch",
+        "K7/subagents",
+        "K8/ws/.codexclaw/dispatches",
+        "A/subagent-config/fallback-dispatch-cli.test.ts"
+      ],
+      "note": "created moves a claimed attempt to running (wait) with observedModel; complete with the recorded agentId closes the dispatch; status then reports complete and a later claim cannot reopen it.",
+      "given": {
+        "json": {
+          "ws/.codexclaw/dispatches/rec-s1/one.json": {
+            "version": 1,
+            "sessionId": "rec-s1",
+            "id": "one",
+            "role": "executor",
+            "candidates": [
+              {
+                "model": "rec/exec-primary",
+                "effort": "high"
+              },
+              {
+                "model": "rec/exec-fallback",
+                "effort": null
+              }
+            ],
+            "attempts": [
+              {
+                "id": "att-1",
+                "candidate": {
+                  "model": "rec/exec-primary",
+                  "effort": "high"
+                },
+                "claimed": true,
+                "agentId": null,
+                "observedModel": null,
+                "code": null,
+                "taskFailure": null,
+                "status": "claimed",
+                "reconciliation": null,
+                "spawnIssued": false,
+                "toolUseId": null
+              }
+            ],
+            "status": "active"
+          }
+        }
+      },
+      "steps": [
+        {
+          "cli": [
+            "subagents",
+            "dispatch"
+          ],
+          "stdin": {
+            "action": "report",
+            "sessionId": "rec-s1",
+            "dispatchId": "one",
+            "attemptId": "att-1",
+            "outcome": "created",
+            "agentId": "child-a",
+            "observedModel": "rec/exec-primary"
+          }
+        },
+        {
+          "cli": [
+            "subagents",
+            "dispatch"
+          ],
+          "stdin": {
+            "action": "report",
+            "sessionId": "rec-s1",
+            "dispatchId": "one",
+            "attemptId": "att-1",
+            "outcome": "complete",
+            "agentId": "child-a"
+          }
+        },
+        {
+          "cli": [
+            "subagents",
+            "dispatch"
+          ],
+          "stdin": {
+            "action": "status",
+            "sessionId": "rec-s1",
+            "dispatchId": "one"
+          }
+        },
+        {
+          "cli": [
+            "subagents",
+            "dispatch"
+          ],
+          "stdin": {
+            "action": "claim",
+            "sessionId": "rec-s1",
+            "dispatchId": "one",
+            "attemptId": "att-1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "cli__subagents__dispatch_task_failed_to_main_direct",
+      "covers": [
+        "K6/subagents/dispatch",
+        "K7/subagents",
+        "K8/ws/.codexclaw/dispatches",
+        "A/subagent-config/fallback-dispatch.test.ts",
+        "A/subagent-config/fallback-dispatch-cli.test.ts"
+      ],
+      "note": "Task failure on the last candidate: a still-running child reconciles; an invalid taskFailure kind is refused; a confirmed stopped child with evidence and reconciliation ends in main-direct and records taskFailure; status reads it back.",
+      "given": {
+        "json": {
+          "ws/.codexclaw/dispatches/rec-s1/one.json": {
+            "version": 1,
+            "sessionId": "rec-s1",
+            "id": "one",
+            "role": "executor",
+            "candidates": [
+              {
+                "model": "rec/exec-primary",
+                "effort": "high"
+              },
+              {
+                "model": "rec/exec-fallback",
+                "effort": null
+              }
+            ],
+            "attempts": [
+              {
+                "id": "att-1",
+                "candidate": {
+                  "model": "rec/exec-primary",
+                  "effort": "high"
+                },
+                "claimed": true,
+                "agentId": "child-a",
+                "observedModel": null,
+                "code": null,
+                "taskFailure": null,
+                "status": "failed",
+                "reconciliation": "first child stopped",
+                "spawnIssued": false,
+                "toolUseId": null
+              },
+              {
+                "id": "att-2",
+                "candidate": {
+                  "model": "rec/exec-fallback",
+                  "effort": null
+                },
+                "claimed": true,
+                "agentId": "child-b",
+                "observedModel": null,
+                "code": null,
+                "taskFailure": null,
+                "status": "running",
+                "reconciliation": null,
+                "spawnIssued": true,
+                "toolUseId": "rec-call-1"
+              }
+            ],
+            "status": "active"
+          }
+        }
+      },
+      "steps": [
+        {
+          "cli": [
+            "subagents",
+            "dispatch"
+          ],
+          "stdin": {
+            "action": "report",
+            "sessionId": "rec-s1",
+            "dispatchId": "one",
+            "attemptId": "att-2",
+            "outcome": "task_failed",
+            "agentId": "child-b",
+            "executionState": "running",
+            "reconciliation": "still running",
+            "taskFailure": {
+              "kind": "stagnation",
+              "evidence": "no progress"
+            }
+          }
+        },
+        {
+          "cli": [
+            "subagents",
+            "dispatch"
+          ],
+          "stdin": {
+            "action": "report",
+            "sessionId": "rec-s1",
+            "dispatchId": "one",
+            "attemptId": "att-2",
+            "outcome": "task_failed",
+            "agentId": "child-b",
+            "executionState": "stopped",
+            "reconciliation": "stopped",
+            "taskFailure": {
+              "kind": "boredom",
+              "evidence": "x"
+            }
+          }
+        },
+        {
+          "cli": [
+            "subagents",
+            "dispatch"
+          ],
+          "stdin": {
+            "action": "report",
+            "sessionId": "rec-s1",
+            "dispatchId": "one",
+            "attemptId": "att-2",
+            "outcome": "task_failed",
+            "agentId": "child-b",
+            "executionState": "stopped",
+            "reconciliation": "second child stopped; partial work preserved",
+            "taskFailure": {
+              "kind": "stagnation",
+              "evidence": "no advancement at the stated review point"
+            }
+          }
+        },
+        {
+          "cli": [
+            "subagents",
+            "dispatch"
+          ],
+          "stdin": {
+            "action": "status",
+            "sessionId": "rec-s1",
+            "dispatchId": "one"
+          }
+        }
+      ]
+    },
+    {
+      "id": "cli__subagents__dispatch_failure_outcomes",
+      "covers": [
+        "K6/subagents/dispatch",
+        "K7/subagents",
+        "A/subagent-config/fallback-dispatch.test.ts"
+      ],
+      "note": "Failure outcomes on claimed attempts: arbitrary prose is unclassified (reconcile, no code); a policy code in a structured envelope stops the dispatch without fallback; unavailable with confirmed no child returns the work to the main agent (main-direct).",
+      "given": {
+        "json": {
+          "ws/.codexclaw/dispatches/rec-s1/one.json": {
+            "version": 1,
+            "sessionId": "rec-s1",
+            "id": "one",
+            "role": "executor",
+            "candidates": [
+              {
+                "model": "rec/exec-primary",
+                "effort": "high"
+              },
+              {
+                "model": "rec/exec-fallback",
+                "effort": null
+              }
+            ],
+            "attempts": [
+              {
+                "id": "att-1",
+                "candidate": {
+                  "model": "rec/exec-primary",
+                  "effort": "high"
+                },
+                "claimed": true,
+                "agentId": null,
+                "observedModel": null,
+                "code": null,
+                "taskFailure": null,
+                "status": "claimed",
+                "reconciliation": null,
+                "spawnIssued": false,
+                "toolUseId": null
+              }
+            ],
+            "status": "active"
+          },
+          "ws/.codexclaw/dispatches/rec-s1/two.json": {
+            "version": 1,
+            "sessionId": "rec-s1",
+            "id": "two",
+            "role": "executor",
+            "candidates": [
+              {
+                "model": "rec/exec-primary",
+                "effort": "high"
+              },
+              {
+                "model": "rec/exec-fallback",
+                "effort": null
+              }
+            ],
+            "attempts": [
+              {
+                "id": "att-1",
+                "candidate": {
+                  "model": "rec/exec-primary",
+                  "effort": "high"
+                },
+                "claimed": true,
+                "agentId": null,
+                "observedModel": null,
+                "code": null,
+                "taskFailure": null,
+                "status": "claimed",
+                "reconciliation": null,
+                "spawnIssued": false,
+                "toolUseId": null
+              }
+            ],
+            "status": "active"
+          },
+          "ws/.codexclaw/dispatches/rec-s1/three.json": {
+            "version": 1,
+            "sessionId": "rec-s1",
+            "id": "three",
+            "role": "executor",
+            "candidates": [
+              {
+                "model": "rec/exec-primary",
+                "effort": "high"
+              },
+              {
+                "model": "rec/exec-fallback",
+                "effort": null
+              }
+            ],
+            "attempts": [
+              {
+                "id": "att-1",
+                "candidate": {
+                  "model": "rec/exec-primary",
+                  "effort": "high"
+                },
+                "claimed": true,
+                "agentId": null,
+                "observedModel": null,
+                "code": null,
+                "taskFailure": null,
+                "status": "claimed",
+                "reconciliation": null,
+                "spawnIssued": false,
+                "toolUseId": null
+              }
+            ],
+            "status": "active"
+          }
+        }
+      },
+      "steps": [
+        {
+          "cli": [
+            "subagents",
+            "dispatch"
+          ],
+          "stdin": {
+            "action": "report",
+            "sessionId": "rec-s1",
+            "dispatchId": "one",
+            "attemptId": "att-1",
+            "outcome": "failed",
+            "error": "the quota server said something odd",
+            "executionState": "not_created",
+            "reconciliation": "none"
+          }
+        },
+        {
+          "cli": [
+            "subagents",
+            "dispatch"
+          ],
+          "stdin": {
+            "action": "report",
+            "sessionId": "rec-s1",
+            "dispatchId": "two",
+            "attemptId": "att-1",
+            "outcome": "failed",
+            "error": {
+              "error": {
+                "code": "content_policy_violation"
+              }
+            },
+            "executionState": "not_created",
+            "reconciliation": "none"
+          }
+        },
+        {
+          "cli": [
+            "subagents",
+            "dispatch"
+          ],
+          "stdin": {
+            "action": "report",
+            "sessionId": "rec-s1",
+            "dispatchId": "three",
+            "attemptId": "att-1",
+            "outcome": "unavailable",
+            "executionState": "not_created",
+            "reconciliation": "native spawn tool absent in this session"
+          }
+        }
+      ]
+    },
+    {
+      "id": "cli__subagents__dispatch_refusals",
+      "covers": [
+        "K6/subagents/dispatch",
+        "A/subagent-config/fallback-dispatch-cli.test.ts",
+        "A/subagent-config/fallback-dispatch.test.ts",
+        "K13/CODEX_THREAD_ID"
+      ],
+      "note": "dispatch input errors print {error} and exit 1: invalid JSON, empty input, invalid sessionId, a session that does not match CODEX_THREAD_ID, a corrupt state file, a stale attemptId, and a report before claim.",
+      "given": {
+        "json": {
+          "ws/.codexclaw/dispatches/rec-s1/bad.json": {},
+          "ws/.codexclaw/dispatches/rec-s1/one.json": {
+            "version": 1,
+            "sessionId": "rec-s1",
+            "id": "one",
+            "role": "executor",
+            "candidates": [
+              {
+                "model": "rec/exec-primary",
+                "effort": "high"
+              },
+              {
+                "model": "rec/exec-fallback",
+                "effort": null
+              }
+            ],
+            "attempts": [
+              {
+                "id": "att-1",
+                "candidate": {
+                  "model": "rec/exec-primary",
+                  "effort": "high"
+                },
+                "claimed": false,
+                "agentId": null,
+                "observedModel": null,
+                "code": null,
+                "taskFailure": null,
+                "status": "ready",
+                "reconciliation": null,
+                "spawnIssued": false,
+                "toolUseId": null
+              }
+            ],
+            "status": "active"
+          }
+        }
+      },
+      "steps": [
+        {
+          "cli": [
+            "subagents",
+            "dispatch"
+          ],
+          "stdin": "{"
+        },
+        {
+          "cli": [
+            "subagents",
+            "dispatch"
+          ],
+          "stdin": ""
+        },
+        {
+          "cli": [
+            "subagents",
+            "dispatch"
+          ],
+          "stdin": {
+            "action": "status",
+            "sessionId": "../x",
+            "dispatchId": "one"
+          }
+        },
+        {
+          "cli": [
+            "subagents",
+            "dispatch"
+          ],
+          "stdin": {
+            "action": "status",
+            "sessionId": "rec-s1",
+            "dispatchId": "one"
+          },
+          "env": {
+            "CODEX_THREAD_ID": "rec-other"
+          }
+        },
+        {
+          "cli": [
+            "subagents",
+            "dispatch"
+          ],
+          "stdin": {
+            "action": "status",
+            "sessionId": "rec-s1",
+            "dispatchId": "bad"
+          }
+        },
+        {
+          "cli": [
+            "subagents",
+            "dispatch"
+          ],
+          "stdin": {
+            "action": "claim",
+            "sessionId": "rec-s1",
+            "dispatchId": "one",
+            "attemptId": "att-0"
+          }
+        },
+        {
+          "cli": [
+            "subagents",
+            "dispatch"
+          ],
+          "stdin": {
+            "action": "report",
+            "sessionId": "rec-s1",
+            "dispatchId": "one",
+            "attemptId": "att-1",
+            "outcome": "created",
+            "agentId": "child-a"
+          }
+        }
+      ]
+    },
+    {
+      "id": "mcp__subagent-config__initialize_and_tools_list",
+      "covers": [
+        "K10/initialize",
+        "K10/tools/list",
+        "A/subagent-config/mcp.test.ts",
+        "A/plugin/build.test.mjs"
+      ],
+      "note": "initialize returns protocol 2024-11-05 and serverInfo; tools/list advertises subagents_get, subagents_set and catalog_list with their input schemas.",
+      "given": {},
+      "steps": [
+        {
+          "mcp": [
+            {
+              "jsonrpc": "2.0",
+              "id": 1,
+              "method": "initialize",
+              "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {
+                  "name": "rec",
+                  "version": "0"
+                }
+              }
+            },
+            {
+              "jsonrpc": "2.0",
+              "method": "notifications/initialized"
+            },
+            {
+              "jsonrpc": "2.0",
+              "id": 2,
+              "method": "tools/list"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mcp__subagent-config__ping_unknown_method_and_garbage",
+      "covers": [
+        "K10/ping",
+        "K10/unknown-method",
+        "A/subagent-config/mcp.test.ts"
+      ],
+      "note": "ping returns {}; an unknown method with an id gets -32601; an unknown notification and a non-JSON line are ignored; an unknown tool name is an isError result.",
+      "given": {},
+      "steps": [
+        {
+          "mcp": [
+            {
+              "jsonrpc": "2.0",
+              "id": 1,
+              "method": "initialize",
+              "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {
+                  "name": "rec",
+                  "version": "0"
+                }
+              }
+            },
+            {
+              "jsonrpc": "2.0",
+              "id": 2,
+              "method": "ping"
+            },
+            {
+              "jsonrpc": "2.0",
+              "id": 3,
+              "method": "resources/list"
+            },
+            {
+              "jsonrpc": "2.0",
+              "method": "notifications/whatever"
+            },
+            "not json",
+            {
+              "jsonrpc": "2.0",
+              "id": 4,
+              "method": "tools/call",
+              "params": {
+                "name": "no_such_tool",
+                "arguments": {}
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mcp__subagent-config__subagents_set_get_roundtrip_global",
+      "covers": [
+        "K10/tools/call/subagents_set",
+        "K10/tools/call/subagents_get",
+        "K12/ocx",
+        "K8/cxc-home/subagents.json",
+        "A/subagent-config/mcp.test.ts"
+      ],
+      "note": "subagents_set (scope global) persists explorer model/effort and an executor fallback; subagents_get (scope global) returns the settings decorated with spawnArgs and staleModel null, because the default ocx stub fails (catalog unavailable).",
+      "given": {},
+      "steps": [
+        {
+          "mcp": [
+            {
+              "jsonrpc": "2.0",
+              "id": 1,
+              "method": "initialize",
+              "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {
+                  "name": "rec",
+                  "version": "0"
+                }
+              }
+            },
+            {
+              "jsonrpc": "2.0",
+              "id": 2,
+              "method": "tools/call",
+              "params": {
+                "name": "subagents_set",
+                "arguments": {
+                  "scope": "global",
+                  "role": "explorer",
+                  "mode": "model",
+                  "model": "rec/explorer-model",
+                  "effort": "high"
+                }
+              }
+            },
+            {
+              "jsonrpc": "2.0",
+              "id": 3,
+              "method": "tools/call",
+              "params": {
+                "name": "subagents_set",
+                "arguments": {
+                  "scope": "global",
+                  "role": "executor",
+                  "fallback": {
+                    "model": "rec/exec-fallback",
+                    "effort": "low"
+                  }
+                }
+              }
+            },
+            {
+              "jsonrpc": "2.0",
+              "id": 4,
+              "method": "tools/call",
+              "params": {
+                "name": "subagents_get",
+                "arguments": {
+                  "scope": "global"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mcp__subagent-config__subagents_set_refusals",
+      "covers": [
+        "K10/tools/call/subagents_set",
+        "K8/cxc-home/subagents.json",
+        "A/subagent-config/mcp.test.ts",
+        "K13/CODEXCLAW_HOME"
+      ],
+      "note": "Invalid subagents_set calls return isError results and leave the store unchanged: invalid mode, invalid effort, invalid nested fallback effort, unknown role, invalid scope, inherit combined with settings, non-boolean inherit.",
+      "given": {
+        "json": {
+          "cxc/subagents.json": {
+            "roles": {
+              "explorer": {
+                "mode": "model",
+                "model": "rec/explorer-model",
+                "effort": "high",
+                "promptOverride": null,
+                "fallback": null
+              }
+            }
+          }
+        }
+      },
+      "steps": [
+        {
+          "mcp": [
+            {
+              "jsonrpc": "2.0",
+              "id": 1,
+              "method": "initialize",
+              "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {
+                  "name": "rec",
+                  "version": "0"
+                }
+              }
+            },
+            {
+              "jsonrpc": "2.0",
+              "id": 2,
+              "method": "tools/call",
+              "params": {
+                "name": "subagents_set",
+                "arguments": {
+                  "scope": "global",
+                  "role": "explorer",
+                  "mode": "turbo"
+                }
+              }
+            },
+            {
+              "jsonrpc": "2.0",
+              "id": 3,
+              "method": "tools/call",
+              "params": {
+                "name": "subagents_set",
+                "arguments": {
+                  "scope": "global",
+                  "role": "explorer",
+                  "effort": "max"
+                }
+              }
+            },
+            {
+              "jsonrpc": "2.0",
+              "id": 4,
+              "method": "tools/call",
+              "params": {
+                "name": "subagents_set",
+                "arguments": {
+                  "scope": "global",
+                  "role": "executor",
+                  "fallback": {
+                    "model": "rec/fb",
+                    "effort": "max"
+                  }
+                }
+              }
+            },
+            {
+              "jsonrpc": "2.0",
+              "id": 5,
+              "method": "tools/call",
+              "params": {
+                "name": "subagents_set",
+                "arguments": {
+                  "scope": "global",
+                  "role": "nobody",
+                  "mode": "default"
+                }
+              }
+            },
+            {
+              "jsonrpc": "2.0",
+              "id": 6,
+              "method": "tools/call",
+              "params": {
+                "name": "subagents_set",
+                "arguments": {
+                  "scope": "galaxy",
+                  "role": "explorer",
+                  "mode": "default"
+                }
+              }
+            },
+            {
+              "jsonrpc": "2.0",
+              "id": 7,
+              "method": "tools/call",
+              "params": {
+                "name": "subagents_set",
+                "arguments": {
+                  "scope": "global",
+                  "role": "explorer",
+                  "inherit": true,
+                  "mode": "default"
+                }
+              }
+            },
+            {
+              "jsonrpc": "2.0",
+              "id": 8,
+              "method": "tools/call",
+              "params": {
+                "name": "subagents_set",
+                "arguments": {
+                  "scope": "global",
+                  "role": "explorer",
+                  "inherit": "yes"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mcp__subagent-config__subagents_set_inherit_resets_role",
+      "covers": [
+        "K10/tools/call/subagents_set",
+        "K8/cxc-home/subagents.json",
+        "A/subagent-config/mcp.test.ts",
+        "A/subagent-config/scoped-surfaces.test.ts",
+        "K13/CODEXCLAW_HOME"
+      ],
+      "note": "subagents_set with inherit: true removes the whole role override from the global store and returns the re-read settings.",
+      "given": {
+        "json": {
+          "cxc/subagents.json": {
+            "roles": {
+              "explorer": {
+                "mode": "model",
+                "model": "rec/explorer-model",
+                "effort": "high",
+                "promptOverride": null,
+                "fallback": null
+              },
+              "reviewer": {
+                "mode": "default",
+                "model": null,
+                "effort": "low",
+                "promptOverride": null,
+                "fallback": null
+              }
+            }
+          }
+        }
+      },
+      "steps": [
+        {
+          "mcp": [
+            {
+              "jsonrpc": "2.0",
+              "id": 1,
+              "method": "initialize",
+              "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {
+                  "name": "rec",
+                  "version": "0"
+                }
+              }
+            },
+            {
+              "jsonrpc": "2.0",
+              "id": 2,
+              "method": "tools/call",
+              "params": {
+                "name": "subagents_set",
+                "arguments": {
+                  "scope": "global",
+                  "role": "explorer",
+                  "inherit": true
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mcp__subagent-config__subagents_get_native_catalog_stale_model",
+      "covers": [
+        "K10/tools/call/subagents_get",
+        "A/subagent-config/mcp.test.ts",
+        "K8/cxc-home/model-catalog.json",
+        "K13/CODEXCLAW_HOME"
+      ],
+      "note": "With ocx absent and a fresh ${CODEX_HOME}/models_cache.json the native catalog is authoritative: a configured model missing from it is staleModel true, a present one false, default-mode roles null with staleReason. The successful read persists ${CXC_HOME}/model-catalog.json keyed by <CATALOGKEY>.",
+      "given": {
+        "json": {
+          "cxc/subagents.json": {
+            "roles": {
+              "explorer": {
+                "mode": "model",
+                "model": "gpt-5.5",
+                "effort": "high",
+                "promptOverride": null,
+                "fallback": null
+              },
+              "reviewer": {
+                "mode": "model",
+                "model": "rec/gone-model",
+                "effort": null,
+                "promptOverride": null,
+                "fallback": null
+              }
+            }
+          },
+          "codex/models_cache.json": {
+            "models": [
+              {
+                "slug": "gpt-5.5",
+                "supported_reasoning_levels": [
+                  {
+                    "effort": "low"
+                  },
+                  {
+                    "effort": "high"
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        "stubs": {
+          "ocx": null
+        }
+      },
+      "steps": [
+        {
+          "mcp": [
+            {
+              "jsonrpc": "2.0",
+              "id": 1,
+              "method": "initialize",
+              "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {
+                  "name": "rec",
+                  "version": "0"
+                }
+              }
+            },
+            {
+              "jsonrpc": "2.0",
+              "id": 2,
+              "method": "tools/call",
+              "params": {
+                "name": "subagents_get",
+                "arguments": {
+                  "scope": "global"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mcp__subagent-config__subagents_get_ocx_catalog_stale_model",
+      "covers": [
+        "K10/tools/call/subagents_get",
+        "K12/ocx",
+        "A/subagent-config/mcp.test.ts",
+        "K8/cxc-home/model-catalog.json",
+        "K13/CODEXCLAW_HOME"
+      ],
+      "note": "subagents_get with a scripted ocx: the fresh ocx catalog is authoritative, so a configured model it lists is staleModel false and one it lacks is true; ocx is called once with models live --json. The successful read persists ${CXC_HOME}/model-catalog.json keyed by <CATALOGKEY>.",
+      "given": {
+        "json": {
+          "cxc/subagents.json": {
+            "roles": {
+              "explorer": {
+                "mode": "model",
+                "model": "kiro/claude-opus-4.6",
+                "effort": null,
+                "promptOverride": null,
+                "fallback": null
+              },
+              "reviewer": {
+                "mode": "model",
+                "model": "rec/gone-model",
+                "effort": "low",
+                "promptOverride": null,
+                "fallback": null
+              }
+            }
+          }
+        },
+        "stubs": {
+          "ocx": {
+            "stdout": "[{\"namespaced\": \"kiro/claude-opus-4.6\", \"displayName\": \"Claude Opus\"}]",
+            "exit": 0
+          }
+        }
+      },
+      "steps": [
+        {
+          "mcp": [
+            {
+              "jsonrpc": "2.0",
+              "id": 1,
+              "method": "initialize",
+              "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {
+                  "name": "rec",
+                  "version": "0"
+                }
+              }
+            },
+            {
+              "jsonrpc": "2.0",
+              "id": 2,
+              "method": "tools/call",
+              "params": {
+                "name": "subagents_get",
+                "arguments": {
+                  "scope": "global"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mcp__subagent-config__catalog_list_native_when_ocx_absent",
+      "covers": [
+        "K10/tools/call/catalog_list",
+        "A/subagent-config/mcp.test.ts",
+        "K8/cxc-home/model-catalog.json"
+      ],
+      "note": "catalog_list with no ocx on PATH reads ${CODEX_HOME}/models_cache.json: routed provider/model slugs are labelled ocx, hidden and duplicate rows are dropped, reasoning efforts are flattened. The successful read persists ${CXC_HOME}/model-catalog.json keyed by <CATALOGKEY>.",
+      "given": {
+        "json": {
+          "codex/models_cache.json": {
+            "models": [
+              {
+                "slug": "gpt-5.5",
+                "supported_reasoning_levels": [
+                  {
+                    "effort": "low"
+                  },
+                  {
+                    "effort": "medium"
+                  },
+                  {
+                    "effort": "high"
+                  }
+                ]
+              },
+              {
+                "slug": "kiro/claude-opus-4.6"
+              },
+              {
+                "slug": "hidden-model",
+                "visibility": "hide"
+              },
+              {
+                "slug": "gpt-5.5"
+              }
+            ]
+          }
+        },
+        "stubs": {
+          "ocx": null
+        }
+      },
+      "steps": [
+        {
+          "mcp": [
+            {
+              "jsonrpc": "2.0",
+              "id": 1,
+              "method": "initialize",
+              "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {
+                  "name": "rec",
+                  "version": "0"
+                }
+              }
+            },
+            {
+              "jsonrpc": "2.0",
+              "id": 2,
+              "method": "tools/call",
+              "params": {
+                "name": "catalog_list"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mcp__subagent-config__catalog_list_ocx_failure_unavailable",
+      "covers": [
+        "K10/tools/call/catalog_list",
+        "K12/ocx",
+        "A/subagent-config/mcp.test.ts"
+      ],
+      "note": "catalog_list with the default ocx stub (exits 127, so not ENOENT) never falls back to the native cache: it reports unavailable with the OCX discovery message, and ocx was invoked as `ocx models live --json`.",
+      "given": {
+        "json": {
+          "codex/models_cache.json": {
+            "models": [
+              {
+                "slug": "gpt-5.5",
+                "supported_reasoning_levels": [
+                  {
+                    "effort": "low"
+                  },
+                  {
+                    "effort": "medium"
+                  },
+                  {
+                    "effort": "high"
+                  }
+                ]
+              },
+              {
+                "slug": "kiro/claude-opus-4.6"
+              },
+              {
+                "slug": "hidden-model",
+                "visibility": "hide"
+              },
+              {
+                "slug": "gpt-5.5"
+              }
+            ]
+          }
+        }
+      },
+      "steps": [
+        {
+          "mcp": [
+            {
+              "jsonrpc": "2.0",
+              "id": 1,
+              "method": "initialize",
+              "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {
+                  "name": "rec",
+                  "version": "0"
+                }
+              }
+            },
+            {
+              "jsonrpc": "2.0",
+              "id": 2,
+              "method": "tools/call",
+              "params": {
+                "name": "catalog_list"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mcp__subagent-config__catalog_list_ocx_scripted",
+      "covers": [
+        "K10/tools/call/catalog_list",
+        "K12/ocx",
+        "A/subagent-config/mcp.test.ts",
+        "K8/cxc-home/model-catalog.json"
+      ],
+      "note": "catalog_list with a scripted ocx: rows map namespaced ids (or native ids), skip disabled/pending rows, dedupe, and label with displayName; state ocx-active. The successful read persists ${CXC_HOME}/model-catalog.json keyed by <CATALOGKEY>.",
+      "given": {
+        "stubs": {
+          "ocx": {
+            "stdout": "[{\"namespaced\": \"kiro/claude-opus-4.6\", \"displayName\": \"Claude Opus\", \"reasoningEfforts\": [\"low\", \"high\"]}, {\"id\": \"gpt-5.5\", \"native\": true, \"reasoningEfforts\": [{\"effort\": \"medium\"}]}, {\"namespaced\": \"kiro/disabled\", \"disabled\": true}, {\"namespaced\": \"kiro/pending\", \"initialSelectionPending\": true}, {\"namespaced\": \"kiro/claude-opus-4.6\"}]",
+            "exit": 0
+          }
+        }
+      },
+      "steps": [
+        {
+          "mcp": [
+            {
+              "jsonrpc": "2.0",
+              "id": 1,
+              "method": "initialize",
+              "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {
+                  "name": "rec",
+                  "version": "0"
+                }
+              }
+            },
+            {
+              "jsonrpc": "2.0",
+              "id": 2,
+              "method": "tools/call",
+              "params": {
+                "name": "catalog_list"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mcp__subagent-config__catalog_list_native_unavailable",
+      "covers": [
+        "K10/tools/call/catalog_list",
+        "A/subagent-config/mcp.test.ts"
+      ],
+      "note": "catalog_list with ocx absent and no Codex models cache reports unavailable with the native-catalog message and writes nothing.",
+      "given": {
+        "stubs": {
+          "ocx": null
+        }
+      },
+      "steps": [
+        {
+          "mcp": [
+            {
+              "jsonrpc": "2.0",
+              "id": 1,
+              "method": "initialize",
+              "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {
+                  "name": "rec",
+                  "version": "0"
+                }
+              }
+            },
+            {
+              "jsonrpc": "2.0",
+              "id": 2,
+              "method": "tools/call",
+              "params": {
+                "name": "catalog_list"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "hook__pre-tool-use-attaching-skills__v1_fence_edge_cases",
+      "covers": [
+        "K3/pre-tool-use-attaching-skills",
+        "K5/hook-rendered",
+        "A/subagent-config/spawn-attach-hook.test.ts"
+      ],
+      "note": "Fence edge cases of the conservative line-based normaliser (spawn-attach-hook.ts:215-263).",
+      "given": {},
+      "steps": [
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "message": "```\r\n$cxc-orchestrate inside\r\n```\r\n$cxc-orchestrate after a CRLF fence",
+              "agent_type": "explorer"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        },
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "message": "intro line\n  ```\n$cxc-orchestrate inside\n```\n$cxc-orchestrate after a drifted close",
+              "agent_type": "explorer"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        },
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "message": "> ```\n> $cxc-orchestrate quoted fence body\n> ```\n$cxc-orchestrate after",
+              "agent_type": "explorer"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        },
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "message": "escaped \\` then $cxc-orchestrate\n[$cxc-orchestrate](skill:///x/SKILL.md \"title\")",
+              "agent_type": "explorer"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "cli__subagents__dispatch_reconciled_then_task_failure",
+      "covers": [
+        "K6/subagents/dispatch",
+        "K7/subagents",
+        "K8/ws/.codexclaw/dispatches",
+        "A/subagent-config/fallback-dispatch.test.ts"
+      ],
+      "note": "fallback-dispatch.ts:183-233: code parked by a reconcile report, cleared by an accepted task failure.",
+      "given": {
+        "json": {
+          "ws/.codexclaw/dispatches/rec-s1/one.json": {
+            "version": 1,
+            "sessionId": "rec-s1",
+            "id": "one",
+            "role": "executor",
+            "candidates": [
+              {
+                "model": "rec/exec-primary",
+                "effort": "high"
+              },
+              {
+                "model": "rec/exec-fallback",
+                "effort": null
+              }
+            ],
+            "attempts": [
+              {
+                "id": "att-1",
+                "candidate": {
+                  "model": "rec/exec-primary",
+                  "effort": "high"
+                },
+                "claimed": true,
+                "agentId": "child-a",
+                "observedModel": null,
+                "code": null,
+                "taskFailure": null,
+                "status": "running",
+                "reconciliation": null,
+                "spawnIssued": false,
+                "toolUseId": null
+              }
+            ],
+            "status": "active"
+          }
+        }
+      },
+      "steps": [
+        {
+          "cli": [
+            "subagents",
+            "dispatch"
+          ],
+          "stdin": {
+            "action": "report",
+            "sessionId": "rec-s1",
+            "dispatchId": "one",
+            "attemptId": "att-1",
+            "outcome": "failed",
+            "error": "insufficient_quota",
+            "executionState": "running",
+            "reconciliation": "unknown"
+          }
+        },
+        {
+          "cli": [
+            "subagents",
+            "dispatch"
+          ],
+          "stdin": {
+            "action": "report",
+            "sessionId": "rec-s1",
+            "dispatchId": "one",
+            "attemptId": "att-1",
+            "outcome": "task_failed",
+            "agentId": "child-a",
+            "executionState": "stopped",
+            "reconciliation": "child stopped; diff inspected",
+            "taskFailure": {
+              "kind": "unusable_output",
+              "evidence": "final message unrelated to the packet"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "cli__subagents__dispatch_held_lock_fails_closed",
+      "covers": [
+        "K6/subagents/dispatch",
+        "A/subagent-config/fallback-dispatch.test.ts",
+        "K9/dispatch-lock"
+      ],
+      "note": "fallback-dispatch.ts:137-139: mkdirSync(lock) without stale-lock recovery.",
+      "given": {
+        "json": {
+          "ws/.codexclaw/dispatches/rec-s1/one.json": {
+            "version": 1,
+            "sessionId": "rec-s1",
+            "id": "one",
+            "role": "executor",
+            "candidates": [
+              {
+                "model": "rec/exec-primary",
+                "effort": "high"
+              },
+              {
+                "model": "rec/exec-fallback",
+                "effort": null
+              }
+            ],
+            "attempts": [
+              {
+                "id": "att-1",
+                "candidate": {
+                  "model": "rec/exec-primary",
+                  "effort": "high"
+                },
+                "claimed": false,
+                "agentId": null,
+                "observedModel": null,
+                "code": null,
+                "taskFailure": null,
+                "status": "ready",
+                "reconciliation": null,
+                "spawnIssued": false,
+                "toolUseId": null
+              }
+            ],
+            "status": "active"
+          }
+        },
+        "dirs": [
+          "ws/.codexclaw/dispatches/rec-s1/one.json.lock"
+        ]
+      },
+      "steps": [
+        {
+          "cli": [
+            "subagents",
+            "dispatch"
+          ],
+          "stdin": {
+            "action": "status",
+            "sessionId": "rec-s1",
+            "dispatchId": "one"
+          }
+        },
+        {
+          "cli": [
+            "subagents",
+            "dispatch"
+          ],
+          "stdin": {
+            "action": "claim",
+            "sessionId": "rec-s1",
+            "dispatchId": "one",
+            "attemptId": "att-1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "cli__subagents__register_adopts_identical_legacy_role",
+      "covers": [
+        "K6/subagents/register",
+        "K8/codex-home/agents",
+        "A/subagent-config/role-registration.test.ts"
+      ],
+      "note": "role-registration.ts:262-281: existing === body (template minus the model = \"default\" sentinel) is upgraded with a backup.",
+      "given": {
+        "files": {
+          "codex/agents/executor.toml": "# codexclaw subagent role: executor\n# Bounded code changes in a disjoint write scope. Register with `cxc subagents register executor`.\n# This is the canonical prompt source; plugin installation alone does not register a native role.\nname = \"executor\"\ndescription = \"Implements a bounded, well-scoped code change in a clear write scope and reports the files it touched.\"\nnickname_candidates = [\"Builder\", \"Maker\", \"Hand\"]\n\ndeveloper_instructions = \"\"\"\nRole: scoped executor. You implement one bounded, well-defined code change inside the write scope you are given. You are NOT alone in the codebase — never revert another agent's edits; adjust your work to fit theirs.\n\n# Leaf constraint (LEAF-TOPOLOGY-01, 260709)\nYou are a LEAF agent: do NOT spawn sub-agents (no spawn_agent calls, no delegation chains) — the spawn-attach hook DENIES recursive spawns unless your dispatcher's task message contains CXC-SUBSPAWN-ALLOWED. If decomposition seems necessary, finish your own scope and REPORT the need in your final answer. Never run cxc orchestrate / cxc loop / goal commands: the parent session owns all FSM and goal state. You share the parent's working directory: same path, same branch, same HEAD — not a copy or a fork. Your edits are the parent's uncommitted changes and are visible to every other agent immediately, so stay inside your write scope and never run branch-level git commands (checkout, switch, branch, stash, reset, rebase, merge, pull).\n\n# Discipline\nAlways apply the `dev` skill's universal discipline (work classifier §0, modular limits, verification gate §3, safety §5). Then consult the router for your change surface:\n- UI / components / CSS → `dev-frontend` (+ `dev-uiux-design` for state/empty/error design)\n- API / server / DB → `dev-backend` (+ `dev-data` for queries/pipelines)\n- tests → `dev-testing`; new module/project scaffold → `dev-scaffolding`\n- when a bug blocks you → `dev-debugging`\nRead SKILL.md routing tables; load a `references/` file only when your change needs that depth.\n\n# Method\n1. Stay strictly inside your assigned write scope (the files/dirs you own). Surface — do not silently expand — any change needed outside it.\n2. Match existing conventions in the touched files (style, libraries, patterns) rather than introducing new ones.\n3. Verify as you go: run the project's typecheck/tests for what you changed (`dev` §3). Untested code is not done.\n4. Repair discipline: if the same verification failure survives two consecutive fix attempts, stop patching — report the failure delta and a root-cause hypothesis instead of a third variation.\n\n# Output\n- The concrete change, implemented.\n- A list of every file path you created or modified.\n- The verification you ran and its result (command + pass/fail).\n- The real terminal state: done | blocked | budget-exhausted. Never frame a budget/time stop as done — report best-so-far and the remaining gap.\n- Unless told otherwise, do NOT git commit — leave staging to the main agent.\n\n# Constraints\n- Writes allowed only within the assigned scope. No commits unless explicitly instructed.\n- No destructive git (push/reset/clean) and no production/infra changes without explicit approval.\n\"\"\"\n"
+        }
+      },
+      "steps": [
+        {
+          "cli": [
+            "subagents",
+            "register",
+            "executor"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli__subagents__register_spaced_codex_home",
+      "covers": [
+        "K6/subagents/register",
+        "A/subagent-config/role-registration.test.ts",
+        "K13/CODEX_HOME"
+      ],
+      "note": "resolveNativeRoleHome returns CODEX_HOME untrimmed (role-registration.ts:212-219).",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "subagents",
+            "register",
+            "architect"
+          ],
+          "env": {
+            "CODEX_HOME": "${HOME}/ spaced home "
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__pre-tool-use-attaching-skills__items_control_token_whitespace",
+      "covers": [
+        "K3/pre-tool-use-attaching-skills",
+        "K5/hook-rendered",
+        "A/subagent-config/spawn-items-boundaries.test.ts",
+        "K8/tmp/codexclaw-subspawn"
+      ],
+      "note": "stripControlMarkers(text, true) on items (spawn-attach-hook.ts:409-415,913-918). The grant file lands in tmp/codexclaw-subspawn-<UID>/<GRANTDIR>/<GRANTFILE>.json; covers K8/tmp/codexclaw-subspawn.",
+      "given": {},
+      "steps": [
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "agent_type": "explorer",
+              "items": [
+                {
+                  "type": "text",
+                  "text": "  lead spaces\n\n\n\nCXC-SUBSPAWN-ALLOWED coordinate  \n"
+                },
+                {
+                  "type": "image",
+                  "image_url": "data:image/png;base64,QUJD"
+                }
+              ]
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "mcp__subagent-config__subagents_get_native_catalog_too_old",
+      "covers": [
+        "K10/tools/call/subagents_get",
+        "A/subagent-config/mcp.test.ts",
+        "K13/CODEXCLAW_HOME"
+      ],
+      "note": "A native ${CODEX_HOME}/models_cache.json older than 24 h is not authoritative: with ocx absent, a configured model missing from it is reported staleModel null with staleReason \"catalog unavailable\" instead of true (mcp.ts:84-93,109-118).",
+      "given": {
+        "json": {
+          "cxc/subagents.json": {
+            "roles": {
+              "reviewer": {
+                "mode": "model",
+                "model": "rec/gone-model",
+                "effort": null,
+                "promptOverride": null,
+                "fallback": null
+              }
+            }
+          },
+          "codex/models_cache.json": {
+            "models": [
+              {
+                "slug": "gpt-5.5"
+              }
+            ]
+          }
+        },
+        "mtimes": {
+          "codex/models_cache.json": "2025-12-30T00:00:00Z"
+        },
+        "stubs": {
+          "ocx": null
+        }
+      },
+      "steps": [
+        {
+          "mcp": [
+            {
+              "jsonrpc": "2.0",
+              "id": 1,
+              "method": "initialize",
+              "params": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {
+                  "name": "rec",
+                  "version": "0"
+                }
+              }
+            },
+            {
+              "jsonrpc": "2.0",
+              "id": 2,
+              "method": "tools/call",
+              "params": {
+                "name": "subagents_get",
+                "arguments": {
+                  "scope": "global"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,100 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/session-start-announcing-subagent-fallback",
+    "K5/hook-rendered",
+    "A/subagent-config/fallback-dispatch-cli.test.ts",
+    "A/subagent-config/dispatch-card.test.ts",
+    "K13/CODEXCLAW_HOME"
+  ],
+  "note": "With a global executor fallback the SessionStart context is the first-fallback protocol line followed by the unresolved-family dispatch card.",
+  "given": {
+    "json": {
+      "cxc/subagents.json": {
+        "roles": {
+          "executor": {
+            "mode": "model",
+            "model": "rec/exec-primary",
+            "effort": "high",
+            "promptOverride": null,
+            "fallback": {
+              "model": "rec/exec-fallback",
+              "effort": null
+            }
+          }
+        }
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "session-start-announcing-subagent-fallback",
+        "stdin": {
+          "hook_event_name": "SessionStart",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "source": "startup",
+          "model": "gpt-5.5",
+          "transcript_path": null
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": "[codexclaw] First fallback configured for executor. Roles with a first fallback use the main-owned dispatch protocol before native spawn. Run cxc subagents dispatch with one JSON object on stdin: {action:\"start\",sessionId:<your native session>,dispatchId:<unique task id>,role:<role>}. Then claim with {action:\"claim\",sessionId,dispatchId,attemptId}. Only action=spawn authorizes one native call; prepend its marker followed by a newline to the original task/skills, pass candidate model and effort when non-null, and use a fresh context. Report creation with {action:\"report\",outcome:\"created\",sessionId,dispatchId,attemptId,agentId:<returned id>}, then use native wait. Report success with {action:\"report\",outcome:\"complete\",sessionId,dispatchId,attemptId,agentId} only after validating final work; native completion alone is not task success and terminal reports cannot reopen. Report provider failure with action:\"report\",outcome:\"failed\", the same IDs, the original error and executionState (not_created/stopped/unknown/running). For confirmed stagnation or unusable final output, report outcome:\"task_failed\" with taskFailure:{kind:\"stagnation\"|\"unusable_output\",evidence:<concrete task evidence>}, the same IDs, executionState:\"stopped\", and reconciliation:<termination and partial-work evidence>. Task evidence and reconciliation must each be non-empty text of at most 2000 characters; taskFailure permits only kind and evidence. Omit error on task reports; supplied stop errors still stop, unknown errors reconcile, and next-eligible provider errors must use outcome:\"failed\". Never relabel cancellation, exhausted bounds, a bare wait timeout or supported disagreement as task failure. Failed handoff requires concrete reconciliation evidence and the recorded agentId for a stopped child. Inspect changes and stop all prior work before retrying. A ready result requires a new claim. Status never authorizes a second spawn. main-direct returns remaining work to the main agent; independent review still requires independent evidence. stop/reconcile never authorizes another model or direct execution. OCX owns provider retries; CXC selects at most two native attempts. Do not invent error codes from arbitrary prose; preserve structured errors or canonical transport error text. Explicit caller model overrides and full-history forks are outside this managed path. Never use a dispatch marker to bypass native permissions.\n[codexclaw] Subagent dispatch: family unresolved at SessionStart; managed fallback first; swap the probe for the task. First Code Mode cell (resolves and calls):\nconst n = ALL_TOOLS.map(t => t.name), has = r => n.some(x => r.test(x));\nconst s = n.filter(x => /spawn_agent$/.test(x));\nif (s.length !== 1) throw new Error(\"expected one spawn_agent helper, found \" + s.length);\nconst v1 = has(/(send_input|close_agent|resume_agent)$/), v2 = has(/(followup_task|interrupt_agent|list_agents)$/);\nif (v1 === v2) throw new Error(\"collab family unresolved: v1=\" + v1 + \" v2=\" + v2);\nconst a = {message:\"Report your model and say OK; do not edit files.\",model:\"command-code/deepseek-deepseek-v4.1-flash\",reasoning_effort:\"low\"};\ntext(await tools[s[0]](v1 ? a : {...a, task_name:\"model_probe\", fork_turns:\"none\"}));\nAliases (map 2026-09-24; local Codex catalog membership only):\ndeepseek -> command-code/deepseek-deepseek-v4.1-flash (unverified, map 2026-09-24)\nswe2 -> devin/swe-2 (unverified, map 2026-09-24)\nkimi -> kimi/kimi-for-coding-highspeed (unverified, map 2026-09-24)\nsol -> gpt-6-sol (unverified, map 2026-09-24)\nluna -> gpt-6-luna (unverified, map 2026-09-24)"
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "cxc/subagents.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "roles": {
+            "executor": {
+              "mode": "model",
+              "model": "rec/exec-primary",
+              "effort": "high",
+              "promptOverride": null,
+              "fallback": {
+                "model": "rec/exec-fallback",
+                "effort": null
+              }
+            }
+          }
+        }
+      }
+    },
+    "calls": [
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

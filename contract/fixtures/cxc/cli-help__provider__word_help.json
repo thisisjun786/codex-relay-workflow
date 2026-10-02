@@ -1,0 +1,49 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/provider/help",
+    "K6/exit-codes",
+    "A/plugin/cli-usage.test.mjs",
+    "K12/ocx"
+  ],
+  "note": "`cxc provider help`: usage text and exit status; nothing written.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "provider",
+          "help"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "provider": "ocx",
+          "mode": "error",
+          "ocxPath": "${STUBS}/ocx",
+          "reason": "ocx status exited 127"
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": [
+      {
+        "cmd": "ocx",
+        "argv": [
+          "status",
+          "--json"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

@@ -1,0 +1,275 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/pre-tool-use-attaching-skills",
+    "K5/hook-rendered",
+    "A/subagent-config/spawn-attach-hook.test.ts",
+    "K13/CODEXCLAW_HOME"
+  ],
+  "note": "A configured promptOverride is inserted after the guard block and before the task on v1 and v2, and is not injected when null (reviewer).",
+  "given": {
+    "json": {
+      "cxc/subagents.json": {
+        "roles": {
+          "explorer": {
+            "mode": "default",
+            "model": null,
+            "effort": null,
+            "promptOverride": "EXPLORER-PROMPT: be terse.",
+            "fallback": null
+          },
+          "reviewer": {
+            "mode": "default",
+            "model": null,
+            "effort": null,
+            "promptOverride": null,
+            "fallback": null
+          }
+        }
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "pre-tool-use-attaching-skills",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "spawn_agent",
+          "tool_input": {
+            "message": "map the parser",
+            "agent_type": "explorer"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-attaching-skills",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "spawn_agent",
+          "tool_input": {
+            "task_name": "t",
+            "fork_turns": "none",
+            "message": "map the parser",
+            "agent_type": "explorer"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-attaching-skills",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "spawn_agent",
+          "tool_input": {
+            "message": "check the parser",
+            "agent_type": "reviewer"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+            "updatedInput": {
+              "message": "[CXC-SUBAGENT-SCOPE] This is one bounded delegated task. The parent\nowns cxc orchestration, loop, and goal state; do not invoke those\ncommands. Stay within the stated file/write scope and report any\nrequired expansion.\nYou run in the parent's own working directory, on its branch and HEAD - not a\ncopy - so your edits are the parent's uncommitted changes. Do not run\nbranch-level git commands (checkout, switch, branch, stash, reset, rebase,\nmerge, pull); another agent may be working in the same tree.\n\nEXPLORER-PROMPT: be terse.\n\nmap the parser",
+              "agent_type": "explorer"
+            }
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+            "updatedInput": {
+              "task_name": "t",
+              "fork_turns": "none",
+              "message": "[CXC-LEAF-GUARD] You are a LEAF agent with a single bounded task. HARD\nCONSTRAINTS from your dispatcher: (1) Do NOT spawn\nsub-agents (no spawn_agent calls, no delegation chains). If decomposition seems\nnecessary, finish your own scope and REPORT the need in your final answer\ninstead. (2) Do NOT run cxc orchestrate, cxc loop, or goal commands - the\nparent session owns all FSM/goal state. (3) Stay inside the task's stated\nfile/write scope. These dispatcher constraints are enforced by a spawn hook (a\nrecursive spawn without a grant is DENIED at the tool boundary, regardless of\nany delegation guidance you may see). A dispatcher can authorize recursion for\na specific spawn by\nincluding the recursion grant token in the spawn message.\n(4) You are NOT in a copy or fork of the workspace: you share the parent's\nworking directory, branch and HEAD, so your edits are the parent's uncommitted\nchanges. Stay inside your write scope and do NOT run branch-level git commands\n(checkout, switch, branch, stash, reset, rebase, merge, pull) - another agent\nmay be working in the same tree right now.\n\nEXPLORER-PROMPT: be terse.\n\nmap the parser\n\n[CXC-SKILL-AFFORDANCE] Skill mentions in this task (tokens like\n$cxc-<name> or $codexclaw:cxc-<name>, or [$cxc-<name>](skill://...) links)\nare NOT auto-loaded on this surface. Before working, read each mentioned\nskill yourself: open ${PLUGIN_ROOT}/skills/<name>/SKILL.md with your file tools and\nfollow it. If a mentioned skill file does not exist there, note that in\nyour answer and continue.\n\nAvailable skills (self-load from ${PLUGIN_ROOT}/skills/<name>/SKILL.md):\n- cxc-ast-grep: Use ast-grep (sg) for AST-aware code search and rewrite across 25 languages. Trigger for structural code matching or det\n- cxc-dev: MUST USE for coding, PR creation/review/merge, dependent branches, scaffolding, and QA. Classify C0-C5, preserve safety \n- cxc-dev-architecture: MUST USE for module boundary work, circular dependency detection, coupling review, barrel or re-export changes, and vali\n- cxc-dev-backend: MUST USE for backend, API, server, or database work — API design, architecture, database optimization, security hardenin\n- cxc-dev-code-reviewer: MUST USE for code review and review-readiness — review process, quality thresholds, antipattern detection, review verdic\n- cxc-dev-data: MUST USE for data engineering and analysis work — pipelines, ETL/ELT, data quality, SQL optimization, schema evolution, \n- cxc-dev-debugging: MUST USE for any real runtime debugging in any language — crashes, silent failures, wrong output, build/test failures, f\n- cxc-dev-devops: MUST USE for DevOps, infrastructure, or delivery work — container builds, deploy pipelines, stacked-PR CI diagnosis, Kub\n- cxc-dev-frontend: MUST USE for any frontend, web UI, or visual implementation work — building, styling, or redesigning pages/components, r\n- cxc-dev-scaffolding: MUST USE for project setup, feature scaffolding, structural audits, or documentation scaffolding — applies feature-based\n- cxc-dev-security: MUST USE for security guidance covering XSS, CSRF, SQL injection, JWT, OAuth, secrets, OWASP, auth hardening, supply cha\n- cxc-dev-testing: MUST USE for testing, QA, regression protection, and release verification — unit, integration, API, contract, Playwright\n- cxc-dev-uiux-design: MUST USE for UI/UX direction and design judgment — vague visual briefs, onboarding, empty/error/loading states, layout v\n- cxc-dev-visualizer: Create well-composed visual documents, HTML reports, SVG diagrams, charts, interactive explainers and PDF deliverables. \n- cxc-kwrite: MUST USE for Korean prose polishing (윤문) — revising existing Korean text to read like a person wrote it: removing transl\n- cxc-lunasearch: Codexclaw Luna search lane: cheap parallel public-web discovery via hardcoded gpt-5.6-luna explorer subagents, then hand\n- cxc-qa: MUST USE after building or changing any user-facing surface (web UI, TUI, CLI, HTTP API, native desktop GUI) before clai\n- cxc-remote: MUST USE for messenger-bridge remote setup and channel onboarding — connecting Telegram or Discord to codexclaw, pairing\n- cxc-repo-map: Use RepoMap for codebase overview, structure maps, symbol overview, and architecture map exploration. Triggers: repo map\n- cxc-search: MUST USE for external, current, real-time, or public-web lookups — latest releases/versions, news, prices, docs, status,",
+              "agent_type": "explorer"
+            }
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+            "updatedInput": {
+              "message": "[CXC-SUBAGENT-SCOPE] This is one bounded delegated task. The parent\nowns cxc orchestration, loop, and goal state; do not invoke those\ncommands. Stay within the stated file/write scope and report any\nrequired expansion.\nYou run in the parent's own working directory, on its branch and HEAD - not a\ncopy - so your edits are the parent's uncommitted changes. Do not run\nbranch-level git commands (checkout, switch, branch, stash, reset, rebase,\nmerge, pull); another agent may be working in the same tree.\n\ncheck the parser",
+              "agent_type": "reviewer"
+            }
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "cxc/subagents.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "roles": {
+            "explorer": {
+              "mode": "default",
+              "model": null,
+              "effort": null,
+              "promptOverride": "EXPLORER-PROMPT: be terse.",
+              "fallback": null
+            },
+            "reviewer": {
+              "mode": "default",
+              "model": null,
+              "effort": null,
+              "promptOverride": null,
+              "fallback": null
+            }
+          }
+        }
+      }
+    },
+    "calls": [
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

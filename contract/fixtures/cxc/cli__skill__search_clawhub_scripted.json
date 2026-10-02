@@ -1,0 +1,54 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/skill/search",
+    "K14/skill-search",
+    "A/skill-search/cli.test.ts",
+    "A/skill-search/sources.test.ts"
+  ],
+  "note": "--source clawhub queries the marketplace per search (never cached): duplicate slugs keep the first, rows are ranked by server order.",
+  "given": {
+    "fetch": {
+      "https://clawhub.ai/api/v1/search?q=telegram&limit=20": {
+        "status": 200,
+        "body": "{\"results\": [{\"slug\": \"tg-notify\", \"displayName\": \"TG Notify\", \"summary\": \"telegram notifications\"}, {\"slug\": \"tg-notify\", \"displayName\": \"dup\", \"summary\": \"dup\"}, {\"slug\": \"tg-bot\", \"summary\": \"a telegram bot\"}]}"
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "skill",
+          "search",
+          "telegram",
+          "--source",
+          "clawhub"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "tg-notify (clawhub, 2)\n  telegram notifications\n  https://clawhub.ai/api/v1/packages/tg-notify/file?path=SKILL.md\ntg-bot (clawhub, 1)\n  a telegram bot\n  https://clawhub.ai/api/v1/packages/tg-bot/file?path=SKILL.md\n# external skills: load with `node \"${PLUGIN_ROOT}/bin/cxc.mjs\" skill show <id>` (adapter preamble applies; cxc-dev wins on conflict)\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": [
+      {
+        "cmd": "fetch",
+        "argv": [
+          "GET",
+          "https://clawhub.ai/api/v1/search?q=telegram&limit=20"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

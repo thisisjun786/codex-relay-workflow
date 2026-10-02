@@ -130,10 +130,10 @@ assignment.
 ## Recorded cases
 
 The nineteen cases below were decided against the JUN-99 delivery at
-`d91164d96b08c9d243786b9455989f87022ebc31` on the pre-rename tree, where these files
-were `skills/linear-run/` and `skills/linear-plan/`. Each owning anchor was re-read
-individually against this tree after the `crw-*` rename and the move under
-`plugins/crw/skills/`, rather than derived by rewriting the path prefix. Seventeen
+`d91164d96b08c9d243786b9455989f87022ebc31`, on an earlier tree where these files sat
+under different skill names and paths. Each owning anchor was re-read individually against
+this tree after the skill rename and the move under `plugins/crw/skills/`, rather than
+derived by rewriting the path prefix. Seventeen
 verdicts stand on sentences that did not change; two, S2 and S14, sit on sentences whose
 wording was revised while the verdict held. None needed a new run to re-establish it, so
 they are reused at that grain: reuse a case whose owner still reads the same, and re-read

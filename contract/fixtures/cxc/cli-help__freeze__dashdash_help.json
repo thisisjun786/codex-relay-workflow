@@ -1,0 +1,35 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/freeze/help",
+    "K6/exit-codes",
+    "A/plugin/cli-usage.test.mjs",
+    "A/pabcd-state/help-verbs.test.ts"
+  ],
+  "note": "`cxc freeze --help`: usage text and exit status; nothing written.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "freeze",
+          "--help"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "cxc freeze — build or preview the interview freeze manifest\n\nUsage:\n  cxc freeze --session <id> [--cwd <path>]\n  cxc freeze --dry-run --session <id> [--cwd <path>]\n  cxc freeze --help\n\nNotes:\n  Hashes the plan files under .codexclaw/plan/<slug>/ and writes the manifest\n  at .codexclaw/interview/freeze.json, then reports staleness against any\n  existing manifest.\n  --dry-run previews without writing. --help never writes.\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}
