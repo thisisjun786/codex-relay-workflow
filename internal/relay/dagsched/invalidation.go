@@ -55,6 +55,9 @@ type Stale struct {
 	ConsumedManifest, RebuiltManifest string
 	// Text is the human sentence the reading's detail carries: it names the edge and the version, so the pass records and the reading's input digest hold them too.
 	Text string
+	// Action and ActionDetail are the route of the node, set by the reading on a copy (revalidation.go): what is done about the stale result, and why. The verdict the memo holds says what is stale;
+	// the route also depends on the relationship the node stands on, which is not part of that verdict.
+	Action, ActionDetail string
 }
 
 // Reason is the closed reason of a stale node: stale:edge:<edge_id> when the reason rests on an edge, else stale:criteria_changed or stale:slice_changed.
@@ -76,6 +79,7 @@ func (s Stale) object() contract.OrderedObject {
 		{Key: "consumed_decision", Value: optionalText(s.ConsumedDecision)}, {Key: "current_decision", Value: optionalText(s.CurrentDecision)},
 		{Key: "consumed_slice_digest", Value: optionalText(s.ConsumedSlice)}, {Key: "current_slice_digest", Value: optionalText(s.CurrentSlice)},
 		{Key: "consumed_manifest_digest", Value: optionalText(s.ConsumedManifest)}, {Key: "rebuilt_manifest_digest", Value: optionalText(s.RebuiltManifest)},
+		{Key: "action", Value: optionalText(s.Action)}, {Key: "action_detail", Value: optionalText(s.ActionDetail)},
 	}
 }
 
@@ -209,8 +213,12 @@ func (s *Scheduler) seedOf(ctx context.Context, q store.Querier, plan string, n 
 		return &Stale{Cause: CauseCriteriaChanged, Seed: n.NodeID, ConsumedSlice: consumed, CurrentSlice: n.SliceDigest, ConsumedManifest: c.acc.ManifestDigest,
 			Text: fmt.Sprintf("the node's criteria are %s and its output stands on %s, the criteria it was last re-verified against: its slice is the one it consumed its inputs at (%s), and the same output has not been re-verified against the plan's criteria", short(n.CriteriaSetDigest), short(effective), short(consumed))}, nil
 	}
-	// an acceptance the node consumed is no longer the active acceptance of its node (a predecessor accepted again, contract 3.1 and E-25): the node rests on a version nobody accepts now. A node
-	// that landed is exempt (E-20), which is also what keeps B-14 reachable behind it
+	return s.staleInput(ctx, q, plan, c)
+}
+
+// staleInput is the seed reading of an acceptance the node consumed that is no longer the active acceptance of its node, or nil when every acceptance it consumed still is.
+func (s *Scheduler) staleInput(ctx context.Context, q store.Querier, plan string, c *consumedOf) (*Stale, error) {
+	// a predecessor accepted again (contract 3.1 and E-25): the node rests on a version nobody accepts now. A node that landed is exempt (E-20), which is also what keeps B-14 reachable behind it
 	inputs := consumedInputs(c.body)
 	ids := make([]string, 0, len(inputs))
 	for id := range inputs {

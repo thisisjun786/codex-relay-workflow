@@ -45,6 +45,10 @@ func (s *Scheduler) PrepareCorrection(ctx context.Context, plan, node, actor str
 	if !ok {
 		return out, refuse(contract.RefusalUnregisteredScope, "plan %s has no live node %s", plan, node)
 	}
+	// a node that landed is never run again (revalidation.go)
+	if err := s.refuseLanded(ctx, q, plan, snap, n); err != nil {
+		return out, err
+	}
 	rel, found, err := currentRelationshipOf(ctx, q, plan, node)
 	if err != nil {
 		return out, err
@@ -159,6 +163,10 @@ func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, sup
 				return refuse(contract.RefusalDispositionConflict, "generation %d of %s is bound to manifest %s and the digest given is %s", rel.Generation, rel.ID, latest, suppliedDigest)
 			}
 			return nil
+		}
+		// a new generation is bound to a node that did not land: one that did is never run again, and the generation the relay opened for it is not recorded as its own (revalidation.go)
+		if err := s.refuseLanded(txCtx, tx, plan, snap, n); err != nil {
+			return err
 		}
 		if !recorded.Valid || recorded.Int64 != rel.Generation-1 {
 			return refuse(contract.RefusalDispositionConflict, "generation %d of %s follows generation %d, and the last recorded execution of %s is %d", rel.Generation, rel.ID, rel.Generation-1, node, recorded.Int64)
