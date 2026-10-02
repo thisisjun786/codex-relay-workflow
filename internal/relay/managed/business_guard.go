@@ -7,6 +7,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -84,7 +85,7 @@ func (r *startRun) guardRelationship(ctx context.Context, read *store.ReadOnly) 
 	if json.Unmarshal([]byte(rootsJSON), &roots) != nil || json.Unmarshal([]byte(recipientsJSON), &allowed) != nil {
 		return "managed_scope_changed"
 	}
-	if issue != r.identity.IssueKey || parentTask != str(r.parent["taskId"]) || parentHost != str(r.parent["hostId"]) || childTask != r.task || childHost != str(obj(r.req["child"])["hostId"]) || scope != str(r.req["scopeRef"]) || !jsonSame(roots, stringsOf(r.req["artifactRoots"])) || !jsonSame(allowed, r.recipients) {
+	if issue != r.identity.IssueKey || parentTask != pyjson.Text(r.parent["taskId"]) || parentHost != pyjson.Text(r.parent["hostId"]) || childTask != r.task || childHost != pyjson.Text(pyjson.Map(r.req["child"])["hostId"]) || scope != pyjson.Text(r.req["scopeRef"]) || !jsonSame(roots, stringsOf(r.req["artifactRoots"])) || !jsonSame(allowed, r.recipients) {
 		return "managed_scope_changed"
 	}
 	return ""
@@ -111,7 +112,7 @@ func (r *startRun) guardSettings(ctx context.Context, read *store.ReadOnly) stri
 	for _, role := range []string{"parent", "child"} {
 		who := r.task
 		if role == "parent" {
-			who = str(r.parent["taskId"])
+			who = pyjson.Text(r.parent["taskId"])
 		}
 		var current string
 		if read.QueryRowContext(ctx, "SELECT settings FROM authorized_settings WHERE task_id=?", who).Scan(&current) != nil {
@@ -121,7 +122,7 @@ func (r *startRun) guardSettings(ctx context.Context, read *store.ReadOnly) stri
 		if json.Unmarshal([]byte(current), &recorded) != nil {
 			return "managed_settings_changed"
 		}
-		if !jsonSame(recorded, settingsWithRole(obj(obj(r.req[role])["settings"]), role)) {
+		if !jsonSame(recorded, settingsWithRole(pyjson.Map(pyjson.Map(r.req[role])["settings"]), role)) {
 			return "managed_settings_changed"
 		}
 	}
@@ -165,7 +166,7 @@ func (r *startRun) guardCriteria(ctx context.Context, read *store.ReadOnly) stri
 				match = true
 			}
 		}
-		if !match || item.source != str(r.req["criteriaSource"]) || item.digest != digest {
+		if !match || item.source != pyjson.Text(r.req["criteriaSource"]) || item.digest != digest {
 			return "managed_criteria_changed"
 		}
 	}
