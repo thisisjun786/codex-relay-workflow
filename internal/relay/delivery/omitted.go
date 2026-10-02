@@ -11,11 +11,9 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -533,149 +531,38 @@ func omissionDetail(label string, receipt Obj) string {
 	return "Readiness is declared but no receipt stands at the current head revision for this session and turn. Emit the receipt over the actual artifacts."
 }
 
-// omissionReceipt replays guard.lookup_receipt: the marker's generation stamp and claimed
-// dispatch constrain the current head, staged receipts count, and the artifact bytes must match.
-func omissionReceipt(ctx context.Context, path, rid, session, turn string, generation any, dispatch string) (Obj, error) {
-	u := url.URL{Scheme: "file", Path: path}
-	q := u.Query()
-	q.Set("mode", "ro")
-	q.Set("_pragma", "busy_timeout(5000)")
-	u.RawQuery = q.Encode()
-	db, err := sql.Open("sqlite", u.String())
-	if err != nil {
-		return nil, err
-	}
-	defer db.Close()
-	db.SetMaxOpenConns(1)
-	s := &store.Store{DB: db, Path: path}
-	base := Obj{{Key: "relationshipId", Value: rid}, {Key: "sessionId", Value: session}, {Key: "turnId", Value: turn}, {Key: "atCurrentHead", Value: false}}
-	var relationship, event Row
-	// Release the SQLite snapshot before hashing any files, just as the Python guard does.
-	err = func() (err error) {
-		if _, err = db.ExecContext(ctx, "BEGIN DEFERRED"); err != nil {
-			return err
-		}
-		defer func() {
-			_, rollbackErr := db.ExecContext(ctx, "ROLLBACK")
-			err = errors.Join(err, rollbackErr)
-		}()
-		relationship, err = one(ctx, s, "SELECT status,superseded_by,execution_generation,artifact_roots FROM relationships WHERE relationship_id=?", rid)
-		if err != nil {
-			return err
-		}
-		if relationship == nil {
-			base = set(base, "evidence", "relationship_absent")
-			return nil
-		}
-		if relationship.S("status") != "active" || truthy(relationship.Opt("superseded_by")) {
-			base = set(base, "evidence", "relationship_not_active")
-			return nil
-		}
-		current := relationship.I("execution_generation")
-		if generation != nil && fmt.Sprint(generation) != strconv.FormatInt(current, 10) {
-			base = set(base, "evidence", "registration_generation_mismatch")
-			base = set(base, "detail", fmt.Sprintf("the assignment registered generation %v and the relationship now stands on generation %d", generation, current))
-			return nil
-		}
-		opened, err := one(ctx, s, "SELECT dispatch_request_id FROM generations WHERE relationship_id=? AND execution_generation=?", rid, current)
-		if err != nil {
-			return err
-		}
-		if opened == nil {
-			base = set(base, "evidence", "generation_absent")
-			base = set(base, "detail", fmt.Sprintf("the relationship reports generation %d and the store holds no record of which dispatch opened it", current))
-			return nil
-		}
-		if opened.S("dispatch_request_id") != dispatch {
-			base = set(base, "evidence", "generation_dispatch_mismatch")
-			base = set(base, "detail", fmt.Sprintf("the relationship stands on generation %d, which a different dispatch request opened", current))
-			return nil
-		}
-		head, err := HeadRevision(ctx, s, rid, current)
-		if err != nil {
-			return err
-		}
-		if slices.Contains(ambiguousEvidence, str(head, "evidence")) {
-			base = set(base, "evidence", "head_"+str(head, "evidence"))
-			return nil
-		}
-		if str(head, "eventId") == "" {
-			base = set(base, "evidence", "no_reviewable_revision")
-			return nil
-		}
-		event, err = one(ctx, s, "SELECT event_id,stage,revision_hash,turn_thread_id,turn_id,producer,receipt,manifest_ref FROM events WHERE event_id=?", str(head, "eventId"))
-		return err
-	}()
-	if err != nil {
-		return nil, err
-	}
-	if str(base, "evidence") != "" {
-		return base, nil
-	}
-	if event == nil {
-		return set(base, "evidence", "no_reviewable_revision"), nil
-	}
-	if event.S("producer") != "child" || !slices.Contains([]string{"staged", "final"}, event.S("stage")) {
-		return set(base, "evidence", "head_is_not_a_child_receipt"), nil
-	}
-	if event.S("turn_thread_id") != session || event.S("turn_id") != turn {
-		return set(base, "evidence", "head_belongs_to_another_turn"), nil
-	}
-	// The Stop hook reads the same stored receipt through the same two functions, so the two readers
-	// answer alike: a document that is not JSON is unreadable, and one that is JSON is compared as
-	// the values it holds, whatever their types.
-	rootsValue, payload, unreadable := store.DecodeStoredReceipt(relationship.S("artifact_roots"), event.S("receipt"))
-	if unreadable != "" {
-		base = set(base, "evidence", "stored_receipt_unreadable")
-		base = set(base, "detail", unreadable)
-		return set(base, "eventId", event.S("event_id")), nil
-	}
-	binding, detail, err := omissionDeliverable(ctx, payload, event.S("manifest_ref"), rootsValue)
-	if err != nil {
-		return nil, err
-	}
-	if binding == "" {
-		base = set(base, "evidence", "artifacts_changed_since_receipt")
-		base = set(base, "detail", detail)
-		base = set(base, "eventId", event.S("event_id"))
-		return set(base, "revisionHash", event.S("revision_hash")), nil
-	}
-	base = set(base, "atCurrentHead", true)
-	base = set(base, "evidence", "at_head")
-	base = set(base, "eventId", event.S("event_id"))
-	base = set(base, "revisionHash", event.S("revision_hash"))
-	base = set(base, "stage", event.S("stage"))
-	return set(base, "deliverableBinding", binding), nil
-}
+// observationReceiptTimeout is how long the omission observation waits for a lock on the store when
+// it reads the stored receipt (the wait the reading has always allowed itself).
+const observationReceiptTimeout = 5 * time.Second
 
-// omissionDeliverable maps the shared judgment of a stored receipt, store.DeliverableState, which
-// the Stop hook answers by as well, onto what the omission keeps: the binding when the deliverable
-// stands, the detail when it changed, and an error when the comparison could not happen (a read of
-// the live bytes or of the frozen copy that did not happen, or a context that ended: never reported
-// as a revision that changed, and read by the omission as receipt_unreadable) or raised out of
-// guard.deliverable_state (omissionReceiptFailure names it).
-func omissionDeliverable(ctx context.Context, payload any, reference string, roots any) (string, string, error) {
-	state, binding, detail, err := store.DeliverableState(ctx, payload, reference, roots)
+// omissionReceiptUnmeasured is why a receipt lookup leaves the omission unmeasured, or "" when it
+// read one: a receipt nobody could read (the guard's readable False, which is also a deliverable
+// nobody could compare) is receipt_unreadable, and a lookup that raised leaves with
+// omissionReceiptFailure's reason. A lookup that found no receipt answers readable, with its
+// evidence.
+func omissionReceiptUnmeasured(readable bool, err error) string {
 	switch {
 	case err != nil:
-		return "", "", err
-	case state == store.DeliverableCurrent:
-		return binding, "", nil
-	case state == store.DeliverableUnverifiable:
-		return "", "", errors.New(detail)
+		return omissionReceiptFailure(err)
+	case !readable:
+		return "receipt_unreadable"
 	}
-	return "", detail, nil
+	return ""
 }
 
 // omissionReceiptFailure is the reason a receipt lookup that failed leaves the omission
 // unmeasured with. A receipt nobody could read, or a deliverable nobody could compare, is
 // lookup_receipt's readable False (receipt_unreadable). The RecursionError of a frozen copy nested
 // past json.loads's depth leaves lookup_receipt instead, and observe and derive catch it as a
-// RuntimeError: evidence_unreadable with its words.
+// RuntimeError: evidence_unreadable with its words. So does a string sqlite3 could not encode,
+// which is a ValueError there (a UnicodeEncodeError), with the words pythonStr gives it.
 func omissionReceiptFailure(err error) string {
 	var exception *store.ManifestException
 	if errors.As(err, &exception) && exception.RuntimeError() {
 		return "evidence_unreadable: " + exception.Error()
+	}
+	if encode := store.EncodeError(err); encode != nil {
+		return "evidence_unreadable: " + encode.Error()
 	}
 	return "receipt_unreadable"
 }
@@ -801,9 +688,10 @@ func observeOmission(ctx context.Context, selection store.StateSelection, root, 
 	disposition, _ := dispositionRaw.(Obj)
 	var receipt Obj
 	if str(disposition, "outcome") == "ready_for_review" {
-		receipt, err = omissionReceipt(ctx, selection.DBPath(), rid, session, turn, fieldOf(markerFact(marker, "relationship"), "executionGeneration"), dispatch)
-		if err != nil {
-			return omissionUnmeasured(result, omissionReceiptFailure(err))
+		var readable bool
+		receipt, readable, err = LookupStoredReceiptAt(ctx, selection.DBPath(), nil, observationReceiptTimeout, ReceiptQuery{Relationship: rid, Session: session, Turn: turn, Generation: fieldOf(markerFact(marker, "relationship"), "executionGeneration"), Dispatch: dispatch})
+		if reason := omissionReceiptUnmeasured(readable, err); reason != "" {
+			return omissionUnmeasured(result, reason)
 		}
 	}
 	label := declarationLabel(disposition, session, turn, fieldOf(receipt, "atCurrentHead") == true)
@@ -916,9 +804,10 @@ func DeriveOmission(ctx context.Context, s *store.Store, stateDir, rid, turn, no
 	}
 	var receipt Obj
 	if str(disposition, "outcome") == "ready_for_review" {
-		receipt, err = omissionReceipt(ctx, s.Path, rid, child, turn, generation, dispatch)
-		if err != nil {
-			return omissionUnmeasured(result, omissionReceiptFailure(err))
+		var readable bool
+		receipt, readable, err = LookupStoredReceipt(ctx, s, ReceiptQuery{Relationship: rid, Session: child, Turn: turn, Generation: generation, Dispatch: dispatch})
+		if reason := omissionReceiptUnmeasured(readable, err); reason != "" {
+			return omissionUnmeasured(result, reason)
 		}
 	}
 	label := declarationLabel(disposition, child, turn, fieldOf(receipt, "atCurrentHead") == true)
