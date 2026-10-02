@@ -29,7 +29,7 @@ const refreshRule = "tree_identity"
 const (
 	refreshSafeSide      = "safe side: this head is not accepted. Return the candidate to its child. A hand recheck (git range-diff of the child's commits, the differing paths named above) only decides what the correction says; it never turns this refusal into a pass"
 	refreshSafeSideChain = "safe side: this head is not accepted as one update. If it is a chain of updates, prove them one step at a time, each with the head the earlier proof named as --previous; a head that no proof names goes back to its child. It is not a pass until a proof names it"
-	refreshSafeSideMoved = "safe side: this head is not accepted against the commit named. If the base moved between reading its tip and the update, read the tip again and prove against it, or confirm that the second parent was once a tip of the base and prove against that; otherwise return the candidate to its child"
+	refreshSafeSideMoved = "safe side: this head is not accepted against the commit named. If the base moved between reading its tip and the update, read the tip of the base from the forge again and prove against that tip; a commit that no forge reading named as the tip is never one to prove against, and without a pass the candidate goes back to its child"
 )
 
 var baseRefresh = family{name: "base-refresh", description: `Check that a pull request head is the previously verified head plus the tip of its base, and nothing else.
@@ -93,7 +93,7 @@ func runBaseRefresh(args []string, stdout, stderr io.Writer) int {
 	}
 	if why != nil {
 		fmt.Fprintf(stdout, "refused: %s: %s\n", why.code, why.detail)
-		fmt.Fprintf(stdout, "facts: previous=%s dev_tip=%s head=%s parents=%s merge_tree=%s head_tree=%s second_parent_on_first_parent_line=%s\n", ids[0], ids[2], ids[1], orNone(strings.Join(why.facts.parents, ",")), orNone(why.facts.mergeTree), orNone(why.facts.headTree), orNone(why.facts.tipLine))
+		fmt.Fprintf(stdout, "facts: previous=%s dev_tip=%s head=%s parents=%s merge_tree=%s head_tree=%s\n", ids[0], ids[2], ids[1], orNone(strings.Join(why.facts.parents, ",")), orNone(why.facts.mergeTree), orNone(why.facts.headTree))
 		fmt.Fprintln(stdout, why.safe)
 		return 1
 	}
@@ -124,9 +124,6 @@ type refreshRefusal struct {
 type refreshFacts struct {
 	parents             []string
 	mergeTree, headTree string
-	// tipLine says whether the second parent is on the first-parent history of the named tip, that is,
-	// whether it was the tip of the base at some moment ("yes" or "no"); empty when it was not asked
-	tipLine string
 }
 
 // refreshProof is what a pass proves; its four commits and trees are the fields of the evidence line.
@@ -281,22 +278,6 @@ func (g *refreshGit) isAncestor(ctx context.Context, ancestor, descendant string
 	return false, err
 }
 
-// onFirstParentLine is whether commit is on the first-parent history of tip: the tip of the base at
-// some moment, when the base takes its changes as merge commits or as squashed commits. A commit that
-// reached the base only inside a merged side branch is an ancestor of the tip and is not on that line.
-func (g *refreshGit) onFirstParentLine(ctx context.Context, commit, tip string) (bool, error) {
-	_, out, err := g.iso(ctx, nil, "rev-list", "--first-parent", tip)
-	if err != nil {
-		return false, err
-	}
-	for _, id := range strings.Fields(out) {
-		if id == commit {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
 func (g *refreshGit) parents(ctx context.Context, commit string) ([]string, error) {
 	_, out, err := g.iso(ctx, nil, "rev-list", "--parents", "-n", "1", commit)
 	if err != nil {
@@ -410,14 +391,6 @@ func (g *refreshGit) prove(ctx context.Context, previous, head, tip string) (*re
 		}
 		if !fromBase {
 			return refuse(refreshSafeSideMoved, "not_from_base", "%s merges %s, which is not an ancestor of the commit named as the base tip (%s): a branch that is not the base, or a base that moved between reading its tip and the update", head, second, tip)
-		}
-		onLine, err := g.onFirstParentLine(ctx, second, tip)
-		if err != nil {
-			return nil, nil, err
-		}
-		facts.tipLine = "no"
-		if onLine {
-			facts.tipLine = "yes"
 		}
 		return refuse(refreshSafeSideMoved, "not_the_dev_tip", "%s merges %s, which is on the base but is not the commit named as its tip (%s): the base moved after the update, or the wrong tip was named", head, second, tip)
 	}

@@ -77,7 +77,7 @@ func TestBaseRefreshRefusesAHeadWhoseParentsAreNotExactlyThePreviousHeadAndTheDe
 			head := s.r.update("feature", "dev")
 			s.devMoves("dev2.txt", "newer\n")
 			return s.previous, head
-		}, "not_the_dev_tip", "the base moved", "read the tip again"},
+		}, "not_the_dev_tip", "the base moved", "read the tip of the base from the forge again"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -89,8 +89,15 @@ func TestBaseRefreshRefusesAHeadWhoseParentsAreNotExactlyThePreviousHeadAndTheDe
 				t.Fatalf("want refused %s (%q) and no evidence, got %+v", c.code, c.says, got)
 			}
 			// the skill's safe side is named in the answer: back to the child, a recheck is not a pass
-			if !strings.Contains(got.stdout, "\nsafe side: ") || !strings.Contains(got.stdout, c.safe) {
-				t.Errorf("a refusal names the safe side (%q):\n%s", c.safe, got.stdout)
+			// the line itself: the refusal's detail may quote the same words
+			var line string
+			for _, l := range strings.Split(got.stdout, "\n") {
+				if strings.HasPrefix(l, "safe side: ") {
+					line = l
+				}
+			}
+			if !strings.Contains(line, c.safe) {
+				t.Errorf("the safe-side line lacks %q:\n%s", c.safe, got.stdout)
 			}
 		})
 	}
@@ -154,23 +161,17 @@ func TestBaseRefreshRecoversFromABaseThatMovedUnderTheUpdate(t *testing.T) {
 	}
 	// dev moves once more: the update merged an older commit than the tip, which is a refusal of its own
 	s.devMoves("dev3.txt", "newest\n")
-	if got := check(s.r, s.previous, head, "dev"); got.exit != 1 || !strings.HasPrefix(got.stdout, "refused: not_the_dev_tip:") || !strings.Contains(got.stdout, "parents="+s.previous+","+newer) || !strings.Contains(got.stdout, " second_parent_on_first_parent_line=yes\n") {
+	if got := check(s.r, s.previous, head, "dev"); got.exit != 1 || !strings.HasPrefix(got.stdout, "refused: not_the_dev_tip:") || !strings.Contains(got.stdout, "parents="+s.previous+","+newer) {
 		t.Fatalf("older commit than the tip: %+v", got)
 	}
-	// the recovery: the second parent was once a tip of the base, which the first-parent history shows,
-	// and naming it proves the update against the commit it merged
-	if !strings.Contains(s.r.git("rev-list", "--first-parent", "dev"), newer) {
-		t.Fatal("the fixture was meant to put the merged commit on the first-parent history of dev")
-	}
-	if got := check(s.r, s.previous, head, newer); got.exit != 0 || !strings.Contains(got.stdout, "dev_tip="+newer+" ") {
-		t.Fatalf("recovery: %+v", got)
-	}
+	// nothing proves the second parent against a tip no forge reading named, so the answer stays a refusal
 }
 
-func TestBaseRefreshNamesWhatItIsGivenSoTheProcedureHasToAskWhetherItWasATip(t *testing.T) {
-	// a commit that reached dev inside a merged side branch is an ancestor of dev and was never its tip.
-	// The check proves an update against any commit it is named, so what makes a named commit a dev tip
-	// is the procedure's first-parent test, which this commit fails.
+func TestBaseRefreshProvesAgainstTheCommitItIsNamed(t *testing.T) {
+	// The check proves an update against whatever commit it is named, tip or not: a commit that reached
+	// dev inside a merged side branch passes when named, and so would an intermediate commit of a push
+	// that moved dev by several commits. Only the procedure says what may be named (a tip read from
+	// the forge), and the check cannot tell the two apart, so this test pins both answers.
 	s := newScenario(t)
 	s.r.branchFrom("side", s.fork)
 	side := s.r.commit("side.txt", "side\n", "side work")
@@ -180,15 +181,11 @@ func TestBaseRefreshNamesWhatItIsGivenSoTheProcedureHasToAskWhetherItWasATip(t *
 	s.r.git("checkout", "-q", "feature")
 	s.r.git("merge", "-q", "--no-ff", "-m", "Merge a commit of the side branch", side)
 	head := s.r.git("rev-parse", "HEAD")
-	// the check says whether the second parent was ever a tip, so the procedure needs no hand-run git for it
-	if got := check(s.r, s.previous, head, "dev"); got.exit != 1 || !strings.HasPrefix(got.stdout, "refused: not_the_dev_tip:") || !strings.Contains(got.stdout, " second_parent_on_first_parent_line=no\n") {
+	if got := check(s.r, s.previous, head, "dev"); got.exit != 1 || !strings.HasPrefix(got.stdout, "refused: not_the_dev_tip:") {
 		t.Fatalf("named by the branch: %+v", got)
 	}
 	if got := check(s.r, s.previous, head, side); got.exit != 0 {
 		t.Fatalf("the check proves the update against the commit it is named: %+v", got)
-	}
-	if strings.Contains(s.r.git("rev-list", "--first-parent", "dev"), side) {
-		t.Fatal("the side-branch commit must not be on the first-parent history of dev, or the procedure's test cannot tell it from a tip")
 	}
 }
 

@@ -343,8 +343,7 @@ On the new head N nothing about P carries over. Before the merge:
   first parent is not P); `not_a_merge` (N does not have two parents); `parents_swapped` (P is the
   second parent: the reverse merge, which merge-ort gives the same tree, so only the parent order
   tells it apart); `not_from_base` (the second parent is not an ancestor of D);
-  `not_the_dev_tip` (it is an ancestor of D but not D itself; the `facts:` line then says whether
-  it is on the first-parent history of D, `second_parent_on_first_parent_line=yes|no`);
+  `not_the_dev_tip` (it is an ancestor of D but not D itself);
   `merge_conflicts` (git cannot merge P and D without a resolution, so N carries one);
   `tree_differs` (N's tree is not what git merges; the paths that differ are named). Exit 2 means
   git could not answer (a missing commit, a shallow checkout, git older than 2.41, a `merge-tree`
@@ -413,20 +412,13 @@ call for the stepwise proof, not a return.
 If the base moved between reading D and the update call, the update merged a newer commit than D
 and the check says `not_from_base` (that commit is not an ancestor of D); `not_the_dev_tip` says
 the commit named was newer than the one merged (a pull request's `base.sha` was read for D), or that
-the base moved again since. Read the tip of the base again, T, run the check with `--base T` and
-act on what it prints. Exit 0: N's second parent is T, and N is current and proved. `not_the_dev_tip`:
-the `facts:` line says `second_parent_on_first_parent_line=yes` when the second parent was the tip
-of the base at some moment (it is on the first-parent history of the named tip) and `no` when it
-reached the base only inside a merged side branch. That reading holds for a base that takes its
-changes as merge commits or squashed commits, as dev does; a base that lands by rebase puts commits
-on that line that were never a tip, and there the recovery is not used. On `yes`, run the check
-once more with `--base <that second parent>`: the proof is of that update against the commit it
-merged, the evidence line carries it as `dev_tip`, and N is proved but behind (`merge-evidence`
-says `candidate_behind`), so the next step starts from N. On `no`, and on any other refusal, the
-candidate goes back. `--base` is only ever a commit read from the forge or a second parent the
-check itself marked `yes`, never a head's second parent taken unread. Count a `yes` recovery as
-`recovered` in the merge record: neither handled nor returned until the candidate lands or goes
-back.
+the base moved again since. Read the tip of the base from the forge again, T, and run the check with
+`--base T`. Exit 0 means N's second parent is T, so N is current and proved; any refusal sends the
+candidate back to its child. `--base` is only ever a tip read from the forge: never a head's second
+parent, and never a commit that no forge reading named as the tip. The check proves an update
+against whatever commit it is named, and an ancestor of the base that was never its tip passes as
+readily (a commit of a merged side branch, or an intermediate commit of a push that moved the base
+by several commits).
 
 Then merge as above: reread the head and base, merge with the expected-head guard on N.
 
@@ -481,26 +473,32 @@ and the evidence text is the only place that difference is explained. The merge 
 coordination record carries the same lines. The parent copies them from the check's output; it
 does not retype the fields.
 
-**Record what the lane costs**, beside the landed and candidate revisions, one entry per merge:
+**Record what the lane costs**, beside the landed and candidate revisions: one entry per merge, and
+one record per conflict episode, written when the episode closes, so that a candidate that never
+lands still leaves its returned episode behind:
 
-    merge-lane: pr=<N> landed=<commit> episodes=<none, or handled|returned|recovered in order>
+    merge-lane: pr=<N> landed=<commit>
       verified_at=<UTC> granted=<UTC> landed_at=<UTC>
       ci_runs=<attempts on every head> ci_runs_parent_heads=<attempts on heads the parent made>
       ci_reruns=<reruns the parent asked for, at most one per head>
       dev_after=<success|failure|unread|pending> evidence=<the evidence line, once per step>
+    merge-lane-episode: pr=<N> at=<UTC> outcome=<handled|returned>
+      because=<the refresh passed the check | a forge conflict | a refusal (code) | an exit 2 not
+      cleared | stale_base | a merge state still UNKNOWN>
 
-An entry for a candidate that was refreshed and landed after one rerun reads, in shape only (the
-numbers are illustrative): `episodes=handled`, verified 01:02:00Z, granted 01:20:00Z, landed
-01:41:30Z, `ci_runs=9 ci_runs_parent_heads=4 ci_reruns=1 dev_after=success`; its lane wait is 18
-minutes and its service time S is 21.5 minutes.
+An entry for a candidate that was refreshed once and landed after one rerun reads, in shape only
+(the numbers are illustrative): verified 01:02:00Z, granted 01:20:00Z, landed 01:41:30Z,
+`ci_runs=9 ci_runs_parent_heads=4 ci_reruns=1 dev_after=success`, with one episode record
+`outcome=handled`; its lane wait is 18 minutes and its service time S is 21.5 minutes.
 
 - Times, not minutes, are recorded, so that the pre-registered comparison can recompute them. The
   lane wait is `granted` minus `verified_at` (the verdict `verified`); it is not the contract's W,
   the node's implementation time. S, the merge-lane service time, is `landed_at` minus `granted`.
-  `granted` is the merge-turn grant (`merge-turn-show`), or, with no lane, the instant the parent took
-  the candidate as next to merge (the update call when it needed one). A time that cannot be read is
-  written `unread` and the figure that needs it is not computed, never zero. `landed_at` is the observed landing (`merge-turn-land`, or the forge's `merged_at`),
-  never the merge request being accepted.
+  `granted` is the merge-turn grant (`merge-turn-show`), or, with no lane, the instant the parent
+  took the candidate as next to merge (the update call when it needed one). `landed_at` is the
+  observed landing (`merge-turn-land`, or the forge's `merged_at`), never the merge request being
+  accepted. A time that cannot be read is written `unread` and the figure that needs it is not
+  computed, never zero.
 - CI runs per merged pull request is the number of workflow-run attempts, each attempt counted once,
   on every head of the pull request until it landed (`gh api
   "repos/OWNER/REPO/actions/runs?head_sha=<head>"`, the `pull_request` runs and their `run_attempt`);
@@ -508,15 +506,12 @@ minutes and its service time S is 21.5 minutes.
   has no run.
 - Conflicts are counted as episodes, for the base reason only. An episode is one occasion on which
   the only block on a candidate was the base. It is handled when the parent's refresh passed the
-  check and the candidate went on, and returned when it was a base-caused return to the child: a
-  forge conflict, a refusal, an exit 2 that a second ask did not clear, a `stale_base`, a merge
-  state still `UNKNOWN`. A `recovered` episode stays open until the candidate lands (handled) or
-  goes back (returned). A candidate that landed with no episode is `episodes=none` and is in
-  neither count. A candidate that went back to its child and later landed carries its returned
-  episode in the entry of its landing; the episodes of every entry are the sample of the ratio.
-- The conservative return ratio is the returned episodes divided by the closed episodes (handled
-  plus returned) over the merges of a run, with every doubt counted as returned. Open episodes are
-  reported beside it and are not in it; with no closed episode the ratio is not defined and is
+  check, and returned when the candidate went back to its child for the base: a forge conflict, a
+  refusal, an exit 2 that a second ask did not clear, a `stale_base`, a merge state still
+  `UNKNOWN`. Each episode has one record, whether or not the candidate lands later; a candidate
+  that needs no refresh has none.
+- The conservative return ratio is the returned episode records divided by all episode records of
+  a run, with every doubt counted as returned; with no record the ratio is not defined and is
   written so, never as 0. It has no target here: targets belong to the pre-registration of the
   DAG comparison.
 
