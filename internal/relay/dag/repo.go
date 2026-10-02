@@ -604,15 +604,24 @@ func Preflight(ctx context.Context, dbPath string, rev Revision) error {
 // preflightRead is Preflight's reading of an existing store. Its reads are separate queries, so another
 // writer's commit can land between them; when one of them is this very request (a repeated request racing
 // its own first copy), every later read sees the plan after that commit and the request looks stale or
-// conflicting. So a refusal is handed on, not given, once the request is found in the log: the writing open
-// answers it with the stored result, and judges it again as the authority. A request that is not in the log
-// is refused as it was.
+// conflicting. So a refusal (a stale parent, a plan the rules reject) is handed on, not given, once the request
+// is found in the log: the writing open answers it with the stored result, and judges it again as the authority.
+// A request that is not in the log is refused as it was. A failure to read the store is the host's and is
+// returned as it is, the look-up included.
 func preflightRead(ctx context.Context, q Queryer, rev Revision) error {
 	err := judgeAgainstStore(ctx, q, rev)
 	if err == nil {
 		return nil
 	}
-	if _, found, lookup := revisionByRequest(ctx, q, rev.PlanID, rev.RequestID); lookup == nil && found {
+	var refusal *store.RefusedError
+	if !errors.As(err, &refusal) {
+		return err // a failure to read the store is the host's, and a request is not looked up again to hide it
+	}
+	_, found, lookup := revisionByRequest(ctx, q, rev.PlanID, rev.RequestID)
+	if lookup != nil {
+		return lookup
+	}
+	if found {
 		return nil
 	}
 	return err

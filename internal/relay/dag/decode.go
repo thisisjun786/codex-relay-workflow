@@ -441,9 +441,14 @@ func Checked(rev Revision) (Revision, error) {
 	for i, c := range rev.Changes {
 		changes[i] = changeObject(c)
 	}
-	return DecodeRevision([]byte(canonical(map[string]any{
+	document := map[string]any{
 		"schema": SchemaRevision, "plan_id": rev.PlanID, "project_key": rev.ProjectKey, "request_id": rev.RequestID,
-		"expected_parent_revision": rev.ExpectedParent, "coordinator_epoch": rev.CoordinatorEpoch, "author_task_id": rev.AuthorTaskID,
-		"changes": changes,
-	})))
+		"expected_parent_revision": rev.ExpectedParent, "author_task_id": rev.AuthorTaskID, "changes": changes,
+	}
+	if rev.CoordinatorEpoch != 0 {
+		// optional, and left out when zero so the document is no longer than the one a caller could have written
+		// (a document at the size limit without the field must not cross it for being spelled out here)
+		document["coordinator_epoch"] = rev.CoordinatorEpoch
+	}
+	return DecodeRevision([]byte(canonical(document)))
 }

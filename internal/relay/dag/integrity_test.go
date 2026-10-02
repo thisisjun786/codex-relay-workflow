@@ -138,15 +138,20 @@ func TestACommandNeverTrustsRowsThatDisagreeWithTheLog(t *testing.T) {
 // between two reads of a refusal's early form.
 type interposed struct {
 	Queryer
-	n    int
-	hook func()
-	seen int
+	n      int
+	hook   func()
+	failAt int // the read, counted from 1, that fails with fault instead of running
+	fault  error
+	seen   int
 }
 
 func (q *interposed) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
 	q.seen++
-	if q.seen == q.n {
+	if q.hook != nil && q.seen == q.n {
 		q.hook()
+	}
+	if q.failAt != 0 && q.seen == q.failAt {
+		return nil, q.fault
 	}
 	return q.Queryer.QueryContext(ctx, query, args...)
 }
@@ -232,5 +237,83 @@ func TestRepeatedRequestsRacingTheirFirstCopyAreAllAnswered(t *testing.T) {
 		if _, head, err := r.Snapshot(context.Background(), "plan", 0); err != nil || head != int64(round+1) {
 			t.Fatalf("round %d: head %d, %v; one revision per round", round, head, err)
 		}
+	}
+}
+
+// A refusal is handed on only for a request the log holds, and a failure to read the store is never turned into
+// either answer: not into a refusal by a second read that failed, and not into "go on" by a second read that worked.
+func TestPreflightReturnsAFailureToReadAsItIs(t *testing.T) {
+	fault := errors.New("injected storage read failure")
+	t.Run("the look-up that follows a refusal fails", func(t *testing.T) {
+		r, s, _ := newRepo(t)
+		mustPut(t, r, revDoc("plan", "r1", 0, addNode("a", NodeNonPR)))
+		mustPut(t, r, revDoc("plan", "r2", 1, addNode("b", NodeNonPR)))
+		q := &interposed{Queryer: s.DB, failAt: 4, fault: fault}
+		err := preflightRead(context.Background(), q, decode(t, revDoc("plan", "stale", 1, addNode("c", NodeNonPR))))
+		if !errors.Is(err, fault) {
+			t.Fatalf("the failure of the look-up was answered as %v", err)
+		}
+	})
+	t.Run("a read fails before the request appears in the log", func(t *testing.T) {
+		r, s, _ := newRepo(t)
+		mustPut(t, r, revDoc("plan", "r1", 0, addNode("a", NodeNonPR)))
+		rev := decode(t, revDoc("plan", "r2", 1, addNode("b", NodeNonPR)))
+		q := &interposed{Queryer: s.DB, n: 2, hook: func() {
+			if _, err := r.Put(context.Background(), rev); err != nil {
+				t.Error(err)
+			}
+		}, failAt: 2, fault: fault}
+		err := preflightRead(context.Background(), q, rev)
+		if !errors.Is(err, fault) {
+			t.Fatalf("the failure to read was answered as %v", err)
+		}
+	})
+}
+
+// A document at the size limit is judged as the document it is: the typed form of it, written out again, is not
+// longer for the fields a document may leave out.
+func TestACheckedDocumentAtTheSizeLimitIsStillAccepted(t *testing.T) {
+	changes := []doc{addNode("a", NodeNonPR), addNode("b", NodeNonPR)}
+	var authorities [][]any
+	for i := 0; i < 100; i++ {
+		e := edgeDoc(fmt.Sprintf("e%d", i), "a", "b", EdgeDecision)
+		list := make([]any, 16)
+		for j := range list {
+			list[j] = fmt.Sprintf("%02d", j)
+		}
+		authorities = append(authorities, list)
+		e["required_authority"] = list
+		changes = append(changes, doc{"op": OpAddEdge, "edge": e})
+	}
+	d := revDoc("plan", "r1", 0, changes...)
+	remaining := MaxDocumentBytes - len(canonical(d))
+	for _, list := range authorities {
+		for j := range list {
+			n := remaining
+			if n > 1016 {
+				n = 1016
+			}
+			// a text is limited in characters, not bytes: four-byte characters fill the document within it
+			list[j] = list[j].(string) + strings.Repeat("😀", n/4) + strings.Repeat("x", n%4)
+			remaining -= n
+		}
+	}
+	if remaining != 0 {
+		t.Fatalf("the test document does not fill the limit: %d bytes left over", remaining)
+	}
+	encoded := []byte(canonical(d))
+	if len(encoded) != MaxDocumentBytes {
+		t.Fatalf("the document is %d bytes, not the limit %d", len(encoded), MaxDocumentBytes)
+	}
+	rev, err := DecodeRevision(encoded)
+	if err != nil {
+		t.Fatalf("the document itself is refused: %v", err)
+	}
+	r, _, path := newRepo(t)
+	if err := Preflight(context.Background(), path, rev); err != nil {
+		t.Errorf("Preflight refused a valid document of %d bytes: %v", len(encoded), err)
+	}
+	if _, err := r.Put(context.Background(), rev); err != nil {
+		t.Errorf("Put refused a valid document of %d bytes: %v", len(encoded), err)
 	}
 }
