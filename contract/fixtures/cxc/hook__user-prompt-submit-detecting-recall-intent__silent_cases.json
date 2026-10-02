@@ -1,0 +1,120 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/user-prompt-submit-detecting-recall-intent",
+    "A/recall/hook.test.ts"
+  ],
+  "note": "Silent: a prompt that already drives recall (`cxc chat search`), a write-gate idiom (기억해), a git noun ('previous commit'), bare 그때, a wrong hook_event_name, and an unparseable payload; every one exits 0 with empty stdout.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "user-prompt-submit-detecting-recall-intent",
+        "stdin": {
+          "hook_event_name": "UserPromptSubmit",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "prompt": "지난번 작업 cxc chat search \"trigram\" 로 찾아줘",
+          "model": "gpt-5.5",
+          "transcript_path": null
+        }
+      },
+      {
+        "hook": "user-prompt-submit-detecting-recall-intent",
+        "stdin": {
+          "hook_event_name": "UserPromptSubmit",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "prompt": "이거 기억해줘: 배포는 금요일 금지",
+          "model": "gpt-5.5",
+          "transcript_path": null
+        }
+      },
+      {
+        "hook": "user-prompt-submit-detecting-recall-intent",
+        "stdin": {
+          "hook_event_name": "UserPromptSubmit",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "prompt": "show me the previous commit",
+          "model": "gpt-5.5",
+          "transcript_path": null
+        }
+      },
+      {
+        "hook": "user-prompt-submit-detecting-recall-intent",
+        "stdin": {
+          "hook_event_name": "UserPromptSubmit",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "prompt": "그때 봤어",
+          "model": "gpt-5.5",
+          "transcript_path": null
+        }
+      },
+      {
+        "hook": "user-prompt-submit-detecting-recall-intent",
+        "stdin": {
+          "hook_event_name": "SessionStart",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "prompt": "지난번 작업 이어서",
+          "model": "gpt-5.5",
+          "transcript_path": null
+        }
+      },
+      {
+        "hook": "user-prompt-submit-detecting-recall-intent",
+        "stdin": "not json at all"
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      }
+    },
+    "calls": []
+  }
+}

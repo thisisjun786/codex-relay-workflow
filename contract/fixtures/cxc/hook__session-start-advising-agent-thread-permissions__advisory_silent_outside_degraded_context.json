@@ -1,0 +1,175 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/session-start-advising-agent-thread-permissions",
+    "A/pabcd-state/agent-thread-permissions.test.ts",
+    "K13/CODEX_HOME"
+  ],
+  "note": "Advisory silent: Codex config not full access (workspace-write), permission_mode full-access, agent_type present, a user-thread rollout, a broken rollout line, and a non-string cwd.",
+  "given": {
+    "files": {
+      "codex/config.toml": "approval_policy = \"never\"\nsandbox_mode = \"danger-full-access\"\n",
+      "codex/sessions/rollout-agent.jsonl": "{\"type\": \"session_meta\", \"payload\": {\"id\": \"rec-s1\", \"thread_source\": \"agent_created_thread\"}}\n",
+      "codex/sessions/rollout-bad.jsonl": "{bad\n",
+      "codex/sessions/rollout-user.jsonl": "{\"type\": \"session_meta\", \"payload\": {\"id\": \"rec-s1\", \"thread_source\": \"user\"}}\n",
+      "tmp/c-ww/config.toml": "approval_policy = \"never\"\nsandbox_mode = \"workspace-write\"\n"
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "session-start-advising-agent-thread-permissions",
+        "stdin": {
+          "hook_event_name": "SessionStart",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "source": "startup",
+          "model": "gpt-5.5",
+          "transcript_path": "${CODEX_HOME}/sessions/rollout-agent.jsonl",
+          "permission_mode": "default"
+        },
+        "env": {
+          "CODEX_HOME": "${TMP}/c-ww"
+        }
+      },
+      {
+        "hook": "session-start-advising-agent-thread-permissions",
+        "stdin": {
+          "hook_event_name": "SessionStart",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "source": "startup",
+          "model": "gpt-5.5",
+          "transcript_path": "${CODEX_HOME}/sessions/rollout-agent.jsonl",
+          "permission_mode": "full-access"
+        }
+      },
+      {
+        "hook": "session-start-advising-agent-thread-permissions",
+        "stdin": {
+          "hook_event_name": "SessionStart",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "source": "startup",
+          "model": "gpt-5.5",
+          "transcript_path": "${CODEX_HOME}/sessions/rollout-agent.jsonl",
+          "permission_mode": "default",
+          "agent_type": "worker"
+        }
+      },
+      {
+        "hook": "session-start-advising-agent-thread-permissions",
+        "stdin": {
+          "hook_event_name": "SessionStart",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "source": "startup",
+          "model": "gpt-5.5",
+          "transcript_path": "${CODEX_HOME}/sessions/rollout-user.jsonl",
+          "permission_mode": "default"
+        }
+      },
+      {
+        "hook": "session-start-advising-agent-thread-permissions",
+        "stdin": {
+          "hook_event_name": "SessionStart",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "source": "startup",
+          "model": "gpt-5.5",
+          "transcript_path": "${CODEX_HOME}/sessions/rollout-bad.jsonl",
+          "permission_mode": "default"
+        }
+      },
+      {
+        "hook": "session-start-advising-agent-thread-permissions",
+        "stdin": {
+          "hook_event_name": "SessionStart",
+          "session_id": "rec-s1",
+          "cwd": null,
+          "source": "startup",
+          "model": "gpt-5.5",
+          "transcript_path": "${CODEX_HOME}/sessions/rollout-agent.jsonl",
+          "permission_mode": "default"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/config.toml": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "approval_policy = \"never\"\nsandbox_mode = \"danger-full-access\"\n"
+      },
+      "codex/sessions": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "codex/sessions/rollout-agent.jsonl": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "{\"type\": \"session_meta\", \"payload\": {\"id\": \"rec-s1\", \"thread_source\": \"agent_created_thread\"}}\n"
+      },
+      "codex/sessions/rollout-bad.jsonl": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "{bad\n"
+      },
+      "codex/sessions/rollout-user.jsonl": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "{\"type\": \"session_meta\", \"payload\": {\"id\": \"rec-s1\", \"thread_source\": \"user\"}}\n"
+      },
+      "tmp/c-ww": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "tmp/c-ww/config.toml": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "approval_policy = \"never\"\nsandbox_mode = \"workspace-write\"\n"
+      }
+    },
+    "calls": []
+  }
+}

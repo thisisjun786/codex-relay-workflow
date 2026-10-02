@@ -1,0 +1,171 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/permission-request-allowing-agent-thread",
+    "K3/session-start-advising-agent-thread-permissions",
+    "A/pabcd-state/agent-thread-permissions.test.ts",
+    "K13/CODEX_HOME",
+    "K13/CODEX_SQLITE_HOME",
+    "K13/CODEXCLAW_HOME"
+  ],
+  "note": "Home-cwd exception, with CODEX_HOME, CODEXCLAW_HOME and CODEX_SQLITE_HOME unset for each step so the defaults under HOME apply: cwd == HOME and the literal default ~/.codex/config.toml and ~/.codexclaw/config.json (plain files) still allow, and the advisory fires. Observed as well: the same defaults allow for a project cwd outside HOME (they are outside that cwd).",
+  "given": {
+    "files": {
+      "home/.codex/config.toml": "approval_policy = \"never\"\nsandbox_mode = \"danger-full-access\"\n",
+      "home/.codexclaw/config.json": "{\"permissions\":{\"agentCreatedThreadAutoAllow\":true}}",
+      "tmp/proj/.keep": "",
+      "tmp/rollout.jsonl": "{\"type\": \"session_meta\", \"payload\": {\"id\": \"rec-s1\", \"thread_source\": \"agent_created_thread\"}}\n"
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "permission-request-allowing-agent-thread",
+        "stdin": {
+          "hook_event_name": "PermissionRequest",
+          "session_id": "rec-s1",
+          "cwd": "${HOME}",
+          "turn_id": "rec-t1",
+          "transcript_path": "${TMP}/rollout.jsonl",
+          "permission_mode": "default",
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "git push"
+          },
+          "tool_use_id": "rec-call-1"
+        },
+        "unset": [
+          "CODEX_HOME",
+          "CODEXCLAW_HOME",
+          "CODEX_SQLITE_HOME"
+        ],
+        "cwd": "home"
+      },
+      {
+        "hook": "session-start-advising-agent-thread-permissions",
+        "stdin": {
+          "hook_event_name": "SessionStart",
+          "session_id": "rec-s1",
+          "cwd": "${HOME}",
+          "source": "startup",
+          "model": "gpt-5.5",
+          "transcript_path": "${TMP}/rollout.jsonl",
+          "permission_mode": "default"
+        },
+        "unset": [
+          "CODEX_HOME",
+          "CODEXCLAW_HOME",
+          "CODEX_SQLITE_HOME"
+        ],
+        "cwd": "home"
+      },
+      {
+        "hook": "permission-request-allowing-agent-thread",
+        "stdin": {
+          "hook_event_name": "PermissionRequest",
+          "session_id": "rec-s1",
+          "cwd": "${TMP}/proj",
+          "turn_id": "rec-t1",
+          "transcript_path": "${TMP}/rollout.jsonl",
+          "permission_mode": "default",
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "git push"
+          },
+          "tool_use_id": "rec-call-1"
+        },
+        "unset": [
+          "CODEX_HOME",
+          "CODEXCLAW_HOME",
+          "CODEX_SQLITE_HOME"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PermissionRequest",
+            "decision": {
+              "behavior": "allow"
+            }
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "systemMessage": "This agent-created thread started in the default approval mode despite your full-access Codex config, so approval prompts may appear. You can switch this thread to Full Access in the composer, or set permissions.agentCreatedThreadAutoAllow to true in ~/.codexclaw/config.json so codexclaw answers these approvals for you, including one-time network requests.",
+          "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": "This Codex Desktop agent-created thread may show approval prompts even though the user Codex config requests full access. Request escalation explicitly for network or git operations when needed. If the user enabled permissions.agentCreatedThreadAutoAllow, codexclaw answers pending approvals, including one-time network requests, without prompting; it never changes this thread's sandbox."
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PermissionRequest",
+            "decision": {
+              "behavior": "allow"
+            }
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "home/.codex": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "home/.codex/config.toml": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "approval_policy = \"never\"\nsandbox_mode = \"danger-full-access\"\n"
+      },
+      "home/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "home/.codexclaw/config.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json",
+        "json": {
+          "permissions": {
+            "agentCreatedThreadAutoAllow": true
+          }
+        }
+      },
+      "tmp/proj": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "tmp/proj/.keep": {
+        "type": "file",
+        "mode": "0644",
+        "form": "empty"
+      },
+      "tmp/rollout.jsonl": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "{\"type\": \"session_meta\", \"payload\": {\"id\": \"rec-s1\", \"thread_source\": \"agent_created_thread\"}}\n"
+      }
+    },
+    "calls": []
+  }
+}

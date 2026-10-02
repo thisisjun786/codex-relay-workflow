@@ -1,0 +1,59 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/memory/allow-write",
+    "A/pabcd-state/memory-write-gate.test.ts"
+  ],
+  "note": "Parse errors exit 2 with `memory: <error>` plus usage on stderr and write nothing: a non-canonical session id, a missing --session, an unknown flag.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "memory",
+          "allow-write",
+          "--session",
+          "../../etc/passwd"
+        ]
+      },
+      {
+        "cli": [
+          "memory",
+          "allow-write"
+        ]
+      },
+      {
+        "cli": [
+          "memory",
+          "allow-write",
+          "--session",
+          "rec-s1",
+          "--force"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 2,
+    "steps": [
+      {
+        "exit": 2,
+        "stdout_form": "empty",
+        "stderr": "memory: missing required argument: --session <id> (must be a canonical session id)\nUsage:\n  cxc memory allow-write --session <id>\n  cxc memory allow-write --session=<id>\n  cxc memory allow-write --help\n\nAuthorizes exactly ONE memory write (memories.add_ad_hoc_note, or an edit under\n~/.codex/memories) for that session. The grant is consumed by the next write.\n\nThe grant is stored at <cwd>/.codexclaw/sessions/<id>.json and is keyed by that\ncwd plus the session id. The success line names the cwd it wrote to. Issuing the\ngrant from a different working directory will print success and never be seen by\nthe hook running in this session.\n\nThe ordinary path needs no command: when the user asks in their own words to\nremember something, the session records that request and the next write passes.\n"
+      },
+      {
+        "exit": 2,
+        "stdout_form": "empty",
+        "stderr": "memory: missing required argument: --session <id> (must be a canonical session id)\nUsage:\n  cxc memory allow-write --session <id>\n  cxc memory allow-write --session=<id>\n  cxc memory allow-write --help\n\nAuthorizes exactly ONE memory write (memories.add_ad_hoc_note, or an edit under\n~/.codex/memories) for that session. The grant is consumed by the next write.\n\nThe grant is stored at <cwd>/.codexclaw/sessions/<id>.json and is keyed by that\ncwd plus the session id. The success line names the cwd it wrote to. Issuing the\ngrant from a different working directory will print success and never be seen by\nthe hook running in this session.\n\nThe ordinary path needs no command: when the user asks in their own words to\nremember something, the session records that request and the next write passes.\n"
+      },
+      {
+        "exit": 2,
+        "stdout_form": "empty",
+        "stderr": "memory: unknown argument '--force'\nUsage:\n  cxc memory allow-write --session <id>\n  cxc memory allow-write --session=<id>\n  cxc memory allow-write --help\n\nAuthorizes exactly ONE memory write (memories.add_ad_hoc_note, or an edit under\n~/.codex/memories) for that session. The grant is consumed by the next write.\n\nThe grant is stored at <cwd>/.codexclaw/sessions/<id>.json and is keyed by that\ncwd plus the session id. The success line names the cwd it wrote to. Issuing the\ngrant from a different working directory will print success and never be seen by\nthe hook running in this session.\n\nThe ordinary path needs no command: when the user asks in their own words to\nremember something, the session records that request and the next write passes.\n"
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

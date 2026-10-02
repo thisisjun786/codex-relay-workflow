@@ -1,0 +1,60 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/subagents/register",
+    "A/subagent-config/role-registration.test.ts"
+  ],
+  "note": "register accepts only executor or architect with no extra arguments (trailing --global included).",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "subagents",
+          "register",
+          "explorer"
+        ]
+      },
+      {
+        "cli": [
+          "subagents",
+          "register",
+          "executor",
+          "--global"
+        ]
+      },
+      {
+        "cli": [
+          "subagents",
+          "register"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 1,
+    "steps": [
+      {
+        "exit": 1,
+        "stdout_form": "text",
+        "stdout": "subagents: usage: subagents register executor|architect\n",
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "text",
+        "stdout": "subagents: usage: subagents register executor|architect\n",
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "text",
+        "stdout": "subagents: usage: subagents register executor|architect\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

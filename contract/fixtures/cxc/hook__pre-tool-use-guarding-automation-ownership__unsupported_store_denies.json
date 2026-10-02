@@ -1,0 +1,187 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/pre-tool-use-guarding-automation-ownership",
+    "K5/hook-rendered",
+    "K8/codex/automations",
+    "A/pabcd-state/automation-ownership-gate.test.ts"
+  ],
+  "note": "The strict store subset: an unknown key, a duplicate key, version 2 and a stored id that differs from the directory each make ownership unavailable, so the owner's own delete denies.",
+  "given": {
+    "files": {
+      "codex/automations/a-dup/automation.toml": "version = 1\nid = \"a-dup\"\nkind = \"heartbeat\"\nname = \"Example\"\nprompt = \"A prompt\"\nrrule = \"FREQ=HOURLY\"\nstatus = \"ACTIVE\"\ntarget_thread_id = \"rec-s1\"\ncreated_at = 123\nupdated_at = 456\nkind = \"heartbeat\"\n",
+      "codex/automations/a-mismatch/automation.toml": "version = 1\nid = \"other-id\"\nkind = \"heartbeat\"\nname = \"Example\"\nprompt = \"A prompt\"\nrrule = \"FREQ=HOURLY\"\nstatus = \"ACTIVE\"\ntarget_thread_id = \"rec-s1\"\ncreated_at = 123\nupdated_at = 456\n",
+      "codex/automations/a-unknown/automation.toml": "version = 1\nid = \"a-unknown\"\nkind = \"heartbeat\"\nname = \"Example\"\nprompt = \"A prompt\"\nrrule = \"FREQ=HOURLY\"\nstatus = \"ACTIVE\"\ntarget_thread_id = \"rec-s1\"\ncreated_at = 123\nupdated_at = 456\nowner = \"rec-s1\"\n",
+      "codex/automations/a-v2/automation.toml": "version = 2\nid = \"a-v2\"\nkind = \"heartbeat\"\nname = \"Example\"\nprompt = \"A prompt\"\nrrule = \"FREQ=HOURLY\"\nstatus = \"ACTIVE\"\ntarget_thread_id = \"rec-s1\"\ncreated_at = 123\nupdated_at = 456\n"
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "pre-tool-use-guarding-automation-ownership",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "mcp__codex_app__automation_update",
+          "tool_input": {
+            "mode": "delete",
+            "id": "a-unknown"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-guarding-automation-ownership",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "mcp__codex_app__automation_update",
+          "tool_input": {
+            "mode": "delete",
+            "id": "a-dup"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-guarding-automation-ownership",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "mcp__codex_app__automation_update",
+          "tool_input": {
+            "mode": "delete",
+            "id": "a-v2"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-guarding-automation-ownership",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "mcp__codex_app__automation_update",
+          "tool_input": {
+            "mode": "delete",
+            "id": "a-mismatch"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "AUTOMATION-OWNERSHIP-01: Cannot verify automation ownership from the native payload and supported local store. No mutation is permitted."
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "AUTOMATION-OWNERSHIP-01: Cannot verify automation ownership from the native payload and supported local store. No mutation is permitted."
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "AUTOMATION-OWNERSHIP-01: Cannot verify automation ownership from the native payload and supported local store. No mutation is permitted."
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "AUTOMATION-OWNERSHIP-01: Cannot verify automation ownership from the native payload and supported local store. No mutation is permitted."
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/automations": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "codex/automations/a-dup": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "codex/automations/a-dup/automation.toml": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "version = 1\nid = \"a-dup\"\nkind = \"heartbeat\"\nname = \"Example\"\nprompt = \"A prompt\"\nrrule = \"FREQ=HOURLY\"\nstatus = \"ACTIVE\"\ntarget_thread_id = \"rec-s1\"\ncreated_at = 123\nupdated_at = 456\nkind = \"heartbeat\"\n"
+      },
+      "codex/automations/a-mismatch": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "codex/automations/a-mismatch/automation.toml": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "version = 1\nid = \"other-id\"\nkind = \"heartbeat\"\nname = \"Example\"\nprompt = \"A prompt\"\nrrule = \"FREQ=HOURLY\"\nstatus = \"ACTIVE\"\ntarget_thread_id = \"rec-s1\"\ncreated_at = 123\nupdated_at = 456\n"
+      },
+      "codex/automations/a-unknown": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "codex/automations/a-unknown/automation.toml": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "version = 1\nid = \"a-unknown\"\nkind = \"heartbeat\"\nname = \"Example\"\nprompt = \"A prompt\"\nrrule = \"FREQ=HOURLY\"\nstatus = \"ACTIVE\"\ntarget_thread_id = \"rec-s1\"\ncreated_at = 123\nupdated_at = 456\nowner = \"rec-s1\"\n"
+      },
+      "codex/automations/a-v2": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "codex/automations/a-v2/automation.toml": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "version = 2\nid = \"a-v2\"\nkind = \"heartbeat\"\nname = \"Example\"\nprompt = \"A prompt\"\nrrule = \"FREQ=HOURLY\"\nstatus = \"ACTIVE\"\ntarget_thread_id = \"rec-s1\"\ncreated_at = 123\nupdated_at = 456\n"
+      },
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      }
+    },
+    "calls": []
+  }
+}

@@ -1,0 +1,169 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/config/set",
+    "K6/config/unset",
+    "K8/codex-home/config.toml",
+    "K8/codex-home/.codexclaw-install.json",
+    "A/config-guard/config-set.test.ts"
+  ],
+  "note": "With a manifest: set true backs up config.toml, writes the key and records priorValue null; setting again keeps the original prior; unset restores (removes the line) and drops the record; a second unset is refused with exit 1.",
+  "given": {
+    "files": {
+      "codex/config.toml": "model = \"gpt-5.5\"\n\n[features]\nhooks = true\n"
+    },
+    "json": {
+      "codex/.codexclaw-install.json": {
+        "version": 2,
+        "activatedAt": "2025-12-01T00:00:00.000Z",
+        "configPath": "${CODEX_HOME}/config.toml",
+        "backupPath": null,
+        "postActivateHash": null,
+        "flags": {
+          "multi_agent": {
+            "priorEnabled": false,
+            "enabledByCodexclaw": true,
+            "enableFailed": false
+          },
+          "goals": {
+            "priorEnabled": false,
+            "enabledByCodexclaw": true,
+            "enableFailed": false
+          },
+          "hooks": {
+            "priorEnabled": true,
+            "enabledByCodexclaw": false,
+            "enableFailed": false
+          },
+          "default_mode_request_user_input": {
+            "priorEnabled": false,
+            "enabledByCodexclaw": false,
+            "enableFailed": true,
+            "failure": {
+              "exitCode": 1,
+              "message": "unknown feature"
+            }
+          }
+        },
+        "tableKeys": {}
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "config",
+          "set",
+          "memories.dedicated_tools",
+          "true"
+        ]
+      },
+      {
+        "cli": [
+          "config",
+          "set",
+          "memories.dedicated_tools",
+          "true"
+        ]
+      },
+      {
+        "cli": [
+          "config",
+          "unset",
+          "memories.dedicated_tools"
+        ]
+      },
+      {
+        "cli": [
+          "config",
+          "unset",
+          "memories.dedicated_tools"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 1,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "주의: memories/{list,read,search,add_ad_hoc_note} 네 도구가 열립니다. add_ad_hoc_note는 메모리에 새 노트를 만드는 쓰기 경로이지만, codexclaw 의 PreToolUse 메모리 쓰기 게이트가 명시 요청 없는 쓰기를 거부합니다. 설치가 이 키를 켜고, 'cxc disable' 이 설치 이전 값으로 되돌립니다.\nmemories.dedicated_tools: (unset) -> true\nbackup: ${CODEX_HOME}/config.toml.codexclaw-2026-01-01T00-00-00-000Z.bak\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "주의: memories/{list,read,search,add_ad_hoc_note} 네 도구가 열립니다. add_ad_hoc_note는 메모리에 새 노트를 만드는 쓰기 경로이지만, codexclaw 의 PreToolUse 메모리 쓰기 게이트가 명시 요청 없는 쓰기를 거부합니다. 설치가 이 키를 켜고, 'cxc disable' 이 설치 이전 값으로 되돌립니다.\nmemories.dedicated_tools: true -> true (already set; recorded)\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "memories.dedicated_tools: (unset) -> (absent)\nbackup: ${CODEX_HOME}/config.toml.codexclaw-2026-01-01T00-00-00-000Z.bak\n",
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "empty",
+        "stderr": "config unset: memories.dedicated_tools is not recorded as set by codexclaw; nothing to unset.\n"
+      }
+    ],
+    "tree": {
+      "codex/.codexclaw-install.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty",
+        "json": {
+          "version": 2,
+          "activatedAt": "<TS>",
+          "configPath": "${CODEX_HOME}/config.toml",
+          "backupPath": null,
+          "postActivateHash": "778db2c66538a58ad6c194dc4ea306f98b6771a79bb503f6aba191d863d40b67",
+          "flags": {
+            "multi_agent": {
+              "priorEnabled": false,
+              "enabledByCodexclaw": true,
+              "enableFailed": false
+            },
+            "goals": {
+              "priorEnabled": false,
+              "enabledByCodexclaw": true,
+              "enableFailed": false
+            },
+            "hooks": {
+              "priorEnabled": true,
+              "enabledByCodexclaw": false,
+              "enableFailed": false
+            },
+            "default_mode_request_user_input": {
+              "priorEnabled": false,
+              "enabledByCodexclaw": false,
+              "enableFailed": true,
+              "failure": {
+                "exitCode": 1,
+                "message": "unknown feature"
+              }
+            }
+          },
+          "tableKeys": {}
+        }
+      },
+      "codex/config.toml": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "model = \"gpt-5.5\"\n\n[features]\nhooks = true\n\n[memories]\n"
+      },
+      "codex/config.toml.codexclaw-2026-01-01T00-00-00-000Z.bak": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "model = \"gpt-5.5\"\n\n[features]\nhooks = true\n\n[memories]\ndedicated_tools = true\n"
+      }
+    },
+    "calls": []
+  }
+}

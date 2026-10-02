@@ -1,0 +1,76 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/session-start-advising-agent-thread-permissions",
+    "K5/hook-rendered",
+    "A/pabcd-state/agent-thread-permissions.test.ts",
+    "K13/CODEXCLAW_HOME"
+  ],
+  "note": "SessionStart advisory for an agent-created default-mode root thread under a full-access Codex config: systemMessage (user advice) plus additionalContext (model advice), emitted even without the opt-in.",
+  "given": {
+    "files": {
+      "codex/config.toml": "approval_policy = \"never\"\nsandbox_mode = \"danger-full-access\"\n",
+      "codex/sessions/rollout-agent.jsonl": "{\"type\": \"session_meta\", \"payload\": {\"id\": \"rec-s1\", \"thread_source\": \"agent_created_thread\"}}\n",
+      "cxc/config.json": "{}"
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "session-start-advising-agent-thread-permissions",
+        "stdin": {
+          "hook_event_name": "SessionStart",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "source": "startup",
+          "model": "gpt-5.5",
+          "transcript_path": "${CODEX_HOME}/sessions/rollout-agent.jsonl",
+          "permission_mode": "default"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "systemMessage": "This agent-created thread started in the default approval mode despite your full-access Codex config, so approval prompts may appear. You can switch this thread to Full Access in the composer, or set permissions.agentCreatedThreadAutoAllow to true in ~/.codexclaw/config.json so codexclaw answers these approvals for you, including one-time network requests.",
+          "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": "This Codex Desktop agent-created thread may show approval prompts even though the user Codex config requests full access. Request escalation explicitly for network or git operations when needed. If the user enabled permissions.agentCreatedThreadAutoAllow, codexclaw answers pending approvals, including one-time network requests, without prompting; it never changes this thread's sandbox."
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/config.toml": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "approval_policy = \"never\"\nsandbox_mode = \"danger-full-access\"\n"
+      },
+      "codex/sessions": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "codex/sessions/rollout-agent.jsonl": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "{\"type\": \"session_meta\", \"payload\": {\"id\": \"rec-s1\", \"thread_source\": \"agent_created_thread\"}}\n"
+      },
+      "cxc/config.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json",
+        "json": {}
+      }
+    },
+    "calls": []
+  }
+}

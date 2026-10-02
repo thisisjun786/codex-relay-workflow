@@ -1,0 +1,309 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/doctor/json",
+    "K6/hooks/retrust",
+    "K7/doctor",
+    "K13/CODEX_BIN",
+    "K13/CODEX_SURFACE",
+    "K13/CODEX_APP_PORT",
+    "K12/codex"
+  ],
+  "note": "CODEX_SURFACE, else CODEX_APP_PORT, sets doctor's activeSurface (doctor.ts:369). CODEX_BIN is read only by `hooks retrust` (codex-bin.ts:112 via hook-trust.ts:396): doctor keeps running the codex on PATH, retrust runs codex-pinned (see calls).",
+  "given": {
+    "files": {
+      "codex/config.toml": "[plugins.\"codexclaw@local\"]\nenabled = true\n"
+    },
+    "stubs": {
+      "codex": {
+        "stdout": "default_mode_request_user_input  stable  true\ngoals  experimental  true\nhooks  stable  true\nmulti_agent  stable  true\n",
+        "exit": 0
+      },
+      "codex-pinned": {
+        "stdout": "default_mode_request_user_input  stable  true\ngoals  experimental  true\nhooks  stable  true\nmulti_agent  stable  true\n",
+        "exit": 0
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "doctor",
+          "--json"
+        ],
+        "env": {
+          "CODEX_BIN": "${STUBS}/codex-pinned",
+          "CODEX_SURFACE": "cli"
+        }
+      },
+      {
+        "cli": [
+          "doctor",
+          "--json"
+        ],
+        "env": {
+          "CODEX_APP_PORT": "4500"
+        }
+      },
+      {
+        "cli": [
+          "hooks",
+          "retrust",
+          "--key",
+          "codexclaw@local",
+          "--bootstrap-ok"
+        ],
+        "env": {
+          "CODEX_BIN": "${STUBS}/codex-pinned"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 1,
+        "stdout_form": "json-pretty",
+        "stdout_json": {
+          "schemaVersion": 1,
+          "overall": "FAIL",
+          "checks": [
+            {
+              "name": "manifest",
+              "severity": "PASS",
+              "evidence": "plugin.json parsed, 31 hook(s) referenced"
+            },
+            {
+              "name": "hooks",
+              "severity": "PASS",
+              "evidence": "all hook target(s) present"
+            },
+            {
+              "name": "mcp-targets",
+              "severity": "PASS",
+              "evidence": "all mcp target(s) present"
+            },
+            {
+              "name": "skills",
+              "severity": "PASS",
+              "evidence": "29 skill(s) each have SKILL.md + agents/openai.yaml"
+            },
+            {
+              "name": "agents",
+              "severity": "PASS",
+              "evidence": "4 role TOML(s): architect.toml, executor.toml, explorer.toml, reviewer.toml"
+            },
+            {
+              "name": "drift:version",
+              "severity": "PASS",
+              "evidence": "declared plugin version <VERSION>"
+            },
+            {
+              "name": "drift:mcp",
+              "severity": "PASS",
+              "evidence": "./.mcp.json parses, 1 server(s) declared"
+            },
+            {
+              "name": "known-issues",
+              "severity": "PASS",
+              "evidence": "no known-issue signature matched"
+            },
+            {
+              "name": "hook-trust",
+              "severity": "FAIL",
+              "repair": "32 hook(s) have no trust entry in ${CODEX_HOME}/config.toml; only Codex itself writes those on hook approval. Approve this plugin's hooks in Codex, or record them explicitly with: cxc hooks retrust --key codexclaw@local --codex-home ${CODEX_HOME} --bootstrap-ok",
+              "evidence": "32 of 32 hook(s) not trusted for codexclaw@local: 32 with no trust record, 0 whose recorded hash no longer matches. The host excludes both from execution unless hook trust is bypassed, so these need approval. Execution itself was not verified here. untrusted codexclaw@local:hooks/session-start-ensuring-provider-bridge.json:session_start:0:0 expected=sha256:9cf9b8e5dca9ba92e8454de25ce51ae1447f470aca4947ade7f7c1084e2f492f actual=(none) file_sha256=59b9e401af0b5962; untrusted codexclaw@local:hooks/session-start-bootstrapping-pabcd-state.json:session_start:0:0 expected=sha256:a1337bf2f68792c8b073ae88febdbb8b43f50ed0c78978dc4fc58109e9b0589d actual=(none) file_sha256=62dab230cd5c9583; untrusted codexclaw@local:hooks/session-start-healing-declared-features.json:session_start:0:0 expected=sha256:f54c17baceea6d3b2ac1c3d4d2beafa9a20db2befe4cfecde4006abb92aab19a actual=(none) file_sha256=562ac6424da44d36; untrusted codexclaw@local:hooks/session-start-announcing-map-affordance.json:session_start:0:0 expected=sha256:4148e51b76205572e3f7a7ab5d61199b7f2eae0b43d97664b05f7502ee92af53 actual=(none) file_sha256=a69440d3a84057b7; untrusted codexclaw@local:hooks/session-start-advising-agent-thread-permissions.json:session_start:0:0 expected=sha256:31155fb17d45bf95686a573dcceb0ced41d3de4909007fb77a8b1db3ff2df9e8 actual=(none) file_sha256=8ded4e8bc7bcb29d; untrusted codexclaw@local:hooks/user-prompt-submit-checking-pabcd-trigger.json:user_prompt_submit:0:0 expected=sha256:04462b4d2a0ca316e967d5429e4808f2dd73636b13d9a9a9c984de6de17d4da7 actual=(none) file_sha256=e43a241f3fbeb746; untrusted codexclaw@local:hooks/stop-checking-pabcd-continuation.json:stop:0:0 expected=sha256:5be9da5eadafb4043c6576a5fa2805a8cb7cc259ad811a67251fde7b77f04f4a actual=(none) file_sha256=950a17c381a990cd; untrusted codexclaw@local:hooks/pre-tool-use-guarding-goal-budget.json:pre_tool_use:0:0 expected=sha256:a327f72ff6506a5e9820c59a8a3c625f9a5b2b5b1f755ce622948199482bf041 actual=(none) file_sha256=967ff07a664a7fda; untrusted codexclaw@local:hooks/permission-request-allowing-agent-thread.json:permission_request:0:0 expected=sha256:d8d551e1070557c181280fdf41653a7c61b86b939c0bb3d939c39c9760f458e5 actual=(none) file_sha256=4cdc14a0a61fbffa; untrusted codexclaw@local:hooks/pre-tool-use-guarding-interview-in-goal.json:pre_tool_use:0:0 expected=sha256:1243674f7367995a3861abc2d1bc3c64300ea910bf4ebaeb4a02a9c4a00d1db3 actual=(none) file_sha256=950d1be4a79e583c; untrusted codexclaw@local:hooks/pre-tool-use-guarding-goal-complete.json:pre_tool_use:0:0 expected=sha256:caaf85c7e4e04d9edce2adc0461c6c466fe4ffdcae133fc18ae8137e26541d05 actual=(none) file_sha256=057d63fb37f8d7c2; untrusted codexclaw@local:hooks/post-tool-use-capturing-interview-answers.json:post_tool_use:0:0 expected=sha256:d42e62bcace6ba3932ac67c5bb87a9aa40335af9fb0c21cc7e2db8ed03a79357 actual=(none) file_sha256=ffa972b6d9215b85; untrusted codexclaw@local:hooks/subagent-stop-verifying-evidence.json:subagent_stop:0:0 expected=sha256:84e1bb4945bc1f0c31d20ff1cfd3dc555eb266362cc159182962fc6c71f2e6d8 actual=(none) file_sha256=5e7b04b9029e0c22; untrusted codexclaw@local:hooks/subagent-stop-observing-review.json:subagent_stop:0:0 expected=sha256:e7cd578f89527c913ddacfff648e3f70cb7b05b8efadf7b4d413f99e520e365d actual=(none) file_sha256=20db0f9b60f75c15; untrusted codexclaw@local:hooks/pre-tool-use-attaching-skills.json:pre_tool_use:0:0 expected=sha256:b66c73febc5a76b12b0a9b59b44696aa78fa723d3af2f94c027a68b4e38fad31 actual=(none) file_sha256=4f87c5f8a9b7e11b; untrusted codexclaw@local:hooks/session-start-announcing-subagent-fallback.json:session_start:0:0 expected=sha256:0d7b75687b54be277a52170df5d040d08a706952fd03984db6c1159ded03dc05 actual=(none) file_sha256=12695b6295a29a96; untrusted codexclaw@local:hooks/post-compact-resetting-reinject-cursor.json:post_compact:0:0 expected=sha256:ccde59b7b74e2ed742009f5e7a3147a5e4ce3439dbe95222a3708eb145faf977 actual=(none) file_sha256=7e9d557ff27d29b9; untrusted codexclaw@local:hooks/pre-tool-use-linting-apply-patch.json:pre_tool_use:0:0 expected=sha256:2277c611e71fbf3e34b524a552155783a13f0230e816f23c9fbbed05ee538fd0 actual=(none) file_sha256=13f5d66ce035aa9b; untrusted codexclaw@local:hooks/post-tool-use-tracking-render-observations.json:post_tool_use:0:0 expected=sha256:fa02c465abac8cc04890e347a4849b747bb47dfc83580b87ffaa07607b991d62 actual=(none) file_sha256=f9466ef5f3fad956; untrusted codexclaw@local:hooks/session-start-injecting-recall-context.json:session_start:0:0 expected=sha256:797c968d7c27dd2c4703d0d4aad010479c88d8c26efa7c87284222eb4d8a2e13 actual=(none) file_sha256=b61e95f8cd2df152; untrusted codexclaw@local:hooks/post-compact-injecting-recall-context.json:post_compact:0:0 expected=sha256:edf979d4135581ac8ee94714b9753ff2a764eed8292a7f06ccbd320593baf93c actual=(none) file_sha256=de3f0e4a3015469c; untrusted codexclaw@local:hooks/post-compact-injecting-bg-terminal-affordance.json:post_compact:0:0 expected=sha256:f62ec767f6dc7bd82bef3955475a59bbecdbee44dee3634efa36f26d8ba60372 actual=(none) file_sha256=cd5306daa6a6a8d9; untrusted codexclaw@local:hooks/post-compact-injecting-bg-terminal-affordance.json:user_prompt_submit:0:0 expected=sha256:fbc69c162733c90cfe203c4936131e92cbe93b4d13f6f55700c550a824704046 actual=(none) file_sha256=cd5306daa6a6a8d9; untrusted codexclaw@local:hooks/user-prompt-submit-detecting-recall-intent.json:user_prompt_submit:0:0 expected=sha256:9b424d6b9d0b267391769bbf929aed48f584ad0f9c3cc2bee48a6ab973621deb actual=(none) file_sha256=f75eb9ebc6d164ef; untrusted codexclaw@local:hooks/session-start-detecting-managed-worktree.json:session_start:0:0 expected=sha256:c09f6a180fbca87cdb3aa28cb1749107558bccf7200abbe2a533f5dba7cb58d8 actual=(none) file_sha256=7b5db51a56ca61f0; untrusted codexclaw@local:hooks/user-prompt-submit-guiding-worktree-rename.json:user_prompt_submit:0:0 expected=sha256:ddd3cc41e640a7ea199ccf13fb29724492f23069e7c18ec954553cf6715532c4 actual=(none) file_sha256=f26de5241f4fa3ae; untrusted codexclaw@local:hooks/pre-tool-use-guarding-managed-worktree-deletion.json:pre_tool_use:0:0 expected=sha256:a743a8218d37e99fb5beca96b4aae44876c2d208cf5c4cff23b8b808f7edbaf8 actual=(none) file_sha256=29744da962277c55; untrusted codexclaw@local:hooks/pre-tool-use-guarding-memory-write.json:pre_tool_use:0:0 expected=sha256:4679e43b7647519c6365c0d6195b99af68762289ef59574f6a808419317c3c73 actual=(none) file_sha256=78d0c42a299922a2; untrusted codexclaw@local:hooks/stop-waking-on-background-completion.json:stop:0:0 expected=sha256:dbe7ca8d48dcf3e9c61260990c2cd7e8b10ad3ab745d8196e9038291142ce393 actual=(none) file_sha256=21cc86681f7a5036; untrusted codexclaw@local:hooks/user-prompt-submit-delivering-background-completions.json:user_prompt_submit:0:0 expected=sha256:a1f54e9f2f294e8f3c7100c97c1412218518ba55c2f669835b5ad9468b4c4c06 actual=(none) file_sha256=0a2ce384a9454798; untrusted codexclaw@local:hooks/session-start-adopting-background-completions.json:session_start:0:0 expected=sha256:14a9e02e680e471d5042335a55e57020320d05aebdb4d94f79652da3625733b0 actual=(none) file_sha256=d51b61cfe7d3fea9; untrusted codexclaw@local:hooks/pre-tool-use-guarding-automation-ownership.json:pre_tool_use:0:0 expected=sha256:84f818ef990109f1ab59c6db05833833215bd2164f6af3c286c4822a6c932c93 actual=(none) file_sha256=e37a68f39280c820"
+            },
+            {
+              "name": "hook-execution",
+              "severity": "WARN",
+              "evidence": "native session unavailable: 0 current invocation(s); unverified (session/actor identity unavailable); 0 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+            },
+            {
+              "name": "ast-grep",
+              "severity": "WARN",
+              "evidence": "python3 not found - install Python 3.9+ to run the ast-grep helper"
+            },
+            {
+              "name": "install-root",
+              "severity": "WARN",
+              "evidence": "no plugin cache at ${CODEX_HOME}/plugins/cache (running uninstalled?)"
+            },
+            {
+              "name": "pabcd-state",
+              "severity": "PASS",
+              "evidence": "no .codexclaw/sessions/ directory (clean state)"
+            },
+            {
+              "name": "features",
+              "severity": "PASS",
+              "evidence": "4/4 declared flag(s) enabled"
+            },
+            {
+              "name": "wsl",
+              "severity": "PASS",
+              "evidence": "not running under WSL"
+            }
+          ],
+          "pluginVersion": "<VERSION>",
+          "codexVersion": "default_mode_request_user_input  stable  true\ngoals  experimental  true\nhooks  stable  true\nmulti_agent  stable  true",
+          "activeSurface": "cli"
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "json-pretty",
+        "stdout_json": {
+          "schemaVersion": 1,
+          "overall": "FAIL",
+          "checks": [
+            {
+              "name": "manifest",
+              "severity": "PASS",
+              "evidence": "plugin.json parsed, 31 hook(s) referenced"
+            },
+            {
+              "name": "hooks",
+              "severity": "PASS",
+              "evidence": "all hook target(s) present"
+            },
+            {
+              "name": "mcp-targets",
+              "severity": "PASS",
+              "evidence": "all mcp target(s) present"
+            },
+            {
+              "name": "skills",
+              "severity": "PASS",
+              "evidence": "29 skill(s) each have SKILL.md + agents/openai.yaml"
+            },
+            {
+              "name": "agents",
+              "severity": "PASS",
+              "evidence": "4 role TOML(s): architect.toml, executor.toml, explorer.toml, reviewer.toml"
+            },
+            {
+              "name": "drift:version",
+              "severity": "PASS",
+              "evidence": "declared plugin version <VERSION>"
+            },
+            {
+              "name": "drift:mcp",
+              "severity": "PASS",
+              "evidence": "./.mcp.json parses, 1 server(s) declared"
+            },
+            {
+              "name": "known-issues",
+              "severity": "PASS",
+              "evidence": "no known-issue signature matched"
+            },
+            {
+              "name": "hook-trust",
+              "severity": "FAIL",
+              "repair": "32 hook(s) have no trust entry in ${CODEX_HOME}/config.toml; only Codex itself writes those on hook approval. Approve this plugin's hooks in Codex, or record them explicitly with: cxc hooks retrust --key codexclaw@local --codex-home ${CODEX_HOME} --bootstrap-ok",
+              "evidence": "32 of 32 hook(s) not trusted for codexclaw@local: 32 with no trust record, 0 whose recorded hash no longer matches. The host excludes both from execution unless hook trust is bypassed, so these need approval. Execution itself was not verified here. untrusted codexclaw@local:hooks/session-start-ensuring-provider-bridge.json:session_start:0:0 expected=sha256:9cf9b8e5dca9ba92e8454de25ce51ae1447f470aca4947ade7f7c1084e2f492f actual=(none) file_sha256=59b9e401af0b5962; untrusted codexclaw@local:hooks/session-start-bootstrapping-pabcd-state.json:session_start:0:0 expected=sha256:a1337bf2f68792c8b073ae88febdbb8b43f50ed0c78978dc4fc58109e9b0589d actual=(none) file_sha256=62dab230cd5c9583; untrusted codexclaw@local:hooks/session-start-healing-declared-features.json:session_start:0:0 expected=sha256:f54c17baceea6d3b2ac1c3d4d2beafa9a20db2befe4cfecde4006abb92aab19a actual=(none) file_sha256=562ac6424da44d36; untrusted codexclaw@local:hooks/session-start-announcing-map-affordance.json:session_start:0:0 expected=sha256:4148e51b76205572e3f7a7ab5d61199b7f2eae0b43d97664b05f7502ee92af53 actual=(none) file_sha256=a69440d3a84057b7; untrusted codexclaw@local:hooks/session-start-advising-agent-thread-permissions.json:session_start:0:0 expected=sha256:31155fb17d45bf95686a573dcceb0ced41d3de4909007fb77a8b1db3ff2df9e8 actual=(none) file_sha256=8ded4e8bc7bcb29d; untrusted codexclaw@local:hooks/user-prompt-submit-checking-pabcd-trigger.json:user_prompt_submit:0:0 expected=sha256:04462b4d2a0ca316e967d5429e4808f2dd73636b13d9a9a9c984de6de17d4da7 actual=(none) file_sha256=e43a241f3fbeb746; untrusted codexclaw@local:hooks/stop-checking-pabcd-continuation.json:stop:0:0 expected=sha256:5be9da5eadafb4043c6576a5fa2805a8cb7cc259ad811a67251fde7b77f04f4a actual=(none) file_sha256=950a17c381a990cd; untrusted codexclaw@local:hooks/pre-tool-use-guarding-goal-budget.json:pre_tool_use:0:0 expected=sha256:a327f72ff6506a5e9820c59a8a3c625f9a5b2b5b1f755ce622948199482bf041 actual=(none) file_sha256=967ff07a664a7fda; untrusted codexclaw@local:hooks/permission-request-allowing-agent-thread.json:permission_request:0:0 expected=sha256:d8d551e1070557c181280fdf41653a7c61b86b939c0bb3d939c39c9760f458e5 actual=(none) file_sha256=4cdc14a0a61fbffa; untrusted codexclaw@local:hooks/pre-tool-use-guarding-interview-in-goal.json:pre_tool_use:0:0 expected=sha256:1243674f7367995a3861abc2d1bc3c64300ea910bf4ebaeb4a02a9c4a00d1db3 actual=(none) file_sha256=950d1be4a79e583c; untrusted codexclaw@local:hooks/pre-tool-use-guarding-goal-complete.json:pre_tool_use:0:0 expected=sha256:caaf85c7e4e04d9edce2adc0461c6c466fe4ffdcae133fc18ae8137e26541d05 actual=(none) file_sha256=057d63fb37f8d7c2; untrusted codexclaw@local:hooks/post-tool-use-capturing-interview-answers.json:post_tool_use:0:0 expected=sha256:d42e62bcace6ba3932ac67c5bb87a9aa40335af9fb0c21cc7e2db8ed03a79357 actual=(none) file_sha256=ffa972b6d9215b85; untrusted codexclaw@local:hooks/subagent-stop-verifying-evidence.json:subagent_stop:0:0 expected=sha256:84e1bb4945bc1f0c31d20ff1cfd3dc555eb266362cc159182962fc6c71f2e6d8 actual=(none) file_sha256=5e7b04b9029e0c22; untrusted codexclaw@local:hooks/subagent-stop-observing-review.json:subagent_stop:0:0 expected=sha256:e7cd578f89527c913ddacfff648e3f70cb7b05b8efadf7b4d413f99e520e365d actual=(none) file_sha256=20db0f9b60f75c15; untrusted codexclaw@local:hooks/pre-tool-use-attaching-skills.json:pre_tool_use:0:0 expected=sha256:b66c73febc5a76b12b0a9b59b44696aa78fa723d3af2f94c027a68b4e38fad31 actual=(none) file_sha256=4f87c5f8a9b7e11b; untrusted codexclaw@local:hooks/session-start-announcing-subagent-fallback.json:session_start:0:0 expected=sha256:0d7b75687b54be277a52170df5d040d08a706952fd03984db6c1159ded03dc05 actual=(none) file_sha256=12695b6295a29a96; untrusted codexclaw@local:hooks/post-compact-resetting-reinject-cursor.json:post_compact:0:0 expected=sha256:ccde59b7b74e2ed742009f5e7a3147a5e4ce3439dbe95222a3708eb145faf977 actual=(none) file_sha256=7e9d557ff27d29b9; untrusted codexclaw@local:hooks/pre-tool-use-linting-apply-patch.json:pre_tool_use:0:0 expected=sha256:2277c611e71fbf3e34b524a552155783a13f0230e816f23c9fbbed05ee538fd0 actual=(none) file_sha256=13f5d66ce035aa9b; untrusted codexclaw@local:hooks/post-tool-use-tracking-render-observations.json:post_tool_use:0:0 expected=sha256:fa02c465abac8cc04890e347a4849b747bb47dfc83580b87ffaa07607b991d62 actual=(none) file_sha256=f9466ef5f3fad956; untrusted codexclaw@local:hooks/session-start-injecting-recall-context.json:session_start:0:0 expected=sha256:797c968d7c27dd2c4703d0d4aad010479c88d8c26efa7c87284222eb4d8a2e13 actual=(none) file_sha256=b61e95f8cd2df152; untrusted codexclaw@local:hooks/post-compact-injecting-recall-context.json:post_compact:0:0 expected=sha256:edf979d4135581ac8ee94714b9753ff2a764eed8292a7f06ccbd320593baf93c actual=(none) file_sha256=de3f0e4a3015469c; untrusted codexclaw@local:hooks/post-compact-injecting-bg-terminal-affordance.json:post_compact:0:0 expected=sha256:f62ec767f6dc7bd82bef3955475a59bbecdbee44dee3634efa36f26d8ba60372 actual=(none) file_sha256=cd5306daa6a6a8d9; untrusted codexclaw@local:hooks/post-compact-injecting-bg-terminal-affordance.json:user_prompt_submit:0:0 expected=sha256:fbc69c162733c90cfe203c4936131e92cbe93b4d13f6f55700c550a824704046 actual=(none) file_sha256=cd5306daa6a6a8d9; untrusted codexclaw@local:hooks/user-prompt-submit-detecting-recall-intent.json:user_prompt_submit:0:0 expected=sha256:9b424d6b9d0b267391769bbf929aed48f584ad0f9c3cc2bee48a6ab973621deb actual=(none) file_sha256=f75eb9ebc6d164ef; untrusted codexclaw@local:hooks/session-start-detecting-managed-worktree.json:session_start:0:0 expected=sha256:c09f6a180fbca87cdb3aa28cb1749107558bccf7200abbe2a533f5dba7cb58d8 actual=(none) file_sha256=7b5db51a56ca61f0; untrusted codexclaw@local:hooks/user-prompt-submit-guiding-worktree-rename.json:user_prompt_submit:0:0 expected=sha256:ddd3cc41e640a7ea199ccf13fb29724492f23069e7c18ec954553cf6715532c4 actual=(none) file_sha256=f26de5241f4fa3ae; untrusted codexclaw@local:hooks/pre-tool-use-guarding-managed-worktree-deletion.json:pre_tool_use:0:0 expected=sha256:a743a8218d37e99fb5beca96b4aae44876c2d208cf5c4cff23b8b808f7edbaf8 actual=(none) file_sha256=29744da962277c55; untrusted codexclaw@local:hooks/pre-tool-use-guarding-memory-write.json:pre_tool_use:0:0 expected=sha256:4679e43b7647519c6365c0d6195b99af68762289ef59574f6a808419317c3c73 actual=(none) file_sha256=78d0c42a299922a2; untrusted codexclaw@local:hooks/stop-waking-on-background-completion.json:stop:0:0 expected=sha256:dbe7ca8d48dcf3e9c61260990c2cd7e8b10ad3ab745d8196e9038291142ce393 actual=(none) file_sha256=21cc86681f7a5036; untrusted codexclaw@local:hooks/user-prompt-submit-delivering-background-completions.json:user_prompt_submit:0:0 expected=sha256:a1f54e9f2f294e8f3c7100c97c1412218518ba55c2f669835b5ad9468b4c4c06 actual=(none) file_sha256=0a2ce384a9454798; untrusted codexclaw@local:hooks/session-start-adopting-background-completions.json:session_start:0:0 expected=sha256:14a9e02e680e471d5042335a55e57020320d05aebdb4d94f79652da3625733b0 actual=(none) file_sha256=d51b61cfe7d3fea9; untrusted codexclaw@local:hooks/pre-tool-use-guarding-automation-ownership.json:pre_tool_use:0:0 expected=sha256:84f818ef990109f1ab59c6db05833833215bd2164f6af3c286c4822a6c932c93 actual=(none) file_sha256=e37a68f39280c820"
+            },
+            {
+              "name": "hook-execution",
+              "severity": "WARN",
+              "evidence": "native session unavailable: 0 current invocation(s); unverified (session/actor identity unavailable); 0 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+            },
+            {
+              "name": "ast-grep",
+              "severity": "WARN",
+              "evidence": "python3 not found - install Python 3.9+ to run the ast-grep helper"
+            },
+            {
+              "name": "install-root",
+              "severity": "WARN",
+              "evidence": "no plugin cache at ${CODEX_HOME}/plugins/cache (running uninstalled?)"
+            },
+            {
+              "name": "pabcd-state",
+              "severity": "PASS",
+              "evidence": "no .codexclaw/sessions/ directory (clean state)"
+            },
+            {
+              "name": "features",
+              "severity": "PASS",
+              "evidence": "4/4 declared flag(s) enabled"
+            },
+            {
+              "name": "wsl",
+              "severity": "PASS",
+              "evidence": "not running under WSL"
+            }
+          ],
+          "pluginVersion": "<VERSION>",
+          "codexVersion": "default_mode_request_user_input  stable  true\ngoals  experimental  true\nhooks  stable  true\nmulti_agent  stable  true",
+          "activeSurface": "app"
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "[trusted] codexclaw@local:hooks/session-start-ensuring-provider-bridge.json:session_start:0:0 expected=sha256:9cf9b8e5dca9ba92e8454de25ce51ae1447f470aca4947ade7f7c1084e2f492f actual=sha256:9cf9b8e5dca9ba92e8454de25ce51ae1447f470aca4947ade7f7c1084e2f492f\n[trusted] codexclaw@local:hooks/session-start-bootstrapping-pabcd-state.json:session_start:0:0 expected=sha256:a1337bf2f68792c8b073ae88febdbb8b43f50ed0c78978dc4fc58109e9b0589d actual=sha256:a1337bf2f68792c8b073ae88febdbb8b43f50ed0c78978dc4fc58109e9b0589d\n[trusted] codexclaw@local:hooks/session-start-healing-declared-features.json:session_start:0:0 expected=sha256:f54c17baceea6d3b2ac1c3d4d2beafa9a20db2befe4cfecde4006abb92aab19a actual=sha256:f54c17baceea6d3b2ac1c3d4d2beafa9a20db2befe4cfecde4006abb92aab19a\n[trusted] codexclaw@local:hooks/session-start-announcing-map-affordance.json:session_start:0:0 expected=sha256:4148e51b76205572e3f7a7ab5d61199b7f2eae0b43d97664b05f7502ee92af53 actual=sha256:4148e51b76205572e3f7a7ab5d61199b7f2eae0b43d97664b05f7502ee92af53\n[trusted] codexclaw@local:hooks/session-start-advising-agent-thread-permissions.json:session_start:0:0 expected=sha256:31155fb17d45bf95686a573dcceb0ced41d3de4909007fb77a8b1db3ff2df9e8 actual=sha256:31155fb17d45bf95686a573dcceb0ced41d3de4909007fb77a8b1db3ff2df9e8\n[trusted] codexclaw@local:hooks/user-prompt-submit-checking-pabcd-trigger.json:user_prompt_submit:0:0 expected=sha256:04462b4d2a0ca316e967d5429e4808f2dd73636b13d9a9a9c984de6de17d4da7 actual=sha256:04462b4d2a0ca316e967d5429e4808f2dd73636b13d9a9a9c984de6de17d4da7\n[trusted] codexclaw@local:hooks/stop-checking-pabcd-continuation.json:stop:0:0 expected=sha256:5be9da5eadafb4043c6576a5fa2805a8cb7cc259ad811a67251fde7b77f04f4a actual=sha256:5be9da5eadafb4043c6576a5fa2805a8cb7cc259ad811a67251fde7b77f04f4a\n[trusted] codexclaw@local:hooks/pre-tool-use-guarding-goal-budget.json:pre_tool_use:0:0 expected=sha256:a327f72ff6506a5e9820c59a8a3c625f9a5b2b5b1f755ce622948199482bf041 actual=sha256:a327f72ff6506a5e9820c59a8a3c625f9a5b2b5b1f755ce622948199482bf041\n[trusted] codexclaw@local:hooks/permission-request-allowing-agent-thread.json:permission_request:0:0 expected=sha256:d8d551e1070557c181280fdf41653a7c61b86b939c0bb3d939c39c9760f458e5 actual=sha256:d8d551e1070557c181280fdf41653a7c61b86b939c0bb3d939c39c9760f458e5\n[trusted] codexclaw@local:hooks/pre-tool-use-guarding-interview-in-goal.json:pre_tool_use:0:0 expected=sha256:1243674f7367995a3861abc2d1bc3c64300ea910bf4ebaeb4a02a9c4a00d1db3 actual=sha256:1243674f7367995a3861abc2d1bc3c64300ea910bf4ebaeb4a02a9c4a00d1db3\n[trusted] codexclaw@local:hooks/pre-tool-use-guarding-goal-complete.json:pre_tool_use:0:0 expected=sha256:caaf85c7e4e04d9edce2adc0461c6c466fe4ffdcae133fc18ae8137e26541d05 actual=sha256:caaf85c7e4e04d9edce2adc0461c6c466fe4ffdcae133fc18ae8137e26541d05\n[trusted] codexclaw@local:hooks/post-tool-use-capturing-interview-answers.json:post_tool_use:0:0 expected=sha256:d42e62bcace6ba3932ac67c5bb87a9aa40335af9fb0c21cc7e2db8ed03a79357 actual=sha256:d42e62bcace6ba3932ac67c5bb87a9aa40335af9fb0c21cc7e2db8ed03a79357\n[trusted] codexclaw@local:hooks/subagent-stop-verifying-evidence.json:subagent_stop:0:0 expected=sha256:84e1bb4945bc1f0c31d20ff1cfd3dc555eb266362cc159182962fc6c71f2e6d8 actual=sha256:84e1bb4945bc1f0c31d20ff1cfd3dc555eb266362cc159182962fc6c71f2e6d8\n[trusted] codexclaw@local:hooks/subagent-stop-observing-review.json:subagent_stop:0:0 expected=sha256:e7cd578f89527c913ddacfff648e3f70cb7b05b8efadf7b4d413f99e520e365d actual=sha256:e7cd578f89527c913ddacfff648e3f70cb7b05b8efadf7b4d413f99e520e365d\n[trusted] codexclaw@local:hooks/pre-tool-use-attaching-skills.json:pre_tool_use:0:0 expected=sha256:b66c73febc5a76b12b0a9b59b44696aa78fa723d3af2f94c027a68b4e38fad31 actual=sha256:b66c73febc5a76b12b0a9b59b44696aa78fa723d3af2f94c027a68b4e38fad31\n[trusted] codexclaw@local:hooks/session-start-announcing-subagent-fallback.json:session_start:0:0 expected=sha256:0d7b75687b54be277a52170df5d040d08a706952fd03984db6c1159ded03dc05 actual=sha256:0d7b75687b54be277a52170df5d040d08a706952fd03984db6c1159ded03dc05\n[trusted] codexclaw@local:hooks/post-compact-resetting-reinject-cursor.json:post_compact:0:0 expected=sha256:ccde59b7b74e2ed742009f5e7a3147a5e4ce3439dbe95222a3708eb145faf977 actual=sha256:ccde59b7b74e2ed742009f5e7a3147a5e4ce3439dbe95222a3708eb145faf977\n[trusted] codexclaw@local:hooks/pre-tool-use-linting-apply-patch.json:pre_tool_use:0:0 expected=sha256:2277c611e71fbf3e34b524a552155783a13f0230e816f23c9fbbed05ee538fd0 actual=sha256:2277c611e71fbf3e34b524a552155783a13f0230e816f23c9fbbed05ee538fd0\n[trusted] codexclaw@local:hooks/post-tool-use-tracking-render-observations.json:post_tool_use:0:0 expected=sha256:fa02c465abac8cc04890e347a4849b747bb47dfc83580b87ffaa07607b991d62 actual=sha256:fa02c465abac8cc04890e347a4849b747bb47dfc83580b87ffaa07607b991d62\n[trusted] codexclaw@local:hooks/session-start-injecting-recall-context.json:session_start:0:0 expected=sha256:797c968d7c27dd2c4703d0d4aad010479c88d8c26efa7c87284222eb4d8a2e13 actual=sha256:797c968d7c27dd2c4703d0d4aad010479c88d8c26efa7c87284222eb4d8a2e13\n[trusted] codexclaw@local:hooks/post-compact-injecting-recall-context.json:post_compact:0:0 expected=sha256:edf979d4135581ac8ee94714b9753ff2a764eed8292a7f06ccbd320593baf93c actual=sha256:edf979d4135581ac8ee94714b9753ff2a764eed8292a7f06ccbd320593baf93c\n[trusted] codexclaw@local:hooks/post-compact-injecting-bg-terminal-affordance.json:post_compact:0:0 expected=sha256:f62ec767f6dc7bd82bef3955475a59bbecdbee44dee3634efa36f26d8ba60372 actual=sha256:f62ec767f6dc7bd82bef3955475a59bbecdbee44dee3634efa36f26d8ba60372\n[trusted] codexclaw@local:hooks/post-compact-injecting-bg-terminal-affordance.json:user_prompt_submit:0:0 expected=sha256:fbc69c162733c90cfe203c4936131e92cbe93b4d13f6f55700c550a824704046 actual=sha256:fbc69c162733c90cfe203c4936131e92cbe93b4d13f6f55700c550a824704046\n[trusted] codexclaw@local:hooks/user-prompt-submit-detecting-recall-intent.json:user_prompt_submit:0:0 expected=sha256:9b424d6b9d0b267391769bbf929aed48f584ad0f9c3cc2bee48a6ab973621deb actual=sha256:9b424d6b9d0b267391769bbf929aed48f584ad0f9c3cc2bee48a6ab973621deb\n[trusted] codexclaw@local:hooks/session-start-detecting-managed-worktree.json:session_start:0:0 expected=sha256:c09f6a180fbca87cdb3aa28cb1749107558bccf7200abbe2a533f5dba7cb58d8 actual=sha256:c09f6a180fbca87cdb3aa28cb1749107558bccf7200abbe2a533f5dba7cb58d8\n[trusted] codexclaw@local:hooks/user-prompt-submit-guiding-worktree-rename.json:user_prompt_submit:0:0 expected=sha256:ddd3cc41e640a7ea199ccf13fb29724492f23069e7c18ec954553cf6715532c4 actual=sha256:ddd3cc41e640a7ea199ccf13fb29724492f23069e7c18ec954553cf6715532c4\n[trusted] codexclaw@local:hooks/pre-tool-use-guarding-managed-worktree-deletion.json:pre_tool_use:0:0 expected=sha256:a743a8218d37e99fb5beca96b4aae44876c2d208cf5c4cff23b8b808f7edbaf8 actual=sha256:a743a8218d37e99fb5beca96b4aae44876c2d208cf5c4cff23b8b808f7edbaf8\n[trusted] codexclaw@local:hooks/pre-tool-use-guarding-memory-write.json:pre_tool_use:0:0 expected=sha256:4679e43b7647519c6365c0d6195b99af68762289ef59574f6a808419317c3c73 actual=sha256:4679e43b7647519c6365c0d6195b99af68762289ef59574f6a808419317c3c73\n[trusted] codexclaw@local:hooks/stop-waking-on-background-completion.json:stop:0:0 expected=sha256:dbe7ca8d48dcf3e9c61260990c2cd7e8b10ad3ab745d8196e9038291142ce393 actual=sha256:dbe7ca8d48dcf3e9c61260990c2cd7e8b10ad3ab745d8196e9038291142ce393\n[trusted] codexclaw@local:hooks/user-prompt-submit-delivering-background-completions.json:user_prompt_submit:0:0 expected=sha256:a1f54e9f2f294e8f3c7100c97c1412218518ba55c2f669835b5ad9468b4c4c06 actual=sha256:a1f54e9f2f294e8f3c7100c97c1412218518ba55c2f669835b5ad9468b4c4c06\n[trusted] codexclaw@local:hooks/session-start-adopting-background-completions.json:session_start:0:0 expected=sha256:14a9e02e680e471d5042335a55e57020320d05aebdb4d94f79652da3625733b0 actual=sha256:14a9e02e680e471d5042335a55e57020320d05aebdb4d94f79652da3625733b0\n[trusted] codexclaw@local:hooks/pre-tool-use-guarding-automation-ownership.json:pre_tool_use:0:0 expected=sha256:84f818ef990109f1ab59c6db05833833215bd2164f6af3c286c4822a6c932c93 actual=sha256:84f818ef990109f1ab59c6db05833833215bd2164f6af3c286c4822a6c932c93\nupdated=0 appended=32\nbackup: ${CODEX_HOME}/config.toml.bak-2026-01-01T00-00-00.000Z\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/config.toml": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "[plugins.\"codexclaw@local\"]\nenabled = true\n\n[hooks.state.\"codexclaw@local:hooks/session-start-ensuring-provider-bridge.json:session_start:0:0\"]\ntrusted_hash = \"sha256:9cf9b8e5dca9ba92e8454de25ce51ae1447f470aca4947ade7f7c1084e2f492f\"\n\n[hooks.state.\"codexclaw@local:hooks/session-start-bootstrapping-pabcd-state.json:session_start:0:0\"]\ntrusted_hash = \"sha256:a1337bf2f68792c8b073ae88febdbb8b43f50ed0c78978dc4fc58109e9b0589d\"\n\n[hooks.state.\"codexclaw@local:hooks/session-start-healing-declared-features.json:session_start:0:0\"]\ntrusted_hash = \"sha256:f54c17baceea6d3b2ac1c3d4d2beafa9a20db2befe4cfecde4006abb92aab19a\"\n\n[hooks.state.\"codexclaw@local:hooks/session-start-announcing-map-affordance.json:session_start:0:0\"]\ntrusted_hash = \"sha256:4148e51b76205572e3f7a7ab5d61199b7f2eae0b43d97664b05f7502ee92af53\"\n\n[hooks.state.\"codexclaw@local:hooks/session-start-advising-agent-thread-permissions.json:session_start:0:0\"]\ntrusted_hash = \"sha256:31155fb17d45bf95686a573dcceb0ced41d3de4909007fb77a8b1db3ff2df9e8\"\n\n[hooks.state.\"codexclaw@local:hooks/user-prompt-submit-checking-pabcd-trigger.json:user_prompt_submit:0:0\"]\ntrusted_hash = \"sha256:04462b4d2a0ca316e967d5429e4808f2dd73636b13d9a9a9c984de6de17d4da7\"\n\n[hooks.state.\"codexclaw@local:hooks/stop-checking-pabcd-continuation.json:stop:0:0\"]\ntrusted_hash = \"sha256:5be9da5eadafb4043c6576a5fa2805a8cb7cc259ad811a67251fde7b77f04f4a\"\n\n[hooks.state.\"codexclaw@local:hooks/pre-tool-use-guarding-goal-budget.json:pre_tool_use:0:0\"]\ntrusted_hash = \"sha256:a327f72ff6506a5e9820c59a8a3c625f9a5b2b5b1f755ce622948199482bf041\"\n\n[hooks.state.\"codexclaw@local:hooks/permission-request-allowing-agent-thread.json:permission_request:0:0\"]\ntrusted_hash = \"sha256:d8d551e1070557c181280fdf41653a7c61b86b939c0bb3d939c39c9760f458e5\"\n\n[hooks.state.\"codexclaw@local:hooks/pre-tool-use-guarding-interview-in-goal.json:pre_tool_use:0:0\"]\ntrusted_hash = \"sha256:1243674f7367995a3861abc2d1bc3c64300ea910bf4ebaeb4a02a9c4a00d1db3\"\n\n[hooks.state.\"codexclaw@local:hooks/pre-tool-use-guarding-goal-complete.json:pre_tool_use:0:0\"]\ntrusted_hash = \"sha256:caaf85c7e4e04d9edce2adc0461c6c466fe4ffdcae133fc18ae8137e26541d05\"\n\n[hooks.state.\"codexclaw@local:hooks/post-tool-use-capturing-interview-answers.json:post_tool_use:0:0\"]\ntrusted_hash = \"sha256:d42e62bcace6ba3932ac67c5bb87a9aa40335af9fb0c21cc7e2db8ed03a79357\"\n\n[hooks.state.\"codexclaw@local:hooks/subagent-stop-verifying-evidence.json:subagent_stop:0:0\"]\ntrusted_hash = \"sha256:84e1bb4945bc1f0c31d20ff1cfd3dc555eb266362cc159182962fc6c71f2e6d8\"\n\n[hooks.state.\"codexclaw@local:hooks/subagent-stop-observing-review.json:subagent_stop:0:0\"]\ntrusted_hash = \"sha256:e7cd578f89527c913ddacfff648e3f70cb7b05b8efadf7b4d413f99e520e365d\"\n\n[hooks.state.\"codexclaw@local:hooks/pre-tool-use-attaching-skills.json:pre_tool_use:0:0\"]\ntrusted_hash = \"sha256:b66c73febc5a76b12b0a9b59b44696aa78fa723d3af2f94c027a68b4e38fad31\"\n\n[hooks.state.\"codexclaw@local:hooks/session-start-announcing-subagent-fallback.json:session_start:0:0\"]\ntrusted_hash = \"sha256:0d7b75687b54be277a52170df5d040d08a706952fd03984db6c1159ded03dc05\"\n\n[hooks.state.\"codexclaw@local:hooks/post-compact-resetting-reinject-cursor.json:post_compact:0:0\"]\ntrusted_hash = \"sha256:ccde59b7b74e2ed742009f5e7a3147a5e4ce3439dbe95222a3708eb145faf977\"\n\n[hooks.state.\"codexclaw@local:hooks/pre-tool-use-linting-apply-patch.json:pre_tool_use:0:0\"]\ntrusted_hash = \"sha256:2277c611e71fbf3e34b524a552155783a13f0230e816f23c9fbbed05ee538fd0\"\n\n[hooks.state.\"codexclaw@local:hooks/post-tool-use-tracking-render-observations.json:post_tool_use:0:0\"]\ntrusted_hash = \"sha256:fa02c465abac8cc04890e347a4849b747bb47dfc83580b87ffaa07607b991d62\"\n\n[hooks.state.\"codexclaw@local:hooks/session-start-injecting-recall-context.json:session_start:0:0\"]\ntrusted_hash = \"sha256:797c968d7c27dd2c4703d0d4aad010479c88d8c26efa7c87284222eb4d8a2e13\"\n\n[hooks.state.\"codexclaw@local:hooks/post-compact-injecting-recall-context.json:post_compact:0:0\"]\ntrusted_hash = \"sha256:edf979d4135581ac8ee94714b9753ff2a764eed8292a7f06ccbd320593baf93c\"\n\n[hooks.state.\"codexclaw@local:hooks/post-compact-injecting-bg-terminal-affordance.json:post_compact:0:0\"]\ntrusted_hash = \"sha256:f62ec767f6dc7bd82bef3955475a59bbecdbee44dee3634efa36f26d8ba60372\"\n\n[hooks.state.\"codexclaw@local:hooks/post-compact-injecting-bg-terminal-affordance.json:user_prompt_submit:0:0\"]\ntrusted_hash = \"sha256:fbc69c162733c90cfe203c4936131e92cbe93b4d13f6f55700c550a824704046\"\n\n[hooks.state.\"codexclaw@local:hooks/user-prompt-submit-detecting-recall-intent.json:user_prompt_submit:0:0\"]\ntrusted_hash = \"sha256:9b424d6b9d0b267391769bbf929aed48f584ad0f9c3cc2bee48a6ab973621deb\"\n\n[hooks.state.\"codexclaw@local:hooks/session-start-detecting-managed-worktree.json:session_start:0:0\"]\ntrusted_hash = \"sha256:c09f6a180fbca87cdb3aa28cb1749107558bccf7200abbe2a533f5dba7cb58d8\"\n\n[hooks.state.\"codexclaw@local:hooks/user-prompt-submit-guiding-worktree-rename.json:user_prompt_submit:0:0\"]\ntrusted_hash = \"sha256:ddd3cc41e640a7ea199ccf13fb29724492f23069e7c18ec954553cf6715532c4\"\n\n[hooks.state.\"codexclaw@local:hooks/pre-tool-use-guarding-managed-worktree-deletion.json:pre_tool_use:0:0\"]\ntrusted_hash = \"sha256:a743a8218d37e99fb5beca96b4aae44876c2d208cf5c4cff23b8b808f7edbaf8\"\n\n[hooks.state.\"codexclaw@local:hooks/pre-tool-use-guarding-memory-write.json:pre_tool_use:0:0\"]\ntrusted_hash = \"sha256:4679e43b7647519c6365c0d6195b99af68762289ef59574f6a808419317c3c73\"\n\n[hooks.state.\"codexclaw@local:hooks/stop-waking-on-background-completion.json:stop:0:0\"]\ntrusted_hash = \"sha256:dbe7ca8d48dcf3e9c61260990c2cd7e8b10ad3ab745d8196e9038291142ce393\"\n\n[hooks.state.\"codexclaw@local:hooks/user-prompt-submit-delivering-background-completions.json:user_prompt_submit:0:0\"]\ntrusted_hash = \"sha256:a1f54e9f2f294e8f3c7100c97c1412218518ba55c2f669835b5ad9468b4c4c06\"\n\n[hooks.state.\"codexclaw@local:hooks/session-start-adopting-background-completions.json:session_start:0:0\"]\ntrusted_hash = \"sha256:14a9e02e680e471d5042335a55e57020320d05aebdb4d94f79652da3625733b0\"\n\n[hooks.state.\"codexclaw@local:hooks/pre-tool-use-guarding-automation-ownership.json:pre_tool_use:0:0\"]\ntrusted_hash = \"sha256:84f818ef990109f1ab59c6db05833833215bd2164f6af3c286c4822a6c932c93\"\n"
+      },
+      "codex/config.toml.bak-2026-01-01T00-00-00.000Z": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "[plugins.\"codexclaw@local\"]\nenabled = true\n"
+      }
+    },
+    "calls": [
+      {
+        "cmd": "codex",
+        "argv": [
+          "features",
+          "list"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "codex",
+        "argv": [
+          "--version"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "codex",
+        "argv": [
+          "features",
+          "list"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "codex",
+        "argv": [
+          "--version"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "codex-pinned",
+        "argv": [
+          "features",
+          "list"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

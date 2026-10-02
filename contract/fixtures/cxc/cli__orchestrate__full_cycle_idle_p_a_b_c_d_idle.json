@@ -1,0 +1,360 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/orchestrate/transition",
+    "K8/ws/.codexclaw/sessions",
+    "K8/ws/.codexclaw/ledger.jsonl",
+    "A/pabcd-state/orchestrate-cli.test.ts",
+    "K6/plan/init",
+    "K7/orchestrate",
+    "A/pabcd-state/plan-cli.test.ts",
+    "K6/orchestrate/status"
+  ],
+  "note": "The whole agent-gated cycle on an unbound session: every edge with its attest, D closing to IDLE, status before and after.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "session-start-bootstrapping-pabcd-state",
+        "stdin": {
+          "hook_event_name": "SessionStart",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "source": "startup"
+        }
+      },
+      {
+        "cli": [
+          "orchestrate",
+          "status",
+          "--session",
+          "rec-s1",
+          "--cwd",
+          "${WS}"
+        ]
+      },
+      {
+        "cli": [
+          "orchestrate",
+          "P",
+          "--session",
+          "rec-s1",
+          "--cwd",
+          "${WS}"
+        ]
+      },
+      {
+        "cli": [
+          "plan",
+          "init",
+          "--slug",
+          "demo",
+          "--date",
+          "260101",
+          "--cwd",
+          "${WS}"
+        ]
+      },
+      {
+        "cli": [
+          "orchestrate",
+          "A",
+          "--session",
+          "rec-s1",
+          "--cwd",
+          "${WS}",
+          "--attest",
+          "{\"from\":\"P\",\"to\":\"A\",\"did\":\"wrote and audited the plan\",\"planUnit\":\"devlog/_plan/260101_demo\"}"
+        ]
+      },
+      {
+        "cli": [
+          "orchestrate",
+          "B",
+          "--session",
+          "rec-s1",
+          "--cwd",
+          "${WS}",
+          "--attest",
+          "{\"from\":\"A\",\"to\":\"B\",\"did\":\"audit passed\",\"auditOutput\":\"VERDICT: PASS\",\"auditVerdict\":\"pass\"}"
+        ]
+      },
+      {
+        "cli": [
+          "orchestrate",
+          "C",
+          "--session",
+          "rec-s1",
+          "--cwd",
+          "${WS}",
+          "--attest",
+          "{\"from\":\"B\",\"to\":\"C\",\"did\":\"implemented the parser\"}"
+        ]
+      },
+      {
+        "cli": [
+          "orchestrate",
+          "D",
+          "--session",
+          "rec-s1",
+          "--cwd",
+          "${WS}",
+          "--attest",
+          "{\"from\":\"C\",\"to\":\"D\",\"did\":\"verified\",\"checkOutput\":\"tests 12 passed\",\"exitCode\":0}"
+        ]
+      },
+      {
+        "cli": [
+          "orchestrate",
+          "status",
+          "--session",
+          "rec-s1",
+          "--cwd",
+          "${WS}",
+          "--json"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "session=rec-s1 phase=IDLE interview=false auditPassed=false checkPassed=false\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "orchestrate P: current=IDLE -> P (IDLE → P, session rec-s1) [formal P: architect proposal -> main executable plan -> same-architect reflection before A (cxc-pabcd phase-plan)]\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "plan init: scaffolded devlog/_plan/260101_demo (000_plan.md + 1 phase doc(s)).\nWrite every doc to diff-level BEFORE P -> A; the P>A gate requires planUnit to carry numbered docs.\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "orchestrate A: current=P -> A (P → A, session rec-s1)\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "orchestrate B: current=A -> B (A → B, session rec-s1)\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "orchestrate C: current=B -> C (B → C, session rec-s1)\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "orchestrate D: current=C -> IDLE (C → IDLE, cycle closed, session rec-s1)\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "phase": "IDLE",
+          "flags": {
+            "interview": false,
+            "auditPassed": false,
+            "checkPassed": false
+          },
+          "sessionId": "rec-s1",
+          "selection": "explicit"
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/.gitignore": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n"
+      },
+      "ws/.codexclaw/ledger.jsonl": {
+        "type": "file",
+        "mode": "0644",
+        "form": "jsonl",
+        "jsonl": [
+          {
+            "ts": "<TS>",
+            "sessionId": "rec-s1",
+            "from": "IDLE",
+            "to": "P",
+            "reason": "cli"
+          },
+          {
+            "ts": "<TS>",
+            "sessionId": "rec-s1",
+            "from": "P",
+            "to": "A",
+            "reason": "cli",
+            "evidence": "wrote and audited the plan"
+          },
+          {
+            "ts": "<TS>",
+            "sessionId": "rec-s1",
+            "from": "A",
+            "to": "B",
+            "reason": "cli",
+            "evidence": "audit passed"
+          },
+          {
+            "ts": "<TS>",
+            "sessionId": "rec-s1",
+            "from": "B",
+            "to": "C",
+            "reason": "cli",
+            "evidence": "implemented the parser"
+          },
+          {
+            "ts": "<TS>",
+            "sessionId": "rec-s1",
+            "from": "C",
+            "to": "IDLE",
+            "reason": "done",
+            "evidence": "verified"
+          }
+        ]
+      },
+      "ws/.codexclaw/render-observations.jsonl": {
+        "type": "file",
+        "mode": "0644",
+        "form": "empty"
+      },
+      "ws/.codexclaw/sessions": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty-nonl",
+        "json": {
+          "phase": "IDLE",
+          "sessionId": "rec-s1",
+          "slug": "",
+          "updatedAt": "<TS>",
+          "flags": {
+            "interview": false,
+            "auditPassed": false,
+            "checkPassed": false
+          },
+          "supersededBy": null,
+          "injectedTurns": [],
+          "lastInjectedPhase": null,
+          "orchestrationActive": false,
+          "interview": null,
+          "stopBlockPhase": null,
+          "stopBlockCount": 0,
+          "stopBlockWorkPhaseId": null,
+          "stopMetricCursor": 0,
+          "stopBlockTotal": 0,
+          "stopBlockTurnId": null,
+          "stopBlockCapNotified": false,
+          "loopArmSeen": false,
+          "idleEditNudges": 0,
+          "memoryWriteRequested": false,
+          "memoryWriteTurn": null,
+          "memoryWriteGrant": false,
+          "unverifiedSubagents": [],
+          "unverifiedCorrupt": false,
+          "phaseEntrySource": null,
+          "planUnit": null,
+          "planEpoch": null,
+          "checkEpoch": null,
+          "dcloseRecovery": null
+        }
+      },
+      "ws/devlog": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/devlog/_plan": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/devlog/_plan/260101_demo": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/devlog/_plan/260101_demo/000_plan.md": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "# 000 — demo: Plan\n\n> DIFFLEVEL-ROADMAP-01: write this doc to full diff-level precision (exact paths,\n> NEW/MODIFY/DELETE, before/after diffs) BEFORE P -> A. An empty scaffold does not\n> satisfy the rule; the A-phase reviewer FAILS outline-only phase docs.\n\n## Objective\n\n(fill in: the concrete outcome, the observed failure, the evidence base)\n\n## Loop-spec\n\n- Loop archetype: (verifier-defined | judged)\n- Write scope / out-of-scope:\n- Budget / bounds:\n\n## Work-phase map (one phase = one full PABCD cycle)\n\n| WP | Doc | Slice | Depends on |\n|----|-----|-------|------------|\n\n## Accept criteria\n\n- (mirror into the goalplan criteria[])\n"
+      },
+      "ws/devlog/_plan/260101_demo/010_phase1.md": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "# 010 — Phase 1 (demo)\n\n> DIFFLEVEL-ROADMAP-01: write this doc to full diff-level precision (exact paths,\n> NEW/MODIFY/DELETE, before/after diffs) BEFORE P -> A. An empty scaffold does not\n> satisfy the rule; the A-phase reviewer FAILS outline-only phase docs.\n\n## MODIFY / NEW / DELETE map\n\n(fill in: exact file paths with before/after diffs — a copy-paste-executable PRD)\n\n## TESTS\n\n(fill in: test files + cases)\n\n## Verification (C)\n\n(fill in: exact commands + expected exit codes)\n"
+      }
+    },
+    "calls": [
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "HEAD"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "status",
+          "--porcelain=v1",
+          "-z",
+          "--untracked-files=all"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "HEAD"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "status",
+          "--porcelain=v1",
+          "-z",
+          "--untracked-files=all"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

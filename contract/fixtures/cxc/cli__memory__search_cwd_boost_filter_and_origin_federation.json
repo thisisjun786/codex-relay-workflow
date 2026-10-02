@@ -1,0 +1,225 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/memory/search",
+    "K7/memory",
+    "K11/threads",
+    "K12/git",
+    "A/recall/cwd-scope.test.ts"
+  ],
+  "note": "Three summaries mention wombat: one recorded in this workspace, one in another checkout of the same git origin (joined through threads.git_origin_url), one in an unrelated project. --cwd boosts in-project hits but keeps all three; --cwd-only keeps this workspace and the same-origin checkout and drops the unrelated one. The origin is read with `git -C <cwd> config --get remote.origin.url`.",
+  "given": {
+    "files": {
+      "codex/memories/rollout_summaries/here.md": "thread_id: 019f0000-0000-7000-8000-0000000000a1\ncwd: ${WS}\n\n# Rollout\n\nThe wombat pipeline shipped.\n",
+      "codex/memories/rollout_summaries/main.md": "thread_id: 019f0000-0000-7000-8000-0000000000a2\ncwd: /proj/alpha-main\n\n# Rollout\n\nThe wombat pipeline was reviewed.\n",
+      "codex/memories/rollout_summaries/there.md": "thread_id: 019f0000-0000-7000-8000-0000000000a3\ncwd: /proj/beta\n\n# Rollout\n\nThe wombat pipeline elsewhere.\n"
+    },
+    "git": {
+      "origin": "https://github.com/example/alpha.git"
+    },
+    "sqlite": {
+      "codex/state_2.sqlite": [
+        "CREATE TABLE threads (id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '', cwd TEXT NOT NULL DEFAULT '', git_branch TEXT, git_origin_url TEXT, updated_at_ms INTEGER)",
+        "INSERT INTO threads VALUES ('019f0000-0000-7000-8000-0000000000a1', 'here lane', '${WS}', 'main', 'https://github.com/example/alpha.git', NULL)",
+        "INSERT INTO threads VALUES ('019f0000-0000-7000-8000-0000000000a2', 'main checkout', '/proj/alpha-main', 'main', 'https://github.com/example/alpha.git', NULL)",
+        "INSERT INTO threads VALUES ('019f0000-0000-7000-8000-0000000000a3', 'there lane', '/proj/beta', 'main', 'git@github.com:example/beta.git', NULL)"
+      ]
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "memory",
+          "search",
+          "wombat",
+          "--json"
+        ]
+      },
+      {
+        "cli": [
+          "memory",
+          "search",
+          "wombat",
+          "--cwd",
+          "${WS}",
+          "--json"
+        ]
+      },
+      {
+        "cli": [
+          "memory",
+          "search",
+          "wombat",
+          "--cwd-only",
+          "${WS}",
+          "--json"
+        ]
+      }
+    ],
+    "observe": [
+      "cxc"
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-pretty",
+        "stdout_json": {
+          "hits": [
+            {
+              "origin": "file",
+              "kind": "rollout",
+              "relpath": "rollout_summaries/there.md",
+              "threadId": "<UUID_1>",
+              "updatedAt": "<TS>",
+              "excerpt": "The wombat pipeline elsewhere.",
+              "startLine": 6,
+              "cwd": "/proj/beta",
+              "score": 3.499999998280885
+            },
+            {
+              "origin": "file",
+              "kind": "rollout",
+              "relpath": "rollout_summaries/main.md",
+              "threadId": "<UUID_2>",
+              "updatedAt": "<TS>",
+              "excerpt": "The wombat pipeline was reviewed.",
+              "startLine": 6,
+              "cwd": "/proj/alpha-main",
+              "score": 3.499999998280885
+            },
+            {
+              "origin": "file",
+              "kind": "rollout",
+              "relpath": "rollout_summaries/here.md",
+              "threadId": "<UUID_3>",
+              "updatedAt": "<TS>",
+              "excerpt": "The wombat pipeline shipped.",
+              "startLine": 6,
+              "cwd": "${WS}",
+              "score": 3.499999998280885
+            }
+          ],
+          "warnings": [
+            "memories db not found (stage1 search off)"
+          ],
+          "scannedFiles": 3,
+          "elapsedMs": "<DURATION>"
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-pretty",
+        "stdout_json": {
+          "hits": [
+            {
+              "origin": "file",
+              "kind": "rollout",
+              "relpath": "rollout_summaries/main.md",
+              "threadId": "<UUID_2>",
+              "updatedAt": "<TS>",
+              "excerpt": "The wombat pipeline was reviewed.",
+              "startLine": 6,
+              "cwd": "/proj/alpha-main",
+              "score": 5.4999999982808845
+            },
+            {
+              "origin": "file",
+              "kind": "rollout",
+              "relpath": "rollout_summaries/here.md",
+              "threadId": "<UUID_3>",
+              "updatedAt": "<TS>",
+              "excerpt": "The wombat pipeline shipped.",
+              "startLine": 6,
+              "cwd": "${WS}",
+              "score": 5.4999999982808845
+            },
+            {
+              "origin": "file",
+              "kind": "rollout",
+              "relpath": "rollout_summaries/there.md",
+              "threadId": "<UUID_1>",
+              "updatedAt": "<TS>",
+              "excerpt": "The wombat pipeline elsewhere.",
+              "startLine": 6,
+              "cwd": "/proj/beta",
+              "score": 3.499999998280885
+            }
+          ],
+          "warnings": [
+            "memories db not found (stage1 search off)"
+          ],
+          "scannedFiles": 3,
+          "elapsedMs": "<DURATION>"
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-pretty",
+        "stdout_json": {
+          "hits": [
+            {
+              "origin": "file",
+              "kind": "rollout",
+              "relpath": "rollout_summaries/main.md",
+              "threadId": "<UUID_2>",
+              "updatedAt": "<TS>",
+              "excerpt": "The wombat pipeline was reviewed.",
+              "startLine": 6,
+              "cwd": "/proj/alpha-main",
+              "score": 5.4999999982808845
+            },
+            {
+              "origin": "file",
+              "kind": "rollout",
+              "relpath": "rollout_summaries/here.md",
+              "threadId": "<UUID_3>",
+              "updatedAt": "<TS>",
+              "excerpt": "The wombat pipeline shipped.",
+              "startLine": 6,
+              "cwd": "${WS}",
+              "score": 5.4999999982808845
+            }
+          ],
+          "warnings": [
+            "memories db not found (stage1 search off)"
+          ],
+          "scannedFiles": 3,
+          "elapsedMs": "<DURATION>"
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": [
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "config",
+          "--get",
+          "remote.origin.url"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "config",
+          "--get",
+          "remote.origin.url"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

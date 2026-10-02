@@ -1,0 +1,117 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/bg/cancel",
+    "K8/ws/.codexclaw/bg",
+    "A/bg-wake/cli.test.ts"
+  ],
+  "note": "Cancelling an already finished job (pid null, status complete) keeps its status; the record is unchanged.",
+  "given": {
+    "json": {
+      "ws/.codexclaw/bg/f1.json": {
+        "id": "f1",
+        "sessionId": "rec-s1",
+        "adoptedBy": null,
+        "cwd": "${WS}",
+        "command": [
+          "true"
+        ],
+        "note": null,
+        "pid": null,
+        "startToken": null,
+        "status": "complete",
+        "exitCode": 0,
+        "startedAt": "2025-12-31T23:50:00.000Z",
+        "endedAt": "2025-12-31T23:51:00.000Z",
+        "deliveredAt": null
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "bg",
+          "cancel",
+          "f1"
+        ]
+      },
+      {
+        "cli": [
+          "bg",
+          "list",
+          "--json"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "f1 complete\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": [
+          {
+            "id": "f1",
+            "sessionId": "rec-s1",
+            "adoptedBy": null,
+            "cwd": "${WS}",
+            "command": [
+              "true"
+            ],
+            "note": null,
+            "pid": null,
+            "startToken": null,
+            "status": "complete",
+            "exitCode": 0,
+            "startedAt": "<TS>",
+            "endedAt": "<TS>",
+            "deliveredAt": null
+          }
+        ],
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/bg": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/bg/f1.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "id": "f1",
+          "sessionId": "rec-s1",
+          "adoptedBy": null,
+          "cwd": "${WS}",
+          "command": [
+            "true"
+          ],
+          "note": null,
+          "pid": null,
+          "startToken": null,
+          "status": "complete",
+          "exitCode": 0,
+          "startedAt": "<TS>",
+          "endedAt": "<TS>",
+          "deliveredAt": null
+        }
+      }
+    },
+    "calls": []
+  }
+}

@@ -1,0 +1,338 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/subagents/dispatch",
+    "K7/subagents",
+    "K8/ws/.codexclaw/dispatches",
+    "A/subagent-config/fallback-dispatch-cli.test.ts",
+    "K13/CODEXCLAW_HOME"
+  ],
+  "note": "dispatch start snapshots the global executor primary + fallback candidates into ws/.codexclaw/dispatches/<session>/<id>.json (creating .codexclaw with its .gitignore); status reads it back; a second start is refused; changing the role's fallback afterwards does not change the stored candidates.",
+  "given": {
+    "json": {
+      "cxc/subagents.json": {
+        "roles": {
+          "executor": {
+            "mode": "model",
+            "model": "rec/exec-primary",
+            "effort": "high",
+            "promptOverride": null,
+            "fallback": {
+              "model": "rec/exec-fallback",
+              "effort": null
+            }
+          }
+        }
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "subagents",
+          "dispatch"
+        ],
+        "stdin": {
+          "action": "start",
+          "sessionId": "rec-s1",
+          "dispatchId": "one",
+          "role": "executor"
+        }
+      },
+      {
+        "cli": [
+          "subagents",
+          "dispatch"
+        ],
+        "stdin": {
+          "action": "status",
+          "sessionId": "rec-s1",
+          "dispatchId": "one"
+        }
+      },
+      {
+        "cli": [
+          "subagents",
+          "dispatch"
+        ],
+        "stdin": {
+          "action": "start",
+          "sessionId": "rec-s1",
+          "dispatchId": "one",
+          "role": "executor"
+        }
+      },
+      {
+        "cli": [
+          "subagents",
+          "set",
+          "executor",
+          "--fallback-model",
+          "rec/changed-fallback",
+          "--global"
+        ]
+      },
+      {
+        "cli": [
+          "subagents",
+          "dispatch"
+        ],
+        "stdin": {
+          "action": "status",
+          "sessionId": "rec-s1",
+          "dispatchId": "one"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "action": "ready",
+          "dispatchId": "one",
+          "attemptId": "<UUID_1>",
+          "independentReviewRequired": false,
+          "attempts": [
+            {
+              "id": "<UUID_1>",
+              "candidate": {
+                "model": "rec/exec-primary",
+                "effort": "high"
+              },
+              "claimed": false,
+              "agentId": null,
+              "observedModel": null,
+              "code": null,
+              "taskFailure": null,
+              "status": "ready",
+              "reconciliation": null,
+              "spawnIssued": false,
+              "toolUseId": null
+            }
+          ]
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "action": "ready",
+          "dispatchId": "one",
+          "attemptId": "<UUID_1>",
+          "independentReviewRequired": false,
+          "attempts": [
+            {
+              "id": "<UUID_1>",
+              "candidate": {
+                "model": "rec/exec-primary",
+                "effort": "high"
+              },
+              "claimed": false,
+              "agentId": null,
+              "observedModel": null,
+              "code": null,
+              "taskFailure": null,
+              "status": "ready",
+              "reconciliation": null,
+              "spawnIssued": false,
+              "toolUseId": null
+            }
+          ]
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "error": "dispatch already exists; use status, never replay start"
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-pretty",
+        "stdout_json": {
+          "mode": "model",
+          "model": "rec/exec-primary",
+          "effort": "high",
+          "promptOverride": null,
+          "fallback": {
+            "model": "rec/changed-fallback",
+            "effort": null
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "action": "ready",
+          "dispatchId": "one",
+          "attemptId": "<UUID_1>",
+          "independentReviewRequired": false,
+          "attempts": [
+            {
+              "id": "<UUID_1>",
+              "candidate": {
+                "model": "rec/exec-primary",
+                "effort": "high"
+              },
+              "claimed": false,
+              "agentId": null,
+              "observedModel": null,
+              "code": null,
+              "taskFailure": null,
+              "status": "ready",
+              "reconciliation": null,
+              "spawnIssued": false,
+              "toolUseId": null
+            }
+          ]
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "cxc/subagents.json": {
+        "type": "file",
+        "mode": "0600",
+        "form": "json-pretty",
+        "json": {
+          "roles": {
+            "executor": {
+              "mode": "model",
+              "model": "rec/exec-primary",
+              "effort": "high",
+              "promptOverride": null,
+              "fallback": {
+                "model": "rec/changed-fallback",
+                "effort": null
+              }
+            }
+          }
+        }
+      },
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/.gitignore": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n"
+      },
+      "ws/.codexclaw/dispatches": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "ws/.codexclaw/dispatches/rec-s1": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "ws/.codexclaw/dispatches/rec-s1/one.json": {
+        "type": "file",
+        "mode": "0600",
+        "form": "json-pretty",
+        "json": {
+          "version": 1,
+          "sessionId": "rec-s1",
+          "id": "one",
+          "role": "executor",
+          "candidates": [
+            {
+              "model": "rec/exec-primary",
+              "effort": "high"
+            },
+            {
+              "model": "rec/exec-fallback",
+              "effort": null
+            }
+          ],
+          "attempts": [
+            {
+              "id": "<UUID_1>",
+              "candidate": {
+                "model": "rec/exec-primary",
+                "effort": "high"
+              },
+              "claimed": false,
+              "agentId": null,
+              "observedModel": null,
+              "code": null,
+              "taskFailure": null,
+              "status": "ready",
+              "reconciliation": null,
+              "spawnIssued": false,
+              "toolUseId": null
+            }
+          ],
+          "status": "active"
+        }
+      }
+    },
+    "calls": [
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

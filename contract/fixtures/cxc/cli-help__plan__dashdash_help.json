@@ -1,0 +1,35 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/plan/help",
+    "K6/exit-codes",
+    "A/plugin/cli-usage.test.mjs",
+    "A/pabcd-state/help-verbs.test.ts"
+  ],
+  "note": "`cxc plan --help`: usage text and exit status; nothing written.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "plan",
+          "--help"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "cxc plan — scaffold a devlog plan unit (DIFFLEVEL-ROADMAP-01)\n\nUsage:\n  cxc plan init --slug <slug> [--phases <n>] [--date <YYMMDD>] [--cwd <path>]\n  cxc plan --help\n\nNotes:\n  Creates devlog/_plan/<YYMMDD>_<slug>/ with 000_plan.md plus one decade doc\n  (010, 020, ...) per phase. P>A requires such a unit to exist on disk with\n  numbered docs — a chat-message plan does not satisfy Plan.\n  --date is for callers that already carry their own prefix; omit it to stamp today.\n  init refuses to overwrite an existing unit.\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

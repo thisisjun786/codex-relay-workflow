@@ -1,0 +1,45 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/skill/help",
+    "K6/exit-codes",
+    "A/plugin/cli-usage.test.mjs",
+    "K14/skill-search"
+  ],
+  "note": "`cxc skill search --help`: whether the subcommand treats --help as help, and what it writes.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "skill",
+          "search",
+          "--help"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "no matching skills\n",
+        "stderr": "skill-search: source jaw failed (fetch failed)\n"
+      }
+    ],
+    "tree": {},
+    "calls": [
+      {
+        "cmd": "fetch",
+        "argv": [
+          "GET",
+          "https://raw.githubusercontent.com/lidge-jun/cli-jaw-skills/main/registry.json"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

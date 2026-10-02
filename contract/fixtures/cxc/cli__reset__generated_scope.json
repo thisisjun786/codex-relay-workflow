@@ -1,0 +1,148 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/reset/generated",
+    "K8/ws/.codexclaw",
+    "A/cxc-ops/cxc-ops.test.ts"
+  ],
+  "note": "`reset --generated` removes only interview/; a second run reports nothing to remove.",
+  "given": {
+    "files": {
+      "ws/.codexclaw/affordance-recovery/abc.pending": "pending\n",
+      "ws/.codexclaw/bg/x.json": "{}\n",
+      "ws/.codexclaw/goalplans/g1/plan.json": "{}\n",
+      "ws/.codexclaw/interview/plan.md": "# plan\n",
+      "ws/.codexclaw/interviews/rec-s1.jsonl": "{}\n",
+      "ws/.codexclaw/ledger.jsonl": "{\"event\":\"x\"}\n",
+      "ws/.codexclaw/sessions/notes.txt": "keep\n",
+      "ws/.codexclaw/sessions/rec-s1.json": "{\"phase\":\"B\"}\n",
+      "ws/.codexclaw/sessions/rec-s2.json": "{\"phase\":\"P\"}\n",
+      "ws/keep.txt": "outside\n"
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "reset",
+          "--generated"
+        ]
+      },
+      {
+        "cli": [
+          "reset",
+          "--generated"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "reset --generated: removed 1 path(s)\n  - ${WS}/.codexclaw/interview\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "reset --generated: removed 0 path(s) (nothing to remove)\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/affordance-recovery": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/affordance-recovery/abc.pending": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "pending\n"
+      },
+      "ws/.codexclaw/bg": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/bg/x.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {}
+      },
+      "ws/.codexclaw/goalplans": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/goalplans/g1": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/goalplans/g1/plan.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {}
+      },
+      "ws/.codexclaw/interviews": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/interviews/rec-s1.jsonl": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {}
+      },
+      "ws/.codexclaw/ledger.jsonl": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "event": "x"
+        }
+      },
+      "ws/.codexclaw/sessions": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/sessions/notes.txt": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "keep\n"
+      },
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "phase": "B"
+        }
+      },
+      "ws/.codexclaw/sessions/rec-s2.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "phase": "P"
+        }
+      },
+      "ws/keep.txt": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "outside\n"
+      }
+    },
+    "calls": []
+  }
+}

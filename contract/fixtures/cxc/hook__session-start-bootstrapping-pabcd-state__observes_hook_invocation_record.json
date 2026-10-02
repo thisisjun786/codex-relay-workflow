@@ -1,0 +1,131 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/session-start-bootstrapping-pabcd-state",
+    "K4/hook-observations",
+    "A/cxc-ops/hook-observation.test.ts"
+  ],
+  "note": "Every hook invocation writes one metadata record under CODEX_HOME/codexclaw/hook-observations/<sha(session)>/<sha(agent)>/<sha(slot)>.json (mode 0600, dirs 0700).",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "session-start-bootstrapping-pabcd-state",
+        "stdin": {
+          "hook_event_name": "SessionStart",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "source": "startup"
+        }
+      }
+    ],
+    "observe": [
+      "ws",
+      "codex",
+      "codex/codexclaw/hook-observations"
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "codex/codexclaw/hook-observations": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "codex/codexclaw/hook-observations/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "codex/codexclaw/hook-observations/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "codex/codexclaw/hook-observations/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b/37990bf2bf0c0e5c2c022cc30113440d31bc36f57d8f2ce088a1ca5e50eae309.json": {
+        "type": "file",
+        "mode": "0600",
+        "form": "json-line",
+        "json": {
+          "schemaVersion": 1,
+          "sessionId": "rec-s1",
+          "agentId": null,
+          "component": "pabcd-state",
+          "event": "session-start",
+          "observedAt": "<TS>",
+          "pluginRoot": "${PLUGIN_ROOT}",
+          "pluginVersion": "<VERSION>",
+          "manifestDigest": "<DIGEST>",
+          "entrypoint": "components/pabcd-state/dist/cli.js",
+          "entrypointDigest": "<DIGEST>",
+          "outcome": "invoked"
+        }
+      },
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/.gitignore": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n"
+      },
+      "ws/.codexclaw/sessions": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty-nonl",
+        "json": {
+          "phase": "IDLE",
+          "sessionId": "rec-s1",
+          "slug": "",
+          "updatedAt": "<TS>",
+          "flags": {
+            "interview": false,
+            "auditPassed": false,
+            "checkPassed": false
+          },
+          "supersededBy": null,
+          "injectedTurns": [],
+          "lastInjectedPhase": null,
+          "orchestrationActive": false,
+          "interview": null,
+          "stopBlockPhase": null,
+          "stopBlockCount": 0,
+          "stopBlockWorkPhaseId": null,
+          "stopMetricCursor": 0,
+          "stopBlockTotal": 0,
+          "stopBlockTurnId": null,
+          "stopBlockCapNotified": false,
+          "loopArmSeen": false,
+          "idleEditNudges": 0,
+          "memoryWriteRequested": false,
+          "memoryWriteTurn": null,
+          "memoryWriteGrant": false,
+          "unverifiedSubagents": [],
+          "unverifiedCorrupt": false,
+          "phaseEntrySource": null,
+          "planUnit": null,
+          "planEpoch": null,
+          "checkEpoch": null,
+          "dcloseRecovery": null
+        }
+      }
+    },
+    "calls": []
+  }
+}

@@ -1,0 +1,79 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/subagents/help",
+    "K6/exit-codes",
+    "A/plugin/cli-usage.test.mjs"
+  ],
+  "note": "`cxc subagents list --help`: whether the subcommand treats --help as help, and what it writes.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "subagents",
+          "list",
+          "--help"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-pretty",
+        "stdout_json": {
+          "roles": {
+            "explorer": {
+              "mode": "default",
+              "model": null,
+              "effort": null,
+              "promptOverride": null,
+              "fallback": null
+            },
+            "reviewer": {
+              "mode": "default",
+              "model": null,
+              "effort": null,
+              "promptOverride": null,
+              "fallback": null
+            },
+            "executor": {
+              "mode": "default",
+              "model": null,
+              "effort": null,
+              "promptOverride": null,
+              "fallback": null
+            },
+            "architect": {
+              "mode": "default",
+              "model": null,
+              "effort": null,
+              "promptOverride": null,
+              "fallback": null
+            }
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": [
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

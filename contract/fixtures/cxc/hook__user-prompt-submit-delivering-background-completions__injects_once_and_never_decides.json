@@ -1,0 +1,131 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/user-prompt-submit-delivering-background-completions",
+    "K5/hook-rendered",
+    "K8/ws/.codexclaw/bg",
+    "A/bg-wake/hook.test.ts"
+  ],
+  "note": "UserPromptSubmit injects the completion as additionalContext (never a decision), stamps it, and is silent on the next prompt.",
+  "given": {
+    "json": {
+      "ws/.codexclaw/bg/test1.json": {
+        "id": "test1",
+        "sessionId": "rec-s1",
+        "adoptedBy": null,
+        "cwd": "${WS}",
+        "command": [
+          "npm",
+          "test"
+        ],
+        "note": null,
+        "pid": null,
+        "startToken": null,
+        "status": "failed",
+        "exitCode": 1,
+        "startedAt": "2025-12-31T23:50:00.000Z",
+        "endedAt": "2025-12-31T23:54:12.000Z",
+        "deliveredAt": null
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "user-prompt-submit-delivering-background-completions",
+        "stdin": {
+          "hook_event_name": "UserPromptSubmit",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "prompt": "Summarise the README.",
+          "model": "gpt-5.5",
+          "transcript_path": null
+        }
+      },
+      {
+        "hook": "user-prompt-submit-delivering-background-completions",
+        "stdin": {
+          "hook_event_name": "UserPromptSubmit",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "prompt": "Summarise the README.",
+          "model": "gpt-5.5",
+          "transcript_path": null
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": "[codexclaw bg] 백그라운드 작업 1건이 끝났습니다.\n- test1 (failed, exit 1, 4m12s) — npm test\n출력은 `cxc bg get <id> --tail 40`으로 봅니다. 전체 목록은 `cxc bg list`.\n결과를 확인하고 필요한 후속 작업을 이어가세요."
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/bg": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/bg/ledger.jsonl": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "at": "<TS>",
+          "event": "delivered",
+          "id": "test1",
+          "sessionId": "rec-s1"
+        }
+      },
+      "ws/.codexclaw/bg/test1.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty",
+        "json": {
+          "id": "test1",
+          "sessionId": "rec-s1",
+          "adoptedBy": null,
+          "cwd": "${WS}",
+          "command": [
+            "npm",
+            "test"
+          ],
+          "note": null,
+          "pid": null,
+          "startToken": null,
+          "status": "failed",
+          "exitCode": 1,
+          "startedAt": "<TS>",
+          "endedAt": "<TS>",
+          "deliveredAt": "<TS>"
+        }
+      }
+    },
+    "calls": []
+  }
+}

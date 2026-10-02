@@ -1,0 +1,50 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/subagents/register",
+    "K8/codex-home/agents",
+    "A/subagent-config/role-registration.test.ts"
+  ],
+  "note": "An existing user-edited architect.toml that is neither managed nor the template body is refused (exit 1) and preserved.",
+  "given": {
+    "files": {
+      "codex/agents/architect.toml": "name = \"architect\"\n# my own edits\n"
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "subagents",
+          "register",
+          "architect"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 1,
+    "steps": [
+      {
+        "exit": 1,
+        "stdout_form": "text",
+        "stdout": "subagents: Existing architect role differs; preserved ${CODEX_HOME}/agents/architect.toml. Compare it with ${PLUGIN_ROOT}/agents/architect.toml before updating.\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/agents": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "codex/agents/architect.toml": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "name = \"architect\"\n# my own edits\n"
+      }
+    },
+    "calls": []
+  }
+}

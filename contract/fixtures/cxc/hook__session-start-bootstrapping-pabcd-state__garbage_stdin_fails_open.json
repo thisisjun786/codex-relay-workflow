@@ -1,0 +1,30 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/session-start-bootstrapping-pabcd-state",
+    "K3/fail-open"
+  ],
+  "note": "Unparseable stdin exits 0 with no output (fail-open).",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "session-start-bootstrapping-pabcd-state",
+        "stdin": "not json at all"
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

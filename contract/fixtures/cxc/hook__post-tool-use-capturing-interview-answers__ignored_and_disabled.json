@@ -1,0 +1,135 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/post-tool-use-capturing-interview-answers",
+    "A/pabcd-state/interview-ledger.test.ts",
+    "A/plugin/hook-e2e.test.mjs",
+    "K13/CODEXCLAW_PABCD"
+  ],
+  "note": "Nothing captured for another tool name, a subagent-stamped payload, or with CODEXCLAW_PABCD=off.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "post-tool-use-capturing-interview-answers",
+        "stdin": {
+          "hook_event_name": "PostToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "view_image",
+          "tool_input": {
+            "questions": [
+              {
+                "id": "q1",
+                "header": "Scope",
+                "question": "Which scope?"
+              }
+            ]
+          },
+          "tool_use_id": "rec-call-1",
+          "tool_response": {
+            "answers": {
+              "q1": {
+                "answers": [
+                  "Small"
+                ]
+              }
+            }
+          }
+        }
+      },
+      {
+        "hook": "post-tool-use-capturing-interview-answers",
+        "stdin": {
+          "hook_event_name": "PostToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "request_user_input",
+          "tool_input": {
+            "questions": [
+              {
+                "id": "q1",
+                "header": "Scope",
+                "question": "Which scope?"
+              }
+            ]
+          },
+          "tool_use_id": "rec-call-1",
+          "tool_response": {
+            "answers": {
+              "q1": {
+                "answers": [
+                  "Small"
+                ]
+              }
+            }
+          },
+          "agent_id": "rec-a1",
+          "agent_type": "worker"
+        }
+      },
+      {
+        "hook": "post-tool-use-capturing-interview-answers",
+        "stdin": {
+          "hook_event_name": "PostToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "request_user_input",
+          "tool_input": {
+            "questions": [
+              {
+                "id": "q1",
+                "header": "Scope",
+                "question": "Which scope?"
+              }
+            ]
+          },
+          "tool_use_id": "rec-call-1",
+          "tool_response": {
+            "answers": {
+              "q1": {
+                "answers": [
+                  "Small"
+                ]
+              }
+            }
+          }
+        },
+        "env": {
+          "CODEXCLAW_PABCD": "off"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      }
+    },
+    "calls": []
+  }
+}

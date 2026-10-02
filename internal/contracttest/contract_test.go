@@ -28,15 +28,29 @@ func TestMain(m *testing.M) {
 	})
 }
 
+// pendingDomains are fixture domains recorded for an implementation the Go build does not have
+// yet. Each is skipped by name with its reason, never silently; every other domain runs in full.
+// cxc is the CXC v0.2.40 behaviour corpus (CRW-279, contract/schema/cxc/README.md): its run kind
+// "cxc" gets a runner when the Go port implements CXC, and `crw-dev cxc lint` (part of
+// `crw-dev ci contracts`) checks it until then.
+var pendingDomains = map[string]string{
+	"cxc": "CXC v0.2.40 corpus (CRW-279): replayed once the Go port implements CXC; `crw-dev cxc lint` checks it meanwhile",
+}
+
 // TestDomain replays contract/fixtures/<domain>/*.json. `-run 'Domain/<name>'` selects one
-// domain. Every fixture of every domain runs: a fixture whose kind has no runner, or that asks for
-// something its runner cannot do, is a corpus defect and fails, never a skip.
+// domain. Every fixture of every domain runs, apart from the pendingDomains, which are skipped by
+// name: a fixture whose kind has no runner, or that asks for something its runner cannot do, is a
+// corpus defect and fails, never a skip.
 func TestDomain(t *testing.T) {
 	domains, err := Domains()
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, domain := range domains {
+		if reason, pending := pendingDomains[domain]; pending {
+			t.Run(domain, func(t *testing.T) { t.Skip(reason) })
+			continue
+		}
 		scenarios, err := Load(domain)
 		if err != nil {
 			t.Fatal(err)
@@ -56,6 +70,24 @@ func TestDomain(t *testing.T) {
 				})
 			}
 		})
+	}
+}
+
+// A pending domain names a fixture directory that exists, so the skip list cannot outlive the
+// corpus it excuses.
+func TestPendingDomains_are_fixture_directories(t *testing.T) {
+	domains, err := Domains()
+	if err != nil {
+		t.Fatal(err)
+	}
+	present := map[string]bool{}
+	for _, domain := range domains {
+		present[domain] = true
+	}
+	for domain := range pendingDomains {
+		if !present[domain] {
+			t.Errorf("pending domain %q has no contract/fixtures/%s directory", domain, domain)
+		}
 	}
 }
 

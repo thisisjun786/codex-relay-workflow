@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/dev/cxccorpus"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/definition"
 	"github.com/thisisjun786/codex-relay-workflow/internal/skill"
 )
@@ -43,6 +44,10 @@ var contractChecks = []contractCheck{
 	{name: "start policy", contract: skillRun + "/references/start-policy.md", check: startPolicyCheck},
 	// The parent title rule lives in the binding procedure, so the checker is paired with it.
 	{name: "parent title", contract: "plugins/crw/skills/crw-plan/references/integrations.md", check: parentTitleCheck},
+	// The CXC v0.2.40 behaviour corpus (CRW-279): its specs, fixtures, rules, rename table and
+	// coverage index agree. Recording needs the Node oracle and stays a manual `crw-dev cxc
+	// record`; this check needs none.
+	{name: "cxc corpus", contract: cxccorpus.Coverage, check: cxccorpus.LintReport},
 }
 
 func isFile(path string) bool {

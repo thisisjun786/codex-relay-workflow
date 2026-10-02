@@ -1,0 +1,320 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/loop",
+    "K8/ws/.codexclaw/goalplans",
+    "A/pabcd-state/goalplan-public-surface.test.ts",
+    "A/pabcd-state/goalplan.test.ts",
+    "K12/git"
+  ],
+  "note": "init needs a real objective; the slug is derived safely from any objective; init without --session leaves session state alone, with --session it binds the slug; unknown verb and a show without a slug source are parse errors.",
+  "given": {
+    "json": {
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "phase": "IDLE",
+        "sessionId": "rec-s1",
+        "slug": "",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "flags": {
+          "interview": false,
+          "auditPassed": false,
+          "checkPassed": false
+        },
+        "supersededBy": null,
+        "injectedTurns": [],
+        "lastInjectedPhase": null,
+        "orchestrationActive": false,
+        "interview": null,
+        "stopBlockPhase": null,
+        "stopBlockCount": 0,
+        "stopBlockWorkPhaseId": null,
+        "stopMetricCursor": 0,
+        "stopBlockTotal": 0,
+        "stopBlockTurnId": null,
+        "stopBlockCapNotified": false,
+        "loopArmSeen": false,
+        "idleEditNudges": 0,
+        "memoryWriteRequested": false,
+        "memoryWriteTurn": null,
+        "memoryWriteGrant": false,
+        "unverifiedSubagents": [],
+        "unverifiedCorrupt": false,
+        "phaseEntrySource": null,
+        "planUnit": null,
+        "planEpoch": null,
+        "checkEpoch": null,
+        "dcloseRecovery": null
+      }
+    },
+    "git": {
+      "commit": "initial"
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "loop",
+          "init",
+          "--objective",
+          "",
+          "--cwd",
+          "${WS}"
+        ]
+      },
+      {
+        "cli": [
+          "loop",
+          "init",
+          "--objective",
+          "../../etc/passwd: Ship it!",
+          "--cwd",
+          "${WS}"
+        ]
+      },
+      {
+        "cli": [
+          "loop",
+          "show",
+          "--objective",
+          "../../etc/passwd: Ship it!",
+          "--cwd",
+          "${WS}"
+        ]
+      },
+      {
+        "cli": [
+          "loop",
+          "init",
+          "--objective",
+          "Bound objective",
+          "--session",
+          "rec-s1",
+          "--cwd",
+          "${WS}"
+        ]
+      },
+      {
+        "cli": [
+          "loop",
+          "frobnicate",
+          "--cwd",
+          "${WS}"
+        ]
+      },
+      {
+        "cli": [
+          "loop",
+          "show",
+          "--cwd",
+          "${WS}"
+        ]
+      },
+      {
+        "cli": [
+          "loop",
+          "show",
+          "--session",
+          "rec-s1",
+          "--cwd",
+          "${WS}"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 1,
+        "stdout_form": "text",
+        "stdout": "loop init: --objective \"<text>\" is required\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "[codexclaw loop: etc-passwd-ship-it]\nobjective: ../../etc/passwd: Ship it!\nhost: armed=false source=none\nworkPhases: 0 (remaining 0)\ncriteria: 0 (unmet 0)\ncomplete: true\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "[codexclaw loop: etc-passwd-ship-it]\nobjective: ../../etc/passwd: Ship it!\nhost: armed=false source=none\nworkPhases: 0 (remaining 0)\ncriteria: 0 (unmet 0)\ncomplete: true\nwriteLock: absent path=${WS}/.codexclaw/goalplans/etc-passwd-ship-it/.goalplan.lock\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "[codexclaw loop: bound-objective]\nobjective: Bound objective\nhost: armed=false source=none\nworkPhases: 0 (remaining 0)\ncriteria: 0 (unmet 0)\ncomplete: true\n",
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "empty",
+        "stderr": "loop: unknown loop verb 'frobnicate' (expected init|show|validate|steer|add-criterion|add-work-phase|ready|add-task|complete-task|meet-criterion|ask|decide); run cxc loop --help\n"
+      },
+      {
+        "exit": 1,
+        "stdout_form": "text",
+        "stdout": "loop show: --slug \"<text>\", --objective \"<text>\", or --session <id> (with a bound plan) is required\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "[codexclaw loop: bound-objective]\nobjective: Bound objective\nhost: armed=false source=none\nworkPhases: 0 (remaining 0)\ncriteria: 0 (unmet 0)\ncomplete: true\nwriteLock: absent path=${WS}/.codexclaw/goalplans/bound-objective/.goalplan.lock\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/goalplans": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "ws/.codexclaw/goalplans/bound-objective": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "ws/.codexclaw/goalplans/bound-objective/goalplan.json": {
+        "type": "file",
+        "mode": "0600",
+        "form": "json-pretty-nonl",
+        "json": {
+          "objective": "Bound objective",
+          "slug": "bound-objective",
+          "schemaVersion": 1,
+          "createdAt": "<TS>",
+          "updatedAt": "<TS>",
+          "activeWorkPhaseId": null,
+          "workPhases": [],
+          "criteria": [],
+          "host": {
+            "armed": false,
+            "armedAt": null,
+            "source": "none"
+          }
+        }
+      },
+      "ws/.codexclaw/goalplans/bound-objective/ledger.jsonl": {
+        "type": "file",
+        "mode": "0600",
+        "form": "json-line",
+        "json": {
+          "ts": "<TS>",
+          "slug": "bound-objective",
+          "event": "created",
+          "detail": "init objective=\"Bound objective\" criteria=0"
+        }
+      },
+      "ws/.codexclaw/goalplans/etc-passwd-ship-it": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "ws/.codexclaw/goalplans/etc-passwd-ship-it/goalplan.json": {
+        "type": "file",
+        "mode": "0600",
+        "form": "json-pretty-nonl",
+        "json": {
+          "objective": "../../etc/passwd: Ship it!",
+          "slug": "etc-passwd-ship-it",
+          "schemaVersion": 1,
+          "createdAt": "<TS>",
+          "updatedAt": "<TS>",
+          "activeWorkPhaseId": null,
+          "workPhases": [],
+          "criteria": [],
+          "host": {
+            "armed": false,
+            "armedAt": null,
+            "source": "none"
+          }
+        }
+      },
+      "ws/.codexclaw/goalplans/etc-passwd-ship-it/ledger.jsonl": {
+        "type": "file",
+        "mode": "0600",
+        "form": "json-line",
+        "json": {
+          "ts": "<TS>",
+          "slug": "etc-passwd-ship-it",
+          "event": "created",
+          "detail": "init objective=\"../../etc/passwd: Ship it!\" criteria=0"
+        }
+      },
+      "ws/.codexclaw/sessions": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty-nonl",
+        "json": {
+          "phase": "IDLE",
+          "sessionId": "rec-s1",
+          "slug": "bound-objective",
+          "updatedAt": "<TS>",
+          "flags": {
+            "interview": false,
+            "auditPassed": false,
+            "checkPassed": false
+          },
+          "supersededBy": null,
+          "injectedTurns": [],
+          "lastInjectedPhase": null,
+          "orchestrationActive": false,
+          "interview": null,
+          "stopBlockPhase": null,
+          "stopBlockCount": 0,
+          "stopBlockWorkPhaseId": null,
+          "stopMetricCursor": 0,
+          "stopBlockTotal": 0,
+          "stopBlockTurnId": null,
+          "stopBlockCapNotified": false,
+          "loopArmSeen": false,
+          "idleEditNudges": 0,
+          "memoryWriteRequested": false,
+          "memoryWriteTurn": null,
+          "memoryWriteGrant": false,
+          "unverifiedSubagents": [],
+          "unverifiedCorrupt": false,
+          "phaseEntrySource": null,
+          "planUnit": null,
+          "planEpoch": null,
+          "checkEpoch": null,
+          "dcloseRecovery": null
+        }
+      },
+      "ws/.git": {
+        "type": "dir",
+        "mode": "0755"
+      }
+    },
+    "calls": [
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "HEAD"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "status",
+          "--porcelain=v1",
+          "-z",
+          "--untracked-files=all"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

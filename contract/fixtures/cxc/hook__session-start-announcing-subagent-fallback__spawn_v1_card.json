@@ -1,0 +1,67 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/session-start-announcing-subagent-fallback",
+    "K5/hook-rendered",
+    "A/subagent-config/dispatch-card.test.ts",
+    "K13/CODEXCLAW_SPAWN_V1"
+  ],
+  "note": "CODEXCLAW_SPAWN_V1=1 selects the V1 card with the nested multi_agent_v1 helper names.",
+  "given": {
+    "env": {
+      "CODEXCLAW_SPAWN_V1": "1"
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "session-start-announcing-subagent-fallback",
+        "stdin": {
+          "hook_event_name": "SessionStart",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "source": "startup",
+          "model": "gpt-5.5",
+          "transcript_path": null
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": "[codexclaw] Subagent dispatch: V1 requested by CODEXCLAW_SPAWN_V1=1 (override, not host evidence).\nCode Mode first cell: await tools.multi_agent_v1__spawn_agent({message:\"Report your model and say OK; do not edit files.\",model:\"command-code/deepseek-deepseek-v4.1-flash\",reasoning_effort:\"low\"});\nDirect: multi_agent_v1.spawn_agent({message,model?,reasoning_effort?}); wait: tools.multi_agent_v1__wait_agent({targets:[agent_id],timeout_ms}); close: tools.multi_agent_v1__close_agent({target:agent_id}). Replace the probe message with the task; obey managed fallback dispatch first.\nAliases (map 2026-09-24; local Codex catalog membership only):\ndeepseek -> command-code/deepseek-deepseek-v4.1-flash (unverified, map 2026-09-24)\nswe2 -> devin/swe-2 (unverified, map 2026-09-24)\nkimi -> kimi/kimi-for-coding-highspeed (unverified, map 2026-09-24)\nsol -> gpt-6-sol (unverified, map 2026-09-24)\nluna -> gpt-6-luna (unverified, map 2026-09-24)"
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      }
+    },
+    "calls": [
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}
