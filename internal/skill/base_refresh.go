@@ -196,13 +196,21 @@ func openRefreshGit(ctx context.Context, checkout string) (*refreshGit, error) {
 	if err != nil {
 		return nil, err
 	}
+	_, format, err := gitAt(ctx, env, "-C", checkout, "rev-parse", "--show-object-format")
+	if err != nil {
+		return nil, err
+	}
+	// the throwaway repository has to hash like the checkout, or it cannot read the objects it borrows
+	if format = strings.TrimSpace(format); format != "sha1" && format != "sha256" {
+		return nil, fmt.Errorf("git answered %q to --show-object-format, which is not an object format this check knows", firstLine(format))
+	}
 	dir, err := os.MkdirTemp("", "base-refresh-")
 	if err != nil {
 		return nil, err
 	}
 	g := &refreshGit{checkout: checkout, dir: dir, gitdir: filepath.Join(dir, "g.git"), env: env}
 	g.isoEnv = append(refreshEnv(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_ATTR_NOSYSTEM=1", "GIT_TEMPLATE_DIR=", "HOME="+dir, "XDG_CONFIG_HOME="+dir)
-	if _, _, err := gitAt(ctx, g.isoEnv, "init", "--bare", "-q", g.gitdir); err != nil {
+	if _, _, err := gitAt(ctx, g.isoEnv, "init", "--bare", "-q", "--object-format="+format, g.gitdir); err != nil {
 		g.close()
 		return nil, err
 	}

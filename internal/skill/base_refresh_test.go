@@ -16,10 +16,12 @@ type refreshRepo struct {
 	path string
 }
 
-func newRefreshRepo(t *testing.T) *refreshRepo {
+func newRefreshRepo(t *testing.T) *refreshRepo { return newRefreshRepoFormat(t, "sha1") }
+
+func newRefreshRepoFormat(t *testing.T, format string) *refreshRepo {
 	t.Helper()
 	r := &refreshRepo{t: t, path: t.TempDir()}
-	r.git("init", "-q", "-b", "dev")
+	r.git("init", "-q", "-b", "dev", "--object-format="+format)
 	r.git("config", "user.email", "t@example.com")
 	r.git("config", "user.name", "t")
 	r.git("config", "commit.gpgsign", "false")
@@ -106,8 +108,10 @@ type scenario struct {
 	previous string
 }
 
-func newScenario(t *testing.T) *scenario {
-	r := newRefreshRepo(t)
+func newScenario(t *testing.T) *scenario { return newScenarioFormat(t, "sha1") }
+
+func newScenarioFormat(t *testing.T, format string) *scenario {
+	r := newRefreshRepoFormat(t, format)
 	s := &scenario{r: r, fork: r.git("rev-parse", "dev")}
 	r.branchFrom("feature", s.fork)
 	s.previous = r.commit("feature.txt", "feature work\n", "feature work")
@@ -441,5 +445,23 @@ func TestBaseRefreshNeedsAGitThatReadsCommittedAttributes(t *testing.T) {
 	got := check(s.r, s.previous, head, "dev")
 	if got.exit != 2 || got.stdout != "" || !strings.Contains(got.stderr, "git 2.41 or newer is needed") {
 		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestBaseRefreshWorksInASHA256Checkout(t *testing.T) {
+	// the throwaway repository has to use the checkout's object format, or it cannot read the
+	// objects it borrows and every honest update in such a checkout would end in exit 2
+	s := newScenarioFormat(t, "sha256")
+	s.devMoves("dev.txt", "dev work\n")
+	head := s.r.update("feature", "dev")
+	if len(head) != 64 {
+		t.Fatalf("the fixture was meant to be a SHA-256 repository, got commit id %q", head)
+	}
+	got := check(s.r, s.previous, head, "dev")
+	if got.exit != 0 || !strings.HasPrefix(got.stdout, "ok: "+head+" is "+s.previous+" plus 1 merge of dev") {
+		t.Fatalf("got %+v", got)
+	}
+	if refused := check(s.r, s.previous, s.previous, "dev"); refused.exit != 1 || !strings.HasPrefix(refused.stdout, "refused: no_update:") {
+		t.Fatalf("got %+v", refused)
 	}
 }
