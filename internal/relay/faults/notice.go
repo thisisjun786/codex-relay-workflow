@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 const NoticePage = 20
@@ -68,9 +70,6 @@ func (d *NoticeDeliverer) Tick(ctx context.Context, now float64, limit int) (Not
 	return answer, nil
 }
 
-func noticeClaimable(state string) bool {
-	return state == "queued" || state == "deferred_busy" || state == "withheld_pre_send"
-}
 func noticeSent(state string) bool                     { return state == "dispatched" || state == "read" }
 func noticeString(m map[string]any, key string) string { s, _ := m[key].(string); return s }
 func noticeAt(now float64) string {
@@ -90,7 +89,7 @@ func (d *NoticeDeliverer) get(ctx context.Context, id string) (row, error) {
 	return d.Ledger.one(ctx, "SELECT * FROM supervisor_messages WHERE message_id=?", id)
 }
 func (d *NoticeDeliverer) mayHaveSent(ctx context.Context, id string) (bool, error) {
-	r, err := d.Ledger.one(ctx, "SELECT request_id FROM supervisor_attempts WHERE message_id=? AND (send_attempted <> 'no' OR retry_safe=0) ORDER BY attempt_no DESC LIMIT 1", id)
+	r, err := d.Ledger.one(ctx, "SELECT request_id FROM supervisor_attempts WHERE message_id=? AND "+store.SupervisorAttemptMayHaveGoneSQL("")+" ORDER BY attempt_no DESC LIMIT 1", id)
 	return r != nil, err
 }
 func noticeAddressed(r row, live map[string]any) bool {
@@ -118,7 +117,7 @@ func (d *NoticeDeliverer) waitingFor(ctx context.Context, one map[string]any, no
 		if noticeSent(text(r, "state")) {
 			return "", nil
 		}
-		if !noticeClaimable(text(r, "state")) {
+		if !store.SupervisorUnsent(text(r, "state")) {
 			return "its message " + text(r, "message_id") + " is " + text(r, "state") + ": a send may be under way, and it is settled from that send's answer", nil
 		}
 	}
@@ -149,10 +148,10 @@ func (d *NoticeDeliverer) waitingFor(ctx context.Context, one map[string]any, no
 			return "the supervisor channel rechecks the level above at " + noticeAt(next) + because, err
 		}
 	}
-	query := "SELECT message_id FROM supervisor_messages WHERE recipient_task_id=? AND ((state IN ('queued','deferred_busy','withheld_pre_send') AND hold_reason IS NULL AND (next_eligible_at IS NULL OR next_eligible_at<=?)) OR (state='sending' AND lease_until IS NOT NULL AND lease_until>?))"
+	query := "SELECT message_id FROM supervisor_messages WHERE recipient_task_id=? AND " + store.SupervisorAheadSQL("")
 	args := []any{live["recipient"], now, now}
 	if r != nil && r.Get("recipient_task_id") == live["recipient"] {
-		query += " AND (staged_at < ? OR (staged_at = ? AND message_id < ?))"
+		query += " AND " + store.SupervisorOlderThanSQL("")
 		args = append(args, r.Get("staged_at"), r.Get("staged_at"), r.Get("message_id"))
 	}
 	ahead, err := d.Ledger.one(ctx, query+" ORDER BY staged_at,message_id LIMIT 1", args...)
@@ -299,7 +298,7 @@ func (d *NoticeDeliverer) deliver(ctx context.Context, one map[string]any, answe
 		return err
 	}
 	var attemptErr error
-	if noticeClaimable(text(r, "state")) {
+	if store.SupervisorUnsent(text(r, "state")) {
 		attemptErr = d.Channel.Attempt(ctx, message, now, d.Owner)
 	}
 	r, err = d.get(ctx, message)
@@ -317,7 +316,7 @@ func (d *NoticeDeliverer) deliver(ctx context.Context, one map[string]any, answe
 	if err != nil {
 		return err
 	}
-	if noticeClaimable(text(r, "state")) && !sent {
+	if store.SupervisorUnsent(text(r, "state")) && !sent {
 		why, err := d.why(ctx, r, attemptErr)
 		if err != nil {
 			return err
@@ -358,7 +357,7 @@ func (d *NoticeDeliverer) reconcile(ctx context.Context, answer *NoticeAnswer, n
 		} else if noticeSent(text(r, "state")) {
 			delivered = true
 			why, err = d.ref(ctx, r)
-		} else if noticeClaimable(text(r, "state")) {
+		} else if store.SupervisorUnsent(text(r, "state")) {
 			var sent bool
 			sent, err = d.mayHaveSent(ctx, text(r, "message_id"))
 			if err == nil && !sent {
@@ -431,7 +430,7 @@ func (d *NoticeDeliverer) because(ctx context.Context, id string) (string, error
 // pending notice out of the channel's oldest-claimable report queue.
 func (l *Ledger) ParkNotice(ctx context.Context, id, reason string) error {
 	return l.Store.Compose(ctx, func(ctx context.Context, _ *sql.Conn) error {
-		result, err := l.exec(ctx, "UPDATE supervisor_messages SET hold_reason=?,updated_at=? WHERE message_id=? AND obligation_kind='fault_notification' AND state IN ('queued','deferred_busy','withheld_pre_send') AND hold_reason IS NULL AND NOT EXISTS (SELECT 1 FROM supervisor_attempts a WHERE a.message_id=supervisor_messages.message_id AND (a.send_attempted <> 'no' OR a.retry_safe=0))", NoticeParkedHold, l.Clock.ISO(), id)
+		result, err := l.exec(ctx, "UPDATE supervisor_messages SET hold_reason=?,updated_at=? WHERE message_id=? AND obligation_kind='fault_notification' AND hold_reason IS NULL AND "+store.SupervisorNeverSentSQL(), NoticeParkedHold, l.Clock.ISO(), id)
 		if err != nil {
 			return err
 		}
