@@ -113,19 +113,74 @@ repository are two keys; a plan names one spelling per repository.
 `crw relay dag-ready --plan P --record --actor A` keeps the reading as a row of `dag_passes`: the ready node ids in order, the free slots, the ceiling, the held slots, the
 deciding limit and the node dispositions. A pass is a fact and never a decision; a duplicate wake records another pass.
 
+## Releasing a node
+
+`crw relay dag-release --plan P --node N --actor A --request @file --marker-root DIR` (with the explicit `--state` and `--socket` a managed start needs) gives a ready node to a Codex child through the managed-start
+engine. The actor is the project's registered parent: it owns the slot and the child. The request document, `dag-release-request/1`, carries what the plan and the store do not hold: for an
+implementation node the base (repository and ref; the commit is read from the target, never given), the rule version the node is dispatched under (skills digest, model, effort, prompt template, relay build:
+every field required), volatile snapshots (see below), the instructions, the criteria, the criteria source and scope reference, the artifact roots, the allowed recipients, and the parent's and the child's host and
+settings.
+
+The release is idempotent and never creates a second child. In order:
+
+1. **Replay first.** An intent already recorded for the node is continued from the exact request bytes frozen with it (`dag_release_requests`) and never rebuilt: the managed engine fingerprints the whole
+   request, while the manifest digest leaves out fields that are still in the prompt, so a clock or a base tip that moved would read as a second release. A replay presented with another spelling of the marker
+   root, the socket or the state selector than the intent was frozen under is refused (`disposition_conflict`) before the engine is asked; a stored manifest or request that no longer digests to what was recorded is
+   `revision_mismatch`.
+2. **Judge, without a transaction.** The reading says the node is ready (or deferred only for capacity: the ceiling is enforced in step 4, where the contest is recorded). For every pinned predecessor the relay reads
+   the pull request itself from the forge, by the owner/name it recorded at acceptance, and refuses when its head is no longer the accepted one after recording a `stale_head` observation (E-10); an unreadable or
+   incomplete read is the host's failure, nothing is written, and a retry is allowed; a closed or merged pull request is fine, only the head is compared. The request's criteria must digest to the plan's. The manifest is
+   built and verified, every artifact and volatile snapshot hashed again.
+3. **Assemble the request.** Its id is derived from the node and the manifest digest only (`dag-` and 40 hex characters): no attempt counter, so a replay is the same request. The prompt carries the manifest inline,
+   or the path and digest of its frozen copy (`<first artifact root>/dag-input-manifests/<digest>.json`, create-exclusive, mode 0600, re-read) when it exceeds 60000 characters, and tells the child, in English, to
+   verify every uri, hash and size before consuming an input and to report `blocked_needs_input` on any mismatch.
+4. **Write the intent.** One transaction judges the store half again (a plan revision, an acceptance or a registration may have moved), checks the slice, the criteria and the incoming edges against the manifest,
+   decides capacity, reserves a slot of subject kind `dag_node` and key `plan:node` (decision D-15) and writes the manifest, the frozen request and the release together, or nothing. When no slot is free the
+   contest is recorded and `capacity_exhausted` answered; a refusal of the reservation itself (another parent, a ceiling at initiative or store scope) leaves its conflict row and no intent.
+5. **Start the child**, outside any transaction, with the frozen bytes. A refused or incomplete start (a creation whose outcome is unknown, settings that differ from what was asked) leaves the intent and the slot; the
+   same call again reaches this step again and the engine reconciles with the creation it already made. A request another caller is advancing waits for that caller to bind its child.
+6. **Bind** the child to the node (`dag_node_executions`, kind `initial`). The engine already refuses a creation whose model, effort, sandbox or approval policy differ from the request; the bind refuses a
+   relationship that is not this node's issue and parent.
+
+The slot is held from step 4 until the parent releases it with the acceptance of a non-PR node or the integration of an implementation node, or an operator does.
+
+### Input manifest
+
+The manifest (`dag-input-manifest/1`, contract 4.2) is content-addressed and records, for every incoming edge, the value that satisfied it: the acceptance and its revision, the pinned head, the artifacts with
+uri, sha256, size and the artifact root they lie under, the landed commit, or the recorded decision; the node's slice and criteria digests; the base; the rule version; the volatile snapshots. A manifest is released
+only when it is whole: a missing, mismatched or altered input, an unreadable store, or an empty rule-version field is never an empty success. The violated paths of contract 4.4 map onto the relay's existing refusal
+reasons:
+
+| Path | Reason in the reading | Refusal |
+| --- | --- | --- |
+| B-01, B-16 | `blocked:manifest_incomplete` | `malformed_receipt` |
+| B-02, B-07 | `blocked:manifest_tampered`, `blocked:acceptance_tampered` | `revision_mismatch` |
+| B-03, B-04, B-17 | `blocked:input_missing`, `blocked:input_hash_mismatch` | `manifest_unverified` |
+| B-05 | `blocked:input_out_of_scope` | `scope_escape` |
+| B-09 | `blocked:stale_head` | `merge_candidate_moved` |
+| B-10 | `blocked:stale_criteria` | `criteria_set_changed` |
+| B-13 | `blocked:evidence_mismatch` | `revision_mismatch` |
+| B-06, B-08, B-11, B-12, B-14, B-15 and every other reason | as named | `disposition_conflict` |
+
+A node that is owned already is `duplicate_assignment`, an unmeasured ceiling `capacity_unmeasured`, overlapping regions `region_overlap`. The closed reason travels in the refusal's detail.
+
+A volatile snapshot is a file the node reads that can change (a Linear document, an issue) captured before dispatch: it must be an absolute path under one of the child's artifact roots (B-05), exist (B-03) and hash to
+the digest the manifest names (B-04). It is part of the manifest digest, so a later edit is a different manifest.
+
 ## Commands
 
 | Command | Reads or writes | Answer |
 | --- | --- | --- |
 | `dag-ready --plan P [--record --actor A]` | reads; writes one `dag_passes` row with `--record` | the reading: `plan_id`, `plan_revision`, `state_digest`, `input_digest`, `pass`, `ready`, `nodes` |
 | `dag-region-declare --plan P --node N --actor A --regions R` | writes `dag_node_regions` | the declaration in force and whether it replayed |
+| `dag-release --plan P --node N --actor A --request R --marker-root D` | writes the intent (`dag_releases`, `dag_release_requests`, `dag_input_manifests`), reserves a slot, starts a managed task, binds it (`dag_node_executions`) | the release: manifest digest, request id, slot, relationship, generation and child; exit 2 with the managed engine's answer nested under `managed` when the start was refused or incomplete |
 
-Refusals use the relay's existing reasons: `unregistered_scope` (a plan or node that is not there), `malformed_receipt` (a region that is not valid),
-`disposition_conflict` (a node that edits no repository, or whose regions are held). Exit codes are the relay's: 0, 2 refusal, 3 host, 4 usage.
+Refusals use the relay's existing reasons: `unregistered_scope` (a plan or node that is not there), `malformed_receipt` (a region or a request that is not valid),
+`disposition_conflict` (a node that edits no repository, or whose regions are held, or that is not ready), and the reasons of the table above. Exit codes are the relay's: 0, 2 refusal, 3 host, 4 usage.
 
 ## The store
 
-The scheduler adds tables to the DAG zone ([DAG plans](dag-plans.md#the-store)) as appended statements. `dag_passes` and `dag_node_regions` are described above;
+The scheduler adds tables to the DAG zone ([DAG plans](dag-plans.md#the-store)) as appended statements. `dag_passes` and `dag_node_regions` are described above; `dag_release_requests` freezes the request of a release with its intent;
 `dag_merge_checks`, `dag_acceptance_revalidations` and `dag_acceptance_forge` hold what the relay observed of an accepted pull request, re-verification of an accepted
 output under new criteria, and the forge identity of an accepted implementation node.
 

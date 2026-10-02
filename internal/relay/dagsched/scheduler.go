@@ -25,6 +25,11 @@ type Scheduler struct {
 	Selectors Selectors
 	// Now is the clock of the recorded_at columns; registry.SystemISO when nil. A reading never uses it.
 	Now func() string
+
+	// Test seams (zero in production): between the unlocked judgement and the intent, after the slot is reserved, and between the managed start and the bind.
+	testBetweenReadAndIntent func()
+	testAfterReserve         func() error
+	testAfterStart           func() error
 }
 
 // Selectors are what the managed identity fingerprints besides the request: the marker root, the socket and the state

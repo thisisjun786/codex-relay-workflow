@@ -12,6 +12,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -23,6 +24,8 @@ func init() {
 		// dag-ready reads, and writes only when it is asked to keep the pass.
 		dispatch.Command{Name: "dag-ready", ReadOnlyWhen: func(args dispatch.Args) bool { return !args.Bool("record") }, Run: runReady},
 		dispatch.Command{Name: "dag-region-declare", Run: runRegionDeclare},
+		// dag-release starts a managed task: like managed-start it opens its own admitted connection and needs the explicit --state and --socket.
+		dispatch.Command{Name: "dag-release", OwnAdmission: true, Exempt: true, Run: runRelease},
 	)
 }
 
@@ -145,4 +148,36 @@ func runRegionDeclare(ctx context.Context, services dispatch.Services, args disp
 	}
 	return contract.OrderedObject{{Key: "ok", Value: true}, {Key: "plan_id", Value: declared.PlanID}, {Key: "node_id", Value: declared.NodeID},
 		{Key: "declaration_seq", Value: declared.Seq}, {Key: "replayed", Value: declared.Replayed}, {Key: "regions", Value: list}}, nil
+}
+
+func runRelease(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
+	if services.SocketPath == "" || services.Selection.Source != "flag" {
+		return nil, usage("dag-release starts a managed task and requires explicit --state and --socket")
+	}
+	raw, err := readDocument(args.Text("request"))
+	if err != nil {
+		return nil, err
+	}
+	request, err := DecodeReleaseRequest(raw)
+	if err != nil {
+		return nil, err
+	}
+	sched, closeStore, err := openScheduler(ctx, services)
+	if err != nil {
+		return nil, err
+	}
+	defer closeStore()
+	sched.Tips = mergeturn.TargetReader{}
+	sched.PRs = ForgePullRequestReader(ExecRunner)
+	sched.Start = ProductionStarter(services, args)
+	sched.Selectors = Selectors{MarkerRoot: args.Text("marker-root"), Socket: services.SocketPath, StateSelector: services.Selection.Path}
+	result, err := sched.Release(ctx, args.Text("plan"), args.Text("node"), args.Text("actor"), request)
+	if err != nil {
+		return nil, hostFailure(err)
+	}
+	if !result.Bound {
+		// the managed start was refused or left incomplete: the intent and the slot stay, and the same call again continues it.
+		return nil, &dispatch.PayloadExit{Payload: result.Object(), Code: contract.ExitRefused}
+	}
+	return result.Object(), nil
 }

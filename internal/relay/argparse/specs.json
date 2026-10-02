@@ -763,5 +763,11 @@
   {"flag":"--plan","required":true},
   {"flag":"--node","required":true},
   {"flag":"--actor","required":true},
-  {"flag":"--regions","required":true,"help":"the regions as a JSON list, or @file"}]}
+  {"flag":"--regions","required":true,"help":"the regions as a JSON list, or @file"}]},
+{"name":"dag-release","summary":"releases a ready DAG node to a Codex child through the managed-start engine: it re-verifies every input (artifact bytes re-hashed, pinned pull request heads read from the forge), writes the intent, the input manifest and a held execution slot together, starts the child with a request id derived from the node and the manifest, and binds the child to the node. Repeating it never creates a second child","options":[
+  {"flag":"--plan","required":true},
+  {"flag":"--node","required":true},
+  {"flag":"--actor","required":true,"help":"the project's registered parent, who owns the slot and the child"},
+  {"flag":"--request","required":true,"help":"the dag-release-request/1 document as JSON, or @file"},
+  {"flag":"--marker-root","required":true}]}
 ]

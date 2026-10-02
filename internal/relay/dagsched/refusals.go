@@ -2,6 +2,7 @@ package dagsched
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -22,4 +23,46 @@ func orderedString(o contract.OrderedObject, key string) string {
 		}
 	}
 	return ""
+}
+
+// refusalOfFinding is the existing refusal reason of a violated path of contract 4.4 (BlockedPaths); a reason with no row there is a disposition conflict. The
+// closed reason travels in the detail.
+func refusalOfFinding(f BlockedFinding) error {
+	for _, p := range BlockedPaths {
+		if p.Reason == f.Reason {
+			return refuse(contract.RefusalReason(p.Refusal), "%s %s: %s", f.Code, f.Reason, f.Detail)
+		}
+	}
+	return refuse(contract.RefusalDispositionConflict, "%s: %s", f.Reason, f.Detail)
+}
+
+// refusalOfReading is what a release of a node that is not ready answers: the existing reason that means the same, with the closed reason in the detail.
+func refusalOfReading(n NodeReading) error {
+	switch n.Reason {
+	case SkipAlreadyOwned:
+		return refuse(contract.RefusalDuplicateAssignment, "%s (%s): %s", n.NodeID, n.Reason, n.Detail)
+	case DeferCapacityUnmeasured:
+		return refuse(contract.RefusalCapacityUnmeasured, "%s (%s): %s", n.NodeID, n.Reason, n.Detail)
+	case DeferEditOverlap:
+		return refuse(contract.RefusalRegionOverlap, "%s (%s): %s", n.NodeID, n.Reason, n.Detail)
+	}
+	if strings.HasPrefix(n.Reason, "blocked:") {
+		code := ""
+		for _, p := range BlockedPaths {
+			if p.Reason == n.Reason {
+				code = p.Code
+				break
+			}
+		}
+		return refusalOfFinding(BlockedFinding{Code: code, Reason: n.Reason, Detail: n.Detail})
+	}
+	return refuse(contract.RefusalDispositionConflict, "%s is not ready (%s): %s", n.NodeID, n.Reason, n.Detail)
+}
+
+func refuseCandidateMoved(format string, args ...any) error {
+	return refuse(contract.RefusalMergeCandidateMoved, format, args...)
+}
+
+func refuseEvidenceMalformed(format string, args ...any) error {
+	return refuse(contract.RefusalMergeEvidenceMalformed, format, args...)
 }

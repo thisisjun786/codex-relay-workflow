@@ -99,32 +99,47 @@ func (s *Scheduler) checkArtifacts(ctx context.Context, q store.Querier, accepta
 	}
 	var hashes []string
 	for _, entry := range entries {
-		digest, size, _, err := store.HashArtifactContext(ctx, entry.Path, artifactRoots, false)
+		finding, digest, err := hashEntry(ctx, entry, artifactRoots)
 		if err != nil {
-			var refused *store.RefusedError
-			if errors.As(err, &refused) {
-				switch refused.Reason {
-				case store.ReasonScopeEscape, store.ReasonPathRelocated, store.ReasonSymlinkComponent:
-					return &BlockedFinding{"B-05", BlockedInputOutOfScope, entry.Path + ": " + err.Error()}, hashes, nil
-				case store.ReasonArtifactMutated, store.ReasonArtifactLeaseBroken:
-					// the bytes changed under the read: they are not the bytes the receipt declared.
-					return &BlockedFinding{"B-04", BlockedInputHashMismatch, entry.Path + ": " + err.Error()}, hashes, nil
-				}
-			}
-			if ctx.Err() != nil {
-				return nil, nil, err
-			}
-			return &BlockedFinding{"B-03", BlockedInputMissing, entry.Path + ": " + err.Error()}, hashes, nil
+			return nil, nil, err
 		}
-		hashes = append(hashes, entry.Path+":"+digest)
-		if digest != entry.SHA256 {
-			return &BlockedFinding{"B-04", BlockedInputHashMismatch, entry.Path + ": the bytes hash to " + digest + " and the receipt declared " + entry.SHA256}, hashes, nil
+		if digest != "" {
+			hashes = append(hashes, entry.Path+":"+digest)
 		}
-		if entry.Bytes != nil && *entry.Bytes != size {
-			return &BlockedFinding{"B-04", BlockedInputHashMismatch, entry.Path + ": the file is " + itoa64(size) + " bytes and the receipt declared " + itoa64(*entry.Bytes)}, hashes, nil
+		if finding != nil {
+			return finding, hashes, nil
 		}
 	}
 	return nil, hashes, nil
+}
+
+// hashEntry reads one declared artifact again: through the roots, hashed, compared with what was declared. A finding names the violated path of contract 4.4; digest
+// is what was read when anything was.
+func hashEntry(ctx context.Context, entry consumed, roots []string) (*BlockedFinding, string, error) {
+	digest, size, _, err := store.HashArtifactContext(ctx, entry.Path, roots, false)
+	if err != nil {
+		var refused *store.RefusedError
+		if errors.As(err, &refused) {
+			switch refused.Reason {
+			case store.ReasonScopeEscape, store.ReasonPathRelocated, store.ReasonSymlinkComponent:
+				return &BlockedFinding{"B-05", BlockedInputOutOfScope, entry.Path + ": " + err.Error()}, "", nil
+			case store.ReasonArtifactMutated, store.ReasonArtifactLeaseBroken:
+				// the bytes changed under the read: they are not the bytes the receipt declared.
+				return &BlockedFinding{"B-04", BlockedInputHashMismatch, entry.Path + ": " + err.Error()}, "", nil
+			}
+		}
+		if ctx.Err() != nil {
+			return nil, "", err
+		}
+		return &BlockedFinding{"B-03", BlockedInputMissing, entry.Path + ": " + err.Error()}, "", nil
+	}
+	if digest != entry.SHA256 {
+		return &BlockedFinding{"B-04", BlockedInputHashMismatch, entry.Path + ": the bytes hash to " + digest + " and the receipt declared " + entry.SHA256}, digest, nil
+	}
+	if entry.Bytes != nil && *entry.Bytes != size {
+		return &BlockedFinding{"B-04", BlockedInputHashMismatch, entry.Path + ": the file is " + itoa64(size) + " bytes and the receipt declared " + itoa64(*entry.Bytes)}, digest, nil
+	}
+	return nil, digest, nil
 }
 
 // receiptEntries reads the manifest of a stored receipt: the list of {path, sha256, bytes}. ok is false for a receipt that is not an object, has no

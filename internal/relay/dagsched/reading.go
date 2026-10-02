@@ -96,3 +96,13 @@ func (r Reading) Object() contract.OrderedObject {
 
 // SchemaReading names the document dag-ready prints.
 const SchemaReading = "dag-ready/1"
+
+// find is one node's reading.
+func (r Reading) find(id string) (NodeReading, bool) {
+	for _, n := range r.Nodes {
+		if n.NodeID == id {
+			return n, true
+		}
+	}
+	return NodeReading{}, false
+}

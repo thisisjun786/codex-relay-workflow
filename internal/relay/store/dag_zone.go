@@ -367,4 +367,20 @@ BEGIN SELECT RAISE(ABORT, 'dag_edges rows are never deleted'); END`,
     declared_at     TEXT NOT NULL,
     PRIMARY KEY (plan_id, node_id, declaration_seq, repository, path, region_kind, region_key)
 )`,
+
+	// The release of a node, frozen with its intent (dag_releases): the exact managed-start request bytes and the selectors they were fingerprinted
+	// with. managed.Start fingerprints the whole request and refuses another body under one request id, while the manifest digest leaves out fields that
+	// are still in the prompt, so a replay of an intent whose child was not created sends these bytes and never rebuilds the request.
+	`CREATE TABLE IF NOT EXISTS dag_release_requests (
+    plan_id         TEXT NOT NULL REFERENCES dag_plans (plan_id),
+    node_id         TEXT NOT NULL,
+    manifest_digest TEXT NOT NULL,
+    request_sha256  TEXT NOT NULL,
+    request_json    TEXT NOT NULL,
+    marker_root     TEXT NOT NULL,
+    socket          TEXT NOT NULL,
+    state_selector  TEXT NOT NULL,
+    recorded_at     TEXT NOT NULL,
+    PRIMARY KEY (plan_id, node_id, manifest_digest)
+)`,
 }

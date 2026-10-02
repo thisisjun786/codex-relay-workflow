@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
@@ -34,6 +35,7 @@ type fixture struct {
 	path  string
 	repo  *dag.Repo
 	sched *Scheduler
+	mu    sync.Mutex // the clock is read from concurrent releases
 	tick  int
 }
 
@@ -43,10 +45,13 @@ func newFixture(t *testing.T) *fixture {
 }
 
 // newFixtureAt is a fixture over a store at a given path (the CLI tests need the path the binary will open).
-func newFixtureAt(t *testing.T, path string) *fixture {
+func newFixtureAt(t *testing.T, path string) *fixture { return newFixtureOn(t, path, "") }
+
+// newFixtureOn is a fixture over a store created for an App Server socket (a store a real adapter serves must record the socket it serves).
+func newFixtureOn(t *testing.T, path, socket string) *fixture {
 	t.Helper()
-	testsupport.Create(t, path, "", "go")
-	s, err := store.Open(context.Background(), path, "")
+	testsupport.Create(t, path, socket, "go")
+	s, err := store.Open(context.Background(), path, socket)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,6 +63,8 @@ func newFixtureAt(t *testing.T, path string) *fixture {
 }
 
 func (f *fixture) clock() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.tick++
 	return fmt.Sprintf("2026-10-02T00:%02d:%02d.000000+00:00", f.tick/60, f.tick%60)
 }

@@ -219,3 +219,46 @@ func TestReadOnlyReadNeverCreatesTheZone(t *testing.T) {
 		t.Fatal("the write open did not create the zone")
 	}
 }
+
+// dag-release starts a managed task, so like managed-start it needs the explicit --state and --socket, and it refuses a request it cannot read before it touches the store.
+func TestCLIReleaseRefusalsBeforeAnyEffect(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "state")
+	socket := filepath.Join(t.TempDir(), "app.sock")
+	f := newFixtureOn(t, filepath.Join(state, "relay.sqlite3"), socket)
+	releasePlan(f, "rp")
+	f.projectParent()
+	if err := f.s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	args := func(request string) []string {
+		return []string{"--socket", socket, "dag-release", "--plan", "rp", "--node", "A", "--actor", "parent", "--request", request, "--marker-root", t.TempDir()}
+	}
+	if out, code := crw(t, state, "dag-release", "--plan", "rp", "--node", "A", "--actor", "parent", "--request", "{}", "--marker-root", t.TempDir()); code != 4 {
+		t.Fatalf("without --socket: exit %d\n%s", code, out)
+	}
+	for name, request := range map[string]string{
+		"an unknown field":         `{"schema":"dag-release-request/1","colour":"red"}`,
+		"the wrong schema":         `{"schema":"other/1"}`,
+		"a document that is empty": `{}`,
+	} {
+		out, code := crw(t, state, args(request)...)
+		if m := parseOut(t, out); code != 2 || m["reason"] != "malformed_receipt" {
+			t.Fatalf("%s: exit %d\n%s", name, code, out)
+		}
+	}
+	if out, code := crw(t, state, args("@/nonexistent/request.json")...); code != 4 {
+		t.Fatalf("a missing file: exit %d\n%s", code, out)
+	}
+	if n := passCount(t, state); n != 0 {
+		t.Fatalf("%d passes", n)
+	}
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(state, "relay.sqlite3")+"?mode=ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var releases int
+	if err := db.QueryRow("SELECT COUNT(*) FROM dag_releases").Scan(&releases); err != nil || releases != 0 {
+		t.Fatalf("a refused request left %d releases (%v)", releases, err)
+	}
+}
