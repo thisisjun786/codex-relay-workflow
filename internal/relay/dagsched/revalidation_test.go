@@ -580,6 +580,10 @@ func TestStaleRouteFollowsTheCause(t *testing.T) {
 		{name: "an edge was added into C from a node nobody accepted", setup: func(k *releaseKit, _ map[string]AcceptResult) {
 			k.putPlan("sr", int(k.snapshot("sr").Revision), "sr-r2", addRelNode("Q", dag.NodeNonPR), addEdge("qc", "Q", "C", dag.EdgeArtifactVerified, nil))
 		}, want: []route{{"C", rvHold}}},
+		{name: "the plan paused A, whose spec changed", setup: func(k *releaseKit, _ map[string]AcceptResult) {
+			k.invRevise("sr", "A", "sr-r2", invTitle("A revised"))
+			k.putPlan("sr", int(k.snapshot("sr").Revision), "sr-r3", lifeOp("pause_node", "A"))
+		}, want: []route{{"A", rvHold}, {"C", rvHold}}},
 		{name: "an edge was retired from C", setup: func(k *releaseKit, _ map[string]AcceptResult) {
 			k.putPlan("sr", int(k.snapshot("sr").Revision), "sr-r2", doc{"op": dag.OpRetireEdge, "edge_id": "ac"})
 		}, want: []route{{"C", rvCorrect}}},

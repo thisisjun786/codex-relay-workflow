@@ -165,7 +165,12 @@ func (s *Scheduler) routeStale(ctx context.Context, q store.Querier, plan string
 	if err != nil {
 		return "", "", err
 	}
+	life := lifeOf(snap, n)
 	switch {
+	case !life.active():
+		// the plan holds the node (paused, or the whole plan paused; an ended node is not judged stale at all): ruling, accepting and correcting it are refused until the plan lets it run (lifecycle.go)
+		reason, why := life.reason(n.NodeID)
+		return ActionHold, reason + ": " + why, nil
 	case above != nil:
 		action, detail = holdOnPredecessor(n, above)
 		return action, detail, nil
