@@ -14,7 +14,8 @@ import (
 // The cost and the order of the census (CRW-262): which store rows it reads, and how it ranks a turn that has
 // more than one reason to be pending.
 
-// planOf is the EXPLAIN QUERY PLAN of a statement, one line per step.
+// planOf is the EXPLAIN QUERY PLAN of a statement, one line per step. The wording is that of the SQLite the store's
+// driver bundles: a driver upgrade that rewords a step changes the assertions on it and nothing else.
 func planOf(t *testing.T, ctx context.Context, s *store.Store, query string, args ...any) []string {
 	t.Helper()
 	rows, err := s.All(ctx, "EXPLAIN QUERY PLAN "+query, args...)

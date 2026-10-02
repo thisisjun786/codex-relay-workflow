@@ -86,9 +86,10 @@ ORDER BY r.relationship_id, t.rowid`
 	// The reads of the pending turns of one relationship, by primary key: its generations (a read is stored under the
 	// relationship's current generation, so these are the generations a read sits under) and the turn ids, given as one
 	// JSON array. Only a relationship with a pending turn is asked, and only for its pending turns: the rows of its
-	// settled turns are never deleted and are never read. One row per generation a turn was read under; each is judged
-	// on its own (see past) before the latest is taken. It probes once for each generation of the relationship and each
-	// pending turn, so its cost follows those two and not how long the relationship has lived.
+	// other turns (settled ones, whose rows are never deleted) are not asked for. One row per generation a turn was
+	// read under; each is judged on its own (see past) before the latest is taken. It probes once for each generation
+	// of the relationship and each pending turn, so its cost follows those two and not how long the relationship has
+	// lived.
 	attemptsOfPendingTurns = `SELECT turn_id AS turn, last_attempt_at AS attempt FROM poll_observations
 WHERE relationship_id=?1 AND execution_generation IN (SELECT execution_generation FROM generations WHERE relationship_id=?1)
   AND turn_id IN (SELECT value FROM json_each(?2))`
@@ -128,9 +129,9 @@ func (d *Daemon) census(ctx context.Context) ([]*pending, error) {
 	// A stamp later than the clock now was written before the clock was set back, so it is older than anything the
 	// clock stamps now. It counts as the oldest stamp there is; reading the turn replaces it with a valid one, so
 	// turns stamped in a clock's future neither rank behind the turns just read nor hold the same front for ever.
-	// The clock is read after the queries, so no stamp they returned is later than it, and each reason is judged
-	// on its own before the earliest of a turn's reasons is taken: judged after, a turn with a regressed stamp and
-	// a valid one would be ranked by the valid one.
+	// The clock is read after the queries, so a stamp is later than it only when it was written before a set-back,
+	// never because it arrived while they ran. Each reason is judged on its own before the earliest of a turn's
+	// reasons is taken: judged after, a turn with a regressed stamp and a valid one would be ranked by the valid one.
 	now := delivery.ISOOf(d.Clock.Now())
 	past := func(stamp string) string {
 		if stamp > now {

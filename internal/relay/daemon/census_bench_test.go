@@ -10,10 +10,11 @@ import (
 
 const loadStamp = "2023-11-14T22:13:20.000000+00:00"
 
-// loadStore seeds a store the way a long-lived relay holds one: relationships rel-N, the first active archived the
-// rest, each on generation gens with an anchor for every generation (the current one unsettled, the older ones
-// settled), and admitted turns spread over its generations, all settled but the last pending of them. Every
-// admitted turn has the poll row a read of it leaves, under the generation it was admitted to.
+// loadStore seeds a store the way a long-lived relay holds one: relationships rel-N, the first active of them
+// active and the rest archived, each on generation gens with an anchor for every generation (the current one
+// unsettled, the older ones settled), and admitted turns spread over its generations, all settled but the last
+// pending of them (an archived relationship is seeded the same way, so its last admissions stay unsettled but no
+// tick lists them). Every admitted turn has the poll row a read of it leaves, under the generation it was admitted to.
 func loadStore(b *testing.B, active, archived, admitted, gens, pending int) *store.Store {
 	b.Helper()
 	s, err := fixtureStore(context.Background(), filepath.Join(b.TempDir(), "relay.sqlite3"), "")
@@ -49,8 +50,8 @@ SELECT relationship_id,execution_generation,turn_id,'inProgress',?,? FROM genera
 // BenchmarkCensus measures what one tick spends on the census, and on the admissions query alone, for stores of
 // different size: go test ./internal/relay/daemon -run '^$' -bench Census -benchtime 30x -count 5. A name gives the
 // active relationships, the admitted turns they hold in all (the same number in each), the archived relationships
-// beside them (each with the same settled admissions), and, when more than one, the generations of each relationship
-// and the pending admitted turns it has.
+// beside them (seeded like the active ones), and, when more than one, the generations of each relationship and the
+// pending admitted turns it has.
 func BenchmarkCensus(b *testing.B) {
 	for _, c := range []struct {
 		name                                      string
