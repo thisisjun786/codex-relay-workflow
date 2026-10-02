@@ -1,0 +1,290 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/divergence",
+    "K8/ws/.codexclaw/divergence",
+    "A/pabcd-state/divergence.test.ts"
+  ],
+  "note": "Divergence mode on/off and the candidate archive, including an unsourced candidate refused.",
+  "given": {
+    "json": {
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "phase": "IDLE",
+        "sessionId": "rec-s1",
+        "slug": "",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "flags": {
+          "interview": false,
+          "auditPassed": false,
+          "checkPassed": false
+        },
+        "supersededBy": null,
+        "injectedTurns": [],
+        "lastInjectedPhase": null,
+        "orchestrationActive": false,
+        "interview": null,
+        "stopBlockPhase": null,
+        "stopBlockCount": 0,
+        "stopBlockWorkPhaseId": null,
+        "stopMetricCursor": 0,
+        "stopBlockTotal": 0,
+        "stopBlockTurnId": null,
+        "stopBlockCapNotified": false,
+        "loopArmSeen": false,
+        "idleEditNudges": 0,
+        "memoryWriteRequested": false,
+        "memoryWriteTurn": null,
+        "memoryWriteGrant": false,
+        "unverifiedSubagents": [],
+        "unverifiedCorrupt": false,
+        "phaseEntrySource": null,
+        "planUnit": null,
+        "planEpoch": null,
+        "checkEpoch": null,
+        "dcloseRecovery": null
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "divergence",
+          "mode",
+          "on",
+          "--session",
+          "rec-s1",
+          "--collapse",
+          "D",
+          "--reason",
+          "plateau",
+          "--json"
+        ]
+      },
+      {
+        "cli": [
+          "divergence",
+          "candidate",
+          "add",
+          "--session",
+          "rec-s1",
+          "--kind",
+          "alternative",
+          "--change-class",
+          "state-space-redesign",
+          "--title",
+          "Streamed writer",
+          "--rationale",
+          "avoid buffering",
+          "--source",
+          "https://example.invalid/a",
+          "--json"
+        ]
+      },
+      {
+        "cli": [
+          "divergence",
+          "candidate",
+          "add",
+          "--session",
+          "rec-s1",
+          "--kind",
+          "alternative",
+          "--change-class",
+          "state-space-redesign",
+          "--title",
+          "No source",
+          "--rationale",
+          "guess"
+        ]
+      },
+      {
+        "cli": [
+          "divergence",
+          "candidate",
+          "list",
+          "--session",
+          "rec-s1",
+          "--json"
+        ]
+      },
+      {
+        "cli": [
+          "divergence",
+          "mode",
+          "off",
+          "--session",
+          "rec-s1",
+          "--reason",
+          "broken",
+          "--json"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "sessionId": "rec-s1",
+          "active": true,
+          "objectiveKind": "maximize",
+          "collapsePoint": "D",
+          "reason": "plateau",
+          "updatedAt": "<TS>"
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "ts": "<TS>",
+          "sessionId": "rec-s1",
+          "id": "alternative-streamed-writer",
+          "kind": "alternative",
+          "title": "Streamed writer",
+          "rationale": "avoid buffering",
+          "sourceUrls": [
+            "https://example.invalid/a"
+          ],
+          "status": "proposed",
+          "changeClass": "state-space-redesign"
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "text",
+        "stdout": "divergence candidate add: at least one --source <url> is required\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "sessionId": "rec-s1",
+          "candidates": [
+            {
+              "ts": "<TS>",
+              "sessionId": "rec-s1",
+              "id": "alternative-streamed-writer",
+              "kind": "alternative",
+              "title": "Streamed writer",
+              "rationale": "avoid buffering",
+              "sourceUrls": [
+                "https://example.invalid/a"
+              ],
+              "status": "proposed",
+              "changeClass": "state-space-redesign"
+            }
+          ]
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "sessionId": "rec-s1",
+          "active": false,
+          "objectiveKind": "maximize",
+          "collapsePoint": "D",
+          "reason": "broken",
+          "updatedAt": "<TS>"
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/divergence": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/divergence/candidates.jsonl": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "ts": "<TS>",
+          "sessionId": "rec-s1",
+          "id": "alternative-streamed-writer",
+          "kind": "alternative",
+          "title": "Streamed writer",
+          "rationale": "avoid buffering",
+          "sourceUrls": [
+            "https://example.invalid/a"
+          ],
+          "status": "proposed",
+          "changeClass": "state-space-redesign"
+        }
+      },
+      "ws/.codexclaw/divergence/rec-s1.mode.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty-nonl",
+        "json": {
+          "sessionId": "rec-s1",
+          "active": false,
+          "objectiveKind": "maximize",
+          "collapsePoint": "D",
+          "reason": "broken",
+          "updatedAt": "<TS>"
+        }
+      },
+      "ws/.codexclaw/sessions": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "phase": "IDLE",
+          "sessionId": "rec-s1",
+          "slug": "",
+          "updatedAt": "<TS>",
+          "flags": {
+            "interview": false,
+            "auditPassed": false,
+            "checkPassed": false
+          },
+          "supersededBy": null,
+          "injectedTurns": [],
+          "lastInjectedPhase": null,
+          "orchestrationActive": false,
+          "interview": null,
+          "stopBlockPhase": null,
+          "stopBlockCount": 0,
+          "stopBlockWorkPhaseId": null,
+          "stopMetricCursor": 0,
+          "stopBlockTotal": 0,
+          "stopBlockTurnId": null,
+          "stopBlockCapNotified": false,
+          "loopArmSeen": false,
+          "idleEditNudges": 0,
+          "memoryWriteRequested": false,
+          "memoryWriteTurn": null,
+          "memoryWriteGrant": false,
+          "unverifiedSubagents": [],
+          "unverifiedCorrupt": false,
+          "phaseEntrySource": null,
+          "planUnit": null,
+          "planEpoch": null,
+          "checkEpoch": null,
+          "dcloseRecovery": null
+        }
+      }
+    },
+    "calls": []
+  }
+}

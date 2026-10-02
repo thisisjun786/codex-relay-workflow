@@ -169,10 +169,16 @@ func gunzipped(raw []byte) ([]byte, error) {
 	return io.ReadAll(reader)
 }
 
-// fixtures is every JSON file under contract/fixtures and every document held as a string in one.
+// fixtures is every JSON file under contract/fixtures and every document held as a string in one,
+// apart from contract/fixtures/cxc: that corpus was recorded from the CXC Node build (CRW-279),
+// not from the Python reference these readers and writers are held to.
 func fixtures(t testing.TB) []string {
 	var docs []string
-	err := filepath.WalkDir(filepath.Join(moduleRoot(), "contract", "fixtures"), func(path string, entry fs.DirEntry, err error) error {
+	root := filepath.Join(moduleRoot(), "contract", "fixtures")
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err == nil && entry.IsDir() && path == filepath.Join(root, "cxc") {
+			return fs.SkipDir
+		}
 		if err != nil || entry.IsDir() || !strings.HasSuffix(path, ".json") {
 			return err
 		}

@@ -1,0 +1,228 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/pre-tool-use-attaching-skills",
+    "K5/hook-rendered",
+    "A/subagent-config/spawn-attach-hook.test.ts"
+  ],
+  "note": "V2 surface: a task_name/fork_turns spawn with no skill mention gets the full LEAF guard plus the [CXC-SKILL-AFFORDANCE] self-load block with the leaf-safe catalog; a short gAAAA lookalike is plaintext and gets the same; the hook-facing name collaborationspawn_agent proves V2 without payload markers, and an inlined kwrite body replaces the affordance.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "pre-tool-use-attaching-skills",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "spawn_agent",
+          "tool_input": {
+            "task_name": "t",
+            "fork_turns": "none",
+            "message": "Inspect the catalog module."
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-attaching-skills",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "spawn_agent",
+          "tool_input": {
+            "task_name": "t",
+            "fork_turns": "none",
+            "message": "gAAAAx"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-attaching-skills",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "collaborationspawn_agent",
+          "tool_input": {
+            "message": "use $cxc-kwrite on the notice"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+            "updatedInput": {
+              "task_name": "t",
+              "fork_turns": "none",
+              "message": "[CXC-LEAF-GUARD] You are a LEAF agent with a single bounded task. HARD\nCONSTRAINTS from your dispatcher: (1) Do NOT spawn\nsub-agents (no spawn_agent calls, no delegation chains). If decomposition seems\nnecessary, finish your own scope and REPORT the need in your final answer\ninstead. (2) Do NOT run cxc orchestrate, cxc loop, or goal commands - the\nparent session owns all FSM/goal state. (3) Stay inside the task's stated\nfile/write scope. These dispatcher constraints are enforced by a spawn hook (a\nrecursive spawn without a grant is DENIED at the tool boundary, regardless of\nany delegation guidance you may see). A dispatcher can authorize recursion for\na specific spawn by\nincluding the recursion grant token in the spawn message.\n(4) You are NOT in a copy or fork of the workspace: you share the parent's\nworking directory, branch and HEAD, so your edits are the parent's uncommitted\nchanges. Stay inside your write scope and do NOT run branch-level git commands\n(checkout, switch, branch, stash, reset, rebase, merge, pull) - another agent\nmay be working in the same tree right now.\n\nInspect the catalog module.\n\n[CXC-SKILL-AFFORDANCE] Skill mentions in this task (tokens like\n$cxc-<name> or $codexclaw:cxc-<name>, or [$cxc-<name>](skill://...) links)\nare NOT auto-loaded on this surface. Before working, read each mentioned\nskill yourself: open ${PLUGIN_ROOT}/skills/<name>/SKILL.md with your file tools and\nfollow it. If a mentioned skill file does not exist there, note that in\nyour answer and continue.\n\nAvailable skills (self-load from ${PLUGIN_ROOT}/skills/<name>/SKILL.md):\n- cxc-ast-grep: Use ast-grep (sg) for AST-aware code search and rewrite across 25 languages. Trigger for structural code matching or det\n- cxc-dev: MUST USE for coding, PR creation/review/merge, dependent branches, scaffolding, and QA. Classify C0-C5, preserve safety \n- cxc-dev-architecture: MUST USE for module boundary work, circular dependency detection, coupling review, barrel or re-export changes, and vali\n- cxc-dev-backend: MUST USE for backend, API, server, or database work — API design, architecture, database optimization, security hardenin\n- cxc-dev-code-reviewer: MUST USE for code review and review-readiness — review process, quality thresholds, antipattern detection, review verdic\n- cxc-dev-data: MUST USE for data engineering and analysis work — pipelines, ETL/ELT, data quality, SQL optimization, schema evolution, \n- cxc-dev-debugging: MUST USE for any real runtime debugging in any language — crashes, silent failures, wrong output, build/test failures, f\n- cxc-dev-devops: MUST USE for DevOps, infrastructure, or delivery work — container builds, deploy pipelines, stacked-PR CI diagnosis, Kub\n- cxc-dev-frontend: MUST USE for any frontend, web UI, or visual implementation work — building, styling, or redesigning pages/components, r\n- cxc-dev-scaffolding: MUST USE for project setup, feature scaffolding, structural audits, or documentation scaffolding — applies feature-based\n- cxc-dev-security: MUST USE for security guidance covering XSS, CSRF, SQL injection, JWT, OAuth, secrets, OWASP, auth hardening, supply cha\n- cxc-dev-testing: MUST USE for testing, QA, regression protection, and release verification — unit, integration, API, contract, Playwright\n- cxc-dev-uiux-design: MUST USE for UI/UX direction and design judgment — vague visual briefs, onboarding, empty/error/loading states, layout v\n- cxc-dev-visualizer: Create well-composed visual documents, HTML reports, SVG diagrams, charts, interactive explainers and PDF deliverables. \n- cxc-kwrite: MUST USE for Korean prose polishing (윤문) — revising existing Korean text to read like a person wrote it: removing transl\n- cxc-lunasearch: Codexclaw Luna search lane: cheap parallel public-web discovery via hardcoded gpt-5.6-luna explorer subagents, then hand\n- cxc-qa: MUST USE after building or changing any user-facing surface (web UI, TUI, CLI, HTTP API, native desktop GUI) before clai\n- cxc-remote: MUST USE for messenger-bridge remote setup and channel onboarding — connecting Telegram or Discord to codexclaw, pairing\n- cxc-repo-map: Use RepoMap for codebase overview, structure maps, symbol overview, and architecture map exploration. Triggers: repo map\n- cxc-search: MUST USE for external, current, real-time, or public-web lookups — latest releases/versions, news, prices, docs, status,"
+            }
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+            "updatedInput": {
+              "task_name": "t",
+              "fork_turns": "none",
+              "message": "[CXC-LEAF-GUARD] You are a LEAF agent with a single bounded task. HARD\nCONSTRAINTS from your dispatcher: (1) Do NOT spawn\nsub-agents (no spawn_agent calls, no delegation chains). If decomposition seems\nnecessary, finish your own scope and REPORT the need in your final answer\ninstead. (2) Do NOT run cxc orchestrate, cxc loop, or goal commands - the\nparent session owns all FSM/goal state. (3) Stay inside the task's stated\nfile/write scope. These dispatcher constraints are enforced by a spawn hook (a\nrecursive spawn without a grant is DENIED at the tool boundary, regardless of\nany delegation guidance you may see). A dispatcher can authorize recursion for\na specific spawn by\nincluding the recursion grant token in the spawn message.\n(4) You are NOT in a copy or fork of the workspace: you share the parent's\nworking directory, branch and HEAD, so your edits are the parent's uncommitted\nchanges. Stay inside your write scope and do NOT run branch-level git commands\n(checkout, switch, branch, stash, reset, rebase, merge, pull) - another agent\nmay be working in the same tree right now.\n\ngAAAAx\n\n[CXC-SKILL-AFFORDANCE] Skill mentions in this task (tokens like\n$cxc-<name> or $codexclaw:cxc-<name>, or [$cxc-<name>](skill://...) links)\nare NOT auto-loaded on this surface. Before working, read each mentioned\nskill yourself: open ${PLUGIN_ROOT}/skills/<name>/SKILL.md with your file tools and\nfollow it. If a mentioned skill file does not exist there, note that in\nyour answer and continue.\n\nAvailable skills (self-load from ${PLUGIN_ROOT}/skills/<name>/SKILL.md):\n- cxc-ast-grep: Use ast-grep (sg) for AST-aware code search and rewrite across 25 languages. Trigger for structural code matching or det\n- cxc-dev: MUST USE for coding, PR creation/review/merge, dependent branches, scaffolding, and QA. Classify C0-C5, preserve safety \n- cxc-dev-architecture: MUST USE for module boundary work, circular dependency detection, coupling review, barrel or re-export changes, and vali\n- cxc-dev-backend: MUST USE for backend, API, server, or database work — API design, architecture, database optimization, security hardenin\n- cxc-dev-code-reviewer: MUST USE for code review and review-readiness — review process, quality thresholds, antipattern detection, review verdic\n- cxc-dev-data: MUST USE for data engineering and analysis work — pipelines, ETL/ELT, data quality, SQL optimization, schema evolution, \n- cxc-dev-debugging: MUST USE for any real runtime debugging in any language — crashes, silent failures, wrong output, build/test failures, f\n- cxc-dev-devops: MUST USE for DevOps, infrastructure, or delivery work — container builds, deploy pipelines, stacked-PR CI diagnosis, Kub\n- cxc-dev-frontend: MUST USE for any frontend, web UI, or visual implementation work — building, styling, or redesigning pages/components, r\n- cxc-dev-scaffolding: MUST USE for project setup, feature scaffolding, structural audits, or documentation scaffolding — applies feature-based\n- cxc-dev-security: MUST USE for security guidance covering XSS, CSRF, SQL injection, JWT, OAuth, secrets, OWASP, auth hardening, supply cha\n- cxc-dev-testing: MUST USE for testing, QA, regression protection, and release verification — unit, integration, API, contract, Playwright\n- cxc-dev-uiux-design: MUST USE for UI/UX direction and design judgment — vague visual briefs, onboarding, empty/error/loading states, layout v\n- cxc-dev-visualizer: Create well-composed visual documents, HTML reports, SVG diagrams, charts, interactive explainers and PDF deliverables. \n- cxc-kwrite: MUST USE for Korean prose polishing (윤문) — revising existing Korean text to read like a person wrote it: removing transl\n- cxc-lunasearch: Codexclaw Luna search lane: cheap parallel public-web discovery via hardcoded gpt-5.6-luna explorer subagents, then hand\n- cxc-qa: MUST USE after building or changing any user-facing surface (web UI, TUI, CLI, HTTP API, native desktop GUI) before clai\n- cxc-remote: MUST USE for messenger-bridge remote setup and channel onboarding — connecting Telegram or Discord to codexclaw, pairing\n- cxc-repo-map: Use RepoMap for codebase overview, structure maps, symbol overview, and architecture map exploration. Triggers: repo map\n- cxc-search: MUST USE for external, current, real-time, or public-web lookups — latest releases/versions, news, prices, docs, status,"
+            }
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+            "updatedInput": {
+              "message": "[CXC-LEAF-GUARD] You are a LEAF agent with a single bounded task. HARD\nCONSTRAINTS from your dispatcher: (1) Do NOT spawn\nsub-agents (no spawn_agent calls, no delegation chains). If decomposition seems\nnecessary, finish your own scope and REPORT the need in your final answer\ninstead. (2) Do NOT run cxc orchestrate, cxc loop, or goal commands - the\nparent session owns all FSM/goal state. (3) Stay inside the task's stated\nfile/write scope. These dispatcher constraints are enforced by a spawn hook (a\nrecursive spawn without a grant is DENIED at the tool boundary, regardless of\nany delegation guidance you may see). A dispatcher can authorize recursion for\na specific spawn by\nincluding the recursion grant token in the spawn message.\n(4) You are NOT in a copy or fork of the workspace: you share the parent's\nworking directory, branch and HEAD, so your edits are the parent's uncommitted\nchanges. Stay inside your write scope and do NOT run branch-level git commands\n(checkout, switch, branch, stash, reset, rebase, merge, pull) - another agent\nmay be working in the same tree right now.\n\nuse [$cxc-kwrite](skill://${PLUGIN_ROOT}/skills/kwrite/SKILL.md) on the notice\n\n<skill name=\"cxc-kwrite\">\n---\nname: cxc-kwrite\ndescription: \"MUST USE for Korean prose polishing (윤문) — revising existing Korean text to read like a person wrote it: removing translationese and AI idioms, fixing register/tone breaks, varying rhythm, replacing abstract endings, while preserving meaning exactly. Applies to docs, articles, announcements, READMEs, UI copy, and any Korean output the agent writes. Triggers: 윤문, 다듬어, 다듬어줘, 자연스럽게, 매끄럽게, 교정, 고쳐줘, AI투, 번역투, Korean polish, kwrite, proofread Korean.\"\nmetadata:\n  last-verified: \"2026-07-07\"\n  short-description: \"Korean prose polishing: AI-tell removal + register consistency + meaning-exact revision.\"\n---\n\n# kwrite — Korean Prose Polishing (윤문)\n\nUse this skill when the task is to REVISE existing Korean text (or polish\nKorean text you are about to output): remove the patterns that make it read\nmachine-written, keep everything it says intact. This is a revision\ndiscipline, not a generation pipeline — genre, format, and audience stay\nwhatever the source text already is.\n\n## Prime directives\n\n1. **Meaning is frozen.** Facts, claims, numbers, proper nouns, quotes, and\n   causal links are preserved to the letter. Ambiguity is never resolved by\n   invention.\n2. **Edit detected spans only.** Sentences without a detected pattern are not\n   touched. Polishing is not rewriting.\n3. **No over-polishing.** If more than ~30% of the text changes, stop and\n   re-check: you are probably rewriting, not polishing.\n4. **Register is part of meaning.** 문어체 stays 문어체, 구어체 stays 구어체,\n   존댓말 stays 존댓말. Fix breaks IN the register; never migrate the text to\n   a different one.\n\n## Revision protocol (run in order, re-run a pass after fixing it)\n\n### Pass 1 — Register/tone consistency (S1)\n\n- First and last sentence carry the same register and speech level.\n- No \"~합니다/~입니다\" islands inside 반말/평서 text; no \"~해/~야\" inside\n  존댓말 text; no \"~하겠습니다\" formality spikes in informal prose.\n\n### Pass 2 — Translationese + AI idioms (S1)\n\nScan against [references/ai-tell-taxonomy.md](references/ai-tell-taxonomy.md)\nCAT-1 (번역투), CAT-3 (AI 관용구), CAT-5 (톤 파괴). Anything S1 is fixed\nimmediately; the taxonomy carries register-preserving corrections.\n\n### Pass 3 — Mechanical structure (S2)\n\n- \"첫째/둘째/셋째\" enumeration, \"A, B, 그리고 C\" parallelism, identical\n  sentence frames in sequence (CAT-2).\n- Sentence-initial connective stacking: 또한/한편/더불어/아울러/이에 따라\n  (CAT-4). Default fix is deletion.\n- Over-explanation: restating the obvious, \"다시 말해\"/\"즉,\" repetition,\n  parenthetical glossing of things the reader knows (CAT-7).\n\n### Pass 4 — Rhythm + endings (S2)\n\n- Uniform sentence length or repeated final endings three times in a row:\n  break with a short sentence, vary the ending (CAT-8).\n- Abstract escape-hatch closings — 기대된다/주목된다/~할 것으로\n  보인다/귀추가 주목된다 (CAT-6): end on a concrete statement, a specific\n  consequence, or simply end.\n\n## Verdict\n\nAll four passes clean -> output. Any FAIL -> fix that span, re-run that pass.\nReport noteworthy changes briefly when the user asked for 윤문 explicitly;\napply silently when polishing your own outgoing Korean prose.\n\n## Scope guard\n\n- This skill owns revision of existing Korean text. Generating new content\n  for a specific platform, audience, or format is a different job — use the\n  skill that owns that surface (or plain judgment) and then run this\n  protocol on the draft.\n- Structure is out of scope here. When the draft is a report or explainer, apply\n  [Reader documents](../dev/references/reader-documents.md) first (두괄식: 결론이\n  맨 앞에 있는지), then run this protocol on the sentences.\n- Non-Korean text: out of scope. Mixed-language docs: polish only the Korean\n  prose, leave code/English untouched.\n</skill>"
+            }
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      }
+    },
+    "calls": [
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

@@ -1,0 +1,152 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/doctor/json",
+    "K7/doctor",
+    "K12/python3",
+    "A/cxc-ops/ast-grep.test.ts"
+  ],
+  "note": "A python3 on PATH whose helper `doctor` output names an ast-grep version and binary path: the ast-grep check is PASS with both.",
+  "given": {
+    "stubs": {
+      "codex": {
+        "stdout": "default_mode_request_user_input  under development  true\ngoals                            stable             true\nhooks                            stable             true\nmulti_agent                      stable             true\n",
+        "exit": 0
+      },
+      "python3": {
+        "stdout": "ast-grep 0.38.1\nast-grep binary: /opt/sg/bin/sg\n",
+        "exit": 0
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "doctor",
+          "--json"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-pretty",
+        "stdout_json": {
+          "schemaVersion": 1,
+          "overall": "WARN",
+          "checks": [
+            {
+              "name": "manifest",
+              "severity": "PASS",
+              "evidence": "plugin.json parsed, 31 hook(s) referenced"
+            },
+            {
+              "name": "hooks",
+              "severity": "PASS",
+              "evidence": "all hook target(s) present"
+            },
+            {
+              "name": "mcp-targets",
+              "severity": "PASS",
+              "evidence": "all mcp target(s) present"
+            },
+            {
+              "name": "skills",
+              "severity": "PASS",
+              "evidence": "29 skill(s) each have SKILL.md + agents/openai.yaml"
+            },
+            {
+              "name": "agents",
+              "severity": "PASS",
+              "evidence": "4 role TOML(s): architect.toml, executor.toml, explorer.toml, reviewer.toml"
+            },
+            {
+              "name": "drift:version",
+              "severity": "PASS",
+              "evidence": "declared plugin version <VERSION>"
+            },
+            {
+              "name": "drift:mcp",
+              "severity": "PASS",
+              "evidence": "./.mcp.json parses, 1 server(s) declared"
+            },
+            {
+              "name": "known-issues",
+              "severity": "PASS",
+              "evidence": "no known-issue signature matched"
+            },
+            {
+              "name": "hook-trust",
+              "severity": "WARN",
+              "evidence": "enabled install key is ambiguous (0): (none)"
+            },
+            {
+              "name": "hook-execution",
+              "severity": "WARN",
+              "evidence": "native session unavailable: 0 current invocation(s); unverified (session/actor identity unavailable); 0 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+            },
+            {
+              "name": "ast-grep",
+              "severity": "PASS",
+              "evidence": "sg resolved at /opt/sg/bin/sg (version 0.38.1)"
+            },
+            {
+              "name": "install-root",
+              "severity": "WARN",
+              "evidence": "no plugin cache at ${CODEX_HOME}/plugins/cache (running uninstalled?)"
+            },
+            {
+              "name": "pabcd-state",
+              "severity": "PASS",
+              "evidence": "no .codexclaw/sessions/ directory (clean state)"
+            },
+            {
+              "name": "features",
+              "severity": "PASS",
+              "evidence": "4/4 declared flag(s) enabled"
+            },
+            {
+              "name": "wsl",
+              "severity": "PASS",
+              "evidence": "not running under WSL"
+            }
+          ],
+          "pluginVersion": "<VERSION>",
+          "codexVersion": "default_mode_request_user_input  under development  true\ngoals                            stable             true\nhooks                            stable             true\nmulti_agent                      stable             true"
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": [
+      {
+        "cmd": "python3",
+        "argv": [
+          "${PLUGIN_ROOT}/skills/ast-grep/scripts/ast_grep_helper.py",
+          "doctor"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "codex",
+        "argv": [
+          "features",
+          "list"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "codex",
+        "argv": [
+          "--version"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

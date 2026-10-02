@@ -1,0 +1,46 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/bg/list",
+    "A/bg-wake/cli.test.ts"
+  ],
+  "note": "No registry directory: `bg list` says there are no background jobs, `bg list --json` prints [] and nothing is created.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "bg",
+          "list"
+        ]
+      },
+      {
+        "cli": [
+          "bg",
+          "list",
+          "--json"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "백그라운드 작업 없음\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": [],
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

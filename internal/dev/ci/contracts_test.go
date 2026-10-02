@@ -247,7 +247,7 @@ func contractsRepo(t *testing.T, present ...string) *fixtureRepo {
 	return r
 }
 
-// contractInputs are the files the five checks read, as this checkout has them.
+// contractInputs are the files the six checks read, as this checkout has them.
 var contractInputs = []string{
 	"plugins/crw/skills/crw-run/references/hook-contract.md",
 	"plugins/crw/skills/crw-run/scripts/fixtures",
@@ -260,6 +260,8 @@ var contractInputs = []string{
 	"packages/codex-thread-bridge/LICENSE",
 	"plugins/crw/skills/crw-run/references/start-policy.md",
 	"plugins/crw/skills/crw-plan/references/integrations.md",
+	"contract/schema/cxc",
+	"contract/fixtures/cxc",
 }
 
 // copyTree copies the file or directory rel from this checkout into root.
@@ -340,7 +342,7 @@ func Test47_ContractsPairsAndAbsentComponents(t *testing.T) {
 	}
 	for _, line := range []string{"fixtures matched", "sites reached", "OK every clause cited by any fixture exists",
 		"runtime: the component definition (internal/runtime/definition/definition.go) agrees with the checkout", "vocabulary: 3 run modes and 3 observation paths, as declared",
-		"title fixtures against their recorded expectations"} {
+		"title fixtures against their recorded expectations", "cxc corpus: "} {
 		if !strings.Contains(here.stdout, line) || !strings.Contains(checked.stdout, line) {
 			t.Errorf("a check did not report %q\nrepository: %s\nwithout Python: %s", line, here.stdout, checked.stdout)
 		}

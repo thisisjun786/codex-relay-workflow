@@ -1,0 +1,204 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K9/session-lock",
+    "K6/memory/allow-write",
+    "K3/subagent-stop-verifying-evidence",
+    "A/pabcd-state/memory-write-gate.test.ts",
+    "A/pabcd-state/subagent-evidence.test.ts"
+  ],
+  "note": "A pre-existing sessions/<id>.json.lock (no stale breaker): the grant and the evidence gate, which take the session lock, exhaust their retries; orchestrate, which does not take it, still moves.",
+  "given": {
+    "files": {
+      "ws/.codexclaw/sessions/rec-s1.json.lock": "999999\n"
+    },
+    "json": {
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "phase": "IDLE",
+        "sessionId": "rec-s1",
+        "slug": "",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "flags": {
+          "interview": false,
+          "auditPassed": false,
+          "checkPassed": false
+        },
+        "supersededBy": null,
+        "injectedTurns": [],
+        "lastInjectedPhase": null,
+        "orchestrationActive": false,
+        "interview": null,
+        "stopBlockPhase": null,
+        "stopBlockCount": 0,
+        "stopBlockWorkPhaseId": null,
+        "stopMetricCursor": 0,
+        "stopBlockTotal": 0,
+        "stopBlockTurnId": null,
+        "stopBlockCapNotified": false,
+        "loopArmSeen": false,
+        "idleEditNudges": 0,
+        "memoryWriteRequested": false,
+        "memoryWriteTurn": null,
+        "memoryWriteGrant": false,
+        "unverifiedSubagents": [],
+        "unverifiedCorrupt": false,
+        "phaseEntrySource": null,
+        "planUnit": null,
+        "planEpoch": null,
+        "checkEpoch": null,
+        "dcloseRecovery": null
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "memory",
+          "allow-write",
+          "--session",
+          "rec-s1"
+        ]
+      },
+      {
+        "hook": "subagent-stop-verifying-evidence",
+        "stdin": {
+          "hook_event_name": "SubagentStop",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "agent_id": "rec-a1",
+          "agent_type": "executor",
+          "last_assistant_message": "Done.",
+          "stop_hook_active": false
+        }
+      },
+      {
+        "cli": [
+          "orchestrate",
+          "P",
+          "--session",
+          "rec-s1",
+          "--cwd",
+          "${WS}"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 1,
+        "stdout_form": "empty",
+        "stderr": "memory allow-write: could not record the grant (EEXIST: file already exists, open '${WS}/.codexclaw/sessions/rec-s1.json.lock')\n"
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json",
+        "stdout_json": {
+          "decision": "block",
+          "reason": "Your completion is unverified — no evidence receipt was recorded. This is attempt 1 of 3. Actually run the relevant checks (build/tests/commands), write the output and your judgement to a file under `.codexclaw/evidence/`, and make the LAST line of your reply exactly `EVIDENCE_RECORDED: <path>` pointing at that file. Do not claim done without it. If you were dispatched READ-ONLY and cannot write there, say so plainly in your final message: your parent must re-dispatch you as an `explorer` (read-only lanes are not evidence-gated). Do not keep repeating the same answer — this budget is bounded."
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "orchestrate P: current=IDLE -> P (IDLE → P, session rec-s1) [formal P: architect proposal -> main executable plan -> same-architect reflection before A (cxc-pabcd phase-plan)]\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/evidence-attempts": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/evidence-attempts/rec-s1-rec-a1-rec-t1-aa4873d5ee32c85eed08eafe4ad2059e.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "attempts": 1
+        }
+      },
+      "ws/.codexclaw/ledger.jsonl": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "ts": "<TS>",
+          "sessionId": "rec-s1",
+          "from": "IDLE",
+          "to": "P",
+          "reason": "cli"
+        }
+      },
+      "ws/.codexclaw/render-observations.jsonl": {
+        "type": "file",
+        "mode": "0644",
+        "form": "empty"
+      },
+      "ws/.codexclaw/sessions": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty-nonl",
+        "json": {
+          "phase": "P",
+          "sessionId": "rec-s1",
+          "slug": "",
+          "updatedAt": "<TS>",
+          "flags": {
+            "interview": false,
+            "auditPassed": false,
+            "checkPassed": false
+          },
+          "supersededBy": null,
+          "injectedTurns": [],
+          "lastInjectedPhase": "P",
+          "orchestrationActive": true,
+          "interview": null,
+          "stopBlockPhase": null,
+          "stopBlockCount": 0,
+          "stopBlockWorkPhaseId": null,
+          "stopMetricCursor": 0,
+          "stopBlockTotal": 0,
+          "stopBlockTurnId": null,
+          "stopBlockCapNotified": false,
+          "loopArmSeen": false,
+          "idleEditNudges": 0,
+          "memoryWriteRequested": false,
+          "memoryWriteTurn": null,
+          "memoryWriteGrant": false,
+          "unverifiedSubagents": [],
+          "unverifiedCorrupt": false,
+          "phaseEntrySource": null,
+          "planUnit": null,
+          "planEpoch": null,
+          "checkEpoch": null,
+          "dcloseRecovery": null
+        }
+      },
+      "ws/.codexclaw/sessions/rec-s1.json.lock": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": 999999
+      }
+    },
+    "calls": []
+  }
+}

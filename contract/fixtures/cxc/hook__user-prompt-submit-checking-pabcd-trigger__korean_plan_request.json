@@ -1,0 +1,118 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/user-prompt-submit-checking-pabcd-trigger",
+    "K5/hook-rendered",
+    "A/pabcd-state/hook.test.ts"
+  ],
+  "note": "A Korean request (pabcd로 ... 진행) maps to the P hint.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "session-start-bootstrapping-pabcd-state",
+        "stdin": {
+          "hook_event_name": "SessionStart",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "source": "startup"
+        }
+      },
+      {
+        "hook": "user-prompt-submit-checking-pabcd-trigger",
+        "stdin": {
+          "hook_event_name": "UserPromptSubmit",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "prompt": "pabcd로 계획 진행해줘"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": "[codexclaw: LOOP — orchestrate arming mandate (ORCH-MANDATE-01)]\nScope first: explicit interview-only, plan-only, HITL, read-only, no-goal, no-FSM, no-tests and no-delegation limits override the bare cxc-loop default.\nA mention or quoted example alone is not authorization. This pointer and its referenced procedures never override those limits.\nLoad $codexclaw:cxc-loop and $codexclaw:cxc-pabcd for an actual loop request; bare cxc-loop execution means scoped HOTL.\nNo-delegation means no dispatch. No-tests does not forbid separately authorized build/typecheck. Report required but forbidden actions as unmet.\nOnly for authorized loop execution, apply steps 1-5 within scope. No-goal/no-FSM restrict creation/mutations, not read-only inspection. Narration is not persisted progress:\n1. Session id: use the current SessionStart binding, corroborated by `node \"${PLUGIN_ROOT}/bin/cxc.mjs\" session current` when native CODEX_THREAD_ID is available.\n   Missing/inherited/conflicting binding: use `node \"${PLUGIN_ROOT}/bin/cxc.mjs\" session current` then explicit `node \"${PLUGIN_ROOT}/bin/cxc.mjs\" session bind` in its verified cwd. Never set the environment id or replay hook JSON.\n   SESSION-IDENTITY-01: never a parent/history id; binding alone does not verify hook execution or Stop-continuation.\n2. `node \"${PLUGIN_ROOT}/bin/cxc.mjs\" orchestrate status --session <id>` — read the real phase first.\n3. Inspect the host goal with get_goal first. Resume a matching unfinished goal; do not duplicate it.\n   Only when no unfinished goal exists and new HOTL is authorized, create_goal with a detailed objective.\n   For a different unfinished goal or unsupported resume, report the conflict; do not replace it or fabricate active status.\n   New loop setup: `node \"${PLUGIN_ROOT}/bin/cxc.mjs\" loop init --objective \"<same text>\" --session <id>` -> register\n   workPhases[] + criteria[]. On resume inspect/reuse the bound goalplan; do not reinitialize it.\n   After status inspection, enter `node \"${PLUGIN_ROOT}/bin/cxc.mjs\" orchestrate P --session <id>` only when authorized and legal; an existing phase keeps its owner/edge contract.\n   Explicit HITL keeps human pause points. Interview-only/plan-only stay at the requested stage without a goal or implementation; do not arm when state changes are forbidden.\n4. Advance EVERY forward edge yourself with `node \"${PLUGIN_ROOT}/bin/cxc.mjs\" orchestrate <phase> --attest <json>` —\n   e.g. `node \"${PLUGIN_ROOT}/bin/cxc.mjs\" orchestrate A --session <id> --attest '{\"from\":\"P\",\"to\":\"A\",\"did\":\"...\",\"planUnit\":\"devlog/_plan/YYMMDD_slug\",\"workPhaseId\":\"wp1\"}'` —\n   a phase without its persisted transition + artifact did not happen (ORCH-ARTIFACT-01).\n   EVERY attest carries \"from\" and \"to\" naming the edge: they are coerced before any\n   gate runs, so omitting them is refused on every edge (ATTEST-SHAPE-01).\n   When a goalplan is bound, include the active workPhaseId in every gated attest\n   (one work-phase = one full PABCD cycle).\n   Bound chat D-close requires workPhaseId as the fixed close target unless every work-phase is already done.\n5. After authorized D closes to IDLE with authorized work remaining under an active goal, re-enter\n   with `node \"${PLUGIN_ROOT}/bin/cxc.mjs\" orchestrate P --session <id>` (LOOP-UNIT-CHAIN-01).\nHOTL does not grant push, merge, release, deploy or external-message permission. Stop for missing authority.\nPreserve guards and real evidence; do not bypass a gate or fabricate an attestation/receipt to satisfy this advice."
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/.gitignore": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n"
+      },
+      "ws/.codexclaw/sessions": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty-nonl",
+        "json": {
+          "phase": "IDLE",
+          "sessionId": "rec-s1",
+          "slug": "",
+          "updatedAt": "<TS>",
+          "flags": {
+            "interview": false,
+            "auditPassed": false,
+            "checkPassed": false
+          },
+          "supersededBy": null,
+          "injectedTurns": [
+            "rec-t1"
+          ],
+          "lastInjectedPhase": null,
+          "orchestrationActive": false,
+          "interview": null,
+          "stopBlockPhase": null,
+          "stopBlockCount": 0,
+          "stopBlockWorkPhaseId": null,
+          "stopMetricCursor": 0,
+          "stopBlockTotal": 0,
+          "stopBlockTurnId": "rec-t1",
+          "stopBlockCapNotified": false,
+          "loopArmSeen": true,
+          "idleEditNudges": 0,
+          "memoryWriteRequested": false,
+          "memoryWriteTurn": null,
+          "memoryWriteGrant": false,
+          "unverifiedSubagents": [],
+          "unverifiedCorrupt": false,
+          "phaseEntrySource": null,
+          "planUnit": null,
+          "planEpoch": null,
+          "checkEpoch": null,
+          "dcloseRecovery": null
+        }
+      }
+    },
+    "calls": []
+  }
+}

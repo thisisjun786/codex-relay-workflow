@@ -1,0 +1,151 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/pre-tool-use-guarding-automation-ownership",
+    "K5/hook-rendered",
+    "A/pabcd-state/automation-ownership-gate.test.ts",
+    "A/plugin/hook-e2e.test.mjs"
+  ],
+  "note": "Native caller identity: agent_id or agent_type present (the gate runs above the subagent exit) denies even for the owner's heartbeat; an empty or unsafe session_id denies; agent_id null with agent_type \"\" is treated as root and passes.",
+  "given": {
+    "files": {
+      "codex/automations/heartbeat-one/automation.toml": "version = 1\nid = \"heartbeat-one\"\nkind = \"heartbeat\"\nname = \"Example\"\nprompt = \"A prompt\"\nrrule = \"FREQ=HOURLY\"\nstatus = \"ACTIVE\"\ntarget_thread_id = \"rec-s1\"\ncreated_at = 123\nupdated_at = 456\n"
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "pre-tool-use-guarding-automation-ownership",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "mcp__codex_app__automation_update",
+          "tool_input": {
+            "mode": "delete",
+            "id": "heartbeat-one"
+          },
+          "tool_use_id": "rec-call-1",
+          "agent_id": "rec-a1",
+          "agent_type": "worker"
+        }
+      },
+      {
+        "hook": "pre-tool-use-guarding-automation-ownership",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "mcp__codex_app__automation_update",
+          "tool_input": {
+            "mode": "delete",
+            "id": "heartbeat-one"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-guarding-automation-ownership",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "../owner",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "mcp__codex_app__automation_update",
+          "tool_input": {
+            "mode": "delete",
+            "id": "heartbeat-one"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-guarding-automation-ownership",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "mcp__codex_app__automation_update",
+          "tool_input": {
+            "mode": "delete",
+            "id": "heartbeat-one"
+          },
+          "tool_use_id": "rec-call-1",
+          "agent_id": null,
+          "agent_type": ""
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "AUTOMATION-OWNERSHIP-01: Child or ambiguous caller identity cannot mutate root automations."
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "AUTOMATION-OWNERSHIP-01: Native caller session is missing or invalid."
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "AUTOMATION-OWNERSHIP-01: Native caller session is missing or invalid."
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/automations": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "codex/automations/heartbeat-one": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "codex/automations/heartbeat-one/automation.toml": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "version = 1\nid = \"heartbeat-one\"\nkind = \"heartbeat\"\nname = \"Example\"\nprompt = \"A prompt\"\nrrule = \"FREQ=HOURLY\"\nstatus = \"ACTIVE\"\ntarget_thread_id = \"rec-s1\"\ncreated_at = 123\nupdated_at = 456\n"
+      },
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      }
+    },
+    "calls": []
+  }
+}

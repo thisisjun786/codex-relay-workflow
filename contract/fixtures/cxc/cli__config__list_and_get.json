@@ -1,0 +1,71 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/config/list",
+    "K6/config/get",
+    "K8/codex-home/config.toml",
+    "A/config-guard/config-set.test.ts"
+  ],
+  "note": "`config list` shows each managed key, its live value and caution; `config get` reads it; a non-whitelisted key is refused with exit 2.",
+  "given": {
+    "files": {
+      "codex/config.toml": "[memories]\ndedicated_tools = false\n"
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "config",
+          "list"
+        ]
+      },
+      {
+        "cli": [
+          "config",
+          "get",
+          "memories.dedicated_tools"
+        ]
+      },
+      {
+        "cli": [
+          "config",
+          "get",
+          "features.hooks"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 2,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "memories.dedicated_tools = false\n  memories/{list,read,search,add_ad_hoc_note} 네 도구가 열립니다. add_ad_hoc_note는 메모리에 새 노트를 만드는 쓰기 경로이지만, codexclaw 의 PreToolUse 메모리 쓰기 게이트가 명시 요청 없는 쓰기를 거부합니다. 설치가 이 키를 켜고, 'cxc disable' 이 설치 이전 값으로 되돌립니다.\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "memories.dedicated_tools = false\n",
+        "stderr": ""
+      },
+      {
+        "exit": 2,
+        "stdout_form": "empty",
+        "stderr": "'features.hooks' is not a codexclaw-managed key. Run 'cxc config list' to see what can be set. codexclaw edits only whitelisted keys, so it never becomes a general TOML editor.\n"
+      }
+    ],
+    "tree": {
+      "codex/config.toml": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "[memories]\ndedicated_tools = false\n"
+      }
+    },
+    "calls": []
+  }
+}

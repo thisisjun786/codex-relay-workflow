@@ -1,0 +1,896 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/session",
+    "K8/ws/.codexclaw/sources",
+    "K11/threads",
+    "K12/git",
+    "A/pabcd-state/worktree-source-integration.test.ts",
+    "K12/git",
+    "K13/CODEX_THREAD_ID"
+  ],
+  "note": "Reproduction control then binding: unbound, a change in the linked worktree does not count for B->C (SOURCE-DELTA-01); after reset (IDLE->A is then illegal) `session source` binds the worktree, binding the same worktree again is accepted, and a root that is not a worktree is refused.",
+  "given": {
+    "files": {
+      "ws/seed": "seed"
+    },
+    "json": {
+      "ws/.codexclaw/sessions/0190cafe-0279-7000-8000-000000000279.json": {
+        "phase": "A",
+        "sessionId": "0190cafe-0279-7000-8000-000000000279",
+        "slug": "",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "flags": {
+          "interview": false,
+          "auditPassed": false,
+          "checkPassed": false
+        },
+        "supersededBy": null,
+        "injectedTurns": [],
+        "lastInjectedPhase": null,
+        "orchestrationActive": true,
+        "interview": null,
+        "stopBlockPhase": null,
+        "stopBlockCount": 0,
+        "stopBlockWorkPhaseId": null,
+        "stopMetricCursor": 0,
+        "stopBlockTotal": 0,
+        "stopBlockTurnId": null,
+        "stopBlockCapNotified": false,
+        "loopArmSeen": false,
+        "idleEditNudges": 0,
+        "memoryWriteRequested": false,
+        "memoryWriteTurn": null,
+        "memoryWriteGrant": false,
+        "unverifiedSubagents": [],
+        "unverifiedCorrupt": false,
+        "phaseEntrySource": null,
+        "planUnit": null,
+        "planEpoch": null,
+        "checkEpoch": null,
+        "dcloseRecovery": null
+      }
+    },
+    "env": {
+      "CODEX_THREAD_ID": "0190cafe-0279-7000-8000-000000000279"
+    },
+    "git": {
+      "commit": "seed",
+      "worktrees": [
+        {
+          "path": "tmp/wt",
+          "branch": "work"
+        }
+      ]
+    },
+    "sqlite": {
+      "codex/state_5.sqlite": [
+        "CREATE TABLE threads (id TEXT PRIMARY KEY, cwd TEXT, archived INTEGER, source TEXT)",
+        "INSERT INTO threads (id, cwd, archived, source) VALUES ('0190cafe-0279-7000-8000-000000000279', '${WS}', 0, 'cli')"
+      ]
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "session",
+          "current",
+          "--json"
+        ]
+      },
+      {
+        "cli": [
+          "orchestrate",
+          "B",
+          "--session",
+          "0190cafe-0279-7000-8000-000000000279",
+          "--cwd",
+          "${WS}",
+          "--attest",
+          "{\"from\":\"A\",\"to\":\"B\",\"did\":\"integration fixture work\",\"auditOutput\":\"VERDICT: PASS\",\"auditVerdict\":\"pass\"}"
+        ]
+      },
+      {
+        "write": {
+          "tmp/wt/implemented": "yes\n"
+        }
+      },
+      {
+        "cli": [
+          "orchestrate",
+          "C",
+          "--session",
+          "0190cafe-0279-7000-8000-000000000279",
+          "--cwd",
+          "${WS}",
+          "--attest",
+          "{\"from\":\"B\",\"to\":\"C\",\"did\":\"integration fixture work\"}"
+        ]
+      },
+      {
+        "cli": [
+          "orchestrate",
+          "reset",
+          "--session",
+          "0190cafe-0279-7000-8000-000000000279",
+          "--cwd",
+          "${WS}"
+        ]
+      },
+      {
+        "cli": [
+          "orchestrate",
+          "A",
+          "--session",
+          "0190cafe-0279-7000-8000-000000000279",
+          "--cwd",
+          "${WS}"
+        ]
+      },
+      {
+        "cli": [
+          "session",
+          "source",
+          "${TMP}/wt",
+          "--json"
+        ]
+      },
+      {
+        "cli": [
+          "session",
+          "source",
+          "${TMP}/wt",
+          "--json"
+        ]
+      },
+      {
+        "cli": [
+          "session",
+          "source",
+          "${TMP}",
+          "--json"
+        ]
+      },
+      {
+        "cli": [
+          "orchestrate",
+          "status",
+          "--session",
+          "0190cafe-0279-7000-8000-000000000279",
+          "--cwd",
+          "${WS}",
+          "--json"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "ok": true,
+          "sessionId": "<UUID_1>",
+          "cwd": "${WS}",
+          "sourceCwd": "${WS}",
+          "source": "CODEX_THREAD_ID",
+          "dbPath": "${CODEX_HOME}/state_5.sqlite",
+          "statePath": "${WS}/.codexclaw/sessions/<UUID_1>.json",
+          "stateExists": true,
+          "phase": "A",
+          "created": false,
+          "hooksVerified": false
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "orchestrate B: current=A -> B (A → B, session <UUID_1>)\n",
+        "stderr": ""
+      },
+      {
+        "action": "write",
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "text",
+        "stdout": "orchestrate C: current=B session=<UUID_1>; the source is unchanged since B began (f095d0b), so nothing was implemented in this B (SOURCE-DELTA-01). Implement inside B rather than carrying earlier work across the edge. Nothing was written.\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "orchestrate reset: current=B -> IDLE (session <UUID_1>)\n",
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "text",
+        "stdout": "orchestrate A: current=IDLE session=<UUID_1>; illegal transition IDLE->A\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "ok": true,
+          "sessionId": "<UUID_1>",
+          "cwd": "${WS}",
+          "sourceCwd": "${TMP}/wt",
+          "sourceIdentity": {
+            "kind": "resolved",
+            "commitSha": "f095d0b6f3af09c010c4520879173374c506a8b6",
+            "dirty": true,
+            "treeHash": "1402c9e5de3ced20986c8b130532286dfad3ebafef30c0a74b570fd345887e95",
+            "capturedAt": "<TS>",
+            "sourceRoot": "${TMP}/wt"
+          },
+          "source": "CODEX_THREAD_ID",
+          "dbPath": "${CODEX_HOME}/state_5.sqlite",
+          "statePath": "${WS}/.codexclaw/sessions/<UUID_1>.json",
+          "stateExists": true,
+          "phase": "IDLE",
+          "created": false,
+          "hooksVerified": false
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "ok": true,
+          "sessionId": "<UUID_1>",
+          "cwd": "${WS}",
+          "sourceCwd": "${TMP}/wt",
+          "sourceIdentity": {
+            "kind": "resolved",
+            "commitSha": "f095d0b6f3af09c010c4520879173374c506a8b6",
+            "dirty": true,
+            "treeHash": "1402c9e5de3ced20986c8b130532286dfad3ebafef30c0a74b570fd345887e95",
+            "capturedAt": "<TS>",
+            "sourceRoot": "${TMP}/wt"
+          },
+          "source": "CODEX_THREAD_ID",
+          "dbPath": "${CODEX_HOME}/state_5.sqlite",
+          "statePath": "${WS}/.codexclaw/sessions/<UUID_1>.json",
+          "stateExists": true,
+          "phase": "IDLE",
+          "created": false,
+          "hooksVerified": false
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "ok": false,
+          "error": "SOURCE-ROOT: Cannot resolve source Git worktree identity.",
+          "hooksVerified": false
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "phase": "IDLE",
+          "flags": {
+            "interview": false,
+            "auditPassed": false,
+            "checkPassed": false
+          },
+          "sessionId": "<UUID_1>",
+          "selection": "explicit"
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/state_5.sqlite": {
+        "type": "file",
+        "mode": "0644",
+        "form": "sqlite",
+        "json": {
+          "tables": [
+            {
+              "name": "threads",
+              "sql": "CREATE TABLE threads (id TEXT PRIMARY KEY, cwd TEXT, archived INTEGER, source TEXT)",
+              "rows": [
+                {
+                  "id": "<UUID_1>",
+                  "cwd": "${WS}",
+                  "archived": 0,
+                  "source": "cli"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "tmp/wt": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "tmp/wt/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "tmp/wt/.codexclaw/sessions": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "tmp/wt/.codexclaw/sessions/<UUID_1>.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "phase": "A",
+          "sessionId": "<UUID_1>",
+          "slug": "",
+          "updatedAt": "<TS>",
+          "flags": {
+            "interview": false,
+            "auditPassed": false,
+            "checkPassed": false
+          },
+          "supersededBy": null,
+          "injectedTurns": [],
+          "lastInjectedPhase": null,
+          "orchestrationActive": true,
+          "interview": null,
+          "stopBlockPhase": null,
+          "stopBlockCount": 0,
+          "stopBlockWorkPhaseId": null,
+          "stopMetricCursor": 0,
+          "stopBlockTotal": 0,
+          "stopBlockTurnId": null,
+          "stopBlockCapNotified": false,
+          "loopArmSeen": false,
+          "idleEditNudges": 0,
+          "memoryWriteRequested": false,
+          "memoryWriteTurn": null,
+          "memoryWriteGrant": false,
+          "unverifiedSubagents": [],
+          "unverifiedCorrupt": false,
+          "phaseEntrySource": null,
+          "planUnit": null,
+          "planEpoch": null,
+          "checkEpoch": null,
+          "dcloseRecovery": null
+        }
+      },
+      "tmp/wt/.git": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "gitdir: ${WS}/.git/worktrees/wt\n"
+      },
+      "tmp/wt/implemented": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "yes\n"
+      },
+      "tmp/wt/seed": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "seed"
+      },
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/ledger.jsonl": {
+        "type": "file",
+        "mode": "0644",
+        "form": "jsonl",
+        "jsonl": [
+          {
+            "ts": "<TS>",
+            "sessionId": "<UUID_1>",
+            "from": "A",
+            "to": "B",
+            "reason": "cli",
+            "evidence": "integration fixture work"
+          },
+          {
+            "ts": "<TS>",
+            "sessionId": "<UUID_1>",
+            "from": "B",
+            "to": "IDLE",
+            "reason": "reset"
+          }
+        ]
+      },
+      "ws/.codexclaw/sessions": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/sessions/<UUID_1>.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty-nonl",
+        "json": {
+          "phase": "IDLE",
+          "sessionId": "<UUID_1>",
+          "slug": "",
+          "updatedAt": "<TS>",
+          "flags": {
+            "interview": false,
+            "auditPassed": false,
+            "checkPassed": false
+          },
+          "supersededBy": null,
+          "injectedTurns": [],
+          "lastInjectedPhase": null,
+          "orchestrationActive": false,
+          "interview": null,
+          "stopBlockPhase": null,
+          "stopBlockCount": 0,
+          "stopBlockWorkPhaseId": null,
+          "stopMetricCursor": 0,
+          "stopBlockTotal": 0,
+          "stopBlockTurnId": null,
+          "stopBlockCapNotified": false,
+          "loopArmSeen": false,
+          "idleEditNudges": 0,
+          "memoryWriteRequested": false,
+          "memoryWriteTurn": null,
+          "memoryWriteGrant": false,
+          "unverifiedSubagents": [],
+          "unverifiedCorrupt": false,
+          "phaseEntrySource": null,
+          "planUnit": null,
+          "planEpoch": null,
+          "checkEpoch": null,
+          "dcloseRecovery": null
+        }
+      },
+      "ws/.codexclaw/sources": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/sources/<UUID_1>.json": {
+        "type": "file",
+        "mode": "0600",
+        "form": "json-pretty",
+        "json": {
+          "version": 1,
+          "ownerSessionId": "<UUID_1>",
+          "nativeCwd": "${WS}",
+          "sourceRoot": "${TMP}/wt",
+          "commonDir": "${WS}/.git",
+          "gitDir": "${WS}/.git/worktrees/wt"
+        }
+      },
+      "ws/.git": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/seed": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "seed"
+      }
+    },
+    "calls": [
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "HEAD"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "status",
+          "--porcelain=v1",
+          "-z",
+          "--untracked-files=all"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "HEAD"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "status",
+          "--porcelain=v1",
+          "-z",
+          "--untracked-files=all"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--path-format=absolute",
+          "--git-common-dir"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--absolute-git-dir"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${TMP}/wt"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--path-format=absolute",
+          "--git-common-dir"
+        ],
+        "cwd": "${TMP}/wt"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--absolute-git-dir"
+        ],
+        "cwd": "${TMP}/wt"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--path-format=absolute",
+          "--git-common-dir"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--absolute-git-dir"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${TMP}/wt"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--path-format=absolute",
+          "--git-common-dir"
+        ],
+        "cwd": "${TMP}/wt"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--absolute-git-dir"
+        ],
+        "cwd": "${TMP}/wt"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--path-format=absolute",
+          "--git-common-dir"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--absolute-git-dir"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${TMP}/wt"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--path-format=absolute",
+          "--git-common-dir"
+        ],
+        "cwd": "${TMP}/wt"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--absolute-git-dir"
+        ],
+        "cwd": "${TMP}/wt"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "HEAD"
+        ],
+        "cwd": "${TMP}/wt"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "status",
+          "--porcelain=v1",
+          "-z",
+          "--untracked-files=all"
+        ],
+        "cwd": "${TMP}/wt"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--path-format=absolute",
+          "--git-common-dir"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--absolute-git-dir"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${TMP}/wt"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--path-format=absolute",
+          "--git-common-dir"
+        ],
+        "cwd": "${TMP}/wt"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--absolute-git-dir"
+        ],
+        "cwd": "${TMP}/wt"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--path-format=absolute",
+          "--git-common-dir"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--absolute-git-dir"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${TMP}/wt"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--path-format=absolute",
+          "--git-common-dir"
+        ],
+        "cwd": "${TMP}/wt"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--absolute-git-dir"
+        ],
+        "cwd": "${TMP}/wt"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--path-format=absolute",
+          "--git-common-dir"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--absolute-git-dir"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${TMP}/wt"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--path-format=absolute",
+          "--git-common-dir"
+        ],
+        "cwd": "${TMP}/wt"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--absolute-git-dir"
+        ],
+        "cwd": "${TMP}/wt"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "HEAD"
+        ],
+        "cwd": "${TMP}/wt"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "status",
+          "--porcelain=v1",
+          "-z",
+          "--untracked-files=all"
+        ],
+        "cwd": "${TMP}/wt"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--path-format=absolute",
+          "--git-common-dir"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--absolute-git-dir"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${TMP}"
+      }
+    ]
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/config/help",
+    "K6/exit-codes",
+    "A/plugin/cli-usage.test.mjs"
+  ],
+  "note": "`cxc config get --help`: whether the subcommand treats --help as help, and what it writes.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "config",
+          "get",
+          "--help"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 2,
+    "steps": [
+      {
+        "exit": 2,
+        "stdout_form": "empty",
+        "stderr": "'--help' is not a codexclaw-managed key. Run 'cxc config list' to see what can be set. codexclaw edits only whitelisted keys, so it never becomes a general TOML editor.\n"
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

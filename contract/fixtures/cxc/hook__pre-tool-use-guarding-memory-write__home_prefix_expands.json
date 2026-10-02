@@ -1,0 +1,123 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/pre-tool-use-guarding-memory-write",
+    "K5/hook-rendered",
+    "A/pabcd-state/memory-write-gate.test.ts",
+    "K13/CODEX_HOME"
+  ],
+  "note": "Home prefixes expand against HOME: with CODEX_HOME=${HOME}/.codex, `~/.codex/memories/...` and `$HOME/.codex/memories/...` destinations are memory writes and deny.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "pre-tool-use-guarding-memory-write",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi > ~/.codex/memories/n.md"
+          },
+          "tool_use_id": "rec-call-1"
+        },
+        "env": {
+          "CODEX_HOME": "${HOME}/.codex"
+        }
+      },
+      {
+        "hook": "pre-tool-use-guarding-memory-write",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi > $HOME/.codex/memories/n.md"
+          },
+          "tool_use_id": "rec-call-1"
+        },
+        "env": {
+          "CODEX_HOME": "${HOME}/.codex"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "[codexclaw MEMORY-WRITE-GATE] Blocked a write of a file under the Codex memories directory (${HOME}/.codex/memories/n.md): this session has no explicit user request to remember anything. Memory notes outlive codexclaw and reach every later session, so they are written only when the user asks. Two ways forward: ask the user to confirm they want this remembered (a prompt such as \"기억해둬\" or \"remember this\" authorizes the next write), or record an explicit grant with `cxc memory allow-write --session rec-s1` from ${WS}. The grant is stored per cwd; issuing it from a different working directory will print success and never be seen by this hook. If the user did ask, say so and retry — the request must appear in their own message, not in yours.",
+            "additionalContext": "[codexclaw MEMORY-WRITE-GATE] Blocked a write of a file under the Codex memories directory (${HOME}/.codex/memories/n.md): this session has no explicit user request to remember anything. Memory notes outlive codexclaw and reach every later session, so they are written only when the user asks. Two ways forward: ask the user to confirm they want this remembered (a prompt such as \"기억해둬\" or \"remember this\" authorizes the next write), or record an explicit grant with `cxc memory allow-write --session rec-s1` from ${WS}. The grant is stored per cwd; issuing it from a different working directory will print success and never be seen by this hook. If the user did ask, say so and retry — the request must appear in their own message, not in yours."
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "[codexclaw MEMORY-WRITE-GATE] Blocked a write of a file under the Codex memories directory (${HOME}/.codex/memories/n.md): this session has no explicit user request to remember anything. Memory notes outlive codexclaw and reach every later session, so they are written only when the user asks. Two ways forward: ask the user to confirm they want this remembered (a prompt such as \"기억해둬\" or \"remember this\" authorizes the next write), or record an explicit grant with `cxc memory allow-write --session rec-s1` from ${WS}. The grant is stored per cwd; issuing it from a different working directory will print success and never be seen by this hook. If the user did ask, say so and retry — the request must appear in their own message, not in yours.",
+            "additionalContext": "[codexclaw MEMORY-WRITE-GATE] Blocked a write of a file under the Codex memories directory (${HOME}/.codex/memories/n.md): this session has no explicit user request to remember anything. Memory notes outlive codexclaw and reach every later session, so they are written only when the user asks. Two ways forward: ask the user to confirm they want this remembered (a prompt such as \"기억해둬\" or \"remember this\" authorizes the next write), or record an explicit grant with `cxc memory allow-write --session rec-s1` from ${WS}. The grant is stored per cwd; issuing it from a different working directory will print success and never be seen by this hook. If the user did ask, say so and retry — the request must appear in their own message, not in yours."
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "home/.codex": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "home/.codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "home/.codex/codexclaw/hook-observations": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "home/.codex/codexclaw/hook-observations/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "home/.codex/codexclaw/hook-observations/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "home/.codex/codexclaw/hook-observations/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b/bf90d1daea34214714448baf1ab0fadbb5c2d2d23daefdeaf5c74ea215b52e89.json": {
+        "type": "file",
+        "mode": "0600",
+        "form": "json-line",
+        "json": {
+          "schemaVersion": 1,
+          "sessionId": "rec-s1",
+          "agentId": null,
+          "component": "pabcd-state",
+          "event": "pre-tool-use-memory-write",
+          "observedAt": "<TS>",
+          "pluginRoot": "${PLUGIN_ROOT}",
+          "pluginVersion": "<VERSION>",
+          "manifestDigest": "<DIGEST>",
+          "entrypoint": "components/pabcd-state/dist/cli.js",
+          "entrypointDigest": "<DIGEST>",
+          "outcome": "invoked"
+        }
+      }
+    },
+    "calls": []
+  }
+}

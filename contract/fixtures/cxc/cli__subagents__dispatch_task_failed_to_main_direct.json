@@ -1,0 +1,412 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/subagents/dispatch",
+    "K7/subagents",
+    "K8/ws/.codexclaw/dispatches",
+    "A/subagent-config/fallback-dispatch.test.ts",
+    "A/subagent-config/fallback-dispatch-cli.test.ts"
+  ],
+  "note": "Task failure on the last candidate: a still-running child reconciles; an invalid taskFailure kind is refused; a confirmed stopped child with evidence and reconciliation ends in main-direct and records taskFailure; status reads it back.",
+  "given": {
+    "json": {
+      "ws/.codexclaw/dispatches/rec-s1/one.json": {
+        "version": 1,
+        "sessionId": "rec-s1",
+        "id": "one",
+        "role": "executor",
+        "candidates": [
+          {
+            "model": "rec/exec-primary",
+            "effort": "high"
+          },
+          {
+            "model": "rec/exec-fallback",
+            "effort": null
+          }
+        ],
+        "attempts": [
+          {
+            "id": "att-1",
+            "candidate": {
+              "model": "rec/exec-primary",
+              "effort": "high"
+            },
+            "claimed": true,
+            "agentId": "child-a",
+            "observedModel": null,
+            "code": null,
+            "taskFailure": null,
+            "status": "failed",
+            "reconciliation": "first child stopped",
+            "spawnIssued": false,
+            "toolUseId": null
+          },
+          {
+            "id": "att-2",
+            "candidate": {
+              "model": "rec/exec-fallback",
+              "effort": null
+            },
+            "claimed": true,
+            "agentId": "child-b",
+            "observedModel": null,
+            "code": null,
+            "taskFailure": null,
+            "status": "running",
+            "reconciliation": null,
+            "spawnIssued": true,
+            "toolUseId": "rec-call-1"
+          }
+        ],
+        "status": "active"
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "subagents",
+          "dispatch"
+        ],
+        "stdin": {
+          "action": "report",
+          "sessionId": "rec-s1",
+          "dispatchId": "one",
+          "attemptId": "att-2",
+          "outcome": "task_failed",
+          "agentId": "child-b",
+          "executionState": "running",
+          "reconciliation": "still running",
+          "taskFailure": {
+            "kind": "stagnation",
+            "evidence": "no progress"
+          }
+        }
+      },
+      {
+        "cli": [
+          "subagents",
+          "dispatch"
+        ],
+        "stdin": {
+          "action": "report",
+          "sessionId": "rec-s1",
+          "dispatchId": "one",
+          "attemptId": "att-2",
+          "outcome": "task_failed",
+          "agentId": "child-b",
+          "executionState": "stopped",
+          "reconciliation": "stopped",
+          "taskFailure": {
+            "kind": "boredom",
+            "evidence": "x"
+          }
+        }
+      },
+      {
+        "cli": [
+          "subagents",
+          "dispatch"
+        ],
+        "stdin": {
+          "action": "report",
+          "sessionId": "rec-s1",
+          "dispatchId": "one",
+          "attemptId": "att-2",
+          "outcome": "task_failed",
+          "agentId": "child-b",
+          "executionState": "stopped",
+          "reconciliation": "second child stopped; partial work preserved",
+          "taskFailure": {
+            "kind": "stagnation",
+            "evidence": "no advancement at the stated review point"
+          }
+        }
+      },
+      {
+        "cli": [
+          "subagents",
+          "dispatch"
+        ],
+        "stdin": {
+          "action": "status",
+          "sessionId": "rec-s1",
+          "dispatchId": "one"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "action": "reconcile",
+          "dispatchId": "one",
+          "attemptId": "att-2",
+          "independentReviewRequired": false,
+          "attempts": [
+            {
+              "id": "att-1",
+              "candidate": {
+                "model": "rec/exec-primary",
+                "effort": "high"
+              },
+              "claimed": true,
+              "agentId": "child-a",
+              "observedModel": null,
+              "code": null,
+              "taskFailure": null,
+              "status": "failed",
+              "reconciliation": "first child stopped",
+              "spawnIssued": false,
+              "toolUseId": null
+            },
+            {
+              "id": "att-2",
+              "candidate": {
+                "model": "rec/exec-fallback",
+                "effort": null
+              },
+              "claimed": true,
+              "agentId": "child-b",
+              "observedModel": null,
+              "code": null,
+              "taskFailure": null,
+              "status": "reconcile",
+              "reconciliation": null,
+              "spawnIssued": true,
+              "toolUseId": "rec-call-1"
+            }
+          ],
+          "reason": "confirm the child is stopped before task handoff"
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "error": "invalid taskFailure kind"
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "action": "main-direct",
+          "dispatchId": "one",
+          "attemptId": "att-2",
+          "independentReviewRequired": false,
+          "attempts": [
+            {
+              "id": "att-1",
+              "candidate": {
+                "model": "rec/exec-primary",
+                "effort": "high"
+              },
+              "claimed": true,
+              "agentId": "child-a",
+              "observedModel": null,
+              "code": null,
+              "taskFailure": null,
+              "status": "failed",
+              "reconciliation": "first child stopped",
+              "spawnIssued": false,
+              "toolUseId": null
+            },
+            {
+              "id": "att-2",
+              "candidate": {
+                "model": "rec/exec-fallback",
+                "effort": null
+              },
+              "claimed": true,
+              "agentId": "child-b",
+              "observedModel": null,
+              "code": null,
+              "taskFailure": {
+                "kind": "stagnation",
+                "evidence": "no advancement at the stated review point"
+              },
+              "status": "failed",
+              "reconciliation": "second child stopped; partial work preserved",
+              "spawnIssued": true,
+              "toolUseId": "rec-call-1"
+            }
+          ]
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "action": "main-direct",
+          "dispatchId": "one",
+          "attemptId": "att-2",
+          "independentReviewRequired": false,
+          "attempts": [
+            {
+              "id": "att-1",
+              "candidate": {
+                "model": "rec/exec-primary",
+                "effort": "high"
+              },
+              "claimed": true,
+              "agentId": "child-a",
+              "observedModel": null,
+              "code": null,
+              "taskFailure": null,
+              "status": "failed",
+              "reconciliation": "first child stopped",
+              "spawnIssued": false,
+              "toolUseId": null
+            },
+            {
+              "id": "att-2",
+              "candidate": {
+                "model": "rec/exec-fallback",
+                "effort": null
+              },
+              "claimed": true,
+              "agentId": "child-b",
+              "observedModel": null,
+              "code": null,
+              "taskFailure": {
+                "kind": "stagnation",
+                "evidence": "no advancement at the stated review point"
+              },
+              "status": "failed",
+              "reconciliation": "second child stopped; partial work preserved",
+              "spawnIssued": true,
+              "toolUseId": "rec-call-1"
+            }
+          ]
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/dispatches": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/dispatches/rec-s1": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/dispatches/rec-s1/one.json": {
+        "type": "file",
+        "mode": "0600",
+        "form": "json-pretty",
+        "json": {
+          "version": 1,
+          "sessionId": "rec-s1",
+          "id": "one",
+          "role": "executor",
+          "candidates": [
+            {
+              "model": "rec/exec-primary",
+              "effort": "high"
+            },
+            {
+              "model": "rec/exec-fallback",
+              "effort": null
+            }
+          ],
+          "attempts": [
+            {
+              "id": "att-1",
+              "candidate": {
+                "model": "rec/exec-primary",
+                "effort": "high"
+              },
+              "claimed": true,
+              "agentId": "child-a",
+              "observedModel": null,
+              "code": null,
+              "taskFailure": null,
+              "status": "failed",
+              "reconciliation": "first child stopped",
+              "spawnIssued": false,
+              "toolUseId": null
+            },
+            {
+              "id": "att-2",
+              "candidate": {
+                "model": "rec/exec-fallback",
+                "effort": null
+              },
+              "claimed": true,
+              "agentId": "child-b",
+              "observedModel": null,
+              "code": null,
+              "taskFailure": {
+                "kind": "stagnation",
+                "evidence": "no advancement at the stated review point"
+              },
+              "status": "failed",
+              "reconciliation": "second child stopped; partial work preserved",
+              "spawnIssued": true,
+              "toolUseId": "rec-call-1"
+            }
+          ],
+          "status": "main-direct"
+        }
+      }
+    },
+    "calls": [
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

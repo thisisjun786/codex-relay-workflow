@@ -1,0 +1,34 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/subagents/help",
+    "K6/exit-codes",
+    "A/plugin/cli-usage.test.mjs"
+  ],
+  "note": "`cxc subagents help`: usage text and exit status; nothing written.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "subagents",
+          "help"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "cxc subagents — per-role subagent model/prompt config (.codexclaw/subagents.json)\n\n  subagents               list all role configs\n  subagents get <role>    show one role config\n  subagents set <role> --mode default|model [--model <id>] [--effort <level>|--clear-effort] [--prompt <text>|--clear-prompt]\n  --fallback-model <id> [--fallback-effort low|medium|high|xhigh|inherit] | --clear-fallback\n  subagents dispatch      main-owned fallback protocol; JSON stdin (start/claim/report/status)\n  subagents register executor|architect   register or update managed role; restart Codex afterward\n  subagents reset <role>  remove the role override and inherit the next scope\n  Append --global to list/get/set/reset to manage user defaults\n  subagents trust-token   print an export bound to this repo and exact config\n\n  roles: explorer, reviewer, executor, architect\n  efforts: low, medium, high, xhigh (unset = inherit the parent session's effort)\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

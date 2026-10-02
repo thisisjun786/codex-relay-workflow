@@ -1,0 +1,147 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/memory/allow-write",
+    "K8/ws/.codexclaw/sessions",
+    "A/pabcd-state/memory-write-gate.test.ts"
+  ],
+  "note": "The one-write grant is stored in the cwd's session state; a missing or invalid --session is a parse error (exit 2).",
+  "given": {
+    "json": {
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "phase": "IDLE",
+        "sessionId": "rec-s1",
+        "slug": "",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "flags": {
+          "interview": false,
+          "auditPassed": false,
+          "checkPassed": false
+        },
+        "supersededBy": null,
+        "injectedTurns": [],
+        "lastInjectedPhase": null,
+        "orchestrationActive": false,
+        "interview": null,
+        "stopBlockPhase": null,
+        "stopBlockCount": 0,
+        "stopBlockWorkPhaseId": null,
+        "stopMetricCursor": 0,
+        "stopBlockTotal": 0,
+        "stopBlockTurnId": null,
+        "stopBlockCapNotified": false,
+        "loopArmSeen": false,
+        "idleEditNudges": 0,
+        "memoryWriteRequested": false,
+        "memoryWriteTurn": null,
+        "memoryWriteGrant": false,
+        "unverifiedSubagents": [],
+        "unverifiedCorrupt": false,
+        "phaseEntrySource": null,
+        "planUnit": null,
+        "planEpoch": null,
+        "checkEpoch": null,
+        "dcloseRecovery": null
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "memory",
+          "allow-write",
+          "--session",
+          "rec-s1"
+        ]
+      },
+      {
+        "cli": [
+          "memory",
+          "allow-write"
+        ]
+      },
+      {
+        "cli": [
+          "memory",
+          "allow-write",
+          "--session",
+          "../x"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 2,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "memory allow-write: session rec-s1 may perform ONE memory write; grant recorded for cwd ${WS}; the next write consumes this grant.\n",
+        "stderr": ""
+      },
+      {
+        "exit": 2,
+        "stdout_form": "empty",
+        "stderr": "memory: missing required argument: --session <id> (must be a canonical session id)\nUsage:\n  cxc memory allow-write --session <id>\n  cxc memory allow-write --session=<id>\n  cxc memory allow-write --help\n\nAuthorizes exactly ONE memory write (memories.add_ad_hoc_note, or an edit under\n~/.codex/memories) for that session. The grant is consumed by the next write.\n\nThe grant is stored at <cwd>/.codexclaw/sessions/<id>.json and is keyed by that\ncwd plus the session id. The success line names the cwd it wrote to. Issuing the\ngrant from a different working directory will print success and never be seen by\nthe hook running in this session.\n\nThe ordinary path needs no command: when the user asks in their own words to\nremember something, the session records that request and the next write passes.\n"
+      },
+      {
+        "exit": 2,
+        "stdout_form": "empty",
+        "stderr": "memory: missing required argument: --session <id> (must be a canonical session id)\nUsage:\n  cxc memory allow-write --session <id>\n  cxc memory allow-write --session=<id>\n  cxc memory allow-write --help\n\nAuthorizes exactly ONE memory write (memories.add_ad_hoc_note, or an edit under\n~/.codex/memories) for that session. The grant is consumed by the next write.\n\nThe grant is stored at <cwd>/.codexclaw/sessions/<id>.json and is keyed by that\ncwd plus the session id. The success line names the cwd it wrote to. Issuing the\ngrant from a different working directory will print success and never be seen by\nthe hook running in this session.\n\nThe ordinary path needs no command: when the user asks in their own words to\nremember something, the session records that request and the next write passes.\n"
+      }
+    ],
+    "tree": {
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/sessions": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty-nonl",
+        "json": {
+          "phase": "IDLE",
+          "sessionId": "rec-s1",
+          "slug": "",
+          "updatedAt": "<TS>",
+          "flags": {
+            "interview": false,
+            "auditPassed": false,
+            "checkPassed": false
+          },
+          "supersededBy": null,
+          "injectedTurns": [],
+          "lastInjectedPhase": null,
+          "orchestrationActive": false,
+          "interview": null,
+          "stopBlockPhase": null,
+          "stopBlockCount": 0,
+          "stopBlockWorkPhaseId": null,
+          "stopMetricCursor": 0,
+          "stopBlockTotal": 0,
+          "stopBlockTurnId": null,
+          "stopBlockCapNotified": false,
+          "loopArmSeen": false,
+          "idleEditNudges": 0,
+          "memoryWriteRequested": false,
+          "memoryWriteTurn": null,
+          "memoryWriteGrant": true,
+          "unverifiedSubagents": [],
+          "unverifiedCorrupt": false,
+          "phaseEntrySource": null,
+          "planUnit": null,
+          "planEpoch": null,
+          "checkEpoch": null,
+          "dcloseRecovery": null
+        }
+      }
+    },
+    "calls": []
+  }
+}

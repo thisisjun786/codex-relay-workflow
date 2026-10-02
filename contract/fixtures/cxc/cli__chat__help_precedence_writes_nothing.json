@@ -1,0 +1,109 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/chat/help",
+    "K6/memory/help",
+    "A/recall/cli-arg-hygiene.test.ts"
+  ],
+  "note": "--help/-h anywhere wins (even with --rebuild), `chat index help` and `chat index /?` are help, an unknown kind prints usage; all exit 0 and no index is created.",
+  "given": {
+    "files": {
+      "codex/sessions/2025/11/01/rollout-2025-11-01T01-00-00-019f0000-0000-7000-8000-00000000dddd.jsonl": "{\"timestamp\":\"2025-11-01T01:00:00.000Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"019f0000-0000-7000-8000-00000000dddd\",\"timestamp\":\"2025-11-01T01:00:00.000Z\",\"cwd\":\"${WS}\",\"originator\":\"codex-tui\",\"cli_version\":\"0.130.0\",\"instructions\":\"base instructions\"}}\n{\"timestamp\":\"2025-11-01T01:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"ancient question about the trigram index\"}]}}\n{\"timestamp\":\"2025-11-01T01:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"ancient answer\"}]}}\n",
+      "codex/sessions/2025/12/30/rollout-2025-12-30T05-00-00-019f0000-0000-7000-8000-00000000cccc.jsonl": "{\"timestamp\":\"2025-12-30T05:00:00.000Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"019f0000-0000-7000-8000-00000000cccc\",\"timestamp\":\"2025-12-30T05:00:00.000Z\",\"cwd\":\"/proj/elsewhere\",\"originator\":\"codex-tui\",\"cli_version\":\"0.130.0\",\"instructions\":\"base instructions\"}}\n{\"timestamp\":\"2025-12-30T05:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"unrelated project question about the trigram index\"}]}}\n{\"timestamp\":\"2025-12-30T05:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"unrelated answer\"}]}}\n",
+      "codex/sessions/2025/12/31/rollout-2025-12-31T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl": "{\"timestamp\":\"2025-12-31T01:00:00.000Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"019f0000-0000-7000-8000-00000000aaaa\",\"timestamp\":\"2025-12-31T01:00:00.000Z\",\"cwd\":\"${WS}\",\"originator\":\"codex-tui\",\"cli_version\":\"0.130.0\",\"instructions\":\"base instructions\"}}\n{\"timestamp\":\"2025-12-31T01:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"# AGENTS.md instructions injected preamble mentioning zebra\"}]}}\n{\"timestamp\":\"2025-12-31T01:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"please deploy the trigram index for korean search\"}]}}\n{\"timestamp\":\"2025-12-31T01:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"deployed the trigram index; korean 한글 검색 works now\"}]}}\n{\"timestamp\":\"2025-12-31T01:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",\"name\":\"exec_command\",\"arguments\":\"{\\\"cmd\\\":\\\"rg zebra-in-tool-arguments\\\"}\",\"call_id\":\"tool_1\"}}\n{\"timestamp\":\"2025-12-31T01:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"function_call_output\",\"call_id\":\"tool_1\",\"output\":\"tool output: zebra-in-tool-output\"}}\n{\"timestamp\":\"2025-12-31T01:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"한글 트라이그램 결과 확인해줘\"}]}}\n{\"timestamp\":\"2025-12-31T01:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"확인 완료: 트라이그램 인덱스 정상\"}]}}\n",
+      "codex/sessions/2025/12/31/rollout-2025-12-31T02-00-00-019f0000-0000-7000-8000-00000000bbbb.jsonl": "{\"timestamp\":\"2025-12-31T02:00:00.000Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"019f0000-0000-7000-8000-00000000bbbb\",\"timestamp\":\"2025-12-31T02:00:00.000Z\",\"cwd\":\"${WS}\",\"originator\":\"codex_exec\",\"cli_version\":\"0.130.0\",\"instructions\":\"base instructions\",\"thread_source\":\"subagent\",\"source\":{\"subagent\":{\"parent_thread_id\":\"019f0000-0000-7000-8000-00000000aaaa\",\"depth\":1}}}}\n{\"timestamp\":\"2025-12-31T02:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"subagent task about the trigram index\"}]}}\n{\"timestamp\":\"2025-12-31T02:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"subagent reply mentioning zebra too\"}]}}\n"
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "chat",
+          "index",
+          "--rebuild",
+          "--help"
+        ]
+      },
+      {
+        "cli": [
+          "chat",
+          "search",
+          "--help"
+        ]
+      },
+      {
+        "cli": [
+          "memory",
+          "search",
+          "-h"
+        ]
+      },
+      {
+        "cli": [
+          "chat",
+          "index",
+          "help"
+        ]
+      },
+      {
+        "cli": [
+          "chat",
+          "index",
+          "/?"
+        ]
+      },
+      {
+        "cli": [
+          "chat"
+        ]
+      }
+    ],
+    "observe": [
+      "cxc"
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "cxc chat search \"<query>\" [--days N] [--cwd PATH] [--role r] [--source main|subagent|all]\n                           [--limit N] [--context N] [--any] [--all] [--no-tools]\n                           [--recent] [--scan] [--no-refresh] [--synonyms] [--json]\ncxc chat index [--rebuild] [--status] [--json]\ncxc memory search \"<query>\" [--days N] [--limit N] [--any] [--no-synonyms]\n                             [--cwd PATH] [--cwd-only PATH] [--no-chat] [--json]\ncxc memory status [--json] [--home PATH]\ncxc memory requeue [--apply] [--include-context-window] [--kind K] [--limit N]\n                   [--retries N] [--json] [--home PATH]\n\n  --days N     restrict to the last N days (chat default 7, 0 = full history)\n  --cwd PATH   scope to PATH and to other checkouts of the same git origin\n               (chat: only those sessions; memory: rank those hits first)\n  --cwd-only PATH  memory search: drop hits recorded outside that project\n  --role r     only messages with this role (user|assistant|tool)\n  --source s   main (default) | subagent | all\n  --limit N    max hits (chat default 50, memory default 20)\n  --context N  include N neighbouring messages around each hit\n  --any        OR the query words (default: AND)\n  --all        include harness-injected synthetic messages\n  --no-tools   skip tool call/output (tool_log) matching\n  --recent     order by time instead of relevance (index engine default: relevance)\n  --rank       order by relevance (the default; accepted for explicitness)\n  --no-chat    memory search: do not fall back to raw chat when nothing matches\n  --scan       force the raw JSONL scan path (skip the sidecar index)\n  --no-refresh skip refresh-on-query ingest (fastest, index may be stale)\n  --no-synonyms memory search: raw words only — no ko/en synonyms, no korean stem\n  --synonyms   chat search: expand ko/en synonyms + korean stems (default off)\n  --json       machine-readable output (text fields clipped at 500 chars)\n  --full       with --json: emit unclipped text fields\n  --home PATH  search an alternate Codex home (default $CODEX_HOME ?? ~/.codex)\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "cxc chat search \"<query>\" [--days N] [--cwd PATH] [--role r] [--source main|subagent|all]\n                           [--limit N] [--context N] [--any] [--all] [--no-tools]\n                           [--recent] [--scan] [--no-refresh] [--synonyms] [--json]\ncxc chat index [--rebuild] [--status] [--json]\ncxc memory search \"<query>\" [--days N] [--limit N] [--any] [--no-synonyms]\n                             [--cwd PATH] [--cwd-only PATH] [--no-chat] [--json]\ncxc memory status [--json] [--home PATH]\ncxc memory requeue [--apply] [--include-context-window] [--kind K] [--limit N]\n                   [--retries N] [--json] [--home PATH]\n\n  --days N     restrict to the last N days (chat default 7, 0 = full history)\n  --cwd PATH   scope to PATH and to other checkouts of the same git origin\n               (chat: only those sessions; memory: rank those hits first)\n  --cwd-only PATH  memory search: drop hits recorded outside that project\n  --role r     only messages with this role (user|assistant|tool)\n  --source s   main (default) | subagent | all\n  --limit N    max hits (chat default 50, memory default 20)\n  --context N  include N neighbouring messages around each hit\n  --any        OR the query words (default: AND)\n  --all        include harness-injected synthetic messages\n  --no-tools   skip tool call/output (tool_log) matching\n  --recent     order by time instead of relevance (index engine default: relevance)\n  --rank       order by relevance (the default; accepted for explicitness)\n  --no-chat    memory search: do not fall back to raw chat when nothing matches\n  --scan       force the raw JSONL scan path (skip the sidecar index)\n  --no-refresh skip refresh-on-query ingest (fastest, index may be stale)\n  --no-synonyms memory search: raw words only — no ko/en synonyms, no korean stem\n  --synonyms   chat search: expand ko/en synonyms + korean stems (default off)\n  --json       machine-readable output (text fields clipped at 500 chars)\n  --full       with --json: emit unclipped text fields\n  --home PATH  search an alternate Codex home (default $CODEX_HOME ?? ~/.codex)\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "cxc chat search \"<query>\" [--days N] [--cwd PATH] [--role r] [--source main|subagent|all]\n                           [--limit N] [--context N] [--any] [--all] [--no-tools]\n                           [--recent] [--scan] [--no-refresh] [--synonyms] [--json]\ncxc chat index [--rebuild] [--status] [--json]\ncxc memory search \"<query>\" [--days N] [--limit N] [--any] [--no-synonyms]\n                             [--cwd PATH] [--cwd-only PATH] [--no-chat] [--json]\ncxc memory status [--json] [--home PATH]\ncxc memory requeue [--apply] [--include-context-window] [--kind K] [--limit N]\n                   [--retries N] [--json] [--home PATH]\n\n  --days N     restrict to the last N days (chat default 7, 0 = full history)\n  --cwd PATH   scope to PATH and to other checkouts of the same git origin\n               (chat: only those sessions; memory: rank those hits first)\n  --cwd-only PATH  memory search: drop hits recorded outside that project\n  --role r     only messages with this role (user|assistant|tool)\n  --source s   main (default) | subagent | all\n  --limit N    max hits (chat default 50, memory default 20)\n  --context N  include N neighbouring messages around each hit\n  --any        OR the query words (default: AND)\n  --all        include harness-injected synthetic messages\n  --no-tools   skip tool call/output (tool_log) matching\n  --recent     order by time instead of relevance (index engine default: relevance)\n  --rank       order by relevance (the default; accepted for explicitness)\n  --no-chat    memory search: do not fall back to raw chat when nothing matches\n  --scan       force the raw JSONL scan path (skip the sidecar index)\n  --no-refresh skip refresh-on-query ingest (fastest, index may be stale)\n  --no-synonyms memory search: raw words only — no ko/en synonyms, no korean stem\n  --synonyms   chat search: expand ko/en synonyms + korean stems (default off)\n  --json       machine-readable output (text fields clipped at 500 chars)\n  --full       with --json: emit unclipped text fields\n  --home PATH  search an alternate Codex home (default $CODEX_HOME ?? ~/.codex)\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "cxc chat search \"<query>\" [--days N] [--cwd PATH] [--role r] [--source main|subagent|all]\n                           [--limit N] [--context N] [--any] [--all] [--no-tools]\n                           [--recent] [--scan] [--no-refresh] [--synonyms] [--json]\ncxc chat index [--rebuild] [--status] [--json]\ncxc memory search \"<query>\" [--days N] [--limit N] [--any] [--no-synonyms]\n                             [--cwd PATH] [--cwd-only PATH] [--no-chat] [--json]\ncxc memory status [--json] [--home PATH]\ncxc memory requeue [--apply] [--include-context-window] [--kind K] [--limit N]\n                   [--retries N] [--json] [--home PATH]\n\n  --days N     restrict to the last N days (chat default 7, 0 = full history)\n  --cwd PATH   scope to PATH and to other checkouts of the same git origin\n               (chat: only those sessions; memory: rank those hits first)\n  --cwd-only PATH  memory search: drop hits recorded outside that project\n  --role r     only messages with this role (user|assistant|tool)\n  --source s   main (default) | subagent | all\n  --limit N    max hits (chat default 50, memory default 20)\n  --context N  include N neighbouring messages around each hit\n  --any        OR the query words (default: AND)\n  --all        include harness-injected synthetic messages\n  --no-tools   skip tool call/output (tool_log) matching\n  --recent     order by time instead of relevance (index engine default: relevance)\n  --rank       order by relevance (the default; accepted for explicitness)\n  --no-chat    memory search: do not fall back to raw chat when nothing matches\n  --scan       force the raw JSONL scan path (skip the sidecar index)\n  --no-refresh skip refresh-on-query ingest (fastest, index may be stale)\n  --no-synonyms memory search: raw words only — no ko/en synonyms, no korean stem\n  --synonyms   chat search: expand ko/en synonyms + korean stems (default off)\n  --json       machine-readable output (text fields clipped at 500 chars)\n  --full       with --json: emit unclipped text fields\n  --home PATH  search an alternate Codex home (default $CODEX_HOME ?? ~/.codex)\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "cxc chat search \"<query>\" [--days N] [--cwd PATH] [--role r] [--source main|subagent|all]\n                           [--limit N] [--context N] [--any] [--all] [--no-tools]\n                           [--recent] [--scan] [--no-refresh] [--synonyms] [--json]\ncxc chat index [--rebuild] [--status] [--json]\ncxc memory search \"<query>\" [--days N] [--limit N] [--any] [--no-synonyms]\n                             [--cwd PATH] [--cwd-only PATH] [--no-chat] [--json]\ncxc memory status [--json] [--home PATH]\ncxc memory requeue [--apply] [--include-context-window] [--kind K] [--limit N]\n                   [--retries N] [--json] [--home PATH]\n\n  --days N     restrict to the last N days (chat default 7, 0 = full history)\n  --cwd PATH   scope to PATH and to other checkouts of the same git origin\n               (chat: only those sessions; memory: rank those hits first)\n  --cwd-only PATH  memory search: drop hits recorded outside that project\n  --role r     only messages with this role (user|assistant|tool)\n  --source s   main (default) | subagent | all\n  --limit N    max hits (chat default 50, memory default 20)\n  --context N  include N neighbouring messages around each hit\n  --any        OR the query words (default: AND)\n  --all        include harness-injected synthetic messages\n  --no-tools   skip tool call/output (tool_log) matching\n  --recent     order by time instead of relevance (index engine default: relevance)\n  --rank       order by relevance (the default; accepted for explicitness)\n  --no-chat    memory search: do not fall back to raw chat when nothing matches\n  --scan       force the raw JSONL scan path (skip the sidecar index)\n  --no-refresh skip refresh-on-query ingest (fastest, index may be stale)\n  --no-synonyms memory search: raw words only — no ko/en synonyms, no korean stem\n  --synonyms   chat search: expand ko/en synonyms + korean stems (default off)\n  --json       machine-readable output (text fields clipped at 500 chars)\n  --full       with --json: emit unclipped text fields\n  --home PATH  search an alternate Codex home (default $CODEX_HOME ?? ~/.codex)\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "cxc chat search \"<query>\" [--days N] [--cwd PATH] [--role r] [--source main|subagent|all]\n                           [--limit N] [--context N] [--any] [--all] [--no-tools]\n                           [--recent] [--scan] [--no-refresh] [--synonyms] [--json]\ncxc chat index [--rebuild] [--status] [--json]\ncxc memory search \"<query>\" [--days N] [--limit N] [--any] [--no-synonyms]\n                             [--cwd PATH] [--cwd-only PATH] [--no-chat] [--json]\ncxc memory status [--json] [--home PATH]\ncxc memory requeue [--apply] [--include-context-window] [--kind K] [--limit N]\n                   [--retries N] [--json] [--home PATH]\n\n  --days N     restrict to the last N days (chat default 7, 0 = full history)\n  --cwd PATH   scope to PATH and to other checkouts of the same git origin\n               (chat: only those sessions; memory: rank those hits first)\n  --cwd-only PATH  memory search: drop hits recorded outside that project\n  --role r     only messages with this role (user|assistant|tool)\n  --source s   main (default) | subagent | all\n  --limit N    max hits (chat default 50, memory default 20)\n  --context N  include N neighbouring messages around each hit\n  --any        OR the query words (default: AND)\n  --all        include harness-injected synthetic messages\n  --no-tools   skip tool call/output (tool_log) matching\n  --recent     order by time instead of relevance (index engine default: relevance)\n  --rank       order by relevance (the default; accepted for explicitness)\n  --no-chat    memory search: do not fall back to raw chat when nothing matches\n  --scan       force the raw JSONL scan path (skip the sidecar index)\n  --no-refresh skip refresh-on-query ingest (fastest, index may be stale)\n  --no-synonyms memory search: raw words only — no ko/en synonyms, no korean stem\n  --synonyms   chat search: expand ko/en synonyms + korean stems (default off)\n  --json       machine-readable output (text fields clipped at 500 chars)\n  --full       with --json: emit unclipped text fields\n  --home PATH  search an alternate Codex home (default $CODEX_HOME ?? ~/.codex)\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

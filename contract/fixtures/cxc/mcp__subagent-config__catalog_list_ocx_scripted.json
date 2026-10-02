@@ -1,0 +1,132 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K10/tools/call/catalog_list",
+    "K12/ocx",
+    "A/subagent-config/mcp.test.ts",
+    "K8/cxc-home/model-catalog.json"
+  ],
+  "note": "catalog_list with a scripted ocx: rows map namespaced ids (or native ids), skip disabled/pending rows, dedupe, and label with displayName; state ocx-active. The successful read persists ${CXC_HOME}/model-catalog.json keyed by <CATALOGKEY>.",
+  "given": {
+    "stubs": {
+      "ocx": {
+        "stdout": "[{\"namespaced\": \"kiro/claude-opus-4.6\", \"displayName\": \"Claude Opus\", \"reasoningEfforts\": [\"low\", \"high\"]}, {\"id\": \"gpt-5.5\", \"native\": true, \"reasoningEfforts\": [{\"effort\": \"medium\"}]}, {\"namespaced\": \"kiro/disabled\", \"disabled\": true}, {\"namespaced\": \"kiro/pending\", \"initialSelectionPending\": true}, {\"namespaced\": \"kiro/claude-opus-4.6\"}]",
+        "exit": 0
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "mcp": [
+          {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+              "protocolVersion": "2024-11-05",
+              "capabilities": {},
+              "clientInfo": {
+                "name": "rec",
+                "version": "0"
+              }
+            }
+          },
+          {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+              "name": "catalog_list"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "jsonl",
+        "stdout_jsonl": [
+          {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+              "protocolVersion": "2024-11-05",
+              "capabilities": {
+                "tools": {}
+              },
+              "serverInfo": {
+                "name": "codexclaw-subagent-config",
+                "version": "0.1.1"
+              }
+            }
+          },
+          {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"state\":\"ocx-active\",\"entries\":[{\"id\":\"kiro/claude-opus-4.6\",\"source\":\"ocx\",\"label\":\"Claude Opus (kiro/claude-opus-4.6)\",\"reasoningEfforts\":[\"low\",\"high\"]},{\"id\":\"gpt-5.5\",\"source\":\"native\",\"label\":\"gpt-5.5\",\"reasoningEfforts\":[\"medium\"]}],\"status\":\"fresh\",\"source\":\"ocx\",\"fetchedAt\":\"<TS>\"}"
+                }
+              ]
+            }
+          }
+        ],
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "cxc/model-catalog.json": {
+        "type": "file",
+        "mode": "0600",
+        "form": "json-line",
+        "json": {
+          "key": "<CATALOGKEY_1>",
+          "catalog": {
+            "state": "ocx-active",
+            "entries": [
+              {
+                "id": "kiro/claude-opus-4.6",
+                "source": "ocx",
+                "label": "Claude Opus (kiro/claude-opus-4.6)",
+                "reasoningEfforts": [
+                  "low",
+                  "high"
+                ]
+              },
+              {
+                "id": "gpt-5.5",
+                "source": "native",
+                "label": "gpt-5.5",
+                "reasoningEfforts": [
+                  "medium"
+                ]
+              }
+            ],
+            "status": "fresh",
+            "source": "ocx",
+            "fetchedAt": "<TS>"
+          }
+        }
+      }
+    },
+    "calls": [
+      {
+        "cmd": "ocx",
+        "argv": [
+          "models",
+          "live",
+          "--json"
+        ],
+        "cwd": "${PLUGIN_ROOT}"
+      }
+    ]
+  }
+}

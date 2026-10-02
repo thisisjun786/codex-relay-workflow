@@ -1,0 +1,168 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K10/tools/call/subagents_get",
+    "K12/ocx",
+    "A/subagent-config/mcp.test.ts",
+    "K8/cxc-home/model-catalog.json",
+    "K13/CODEXCLAW_HOME"
+  ],
+  "note": "subagents_get with a scripted ocx: the fresh ocx catalog is authoritative, so a configured model it lists is staleModel false and one it lacks is true; ocx is called once with models live --json. The successful read persists ${CXC_HOME}/model-catalog.json keyed by <CATALOGKEY>.",
+  "given": {
+    "json": {
+      "cxc/subagents.json": {
+        "roles": {
+          "explorer": {
+            "mode": "model",
+            "model": "kiro/claude-opus-4.6",
+            "effort": null,
+            "promptOverride": null,
+            "fallback": null
+          },
+          "reviewer": {
+            "mode": "model",
+            "model": "rec/gone-model",
+            "effort": "low",
+            "promptOverride": null,
+            "fallback": null
+          }
+        }
+      }
+    },
+    "stubs": {
+      "ocx": {
+        "stdout": "[{\"namespaced\": \"kiro/claude-opus-4.6\", \"displayName\": \"Claude Opus\"}]",
+        "exit": 0
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "mcp": [
+          {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+              "protocolVersion": "2024-11-05",
+              "capabilities": {},
+              "clientInfo": {
+                "name": "rec",
+                "version": "0"
+              }
+            }
+          },
+          {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+              "name": "subagents_get",
+              "arguments": {
+                "scope": "global"
+              }
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "jsonl",
+        "stdout_jsonl": [
+          {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+              "protocolVersion": "2024-11-05",
+              "capabilities": {
+                "tools": {}
+              },
+              "serverInfo": {
+                "name": "codexclaw-subagent-config",
+                "version": "0.1.1"
+              }
+            }
+          },
+          {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"roles\":{\"explorer\":{\"mode\":\"model\",\"model\":\"kiro/claude-opus-4.6\",\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{\"model\":\"kiro/claude-opus-4.6\"},\"staleModel\":false},\"reviewer\":{\"mode\":\"model\",\"model\":\"rec/gone-model\",\"effort\":\"low\",\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{\"model\":\"rec/gone-model\",\"reasoning_effort\":\"low\"},\"staleModel\":true},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"}},\"scope\":\"global\",\"sources\":{\"explorer\":\"global\",\"reviewer\":\"global\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":true,\"reviewer\":true,\"executor\":false,\"architect\":false}}"
+                }
+              ]
+            }
+          }
+        ],
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "cxc/model-catalog.json": {
+        "type": "file",
+        "mode": "0600",
+        "form": "json-line",
+        "json": {
+          "key": "<CATALOGKEY_1>",
+          "catalog": {
+            "state": "ocx-active",
+            "entries": [
+              {
+                "id": "kiro/claude-opus-4.6",
+                "source": "ocx",
+                "label": "Claude Opus (kiro/claude-opus-4.6)",
+                "reasoningEfforts": null
+              }
+            ],
+            "status": "fresh",
+            "source": "ocx",
+            "fetchedAt": "<TS>"
+          }
+        }
+      },
+      "cxc/subagents.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "roles": {
+            "explorer": {
+              "mode": "model",
+              "model": "kiro/claude-opus-4.6",
+              "effort": null,
+              "promptOverride": null,
+              "fallback": null
+            },
+            "reviewer": {
+              "mode": "model",
+              "model": "rec/gone-model",
+              "effort": "low",
+              "promptOverride": null,
+              "fallback": null
+            }
+          }
+        }
+      }
+    },
+    "calls": [
+      {
+        "cmd": "ocx",
+        "argv": [
+          "models",
+          "live",
+          "--json"
+        ],
+        "cwd": "${PLUGIN_ROOT}"
+      }
+    ]
+  }
+}

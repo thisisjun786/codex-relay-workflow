@@ -1,0 +1,76 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/pre-tool-use-guarding-interview-in-goal",
+    "A/plugin/hook-e2e.test.mjs",
+    "K13/CODEX_SQLITE_HOME",
+    "K11/goals"
+  ],
+  "note": "A subagent payload is skipped even under an active goal.",
+  "given": {
+    "sqlite": {
+      "codex/goals_1.sqlite": [
+        "CREATE TABLE thread_goals (thread_id TEXT PRIMARY KEY NOT NULL, status TEXT NOT NULL, objective TEXT)",
+        "INSERT INTO thread_goals (thread_id, status, objective) VALUES ('rec-s1', 'active', 'ship the feature')"
+      ]
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "pre-tool-use-guarding-interview-in-goal",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "request_user_input",
+          "tool_input": {
+            "questions": []
+          },
+          "tool_use_id": "rec-call-1",
+          "agent_id": "rec-a1",
+          "agent_type": "worker"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "codex/goals_1.sqlite": {
+        "type": "file",
+        "mode": "0644",
+        "form": "sqlite",
+        "json": {
+          "tables": [
+            {
+              "name": "thread_goals",
+              "sql": "CREATE TABLE thread_goals (thread_id TEXT PRIMARY KEY NOT NULL, status TEXT NOT NULL, objective TEXT)",
+              "rows": [
+                {
+                  "thread_id": "rec-s1",
+                  "status": "active",
+                  "objective": "ship the feature"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "calls": []
+  }
+}

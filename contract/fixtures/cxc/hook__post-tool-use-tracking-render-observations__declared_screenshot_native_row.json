@@ -1,0 +1,178 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/post-tool-use-tracking-render-observations",
+    "K8/ws/.codexclaw/render-observations.jsonl",
+    "A/pabcd-state/render-observations.test.ts"
+  ],
+  "note": "view_image of a screenshot declared by a QA verdict under .codexclaw/evidence/<session>/qa records a native-observation row with the resolved screenshotPath; the same view with a failed response, and an empty declared file, record only the plain observation row.",
+  "given": {
+    "files": {
+      "ws/shots/empty.png": "",
+      "ws/shots/home.png": "PNGDATA"
+    },
+    "json": {
+      "ws/.codexclaw/evidence/rec-s1/qa/r1/verdict.json": {
+        "artifactRefs": [
+          "../../../../../shots/home.png",
+          "../../../../../shots/empty.png"
+        ]
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "post-tool-use-tracking-render-observations",
+        "stdin": {
+          "hook_event_name": "PostToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "view_image",
+          "tool_input": {
+            "path": "shots/home.png"
+          },
+          "tool_use_id": "rec-call-1",
+          "tool_response": "ok"
+        }
+      },
+      {
+        "hook": "post-tool-use-tracking-render-observations",
+        "stdin": {
+          "hook_event_name": "PostToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "view_image",
+          "tool_input": {
+            "path": "shots/home.png"
+          },
+          "tool_use_id": "rec-call-1",
+          "tool_response": "Error: could not open image"
+        }
+      },
+      {
+        "hook": "post-tool-use-tracking-render-observations",
+        "stdin": {
+          "hook_event_name": "PostToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "view_image",
+          "tool_input": {
+            "path": "shots/empty.png"
+          },
+          "tool_use_id": "rec-call-1",
+          "tool_response": "ok"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/evidence": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/evidence/rec-s1": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/evidence/rec-s1/qa": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/evidence/rec-s1/qa/r1": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/evidence/rec-s1/qa/r1/verdict.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "artifactRefs": [
+            "../../../../../shots/home.png",
+            "../../../../../shots/empty.png"
+          ]
+        }
+      },
+      "ws/.codexclaw/render-observations.jsonl": {
+        "type": "file",
+        "mode": "0644",
+        "form": "jsonl",
+        "jsonl": [
+          {
+            "ts": "<TS>",
+            "kind": "observation",
+            "detail": "view_image",
+            "sessionId": "rec-s1"
+          },
+          {
+            "ts": "<TS>",
+            "kind": "native-observation",
+            "detail": "view_image",
+            "sessionId": "rec-s1",
+            "screenshotPath": "${WS}/shots/home.png"
+          },
+          {
+            "ts": "<TS>",
+            "kind": "observation",
+            "detail": "view_image",
+            "sessionId": "rec-s1"
+          },
+          {
+            "ts": "<TS>",
+            "kind": "observation",
+            "detail": "view_image",
+            "sessionId": "rec-s1"
+          }
+        ]
+      },
+      "ws/shots": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/shots/empty.png": {
+        "type": "file",
+        "mode": "0644",
+        "form": "empty"
+      },
+      "ws/shots/home.png": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "PNGDATA"
+      }
+    },
+    "calls": []
+  }
+}

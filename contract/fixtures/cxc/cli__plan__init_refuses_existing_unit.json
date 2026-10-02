@@ -1,0 +1,82 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/plan/init",
+    "A/pabcd-state/plan-cli.test.ts"
+  ],
+  "note": "init refuses to overwrite an existing unit.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "plan",
+          "init",
+          "--slug",
+          "demo",
+          "--date",
+          "260101",
+          "--cwd",
+          "${WS}"
+        ]
+      },
+      {
+        "cli": [
+          "plan",
+          "init",
+          "--slug",
+          "demo",
+          "--date",
+          "260101",
+          "--cwd",
+          "${WS}"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 1,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "plan init: scaffolded devlog/_plan/260101_demo (000_plan.md + 1 phase doc(s)).\nWrite every doc to diff-level BEFORE P -> A; the P>A gate requires planUnit to carry numbered docs.\n",
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "text",
+        "stdout": "plan init: ${WS}/devlog/_plan/260101_demo already exists — refusing to overwrite. Write your docs there.\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "ws/devlog": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/devlog/_plan": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/devlog/_plan/260101_demo": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/devlog/_plan/260101_demo/000_plan.md": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "# 000 — demo: Plan\n\n> DIFFLEVEL-ROADMAP-01: write this doc to full diff-level precision (exact paths,\n> NEW/MODIFY/DELETE, before/after diffs) BEFORE P -> A. An empty scaffold does not\n> satisfy the rule; the A-phase reviewer FAILS outline-only phase docs.\n\n## Objective\n\n(fill in: the concrete outcome, the observed failure, the evidence base)\n\n## Loop-spec\n\n- Loop archetype: (verifier-defined | judged)\n- Write scope / out-of-scope:\n- Budget / bounds:\n\n## Work-phase map (one phase = one full PABCD cycle)\n\n| WP | Doc | Slice | Depends on |\n|----|-----|-------|------------|\n\n## Accept criteria\n\n- (mirror into the goalplan criteria[])\n"
+      },
+      "ws/devlog/_plan/260101_demo/010_phase1.md": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "# 010 — Phase 1 (demo)\n\n> DIFFLEVEL-ROADMAP-01: write this doc to full diff-level precision (exact paths,\n> NEW/MODIFY/DELETE, before/after diffs) BEFORE P -> A. An empty scaffold does not\n> satisfy the rule; the A-phase reviewer FAILS outline-only phase docs.\n\n## MODIFY / NEW / DELETE map\n\n(fill in: exact file paths with before/after diffs — a copy-paste-executable PRD)\n\n## TESTS\n\n(fill in: test files + cases)\n\n## Verification (C)\n\n(fill in: exact commands + expected exit codes)\n"
+      }
+    },
+    "calls": []
+  }
+}

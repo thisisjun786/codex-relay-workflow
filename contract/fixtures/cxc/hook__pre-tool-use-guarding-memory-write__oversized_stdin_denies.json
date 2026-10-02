@@ -1,0 +1,51 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/pre-tool-use-guarding-memory-write",
+    "K9/stdin-cap",
+    "A/pabcd-state/cli-bounds.test.ts"
+  ],
+  "note": "The memory gate's verb starts with pre-tool-use, so an oversized payload gets the oversized-input deny envelope (exit 0).",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "pre-tool-use-guarding-memory-write",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "memoriesadd_ad_hoc_note",
+          "tool_input": {
+            "filename": "note.md",
+            "note": "x"
+          },
+          "tool_use_id": "rec-call-1"
+        },
+        "stdin_pad": 4194368
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "[codexclaw] hook input exceeded 4194304 bytes; refusing to bypass policy enforcement",
+            "additionalContext": "[codexclaw] hook input exceeded 4194304 bytes; refusing to bypass policy enforcement"
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

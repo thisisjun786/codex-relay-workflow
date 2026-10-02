@@ -1,0 +1,368 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/metric",
+    "K8/ws/.codexclaw/metrics.jsonl",
+    "K8/ws/.codexclaw/objective-kind",
+    "A/pabcd-state/metrics.test.ts",
+    "A/plugin/metric-bin.test.mjs"
+  ],
+  "note": "Objective metric rows, kind, the line parser (its help says it reads stdin; v0.2.40 parses argv after the verb instead), stdin ingest and a non-numeric refusal.",
+  "given": {
+    "json": {
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "phase": "IDLE",
+        "sessionId": "rec-s1",
+        "slug": "",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "flags": {
+          "interview": false,
+          "auditPassed": false,
+          "checkPassed": false
+        },
+        "supersededBy": null,
+        "injectedTurns": [],
+        "lastInjectedPhase": null,
+        "orchestrationActive": false,
+        "interview": null,
+        "stopBlockPhase": null,
+        "stopBlockCount": 0,
+        "stopBlockWorkPhaseId": null,
+        "stopMetricCursor": 0,
+        "stopBlockTotal": 0,
+        "stopBlockTurnId": null,
+        "stopBlockCapNotified": false,
+        "loopArmSeen": false,
+        "idleEditNudges": 0,
+        "memoryWriteRequested": false,
+        "memoryWriteTurn": null,
+        "memoryWriteGrant": false,
+        "unverifiedSubagents": [],
+        "unverifiedCorrupt": false,
+        "phaseEntrySource": null,
+        "planUnit": null,
+        "planEpoch": null,
+        "checkEpoch": null,
+        "dcloseRecovery": null
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "metric",
+          "record",
+          "--session",
+          "rec-s1",
+          "--name",
+          "latency_ms",
+          "--value",
+          "120",
+          "--json"
+        ]
+      },
+      {
+        "cli": [
+          "metric",
+          "record",
+          "--session",
+          "rec-s1",
+          "--name",
+          "latency_ms",
+          "--value",
+          "130"
+        ]
+      },
+      {
+        "cli": [
+          "metric",
+          "show",
+          "--session",
+          "rec-s1",
+          "--json"
+        ]
+      },
+      {
+        "cli": [
+          "metric",
+          "kind",
+          "--session",
+          "rec-s1",
+          "--set",
+          "maximize",
+          "--json"
+        ]
+      },
+      {
+        "cli": [
+          "metric",
+          "parse-line",
+          "--session",
+          "rec-s1"
+        ],
+        "stdin": "METRIC latency_ms=110\n"
+      },
+      {
+        "cli": [
+          "metric",
+          "parse-line",
+          "METRIC",
+          "latency_ms=110",
+          "--session",
+          "rec-s1"
+        ]
+      },
+      {
+        "cli": [
+          "metric",
+          "ingest",
+          "--session",
+          "rec-s1",
+          "--source",
+          "evaluate.sh",
+          "--json"
+        ],
+        "stdin": "METRIC latency_ms=105\nnoise\nMETRIC throughput=9.5\n"
+      },
+      {
+        "cli": [
+          "metric",
+          "record",
+          "--session",
+          "rec-s1",
+          "--name",
+          "x",
+          "--value",
+          "abc"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 1,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "ts": "<TS>",
+          "sessionId": "rec-s1",
+          "workPhaseId": "default",
+          "metricName": "latency_ms",
+          "value": 120,
+          "baseline": 120,
+          "best": 120,
+          "source": "operator-entered"
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "metric record: latency_ms=130 best=130 source=operator-entered\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "sessionId": "rec-s1",
+          "records": [
+            {
+              "ts": "<TS>",
+              "sessionId": "rec-s1",
+              "workPhaseId": "default",
+              "metricName": "latency_ms",
+              "value": 120,
+              "baseline": 120,
+              "best": 120,
+              "source": "operator-entered"
+            },
+            {
+              "ts": "<TS>",
+              "sessionId": "rec-s1",
+              "workPhaseId": "default",
+              "metricName": "latency_ms",
+              "value": 130,
+              "baseline": 120,
+              "best": 130,
+              "source": "operator-entered"
+            }
+          ]
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "sessionId": "rec-s1",
+          "kind": "maximize",
+          "explicit": "maximize"
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "json-line",
+        "stdout_json": null,
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "json-line",
+        "stdout_json": null,
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "records": [
+            {
+              "ts": "<TS>",
+              "sessionId": "rec-s1",
+              "workPhaseId": "default",
+              "metricName": "latency_ms",
+              "value": 105,
+              "baseline": 120,
+              "best": 130,
+              "source": "evaluate.sh"
+            },
+            {
+              "ts": "<TS>",
+              "sessionId": "rec-s1",
+              "workPhaseId": "default",
+              "metricName": "throughput",
+              "value": 9.5,
+              "baseline": 9.5,
+              "best": 9.5,
+              "source": "evaluate.sh"
+            }
+          ]
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "text",
+        "stdout": "metric record: --value <number> is required\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/metrics.jsonl": {
+        "type": "file",
+        "mode": "0644",
+        "form": "jsonl",
+        "jsonl": [
+          {
+            "ts": "<TS>",
+            "sessionId": "rec-s1",
+            "workPhaseId": "default",
+            "metricName": "latency_ms",
+            "value": 120,
+            "baseline": 120,
+            "best": 120,
+            "source": "operator-entered"
+          },
+          {
+            "ts": "<TS>",
+            "sessionId": "rec-s1",
+            "workPhaseId": "default",
+            "metricName": "latency_ms",
+            "value": 130,
+            "baseline": 120,
+            "best": 130,
+            "source": "operator-entered"
+          },
+          {
+            "ts": "<TS>",
+            "sessionId": "rec-s1",
+            "workPhaseId": "default",
+            "metricName": "latency_ms",
+            "value": 105,
+            "baseline": 120,
+            "best": 130,
+            "source": "evaluate.sh"
+          },
+          {
+            "ts": "<TS>",
+            "sessionId": "rec-s1",
+            "workPhaseId": "default",
+            "metricName": "throughput",
+            "value": 9.5,
+            "baseline": 9.5,
+            "best": 9.5,
+            "source": "evaluate.sh"
+          }
+        ]
+      },
+      "ws/.codexclaw/objective-kind": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/objective-kind/rec-s1.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty-nonl",
+        "json": {
+          "sessionId": "rec-s1",
+          "kind": "maximize",
+          "updatedAt": "<TS>"
+        }
+      },
+      "ws/.codexclaw/sessions": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "phase": "IDLE",
+          "sessionId": "rec-s1",
+          "slug": "",
+          "updatedAt": "<TS>",
+          "flags": {
+            "interview": false,
+            "auditPassed": false,
+            "checkPassed": false
+          },
+          "supersededBy": null,
+          "injectedTurns": [],
+          "lastInjectedPhase": null,
+          "orchestrationActive": false,
+          "interview": null,
+          "stopBlockPhase": null,
+          "stopBlockCount": 0,
+          "stopBlockWorkPhaseId": null,
+          "stopMetricCursor": 0,
+          "stopBlockTotal": 0,
+          "stopBlockTurnId": null,
+          "stopBlockCapNotified": false,
+          "loopArmSeen": false,
+          "idleEditNudges": 0,
+          "memoryWriteRequested": false,
+          "memoryWriteTurn": null,
+          "memoryWriteGrant": false,
+          "unverifiedSubagents": [],
+          "unverifiedCorrupt": false,
+          "phaseEntrySource": null,
+          "planUnit": null,
+          "planEpoch": null,
+          "checkEpoch": null,
+          "dcloseRecovery": null
+        }
+      }
+    },
+    "calls": []
+  }
+}

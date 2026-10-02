@@ -1,0 +1,37 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/memory/help",
+    "K6/exit-codes",
+    "A/plugin/cli-usage.test.mjs",
+    "A/pabcd-state/help-verbs.test.ts",
+    "A/recall/cli-arg-hygiene.test.ts"
+  ],
+  "note": "`cxc memory allow-write --help`: whether the subcommand treats --help as help, and what it writes.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "memory",
+          "allow-write",
+          "--help"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "Usage:\n  cxc memory allow-write --session <id>\n  cxc memory allow-write --session=<id>\n  cxc memory allow-write --help\n\nAuthorizes exactly ONE memory write (memories.add_ad_hoc_note, or an edit under\n~/.codex/memories) for that session. The grant is consumed by the next write.\n\nThe grant is stored at <cwd>/.codexclaw/sessions/<id>.json and is keyed by that\ncwd plus the session id. The success line names the cwd it wrote to. Issuing the\ngrant from a different working directory will print success and never be seen by\nthe hook running in this session.\n\nThe ordinary path needs no command: when the user asks in their own words to\nremember something, the session records that request and the next write passes.\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

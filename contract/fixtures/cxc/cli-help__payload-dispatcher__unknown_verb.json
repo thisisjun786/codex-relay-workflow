@@ -1,0 +1,32 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/payload-dispatcher",
+    "A/plugin/payload-bin.test.mjs"
+  ],
+  "note": "The plugin's own bin/cxc.mjs (payload dispatcher): help, version, unknown verb, and the repo-only map/gui pointer.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "frobnicate"
+        ],
+        "payload": true
+      }
+    ]
+  },
+  "expect": {
+    "exit": 1,
+    "steps": [
+      {
+        "exit": 1,
+        "stdout_form": "empty",
+        "stderr": "cxc: unknown command 'frobnicate'\nRun with --help for usage.\n"
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

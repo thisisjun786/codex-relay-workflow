@@ -1,0 +1,44 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/hooks/bare",
+    "A/cxc-ops/cxc-ops.test.ts"
+  ],
+  "note": "`cxc hooks` without `retrust` (bare or any other word) prints the retrust usage line and exits 1.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "hooks"
+        ]
+      },
+      {
+        "cli": [
+          "hooks",
+          "status"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 1,
+    "steps": [
+      {
+        "exit": 1,
+        "stdout_form": "text",
+        "stdout": "cxc-ops hooks retrust [--key <plugin@marketplace>] [--codex-home <path>] [--bootstrap-ok]\n",
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "text",
+        "stdout": "cxc-ops hooks retrust [--key <plugin@marketplace>] [--codex-home <path>] [--bootstrap-ok]\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

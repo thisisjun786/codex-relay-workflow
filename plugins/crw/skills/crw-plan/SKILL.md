@@ -1,6 +1,6 @@
 ---
 name: crw-plan
-description: "Decompose an agreed goal into Linear projects, useful milestones, and one-PR implementation issues in one planning operation, and carry the standard for explaining a system's design to somebody who does not know it yet. Use crw-define for initiative definition and intent exploration. Use for product planning, roadmap setup, scoped plan updates, and requests to understand or review how a system works or should work; use crw-run for dispatch and crw-check for implementation drift. Formerly linear-plan."
+description: "Decompose an agreed goal into Linear projects, useful milestones, and one-PR implementation issues in one planning operation, and carry the standard for explaining a system's design to somebody who does not know it yet. Use crw-define for initiative definition and intent exploration. Use for product planning, roadmap setup, scoped plan updates, and requests to understand or review how a system works or should work; use crw-run for dispatch and crw-check for implementation drift."
 ---
 
 # CRW Plan

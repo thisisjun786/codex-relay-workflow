@@ -1,0 +1,76 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/post-tool-use-tracking-render-observations",
+    "K8/ws/.codexclaw/render-observations.jsonl",
+    "A/pabcd-state/render-observations.test.ts"
+  ],
+  "note": "apply_patch riding the same leg: an edited .html and an added .tsx each append an artifact-modified row; the .ts edit and a deleted .svg do not.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "post-tool-use-tracking-render-observations",
+        "stdin": {
+          "hook_event_name": "PostToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "apply_patch",
+          "tool_input": {
+            "command": "*** Begin Patch\n*** Update File: web/index.html\n@@\n-<p>a</p>\n+<p>b</p>\n*** Add File: web/App.tsx\n+export const App = () => null;\n*** Update File: src/x.ts\n@@\n-a\n+b\n*** Delete File: web/old.svg\n*** End Patch\n"
+          },
+          "tool_use_id": "rec-call-1",
+          "tool_response": "Success"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/.gitignore": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n"
+      },
+      "ws/.codexclaw/render-observations.jsonl": {
+        "type": "file",
+        "mode": "0644",
+        "form": "jsonl",
+        "jsonl": [
+          {
+            "ts": "<TS>",
+            "kind": "artifact-modified",
+            "detail": "web/index.html",
+            "sessionId": "rec-s1"
+          },
+          {
+            "ts": "<TS>",
+            "kind": "artifact-modified",
+            "detail": "web/App.tsx",
+            "sessionId": "rec-s1"
+          }
+        ]
+      }
+    },
+    "calls": []
+  }
+}

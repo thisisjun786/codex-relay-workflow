@@ -1,0 +1,232 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/scan/record",
+    "K8/ws/.codexclaw/sessions",
+    "K8/ws/.codexclaw/interviews",
+    "A/pabcd-state/scan-cli.test.ts"
+  ],
+  "note": "A scan round records counters and dimension levels into the tracker and the interview ledger; an unknown level is rejected.",
+  "given": {
+    "json": {
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "phase": "IDLE",
+        "sessionId": "rec-s1",
+        "slug": "",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "flags": {
+          "interview": false,
+          "auditPassed": false,
+          "checkPassed": false
+        },
+        "supersededBy": null,
+        "injectedTurns": [],
+        "lastInjectedPhase": null,
+        "orchestrationActive": false,
+        "interview": null,
+        "stopBlockPhase": null,
+        "stopBlockCount": 0,
+        "stopBlockWorkPhaseId": null,
+        "stopMetricCursor": 0,
+        "stopBlockTotal": 0,
+        "stopBlockTurnId": null,
+        "stopBlockCapNotified": false,
+        "loopArmSeen": false,
+        "idleEditNudges": 0,
+        "memoryWriteRequested": false,
+        "memoryWriteTurn": null,
+        "memoryWriteGrant": false,
+        "unverifiedSubagents": [],
+        "unverifiedCorrupt": false,
+        "phaseEntrySource": null,
+        "planUnit": null,
+        "planEpoch": null,
+        "checkEpoch": null,
+        "dcloseRecovery": null
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "orchestrate",
+          "I",
+          "--session",
+          "rec-s1",
+          "--cwd",
+          "${WS}"
+        ]
+      },
+      {
+        "cli": [
+          "scan",
+          "record",
+          "--session",
+          "rec-s1",
+          "--cwd",
+          "${WS}",
+          "--contradictions",
+          "2",
+          "--high",
+          "1",
+          "--dim",
+          "goal=mid",
+          "--known",
+          "goal=export CSV"
+        ]
+      },
+      {
+        "cli": [
+          "scan",
+          "record",
+          "--session",
+          "rec-s1",
+          "--cwd",
+          "${WS}",
+          "--dim",
+          "goal=partial"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 1,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "orchestrate I: current=IDLE -> I (IDLE → I, session rec-s1)\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "scan record: round 1 recorded for session rec-s1 (contradictions=2, high=1)\n",
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "empty",
+        "stderr": "scan: scan record: invalid level 'partial' (expected low|mid|high|max)\n"
+      }
+    ],
+    "tree": {
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/interviews": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/interviews/rec-s1.jsonl": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "ts": "<TS>",
+          "sessionId": "rec-s1",
+          "event": "scan_completed",
+          "roundId": 1,
+          "contradictionCount": 2,
+          "highContradictionCount": 1
+        }
+      },
+      "ws/.codexclaw/ledger.jsonl": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "ts": "<TS>",
+          "sessionId": "rec-s1",
+          "from": "IDLE",
+          "to": "I",
+          "reason": "cli"
+        }
+      },
+      "ws/.codexclaw/sessions": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty-nonl",
+        "json": {
+          "phase": "I",
+          "sessionId": "rec-s1",
+          "slug": "",
+          "updatedAt": "<TS>",
+          "flags": {
+            "interview": false,
+            "auditPassed": false,
+            "checkPassed": false
+          },
+          "supersededBy": null,
+          "injectedTurns": [],
+          "lastInjectedPhase": "I",
+          "orchestrationActive": true,
+          "interview": {
+            "roundId": 0,
+            "dimensions": {
+              "goal": {
+                "level": "mid",
+                "known": [
+                  "export CSV"
+                ],
+                "unknown": [],
+                "confidence": 0
+              },
+              "constraint": {
+                "level": "low",
+                "known": [],
+                "unknown": [],
+                "confidence": 0
+              },
+              "success": {
+                "level": "low",
+                "known": [],
+                "unknown": [],
+                "confidence": 0
+              },
+              "ontology": {
+                "level": "low",
+                "known": [],
+                "unknown": [],
+                "confidence": 0
+              }
+            },
+            "contradictions": [],
+            "assumptions": [],
+            "autoResolveCount": 0,
+            "consecutiveAutoResolves": 0,
+            "scanRounds": 1,
+            "lastScanRoundId": 1
+          },
+          "stopBlockPhase": null,
+          "stopBlockCount": 0,
+          "stopBlockWorkPhaseId": null,
+          "stopMetricCursor": 0,
+          "stopBlockTotal": 0,
+          "stopBlockTurnId": null,
+          "stopBlockCapNotified": false,
+          "loopArmSeen": false,
+          "idleEditNudges": 0,
+          "memoryWriteRequested": false,
+          "memoryWriteTurn": null,
+          "memoryWriteGrant": false,
+          "unverifiedSubagents": [],
+          "unverifiedCorrupt": false,
+          "phaseEntrySource": null,
+          "planUnit": null,
+          "planEpoch": null,
+          "checkEpoch": null,
+          "dcloseRecovery": null
+        }
+      }
+    },
+    "calls": []
+  }
+}
