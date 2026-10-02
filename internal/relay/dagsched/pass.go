@@ -54,7 +54,11 @@ func (r Reading) orderJSON() string {
 func (r Reading) dispositionsJSON() string {
 	nodes := make([]any, len(r.Nodes))
 	for i, n := range r.Nodes {
-		nodes[i] = map[string]any{"node_id": n.NodeID, "state": n.State, "disposition": n.Disposition, "reason": n.Reason, "detail": n.Detail}
+		node := map[string]any{"node_id": n.NodeID, "state": n.State, "disposition": n.Disposition, "reason": n.Reason, "detail": n.Detail}
+		if n.Lifecycle != "" {
+			node["lifecycle"] = n.Lifecycle
+		}
+		nodes[i] = node
 	}
 	return dag.Canonical(nodes)
 }

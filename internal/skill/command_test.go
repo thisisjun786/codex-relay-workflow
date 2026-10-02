@@ -37,9 +37,9 @@ func TestSkillCommandLine(t *testing.T) {
 		}
 	}
 	expect(t, runSkillInProcess(), 2, nil, []string{"crw skill: error: a command is required"})
-	expect(t, runSkillInProcess("--help"), 0, []string{"usage: crw skill {hook-probe,parent-title,start-policy}"}, nil)
+	expect(t, runSkillInProcess("--help"), 0, []string{"usage: crw skill {hook-probe,issue-size,parent-title,start-policy,base-refresh}"}, nil)
 	expect(t, runSkillInProcess("nope"), 2, nil, []string{`invalid command "nope"`})
-	for _, f := range []family{hookProbe, parentTitle, startPolicy} {
+	for _, f := range []family{hookProbe, issueSize, parentTitle, startPolicy, baseRefresh} {
 		t.Run(f.name, func(t *testing.T) {
 			var names []string
 			for _, c := range f.commands {
@@ -64,6 +64,7 @@ func TestSkillCommandLine(t *testing.T) {
 		{[]string{"hook-probe", "decide", "--help"}, []string{"usage: crw skill hook-probe decide [flags] observation"}},
 		{[]string{"parent-title", "replay", "--help"}, []string{"-fixtures", "-allow-unreached"}},
 		{[]string{"start-policy", "check", "--help"}, []string{"usage: crw skill start-policy check [flags] [record]"}},
+		{[]string{"issue-size", "check", "--help"}, []string{"usage: crw skill issue-size check [flags] [file]"}},
 	} {
 		expect(t, runSkillInProcess(c.args...), 0, c.flags, nil)
 	}

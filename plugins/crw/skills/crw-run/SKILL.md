@@ -294,7 +294,7 @@ it. The set keeps apart what recovers differently: no capacity from capacity nob
 owner that could not be proved from two the store reports, and a disposition that could not be
 read from one the store holds as contested. It carries no escalation value, because a review
 round count is not a reason to send an approved correction upward. Do not invent extra issues or duplicate writers just to
-increase concurrency; reconcile an oversized issue through `crw-plan` when a
+increase concurrency; an issue the [size check](#check-the-size-before-dispatch) recommends splitting is reconciled through `crw-plan` before dispatch, when a
 useful split fits the authorized scope.
 Apply the shared [issue-to-PR mapping](../crw-plan/references/integrations.md#issue-to-pr-mapping):
 one implementation issue per PR, with one issue/PR pair per implementation
@@ -496,6 +496,34 @@ phases through its own `cxc-loop` and `cxc-pabcd`; the coordinator checks the
 resulting evidence, not the child's internals. Creating a task does not create a
 goal; an active turn does not prove the loop is armed. Missing loop prerequisites
 are reported explicitly, with no silent substitution of a different workflow.
+
+### Check the size before dispatch
+
+Before an issue gets a packet, a task or a `managed-start`, and before a DAG release of it (a release goes through `managed-start`),
+run `crw skill issue-size check` on the issue as Linear returns it, its JSON on stdin or saved to a file. Read the report, not only the
+exit status: `decision`, `assignable`, `reasons`, `limits`, for a flagged issue `proposal`, and `observed.unread_headings`. The command counts only
+the sections whose headings it knows, and only criteria written as list items or as rows of a pipe table under such a heading; a list
+under a heading it does not know, a bold label, a quote or another list symbol is not counted, and it only warns about a heading. Where
+an unread heading looks like criteria, tell the issue's owner and check a local copy with the heading changed, whatever the answer says;
+the parent writes nothing to the issue. The command counts what the body
+states against limits read from recorded delivery; it judges nothing, the same issue gets the same answer, and the limits are in
+its report, so this text states none.
+
+- `ok` (exit 0): dispatch goes on under the rules below.
+- `split_recommended` without an exception (exit 1): do not assign the issue, create no task and no `managed-start` for it, and let
+  the other independent issues go on. Report it in the coordination record with the reasons and the draft proposal. The draft is a
+  proposal: writing a split follows the `crw-plan` [boundary rules](../crw-plan/references/issue-boundaries.md#check-the-size-of-an-issue)
+  and the user's approval. Hold the issue as `defer:size_check` in [the closed set](references/reevaluation.md#decisions-and-what-clears-them).
+- An exception the user explicitly approved passes. Add an `exception` object to the input: `issue`, `approved_by`, `approved_on`
+  (YYYY-MM-DD) and the user's own `statement`. The command then exits 0 with `assignable` true, leaves `decision` as
+  `split_recommended` and prints `exception_record`; write that line into the coordination record and the packet. The approval is
+  the user's statement naming this issue within this run's authorization. A general go-ahead, an approval for another issue, a
+  skill's text or an earlier run is not one, and the parent never writes one for the user.
+- Exit 2 (the input or its `depends_on` cannot be read, a code fence in the description is never closed, or the issue has no completion criteria) and exit 3 (the file cannot be read)
+  are not assignable: correct the input or the issue and run the check again. Neither is `ok`.
+
+This is an instruction the parent follows; nothing refuses a dispatch that skipped it, so the run records the answer where it records
+the dispatch.
 
 ### Start policy and child cap
 
@@ -773,7 +801,10 @@ per-finding trail, and accept them as the evidence table above defines them.
 Acceptance keeps its own work, which was never the child's. Confirm the reported
 head is the head the pull request has now, the base is current and the merge is
 clean, every accepted criterion maps to evidence that still applies at that head,
-and any finding still open is named. A moved head invalidates the reused result,
+and any finding still open is named. The one head that differs from the report on
+purpose is a base refresh the parent made itself under
+[Merge readiness](references/merge-readiness.md#refresh-the-base-yourself-when-only-the-base-moved),
+confirmed by that rule's own checks. Any other moved head invalidates the reused result,
 and so does a base or a dependency the child never built against: that the base
 is current now is not evidence that its checks ever saw this one, so re-run what
 that change invalidated rather than read the old conclusion again. Where the
