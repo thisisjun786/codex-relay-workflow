@@ -28,8 +28,8 @@ The scheduler re-implements no I-17 loop or skill, and contract section 10 names
 
 `crw relay dag-ready --plan P` reads the plan at its head revision and the relay's execution records and answers, for every live node,
 one disposition and (except for a ready node) one reason from a closed set. A reading writes nothing, reads no clock and opens
-no second connection, so two readings of one store state are byte-identical; its `input_digest` covers everything it read, the bytes of
-the artifact files included. A store with no DAG zone, or a plan it does not hold, answers `unregistered_scope` and is left as it was.
+no second connection, so with unchanged store rows and artifact bytes two readings are byte-identical. Its `input_digest` hashes the plan identity, the node states and dispositions, the selected order, the capacity summary and the hashes of the artifact files it checked;
+it is not a fingerprint of every source row read. A store with no DAG zone, or a plan it does not hold, answers `unregistered_scope` and is left as it was.
 
 A node is a **candidate** when it is not owned and every incoming edge is satisfied (the predicates are [Edge satisfaction](#edge-satisfaction)).
 Candidates are then checked against what lies outside the plan, ranked, and cut by free slots and by edit-region overlap.
@@ -116,7 +116,7 @@ observation leaves no slot free.
 
 `crw relay dag-region-declare --plan P --node N --actor A --regions @file` declares the places an implementation node will edit, before it is released: 1 to 64 regions of
 a repository, path, kind (`tree`, `file`, `symbol` with its symbol) and change (`edit`, `rename`, `delete`). A repository is a forge `owner/name` or an existing local
-checkout (the directory its absolute path reaches, links resolved); a path is kept as written and refused when it has whitespace at either end. A rename, a delete and the
+checkout (the directory its absolute path reaches, links resolved); whitespace inside a path component is kept and the path is cleaned before it is stored, while surrounding whitespace and control characters are refused. A rename, a delete and the
 hotspots (lockfiles, anything under `.github/`, a Makefile or Dockerfile, `.sql` files, a `schema` or `migrations` directory) are exclusive: they conflict with any other
 region of the repository. A node with no declaration counts as overlapping every other node: it waits while any node holds regions, and every declared node waits while one
 undeclared node holds. Regions are held from release until the head lands, so a declaration cannot change while the node holds them. A forge slug and a checkout path of one
@@ -137,7 +137,7 @@ settings.
 
 The release is idempotent and never creates a second child. In order:
 
-1. **Replay first.** An intent already recorded for the node is continued from the exact request bytes frozen with it (`dag_release_requests`) and never rebuilt: the managed engine fingerprints the whole
+1. **Replay first.** An already-bound release returns its recorded execution without repeating the continuation checks below; they apply only to an unbound intent. An intent already recorded for the node is continued from the exact request bytes frozen with it (`dag_release_requests`) and never rebuilt: the managed engine fingerprints the whole
    request, while the manifest digest leaves out fields that are still in the prompt, so a clock or a base tip that moved would read as a second release. A replay of an intent whose slot was returned meanwhile reserves it again under the same ceilings, and is refused `capacity_exhausted` when none is free. A replay presented with another spelling of the marker
    root, the socket or the state selector than the intent was frozen under is refused (`disposition_conflict`) before the engine is asked; a stored manifest or request that no longer digests to what was recorded is
    `revision_mismatch`.
@@ -146,7 +146,7 @@ The release is idempotent and never creates a second child. In order:
    incomplete read is the host's failure, nothing is written, and a retry is allowed; a closed or merged pull request is fine, only the head is compared. The request's criteria must digest to the plan's. The manifest is
    built and verified, every artifact and volatile snapshot hashed again.
 3. **Assemble the request.** Its id is derived from the node and the manifest digest only (`dag-` and 40 hex characters): no attempt counter, so a replay is the same request. The prompt carries the manifest inline,
-   or the path and hash of its frozen copy (`<first artifact root>/dag-input-manifests/<sha256 of the bytes>.json`, see *The frozen copy* below) when it exceeds 60000 characters, and tells the child, in English, to
+   or the path and hash of its frozen copy (`<first artifact root>/dag-input-manifests/<sha256 of the bytes>.json`, see *The frozen copy* below) when it exceeds 60000 UTF-8 bytes, and tells the child, in English, to
    verify every uri, hash and size before consuming an input and to report `blocked_needs_input` on any mismatch.
 4. **Write the intent.** The acceptance whose pull request was read in step 2 must be the one the manifest consumes (a predecessor accepted again meanwhile is a head that was never checked: `disposition_conflict`, repeat the release). One transaction judges the store half again (a plan revision, an acceptance or a registration may have moved), checks the slice, the criteria and the incoming edges against the manifest,
    decides capacity, reserves a slot of subject kind `dag_node` and key `plan/node` (a character neither id may contain) (decision D-15) and writes the manifest, the frozen request and the release together, or nothing. When no slot is free the
@@ -159,8 +159,7 @@ The release is idempotent and never creates a second child. In order:
 **What a replay does not repeat.** A replay continues a frozen intent; it is not a new release. It repeats the checks that decide whether the intent may continue (a tombstoned managed start, the slot's parent and
 project, a returned slot reserved again under the same ceilings, the frozen request's and the stored manifest's digests, the selectors) and sends the same bytes. It does not re-run the reading, the freshness of the
 pinned pull requests, the plan's slice, the base tip or the hashing of the input files: the intent's manifest is what it is, a change that invalidates it is the business of invalidation and adoption (a later issue), and
-the child verifies every input against the manifest before consuming it. A start that was released after its slot was reserved leaves the slot held and the node `blocked:release_abandoned`; the way on is the
-operator's `slot-release` or a plan revision that changes the slice.
+the child verifies every input against the manifest before consuming it. A start that was released after its slot was reserved leaves the slot held and the node `blocked:release_abandoned`. Returning the slot frees capacity but does not revive the tombstoned request, and changing the node's slice does not replace its recorded intent: recovery of that intent is not implemented here (it belongs to invalidation and adoption).
 
 The slot is held from step 4 until the parent releases it with the acceptance of a non-PR node or the integration of an implementation node, or an operator does.
 
@@ -230,8 +229,7 @@ is refused, also when the generation is already bound. The previous acceptance s
 ### The frozen copy
 
 A manifest that a child has to read from a file (an oversize release prompt, or a correction) is kept as `<first artifact root>/dag-input-manifests/<sha256 of its canonical bytes>.json`. The name is the hash of the
-bytes, not the manifest digest: two bodies of one manifest differ in what the digest leaves out (the time of the build, the rule version), so a second release attempt or a second preparation never meets a file it did
-not write. The file is created exclusively with mode 0600, in a directory that must be a directory of its own (a link is refused, so nothing is written outside the root), and is read back through the relay's authorized
+bytes, not the manifest digest: two bodies of one manifest differ in what the digest leaves out (the time of the build, the rule version), so they are two files. An existing regular file of that name is reused only after the authorized, byte-for-byte check below. A newly created file is created exclusively with mode 0600, in a directory that must be a directory of its own (a link is refused), and is read back through the relay's authorized
 open (inside the root, no link on the way, a regular file, never blocking on a pipe) and compared byte for byte. The child owns its artifact root, so a link or a pipe planted there makes the freeze fail and never makes it wait. A link planted between the check of the directory and the creation of the file, or an artifact
 root that is itself a link, can leave one file outside the root (it holds only a manifest the relay wrote); the read-back then refuses and nothing is bound. An artifact root with a control character is refused when a correction is prepared,
 because the relay's message joins the lines of a finding and the child would read another path. A correction uses the body the store holds for the digest, so preparing twice from the same inputs gives the same file and the same line. The directory is created by the freeze and is not
@@ -288,13 +286,13 @@ project's registered parent records, and a basis is not rewritten.
 | `dag-integration-observe --plan P --node N --actor A [--target REPO@REF]` | appends `dag_integration_observations`; returns an implementation node's slot when it is integrated | the observations, `integrated`, `mark_present`, `slot_released` |
 | `dag-decision-record --plan P --actor A --subject S --digest D --disposition X --authority-kind K --authority-ref R` | writes `dag_decisions` | the decision id and revision, `replayed`, the decision it superseded |
 | `dag-correct --plan P --node N --actor A [--prepare --manifest-request R] [--manifest-digest D]` | `--prepare` stores a manifest; otherwise writes `dag_node_executions` (kind `correction`) | the instruction line and manifest digest, or the generation bound and `carried_over` |
-| `dag-merge-judge --plan P --node N --actor A` | appends `dag_merge_checks` (when the judgement differs from the latest) | the outcome, reason, round, check sequence, heads, base tip and failed required checks |
-| `dag-merge-request --plan P --node N --actor A --host H` | the judgement as above; asks the merge lane for a turn (`merge_turns`) when eligible | the judgement and the turn |
+| `dag-merge-judge --plan P --node N --actor A [--repository OWNER/NAME --pull-request N]` | appends `dag_merge_checks` (when the judgement differs from the latest) | the outcome, reason, round, check sequence, heads, base tip and failed required checks |
+| `dag-merge-request --plan P --node N --actor A --host H [--repository OWNER/NAME --pull-request N]` | the judgement as above; asks the merge lane for a turn (`merge_turns`) when eligible | the judgement and the turn |
 | `dag-conflict-observe --plan P --actor A --repository PATH --left-node N --right-node M --left-head SHA --right-head SHA` | writes `dag_conflict_observations` | the number of conflicting files and their names |
 | `dag-cap-basis-record --limit L --revision R --w-minutes W --w-source S --s-minutes S --s-source S --actor A` | writes `dag_cap_basis` | the basis recorded |
 
 Refusals use the relay's existing reasons: `unregistered_scope` (a plan or node that is not there), `malformed_receipt` (a region or a request that is not valid),
-`disposition_conflict` (a node that edits no repository, or whose regions are held, or that is not ready), and the reasons of the table above. Exit codes are the relay's: 0, 2 refusal, 3 host, 4 usage.
+`disposition_conflict` (a node that edits no repository, or whose regions are held, or that is not ready), and the reasons of the table above. Commands can also refuse with `merge_target_unreadable`, `not_acknowledged`, `relationship_conflict`, `relationship_not_active`, `revision_ambiguous`, `scope_role_mismatch`, `slot_unknown` and `unregistered_relationship`. Exit codes are the relay's: 0, 2 refusal, 3 host, 4 usage.
 
 ## The store
 
@@ -332,6 +330,6 @@ Where the code reads the contract differently, or adds to it, and why:
 ## Where the code reads the contract (D-19)
 
 The contract cites file and line at an older commit. Every citation of the sections this issue consumes (76 of them) was resolved at that commit and at this baseline: 53 are identical at the cited lines, 23 moved with identical content
-(the largest offsets: `registry.go` +30, `delivery/service.go` +84, `relay.md` +27), none changed and none is gone. The claims the design leans on still hold: nothing outside `capacity` references `execution_slots`; there was no
-ancestor check (this issue adds one); `work_reports` has no product writer; `managed.Start` rejects a different body under one request id; the managed request id limit is unchanged at 128. New since the contract: the plan
+(the largest offsets: `registry.go` +30, `delivery/service.go` +84, `relay.md` +27), none changed and none is gone. The claims the design leans on still hold, restated for this baseline: before this change managed-start, registry and delivery did not consult execution slots (the scheduler now couples slot reservation with release intent); there was no
+ancestor check (this change adds one); `work_reports` has no product writer; `managed.Start` rejects a different body under one request id; the managed request id limit is unchanged at 128. New since the contract: the plan
 store of CRW-183, and the delivery role gate (`registry.CheckBoundRole`), which no longer withholds a relay-managed parent's completion delivery.
