@@ -238,6 +238,52 @@ func TestBusy_a_reconciliation_does_not_lift_the_busy_cap_the_combined_count_set
 	}
 }
 
+// reconcile's write computes a delivery's hold from the attempt it settles, and the busy_cap hold of
+// deferBusy is not that attempt's: whatever retry-safe rejection the old attempt received, reconciling it
+// must not lift the cap. Only a reading that finds the message was sent may.
+func TestBusy_a_reconciliation_of_an_earlier_rejection_does_not_lift_the_busy_cap(t *testing.T) {
+	w := newScaleWorld(t, 1)
+	f := w.f
+	event := w.emit(0)
+	f.host.script = []string{"read_fail"}
+	record := f.mustAttempt(event, at(f.clock.Now()))
+	if record == nil || str(record, "deliveryState") != WithheldPreSend {
+		t.Fatalf("the transport's refusal was not recorded as a withheld attempt: %v", record)
+	}
+	request := str(record, "requestId")
+	f.clock.T = f.row(event).F("next_eligible_at")
+	w.busy(true)
+	busyUntilDue(t, f, event, int(f.delivery.Policy.BusyMaxAttempts))
+	row := f.row(event)
+	if row.S("hold_reason") != BusyCap || row.I("attempt_count") != 1 {
+		t.Fatalf("the delivery is held with %q after %d attempts, want %s after one", row.S("hold_reason"), row.I("attempt_count"), BusyCap)
+	}
+	if _, err := NewReconciler(f.delivery).ReconcileAttempt(f.ctx, request, f.host, nil); err != nil {
+		t.Fatal(err)
+	}
+	if hold := f.row(event).S("hold_reason"); hold != BusyCap {
+		t.Errorf("reconciling an earlier rejection left the delivery with hold %q, want %s kept", hold, BusyCap)
+	}
+	w.busy(false)
+	f.clock.Advance(1e6)
+	if len(f.eligible()) != 0 || len(accepted(f)) != 0 {
+		t.Errorf("a delivery held at the busy cap is due again: %v, accepted %v", f.eligible(), accepted(f))
+	}
+}
+
+// The previous implementation journaled a delivery's first busy answer (and, in a race, one more) with an
+// empty detail, and the new count cannot tell those rows from its own. Such a row counts as one answer: a
+// delivery that was already waiting when this was installed starts one step ahead.
+func TestBusy_a_journal_row_the_previous_implementation_left_counts_as_one_answer(t *testing.T) {
+	w := newScaleWorld(t, 1)
+	f := w.f
+	w.busy(true)
+	event := w.emit(0)
+	w.exec("INSERT INTO journal (at, kind, subject, detail) VALUES (?, 'delivery_deferred_busy', ?, '')", f.clock.ISO(), event)
+	answerBusy(t, f, event, 2)
+	answerBusy(t, f, event, 3)
+}
+
 // accepted is the events of the messages the host accepted, in order: a send the transport answered
 // busy is in the host's list too, and is not a delivery.
 func accepted(f *fixture) []string {

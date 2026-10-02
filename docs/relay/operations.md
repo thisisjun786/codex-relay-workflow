@@ -538,11 +538,13 @@ it, so an answer the update refused is not counted), and the attempts the transp
 count with them; the count is read from those rows, so it survives a restart. After a pre-claim answer the
 delivery's next try is `BusyBase` (15 s) doubled for each answer, up to `BusyMax` (300 s), and the first
 pre-claim answer at or after the `BusyMaxAttempts`-th (the 40th) holds it with `busy_cap`; a reconciliation
-that finds the recipient busy does not lift that hold. An attempt the transport settles as busy keeps its
-own attempt-number backoff (the first waits 30 s), and a streak of such answers alone is held by the
+does not lift that hold unless it finds the message was sent. An attempt the transport settles as busy keeps
+its own attempt-number backoff (the first waits 30 s), and a streak of such answers alone is held by the
 attempt cap, as before. `attempt_count` could not do this: only a claim raises it, and a
 recipient that is busy at the lifecycle read is never claimed against, so the backoff used to stay at its
-base and the cap used to be out of reach.
+base and the cap used to be out of reach. A journal row the previous implementation left (it wrote one
+when a delivery first met a busy recipient, and in a rare race one more) counts as an answer, so a delivery
+that was already waiting when this was installed starts one step ahead.
 
 While an older delivery to a recipient waits out a busy backoff, a younger delivery to the same recipient
 is not due: not listed by the tick, not taken by a direct `deliver --event` (it returns nothing and does not
