@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/golden"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
@@ -75,5 +76,47 @@ func TestATombstoneNeedsItsClaim(t *testing.T) {
 	}
 	if _, err := os.Lstat(grave); !os.IsNotExist(err) {
 		t.Fatal("the tombstone is left")
+	}
+}
+
+// An interrupted removal leaves one trace, the tombstone, and the two commands that report it
+// name one recovery for it: crw install status lists every tombstone, and crw doctor's residue
+// lists the ones whose claim is an abandoned staging's (a reclaim killed before its deletion
+// finished). The residue used to say the next install would reclaim it, but an install reclaims
+// the directory under a runtime's own name, never a tombstone for its own sake: crw install
+// remove is what finishes one.
+func TestDoctorResidueAndStatusNameOneRecoveryForATombstone(t *testing.T) {
+	h := newHost(t)
+	first := archive(t, "0.9.0", "")
+	old := runtimeDir(h, "0.9.0", first, t)
+	h.mustInstall(t, "install", first)
+	h.mustInstall(t, "update", archive(t, "0.9.1", ""))
+	grave := filepath.Join(h.dest, ".crw-removing-"+filepath.Base(old))
+	if err := os.Rename(old, grave); err != nil {
+		t.Fatal(err)
+	}
+	unsettle(t, grave)
+
+	status, _ := install.Status(context.Background(), h.options())
+	interrupted := golden.List(at(status, "interruptedRemovals"))
+	if len(interrupted) != 1 || at(golden.Obj(interrupted[0]), "path") != grave || at(golden.Obj(interrupted[0]), "ours") != true {
+		t.Fatalf("status: %s", golden.Canon(at(status, "interruptedRemovals")))
+	}
+	fromStatus := text(at(golden.Obj(interrupted[0]), "recoveryRequires"))
+
+	report := doctor.Diagnose(context.Background(), doctor.Options{Env: h.env, CodexVersion: codexCli, Socket: h.fake.SocketPath, State: h.relayState})
+	paths, recoveries := golden.List(at(report, "residue", "residualPaths")), golden.List(at(report, "residue", "recoveryRequires"))
+	if len(paths) != 1 || paths[0] != grave || len(recoveries) != 1 {
+		t.Fatalf("the survey no longer lists the tombstone as its one residue: %s", golden.Canon(at(report, "residue")))
+	}
+	fromDoctor := text(recoveries[0])
+
+	for label, got := range map[string]string{"status": fromStatus, "doctor": fromDoctor} {
+		if !strings.Contains(got, "crw install remove "+grave) || strings.Contains(got, "next install") {
+			t.Errorf("%s does not name crw install remove for %s: %s", label, grave, got)
+		}
+	}
+	if fromDoctor != fromStatus {
+		t.Errorf("the recoveries differ\n doctor: %s\n status: %s", fromDoctor, fromStatus)
 	}
 }
