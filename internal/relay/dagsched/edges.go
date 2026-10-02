@@ -121,24 +121,50 @@ func (s *Scheduler) edgeStatus(ctx context.Context, q store.Querier, plan string
 	} else if found && rel.Status == "cancelled" {
 		cancelled = true
 	}
+	// the plan can end a node as the relay can end its relationship (CRW-281): a cancelled or archived node satisfies nothing it has not already landed
+	if from.Lifecycle == dag.LifeCancelled {
+		cancelled = true
+	}
+	archived := from.Lifecycle == dag.LifeArchived
 	switch e.Kind {
 	case dag.EdgeArtifactVerified:
 		if cancelled {
 			return blocked(BlockedPredecessorCancelled, "the predecessor was cancelled; its outgoing artifact edges stay unsatisfied until the plan is revised"), nil
 		}
-		return s.artifactVerified(ctx, q, plan, e, from)
+		if archived {
+			return blocked(BlockedPredecessorArchived, "the predecessor was archived; its outgoing artifact edges stay unsatisfied until the plan is revised"), nil
+		}
+		if st, err := s.endedPredecessor(ctx, q, plan, snap, from); err != nil || st != nil {
+			return valueOf(st), err
+		}
+		return s.artifactVerified(ctx, q, plan, snap, e, from)
 	case dag.EdgeIntegrated:
-		st, err := s.integratedEdge(ctx, q, plan, e, from)
+		st, err := s.integratedEdge(ctx, q, plan, snap, e, from)
 		if err != nil {
 			return EdgeStatus{}, err
 		}
 		if !st.Satisfied && cancelled {
 			return blocked(BlockedPredecessorCancelled, "the predecessor was cancelled before its merge landed"), nil
 		}
+		if !st.Satisfied && archived {
+			return blocked(BlockedPredecessorArchived, "the predecessor was archived before its merge landed"), nil
+		}
+		if !st.Satisfied {
+			// a landing is a fact the plan cannot take back, so a satisfied integrated edge is not looked behind; one that is not yet is blocked when what its predecessor rests on was ended
+			if ended, err := s.endedPredecessor(ctx, q, plan, snap, from); err != nil || ended != nil {
+				return valueOf(ended), err
+			}
+		}
 		return st, nil
 	case dag.EdgeDecision:
 		if cancelled {
 			return blocked(BlockedPredecessorCancelled, "the predecessor was cancelled; its outgoing decision edges stay unsatisfied until the plan is revised"), nil
+		}
+		if archived {
+			return blocked(BlockedPredecessorArchived, "the predecessor was archived; its outgoing decision edges stay unsatisfied until the plan is revised"), nil
+		}
+		if st, err := s.endedPredecessor(ctx, q, plan, snap, from); err != nil || st != nil {
+			return valueOf(st), err
 		}
 		return s.decisionEdge(ctx, q, plan, e)
 	}
@@ -244,7 +270,7 @@ func (s *Scheduler) recordedEvidence(ctx context.Context, q store.Querier, a Acc
 
 // artifactVerified is contract 2.1 as the reader applies it: the durable acceptance plus the currency checks that make a stale
 // result open nothing.
-func (s *Scheduler) artifactVerified(ctx context.Context, q store.Querier, plan string, e dag.SnapEdge, from dag.SnapNode) (EdgeStatus, error) {
+func (s *Scheduler) artifactVerified(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, e dag.SnapEdge, from dag.SnapNode) (EdgeStatus, error) {
 	a, found, err := loadActiveAcceptance(ctx, q, plan, e.FromNodeID)
 	if err != nil {
 		return EdgeStatus{}, err
@@ -297,6 +323,11 @@ func (s *Scheduler) artifactVerified(ctx context.Context, q store.Querier, plan 
 			return blocked(BlockedStaleHead, "the pull request head was observed at "+observed+" after "+a.HeadSHA+" was accepted"), nil
 		}
 	}
+	// 9. the accepted result still rests on the plan as it is now: a stale predecessor opens no edge, so nothing is released onto it (contract 8.2, E-25). This is the last check, so the reasons
+	// above (criteria, head, consumed inputs) are the ones shown first when several hold; the judgement itself is asked directly and does not depend on them.
+	if st, err := s.stalePredecessor(ctx, q, plan, snap, e, from); err != nil || st != nil {
+		return valueOf(st), err
+	}
 	return EdgeStatus{Satisfied: true, Since: a.AcceptedAt, AcceptanceID: a.AcceptanceID}, nil
 }
 
@@ -331,7 +362,9 @@ type IntegratedAt struct {
 // integratedAt is P-INT (contract 2.2) for one acceptance and one target, not for an edge kind: a terminal node and a stacked
 // predecessor have targets too. It needs a contained observation of the accepted head with no later one that says otherwise, the parent's
 // merged mark on the same event, generation and revision, and, when a merge turn carried the observation, that turn landing the same head on the
-// same target.
+// same target. The observation it returns is the EARLIEST such one: the first positive observation of the current containment run (after the last
+// negative one). Ancestry is monotone, so a merge that moves the target changes no answer, and the landed commit and the time the edge became satisfied
+// that consumers recorded must not follow every later observation of a moved tip (contract E-27).
 func (s *Scheduler) integratedAt(ctx context.Context, q store.Querier, plan string, a Acceptance, repository, baseRef string) (IntegratedAt, error) {
 	var out IntegratedAt
 	found, err := queryOne(ctx, q, "SELECT o.observation_id, o.observed_at"+
@@ -345,7 +378,7 @@ func (s *Scheduler) integratedAt(ctx context.Context, q store.Querier, plan stri
 		"   AND o2.base_ref = o.base_ref AND o2.observed_seq > o.observed_seq AND o2.is_ancestor = 0)"+
 		"  AND (o.merge_turn_id IS NULL OR EXISTS (SELECT 1 FROM merge_turns m WHERE m.turn_id = o.merge_turn_id AND m.state = 'landed'"+
 		"   AND m.candidate_head = a.head_sha AND m.repository = o.repository AND m.base_ref = o.base_ref))"+
-		" ORDER BY o.observed_seq DESC LIMIT 1",
+		" ORDER BY o.observed_seq ASC LIMIT 1",
 		[]any{repository, baseRef, a.AcceptanceID, plan}, &out.Observation, &out.Since)
 	if err != nil {
 		return IntegratedAt{}, err
@@ -365,7 +398,7 @@ func (s *Scheduler) integratedAt(ctx context.Context, q store.Querier, plan stri
 	return out, err
 }
 
-func (s *Scheduler) integratedEdge(ctx context.Context, q store.Querier, plan string, e dag.SnapEdge, from dag.SnapNode) (EdgeStatus, error) {
+func (s *Scheduler) integratedEdge(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, e dag.SnapEdge, from dag.SnapNode) (EdgeStatus, error) {
 	a, found, err := loadActiveAcceptance(ctx, q, plan, e.FromNodeID)
 	if err != nil {
 		return EdgeStatus{}, err
@@ -393,6 +426,11 @@ func (s *Scheduler) integratedEdge(ctx context.Context, q store.Querier, plan st
 	}
 	switch {
 	case at.Satisfied:
+		// the result is in this target, but a result the plan no longer stands behind that has not landed in every one of its targets (one that has is never stale, E-20) hands nothing over,
+		// wherever its head landed: a stale predecessor opens no edge (contract 8.2, E-25), whichever kind the edge is
+		if st, err := s.stalePredecessor(ctx, q, plan, snap, e, from); err != nil || st != nil {
+			return valueOf(st), err
+		}
 		return EdgeStatus{Satisfied: true, Since: at.Since, AcceptanceID: a.AcceptanceID, ObservationID: at.Observation}, nil
 	case at.Unprovable:
 		return blocked(BlockedIntegrationUnprovable, "a merge landed this head but the target does not contain it (a squash or rebase landing)"), nil

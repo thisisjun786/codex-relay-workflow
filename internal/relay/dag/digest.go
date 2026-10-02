@@ -74,7 +74,7 @@ func changeObject(c Change) map[string]any {
 	case OpReplaceNode:
 		m["node"] = nodeObject(*c.Node)
 		m["supersedes_node_id"] = c.SupersedesNodeID
-	case OpRetireNode:
+	case OpRetireNode, OpPauseNode, OpResumeNode, OpCancelNode, OpArchiveNode:
 		m["node_id"] = c.NodeID
 	case OpAddEdge:
 		m["edge"] = edgeObject(*c.Edge)
@@ -107,8 +107,9 @@ func SliceDigest(n Node, incoming []Edge) string {
 }
 
 // stateDigest is the digest of a plan's live content: what two equal plans share whatever revisions
-// produced them.
-func stateDigest(planID, project string, nodes []SnapNode, edges []SnapEdge) string {
+// produced them. The lifecycle (CRW-281) is part of it only when it is not the default, so a plan that was never
+// paused, cancelled or archived digests exactly as it did before there were lifecycle changes.
+func stateDigest(planID, project, planState string, nodes []SnapNode, edges []SnapEdge) string {
 	ns := make([]any, len(nodes))
 	for i, n := range nodes {
 		m := nodeObject(n.Node)
@@ -116,13 +117,20 @@ func stateDigest(planID, project string, nodes []SnapNode, edges []SnapEdge) str
 		if n.SupersedesNodeID != "" {
 			m["supersedes_node_id"] = n.SupersedesNodeID
 		}
+		if n.Lifecycle != "" {
+			m["lifecycle"] = n.Lifecycle
+		}
 		ns[i] = m
 	}
 	es := make([]any, len(edges))
 	for i, e := range edges {
 		es[i] = edgeObject(e.Edge)
 	}
-	return sum(map[string]any{"schema": SchemaSnapshot, "plan_id": planID, "project_key": project, "nodes": ns, "edges": es})
+	content := map[string]any{"schema": SchemaSnapshot, "plan_id": planID, "project_key": project, "nodes": ns, "edges": es}
+	if planState != "" {
+		content["plan_state"] = planState
+	}
+	return sum(content)
 }
 
 // RequestDigest identifies a request by what it asks, whatever its key order or whitespace: the

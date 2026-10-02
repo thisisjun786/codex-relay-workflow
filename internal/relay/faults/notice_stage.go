@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // ComposeNotice ports only the packet shape used by fault notices. evidence is
@@ -145,7 +146,7 @@ func (l *Ledger) StageNotice(ctx context.Context, notice map[string]any, resolve
 			args = append(args, NoticeParkedHold, noticeUnaddressedHold)
 		}
 		args = append(args, stamp, id, r.Get("packet"), r.Get("relationship_id"), r.Get("sender_task_id"), r.Get("recipient_task_id"))
-		result, err := l.exec(ctx, "UPDATE supervisor_messages SET packet=?,relationship_id=?,sender_task_id=?,recipient_task_id=?,project_key=?,"+bounds+" updated_at=? WHERE message_id=? AND state IN ('queued','deferred_busy','withheld_pre_send') AND packet=? AND relationship_id=? AND sender_task_id=? AND recipient_task_id=? AND NOT EXISTS(SELECT 1 FROM supervisor_attempts a WHERE a.message_id=supervisor_messages.message_id AND (a.send_attempted <> 'no' OR a.retry_safe=0))", args...)
+		result, err := l.exec(ctx, "UPDATE supervisor_messages SET packet=?,relationship_id=?,sender_task_id=?,recipient_task_id=?,project_key=?,"+bounds+" updated_at=? WHERE message_id=? AND "+store.SupervisorNeverSentSQL()+" AND packet=? AND relationship_id=? AND sender_task_id=? AND recipient_task_id=?", args...)
 		if err != nil {
 			return err
 		}

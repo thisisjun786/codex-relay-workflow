@@ -89,7 +89,13 @@ func NewReconciler(d *Service) *Reconciler {
 
 func (rc *Reconciler) policy() RetryPolicy { return rc.Delivery.Policy }
 
-const unresolvedWhere = " WHERE (a.internal_state = 'in_flight' OR (a.state = ? AND d.state IN (?, ?)))"
+// An attempt is open while it is in flight, or while it is held uncertain and so is its delivery (or the
+// delivery is sending). unresolvedWhere is the two terms joined; OpenParents reads each by itself.
+const (
+	unresolvedInFlight = "a.internal_state = 'in_flight'"
+	unresolvedHeld     = "a.state = ? AND d.state IN (?, ?)"
+	unresolvedWhere    = " WHERE (" + unresolvedInFlight + " OR (" + unresolvedHeld + "))"
+)
 
 // OpenAttempts is open_attempts with no bound: everything a restart has to look at.
 func (rc *Reconciler) OpenAttempts(ctx context.Context) ([]Row, error) {

@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// The `crw skill` command line: a family (hook-probe, parent-title, start-policy), one of its
+// The `crw skill` command line: a family (hook-probe, parent-title, start-policy, base-refresh), one of its
 // commands, then the command's flags and positional arguments, read with the flag package. -h
 // or --help prints the usage on stdout and exits 0; a usage error prints it on stderr and exits 2.
 
@@ -151,4 +151,10 @@ var startPolicy = family{name: "start-policy", description: `Check a start-polic
 	{"vocabulary", "print the declared values and the legal pairings"},
 	{"check", "check a record's two closed-vocabulary fields"},
 	{"selftest", "check the vocabulary and the recorded negative cases"},
+}}
+
+var issueSize = family{name: "issue-size", description: `Count what one issue states and answer ok or split_recommended, so an issue that would outgrow one pull request is found before a child is given it.
+
+The issue is read as the Linear tools give it (id, title, description) or as fields (criteria, research_criteria, deliverables, scope, verification, depends_on, exception). The answer is a count against limits taken from recorded issues, not a judgment: the same input is the same bytes, and the report prints the limits it applied. A split_recommended answer carries a draft split for crw-plan to judge. Exit 0 means the issue may be assigned (ok, or split_recommended with a valid exception record), 1 that it is not to be assigned as it is, 2 an input that cannot be read, 3 a file that cannot be read.`, commands: [][2]string{
+	{"check", "read one issue as JSON, from a file or stdin, and print the size answer"},
 }}

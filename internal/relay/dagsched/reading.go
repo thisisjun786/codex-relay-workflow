@@ -24,10 +24,13 @@ type Rank struct {
 type NodeReading struct {
 	NodeID, IssueKey, Kind string
 	State                  string
-	Disposition            string // ready | wait | defer | blocked | skip | done
+	Disposition            string // ready | wait | defer | blocked | skip | done | stale
 	Reason                 string // empty for a ready node
 	Detail                 string
-	Rank                   *Rank // candidates only
+	Rank                   *Rank  // candidates only
+	Stale                  *Stale // a stale node only: what its accepted result no longer matches (invalidation.go)
+	// Lifecycle is what the plan says of the node: paused, cancelled or archived. Empty for an active node, and then no key is printed (CRW-281).
+	Lifecycle string
 }
 
 // PassSummary is the capacity side of one reading.
@@ -47,6 +50,8 @@ type Reading struct {
 	Pass         PassSummary
 	Ready        []NodeReading
 	Nodes        []NodeReading
+	// PlanState is paused while the plan is paused; empty for an active plan, and then no key is printed (CRW-281).
+	PlanState string
 }
 
 func (n NodeReading) object() contract.OrderedObject {
@@ -55,8 +60,14 @@ func (n NodeReading) object() contract.OrderedObject {
 		{Key: "state", Value: n.State}, {Key: "disposition", Value: n.Disposition},
 		{Key: "reason", Value: optionalText(n.Reason)}, {Key: "detail", Value: optionalText(n.Detail)},
 	}
+	if n.Stale != nil {
+		o = append(o, contract.Field{Key: "stale", Value: n.Stale.object()})
+	}
 	if n.Rank != nil {
 		o = append(o, contract.Field{Key: "rank", Value: n.Rank.object()})
+	}
+	if n.Lifecycle != "" {
+		o = append(o, contract.Field{Key: "lifecycle", Value: n.Lifecycle})
 	}
 	return o
 }
@@ -82,16 +93,21 @@ func (r Reading) Object() contract.OrderedObject {
 	for i, n := range r.Nodes {
 		nodes[i] = n.object()
 	}
-	return contract.OrderedObject{
+	o := contract.OrderedObject{
 		{Key: "ok", Value: true}, {Key: "schema", Value: SchemaReading},
 		{Key: "plan_id", Value: r.PlanID}, {Key: "plan_revision", Value: r.PlanRevision},
 		{Key: "state_digest", Value: r.StateDigest}, {Key: "input_digest", Value: r.InputDigest},
+	}
+	if r.PlanState != "" {
+		o = append(o, contract.Field{Key: "plan_state", Value: r.PlanState})
+	}
+	return append(o, contract.OrderedObject{
 		{Key: "pass", Value: contract.OrderedObject{
 			{Key: "free_slots", Value: r.Pass.FreeSlots}, {Key: "ceiling", Value: r.Pass.Ceiling}, {Key: "ceiling_source", Value: r.Pass.CeilingSource},
 			{Key: "held", Value: r.Pass.Held}, {Key: "ready_count", Value: r.Pass.ReadyCount}, {Key: "deciding_limit", Value: r.Pass.DecidingLimit},
 		}},
 		{Key: "ready", Value: ready}, {Key: "nodes", Value: nodes},
-	}
+	}...)
 }
 
 // SchemaReading names the document dag-ready prints.
