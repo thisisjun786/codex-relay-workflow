@@ -278,4 +278,53 @@ WHEN OLD.retired_rev IS NOT NULL OR NEW.retired_rev IS NULL
 BEGIN SELECT RAISE(ABORT, 'dag_edges rows are immutable except for their one retirement'); END`,
 	`CREATE TRIGGER IF NOT EXISTS dag_edges_no_delete BEFORE DELETE ON dag_edges
 BEGIN SELECT RAISE(ABORT, 'dag_edges rows are never deleted'); END`,
+
+	// CRW-184, the scheduler (docs/relay/dag-scheduler.md). Appended statements only: a shipped statement is
+	// never edited (the swap gate compares stored text, so an ALTER would read as a changed object), and a table
+	// arrives in the change that first queries it (TestDAGZoneEveryTableHasAQueryOrAPendingWriter).
+	//
+	// dag_merge_checks is the history of what the relay observed of an accepted pull request at merge time: one row
+	// per observation that differs from the previous one (check_seq is max+1 per acceptance, "latest" is the highest),
+	// so the retry round of a required check, a stale head and an eviction are all readable afterwards.
+	// evidence_json is the canonical body checks_digest was taken over, so the digest can be recomputed (B-13).
+	`CREATE TABLE IF NOT EXISTS dag_merge_checks (
+    check_id             TEXT PRIMARY KEY,
+    acceptance_id        TEXT NOT NULL REFERENCES dag_acceptances (acceptance_id),
+    check_seq            INTEGER NOT NULL CHECK (check_seq >= 1),
+    head_sha             TEXT NOT NULL,
+    observed_head_sha    TEXT NOT NULL,
+    base_tip_sha         TEXT NOT NULL,
+    checks_base_sha      TEXT,
+    checks_digest        TEXT NOT NULL,
+    evidence_json        TEXT NOT NULL,
+    failed_required_json TEXT NOT NULL,
+    round_no             INTEGER NOT NULL CHECK (round_no BETWEEN 1 AND 2),
+    outcome              TEXT NOT NULL CHECK (outcome IN ('eligible', 'retry_same_sha', 'evicted', 'checks_pending', 'stale_head', 'stale_base', 'stale_criteria', 'predecessor_not_landed')),
+    reason               TEXT NOT NULL,
+    recorded_at          TEXT NOT NULL,
+    UNIQUE (acceptance_id, check_seq)
+)`,
+
+	// Re-verification of an accepted output under re-registered criteria (contract E-11). dag_acceptances_effect allows one
+	// row per relationship, generation and revision, so the same output cannot be accepted twice; the re-verification is an
+	// ordered history here (reval_seq), the latest row is the acceptance's effective criteria digest, and the acceptance keeps its identity.
+	`CREATE TABLE IF NOT EXISTS dag_acceptance_revalidations (
+    revalidation_id     TEXT PRIMARY KEY,
+    acceptance_id       TEXT NOT NULL REFERENCES dag_acceptances (acceptance_id),
+    criteria_set_digest TEXT NOT NULL,
+    event_id            TEXT NOT NULL,
+    verdict_turn_id     TEXT NOT NULL,
+    reval_seq           INTEGER NOT NULL CHECK (reval_seq >= 1),
+    revalidated_by      TEXT NOT NULL,
+    revalidated_at      TEXT NOT NULL,
+    UNIQUE (acceptance_id, reval_seq)
+)`,
+
+	// The forge identity of an accepted implementation node: dag_acceptances.repository is the target of the edges (a local
+	// path is allowed for local ancestry), while the pull request reader needs the owner/name slug and the number.
+	`CREATE TABLE IF NOT EXISTS dag_acceptance_forge (
+    acceptance_id    TEXT PRIMARY KEY REFERENCES dag_acceptances (acceptance_id),
+    forge_repository TEXT NOT NULL CHECK (forge_repository <> ''),
+    pr_number        INTEGER NOT NULL CHECK (pr_number >= 1)
+)`,
 }

@@ -11,4 +11,3 @@
 // record bound to its consumed input manifest, its criteria digest and its verification evidence; a child's
 // completion, a transport acknowledgement and a statement in a report open no edge by themselves.
 package dagsched
-

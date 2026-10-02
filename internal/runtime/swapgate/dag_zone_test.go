@@ -29,8 +29,15 @@ func declaredParts(t *testing.T) (v1, zone record.Object) {
 		}
 		v1 = append(v1, field)
 	}
-	// twelve tables, their indexes and the triggers that keep the log append-only
-	if tables != 12 || len(zone) < 12+7 {
+	// the zone's tables (every CREATE TABLE of its statements: twelve in CRW-183, more as the scheduler's phases append them), their
+	// indexes and the triggers that keep the log append-only
+	want := 0
+	for _, statement := range store.DAGZoneStatements() {
+		if strings.HasPrefix(statement, "CREATE TABLE") {
+			want++
+		}
+	}
+	if tables != want || want < 12 || len(zone) < want+7 {
 		t.Fatalf("the declared schema holds %d zone objects, %d of them tables", len(zone), tables)
 	}
 	return v1, zone
