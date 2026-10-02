@@ -87,6 +87,12 @@ func (s *Scheduler) Ready(ctx context.Context, q store.Querier, plan string, opt
 				if reading.Stale, err = s.staleOf(ctx, q, plan, snap, n); err != nil {
 					return Reading{}, err
 				}
+				// what is done about it (revalidation.go)
+				if reading.Stale != nil {
+					if reading.Stale, err = s.withRoute(ctx, q, plan, snap, n, reading.Stale); err != nil {
+						return Reading{}, err
+					}
+				}
 			}
 			life.overlayOwned(reading, state)
 			if state.Holds && n.Kind == dag.NodeImplementation {
