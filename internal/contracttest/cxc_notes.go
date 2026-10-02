@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -74,6 +75,9 @@ func loadCXCNotes(dir string, fixtures []string) (map[string]cxcClaim, error) {
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&file); err != nil {
 			return nil, fmt.Errorf("%s: %w", path, err)
+		}
+		if _, err := decoder.Token(); err != io.EOF {
+			return nil, fmt.Errorf("%s: data after the JSON value", path)
 		}
 		if stem := strings.TrimSuffix(filepath.Base(path), ".json"); file.Issue != stem {
 			return nil, fmt.Errorf("%s: issue %q is not the file name %q", path, file.Issue, stem)

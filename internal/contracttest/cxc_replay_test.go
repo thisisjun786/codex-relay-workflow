@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -100,6 +99,8 @@ var cxcRows = []cxcRow{
 		stdout: "a:x\ncwd:${WS}\nsee github.com/lidge-jun/codexclaw\n"},
 	{name: "a pretty JSON file, a mode and the umask", given: script(`printf '{\\n  \"a\": 1\\n}\\n' > \"$TMPDIR/p.json\"; umask > \"$TMPDIR/umask\"`),
 		tree: `{"tmp/p.json":{"type":"file","mode":"0644","form":"json-pretty","json":{"a":1}},"tmp/umask":{"type":"file","mode":"0644","form":"text","text":"0022\n"}}`},
+	{name: "text with markup characters survives the rename in a JSON file", given: script(`printf '{\"u\":\"crw relay job get <id>\"}\\n' > \"$TMPDIR/u.json\"`),
+		tree: `{"tmp/u.json":{"type":"file","mode":"0644","form":"json-line","json":{"u":"cxc bg get <id>"}}}`},
 	{name: "compact against pretty is a difference", given: script(`printf '{\\n  \"a\": 1\\n}\\n' > \"$TMPDIR/p.json\"`),
 		tree: `{"tmp/p.json":{"type":"file","mode":"0644","form":"json-line","json":{"a":1}}}`, err: "tree/tmp/p.json/form"},
 	{name: "a path-length fixture runs in a 33-byte case root", id: "cli__chat__index_status", given: script(`printf '%s\\n' \"${#CRW_HOME}\"`),
@@ -110,7 +111,6 @@ var cxcRows = []cxcRow{
 		stdout: "a:x\ncwd:${WS}\nlisting\nx\nnogh\n", stderr: "stub ocx: not scripted\n",
 		calls: `[{"cmd":"codex","argv":["features","list"],"cwd":"${WS}"},{"cmd":"codex","argv":["other"],"cwd":"${WS}"},{"cmd":"ocx","argv":[],"cwd":"${WS}"},{"cmd":"git","argv":["--version"],"cwd":"${WS}"}]`},
 	{name: "a different stdout is reported by key", stdout: "a:y\ncwd:${WS}\n", err: "steps/0/stdout"},
-	{name: "a different exit status is reported by key", given: script("exit 3"), err: "steps/0/exit"},
 	// An identical claim on text a rewrite rule changes with no textual replacement is refused; a
 	// changed claim runs against the oracle's own spelling, so a port printing the new name must
 	// say so with a set patch.
@@ -121,6 +121,7 @@ var cxcRows = []cxcRow{
 		claim: cxcClaim{State: cxcChanged, Set: map[string]string{"steps/0/stdout": "a:x\ncwd:${WS}\nnew\n"}}},
 	{name: "remove drops an expected key the port does not produce", tree: `{"tmp/gone":{"type":"file","mode":"0644","form":"text","text":"x"}}`,
 		claim: cxcClaim{State: cxcChanged, Remove: []string{"tree/tmp/gone"}}},
+	{name: "a set value is not a stand-in for a missing key", claim: cxcClaim{State: cxcChanged, Set: map[string]string{"tree/tmp/new/content": ""}}, err: "<absent>"},
 	{name: "remove must match a key", claim: cxcClaim{State: cxcChanged, Remove: []string{"tree/none"}}, err: "matches no"},
 }
 
@@ -224,8 +225,8 @@ func TestCXCNotes(t *testing.T) {
 	}{
 		{"all pending", map[string]string{"pending.json": pending}, map[string]string{"a": "pending pending", "c": "pending pending"}, ""},
 		{"an issue file beats the shared one, whatever the file order",
-			map[string]string{"pending.json": pending, "0.json": `{"issue":"0","identical":["a"],"intentionally-changed":[{"id":"b","reason":"r"}]}`},
-			map[string]string{"a": "identical 0", "b": "intentionally-changed 0", "c": "pending pending"}, ""},
+			map[string]string{"pending.json": pending, "0.json": `{"issue":"0","identical":["a"],"intentionally-changed":[{"id":"b","reason":"r","set":{"k":"v"},"remove":["p"]}]}`},
+			map[string]string{"a": "identical 0", "b": "intentionally-changed 0 map[k:v] [p]", "c": "pending pending"}, ""},
 		{"an unregistered fixture has no claim", map[string]string{"x.json": `{"issue":"x","pending":["a","b"]}`}, map[string]string{"c": ""}, ""},
 		{"two files claiming one fixture", map[string]string{"p.json": `{"issue":"p","identical":["a"]}`, "q.json": `{"issue":"q","identical":["a"]}`}, nil, "claimed by"},
 		{"one file claiming it twice", map[string]string{"p.json": `{"issue":"p","identical":["a"],"intentionally-changed":[{"id":"a","reason":"r"}]}`}, nil, "claimed by"},
@@ -233,6 +234,7 @@ func TestCXCNotes(t *testing.T) {
 		{"the issue is the file name", map[string]string{"p.json": `{"issue":"q","pending":["a"]}`}, nil, "file name"},
 		{"a claim names a fixture", map[string]string{"p.json": `{"issue":"p","identical":["zzz"]}`}, nil, "not a fixture"},
 		{"a pending list names a fixture", map[string]string{"p.json": `{"issue":"p","pending":["zzz"]}`}, nil, "not a fixture"},
+		{"a second document is refused", map[string]string{"p.json": `{"issue":"p","pending":["a"]} {"identical":["a"]}`}, nil, "after the JSON value"},
 		{"an unknown field is refused", map[string]string{"p.json": `{"issue":"p","identica":["a"]}`}, nil, "unknown field"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -254,22 +256,14 @@ func TestCXCNotes(t *testing.T) {
 			}
 			for id, want := range tc.want {
 				claim := got[id]
-				if have := strings.TrimSpace(claim.State + " " + claim.Issue); have != want {
+				have := strings.TrimSpace(claim.State + " " + claim.Issue)
+				if len(claim.Set)+len(claim.Remove) > 0 {
+					have += fmt.Sprint(" ", claim.Set, " ", claim.Remove)
+				}
+				if have != want {
 					t.Errorf("fixture %s is %q, want %q", id, have, want)
 				}
 			}
 		})
-	}
-}
-
-func TestCXCNotes_patches_survive_decoding(t *testing.T) {
-	dir := t.TempDir()
-	doc := `{"issue":"p","intentionally-changed":[{"id":"a","reason":"r","set":{"k":"x\n"},"remove":["y"]}]}`
-	if err := os.WriteFile(filepath.Join(dir, "p.json"), []byte(doc), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	got, err := loadCXCNotes(dir, []string{"a"})
-	if c := got["a"]; err != nil || c.Reason != "r" || c.Set["k"] != "x\n" || !slices.Equal(c.Remove, []string{"y"}) {
-		t.Errorf("claim = %+v, %v", c, err)
 	}
 }

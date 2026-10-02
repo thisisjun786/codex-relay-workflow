@@ -120,12 +120,18 @@ func mapStrings[T any](v T, f func(string) string) (T, error) {
 		return out, err
 	}
 	var failure error
+	quote := func(s string) string { // as the encoder above spells it: markup characters stay as they are
+		var quoted bytes.Buffer
+		quoter := json.NewEncoder(&quoted)
+		quoter.SetEscapeHTML(false)
+		_ = quoter.Encode(s)
+		return strings.TrimSuffix(quoted.String(), "\n")
+	}
 	mapped := regexp.MustCompile(`"(?:[^"\\]|\\.)*"`).ReplaceAllStringFunc(encoded.String(), func(literal string) string {
 		var s string
 		failure = errors.Join(failure, json.Unmarshal([]byte(literal), &s))
 		if renamed := f(s); renamed != s {
-			raw, _ := json.Marshal(renamed)
-			return string(raw)
+			return quote(renamed)
 		}
 		return literal
 	})
@@ -324,8 +330,10 @@ func compare(want, got map[string]string, claim cxcClaim) error {
 	slices.Sort(keys)
 	var diffs []string
 	for _, key := range slices.Compact(keys) {
-		if want[key] != got[key] {
-			diffs = append(diffs, fmt.Sprintf("  %s: want %.300q, got %.300q", key, want[key], got[key]))
+		w, wok := want[key]
+		g, gok := got[key]
+		if w != g || wok != gok {
+			diffs = append(diffs, fmt.Sprintf("  %s: want %s, got %s", key, shown(w, wok), shown(g, gok)))
 		}
 	}
 	if n := len(diffs); n > 8 {
@@ -335,6 +343,13 @@ func compare(want, got map[string]string, claim cxcClaim) error {
 		return fmt.Errorf("crw differs from the expectation:\n%s", strings.Join(diffs, "\n"))
 	}
 	return nil
+}
+
+func shown(value string, present bool) string {
+	if !present {
+		return "<absent>"
+	}
+	return fmt.Sprintf("%.300q", value)
 }
 
 func loadCXCFixtures(root string) ([]string, map[string]cxccorpus.Fixture, error) {
