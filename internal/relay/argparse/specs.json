@@ -188,6 +188,11 @@
   {"flag":"--expect-artifact-root","kind":"append","required":true},
   {"flag":"--expect-allowed-recipient","kind":"append","required":true},
   {"flag":"--actor","required":true}]},
+{"name":"relationship-close-merged","summary":"close (archive) the live assignments whose work is merged and of which nothing is still owed; without --apply, say which would close and change no relationship, link, binding or journal row","options":[
+  {"flag":"--project","help":"the project whose live assignments to look at"},
+  {"flag":"--all","kind":"true","help":"every live assignment in the store, scoped to a project or not"},
+  {"flag":"--actor","required":true},
+  {"flag":"--apply","kind":"true","help":"close them. Without it no relationship, link, binding or journal row is changed and no store is created; relationship-resume reopens a closed one"}],"groups":[{"required":true,"options":["--project","--all"]}]},
 {"name":"emit","options":[
   {"flag":"--relationship","required":true},
   {"flag":"--generation","type":"int","required":true},

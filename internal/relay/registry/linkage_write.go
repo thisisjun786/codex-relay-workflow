@@ -795,7 +795,9 @@ func (r *Registry) Handover(ctx context.Context, role, key, expect string, endpo
 	}
 	defer release()
 	var refused *linkRefusal
+	var settled []string
 	err = r.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
+		settled = nil
 		row, err := r.Store.One(ctx, "SELECT * FROM scope_bindings"+
 			"  WHERE scope_kind = ? AND scope_key = ? AND role = ?"+
 			"    AND status IN ('active','paused') AND superseded_by IS NULL"+
@@ -834,9 +836,24 @@ func (r *Registry) Handover(ctx context.Context, role, key, expect string, endpo
 						pyvalue.Repr(strList(unfinished)) + "; a replacement owner confirms the unfinished work it takes on",
 					scopeKind: kind, scopeKey: key, incumbent: expect, challenger: endpoint.TaskID}
 			} else if kind == scopeProject {
-				stillHere, err := r.Attached(ctx, key, sql.NullString{}, text(endpoint.TaskID))
+				attached, err := r.Attached(ctx, key, sql.NullString{}, text(endpoint.TaskID))
 				if err != nil {
 					return err
+				}
+				// CRW-288: a merged assignment with nothing owed is not work to move. It is classified here, with reads
+				// only, and closed below once every refusal check has passed.
+				stillHere := []string{}
+				view := NewAssignmentView(r)
+				for _, rid := range attached {
+					reading, err := r.readSettled(ctx, view, rid)
+					if err != nil {
+						return err
+					}
+					if reading.settled {
+						settled = append(settled, rid)
+					} else {
+						stillHere = append(stillHere, rid)
+					}
 				}
 				if len(stillHere) > 0 {
 					refusal = &linkRefusal{reason: contract.RefusalHandoverWouldStrand,
@@ -857,6 +874,13 @@ func (r *Registry) Handover(ctx context.Context, role, key, expect string, endpo
 		if refusal != nil {
 			refused = refusal
 			return l.recordConflict(ctx, refusal, now)
+		}
+		// The rows this handover leaves behind are closed before any binding or link moves, so their links are archived and
+		// not repointed to the incoming parent, and only after every refusal above: a refusal commits just its conflict.
+		for _, rid := range settled {
+			if err := r.closeSettledIn(ctx, rid, actor, now); err != nil {
+				return err
+			}
 		}
 		q := l.q(ctx)
 		currentID := field(current, "bindingId")
@@ -885,8 +909,12 @@ func (r *Registry) Handover(ctx context.Context, role, key, expect string, endpo
 			"   AND upper_task_id = ? AND status IN ('active','paused')", endpoint.TaskID, now, kind, key, expect); err != nil {
 			return err
 		}
-		return journal(ctx, r.Store, "scope_handover", newID, contract.OrderedObject{{Key: "scopeKey", Value: key}, {Key: "from", Value: expect},
-			{Key: "to", Value: endpoint.TaskID}, {Key: "actor", Value: actor}, {Key: "acknowledged", Value: strList(claimed)}}, now)
+		detail := contract.OrderedObject{{Key: "scopeKey", Value: key}, {Key: "from", Value: expect},
+			{Key: "to", Value: endpoint.TaskID}, {Key: "actor", Value: actor}, {Key: "acknowledged", Value: strList(claimed)}}
+		if len(settled) > 0 {
+			detail = append(detail, contract.Field{Key: "closedMerged", Value: strList(sortedSet(settled))})
+		}
+		return journal(ctx, r.Store, "scope_handover", newID, detail, now)
 	})
 	if err != nil {
 		return nil, unwrapRefusal(err)
@@ -894,7 +922,12 @@ func (r *Registry) Handover(ctx context.Context, role, key, expect string, endpo
 	if refused != nil {
 		return nil, refused.err()
 	}
-	return l.binding(ctx, newID)
+	record, err := l.binding(ctx, newID)
+	if err != nil || len(settled) == 0 {
+		return record, err
+	}
+	// the assignments this handover closed because they were merged; the key is absent when it closed none.
+	return append(copyObject(record), contract.Field{Key: "closedMerged", Value: strList(sortedSet(settled))}), nil
 }
 
 // unwrapRefusal returns a refusal raised inside a transaction body as itself, not wrapped.
