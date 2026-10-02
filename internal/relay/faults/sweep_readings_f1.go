@@ -107,6 +107,13 @@ func (sw *Sweeper) readingFaults(ctx context.Context, product, project string, r
 		}
 		switch state {
 		case "unreported":
+			// A reading that says nothing is owed for the turn (a later turn was admitted, the turn has its own
+			// receipt, or the report grace has not run out) is not an omission; the supervisor's readers skip it the
+			// same way. Only an explicit false skips: a reading with no owed field, as the managed observer
+			// produces, is filed as before.
+			if r["owed"] == false {
+				break
+			}
 			observations = append(observations, entry("report_omitted", Broken, fmt.Sprintf("observation:%s:%s", rel, turn), "an admitted turn settled without a report, so what it owed is owed", false, []any{evidence("reading", "reporting-observation/1", map[string]any{"reportingState": state, "reason": r["reason"], "executionGeneration": r["executionGeneration"]}), fact("an admitted turn settles with its report", "the turn settled without a report", "the level above is not told what the turn produced", "read through the CRW-180 reporting projection", r["executionGeneration"])}, signature))
 		case "reported":
 			observations = append(observations, entry("report_omitted", Broken, fmt.Sprintf("observation:%s:%s:reported", rel, turn), "a later reading of this turn found its report", true, []any{evidence("reading", "reporting-observation/1", map[string]any{"reportingState": state})}, signature))

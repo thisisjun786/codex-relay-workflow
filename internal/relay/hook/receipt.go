@@ -138,11 +138,13 @@ func LookupReceipt(ctx context.Context, path string, fallback func() (string, er
 // DecodeRecord makes of a stored receipt; this exported entry has always also accepted values a
 // caller built without decoding (an object as a map, a manifest or the roots as a list of strings
 // or maps), so those are normalized here to the ordered objects and lists the store reads.
+// That includes the records inside the manifest: a record given as a map is read as the ordered
+// object the store subscripts, and any other value is left for the store to refuse as before.
 func DeliverableState(ctx context.Context, payload any, reference string, rootsValue any) (string, string, string, error) {
 	if o, ok := evidence.Object(payload); ok {
 		normalized := append(Object(nil), o...)
 		if manifest, ok := evidence.List(get(o, "manifest")); ok {
-			normalized = set(normalized, "manifest", any(manifest))
+			normalized = set(normalized, "manifest", any(orderedRecords(manifest)))
 		}
 		payload = normalized
 	}
@@ -150,4 +152,18 @@ func DeliverableState(ctx context.Context, payload any, reference string, rootsV
 		rootsValue = roots
 	}
 	return store.DeliverableState(ctx, payload, reference, rootsValue)
+}
+
+// orderedRecords is records with every record that is a map made the ordered object
+// FrozenManifestEntries subscripts; any other value is kept. It builds a new list, so neither
+// the caller's list nor its maps are touched.
+func orderedRecords(records []any) []any {
+	out := make([]any, len(records))
+	for i, record := range records {
+		if o, ok := evidence.Object(record); ok {
+			record = o
+		}
+		out[i] = record
+	}
+	return out
 }
