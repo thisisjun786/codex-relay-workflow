@@ -313,6 +313,7 @@ func readSections(body string) (sections []section, unread []string, err error) 
 			fenced[i] = true
 			if mark == openMark && n >= openLen && rest == "" {
 				openMark = 0
+				listParagraph = false // a fence is no paragraph, so the line after it cannot continue an item's text
 			}
 		case mark != 0:
 			fenced[i], openMark, openLen = true, mark, n
@@ -332,7 +333,9 @@ func readSections(body string) (sections []section, unread []string, err error) 
 				headings = append(headings, heading{i, 2, level, plainText(strings.TrimSpace(lines[i]))})
 				i++
 				listParagraph = false
-			case col <= 3 && listLine.MatchString(text) && !thematicBreak.MatchString(text):
+			case col <= 3 && thematicBreak.MatchString(text):
+				listParagraph = false // a rule ends the item, and what follows it starts a new paragraph
+			case col <= 3 && listLine.MatchString(text):
 				listParagraph = true
 			}
 		}
