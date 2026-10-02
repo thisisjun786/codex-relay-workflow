@@ -49,6 +49,10 @@ func DefaultPolicy() RetryPolicy {
 		MinSendInterval: 5, MaxSendsPerRelationshipPerHour: 12, LifecycleRecheck: 60, Lease: 300, MaxSendsPerParentPerTick: 2}
 }
 
+// DelayFor is how long a delivery waits for its attemptNo-th try: the base, doubled for each earlier
+// one, up to the ceiling. deferBusy passes the number of the recipient's busy answer
+// (Service.busyAnswers plus this one), so the first busy answer waits BusyBase; settle and reconcile
+// pass an attempt number plus one.
 func (p RetryPolicy) DelayFor(attemptNo int64, reason string) float64 {
 	base, ceiling := p.PresendBase, p.PresendMax
 	if reason == "busy" {
