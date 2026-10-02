@@ -356,14 +356,17 @@ nothing else. Refresh the candidate that is next to merge, not the whole queue.
 
 Then merge as above: reread the head and base, merge with the expected-head guard on N.
 
-**What still goes back to the child.** A conflict comes before any update: the forge refused the
-call, or the state reads `DIRTY`. There is no N, the branch is where the child left it, and the
-correction is the old base-refresh correction that names P and the conflicting base. Everything else
-is found on a head the parent made: a refusal from `base-refresh check`; a required job that failed
-on N, or a `Devin Review` status that failed; a thread on N outside `threadsSeen`, or a blocking
-finding on N under [impact](#judge-a-finding-by-its-impact). Those corrections name N and not P, and
-carry the [restoration block](task-packet.md#restoration-block) because the child's worktree is now
-behind its branch. Waiting is not a reason to return it. The route is otherwise the
+**What still goes back to the child.** A conflict comes before an update: the forge refused the
+call, or the state reads `DIRTY`. That update did not happen, so the branch is where the last one
+left it: at P when this was the first attempt, at the newest head the parent made when it was a
+repeat. The correction is the old base-refresh correction that names that head and the conflicting
+base, and it carries the [restoration block](task-packet.md#restoration-block) when an earlier
+refresh already moved the branch past what the child holds. Everything else is found on a head the
+parent made: a refusal from `base-refresh check`; a required job that failed on N, or a
+`Devin Review` status that failed; a thread on N outside `threadsSeen`, or a blocking finding on N
+under [impact](#judge-a-finding-by-its-impact). Those corrections name N and not P, and carry the
+restoration block because the child's worktree is now behind its branch. Waiting is not a reason to
+return it. The route is otherwise the
 [needs-changes route](../SKILL.md#return-corrections-to-the-existing-task), unchanged.
 
 **In a DAG-managed project the update comes before `dag-accept`.** `dag-accept` records the head the
