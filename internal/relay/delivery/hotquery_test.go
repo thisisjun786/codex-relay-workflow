@@ -155,6 +155,12 @@ func (w *hotWorld) scramble(salt int) {
 		w.exec(q)
 	}
 	// A send just begun is open both ways: its attempt is in flight and held, and its delivery is sending.
+	// A third of the relationships have moved on to a second generation whose anchor is pending, and the
+	// events of that generation are every other event: an event is judged by the anchor of its own
+	// generation and not by another one of its relationship.
+	w.exec("UPDATE generations SET anchor_state = 'bound' WHERE relationship_id IN (SELECT relationship_id FROM relationships WHERE " + hotMix(rel, salt+14, 3) + " = 0)")
+	w.exec("INSERT INTO generations (relationship_id, execution_generation, dispatch_request_id, anchor_state, dispatch_turn_id, opened_at) SELECT relationship_id, 2, 'second-' || relationship_id, 'anchor_pending', 'anchor-2', opened_at FROM generations WHERE execution_generation = 1 AND relationship_id IN (SELECT relationship_id FROM relationships WHERE " + hotMix(rel, salt+14, 3) + " = 0)")
+	w.exec("UPDATE events SET execution_generation = 2 WHERE " + hotMix(event, salt+15, 2) + " = 0 AND relationship_id IN (SELECT relationship_id FROM generations WHERE execution_generation = 2)")
 	w.exec("UPDATE attempts SET internal_state = 'in_flight', state = ? WHERE request_id IN ('req-000401-2', 'req-000802-2')", HeldUncertain)
 	w.exec("UPDATE deliveries SET state = ? WHERE event_id IN ('ev-000401', 'ev-000802')", Sending)
 }
@@ -347,5 +353,44 @@ func TestHotQueriesReturnTheSameRowsAtTheIssuesScale(t *testing.T) {
 				t.Errorf("busy=%v but %d due rows, %d open parents, %d pending anchors", busy, due, open, pending)
 			}
 		})
+	}
+}
+
+// c3: among deliveries with one update stamp the anchor read has never had an order. What it does
+// guarantee is the limit and the stamps: the oldest distinct stamps come first, in order, and the
+// rest of the list is as many of the tied deliveries as the limit leaves room for, none of them
+// from outside the set the old statement selected.
+func TestPendingAnchorsKeepTheOldestStampsAndCutTiesAtTheLimit(t *testing.T) {
+	w := newHotWorld(t, "ties", 3000, 2, 2)
+	w.exec("UPDATE generations SET anchor_state = 'anchor_pending'")
+	const first = 10
+	// Every revision request but the first few shares one stamp, later than theirs.
+	w.exec("UPDATE deliveries SET updated_at = '2030-01-01T00:00:00.000000+00:00' WHERE kind = ? AND event_id NOT IN (SELECT event_id FROM deliveries WHERE kind = ? ORDER BY event_id LIMIT ?)", Revision, Revision, first)
+	rows, err := w.ack.pendingAnchors(w.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, r := range rows {
+		got = append(got, r.S("event_id"))
+	}
+	everything, err := all(w.ctx, w.store, legacyPendingAnchorsSQL, Revision, Dispatched, Acknowledged, "anchor_pending", 100000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var candidates []string
+	for _, r := range everything {
+		candidates = append(candidates, r.S("event_id"))
+	}
+	if len(candidates) <= pendingAnchorsLimit+first {
+		t.Fatalf("only %d anchors wait: the limit does not cut the ties", len(candidates))
+	}
+	if len(got) != pendingAnchorsLimit || !slices.Equal(got[:first], candidates[:first]) {
+		t.Fatalf("anchors read = %d, oldest %q, want %d with the oldest %q", len(got), got[:min(first, len(got))], pendingAnchorsLimit, candidates[:first])
+	}
+	for _, id := range got[first:] {
+		if !slices.Contains(candidates[first:], id) {
+			t.Errorf("%s is not among the tied candidates", id)
+		}
 	}
 }
