@@ -106,7 +106,12 @@ func (s *Scheduler) ClaimEpoch(ctx context.Context, plan string, in ClaimInput) 
 			if claimed && prior.Epoch == latest.Epoch && prior.TaskID == in.Actor && prior.BindingID == binding {
 				out.Claim, out.Replayed = prior, true
 				out.PreviousEpoch = prior.Epoch - 1
-				return nil
+				// the answer of the first call named the claim this one replaced: a session that retries after losing the response is told the same
+				before, had, err := dag.ClaimAt(txCtx, tx, plan, prior.Epoch-1)
+				if had {
+					out.PreviousTask = before.TaskID
+				}
+				return err
 			}
 			return dag.StaleEpoch("session %s already claimed epoch %d of plan %s and that claim is not the newest (epoch %d): a session that was replaced does not take the plan back; a new session claims with a new nonce", in.SessionNonce, prior.Epoch, plan, latest.Epoch)
 		}
@@ -471,6 +476,9 @@ func (s *Scheduler) resumeOf(ctx context.Context, q store.Querier, plan, actor s
 		return nil
 	}
 	switch {
+	case n.Reason == BlockedEffectUnknown && rel.ParentTaskID != actor:
+		// only the parent of the accepted result's relationship can observe where the head is (observableRelationship): another parent is not sent to a command that refuses it
+		out.Resume, out.ResumeDetail = ResumeNeedsOperator, "a merge turn for the accepted head ended with an unknown effect, and only the parent of relationship "+rel.ID+" ("+rel.ParentTaskID+") can observe where the head is: nothing in this build hands that over"
 	case n.Reason == BlockedEffectUnknown:
 		out.Resume, out.ResumeDetail = ResumeReconcile, "a merge turn for the accepted head ended with an unknown effect: observe where the head is (dag-integration-observe) and do not request another turn"
 	case liveNodeState(n.State) && rel.ParentTaskID == actor:

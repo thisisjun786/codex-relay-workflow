@@ -123,7 +123,7 @@ answered, and the next revision is built, only from rows whose slice digests and
 outside the product is the host's failure on a write too and never carries forward under digests that look right. The Go entry point `Repo.Put`
 takes a typed revision and judges it by the rules of a revision document (`Checked`), so a caller that never wrote a document cannot store an
 empty change list, an op that does not exist or a malformed digest. The early check before the writing open (`Preflight`) hands a request on
-once it finds it in the log, because that request may have committed between two of its reads; a failure to read the store is returned as it is.
+once it finds it in the log, because that request may have committed between two of its reads; a failure to read the store is returned as it is. It checks the coordinator epoch before anything else, as `Put` does, so a session that was replaced hears `stale_coordinator_epoch` and not the plan's own refusal.
 
 ## Commands
 

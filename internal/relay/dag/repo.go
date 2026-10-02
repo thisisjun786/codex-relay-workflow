@@ -614,21 +614,32 @@ func sameRows(a, b State) bool {
 // command opens the store for writing: an invalid first revision, a stale or impossible parent, or
 // a revision that breaks the plan rules is refused here, so a refused request leaves a state
 // directory without a store as it found it. The transaction in Put repeats every check as the
-// authority; this one is a refusal's early form. A failure to read the store is the host's failure
-// and is returned as it is, never handed on to the writing open.
+// authority; this one is a refusal's early form. The coordinator epoch is judged first, as Put judges it: a session that does not hold the plan's epoch hears
+// stale_coordinator_epoch whatever else is wrong with its request, and a request that names an epoch when there is no store has nobody's claim to stand on. A failure to
+// read the store is the host's failure and is returned as it is, never handed on to the writing open.
 func Preflight(ctx context.Context, dbPath string, rev Revision) error {
 	rev, err := Checked(rev)
 	if err != nil {
 		return err
 	}
+	_, statErr := os.Lstat(dbPath)
+	missing := errors.Is(statErr, os.ErrNotExist)
+	if missing && rev.CoordinatorEpoch != 0 {
+		return StaleEpoch("the request holds coordinator epoch %d and nobody has claimed an epoch of plan %s", rev.CoordinatorEpoch, rev.PlanID)
+	}
 	if rev.ExpectedParent == 0 {
+		if !missing {
+			if err := preflightFence(ctx, dbPath, rev); err != nil {
+				return err
+			}
+		}
 		_, _, violations := Apply(State{PlanID: rev.PlanID}, rev)
 		if len(violations) > 0 {
 			return &PlanRejected{Violations: violations}
 		}
 		return nil
 	}
-	if _, err := os.Lstat(dbPath); errors.Is(err, os.ErrNotExist) {
+	if missing {
 		return conflict("the request expects parent revision %d, but there is no relay store, so plan %s has no revision", rev.ExpectedParent, rev.PlanID)
 	}
 	ro, err := store.OpenInPlace(ctx, dbPath, 5*time.Second)
@@ -637,6 +648,16 @@ func Preflight(ctx context.Context, dbPath string, rev Revision) error {
 	}
 	defer ro.Close()
 	return preflightRead(ctx, ro, rev)
+}
+
+// preflightFence is the coordinator-epoch check of Preflight for a first revision, which reads nothing else of the store.
+func preflightFence(ctx context.Context, dbPath string, rev Revision) error {
+	ro, err := store.OpenInPlace(ctx, dbPath, 5*time.Second)
+	if err != nil {
+		return fmt.Errorf("checking the plan before writing: %w", err)
+	}
+	defer ro.Close()
+	return CheckCoordinatorEpoch(ctx, ro, rev.PlanID, rev.ProjectKey, rev.AuthorTaskID, rev.CoordinatorEpoch)
 }
 
 // preflightRead is Preflight's reading of an existing store. Its reads are separate queries, so another
@@ -666,6 +687,9 @@ func preflightRead(ctx context.Context, q Queryer, rev Revision) error {
 }
 
 func judgeAgainstStore(ctx context.Context, ro Queryer, rev Revision) error {
+	if err := CheckCoordinatorEpoch(ctx, ro, rev.PlanID, rev.ProjectKey, rev.AuthorTaskID, rev.CoordinatorEpoch); err != nil {
+		return err
+	}
 	if _, found, err := revisionByRequest(ctx, ro, rev.PlanID, rev.RequestID); err != nil {
 		return err
 	} else if found {

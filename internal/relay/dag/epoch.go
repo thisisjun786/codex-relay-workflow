@@ -46,6 +46,11 @@ func ClaimByNonce(ctx context.Context, q Queryer, plan, nonce string) (Claim, bo
 	return scanClaim(ctx, q, "plan_id = ? AND session_nonce = ?", plan, nonce)
 }
 
+// ClaimAt is the claim that raised the plan to epoch (found is false for an epoch nobody claimed, epoch 0 included).
+func ClaimAt(ctx context.Context, q Queryer, plan string, epoch int64) (Claim, bool, error) {
+	return scanClaim(ctx, q, "plan_id = ? AND epoch = ?", plan, epoch)
+}
+
 // liveParent is the parent binding of a project that a task holds and that is still the project's owner: active or paused, and not
 // replaced. This is how the rest of the relay reads a live owner (the contract's SQL for the fence says status = 'active'; a paused binding
 // is not a stale epoch, so it is not refused under that name).
