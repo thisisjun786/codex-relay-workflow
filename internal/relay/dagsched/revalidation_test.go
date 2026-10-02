@@ -275,7 +275,7 @@ func TestRevalidationIsRefusedWhenTheOutputMustBeReworked(t *testing.T) {
 			k.rvReregister("sr", "A", "sr-r3", accepted["A"].RelationshipID, other, nil)
 			return other
 		}},
-		{name: "the criteria changed and an input A consumed is no longer there", reason: invCriteriaChanged, action: rvHold, names: "is not there as it consumed it", setup: func(k *releaseKit, accepted map[string]AcceptResult) string {
+		{name: "the criteria changed and an input A consumed is no longer there", reason: invCriteriaChanged, action: rvHold, names: "is not there", setup: func(k *releaseKit, accepted map[string]AcceptResult) string {
 			// the child of R was cancelled: the acceptance A consumed stands, but the edge from R is no longer satisfied, so what A consumed cannot be rebuilt
 			k.exec("UPDATE relationships SET status = 'cancelled' WHERE relationship_id = ?", accepted["R"].RelationshipID)
 			other := dig("criteria while R is gone")
@@ -577,6 +577,9 @@ func TestStaleRouteFollowsTheCause(t *testing.T) {
 		{name: "an edge was added into C", setup: func(k *releaseKit, _ map[string]AcceptResult) {
 			k.putPlan("sr", int(k.snapshot("sr").Revision), "sr-r2", addEdge("bc", "B", "C", dag.EdgeArtifactVerified, nil))
 		}, want: []route{{"C", rvCorrect}}},
+		{name: "an edge was added into C from a node nobody accepted", setup: func(k *releaseKit, _ map[string]AcceptResult) {
+			k.putPlan("sr", int(k.snapshot("sr").Revision), "sr-r2", addRelNode("Q", dag.NodeNonPR), addEdge("qc", "Q", "C", dag.EdgeArtifactVerified, nil))
+		}, want: []route{{"C", rvHold}}},
 		{name: "an edge was retired from C", setup: func(k *releaseKit, _ map[string]AcceptResult) {
 			k.putPlan("sr", int(k.snapshot("sr").Revision), "sr-r2", doc{"op": dag.OpRetireEdge, "edge_id": "ac"})
 		}, want: []route{{"C", rvCorrect}}},
@@ -712,8 +715,12 @@ func TestAMergedNodeIsNotCorrectableWhateverItsKindBecomes(t *testing.T) {
 	if n, _ := nodeOf(k.snapshot("g"), "D"); n.Kind != dag.NodeNonPR {
 		t.Fatalf("the revision did not change the kind of D: %+v", n)
 	}
-	if got := invStaleIDs(k.read("g")); len(got) != 0 {
+	reading := k.read("g")
+	if got := invStaleIDs(reading); len(got) != 0 {
 		t.Fatalf("stale = %v: a node that landed is not stale whatever kind the plan gives it", got)
+	}
+	if n := reading.node("D"); n.State != StateIntegrated || n.Reason != DoneIntegrated {
+		t.Fatalf("D = %+v: what landed still reads integrated whatever kind the plan gives the node", n)
 	}
 	if _, err := k.sched.PrepareCorrection(context.Background(), "g", "D", "parent", ManifestInput{RuleVersion: k.request(false).RuleVersion}, VerifyOptions{ArtifactRoots: []string{k.root}}); refusalReason(err) != "disposition_conflict" {
 		t.Fatalf("prepare a correction of a node that landed and is now another kind = %v, want disposition_conflict", err)

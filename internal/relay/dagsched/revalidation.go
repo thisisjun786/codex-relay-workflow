@@ -42,7 +42,8 @@ func StaleActions() []string {
 
 // consumedChange is what is no longer as an accepted node consumed it, the criteria aside. It is nil, and the text empty, only when no acceptance the node consumed was replaced and the manifest rebuilt
 // from the store as the node consumed it (its criteria taken as the consumed ones) is complete and digests to the one it consumed: that is the one case in which a change of the criteria leaves the node
-// able to be ruled again as it is. Otherwise it is the change that explains the difference, or, when none does (an input that is not there, a value an edge reports on its own), the sentence that says so.
+// able to be ruled again as it is. Otherwise it is the change that explains the difference, or, when none does (a value an edge reports on its own), the sentence that says so. An input that is not there
+// at all is unavailableInput's, asked before this.
 func (s *Scheduler) consumedChange(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, n dag.SnapNode) (*Stale, string, error) {
 	ctx, m := memoFor(ctx, plan, snap)
 	if err := s.prepare(ctx, q, plan, snap, m); err != nil {
@@ -64,15 +65,6 @@ func (s *Scheduler) consumedChange(ctx context.Context, q store.Querier, plan st
 	}
 	if st, err := s.explain(ctx, q, plan, snap, n, c); err != nil || st != nil {
 		return st, "", err
-	}
-	for _, e := range incomingEdges(snap, n.NodeID) {
-		status, err := s.edgeStatus(ctx, q, plan, snap, e)
-		if err != nil {
-			return nil, "", err
-		}
-		if !status.Satisfied {
-			return nil, fmt.Sprintf("an input of %s is not there as it consumed it: edge %s reads %s", n.NodeID, e.EdgeID, status.Reason), nil
-		}
 	}
 	return nil, fmt.Sprintf("a value %s consumed changed without a stale result behind it: the edges and the merge lane report which", n.NodeID), nil
 }
@@ -132,6 +124,21 @@ func (s *Scheduler) restsOnStale(ctx context.Context, q store.Querier, plan stri
 	return nil, nil
 }
 
+// unavailableInput is the first incoming edge, by id, that is not satisfied now, as a sentence, or "" when every one is: a node cannot be rebuilt, ruled again or corrected on an input that is not there
+// (its manifest cannot be built), whatever changed it, so there is nothing to do on it until the edge is satisfied.
+func (s *Scheduler) unavailableInput(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, n dag.SnapNode) (string, error) {
+	for _, e := range incomingEdges(snap, n.NodeID) {
+		status, err := s.edgeStatus(ctx, q, plan, snap, e)
+		if err != nil {
+			return "", err
+		}
+		if !status.Satisfied {
+			return fmt.Sprintf("an input of %s is not there: edge %s from %s reads %s", n.NodeID, e.EdgeID, e.FromNodeID, status.Reason), nil
+		}
+	}
+	return "", nil
+}
+
 // holdOnPredecessor is the route of a node that rests on a stale predecessor: nothing to do on it until that is repaired.
 func holdOnPredecessor(n dag.SnapNode, st *Stale) (string, string) {
 	return ActionHold, fmt.Sprintf("nothing to do on %s yet: over edge %s it rests on %s, whose accepted result is stale (it stems from %s); repair that first, and the route of this node follows from what it then consumes",
@@ -154,10 +161,16 @@ func (s *Scheduler) routeStale(ctx context.Context, q store.Querier, plan string
 			return "", "", err
 		}
 	}
+	missing, err := s.unavailableInput(ctx, q, plan, snap, n)
+	if err != nil {
+		return "", "", err
+	}
 	switch {
 	case above != nil:
 		action, detail = holdOnPredecessor(n, above)
 		return action, detail, nil
+	case missing != "":
+		return ActionHold, missing + ": the output cannot be ruled again or corrected as it stands, and a manifest cannot be built, until the edge is satisfied", nil
 	case !found || rel.Superseded || rel.Status == "archived" || rel.Status == "cancelled":
 		return ActionRedefine, fmt.Sprintf("the relationship of %s has ended, so there is no child to send a correction to: reworking this output is a redefinition of the node, a new relationship registered with supersedes (contract 5, decision D-08), "+
 			"which the parent decides and which makes a new child", n.NodeID), nil
