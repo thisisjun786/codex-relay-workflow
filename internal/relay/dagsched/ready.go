@@ -46,6 +46,8 @@ func (s *Scheduler) Ready(ctx context.Context, q store.Querier, plan string, opt
 	if err != nil {
 		return Reading{}, err
 	}
+	// one memo of the invalidation judgement for this reading (invalidation.go): it lives in a context derived here and ends with the call, so no verdict outlives the state it was made for
+	ctx, _ = memoFor(ctx, plan, snap)
 	nodes := append([]dag.SnapNode(nil), snap.Nodes...)
 	sort.Slice(nodes, func(i, j int) bool { return nodes[i].NodeID < nodes[j].NodeID })
 	incoming := map[string][]dag.SnapEdge{}
@@ -80,6 +82,11 @@ func (s *Scheduler) Ready(ctx context.Context, q store.Querier, plan string, opt
 		readings[n.NodeID] = reading
 		if state.Owned {
 			reading.Disposition, reading.Reason, reading.Detail = state.Disp, state.Reason, state.Detail
+			if state.State == StateStale {
+				if reading.Stale, err = s.staleOf(ctx, q, plan, snap, n); err != nil {
+					return Reading{}, err
+				}
+			}
 			if state.Holds && n.Kind == dag.NodeImplementation {
 				regions, declared := declarations[n.NodeID]
 				holders = append(holders, holder{NodeID: n.NodeID, Regions: regions, Unknown: !declared})
