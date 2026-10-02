@@ -62,20 +62,23 @@ Candidates are then checked against what lies outside the plan, ranked, and cut 
 | blocked | `blocked:evidence_mismatch` | a merge check no longer digests to what was recorded (B-13) |
 | blocked | `blocked:inconsistent_inputs` | the inputs rest on two acceptances of one node (B-14) |
 | blocked | `blocked:input_unverified_at_consumption` | the child's own newest report is blocked_needs_input (B-15) |
-| blocked | `blocked:stale_predecessor` | an input of an accepted predecessor is no longer the active acceptance of its node |
+| blocked | `blocked:stale_predecessor` | an input of an accepted predecessor is no longer the active acceptance of its node, or the accepted result of the predecessor is stale (see [Invalidation](#invalidation)): the detail names the edge |
 | blocked | `blocked:creation_unknown` | a child's creation was armed and its outcome is not known; repeating the release reconciles it |
 | blocked | `blocked:effect_unknown` | a merge turn for the accepted head ended with an unknown effect |
 | blocked | `blocked:predecessor_cancelled` | the predecessor's relationship was cancelled before its result was usable |
 | blocked | `blocked:release_abandoned` | the managed start of a decided release was released before it created a child |
 | blocked | `blocked:evicted` | a required check failed again on the same head after its one retry, and the node left the merge lane |
 | blocked | `blocked:ambiguous_head` | the relationship has more than one head revision, or an execution has no relationship |
+| stale | `stale:slice_changed` | the accepted node's own slice (its spec, or its incoming edges) is no longer the one its consumed manifest recorded, and no single edge explains it |
+| stale | `stale:criteria_changed` | only the node's criteria changed, and the same output has not been re-verified against them |
+| stale | `stale:edge:<edge_id>` | the accepted node rests, over that incoming edge, on something that changed: an edge added or retired, a predecessor whose result is stale, an acceptance or decision it consumed that is no longer the one that satisfies the edge |
 | done | `done:accepted` | the parent accepted the node's result |
 | done | `done:integrated` | the accepted head is contained in every target it has to land on and the parent marked it merged |
 
 `blocked:stale_epoch` is in the contract's vocabulary and is not emitted: coordinator fencing is a later issue.
 
 The derived state of each node is shown beside its disposition: `waiting`, `ready`, `releasing`, `creation_unknown`, `running`, `reported`,
-`verifying`, `correcting`, `accepted`, `integrated`, `paused`, `cancelled`, `closed` or `ambiguous`. It is read from the rows each time and never stored.
+`verifying`, `correcting`, `accepted`, `stale`, `integrated`, `paused`, `cancelled`, `closed` or `ambiguous`. It is read from the rows each time and never stored.
 
 ### Edge satisfaction
 
@@ -91,6 +94,37 @@ An edge is satisfied by what the store holds now. Every predicate is scoped to t
   must also be whole and digest to its id, belong to an execution of the node, stand on the plan's and the relationship's criteria now, and rest on active acceptances. The head's own currency is not asked, because what landed is in the target.
 * `decision`: an active, approved decision of the subject with the plan's digest by an authority kind the edge names, or a settled supervisor
   directive with that digest. Authority text is opaque: it is compared, never read.
+
+### Invalidation
+
+A plan revision can change what an accepted node was built from. The reading judges that every time it is computed and never stores it: staleness is derived from the plan, the acceptances and the manifests, like every other node state, so it clears by itself when the cause is repaired. Two readings of one store state are equal byte for byte (no clock is read; the rebuild below takes the author, the time, the base, the volatile snapshots and the rule version from the manifest the node consumed, and hashes no file).
+
+* **Seeds.** An accepted node that has not landed is a seed when what it consumed is no longer what the plan and the store ask for:
+  * its slice digest ([DAG plans](dag-plans.md#digests): its spec, its title included, and its incoming edges) is not the one recorded by the manifest its acceptance consumed: a node edited, an edge added into it, an edge retired from it. The cause is read from the consumed inputs' edge ids against the current incoming edges (`edge_added`, `edge_retired`, else `slice_changed`);
+  * only its criteria changed (the slice digest of the current spec with the consumed criteria is the consumed slice digest) and the same output has not been re-verified against them: the effective criteria of its acceptance, the latest re-validation or else the criteria it was accepted with, are not the plan's (`criteria_changed`, contract 3.2, E-11). Re-verifying the same output resolves it with no new generation (E-21), so the mark goes away;
+  * an acceptance it consumed is no longer the active acceptance of its node, a predecessor accepted again (`input_changed`, contract 3.1, E-25). This is what keeps a node stale after the node above it is repaired, until it is accepted again itself.
+
+  A node that landed is never stale (E-20): its result is in the target branch, so a revision above it makes a new node, not a rerun.
+* **Descendants.** Only the seeds and the nodes below them in the current graph are judged; a node outside that closure reads as before.
+* **Judgement by value.** A seed is stale: its slice digest is part of its manifest, so the digests cannot be equal. A descendant is rebuilt with `BuildManifest`, as it consumed, and its manifest digest is compared with the one its acceptance consumed. Equal means current, however much changed above it. A difference counts when an incoming edge, in id order, explains it: an `artifact_verified` predecessor whose accepted result is stale (asked directly, whatever other reason the edge shows: a change of slice and criteria together is not hidden by `blocked:stale_criteria`), or a satisfied edge whose consumed value differs: the acceptance, the head an integration landed, the decision (id, digest and revision, as the manifest records them). An integrated landing is unchanged when an observation of the current containment run names the landed commit the node recorded (the same acceptance, repository, base branch and head, positive and not reverted, with a landed carrier): the tip an observation read is not a value the node consumed. A difference that has no such edge (a moved head or a cancelled predecessor, other readings of the edges) is not a stale result, so the node stays accepted.
+* **The edge gate.** An `artifact_verified` edge (a code pin included) from a stale predecessor is not satisfied: it reads `blocked:stale_predecessor` and its detail names the edge, the predecessor and why it is stale, so no node is released onto it (contract 8.2, E-25). It is the last check of the edge, after the criteria, head and consumed-input checks, so those reasons are the ones shown when several hold; the judgement itself does not depend on them. `integrated` and `decision` edges are not gated: what they hand over is a landing and a recorded decision, not a result under review.
+* **Containment does not follow dev.** The `integrated` predicate asks whether the accepted head is contained in the target, and ancestry is monotone, so a merge that moves dev changes no answer. The observation that satisfies the edge is the earliest positive one of the current containment run (the first after the last negative observation), so the landed commit that consumers' manifests name, and the time the edge became satisfied, stay as they were when the integration is observed again at a newer tip (contract E-27). A manifest recorded under the earlier choice of the newest observation is still read as unchanged for the same run.
+
+A stale node reads state `stale`, disposition `stale`, reason `stale:slice_changed`, `stale:criteria_changed` or `stale:edge:<edge_id>` (when the reason rests on an incoming edge: an edge added or retired, a stale predecessor, a consumed value that changed), and a `stale` object beside the detail, printed for stale nodes only:
+
+| Field | Meaning |
+| --- | --- |
+| `cause` | `slice_changed`, `criteria_changed`, `edge_added`, `edge_retired`, `predecessor_stale` (the predecessor over `edge_id` is stale) or `input_changed` (the value that satisfies `edge_id` is not the consumed one) |
+| `seed_node_id` | the node the staleness stems from (the node itself when its own slice changed) |
+| `edge_id`, `predecessor_node_id` | the incoming edge the reason rests on and the node on its other end (null when only the node's own slice or criteria changed) |
+| `consumed_acceptance_id`, `current_acceptance_id` | the predecessor version consumed over the edge and the acceptance that satisfies the edge now |
+| `consumed_decision`, `current_decision` | over a decision edge, `<decision id>@<revision>` consumed and now |
+| `consumed_slice_digest`, `current_slice_digest` | the slice digest the consumed version rested on and the plan's now (the node's own, or the predecessor's for `predecessor_stale`) |
+| `consumed_manifest_digest`, `rebuilt_manifest_digest` | the manifest the acceptance consumed and the one built now (null for a seed, which is not rebuilt) |
+
+The detail also carries the edge, the predecessor and the short acceptance ids, so the pass records and the reading's input digest hold them. A stale implementation node keeps holding its edit regions until its head lands. The relationship's own state comes first in the reading (a paused node reads paused, an evicted one `blocked:evicted`), while the gate on the edges built on the node follows the judgement.
+
+What it does not do: it marks and judges only. It does not revalidate a stale node, open a correction generation, adopt a restarted run, pause or cancel, or answer a progress query. A node whose consumed manifest cannot be read is not judged (the edges out of it report `blocked:manifest_tampered`). A criteria re-registration without a plan revision is not a slice change here. `dag-merge-judge` and `dag-merge-request` read the integration and the merge checks, not this judgement, so a stale accepted pull request can still be judged for the merge lane; the function to ask there is `staleOf`. Behind a landed node a mix of two acceptances of one predecessor is not a stale result, and the closure of B-14 (`blocked:inconsistent_inputs`) is what finds it.
 
 ### Input checks
 
@@ -225,7 +259,7 @@ A correction goes back to the same child (contract 3.2): a `needs_changes` rulin
 generation afterwards. The protocol therefore puts the manifest into the one text the relay itself sends. `dag-correct --prepare --manifest-request @file` rebuilds and verifies the node's input manifest as the store holds it now, stores it, and prints an English
 instruction line that names the manifest, a copy of its canonical bytes kept under the child's first artifact root (the file the child reads, since it cannot read the relay's store; see *The frozen copy*) and the sha256 of that file; the parent submits that line as the **restoration** finding of its `needs_changes` ruling. After the ruling, `dag-correct` (without `--prepare`) binds the generation the ruling opened to the manifest that finding names
 (`dag_node_executions`, kind `correction`) once the manifest is stored for this node at its current slice and criteria and the restoration note carries, word for word, the instruction that manifest was prepared with (this generation, the path of the copy and its hash). No file is read when the generation is recorded: the child checks the copy against the hash in the line it was sent. The bound digest is derived from what the child was told: a digest in an ordinary finding does not bind, a restoration block that names two different manifests is refused, a ruling without the block leaves the previous manifest in force (`carried_over`), and a `--manifest-digest` that differs
-is refused, also when the generation is already bound. The previous acceptance stays active and reads `blocked:stale_head` until the parent accepts the corrected result with `--supersedes`; invalidating what depends on it is a later issue.
+is refused, also when the generation is already bound. The previous acceptance stays active and reads `blocked:stale_head` until the parent accepts the corrected result with `--supersedes`; what consumed the old acceptance then reads stale ([Invalidation](#invalidation)).
 
 ### The frozen copy
 
@@ -327,6 +361,7 @@ Where the code reads the contract differently, or adds to it, and why:
 * `stale_base` means the base tip is not contained in the head (strict ruleset, D-11), not that the pull request's own base field differs; contract E-27 only requires `merge_currency_stale` against the new tip.
 * Corrections: the manifest of a correction is prepared before the ruling and travels as a line of the ruling's restoration finding, because the verdict writer opens the generation and sends the message in one transaction.
 * An unknown edit region overlaps everything; a node that edits no repository (`non_pr`) never conflicts.
+* The reading adds the disposition and state `stale` with the reasons `stale:slice_changed`, `stale:criteria_changed` and `stale:edge:<edge_id>` (contract 3.1 `stale:<seed>`), and an artifact edge from a stale result reads `blocked:stale_predecessor`; no refusal reason is added. Contract 4.2 lists the landed commit among the consumed values: the integrated predicate takes the earliest positive observation of the containment run, so a manifest names a stable landing, and a landed commit that an observation of the same run names is read as unchanged ([Invalidation](#invalidation)).
 
 ## Where the code reads the contract (D-19)
 

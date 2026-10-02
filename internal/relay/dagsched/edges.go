@@ -126,7 +126,7 @@ func (s *Scheduler) edgeStatus(ctx context.Context, q store.Querier, plan string
 		if cancelled {
 			return blocked(BlockedPredecessorCancelled, "the predecessor was cancelled; its outgoing artifact edges stay unsatisfied until the plan is revised"), nil
 		}
-		return s.artifactVerified(ctx, q, plan, e, from)
+		return s.artifactVerified(ctx, q, plan, snap, e, from)
 	case dag.EdgeIntegrated:
 		st, err := s.integratedEdge(ctx, q, plan, e, from)
 		if err != nil {
@@ -244,7 +244,7 @@ func (s *Scheduler) recordedEvidence(ctx context.Context, q store.Querier, a Acc
 
 // artifactVerified is contract 2.1 as the reader applies it: the durable acceptance plus the currency checks that make a stale
 // result open nothing.
-func (s *Scheduler) artifactVerified(ctx context.Context, q store.Querier, plan string, e dag.SnapEdge, from dag.SnapNode) (EdgeStatus, error) {
+func (s *Scheduler) artifactVerified(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, e dag.SnapEdge, from dag.SnapNode) (EdgeStatus, error) {
 	a, found, err := loadActiveAcceptance(ctx, q, plan, e.FromNodeID)
 	if err != nil {
 		return EdgeStatus{}, err
@@ -297,6 +297,11 @@ func (s *Scheduler) artifactVerified(ctx context.Context, q store.Querier, plan 
 			return blocked(BlockedStaleHead, "the pull request head was observed at "+observed+" after "+a.HeadSHA+" was accepted"), nil
 		}
 	}
+	// 9. the accepted result still rests on the plan as it is now: a stale predecessor opens no edge, so nothing is released onto it (contract 8.2, E-25). This is the last check, so the reasons
+	// above (criteria, head, consumed inputs) are the ones shown first when several hold; the judgement itself is asked directly and does not depend on them.
+	if st, err := s.stalePredecessor(ctx, q, plan, snap, e, from); err != nil || st != nil {
+		return valueOf(st), err
+	}
 	return EdgeStatus{Satisfied: true, Since: a.AcceptedAt, AcceptanceID: a.AcceptanceID}, nil
 }
 
@@ -331,7 +336,9 @@ type IntegratedAt struct {
 // integratedAt is P-INT (contract 2.2) for one acceptance and one target, not for an edge kind: a terminal node and a stacked
 // predecessor have targets too. It needs a contained observation of the accepted head with no later one that says otherwise, the parent's
 // merged mark on the same event, generation and revision, and, when a merge turn carried the observation, that turn landing the same head on the
-// same target.
+// same target. The observation it returns is the EARLIEST such one: the first positive observation of the current containment run (after the last
+// negative one). Ancestry is monotone, so a merge that moves the target changes no answer, and the landed commit and the time the edge became satisfied
+// that consumers recorded must not follow every later observation of a moved tip (contract E-27).
 func (s *Scheduler) integratedAt(ctx context.Context, q store.Querier, plan string, a Acceptance, repository, baseRef string) (IntegratedAt, error) {
 	var out IntegratedAt
 	found, err := queryOne(ctx, q, "SELECT o.observation_id, o.observed_at"+
@@ -345,7 +352,7 @@ func (s *Scheduler) integratedAt(ctx context.Context, q store.Querier, plan stri
 		"   AND o2.base_ref = o.base_ref AND o2.observed_seq > o.observed_seq AND o2.is_ancestor = 0)"+
 		"  AND (o.merge_turn_id IS NULL OR EXISTS (SELECT 1 FROM merge_turns m WHERE m.turn_id = o.merge_turn_id AND m.state = 'landed'"+
 		"   AND m.candidate_head = a.head_sha AND m.repository = o.repository AND m.base_ref = o.base_ref))"+
-		" ORDER BY o.observed_seq DESC LIMIT 1",
+		" ORDER BY o.observed_seq ASC LIMIT 1",
 		[]any{repository, baseRef, a.AcceptanceID, plan}, &out.Observation, &out.Since)
 	if err != nil {
 		return IntegratedAt{}, err
