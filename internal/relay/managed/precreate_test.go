@@ -73,6 +73,10 @@ func TestPrecreate_RefusalsComeBeforeTheHostIsAsked(t *testing.T) {
 	const separator = " must not contain '|', which is the field separator"
 	const conflict = "'parent' already has execution settings that differ from this record; ensure_only does not overwrite them"
 	differentModel := func(settings map[string]any) { settings["model"] = "gpt-other" }
+	hostSeparator := func(r map[string]any) {
+		r["parent"].(map[string]any)["hostId"] = "ho|st"
+		r["child"].(map[string]any)["hostId"] = "ho|st"
+	}
 	cases := []struct {
 		name   string
 		bound  bool
@@ -80,41 +84,58 @@ func TestPrecreate_RefusalsComeBeforeTheHostIsAsked(t *testing.T) {
 		record func(*scopeRun)
 		reason string
 		detail string
+		// state is the request's state afterwards: a refusal at the first scope ask leaves the reservation
+		// unarmed; the asks directly before the effect come after the reservation is armed.
+		state string
 	}{
-		{name: "issue key holding the separator", bound: true,
+		{name: "issue key holding the separator", bound: true, state: "create_armed",
 			change: func(r map[string]any) { r["issueKey"] = "REL|X" }, detail: "issue_key" + separator},
-		{name: "parent task id holding the separator",
+		{name: "parent task id holding the separator", state: "create_armed",
 			change: func(r map[string]any) {
 				withoutProject(r)
 				r["parent"].(map[string]any)["taskId"] = "par|ent"
 				r["allowedRecipients"] = []any{"par|ent"}
 			}, detail: "parent_task_id" + separator},
-		{name: "host id holding the separator under a project", bound: true,
+		// Registration names the first field it finds, parent before issue.
+		{name: "parent task id and issue key both holding the separator", state: "create_armed",
 			change: func(r map[string]any) {
-				r["parent"].(map[string]any)["hostId"] = "ho|st"
-				r["child"].(map[string]any)["hostId"] = "ho|st"
-			}, reason: "unregistered_scope", detail: "the child host id" + separator},
-		{name: "parent settings that differ from the recorded ones", bound: true,
+				withoutProject(r)
+				r["issueKey"] = "REL|X"
+				r["parent"].(map[string]any)["taskId"] = "par|ent"
+				r["allowedRecipients"] = []any{"par|ent"}
+			}, detail: "parent_task_id" + separator},
+		{name: "host id holding the separator under a project", bound: true, state: "create_armed",
+			change: hostSeparator, reason: "unregistered_scope", detail: "the child host id" + separator},
+		{name: "parent settings that differ from the recorded ones", bound: true, state: "create_armed",
 			record: func(x *scopeRun) { x.recordParentSettings(differentModel) },
 			reason: "relationship_conflict", detail: conflict},
-		// The answer a request got before is the one it gets now, so a request refused for two reasons keeps
-		// the reason registration would have given first: the project scope, then the separator in the
-		// identity, then the project's host, then the recorded settings.
-		{name: "separator beats differing settings", bound: true,
+		// Each refusal keeps its own answer, and the checks that already ran before creation keep their
+		// place. A request refused for two reasons the request alone decides gets the one registration
+		// would have given first: the project scope, then the separator in the identity, then the
+		// project's host, then the recorded settings.
+		{name: "separator beats differing settings", bound: true, state: "create_armed",
 			change: func(r map[string]any) { r["issueKey"] = "REL|X" },
 			record: func(x *scopeRun) { x.recordParentSettings(differentModel) },
 			detail: "issue_key" + separator},
-		{name: "unbound project beats separator and differing settings",
+		{name: "unbound project beats separator and differing settings", state: "reserved",
 			change: func(r map[string]any) { r["issueKey"] = "REL|X" },
 			record: func(x *scopeRun) { x.recordParentSettings(differentModel) },
 			reason: "unregistered_scope", detail: "project 'P-SCOPE' has no registered parent, so an issue cannot be attached to it yet"},
-		{name: "host separator beats differing settings", bound: true,
-			change: func(r map[string]any) {
-				r["parent"].(map[string]any)["hostId"] = "ho|st"
-				r["child"].(map[string]any)["hostId"] = "ho|st"
-			},
+		{name: "host separator beats differing settings", bound: true, state: "create_armed",
+			change: hostSeparator,
 			record: func(x *scopeRun) { x.recordParentSettings(differentModel) },
 			reason: "unregistered_scope", detail: "the child host id" + separator},
+		// Registration used to answer duplicate_scope_owner for the rival owner of the issue, a refusal that
+		// names the created child and so cannot be asked before it exists; the settings refusal is decided
+		// first now. This is the one answer that changes, for a request that is refused anyway.
+		{name: "differing settings are asked before a rival child binding that needs the child", bound: true, state: "create_armed",
+			record: func(x *scopeRun) {
+				x.recordParentSettings(differentModel)
+				if _, err := x.reg.BindScopeAs(x.ctx, "child", "REL-MANAGED", registry.Endpoint{TaskID: "rival", HostID: "host"}, "active"); err != nil {
+					x.t.Fatal(err)
+				}
+			},
+			reason: "relationship_conflict", detail: conflict},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -138,11 +159,29 @@ func TestPrecreate_RefusalsComeBeforeTheHostIsAsked(t *testing.T) {
 			if len(x.host.calls) != 0 {
 				t.Fatalf("a refused request reached the host: %v", x.host.calls)
 			}
-			// Nothing was armed, so managed-release can still release the reservation.
-			if row := x.requestRow(); row.State != "reserved" || x.count("relationships") != 0 {
-				t.Fatalf("refused request left %s with %d relationships", row.State, x.count("relationships"))
+			if row := x.requestRow(); row.State != c.state || x.count("relationships") != 0 {
+				t.Fatalf("refused request left %s with %d relationships, want %s with none", row.State, x.count("relationships"), c.state)
 			}
 		})
+	}
+}
+
+// A request refused for its parent settings is armed and keeps its request id: once the recorded settings
+// are the request's, the same request creates its one child.
+func TestPrecreate_SettingsRefusalRetryCreatesTheChildOnce(t *testing.T) {
+	x := newScopeRun(t)
+	x.bind("parent")
+	x.recordParentSettings(func(settings map[string]any) { settings["model"] = "gpt-other" })
+	if _, err := x.start.Run(x.ctx, x.raw); err == nil || len(x.host.calls) != 0 {
+		t.Fatalf("first run: %v %v", err, x.host.calls)
+	}
+	if _, err := x.store.DB.ExecContext(x.ctx, "DELETE FROM authorized_settings WHERE task_id = 'parent'"); err != nil {
+		t.Fatal(err)
+	}
+	x.recordParentSettings(func(map[string]any) {})
+	got := x.run()
+	if got["state"] != "admitted" || x.host.count("CreateThread") != 1 {
+		t.Fatalf("retry: %v %v", got, x.host.calls)
 	}
 }
 
@@ -222,11 +261,11 @@ func TestPrecreate_BindingRemovedJustBeforeTheEffectCreatesNothing(t *testing.T)
 	}
 }
 
-// projectLockPath is where the managed-start protocol keeps a project's lock: a sidecar beside the store.
+// protocolLockPath is where the managed-start protocol keeps a project's lock: a sidecar beside the store.
 // A writer of the project's parent binding takes it exclusively, a managed start takes it shared for the
 // span from its last scope ask to the creation. The tests spell the path out so they hold the engine to the
 // protocol and not to its own helper.
-func projectLockPath(storePath, project string) string {
+func protocolLockPath(storePath, project string) string {
 	sum := sha256.Sum256([]byte(project))
 	return filepath.Join(filepath.Dir(storePath), "managed-start-project-"+hex.EncodeToString(sum[:])+".lock")
 }
@@ -235,7 +274,7 @@ func projectLockPath(storePath, project string) string {
 // reports false when a managed start is inside the span, which is what the lock exists to tell a writer.
 func holdProject(t *testing.T, storePath, project string) (release func(), held bool) {
 	t.Helper()
-	fd, err := unix.Open(projectLockPath(storePath, project), unix.O_CREAT|unix.O_RDWR|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0600)
+	fd, err := unix.Open(protocolLockPath(storePath, project), unix.O_CREAT|unix.O_RDWR|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0600)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -330,7 +369,7 @@ func TestPrecreate_StartWaitsForAWriterOfTheBinding(t *testing.T) {
 			created := make(chan struct{})
 			x.host.onCreate = func() { close(created) }
 			done := x.runAsync(x.raw)
-			<-reached
+			recv(t, reached, "the start to reach its creation step")
 			select {
 			case <-created:
 				t.Fatal("the start asked the host to create while a writer held the project's lock")
@@ -491,7 +530,7 @@ func TestPrecreate_StartInsideTheSpanHoldsOffAWriter(t *testing.T) {
 	t.Cleanup(func() { once.Do(func() { close(letGo) }) })
 	host.parked[create] = letGo
 	done := x.runAsync(raw)
-	if id := <-host.entered; id != create {
+	if id := recv(t, host.entered, "the creation to begin"); id != create {
 		t.Fatalf("the creation was %s, want %s", id, create)
 	}
 	if release, held := holdProject(t, x.store.Path, scopeProject); held {
@@ -531,7 +570,7 @@ func TestPrecreate_StartsAreNotSerialised(t *testing.T) {
 			t.Cleanup(func() { once.Do(func() { close(letGo) }) })
 			host.parked[createA] = letGo
 			doneA := x.runAsync(rawA)
-			if id := <-host.entered; id != createA {
+			if id := recv(t, host.entered, "the first creation to begin"); id != createA {
 				t.Fatalf("the first creation was %s, want A's", id)
 			}
 			// A stays parked inside CreateThread for the whole of B's start.
@@ -543,4 +582,134 @@ func TestPrecreate_StartsAreNotSerialised(t *testing.T) {
 			admitted(t, "A", awaitStart(t, "A", doneA))
 		})
 	}
+}
+
+// recv is a bounded receive: a test that waits on the engine fails with what it waited for, not by hanging.
+func recv[T any](t *testing.T, ch <-chan T, what string) T {
+	t.Helper()
+	select {
+	case v := <-ch:
+		return v
+	case <-time.After(20 * time.Second):
+		t.Fatalf("timed out waiting for %s", what)
+		panic("unreachable")
+	}
+}
+
+// A writer that holds the lock of one project holds up the starts of that project and of no other.
+func TestPrecreate_AWriterOfOneProjectDoesNotHoldUpAnother(t *testing.T) {
+	x := newScopeRun(t)
+	bindProject(t, x, scopeProject, "parent")
+	bindProject(t, x, "P-B", "parent-B")
+	host := newSpanHost(x.host.managedFake)
+	x.start.Adapter = host
+	rawA, createA := x.startFor(host, "managed-A", "REL-A", "parent", scopeProject)
+	rawB, createB := x.startFor(host, "managed-B", "REL-B", "parent-B", "P-B")
+	release, held := holdProject(t, x.store.Path, scopeProject)
+	if !held {
+		t.Fatal("the project's lock was taken by someone else")
+	}
+	reached := atCreation(x.host.managedFake, createA)
+	doneA := x.runAsync(rawA)
+	recv(t, reached, "A to reach its creation step")
+	// A is waiting for the writer; B, of another project, goes through meanwhile.
+	admitted(t, "B", awaitStart(t, "B", x.runAsync(rawB)))
+	if host.createdCount(createA) != 0 || host.createdCount(createB) != 1 {
+		t.Fatalf("created A %d, B %d", host.createdCount(createA), host.createdCount(createB))
+	}
+	release()
+	admitted(t, "A", awaitStart(t, "A", doneA))
+}
+
+// A request that already has its creation answer, or is registered, takes no lock: a retry is never held up
+// by a writer, and answers as it did.
+func TestPrecreate_ReplaysTakeNoLock(t *testing.T) {
+	t.Run("attached request", func(t *testing.T) {
+		x := newScopeRun(t)
+		x.bind("parent")
+		x.run()
+		release, held := holdProject(t, x.store.Path, scopeProject)
+		if !held {
+			t.Fatal("the start kept the project's lock")
+		}
+		defer release()
+		admitted(t, "replay", awaitStart(t, "replay", x.runAsync(x.raw)))
+		if x.host.count("CreateThread") != 1 {
+			t.Fatalf("replay created again: %v", x.host.calls)
+		}
+	})
+	t.Run("request armed with a creation answer", func(t *testing.T) {
+		x := newScopeRun(t)
+		x.bind("parent")
+		x.host.creationEnvironmentChanged = true
+		if first := x.run(); first["reason"] != "creation_settings_unverified" {
+			t.Fatalf("first run: %v", first)
+		}
+		release, held := holdProject(t, x.store.Path, scopeProject)
+		if !held {
+			t.Fatal("the start kept the project's lock")
+		}
+		defer release()
+		out := awaitStart(t, "retry", x.runAsync(x.raw))
+		if out.err != nil || out.got["reason"] != "creation_settings_unverified" || x.host.count("CreateThread") != 1 {
+			t.Fatalf("retry: %v %v %v", out.got, out.err, x.host.calls)
+		}
+	})
+}
+
+// The checks that already ran before creation keep their place: on a request that is armed and has no
+// creation answer, a vanished binding still beats a failing ledger check, and a failing ledger check still
+// beats the new refusals, which come last, directly before the effect.
+func TestPrecreate_ChecksThatRanBeforeCreationKeepTheirPrecedence(t *testing.T) {
+	// armed returns a run whose request is armed with nothing created, and whose ledger check fails on the
+	// creation path from now on.
+	armed := func(t *testing.T) *scopeRun {
+		x := newScopeRun(t)
+		x.bind("parent")
+		removed := false
+		x.host.onGetOperation = func(id string) {
+			if strings.HasPrefix(id, "managed-create-") && !removed {
+				removed = true
+				x.unbind()
+			}
+		}
+		if _, err := x.start.Run(x.ctx, x.raw); err == nil || x.requestRow().State != "create_armed" {
+			t.Fatalf("setup: %v %s", err, x.requestRow().State)
+		}
+		x.host.onGetOperation = nil
+		host := &ledgerHook{callRecord: x.host}
+		x.start.Adapter = host
+		creating := false
+		x.host.onGetOperation = func(id string) {
+			if strings.HasPrefix(id, "managed-create-") {
+				creating = true
+			}
+		}
+		host.onLedger = func() {
+			if creating {
+				x.host.ledger = map[string]any{"realPath": "replaced", "device": 9, "inode": 9}
+			}
+		}
+		return x
+	}
+	t.Run("vanished binding beats a failing ledger check", func(t *testing.T) {
+		x := armed(t)
+		_, err := x.start.Run(x.ctx, x.raw)
+		reasonIs(t, err, "unregistered_scope")
+		if x.host.count("CreateThread") != 0 {
+			t.Fatalf("created: %v", x.host.calls)
+		}
+	})
+	t.Run("failing ledger check beats differing settings", func(t *testing.T) {
+		x := armed(t)
+		x.bind("parent")
+		x.recordParentSettings(func(settings map[string]any) { settings["model"] = "gpt-other" })
+		_, err := x.start.Run(x.ctx, x.raw)
+		if reason, detail := answer(err); reason != "relationship_conflict" || detail != "ledger replaced" {
+			t.Fatalf("answer %q %q", reason, detail)
+		}
+		if x.host.count("CreateThread") != 0 {
+			t.Fatalf("created: %v", x.host.calls)
+		}
+	})
 }

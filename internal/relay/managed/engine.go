@@ -177,27 +177,13 @@ func (m *Start) Run(ctx context.Context, raw []byte) (contract.OrderedObject, er
 		return nil, err
 	}
 	if receipt == nil || receipt["status"] == "not_attempted" {
-		readiness, err = m.ready(ctx, req)
+		var notReady string
+		receipt, notReady, err = m.create(ctx, identity, req, ledger)
 		if err != nil {
 			return nil, err
 		}
-		if readiness != "" {
-			return answer(row, "refused", "creation", readiness)
-		}
-		// Asked again right before the effect, as readiness is: the binding may have moved since the first ask.
-		if err := m.scopeRefusal(ctx, identity, req); err != nil {
-			return nil, err
-		}
-		child := obj(req["child"])
-		settings := obj(child["settings"])
-		if err := m.Adapter.RequireLedger(ctx, ledger); err != nil {
-			return nil, err
-		}
-		sandbox := obj(settings["sandbox"])
-		kind := map[string]string{"workspaceWrite": "workspace-write", "readOnly": "read-only", "dangerFullAccess": "danger-full-access"}[str(sandbox["type"])]
-		receipt, err = m.Adapter.CreateThread(ctx, CreateThreadRequest{RequestID: identity.CreateRequestID, CWD: str(settings["cwd"]), Prompt: bootstrap, Title: str(child["title"]), Sandbox: kind, Model: str(settings["model"]), ReasoningEffort: str(settings["reasoningEffort"]), RuntimeWorkspaceRoots: stringsOf(settings["runtimeWorkspaceRoots"]), ExpectedSandboxPolicy: sandbox, Role: "child"})
-		if err != nil {
-			return nil, err
+		if notReady != "" {
+			return answer(row, "refused", "creation", notReady)
 		}
 	}
 	if str(receipt["status"]) == "failed" {
@@ -496,6 +482,70 @@ func (m *Start) Run(ctx context.Context, raw []byte) (contract.OrderedObject, er
 	resultRow := result(row)
 	resultRow.BusinessTurnID = turn
 	return resultRow.Observe(ctx, m.Store, m.now(), "admitted", "business_accepted", "")
+}
+
+// create is the one place a managed start asks the host for its child. Every refusal that can be decided
+// without the child is decided here, in the order it was always decided, and the last of them directly
+// before the host is asked: readiness, the project scope, the ledger, then the project scope again with
+// the request's own fields (requestRefusal). A request that names a project holds the project's lock
+// (LockProject) from before the first of these until CreateThread has returned, so a writer of the
+// project's binding that takes it exclusively cannot change the binding in between.
+//
+// It returns the host's receipt, or the readiness refusal code that stands in for it.
+func (m *Start) create(ctx context.Context, id Identity, req, ledger map[string]any) (map[string]any, string, error) {
+	if project := str(req["projectKey"]); project != "" {
+		release, err := LockProject(ctx, m.Store.Path, project)
+		if err != nil {
+			return nil, "", err
+		}
+		defer release()
+	}
+	readiness, err := m.ready(ctx, req)
+	if err != nil {
+		return nil, "", err
+	}
+	if readiness != "" {
+		return nil, readiness, nil
+	}
+	// Asked right before the effect, as readiness is: the binding may have moved since the first ask.
+	if err := m.scopeRefusal(ctx, id, req); err != nil {
+		return nil, "", err
+	}
+	if err := m.Adapter.RequireLedger(ctx, ledger); err != nil {
+		return nil, "", err
+	}
+	// The ledger check is an adapter call and takes time: the last ask is the one after it, and nothing but
+	// the host call follows it.
+	if err := m.scopeRefusal(ctx, id, req); err != nil {
+		return nil, "", err
+	}
+	if err := m.requestRefusal(ctx, req); err != nil {
+		return nil, "", err
+	}
+	child := obj(req["child"])
+	settings := obj(child["settings"])
+	sandbox := obj(settings["sandbox"])
+	kind := map[string]string{"workspaceWrite": "workspace-write", "readOnly": "read-only", "dangerFullAccess": "danger-full-access"}[str(sandbox["type"])]
+	receipt, err := m.Adapter.CreateThread(ctx, CreateThreadRequest{RequestID: id.CreateRequestID, CWD: str(settings["cwd"]), Prompt: bootstrap, Title: str(child["title"]), Sandbox: kind, Model: str(settings["model"]), ReasoningEffort: str(settings["reasoningEffort"]), RuntimeWorkspaceRoots: stringsOf(settings["runtimeWorkspaceRoots"]), ExpectedSandboxPolicy: sandbox, Role: "child"})
+	return receipt, "", err
+}
+
+// requestRefusal is what registration and the settings record refuse once the child exists and the request
+// alone decides: a field holding the field separator, then the parent's recorded settings that differ from
+// the request's. Each is the refusal registration or EnsureSettings gives, with the same reason, detail
+// and error type, asked while the child does not exist. The settings read is the store's answer now;
+// EnsureSettings after creation stays the write that decides.
+func (m *Start) requestRefusal(ctx context.Context, req map[string]any) error {
+	if err := separatorRefusal(req); err != nil {
+		return err
+	}
+	parent := obj(req["parent"])
+	settings := map[string]any{}
+	for key, value := range obj(parent["settings"]) {
+		settings[key] = value
+	}
+	settings["citedRole"] = "parent"
+	return SettingsConflict(ctx, m.Store, str(parent["taskId"]), settings)
 }
 
 // scopeRefusal is the project-scope decision Register makes once the child exists, asked while it does

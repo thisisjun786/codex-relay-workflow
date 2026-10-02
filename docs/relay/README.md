@@ -348,6 +348,29 @@ same request id and it creates its one task; if you release that reservation wit
 `managed-release` instead, its request id stays dead and the next attempt needs a new one. The
 second check, which catches a binding that moved after the reservation was armed, leaves the
 request armed and not releasable; retry it with the same request id once the project is bound again.
+Three more refusals that registration or the settings record used to give only after the task existed
+are given before the host is asked to create it, with the same reason, detail and exit code. They
+come directly before the creation, after the readiness, scope and ledger checks that were always made
+there: a `parent` task id or an `issueKey` that contains `|` (the field separator, as a plain error
+naming `parent_task_id` or `issue_key`; the parent is named first when both do), a child host id that
+contains `|` when the request names a `projectKey` (`unregistered_scope`; a request without a project is
+not asked, as registration does not ask), and parent settings that differ from the settings already
+recorded for that parent (`relationship_conflict`). A request refused this way is armed with no task and not
+releasable; a settings refusal clears once the recorded settings agree with the request, and the
+same request id then creates its task. A request that
+is refused for two reasons answers the one that can be asked first, so a request that also names a
+rival owner of its issue, a refusal that needs the created child, answers the settings refusal
+instead of `duplicate_scope_owner`.
+A request that names a `projectKey` holds that project's lock, shared, from before the readiness and
+scope checks until the creation has returned: `managed-start-project-<sha256 of the key>.lock` beside
+the store. Starts do not hold each other up, and a start of another project uses another file. A
+writer of the project's parent binding that takes the same lock exclusively waits for every start
+inside that span, and a start waits for it before it asks about the binding, so the binding cannot
+change between the last scope check and the creation. Only `managed-start` takes the lock today;
+the registry's writers (`linkage-bind`, `linkage-handover`) do not, so a binding they remove inside the
+span is not prevented, and registration refuses the new task as before. The wait is bounded at 30
+seconds: a holder that never lets go ends it with the retryable `LockWaitExpired` host error, the
+request stays armed, and the same request id continues it.
 Registration adds that retained child's ID to the declared recipients so the parent can
 return revision requests to its own child. Replay and pre-start checks verify this derived
 list; it does not authorize messages to an unrelated task.
