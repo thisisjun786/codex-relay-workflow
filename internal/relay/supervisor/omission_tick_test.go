@@ -21,7 +21,7 @@ import (
 
 // CRW-300: what the daemon's tick costs for relationships whose turn declared ready_for_review.
 //
-// The world is the standing world of CRW-299 (a project, a supervisor above it, one relationship per
+// The world is the standing world of PR #319 (a project, a supervisor above it, one relationship per
 // issue) with what omission derivation reads added to each relationship: a generation opened by a
 // dispatch request, the claim of a reporting session, the turn's declaration (ready_for_review), the
 // relay's completed settlement of the turn, and a receipt event over a real artifact with a frozen copy.
@@ -172,7 +172,7 @@ func (w *omissionWorld) dump() string {
 
 // connectionsOpened counts the connections opened to any SQLite database through the driver registered
 // as "sqlite" (what sql.Open("sqlite", ...) uses, as the omission reader's own connection did before
-// CRW-297) from the time the process loaded this package's tests.
+// PR #306) from the time the process loaded this package's tests.
 var connectionsOpened atomic.Int64
 
 func init() {
