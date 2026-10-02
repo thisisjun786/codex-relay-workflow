@@ -1,10 +1,7 @@
-//go:build dev
-
 package cxccorpus
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -218,6 +215,3 @@ func (s *Session) Stderr(text string) string {
 	}
 	return s.Text(strings.Join(kept, ""))
 }
-
-// osGetenv is os.Getenv; a seam for the safety checks' tests.
-var osGetenv = os.Getenv

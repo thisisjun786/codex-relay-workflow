@@ -9,17 +9,19 @@ import (
 )
 
 // settings.py vocabulary. The codes are machine-consumed; SettingsDifferAfterLoad and the
-// hold texts are caller-visible and kept byte-identical to settings.py.
+// hold texts are caller-visible and kept byte-identical to settings.py. The five refusal reasons
+// are members of the contract's generated refusal enum and are spelled from it; the rest are finding
+// and note codes the enum does not carry.
 const (
-	SettingsUnavailable             = "settings_unavailable"
-	SettingsIncomplete              = "settings_incomplete"
-	SettingsMistyped                = "settings_mistyped"
+	SettingsUnavailable             = string(contract.RefusalSettingsUnavailable)
+	SettingsIncomplete              = string(contract.RefusalSettingsIncomplete)
+	SettingsMistyped                = string(contract.RefusalSettingsMistyped)
 	SettingsNotPreserved            = "settings_not_preserved"
 	SettingUnobservable             = "setting_unobservable"
 	EnvironmentsUnknown             = "environments_unknown"
 	UnverifiablePermissionProfile   = "unverifiable_permission_profile"
-	UnsupportedSandboxType          = "unsupported_sandbox_type"
-	UnsupportedApprovalPolicy       = "unsupported_approval_policy"
+	UnsupportedSandboxType          = string(contract.RefusalUnsupportedSandboxType)
+	UnsupportedApprovalPolicy       = string(contract.RefusalUnsupportedApprovalPolicy)
 	SettingsDifferAfterLoad         = "settings_differ_after_load"
 	ApprovalPolicyDiffersFromRecord = "approval_policy_differs_from_record"
 	RuntimeRootsNarrower            = "runtime_roots_narrower_than_record"
