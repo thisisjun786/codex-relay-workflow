@@ -356,13 +356,15 @@ nothing else. Refresh the candidate that is next to merge, not the whole queue.
 
 Then merge as above: reread the head and base, merge with the expected-head guard on N.
 
-**What still goes back to the child**, as a correction that names N and not P, with the
-[restoration block](task-packet.md#restoration-block) because the child's worktree is now behind its
-branch: a conflict (the update is refused for it, or the state reads `DIRTY`); a refusal from
-`base-refresh check`; a required job that failed on N, or a `Devin Review` status that failed; a
-thread on N outside `threadsSeen`, or a blocking finding on N under
-[impact](#judge-a-finding-by-its-impact). Waiting is not a reason to return it. The old
-[needs-changes route](../SKILL.md#return-corrections-to-the-existing-task) is otherwise unchanged.
+**What still goes back to the child.** A conflict comes before any update: the forge refused the
+call, or the state reads `DIRTY`. There is no N, the branch is where the child left it, and the
+correction is the old base-refresh correction that names P and the conflicting base. Everything else
+is found on a head the parent made: a refusal from `base-refresh check`; a required job that failed
+on N, or a `Devin Review` status that failed; a thread on N outside `threadsSeen`, or a blocking
+finding on N under [impact](#judge-a-finding-by-its-impact). Those corrections name N and not P, and
+carry the [restoration block](task-packet.md#restoration-block) because the child's worktree is now
+behind its branch. Waiting is not a reason to return it. The route is otherwise the
+[needs-changes route](../SKILL.md#return-corrections-to-the-existing-task), unchanged.
 
 **In a DAG-managed project the update comes before `dag-accept`.** `dag-accept` records the head the
 forge shows as the accepted head and takes none from the child's report; a head that moves
@@ -379,9 +381,11 @@ did before this rule. The limit is the scheduler's, which has no re-acceptance o
 made at P is restated with `merge-turn-ready --head N`, which resets readiness and, for a turn
 already holding, issues a new grant: acknowledge it with `merge-turn-acknowledge` and declare the
 candidate ready again. `merge-turn-check` states N and the required names read from the reading of N.
-A store that still holds work reports naming P (written by an older runtime) refuses N there as
-`merge_candidate_moved`, when the turn is already held: return the turn and send the candidate back
-like any other refusal.
+It also compares N with the head of any work report recorded for the assignment, and refuses a
+different one as `merge_candidate_moved`. Nothing in the product records a work report
+(`docs/port/decisions.md`, section 53), so N has no report head to disagree with; a store that holds
+such a row naming P anyway refuses N there, when the turn is already held: return the turn and send
+the candidate back like any other refusal.
 
 **Record the refresh** where the merge is recorded. `assignment-mark merged --evidence` names N and
 the check behind it (the helper's first line and the `merge-evidence` verdict on N), because
