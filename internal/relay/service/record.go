@@ -33,10 +33,6 @@ func obj(values ...any) Object {
 	return out
 }
 
-// get is o.Get(k) and text is pyjson.Text. worker.go still calls them by these names; they go
-// with that file's own rewrite.
-func get(o Object, k string) any { return o.Get(k) }
-func text(v any) string          { return pyjson.Text(v) }
 func num(v any) int {
 	switch n := v.(type) {
 	case int:

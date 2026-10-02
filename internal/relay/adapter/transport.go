@@ -16,9 +16,6 @@ import (
 
 func slicesSort(values []string) { sort.Strings(values) }
 
-// field is o.Get(key). worker_observation.go still calls it by this name; it goes with that file's
-// own rewrite.
-func field(o contract.OrderedObject, key string) any { return o.Get(key) }
 func plain(value any) any {
 	switch x := value.(type) {
 	case contract.OrderedObject:

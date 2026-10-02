@@ -143,10 +143,6 @@ func object(value any) (map[string]any, error) {
 	return nil, attributeError(value, "get")
 }
 
-// text is pyjson.Text. worker_observation.go still calls it by this name; it goes with that
-// file's own rewrite.
-func text(value any) string { return pyjson.Text(value) }
-
 func rawEntries(page map[string]any) ([]any, error) {
 	value, exists := page["data"]
 	if !exists {
