@@ -125,6 +125,7 @@ func HashArtifactContext(ctx context.Context, declared string, roots []string, a
 			defer releaseLease(fd)
 		}
 	}
+	countArtifactRead(ctx)
 	first, size, err := hashDescriptorContext(ctx, fd)
 	if err != nil {
 		return "", 0, ArtifactBinding{}, err
