@@ -1,22 +1,20 @@
-//go:build dev
-
 // Package cxccorpus records and checks the CXC v0.2.40 behaviour corpus (CRW-279): fixtures
 // under contract/fixtures/cxc that later Go port issues replay through the name-substitution
 // table in contract/schema/cxc. The recorder drives the real Node build of CXC v0.2.40 (the
 // oracle) in an isolated temporary root, so it shells out to node: it is development tooling,
 // built only with -tags dev, and never part of crw. The lint half needs no oracle and runs in
-// CI (`crw-dev ci contracts`).
+// CI (`crw-dev ci contracts`). What a replay shares with the recorder (the fixture types, the
+// normaliser, the rename table, the declarations and the case engine) carries no build tag, so a
+// Go test can run a build against the corpus through the same code.
 package cxccorpus
 
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 )
 
 // The corpus layout, relative to the repository root.
@@ -267,20 +265,4 @@ func Marshal(v any) ([]byte, error) {
 		return nil, err
 	}
 	return buf.Bytes(), nil
-}
-
-// validID is the fixture filename rule: lowercase words joined by - _ and the __ separator.
-func validID(id string) error {
-	if id == "" || len(id) > 160 {
-		return errors.New("empty or longer than 160 bytes")
-	}
-	for _, r := range id {
-		if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.') {
-			return fmt.Errorf("character %q is outside [a-z0-9._-]", r)
-		}
-	}
-	if !strings.Contains(id, "__") {
-		return errors.New("has no __ separating its surface from its case")
-	}
-	return nil
 }

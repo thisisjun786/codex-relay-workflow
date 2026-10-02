@@ -275,13 +275,369 @@ The reading and the merge are not one act, and the command does not pretend they
 are: the expected-head guard is what closes the gap at the moment of merging, and a
 finding that lands after it is a late finding for the original issue's correction
 path.
+A base that only moved is the one disagreement the parent removes itself, under
+[Refresh the base yourself when only the base moved](#refresh-the-base-yourself-when-only-the-base-moved).
 
 Serialize integrations sharing a target. Verify the actual landing and resulting
 destination revision; an accepted or queued merge request is not a completed merge.
 In the existing coordination record, retain the candidate and landed revisions,
 CI attempt links/results, review sources and coverage, finding dispositions, and
-any permitted fallback or remaining limitation. Keep implementation verification,
+any permitted fallback or remaining limitation. A base refresh adds the head it started
+from, the head it produced and the check between them. Keep implementation verification,
 integration, and deployment as separate claims.
+
+### What the handoff discloses, checked at the verdict
+
+The handoff's `disclosures` member ([what a handoff
+discloses](task-packet.md#what-a-handoff-discloses)) is read with the rest of the record and
+restated like it, never rebuilt. Nothing in the relay grades it, so the comparisons below are what
+stands between a rejected High and a merge. They sit after the claim and the acknowledgement and
+before the verdict is `verified`, and each is a comparison with a record the parent can read:
+mechanical validity, not a second review round
+([OPS-9.3](operations.md#ops-93-the-parent-merges-and-does-not-release)). A comparison that fails
+returns the candidate through the needs-changes verdict, with the restoration block in the first
+finding ([Return corrections to the existing
+task](../SKILL.md#return-corrections-to-the-existing-task)).
+
+1. **Every item is there.** A handoff for a pull request with no `disclosures` member, or with an
+   item left out, does not describe the candidate and returns to the same child like any other
+   disagreement between the record and the re-read
+   ([OPS-9.4](operations.md#ops-94-a-new-head-invalidates-the-review-it-outran)). `none` and
+   `ran: false` are answers; silence is not.
+
+2. **Every rejected High is answered before `verified`.** Each `internalReview` finding disposed of
+   as `rebutted` or `out_of_scope` has a `decisionRequests` entry or names the parent ruling that
+   already settled it; one with neither is a hole in the record and the handoff returns. Each
+   request is then answered in one of three ways. The rebuttal is confirmed on its evidence: the
+   finding is not a defect, nothing is accepted, and the five records of a conditional acceptance do
+   not apply. A real residue that is minor and separable, the usual shape of `out_of_scope`, is
+   accepted under [conditional acceptance](#conditional-acceptance-and-what-recording-one-costs)
+   with its five records. Or a fix is required. A finding in a blocking class under
+   [impact](#judge-a-finding-by-its-impact) always gets this answer, whatever label the review gave
+   it and whatever the child concluded: it is fixed, or the candidate is reported blocked. A verdict
+   that does not name a request is incomplete. Where the child asked first and ended its turn
+   `blocked_needs_input`, the answer goes back on that route and the request cites it.
+
+3. **Every commit after the review is accounted for.** With a `reviewedHead`,
+   `git rev-list --first-parent <reviewedHead>..<head>` names exactly the merge commits of the
+   `baseRefresh` entries and the commits of `commitsAfter` that lie after it; a commit in neither,
+   or a listed one after `reviewedHead` that is not there, means the record does not describe the
+   candidate. An entry or a commit that lies before `reviewedHead` is history the review covered and
+   is not compared, so a later generation's handoff may keep earlier entries or drop them. The
+   first-parent line is the window on purpose: a merge of the base made before the review is history
+   the review covered, and an unrestricted range would also list the base's own commits. The window
+   runs from the head the latest independent review covered through every generation, whoever made
+   each merge. The listed commits are changes the review did not see. Hosted-review fixes, base
+   merges and digest re-records are expected; the parent asks for an independent check of a commit,
+   and of that commit only, where it changes behavior and nothing else covered it. Where there is no
+   `reviewedHead` (`ran` is `false`, or only checks limited to some hunks ran) the window starts at
+   the assignment's baseline commit and only merges are compared:
+   `git rev-list --first-parent --merges <baseline>..<head>` names exactly the merge commits of the
+   entries plus any merge listed in `commitsAfter` as not a merge of the base, so a base merge
+   nobody listed does not escape the refresh checks, while ordinary commits are the child's own work
+   and are not listed one by one. The handoff's independence then rests on the hosted review and the
+   parent's own reading, and the verdict says so.
+
+4. **Each refresh is the kind it says.** A refresh the child made is proved by the same check as one
+   the parent made ([Refresh the base yourself when only the base
+   moved](#refresh-the-base-yourself-when-only-the-base-moved)). For every entry, of any kind, first
+   read the merge's parents with `git rev-list --parents -n 1 <head>`: there are exactly two, the
+   first is the entry's `previous` and the second is its `merged`, and that second parent is an
+   ancestor of the base tip the parent observed itself
+   (`git merge-base --is-ancestor <merged> origin/dev`, or the tip seen before the landing). The
+   helper's own test that the second parent is on the base is empty when the caller names that
+   parent as the base, and it only runs for a `clean` entry. A field that disagrees with the actual
+   parents is a wrong receipt: the entry returns to be corrected and the checks run again. Only when
+   the actual parents show that the commit is not a merge of the base, because it has not exactly
+   two parents or its second parent is not on the observed base, is what it brings in the child's
+   own change; it then belongs in `commitsAfter` and is judged by impact. Then, for an entry named
+   `clean`, run
+   `crw skill base-refresh check --repo <a checkout that has fetched both heads and the base> --previous <previous> --head <head> --base origin/dev`
+   and read the answer:
+
+   - Exit 0 confirms the entry, and the refresh reruns the gates only.
+   - Exit 1 is read by its reason. `no_update`: the entry names a refresh that did not happen, so
+     it is dropped. `not_built_on_previous`: a wrong anchor, more than a hundred merges or a walk
+     that reached the base, so the anchor is corrected. `not_a_merge` and `not_from_base`: a commit
+     that is not a merge of the base lies in the range. It is the child's own change, belongs in
+     `commitsAfter` and gets an independent check of that delta by impact, not of the whole diff.
+     `merge_conflicts` and `tree_differs`: the merge carries resolutions or edits, so it is not
+     `clean`, and it stays a `baseRefresh` entry. It is reclassified `mechanical` or `manual` by the
+     hunks `git show --remerge-diff <head>` prints for it, an added file included, and checked as
+     that kind. The check stops at the first refusal it meets from the head and says nothing about
+     the commits before it, which is what the accounting in the previous item covers.
+   - Exit 2 is no answer. The cause it names is addressed (fetch the commits, use a full checkout,
+     git 2.41 or newer) and the entry is unverified until the check has run.
+
+   For a `mechanical` or `manual` entry, `git show --remerge-diff <head>` prints the merge's
+   resolutions and each one must be a listed hunk: an unlisted resolution, or an edit riding in the
+   merge, returns the entry. The parent reproduces a mechanical hunk's rule and compares; for a
+   manual entry it compares the scope and result of the child's independent check with the hunks,
+   because that check is the child's and the parent does not repeat it.
+
+5. **The paths are the ones changed.** `git diff --name-only origin/dev...<head>` against
+   `changedPaths`: a path left out, or placed in the wrong region, means the record does not
+   describe the candidate. Where a region covers part of a file the entry's hunk ranges are compared
+   with the declared section the same way (`git diff -U0 origin/dev...<head> -- <path>`); a verdict
+   that compared paths only records those regions as unverified, and the count of paths outside
+   every region is kept apart from the count of hunks outside a section. Both counts go in the
+   coordination record beside the merge ([Recheck, integrate, and
+   record](#recheck-integrate-and-record)). Nothing else consumes them yet, and that record is where
+   a later calibration of the declarations can read them.
+
+6. **Sibling impact is read before the merge order is chosen.** The registry entries the child added
+   are what a union check keeps when the next sibling's branch is refreshed onto this one, and a
+   shared interface it changed is what that sibling must read first. A finding that needs a
+   sibling's work to change is the parent's to route, through the relay or the coordination record;
+   the child does not settle it and does not message the sibling. That sibling's next correction
+   carries the landing and the expected conflicts in its [restoration
+   block](task-packet.md#restoration-block).
+
+### Refresh the base yourself when only the base moved
+
+The dev ruleset is strict: a pull request has to contain the tip of its base, so each landing leaves
+the other candidates behind. Returning a candidate to its child for that alone costs a whole
+generation (merge the base, wait for every job and the review, report again) and changes nothing the
+parent had verified. When nothing else is wrong the parent updates the branch itself, once, and
+proves what it produced. The merge gate does not change: after the update every condition of it has
+to hold again on the new head.
+
+**Only the candidate about to merge.** Refresh the candidate that is about to merge, when its turn
+comes: the one that holds the merge turn or is next in line for it (first in, first out until
+measured, D-16). A landing leaves every other open pull request behind, and that is no reason to
+touch them: a refresh restarts every required job, and a head refreshed early is behind again after
+the next landing. One merge never starts a refresh of the remaining pull requests, and a parent does
+not refresh a queue ahead of its turn to save time later. A candidate that is not next waits, with
+the head its child reported.
+
+Do it only when all three hold at the head P that the child reported and the parent verified (a
+later refresh of the same candidate is a further step of its own, below):
+
+1. The base is the only thing wrong. `merge-evidence --restate <the child's record>` reports exactly
+   two problems, `candidate_behind` and `candidate_moved`, and `pinned.headSha` is the record's
+   head. The reading raises `candidate_moved` for a moved head and for a moved base alike, so the
+   head comparison is what attributes it to the base. Any other problem (a `late_finding`, a job that
+   is not a success, a changed gate, a draft) is not a currency problem and is handled as it always was.
+   A merge state of `UNKNOWN`, which the forge reports briefly after a landing, is a reading to repeat.
+2. The forge reports no conflict: `pinned.mergeable` is true and the merge state is not `DIRTY`.
+3. Every criterion was ruled verified at P: the relay verdict on the report that names P is
+   `verified` ([assignment-show](relay.md#verify-the-current-revision)), or, with no relay, the
+   parent's own check against the Linear criteria is recorded for P. That ruling includes the
+   [disclosure checks](#what-the-handoff-discloses-checked-at-the-verdict) at P.
+
+Read the tip of the base from the forge immediately before the update and keep it: it is D, the dev
+tip, and every proof below names it (`gh api repos/OWNER/REPO/branches/dev --jq .commit.sha`; a
+pull request's `base.sha` is a snapshot, not the tip). Then update with the forge's call, guarded by
+the head you verified, and never by rebase, reset or force-push:
+
+    gh api -X PUT repos/OWNER/REPO/pulls/N/update-branch -f expected_head_sha=<the head you verified>
+
+A 202 says the forge accepted the request, not that the branch moved: read the pull request until
+its head is no longer the one you verified. A 422 whose message names a merge conflict is a conflict
+(below). Any other 422, such as a head that moved because the child pushed, leaves the branch
+untouched and means the verification described a head that is gone, so start again from the top.
+
+On the new head N nothing about P carries over. Before the merge:
+
+- **What N is.** `crw skill base-refresh check --repo <a checkout that has fetched N and D>
+  --previous P --head N --base D` answers from git alone, as an identity. It passes (exit 0) only
+  when all three hold: N has exactly two parents, P first and D second, in that order;
+  `git merge-tree --write-tree P D` exits 0; and the tree it writes is N's own tree. So no edit, hand
+  resolution, file of its own, second update or reversed merge rides along. A pass prints an
+  `evidence:` line with five fields (`previous`, `dev_tip`, `head`, `tree`, `rule=tree_identity`),
+  which the parent copies into the merge record and the merged mark instead of retyping them
+  (Record the refresh, below). Exit 1 names what N is instead and quotes what was read on a
+  `facts:` line: `no_update` (N is P); `not_built_on_previous` (N is already on the base, or its
+  first parent is not P); `not_a_merge` (N does not have two parents); `parents_swapped` (P is the
+  second parent: the reverse merge, which merge-ort gives the same tree, so only the parent order
+  tells it apart); `not_from_base` (the second parent is not an ancestor of D);
+  `not_the_dev_tip` (it is an ancestor of D but not D itself);
+  `merge_conflicts` (git cannot merge P and D without a resolution, so N carries one);
+  `tree_differs` (N's tree is not what git merges; the paths that differ are named). Exit 2 means
+  git could not answer (a missing commit, a shallow checkout, git older than 2.41, a `merge-tree`
+  that fails or writes no tree), which is not a pass: fetch and ask again. Run it before the merge,
+  because a head that has landed is an ancestor of its base; a replay afterwards names the
+  `dev_tip` of the evidence line in `--base`. There is no hand-run substitute: plain git commands
+  in a checkout follow its replace refs, merge drivers and attributes, and what they print is not
+  this answer. Where the installed `crw` does not list `base-refresh` among the `crw skill`
+  families, the parent does not refresh, and the candidate goes back to its child as it did before
+  this rule.
+- **The safe side.** A refusal, and an exit 2 that a second ask does not clear, leaves N
+  unaccepted. The candidate goes back to its child under the needs-changes route below, naming N
+  and quoting the first line and the `facts:` line, except where the refusal itself names a step
+  the parent takes first: the stepwise proof of a chain and the re-pin after a moved base, both
+  below. `git range-diff` of the child's commits as seen from P and from N, and the paths a
+  `tree_differs` names, decide what the correction says; neither turns a refusal into a pass, and
+  nothing else in this procedure accepts a head the check refused. One possible cause of a
+  `tree_differs` on an update the forge made without reporting a conflict is rename handling: the
+  check merges with git's defaults and no configuration (merge-ort, rename detection on), the forge
+  merges with its own settings and limits, and on a repository that renames files the two can
+  differ. A difference can only make the trees differ, so it ends in a refusal and never in a pass.
+- **Every job and the review, on N.** `merge-evidence` on N, without `--restate` because the
+  child's record names P, must exit 0: each required job a success at its newest attempt, reviews and
+  threads read to the end, and the candidate no longer behind. Jobs still pending, and a reading that
+  is unknown or stale, are waiting: read again. Devin reports a `Devin Review` commit status on a
+  head it has analysed; read once on a merge-only head, it completed within seconds and left no
+  review object, and what posts it is the repository's Devin setup, which is not assumed for every
+  head: `gh api repos/OWNER/REPO/commits/N/status`. Pending is waiting, `success` means it ran,
+  and its review and threads on N are then read like any other; no status at all is recorded as an
+  unavailable reviewer, never as a pass. Every thread on N has to be in the record's `threadsSeen`.
+- **A required job that failed on N is rerun once, on N.** On a head the parent made, a failed
+  required job is a flake or a real failure, and D-12 settles it with one rerun on the same SHA: a job that passes is a flake, one that fails again is a failure.
+  In a DAG-managed project that rerun is the scheduler's own `retry_same_sha`: `dag-merge-judge`
+  (after `dag-accept`, below) answers `checks_pending` while N's jobs run, `retry_same_sha` on the
+  first failure of N once every required check has finished, and `evicted` on a second one. Rerun
+  only after the judge has answered `retry_same_sha`, never on seeing red: the store counts only
+  failures a judgement recorded, so an earlier rerun would be invisible to it and the second
+  failure would earn a second retry. Run the failed jobs again on the same head (`gh run rerun <run
+  id> --failed`, which asks for the rerun and proves nothing) and ask the judge again: it reads the
+  newest attempt of each job and answers `eligible` (its reason says "after a recorded failure (a
+  flaky check)", which is the flake ledger) or, on a second failure, `evicted`, and the candidate
+  goes back to its child naming N. In a project with no plan there is no judge: the parent makes
+  the same single rerun by hand, reads the new attempt through `merge-evidence` on N (the newest
+  attempt of each job counts), and adds one to `ci_reruns` in the merge record, with the job, the
+  failed run id and attempt, and the passing attempt. Three sequences, in both modes: a failure and
+  then a green rerun lets the candidate go on, with the flake recorded; a failure and then a second
+  failure, of the same job or another, is a real failure and the candidate goes back naming N; a
+  failure that appears after a green reading of N is a first failure when no rerun was spent on N
+  and a second one when it was. It is one rerun per head N; a new head starts its own. A job still
+  pending is waited on, never rerun; a failed `Devin Review` status or a review finding is not a
+  job and is not rerun.
+
+If the base moved again while N's checks ran, N is behind again. A refresh restarts every job, so a
+head whose jobs are still running is not refreshed again: wait for them. Then repeat from N, which
+is now the current head: read the new tip D2, update with the call guarded by N, and prove that one
+step, `--previous N --head N2 --base D2`. `merge-evidence` on N, without `--restate`, reports exactly
+one problem, `candidate_behind`, and `pinned.headSha` is the head the parent produced; the forge
+reports no conflict; every thread is in `threadsSeen`; the criteria are still the ones ruled
+verified at P. `--previous` is P (the head the relay verdict names) or a head whose `evidence:` line
+is already in the coordination record, never a head only the parent has looked at: the proof is
+of one update at a time, a chain is sound because each link was proved, and the merged mark,
+written after the landing, carries every step's evidence line. The check refuses P to N2 taken in one step as
+`not_built_on_previous` (N2's first parent already contains P), and that refusal on a chain is a
+call for the stepwise proof, not a return.
+
+If the base moved between reading D and the update call, the update merged a newer commit than D
+and the check says `not_from_base` (that commit is not an ancestor of D); `not_the_dev_tip` says
+the commit named was newer than the one merged (a pull request's `base.sha` was read for D), or that
+the base moved again since. Read the tip of the base from the forge again, T, and run the check with
+`--base T`. Exit 0 means N's second parent is T, so N is current and proved; any refusal sends the
+candidate back to its child. `--base` is only ever a tip read from the forge: never a head's second
+parent, and never a commit that no forge reading named as the tip. The check proves an update
+against whatever commit it is named, and an ancestor of the base that was never its tip passes as
+readily (a commit of a merged side branch, or an intermediate commit of a push that moved the base
+by several commits).
+
+Then merge as above: reread the head and base, merge with the expected-head guard on N.
+
+**What still goes back to the child.** A conflict comes before an update: the forge refused the
+call, or the state reads `DIRTY`. That update did not happen, so the branch is where the last one
+left it: at P when this was the first attempt, at the newest head the parent made when it was a
+repeat. The correction is the old base-refresh correction that names that head and the conflicting
+base, and it carries the [restoration block](task-packet.md#restoration-block) when an earlier
+refresh already moved the branch past what the child holds. Everything else is found on a head the
+parent made: a refusal from `base-refresh check`; a required job that failed on N again after its one rerun, or a
+`Devin Review` status that failed; a thread on N outside `threadsSeen`, or a blocking finding on N
+under [impact](#judge-a-finding-by-its-impact). Those corrections name N and not P, and carry the
+restoration block because the child's worktree is now behind its branch. Waiting is not a reason to
+return it. The route is otherwise the
+[needs-changes route](../SKILL.md#return-corrections-to-the-existing-task), unchanged.
+
+**In a DAG-managed project the update comes before `dag-accept`, and the jobs on N are read after
+it.** `dag-accept` records the head the forge shows as the accepted head and takes none from the
+child's report; a head that moves afterwards reads `stale_head` at `dag-merge-judge` and
+`dag-merge-request`, leaves the node `blocked:stale_head`, and the same output cannot be accepted at
+the new head (`merge_candidate_moved`). An acceptance reads no CI, no review and no thread
+(`docs/relay/dag-scheduler.md`, "Accepting a result"), so the order is: the verdict `verified`, the
+update and the base-refresh check on N, `dag-accept` (it records N), `dag-merge-judge` for the
+jobs on N (`checks_pending` is waited on; the first failure is the `retry_same_sha` above),
+`merge-evidence` on N for the reviews and threads, which the judge does not read,
+`dag-merge-request`, the merge lane, the merge, `assignment-mark merged`,
+`dag-integration-observe`. The judge reads the pull request through the relay's own checkout, so N
+has to be fetched there, or it fails as a host problem and writes nothing. A base that moves after
+the acceptance, for example while N's jobs run or while the candidate waits for its turn, cannot be
+refreshed by the parent at this baseline: the update would move the head off the accepted one, and
+the judge reads `stale_base`. That candidate goes back to its child for a new generation as it did
+before this rule. The window now includes N's job time, and another project's landing during it
+counts; refreshing only the candidate about to merge is what keeps it short. The limit is the
+scheduler's, which has no re-acceptance of a verified refresh.
+
+**On the relay's merge lane**, claim the turn with N (`merge-turn-request --head N`). A claim already
+made at P is restated with `merge-turn-ready --head N`, which resets readiness and, for a turn
+already holding, issues a new grant: acknowledge it with `merge-turn-acknowledge` and declare the
+candidate ready again. `merge-turn-check` states N and the required names read from the reading of N.
+It also compares N with the head of any work report recorded for the assignment, and refuses a
+different one as `merge_candidate_moved`. Nothing in the product records a work report
+(`docs/port/decisions.md`, section 53), so N has no report head to disagree with; a store that holds
+such a row naming P anyway refuses N there, when the turn is already held: return the turn and send
+the candidate back like any other refusal.
+
+**Record the refresh** where the merge is recorded. `assignment-mark merged --evidence` carries the
+check's `evidence:` line exactly as printed (previous head, dev tip, new head, tree OID and the rule
+applied), one line per step when the candidate was refreshed more than once, and the
+`merge-evidence` verdict on N, because `--expected-event` pins the child's report, which names P:
+the merged head and the receipt revision differ, as they already do after a child's base refresh,
+and the evidence text is the only place that difference is explained. The merge record in the
+coordination record carries the same lines. The parent copies them from the check's output; it
+does not retype the fields.
+
+**Record what the lane costs**, beside the landed and candidate revisions: one entry per merge, and
+one record per conflict episode, written when the episode closes, so that a candidate that never
+lands still leaves its returned episode behind:
+
+    merge-lane: pr=<N> landed=<commit>
+      verified_at=<UTC> granted=<UTC> landed_at=<UTC>
+      ci_runs=<attempts on every head> ci_runs_parent_heads=<attempts on heads the parent made>
+      ci_reruns=<reruns the parent asked for, at most one per head>
+      dev_after=<success|failure|unread|pending> evidence=<the evidence line, once per step>
+    merge-lane-episode: pr=<N> at=<UTC> outcome=<handled|returned>
+      because=<the refresh passed the check | a forge conflict | a refusal (code) | an exit 2 not
+      cleared | stale_base | a merge state still UNKNOWN>
+
+An entry for a candidate that was refreshed once and landed after one rerun reads, in shape only
+(the numbers are illustrative): verified 01:02:00Z, granted 01:20:00Z, landed 01:41:30Z,
+`ci_runs=9 ci_runs_parent_heads=4 ci_reruns=1 dev_after=success`, with one episode record
+`outcome=handled`; its lane wait is 18 minutes and its service time S is 21.5 minutes.
+
+- Times, not minutes, are recorded, so that the pre-registered comparison can recompute them. The
+  lane wait is `granted` minus `verified_at` (the verdict `verified`); it is not the contract's W,
+  the node's implementation time. S, the merge-lane service time, is `landed_at` minus `granted`.
+  `granted` is the merge-turn grant (`merge-turn-show`), or, with no lane, the instant the parent
+  took the candidate as next to merge (the update call when it needed one). `landed_at` is the
+  observed landing (`merge-turn-land`, or the forge's `merged_at`), never the merge request being
+  accepted. A time that cannot be read is written `unread` and the figure that needs it is not
+  computed, never zero.
+- CI runs per merged pull request is the number of workflow-run attempts, each attempt counted once,
+  on every head of the pull request until it landed (`gh api
+  "repos/OWNER/REPO/actions/runs?head_sha=<head>"`, the `pull_request` runs and their `run_attempt`);
+  the entry says apart how many ran on heads the parent made. A commit that was never a pushed head
+  has no run.
+- Conflicts are counted as episodes, for the base reason only. An episode is one occasion on which
+  the only block on a candidate was the base. It is handled when the parent's refresh passed the
+  check, and returned when the candidate went back to its child for the base: a forge conflict, a
+  refusal, an exit 2 that a second ask did not clear, a `stale_base`, a merge state still
+  `UNKNOWN`. Each episode has one record, whether or not the candidate lands later; a candidate
+  that needs no refresh has none.
+- The conservative return ratio is the returned episode records divided by all episode records of
+  a run, with every doubt counted as returned; with no record the ratio is not defined and is
+  written so, never as 0. It has no target here: targets belong to the pre-registration of the
+  DAG comparison.
+
+Two acceptance lines are stated as what is measured, not as properties of the rule. *0 false
+accepts by the checker* is a count over audited passes: the numerator is the passes later shown to
+hold anything beyond P plus D, the denominator the passes audited, and a pass not yet audited is
+counted apart, not as zero. A pass is audited after the landing by running the check again on the
+evidence line's fields (`--base` set to its `dev_tip`) and by reading the landed diff against P.
+*0 post-merge dev reds caused by a parent refresh* is a count over read landings: the denominator
+is the refreshed candidates' landing commits whose `dev-gate` run (the `push` run on the commit,
+`dev_after`) was read, and the numerator the failed runs that the parent traces, from the log and
+the diff of P against N, to the combination of P and D that N's jobs passed over. Under the strict
+ruleset the landed tree is N's tree when the base takes N by a merge commit or a squash (read it
+with `git rev-parse <landing>^{tree}`), so a red there that is not that combination is something
+else: a flake (it passes on a rerun of the commit), a job that only runs on a push or an
+infrastructure failure before the code ran, or undetermined. Those three are reported beside the
+count and are not in it; so are a landing not yet landed (`pending`) and one not read (`unread`),
+and none of them is ever counted as zero.
 
 ## Hold the turn only while you can use it
 

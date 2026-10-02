@@ -102,12 +102,33 @@ func checkSQLiteContract(t *testing.T) {
 		}
 	})
 	t.Run("locks", func(t *testing.T) {
+		ctx := context.Background()
 		path := filepath.Join(t.TempDir(), "relay.sqlite3")
-		s, err := store.Open(context.Background(), path, "")
+		s, err := store.Open(ctx, path, "")
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer s.Close()
+		// The store has one pooled connection, so the connection taken here is the store's own, with
+		// the busy timeout its connection hook installed. SQLITE_BUSY comes after that timeout, 30 s
+		// as the store sets it, so the probe lowers the timeout on this connection: the driver, the
+		// lock and the error are the store's, only the wait is short.
+		probe, err := s.DB.Conn(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		requireBusyTimeout(t, probe, storeBusyTimeout.Milliseconds())
+		if _, err := probe.ExecContext(ctx, fmt.Sprintf("PRAGMA busy_timeout=%d", probeBusyTimeout.Milliseconds())); err != nil {
+			t.Fatal(err)
+		}
+		requireBusyTimeout(t, probe, probeBusyTimeout.Milliseconds())
+		// With no lock held the probe write succeeds, so the SQLITE_BUSY below comes from the peer's lock.
+		if _, err := probe.ExecContext(ctx, lockProbeInsert); err != nil {
+			t.Fatalf("the probe write on an unlocked store: %v", err)
+		}
+		if _, err := probe.ExecContext(ctx, "DELETE FROM schema_meta WHERE key = 'lock_probe'"); err != nil {
+			t.Fatal(err)
+		}
 		// A second process holds the store's write lock: the SQLite locking contract is between
 		// processes, whichever runtime each one is. The peer is this test binary (sqlitePeer).
 		holder := sqlitePeerCommand(t, "hold", path)
@@ -139,12 +160,19 @@ func checkSQLiteContract(t *testing.T) {
 		case <-time.After(5 * time.Second):
 			t.Fatal("peer lock timeout")
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
-		_, err = s.DB.ExecContext(ctx, "INSERT INTO schema_meta VALUES ('lock_probe','value')")
+		probeCtx, cancel := context.WithTimeout(ctx, probeBudget)
+		started := time.Now()
+		_, err = probe.ExecContext(probeCtx, lockProbeInsert)
+		waited := time.Since(started)
 		cancel()
 		var busy *sqlite.Error
 		if !errors.As(err, &busy) || busy.Code() != 5 {
 			t.Fatalf("Go should see SQLITE_BUSY: %v", err)
+		}
+		// A busy handler in force waits its timeout out before it gives up: failing at once means it
+		// is not installed, and still waiting at the budget means the lowered timeout did not apply.
+		if waited < probeBusyTimeout/2 || waited >= probeBudget {
+			t.Fatalf("SQLITE_BUSY after %v with a busy timeout of %v", waited, probeBusyTimeout)
 		}
 		if _, err := stdin.Write([]byte("release\n")); err != nil {
 			t.Fatal(err)
@@ -153,18 +181,24 @@ func checkSQLiteContract(t *testing.T) {
 			t.Fatal(err)
 		}
 		stdin.Close()
-		conn, err := s.DB.Conn(context.Background())
+		// Discard the lowered connection, as the pool check does: the next one is dialled by the
+		// connection hook and has the store's timeout again.
+		if err := probe.Raw(func(any) error { return driver.ErrBadConn }); !errors.Is(err, driver.ErrBadConn) {
+			t.Fatalf("discard the probe connection: %v", err)
+		}
+		conn, err := s.DB.Conn(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := conn.ExecContext(context.Background(), "BEGIN IMMEDIATE"); err != nil {
+		requireBusyTimeout(t, conn, storeBusyTimeout.Milliseconds())
+		if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 			t.Fatal(err)
 		}
 		output, err := sqlitePeerCommand(t, "write", path).CombinedOutput()
 		if err == nil || !strings.Contains(string(output), "database is locked") {
 			t.Fatalf("the peer should see SQLITE_BUSY: %v: %s", err, output)
 		}
-		if _, err := conn.ExecContext(context.Background(), "ROLLBACK"); err != nil {
+		if _, err := conn.ExecContext(ctx, "ROLLBACK"); err != nil {
 			t.Fatal(err)
 		}
 		// The store has one connection: release it before asking the store anything else.
@@ -176,6 +210,25 @@ func checkSQLiteContract(t *testing.T) {
 			t.Fatalf("integrity=%q: %v", integrity, err)
 		}
 	})
+}
+
+// The lock check waits for SQLITE_BUSY on a connection whose busy timeout it lowered: the store's
+// own is storeBusyTimeout (internal/relay/store Open), the probe's is probeBusyTimeout, and the
+// probe is given probeBudget, 20 times its timeout and a third of the store's, to return.
+const (
+	storeBusyTimeout = 30 * time.Second
+	probeBusyTimeout = 500 * time.Millisecond
+	probeBudget      = 10 * time.Second
+	lockProbeInsert  = "INSERT INTO schema_meta VALUES ('lock_probe','value')"
+)
+
+// requireBusyTimeout fails the test unless conn's busy timeout is want milliseconds.
+func requireBusyTimeout(t *testing.T, conn *sql.Conn, want int64) {
+	t.Helper()
+	var got int64
+	if err := conn.QueryRowContext(context.Background(), "PRAGMA busy_timeout").Scan(&got); err != nil || got != want {
+		t.Fatalf("PRAGMA busy_timeout=%d, want %d: %v", got, want, err)
+	}
 }
 
 // sqlitePeerEnv names the SQLite peer mode a re-executed test binary runs instead of the tests

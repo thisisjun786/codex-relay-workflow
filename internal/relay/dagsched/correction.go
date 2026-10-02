@@ -45,6 +45,9 @@ func (s *Scheduler) PrepareCorrection(ctx context.Context, plan, node, actor str
 	if !ok {
 		return out, refuse(contract.RefusalUnregisteredScope, "plan %s has no live node %s", plan, node)
 	}
+	if err := lifecycleRefusal(snap, n, "correcting it", false); err != nil {
+		return out, err
+	}
 	rel, found, err := currentRelationshipOf(ctx, q, plan, node)
 	if err != nil {
 		return out, err
@@ -84,7 +87,18 @@ func (s *Scheduler) PrepareCorrection(ctx context.Context, plan, node, actor str
 	if err != nil {
 		return out, err
 	}
-	if _, err := (&dag.Repo{Store: s.Store, Now: s.Now}).PutManifest(ctx, stored); err != nil {
+	if s.testBeforePrepareTx != nil {
+		s.testBeforePrepareTx()
+	}
+	// the plan's hold is asked again in the transaction that stores the manifest, and the file is frozen and the instruction returned only after it committed: a pause that landed while the inputs were
+	// being verified leaves no manifest and no instruction
+	if err := s.Store.Compose(ctx, func(txCtx context.Context, _ *sql.Conn) error {
+		if err := lifecycleOpen(txCtx, s.Store.Q(txCtx), plan, node, "correcting it", false); err != nil {
+			return err
+		}
+		_, err := (&dag.Repo{Store: s.Store, Now: s.Now}).PutManifest(txCtx, stored)
+		return err
+	}); err != nil {
 		return out, err
 	}
 	// the manifest of a digest is the body the store holds: the first one stored (a body built later differs in what the digest leaves out, such as the time of the build)
@@ -130,6 +144,9 @@ func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, sup
 		n, ok := nodeOf(snap, node)
 		if !ok {
 			return refuse(contract.RefusalUnregisteredScope, "plan %s has no live node %s", plan, node)
+		}
+		if err := lifecycleRefusal(snap, n, "correcting it", false); err != nil {
+			return err
 		}
 		rel, found, err := currentRelationshipOf(txCtx, tx, plan, node)
 		if err != nil {

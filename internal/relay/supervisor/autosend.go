@@ -104,7 +104,7 @@ func (c *Channel) deferAutoFault(ctx context.Context, id string, now float64, fa
 	if err != nil {
 		return err
 	}
-	if row.HoldReason.Valid || row.State != "queued" && row.State != "deferred_busy" && row.State != "withheld_pre_send" {
+	if row.HoldReason.Valid || !row.Unsent() {
 		return nil
 	}
 	at := delivery.ISOOf(now)
@@ -213,7 +213,9 @@ func (c *Channel) stageUnsentWithReadings(ctx context.Context, project, at strin
 			byObligation[o.ID] = reading
 		}
 	}
-	standing, err := c.Standing(ctx, project, values)
+	// The visit reads only what can still report (standing's visit scope); a parent staging by hand
+	// (StageStanding, supervisor-standing) still gets the whole project.
+	standing, err := c.standing(ctx, project, values, true)
 	if err != nil {
 		return nil, err
 	}
@@ -230,7 +232,7 @@ func (c *Channel) stageUnsentWithReadings(ctx context.Context, project, at strin
 		var state string
 		var hold, frozen sql.NullString
 		err := c.Store.Q(ctx).QueryRowContext(ctx, "SELECT state,hold_reason,reading FROM supervisor_messages WHERE obligation_id=? ORDER BY staged_at DESC LIMIT 1", o.ID).Scan(&state, &hold, &frozen)
-		if err == nil && !((state == "queued" || state == "deferred_busy" || state == "withheld_pre_send") && (!hold.Valid || hold.String == "superseded_by_report" || hold.String == "hierarchy_unresolved")) {
+		if err == nil && !(store.SupervisorUnsent(state) && (!hold.Valid || hold.String == "superseded_by_report" || hold.String == "hierarchy_unresolved")) {
 			skipped++
 			continue
 		}
@@ -328,9 +330,7 @@ func (c *Channel) autoHeads(ctx context.Context, now float64, limit int, afterAt
 	}
 	// Select heads before applying the window: one recipient's backlog must not
 	// consume the page, and an expired sending lease is recovered by Attempt.
-	eligible := func(alias string) string {
-		return "((" + alias + ".state IN ('queued','deferred_busy','withheld_pre_send') AND " + alias + ".hold_reason IS NULL AND (" + alias + ".next_eligible_at IS NULL OR " + alias + ".next_eligible_at<=?)) OR (" + alias + ".state='sending' AND " + alias + ".lease_until IS NOT NULL AND " + alias + ".lease_until<=?))"
-	}
+	eligible := store.SupervisorAttemptableSQL
 	heads := "SELECT m.message_id,m.recipient_task_id,m.staged_at FROM supervisor_messages m WHERE " + eligible("m") +
 		" AND NOT EXISTS (SELECT 1 FROM supervisor_messages o WHERE o.recipient_task_id=m.recipient_task_id AND " + eligible("o") +
 		" AND (o.staged_at<m.staged_at OR (o.staged_at=m.staged_at AND o.message_id<m.message_id)))"

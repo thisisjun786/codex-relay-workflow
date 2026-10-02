@@ -2,6 +2,8 @@ package delivery
 
 import (
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 )
 
 // test_on_request_delivery.py ORD-1..ORD-5 here; ORD-6..ORD-9 in onrequest_adapter_test.go.
@@ -19,7 +21,7 @@ func runORD(t *testing.T, tree, mode string, goSide func(f *fixture, out map[str
 }
 
 func usable(data string) map[string]any {
-	err := (&TaskSettings{Data: loadsObj(data)}).RequireUsable()
+	err := (registry.TaskSettings{Data: loadsObj(data)}).RequireUsable()
 	if err != nil {
 		return refusalOf(err)
 	}

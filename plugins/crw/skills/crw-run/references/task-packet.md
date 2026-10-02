@@ -191,8 +191,26 @@ Execution:
   end: implement, test, commit, push, open the pull request, then triage, fix, reply
   to and recheck its reviews. Report once the current head's required checks and
   reviews have finished and their blockers are resolved, not when the code is written.
+  That publication scope is the explicit push approval CXC `DEV-GIT-PUSH-01` requires, the
+  standing authorization of
+  [Default dev integration](../../crw-plan/references/integrations.md#default-dev-integration)
+  carried by this packet: push your task branch and open the pull request without stopping
+  to ask, and never merge; no force-push, no tag, no push to `dev` or `main`.
   Without that authorization, or without the access to use it, commit locally or
   return the frozen diff and say which publication you did not perform.
+- Finish your own independent review before you open the pull request. The review meant here is the
+  one your workflow runs on the candidate inside this task; whether and how often it runs is that
+  workflow's decision, which this packet does not change. Where one runs, it ends on the head the
+  pull request is opened from, and the hosted review then follows on the open pull request, so the
+  hosted review reads a change your review has already answered instead of overlapping it on one
+  head. The handoff says which head your review covered and lists the commits made after it ([what a
+  handoff discloses](#what-a-handoff-discloses)).
+- A finding of your own review that you reject is not yours to close. When the review rated a
+  finding High or blocker and you would not apply it, because you rebutted it or place it outside
+  this issue, list it in the handoff as a decision request, or ask your parent first when the answer
+  decides what you build next: end the turn `blocked_needs_input` with a blocked receipt. An
+  internal finding has no pull request thread, so a rejection the handoff does not show is one
+  nobody can find.
 - Open that pull request non-draft, or transition an existing draft to Ready for review
   as soon as the implementation is reviewable, then request the review the repository
   requires and this assignment authorizes, and confirm it actually started. An optional
@@ -218,6 +236,12 @@ Execution:
   badge with a false record. If a required check has not passed or a mandatory review has
   not finished, that is BLOCKED and is reported as blocked. Do not report completion with a
   note about what is still open, because the note is what gets skimmed past.
+- A correction that asks only for the base to be brought up to date is not new scope. Merge the
+  current base into your branch with a merge commit, name the kind of each merge you made, and rerun
+  what that kind needs and no more: the gates for a `clean` refresh, the gates plus the
+  deterministic checks over the listed hunks for a `mechanical` one, and the gates plus an
+  independent check of the hand-resolved hunks only for a `manual` one ([the
+  kinds](#what-a-handoff-discloses)). Do not audit again what the refresh did not change.
 - Maintain CXC: load current cxc-dev and relevant surface skills, and follow
   the configured CXC protocol for helpers and review within this task.
 - Work in the assigned existing worktree; preserve unrelated changes.
@@ -279,11 +303,21 @@ Execution:
   by a DIFFERENT task, that is a conflict rather than a delay and it is not recovered through
   you. Report it naming the owner the lookup returned, preserve your artifact, and write
   nothing into that relationship; the coordinator reconciles your work with that owner.
+- If you need something only a person can give, such as a decision, a credential or an
+  approval this packet does not carry, do not ask with `request_user_input`: CXC denies it
+  while your goal is active. Write the question out, record `blocked_needs_input` on your
+  turn and, where a relay holds the assignment, emit that outcome over a file that states
+  it; where none does, return the CXC status the case takes (BLOCKED, UNSAFE or NEEDS_HUMAN)
+  with the question. Then end the turn. Your parent takes the question to Jun. See
+  [Default dev integration](../../crw-plan/references/integrations.md#default-dev-integration).
 - [When CXC Loop is the effective workflow:]
   `$codexclaw:cxc-loop` — invoke the installed skill, or attach it through the
   creation tool's supported skill field, and run this bounded objective under it and
   `cxc-pabcd` using your own session binding, host goal, and goalplan.
   If a required loop capability is absent, report the exact gap before starting.
+  CXC `LOOP-DOCS-FIRST-01` applies to your own issue as CXC states it: a single-cycle issue
+  skips the docs-only first cycle, and a child that plans two or more work-phases opens with
+  one, with CXC's roadmap debt for scope found later.
   On a correction or a resume, read whether that goal and goalplan exist before making
   either. Usually they do, and the work is to continue them: opening a second goal for
   the same assignment is a duplicate rather than a resume, and the coordinator reads it
@@ -356,6 +390,13 @@ Return:
   nothing passed every check. The parent restates these values immediately before merging
   rather than collecting them again, which is why they are yours to produce, and it confirms
   each acceptance against a decision it actually made.
+- Disclosures, for a pull request you are handing over, as the `disclosures` member of the handoff
+  file: what your internal review found and how each High or blocker finding was disposed of, each
+  one you rejected as a decision request, the head the review covered and the commits after it, one
+  `baseRefresh` entry for each merge of the base, the changed paths compared with the declared edit
+  regions, and the sibling impact. [What a handoff discloses](#what-a-handoff-discloses) defines
+  each item and the kinds of refresh. State every item, with `none` where there is none, because an
+  item left out reads as not checked.
 - Remaining defects, unverified behavior, and possible integration conflicts.
 - Proposed changes to a Linear record, returned rather than written: the document or issue ID,
   the revision you read, the reason, the smallest sufficient change and its evidence.
@@ -383,6 +424,10 @@ field in brackets where that reduced shape names it differently.
   packet carries the literal installed-skill invocation and names the applicable surface
   skills; naming the skills descriptively is not the invocation. Where an explicit
   non-Loop or no-goal alternative is effective, that workflow is named in its place.
+  Where Loop is effective the packet also says how `LOOP-DOCS-FIRST-01` applies to the
+  child's own issue, as
+  [Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution)
+  states it.
 - Issue scope — `Issue/PR mapping:` and `Outcome and scope:` [`Scope:` with its
   `Input baseline:`], including the exclusions.
 - Verification boundary — `Verification:`, covering what this child verifies itself and
@@ -390,6 +435,16 @@ field in brackets where that reduced shape names it differently.
 - Handoff and completion boundary — the delivery contract under `Authorized execution:`
   and the `Return:` block [`Scope:` write authority and `Return:`]: what finishing means
   here, what the coordinator owns after it.
+- Publication scope — the publication sentence under `Execution:` and the `Delivery:` line
+  under `Authorized execution:`. The packet says that its publication scope is the explicit
+  push approval CXC `DEV-GIT-PUSH-01` requires (push the task branch, open the pull request,
+  never merge), or that its scope excludes publication and the child pushes nothing.
+  [Default dev integration](../../crw-plan/references/integrations.md#default-dev-integration)
+  owns the rule; this line checks that the packet carries it. [A Non-PR packet has no
+  publication to approve.]
+- Escalation route — the `Execution:` bullet on a question only a person can answer:
+  `blocked_needs_input` with the question written out, never `request_user_input`. [A Non-PR
+  packet carries it in `Workflow/settings:`.]
 - Model and effort — `Effective model/effort:` [`Workflow/settings:`], applied through
   the creation tool's real arguments and read back from the receipt.
 - Language — `Language:`, the same in both shapes: what the child writes is English from its
@@ -565,7 +620,9 @@ Title: [the Codex task title: issue ID · descriptive title of up to 20 characte
 Coordinator: [actual task/host IDs if delegated; project ID only if one exists]
 Scope: [accepted question/outcome, exclusions, dependencies and write authority]
 Input baseline: [source IDs, revisions/updated-at evidence and known gaps]
-Workflow/settings: [effective workflow, model/effort and actual permission profile]
+Workflow/settings: [effective workflow, model/effort and actual permission profile; a
+  question only a person can answer goes to the parent as `blocked_needs_input` with the
+  question written out, never `request_user_input`]
 Language: English for everything you write, as in the launch packet
 Working location: [permitted cwd/artifact roots; no invented Git repository]
 Workspace ownership: [what is already present at that working location and those artifact
@@ -852,6 +909,12 @@ reads further exactly where a criterion is unmet, an artifact has moved, or the 
 is not there. Condensing never costs an accepted criterion or the independent review behind one: a
 result short enough to hide an unmet criterion is raised rather than accepted.
 
+When the result condenses a child's pull request delivery, none of its disclosures is dropped on the
+way up ([what a handoff discloses](#what-a-handoff-discloses)): a decision request still open is an
+unresolved problem and goes in `Asking`, the reviewed head and the base refresh kinds go with the
+artifact's head in `Scope`, and a sibling impact that needs another scope's work is a conflict with
+another scope, which `Asking` already names.
+
 ```text
 Request: shared-surface-1-r2
 Reply to: shared-surface-1
@@ -863,6 +926,125 @@ Asking: nothing to decide. OPS-8 is untouched as agreed, and one criterion is un
 Because: CRW-127's per-criterion record, and PR #142's checks on the head that landed
 Next: B, whose condition is now met, to open its own review
 ```
+
+### What a handoff discloses
+
+This defines the `disclosures` member of the handoff file that the `Return:` bullet for a
+merge-readiness handoff names. The child writes it and its receipt carries it; the parent's
+[verdict](merge-readiness.md#what-the-handoff-discloses-checked-at-the-verdict) reads it.
+
+The handoff records what the checks and the hosted review found on the head. It cannot show what
+became of the child's own internal review, whether that review finished before the pull request was
+opened, what kind of base refresh the branch went through, or what the change touches that a sibling
+issue also touches. Each of those has gone unseen before: of the three defects one analysis found a
+parent sending back, two had been rated High by the child's own review and rejected without a trace
+in the receipt. An internal finding has no pull request thread, so the thread coverage never sees
+it, and this section is the only record it has.
+
+`disclosures` is a top-level key of the handoff file, beside `handoff` and not inside it. The relay
+reads only the keys of the record it grades and carries the file as an artifact without parsing it,
+so nothing in the relay checks this section; the parent's verdict does. Every item is stated:
+`none`, or `ran: false` for a review that did not run, is an answer, and an item left out reads as
+not checked.
+
+```json
+{"handoff": {"...": "the record merge-evidence produced"},
+ "disclosures": {
+   "internalReview": {"ran": true, "reviewedHead": "<sha>",
+     "findings": [{"id": "r1", "summary": "...", "disposition": "rebutted", "evidence": "..."}],
+     "commitsAfter": [{"sha": "<sha>", "cause": "hosted-review fix", "note": "..."}]},
+   "decisionRequests": [{"findingId": "r1", "effect": "...", "why": "...", "proposal": "..."}],
+   "baseRefresh": [{"kind": "clean", "previous": "<sha>", "head": "<sha>", "merged": "<sha>",
+     "trees": {"expected": "<tree>", "actual": "<tree>"}}],
+   "changedPaths": {"declared": ["..."], "changed": ["..."], "outside": []},
+   "siblingImpact": {"sharedInterfaces": [], "registryEntries": [], "siblingWork": []}}}
+```
+
+- **`internalReview`**: whether an independent review ran inside this task (`ran`) and the head it
+  covered (`reviewedHead`: the latest head such that the independent reviews so far cover every
+  change up to it. A later generation that reviews its correction on top of the earlier review names
+  the new head. A check limited to some hunks or commits, such as the independent check of a manual
+  refresh's resolved hunks, is recorded with its entry and does not move it. A task whose reviews so
+  far cover no head completely, because none ran or only checks limited to some hunks ran, has no
+  `reviewedHead`: it omits the field, `ran` says whether any independent check ran, and its entries
+  start at the assignment's baseline commit). For every finding it rated High or blocker, or the top
+  tier of whatever scale it used, one entry with the `id`, a one-line summary and exactly one
+  disposition: `applied` with the commit that applied it, `rebutted` with the evidence that it is
+  not a defect, or `out_of_scope` with the boundary that excludes it and where it goes instead. A
+  review that ran and raised no such finding says so, and a task that ran none says `ran: false`.
+  The internal independent review ends on the head the pull request is opened from and the hosted
+  review follows on the open pull request, so `commitsAfter` lists what the review did not see: the
+  commits after `reviewedHead` on the branch's first-parent line that are not merges of the base,
+  each with its cause, such as a hosted-review fix or a digest re-record. Where `reviewedHead` is
+  omitted, `commitsAfter` still lists any merge that is not a merge of the base. Whether and how
+  often a review runs is its workflow's decision and not this procedure's; this item only makes what
+  happened visible.
+
+- **`decisionRequests`**: every finding above whose disposition is `rebutted` or `out_of_scope`,
+  unless the parent has already ruled on it, in which case the entry names that ruling. A rejection
+  is the parent's decision, so the child does not close such a finding on its own authority. Each
+  entry gives the finding, the child's reading of its effect, why it is rejected and what the child
+  proposes, which is the exchange [conditional
+  acceptance](merge-readiness.md#conditional-acceptance-and-what-recording-one-costs) already holds
+  before a handoff and not a second path. Where the answer decides what the child builds next, it
+  asks before handing over: the turn ends `blocked_needs_input` with a blocked receipt over a file
+  that carries the request. Otherwise it hands over with the list and the verdict answers each
+  entry. The review's label only selects what is listed; the parent classifies each finding by
+  [impact](merge-readiness.md#judge-a-finding-by-its-impact), so a High that falls in a blocking
+  class is a fix whatever the child concluded.
+
+- **`baseRefresh`**: one entry for each merge of the base on the first-parent line after
+  `reviewedHead` (since the assignment's baseline commit where there is no `reviewedHead`), whoever
+  made it and in whichever generation. The window runs through every generation, so an entry stays
+  in the list while its merge lies after `reviewedHead` and is dropped once a later review has
+  covered it. A merge the parent made with the forge's update-branch call is an entry too, which the
+  child checks with the same helper. An entry gives the `kind` below, the merge's first parent
+  (`previous`), the merge commit (`head`) and its second parent, the base commit merged (`merged`,
+  in full). Consecutive merges are consecutive entries, each starting at its own first parent. A
+  commit made after a merge, such as a digest re-record, is not part of the entry: it is listed in
+  `commitsAfter` with its cause, so the merge head and the final head are two facts. A branch with
+  no merge of the base after the review says `[]`.
+
+- **`changedPaths`**: where the assignment declares edit regions, the paths the branch changed, from
+  `git diff --name-only origin/dev...<head>` (the merge-base form, so merging the base does not show
+  a sibling's files as this branch's), each placed in a region the assignment declared, in a file it
+  names as an expected overlap, or outside every region, with the paths outside and their count. A
+  region declared for part of a file, a section of it for example, is invisible to a path
+  comparison, so for such a file the entry lists the hunk ranges changed
+  (`git diff -U0 origin/dev...<head> -- <path>`) and places each in or outside the section. Where
+  the assignment declares no regions the item says so.
+
+- **`siblingImpact`**: the shared interfaces the change altered (a command, a field or a function
+  the work of another issue may call); the registry entries it added (rows of a table, ids, list
+  entries, version lines, which are the entries a union check keeps when two siblings both add to
+  one list); and any finding that needs a sibling's work to change, naming the sibling by pull
+  request or title. The child does not message or coordinate with a sibling about it; the parent
+  routes it.
+
+The kinds of base refresh, and what reruns for each, which is all that a refresh asks:
+
+| Kind | The entry shows | What reruns, and nothing more |
+|---|---|---|
+| `clean` | the merge's expected and actual trees: the tree of `git merge-tree --write-tree <previous> <merged>` and the tree of the merge commit, which are equal | the gates: the repository's local checks for the paths now in the branch and a digest re-record where the merge touched the plugin, then every required job, the `Devin Review` status and the threads on the final head, which [OPS-9.4](operations.md#ops-94-a-new-head-invalidates-the-review-it-outran) reads again on any new head. No review of the change and no audit of the plan |
+| `mechanical` | each resolved hunk with the rule the assignment names for that overlap (its wording or identifier), its path and lines, and the command that reproduces the resolution with the result of comparing it | the gates, and the deterministic checks that read those hunks: the reproduction and its comparison, the repository's validators and link check, the digest re-record, `git diff --check`. No model review |
+| `manual` | each hand-resolved hunk with its path and lines, and the independent check of those hunks | the gates, and an independent check of the hand-resolved hunks only, run by the child's own independent reviewer on those hunks and what they merge. The rest of the diff is not reviewed again |
+
+A named rule is one the assignment or the restoration block states for that overlap, such as keeping
+both sides' rows or lines, renumbering a clashing id, or re-recording a digest last. A rule the
+child chose itself is not one, and a hunk no named rule covers is `manual`; a merge with both kinds
+of hunk is `manual`. The hunks an entry lists are exactly the ones `git show --remerge-diff <head>`
+prints for that merge (git 2.36 or newer): it prints nothing for a clean merge, and it prints an
+unlisted resolution, or an edit riding in the merge, as a hunk.
+
+A base refresh is not new scope. The kind says how much of it is checked again and does not say what
+a failing gate means: a job that fails on the final head is a defect like any other and is fixed.
+The parent refreshes a candidate itself when only the base moved ([Refresh the base yourself when
+only the base moved](merge-readiness.md#refresh-the-base-yourself-when-only-the-base-moved)), and a
+refresh the parent made is `clean` by the same measure, so the two rules draw one line: a merge of
+the base with no conflict and no hand-resolved hunk reruns the gates, whoever merged it. What still
+goes back to the child, a conflict, a base that moved after `dag-accept`, or an installed runtime
+without the helper, arrives as a correction for the refresh alone, and the child's own merge of the
+base before a handoff is the same act.
 
 ## Restoration block
 
@@ -892,6 +1074,15 @@ says, so read the level first and the fields second:
   [Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution),
   or the explicit override its assignment carried. Like the workflow it has no transport field,
   and a child that lost its first assignment answers a review in whatever language it drifts to.
+- The publication scope and the escalation route, restated. Like the workflow and the language
+  they have no transport field, and a child that compacted away its first assignment is left with
+  CXC's own rules, which say never to push without approval and point a question at the
+  user. Say whether its publication scope is still the explicit push approval
+  `DEV-GIT-PUSH-01` requires (push its task branch, update the pull request, never merge, nothing
+  wider) or that it is not, and that a question only a person can answer goes to the parent as
+  `blocked_needs_input` with the question written out. These are pointers to
+  [Default dev integration](../../crw-plan/references/integrations.md#default-dev-integration),
+  not a copy of it.
 - Assignment identity: the issue, this task's own id, and where a relay holds the
   assignment its relationship id and the generation to emit under, read from the
   assignment rather than copied from the coordinator's own state. On a needs-changes
@@ -904,6 +1095,28 @@ says, so read the level first and the fields second:
   required checks and reviews are outstanding on that head. Include the current
   [reviewer policy](merge-readiness.md#disabled-reviewer-policy) when it changed;
   supersede stale review-wait instructions without discarding unresolved findings.
+- When the parent updated the branch itself after the child's report
+  ([refreshing the base](merge-readiness.md#refresh-the-base-yourself-when-only-the-base-moved)),
+  the head named above is the parent's, and the child's local worktree is behind its remote
+  branch. Say so: name the remote head and the head the child reported, and make the first
+  action of the generation to fetch and fast-forward the local branch to that remote head
+  (`git fetch origin`, then `git merge --ff-only origin/<branch>`) before reading, editing or
+  running anything. A local branch that cannot fast-forward holds commits the remote does not
+  have: they are merged with the remote head and reported, never reset, rebased or pushed over
+  the parent's merge. The child's next push is then built on the parent's head, so it keeps the
+  update instead of repeating it.
+- The siblings' landings and the conflicts the parent expects, stated as relay facts: which pull
+  requests of this project's other issues have landed in the base since the head the task holds
+  (pull request, merge commit, and the record each was read from, such as the relay's landing
+  record, `merge-turn-show`, or an assignment's `merged` mark, or the forge where the relay holds
+  none), and each conflict the parent expects when the task merges the base: the path, the sibling's
+  pull request and the resolution rule the assignment names for that overlap. A fact the parent
+  could not establish is named as not established and is never filled in, and where nothing landed
+  the line says so, with the time it was read. Without it a correction that says "merge the base"
+  leaves the task to guess what the base now contains, and a task that guesses audits again to be
+  safe. When the correction is a base refresh, this bullet also says that it is not new scope and
+  points at the [kinds and what reruns for each](#what-a-handoff-discloses): the receipt names the
+  kind.
 - The unresolved findings, each with what would settle it.
 - The single next action this message is asking for.
 - Durable locators for the work the task itself owns: where its plan, its ledger and its
