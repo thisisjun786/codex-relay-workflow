@@ -169,3 +169,56 @@ func TestCriteriaRolledBackAfterAReverificationIsStillStale(t *testing.T) {
 		t.Fatalf("after the re-verification against the plan's criteria %v are stale: %s", invStaleIDs(resolved), resolved.brief())
 	}
 }
+
+// The gate on an integrated edge reaches the consumer that already rests on it. U must land in two branches and landed in one (dev); I consumed that landing over the edge ui and was accepted.
+// U is then revised: U is stale, so the edge ui no longer opens, and I, whose consumed value is the landing of a result the plan no longer stands behind, is stale with it: nothing is released onto
+// it (its code-pinned successor T) and its pull request is not judged for the merge lane. Once U has landed everywhere it is exempt (E-20) and I is current again.
+func TestAConsumerOfAStaleIntegratedResultIsStaleToo(t *testing.T) {
+	k := &judgeKit{integrationKit: newIntegrationKit(t)}
+	repo := k.repo
+	k.putPlan("g", int(k.snapshot("g").Revision), "g-r2", addRelNode("U", dag.NodeImplementation), addRelNode("X", dag.NodeNonPR), addRelNode("T", dag.NodeNonPR),
+		addEdge("ui", "U", "I", dag.EdgeIntegrated, doc{"target_repository": repo.path}),
+		addEdge("ux", "U", "X", dag.EdgeIntegrated, doc{"target_repository": repo.path, "target_base_ref": "release"}),
+		addEdge("it", "I", "T", dag.EdgeArtifactVerified, doc{"pins_code_head": true, "target_repository": repo.path, "target_base_ref": "dev"}))
+	u := k.acceptNode("g", "U", acceptOpts{HeadSHA: repo.git("rev-parse", "dev"), PR: 6, Forge: "owner/repo", Repository: repo.path})
+	k.integrate(u, repo.path, "dev", true, true)
+	repo.git("checkout", "-q", "-b", "feature")
+	k.feature = repo.commit("feature.txt", "feature")
+	repo.git("checkout", "-q", "dev")
+	k.declare("g", "I", "feature.txt")
+	k.acceptNode("g", "I", acceptOpts{HeadSHA: k.feature, PR: 5, Forge: "owner/repo", Repository: repo.path, Inputs: invRealInputs(k.releaseKit, "g", "I")})
+	k.pr = PullRequest{Repository: "owner/repo", Number: 5, State: "open", HeadSHA: k.feature, BaseRef: "dev", BaseSHA: repo.git("rev-parse", "dev"), Verdict: "ready", RequiredDeclared: []string{"A", "B"}, RequiredReadable: true}
+	k.setChecks("A:1:1:success", "B:2:1:success")
+	if before := k.read("g"); len(invStaleIDs(before)) != 0 || before.node("I").Reason != DoneAccepted || !k.judge().Eligible() {
+		t.Fatalf("before the revision: %s", before.brief())
+	}
+	k.invRevise("g", "U", "g-r3", invTitle("a changed title"))
+	after := k.read("g")
+	if got := invStaleIDs(after); !reflect.DeepEqual(got, []string{"I", "U"}) {
+		t.Fatalf("stale = %v, want [I U]: %s", got, after.brief())
+	}
+	obj := invStaleObject(t, after, "I")
+	if after.node("I").Reason != "stale:edge:ui" || invField(obj, "cause") != "predecessor_stale" || invField(obj, "predecessor_node_id") != "U" || invField(obj, "consumed_acceptance_id") != u.Acceptance.AcceptanceID {
+		t.Fatalf("I = %+v %v", after.node("I"), obj)
+	}
+	if n := after.node("T"); n.Disposition == DispReady || n.Reason != BlockedStalePredecessor || !strings.Contains(n.Detail, "edge it") {
+		t.Fatalf("T = %+v, want it held back by the stale I", n)
+	}
+	invAssertReasons(t, after)
+	rows := k.count("SELECT COUNT(*) FROM dag_merge_checks")
+	if _, turn, err := k.sched.RequestMergeTurn(context.Background(), "g", "I", "parent", MergeRequestInput{Host: "host"}); refusalReason(err) != "disposition_conflict" || turn != nil || !strings.Contains(err.Error(), "stale:edge:ui") {
+		t.Fatalf("request for a consumer of a stale result = %v %v", err, turn)
+	}
+	if k.count("SELECT COUNT(*) FROM dag_merge_checks") != rows || k.count("SELECT COUNT(*) FROM merge_turns") != 0 {
+		t.Fatal("a judgement or a turn was written for a stale consumer")
+	}
+	// U lands in its other target: it is never stale again, and what rests on its landing is current
+	k.integrate(u, repo.path, "release", true, true)
+	landed := k.read("g")
+	if got := invStaleIDs(landed); len(got) != 0 {
+		t.Fatalf("after U landed everywhere %v are stale: %s", got, landed.brief())
+	}
+	if !k.judge().Eligible() {
+		t.Fatal("the consumer of a landed result is judged again")
+	}
+}

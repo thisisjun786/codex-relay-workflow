@@ -432,8 +432,9 @@ func (s *Scheduler) judgeBelow(ctx context.Context, q store.Querier, plan string
 	return st, err
 }
 
-// explain finds the first incoming edge (by id) over which the node's consumed value is no longer what the plan and the store give: a predecessor whose accepted result is stale (asked
-// directly, so that another reason the edge shows, such as blocked:stale_criteria, hides nothing), or a satisfied edge whose consumed value differs: the acceptance, the head an integration
+// explain finds the first incoming edge (by id) over which the node's consumed value is no longer what the plan and the store give: a predecessor whose accepted result is stale, over an
+// artifact or an integrated edge (asked directly, so that another reason the edge shows, such as blocked:stale_criteria, hides nothing; the integrated edge of a stale result that landed
+// in only some of its targets is closed by the gate, and what rests on its landing rests on that result), or a satisfied edge whose consumed value differs: the acceptance, the head an integration
 // landed (not the tip it was observed at: containment is monotone), the decision (id, digest and revision, as the manifest records them). A difference with no such edge (another edge fact such as a
 // moved head or a cancelled predecessor) is not a stale result: the edges and the merge lane report those.
 func (s *Scheduler) explain(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, n dag.SnapNode, c *consumedOf) (*Stale, error) {
@@ -441,7 +442,7 @@ func (s *Scheduler) explain(ctx context.Context, q store.Querier, plan string, s
 	for _, e := range incomingEdges(snap, n.NodeID) {
 		in := inputs[e.EdgeID]
 		consumed := textOf(in["acceptance_id"])
-		if e.Kind == dag.EdgeArtifactVerified {
+		if e.Kind == dag.EdgeArtifactVerified || e.Kind == dag.EdgeIntegrated {
 			if pred, ok := nodeOf(snap, e.FromNodeID); ok {
 				above, err := s.staleOf(ctx, q, plan, snap, pred)
 				if err != nil {
