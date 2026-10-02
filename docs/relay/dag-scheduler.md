@@ -132,7 +132,7 @@ The release is idempotent and never creates a second child. In order:
    incomplete read is the host's failure, nothing is written, and a retry is allowed; a closed or merged pull request is fine, only the head is compared. The request's criteria must digest to the plan's. The manifest is
    built and verified, every artifact and volatile snapshot hashed again.
 3. **Assemble the request.** Its id is derived from the node and the manifest digest only (`dag-` and 40 hex characters): no attempt counter, so a replay is the same request. The prompt carries the manifest inline,
-   or the path and digest of its frozen copy (`<first artifact root>/dag-input-manifests/<digest>.json`, create-exclusive, mode 0600, re-read) when it exceeds 60000 characters, and tells the child, in English, to
+   or the path and hash of its frozen copy (`<first artifact root>/dag-input-manifests/<sha256 of the bytes>.json`, see *The frozen copy* below) when it exceeds 60000 characters, and tells the child, in English, to
    verify every uri, hash and size before consuming an input and to report `blocked_needs_input` on any mismatch.
 4. **Write the intent.** The acceptance whose pull request was read in step 2 must be the one the manifest consumes (a predecessor accepted again meanwhile is a head that was never checked: `disposition_conflict`, repeat the release). One transaction judges the store half again (a plan revision, an acceptance or a registration may have moved), checks the slice, the criteria and the incoming edges against the manifest,
    decides capacity, reserves a slot of subject kind `dag_node` and key `plan/node` (a character neither id may contain) (decision D-15) and writes the manifest, the frozen request and the release together, or nothing. When no slot is free the
@@ -209,9 +209,18 @@ supersedes the active one and keeps the history, so a rejection after an approva
 
 A correction goes back to the same child (contract 3.2): a `needs_changes` ruling opens the next generation of the same relationship and the existing verdict writer sends the correction message in the same transaction, so a manifest cannot be placed in that
 generation afterwards. The protocol therefore puts the manifest into the one text the relay itself sends. `dag-correct --prepare --manifest-request @file` rebuilds and verifies the node's input manifest as the store holds it now, stores it, and prints an English
-instruction line that names the manifest, a copy of its canonical bytes kept under the child's first artifact root (`dag-input-manifests/<digest>.json`, the file the child reads, since it cannot read the relay's store) and the sha256 of that file; the parent submits that line as the **restoration** finding of its `needs_changes` ruling. After the ruling, `dag-correct` (without `--prepare`) binds the generation the ruling opened to the manifest that finding names
-(`dag_node_executions`, kind `correction`) once the manifest is stored for this node at its current slice and criteria and the child's copy still holds its bytes. The bound digest is derived from what the child was told: a digest in an ordinary finding does not bind, a restoration block that names two different manifests is refused, a ruling without the block leaves the previous manifest in force (`carried_over`), and a `--manifest-digest` that differs
+instruction line that names the manifest, a copy of its canonical bytes kept under the child's first artifact root (the file the child reads, since it cannot read the relay's store; see *The frozen copy*) and the sha256 of that file; the parent submits that line as the **restoration** finding of its `needs_changes` ruling. After the ruling, `dag-correct` (without `--prepare`) binds the generation the ruling opened to the manifest that finding names
+(`dag_node_executions`, kind `correction`) once the manifest is stored for this node at its current slice and criteria and the restoration note carries, word for word, the instruction that manifest was prepared with (this generation, the path of the copy and its hash). No file is read when the generation is recorded: the child checks the copy against the hash in the line it was sent. The bound digest is derived from what the child was told: a digest in an ordinary finding does not bind, a restoration block that names two different manifests is refused, a ruling without the block leaves the previous manifest in force (`carried_over`), and a `--manifest-digest` that differs
 is refused, also when the generation is already bound. The previous acceptance stays active and reads `blocked:stale_head` until the parent accepts the corrected result with `--supersedes`; invalidating what depends on it is a later issue.
+
+### The frozen copy
+
+A manifest that a child has to read from a file (an oversize release prompt, or a correction) is kept as `<first artifact root>/dag-input-manifests/<sha256 of its canonical bytes>.json`. The name is the hash of the
+bytes, not the manifest digest: two bodies of one manifest differ in what the digest leaves out (the time of the build, the rule version), so a second release attempt or a second preparation never meets a file it did
+not write. The file is created exclusively with mode 0600, in a directory that must be a directory of its own (a link is refused, so nothing is written outside the root), and is read back through the relay's authorized
+open (inside the root, no link on the way, a regular file, never blocking on a pipe) and compared byte for byte. The child owns its artifact root, so a link or a pipe planted there makes the freeze fail; it never
+writes elsewhere or waits. A correction uses the body the store holds for the digest, so preparing twice from the same inputs gives the same file and the same line. The directory is created by the freeze and is not
+cleaned up by it.
 
 ## Commands
 
