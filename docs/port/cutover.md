@@ -760,7 +760,11 @@ Where a command's own argument refusal falls follows `cli.py` `main`: a read-onl
 (`merge-turn-show`'s selectors, `linkage-up`'s `--scope`) answers that refusal and creates
 nothing, never `store_absent`; a write form's store is opened by `_ownership_preflight` before
 its handler, so its own argument refusal comes after admission: an absent store is left
-initialized and a store another runtime owns answers `store_owned_by_other` (decision 31).
+initialized and a store another runtime owns answers `store_owned_by_other` (decision 31). A command
+that judges the root options its line gives (`dispatch.Command.Validate`: `reporting-show` and
+`reporting-derive`, whose `--state` and `--socket` checks run after `check_start`) answers that usage error
+before the selected store's recorded socket is compared, so a store recording another socket does not turn
+it into `state_directory_serves_another_socket`.
 
 ### The live-state guard (test isolation only)
 

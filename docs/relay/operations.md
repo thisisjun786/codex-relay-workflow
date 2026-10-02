@@ -120,7 +120,10 @@ selected store is refused `state_directory_serves_another_socket` when that stor
 socket than `--socket`, or than the default socket that scoped a discovery made without one:
 the `service` subcommands that write intent and records (`enable`, `disable`, `stop`, `declare`,
 `start`, `restart`, `run`), `managed-start`, `managed-show` and `reporting-derive` included, before
-anything is written. `doctor` and `service status` are how that mismatch is diagnosed, so they
+anything is written. A reporting form's own selector errors come first, whatever the store records:
+`reporting-show` without `--state`, and either form given `--socket`, answer the usage error (exit 4), so
+only a valid `reporting-derive` line is refused here (a valid `reporting-show` line names `--state` and no
+socket, and a `--state` selection has no default socket to compare). `doctor` and `service status` are how that mismatch is diagnosed, so they
 answer it rather than refuse: their report carries a `socketMismatch` block with the refusal's
 fields (reason, detail, both sockets, the directory and the recovery lines), and still exits 0.
 `packet-check` consults the whole selection refusal itself where it reads the store.
