@@ -112,6 +112,11 @@ func slfAnswer(changes map[string]any) map[string]any {
 func slfSettings(record map[string]any, free bool) delivery.TaskSettings {
 	return delivery.TaskSettings{Data: slfObj(record).(delivery.Obj), SettingsFreeResume: free}
 }
+
+// slfUsable is the registry's usability judgement of a record; the relay has one set of settings rules.
+func slfUsable(record map[string]any) error {
+	return (registry.TaskSettings{Data: slfObj(record).(delivery.Obj)}).RequireUsable()
+}
 func slfCheck(record, answer map[string]any, free bool) map[string]any {
 	// The guarded send's check as the bridge adapter runs it: registry's recorded-settings
 	// predicate, and a settings-free resume that finds a difference names it
@@ -183,7 +188,7 @@ func slfWhole(t *testing.T, id string) {
 		cases := []map[string]any{slfCopy(base, map[string]any{"runtimeWorkspaceRoots": "/a/bc"}), slfCopy(base, map[string]any{"runtimeWorkspaceRoots": 7}), slfCopy(base, map[string]any{"runtimeWorkspaceRoots": []any{slfWork, 7}}), slfCopy(base, map[string]any{"environments": "local"}), slfCopy(base, map[string]any{"environments": []any{"local"}}), slfCopy(base, map[string]any{"environments": []any{map[string]any{"environmentId": 7, "cwd": slfWork}}}), slfCopy(base, map[string]any{"environments": []any{map[string]any{"environmentId": "local"}}}), slfCopy(base, map[string]any{"environments": []any{map[string]any{"environmentId": "local", "cwd": slfWork, "runtimeWorkspaceRoots": "/a/bc"}}}), slfCopy(base, map[string]any{"environments": []any{map[string]any{"environmentId": "local", "cwd": slfWork, "runtimeWorkspaceRoots": nil}}})}
 		out := []any{}
 		for _, one := range cases {
-			out = append(out, slfRefusal(slfSettings(one, true).RequireUsable()))
+			out = append(out, slfRefusal(slfUsable(one)))
 		}
 		slfSame(t, id, out)
 	case "SLF-8":
@@ -200,7 +205,7 @@ func slfWhole(t *testing.T, id string) {
 	case "SLF-10":
 		bad := slfCopy(slfSandbox(), map[string]any{"writableRoots": []any{123}})
 		record := slfCopy(base, map[string]any{"sandbox": bad})
-		slfSame(t, id, map[string]any{"record": slfRefusal(slfSettings(record, true).RequireUsable()), "both": slfCheck(record, slfAnswer(map[string]any{"sandbox": bad}), true), "answer": slfCheck(base, slfAnswer(map[string]any{"sandbox": bad}), true)})
+		slfSame(t, id, map[string]any{"record": slfRefusal(slfUsable(record)), "both": slfCheck(record, slfAnswer(map[string]any{"sandbox": bad}), true), "answer": slfCheck(base, slfAnswer(map[string]any{"sandbox": bad}), true)})
 	case "SLF-11":
 		wrong := []struct {
 			k string
@@ -209,7 +214,7 @@ func slfWhole(t *testing.T, id string) {
 		records := []any{}
 		for _, w := range wrong {
 			bad := slfCopy(slfSandbox(), map[string]any{w.k: w.v})
-			records = append(records, slfRefusal(slfSettings(slfCopy(base, map[string]any{"sandbox": bad}), true).RequireUsable()))
+			records = append(records, slfRefusal(slfUsable(slfCopy(base, map[string]any{"sandbox": bad}))))
 		}
 		zero := slfCopy(slfSandbox(), map[string]any{"networkAccess": 0})
 		listed := slfCopy(slfSandbox(), map[string]any{"networkAccess": []any{1}})
@@ -217,14 +222,14 @@ func slfWhole(t *testing.T, id string) {
 	case "SLF-12":
 		env := []any{map[string]any{"environmentId": "local", "cwd": slfWork}}
 		record := slfCopy(base, map[string]any{"environments": env})
-		slfSame(t, id, map[string]any{"usable": slfRefusal(slfSettings(record, true).RequireUsable()), "comparison": slfCheck(record, slfAnswer(map[string]any{"thread": map[string]any{"environments": env}}), true)})
+		slfSame(t, id, map[string]any{"usable": slfRefusal(slfUsable(record)), "comparison": slfCheck(record, slfAnswer(map[string]any{"thread": map[string]any{"environments": env}}), true)})
 	case "SLF-13":
 		profile := map[string]any{"id": "profile-1", "extends": nil, "rules": []any{}}
 		record := slfCopy(base, map[string]any{"expectedPermissionProfile": profile})
 		same := map[string]any{"rules": []any{}, "extends": nil, "id": "profile-1"}
 		missing := slfAnswer(nil)
 		delete(missing, "activePermissionProfile")
-		slfSame(t, id, map[string]any{"usable": slfRefusal(slfSettings(record, true).RequireUsable()), "same": slfCheck(record, slfAnswer(map[string]any{"activePermissionProfile": same}), true), "bool": slfCheck(slfCopy(base, map[string]any{"expectedPermissionProfile": 0}), slfAnswer(map[string]any{"activePermissionProfile": false}), true), "missing": slfCheck(record, missing, true), "none": slfCheck(base, slfAnswer(nil), true)})
+		slfSame(t, id, map[string]any{"usable": slfRefusal(slfUsable(record)), "same": slfCheck(record, slfAnswer(map[string]any{"activePermissionProfile": same}), true), "bool": slfCheck(slfCopy(base, map[string]any{"expectedPermissionProfile": 0}), slfAnswer(map[string]any{"activePermissionProfile": false}), true), "missing": slfCheck(record, missing, true), "none": slfCheck(base, slfAnswer(nil), true)})
 	case "SLF-14":
 		extra := map[string]any{"environmentId": "local", "cwd": slfWork, "runtimeWorkspaceRoots": []any{slfWork}, "extraAuthorization": "restricted"}
 		plain := map[string]any{"environmentId": "local", "cwd": slfWork, "runtimeWorkspaceRoots": []any{slfWork}}
