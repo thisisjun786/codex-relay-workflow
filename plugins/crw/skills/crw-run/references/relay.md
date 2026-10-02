@@ -1231,7 +1231,8 @@ summary once and pass it as `--document` every time (its id or URL, one line).
         codex-session-relay --state "$RELAY_STATE" dag-summary-enqueue --plan <plan> --actor <you> --document <doc>
 
 2. **Take.** `dag-summary-claim --summary <id> --actor <you>` answers a `claim_token` and the `operation`: the exact `block`, the exact `container` text, the `empty_container` and the protocol. A second claim of the same
-   entry is allowed at once (the answer of the first may have been lost) and kills the first token. `sync_not_claimable` means this is not the entry to write: the entry was superseded or confirmed, so run
+   entry is allowed at once (the answer of the first may have been lost) and kills the first token: a restarted or replacement session claims again any entry that reads `claimed`, because
+   a `dag-coordinator-claim` does not touch summary tokens and only that second claim ends the earlier session's. `sync_not_claimable` means this is not the entry to write: the entry was superseded or confirmed, so run
    `dag-summary-status` and take the newest one; an entry that failed eight times says so, and `dag-summary-retry --summary <id> --actor <you>` reopens that entry only.
 
         codex-session-relay --state "$RELAY_STATE" dag-summary-claim --summary <id> --actor <you>

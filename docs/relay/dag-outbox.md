@@ -146,7 +146,7 @@ the headers, never by looking for words.
 The procedure is in the crw-run skill (`references/relay.md`, "The Linear summary of a DAG plan"). In order:
 
 1. `dag-summary-status --plan P`: a document whose newest entry is owed, or is not up to date, needs a turn. If the plan has moved on, `dag-summary-enqueue --plan P --actor A --document D` first.
-2. `dag-summary-claim --summary S --actor A`: take the newest open entry.
+2. `dag-summary-claim --summary S --actor A`: take the newest open entry. An entry that already reads `claimed` (an earlier session of the parent, a restart) is claimed again the same way: only the second claim ends the earlier token.
 3. Read the document from Linear and keep that one text. `dag-summary-reconcile` on it. `writable: false` or `relation: newer`: stop, the entry was overtaken, take the newest entry. `already_written`: go to 5.
 4. Write as `repair` says: `replace_container`: one `save_document` with `patch` [`{op: replace, old_string: <the container text from that read>, new_string: <the container text>}`]; `initialize`: one `patch` that replaces the whole document
    text that was read with that text, a blank line and the empty container, then read again and reconcile again; `manual`: write nothing, record the failure and report it to a person. On any failure: `dag-summary-fail` with the claim token and the error, and go back to 2 for the same entry.
@@ -166,7 +166,7 @@ connector once the container changed.
   the relay never confirms such a document, and a person removes the surplus text. Two sessions of the parent that both initialise a container are made safe by the conditional replacement of the whole document, not by the relay.
 * A failure has no backoff. The eighth parks the entry, so a parent that fails in a loop cannot burn more than eight attempts on one entry, and they can all be spent in one turn.
 * A change of the progress document's content between builds gives a different digest: one extra entry after an upgrade, never a wrong one.
-* Progress replay, stale handling, coordinator fencing and the parent's base refresh are later issues. These writers decide nothing about the plan and are not fenced by [the coordinator epoch](dag-scheduler.md#the-coordinator-epoch): a summary states the store's current progress, enqueueing it again is a replay, and the claim token fences a replaced session's confirmation or failure (a restart claims again and kills the old token). `coordinator_epoch` is 0 on every entry, so a later fence has the column.
+* Progress replay, stale handling, coordinator fencing and the parent's base refresh are later issues. These writers decide nothing about the plan and are not fenced by [the coordinator epoch](dag-scheduler.md#the-coordinator-epoch): a summary states the store's current progress, enqueueing it again is a replay, and the claim token fences a replaced session's confirmation or failure. A coordinator claim (`dag-coordinator-claim`) does not touch summary tokens: a restarted or replacement session claims again, at once, any entry that reads `claimed` (step 2 of the flow), and that second claim is what kills the old session's token. `coordinator_epoch` is 0 on every entry, so a later fence has the column.
 
 ## The store
 
