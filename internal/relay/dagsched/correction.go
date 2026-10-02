@@ -37,6 +37,10 @@ type Prepared struct {
 func (s *Scheduler) PrepareCorrection(ctx context.Context, plan, node, actor string, in ManifestInput, opts VerifyOptions) (Prepared, error) {
 	var out Prepared
 	q := s.Store.Q(ctx)
+	// nothing is built, read from the forge or written for a session that does not hold the plan's epoch (the manifest is stored under the fence again below)
+	if err := s.fence(ctx, q, plan, actor); err != nil {
+		return out, err
+	}
 	snap, _, err := dag.SnapshotAt(ctx, q, plan, 0)
 	if err != nil {
 		return out, err
@@ -84,7 +88,18 @@ func (s *Scheduler) PrepareCorrection(ctx context.Context, plan, node, actor str
 	if err != nil {
 		return out, err
 	}
-	if _, err := (&dag.Repo{Store: s.Store, Now: s.Now}).PutManifest(ctx, stored); err != nil {
+	if s.testBeforeManifestStore != nil {
+		s.testBeforeManifestStore()
+	}
+	// the fence and the store of the manifest are one transaction (PutManifest joins it): a claim that landed since the check above refuses and stores nothing. The file written below is
+	// inert until a ruling names its manifest, which only a fenced RecordCorrection can bind.
+	if err := s.Store.Compose(ctx, func(txCtx context.Context, _ *sql.Conn) error {
+		if err := s.fence(txCtx, s.Store.Q(txCtx), plan, actor); err != nil {
+			return err
+		}
+		_, err := (&dag.Repo{Store: s.Store, Now: s.Now}).PutManifest(txCtx, stored)
+		return err
+	}); err != nil {
 		return out, err
 	}
 	// the manifest of a digest is the body the store holds: the first one stored (a body built later differs in what the digest leaves out, such as the time of the build)
@@ -123,6 +138,9 @@ func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, sup
 	out := CorrectionResult{PlanID: plan, NodeID: node}
 	err := s.Store.Compose(ctx, func(txCtx context.Context, _ *sql.Conn) error {
 		tx := s.Store.Q(txCtx)
+		if err := s.fence(txCtx, tx, plan, actor); err != nil {
+			return err
+		}
 		snap, _, err := dag.SnapshotAt(txCtx, tx, plan, 0)
 		if err != nil {
 			return err

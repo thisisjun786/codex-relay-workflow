@@ -147,8 +147,12 @@ func (s *Scheduler) slotOf(ctx context.Context, q store.Querier, plan, node stri
 // A refused or incomplete start leaves the intent and the slot in place: the next call reaches step 5 again and the managed engine reconciles with the creation it already made.
 func (s *Scheduler) Release(ctx context.Context, plan, node, actor string, req ReleaseRequest) (ReleaseResult, error) {
 	out := ReleaseResult{PlanID: plan, NodeID: node}
-	// 1. replay first
+	// 0. a session that does not hold the plan's epoch decides nothing, and is told nothing about the release (the transactions below check again, where they write)
 	q := s.Store.Q(ctx)
+	if err := s.fence(ctx, q, plan, actor); err != nil {
+		return out, err
+	}
+	// 1. replay first
 	if row, found, err := latestRelease(ctx, q, plan, node); err != nil {
 		return out, err
 	} else if found {
@@ -258,6 +262,9 @@ func (s *Scheduler) Release(ctx context.Context, plan, node, actor string, req R
 	var concurrent bool
 	err = s.Store.Compose(ctx, func(txCtx context.Context, _ *sql.Conn) error {
 		tx := s.Store.Q(txCtx)
+		if err := s.fence(txCtx, tx, plan, actor); err != nil {
+			return err
+		}
 		if _, exists, err := existingRelease(txCtx, tx, plan, node, digest); err != nil {
 			return err
 		} else if exists {
@@ -294,7 +301,7 @@ func (s *Scheduler) Release(ctx context.Context, plan, node, actor string, req R
 			plan, node, digest, shaOf(raw), string(raw), s.Selectors.MarkerRoot, s.Selectors.Socket, s.Selectors.StateSelector, at); err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(txCtx, "INSERT INTO dag_releases (plan_id, node_id, manifest_digest, managed_request_id, coordinator_epoch, decided_at) VALUES (?,?,?,?,0,?)", plan, node, digest, out.RequestID, at)
+		_, err = tx.ExecContext(txCtx, "INSERT INTO dag_releases (plan_id, node_id, manifest_digest, managed_request_id, coordinator_epoch, decided_at) VALUES (?,?,?,?,?,?)", plan, node, digest, out.RequestID, s.ExpectedEpoch, at)
 		return err
 	})
 	if err != nil {
@@ -545,6 +552,9 @@ func (s *Scheduler) replay(ctx context.Context, plan, node, actor string, row re
 	var refused error
 	if err := s.Store.Compose(ctx, func(txCtx context.Context, _ *sql.Conn) error {
 		tx := s.Store.Q(txCtx)
+		if err := s.fence(txCtx, tx, plan, actor); err != nil {
+			return err
+		}
 		var managedState string
 		if _, err := queryOne(txCtx, tx, "SELECT state FROM managed_start_requests WHERE request_id = ?", []any{row.Request}, &managedState); err != nil {
 			return err
@@ -639,6 +649,9 @@ func (s *Scheduler) startAndBind(ctx context.Context, plan, node, actor string, 
 	}
 	err = s.Store.Compose(ctx, func(txCtx context.Context, _ *sql.Conn) error {
 		q := s.Store.Q(txCtx)
+		if err := s.fence(txCtx, q, plan, actor); err != nil {
+			return err
+		}
 		var issue, parent, kid string
 		var gen int64
 		found, err := queryOne(txCtx, q, "SELECT issue_key, parent_task_id, child_task_id, execution_generation FROM relationships WHERE relationship_id = ?", []any{rid}, &issue, &parent, &kid, &gen)

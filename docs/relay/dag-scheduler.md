@@ -12,7 +12,7 @@ says so in [Departures](#departures-from-the-contract).
 
 ## The goal-free parent's turn
 
-The parent holds no goal and runs no loop. When a relay result, a block or a decision request wakes it, one turn goes like this, and it ends when only waiting remains:
+The parent holds no goal and runs no loop. A session that starts (the first one, a restart, or a replacement) begins with `dag-coordinator-claim` and `dag-restart` ([The coordinator epoch](#the-coordinator-epoch), [Restart and adoption](#restart-and-adoption)). When a relay result, a block or a decision request wakes it, one turn goes like this, and it ends when only waiting remains:
 
 1. `dag-ready --plan P` (add `--record --actor A` to keep the pass): the nodes that are ready, in release order, and for every other live node its one reason. The store is the truth and a wake is only a hint: the same reading is
    right whether the wake was the first, a duplicate or a late one.
@@ -75,7 +75,7 @@ Candidates are then checked against what lies outside the plan, ranked, and cut 
 | done | `done:accepted` | the parent accepted the node's result |
 | done | `done:integrated` | the accepted head is contained in every target it has to land on and the parent marked it merged |
 
-`blocked:stale_epoch` is in the contract's vocabulary and is not emitted: coordinator fencing is a later issue.
+`blocked:stale_epoch` is in the contract's vocabulary and is not emitted: a reading is the same for every session (a new parent reads before it claims, so a read is never fenced) and a stale session is stopped where it writes, with `stale_coordinator_epoch` ([The coordinator epoch](#the-coordinator-epoch)).
 
 The derived state of each node is shown beside its disposition: `waiting`, `ready`, `releasing`, `creation_unknown`, `running`, `reported`,
 `verifying`, `correcting`, `accepted`, `stale`, `integrated`, `paused`, `cancelled`, `closed` or `ambiguous`. It is read from the rows each time and never stored.
@@ -313,6 +313,46 @@ order with their heads, so asking either way round is one row, and the same two 
 ceiling only for a limit revision that has a row here, and clamps it to 6 otherwise. The value of a ceiling is decision D-05, which is not made: this writes evidence and raises nothing. Only the task that declared the limit or the
 project's registered parent records, and a basis is not rewritten.
 
+## The coordinator epoch
+
+A plan is driven by one parent session at a time, and a parent is replaced: by a new session of the same task (a restart, or a context that lost its picture), or by another task that took the project over. The epoch is how the store tells the session that holds a plan from one that used to. It is a fence for DAG commands and nothing more: it does not make the path from a release to a landing exactly-once, and no existing command (`verdict`, `assignment-mark`, `managed-start`, `merge-turn-*`) gains an epoch (decision D-07).
+
+**Claim.** `dag-coordinator-claim --plan P --actor A --session-nonce N [--project K]` raises the plan's epoch to the next number (one above the newest claim, 1 for the first) in one transaction and answers it. The actor must hold the live parent binding of the plan's project (a binding that is active or paused and was not replaced: `scope_role_mismatch` otherwise). The row records the epoch, the binding and its revision, the task, the session nonce and the time. The nonce names the session once and is never reused: the same call again while it is still the newest claim answers the same epoch (`replayed: true`); the nonce of a session that was replaced, or one another task used, is `stale_coordinator_epoch`, so a replaced session cannot take the plan back by repeating itself. A plan that has no revision yet has no header and so no project: the claim names it with `--project`. A session claims before its first decision and keeps the epoch the claim answered: it sends it with every command that decides. A session that reads the newest epoch from the store and sends that has not claimed, and the fence cannot tell it from the holder (the contract's fence has no nonce); keeping the claim's answer is the session's discipline.
+
+**Fence.** The commands that decide name the epoch they hold (`--expect-epoch E`; in a revision document `coordinator_epoch`) and check it as the first statement of the transaction that writes, before any replay is recognised, so a stale session is told nothing about what the plan holds and writes nothing (every table, the managed starts, the slots and the merge turns are as they were; a refused release created no child). A plan with a claim is fenced strictly: the epoch must be the newest, the claim must be the actor's, and the parent binding it was made under must still be a live parent binding of the plan's project. A plan nobody has claimed is unfenced, as every plan was before the fence existed: a write that names no epoch passes, and one that names an epoch is refused. The first claim fences a plan from then on; the rows a plan has before it carry epoch 0. Every refusal is `stale_coordinator_epoch` (exit 2), whichever of the three conditions failed, and its detail says which.
+
+The checks sit at the head of: `dag-plan-put`, `dag-release` (before any replay, and again in the transactions that write the intent, replay it and bind the child), `dag-accept`, `dag-decision-record`, `dag-integration-observe` (the only writer of an observation, and so of the withdrawal of a landing: a later negative observation), `dag-correct` (the preparation checks before it reads or builds anything and again in the one transaction that stores the manifest; the file it then keeps under the child's artifact root is inert until a ruling names its manifest, which only the fenced recording can bind), `dag-region-declare`, `dag-merge-judge`, `dag-merge-request`, `dag-adopt` and, for a project limit, `dag-cap-basis-record`. A basis belongs to a limit and has no plan, so the recorder names the plan it coordinates (`--plan`, which must be a plan of that project) and the fence runs for that plan. Once any claim was made under a parent binding of the project (the claim of a plan that has no revision yet counts, and so does a claim whose binding was replaced since), a basis without a plan, or for a plan that has no claim of its own, is `stale_coordinator_epoch`: an unclaimed second plan is no way round the fence. A limit of a wider scope is declared by a supervisor, who coordinates no plan: it takes no plan and is not fenced.
+
+The rows a decision leaves carry the epoch of the session that decided it (the release, the acceptance, the decision, the revision and the manifest body), so a plan's rows show who decided what. The epoch stays out of every digest except the request digest of a revision: a request id sent again under another epoch is `plan_revision_conflict`, so a restarted parent reads the log and does not resend. Rows written before the first claim keep epoch 0.
+
+**What it does not do.** A read is not fenced: a new parent reads before it claims. `dag-ready --record` and `dag-conflict-observe` record measurements and decide nothing. A write that started before the first claim lands is ordered by the store's write lock: the claim first and the unfenced write is refused at its fence, or the write first and it commits at epoch 0. A release that is cut by a claim between its intent and its bind leaves an admitted child unbound, and a new session of the same task replays it and binds it.
+
+## Restart and adoption
+
+Nothing is resident, so a restart loses nothing: the plan, the releases, the executions, the acceptances and the merge records are in the store, and `dag-ready --plan P` answers what may start from the store alone. `dag-restart --plan P --actor A` is the picture a parent that starts again needs first. It reads, writes nothing and reads no clock: the same store gives the same answer, and a lease, a heartbeat or a deadline that ran out never makes an owned node ready again or reassigns it. For the newest claim it says whether the actor holds it, and for every node somebody owns what to do:
+
+| Resume | Meaning |
+| --- | --- |
+| `adopt` | a live child whose relationship this actor holds: release nothing, carry on |
+| `adopt_needed` | the node's relationship was replaced by one this actor holds, for the same child: run `dag-adopt` |
+| `reconcile` | an effect whose outcome is not known (a creation whose response was lost, a release started and not bound, a merge turn whose effect is unknown): resolve it by replaying the same request (`dag-release` reads the host's record of the creation before it creates anything) or by observation (`dag-integration-observe`), never by doing it again |
+| `needs_operator` | nothing in this build moves it on, and the detail says why |
+| `none` | nothing is outstanding (a node with an acceptance: the acceptance is the node's value and belongs to no session) |
+
+A managed start that was released before it created a child is `needs_operator` first (the reading derives it as releasing). A node whose relationship was replaced is judged before its derived state, which reads the replaced relationship as closed.
+
+**Adoption.** After a replacement the new parent has registered the child under a new relationship with the old one superseded and has taken the project over (the relay's own commands), and the node's executions still stand on the old relationship, which is archived. `dag-adopt --plan P --node N --actor A --expect-epoch E` binds the successor to the node as an execution of kind `parent_handover` with the manifest the child was released under. The successor is resolved and validated on every call, a replay included: live (active or paused, not replaced), the same issue, the same child, held by the actor. Its relay state word must be one of a child that is working on, or reporting, the result (a paused successor is adopted and nothing proceeds until it is resumed). Nothing is created, no generation is opened, nothing is reserved, and a node that has an acceptance is refused. The slot stays held under the task it was reserved for. `dag-accept` of a non_pr node and `dag-integration-observe` of an implementation node return it, as that task, when the node's current parent calls: only when the slot is held for the plan's project and its holder is the parent of a relationship in this node's own execution chain (any other holder is refused as before), with no reservation, so a lowered ceiling or a blocking measurement cannot refuse it. The slot then reads as released by the former parent; the reason (`dag_accepted`, `dag_integrated`) is unchanged.
+
+What each kind of restart recovers:
+
+| Restart | Recovered |
+| --- | --- |
+| a new session of the same parent task | every boundary: before the intent, after the intent, the creation response lost, started and not bound, bound, the result stored, the ruling stored, accepted. One child and one release row per node; the pending effect is reconciled by replaying the same request; results and rulings stored before the crash are used. `dag-restart` says `reconcile` up to the bind, `adopt` from the bind to the ruling and `none` once accepted |
+| a replacement parent task | a bound child whose result is not accepted, by `dag-adopt`. The previous parent's writes are refused |
+| a replacement parent task | not recovered, and said so (`needs_operator`, no child created): a release that never bound its child (the managed start is frozen under the previous parent), a result accepted and not landed (its merge turn and merged mark belong to the previous parent), and results stored under the replaced relationship (the child reports under the successor) |
+
+An unknown merge turn stays unknown until the head is observed; the merge lane answers the holder's repeated request with the turn it already has or refuses it, and no second turn exists. Elapsed time is not an observation.
+
 ## Commands
 
 | Command | Reads or writes | Answer |
@@ -327,10 +367,15 @@ project's registered parent records, and a basis is not rewritten.
 | `dag-merge-judge --plan P --node N --actor A [--repository OWNER/NAME --pull-request N]` | appends `dag_merge_checks` (when the judgement differs from the latest) | the outcome, reason, round, check sequence, heads, base tip and failed required checks |
 | `dag-merge-request --plan P --node N --actor A --host H [--repository OWNER/NAME --pull-request N]` | the judgement as above; asks the merge lane for a turn (`merge_turns`) when eligible | the judgement and the turn |
 | `dag-conflict-observe --plan P --actor A --repository PATH --left-node N --right-node M --left-head SHA --right-head SHA` | writes `dag_conflict_observations` | the number of conflicting files and their names |
-| `dag-cap-basis-record --limit L --revision R --w-minutes W --w-source S --s-minutes S --s-source S --actor A` | writes `dag_cap_basis` | the basis recorded |
+| `dag-cap-basis-record --limit L --revision R --w-minutes W --w-source S --s-minutes S --s-source S --actor A [--plan P]` | writes `dag_cap_basis` | the basis recorded |
+| `dag-coordinator-claim --plan P --actor A --session-nonce N [--project K]` | writes `dag_coordinator_claims` | the claim: epoch, task, binding, nonce, whether it replayed, the epoch and task it replaced |
+| `dag-adopt --plan P --node N --actor A [--expect-epoch E]` | writes `dag_node_executions` (kind `parent_handover`) | the successor relationship bound to the node, the child, the generation, whether it replayed |
+| `dag-restart --plan P --actor A` | reads | the newest claim, whether the actor holds it, and per owned node what to do ([Restart and adoption](#restart-and-adoption)) |
+
+The commands that decide take `--expect-epoch E`, the epoch the session holds: `dag-region-declare`, `dag-release`, `dag-accept`, `dag-integration-observe`, `dag-decision-record`, `dag-correct` (both forms), `dag-merge-judge`, `dag-merge-request`, `dag-adopt`, `dag-cap-basis-record`, and, in the revision document, `dag-plan-put`. `dag-ready --record` and `dag-conflict-observe` record measurements and decide nothing, and are not fenced.
 
 Refusals use the relay's existing reasons: `unregistered_scope` (a plan or node that is not there), `malformed_receipt` (a region or a request that is not valid),
-`disposition_conflict` (a node that edits no repository, or whose regions are held, or that is not ready), and the reasons of the table above. Commands can also refuse with `merge_target_unreadable`, `not_acknowledged`, `relationship_conflict`, `relationship_not_active`, `revision_ambiguous`, `scope_role_mismatch`, `slot_unknown` and `unregistered_relationship`. Exit codes are the relay's: 0, 2 refusal, 3 host, 4 usage.
+`disposition_conflict` (a node that edits no repository, or whose regions are held, or that is not ready), and the reasons of the table above. A write of an epoch that is not the plan's is `stale_coordinator_epoch` (new, decision D-02: the second reason this feature adds to the relay's contract, beside `plan_revision_conflict`). Commands can also refuse with `merge_target_unreadable`, `not_acknowledged`, `relationship_conflict`, `relationship_not_active`, `revision_ambiguous`, `scope_role_mismatch`, `slot_unknown` and `unregistered_relationship`. Exit codes are the relay's: 0, 2 refusal, 3 host, 4 usage.
 
 ## The store
 
@@ -353,15 +398,16 @@ Where the code reads the contract differently, or adds to it, and why:
 
 * Contract 7.2 names the `edit_regions` tables for regions; those are two-project agreements keyed by base revision with no unknown or hotspot rule, so per-node declarations have their own table and reuse only the place vocabulary.
 * The managed request id of a release is derived from the plan, the node and the manifest digest (contract 2.6 names the node and the digest): node ids are plan-local and request ids are global to the store. Every predicate carries the plan id, which the contract's SQL predates. The acceptance digest includes the plan id too: acceptance ids are a store-wide key and node ids are plan-local.
-* The reading's vocabulary adds `blocked:release_abandoned`, `blocked:evicted` (D-12) and `blocked:stale_predecessor`; `blocked:stale_epoch` is not emitted (coordinator fencing is a later issue). A `blocked_needs_input` receipt reads as `blocked:input_unverified_at_consumption` (B-15).
+* The reading's vocabulary adds `blocked:release_abandoned`, `blocked:evicted` (D-12) and `blocked:stale_predecessor`; `blocked:stale_epoch` is not emitted (the fence refuses writes, a read is not fenced). A `blocked_needs_input` receipt reads as `blocked:input_unverified_at_consumption` (B-15).
 * No new refusal reason: an unmet ready predicate reads `disposition_conflict` with the closed reason in the detail, tamper `revision_mismatch`, missing or altered inputs `manifest_unverified` and `scope_escape`, a stale head `merge_candidate_moved`, stale criteria `criteria_set_changed`.
-* Plan-level pause does not exist in the revision operations, so a plan is always active until coordinator fencing.
+* Plan-level pause does not exist in the revision operations, so a plan is always active.
 * P-DEC-1 reads the plan's project scope; the decision subject stays opaque and a directive satisfies an edge only when its digest equals the edge's (D-09).
 * B-13 is evaluated on `dag_merge_checks` rows, which keep the evidence body; `dag_acceptances.evidence_digest` excludes its body (contract 4.3) and cannot be recomputed.
 * `defer:merge_window` is emitted for a target whose merge turn is in a state that can move the tip (merging, unknown), not for a waiting or holding turn; `defer:ownership_unverified` is a project without exactly one registered parent.
 * E-11 against the shipped one-row-per-output index: the same output ruled again under re-registered criteria is a row of `dag_acceptance_revalidations`, not a second acceptance.
 * A release freezes its exact request bytes (`dag_release_requests`): the managed engine fingerprints the whole request, so a replay must send the same bytes.
 * `stale_base` means the base tip is not contained in the head (strict ruleset, D-11), not that the pull request's own base field differs; contract E-27 only requires `merge_currency_stale` against the new tip.
+* Coordinator epoch (contract 6): the fence reads a live parent binding as `status IN ('active','paused') AND superseded_by IS NULL`, as the rest of the relay does, not as `status = 'active'` (a paused binding is not a stale epoch). A plan nobody has claimed is unfenced, so plans written before the fence, and the callers that rely on them, keep working; the first claim fences the plan, and claiming before the first decision is the parent's duty. The cap basis has no plan: it is fenced through the plan its recorder names. The epoch is also written into the manifest body (outside its digest). No zone statement is appended: `dag_coordinator_claims`, the epoch columns and the `parent_handover` kind were already shipped.
 * Corrections: the manifest of a correction is prepared before the ruling and travels as a line of the ruling's restoration finding, because the verdict writer opens the generation and sends the message in one transaction.
 * An unknown edit region overlaps everything; a node that edits no repository (`non_pr`) never conflicts.
 * The reading adds the disposition and state `stale` with the reasons `stale:slice_changed`, `stale:criteria_changed` and `stale:edge:<edge_id>` (contract 3.1 `stale:<seed>`), and an artifact edge, or an integrated edge a landing satisfies, from a stale result reads `blocked:stale_predecessor`; the merge judgement refuses a stale result with the existing `disposition_conflict`. No refusal reason, outcome or zone statement is added. Contract 4.2 lists the landed commit among the consumed values: the integrated predicate takes the earliest positive observation of the containment run, so a manifest names a stable landing, and a landed commit that an observation of the same run names is read as unchanged ([Invalidation](#invalidation)).

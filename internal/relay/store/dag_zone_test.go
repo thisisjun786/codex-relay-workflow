@@ -509,9 +509,7 @@ func TestDAGZoneReadOnlyCommandDoesNotCreateIt(t *testing.T) {
 // pendingWriters are the zone tables whose first writer is a later issue of the DAG project: no production query names them
 // yet. The list is exactly those tables: a table gains a query and leaves this list in the same change, and a table with neither
 // is dead schema.
-var pendingWriters = map[string]string{
-	"dag_coordinator_claims": "CRW-185",
-}
+var pendingWriters = map[string]string{}
 
 func TestDAGZoneEveryTableHasAQueryOrAPendingWriter(t *testing.T) {
 	var tables []string

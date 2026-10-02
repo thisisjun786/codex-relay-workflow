@@ -763,13 +763,15 @@
   {"flag":"--plan","required":true},
   {"flag":"--node","required":true},
   {"flag":"--actor","required":true},
-  {"flag":"--regions","required":true,"help":"the regions as a JSON list, or @file"}]},
+  {"flag":"--regions","required":true,"help":"the regions as a JSON list, or @file"},
+  {"flag":"--expect-epoch","type":"int","help":"the coordinator epoch this session holds (dag-coordinator-claim answers it); a write from another epoch is refused stale_coordinator_epoch. 0 names none, which only a plan nobody claimed takes"}]},
 {"name":"dag-release","summary":"releases a ready DAG node to a Codex child through the managed-start engine: it re-verifies every input (artifact bytes re-hashed, pinned pull request heads read from the forge), writes the intent, the input manifest and a held execution slot together, starts the child with a request id derived from the node and the manifest, and binds the child to the node. Repeating it never creates a second child","options":[
   {"flag":"--plan","required":true},
   {"flag":"--node","required":true},
   {"flag":"--actor","required":true,"help":"the project's registered parent, who owns the slot and the child"},
   {"flag":"--request","required":true,"help":"the dag-release-request/1 document as JSON, or @file"},
-  {"flag":"--marker-root","required":true}]},
+  {"flag":"--marker-root","required":true},
+  {"flag":"--expect-epoch","type":"int","help":"the coordinator epoch this session holds (dag-coordinator-claim answers it); a write from another epoch is refused stale_coordinator_epoch. 0 names none, which only a plan nobody claimed takes"}]},
 {"name":"dag-accept","summary":"records that the parent accepted a DAG node's result: written only when the result is the current head of its generation, acknowledged and verified by the host, ruled verified under the current criteria, and, for an implementation node, on the pull request head the relay reads from the forge itself. The same output again is a replay; the same output re-ruled under re-registered criteria is a revalidation of the same acceptance; a new output replaces an active acceptance only with --supersedes","options":[
   {"flag":"--plan","required":true},
   {"flag":"--node","required":true},
@@ -778,12 +780,14 @@
   {"flag":"--repository","help":"an implementation node's pull request repository (owner/name)"},
   {"flag":"--pull-request","type":"int","help":"an implementation node's pull request number"},
   {"flag":"--supersedes","help":"the active acceptance of another output this one replaces"},
-  {"flag":"--rule-version","required":true,"help":"the rules the result was verified under, {skills_digest, model, effort} as JSON or @file"}]},
+  {"flag":"--rule-version","required":true,"help":"the rules the result was verified under, {skills_digest, model, effort} as JSON or @file"},
+  {"flag":"--expect-epoch","type":"int","help":"the coordinator epoch this session holds (dag-coordinator-claim answers it); a write from another epoch is refused stale_coordinator_epoch. 0 names none, which only a plan nobody claimed takes"}]},
 {"name":"dag-integration-observe","summary":"records whether an accepted implementation node's head is contained in the branches it has to land on, read by the relay itself (git merge-base --is-ancestor for a local checkout, the compare API for a forge repository). Integration needs every required target to contain the head and the parent's merged mark on the same revision; the node's slot is returned when it does","options":[
   {"flag":"--plan","required":true},
   {"flag":"--node","required":true},
   {"flag":"--actor","required":true},
-  {"flag":"--target","kind":"append","help":"repository@ref to observe (repeatable); the targets of the node's outgoing edges by default. A terminal node needs it"}]},
+  {"flag":"--target","kind":"append","help":"repository@ref to observe (repeatable); the targets of the node's outgoing edges by default. A terminal node needs it"},
+  {"flag":"--expect-epoch","type":"int","help":"the coordinator epoch this session holds (dag-coordinator-claim answers it); a write from another epoch is refused stale_coordinator_epoch. 0 names none, which only a plan nobody claimed takes"}]},
 {"name":"dag-decision-record","summary":"records a decision for a decision edge: the subject and digest the plan fixed, approved or rejected, and the authority (kind and reference; opaque, compared and never read). Only the project's registered parent records; a repeat is a replay and another decision supersedes the active one","options":[
   {"flag":"--plan","required":true},
   {"flag":"--actor","required":true},
@@ -791,27 +795,31 @@
   {"flag":"--digest","required":true},
   {"flag":"--disposition","required":true,"help":"approved or rejected"},
   {"flag":"--authority-kind","required":true},
-  {"flag":"--authority-ref","required":true}]},
+  {"flag":"--authority-ref","required":true},
+  {"flag":"--expect-epoch","type":"int","help":"the coordinator epoch this session holds (dag-coordinator-claim answers it); a write from another epoch is refused stale_coordinator_epoch. 0 names none, which only a plan nobody claimed takes"}]},
 {"name":"dag-correct","summary":"takes a correction back to the same child: with --prepare it rebuilds and stores the node's input manifest and prints the instruction line the correction ruling must carry as its restoration block; after the needs_changes ruling it binds the generation the ruling opened to the manifest that block names (or the previous one)","options":[
   {"flag":"--plan","required":true},
   {"flag":"--node","required":true},
   {"flag":"--actor","required":true},
   {"flag":"--prepare","kind":"true","help":"prepare the manifest and print the instruction instead of recording the generation"},
   {"flag":"--manifest-request","help":"with --prepare: {base, rule_version, volatile, artifact_roots} as JSON or @file"},
-  {"flag":"--manifest-digest","help":"cross-check: the digest the child was told"}]},
+  {"flag":"--manifest-digest","help":"cross-check: the digest the child was told"},
+  {"flag":"--expect-epoch","type":"int","help":"the coordinator epoch this session holds (dag-coordinator-claim answers it); a write from another epoch is refused stale_coordinator_epoch. 0 names none, which only a plan nobody claimed takes"}]},
 {"name":"dag-merge-judge","summary":"judges whether an accepted pull request may go to the merge lane: the relay reads the pull request and the base branch itself, and the judgement (eligible, retry_same_sha, evicted, checks_pending, stale_head, stale_base, stale_criteria or predecessor_not_landed) is appended to the node's history of merge checks. A required check that fails is retried once on the same head and a second failure evicts the node (D-12)","options":[
   {"flag":"--plan","required":true},
   {"flag":"--node","required":true},
   {"flag":"--actor","required":true,"help":"the parent of the node's relationship"},
   {"flag":"--repository","help":"optional cross-check: the forge repository (owner/name) of the accepted pull request"},
-  {"flag":"--pull-request","type":"int","help":"optional cross-check: the accepted pull request number"}]},
+  {"flag":"--pull-request","type":"int","help":"optional cross-check: the accepted pull request number"},
+  {"flag":"--expect-epoch","type":"int","help":"the coordinator epoch this session holds (dag-coordinator-claim answers it); a write from another epoch is refused stale_coordinator_epoch. 0 names none, which only a plan nobody claimed takes"}]},
 {"name":"dag-merge-request","summary":"asks the merge lane for a turn for an accepted pull request after a judgement made now says it is eligible. A pull request that is not eligible gets no merge turn and the refusal names the reason; the turn order stays the lane's (first in, first out)","options":[
   {"flag":"--plan","required":true},
   {"flag":"--node","required":true},
   {"flag":"--actor","required":true,"help":"the project's registered parent, who holds the turn"},
   {"flag":"--host","required":true,"help":"the host the holder runs on"},
   {"flag":"--repository","help":"optional cross-check: the forge repository (owner/name) of the accepted pull request"},
-  {"flag":"--pull-request","type":"int","help":"optional cross-check: the accepted pull request number"}]},
+  {"flag":"--pull-request","type":"int","help":"optional cross-check: the accepted pull request number"},
+  {"flag":"--expect-epoch","type":"int","help":"the coordinator epoch this session holds (dag-coordinator-claim answers it); a write from another epoch is refused stale_coordinator_epoch. 0 names none, which only a plan nobody claimed takes"}]},
 {"name":"dag-conflict-observe","summary":"records how many files git cannot merge between the heads of two parallel implementation branches of a plan (git merge-tree --write-tree, computed in memory), for measurement; nothing waits for it","options":[
   {"flag":"--plan","required":true},
   {"flag":"--actor","required":true,"help":"the project's registered parent"},
@@ -827,5 +835,20 @@
   {"flag":"--w-source","required":true},
   {"flag":"--s-minutes","type":"float","required":true},
   {"flag":"--s-source","required":true},
-  {"flag":"--actor","required":true,"help":"the task that declared the limit or the registered parent of its project"}]}
+  {"flag":"--actor","required":true,"help":"the task that declared the limit or the registered parent of its project"},
+  {"flag":"--plan","help":"the plan the recorder coordinates: for a project limit it is held to that project and fenced by its epoch; once a plan of the project is under an epoch a basis without a plan is refused"},
+  {"flag":"--expect-epoch","type":"int","help":"the coordinator epoch this session holds (dag-coordinator-claim answers it); a write from another epoch is refused stale_coordinator_epoch. 0 names none, which only a plan nobody claimed takes"}]},
+{"name":"dag-coordinator-claim","summary":"raises the coordinator epoch of a DAG plan for a new parent session: the next number after the newest claim, recorded with the parent binding it was made under, the task and the session nonce. The actor must hold the live parent binding of the plan's project. Repeating the call with the same nonce while it is the newest claim answers the same epoch; the nonce of a session that was replaced is stale_coordinator_epoch. A session claims before its first decision and sends the epoch it was given as --expect-epoch","options":[
+  {"flag":"--plan","required":true},
+  {"flag":"--actor","required":true,"help":"the project's parent task"},
+  {"flag":"--session-nonce","required":true,"help":"names this session once and is never reused (letters, digits and . _ : -)"},
+  {"flag":"--project","help":"the plan's project, needed only while the plan has no revision"}]},
+{"name":"dag-adopt","summary":"binds a live child to the parent that replaced the node's parent: the successor relationship (registered with the old one superseded, same issue and child, held by the actor) becomes an execution of the node of kind parent_handover under the manifest the child was released with. Nothing is created, opened or reserved; a node with an acceptance is refused. Repeating it is a replay","options":[
+  {"flag":"--plan","required":true},
+  {"flag":"--node","required":true},
+  {"flag":"--actor","required":true,"help":"the adopting parent, who holds the successor relationship"},
+  {"flag":"--expect-epoch","type":"int","help":"the coordinator epoch this session holds (dag-coordinator-claim answers it); a write from another epoch is refused stale_coordinator_epoch. 0 names none, which only a plan nobody claimed takes"}]},
+{"name":"dag-restart","summary":"what the store says to a parent that starts again, rebuilt from the store alone with no clock: the newest coordinator claim and whether the actor holds it, and for every node somebody owns what to do (adopt a live child, run dag-adopt, reconcile an effect whose outcome is unknown by replaying the same request or observing, needs_operator, or none). Reads only","options":[
+  {"flag":"--plan","required":true},
+  {"flag":"--actor","required":true,"help":"the task that starts again"}]}
 ]

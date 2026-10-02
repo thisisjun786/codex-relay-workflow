@@ -58,9 +58,35 @@ func (s *Scheduler) releaseSlot(ctx context.Context, q store.Querier, plan, node
 	if err != nil || state != "held" {
 		return false, err
 	}
-	_, err = (&capacity.Capacity{Store: s.Store, Now: s.now}).Release(ctx, capacity.Release{SubjectKind: SlotSubjectKind, SubjectKey: SlotSubjectKey(plan, node), ReleasedBy: actor, Reason: reason,
+	releasedBy, err := s.slotReturner(ctx, q, plan, node, actor, tenure)
+	if err != nil {
+		return false, err
+	}
+	_, err = (&capacity.Capacity{Store: s.Store, Now: s.now}).Release(ctx, capacity.Release{SubjectKind: SlotSubjectKind, SubjectKey: SlotSubjectKey(plan, node), ReleasedBy: releasedBy, Reason: reason,
 		Tenure: sql.NullInt64{Int64: tenure, Valid: true}})
 	return err == nil, err
+}
+
+// slotReturner is the task a slot goes back as. It is the caller, who holds it, except after a parent was replaced and the node adopted (epoch.go, Adopt): the slot was reserved for the previous parent, and
+// both callers of releaseSlot have already shown that the caller is the parent of the node's current relationship. It then goes back as the recorded holder, with no reservation, so a ceiling or a
+// measurement cannot refuse it. Only when the slot is held for the plan's own project and its holder is the parent of a relationship in this node's own execution chain: any other holder
+// is left to capacity's own rule and the caller is refused as before.
+func (s *Scheduler) slotReturner(ctx context.Context, q store.Querier, plan, node, actor string, tenure int64) (string, error) {
+	var holder, project string
+	held, err := queryOne(ctx, q, "SELECT parent_task_id, project_key FROM execution_slots WHERE subject_kind = ? AND subject_key = ? AND tenure = ? AND state = 'held'", []any{SlotSubjectKind, SlotSubjectKey(plan, node), tenure}, &holder, &project)
+	if err != nil || !held || holder == actor {
+		return actor, err
+	}
+	var planProject string
+	if has, err := queryOne(ctx, q, "SELECT project_key FROM dag_plans WHERE plan_id = ?", []any{plan}, &planProject); err != nil || !has || planProject != project {
+		return actor, err
+	}
+	var one int
+	chain, err := queryOne(ctx, q, "SELECT 1 FROM dag_node_executions e JOIN relationships r ON r.relationship_id = e.relationship_id WHERE e.plan_id = ? AND e.node_id = ? AND r.parent_task_id = ? LIMIT 1", []any{plan, node, holder}, &one)
+	if err != nil || !chain {
+		return actor, err
+	}
+	return holder, nil
 }
 
 // verifiedHead is the live reading of P-AV-1 (contract 2.1): the final, unsuppressed ready_for_review event that is the one head of its generation, acknowledged and verified by the host,
@@ -186,6 +212,9 @@ func (s *Scheduler) Accept(ctx context.Context, plan, node, actor string, in Acc
 	}
 	err = s.Store.Compose(ctx, func(txCtx context.Context, _ *sql.Conn) error {
 		tx := s.Store.Q(txCtx)
+		if err := s.fence(txCtx, tx, plan, actor); err != nil {
+			return err
+		}
 		current, _, err := dag.SnapshotAt(txCtx, tx, plan, 0)
 		if err != nil {
 			return err
@@ -282,7 +311,7 @@ func (s *Scheduler) Accept(ctx context.Context, plan, node, actor string, in Acc
 		}
 		a := Acceptance{PlanID: plan, NodeID: node, ManifestDigest: manifest, RelationshipID: rel.ID, ExecutionGeneration: rel.Generation, EventID: head.EventID, RevisionHash: head.RevisionHash,
 			CriteriaSetDigest: head.SetDigest, Verdict: "verified", OutputManifestRef: head.ManifestRef, AckTier: head.AckTier, VerdictTurnID: head.VerdictTurn, RuleVersionJSON: ruleJSON, AcceptedByTask: actor,
-			AcceptedAt: s.now(), SupersedesAcceptanceID: activeID, State: "active"}
+			CoordinatorEpoch: s.ExpectedEpoch, AcceptedAt: s.now(), SupersedesAcceptanceID: activeID, State: "active"}
 		if implementation {
 			repository, err := s.acceptTarget(txCtx, tx, current, node, in.PullRequest.Repository)
 			if err != nil {

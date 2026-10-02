@@ -35,7 +35,7 @@ this one names the field and says that nodes and edges are changes.)
 | `plan_id`, `project_key`, `author_task_id` | identifiers (letters, digits, `. _ : -`, at most 128 characters). A plan belongs to the project it was first written for |
 | `request_id` | names this request; the same id again is the same request |
 | `expected_parent_revision` | the revision this one is applied to; 0 for the first |
-| `coordinator_epoch` | optional, a whole number, recorded as given. It fences nothing in this version (decisions D-07 and CRW-185) |
+| `coordinator_epoch` | optional, a whole number: the epoch the writing session holds, 0 when none is named. A plan that has been claimed ([the coordinator epoch](dag-scheduler.md#the-coordinator-epoch)) takes only its newest epoch from the task that claimed it, and refuses any other write as `stale_coordinator_epoch`; a plan nobody has claimed takes 0 |
 | `changes` | the typed changes, 1 to 256 |
 
 A node is `{node_id, issue_key, kind, criteria_set_digest, title?}` (`criteria_set_digest` is a sha256 in lowercase hex).
@@ -87,6 +87,8 @@ Revisions are appended, never changed. `dag-plan-put` is one store transaction (
 3. the changes are folded onto the head and the result is validated;
 4. only then is anything written: the plan's header (first revision), the revision row, and the rows of the fold.
 
+Before step 1, as the first statement of the transaction, the coordinator epoch the revision names is checked (see [the coordinator epoch](dag-scheduler.md#the-coordinator-epoch)): a session that does not hold the plan's epoch is refused as `stale_coordinator_epoch`, whether or not its request was recorded, and writes nothing. A request id sent again under another epoch is another request (`plan_revision_conflict`): a restarted parent reads the log.
+
 Commit is the only moment a revision becomes visible. A writer killed before it leaves no row of that revision in any table,
 and reads return the last committed revision. The tables enforce what the writer does: triggers abort an UPDATE or DELETE of a
 plan or revision, a node or edge row may change once (from live to retired) and is never deleted, and revision n has parent n-1,
@@ -120,7 +122,7 @@ All three are relay commands (`codex-session-relay [--state DIR] <command>`); ou
 
 | Command | Does | Exit |
 | --- | --- | --- |
-| `dag-plan-put --request <json or @file>` | appends a revision; answers `{ok, replayed, plan_id, project_key, revision_no, parent_revision_no, request_id, request_digest, state_digest, coordinator_epoch, author_task_id, recorded_at, node_digests}` | 0; 2 refused (`malformed_receipt` for a rejected plan, `plan_revision_conflict`); 3 host; 4 a document that is not JSON or cannot be read |
+| `dag-plan-put --request <json or @file>` | appends a revision; answers `{ok, replayed, plan_id, project_key, revision_no, parent_revision_no, request_id, request_digest, state_digest, coordinator_epoch, author_task_id, recorded_at, node_digests}` | 0; 2 refused (`malformed_receipt` for a rejected plan, `plan_revision_conflict`, `stale_coordinator_epoch`); 3 host; 4 a document that is not JSON or cannot be read |
 | `dag-plan-show --plan P [--revision N] [--verify]` | the plan as of a revision. `nodes` and `edges` are the top-level lists of the answer, with `schema`, `revision_no`, `head_revision_no`, `state_digest`, `digests_verified`, `log_verified` | 0; 2 `unregistered_scope`; 3 corrupt |
 | `dag-plan-log --plan P [--after C] [--limit N]` | the events after a cursor with their typed changes, and the `cursor` to resume from | 0; 2 `unregistered_scope` |
 
@@ -132,10 +134,7 @@ create the zone.
 
 ### Refusal reasons
 
-The relay's exit-code contract is unchanged except for one reason. A rejected plan reuses `malformed_receipt` (the relay's reason for a
-structured document that is malformed, as the linkage envelope uses it), an unknown plan or revision reuses `unregistered_scope`, and
-**`plan_revision_conflict`** is new: a plan write that lost to another writer (a stale parent) or that reuses a request id for a
-different request (decision D-02). A stale coordinator epoch is not a reason here, because nothing fences by epoch yet.
+The relay's exit-code contract is unchanged except for two reasons. A rejected plan reuses `malformed_receipt` (the relay's reason for a structured document that is malformed, as the linkage envelope uses it), an unknown plan or revision reuses `unregistered_scope`, and two reasons are new (decision D-02): **`plan_revision_conflict`**, a plan write that lost to another writer (a stale parent) or that reuses a request id for a different request, and **`stale_coordinator_epoch`**, a write from a session that does not hold the plan's coordinator epoch: a newer session claimed it, the claim is another task's, or the parent binding it was made under is no longer a live parent binding of the project. Both are registered in `contract/schema/relay-exit-codes.json` and the generated Go (`internal/contract/exit_codes_generated.go`).
 
 ## The store
 
@@ -148,8 +147,7 @@ tables (decision D-01):
   `SchemaVersion` stays `1`; no existing table or column changes;
 * the zone is the twelve `dag_*` tables of the contract: `dag_plans`, `dag_plan_revisions`, `dag_nodes`, `dag_edges`,
   `dag_input_manifests`, and the tables the scheduler writes (`dag_node_executions`, `dag_releases`,
-  `dag_acceptances`, `dag_integration_observations`, `dag_decisions`, `dag_cap_basis`; `dag_coordinator_claims` has no writer until
-  coordinator fencing), and seven tables the scheduler appended to it (`dag_merge_checks`, `dag_acceptance_revalidations`, `dag_acceptance_forge`,
+  `dag_acceptances`, `dag_integration_observations`, `dag_decisions`, `dag_cap_basis`; `dag_coordinator_claims` is written by `dag-coordinator-claim`, and the scheduler's writes check it), and seven tables the scheduler appended to it (`dag_merge_checks`, `dag_acceptance_revalidations`, `dag_acceptance_forge`,
   `dag_passes`, `dag_node_regions`, `dag_release_requests`, `dag_conflict_observations`; see [the scheduler's store](dag-scheduler.md#the-store)). Node-keyed
   tables carry `plan_id`, so node ids need only be unique within a plan;
 * a command that declares itself read-only never creates the zone: it arrives with the first write open;

@@ -140,6 +140,9 @@ func (s *Scheduler) Judge(ctx context.Context, plan, node, actor string, in Judg
 	}
 	err = s.Store.Compose(ctx, func(txCtx context.Context, _ *sql.Conn) error {
 		tx := s.Store.Q(txCtx)
+		if err := s.fence(txCtx, tx, plan, actor); err != nil {
+			return err
+		}
 		current, _, err := dag.SnapshotAt(txCtx, tx, plan, 0)
 		if err != nil {
 			return err
@@ -311,6 +314,9 @@ func (s *Scheduler) RequestMergeTurn(ctx context.Context, plan, node, actor stri
 	// eligible any more that lands between the judgement and the request creates no turn and no grant.
 	err = s.Store.Compose(ctx, func(txCtx context.Context, _ *sql.Conn) error {
 		tx := s.Store.Q(txCtx)
+		if err := s.fence(txCtx, tx, plan, actor); err != nil {
+			return err
+		}
 		current, _, err := dag.SnapshotAt(txCtx, tx, plan, 0)
 		if err != nil {
 			return err
