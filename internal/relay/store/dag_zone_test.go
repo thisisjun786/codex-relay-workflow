@@ -40,6 +40,8 @@ var zoneInventory = map[string][]string{
 	"dag_merge_checks":             {"check_id", "acceptance_id", "check_seq", "head_sha", "observed_head_sha", "base_tip_sha", "checks_base_sha", "checks_digest", "evidence_json", "failed_required_json", "round_no", "outcome", "reason", "recorded_at"},
 	"dag_acceptance_revalidations": {"revalidation_id", "acceptance_id", "criteria_set_digest", "event_id", "verdict_turn_id", "reval_seq", "revalidated_by", "revalidated_at"},
 	"dag_acceptance_forge":         {"acceptance_id", "forge_repository", "pr_number"},
+	"dag_passes":                   {"plan_id", "pass_seq", "plan_revision", "input_digest", "ready_count", "free_slots", "ceiling", "held", "deciding_limit", "order_json", "dispositions_json", "recorded_by", "recorded_at"},
+	"dag_node_regions":             {"plan_id", "node_id", "declaration_seq", "repository", "path", "region_kind", "region_key", "change", "exclusive", "declared_by", "declared_at"},
 }
 
 // rawDB opens path without any of the store's open rules, as an operator's sqlite3 would.
@@ -506,9 +508,7 @@ func TestDAGZoneReadOnlyCommandDoesNotCreateIt(t *testing.T) {
 // yet. The list is exactly those tables: a table gains a query and leaves this list in the same change, and a table with neither
 // is dead schema.
 var pendingWriters = map[string]string{
-	"dag_releases":           "CRW-184",
 	"dag_coordinator_claims": "CRW-185",
-	"dag_cap_basis":          "CRW-184",
 }
 
 func TestDAGZoneEveryTableHasAQueryOrAPendingWriter(t *testing.T) {

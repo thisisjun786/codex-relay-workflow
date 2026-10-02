@@ -754,5 +754,14 @@
 {"name":"dag-plan-log","summary":"the revisions of a DAG plan after a cursor, in order, with their typed changes: what a reader resumes from, or replays onto the snapshot it holds","options":[
   {"flag":"--plan","required":true},
   {"flag":"--after","type":"int","help":"the last revision already seen; 0 reads from the first"},
-  {"flag":"--limit","type":"int","help":"at most this many revisions (1 to 1000; 100 by default)"}]}
+  {"flag":"--limit","type":"int","help":"at most this many revisions (1 to 1000; 100 by default)"}]},
+{"name":"dag-ready","summary":"the ready set of a DAG plan, computed from the stored plan and the relay's execution records: the nodes whose every incoming edge is satisfied, ranked by hop-count critical path, descendants and age and cut by free slots and edit-region overlap, and one closed reason for every other live node. Reads only unless --record keeps the pass","options":[
+  {"flag":"--plan","required":true},
+  {"flag":"--record","kind":"true","help":"keep this reading as a pass (dag_passes); needs --actor"},
+  {"flag":"--actor","help":"the task asking for the recorded pass"}]},
+{"name":"dag-region-declare","summary":"declares the edit regions of an implementation node before it is released: repository, path, kind (tree, file, symbol) and change (edit, rename, delete) for 1 to 64 regions. A node with no declaration counts as overlapping everything; renames, deletes and hotspots are exclusive. An identical declaration is a replay","options":[
+  {"flag":"--plan","required":true},
+  {"flag":"--node","required":true},
+  {"flag":"--actor","required":true},
+  {"flag":"--regions","required":true,"help":"the regions as a JSON list, or @file"}]}
 ]

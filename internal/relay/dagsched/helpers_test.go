@@ -7,7 +7,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
@@ -37,7 +39,12 @@ type fixture struct {
 
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "relay.sqlite3")
+	return newFixtureAt(t, filepath.Join(t.TempDir(), "relay.sqlite3"))
+}
+
+// newFixtureAt is a fixture over a store at a given path (the CLI tests need the path the binary will open).
+func newFixtureAt(t *testing.T, path string) *fixture {
+	t.Helper()
 	testsupport.Create(t, path, "", "go")
 	s, err := store.Open(context.Background(), path, "")
 	if err != nil {
@@ -168,6 +175,8 @@ type accepted struct {
 	Acceptance Acceptance
 	Event      string
 	Manifest   string
+	Root       string   // the relationship's artifact root
+	Files      []string // the artifacts of the receipt (non_pr nodes), by absolute path
 }
 
 type acceptOpts struct {
@@ -177,6 +186,8 @@ type acceptOpts struct {
 	Forge      string // forge slug (a dag_acceptance_forge row when set)
 	Repository string // the edge target recorded
 	Status     string // relationship status, active by default
+	Suffix     string // appended to the relationship id: a second acceptance of one node needs a second relationship
+	NoManifest bool   // a non_pr node's receipt declares no artifacts
 }
 
 // acceptNode writes the rows a verified, accepted result leaves, shaped as the intake, ack and verdict writers shape them (the
@@ -190,13 +201,25 @@ func (f *fixture) acceptNode(plan, node string, o acceptOpts) accepted {
 	if !ok {
 		f.t.Fatalf("no node %s", node)
 	}
-	rid := "rel-" + plan + "-" + node
+	rid := "rel-" + plan + "-" + node + o.Suffix
 	status := o.Status
 	if status == "" {
 		status = "active"
 	}
 	now := f.clock()
 	root := f.t.TempDir()
+	var files []string
+	receipt := "{}"
+	if n.Kind == dag.NodeNonPR && !o.NoManifest {
+		file := filepath.Join(root, node+".md")
+		content := []byte("artifact of " + node + o.Suffix + "\n")
+		if err := os.WriteFile(file, content, 0o600); err != nil {
+			f.t.Fatal(err)
+		}
+		sum := sha256.Sum256(content)
+		files = append(files, file)
+		receipt = fmt.Sprintf(`{"manifest":[{"path":%s,"sha256":"%s","bytes":%d}]}`, jsonString(file), hex.EncodeToString(sum[:]), len(content))
+	}
 	if err := storeseed.RecordRelationship(context.Background(), f.s, store.Relationship{ID: rid, IssueKey: n.IssueKey, Status: status, ParentTaskID: "parent", ChildTaskID: "child-" + node,
 		Generation: 1, ArtifactRoots: "[" + jsonString(root) + "]", AllowedRecipients: "[\"parent\"]", CreatedAt: now, UpdatedAt: now},
 		store.Generation{RelationshipID: rid, Number: 1, DispatchRequestID: "dispatch-" + rid, AnchorState: store.AnchorBound,
@@ -206,7 +229,7 @@ func (f *fixture) acceptNode(plan, node string, o acceptOpts) accepted {
 	revision := dig("revision " + rid)
 	event := "evt-" + rid
 	f.exec("INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at)"+
-		" VALUES (?, ?, 1, ?, 'ready_for_review', 'child', ?, 'turn-1', 'completed', '{}', 'final', ?, ?)", event, rid, revision, "child-"+node, now, now)
+		" VALUES (?, ?, 1, ?, 'ready_for_review', 'child', ?, 'turn-1', 'completed', ?, 'final', ?, ?)", event, rid, revision, "child-"+node, receipt, now, now)
 	f.exec("INSERT INTO revision_lineage (relationship_id, execution_generation, event_id, revision_hash, declared_by, recorded_at) VALUES (?, 1, ?, ?, 'child', ?)", rid, event, revision, now)
 	f.exec("INSERT INTO acks (event_id, record, ack_turn_id, accepted, verified, ack_at) VALUES (?, '{}', 'ack-turn', 1, 'verified', ?)", event, now)
 	f.exec("INSERT INTO ack_evidence (event_id, tier, observed_at) VALUES (?, 'host_read', ?)", event, now)
@@ -233,7 +256,7 @@ func (f *fixture) acceptNode(plan, node string, o acceptOpts) accepted {
 	if o.Forge != "" {
 		f.exec("INSERT INTO dag_acceptance_forge (acceptance_id, forge_repository, pr_number) VALUES (?, ?, ?)", a.AcceptanceID, o.Forge, o.PR)
 	}
-	return accepted{Acceptance: a, Event: event, Manifest: manifest}
+	return accepted{Acceptance: a, Event: event, Manifest: manifest, Root: root, Files: files}
 }
 
 func nullable(s string) any {
@@ -259,3 +282,113 @@ func jsonString(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
 }
+
+// projectParent registers the one parent of the plan's project: a release reserves under it.
+func (f *fixture) projectParent() {
+	f.t.Helper()
+	now := f.clock()
+	if err := storeseed.InsertScopeBinding(context.Background(), f.s, store.ScopeBindingsRow{BindingID: "bind-parent", Role: "parent", ScopeKind: "project", ScopeKey: "P-TEST",
+		TaskID: "parent", HostID: "host", Status: "active", Revision: 1, CreatedAt: now, UpdatedAt: now}); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+// startNode records a running execution of a node: its relationship, bound to the generation the release made, and the execution row. It writes no
+// event, so the relay's state word for it is requested.
+func (f *fixture) startNode(plan, node string) string {
+	f.t.Helper()
+	snap := f.snapshot(plan)
+	n, ok := nodeOf(snap, node)
+	if !ok {
+		f.t.Fatalf("no node %s", node)
+	}
+	rid := "rel-" + plan + "-" + node
+	now := f.clock()
+	if err := storeseed.RecordRelationship(context.Background(), f.s, store.Relationship{ID: rid, IssueKey: n.IssueKey, Status: "active", ParentTaskID: "parent", ChildTaskID: "child-" + node,
+		Generation: 1, ArtifactRoots: "[" + jsonString(f.t.TempDir()) + "]", AllowedRecipients: "[\"parent\"]", CreatedAt: now, UpdatedAt: now},
+		store.Generation{RelationshipID: rid, Number: 1, DispatchRequestID: "dispatch-" + rid, AnchorState: store.AnchorBound,
+			DispatchTurnID: sql.NullString{String: "turn-dispatch", Valid: true}, OpenedAt: now, BoundAt: sql.NullString{String: now, Valid: true}}, "host", "host"); err != nil {
+		f.t.Fatal(err)
+	}
+	manifest := f.putManifest(snap, node, []any{})
+	f.exec("INSERT INTO dag_node_executions (plan_id, node_id, relationship_id, execution_generation, manifest_digest, kind, managed_request_id) VALUES (?, ?, ?, 1, ?, 'initial', ?)",
+		plan, node, rid, manifest, ReleaseRequestID(node, manifest))
+	return rid
+}
+
+// holdSlots records n held execution slots of the project, as releases would have reserved them.
+func (f *fixture) holdSlots(n int) {
+	f.t.Helper()
+	for i := 0; i < n; i++ {
+		key := fmt.Sprintf("held-%d", i)
+		if err := f.s.InsertExecutionSlot(context.Background(), store.ExecutionSlotsRow{SlotID: "slot-" + key, SubjectKind: "dag_node", SubjectKey: key, ParentTaskID: "parent", ProjectKey: "P-TEST",
+			Tenure: 1, State: "held", ReservedBy: "parent", ReservedAt: f.clock()}); err != nil {
+			f.t.Fatal(err)
+		}
+	}
+}
+
+// declareLimit declares an enforced limit of a scope.
+func (f *fixture) declareLimit(scopeKind, scopeKey, dimension string, ceiling float64) {
+	f.t.Helper()
+	at := f.clock()
+	if err := f.s.DeclareExecutionLimit(context.Background(), store.ExecutionLimitsRow{LimitID: "lim-" + scopeKind + "-" + dimension, ScopeKind: scopeKind, ScopeKey: scopeKey,
+		Dimension: dimension, Unit: dimension, Ceiling: ceiling, Enforce: 1, DeclaredBy: "parent", Source: "test", Revision: 1, DeclaredAt: at, UpdatedAt: at}); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+// read is the ready set of a plan.
+func (f *fixture) read(plan string) Reading {
+	f.t.Helper()
+	reading, err := f.sched.Read(context.Background(), plan, ReadyOptions{})
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return reading
+}
+
+// node is one node's reading.
+func (r Reading) node(id string) NodeReading {
+	for _, n := range r.Nodes {
+		if n.NodeID == id {
+			return n
+		}
+	}
+	panic("no node " + id + " in the reading")
+}
+
+func (r Reading) readyIDs() []string {
+	out := make([]string, len(r.Ready))
+	for i, n := range r.Ready {
+		out[i] = n.NodeID
+	}
+	return out
+}
+
+// declare records a declaration of one tree/file region per path for a node.
+func (f *fixture) declare(plan, node string, paths ...string) RegionDeclaration {
+	f.t.Helper()
+	var regions []Region
+	for _, p := range paths {
+		regions = append(regions, Region{Repository: "owner/repo", Path: p, Kind: "file", Change: "edit"})
+	}
+	d, err := f.sched.DeclareRegions(context.Background(), plan, node, "parent", regions)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return d
+}
+
+// brief is one line per node: id, state, disposition, reason.
+func (r Reading) brief() string {
+	var b strings.Builder
+	for _, n := range r.Nodes {
+		fmt.Fprintf(&b, "%s[%s %s %s] ", n.NodeID, n.State, n.Disposition, n.Reason)
+	}
+	return b.String()
+}
+
+func contextBackground() context.Context { return context.Background() }
+
+func nullText(s string) sql.NullString { return sql.NullString{String: s, Valid: true} }

@@ -327,4 +327,44 @@ BEGIN SELECT RAISE(ABORT, 'dag_edges rows are never deleted'); END`,
     forge_repository TEXT NOT NULL CHECK (forge_repository <> ''),
     pr_number        INTEGER NOT NULL CHECK (pr_number >= 1)
 )`,
+
+	// dag_passes records every scheduler pass someone asked to keep (dag-ready --record): what was ready, how many slots were free, and which limit
+	// decided the order of the candidates it cut. A pass is a fact, never a decision: a duplicate wake records another row and the release path
+	// does not read it (release idempotency lives in dag_releases). order_json is the ready node ids in release order, dispositions_json the
+	// reading's node list; input_digest is the digest of everything the reading read.
+	`CREATE TABLE IF NOT EXISTS dag_passes (
+    plan_id           TEXT NOT NULL REFERENCES dag_plans (plan_id),
+    pass_seq          INTEGER NOT NULL CHECK (pass_seq >= 1),
+    plan_revision     INTEGER NOT NULL,
+    input_digest      TEXT NOT NULL,
+    ready_count       INTEGER NOT NULL CHECK (ready_count >= 0),
+    free_slots        INTEGER NOT NULL CHECK (free_slots >= 0),
+    ceiling           INTEGER NOT NULL CHECK (ceiling >= 0),
+    held              INTEGER NOT NULL CHECK (held >= 0),
+    deciding_limit    TEXT NOT NULL CHECK (deciding_limit IN ('none','no_capacity','edit_overlap','capacity_unmeasured')),
+    order_json        TEXT NOT NULL,
+    dispositions_json TEXT NOT NULL,
+    recorded_by       TEXT NOT NULL,
+    recorded_at       TEXT NOT NULL,
+    PRIMARY KEY (plan_id, pass_seq)
+)`,
+
+	// The edit regions a node declares before it is released (contract 7.2). A declaration is the set of rows sharing one declaration_seq, the
+	// latest sequence of a node is its declaration, and a node with no row has none: its regions are unknown and count as overlapping everything.
+	// exclusive is set for a rename, a delete and the hotspots (lockfiles, workflow files, schemas), which conflict with any other change in the
+	// repository.
+	`CREATE TABLE IF NOT EXISTS dag_node_regions (
+    plan_id         TEXT NOT NULL REFERENCES dag_plans (plan_id),
+    node_id         TEXT NOT NULL,
+    declaration_seq INTEGER NOT NULL CHECK (declaration_seq >= 1),
+    repository      TEXT NOT NULL CHECK (repository <> ''),
+    path            TEXT NOT NULL CHECK (path <> ''),
+    region_kind     TEXT NOT NULL CHECK (region_kind IN ('tree','file','symbol')),
+    region_key      TEXT NOT NULL DEFAULT '',
+    change          TEXT NOT NULL CHECK (change IN ('edit','rename','delete')),
+    exclusive       INTEGER NOT NULL CHECK (exclusive IN (0,1)),
+    declared_by     TEXT NOT NULL,
+    declared_at     TEXT NOT NULL,
+    PRIMARY KEY (plan_id, node_id, declaration_seq, repository, path, region_kind, region_key)
+)`,
 }

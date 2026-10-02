@@ -34,6 +34,7 @@ store lives outside repositories; caller-selected receipt and artifact locations
 | CLI | implemented | `internal/relay/cli`; the corpus's `cli-shape` and `exit-codes` domains |
 | frozen-schema conformance | implemented | `internal/relay/store`; the corpus's `records` domain |
 | DAG plans: validated, append-only revision log and its additive store zone | implemented | [DAG plans](dag-plans.md); `internal/relay/dag`, `internal/relay/store` |
+| DAG scheduler: ready set, edit regions, capacity and pass records (release, acceptance and merge eligibility follow in the same page as they land) | implemented in part | [DAG scheduler](dag-scheduler.md); `internal/relay/dagsched` |
 
 Until todo 44 each row's proof was a test of the Python package under
 `packages/codex-session-relay/tests`; [the test map](../port/test-map.md) names where each one's
