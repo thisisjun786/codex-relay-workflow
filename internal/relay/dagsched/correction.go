@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -84,14 +83,22 @@ func (s *Scheduler) PrepareCorrection(ctx context.Context, plan, node, actor str
 	if _, err := (&dag.Repo{Store: s.Store, Now: s.Now}).PutManifest(ctx, stored); err != nil {
 		return out, err
 	}
-	canonical := dag.Canonical(body)
-	path := frozenManifestPath(roots[0], digest)
-	if err := FreezeManifest(path, []byte(canonical)); err != nil {
+	// the manifest of a digest is the body the store holds: the first one stored (a body built later differs in what the digest leaves out, such as the time of the build)
+	keptBody, found, err := dag.ReadManifestOn(ctx, q, digest)
+	if err != nil {
+		return out, err
+	}
+	if !found {
+		return out, fmt.Errorf("manifest %s was stored and cannot be read back", digest)
+	}
+	canonical := []byte(dag.Canonical(keptBody))
+	path, err := FreezeManifest(roots[0], canonical)
+	if err != nil {
 		return out, err
 	}
 	out.ManifestDigest = digest
 	out.FrozenPath = path
-	out.Instruction = CorrectionInstruction(n.IssueKey, rel.Generation+1, digest, path, shaOf([]byte(canonical)))
+	out.Instruction = CorrectionInstruction(n.IssueKey, rel.Generation+1, digest, path, shaOf(canonical))
 	return out, nil
 }
 
@@ -174,7 +181,7 @@ func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, sup
 		if _, err := queryOne(txCtx, tx, "SELECT manifest_digest FROM dag_node_executions WHERE plan_id = ? AND node_id = ? AND relationship_id = ? AND execution_generation = ?", []any{plan, node, rel.ID, rel.Generation - 1}, &previous); err != nil {
 			return err
 		}
-		digest, err := restorationDigest(findings.String)
+		digest, note, err := restorationDigest(findings.String)
 		if err != nil {
 			return err
 		}
@@ -193,7 +200,8 @@ func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, sup
 			if body["node_slice_digest"] != n.SliceDigest || body["criteria_set_digest"] != n.CriteriaSetDigest {
 				return refuse(contract.RefusalDispositionConflict, "the manifest %s was prepared for another version of node %s than the plan holds now: prepare it again and rule again", digest, node)
 			}
-			// the child reads a file, so the file has to be there and be the manifest
+			// the child reads a file named in the ruling's note: the note has to carry exactly the line the manifest was prepared with (this generation, the path of the copy and its hash), so a
+			// manifest the child was told about under another path or another hash is not the one bound. No file is read here: the child verifies the copy against the hash in the line.
 			roots, err := relationshipRoots(txCtx, tx, rel.ID)
 			if err != nil {
 				return err
@@ -201,9 +209,9 @@ func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, sup
 			if len(roots) == 0 {
 				return refuse(contract.RefusalManifestUnverified, "relationship %s has no artifact root, so the child cannot have been given the manifest %s", rel.ID, digest)
 			}
-			path := frozenManifestPath(roots[0], digest)
-			if err := checkFrozen(path, dag.Canonical(body)); err != nil {
-				return refuse(contract.RefusalManifestUnverified, "the copy of manifest %s the child was told to read is not usable: %v", digest, err)
+			canonical := []byte(dag.Canonical(body))
+			if want := CorrectionInstruction(n.IssueKey, rel.Generation, digest, frozenManifestPath(roots[0], canonical), shaOf(canonical)); !strings.Contains(note, want) {
+				return refuse(contract.RefusalDispositionConflict, "the restoration note does not carry the instruction manifest %s was prepared with (generation %d, its path and its file hash): the child was not told this manifest as prepared", digest, rel.Generation)
 			}
 		}
 		if suppliedDigest != "" && suppliedDigest != digest {
@@ -230,44 +238,34 @@ func relationshipRoots(ctx context.Context, q store.Querier, rid string) ([]stri
 	return roots, nil
 }
 
-// checkFrozen reads the child's copy of a manifest and compares it with the canonical bytes. It writes nothing.
-func checkFrozen(path, canonical string) error {
-	read, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	if string(read) != canonical {
-		return fmt.Errorf("%s holds other bytes than the manifest (%s, %s)", path, shaOf(read), shaOf([]byte(canonical)))
-	}
-	return nil
-}
-
 // restorationDigest reads the manifest digest the ruling's restoration block names: every "manifest <64 hex>" in the note of the one finding declared with restoration true. Two different
 // digests anywhere in the block are refused, because the child would be told two manifests; none is "" (the previous manifest stays in force).
-func restorationDigest(findings string) (string, error) {
+func restorationDigest(findings string) (string, string, error) {
 	if findings == "" {
-		return "", nil
+		return "", "", nil
 	}
 	var list []map[string]any
 	if err := json.Unmarshal([]byte(findings), &list); err != nil {
-		return "", nil
+		return "", "", nil
 	}
 	found := map[string]bool{}
+	var carried string
 	for _, f := range list {
 		if flag, _ := f["restoration"].(bool); !flag {
 			continue
 		}
 		note, _ := f["note"].(string)
+		carried = note
 		for _, m := range manifestNamePattern.FindAllStringSubmatch(note, -1) {
 			found[m[1]] = true
 		}
 	}
 	switch len(found) {
 	case 0:
-		return "", nil
+		return "", "", nil
 	case 1:
 		for digest := range found {
-			return digest, nil
+			return digest, carried, nil
 		}
 	}
 	names := make([]string, 0, len(found))
@@ -275,5 +273,5 @@ func restorationDigest(findings string) (string, error) {
 		names = append(names, digest)
 	}
 	sort.Strings(names)
-	return "", refuse(contract.RefusalDispositionConflict, "the restoration block names %d manifests (%s): the child would be told more than one", len(names), strings.Join(names, ", "))
+	return "", "", refuse(contract.RefusalDispositionConflict, "the restoration block names %d manifests (%s): the child would be told more than one", len(names), strings.Join(names, ", "))
 }

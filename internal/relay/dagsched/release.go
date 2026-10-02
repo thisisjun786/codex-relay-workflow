@@ -454,8 +454,8 @@ func (s *Scheduler) assemble(plan string, n dag.SnapNode, project, actor string,
 	where := "inline below"
 	text := manifest
 	if len(manifest) > maxInlineManifest {
-		path := frozenManifestPath(req.ArtifactRoots[0], digest)
-		if err := FreezeManifest(path, []byte(manifest)); err != nil {
+		path, err := FreezeManifest(req.ArtifactRoots[0], []byte(manifest))
+		if err != nil {
 			return nil, err
 		}
 		where, text = "stored at "+path+" (sha256 "+shaOf([]byte(manifest))+")", "(see the stored copy)"

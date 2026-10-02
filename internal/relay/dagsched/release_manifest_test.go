@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 
@@ -106,20 +107,86 @@ func TestReleaseAwaitBound(t *testing.T) {
 	}
 }
 
-// Two releases of one manifest write one frozen file; a file that holds other bytes is never taken for the manifest.
+// A frozen copy is named by its own bytes: the same bytes are one file, other bytes are another file, and a file that holds other bytes than its name says is never taken for the manifest.
 func TestFreezeManifest(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "frozen", "m.json")
-	if err := FreezeManifest(path, []byte("one")); err != nil {
+	root := t.TempDir()
+	path, err := FreezeManifest(root, []byte("one"))
+	if err != nil || filepath.Base(path) != shaOf([]byte("one"))+".json" || filepath.Dir(path) != filepath.Join(root, "dag-input-manifests") {
+		t.Fatalf("freeze = %q %v", path, err)
+	}
+	if again, err := FreezeManifest(root, []byte("one")); err != nil || again != path {
+		t.Fatalf("the same bytes again = %q %v", again, err)
+	}
+	other, err := FreezeManifest(root, []byte("two"))
+	if err != nil || other == path {
+		t.Fatalf("other bytes = %q %v: a body of the same manifest built later must not meet a file it did not write", other, err)
+	}
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("mode = %v %v", info, err)
+	}
+	if err := os.WriteFile(path, []byte("tampered"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := FreezeManifest(path, []byte("one")); err != nil {
-		t.Fatalf("the same bytes again: %v", err)
+	if _, err := FreezeManifest(root, []byte("one")); err == nil {
+		t.Fatal("a file that holds other bytes than its name was taken for the manifest")
 	}
-	if err := FreezeManifest(path, []byte("two")); err == nil {
-		t.Fatal("another manifest was accepted over an existing file")
+}
+
+// The child owns its artifact root, so what it can plant there must neither take the parent's write outside the root nor hold the parent: a directory or a file that is a link, and a
+// file that is a pipe (opening one blocks), are refused promptly and nothing is written outside.
+func TestFreezeManifestRefusesWhatTheChildCanPlant(t *testing.T) {
+	canonical := []byte("the manifest")
+	named := shaOf(canonical) + ".json"
+	within := func(t *testing.T, plant func(root, dir, outside string)) error {
+		t.Helper()
+		root, outside := t.TempDir(), t.TempDir()
+		plant(root, filepath.Join(root, "dag-input-manifests"), outside)
+		planted, _ := os.ReadDir(outside)
+		done := make(chan error, 1)
+		go func() {
+			_, err := FreezeManifest(root, canonical)
+			done <- err
+		}()
+		select {
+		case err := <-done:
+			if entries, _ := os.ReadDir(outside); len(entries) != len(planted) {
+				t.Fatalf("something was written outside the root: %v", entries)
+			}
+			return err
+		case <-time.After(5 * time.Second):
+			t.Fatal("the freeze is blocked")
+			return nil
+		}
 	}
-	if raw, _ := os.ReadFile(path); string(raw) != "one" {
-		t.Fatalf("the frozen file now holds %q", raw)
+	if err := within(t, func(root, dir, outside string) {
+		if err := os.Symlink(outside, dir); err != nil {
+			t.Fatal(err)
+		}
+	}); err == nil {
+		t.Error("a directory that is a link to elsewhere was written through")
+	}
+	if err := within(t, func(root, dir, outside string) {
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(outside, "planted"), []byte("the manifest"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(outside, "planted"), filepath.Join(dir, named)); err != nil {
+			t.Fatal(err)
+		}
+	}); err == nil {
+		t.Error("a file that is a link to another file with the same bytes was accepted")
+	}
+	if err := within(t, func(root, dir, outside string) {
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := syscall.Mkfifo(filepath.Join(dir, named), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}); err == nil {
+		t.Error("a pipe was taken for the manifest")
 	}
 }
 

@@ -456,16 +456,23 @@ func TestBlockedPathsTable(t *testing.T) {
 	}
 }
 
-// A manifest too large for a prompt is frozen to a file named by its digest under the child's first root, and the prompt names the path and the digest of what was written.
+// A manifest too large for a prompt is frozen to a file named by its own hash under the child's first root, and the prompt names the path and the hash of what was written.
 func TestReleaseFreezesALargeManifest(t *testing.T) {
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
 	k.acceptNode("rp", "A", acceptOpts{Artifacts: 320})
 	res := k.mustRelease("rp", "B")
-	frozen := filepath.Join(k.root, "dag-input-manifests", res.ManifestDigest+".json")
+	copies, _ := filepath.Glob(filepath.Join(k.root, "dag-input-manifests", "*.json"))
+	if len(copies) != 1 {
+		t.Fatalf("frozen copies = %v", copies)
+	}
+	frozen := copies[0]
 	raw, err := os.ReadFile(frozen)
 	if err != nil {
 		t.Fatalf("no frozen copy: %v", err)
+	}
+	if filepath.Base(frozen) != shaOf(raw)+".json" {
+		t.Fatalf("the copy %s is not named by its hash %s", frozen, shaOf(raw))
 	}
 	info, _ := os.Stat(frozen)
 	if info.Mode().Perm() != 0o600 {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -322,16 +323,50 @@ func TestCorrectionRefusesWhatTheChildCouldNotUse(t *testing.T) {
 			t.Fatalf("correction = %v (%d bound)", err, bound(k))
 		}
 	})
-	t.Run("the copy the child was told to read is gone", func(t *testing.T) {
+	t.Run("the note names another path for the copy", func(t *testing.T) {
 		k := newReleaseKit(t)
 		rid := k.correctionKit()
 		prepared := k.prepare()
-		k.ruleNeedsChanges(rid, restoration(prepared.Instruction))
-		if err := os.WriteFile(prepared.FrozenPath, []byte("{}"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := k.correct(""); refusalReason(err) != "manifest_unverified" || bound(k) != 0 {
+		k.ruleNeedsChanges(rid, restoration(strings.Replace(prepared.Instruction, prepared.FrozenPath, "/nowhere/"+filepath.Base(prepared.FrozenPath), 1)))
+		if _, err := k.correct(""); refusalReason(err) != "disposition_conflict" || bound(k) != 0 {
 			t.Fatalf("correction = %v (%d bound)", err, bound(k))
 		}
 	})
+	t.Run("the note gives another hash for the copy", func(t *testing.T) {
+		k := newReleaseKit(t)
+		rid := k.correctionKit()
+		prepared := k.prepare()
+		data, _ := os.ReadFile(prepared.FrozenPath)
+		k.ruleNeedsChanges(rid, restoration(strings.Replace(prepared.Instruction, "file sha256 "+shaOf(data), "file sha256 "+dig("another file"), 1)))
+		if _, err := k.correct(""); refusalReason(err) != "disposition_conflict" || bound(k) != 0 {
+			t.Fatalf("correction = %v (%d bound)", err, bound(k))
+		}
+	})
+	t.Run("the note is about another generation", func(t *testing.T) {
+		k := newReleaseKit(t)
+		rid := k.correctionKit()
+		prepared := k.prepare()
+		k.ruleNeedsChanges(rid, restoration(strings.Replace(prepared.Instruction, "Correction generation 2 of", "Correction generation 7 of", 1)))
+		if _, err := k.correct(""); refusalReason(err) != "disposition_conflict" || bound(k) != 0 {
+			t.Fatalf("correction = %v (%d bound)", err, bound(k))
+		}
+	})
+}
+
+// Preparing a correction twice from the same inputs is the same manifest: the copy the child reads is the body the store holds, so the line the ruling carries and the file always agree,
+// whatever time the second preparation was built at.
+func TestPreparingACorrectionTwiceAgrees(t *testing.T) {
+	k := newReleaseKit(t)
+	rid := k.correctionKit()
+	first := k.prepare()
+	k.clock() // time moves between the two preparations
+	second := k.prepare()
+	if first.ManifestDigest != second.ManifestDigest || first.Instruction != second.Instruction || first.FrozenPath != second.FrozenPath {
+		t.Fatalf("two preparations from the same inputs differ: %+v and %+v", first, second)
+	}
+	k.ruleNeedsChanges(rid, restoration(second.Instruction))
+	res, err := k.correct("")
+	if err != nil || res.ManifestDigest != first.ManifestDigest || res.CarriedOver {
+		t.Fatalf("correction = %v %+v", err, res)
+	}
 }

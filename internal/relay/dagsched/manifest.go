@@ -7,10 +7,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -408,18 +410,29 @@ func (s *Scheduler) verifyInput(ctx context.Context, q store.Querier, e dag.Snap
 	return nil, nil
 }
 
-// frozenManifestPath is where a manifest too large for a prompt is kept: under the child's first artifact root, named by its digest.
-func frozenManifestPath(root, digest string) string {
-	return filepath.Join(root, "dag-input-manifests", digest+".json")
+// frozenManifestDir is where a manifest the child has to read from a file is kept: under the first artifact root of its relationship.
+const frozenManifestDir = "dag-input-manifests"
+
+// frozenManifestPath is the file that holds exactly these canonical bytes. The name is the sha256 of the bytes, not the manifest digest: two bodies of one manifest (they differ in what the
+// digest leaves out, such as the time of the build) are two files, so a second release attempt or a second correction of the same manifest never meets a file it did not write.
+func frozenManifestPath(root string, canonical []byte) string {
+	return filepath.Join(root, frozenManifestDir, shaOf(canonical)+".json")
 }
 
-// FreezeManifest writes the canonical bytes of a manifest to path, create-exclusive and 0600, and reads them back and hashes them: a copy that is not what was written is an
-// error and never a manifest. An existing file is accepted only when it holds the same bytes (two releases of one manifest write one file).
-func FreezeManifest(path string, canonical []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return fmt.Errorf("freeze the manifest: %w", err)
+// FreezeManifest keeps the canonical bytes of a manifest as a file under root and returns its path. The file is created exclusively with mode 0600, the directory must be a directory of
+// its own (a link is refused, so nothing is written outside the root), and the file is read back through the relay's authorized open (inside the root, no link on the way, a regular file,
+// never blocking on a special file) and compared byte for byte: a copy that is not what was written is an error and never a manifest. An existing file is accepted only when it holds the same bytes.
+func FreezeManifest(root string, canonical []byte) (string, error) {
+	dir := filepath.Join(root, frozenManifestDir)
+	path := frozenManifestPath(root, canonical)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", fmt.Errorf("freeze the manifest: %w", err)
 	}
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	// Lstat does not follow a link, so a link to a directory is not a directory here
+	if info, err := os.Lstat(dir); err != nil || !info.IsDir() {
+		return "", fmt.Errorf("freeze the manifest: %s is not a directory of its own", dir)
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
 	switch {
 	case err == nil:
 		_, werr := file.Write(canonical)
@@ -427,19 +440,24 @@ func FreezeManifest(path string, canonical []byte) error {
 			werr = cerr
 		}
 		if werr != nil {
-			return fmt.Errorf("freeze the manifest: %w", werr)
+			return "", fmt.Errorf("freeze the manifest: %w", werr)
 		}
 	case !errors.Is(err, os.ErrExist):
-		return fmt.Errorf("freeze the manifest: %w", err)
+		return "", fmt.Errorf("freeze the manifest: %w", err)
 	}
-	read, err := os.ReadFile(path)
+	opened, err := store.OpenAuthorized(path, []string{root}, false)
 	if err != nil {
-		return fmt.Errorf("freeze the manifest: %w", err)
+		return "", fmt.Errorf("freeze the manifest: %w", err)
+	}
+	defer opened.File.Close()
+	read, err := io.ReadAll(io.LimitReader(opened.File, int64(len(canonical))+1))
+	if err != nil {
+		return "", fmt.Errorf("freeze the manifest: %w", err)
 	}
 	if !bytes.Equal(read, canonical) {
-		return fmt.Errorf("freeze the manifest: %s holds other bytes than the manifest (%s, %s)", path, shaOf(read), shaOf(canonical))
+		return "", fmt.Errorf("freeze the manifest: %s holds other bytes than the manifest (%s, %s)", path, shaOf(read), shaOf(canonical))
 	}
-	return nil
+	return path, nil
 }
 
 func shaOf(b []byte) string {
