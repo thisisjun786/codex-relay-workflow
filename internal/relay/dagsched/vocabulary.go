@@ -55,6 +55,14 @@ const (
 	DoneAccepted   = "done:accepted"
 	DoneIntegrated = "done:integrated"
 
+	// What the plan's own lifecycle says (CRW-281, lifecycle.go): a paused plan or node is held until a resume revision; a cancelled or archived node is never released again and its
+	// descendants are blocked.
+	DeferPlanPaused            = "defer:plan_paused"
+	DeferNodePaused            = "defer:node_paused"
+	SkipNodeCancelled          = "skip:node_cancelled"
+	SkipNodeArchived           = "skip:node_archived"
+	BlockedPredecessorArchived = "blocked:predecessor_archived"
+
 	// The reasons of an accepted node whose result no longer matches the plan (contract 3.1, 8.4; see invalidation.go). The third member, stale:edge:<edge_id>, names the incoming edge the reason
 	// rests on.
 	StaleSliceChanged    = "stale:slice_changed"
@@ -85,6 +93,7 @@ var emittedReasons = []string{
 	BlockedPredecessorCancelled, BlockedReleaseAbandoned, BlockedEvicted, BlockedAmbiguousHead,
 	StaleSliceChanged, StaleCriteriaChanged,
 	DoneAccepted, DoneIntegrated,
+	DeferPlanPaused, DeferNodePaused, SkipNodeCancelled, SkipNodeArchived, BlockedPredecessorArchived,
 }
 
 // ReservedReasons are in the contract's vocabulary and not emitted by this build.
