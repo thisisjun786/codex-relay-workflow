@@ -36,6 +36,14 @@ var zoneInventory = map[string][]string{
 	"dag_decisions":                {"decision_id", "plan_id", "subject", "digest", "disposition", "authority_kind", "authority_ref", "revision", "state", "recorded_by_task_id", "coordinator_epoch", "recorded_at"},
 	"dag_coordinator_claims":       {"plan_id", "epoch", "binding_id", "binding_revision", "task_id", "session_nonce", "claimed_at"},
 	"dag_cap_basis":                {"limit_id", "limit_revision", "w_minutes", "w_source", "s_minutes", "s_source", "decided_by", "decided_at"},
+	// CRW-184 (appended statements).
+	"dag_merge_checks":             {"check_id", "acceptance_id", "check_seq", "head_sha", "observed_head_sha", "base_tip_sha", "checks_base_sha", "checks_digest", "evidence_json", "failed_required_json", "round_no", "outcome", "reason", "recorded_at"},
+	"dag_acceptance_revalidations": {"revalidation_id", "acceptance_id", "criteria_set_digest", "event_id", "verdict_turn_id", "reval_seq", "revalidated_by", "revalidated_at"},
+	"dag_acceptance_forge":         {"acceptance_id", "forge_repository", "pr_number"},
+	"dag_passes":                   {"plan_id", "pass_seq", "plan_revision", "input_digest", "ready_count", "free_slots", "ceiling", "held", "deciding_limit", "order_json", "dispositions_json", "recorded_by", "recorded_at"},
+	"dag_release_requests":         {"plan_id", "node_id", "manifest_digest", "request_sha256", "request_json", "marker_root", "socket", "state_selector", "recorded_at"},
+	"dag_conflict_observations":    {"observation_id", "plan_id", "left_node_id", "right_node_id", "repository", "left_head", "right_head", "base_sha", "conflict_count", "method", "observed_by", "observed_at"},
+	"dag_node_regions":             {"plan_id", "node_id", "declaration_seq", "repository", "path", "region_kind", "region_key", "change", "exclusive", "declared_by", "declared_at"},
 }
 
 // rawDB opens path without any of the store's open rules, as an operator's sqlite3 would.
@@ -502,13 +510,7 @@ func TestDAGZoneReadOnlyCommandDoesNotCreateIt(t *testing.T) {
 // yet. The list is exactly those tables: a table gains a query and leaves this list in the same change, and a table with neither
 // is dead schema.
 var pendingWriters = map[string]string{
-	"dag_node_executions":          "CRW-184",
-	"dag_releases":                 "CRW-184",
-	"dag_acceptances":              "CRW-184",
-	"dag_integration_observations": "CRW-184",
-	"dag_decisions":                "CRW-184",
-	"dag_coordinator_claims":       "CRW-185",
-	"dag_cap_basis":                "CRW-184",
+	"dag_coordinator_claims": "CRW-185",
 }
 
 func TestDAGZoneEveryTableHasAQueryOrAPendingWriter(t *testing.T) {
@@ -535,4 +537,36 @@ func TestDAGZoneEveryTableHasAQueryOrAPendingWriter(t *testing.T) {
 			t.Errorf("pendingWriters names %s, which is not a zone table", table)
 		}
 	}
+}
+
+// The CRW-184 tables carry their own constraints in the table, so a scheduler bug cannot store a row they refuse: the merge-check and
+// revalidation histories are ordered (one row per sequence number), the closed vocabularies are CHECKs, and each dependent row needs
+// its acceptance (foreign keys are on for every connection).
+func TestDAGZoneSchedulerTablesRefuseBadRows(t *testing.T) {
+	db := zoneOpenedDB(t)
+	zoneMustExec(t, db, fmt.Sprintf("INSERT INTO dag_acceptances VALUES ('acc-1','plan-1','a','%s','rel-1',1,'evt','%s','%s','verified',NULL,NULL,NULL,NULL,NULL,'host','turn','{}','task-a',1,'2026-10-02T00:00:00Z',NULL,'active')", zoneDigest, zoneDigest, zoneDigest))
+	check := func(id string, seq int, outcome string, round int) string {
+		return fmt.Sprintf("INSERT INTO dag_merge_checks VALUES ('%s','acc-1',%d,'h1','h1','tip',NULL,'%s','{}','[]',%d,'%s','why','2026-10-02T00:00:00Z')", id, seq, zoneDigest, round, outcome)
+	}
+	zoneMustExec(t, db, check("c1", 1, "eligible", 1), check("c2", 2, "stale_base", 1), check("c3", 3, "eligible", 1))
+	zoneRefuses(t, db, "a second row with the same sequence number", check("c4", 3, "evicted", 2))
+	zoneRefuses(t, db, "an outcome outside the vocabulary", check("c5", 4, "merged", 1))
+	zoneRefuses(t, db, "a third retry round", check("c6", 4, "evicted", 3))
+	zoneRefuses(t, db, "a merge check of an acceptance that does not exist", strings.Replace(check("c7", 1, "eligible", 1), "'acc-1'", "'acc-none'", 1))
+	reval := func(id string, seq int, digest string) string {
+		return fmt.Sprintf("INSERT INTO dag_acceptance_revalidations VALUES ('%s','acc-1','%s','evt','turn',%d,'task-a','2026-10-02T00:00:00Z')", id, digest, seq)
+	}
+	other := strings.Repeat("b", 64)
+	// criteria B, then C, then B again: three rows, each its own sequence number (a UNIQUE on the digest would refuse the third).
+	zoneMustExec(t, db, reval("r1", 1, zoneDigest), reval("r2", 2, other), reval("r3", 3, zoneDigest))
+	zoneRefuses(t, db, "a second revalidation with the same sequence number", reval("r4", 3, other))
+	zoneRefuses(t, db, "a revalidation of an acceptance that does not exist", strings.Replace(reval("r5", 1, other), "'acc-1'", "'acc-none'", 1))
+	forge := func(acceptance, repo string, pr int) string {
+		return fmt.Sprintf("INSERT INTO dag_acceptance_forge VALUES ('%s','%s',%d)", acceptance, repo, pr)
+	}
+	zoneRefuses(t, db, "a forge row before its acceptance (the order Accept must not use)", forge("acc-none", "o/r", 7))
+	zoneRefuses(t, db, "a pull request number of zero", forge("acc-1", "o/r", 0))
+	zoneRefuses(t, db, "an empty forge repository", forge("acc-1", "", 7))
+	zoneMustExec(t, db, forge("acc-1", "o/r", 7))
+	zoneRefuses(t, db, "a second forge identity for one acceptance", forge("acc-1", "o/r", 8))
 }
