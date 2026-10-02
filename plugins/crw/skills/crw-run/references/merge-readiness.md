@@ -286,6 +286,96 @@ any permitted fallback or remaining limitation. A base refresh adds the head it 
 from, the head it produced and the check between them. Keep implementation verification,
 integration, and deployment as separate claims.
 
+### What the handoff discloses, checked at the verdict
+
+The handoff's `disclosures` member ([what a handoff
+discloses](task-packet.md#what-a-handoff-discloses)) is read with the rest of the record and
+restated like it, never rebuilt. Nothing in the relay grades it, so the comparisons below are what
+stands between a rejected High and a merge. They sit after the claim and the acknowledgement and
+before the verdict is `verified`, and each is a comparison with a record the parent can read:
+mechanical validity, not a second review round
+([OPS-9.3](operations.md#ops-93-the-parent-merges-and-does-not-release)). A comparison that fails
+returns the candidate through the needs-changes verdict, with the restoration block in the first
+finding ([Return corrections to the existing
+task](../SKILL.md#return-corrections-to-the-existing-task)).
+
+1. **Every item is there.** A handoff for a pull request with no `disclosures` member, or with an
+   item left out, does not describe the candidate and returns to the same child like any other
+   disagreement between the record and the re-read
+   ([OPS-9.4](operations.md#ops-94-a-new-head-invalidates-the-review-it-outran)). `none` and
+   `ran: false` are answers; silence is not.
+
+2. **Every rejected High is answered before `verified`.** Each `internalReview` finding disposed of
+   as `rebutted` or `out_of_scope` has a `decisionRequests` entry or names the parent ruling that
+   already settled it; one with neither is a hole in the record and the handoff returns. Each
+   request is then answered in one of three ways. The rebuttal is confirmed on its evidence: the
+   finding is not a defect, nothing is accepted, and the five records of a conditional acceptance do
+   not apply. A real residue that is minor and separable, the usual shape of `out_of_scope`, is
+   accepted under [conditional acceptance](#conditional-acceptance-and-what-recording-one-costs)
+   with its five records. Or a fix is required. A finding in a blocking class under
+   [impact](#judge-a-finding-by-its-impact) always gets this answer, whatever label the review gave
+   it and whatever the child concluded: it is fixed, or the candidate is reported blocked. A verdict
+   that does not name a request is incomplete. Where the child asked first and ended its turn
+   `blocked_needs_input`, the answer goes back on that route and the request cites it.
+
+3. **Every commit after the review is accounted for.**
+   `git rev-list --first-parent <reviewedHead>..<head>` names exactly the merge commits of the
+   `baseRefresh` entries and the commits of `commitsAfter`; a commit in neither, or a listed one
+   that is not there, means the record does not describe the candidate. The first-parent line is the
+   window on purpose: a merge of the base made before the review is history the review covered, and
+   an unrestricted range would also list the base's own commits. The listed commits are changes the
+   review did not see. Hosted-review fixes, base merges and digest re-records are expected; the
+   parent asks for an independent check of a commit, and of that commit only, where it changes
+   behavior and nothing else covered it. Where `ran` is `false` there is no reviewed head and no
+   window; the handoff's independence then rests on the hosted review and the parent's own reading,
+   the verdict says so, and the entries are still checked one by one.
+
+4. **Each refresh is the kind it says.** A refresh the child made is proved by the same check as one
+   the parent made ([Refresh the base yourself when only the base moved](#refresh-the-base-yourself-when-only-the-base-moved)).
+   For every entry, of any kind, first confirm that the merge's first parent is the entry's
+   `previous` and that its `merged` commit is an ancestor of the base tip the parent observed itself
+   (`git merge-base --is-ancestor <merged> origin/dev`, or the tip seen before the landing): the
+   helper's own test that the second parent is on the base is empty when the caller names that parent
+   as the base. Then, for an entry named `clean`, run
+   `crw skill base-refresh check --repo <a checkout that has fetched both heads and the base> --previous <previous> --head <head> --base origin/dev`
+   and read the answer:
+
+   - Exit 0 confirms the entry, and the refresh reruns the gates only.
+   - Exit 1 is read by its reason. `no_update`: the entry names a refresh that did not happen, so it
+     is dropped. `not_built_on_previous`: a wrong anchor, more than a hundred merges or a walk that
+     reached the base, so the anchor is corrected. `not_a_merge`, `not_from_base` and `tree_differs`:
+     a commit that is not a merge of the base lies in the range, or edits ride inside a merge. Those
+     are the child's own changes, belong in `commitsAfter` and get an independent check of that
+     delta by impact, not of the whole diff. `merge_conflicts`: that merge carries resolutions,
+     classified by the hunks its entry lists. The check stops at the first conflict it meets from
+     the head and says nothing about the commits before it, which is what the accounting in the
+     previous item covers.
+   - Exit 2 is no answer. The cause it names is addressed (fetch the commits, use a full checkout,
+     git 2.41 or newer) and the entry is unverified until the check has run.
+
+   For a `mechanical` or `manual` entry, `git show --remerge-diff <head>` prints the merge's
+   resolutions and each one must be a listed hunk: an unlisted resolution, or an edit riding in the
+   merge, returns the entry. The parent reproduces a mechanical hunk's rule and compares; for a
+   manual entry it compares the scope and result of the child's independent check with the hunks,
+   because that check is the child's and the parent does not repeat it.
+
+5. **The paths are the ones changed.** `git diff --name-only origin/dev...<head>` against
+   `changedPaths`: a path left out, or placed in the wrong region, means the record does not
+   describe the candidate. Where a region covers part of a file the entry's hunk ranges are compared
+   with the declared section the same way (`git diff -U0`); a verdict that compared paths only
+   records those regions as unverified, and the count of paths outside every region is kept apart
+   from the count of hunks outside a section. Both counts go in the coordination record beside the
+   merge ([Recheck, integrate, and record](#recheck-integrate-and-record)). Nothing else consumes
+   them yet, and that record is where a later calibration of the declarations can read them.
+
+6. **Sibling impact is read before the merge order is chosen.** The registry entries the child added
+   are what a union check keeps when the next sibling's branch is refreshed onto this one, and a
+   shared interface it changed is what that sibling must read first. A finding that needs a
+   sibling's work to change is the parent's to route, through the relay or the coordination record;
+   the child does not settle it and does not message the sibling. That sibling's next correction
+   carries the landing and the expected conflicts in its [restoration
+   block](task-packet.md#restoration-block).
+
 ### Refresh the base yourself when only the base moved
 
 The dev ruleset is strict: a pull request has to contain the tip of its base, so each landing leaves
@@ -307,7 +397,8 @@ second refresh of the same candidate has its own reading, below):
 2. The forge reports no conflict: `pinned.mergeable` is true and the merge state is not `DIRTY`.
 3. Every criterion was ruled verified at P: the relay verdict on the report that names P is
    `verified` ([assignment-show](relay.md#verify-the-current-revision)), or, with no relay, the
-   parent's own check against the Linear criteria is recorded for P.
+   parent's own check against the Linear criteria is recorded for P. That ruling includes the
+   [disclosure checks](#what-the-handoff-discloses-checked-at-the-verdict) at P.
 
 Update with the forge's call, guarded by the head you verified, and never by rebase, reset or
 force-push:
