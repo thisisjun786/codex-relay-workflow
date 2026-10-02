@@ -247,7 +247,7 @@ completely is the host's failure; both write nothing. A row of the history that 
 `crw relay dag-merge-request --plan P --node N --actor A --host H` judges again now (never from the history) and, only when the node is eligible, asks the existing merge lane for a turn with the accepted head, the pull request and the
 relationship. A node that is not eligible gets no turn and the refusal is the relay's own reason (`merge_candidate_moved` for a stale head, `merge_currency_stale` for a stale base, `criteria_set_changed` for stale criteria,
 `disposition_conflict` naming the outcome for the rest); the judgement stays in the history, which is what counts the retry. The lane is not changed: a holder has one live claim per target, so the parent merges one pull request of
-a project at a time (a second request while the first turn is open is `disposition_conflict` naming that turn), and turns of different projects are served first in, first out (D-16, `requested_at` then turn id). The parent's order is
+a project at a time (a second request while the first turn is open, even for another node accepted at the same commit, is `disposition_conflict` naming that turn), and turns of different projects are served first in, first out (D-16, `requested_at` then turn id). The parent's order is
 accept, `dag-merge-request`, acknowledge the grant, `merge-turn-check`, merge on the forge, `merge-turn-land`, `assignment-mark merged`, `dag-integration-observe`. A pull request that went through `dag-merge-request` is
 the only kind the DAG path lets into the lane, so every landed tree of it has an `eligible` judgement of the very head that landed.
 
