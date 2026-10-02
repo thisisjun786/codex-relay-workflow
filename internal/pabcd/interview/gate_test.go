@@ -11,15 +11,15 @@ func readyTracker() *Tracker {
 	for _, d := range DimensionOrder() {
 		*tr.Dimensions.Score(d) = DimensionScore{Level: LevelMax, Known: []string{"x"}, Unknown: []string{}, Confidence: 1}
 	}
-	tr.ScanRounds = 1 // readiness also requires scan-evidence
-	tr.LastScanRoundID = 1
+	tr.ScanRounds, tr.LastScanRoundID = 1, 1 // readiness also requires scan-evidence
 	return tr
 }
 
-// defaultInterview is not ready (all dimensions low).
-func TestDefaultInterviewIsNotReady(t *testing.T) {
-	if IsInterviewReady(DefaultInterview(0)) {
-		t.Fatal("a fresh tracker must not be ready")
+// defaultInterview is not ready (all dimensions low); null/malformed -> false (fail-closed),
+// where the oracle's {} cast is the zero Tracker.
+func TestDefaultNilAndZeroTrackersAreNotReady(t *testing.T) {
+	if IsInterviewReady(DefaultInterview(0)) || IsInterviewReady(nil) || IsInterviewReady(&Tracker{}) {
+		t.Fatal("a fresh, nil or zero tracker must not be ready")
 	}
 }
 
@@ -37,70 +37,45 @@ func TestReadinessNeedsHighOrMaxEverywhere(t *testing.T) {
 	}
 }
 
-// A single contradiction blocks readiness, whatever its severity.
-func TestASingleContradictionBlocksReadiness(t *testing.T) {
+// A single contradiction, whatever its severity, and an unrecorded assumption each block
+// readiness.
+func TestContradictionsAndUnrecordedAssumptionsBlockReadiness(t *testing.T) {
 	tr := readyTracker()
 	tr.Contradictions = []Contradiction{{ContradictionID: "c1", Severity: SeverityLow, Summary: "x"}}
 	if IsInterviewReady(tr) {
-		t.Fatal("a low-severity contradiction must still block")
+		t.Error("a low-severity contradiction must still block")
 	}
-}
-
-// An unrecorded assumption blocks readiness until it is recorded.
-func TestAnUnrecordedAssumptionBlocksReadiness(t *testing.T) {
-	tr := readyTracker()
-	tr.Assumptions = []Assumption{{ID: "a1", Text: "assume X", Recorded: false}}
+	tr = readyTracker()
+	tr.Assumptions = []Assumption{{ID: "a1", Text: "assume X"}}
 	if IsInterviewReady(tr) {
-		t.Fatal("an unrecorded assumption must block")
+		t.Error("an unrecorded assumption must block")
 	}
 	tr.Assumptions[0].Recorded = true
 	if !IsInterviewReady(tr) {
-		t.Fatal("a recorded assumption must not block")
-	}
-}
-
-// null/malformed -> false (fail-closed). The oracle's {} cast is the zero Tracker here.
-func TestNilAndZeroTrackerAreNotReady(t *testing.T) {
-	if IsInterviewReady(nil) || IsInterviewReady(&Tracker{}) {
-		t.Fatal("nil and the zero tracker must not be ready")
+		t.Error("a recorded assumption must not block")
 	}
 }
 
 // 131: scan-evidence is required for readiness (scanRounds 0 blocks, 1 allows); a negative
-// count reads as 0.
+// count reads as 0. Reconstruct defaults the scan fields to 0, so a legacy tracker is not
+// silently ready.
 func TestScanEvidenceIsRequiredForReadiness(t *testing.T) {
 	tr := readyTracker()
 	for rounds, want := range map[int64]bool{0: false, -1: false, 1: true} {
-		tr.ScanRounds = rounds
-		if got := IsInterviewReady(tr); got != want {
-			t.Errorf("scanRounds %d: ready = %v, want %v", rounds, got, want)
+		if tr.ScanRounds = rounds; IsInterviewReady(tr) != want {
+			t.Errorf("scanRounds %d: ready = %v, want %v", rounds, !want, want)
 		}
 	}
-}
-
-// 131: reconstruct defaults the scan fields to 0, so a legacy tracker is not silently ready.
-func TestReconstructDefaultsScanFieldsToZero(t *testing.T) {
-	legacy := `{"roundId":1,"dimensions":` + dimsJSON(`{"level":"max","known":["k"],"unknown":[],"confidence":1}`) +
-		`,"contradictions":[],"assumptions":[{"id":"a","text":"x","recorded":true}]}`
-	r := ReconstructInterview(fromJSON(t, legacy))
-	if r.ScanRounds != 0 || r.LastScanRoundID != 0 {
-		t.Fatalf("scan fields = %d and %d, want 0 and 0", r.ScanRounds, r.LastScanRoundID)
-	}
-	if IsInterviewReady(r) {
-		t.Error("a legacy ready-shaped tracker must not pass without scan-evidence")
+	legacy := ReconstructInterview(fromJSON(t, `{"roundId":1,"dimensions":`+dimsJSON(`{"level":"max","known":["k"],"unknown":[],"confidence":1}`)+
+		`,"contradictions":[],"assumptions":[{"id":"a","text":"x","recorded":true}]}`))
+	if legacy.ScanRounds != 0 || legacy.LastScanRoundID != 0 || IsInterviewReady(legacy) {
+		t.Errorf("a legacy tracker must reconstruct with scan fields 0 and not be ready: %+v", legacy)
 	}
 }
 
-// CRITICAL-2: a partial {level:"max"} dimension is NOT ready (full shape required). A
-// missing array is a nil slice, which is also what a direct decode of the partial JSON gives.
+// CRITICAL-2: a partial {level:"max"} dimension is NOT ready (full shape required). A missing
+// array is a nil slice, which is also what a direct decode of the partial JSON gives.
 func TestAPartialMaxDimensionIsNotReady(t *testing.T) {
-	partial := readyTracker()
-	for _, d := range DimensionOrder() {
-		*partial.Dimensions.Score(d) = DimensionScore{Level: LevelMax}
-	}
-	if IsInterviewReady(partial) {
-		t.Error("a typed partial score (nil arrays) must not be ready")
-	}
 	in := `{"roundId":1,"scanRounds":1,"dimensions":` + dimsJSON(`{"level":"max"}`) + `,"contradictions":[],"assumptions":[]}`
 	var decoded Tracker
 	if err := json.Unmarshal([]byte(in), &decoded); err != nil {
@@ -119,8 +94,7 @@ func TestAPartialMaxDimensionIsNotReady(t *testing.T) {
 		"unknown level":      func(tr *Tracker) { tr.Dimensions.Goal.Level = "maximum" },
 	} {
 		tr := readyTracker()
-		mutate(tr)
-		if IsInterviewReady(tr) {
+		if mutate(tr); IsInterviewReady(tr) {
 			t.Errorf("%s: must not be ready", name)
 		}
 	}
@@ -141,8 +115,8 @@ func TestGateReportsScanRanHighContradictionsAndWarnings(t *testing.T) {
 	tr.ScanRounds = 0
 	tr.Contradictions = []Contradiction{{ContradictionID: "c1", Severity: SeverityHigh, Summary: "x"}}
 	bad := EvaluateInterviewGate(tr, nil)
-	want := "no contradiction scan has been recorded for this interview|1 high-severity contradiction(s) still open"
-	if bad.Ready || bad.ScanRan || bad.HighContradictionCount != 1 || strings.Join(bad.Warnings, "|") != want {
+	if bad.Ready || bad.ScanRan || bad.HighContradictionCount != 1 ||
+		strings.Join(bad.Warnings, "|") != "no contradiction scan has been recorded for this interview|1 high-severity contradiction(s) still open" {
 		t.Fatalf("blocked gate = %+v", bad)
 	}
 	if got := EvaluateInterviewGate(nil, nil); got.Ready || got.ScanRan || len(got.Warnings) != 1 {
@@ -150,42 +124,39 @@ func TestGateReportsScanRanHighContradictionsAndWarnings(t *testing.T) {
 	}
 	tr = readyTracker()
 	tr.Contradictions = []Contradiction{{ContradictionID: "c", Severity: SeverityMedium, Summary: "s"}}
-	med := EvaluateInterviewGate(tr, nil)
-	if med.Ready || med.HighContradictionCount != 0 || strings.Join(med.Warnings, "|") != "interview is not ready (dimensions/assumptions incomplete)" {
+	if med := EvaluateInterviewGate(tr, nil); med.Ready || med.HighContradictionCount != 0 || strings.Join(med.Warnings, "|") != "interview is not ready (dimensions/assumptions incomplete)" {
 		t.Errorf("medium-contradiction gate = %+v", med)
 	}
 }
 
-// A "high" level is only as good as the answer it was derived from: with ledger evidence
-// supplied every high dimension must be backed, "max" needs no backing, and evidence that is
-// supplied but empty backs nothing. Without evidence the gate is the shape check.
+// A "high" level is only as good as the answer it came from: with ledger evidence every high
+// dimension must be backed, "max" needs no backing, and evidence supplied but empty backs
+// nothing. Without evidence the gate is the shape check.
 func TestGateRequiresLedgerBackingForHighDimensions(t *testing.T) {
 	tr := readyTracker()
 	for _, d := range DimensionOrder() {
 		tr.Dimensions.Score(d).Level = LevelHigh
 	}
-	if g := EvaluateInterviewGate(tr, nil); !g.Ready {
-		t.Errorf("without evidence the gate is the shape check: %+v", g)
-	}
 	const tail = " reached \"high\" without an answered question in the interview ledger \u2014 " +
 		"ask and record one per dimension (`crw pabcd scan record --derive --map <questionId>=<dimension>`), or assert the level deliberately"
-	if g := EvaluateInterviewGate(tr, &GateEvidence{}); g.Ready || strings.Join(g.Warnings, "|") != "goal, constraint, success, ontology"+tail {
-		t.Errorf("empty evidence gate = %+v", g)
-	}
 	partly := &GateEvidence{BackedDimensions: map[Dimension]bool{DimensionGoal: true, DimensionSuccess: true}}
-	if g := EvaluateInterviewGate(tr, partly); g.Ready || strings.Join(g.Warnings, "|") != "constraint, ontology"+tail {
-		t.Errorf("partly backed gate = %+v", g)
-	}
 	all := &GateEvidence{BackedDimensions: map[Dimension]bool{"goal": true, "constraint": true, "success": true, "ontology": true}}
-	if g := EvaluateInterviewGate(tr, all); !g.Ready || len(g.Warnings) != 0 {
-		t.Errorf("fully backed gate = %+v", g)
-	}
-	if g := EvaluateInterviewGate(readyTracker(), &GateEvidence{}); !g.Ready {
-		t.Errorf("max dimensions need no backing: %+v", g)
-	}
-	notShape := DefaultInterview(0)
-	notShape.Dimensions.Goal.Level = LevelHigh
-	if g := EvaluateInterviewGate(notShape, &GateEvidence{}); g.Ready || strings.Join(g.Warnings, "|") != "no contradiction scan has been recorded for this interview" {
-		t.Errorf("provenance is only computed for a tracker with the right shape: %+v", g)
+	for _, c := range []struct {
+		name     string
+		tracker  *Tracker
+		evidence *GateEvidence
+		ready    bool
+		warning  string
+	}{
+		{"no evidence is the shape check", tr, nil, true, ""},
+		{"empty evidence backs nothing", tr, &GateEvidence{}, false, "goal, constraint, success, ontology" + tail},
+		{"partly backed", tr, partly, false, "constraint, ontology" + tail},
+		{"fully backed", tr, all, true, ""},
+		{"max needs no backing", readyTracker(), &GateEvidence{}, true, ""},
+		{"provenance waits for the shape", DefaultInterview(0), &GateEvidence{}, false, "no contradiction scan has been recorded for this interview"},
+	} {
+		if g := EvaluateInterviewGate(c.tracker, c.evidence); g.Ready != c.ready || strings.Join(g.Warnings, "|") != c.warning {
+			t.Errorf("%s: gate = %+v", c.name, g)
+		}
 	}
 }
