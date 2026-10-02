@@ -349,6 +349,37 @@ same request id and it creates its one task; if you release that reservation wit
 `managed-release` instead, its request id stays dead and the next attempt needs a new one. The
 second check, which catches a binding that moved after the reservation was armed, leaves the
 request armed and not releasable; retry it with the same request id once the project is bound again.
+Three more refusals that registration or the settings record used to give only after the task existed
+are given before the host is asked to create it, with the same reason, detail and exit code. They
+come directly before the creation, after the readiness, scope and ledger checks that were always made
+there: a `parent` task id or an `issueKey` that contains `|` (the field separator, as a plain error
+naming `parent_task_id` or `issue_key`; the parent is named first when both do), a child host id that
+contains `|` when the request names a `projectKey` (`unregistered_scope`; a request without a project is
+not asked, as registration does not ask), and parent settings that differ from the settings already
+recorded for that parent (`relationship_conflict`). A request refused this way is armed with no task and not
+releasable; a settings refusal clears once the recorded settings agree with the request, and the
+same request id then creates its task. A request that
+is refused for two reasons answers the one that can be asked first, so a request that also names a
+rival owner of its issue, a refusal that needs the created child, answers the settings refusal
+instead of `duplicate_scope_owner`.
+A request that names a `projectKey` holds that project's lock, shared, from before the readiness and
+scope checks until its child is registered: `managed-start-project-<sha256 of the key>.lock` beside
+the store. Starts do not hold each other up, and a start of another project uses another file. Every
+writer of the project's parent binding takes the same lock exclusively before its transaction and
+lets go when it returns: `linkage-bind --role parent`, `linkage-handover --role parent` and
+`linkage-supervise`. Such a writer waits for every start inside that span, and a start waits for it
+before it asks about the binding, so the binding cannot change between the last scope check, the
+creation and the registration (which would refuse a child whose thread already exists). Writers of
+other scopes (a child under an issue, a supervisor under an initiative) take no lock, and a writer or
+a start of another project waits only for that project's own lock. The lock file is named after the
+store's real path, so two spellings of one store (a linked file or directory) share it. The wait is
+bounded at 30 seconds: a start or a writer that waits that
+long answers the retryable `LockWaitExpired` host error (the host envelope, exit 3, detail
+`LockWaitExpired: the project binding lock was not acquired within 30s; retry` for a writer) having
+changed nothing; a start stays armed and the same request id continues it. That is the one new ending
+of the three linkage commands; their refusals, exit codes and other output are unchanged. A retry
+that already has the creation answer takes no lock; if the binding moved after a crash between the
+creation and the registration, registration refuses as before.
 Registration adds that retained child's ID to the declared recipients so the parent can
 return revision requests to its own child. Replay and pre-start checks verify this derived
 list; it does not authorize messages to an unrelated task.

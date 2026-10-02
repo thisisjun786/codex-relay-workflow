@@ -554,8 +554,13 @@ func (r *Registry) BindScope(ctx context.Context, role, key string, endpoint End
 	}
 	bid := bindingID(role, kind, key, endpoint.TaskID)
 	now := r.now()
+	release, err := r.lockProjectParent(ctx, role, key)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	var refused *linkRefusal
-	err := r.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
+	err = r.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
 		plan, refusal, err := l.bindingPlan(ctx, role, key, endpoint, "")
 		if err != nil {
 			return err
