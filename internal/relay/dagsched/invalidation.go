@@ -189,7 +189,13 @@ func (s *Scheduler) seedOf(ctx context.Context, q store.Querier, plan string, n 
 			case len(retired) > 0:
 				in := inputs[retired[0]]
 				st.Cause, st.EdgeID, st.Predecessor, st.ConsumedAcceptance = CauseEdgeRetired, retired[0], textOf(in["from_node_id"]), textOf(in["acceptance_id"])
-				st.Text = fmt.Sprintf("edge %s from %s was retired after the node consumed acceptance %s over it (its slice was %s, the plan's is %s)", st.EdgeID, st.Predecessor, short(st.ConsumedAcceptance), short(consumed), short(n.SliceDigest))
+				if textOf(in["kind"]) == dag.EdgeDecision {
+					// a decision edge hands over a recorded decision, not an acceptance: the version consumed is the decision and its revision
+					st.ConsumedDecision = textOf(in["decision_id"]) + "@" + textOf(in["decision_revision"])
+					st.Text = fmt.Sprintf("edge %s from %s was retired after the node consumed decision %s over it (its slice was %s, the plan's is %s)", st.EdgeID, st.Predecessor, st.ConsumedDecision, short(consumed), short(n.SliceDigest))
+				} else {
+					st.Text = fmt.Sprintf("edge %s from %s was retired after the node consumed acceptance %s over it (its slice was %s, the plan's is %s)", st.EdgeID, st.Predecessor, short(st.ConsumedAcceptance), short(consumed), short(n.SliceDigest))
+				}
 			default:
 				st.Text = fmt.Sprintf("the node's own slice changed after it consumed its inputs (its slice was %s, the plan's is %s)", short(consumed), short(n.SliceDigest))
 			}
@@ -371,10 +377,35 @@ func (s *Scheduler) rebuildAsConsumed(ctx context.Context, q store.Querier, plan
 	}
 	// BuildManifest leaves the digest out when any finding exists (a shape finding of a manifest older than the rule version check, for one); what this judgement needs is whether every incoming
 	// edge yielded its input, and the digest of those inputs.
-	if inputs, _ := built["inputs"].([]any); len(inputs) != len(incomingEdges(snap, n.NodeID)) {
+	inputs, _ := built["inputs"].([]any)
+	if len(inputs) != len(incomingEdges(snap, n.NodeID)) {
 		return "", false, nil
 	}
+	sizesAsConsumed(inputs, consumedInputs(body))
 	return dag.ManifestDigest(built), true, nil
+}
+
+// sizesAsConsumed gives every artifact the size the consumed manifest recorded for the same file. A receipt may declare an artifact without a size, and BuildManifest then reads the size of the file
+// as it is now; the rebuilt digest, and what the reading prints of it, must not depend on a file's size changing, so the consumed size is kept for an artifact with the same path and digest.
+func sizesAsConsumed(inputs []any, consumed map[string]map[string]any) {
+	for _, item := range inputs {
+		in, _ := item.(map[string]any)
+		was := consumed[textOf(in["edge_id"])]
+		built, _ := in["artifacts"].([]any)
+		recorded, _ := was["artifacts"].([]any)
+		for _, a := range built {
+			artifact, _ := a.(map[string]any)
+			for _, r := range recorded {
+				previous, _ := r.(map[string]any)
+				if previous["uri"] == artifact["uri"] && previous["sha256"] == artifact["sha256"] {
+					if size, ok := previous["bytes"]; ok {
+						artifact["bytes"] = size
+					}
+					break
+				}
+			}
+		}
+	}
 }
 
 // judgeBelow judges a node that is inside the closure but is not a seed itself. The manifest it consumed is compared with the one built now; equal means current (the early cutoff: what
@@ -493,8 +524,20 @@ func (s *Scheduler) stalePredecessorReading(ctx context.Context, q store.Querier
 		st.CurrentAcceptance = active.AcceptanceID
 	}
 	if consumed != "" {
-		if acc, err := loadAcceptanceByID(ctx, q, consumed); err == nil {
-			if body, found, err := dag.ReadManifestOn(ctx, q, acc.ManifestDigest); err == nil && found {
+		// what the consumed version rested on: absent or unreadable records leave the digest out of the reading (the edges report them); a failure to read the store is an error
+		acc, err := loadAcceptanceByID(ctx, q, consumed)
+		switch {
+		case errors.Is(err, errNoAcceptance):
+		case err != nil:
+			return nil, err
+		default:
+			body, found, err := dag.ReadManifestOn(ctx, q, acc.ManifestDigest)
+			var corrupt *dag.CorruptError
+			switch {
+			case errors.As(err, &corrupt):
+			case err != nil:
+				return nil, err
+			case found:
 				st.ConsumedSlice = textOf(body["node_slice_digest"])
 			}
 		}

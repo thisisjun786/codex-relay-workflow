@@ -796,3 +796,77 @@ func TestSchedulerPageDescribesTheInvalidationReading(t *testing.T) {
 		}
 	}
 }
+
+// An edge retired from T names the version T consumed over it; over a decision edge that version is the decision and its revision, not an acceptance.
+func TestRetiredDecisionEdgeNamesTheDecisionItConsumed(t *testing.T) {
+	k := newReleaseKit(t)
+	k.putPlan("dd", 0, "dd-r1", addRelNode("S", dag.NodeNonPR), addRelNode("T", dag.NodeNonPR), addEdge("sd", "S", "T", dag.EdgeDecision, nil))
+	k.invSettle("dd", "S")
+	if _, err := k.sched.RecordDecision(context.Background(), "dd", "parent", DecisionInput{Subject: "merge holds", Digest: dig("subject sd"), Disposition: "approved", AuthorityKind: "user", AuthorityRef: "first"}); err != nil {
+		t.Fatal(err)
+	}
+	k.invSettle("dd", "T")
+	k.putPlan("dd", int(k.snapshot("dd").Revision), "dd-r2", doc{"op": dag.OpRetireEdge, "edge_id": "sd"})
+	reading := k.read("dd")
+	if got := invStaleIDs(reading); !reflect.DeepEqual(got, []string{"T"}) {
+		t.Fatalf("stale = %v, want [T]: %s", got, reading.brief())
+	}
+	obj := invStaleObject(t, reading, "T")
+	if reading.node("T").Reason != "stale:edge:sd" || invField(obj, "cause") != "edge_retired" || invField(obj, "predecessor_node_id") != "S" || invField(obj, "consumed_decision") == nil ||
+		!strings.Contains(reading.node("T").Detail, "decision") {
+		t.Fatalf("T = %+v %v", reading.node("T"), obj)
+	}
+	invAssertReasons(t, reading)
+}
+
+// The digest a stale reading prints must not depend on the size of a file changing: a receipt may declare an artifact without its size, and BuildManifest then reads the size of the file as it is.
+// T consumed S's decision and U's artifact; S changes and the decision is approved again, so T is stale because of the edge sd and is rebuilt completely. U's receipt declares no size, and the file
+// grows between two readings: the rebuilt manifest digest the reading prints stays as it was.
+func TestAnArtifactSizeThatChangesDoesNotMoveTheRebuiltDigest(t *testing.T) {
+	k := newReleaseKit(t)
+	k.putPlan("sz", 0, "sz-r1", addRelNode("S", dag.NodeNonPR), addRelNode("U", dag.NodeNonPR), addRelNode("T", dag.NodeNonPR),
+		addEdge("sd", "S", "T", dag.EdgeDecision, nil), addEdge("ut", "U", "T", dag.EdgeArtifactVerified, nil))
+	k.invSettle("sz", "S")
+	accepted := k.invSettle("sz", "U")
+	in := DecisionInput{Subject: "merge holds", Digest: dig("subject sd"), Disposition: "approved", AuthorityKind: "user", AuthorityRef: "first"}
+	if _, err := k.sched.RecordDecision(context.Background(), "sz", "parent", in); err != nil {
+		t.Fatal(err)
+	}
+	k.invSettle("sz", "T")
+	k.invRevise("sz", "S", "sz-r2", invTitle("a changed title"))
+	in.AuthorityKind, in.AuthorityRef = "owner", "second"
+	if _, err := k.sched.RecordDecision(context.Background(), "sz", "parent", in); err != nil {
+		t.Fatal(err)
+	}
+	// U's receipt declares its artifact without a size (the revision of the list does not cover sizes, so U's acceptance stands)
+	var file string
+	if err := k.s.DB.QueryRow("SELECT json_extract(receipt, '$.manifest[0].path') FROM events WHERE relationship_id = ?", accepted.RelationshipID).Scan(&file); err != nil {
+		t.Fatal(err)
+	}
+	k.exec("UPDATE events SET receipt = json_remove(receipt, '$.manifest[0].bytes') WHERE relationship_id = ?", accepted.RelationshipID)
+	printed := func() string {
+		reading := k.read("sz")
+		if got := invStaleIDs(reading); !reflect.DeepEqual(got, []string{"S", "T"}) {
+			t.Fatalf("stale = %v, want [S T]: %s", got, reading.brief())
+		}
+		digest, _ := invField(invStaleObject(t, reading, "T"), "rebuilt_manifest_digest").(string)
+		if digest == "" {
+			t.Fatalf("T was not rebuilt completely: %v", invStaleObject(t, reading, "T"))
+		}
+		return digest
+	}
+	before := printed()
+	grown, err := os.OpenFile(file, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := grown.WriteString("more\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := grown.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if after := printed(); after != before {
+		t.Fatalf("the rebuilt digest follows the size of an artifact: %s then %s", before, after)
+	}
+}
