@@ -52,13 +52,18 @@ func hostFailure(err error) error {
 	return err
 }
 
-// openScheduler opens the selected store for a scheduler command. Selectors are the spellings a release fingerprints; commands that do not release leave them empty.
-func openScheduler(ctx context.Context, services dispatch.Services) (*Scheduler, func(), error) {
+// openScheduler opens the selected store for a scheduler command. Selectors are the spellings a release fingerprints; commands that do not release leave them empty. The epoch the
+// session holds (--expect-epoch, on the commands that decide) is the one every write of the command is fenced with.
+func openScheduler(ctx context.Context, services dispatch.Services, args dispatch.Args) (*Scheduler, func(), error) {
+	epoch := args.Integer("expect-epoch")
+	if epoch < 0 {
+		return nil, nil, usage("--expect-epoch is a whole number, 0 or more")
+	}
 	s, err := store.Open(ctx, services.Selection.DBPath(), services.SocketPath)
 	if err != nil {
 		return nil, nil, err
 	}
-	return &Scheduler{Store: s}, func() { _ = s.Close() }, nil
+	return &Scheduler{Store: s, ExpectedEpoch: epoch}, func() { _ = s.Close() }, nil
 }
 
 func runReady(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
@@ -67,7 +72,7 @@ func runReady(ctx context.Context, services dispatch.Services, args dispatch.Arg
 	if record && actor == "" {
 		return nil, usage("--record needs --actor: a recorded pass names who asked")
 	}
-	sched, closeStore, err := openScheduler(ctx, services)
+	sched, closeStore, err := openScheduler(ctx, services, args)
 	if err != nil {
 		return nil, err
 	}
@@ -142,7 +147,7 @@ func runRegionDeclare(ctx context.Context, services dispatch.Services, args disp
 	if err != nil {
 		return nil, err
 	}
-	sched, closeStore, err := openScheduler(ctx, services)
+	sched, closeStore, err := openScheduler(ctx, services, args)
 	if err != nil {
 		return nil, err
 	}
@@ -172,7 +177,7 @@ func runRelease(ctx context.Context, services dispatch.Services, args dispatch.A
 	if err != nil {
 		return nil, err
 	}
-	sched, closeStore, err := openScheduler(ctx, services)
+	sched, closeStore, err := openScheduler(ctx, services, args)
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +198,7 @@ func runRelease(ctx context.Context, services dispatch.Services, args dispatch.A
 }
 
 func runReleaseClose(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
-	sched, closeStore, err := openScheduler(ctx, services)
+	sched, closeStore, err := openScheduler(ctx, services, args)
 	if err != nil {
 		return nil, err
 	}
@@ -223,7 +228,7 @@ func runAccept(ctx context.Context, services dispatch.Services, args dispatch.Ar
 		}
 		input.PullRequest = &PRRef{Repository: args.Text("repository"), Number: args.Integer("pull-request")}
 	}
-	sched, closeStore, err := openScheduler(ctx, services)
+	sched, closeStore, err := openScheduler(ctx, services, args)
 	if err != nil {
 		return nil, err
 	}
@@ -248,7 +253,7 @@ func runObserve(ctx context.Context, services dispatch.Services, args dispatch.A
 		}
 		targets = append(targets, Target{Repository: repository, BaseRef: ref})
 	}
-	sched, closeStore, err := openScheduler(ctx, services)
+	sched, closeStore, err := openScheduler(ctx, services, args)
 	if err != nil {
 		return nil, err
 	}
@@ -271,7 +276,7 @@ func runObserve(ctx context.Context, services dispatch.Services, args dispatch.A
 }
 
 func runDecision(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
-	sched, closeStore, err := openScheduler(ctx, services)
+	sched, closeStore, err := openScheduler(ctx, services, args)
 	if err != nil {
 		return nil, err
 	}
@@ -286,7 +291,7 @@ func runDecision(ctx context.Context, services dispatch.Services, args dispatch.
 }
 
 func runCorrect(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
-	sched, closeStore, err := openScheduler(ctx, services)
+	sched, closeStore, err := openScheduler(ctx, services, args)
 	if err != nil {
 		return nil, err
 	}
@@ -352,7 +357,7 @@ func runMergeJudge(ctx context.Context, services dispatch.Services, args dispatc
 	if err != nil {
 		return nil, err
 	}
-	sched, closeStore, err := openScheduler(ctx, services)
+	sched, closeStore, err := openScheduler(ctx, services, args)
 	if err != nil {
 		return nil, err
 	}
@@ -370,7 +375,7 @@ func runMergeRequest(ctx context.Context, services dispatch.Services, args dispa
 	if err != nil {
 		return nil, err
 	}
-	sched, closeStore, err := openScheduler(ctx, services)
+	sched, closeStore, err := openScheduler(ctx, services, args)
 	if err != nil {
 		return nil, err
 	}
@@ -384,7 +389,7 @@ func runMergeRequest(ctx context.Context, services dispatch.Services, args dispa
 }
 
 func runConflictObserve(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
-	sched, closeStore, err := openScheduler(ctx, services)
+	sched, closeStore, err := openScheduler(ctx, services, args)
 	if err != nil {
 		return nil, err
 	}
@@ -404,13 +409,13 @@ func runConflictObserve(ctx context.Context, services dispatch.Services, args di
 }
 
 func runCapBasis(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
-	sched, closeStore, err := openScheduler(ctx, services)
+	sched, closeStore, err := openScheduler(ctx, services, args)
 	if err != nil {
 		return nil, err
 	}
 	defer closeStore()
 	basis := CapBasis{LimitID: args.Text("limit"), Revision: args.Integer("revision"), WMinutes: args.Float("w-minutes"), WSource: args.Text("w-source"),
-		SMinutes: args.Float("s-minutes"), SSource: args.Text("s-source"), DecidedBy: args.Text("actor")}
+		SMinutes: args.Float("s-minutes"), SSource: args.Text("s-source"), DecidedBy: args.Text("actor"), Plan: args.Text("plan")}
 	if err := sched.RecordCapBasis(ctx, basis); err != nil {
 		return nil, hostFailure(err)
 	}
