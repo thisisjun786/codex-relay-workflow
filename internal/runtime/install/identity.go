@@ -119,18 +119,16 @@ func (d *runtimeDir) pointed(path string) *bool {
 	return &yes
 }
 
-// tombstonePrefix names a runtime directory crw install is removing: remove, the reclaim of an
-// abandoned staging and the release of a failed candidate first rename the directory to
-// <destination>/.crw-removing-<name> in one atomic step, then delete that. A kill part-way
-// through the deletion leaves the tombstone, never a directory under the runtime's own name
-// with some of its files (its claim among them) gone. crw install remove finishes one; status
-// lists every one.
-const tombstonePrefix = ".crw-removing-"
+// tombstonePrefix names a runtime directory crw install is removing (staging.TombstonePrefix,
+// which the residue survey of crw doctor reads as well): remove, the reclaim of an abandoned
+// staging and the release of a failed candidate rename the directory to
+// <destination>/.crw-removing-<name> in one atomic step, then delete that.
+const tombstonePrefix = staging.TombstonePrefix
 
-// tombstoneOf is the runtime directory name a tombstone name was renamed from.
+// tombstoneOf is the runtime directory name a tombstone name was renamed from
+// (staging.TombstoneOf).
 func tombstoneOf(name string) (string, bool) {
-	original, ok := strings.CutPrefix(name, tombstonePrefix)
-	return original, ok && runtimeDirectory(original)
+	return staging.TombstoneOf(name)
 }
 
 // errForeignTombstone is discard's answer when something already at the tombstone's name is not
