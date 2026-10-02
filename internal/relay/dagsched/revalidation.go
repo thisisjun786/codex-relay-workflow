@@ -108,7 +108,7 @@ func (s *Scheduler) recordHandOpened(ctx context.Context, q store.Querier, plan 
 	if acc, has, err := loadActiveAcceptance(ctx, q, plan, n.NodeID); err != nil {
 		return err
 	} else if has && acc.ExecutionGeneration != rel.Generation-1 {
-		return refuse(contract.RefusalDispositionConflict, "%s, and the accepted result of %s stands on generation %d, so a correction of it is already open (generation %d is recorded for it): wait for its report and accept it, or report this refusal; another generation is not opened beside it",
+		return refuse(contract.RefusalDispositionConflict, "%s, and the accepted result of %s stands on generation %d, so a correction of it is already open (generation %d is recorded for it): report this refusal and open no further generation, because opening one moved the relationship past the generation that correction is accepted on",
 			notRuled, n.NodeID, acc.ExecutionGeneration, rel.Generation-1)
 	}
 	if suppliedDigest == "" {
