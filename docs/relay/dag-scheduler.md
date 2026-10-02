@@ -142,6 +142,12 @@ The release is idempotent and never creates a second child. In order:
 6. **Bind** the child to the node (`dag_node_executions`, kind `initial`). The engine already refuses a creation whose model, effort, sandbox or approval policy differ from the request; the bind refuses a
    relationship that is not this node's issue and parent.
 
+**What a replay does not repeat.** A replay continues a frozen intent; it is not a new release. It repeats the checks that decide whether the intent may continue (a tombstoned managed start, the slot's parent and
+project, a returned slot reserved again under the same ceilings, the frozen request's and the stored manifest's digests, the selectors) and sends the same bytes. It does not re-run the reading, the freshness of the
+pinned pull requests, the plan's slice, the base tip or the hashing of the input files: the intent's manifest is what it is, a change that invalidates it is the business of invalidation and adoption (a later issue), and
+the child verifies every input against the manifest before consuming it. A start that was released after its slot was reserved leaves the slot held and the node `blocked:release_abandoned`; the way on is the
+operator's `slot-release` or a plan revision that changes the slice.
+
 The slot is held from step 4 until the parent releases it with the acceptance of a non-PR node or the integration of an implementation node, or an operator does.
 
 ### Input manifest
