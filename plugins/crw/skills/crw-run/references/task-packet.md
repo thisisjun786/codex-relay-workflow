@@ -166,7 +166,9 @@ Workspace ownership:
   socket's whole path must stay under 104 bytes, since Linux refuses a path of 108 bytes or
   more and macOS one of 104 or more, and a test that binds a socket under `TMPDIR` adds its own
   directory and file names to it, so a per-task scratch path used as `TMPDIR` can be too
-  long. Large disposable output goes under a scratch path the packet names separately]
+  long, and even a short one is no proof that a test's socket binds. A test that fails with
+  `bind: invalid argument` under a short `TMPDIR` is reported with its path length, not worked
+  around. Large disposable output goes under a scratch path the packet names separately]
 - Resource delta to report at close: [measured against the baseline above, what this task
   created, changed, retained, shared or cleaned, each with its owner, release condition and
   next action; the working directory, purpose, handle and running state of any process it
@@ -301,10 +303,11 @@ Execution:
   role settings to match the requested model.
 
 Verification:
-[Specific commands, invariants, negative cases, and real UI/API behavior. Name only commands
-that exist in the target repository's Makefile, CI workflow or CI document, each confirmed
-against the packet's baseline commit when the packet is written, and say so where an issue
-text or an earlier packet names a command that does not exist]
+[Specific commands, invariants, negative cases, and real UI/API behavior. Every make target,
+CI check and repository script it names exists, confirmed against the packet's baseline
+commit when the packet is written; say so where an issue text or an earlier packet names one
+that does not exist. A command that runs a tool directly, such as a focused `go test` run,
+is fine once the writer has confirmed that the package and test it names exist]
 [Allowed test data and runtime boundaries]
 
 Return:
@@ -397,8 +400,9 @@ field in brackets where that reduced shape names it differently.
   request's title comes back in `Return:`.
 - Temporary path — a `TMPDIR` or other temporary directory the packet names is short, and the
   packet states the socket path limit, in the `Capacity and large artifacts:` line.
-- Verification commands — every command under `Verification:` was confirmed to exist when the
-  packet was written, against the checkout at the packet's baseline commit. A make target is
+- Verification targets — every make target, CI check and repository script under
+  `Verification:` was confirmed to exist when the packet was written, against the checkout at
+  the packet's baseline commit. A make target is
   confirmed by its rule in the Makefile or in a file the Makefile includes. Read `make -n
   <target>` beside it as supporting evidence: `No rule to make target` means the name is no
   target, and `Nothing to be done for '<target>'` with exit status 0 means make found nothing
@@ -406,8 +410,10 @@ field in brackets where that reduced shape names it differently.
   exists. `make contract` does that beside a `contract/` directory, and a gate that ran it would
   pass with nothing checked. A target with a recipe prints it, or `'<target>' is up to date`. A CI
   check is confirmed by the command in the workflow file or the repository's CI document, run
-  with its help or dry-run mode where it has one. A command nobody could confirm is replaced by
-  the real one, or the packet says that check has no command; it is not passed along.
+  with its help or dry-run mode where it has one. A target nobody could confirm is replaced by
+  the real one, or the packet says that check has no command; it is not passed along. A command
+  that runs a tool directly, such as a focused `go test ./pkg -run Name`, is not a target and is
+  allowed: confirm that its package and test exist (`go test -list Name ./pkg` lists them).
 
 One obligation is new rather than a restatement. Where a workflow with its own goal and
 state is effective, the child's first execution leaves its own activation evidence and
