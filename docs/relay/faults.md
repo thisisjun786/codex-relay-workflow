@@ -900,8 +900,10 @@ goes on from there, and the rotation ends only when a scan reaches the captured 
 costs the same over a long history as over a short one, where a short page used to start the source
 again and read all of it every tick. A source of no more rows than a window is read whole in one
 sweep, as before. What this costs is detection latency: a delivery that becomes held while the scan
-is elsewhere is read when the rotation next reaches it, at most ceil(rows / 4096) ticks later
-instead of the next tick. The presence check of an open `delivery_stalled` fault reaches a delivery's
+is elsewhere is read when the rotation next reaches it. A rotation takes a tick for every 32 rows
+that match, as it always did, a tick for every 4096 rows scanned, and the one that reaches its end,
+so a store of 20,000 deliveries with none held is covered in 5 ticks where one used to cover it.
+The presence check of an open `delivery_stalled` fault reaches a delivery's
 attempts through their (event, attempt number) key, so it is linear in the deliveries and not in the
 deliveries times the attempts.
 

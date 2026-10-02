@@ -445,29 +445,18 @@ func (sw *Sweeper) window() int {
 }
 
 // scanEnd is the last key one sweep reads of a source whose rotation runs from after to until: the
-// window-th key past after, or until itself when no more than a window of keys remain, which is when
-// reached says this sweep ends the rotation. keys selects the one key that has window-1 keys before it
-// within (after, until] and takes the three arguments after, until and window-1.
+// window-th key past after when a key follows it, so that rows remain to be scanned, and until itself
+// when none does, which is when reached says this sweep ends the rotation. keys selects the keys of
+// the source within (after, until] in order, two of them from offset window-1, and takes the three
+// arguments after, until and window-1. Whether a key follows is what ends a rotation, not whether the
+// window's last key is until: a source counted in fewer rows than the range's keys, such as settled
+// attempts among all attempts, may have nothing after its window but keys it does not count.
 func (sw *Sweeper) scanEnd(ctx context.Context, keys string, after, until any) (end any, reached bool, err error) {
-	r, err := sw.Store.One(ctx, keys, after, until, sw.window()-1)
-	if err != nil || r == nil {
+	rows, err := sw.Store.All(ctx, keys, after, until, sw.window()-1)
+	if err != nil || len(rows) < 2 {
 		return until, true, err
 	}
-	end = r[0].Value
-	return end, sameKey(end, until), nil
-}
-
-// sameKey compares two keys of one source, which a database driver hands back as a string or an int64.
-func sameKey(a, b any) bool {
-	switch x := a.(type) {
-	case string:
-		y, ok := b.(string)
-		return ok && x == y
-	case int64:
-		y, ok := b.(int64)
-		return ok && x == y
-	}
-	return false
+	return rows[0][0].Value, false, nil
 }
 
 // windowedPage is pageOf for a source read through scanEnd: a page that did not fill, in a scan that
@@ -651,7 +640,7 @@ func (sw *Sweeper) deliveryFaults(ctx context.Context, product string, cursor an
 		return page{complete: after == nil}, err
 	}
 	afterText, _ := after.(string)
-	end, reached, err := sw.scanEnd(ctx, "SELECT event_id FROM deliveries WHERE event_id > ? AND event_id <= ? ORDER BY event_id LIMIT 1 OFFSET ?", afterText, until)
+	end, reached, err := sw.scanEnd(ctx, "SELECT event_id FROM deliveries WHERE event_id > ? AND event_id <= ? ORDER BY event_id LIMIT 2 OFFSET ?", afterText, until)
 	if err != nil {
 		return page{}, err
 	}
@@ -725,7 +714,7 @@ func (sw *Sweeper) retryFaults(ctx context.Context, product string, cursor any) 
 		return page{complete: after == nil}, err
 	}
 	afterInt, _ := after.(int64)
-	end, reached, err := sw.scanEnd(ctx, "SELECT rowid FROM attempts WHERE internal_state = 'settled' AND rowid > ? AND rowid <= ? ORDER BY rowid LIMIT 1 OFFSET ?", afterInt, until)
+	end, reached, err := sw.scanEnd(ctx, "SELECT rowid FROM attempts WHERE internal_state = 'settled' AND rowid > ? AND rowid <= ? ORDER BY rowid LIMIT 2 OFFSET ?", afterInt, until)
 	if err != nil {
 		return page{}, err
 	}
