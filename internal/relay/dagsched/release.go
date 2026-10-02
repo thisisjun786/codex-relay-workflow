@@ -531,34 +531,52 @@ func (s *Scheduler) replay(ctx context.Context, plan, node, actor string, row re
 		out.Bound, out.RelationshipID, out.Generation, out.ChildTaskID, out.State = true, rid, generation, child, "admitted"
 		return out, nil
 	}
-	// A managed start that was released before it created anything is a tombstone: the engine refuses its request id forever, so no slot is reserved for it and nothing is started.
-	var managedState string
-	if _, err := queryOne(ctx, q, "SELECT state FROM managed_start_requests WHERE request_id = ?", []any{row.Request}, &managedState); err != nil {
+	// Before anything is started, one transaction decides what may continue: a managed start that was released before it created anything is a tombstone (the engine refuses its request
+	// id forever, so nothing is reserved or started for it); a slot held under the subject by another parent or project is not this release's (capacity.Reserve would refuse it, and so do
+	// we); and a slot that was returned is reserved again through the very function a new release uses, under the same ceilings. Reading the tombstone and reserving in separate
+	// transactions would let a release commit in between and leave a slot held for a request that can never start.
+	var project string
+	if _, err := queryOne(ctx, q, "SELECT project_key FROM dag_plans WHERE plan_id = ?", []any{plan}, &project); err != nil {
 		return out, err
 	}
-	if managedState == "released" {
-		return out, refuse(contract.RefusalDispositionConflict, "%s: the managed start %s of the release of %s was released before it created a child; a plan revision that changes the slice is the way on", BlockedReleaseAbandoned, row.Request, node)
+	if s.testBeforeReplayTx != nil {
+		s.testBeforeReplayTx()
 	}
-	if slot == "" {
-		// the slot of an unbound intent was returned (an operator's slot-release, say): no child is created without one, and the reservation is made again under the same ceilings.
-		var project string
-		if _, err := queryOne(ctx, q, "SELECT project_key FROM dag_plans WHERE plan_id = ?", []any{plan}, &project); err != nil {
-			return out, err
-		}
-		var refused error
-		if err := s.Store.Compose(ctx, func(txCtx context.Context, _ *sql.Conn) error {
-			r, err := asRefusal(s.reserve(txCtx, s.Store.Q(txCtx), project, plan, node, actor, row.Digest))
-			refused = r
+	var refused error
+	if err := s.Store.Compose(ctx, func(txCtx context.Context, _ *sql.Conn) error {
+		tx := s.Store.Q(txCtx)
+		var managedState string
+		if _, err := queryOne(txCtx, tx, "SELECT state FROM managed_start_requests WHERE request_id = ?", []any{row.Request}, &managedState); err != nil {
 			return err
-		}); err != nil {
-			return out, err
 		}
-		if refused != nil {
-			return out, refused
+		if managedState == "released" {
+			refused = refuse(contract.RefusalDispositionConflict, "%s: the managed start %s of the release of %s was released before it created a child; a plan revision that changes the slice is the way on", BlockedReleaseAbandoned, row.Request, node)
+			return nil
 		}
-		if out.SlotID, err = s.slotOf(ctx, q, plan, node); err != nil {
-			return out, err
+		var holder, heldProject string
+		held, err := queryOne(txCtx, tx, "SELECT parent_task_id, project_key FROM execution_slots WHERE subject_kind = ? AND subject_key = ? AND state = 'held'", []any{SlotSubjectKind, SlotSubjectKey(plan, node)}, &holder, &heldProject)
+		if err != nil {
+			return err
 		}
+		switch {
+		case held && (holder != actor || heldProject != project):
+			refused = refuse(contract.RefusalDispositionConflict, "the slot of %s is held by %s for project %s, not by %s for project %s, so this release cannot continue under it", node, holder, heldProject, actor, project)
+		case !held:
+			r, err := asRefusal(s.reserve(txCtx, tx, project, plan, node, actor, row.Digest))
+			if err != nil {
+				return err
+			}
+			refused = r
+		}
+		return nil
+	}); err != nil {
+		return out, err
+	}
+	if refused != nil {
+		return out, refused
+	}
+	if out.SlotID, err = s.slotOf(ctx, q, plan, node); err != nil {
+		return out, err
 	}
 	var raw, sum, marker, socket, selector string
 	found, err := queryOne(ctx, q, "SELECT request_json, request_sha256, marker_root, socket, state_selector FROM dag_release_requests WHERE plan_id = ? AND node_id = ? AND manifest_digest = ?",

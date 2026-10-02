@@ -9,6 +9,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/capacity"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
 )
 
 // Criterion c3, c11: a ready node is released to a child through the real managed engine, and the release leaves exactly the rows the protocol says: the intent, the
@@ -374,5 +375,61 @@ func TestInitiativeClampAppliesWhileTheParentIsPaused(t *testing.T) {
 	}
 	if k.count("SELECT COUNT(*) FROM execution_slots WHERE subject_key = ? AND state = 'held'", SlotSubjectKey("rp", "A")) != 0 {
 		t.Fatal("the replay reserved a slot above the initiative's cap")
+	}
+}
+
+// R4-H1 (audit): a slot held under the node's subject by another parent for another project is not this release's, and the replay does not continue under it.
+func TestReleaseReplayRefusesAForeignHeldSlot(t *testing.T) {
+	k := newReleaseKit(t)
+	releasePlan(k.fixture, "rp")
+	k.host.loseFirstCreation = true
+	if res, err := k.release("rp", "A"); err != nil || res.Bound {
+		t.Fatalf("first call = %v %+v", err, res)
+	}
+	ctx := context.Background()
+	c := &capacity.Capacity{Store: k.s, Now: k.clock}
+	if _, err := c.Release(ctx, capacity.Release{SubjectKind: SlotSubjectKind, SubjectKey: SlotSubjectKey("rp", "A"), ReleasedBy: "parent", Reason: "operator"}); err != nil {
+		t.Fatal(err)
+	}
+	now := k.clock()
+	if err := storeseed.InsertScopeBinding(ctx, k.s, store.ScopeBindingsRow{BindingID: "bind-other", Role: "parent", ScopeKind: "project", ScopeKey: "OTHER", TaskID: "other-parent", HostID: "host", Status: "active", Revision: 1, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Reserve(ctx, capacity.Reservation{SubjectKind: SlotSubjectKind, SubjectKey: SlotSubjectKey("rp", "A"), ParentTask: "other-parent", Project: "OTHER", ReservedBy: "other-parent"}); err != nil {
+		t.Fatal(err)
+	}
+	k.holdSlots(6)
+	_, sentBefore := k.host.counts()
+	if _, err := k.release("rp", "A"); refusalReason(err) != "disposition_conflict" {
+		t.Fatalf("replay under another project's slot = %v", err)
+	}
+	if _, sent := k.host.counts(); sent != sentBefore || k.count("SELECT COUNT(*) FROM dag_node_executions") != 0 {
+		t.Fatal("a child was bound under a slot that is not this release's")
+	}
+}
+
+// R4-H2 (audit): the tombstone is read in the transaction that reserves, so a managed start released between an earlier read and the reservation cannot leave a slot held for a request
+// that can never start.
+func TestReleaseReplayTombstoneRaceReclaimsNoSlot(t *testing.T) {
+	k := newReleaseKit(t)
+	releasePlan(k.fixture, "rp")
+	k.host.loseFirstCreation = true
+	if res, err := k.release("rp", "A"); err != nil || res.Bound {
+		t.Fatalf("first call = %v %+v", err, res)
+	}
+	if _, err := (&capacity.Capacity{Store: k.s, Now: k.clock}).Release(context.Background(), capacity.Release{SubjectKind: SlotSubjectKind, SubjectKey: SlotSubjectKey("rp", "A"), ReleasedBy: "parent", Reason: "operator"}); err != nil {
+		t.Fatal(err)
+	}
+	var request string
+	if err := k.s.DB.QueryRow("SELECT managed_request_id FROM dag_releases").Scan(&request); err != nil {
+		t.Fatal(err)
+	}
+	// the managed start is released by another connection after the replay has started and before it reserves
+	k.sched.testBeforeReplayTx = func() { k.exec("UPDATE managed_start_requests SET state = 'released' WHERE request_id = ?", request) }
+	if _, err := k.release("rp", "A"); refusalReason(err) != "disposition_conflict" {
+		t.Fatalf("replay = %v", err)
+	}
+	if k.count("SELECT COUNT(*) FROM execution_slots WHERE subject_kind = 'dag_node' AND state = 'held'") != 0 {
+		t.Fatal("a slot was reserved for a request that can never start")
 	}
 }
