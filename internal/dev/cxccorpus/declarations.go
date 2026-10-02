@@ -11,15 +11,6 @@ import (
 	"strings"
 )
 
-// DeclarationFile is contract/schema/cxc/hook-declarations.json (contract K1): every hook
-// registration plugin.json lists, in manifest order, with its command split into the entry file
-// and arguments the recorder runs.
-type DeclarationFile struct {
-	Description string        `json:"description"`
-	Oracle      string        `json:"oracle"`
-	Legs        []Declaration `json:"legs"`
-}
-
 var hookCommand = regexp.MustCompile(`^node "\$\{PLUGIN_ROOT\}/([^"]+)"((?: [a-z-]+)*)$`)
 
 // ExtractDeclarations reads the oracle's manifest and hook files. A file with one registration
@@ -71,7 +62,7 @@ func ExtractDeclarations(oracle string) (DeclarationFile, error) {
 					}
 					leg := stem
 					if count > 1 {
-						leg = stem + "." + kebab(event)
+						leg = stem + "." + Kebab(event)
 					}
 					out.Legs = append(out.Legs, Declaration{
 						Leg: leg, File: strings.TrimPrefix(rel, "./"), Event: event, Matcher: group.Matcher,
@@ -85,20 +76,6 @@ func ExtractDeclarations(oracle string) (DeclarationFile, error) {
 	return out, nil
 }
 
-func kebab(s string) string {
-	var b strings.Builder
-	for i, r := range s {
-		if r >= 'A' && r <= 'Z' {
-			if i > 0 {
-				b.WriteByte('-')
-			}
-			r += 'a' - 'A'
-		}
-		b.WriteRune(r)
-	}
-	return b.String()
-}
-
 func readJSON(path string, into any) error {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -108,20 +85,4 @@ func readJSON(path string, into any) error {
 		return fmt.Errorf("%s: %w", path, err)
 	}
 	return nil
-}
-
-// LoadDeclarations reads the committed declarations, keyed by leg.
-func LoadDeclarations(root string) (DeclarationFile, map[string]Declaration, error) {
-	var file DeclarationFile
-	if err := readStrict(filepath.Join(root, Declarations), &file); err != nil {
-		return file, nil, err
-	}
-	byLeg := map[string]Declaration{}
-	for _, d := range file.Legs {
-		if _, dup := byLeg[d.Leg]; dup {
-			return file, nil, fmt.Errorf("%s: leg %q twice", Declarations, d.Leg)
-		}
-		byLeg[d.Leg] = d
-	}
-	return file, byLeg, nil
 }

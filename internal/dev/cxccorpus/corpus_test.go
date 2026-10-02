@@ -207,7 +207,7 @@ func TestRecorder_refuses_unsafe_roots(t *testing.T) {
 
 // A given path outside the five roots is refused before anything is written.
 func TestCasePath_stays_under_the_roots(t *testing.T) {
-	c := &caseRoot{root: t.TempDir()}
+	c := &Case{Root: t.TempDir()}
 	for _, rel := range []string{"ws/a", "codex/x/y", "cxc/z", "home/.config/k", "tmp/t"} {
 		if _, err := casePath(c, rel); err != nil {
 			t.Errorf("casePath(%q): %v", rel, err)
