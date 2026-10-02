@@ -30,9 +30,23 @@ func (rc *Reconciler) OpenAttemptCount(ctx context.Context, parent string) (int,
 	return int(row.I("c")), nil
 }
 
+// openAttemptsFrom joins an attempt to its delivery and the delivery's relationship, which owns the parent.
+const openAttemptsFrom = " FROM attempts a JOIN deliveries d ON d.event_id = a.event_id JOIN relationships r ON r.relationship_id = d.relationship_id"
+
+// openParentsSQL is the statement OpenParents runs: the parents of the open attempts (unresolvedWhere).
+// Each of the two terms is read by its own statement, an attempt in flight through attempts_open and a
+// held attempt from the deliveries in the state it needs (deliveries_state). The two terms in one OR
+// span two tables and cannot use an index of either, so SQLite reads every attempt the store has kept
+// on every tick. An attempt that meets both terms is read twice and listed once. Its arguments are
+// HeldUncertain, HeldUncertain and Sending.
+const openParentsSQL = "SELECT DISTINCT parent_task_id FROM (" +
+	"SELECT r.parent_task_id AS parent_task_id" + openAttemptsFrom + " WHERE " + unresolvedInFlight +
+	" UNION ALL SELECT r.parent_task_id AS parent_task_id" + openAttemptsFrom + " WHERE " + unresolvedHeld +
+	") ORDER BY parent_task_id"
+
 // OpenParents is open_parents.
 func (rc *Reconciler) OpenParents(ctx context.Context) ([]string, error) {
-	rows, err := all(ctx, rc.Store, "SELECT DISTINCT r.parent_task_id AS parent_task_id FROM attempts a JOIN deliveries d ON d.event_id = a.event_id JOIN relationships r ON r.relationship_id = d.relationship_id"+unresolvedWhere+" ORDER BY r.parent_task_id", HeldUncertain, HeldUncertain, Sending)
+	rows, err := all(ctx, rc.Store, openParentsSQL, HeldUncertain, HeldUncertain, Sending)
 	out := make([]string, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, r.S("parent_task_id"))
