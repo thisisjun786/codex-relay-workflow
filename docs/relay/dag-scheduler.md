@@ -10,6 +10,20 @@ turn. No predicate here depends on a model's judgement.
 The page follows the DAG execution contract (CRW-182) sections 2, 3, 4, 7 and 8; where the code departs from the contract's wording it
 says so in [Departures](#departures-from-the-contract).
 
+## The goal-free parent's turn
+
+The parent holds no goal and runs no loop. When a relay result, a block or a decision request wakes it, one turn goes like this, and it ends when only waiting remains:
+
+1. `dag-ready --plan P` (add `--record --actor A` to keep the pass): the nodes that are ready, in release order, and for every other live node its one reason. The store is the truth and a wake is only a hint: the same reading is
+   right whether the wake was the first, a duplicate or a late one.
+2. For each ready node, `dag-release` (a node that is already owned is `skip:already_owned` in the reading and a replay in the release: no second child).
+3. For a result that is reported and verified: `dag-accept`; for a correction: `dag-correct --prepare`, the `needs_changes` ruling carrying the line, `dag-correct`; for a decision edge: `dag-decision-record`.
+4. For an accepted pull request: `dag-merge-request`, the merge lane's own commands, `assignment-mark merged`, `dag-integration-observe`.
+5. End the turn. Nothing is resident: the scheduler is a library the relay's commands call over the relay's one store; it adds no daemon, no listener and no database of its own
+   (`TestNoNewStoreOrDaemon`, `TestForkJoinLeavesNoStoreOfItsOwn`).
+
+The scheduler re-implements no I-17 loop or skill, and contract section 10 names no I-17 output that this issue needs.
+
 ## The ready set
 
 `crw relay dag-ready --plan P` reads the plan at its head revision and the relay's execution records and answers, for every live node,
@@ -299,6 +313,25 @@ proof (M4). A forged `completed` (a report that was only staged, never acknowled
 
 ## Departures from the contract
 
-* Contract 7.2 names the `edit_regions` tables for regions; those are two-project agreements keyed by base revision, so per-node declarations have their own table.
-* Every predicate carries the plan id, which the contract's SQL predates.
-* The acceptance digest includes the plan id: acceptance ids are a store-wide key and node ids are plan-local.
+Where the code reads the contract differently, or adds to it, and why:
+
+* Contract 7.2 names the `edit_regions` tables for regions; those are two-project agreements keyed by base revision with no unknown or hotspot rule, so per-node declarations have their own table and reuse only the place vocabulary.
+* Every predicate carries the plan id, which the contract's SQL predates. The acceptance digest includes the plan id too: acceptance ids are a store-wide key and node ids are plan-local.
+* The reading's vocabulary adds `blocked:release_abandoned`, `blocked:evicted` (D-12) and `blocked:stale_predecessor`; `blocked:stale_epoch` is not emitted (coordinator fencing is a later issue). A `blocked_needs_input` receipt reads as `blocked:input_unverified_at_consumption` (B-15).
+* No new refusal reason: an unmet ready predicate reads `disposition_conflict` with the closed reason in the detail, tamper `revision_mismatch`, missing or altered inputs `manifest_unverified` and `scope_escape`, a stale head `merge_candidate_moved`, stale criteria `criteria_set_changed`.
+* Plan-level pause does not exist in the revision operations, so a plan is always active until coordinator fencing.
+* P-DEC-1 reads the plan's project scope; the decision subject stays opaque and a directive satisfies an edge only when its digest equals the edge's (D-09).
+* B-13 is evaluated on `dag_merge_checks` rows, which keep the evidence body; `dag_acceptances.evidence_digest` excludes its body (contract 4.3) and cannot be recomputed.
+* `defer:merge_window` is emitted for a target whose merge turn is in a state that can move the tip (merging, unknown), not for a waiting or holding turn; `defer:ownership_unverified` is a project without exactly one registered parent.
+* E-11 against the shipped one-row-per-output index: the same output ruled again under re-registered criteria is a row of `dag_acceptance_revalidations`, not a second acceptance.
+* A release freezes its exact request bytes (`dag_release_requests`): the managed engine fingerprints the whole request, so a replay must send the same bytes.
+* `stale_base` means the base tip is not contained in the head (strict ruleset, D-11), not that the pull request's own base field differs; contract E-27 only requires `merge_currency_stale` against the new tip.
+* Corrections: the manifest of a correction is prepared before the ruling and travels as a line of the ruling's restoration finding, because the verdict writer opens the generation and sends the message in one transaction.
+* An unknown edit region overlaps everything; a node that edits no repository (`non_pr`) never conflicts.
+
+## Where the code reads the contract (D-19)
+
+The contract cites file and line at an older commit. Every citation of the sections this issue consumes (76 of them) was resolved at that commit and at this baseline: 53 are identical at the cited lines, 23 moved with identical content
+(the largest offsets: `registry.go` +30, `delivery/service.go` +84, `relay.md` +27), none changed and none is gone. The claims the design leans on still hold: nothing outside `capacity` references `execution_slots`; there was no
+ancestor check (this issue adds one); `work_reports` has no product writer; `managed.Start` rejects a different body under one request id; the managed request id limit is unchanged at 128. New since the contract: the plan
+store of CRW-183, and the delivery role gate (`registry.CheckBoundRole`), which no longer withholds a relay-managed parent's completion delivery.
