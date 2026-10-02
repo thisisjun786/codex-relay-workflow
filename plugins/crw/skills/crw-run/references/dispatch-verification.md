@@ -162,8 +162,8 @@ a case whose owner has moved or been reworded before relying on it.
 | S18 | A mismatch found after creation is reconciled on that same task | Same bullet list | Recovery | unchanged |
 | S19 | A child writes its messages, commits, pull request text and receipts in English, while task titles, Linear records and reports to the user stay Korean | [Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution) language paragraph and the packets' `Language:` line | Default settings | added 2026-10-02; partly measured in P-CRW-115, inspected artifacts held, see below |
 | S20 | A relay-managed child that finishes on a goal-continuation or post-restart turn attaches a continuation claim naming the generation's anchor, read from the relay, and does not read the `unassigned_turn` refusal as a delivery defect; a turn of another task stays refused whatever it claims | [Launch packet](task-packet.md#launch-packet) relay bullet on which turn the receipt is emitted from, and [Completing on a later turn of the same child](relay.md#completing-on-a-later-turn-of-the-same-child) | Recovery | added 2026-10-02; did not occur in the receipts read in P-CRW-115, see below |
-| S22 | A candidate whose only block is BEHIND (`merge-evidence --restate` reports just `candidate_behind` and `candidate_moved` with the record's head unchanged, no conflict, every criterion ruled verified at that head) is updated by the parent itself with the forge's update-branch call guarded by that head; the new head must pass `crw skill base-refresh check` (the previous head plus merges of the base, nothing else), have every required job and the `Devin Review` status succeed, and show no thread outside `threadsSeen`, before an expected-head merge. In a DAG-managed project the update comes before `dag-accept`, which records the head it reads | [Refresh the base yourself when only the base moved](merge-readiness.md#refresh-the-base-yourself-when-only-the-base-moved) | Recovery | added 2026-10-03; decided against the code at dev 53c7e4e8 (`dagsched`, `mergeturn`, `evidence`), the helper's tests, and 22 GitHub update-branch merges in this repository that the helper accepts; no live parent run |
-| S22b | What still goes back to the child after a refresh: a conflict, a helper refusal (an edit, a hand resolution or a non-base merge in the head), a required job or the `Devin Review` status failed on the new head, a thread outside `threadsSeen`, and a base that moves after `dag-accept` (the accepted head is pinned and a moved head cannot be accepted again); a job still pending or an unknown reading is waited on, not returned; the correction names the new head and its [restoration block](task-packet.md#restoration-block) has the child fast-forward its worktree to the remote head first | Same section, and [Restoration block](task-packet.md#restoration-block) | Recovery | added 2026-10-03; same basis as S22 |
+| S22 | A candidate whose only block is BEHIND is updated by the parent itself with a guarded update-branch call, then proved again on the new head (the base-refresh check, every required job, the `Devin Review` status, the child's threads) before an expected-head merge; in a DAG-managed project the update comes before `dag-accept` | [Refresh the base yourself when only the base moved](merge-readiness.md#refresh-the-base-yourself-when-only-the-base-moved) | Recovery | added 2026-10-03; basis below |
+| S22b | What still goes back to the child: a conflict, a refusal from the check, a failed job or Devin status or a new thread on the new head, and a base that moves after `dag-accept`; a pending job is waited on; the correction names the new head and has the child fast-forward its worktree first | Same section, and [Restoration block](task-packet.md#restoration-block) | Recovery | added 2026-10-03; same basis, see below |
 S14 and S17 are the pair that is easiest to confuse. S14 removed the readiness turn; S17
 added a capability check the coordinator performs before creating the task. A check that
 happens on the coordinator's side, before anything exists to answer, is not a turn spent
@@ -203,6 +203,18 @@ on the tests and documentation of PR #272, not on a live run. The run does show 
 about the procedure: the generation-2 anchor is not the `standbyTurnId` of the routing
 record, which the managed-start routing text still tells a child to name for a continuation
 claim (an open entry in the refactor backlog's real-use run 3 list).
+
+S22 and S22b rest on a reading of the code and on tests, not on a live parent run. The code
+read is dev 53c7e4e8: `dagsched` (`Accept` records the head the forge shows and refuses the same output
+at another head, `Judge` rules `stale_head` before `stale_base`), `mergeturn` (`merge-turn-ready --head`
+resets readiness, `merge-turn-check` compares the head with any recorded work report) and `evidence`
+(the problems `merge-evidence --restate` raises for a moved head and a moved base). The helper behind
+the check has its own tests, and ten of eleven mutations of it turn named tests red; it accepts all 22
+merges that the forge committed as "Merge branch 'dev' into <branch>" in this repository's history,
+each with exactly the tree git merges from its parents. The `Devin Review` status was read on one
+merge-only head, where it completed in 2 seconds and left no review object; its behaviour on other
+heads was not measured. Not measured at all: the forge's update-branch call on a live pull request,
+an installed runtime, and the rule under load.
 
 ## Negative cases
 
