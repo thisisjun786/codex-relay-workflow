@@ -51,6 +51,29 @@ type pass struct {
 	stopped   bool
 	relations map[string]delivery.Relationship
 	used      [2]map[string]int // reads this tick, by class and relationship
+	// deferred are the turns this pass read that ended failed or interrupted, in the order they were read. Settling
+	// such a turn asks whether a later turn of its generation holds a final child receipt (laterReceipt), and what
+	// turns a staged claim into one is the settlement of a completed turn, so these ends wait until the pass has
+	// read what it will read: a later turn's claim that the pass confirms is then counted, whichever of the two
+	// turns the schedule read first. Among themselves their order does not matter, since settling a failed or
+	// interrupted turn leaves no child receipt for the lookup to count. (Suppressing its staged claim can still
+	// change which revision of a forked lineage is current, and so what the lookup answers for another turn;
+	// that was so when each end was settled as it was read, and is not changed here.)
+	deferred []endedTurn
+}
+
+// endedTurn is a turn that ended failed or interrupted, with the relationship it was read for.
+type endedTurn struct {
+	r    delivery.Relationship
+	turn store.TurnReference
+}
+
+// settleDeferred settles the ends that waited for the reads of the pass.
+func (o *pass) settleDeferred(ctx context.Context) {
+	for _, e := range o.deferred {
+		o.d.settle(ctx, e.r, e.turn, o.report)
+	}
+	o.deferred = nil
 }
 
 // spent reports whether the pass has used the time Policy.MaxObserveSeconds allows it, and says so once. The
@@ -73,6 +96,10 @@ func (o *pass) spent() bool {
 // deal one turn each, round after round. No relationship gets more than its share of a class in a tick, which is
 // what the budget allows each relationship that needs it and never less than Policy.MinRelationshipShare. The pass
 // is bounded by Policy.MaxTurnReads reads and Policy.MaxObserveSeconds of time.
+//
+// A turn that ended completed is settled as it is read. One that ended failed or interrupted waits until the pass
+// has read what it will read (pass.deferred), so that a later turn's staged claim confirmed in the same pass is
+// counted whichever of the two turns was read first.
 func (d *Daemon) observe(ctx context.Context, report *Report) error {
 	budget := d.Policy.MaxTurnReads
 	work, err := d.census(ctx)
@@ -93,6 +120,14 @@ func (d *Daemon) observe(ctx context.Context, report *Report) error {
 	}
 	share := max(1, d.Policy.MinRelationshipShare, budget/len(work))
 	o := &pass{d: d, report: report, start: d.monotonic(), floor: floor, relations: map[string]delivery.Relationship{}, used: [2]map[string]int{{}, {}}}
+	// Whatever ends the loop (the budget, the time, a failure), the failed and interrupted ends it has read are
+	// settled before it returns, as each was when it was read. A cancelled context refuses every store call, and
+	// leaves them to the next tick.
+	defer func() {
+		if ctx.Err() == nil {
+			o.settleDeferred(ctx)
+		}
+	}()
 	for _, next := range order {
 		if o.reads >= budget || o.spent() {
 			break
@@ -109,15 +144,24 @@ func (d *Daemon) observe(ctx context.Context, report *Report) error {
 		}
 		o.reads++
 		o.used[next.class][next.p.id]++
-		if err = d.read(ctx, r, next.t.id, report); err != nil {
+		var turn *store.TurnReference
+		if turn, err = d.read(ctx, r, next.t.id, report); err != nil {
 			return err
+		}
+		switch {
+		case turn == nil:
+		case turn.Status == "completed":
+			d.settle(ctx, r, *turn, report)
+		default:
+			o.deferred = append(o.deferred, endedTurn{r, *turn})
 		}
 	}
 	return nil
 }
 
-// read asks the host about one turn of r, records the attempt and, when the turn ended, settles it.
-func (d *Daemon) read(ctx context.Context, r delivery.Relationship, turnID string, report *Report) (err error) {
+// read asks the host about one turn of r and records the attempt. It returns the turn when it ended and there is
+// something to settle for it, and nil otherwise.
+func (d *Daemon) read(ctx context.Context, r delivery.Relationship, turnID string, report *Report) (_ *store.TurnReference, err error) {
 	turn, e := d.Host.ReadTurn(r.Child.TaskID, turnID)
 	var status, pollErr any
 	if e != nil {
@@ -138,23 +182,24 @@ func (d *Daemon) read(ctx context.Context, r delivery.Relationship, turnID strin
 		_, err := d.Store.Q(tx).ExecContext(tx, "INSERT INTO poll_observations (relationship_id,execution_generation,turn_id,last_status,last_polled_at,last_attempt_at,last_error) VALUES (?,?,?,?,?,?,?) ON CONFLICT(relationship_id,execution_generation,turn_id) DO UPDATE SET last_status=excluded.last_status,last_polled_at=COALESCE(excluded.last_polled_at,poll_observations.last_polled_at),last_attempt_at=excluded.last_attempt_at,last_error=excluded.last_error", r.ID, r.Generation, turnID, status, success, now, pollErr)
 		return err
 	}); err != nil {
-		return err
+		return nil, err
 	}
 	// Python: turn.status not in ("completed", "failed", "interrupted"); a
 	// non-string host status equals none of them.
 	final, _ := statusText(turn)
 	if e != nil || turn == nil || !slices.Contains([]string{"completed", "failed", "interrupted"}, final) {
-		return nil
+		return nil, nil
 	}
 	worth, e := d.worth(ctx, r.Child.TaskID, turnID, r.ID)
-	if e != nil {
-		return e
+	if e != nil || !worth {
+		return nil, e
 	}
-	if worth {
-		d.settle(ctx, r, store.TurnReference{ThreadID: r.Child.TaskID, TurnID: turnID, Status: final}, report)
-	}
-	return nil
+	return &store.TurnReference{ThreadID: r.Child.TaskID, TurnID: turnID, Status: final}, nil
 }
+
+// errNotSilenced is what the settlement transaction answers when the later receipt that silenced the end of a turn
+// no longer does by the time the settlement commits.
+var errNotSilenced = errors.New("the later receipt that silenced the end of the turn no longer holds")
 
 func (d *Daemon) settle(ctx context.Context, r delivery.Relationship, turn store.TurnReference, report *Report) {
 	synthesized, laterTurn, laterEvent := "", "", ""
@@ -166,12 +211,11 @@ func (d *Daemon) settle(ctx context.Context, r delivery.Relationship, turn store
 			return
 		}
 	}
-	if laterEvent != "" {
-		// A later turn of this generation holds a final child receipt whose delivery the parent is
-		// owed, so the end of this one is not news. The turn is still settled below, with no event, so
-		// it is not read again.
-		report.Notes = append(report.Notes, "observation of "+turn.TurnID+" ("+turn.Status+") not asserted: turn "+laterTurn+", admitted after it, holds the final child receipt "+laterEvent+", which is owed to the parent")
-	} else if ended {
+	// When a later turn of this generation holds a final child receipt whose delivery the parent is owed, the
+	// end of this one is not news: the turn is settled below with no event, so it is not read again. That
+	// rests on the lookup above, which was made before the settlement transaction opens, so the transaction
+	// makes it again.
+	if laterEvent == "" && ended {
 		receipt, err := d.Intake.DaemonObservation(ctx, r.ID, turn)
 		if err != nil {
 			if store.RefusalReason(err) == store.ReasonRelationshipNotActive {
@@ -190,6 +234,19 @@ func (d *Daemon) settle(ctx context.Context, r delivery.Relationship, turn store
 	}
 	commit := func(queue bool, refusal error) error {
 		return d.Store.Compose(ctx, func(tx context.Context, conn *sql.Conn) error {
+			if laterEvent != "" {
+				// The transaction holds the writer lock until it commits, so what it finds is what the
+				// settlement is written on. A generation opened or a relationship paused since the first
+				// lookup leaves nothing to silence the end, and the turn is not settled.
+				turnNow, eventNow, err := d.laterReceipt(tx, r.ID, turn)
+				if err != nil {
+					return fmt.Errorf("later receipt lookup failed: %w", err)
+				}
+				if eventNow == "" {
+					return errNotSilenced
+				}
+				laterTurn, laterEvent = turnNow, eventNow
+			}
 			rows, err := d.Store.All(tx, "SELECT event_id FROM events WHERE stage='staged' AND turn_thread_id=? AND turn_id=? AND relationship_id=? ORDER BY first_seen_at", turn.ThreadID, turn.TurnID, r.ID)
 			if err != nil {
 				return err
@@ -256,6 +313,10 @@ func (d *Daemon) settle(ctx context.Context, r delivery.Relationship, turn store
 		d.beforeSettle(turn)
 	}
 	err := commit(true, nil)
+	if errors.Is(err, errNotSilenced) {
+		report.Notes = append(report.Notes, "settlement of "+turn.TurnID+" ("+turn.Status+") withdrawn: the later receipt that silenced it no longer holds; the turn is judged again on the next pass")
+		return
+	}
 	if err != nil {
 		var refused *store.RefusedError
 		if errors.As(err, &refused) {
@@ -270,6 +331,9 @@ func (d *Daemon) settle(ctx context.Context, r delivery.Relationship, turn store
 		report.Notes = append(report.Notes, "settlement rolled back for "+turn.TurnID+": "+err.Error())
 		return
 	}
+	if laterEvent != "" {
+		report.Notes = append(report.Notes, "observation of "+turn.TurnID+" ("+turn.Status+") not asserted: turn "+laterTurn+", admitted after it, holds the final child receipt "+laterEvent+", which is owed to the parent")
+	}
 	report.Observed++
 }
 
@@ -282,7 +346,8 @@ func (d *Daemon) settle(ctx context.Context, r delivery.Relationship, turn store
 //
 // The relationship and its generation are read here, not taken from the pass's earlier load, and the
 // relationship must still be active: a generation opened or a relationship stopped since the load
-// matches nothing, so DaemonObservation decides exactly as it did before.
+// matches nothing, so DaemonObservation decides exactly as it did before. settle makes the lookup a second time
+// inside the transaction that commits a silenced end, so the same holds between the first lookup and the commit.
 //
 // A final event is an accepted receipt, not a report that reached the parent. It counts only when a
 // delivery (not marked superseded) or a delivery intent exists for it, because delivery is then owed
