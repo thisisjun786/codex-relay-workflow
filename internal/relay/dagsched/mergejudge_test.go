@@ -31,14 +31,18 @@ func newJudgeKit(t *testing.T) *judgeKit {
 	return k
 }
 
-// setChecks scripts the checks of the pull request's head: each entry is name:runId:attempt:conclusion (an empty conclusion has not finished).
+// setChecks scripts the checks of the pull request's head: each entry is name:runId:attempt:conclusion[:stamp] (an empty conclusion has not finished).
 func (k *judgeKit) setChecks(specs ...string) {
 	k.t.Helper()
 	k.pr.Checks = nil
 	for _, spec := range specs {
-		f := strings.Split(spec, ":")
+		f := strings.SplitN(spec, ":", 5)
 		attempt := int64(f[2][0] - '0')
-		k.pr.Checks = append(k.pr.Checks, Check{Name: f[0], RunID: f[1], Attempt: attempt, Conclusion: f[3], HeadSHA: k.pr.HeadSHA})
+		check := Check{Name: f[0], RunID: f[1], Attempt: attempt, Conclusion: f[3], HeadSHA: k.pr.HeadSHA}
+		if len(f) == 5 {
+			check.Stamp = f[4]
+		}
+		k.pr.Checks = append(k.pr.Checks, check)
 	}
 	k.forge.by["owner/repo#5"] = k.pr
 }
@@ -624,5 +628,78 @@ func TestMergeRequestKeepsTheLanesRecordOfARepeatedContest(t *testing.T) {
 	}
 	if k.count("SELECT COUNT(*) FROM merge_turns") != 0 {
 		t.Fatal("a turn exists")
+	}
+}
+
+// Everything is computed from the newest reading of each run. A listing that still carries a failed first attempt beside the passing second one is eligible and is the same judgement read
+// again; a failure that a judgement could not count (a check was still running beside it) is not the first failure of a retry round; a reading of a run that is older than the one already
+// judged, in the same attempt, is discarded as well.
+func TestJudgementsAreComputedFromTheNewestReadingOfEachRun(t *testing.T) {
+	t.Run("a listing with two attempts of a run", func(t *testing.T) {
+		k := newJudgeKit(t)
+		k.setChecks("A:1:1:failure", "A:1:2:success", "B:2:1:success")
+		first := k.judge()
+		if !first.Eligible() {
+			t.Fatalf("first = %+v", first)
+		}
+		if again := k.judge(); !again.Eligible() || !again.Replayed {
+			t.Fatalf("the same listing again = %+v", again)
+		}
+		if _, turn, err := k.sched.RequestMergeTurn(context.Background(), "g", "I", "parent", MergeRequestInput{Host: "host"}); err != nil || turn == nil {
+			t.Fatalf("the turn for the same listing = %v %v", err, turn)
+		}
+	})
+	t.Run("failures that were not counted do not open a retry round", func(t *testing.T) {
+		k := newJudgeKit(t)
+		k.setChecks("A:1:1:failure", "B:2:1:")
+		if r := k.judge(); r.Outcome != OutcomeChecksPending || len(r.FailedRequired) != 0 {
+			t.Fatalf("A red beside a running B = %+v", r)
+		}
+		k.setChecks("A:1:2:success", "B:2:1:")
+		k.judge()
+		k.setChecks("A:1:3:failure", "B:2:1:success")
+		first := k.judge()
+		if first.Outcome != OutcomeRetrySameSHA || first.Round != 1 {
+			t.Fatalf("the first counted failure = %+v", first)
+		}
+		if again := k.judge(); again.Outcome != OutcomeRetrySameSHA || !again.Replayed {
+			t.Fatalf("the first counted failure read again = %+v", again)
+		}
+	})
+	t.Run("an older completion of a run in the same attempt", func(t *testing.T) {
+		k := newJudgeKit(t)
+		k.setChecks("A:1:1:failure:2026-10-02T00:00:01Z", "B:2:1:success")
+		k.judge()
+		// the run was reset and completed again at another time, and passed
+		k.setChecks("A:1:1:success:2026-10-02T00:05:00Z", "B:2:1:success")
+		if r := k.judge(); !r.Eligible() {
+			t.Fatalf("the reset run passed = %+v", r)
+		}
+		// a delayed reading of the earlier completion arrives
+		k.setChecks("A:1:1:failure:2026-10-02T00:00:01Z", "B:2:1:success")
+		if _, err := k.sched.Judge(context.Background(), "g", "I", "parent", JudgeInput{}); refusalReason(err) != "merge_candidate_moved" {
+			t.Fatalf("the older completion = %v", err)
+		}
+		if got := strings.Join(k.history(), " "); got != "retry_same_sha:1 eligible:2" {
+			t.Fatalf("history = %s", got)
+		}
+	})
+}
+
+// Names and run identities are opaque texts: two runs whose joined texts would be equal are two runs.
+func TestRunKeysAreNotJoinedTexts(t *testing.T) {
+	head := strings.Repeat("a", 40)
+	a := Check{Name: "A|check-run:11|status:A", RunID: "check-run:11", HeadSHA: head, Attempt: 1, Conclusion: "failure"}
+	b := Check{Name: "A|check-run:11", RunID: "status:A|check-run:11", HeadSHA: head, Attempt: 1, Conclusion: "failure"}
+	if got := reduceRuns(head, []Check{a, b}); len(got) != 2 {
+		t.Fatalf("reduced to %d runs: %v", len(got), got)
+	}
+	fa, fb := failure{Name: a.Name, Run: a.RunID, Attempt: 1}, failure{Name: b.Name, Run: b.RunID, Attempt: 1}
+	if fa == fb || fa.key() == fb.key() {
+		t.Fatal("two different failures compare equal")
+	}
+	round, err := parseFailures(failuresJSON([]failure{fa, fb}))
+	if err != nil || len(round) != 2 || round[0] == round[1] {
+		t.Fatalf("stored and read back = %v %v", round, err)
 	}
 }

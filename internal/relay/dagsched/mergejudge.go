@@ -3,11 +3,8 @@ package dagsched
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
-	"slices"
 	"strconv"
-	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
@@ -37,79 +34,6 @@ const maxRounds = 2
 
 // completedConclusions are the answers a finished check gives; anything else (empty, pending, queued, in_progress) has not finished.
 var completedConclusions = map[string]bool{"success": true, "failure": true, "neutral": true, "skipped": true, "cancelled": true, "timed_out": true, "action_required": true, "startup_failure": true, "stale": true, "error": true}
-
-// checkKey names a run of a check across the readings of it: the name and the opaque run identity (never ordered), whatever attempt or time the reading is at.
-func checkKey(c Check) string { return c.Name + "|" + c.RunID }
-
-// requiredChecks classifies the checks the base branch requires for the exact head of the pull request, the way merge-evidence and the merge lane's own check read them: of every run
-// only its newest attempt counts, every such run of a required name (and of the provider the branch rule names for it) has to be a success, and no run ordering is guessed from the
-// opaque run ids. A required name with no run on that head, or with a run that has not finished, is pending; the runs that finished and are not a success are the failures. They count only
-// when every required check has finished, so one red job seen before its siblings finish never uses up the retry.
-func requiredChecks(pr PullRequest) (pending, failed []string, keys map[string]string) {
-	keys = map[string]string{}
-	newest := map[string]Check{}
-	for _, c := range pr.Checks {
-		if c.HeadSHA != pr.HeadSHA {
-			continue
-		}
-		if cur, ok := newest[c.RunID]; !ok || c.Attempt > cur.Attempt {
-			newest[c.RunID] = c
-		}
-	}
-	runs := make([]string, 0, len(newest))
-	for id := range newest {
-		runs = append(runs, id)
-	}
-	slices.Sort(runs)
-	// what the branch rule requires is a set of (name, integration) pairs: a name with two integrations needs both to have reported, a name with none named is answered by any
-	type need struct{ name, provider string }
-	var needs []need
-	for _, name := range pr.RequiredDeclared {
-		if providers := pr.RequiredProviders[name]; len(providers) > 0 {
-			for _, p := range providers {
-				needs = append(needs, need{name, p})
-			}
-		} else {
-			needs = append(needs, need{name, ""})
-		}
-	}
-	seen := map[string]bool{}
-	for _, n := range needs {
-		answered := false
-		for _, id := range runs {
-			c := newest[id]
-			if c.Name != n.name || (n.provider != "" && c.Provider != n.provider) {
-				continue
-			}
-			answered = true
-			switch {
-			case !completedConclusions[c.Conclusion]:
-				pending = append(pending, n.name+": run "+id+" has not finished")
-			case c.Conclusion != "success":
-				tuple := n.name + "|" + id + "|" + strconv.FormatInt(c.Attempt, 10)
-				if c.Stamp != "" {
-					// when the forge last changed the run: a commit status has no attempt and a check run can be reset in place, so this is what makes a new failure a different failure
-					tuple += "|" + c.Stamp
-				}
-				if !seen[tuple] {
-					seen[tuple] = true
-					failed = append(failed, tuple)
-					keys[tuple] = checkKey(c)
-				}
-			}
-		}
-		if !answered {
-			label := n.name
-			if n.provider != "" {
-				label += " (integration " + n.provider + ")"
-			}
-			pending = append(pending, label+": no run of the head")
-		}
-	}
-	slices.Sort(pending)
-	slices.Sort(failed)
-	return pending, failed, keys
-}
 
 // mergeable reads the relationship of an accepted result for a judgement: not cancelled or paused (contract 3.2), and the caller is its parent. An archived relationship is fine, its child's
 // work ended and the pull request still has to land.
@@ -236,7 +160,7 @@ func (s *Scheduler) Judge(ctx context.Context, plan, node, actor string, in Judg
 			// the eviction of this head of this pull request is final, whichever acceptance recorded it: a new acceptance of the same head does not bring back the retry the head used up.
 			// The acceptance in force carries the eviction too (the reading blocks it from its own history); an acceptance that already has it is only restated.
 			e := history.evicted
-			out.Outcome, out.Reason, out.Round, out.CheckSeq, out.FailedRequired, out.Replayed = e.outcome, e.reason, e.round, e.seq, e.failed, true
+			out.Outcome, out.Reason, out.Round, out.CheckSeq, out.FailedRequired, out.Replayed = e.outcome, e.reason, e.round, e.seq, failureStrings(e.failed), true
 			var ownSeq int64
 			own, err := queryOne(txCtx, tx, "SELECT check_seq FROM dag_merge_checks WHERE acceptance_id = ? AND outcome = ? AND observed_head_sha = ? ORDER BY check_seq LIMIT 1", []any{acc.AcceptanceID, OutcomeEvicted, pr.HeadSHA}, &ownSeq)
 			if err != nil {
@@ -250,10 +174,8 @@ func (s *Scheduler) Judge(ctx context.Context, plan, node, actor string, in Judg
 			out.CheckSeq, out.Replayed = seq, false
 			return err
 		}
-		for _, c := range pr.Checks {
-			if c.HeadSHA == pr.HeadSHA && c.Attempt < history.maxAttempt[checkKey(c)] {
-				return refuseCandidateMoved("the checks read for %s#%d are older than a judgement already recorded for this head (%s at attempt %d, after attempt %d): read the pull request again", forge, number, c.Name, c.Attempt, history.maxAttempt[checkKey(c)])
-			}
+		if old, newer, stale := history.staleReading(pr.HeadSHA, pr.Checks); stale {
+			return refuseCandidateMoved("the checks read for %s#%d are older than a judgement already recorded for this head (%s run %s at attempt %d %s, after attempt %d %s): read the pull request again", forge, number, old.Name, old.RunID, old.Attempt, old.Stamp, newer.Attempt, newer.Stamp)
 		}
 		fresh, err := s.criteriaCurrent(txCtx, tx, cn, acc)
 		if err != nil {
@@ -283,7 +205,7 @@ func (s *Scheduler) Judge(ctx context.Context, plan, node, actor string, in Judg
 		if err != nil {
 			return err
 		}
-		out.Outcome, out.Reason, out.Round, out.CheckSeq, out.FailedRequired, out.Replayed = m.Outcome, m.Reason, m.Round, seq, m.Failed, !appended
+		out.Outcome, out.Reason, out.Round, out.CheckSeq, out.FailedRequired, out.Replayed = m.Outcome, m.Reason, m.Round, seq, failureStrings(m.Failed), !appended
 		return nil
 	})
 	return out, err
@@ -301,122 +223,6 @@ func (s *Scheduler) criteriaCurrent(ctx context.Context, q store.Querier, cn dag
 		return false, err
 	}
 	return cn.CriteriaSetDigest == effective && rows > 0 && distinct == 1 && canonical.String == effective, nil
-}
-
-// judgeChecks applies the required-checks rule (5) to m, given the history of the same head.
-func (s *Scheduler) judgeChecks(m *mergeCheck, h mergeHistory) {
-	pending, failed, keys := requiredChecks(m.Observed)
-	if len(pending) == 0 {
-		// failures count only once every required check has finished; a red job seen beside a running one is not recorded
-		m.Failed = failed
-	}
-	switch {
-	case len(pending) > 0:
-		m.Outcome, m.Reason = OutcomeChecksPending, "required checks have not finished on this head: "+strings.Join(pending, "; ")
-	case len(failed) == 0 && len(m.Observed.CheckProblems) > 0:
-		m.Outcome, m.Reason = OutcomeChecksPending, "the checks of this head are not usable evidence: "+strings.Join(m.Observed.CheckProblems, "; ")
-	case len(failed) == 0:
-		m.Outcome, m.Reason = OutcomeEligible, "every required check passed on this head"
-		if h.failures > 0 {
-			m.Reason = "every required check passed on this head after a recorded failure (a flaky check)"
-		}
-	case h.retries == 0:
-		m.Outcome, m.Round, m.Reason = OutcomeRetrySameSHA, 1, "required checks failed ("+strings.Join(failed, ", ")+"): run them again on the same head, once"
-	case !h.isNewFailure(failed, keys):
-		// the snapshot the retry round was opened on, read again: it is not a second failure
-		m.Outcome, m.Round, m.Reason = OutcomeRetrySameSHA, 1, "required checks failed ("+strings.Join(failed, ", ")+") and the retry round is open: run them again on the same head, once"
-	default:
-		m.Outcome, m.Round, m.Reason = OutcomeEvicted, maxRounds, "a required check failed again on the same head after its retry ("+strings.Join(failed, ", ")+"): the node left the merge lane"
-	}
-}
-
-// isNewFailure is whether any of the failures is not the failure the retry round was opened on, read again: a tuple no judgement has seen, or a run that a judgement saw not failing (running
-// or passing) since it failed, whatever identity the forge gives its next failure. Another check running again says nothing about this one.
-func (h mergeHistory) isNewFailure(failed []string, keys map[string]string) bool {
-	for _, f := range failed {
-		if !slices.Contains(h.failedBefore, f) || h.rerun[keys[f]] {
-			return true
-		}
-	}
-	return false
-}
-
-type historicRow struct {
-	seq             int64
-	acceptance      string
-	outcome, reason string
-	round           int
-	failed          []string
-}
-
-// mergeHistory is what the judgements of one head already say: how many retry rounds were opened, every failed check seen, and the eviction when there is one.
-type mergeHistory struct {
-	retries  int
-	failures int
-	// rerun: runs (checkKey) that a judgement saw not failing after they had failed
-	rerun map[string]bool
-	// maxAttempt: the newest attempt of each run any judgement of the head read
-	maxAttempt   map[string]int64
-	failedBefore []string
-	evicted      *historicRow
-}
-
-// loadMergeHistory reads what the judgements of one head of a node already say, across every acceptance the node had of it and whichever pull request (or spelling of the repository: the forge
-// does not tell owner/name apart by case) carried it: the checks ran on the commit, so a head that used up its retry or was evicted stays so when the node is accepted again at the same head.
-// The rows come in the order they were written.
-func loadMergeHistory(ctx context.Context, q store.Querier, plan, node, forge, head string) (mergeHistory, error) {
-	h := mergeHistory{rerun: map[string]bool{}, maxAttempt: map[string]int64{}}
-	failedSeen := map[string]bool{}
-	rows, err := q.QueryContext(ctx, "SELECT c.check_seq, c.acceptance_id, c.outcome, c.reason, c.round_no, c.failed_required_json, c.checks_digest, c.evidence_json FROM dag_merge_checks c"+
-		" JOIN dag_acceptances a ON a.acceptance_id = c.acceptance_id JOIN dag_acceptance_forge f ON f.acceptance_id = a.acceptance_id"+
-		" WHERE a.plan_id = ? AND a.node_id = ? AND lower(f.forge_repository) = lower(?) AND c.observed_head_sha = ? ORDER BY c.rowid", plan, node, forge, head)
-	if err != nil {
-		return h, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var r historicRow
-		var failed, digest, evidence string
-		if err := rows.Scan(&r.seq, &r.acceptance, &r.outcome, &r.reason, &r.round, &failed, &digest, &evidence); err != nil {
-			return h, err
-		}
-		// the history decides how many retries are left, so a row that no longer digests to what was recorded (B-13) is not history
-		if recomputed, err := RecomputeEvidenceDigest(evidence); err != nil || recomputed != digest {
-			return h, refuse(contract.RefusalRevisionMismatch, "merge check %d of acceptance %s no longer digests to what was recorded", r.seq, r.acceptance)
-		}
-		if err := json.Unmarshal([]byte(failed), &r.failed); err != nil {
-			return h, fmt.Errorf("a merge check of %s holds a failed list that is not JSON: %w", r.acceptance, err)
-		}
-		if r.outcome == OutcomeRetrySameSHA {
-			h.retries++
-		}
-		seen, err := parseEvidenceChecks(evidence)
-		if err != nil {
-			return h, err
-		}
-		for _, c := range seen {
-			key := checkKey(Check{Name: c.Name, RunID: c.RunID})
-			h.maxAttempt[key] = max(h.maxAttempt[key], c.Attempt)
-			if completedConclusions[c.Conclusion] && c.Conclusion != "success" {
-				failedSeen[key] = true
-			} else if failedSeen[key] {
-				h.rerun[key] = true
-			}
-		}
-		if len(r.failed) > 0 {
-			h.failures++
-			for _, f := range r.failed {
-				if !slices.Contains(h.failedBefore, f) {
-					h.failedBefore = append(h.failedBefore, f)
-				}
-			}
-		}
-		if r.outcome == OutcomeEvicted && h.evicted == nil {
-			row := r
-			h.evicted = &row
-		}
-	}
-	return h, rows.Err()
 }
 
 // predecessorsLanded is rule 3: every live incoming edge that waits for a landing (integrated, or a code pin: a stacked pull request) has its predecessor's accepted head in the edge's target.

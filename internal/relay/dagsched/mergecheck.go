@@ -31,7 +31,7 @@ type mergeCheck struct {
 	Observed   PullRequest
 	BaseTip    string
 	ChecksBase string // the base the checks ran against, when known
-	Failed     []string
+	Failed     []failure
 	Round      int
 	Outcome    string
 	Reason     string
@@ -42,7 +42,7 @@ type mergeCheck struct {
 func (s *Scheduler) appendMergeCheck(ctx context.Context, q store.Querier, m mergeCheck) (seq int64, appended bool, err error) {
 	body := EvidenceBodyOf(m.Observed)
 	digest := EvidenceDigest(body)
-	failed := failedJSON(m.Failed)
+	failed := failuresJSON(m.Failed)
 	var lastSeq int64
 	var outcome, observed, lastDigest, lastFailed, lastTip string
 	var round int
@@ -65,14 +65,6 @@ func (s *Scheduler) appendMergeCheck(ctx context.Context, q store.Querier, m mer
 		"dmc-"+hex.EncodeToString(sum[:])[:32], m.Acceptance.AcceptanceID, seq, m.Acceptance.HeadSHA, m.Observed.HeadSHA, m.BaseTip, checksBase, digest, body.JSON(),
 		failed, m.Round, m.Outcome, m.Reason, s.now())
 	return seq, err == nil, err
-}
-
-func failedJSON(names []string) string {
-	list := make([]any, len(names))
-	for i, n := range names {
-		list[i] = n
-	}
-	return dag.Canonical(list)
 }
 
 // pinnedPredecessor is an incoming code-pinned edge's predecessor as release freshness reads it: its active acceptance and the forge identity the relay recorded.

@@ -89,7 +89,7 @@ func TestRequiredChecksCountEveryRunAtItsNewestAttempt(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			pending, failed, _ := requiredChecks(pr(tc.checks...))
+			pending, failed := requiredChecks(pr(tc.checks...))
 			if len(pending) != tc.pending || len(failed) != tc.failed {
 				t.Fatalf("pending %v failed %v, want %d and %d", pending, failed, tc.pending, tc.failed)
 			}
