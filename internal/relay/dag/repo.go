@@ -186,6 +186,8 @@ func loadState(ctx context.Context, q Queryer, planID, project string, head int6
 
 // Put appends a revision to a plan, in one store transaction:
 //
+//  0. the coordinator epoch the revision names is checked (CheckCoordinatorEpoch): a stale one is
+//     stale_coordinator_epoch, whatever else is true of the request;
 //  1. a request id the plan already recorded returns that revision (Replayed) when the request is the
 //     same one, and conflicts when it is another;
 //  2. an expected parent that is not the plan's head conflicts (the writer lost a race);
@@ -201,6 +203,10 @@ func (r *Repo) Put(ctx context.Context, rev Revision) (Result, error) {
 	digest := RequestDigest(rev)
 	var result Result
 	err = r.Store.Transaction(ctx, func(ctx context.Context, conn *sql.Conn) error {
+		// the fence comes first, before any replay is recognised: a session that does not hold the plan's epoch is refused, and told nothing about what the plan holds (epoch.go)
+		if err := CheckCoordinatorEpoch(ctx, conn, rev.PlanID, rev.ProjectKey, rev.AuthorTaskID, rev.CoordinatorEpoch); err != nil {
+			return err
+		}
 		if existing, found, err := revisionByRequest(ctx, conn, rev.PlanID, rev.RequestID); err != nil {
 			return err
 		} else if found {
