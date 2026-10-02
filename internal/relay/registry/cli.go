@@ -3,10 +3,8 @@ package registry
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"math/big"
 	"os"
 	"strconv"
 	"strings"
@@ -15,7 +13,6 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -48,8 +45,8 @@ func (p parsed) optional(name string) sql.NullString {
 	return sql.NullString{}
 }
 
-func (p parsed) integer(name string) *big.Int {
-	return p.numbers[name].(*big.Int)
+func (p parsed) integer(name string) int64 {
+	return p.numbers[name].(int64)
 }
 
 // command is one relay command of this package: its registration (its name names its argparse
@@ -135,16 +132,6 @@ func cmdDispositionsShow(ctx context.Context, selection store.StateSelection, p 
 	return report, nil
 }
 
-// family is this package's commands' family: a failure no other ending classifies reads as
-// itself, an integer sqlite3 could not bind as its OverflowError however it was wrapped.
-var family = &dispatch.Family{HostDetail: func(err error) string {
-	var overflow *argparse.IntegerOverflow
-	if errors.As(err, &overflow) {
-		return overflow.Error()
-	}
-	return err.Error()
-}}
-
 // register adds commands to the relay command table, each answered by handle.
 func register(commands ...command) {
 	for _, c := range commands {
@@ -152,7 +139,7 @@ func register(commands ...command) {
 		registration.Run = func(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
 			return handle(ctx, services, c, parsedOf(args))
 		}
-		dispatch.Register(family, registration)
+		dispatch.Register(nil, registration)
 	}
 }
 
@@ -372,12 +359,12 @@ func cmdAdmitTurn(ctx context.Context, r *Registry, p parsed) (any, error) {
 	if err := r.AdmitExplicitly(ctx, rid, generation, turn, actor, p.text("reason")); err != nil {
 		return nil, err
 	}
-	return contract.OrderedObject{{Key: "relationship", Value: rid}, {Key: "generation", Value: json.Number(generation.String())},
+	return contract.OrderedObject{{Key: "relationship", Value: rid}, {Key: "generation", Value: generation},
 		{Key: "turn", Value: turn}, {Key: "evidence", Value: "explicit_admission"}}, nil
 }
 
 // AdmitExplicitly is admission.admit_explicitly.
-func (r *Registry) AdmitExplicitly(ctx context.Context, rid string, generation any, turn, actor, detail string) error {
+func (r *Registry) AdmitExplicitly(ctx context.Context, rid string, generation int64, turn, actor, detail string) error {
 	if strings.TrimSpace(turn) == "" {
 		return errors.New("an admitted turn needs an exact turn id")
 	}
@@ -387,13 +374,8 @@ func (r *Registry) AdmitExplicitly(ctx context.Context, rid string, generation a
 	now := r.now()
 	return r.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
 		q := r.Store.Querier(ctx)
-		number, err := argparse.SQLiteInteger(argparse.IntegerValue(generation))
-		if err != nil {
-			return err
-		}
-		generation = number
 		var anchor sql.NullString
-		err = q.QueryRowContext(ctx, "SELECT dispatch_turn_id FROM generations WHERE relationship_id=? AND execution_generation=?", rid, generation).Scan(&anchor)
+		err := q.QueryRowContext(ctx, "SELECT dispatch_turn_id FROM generations WHERE relationship_id=? AND execution_generation=?", rid, generation).Scan(&anchor)
 		if errors.Is(err, sql.ErrNoRows) {
 			return refuse(contract.RefusalUnknownGeneration, "admission needs an existing generation")
 		}

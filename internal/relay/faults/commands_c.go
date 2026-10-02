@@ -4,13 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"math/big"
 	"slices"
 	"sort"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 )
 
 var cNames = []string{"fault-show", "fault-next", "fault-retry", "fault-queue", "fault-cancel", "fault-stage"}
@@ -19,14 +17,14 @@ func cLimit(ctx context.Context, raw, name string, fallback int) (int, error) {
 	if raw == "" {
 		return fallback, nil
 	}
-	n := integerArg(ctx, name, raw)
-	if n == nil || n.Sign() < 1 {
+	n, ok := integerArg(ctx, name, raw)
+	if !ok || n < 1 {
 		return 0, fmt.Errorf("fault_observation_malformed: %s is a positive integer, not %s", name, raw)
 	}
-	if n.Cmp(big.NewInt(1000)) > 0 {
+	if n > 1000 {
 		return 1000, nil
 	}
-	return int(n.Int64()), nil
+	return int(n), nil
 }
 func cView(r row) map[string]any {
 	out := map[string]any{}
@@ -123,9 +121,8 @@ func (e *cMissingFault) Error() string { return "fault not found: " + e.id }
 // Only these checks precede services.faults (and its lazy store) in Python.
 func validateShow(ctx context.Context, a map[string]string) error {
 	if raw := a["--limit"]; raw != "" {
-		n := integerArg(ctx, "--limit", raw)
-		if n.Sign() < 1 {
-			return fmt.Errorf("fault_observation_malformed: --limit is a positive integer, not %s", n.String())
+		if n, ok := integerArg(ctx, "--limit", raw); !ok || n < 1 {
+			return fmt.Errorf("fault_observation_malformed: --limit is a positive integer, not %s", raw)
 		}
 	}
 	id, pub := a["--fault"], a["--publication"]
@@ -210,14 +207,11 @@ func cShow(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
 	}
 	var after int64
 	if raw := a["--after"]; raw != "" {
-		n := integerArg(ctx, "--after", raw)
-		if n == nil || n.Sign() < 0 {
+		n, ok := integerArg(ctx, "--after", raw)
+		if !ok || n < 0 {
 			return nil, fmt.Errorf("fault_observation_malformed: after is a non-negative integer, not %s", raw)
 		}
-		after, e = argparse.SQLiteInteger(n)
-		if e != nil {
-			return nil, e
-		}
+		after = n
 	}
 	clauses := []string{"rowid > ?"}
 	params := []any{after}

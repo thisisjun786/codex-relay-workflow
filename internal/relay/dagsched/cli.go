@@ -221,7 +221,7 @@ func runAccept(ctx context.Context, services dispatch.Services, args dispatch.Ar
 		if !args.Given("repository") || !args.Given("pull-request") {
 			return nil, usage("--repository and --pull-request name a pull request together")
 		}
-		input.PullRequest = &PRRef{Repository: args.Text("repository"), Number: args.Integer("pull-request").Int64()}
+		input.PullRequest = &PRRef{Repository: args.Text("repository"), Number: args.Integer("pull-request")}
 	}
 	sched, closeStore, err := openScheduler(ctx, services)
 	if err != nil {
@@ -331,7 +331,7 @@ func namedPullRequest(args dispatch.Args) (*PRRef, error) {
 	if !args.Given("repository") || !args.Given("pull-request") {
 		return nil, usage("--repository and --pull-request name a pull request together")
 	}
-	return &PRRef{Repository: args.Text("repository"), Number: args.Integer("pull-request").Int64()}, nil
+	return &PRRef{Repository: args.Text("repository"), Number: args.Integer("pull-request")}, nil
 }
 
 func judgeObject(schema string, r JudgeResult) contract.OrderedObject {
@@ -407,7 +407,7 @@ func runCapBasis(ctx context.Context, services dispatch.Services, args dispatch.
 		return nil, err
 	}
 	defer closeStore()
-	basis := CapBasis{LimitID: args.Text("limit"), Revision: args.Integer("revision").Int64(), WMinutes: args.Float("w-minutes"), WSource: args.Text("w-source"),
+	basis := CapBasis{LimitID: args.Text("limit"), Revision: args.Integer("revision"), WMinutes: args.Float("w-minutes"), WSource: args.Text("w-source"),
 		SMinutes: args.Float("s-minutes"), SSource: args.Text("s-source"), DecidedBy: args.Text("actor")}
 	if err := sched.RecordCapBasis(ctx, basis); err != nil {
 		return nil, hostFailure(err)

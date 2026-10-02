@@ -143,7 +143,7 @@ func hostDetail(err error) string {
 	if encode := store.EncodeError(err); encode != nil {
 		return encode.HostDetail()
 	}
-	var overflow *argparse.IntegerOverflow
+	var overflow *store.IntegerOverflow
 	if errors.As(err, &overflow) {
 		return overflow.Error()
 	}
@@ -339,14 +339,8 @@ func cmdRevisionHead(c *cliRun) (any, error) {
 		return nil, err
 	}
 	generation := r.Generation
-	if v := c.opt("--generation"); v != nil {
-		g := argparse.IntegerValue(v)
-		if g.Sign() != 0 {
-			generation, err = argparse.SQLiteInteger(g)
-			if err != nil {
-				return nil, err
-			}
-		}
+	if g, _ := c.opt("--generation").(int64); g != 0 {
+		generation = g
 	}
 	head, err := HeadRevision(c.ctx, d.Store, rid, generation)
 	return Obj{{Key: "relationshipId", Value: rid}, {Key: "executionGeneration", Value: generation}, {Key: "head", Value: head}}, err
