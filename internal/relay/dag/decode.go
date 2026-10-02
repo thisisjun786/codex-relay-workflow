@@ -33,7 +33,8 @@ var hints = map[string]string{
 var (
 	nodeKinds = []string{NodeImplementation, NodeNonPR}
 	edgeKinds = []string{EdgeArtifactVerified, EdgeIntegrated, EdgeDecision}
-	allOps    = []string{OpAddNode, OpUpdateNode, OpReplaceNode, OpRetireNode, OpAddEdge, OpRetireEdge}
+	allOps    = []string{OpAddNode, OpUpdateNode, OpReplaceNode, OpRetireNode, OpAddEdge, OpRetireEdge,
+		OpPauseNode, OpResumeNode, OpCancelNode, OpArchiveNode, OpPausePlan, OpResumePlan}
 )
 
 type decoder struct{ violations []Violation }
@@ -312,11 +313,13 @@ func (d *decoder) change(path string, value any) (Change, bool) {
 			c.Node = d.node(join(path, "node"), obj["node"])
 			c.SupersedesNodeID, _ = d.identifier(path, obj, "supersedes_node_id")
 		}
-	case OpRetireNode:
+	case OpRetireNode, OpPauseNode, OpResumeNode, OpCancelNode, OpArchiveNode:
 		obj, _ := d.object(path, value, []string{"op", "node_id"}, nil)
 		if obj != nil {
 			c.NodeID, _ = d.identifier(path, obj, "node_id")
 		}
+	case OpPausePlan, OpResumePlan:
+		d.object(path, value, []string{"op"}, nil)
 	case OpAddEdge:
 		obj, _ := d.object(path, value, []string{"op", "edge"}, nil)
 		if obj != nil {

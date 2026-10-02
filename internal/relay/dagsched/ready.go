@@ -80,6 +80,7 @@ func (s *Scheduler) Ready(ctx context.Context, q store.Querier, plan string, opt
 		}
 		reading := &NodeReading{NodeID: n.NodeID, IssueKey: n.IssueKey, Kind: n.Kind, State: state.State}
 		readings[n.NodeID] = reading
+		life := lifeOf(snap, n)
 		if state.Owned {
 			reading.Disposition, reading.Reason, reading.Detail = state.Disp, state.Reason, state.Detail
 			if state.State == StateStale {
@@ -87,10 +88,16 @@ func (s *Scheduler) Ready(ctx context.Context, q store.Querier, plan string, opt
 					return Reading{}, err
 				}
 			}
+			life.overlayOwned(reading, state)
 			if state.Holds && n.Kind == dag.NodeImplementation {
 				regions, declared := declarations[n.NodeID]
 				holders = append(holders, holder{NodeID: n.NodeID, Regions: regions, Unknown: !declared})
 			}
+			continue
+		}
+		if !life.active() {
+			// the plan holds the node (paused, cancelled, archived, or the whole plan paused): it is not a candidate whatever its edges say
+			life.holdUnowned(reading)
 			continue
 		}
 		reading.State = StateWaiting
@@ -194,7 +201,7 @@ func (s *Scheduler) Ready(ctx context.Context, q store.Querier, plan string, opt
 	}
 	pass.ReadyCount = selected
 
-	out := Reading{PlanID: plan, PlanRevision: snap.Revision, StateDigest: snap.StateDigest, Pass: pass, Ready: ready}
+	out := Reading{PlanID: plan, PlanRevision: snap.Revision, StateDigest: snap.StateDigest, Pass: pass, Ready: ready, PlanState: snap.PlanState}
 	for _, n := range nodes {
 		out.Nodes = append(out.Nodes, *readings[n.NodeID])
 	}

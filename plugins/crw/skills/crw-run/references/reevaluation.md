@@ -68,6 +68,7 @@ Closed set. A hold names the condition a later pass re-reads, and the row it res
 | `defer:disposition_unreadable` | the store becomes readable | the refused read and its detail |
 | `defer:disposition_contested` | a fresh execution generation | every contested candidate, with no winner chosen |
 | `defer:authority_pending` | the authority case that produced it is answered | the [Start policy](start-policy.md#cases-this-policy-is-accepted-against) case recorded at the start adjudication |
+| `defer:size_check` | the issue is changed and the size check answers `ok`, or the user's approved exception is recorded | the check's report: `decision`, `reasons` and `proposal` |
 | `defer:criteria_contradiction` | the owner of the criteria settles it | both readings, preserved; this is the one hold that goes upward |
 | `skip:already_owned` | not a hold | a responsible child already exists, and it is reused rather than replaced |
 | `skip:out_of_scope` | an authorized scope change admits it | the approved set this run was designated against |
