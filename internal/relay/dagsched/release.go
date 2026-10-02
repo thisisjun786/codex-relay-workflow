@@ -153,8 +153,12 @@ func (s *Scheduler) Release(ctx context.Context, plan, node, actor string, req R
 			s.discardAfterRelease(ctx, frozen, plan, node, err)
 		}
 	}()
-	// 1. replay first
+	// 0. a session that does not hold the plan's epoch decides nothing, and is told nothing about the release (the transactions below check again, where they write)
 	q := s.Store.Q(ctx)
+	if err := s.fence(ctx, q, plan, actor); err != nil {
+		return out, err
+	}
+	// 1. replay first
 	if row, found, err := latestRelease(ctx, q, plan, node); err != nil {
 		return out, err
 	} else if found {
@@ -210,7 +214,7 @@ func (s *Scheduler) Release(ctx context.Context, plan, node, actor string, req R
 	if err != nil {
 		return out, err
 	}
-	if err := s.freshness(ctx, preds); err != nil {
+	if err := s.freshness(ctx, plan, actor, preds); err != nil {
 		return out, err
 	}
 	if s.testAfterFreshness != nil {
@@ -273,6 +277,9 @@ func (s *Scheduler) Release(ctx context.Context, plan, node, actor string, req R
 	var concurrent bool
 	err = s.Store.Compose(ctx, func(txCtx context.Context, _ *sql.Conn) error {
 		tx := s.Store.Q(txCtx)
+		if err := s.fence(txCtx, tx, plan, actor); err != nil {
+			return err
+		}
 		// at most one intent of a node is open: another call that recorded one first is the concurrent release this call replays
 		if _, open, err := latestRelease(txCtx, tx, plan, node); err != nil {
 			return err
@@ -325,15 +332,15 @@ func (s *Scheduler) Release(ctx context.Context, plan, node, actor string, req R
 		at := s.now()
 		if closedBase != "" {
 			_, err = tx.ExecContext(txCtx, "INSERT INTO dag_release_recoveries (plan_id, node_id, manifest_digest, abandoned_request_id, action, successor_request_id, request_sha256, request_json, marker_root, socket, state_selector, reason, recorded_by, coordinator_epoch, recorded_at)"+
-				" VALUES (?,?,?,?,'rereleased',?,?,?,?,?,?,?,?,0,?)", plan, node, digest, closedBase, out.RequestID, shaOf(raw), string(raw), s.Selectors.MarkerRoot, s.Selectors.Socket, s.Selectors.StateSelector,
-				"released again after the close of "+closedBase, actor, at)
+				" VALUES (?,?,?,?,'rereleased',?,?,?,?,?,?,?,?,?,?)", plan, node, digest, closedBase, out.RequestID, shaOf(raw), string(raw), s.Selectors.MarkerRoot, s.Selectors.Socket, s.Selectors.StateSelector,
+				"released again after the close of "+closedBase, actor, s.ExpectedEpoch, at)
 			return err
 		}
 		if _, err := tx.ExecContext(txCtx, "INSERT INTO dag_release_requests (plan_id, node_id, manifest_digest, request_sha256, request_json, marker_root, socket, state_selector, recorded_at) VALUES (?,?,?,?,?,?,?,?,?)",
 			plan, node, digest, shaOf(raw), string(raw), s.Selectors.MarkerRoot, s.Selectors.Socket, s.Selectors.StateSelector, at); err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(txCtx, "INSERT INTO dag_releases (plan_id, node_id, manifest_digest, managed_request_id, coordinator_epoch, decided_at) VALUES (?,?,?,?,0,?)", plan, node, digest, out.RequestID, at)
+		_, err = tx.ExecContext(txCtx, "INSERT INTO dag_releases (plan_id, node_id, manifest_digest, managed_request_id, coordinator_epoch, decided_at) VALUES (?,?,?,?,?,?)", plan, node, digest, out.RequestID, s.ExpectedEpoch, at)
 		return err
 	})
 	if err != nil {
@@ -585,6 +592,9 @@ func (s *Scheduler) replay(ctx context.Context, plan, node, actor string, row re
 	var refused error
 	if err := s.Store.Compose(ctx, func(txCtx context.Context, _ *sql.Conn) error {
 		tx := s.Store.Q(txCtx)
+		if err := s.fence(txCtx, tx, plan, actor); err != nil {
+			return err
+		}
 		// a frozen release is a continuation of an earlier one and creates a child: it is not continued for a node the plan holds or whose frozen inputs the plan ended since, and nothing is reserved for it
 		if err := releaseGate(txCtx, tx, plan, node, row.Digest); err != nil {
 			refused = err
@@ -690,6 +700,9 @@ func (s *Scheduler) startAndBind(ctx context.Context, plan, node, actor string, 
 	}
 	err = s.Store.Compose(ctx, func(txCtx context.Context, _ *sql.Conn) error {
 		q := s.Store.Q(txCtx)
+		if err := s.fence(txCtx, q, plan, actor); err != nil {
+			return err
+		}
 		var issue, parent, kid string
 		var gen int64
 		found, err := queryOne(txCtx, q, "SELECT issue_key, parent_task_id, child_task_id, execution_generation FROM relationships WHERE relationship_id = ?", []any{rid}, &issue, &parent, &kid, &gen)
