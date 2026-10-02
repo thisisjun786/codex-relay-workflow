@@ -25,9 +25,13 @@ type Scheduler struct {
 	Selectors Selectors
 	// Now is the clock of the recorded_at columns; registry.SystemISO when nil. A reading never uses it.
 	Now func() string
+	// ExpectedEpoch is the coordinator epoch the caller's session holds (--expect-epoch): every write that decides checks it inside its own transaction (epoch.go). Zero names no epoch, which an
+	// unclaimed plan accepts.
+	ExpectedEpoch int64
 
 	// Test seams (zero in production): between the unlocked judgement and the intent, after the slot is reserved, and between the managed start and the bind.
 	testBeforeObserveTx      func()
+	testBeforeManifestStore  func()
 	testBetweenJudgeAndAsk   func()
 	testBeforeReplayTx       func()
 	testBeforeAcceptTx       func()
