@@ -21,6 +21,10 @@ func LoadsJSON(data []byte) (any, error) {
 // two leading slashes stay a root of their own where three or more fold to one.
 func PathlibSpelling(value string) string { return pathlibSpelling(value) }
 
+// Normpath is posixpath.normpath (ownership.Normpath): folded lexically, exactly two leading
+// slashes kept.
+func Normpath(value string) string { return ownership.Normpath(value) }
+
 // Absolute is str(Path(value).absolute()) for a path already expanded: the kernel's working
 // directory (os.getcwd, never $PWD's spelling of it) prefixed to a relative path, then the
 // pathlib spelling, nothing resolved and no ".." folded.
@@ -37,7 +41,7 @@ func Abspath(value string) (string, error) {
 		}
 		value = ownership.JoinCwd(cwd, value)
 	}
-	return pythonNormpath(value), nil
+	return Normpath(value), nil
 }
 
 // Dirname is posixpath.dirname: everything before the last slash, trailing slashes dropped unless
