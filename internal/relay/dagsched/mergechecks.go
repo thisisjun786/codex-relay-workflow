@@ -154,7 +154,7 @@ func requiredChecks(pr PullRequest) (pending []string, failed []failure) {
 			case !completedConclusions[c.Conclusion]:
 				pending = append(pending, n.name+": run "+c.RunID+" has not finished")
 			case c.Conclusion != "success":
-				f := failure{Name: c.Name, Run: c.RunID, Attempt: c.Attempt, Stamp: c.Stamp}
+				f := failure{Name: c.Name, Run: c.RunID, Attempt: c.Attempt, Stamp: normalStamp(c.Stamp)}
 				if !seen[f] {
 					seen[f] = true
 					failed = append(failed, f)
