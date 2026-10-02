@@ -1260,6 +1260,13 @@ That comparison is mechanical validity, not a review round. Where the re-read di
 record, the candidate returns to the same child fail-closed; neither the parent nor the supervisor
 reviews on the child's behalf.
 
+One disagreement is the parent's own to remove: a base that moved under an otherwise verified head.
+The parent refreshes that itself under
+[Refresh the base yourself when only the base moved](merge-readiness.md#refresh-the-base-yourself-when-only-the-base-moved),
+and it is the one case where the parent builds the reading of the new head itself, because the
+record it would restate names the head the refresh replaced. Every other disagreement returns as
+above.
+
 Two further things the parent does are not a second review round either. Deciding an acceptance
 the child PROPOSED is the parent's own judgment: the child brings the finding with its reading of
 the effect and the separability, and the parent rules only on whether that residue matters for
@@ -1292,6 +1299,12 @@ A handoff record is invalidated the same way, and a review thread that appears o
 counts: if it is not in the record's `threadsSeen`, the record did not see it and no longer
 describes the candidate. An invalidated record is not a verdict and is not a merge candidate. It
 returns to the child that produced it, through the correction path the assignment already uses.
+
+The one head the parent makes itself, a base refresh under that rule, is a head the child's evidence
+never saw either, and it is handled the same way: the jobs and the review are read again on it, the
+check that it is only the verified head plus merges of the base is run, and no job or review result
+is carried over from the head it replaced. Only the child's judged dispositions of threads that both
+heads show stand.
 
 ## OPS-10 Which system owns which record
 

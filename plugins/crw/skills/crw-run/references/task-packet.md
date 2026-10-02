@@ -904,6 +904,16 @@ says, so read the level first and the fields second:
   required checks and reviews are outstanding on that head. Include the current
   [reviewer policy](merge-readiness.md#disabled-reviewer-policy) when it changed;
   supersede stale review-wait instructions without discarding unresolved findings.
+- When the parent updated the branch itself after the child's report
+  ([refreshing the base](merge-readiness.md#refresh-the-base-yourself-when-only-the-base-moved)),
+  the head named above is the parent's, and the child's local worktree is behind its remote
+  branch. Say so: name the remote head and the head the child reported, and make the first
+  action of the generation to fetch and fast-forward the local branch to that remote head
+  (`git fetch origin`, then `git merge --ff-only origin/<branch>`) before reading, editing or
+  running anything. A local branch that cannot fast-forward holds commits the remote does not
+  have: they are merged with the remote head and reported, never reset, rebased or pushed over
+  the parent's merge. The child's next push is then built on the parent's head, so it keeps the
+  update instead of repeating it.
 - The unresolved findings, each with what would settle it.
 - The single next action this message is asking for.
 - Durable locators for the work the task itself owns: where its plan, its ledger and its
