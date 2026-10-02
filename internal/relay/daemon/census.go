@@ -3,6 +3,7 @@ package daemon
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"maps"
 	"slices"
 
@@ -30,7 +31,8 @@ type pendingTurn struct {
 	pos    int
 	// since is when the turn became pending (the earliest of its reasons), attempt the latest read of it in any
 	// generation: the read loop stores a turn under the relationship's current generation, so an older
-	// generation's anchor is stored under that one.
+	// generation's anchor is stored under that one. Each reason's stamp is judged against the clock before the
+	// earliest is taken (see census), so a reason stamped from before a clock set-back is the earliest there is.
 	since, attempt string
 }
 
@@ -64,23 +66,45 @@ WHERE r.status='active' AND r.superseded_by IS NULL AND g.dispatch_turn_id IS NO
 ORDER BY r.relationship_id, g.execution_generation`
 
 	// What makes a generation_turns row an admission is the store's own predicate (see laterReceiptQuery).
+	//
+	// The join order is fixed with CROSS JOIN. Planned freely, SQLite scans generation_turns whole, the admissions of
+	// every relationship there ever was, archived ones included, and looks up each row's generation and relationship
+	// afterwards. Pinned from the relationships outward, it reaches the rows of an active relationship by their key and
+	// passes over the admissions of active relationships only (the relationships table has no status index, so it is
+	// read whole, one row per relationship there ever was). It still probes assignment_settlements once for each
+	// admission of an active relationship, settled ones included: no stored row says which admission is pending, so
+	// what a tick examines follows those admissions and not only the pending ones (CRW-262 measured it).
 	unsettledAdmissions = `SELECT r.relationship_id AS rid, t.turn_id AS turn, t.admitted_at AS since, 0 AS current
 FROM relationships r
-JOIN generation_turns t ON t.relationship_id=r.relationship_id
-JOIN generations g ON g.relationship_id=t.relationship_id AND g.execution_generation=t.execution_generation
+CROSS JOIN generations g ON g.relationship_id=r.relationship_id
+CROSS JOIN generation_turns t ON t.relationship_id=g.relationship_id AND t.execution_generation=g.execution_generation
 WHERE r.status='active' AND r.superseded_by IS NULL AND g.dispatch_turn_id IS NOT NULL AND g.dispatch_turn_id<>''
   AND t.evidence=('explicit_admission_bound:' || g.dispatch_turn_id)
   AND NOT EXISTS (SELECT 1 FROM assignment_settlements s WHERE s.relationship_id=r.relationship_id AND s.thread_id=r.child_task_id AND s.turn_id=t.turn_id)
 ORDER BY r.relationship_id, t.rowid`
 
-	// The reads of one relationship, by its primary key prefix: only a relationship with a pending turn is asked. One row
-	// per generation a turn was read under; each is judged on its own (see past) before the latest is taken.
-	attemptsOfARelationship = `SELECT turn_id AS turn, last_attempt_at AS attempt FROM poll_observations WHERE relationship_id=?`
+	// The reads of the pending turns of one relationship, by primary key: its generations (a read is stored under the
+	// relationship's current generation, so these are the generations a read sits under) and the turn ids, given as one
+	// JSON array. Only a relationship with a pending turn is asked, and only for its pending turns: the rows of its
+	// other turns (settled ones, whose rows are never deleted) are not asked for. One row per generation a turn was
+	// read under; each is judged on its own (see past) before the latest is taken. It probes once for each generation
+	// of the relationship and each pending turn, so its cost follows those two and not how long the relationship has
+	// lived.
+	attemptsOfPendingTurns = `SELECT turn_id AS turn, last_attempt_at AS attempt FROM poll_observations
+WHERE relationship_id=?1 AND execution_generation IN (SELECT execution_generation FROM generations WHERE relationship_id=?1)
+  AND turn_id IN (SELECT value FROM json_each(?2))`
 )
+
+// reason is one of the reasons a turn is pending, as a query found it: the turn waits since the stamp.
+type reason struct {
+	rid, turn, since string
+	staged           bool
+	how              int
+}
 
 // census returns the active relationships that have a pending turn, in relationship id order.
 func (d *Daemon) census(ctx context.Context) ([]*pending, error) {
-	byID := map[string]*pending{}
+	var reasons []reason
 	for _, q := range []struct {
 		query  string
 		staged bool
@@ -96,27 +120,18 @@ func (d *Daemon) census(ctx context.Context) ([]*pending, error) {
 			if row.Get("current").(int64) != 0 {
 				how = currentAnchor
 			}
-			p := byID[id]
-			if p == nil {
-				p = &pending{id: id, turns: map[string]*pendingTurn{}}
-				byID[id] = p
-			}
-			t := p.turns[turn]
-			if t == nil {
-				t = &pendingTurn{id: turn, how: how, pos: len(p.turns), since: since}
-				p.turns[turn] = t
-			}
-			t.staged = t.staged || q.staged
-			t.how = min(t.how, how)
-			t.since = min(t.since, since)
+			reasons = append(reasons, reason{rid: id, turn: turn, since: since, staged: q.staged, how: how})
 		}
 	}
-	if len(byID) == 0 {
+	if len(reasons) == 0 {
 		return nil, nil
 	}
 	// A stamp later than the clock now was written before the clock was set back, so it is older than anything the
 	// clock stamps now. It counts as the oldest stamp there is; reading the turn replaces it with a valid one, so
 	// turns stamped in a clock's future neither rank behind the turns just read nor hold the same front for ever.
+	// The clock is read after the queries, so a stamp is later than it only when it was written before a set-back,
+	// never because it arrived while they ran. Each reason is judged on its own before the earliest of a turn's
+	// reasons is taken: judged after, a turn with a regressed stamp and a valid one would be ranked by the valid one.
 	now := delivery.ISOOf(d.Clock.Now())
 	past := func(stamp string) string {
 		if stamp > now {
@@ -124,10 +139,31 @@ func (d *Daemon) census(ctx context.Context) ([]*pending, error) {
 		}
 		return stamp
 	}
+	byID := map[string]*pending{}
+	for _, r := range reasons {
+		p := byID[r.rid]
+		if p == nil {
+			p = &pending{id: r.rid, turns: map[string]*pendingTurn{}}
+			byID[r.rid] = p
+		}
+		since := past(r.since)
+		t := p.turns[r.turn]
+		if t == nil {
+			t = &pendingTurn{id: r.turn, how: r.how, pos: len(p.turns), since: since}
+			p.turns[r.turn] = t
+		}
+		t.staged = t.staged || r.staged
+		t.how = min(t.how, r.how)
+		t.since = min(t.since, since)
+	}
 	out := make([]*pending, 0, len(byID))
 	for _, id := range slices.Sorted(maps.Keys(byID)) {
 		p := byID[id]
-		attempts, err := d.Store.All(ctx, attemptsOfARelationship, id)
+		turns, err := json.Marshal(slices.Sorted(maps.Keys(p.turns)))
+		if err != nil {
+			return nil, err
+		}
+		attempts, err := d.Store.All(ctx, attemptsOfPendingTurns, id, string(turns))
 		if err != nil {
 			return nil, err
 		}
@@ -138,7 +174,6 @@ func (d *Daemon) census(ctx context.Context) ([]*pending, error) {
 			}
 		}
 		for _, t := range p.turns {
-			t.since = past(t.since)
 			class := 0
 			if t.staged {
 				class = 1
