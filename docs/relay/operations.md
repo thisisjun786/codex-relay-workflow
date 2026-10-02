@@ -509,13 +509,15 @@ on a shared turn looked permanently unsettled, was re-polled on every round and 
 observation budget forever.
 
 A store from before that table gains it with the backfill an open runs: every observation that
-names an assignment is given its settlement, once. The open records that it ran in `schema_meta`,
-under the key `backfill:assignment_settlements` (value `1`). A store the relay creates carries the
-key from its first moment, and an open that finds it runs the backfill no more: with the identity
-rows and the indexes there as well it writes nothing, so a read-only command neither waits for the
-write lock nor holds it. The daemon writes a settlement in the transaction of the observation it
-belongs to, so no observation the backfill would cover arrives after the key. The backfill and the
-key are written in one transaction.
+names an assignment is given its settlement. A writable open records that it ran in `schema_meta`,
+under the key `backfill:assignment_settlements` (value `1`), in the transaction of the backfill. A
+read-only command records nothing: it leaves the store's rows as it found them, so on a store
+without the key it backfills as it always did, on each open, until the first writable open records
+the key. A store the relay creates carries the key from its first moment, and an open that finds it
+runs the backfill no more: with the identity rows and the indexes there as well it writes nothing,
+so a read-only command neither waits for the write lock nor holds it. The daemon writes a
+settlement in the transaction of the observation it belongs to, so no observation the backfill
+would cover arrives after the key.
 
 So is the work itself. Staged claims are selected and settled per assignment, because a child
 thread can serve several and a claim on one of its turns belongs to exactly one of them.

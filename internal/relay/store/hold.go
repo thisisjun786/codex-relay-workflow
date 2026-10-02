@@ -182,9 +182,11 @@ func ReadOnlyCommand(ctx context.Context) bool {
 // The writer-form open a read command gets takes no SQLite write lock when the store is whole:
 // its identity rows, the settlements-backfill marker and its indexes are all there, as in every
 // store the relay creates, and seedMetadata then writes nothing, so the read neither waits for
-// the daemon's write transaction nor holds up the daemon's next one. The one open that does
-// write is the first of a store from before the marker (settlements still to backfill, once) or
-// one with an index still to install; both are completed here as they always were.
+// the daemon's write transaction nor holds up the daemon's next one. The opens that do write are
+// those of a store from before the marker (a writable open backfills the settlements and
+// records the marker, once; a read command backfills as it always did and leaves the marker to the
+// next writable open) and of one with an index still to install; both are completed here as they
+// always were.
 func openForRead(ctx context.Context, path, socket string) (*Store, error) {
 	resolved, err := refuseLiveState(path)
 	if err != nil {
