@@ -109,7 +109,7 @@ func (s *Scheduler) pinnedPredecessors(ctx context.Context, q store.Querier, pla
 // release form: a reader error or a verdict of unknown is the host's failure and nothing is written, a verdict of stale is refused, a closed or merged pull request is
 // allowed (a predecessor that landed before its successor got capacity keeps its immutable accepted head) and only the head is compared. A failure to read is retryable;
 // a moved head is not.
-func (s *Scheduler) freshness(ctx context.Context, preds []pinnedPredecessor) error {
+func (s *Scheduler) freshness(ctx context.Context, plan, actor string, preds []pinnedPredecessor) error {
 	if len(preds) == 0 {
 		return nil
 	}
@@ -128,6 +128,10 @@ func (s *Scheduler) freshness(ctx context.Context, preds []pinnedPredecessor) er
 			continue
 		}
 		if err := s.Store.Transaction(ctx, func(txCtx context.Context, _ *sql.Conn) error {
+			// the stale_head row is a write of the release that read the forge, and a release of a session that lost the plan's epoch while the forge was read writes nothing
+			if err := s.fence(txCtx, s.Store.Q(txCtx), plan, actor); err != nil {
+				return err
+			}
 			_, _, err := s.appendMergeCheck(txCtx, s.Store.Q(txCtx), mergeCheck{Acceptance: p.Acceptance, Observed: pr, BaseTip: pr.BaseSHA, Round: 1, Outcome: OutcomeStaleHead,
 				Reason: "the pull request head is " + pr.HeadSHA + " and the accepted head is " + p.Acceptance.HeadSHA})
 			return err

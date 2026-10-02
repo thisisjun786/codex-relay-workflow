@@ -218,6 +218,8 @@ func loadLifecycle(ctx context.Context, q Queryer, planID string, head int64) ([
 
 // Put appends a revision to a plan, in one store transaction:
 //
+//  0. the coordinator epoch the revision names is checked (CheckCoordinatorEpoch): a stale one is
+//     stale_coordinator_epoch, whatever else is true of the request;
 //  1. a request id the plan already recorded returns that revision (Replayed) when the request is the
 //     same one, and conflicts when it is another;
 //  2. an expected parent that is not the plan's head conflicts (the writer lost a race);
@@ -233,6 +235,10 @@ func (r *Repo) Put(ctx context.Context, rev Revision) (Result, error) {
 	digest := RequestDigest(rev)
 	var result Result
 	err = r.Store.Transaction(ctx, func(ctx context.Context, conn *sql.Conn) error {
+		// the fence comes first, before any replay is recognised: a session that does not hold the plan's epoch is refused, and told nothing about what the plan holds (epoch.go)
+		if err := CheckCoordinatorEpoch(ctx, conn, rev.PlanID, rev.ProjectKey, rev.AuthorTaskID, rev.CoordinatorEpoch); err != nil {
+			return err
+		}
 		if existing, found, err := revisionByRequest(ctx, conn, rev.PlanID, rev.RequestID); err != nil {
 			return err
 		} else if found {
@@ -608,21 +614,32 @@ func sameRows(a, b State) bool {
 // command opens the store for writing: an invalid first revision, a stale or impossible parent, or
 // a revision that breaks the plan rules is refused here, so a refused request leaves a state
 // directory without a store as it found it. The transaction in Put repeats every check as the
-// authority; this one is a refusal's early form. A failure to read the store is the host's failure
-// and is returned as it is, never handed on to the writing open.
+// authority; this one is a refusal's early form. The coordinator epoch is judged first, as Put judges it: a session that does not hold the plan's epoch hears
+// stale_coordinator_epoch whatever else is wrong with its request, and a request that names an epoch when there is no store has nobody's claim to stand on. A failure to
+// read the store is the host's failure and is returned as it is, never handed on to the writing open.
 func Preflight(ctx context.Context, dbPath string, rev Revision) error {
 	rev, err := Checked(rev)
 	if err != nil {
 		return err
 	}
+	_, statErr := os.Lstat(dbPath)
+	missing := errors.Is(statErr, os.ErrNotExist)
+	if missing && rev.CoordinatorEpoch != 0 {
+		return StaleEpoch("the request holds coordinator epoch %d and nobody has claimed an epoch of plan %s", rev.CoordinatorEpoch, rev.PlanID)
+	}
 	if rev.ExpectedParent == 0 {
+		if !missing {
+			if err := preflightFence(ctx, dbPath, rev); err != nil {
+				return err
+			}
+		}
 		_, _, violations := Apply(State{PlanID: rev.PlanID}, rev)
 		if len(violations) > 0 {
 			return &PlanRejected{Violations: violations}
 		}
 		return nil
 	}
-	if _, err := os.Lstat(dbPath); errors.Is(err, os.ErrNotExist) {
+	if missing {
 		return conflict("the request expects parent revision %d, but there is no relay store, so plan %s has no revision", rev.ExpectedParent, rev.PlanID)
 	}
 	ro, err := store.OpenInPlace(ctx, dbPath, 5*time.Second)
@@ -633,13 +650,24 @@ func Preflight(ctx context.Context, dbPath string, rev Revision) error {
 	return preflightRead(ctx, ro, rev)
 }
 
+// preflightFence is the coordinator-epoch check of Preflight for a first revision, which reads nothing else of the store.
+func preflightFence(ctx context.Context, dbPath string, rev Revision) error {
+	ro, err := store.OpenInPlace(ctx, dbPath, 5*time.Second)
+	if err != nil {
+		return fmt.Errorf("checking the plan before writing: %w", err)
+	}
+	defer ro.Close()
+	return CheckCoordinatorEpoch(ctx, ro, rev.PlanID, rev.ProjectKey, rev.AuthorTaskID, rev.CoordinatorEpoch)
+}
+
 // preflightRead is Preflight's reading of an existing store. Its reads are separate queries, so another
 // writer's commit can land between them; when one of them is this very request (a repeated request racing
 // its own first copy), every later read sees the plan after that commit and the request looks stale or
 // conflicting. So a refusal (a stale parent, a plan the rules reject) is handed on, not given, once the request
 // is found in the log: the writing open answers it with the stored result, and judges it again as the authority.
 // A request that is not in the log is refused as it was. A failure to read the store is the host's and is
-// returned as it is, the look-up included.
+// returned as it is, the look-up included. The coordinator epoch is the exception: its check is the first read, nothing a writer commits during the later reads
+// makes a stale session current, and a session that was replaced and repeats a request it recorded is refused here, not handed on to the writing open.
 func preflightRead(ctx context.Context, q Queryer, rev Revision) error {
 	err := judgeAgainstStore(ctx, q, rev)
 	if err == nil {
@@ -648,6 +676,9 @@ func preflightRead(ctx context.Context, q Queryer, rev Revision) error {
 	var refusal *store.RefusedError
 	if !errors.As(err, &refusal) {
 		return err // a failure to read the store is the host's, and a request is not looked up again to hide it
+	}
+	if isStaleEpoch(refusal) {
+		return err
 	}
 	_, found, lookup := revisionByRequest(ctx, q, rev.PlanID, rev.RequestID)
 	if lookup != nil {
@@ -660,6 +691,9 @@ func preflightRead(ctx context.Context, q Queryer, rev Revision) error {
 }
 
 func judgeAgainstStore(ctx context.Context, ro Queryer, rev Revision) error {
+	if err := CheckCoordinatorEpoch(ctx, ro, rev.PlanID, rev.ProjectKey, rev.AuthorTaskID, rev.CoordinatorEpoch); err != nil {
+		return err
+	}
 	if _, found, err := revisionByRequest(ctx, ro, rev.PlanID, rev.RequestID); err != nil {
 		return err
 	} else if found {
