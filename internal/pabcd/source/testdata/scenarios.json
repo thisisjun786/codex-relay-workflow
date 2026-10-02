@@ -215,5 +215,10 @@
    ]
   },
   "script": "printf 'a\\n' > 'ab😀.ts'; git add -A; git commit -qm more; mv 'ab😀.ts' moved.ts; git add -N moved.ts; printf 'pua\\n' > '.ts'"
+ },
+ {
+  "id": "modified_file_captured_from_subdirectory",
+  "cwd": "sub",
+  "script": "printf 'changed\\n' > sub/x.ts"
  }
 ]

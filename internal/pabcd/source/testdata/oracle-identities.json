@@ -312,5 +312,12 @@
   "dirty": true,
   "treeHash": "6c2c4e68b2c5e9e0629cc71425f28cea5dddaf8d363f2d0036dd9cb981445467",
   "statusZ": "IFIgbW92ZWQudHMAYWLwn5iALnRzAD8/IO6AgC50cwA="
+ },
+ "modified_file_captured_from_subdirectory": {
+  "kind": "resolved",
+  "commitSha": "fc65696793ea53998c3f24d39e545e27cfd091f4",
+  "dirty": true,
+  "treeHash": "93d8920de08fcb6bfc32b71e0ca6cceb1890d2fc8a08e0dcc90e50c7b7e8f574",
+  "statusZ": "IE0gc3ViL3gudHMA"
  }
 }

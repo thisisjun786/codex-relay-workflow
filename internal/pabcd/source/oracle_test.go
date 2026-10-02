@@ -18,6 +18,7 @@ type scenario struct {
 	ID      string `json:"id"`
 	Base    string `json:"base"`
 	Script  string `json:"script"` // run with sh -ec in the tree, as the recorder runs it
+	Cwd     string `json:"cwd"`    // where to capture, relative to the tree; empty is its root
 	Options struct {
 		GeneratedPaths []string `json:"generatedPaths"`
 	} `json:"options"`
@@ -76,6 +77,7 @@ func TestOracleParity(t *testing.T) {
 		t.Run(sc.ID, func(t *testing.T) {
 			want, opts := golden[sc.ID], Options{GeneratedPaths: sc.Options.GeneratedPaths}
 			root := build(t, base, sc)
+			dir := filepath.Join(root, sc.Cwd)
 			check := func(what string, got Identity) {
 				t.Helper()
 				if got.Dirty != want.Dirty || got.TreeHash != want.TreeHash {
@@ -83,13 +85,13 @@ func TestOracleParity(t *testing.T) {
 				}
 			}
 			if want.StatusZ != nil {
-				check("recorded status", resolve(root, want.CommitSha, "", []byte(b64(t, *want.StatusZ)), opts))
+				check("recorded status", resolve(dir, want.CommitSha, "", []byte(b64(t, *want.StatusZ)), opts))
 			}
-			got := Capture(root, opts)
+			got := Capture(dir, opts)
 			if got.Kind != want.Kind || got.CommitSha != want.CommitSha {
 				t.Fatalf("capture: kind %s commit %q, oracle kind %s commit %q", got.Kind, got.CommitSha, want.Kind, want.CommitSha)
 			}
-			if want.StatusZ != nil && gitIn(t, root, "status", "--porcelain=v1", "-z", "--untracked-files=all") != b64(t, *want.StatusZ) {
+			if want.StatusZ != nil && gitIn(t, dir, "status", "--porcelain=v1", "-z", "--untracked-files=all") != b64(t, *want.StatusZ) {
 				t.Skip("this host's git prints other status bytes than the recording; the recorded status checked the hashing")
 			}
 			check("capture", got)

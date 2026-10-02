@@ -31,10 +31,11 @@ for (const sc of JSON.parse(readFileSync(scenarioFile, "utf8"))) {
     git(root, "commit", "-qm", "init");
   }
   sh(root, sc.script);
-  const id = captureSourceIdentity(root, sc.options ?? {});
+  const dir = join(root, sc.cwd ?? "");
+  const id = captureSourceIdentity(dir, sc.options ?? {});
   const rec = { kind: id.kind, commitSha: id.commitSha, dirty: id.dirty };
   if (id.treeHash !== undefined) rec.treeHash = id.treeHash;
-  try { rec.statusZ = git(root, "status", "--porcelain=v1", "-z", "--untracked-files=all").toString("base64"); } catch {}
+  try { rec.statusZ = git(dir, "status", "--porcelain=v1", "-z", "--untracked-files=all").toString("base64"); } catch {}
   out[sc.id] = rec;
   rmSync(root, { recursive: true, force: true });
 }
