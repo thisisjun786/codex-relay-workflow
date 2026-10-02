@@ -386,6 +386,10 @@ Apply [Child task titles](references/task-packet.md#child-task-titles):
 spaces; exclude the issue code and separator). Supply the title through the supported
 creation field, verify the actual title by task ID, and correct it on the same
 managed task when supported. The packet's title alone is not app-state evidence.
+That title names the Codex task, not the pull request, which the child titles in English under
+`Language:` ([Child task titles](references/task-packet.md#child-task-titles)). A temporary
+directory the packet names is short, and every make target, CI check and script it names for
+verification was confirmed to exist when the packet was written ([First full assignment required fields](references/task-packet.md#first-full-assignment-required-fields)).
 
 Apply [Independent implementation tasks](#independent-implementation-tasks) even
 when no new branch or worktree is needed. Non-PR work uses its permitted working
@@ -769,7 +773,10 @@ per-finding trail, and accept them as the evidence table above defines them.
 Acceptance keeps its own work, which was never the child's. Confirm the reported
 head is the head the pull request has now, the base is current and the merge is
 clean, every accepted criterion maps to evidence that still applies at that head,
-and any finding still open is named. A moved head invalidates the reused result,
+and any finding still open is named. The one head that differs from the report on
+purpose is a base refresh the parent made itself under
+[Merge readiness](references/merge-readiness.md#refresh-the-base-yourself-when-only-the-base-moved),
+confirmed by that rule's own checks. Any other moved head invalidates the reused result,
 and so does a base or a dependency the child never built against: that the base
 is current now is not evidence that its checks ever saw this one, so re-run what
 that change invalidated rather than read the old conclusion again. Where the

@@ -149,8 +149,8 @@ tables (decision D-01):
 * the zone is the twelve `dag_*` tables of the contract: `dag_plans`, `dag_plan_revisions`, `dag_nodes`, `dag_edges`,
   `dag_input_manifests`, and the tables the scheduler writes (`dag_node_executions`, `dag_releases`,
   `dag_acceptances`, `dag_integration_observations`, `dag_decisions`, `dag_cap_basis`; `dag_coordinator_claims` has no writer until
-  coordinator fencing), and seven tables the scheduler appended to it (`dag_merge_checks`, `dag_acceptance_revalidations`, `dag_acceptance_forge`,
-  `dag_passes`, `dag_node_regions`, `dag_release_requests`, `dag_conflict_observations`; see [the scheduler's store](dag-scheduler.md#the-store)). Node-keyed
+  coordinator fencing), and eight tables the scheduler appended to it (`dag_merge_checks`, `dag_acceptance_revalidations`, `dag_acceptance_forge`,
+  `dag_passes`, `dag_node_regions`, `dag_release_requests`, `dag_conflict_observations`, `dag_release_recoveries`; see [the scheduler's store](dag-scheduler.md#the-store)). Node-keyed
   tables carry `plan_id`, so node ids need only be unique within a plan;
 * a command that declares itself read-only never creates the zone: it arrives with the first write open;
 * the zone is an append-only ledger of statements (`internal/relay/store/dag_zone.go`). A shipped statement is never edited; a column a
