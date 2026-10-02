@@ -514,12 +514,13 @@ Global options come BEFORE the subcommand:
 | `generation-open` / `generation-bind` | open a generation; bind its anchor to an exact dispatch turn |
 | `admit-turn` | record an owner-confirmed continuation turn out of band |
 | `relationship-status` / `relationship-resume` | pause, cancel, archive; resume only by restating generation and scope |
+| `relationship-close-merged` | archive the live assignments that are merged with nothing owed; a dry run without `--apply` |
 | `linkage-supervise` | an initiative supervisor over a project parent, by execution or by reference |
 | `linkage-bind` | claim one scope for one task at one level |
 | `linkage-attach` | bind an existing assignment's issue to its project |
 | `linkage-peer` | join two project parents, symmetrically and outside the hierarchy |
 | `linkage-outstanding` | exactly the unfinished work a replacement owner must acknowledge |
-| `linkage-handover` | replace a scope's owner, only by restating the owner and that work |
+| `linkage-handover` | replace a scope's owner, only by restating the owner and that work; merged assignments with nothing owed are closed by it |
 | `linkage-directive` / `linkage-settle` | record an instruction by digest and origin, placed by its `--purpose` so one competing for a place already held is refused where it is recorded; settle one without erasing the other |
 | `linkage-up` / `linkage-down` | walk the hierarchy either way, with its gaps and contention |
 | `linkage-counterpart` | who a message is really addressing, and every problem with the reference |
