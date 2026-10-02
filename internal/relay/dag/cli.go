@@ -151,12 +151,17 @@ func optional(s string) any {
 }
 
 func nodeAnswer(n SnapNode) contract.OrderedObject {
-	return contract.OrderedObject{
+	o := contract.OrderedObject{
 		{Key: "node_id", Value: n.NodeID}, {Key: "issue_key", Value: n.IssueKey}, {Key: "kind", Value: n.Kind},
 		{Key: "title", Value: optional(n.Title)}, {Key: "criteria_set_digest", Value: n.CriteriaSetDigest},
 		{Key: "slice_digest", Value: n.SliceDigest}, {Key: "supersedes_node_id", Value: optional(n.SupersedesNodeID)},
 		{Key: "introduced_rev", Value: n.IntroducedRev},
 	}
+	if n.Lifecycle != "" {
+		// only a node the plan paused, cancelled or archived carries the key: an active node reads as it always did
+		o = append(o, contract.Field{Key: "lifecycle", Value: n.Lifecycle})
+	}
+	return o
 }
 
 func edgeAnswer(e SnapEdge) contract.OrderedObject {
@@ -184,13 +189,16 @@ func snapshotAnswer(s Snapshot, head int64, logVerified any) contract.OrderedObj
 	for i, e := range s.Edges {
 		edges[i] = edgeAnswer(e)
 	}
-	return contract.OrderedObject{
+	o := contract.OrderedObject{
 		{Key: "ok", Value: true}, {Key: "schema", Value: SchemaSnapshot},
 		{Key: "plan_id", Value: s.PlanID}, {Key: "project_key", Value: s.ProjectKey},
 		{Key: "revision_no", Value: s.Revision}, {Key: "head_revision_no", Value: head},
 		{Key: "state_digest", Value: s.StateDigest}, {Key: "digests_verified", Value: true}, {Key: "log_verified", Value: logVerified},
-		{Key: "nodes", Value: nodes}, {Key: "edges", Value: edges},
 	}
+	if s.PlanState != "" {
+		o = append(o, contract.Field{Key: "plan_state", Value: s.PlanState}) // present only while the plan is paused
+	}
+	return append(o, contract.Field{Key: "nodes", Value: nodes}, contract.Field{Key: "edges", Value: edges})
 }
 
 func runLog(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {

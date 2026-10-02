@@ -120,11 +120,10 @@ func ReadAuthorizedSettings(ctx context.Context, s *store.Store, taskID string) 
 }
 
 // EligibleSupervisorMessages lists the claimable supervisor messages due at now, in staging
-// order: queued, deferred_busy or withheld_pre_send, with no hold and no later eligibility.
+// order: those store.SupervisorClaimableSQL selects.
 func EligibleSupervisorMessages(ctx context.Context, s *store.Store, now float64, limit int) ([]store.SupervisorMessagesRow, error) {
 	ids, err := s.All(ctx, "SELECT message_id FROM supervisor_messages"+
-		" WHERE state IN ('queued','deferred_busy','withheld_pre_send') AND hold_reason IS NULL"+
-		"   AND (next_eligible_at IS NULL OR next_eligible_at <= ?)"+
+		" WHERE "+store.SupervisorClaimableSQL("")+
 		" ORDER BY staged_at, message_id LIMIT ?", now, limit)
 	if err != nil {
 		return nil, err

@@ -86,6 +86,7 @@ func applyChanges(prev State, changes []Change, strict bool) (State, Diff, []Vio
 	changedEdge := map[string]int{}
 	addedAt := map[string]int{} // edge id -> index of the change that added it
 	addedNode := map[string]int{}
+	planLifeChange := -1 // index of the change of this revision that paused or resumed the plan
 
 	// target checks that a change addresses a node the parent plan holds and that no other change of
 	// this revision already addressed.
@@ -154,6 +155,22 @@ func applyChanges(prev State, changes []Change, strict bool) (State, Diff, []Vio
 				changedEdge[c.EdgeID] = i
 				delete(liveEdges, c.EdgeID)
 			}
+		case OpPauseNode, OpResumeNode, OpCancelNode, OpArchiveNode:
+			// a lifecycle change addresses a node of the parent plan like every other change to a node does, so two changes to one node in a revision conflict
+			if targetNode(i, p+".node_id", c.NodeID) {
+				if why := transitionRefusal(c.Op, "node "+c.NodeID, currentLife(prev.Lifecycle, c.NodeID)); why != "" {
+					add(RuleInvalidLifecycleTransition, p+".op", "%s: %s", c.Op, why)
+				}
+			}
+		case OpPausePlan, OpResumePlan:
+			if planLifeChange >= 0 {
+				add(RuleConflictingChanges, p+".op", "the plan's lifecycle is already changed by changes[%d] in this revision", planLifeChange)
+				continue
+			}
+			planLifeChange = i
+			if why := transitionRefusal(c.Op, "plan "+prev.PlanID, currentLife(prev.Lifecycle, "")); why != "" {
+				add(RuleInvalidLifecycleTransition, p+".op", "%s: %s", c.Op, why)
+			}
 		}
 	}
 
@@ -186,7 +203,13 @@ func applyChanges(prev State, changes []Change, strict bool) (State, Diff, []Vio
 		return State{}, Diff{}, vs
 	}
 
-	return materialize(prev, live, liveEdges)
+	next, diff, more := materialize(prev, live, liveEdges)
+	var err error
+	if next.Lifecycle, err = applyLifecycle(prev.Lifecycle, next.Revision, changes); err != nil {
+		// unreachable for a revision whose changes passed the checks above; a violation rather than a panic if it is ever not
+		more = append(more, Violation{Rule: RuleInvalidLifecycleTransition, Path: "plan", Detail: err.Error()})
+	}
+	return next, diff, more
 }
 
 func describe(taken map[string]string, id string) string {
@@ -477,9 +500,11 @@ func materialize(prev State, live map[string]liveNode, liveEdges map[string]Edge
 // At is the plan as of revision rev: the rows live then, sorted by id, with the digest of their content.
 func (s State) At(rev int64) Snapshot {
 	snap := Snapshot{PlanID: s.PlanID, ProjectKey: s.ProjectKey, Revision: rev, Nodes: []SnapNode{}, Edges: []SnapEdge{}}
+	var nodeLife map[string]string
+	snap.PlanState, nodeLife = lifeAt(s.Lifecycle, rev)
 	for _, row := range s.Nodes {
 		if row.IntroducedRev <= rev && (row.RetiredRev == 0 || row.RetiredRev > rev) {
-			snap.Nodes = append(snap.Nodes, SnapNode{Node: row.Node, SliceDigest: row.SliceDigest, SupersedesNodeID: row.SupersedesNodeID, IntroducedRev: row.IntroducedRev})
+			snap.Nodes = append(snap.Nodes, SnapNode{Node: row.Node, SliceDigest: row.SliceDigest, SupersedesNodeID: row.SupersedesNodeID, IntroducedRev: row.IntroducedRev, Lifecycle: nodeLife[row.NodeID]})
 		}
 	}
 	for _, row := range s.Edges {
@@ -489,7 +514,7 @@ func (s State) At(rev int64) Snapshot {
 	}
 	sort.Slice(snap.Nodes, func(i, j int) bool { return snap.Nodes[i].NodeID < snap.Nodes[j].NodeID })
 	sort.Slice(snap.Edges, func(i, j int) bool { return snap.Edges[i].EdgeID < snap.Edges[j].EdgeID })
-	snap.StateDigest = stateDigest(snap.PlanID, snap.ProjectKey, snap.Nodes, snap.Edges)
+	snap.StateDigest = stateDigest(snap.PlanID, snap.ProjectKey, snap.PlanState, snap.Nodes, snap.Edges)
 	return snap
 }
 
@@ -498,9 +523,15 @@ func StateFromSnapshot(s Snapshot) State {
 	st := State{PlanID: s.PlanID, ProjectKey: s.ProjectKey, Revision: s.Revision}
 	for _, n := range s.Nodes {
 		st.Nodes = append(st.Nodes, NodeVersion{Node: n.Node, SliceDigest: n.SliceDigest, SupersedesNodeID: n.SupersedesNodeID, IntroducedRev: n.IntroducedRev})
+		if n.Lifecycle != "" {
+			st.Lifecycle = append(st.Lifecycle, LifeRow{NodeID: n.NodeID, State: n.Lifecycle, IntroducedRev: s.Revision})
+		}
 	}
 	for _, e := range s.Edges {
 		st.Edges = append(st.Edges, EdgeRow{Edge: e.Edge, IntroducedRev: e.IntroducedRev})
+	}
+	if s.PlanState != "" {
+		st.Lifecycle = append(st.Lifecycle, LifeRow{State: s.PlanState, IntroducedRev: s.Revision})
 	}
 	return st
 }
