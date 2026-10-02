@@ -39,6 +39,14 @@ func ReplaceStateBackupStep(step func(string) error) (restore func()) {
 	return func() { stateBackupStep = saved }
 }
 
+// ReplaceDirectorySync makes the backup's directory syncs go through wrap, which is given the directory and the real
+// sync, until restored.
+func ReplaceDirectorySync(wrap func(path string, next func(string) error) error) (restore func()) {
+	saved := syncDirectory
+	syncDirectory = func(path string) error { return wrap(path, saved) }
+	return func() { syncDirectory = saved }
+}
+
 // ReplaceBeforeWriteLock runs between every settings or bridge record write's decision and the
 // lock it acts under, until restored.
 func ReplaceBeforeWriteLock(between func(path string)) (restore func()) {

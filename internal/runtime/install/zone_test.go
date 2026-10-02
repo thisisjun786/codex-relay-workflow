@@ -38,6 +38,13 @@ func zoneStore(t *testing.T, h *host) (outside string) {
 	testsupport.Create(t, filepath.Join(h.relayState, "relay.sqlite3"), "", "go")
 	write(t, filepath.Join(h.relayState, "ledger.log"), "line one\nline two\n")
 	write(t, filepath.Join(h.relayState, "scopes", "one", "operations.log"), "nested\n")
+	// modes that are not the defaults: a private file, an executable, a directory with its own
+	write(t, filepath.Join(h.relayState, "tool.sh"), "#!/bin/sh\n")
+	for path, mode := range map[string]os.FileMode{"ledger.log": 0o640, "tool.sh": 0o755, filepath.Join("scopes", "one"): 0o750} {
+		if err := os.Chmod(filepath.Join(h.relayState, path), mode); err != nil {
+			t.Fatal(err)
+		}
+	}
 	outside = filepath.Join(t.TempDir(), "linked-target")
 	write(t, outside, "the bytes behind a link\n")
 	if err := os.Symlink(outside, filepath.Join(h.relayState, "linked.txt")); err != nil {
@@ -135,6 +142,34 @@ func atCopy(t *testing.T, h *host) (seen *map[string]string, restore func()) {
 	return &snapshot, restore
 }
 
+// modesOf is the permission bits of every entry under dir (a link read as the file it names), so a copy that kept the
+// bytes and lost the modes is told from one that kept both.
+func modesOf(t *testing.T, dir string) map[string]os.FileMode {
+	t.Helper()
+	out := map[string]os.FileMode{}
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(dir, path)
+		if rel == "." {
+			return nil
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return err
+		}
+		if info.IsDir() || info.Mode().IsRegular() {
+			out[rel] = info.Mode().Perm()
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
 func nothingAt(t *testing.T, path string) {
 	t.Helper()
 	if _, err := os.Lstat(path); !errors.Is(err, fs.ErrNotExist) {
@@ -201,6 +236,21 @@ func TestTheZoneArrivalWithTheRouteIsBackedUpByteForByteAndThenSwaps(t *testing.
 	backup := backupOf(h, "arrival")
 	sameTree(t, *seen, digestTree(t, backup), "the backup")
 	sameTree(t, withoutSidecars(before), withoutSidecars(digestTree(t, h.relayState)), "the state directory after the swap")
+	// the modes come with the bytes
+	wantModes, gotModes := modesOf(t, h.relayState), modesOf(t, backup)
+	for path, mode := range wantModes {
+		if strings.HasSuffix(path, "-wal") || strings.HasSuffix(path, "-shm") {
+			continue
+		}
+		if gotModes[path] != mode {
+			t.Errorf("%s: mode %v in the backup, %v in the state directory", path, gotModes[path], mode)
+		}
+	}
+	for path, mode := range map[string]os.FileMode{"ledger.log": 0o640, "tool.sh": 0o755, filepath.Join("scopes", "one"): 0o750} {
+		if gotModes[path] != mode {
+			t.Errorf("%s: mode %v in the backup, want %v", path, gotModes[path], mode)
+		}
+	}
 	if got := mustRead(t, filepath.Join(backup, "linked.txt")); !bytes.Equal(got, mustRead(t, outside)) {
 		t.Fatalf("the link's bytes: %q", got)
 	}
@@ -751,4 +801,40 @@ func TestARefusalAfterTheBackupStillReportsItOnResumeAndOnRollback(t *testing.T)
 		result, code := install.Rollback(context.Background(), o, "")
 		check(t, h, result, code, backupOf(h, "rollback-after"), next)
 	})
+}
+
+// The backup, its manifest and the directories made for them are synced in their parents once the manifest is written:
+// until then a power loss can keep the files and lose the names that reach them.
+func TestTheBackupAndItsManifestAreSyncedInTheirParents(t *testing.T) {
+	h, _, second, _, next := zoneInstalled(t)
+	zoneStore(t, h)
+	dest := filepath.Join(h.home, "deep", "er", "backup")
+	type call struct {
+		path     string
+		manifest bool
+	}
+	var calls []call
+	restore := install.ReplaceDirectorySync(func(path string, real func(string) error) error {
+		_, err := os.Stat(dest + install.ManifestSuffix)
+		calls = append(calls, call{path, err == nil})
+		return real(path)
+	})
+	defer restore()
+	o := h.options()
+	o.StateBackup = dest
+	result, code := install.Install(context.Background(), o, "update", install.Source{From: second})
+	if code != install.OK || at(result, "swapGate", "stateBackup", "made") != true || h.pointerTarget(t) != next {
+		t.Fatalf("exit %d\n%s", code, golden.Canon(at(result, "swapGate")))
+	}
+	for _, want := range []string{filepath.Join(h.home, "deep", "er"), filepath.Join(h.home, "deep"), h.home} {
+		found := false
+		for _, c := range calls {
+			if c.path == want && c.manifest {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s was not synced after the manifest was written (synced: %v)", want, calls)
+		}
+	}
 }

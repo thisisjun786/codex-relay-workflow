@@ -36,6 +36,9 @@ import (
 // its verification. It is called with "copied".
 var stateBackupStep = func(step string) error { return nil }
 
+// syncDirectory makes a directory's entries durable; a seam so a test can see which directories were synced and when.
+var syncDirectory = syncPath
+
 // ManifestSuffix names the record written beside a backup (not inside it, so the backup holds exactly what the
 // state directory held).
 const ManifestSuffix = ".manifest.json"
@@ -136,6 +139,14 @@ func backupState(ctx context.Context, o Options, dest string) (Object, error) {
 	if err := enoughRoom(filepath.Dir(dest), total); err != nil {
 		return failure(false, "%v", err)
 	}
+	// the nearest directory that exists now: the directories made below it are synced, up to it, once the backup is whole
+	existing := filepath.Dir(dest)
+	for {
+		if _, err := os.Lstat(existing); err == nil || filepath.Dir(existing) == existing {
+			break
+		}
+		existing = filepath.Dir(existing)
+	}
 	if err := os.MkdirAll(filepath.Dir(dest), 0o700); err != nil {
 		return failure(false, "the backup's parent could not be created: %v", err)
 	}
@@ -164,12 +175,12 @@ func backupState(ctx context.Context, o Options, dest string) (Object, error) {
 	}
 	for _, e := range copied {
 		if e.Kind == "dir" {
-			if err := syncPath(filepath.Join(dest, filepath.FromSlash(e.Path))); err != nil {
+			if err := syncDirectory(filepath.Join(dest, filepath.FromSlash(e.Path))); err != nil {
 				return failure(true, "%v", err)
 			}
 		}
 	}
-	if err := syncPath(dest); err != nil {
+	if err := syncDirectory(dest); err != nil {
 		return failure(true, "%v", err)
 	}
 	if err := stateBackupStep("copied"); err != nil {
@@ -203,6 +214,23 @@ func backupState(ctx context.Context, o Options, dest string) (Object, error) {
 			return failure(true, "the copy of %s is not the file it copies (%s against %s)", e.Path, held, e.SHA256)
 		}
 	}
+	// the modes of the source, now that every byte is in place and verified (a mode set earlier could make a copy
+	// unreadable to the verification, a directory first would refuse its own children): files, then directories
+	// deepest first. The directory the backup is made in keeps the 0700 it was created with.
+	for _, e := range copied {
+		if e.Kind != "dir" {
+			if err := os.Chmod(filepath.Join(dest, filepath.FromSlash(e.Path)), fs.FileMode(e.Mode)); err != nil {
+				return failure(true, "the mode of the copy of %s could not be set: %v", e.Path, err)
+			}
+		}
+	}
+	for i := len(copied) - 1; i >= 0; i-- {
+		if e := copied[i]; e.Kind == "dir" {
+			if err := os.Chmod(filepath.Join(dest, filepath.FromSlash(e.Path)), fs.FileMode(e.Mode)); err != nil {
+				return failure(true, "the mode of the copy of %s could not be set: %v", e.Path, err)
+			}
+		}
+	}
 	aggregate, files, bytes := aggregateOf(copied)
 	manifest := map[string]any{
 		"schema": "crw-state-backup/1", "source": source, "destination": dest, "issue": o.Issue, "at": o.stamp(),
@@ -227,6 +255,16 @@ func backupState(ctx context.Context, o Options, dest string) (Object, error) {
 	}
 	if err := out.Close(); err != nil {
 		return failure(true, "the manifest could not be closed: %v", err)
+	}
+	// the entries of the backup and of its manifest live in their parent, and in the directories made above it: until
+	// those are synced a power loss can keep the files and lose the names that reach them
+	for dir := filepath.Dir(dest); ; dir = filepath.Dir(dir) {
+		if err := syncDirectory(dir); err != nil {
+			return failure(true, "%v", err)
+		}
+		if dir == existing || filepath.Dir(dir) == dir {
+			break
+		}
 	}
 	return Object{field("requested", true), field("made", true), field("destination", dest), field("manifest", manifestPath), field("source", source),
 		field("files", files), field("bytes", bytes), field("skipped", strs(skipped)), field("aggregateDigest", aggregate), field("kept", true), field("at", o.stamp()),

@@ -355,12 +355,12 @@ and the refusal names the route: `crw install update --from ... --backup-state-t
 operator's acknowledgement, and under it the command itself takes the OPS-4.5 backup, so the backup is guaranteed by the route and not by
 anyone's memory. Inside the promotion lock, after the daemon-stopped and no-open-attempt cells have answered and before anything is promoted,
 it copies the whole state directory the gate read to `DIR`: copy only, byte for byte, the source opened read-only and nothing moved, recreated
-or deleted, here or on a failure. Directories and regular files are copied with their bytes; a symbolic link to a regular file is copied as the
+or deleted, here or on a failure. Directories and regular files are copied with their bytes and, once every byte is in place and verified, their permission bits (the directory the backup is made in stays 0700); a symbolic link to a regular file is copied as the
 file's bytes under the link's name (a link alone would back up nothing), and when `relay.sqlite3` is such a link the real file's `-wal` and `-shm`
 are copied beside it, so a restore opens with the commits only the log held; a socket, a FIFO or a device is listed as skipped. Each file is
 hashed while it is read and synced; then the state directory is read again, and the listing, every size and every file's digest, and the digest of
 every file in the copy, must be what was copied. Any difference, in any file, refuses the swap ("the state directory changed under the copy"):
-the copy is of one moment or it is not made. `DIR` and its manifest must not exist, must not lie inside the state directory, and must not lie
+the copy is of one moment or it is not made. The backup, its manifest and the directories made for them are synced in their parents after the manifest is written, so a power loss cannot keep the files and lose the names that reach them. `DIR` and its manifest must not exist, must not lie inside the state directory, and must not lie
 inside the runtime destination tree (a failed run removes its candidate runtime, and a backup there would go with it); the free space on its
 filesystem must cover the directory. The record is written last, beside the backup and not inside it (`DIR.manifest.json`: source, destination,
 time, issue, every entry with its size, mode and digest, what was skipped, an aggregate digest), and the command's result carries the same facts
