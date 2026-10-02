@@ -593,6 +593,17 @@ func Test_CRW288_settled_boundaries(t *testing.T) {
 				" reval_seq, revalidated_by, revalidated_at) VALUES (?,?,?,?,?,?,?,?)",
 				"reval-1", "acc-"+rid+"-g1", "new-set", "ev-"+rid+"-g1", "verdict-turn", 1, parent, fakeISO)
 		}, true},
+		{"a corrected plan node: an older unaccepted execution and an accepted merged correction", func(w *world, rid string) {
+			// generation 1 was ruled needs_changes and never accepted; generation 2 is accepted and merged. Only the current
+			// acceptance is active, and the older execution row must not hold the relationship open.
+			w.planNode(rid, 1)
+			if _, err := w.r.OpenGeneration(w.ctx, rid, "dispatch-fix", "needs_changes_revision", sql.NullString{}); err != nil {
+				w.t.Fatal(err)
+			}
+			w.planNode(rid, 2)
+			event, hash := w.mergeAt(rid, 2)
+			w.accept(rid, event, hash, 2)
+		}, true},
 		{"a new generation opened after the mark", func(w *world, rid string) {
 			if _, err := w.r.OpenGeneration(w.ctx, rid, "dispatch-fix", "needs_changes_revision", sql.NullString{}); err != nil {
 				w.t.Fatal(err)

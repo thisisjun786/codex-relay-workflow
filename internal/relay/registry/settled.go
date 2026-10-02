@@ -103,6 +103,9 @@ func (r *Registry) owedOf(ctx context.Context, rid string, mark contract.Ordered
 	if err != nil || zone == nil {
 		return "", err
 	}
+	// The acceptance is looked up by the merge mark's own relationship, generation, event and revision, not by the
+	// generation of the execution row, so a node's older executions (a correction leaves one row per generation) do not
+	// hold it open once the current head is accepted: every row of the node asks the same question.
 	event, generation, revision := field(mark, "eventId"), markNumber(mark, "executionGeneration"), field(mark, "revisionHash")
 	query, args := "SELECT e.node_id AS node FROM dag_node_executions e WHERE e.relationship_id = ?"+
 		" AND NOT EXISTS (SELECT 1 FROM dag_acceptances a WHERE a.plan_id = e.plan_id AND a.node_id = e.node_id AND a.state = 'active'"+
