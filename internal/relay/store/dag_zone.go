@@ -278,4 +278,129 @@ WHEN OLD.retired_rev IS NOT NULL OR NEW.retired_rev IS NULL
 BEGIN SELECT RAISE(ABORT, 'dag_edges rows are immutable except for their one retirement'); END`,
 	`CREATE TRIGGER IF NOT EXISTS dag_edges_no_delete BEFORE DELETE ON dag_edges
 BEGIN SELECT RAISE(ABORT, 'dag_edges rows are never deleted'); END`,
+
+	// CRW-184, the scheduler (docs/relay/dag-scheduler.md). Appended statements only: a shipped statement is
+	// never edited (the swap gate compares stored text, so an ALTER would read as a changed object), and a table
+	// arrives in the change that first queries it (TestDAGZoneEveryTableHasAQueryOrAPendingWriter).
+	//
+	// dag_merge_checks is the history of what the relay observed of an accepted pull request at merge time: one row
+	// per observation that differs from the previous one (check_seq is max+1 per acceptance, "latest" is the highest),
+	// so the retry round of a required check, a stale head and an eviction are all readable afterwards.
+	// evidence_json is the canonical body checks_digest was taken over, so the digest can be recomputed (B-13).
+	`CREATE TABLE IF NOT EXISTS dag_merge_checks (
+    check_id             TEXT PRIMARY KEY,
+    acceptance_id        TEXT NOT NULL REFERENCES dag_acceptances (acceptance_id),
+    check_seq            INTEGER NOT NULL CHECK (check_seq >= 1),
+    head_sha             TEXT NOT NULL,
+    observed_head_sha    TEXT NOT NULL,
+    base_tip_sha         TEXT NOT NULL,
+    checks_base_sha      TEXT,
+    checks_digest        TEXT NOT NULL,
+    evidence_json        TEXT NOT NULL,
+    failed_required_json TEXT NOT NULL,
+    round_no             INTEGER NOT NULL CHECK (round_no BETWEEN 1 AND 2),
+    outcome              TEXT NOT NULL CHECK (outcome IN ('eligible', 'retry_same_sha', 'evicted', 'checks_pending', 'stale_head', 'stale_base', 'stale_criteria', 'predecessor_not_landed')),
+    reason               TEXT NOT NULL,
+    recorded_at          TEXT NOT NULL,
+    UNIQUE (acceptance_id, check_seq)
+)`,
+
+	// Re-verification of an accepted output under re-registered criteria (contract E-11). dag_acceptances_effect allows one
+	// row per relationship, generation and revision, so the same output cannot be accepted twice; the re-verification is an
+	// ordered history here (reval_seq), the latest row is the acceptance's effective criteria digest, and the acceptance keeps its identity.
+	`CREATE TABLE IF NOT EXISTS dag_acceptance_revalidations (
+    revalidation_id     TEXT PRIMARY KEY,
+    acceptance_id       TEXT NOT NULL REFERENCES dag_acceptances (acceptance_id),
+    criteria_set_digest TEXT NOT NULL,
+    event_id            TEXT NOT NULL,
+    verdict_turn_id     TEXT NOT NULL,
+    reval_seq           INTEGER NOT NULL CHECK (reval_seq >= 1),
+    revalidated_by      TEXT NOT NULL,
+    revalidated_at      TEXT NOT NULL,
+    UNIQUE (acceptance_id, reval_seq)
+)`,
+
+	// The forge identity of an accepted implementation node: dag_acceptances.repository is the target of the edges (a local
+	// path is allowed for local ancestry), while the pull request reader needs the owner/name slug and the number.
+	`CREATE TABLE IF NOT EXISTS dag_acceptance_forge (
+    acceptance_id    TEXT PRIMARY KEY REFERENCES dag_acceptances (acceptance_id),
+    forge_repository TEXT NOT NULL CHECK (forge_repository <> ''),
+    pr_number        INTEGER NOT NULL CHECK (pr_number >= 1)
+)`,
+
+	// dag_passes records every scheduler pass someone asked to keep (dag-ready --record): what was ready, how many slots were free, and which limit
+	// decided the order of the candidates it cut. A pass is a fact, never a decision: a duplicate wake records another row and the release path
+	// does not read it (release idempotency lives in dag_releases). order_json is the ready node ids in release order, dispositions_json the
+	// reading's node list; input_digest is the digest of everything the reading read.
+	`CREATE TABLE IF NOT EXISTS dag_passes (
+    plan_id           TEXT NOT NULL REFERENCES dag_plans (plan_id),
+    pass_seq          INTEGER NOT NULL CHECK (pass_seq >= 1),
+    plan_revision     INTEGER NOT NULL,
+    input_digest      TEXT NOT NULL,
+    ready_count       INTEGER NOT NULL CHECK (ready_count >= 0),
+    free_slots        INTEGER NOT NULL CHECK (free_slots >= 0),
+    ceiling           INTEGER NOT NULL CHECK (ceiling >= 0),
+    held              INTEGER NOT NULL CHECK (held >= 0),
+    deciding_limit    TEXT NOT NULL CHECK (deciding_limit IN ('none','no_capacity','edit_overlap','capacity_unmeasured')),
+    order_json        TEXT NOT NULL,
+    dispositions_json TEXT NOT NULL,
+    recorded_by       TEXT NOT NULL,
+    recorded_at       TEXT NOT NULL,
+    PRIMARY KEY (plan_id, pass_seq)
+)`,
+
+	// The edit regions a node declares before it is released (contract 7.2). A declaration is the set of rows sharing one declaration_seq, the
+	// latest sequence of a node is its declaration, and a node with no row has none: its regions are unknown and count as overlapping everything.
+	// exclusive is set for a rename, a delete and the hotspots (lockfiles, workflow files, schemas), which conflict with any other change in the
+	// repository.
+	`CREATE TABLE IF NOT EXISTS dag_node_regions (
+    plan_id         TEXT NOT NULL REFERENCES dag_plans (plan_id),
+    node_id         TEXT NOT NULL,
+    declaration_seq INTEGER NOT NULL CHECK (declaration_seq >= 1),
+    repository      TEXT NOT NULL CHECK (repository <> ''),
+    path            TEXT NOT NULL CHECK (path <> ''),
+    region_kind     TEXT NOT NULL CHECK (region_kind IN ('tree','file','symbol')),
+    region_key      TEXT NOT NULL DEFAULT '',
+    change          TEXT NOT NULL CHECK (change IN ('edit','rename','delete')),
+    exclusive       INTEGER NOT NULL CHECK (exclusive IN (0,1)),
+    declared_by     TEXT NOT NULL,
+    declared_at     TEXT NOT NULL,
+    PRIMARY KEY (plan_id, node_id, declaration_seq, repository, path, region_kind, region_key)
+)`,
+
+	// The release of a node, frozen with its intent (dag_releases): the exact managed-start request bytes and the selectors they were fingerprinted
+	// with. managed.Start fingerprints the whole request and refuses another body under one request id, while the manifest digest leaves out fields that
+	// are still in the prompt, so a replay of an intent whose child was not created sends these bytes and never rebuilds the request.
+	`CREATE TABLE IF NOT EXISTS dag_release_requests (
+    plan_id         TEXT NOT NULL REFERENCES dag_plans (plan_id),
+    node_id         TEXT NOT NULL,
+    manifest_digest TEXT NOT NULL,
+    request_sha256  TEXT NOT NULL,
+    request_json    TEXT NOT NULL,
+    marker_root     TEXT NOT NULL,
+    socket          TEXT NOT NULL,
+    state_selector  TEXT NOT NULL,
+    recorded_at     TEXT NOT NULL,
+    PRIMARY KEY (plan_id, node_id, manifest_digest)
+)`,
+
+	// How many files git cannot merge between the heads of two parallel branches of a plan (git merge-tree --write-tree), recorded for the measurement criterion
+	// c7. The nodes are stored in sorted order (left < right, the heads follow them), so asking either way round is one row; nothing in the scheduler's reading
+	// waits for it. The unique index makes a repeat of the same branches and base a replay.
+	`CREATE TABLE IF NOT EXISTS dag_conflict_observations (
+    observation_id TEXT PRIMARY KEY,
+    plan_id        TEXT NOT NULL REFERENCES dag_plans (plan_id),
+    left_node_id   TEXT NOT NULL,
+    right_node_id  TEXT NOT NULL,
+    repository     TEXT NOT NULL CHECK (repository <> ''),
+    left_head      TEXT NOT NULL,
+    right_head     TEXT NOT NULL,
+    base_sha       TEXT NOT NULL,
+    conflict_count INTEGER NOT NULL CHECK (conflict_count >= 0),
+    method         TEXT NOT NULL,
+    observed_by    TEXT NOT NULL,
+    observed_at    TEXT NOT NULL,
+    CHECK (left_node_id < right_node_id)
+)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS dag_conflict_observations_pair ON dag_conflict_observations (plan_id, left_node_id, right_node_id, left_head, right_head, base_sha)`,
 }

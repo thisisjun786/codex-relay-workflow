@@ -19,6 +19,10 @@ func sum(v any) string {
 	return hex.EncodeToString(h[:])
 }
 
+// Canonical is the canonical JSON every digest of this package hashes, for the packages that build digests of
+// their own over the same serialization (the scheduler's acceptance and evidence digests, contract 4.1).
+func Canonical(v any) string { return canonical(v) }
+
 func nodeObject(n Node) map[string]any {
 	m := map[string]any{"node_id": n.NodeID, "issue_key": n.IssueKey, "kind": n.Kind, "criteria_set_digest": n.CriteriaSetDigest}
 	if n.Title != "" {

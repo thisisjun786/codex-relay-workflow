@@ -3,7 +3,7 @@
 A DAG plan is the relay's record of how a project's issues depend on one another: which deliverables (nodes) exist, and
 what must be true of one before another may start (edges). This page is the normative description of how a plan is
 defined, validated, stored and read. It does not describe how a plan is run: choosing what is ready, releasing a node,
-accepting its result and observing integration belong to the scheduler that reads these plans. The model follows the
+accepting its result and observing integration belong to [the scheduler](dag-scheduler.md) that reads these plans. The model follows the
 DAG execution contract (CRW-182, sections 1, 2, 4, 5 and 6.2); where this page reads the contract it says so
 ([the readings](#where-this-page-reads-the-contract)).
 
@@ -147,8 +147,10 @@ tables (decision D-01):
   a runtime without the zone validates only the frozen tables, so it opens a store that has it and never reads or writes it.
   `SchemaVersion` stays `1`; no existing table or column changes;
 * the zone is the twelve `dag_*` tables of the contract: `dag_plans`, `dag_plan_revisions`, `dag_nodes`, `dag_edges`,
-  `dag_input_manifests`, and the tables whose writers come with the scheduler (`dag_node_executions`, `dag_releases`,
-  `dag_acceptances`, `dag_integration_observations`, `dag_decisions`, `dag_coordinator_claims`, `dag_cap_basis`). Node-keyed
+  `dag_input_manifests`, and the tables the scheduler writes (`dag_node_executions`, `dag_releases`,
+  `dag_acceptances`, `dag_integration_observations`, `dag_decisions`, `dag_cap_basis`; `dag_coordinator_claims` has no writer until
+  coordinator fencing), and seven tables the scheduler appended to it (`dag_merge_checks`, `dag_acceptance_revalidations`, `dag_acceptance_forge`,
+  `dag_passes`, `dag_node_regions`, `dag_release_requests`, `dag_conflict_observations`; see [the scheduler's store](dag-scheduler.md#the-store)). Node-keyed
   tables carry `plan_id`, so node ids need only be unique within a plan;
 * a command that declares itself read-only never creates the zone: it arrives with the first write open;
 * the zone is an append-only ledger of statements (`internal/relay/store/dag_zone.go`). A shipped statement is never edited; a column a
