@@ -1,0 +1,41 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/skill/search",
+    "K12/gh",
+    "A/skill-search/gh-launch.test.ts"
+  ],
+  "note": "gh missing from PATH: the install hint on stderr, no rows, exit 0.",
+  "given": {
+    "stubs": {
+      "gh": null
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "skill",
+          "search",
+          "telegram",
+          "--source",
+          "gh"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "no matching skills\n",
+        "stderr": "skill-search: gh is not on PATH - install the GitHub CLI from cli.github.com\n"
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/map/help",
+    "K6/exit-codes",
+    "A/plugin/cli-usage.test.mjs",
+    "K12/uv"
+  ],
+  "note": "`cxc map help`: usage text and exit status; nothing written.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "map",
+          "help"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 1,
+    "steps": [
+      {
+        "exit": 1,
+        "stdout_form": "empty",
+        "stderr": "codexclaw map: python3 could not be run (exit spawn error). Install Python 3.9+ or set CODEXCLAW_PYTHON.\n"
+      }
+    ],
+    "tree": {},
+    "calls": [
+      {
+        "cmd": "uv",
+        "argv": [
+          "--version"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

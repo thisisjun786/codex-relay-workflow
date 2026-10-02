@@ -1,0 +1,60 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/config/set",
+    "K8/codex-home/config.toml",
+    "A/config-guard/config-set.test.ts"
+  ],
+  "note": "`config set` prints the caution, then refuses with exit 1 because there is no install manifest to record the prior value in; config.toml is untouched. A non-boolean value exits 2 first.",
+  "given": {
+    "files": {
+      "codex/config.toml": "model = \"gpt-5.5\"\n\n[features]\nhooks = true\n"
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "config",
+          "set",
+          "memories.dedicated_tools",
+          "true"
+        ]
+      },
+      {
+        "cli": [
+          "config",
+          "set",
+          "memories.dedicated_tools",
+          "yes"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 2,
+    "steps": [
+      {
+        "exit": 1,
+        "stdout_form": "text",
+        "stdout": "주의: memories/{list,read,search,add_ad_hoc_note} 네 도구가 열립니다. add_ad_hoc_note는 메모리에 새 노트를 만드는 쓰기 경로이지만, codexclaw 의 PreToolUse 메모리 쓰기 게이트가 명시 요청 없는 쓰기를 거부합니다. 설치가 이 키를 켜고, 'cxc disable' 이 설치 이전 값으로 되돌립니다.\n",
+        "stderr": "config set: no readable install manifest under this codex home; run 'cxc enable' first. Without it there is nowhere to record the previous value, and 'cxc disable' could not revert this key.\n"
+      },
+      {
+        "exit": 2,
+        "stdout_form": "empty",
+        "stderr": "config set: the value must be true or false, got 'yes'\n"
+      }
+    ],
+    "tree": {
+      "codex/config.toml": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "model = \"gpt-5.5\"\n\n[features]\nhooks = true\n"
+      }
+    },
+    "calls": []
+  }
+}

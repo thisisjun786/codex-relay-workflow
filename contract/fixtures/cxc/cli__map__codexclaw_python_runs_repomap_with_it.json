@@ -1,0 +1,105 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/map/run",
+    "K13/CODEXCLAW_PYTHON",
+    "K13/CODEXCLAW_MAP_BOOTSTRAP",
+    "K12/python3"
+  ],
+  "note": "CODEXCLAW_PYTHON runs repomap.py with that interpreter (bin/codexclaw.mjs:338); CODEXCLAW_MAP_BOOTSTRAP=1 opts into creating the repo-map venv under CODEXCLAW_HOME with the python on PATH (bin/codexclaw.mjs:386), here a stub that fails.",
+  "given": {
+    "stubs": {
+      "py-pinned": {
+        "stdout": "# repo map (stub)\n",
+        "exit": 0
+      },
+      "python3": {
+        "stderr": "stub python3: venv unavailable\n",
+        "exit": 1
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "map",
+          "."
+        ],
+        "env": {
+          "CODEXCLAW_PYTHON": "${STUBS}/py-pinned"
+        }
+      },
+      {
+        "cli": [
+          "map",
+          "."
+        ],
+        "env": {
+          "CODEXCLAW_MAP_BOOTSTRAP": "1"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 1,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "# repo map (stub)\n",
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "empty",
+        "stderr": "codexclaw map: bootstrapping venv at ${CXC_HOME}/venvs/repomap (one-time)...\nstub python3: venv unavailable\nstub python3: venv unavailable\n"
+      }
+    ],
+    "tree": {},
+    "calls": [
+      {
+        "cmd": "uv",
+        "argv": [
+          "--version"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "py-pinned",
+        "argv": [
+          "-B",
+          "${PLUGIN_ROOT}/skills/repo-map/scripts/repomap.py",
+          "."
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "python3",
+        "argv": [
+          "-m",
+          "venv",
+          "${CXC_HOME}/venvs/repomap"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "uv",
+        "argv": [
+          "--version"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "python3",
+        "argv": [
+          "-B",
+          "${PLUGIN_ROOT}/skills/repo-map/scripts/repomap.py",
+          "."
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

@@ -1,0 +1,268 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/subagents/dispatch",
+    "K7/subagents",
+    "K8/ws/.codexclaw/dispatches",
+    "A/subagent-config/fallback-dispatch.test.ts"
+  ],
+  "note": "fallback-dispatch.ts:183-233: code parked by a reconcile report, cleared by an accepted task failure.",
+  "given": {
+    "json": {
+      "ws/.codexclaw/dispatches/rec-s1/one.json": {
+        "version": 1,
+        "sessionId": "rec-s1",
+        "id": "one",
+        "role": "executor",
+        "candidates": [
+          {
+            "model": "rec/exec-primary",
+            "effort": "high"
+          },
+          {
+            "model": "rec/exec-fallback",
+            "effort": null
+          }
+        ],
+        "attempts": [
+          {
+            "id": "att-1",
+            "candidate": {
+              "model": "rec/exec-primary",
+              "effort": "high"
+            },
+            "claimed": true,
+            "agentId": "child-a",
+            "observedModel": null,
+            "code": null,
+            "taskFailure": null,
+            "status": "running",
+            "reconciliation": null,
+            "spawnIssued": false,
+            "toolUseId": null
+          }
+        ],
+        "status": "active"
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "subagents",
+          "dispatch"
+        ],
+        "stdin": {
+          "action": "report",
+          "sessionId": "rec-s1",
+          "dispatchId": "one",
+          "attemptId": "att-1",
+          "outcome": "failed",
+          "error": "insufficient_quota",
+          "executionState": "running",
+          "reconciliation": "unknown"
+        }
+      },
+      {
+        "cli": [
+          "subagents",
+          "dispatch"
+        ],
+        "stdin": {
+          "action": "report",
+          "sessionId": "rec-s1",
+          "dispatchId": "one",
+          "attemptId": "att-1",
+          "outcome": "task_failed",
+          "agentId": "child-a",
+          "executionState": "stopped",
+          "reconciliation": "child stopped; diff inspected",
+          "taskFailure": {
+            "kind": "unusable_output",
+            "evidence": "final message unrelated to the packet"
+          }
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "action": "reconcile",
+          "dispatchId": "one",
+          "attemptId": "att-1",
+          "independentReviewRequired": false,
+          "attempts": [
+            {
+              "id": "att-1",
+              "candidate": {
+                "model": "rec/exec-primary",
+                "effort": "high"
+              },
+              "claimed": true,
+              "agentId": "child-a",
+              "observedModel": null,
+              "code": "insufficient_quota",
+              "taskFailure": null,
+              "status": "reconcile",
+              "reconciliation": null,
+              "spawnIssued": false,
+              "toolUseId": null
+            }
+          ],
+          "reason": "confirm whether a child exists and stop it before handoff"
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "action": "ready",
+          "dispatchId": "one",
+          "attemptId": "<UUID_1>",
+          "independentReviewRequired": false,
+          "attempts": [
+            {
+              "id": "att-1",
+              "candidate": {
+                "model": "rec/exec-primary",
+                "effort": "high"
+              },
+              "claimed": true,
+              "agentId": "child-a",
+              "observedModel": null,
+              "code": null,
+              "taskFailure": {
+                "kind": "unusable_output",
+                "evidence": "final message unrelated to the packet"
+              },
+              "status": "failed",
+              "reconciliation": "child stopped; diff inspected",
+              "spawnIssued": false,
+              "toolUseId": null
+            },
+            {
+              "id": "<UUID_1>",
+              "candidate": {
+                "model": "rec/exec-fallback",
+                "effort": null
+              },
+              "claimed": false,
+              "agentId": null,
+              "observedModel": null,
+              "code": null,
+              "taskFailure": null,
+              "status": "ready",
+              "reconciliation": null,
+              "spawnIssued": false,
+              "toolUseId": null
+            }
+          ]
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/dispatches": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/dispatches/rec-s1": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/dispatches/rec-s1/one.json": {
+        "type": "file",
+        "mode": "0600",
+        "form": "json-pretty",
+        "json": {
+          "version": 1,
+          "sessionId": "rec-s1",
+          "id": "one",
+          "role": "executor",
+          "candidates": [
+            {
+              "model": "rec/exec-primary",
+              "effort": "high"
+            },
+            {
+              "model": "rec/exec-fallback",
+              "effort": null
+            }
+          ],
+          "attempts": [
+            {
+              "id": "att-1",
+              "candidate": {
+                "model": "rec/exec-primary",
+                "effort": "high"
+              },
+              "claimed": true,
+              "agentId": "child-a",
+              "observedModel": null,
+              "code": null,
+              "taskFailure": {
+                "kind": "unusable_output",
+                "evidence": "final message unrelated to the packet"
+              },
+              "status": "failed",
+              "reconciliation": "child stopped; diff inspected",
+              "spawnIssued": false,
+              "toolUseId": null
+            },
+            {
+              "id": "<UUID_1>",
+              "candidate": {
+                "model": "rec/exec-fallback",
+                "effort": null
+              },
+              "claimed": false,
+              "agentId": null,
+              "observedModel": null,
+              "code": null,
+              "taskFailure": null,
+              "status": "ready",
+              "reconciliation": null,
+              "spawnIssued": false,
+              "toolUseId": null
+            }
+          ],
+          "status": "active"
+        }
+      }
+    },
+    "calls": [
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

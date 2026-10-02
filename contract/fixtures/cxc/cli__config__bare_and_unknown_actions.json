@@ -1,0 +1,67 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/config/bare",
+    "K6/config/help",
+    "A/config-guard/config-set.test.ts"
+  ],
+  "note": "Bare `config` prints usage and exits 2; `config --help` prints it and exits 0; an unknown action exits 2; `config get` with no key exits 2.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "config"
+        ]
+      },
+      {
+        "cli": [
+          "config",
+          "--help"
+        ]
+      },
+      {
+        "cli": [
+          "config",
+          "frob"
+        ]
+      },
+      {
+        "cli": [
+          "config",
+          "get"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 2,
+    "steps": [
+      {
+        "exit": 2,
+        "stdout_form": "text",
+        "stdout": "Usage:\n  cxc config list                          managed keys, their live values and side effects\n  cxc config get <table.key>\n  cxc config set <table.key> <true|false>\n  cxc config unset <table.key>             restore the value from before codexclaw set it\n  cxc config interview [off|new-unit|always]\n\nOnly whitelisted keys can be set; 'config list' shows them. Installation writes just the\nones marked auto-enable in managed-keys.ts, records the pre-install value, and 'cxc\ndisable' restores it; the rest stay an explicit choice. (Separate vocabulary: the\n[features] flags codexclaw needs to run ARE turned on by install and by SessionStart\nself-heal; see cxc doctor's `features` check.)\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "Usage:\n  cxc config list                          managed keys, their live values and side effects\n  cxc config get <table.key>\n  cxc config set <table.key> <true|false>\n  cxc config unset <table.key>             restore the value from before codexclaw set it\n  cxc config interview [off|new-unit|always]\n\nOnly whitelisted keys can be set; 'config list' shows them. Installation writes just the\nones marked auto-enable in managed-keys.ts, records the pre-install value, and 'cxc\ndisable' restores it; the rest stay an explicit choice. (Separate vocabulary: the\n[features] flags codexclaw needs to run ARE turned on by install and by SessionStart\nself-heal; see cxc doctor's `features` check.)\n",
+        "stderr": ""
+      },
+      {
+        "exit": 2,
+        "stdout_form": "empty",
+        "stderr": "config frob: a <table.key> argument is required\nUsage:\n  cxc config list                          managed keys, their live values and side effects\n  cxc config get <table.key>\n  cxc config set <table.key> <true|false>\n  cxc config unset <table.key>             restore the value from before codexclaw set it\n  cxc config interview [off|new-unit|always]\n\nOnly whitelisted keys can be set; 'config list' shows them. Installation writes just the\nones marked auto-enable in managed-keys.ts, records the pre-install value, and 'cxc\ndisable' restores it; the rest stay an explicit choice. (Separate vocabulary: the\n[features] flags codexclaw needs to run ARE turned on by install and by SessionStart\nself-heal; see cxc doctor's `features` check.)\n"
+      },
+      {
+        "exit": 2,
+        "stdout_form": "empty",
+        "stderr": "config get: a <table.key> argument is required\nUsage:\n  cxc config list                          managed keys, their live values and side effects\n  cxc config get <table.key>\n  cxc config set <table.key> <true|false>\n  cxc config unset <table.key>             restore the value from before codexclaw set it\n  cxc config interview [off|new-unit|always]\n\nOnly whitelisted keys can be set; 'config list' shows them. Installation writes just the\nones marked auto-enable in managed-keys.ts, records the pre-install value, and 'cxc\ndisable' restores it; the rest stay an explicit choice. (Separate vocabulary: the\n[features] flags codexclaw needs to run ARE turned on by install and by SessionStart\nself-heal; see cxc doctor's `features` check.)\n"
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

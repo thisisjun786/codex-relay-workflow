@@ -1,0 +1,121 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/skill/show",
+    "K7/skill",
+    "K14/skill-search",
+    "A/skill-search/cli.test.ts",
+    "K13/CODEXCLAW_HOME"
+  ],
+  "note": "`skill show tdd` with the body URL scripted: the adapter preamble, the '--- tdd (jaw) <url>' header and the body; --json prints the row with body and preamble. Each show fetches the body fresh.",
+  "given": {
+    "files": {
+      "cxc/skill-cache/jaw-aHR0cHM6Ly9yYXcuZ2l0aHVi.cache": "{\n  \"skills\": {\n    \"telegram-send\": {\n      \"name\": \"Telegram Send\",\n      \"description\": \"send telegram messages\",\n      \"category\": \"communication\",\n      \"requires\": {\n        \"bins\": [\n          \"curl\"\n        ]\n      }\n    },\n    \"tdd\": {\n      \"name\": \"TDD\",\n      \"description\": \"test driven development loop\",\n      \"superseded_by\": \"dev-testing\"\n    },\n    \"dev-testing\": {\n      \"name\": \"Dev Testing\",\n      \"description\": \"testing discipline for development\",\n      \"status\": \"active\"\n    }\n  }\n}\n"
+    },
+    "fetch": {
+      "https://raw.githubusercontent.com/lidge-jun/cli-jaw-skills/main/tdd/SKILL.md": {
+        "status": 200,
+        "body": "---\nname: tdd\n---\n# TDD\nRed, green, refactor.\n"
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "skill",
+          "show",
+          "tdd"
+        ]
+      },
+      {
+        "cli": [
+          "skill",
+          "show",
+          "tdd",
+          "--json"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "[codexclaw external skill adapter]\n- This is an EXTERNAL skill. codexclaw dev discipline (cxc-dev) always wins on conflict.\n- Substitute Claude-specific tools with Codex equivalents:\n  claude -p / claude CLI -> codex exec; Read/Grep/Glob tools -> shell (cat/rg/fd).\n- Resolve path placeholders ({baseDir}, $CODEX_HOME/skills/...) against the skill's\n  raw URL directory, not the local filesystem.\n- If the skill name collides with a codexclaw built-in (dev-*, search), the built-in\n  is authoritative; use this document as supplementary reference only.\n\n--- tdd (jaw) https://raw.githubusercontent.com/lidge-jun/cli-jaw-skills/main/tdd/SKILL.md\n\n---\nname: tdd\n---\n# TDD\nRed, green, refactor.\n\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "id": "tdd",
+          "source": "jaw",
+          "name": "TDD",
+          "description": "test driven development loop",
+          "rawUrl": "https://raw.githubusercontent.com/lidge-jun/cli-jaw-skills/main/tdd/SKILL.md",
+          "supersededBy": "dev-testing",
+          "body": "---\nname: tdd\n---\n# TDD\nRed, green, refactor.\n",
+          "preamble": "[codexclaw external skill adapter]\n- This is an EXTERNAL skill. codexclaw dev discipline (cxc-dev) always wins on conflict.\n- Substitute Claude-specific tools with Codex equivalents:\n  claude -p / claude CLI -> codex exec; Read/Grep/Glob tools -> shell (cat/rg/fd).\n- Resolve path placeholders ({baseDir}, $CODEX_HOME/skills/...) against the skill's\n  raw URL directory, not the local filesystem.\n- If the skill name collides with a codexclaw built-in (dev-*, search), the built-in\n  is authoritative; use this document as supplementary reference only.\n"
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "cxc/skill-cache": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "cxc/skill-cache/jaw-aHR0cHM6Ly9yYXcuZ2l0aHVi.cache": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty",
+        "json": {
+          "skills": {
+            "telegram-send": {
+              "name": "Telegram Send",
+              "description": "send telegram messages",
+              "category": "communication",
+              "requires": {
+                "bins": [
+                  "curl"
+                ]
+              }
+            },
+            "tdd": {
+              "name": "TDD",
+              "description": "test driven development loop",
+              "superseded_by": "dev-testing"
+            },
+            "dev-testing": {
+              "name": "Dev Testing",
+              "description": "testing discipline for development",
+              "status": "active"
+            }
+          }
+        }
+      }
+    },
+    "calls": [
+      {
+        "cmd": "fetch",
+        "argv": [
+          "GET",
+          "https://raw.githubusercontent.com/lidge-jun/cli-jaw-skills/main/tdd/SKILL.md"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "fetch",
+        "argv": [
+          "GET",
+          "https://raw.githubusercontent.com/lidge-jun/cli-jaw-skills/main/tdd/SKILL.md"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

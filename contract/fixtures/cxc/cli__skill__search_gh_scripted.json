@@ -1,0 +1,77 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/skill/search",
+    "K12/gh",
+    "A/skill-search/cli.test.ts",
+    "A/skill-search/gh-launch.test.ts"
+  ],
+  "note": "--source gh shells out to `gh search code filename:SKILL.md <q> --limit N --json repository,path` and maps the hits to rows.",
+  "given": {
+    "stubs": {
+      "gh": {
+        "stdout": "[{\"repository\": {\"nameWithOwner\": \"acme/skills\"}, \"path\": \"skills/telegram/SKILL.md\"}, {\"repository\": {\"nameWithOwner\": \"bob/tools\"}, \"path\": \"SKILL.md\"}]",
+        "exit": 0
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "skill",
+          "search",
+          "telegram",
+          "--source",
+          "gh",
+          "--json"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-pretty",
+        "stdout_json": [
+          {
+            "id": "telegram",
+            "source": "gh",
+            "name": "acme/skills:skills/telegram",
+            "description": "GitHub code search hit in acme/skills",
+            "rawUrl": "https://raw.githubusercontent.com/acme/skills/HEAD/skills/telegram/SKILL.md",
+            "score": 2
+          },
+          {
+            "id": "bob/tools",
+            "source": "gh",
+            "name": "bob/tools:",
+            "description": "GitHub code search hit in bob/tools",
+            "rawUrl": "https://raw.githubusercontent.com/bob/tools/HEAD/SKILL.md",
+            "score": 1
+          }
+        ],
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": [
+      {
+        "cmd": "gh",
+        "argv": [
+          "search",
+          "code",
+          "filename:SKILL.md telegram",
+          "--limit",
+          "10",
+          "--json",
+          "repository,path"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

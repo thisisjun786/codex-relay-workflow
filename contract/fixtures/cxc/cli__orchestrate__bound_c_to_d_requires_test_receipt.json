@@ -1,0 +1,649 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/orchestrate/transition",
+    "K8/ws/.codexclaw/sessions",
+    "K8/ws/.codexclaw/ledger.jsonl",
+    "A/pabcd-state/orchestrate-cli.test.ts",
+    "K6/receipt/test",
+    "K8/ws/.codexclaw/evidence",
+    "A/pabcd-state/receipt-generated.test.ts",
+    "K12/git"
+  ],
+  "note": "A bound session in a git workspace: B->C is refused until the source changes (SOURCE-DELTA-01); C->D without testReceiptPath is refused; `receipt test` writes the receipt; C->D with it closes the cycle.",
+  "given": {
+    "files": {
+      "ws/devlog/_plan/260101_demo/000_plan.md": "# 000 - demo plan\n",
+      "ws/devlog/_plan/260101_demo/010_phase1.md": "# 010 - phase 1\n",
+      "ws/src/parser.ts": "export const x = 1;\n"
+    },
+    "json": {
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "phase": "IDLE",
+        "sessionId": "rec-s1",
+        "slug": "",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "flags": {
+          "interview": false,
+          "auditPassed": false,
+          "checkPassed": false
+        },
+        "supersededBy": null,
+        "injectedTurns": [],
+        "lastInjectedPhase": null,
+        "orchestrationActive": false,
+        "interview": null,
+        "stopBlockPhase": null,
+        "stopBlockCount": 0,
+        "stopBlockWorkPhaseId": null,
+        "stopMetricCursor": 0,
+        "stopBlockTotal": 0,
+        "stopBlockTurnId": null,
+        "stopBlockCapNotified": false,
+        "loopArmSeen": false,
+        "idleEditNudges": 0,
+        "memoryWriteRequested": false,
+        "memoryWriteTurn": null,
+        "memoryWriteGrant": false,
+        "unverifiedSubagents": [],
+        "unverifiedCorrupt": false,
+        "phaseEntrySource": null,
+        "planUnit": null,
+        "planEpoch": null,
+        "checkEpoch": null,
+        "dcloseRecovery": null
+      }
+    },
+    "git": {
+      "commit": "initial"
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "loop",
+          "init",
+          "--objective",
+          "Ship the export feature",
+          "--session",
+          "rec-s1",
+          "--cwd",
+          "${WS}"
+        ]
+      },
+      {
+        "cli": [
+          "loop",
+          "add-work-phase",
+          "--session",
+          "rec-s1",
+          "--id",
+          "wp1",
+          "--title",
+          "Exporter",
+          "--cwd",
+          "${WS}"
+        ]
+      },
+      {
+        "cli": [
+          "orchestrate",
+          "P",
+          "--session",
+          "rec-s1",
+          "--cwd",
+          "${WS}"
+        ]
+      },
+      {
+        "cli": [
+          "orchestrate",
+          "A",
+          "--session",
+          "rec-s1",
+          "--cwd",
+          "${WS}",
+          "--attest",
+          "{\"from\":\"P\",\"to\":\"A\",\"did\":\"planned\",\"planUnit\":\"devlog/_plan/260101_demo\",\"workPhaseId\":\"wp1\"}"
+        ]
+      },
+      {
+        "cli": [
+          "orchestrate",
+          "B",
+          "--session",
+          "rec-s1",
+          "--cwd",
+          "${WS}",
+          "--attest",
+          "{\"from\":\"A\",\"to\":\"B\",\"did\":\"audited\",\"auditOutput\":\"VERDICT: PASS\",\"auditVerdict\":\"pass\",\"workPhaseId\":\"wp1\"}"
+        ]
+      },
+      {
+        "cli": [
+          "orchestrate",
+          "C",
+          "--session",
+          "rec-s1",
+          "--cwd",
+          "${WS}",
+          "--attest",
+          "{\"from\":\"B\",\"to\":\"C\",\"did\":\"implemented\",\"workPhaseId\":\"wp1\"}"
+        ]
+      },
+      {
+        "write": {
+          "ws/src/parser.ts": "export const x = 2;\n"
+        }
+      },
+      {
+        "cli": [
+          "orchestrate",
+          "C",
+          "--session",
+          "rec-s1",
+          "--cwd",
+          "${WS}",
+          "--attest",
+          "{\"from\":\"B\",\"to\":\"C\",\"did\":\"implemented\",\"workPhaseId\":\"wp1\"}"
+        ]
+      },
+      {
+        "cli": [
+          "orchestrate",
+          "D",
+          "--session",
+          "rec-s1",
+          "--cwd",
+          "${WS}",
+          "--attest",
+          "{\"from\":\"C\",\"to\":\"D\",\"did\":\"verified\",\"checkOutput\":\"ok\",\"exitCode\":0,\"workPhaseId\":\"wp1\"}"
+        ]
+      },
+      {
+        "cli": [
+          "receipt",
+          "test",
+          "--session",
+          "rec-s1",
+          "--cwd",
+          "${WS}",
+          "--",
+          "node",
+          "-e",
+          "console.log('tests 3 passed')"
+        ]
+      },
+      {
+        "cli": [
+          "orchestrate",
+          "D",
+          "--session",
+          "rec-s1",
+          "--cwd",
+          "${WS}",
+          "--attest",
+          "{\"from\":\"C\",\"to\":\"D\",\"did\":\"verified\",\"checkOutput\":\"tests 3 passed\",\"exitCode\":0,\"workPhaseId\":\"wp1\",\"testReceiptPath\":\".codexclaw/evidence/rec-s1/test-receipt.json\"}"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "[codexclaw loop: ship-the-export-feature]\nobjective: Ship the export feature\nhost: armed=false source=none\nworkPhases: 0 (remaining 0)\ncriteria: 0 (unmet 0)\ncomplete: true\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "[codexclaw loop: ship-the-export-feature]\nobjective: Ship the export feature\nhost: armed=false source=none\nworkPhases: 1 (remaining 1)\ncriteria: 0 (unmet 0)\ncomplete: false\n  - wp1 [pending] Exporter\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "orchestrate P: current=IDLE -> P (IDLE → P, session rec-s1) [formal P: architect proposal -> main executable plan -> same-architect reflection before A (cxc-pabcd phase-plan)]\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "orchestrate A: current=P -> A (P → A, session rec-s1)\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "orchestrate B: current=A -> B (A → B, session rec-s1)\n",
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "text",
+        "stdout": "orchestrate C: current=B session=rec-s1; the source is unchanged since B began (69b680a), so nothing was implemented in this B (SOURCE-DELTA-01). Implement inside B rather than carrying earlier work across the edge. Nothing was written.\n",
+        "stderr": ""
+      },
+      {
+        "action": "write",
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "orchestrate C: current=B -> C (B → C, session rec-s1)\n",
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "text",
+        "stdout": "orchestrate D: current=C session=rec-s1; C -> D on a goalplan-bound session requires \"testReceiptPath\" (CHECK-BINDING-01). Produce one with: cxc receipt test --session <id> -- <command>, then pass its path as testReceiptPath. Nothing was written.\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "tests 3 passed\n${WS}/.codexclaw/evidence/rec-s1/test-receipt.json\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "orchestrate D: close target wp1 is complete (cycle closed, session rec-s1)\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/evidence": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/evidence/rec-s1": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/evidence/rec-s1/test-receipt.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty",
+        "json": {
+          "kind": "test",
+          "sourceIdentity": {
+            "kind": "resolved",
+            "commitSha": "69b680a82246fc792815f509dbf13f3e39a2ac65",
+            "dirty": true,
+            "treeHash": "d37b0223ad4b0b3060919fe0111157fad164f8e9e2acc308cf7cbf8af135fd18",
+            "capturedAt": "<TS>"
+          },
+          "command": "node -e console.log('tests 3 passed')",
+          "exitCode": 0,
+          "createdAt": "<TS>",
+          "ownerSessionId": "rec-s1",
+          "checkEpoch": "<NONCE_1>"
+        }
+      },
+      "ws/.codexclaw/goalplans": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "ws/.codexclaw/goalplans/ship-the-export-feature": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "ws/.codexclaw/goalplans/ship-the-export-feature/goalplan.json": {
+        "type": "file",
+        "mode": "0600",
+        "form": "json-pretty-nonl",
+        "json": {
+          "objective": "Ship the export feature",
+          "slug": "ship-the-export-feature",
+          "createdAt": "<TS>",
+          "updatedAt": "<TS>",
+          "activeWorkPhaseId": null,
+          "workPhases": [
+            {
+              "id": "wp1",
+              "title": "Exporter",
+              "status": "done",
+              "tasks": [],
+              "criteriaIds": []
+            }
+          ],
+          "criteria": [],
+          "host": {
+            "armed": false,
+            "armedAt": null,
+            "source": "none"
+          },
+          "schemaVersion": 1,
+          "steeringLog": [
+            {
+              "idempotencyKey": "add-work-phase-09ae6d9b5003",
+              "rationale": "cxc loop add-work-phase",
+              "evidence": "wp1: Exporter",
+              "appliedAt": "<TS>",
+              "summary": "1 op(s): add-work-phase"
+            }
+          ]
+        }
+      },
+      "ws/.codexclaw/goalplans/ship-the-export-feature/ledger.jsonl": {
+        "type": "file",
+        "mode": "0600",
+        "form": "jsonl",
+        "jsonl": [
+          {
+            "ts": "<TS>",
+            "slug": "ship-the-export-feature",
+            "event": "created",
+            "detail": "init objective=\"Ship the export feature\" criteria=0"
+          },
+          {
+            "ts": "<TS>",
+            "slug": "ship-the-export-feature",
+            "event": "steered",
+            "detail": "add-work-phase-09ae6d9b5003: 1 op(s): add-work-phase — cxc loop add-work-phase"
+          },
+          {
+            "ts": "<TS>",
+            "slug": "ship-the-export-feature",
+            "event": "workphase_done",
+            "detail": "closed wp1"
+          }
+        ]
+      },
+      "ws/.codexclaw/ledger.jsonl": {
+        "type": "file",
+        "mode": "0644",
+        "form": "jsonl",
+        "jsonl": [
+          {
+            "ts": "<TS>",
+            "sessionId": "rec-s1",
+            "from": "IDLE",
+            "to": "P",
+            "reason": "cli"
+          },
+          {
+            "ts": "<TS>",
+            "sessionId": "rec-s1",
+            "from": "P",
+            "to": "A",
+            "reason": "cli",
+            "evidence": "planned"
+          },
+          {
+            "ts": "<TS>",
+            "sessionId": "rec-s1",
+            "from": "A",
+            "to": "B",
+            "reason": "cli",
+            "evidence": "audited"
+          },
+          {
+            "ts": "<TS>",
+            "sessionId": "rec-s1",
+            "from": "B",
+            "to": "C",
+            "reason": "cli",
+            "evidence": "implemented"
+          },
+          {
+            "ts": "<TS>",
+            "sessionId": "rec-s1",
+            "from": "C",
+            "to": "IDLE",
+            "reason": "done",
+            "checkEpoch": "<NONCE_1>",
+            "closedWorkPhaseId": "wp1",
+            "evidence": "verified"
+          }
+        ]
+      },
+      "ws/.codexclaw/render-observations.jsonl": {
+        "type": "file",
+        "mode": "0644",
+        "form": "empty"
+      },
+      "ws/.codexclaw/sessions": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty-nonl",
+        "json": {
+          "phase": "IDLE",
+          "sessionId": "rec-s1",
+          "slug": "ship-the-export-feature",
+          "updatedAt": "<TS>",
+          "flags": {
+            "interview": false,
+            "auditPassed": false,
+            "checkPassed": false
+          },
+          "supersededBy": null,
+          "injectedTurns": [],
+          "lastInjectedPhase": null,
+          "orchestrationActive": false,
+          "interview": null,
+          "stopBlockPhase": null,
+          "stopBlockCount": 0,
+          "stopBlockWorkPhaseId": null,
+          "stopMetricCursor": 0,
+          "stopBlockTotal": 0,
+          "stopBlockTurnId": null,
+          "stopBlockCapNotified": false,
+          "loopArmSeen": false,
+          "idleEditNudges": 0,
+          "memoryWriteRequested": false,
+          "memoryWriteTurn": null,
+          "memoryWriteGrant": false,
+          "unverifiedSubagents": [],
+          "unverifiedCorrupt": false,
+          "phaseEntrySource": null,
+          "planUnit": null,
+          "planEpoch": null,
+          "checkEpoch": null,
+          "dcloseRecovery": null
+        }
+      },
+      "ws/.git": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/devlog": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/devlog/_plan": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/devlog/_plan/260101_demo": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/devlog/_plan/260101_demo/000_plan.md": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "# 000 - demo plan\n"
+      },
+      "ws/devlog/_plan/260101_demo/010_phase1.md": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "# 010 - phase 1\n"
+      },
+      "ws/src": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/src/parser.ts": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "export const x = 2;\n"
+      }
+    },
+    "calls": [
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "HEAD"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "status",
+          "--porcelain=v1",
+          "-z",
+          "--untracked-files=all"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "HEAD"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "status",
+          "--porcelain=v1",
+          "-z",
+          "--untracked-files=all"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "HEAD"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "status",
+          "--porcelain=v1",
+          "-z",
+          "--untracked-files=all"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "HEAD"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "status",
+          "--porcelain=v1",
+          "-z",
+          "--untracked-files=all"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "HEAD"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "status",
+          "--porcelain=v1",
+          "-z",
+          "--untracked-files=all"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "HEAD"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "status",
+          "--porcelain=v1",
+          "-z",
+          "--untracked-files=all"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "HEAD"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "status",
+          "--porcelain=v1",
+          "-z",
+          "--untracked-files=all"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "HEAD"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "status",
+          "--porcelain=v1",
+          "-z",
+          "--untracked-files=all"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

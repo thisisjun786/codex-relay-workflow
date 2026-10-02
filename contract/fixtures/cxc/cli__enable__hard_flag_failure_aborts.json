@@ -1,0 +1,93 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/enable/run",
+    "K12/codex",
+    "A/config-guard/soft-failure-visibility.test.ts"
+  ],
+  "note": "A HARD flag's enable failing throws out of activate: unhandled, Node prints the stack trace, exit 1; the backup was already taken but no manifest is written.",
+  "given": {
+    "files": {
+      "codex/config.toml": "model = \"gpt-5.5\"\n\n[features]\nhooks = true\n"
+    },
+    "stubs": {
+      "codex": {
+        "stdout": "default_mode_request_user_input  under development  false\ngoals                            stable             false\nhooks                            stable             true\nmulti_agent                      stable             false\n",
+        "exit": 0,
+        "cases": [
+          {
+            "argv": [
+              "features",
+              "enable",
+              "goals"
+            ],
+            "stderr": "error: unknown feature 'goals'\n",
+            "exit": 2
+          }
+        ]
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "enable"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 1,
+    "steps": [
+      {
+        "exit": 1,
+        "stdout_form": "empty",
+        "stderr": "file://${PLUGIN_ROOT}/components/config-guard/dist/activate.js:244\n        throw new Error(\n              ^\n\nError: codex features enable goals failed (exit 2): error: unknown feature 'goals'\n    at activate (file://${PLUGIN_ROOT}/components/config-guard/dist/activate.js:244:15)\n    at main (file://${PLUGIN_ROOT}/components/config-guard/dist/cli.js:198:17)\n    at file://${PLUGIN_ROOT}/components/config-guard/dist/cli.js:288:16\n    at ModuleJob.run (node:internal/modules/esm/module_job:561:25)\n    at async node:internal/modules/esm/loader:647:26\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)\n\nNode.js v24.20.0\n"
+      }
+    ],
+    "tree": {
+      "codex/config.toml": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "model = \"gpt-5.5\"\n\n[features]\nhooks = true\n"
+      },
+      "codex/config.toml.codexclaw-2026-01-01T00-00-00-000Z.bak": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "model = \"gpt-5.5\"\n\n[features]\nhooks = true\n"
+      }
+    },
+    "calls": [
+      {
+        "cmd": "codex",
+        "argv": [
+          "features",
+          "list"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "codex",
+        "argv": [
+          "features",
+          "enable",
+          "multi_agent"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "codex",
+        "argv": [
+          "features",
+          "enable",
+          "goals"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

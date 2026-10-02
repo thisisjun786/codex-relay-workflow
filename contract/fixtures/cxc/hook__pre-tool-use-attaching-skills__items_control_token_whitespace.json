@@ -1,0 +1,129 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/pre-tool-use-attaching-skills",
+    "K5/hook-rendered",
+    "A/subagent-config/spawn-items-boundaries.test.ts",
+    "K8/tmp/codexclaw-subspawn"
+  ],
+  "note": "stripControlMarkers(text, true) on items (spawn-attach-hook.ts:409-415,913-918). The grant file lands in tmp/codexclaw-subspawn-<UID>/<GRANTDIR>/<GRANTFILE>.json; covers K8/tmp/codexclaw-subspawn.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "pre-tool-use-attaching-skills",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "spawn_agent",
+          "tool_input": {
+            "agent_type": "explorer",
+            "items": [
+              {
+                "type": "text",
+                "text": "  lead spaces\n\n\n\nCXC-SUBSPAWN-ALLOWED coordinate  \n"
+              },
+              {
+                "type": "image",
+                "image_url": "data:image/png;base64,QUJD"
+              }
+            ]
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+            "updatedInput": {
+              "agent_type": "explorer",
+              "items": [
+                {
+                  "type": "text",
+                  "text": "[CXC-SUBAGENT-SCOPE] This is one bounded delegated task with authorized\nrecursion. The parent owns cxc orchestration, loop, and goal state;\ndo not invoke those commands. Stay within the stated file/write scope.\nYou and any child you spawn run in the parent's own working directory, on its\nbranch and HEAD - not a copy. Keep every write scope non-overlapping and do not\nrun branch-level git commands (checkout, switch, branch, stash, reset, rebase,\nmerge, pull).\nOne child spawn is authorized. Include this exact one-time capability in that spawn message: [CXC-SUBSPAWN-GRANT:<GRANT_1>]\n\n  lead spaces\n\n\n\n coordinate  \n"
+                },
+                {
+                  "type": "image",
+                  "image_url": "data:image/png;base64,QUJD"
+                }
+              ]
+            }
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "tmp/codexclaw-subspawn-<UID>": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "tmp/codexclaw-subspawn-<UID>/<GRANTDIR_1>": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "tmp/codexclaw-subspawn-<UID>/<GRANTDIR_1>/<GRANTFILE_1>.json": {
+        "type": "file",
+        "mode": "0600",
+        "form": "json",
+        "json": {
+          "expiresAt": "<MS>"
+        }
+      }
+    },
+    "calls": [
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

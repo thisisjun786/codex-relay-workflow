@@ -1,0 +1,53 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/session-start-ensuring-provider-bridge",
+    "K5/hook-rendered",
+    "A/provider-bridge/detect.test.ts"
+  ],
+  "note": "No ocx on PATH: mode native with the reason, exit 0.",
+  "given": {
+    "stubs": {
+      "ocx": null
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "session-start-ensuring-provider-bridge",
+        "stdin": {
+          "hook_event_name": "SessionStart",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "source": "startup",
+          "model": "gpt-5.5",
+          "transcript_path": null
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": "{\"provider\":\"ocx\",\"mode\":\"native\",\"reason\":\"ocx not found on PATH; using native Codex catalog\"}"
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      }
+    },
+    "calls": []
+  }
+}

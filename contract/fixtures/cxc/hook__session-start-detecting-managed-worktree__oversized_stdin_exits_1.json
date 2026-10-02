@@ -1,0 +1,91 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/session-start-detecting-managed-worktree",
+    "K3/post-tool-use-tracking-render-observations",
+    "K9/stdin-cap",
+    "A/pabcd-state/cli-bounds.test.ts"
+  ],
+  "note": "oversizedHookOutput only answers pre-tool-use*/stop/subagent-stop verbs: the SessionStart worktree-guard verb and the PostToolUse render-observation verb exit 1 with empty stdout on oversized stdin.",
+  "given": {
+    "files": {
+      "codex/worktrees/7627/repo/.git": "gitdir: /fake/main/.git/worktrees/7627\n",
+      "codex/worktrees/7627/repo/README.md": "managed checkout\n"
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "session-start-detecting-managed-worktree",
+        "stdin": {
+          "hook_event_name": "SessionStart",
+          "session_id": "rec-s1",
+          "cwd": "${CODEX_HOME}/worktrees/7627/repo",
+          "source": "startup",
+          "model": "gpt-5.5",
+          "transcript_path": null
+        },
+        "stdin_pad": 4194368
+      },
+      {
+        "hook": "post-tool-use-tracking-render-observations",
+        "stdin": {
+          "hook_event_name": "PostToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "view_image",
+          "tool_input": {
+            "path": "a.png"
+          },
+          "tool_use_id": "rec-call-1",
+          "tool_response": "ok"
+        },
+        "stdin_pad": 4194368
+      }
+    ]
+  },
+  "expect": {
+    "exit": 1,
+    "steps": [
+      {
+        "exit": 1,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "empty",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/worktrees": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "codex/worktrees/7627": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "codex/worktrees/7627/repo": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "codex/worktrees/7627/repo/.git": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "gitdir: /fake/main/.git/worktrees/7627\n"
+      },
+      "codex/worktrees/7627/repo/README.md": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "managed checkout\n"
+      }
+    },
+    "calls": []
+  }
+}

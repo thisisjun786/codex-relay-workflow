@@ -1,0 +1,103 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/subagents/set",
+    "K7/subagents",
+    "K8/cxc-home/subagents.json",
+    "A/subagent-config/cli.test.ts",
+    "K13/CODEXCLAW_HOME"
+  ],
+  "note": "--clear-effort and --clear-prompt reset those fields to null; --mode default drops the model; unrelated top-level and per-role JSON fields in the file are preserved.",
+  "given": {
+    "json": {
+      "cxc/subagents.json": {
+        "note": "keep me",
+        "roles": {
+          "explorer": {
+            "mode": "model",
+            "model": "rec/explorer-model",
+            "effort": "high",
+            "promptOverride": "Be terse.",
+            "fallback": null,
+            "extra": "keep"
+          }
+        }
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "subagents",
+          "set",
+          "explorer",
+          "--clear-effort",
+          "--clear-prompt",
+          "--global"
+        ]
+      },
+      {
+        "cli": [
+          "subagents",
+          "set",
+          "explorer",
+          "--mode",
+          "default",
+          "--global"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-pretty",
+        "stdout_json": {
+          "mode": "model",
+          "model": "rec/explorer-model",
+          "effort": null,
+          "promptOverride": null,
+          "fallback": null
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-pretty",
+        "stdout_json": {
+          "mode": "default",
+          "model": null,
+          "effort": null,
+          "promptOverride": null,
+          "fallback": null
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "cxc/subagents.json": {
+        "type": "file",
+        "mode": "0600",
+        "form": "json-pretty",
+        "json": {
+          "note": "keep me",
+          "roles": {
+            "explorer": {
+              "mode": "default",
+              "model": null,
+              "effort": null,
+              "promptOverride": null,
+              "fallback": null,
+              "extra": "keep"
+            }
+          }
+        }
+      }
+    },
+    "calls": []
+  }
+}

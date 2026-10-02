@@ -1,0 +1,96 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/permission-request-allowing-agent-thread",
+    "A/pabcd-state/agent-thread-permissions.test.ts",
+    "K13/CODEX_HOME",
+    "K13/CODEX_SQLITE_HOME",
+    "K13/CODEXCLAW_HOME"
+  ],
+  "note": "cwd == HOME with ~/.codex a symlink to ~/real-codex: the real config path differs from the literal default, sits inside cwd, and is rejected (no decision).",
+  "given": {
+    "files": {
+      "home/.codexclaw/config.json": "{\"permissions\":{\"agentCreatedThreadAutoAllow\":true}}",
+      "home/real-codex/config.toml": "approval_policy = \"never\"\nsandbox_mode = \"danger-full-access\"\n",
+      "tmp/rollout.jsonl": "{\"type\": \"session_meta\", \"payload\": {\"id\": \"rec-s1\", \"thread_source\": \"agent_created_thread\"}}\n"
+    },
+    "symlinks": {
+      "home/.codex": "${HOME}/real-codex"
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "permission-request-allowing-agent-thread",
+        "stdin": {
+          "hook_event_name": "PermissionRequest",
+          "session_id": "rec-s1",
+          "cwd": "${HOME}",
+          "turn_id": "rec-t1",
+          "transcript_path": "${TMP}/rollout.jsonl",
+          "permission_mode": "default",
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "git push"
+          },
+          "tool_use_id": "rec-call-1"
+        },
+        "unset": [
+          "CODEX_HOME",
+          "CODEXCLAW_HOME",
+          "CODEX_SQLITE_HOME"
+        ],
+        "cwd": "home"
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "home/.codex": {
+        "type": "symlink",
+        "mode": "",
+        "target": "${HOME}/real-codex"
+      },
+      "home/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "home/.codexclaw/config.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json",
+        "json": {
+          "permissions": {
+            "agentCreatedThreadAutoAllow": true
+          }
+        }
+      },
+      "home/real-codex": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "home/real-codex/config.toml": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "approval_policy = \"never\"\nsandbox_mode = \"danger-full-access\"\n"
+      },
+      "tmp/rollout.jsonl": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "{\"type\": \"session_meta\", \"payload\": {\"id\": \"rec-s1\", \"thread_source\": \"agent_created_thread\"}}\n"
+      }
+    },
+    "calls": []
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/orchestrate/transition",
+    "K8/ws/.codexclaw/sessions",
+    "K8/ws/.codexclaw/ledger.jsonl",
+    "A/pabcd-state/orchestrate-cli.test.ts",
+    "K6/orchestrate/status"
+  ],
+  "note": "status with no session and an empty workspace reports it and creates nothing.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "orchestrate",
+          "status",
+          "--cwd",
+          "${WS}"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "no active session\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

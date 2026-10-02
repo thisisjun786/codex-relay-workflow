@@ -1,0 +1,284 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/pre-tool-use-guarding-memory-write",
+    "K5/hook-rendered",
+    "A/pabcd-state/memory-write-gate.test.ts"
+  ],
+  "note": "Shell surface by write destination: redirect, no-space append, tee, sed -i, cp/mv destination into memories deny; reads (cat, rg with 2>/dev/null, sed -n), cp out of memories and a heredoc whose body names memories pass.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "pre-tool-use-guarding-memory-write",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi > ${CODEX_HOME}/memories/notes.md"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-guarding-memory-write",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi>>${CODEX_HOME}/memories/n.md"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-guarding-memory-write",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "rg foo . | tee ${CODEX_HOME}/memories/out.md"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-guarding-memory-write",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "sed -i 's/a/b/' ${CODEX_HOME}/memories/MEMORY.md"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-guarding-memory-write",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "cp ./a.md ${CODEX_HOME}/memories/b.md"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-guarding-memory-write",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "mv ./a.md ${CODEX_HOME}/memories/b.md"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-guarding-memory-write",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "cat ${CODEX_HOME}/memories/MEMORY.md"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-guarding-memory-write",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "rg foo ${CODEX_HOME}/memories/MEMORY.md 2>/dev/null"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-guarding-memory-write",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "sed -n '1p' ${CODEX_HOME}/memories/MEMORY.md"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-guarding-memory-write",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "cp ${CODEX_HOME}/memories/a.md ./b.md"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-guarding-memory-write",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "cat > ./devlog/brief.md <<'EOF'\n${CODEX_HOME}/memories\nEOF"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "[codexclaw MEMORY-WRITE-GATE] Blocked a write of a file under the Codex memories directory (${CODEX_HOME}/memories/notes.md): this session has no explicit user request to remember anything. Memory notes outlive codexclaw and reach every later session, so they are written only when the user asks. Two ways forward: ask the user to confirm they want this remembered (a prompt such as \"기억해둬\" or \"remember this\" authorizes the next write), or record an explicit grant with `cxc memory allow-write --session rec-s1` from ${WS}. The grant is stored per cwd; issuing it from a different working directory will print success and never be seen by this hook. If the user did ask, say so and retry — the request must appear in their own message, not in yours.",
+            "additionalContext": "[codexclaw MEMORY-WRITE-GATE] Blocked a write of a file under the Codex memories directory (${CODEX_HOME}/memories/notes.md): this session has no explicit user request to remember anything. Memory notes outlive codexclaw and reach every later session, so they are written only when the user asks. Two ways forward: ask the user to confirm they want this remembered (a prompt such as \"기억해둬\" or \"remember this\" authorizes the next write), or record an explicit grant with `cxc memory allow-write --session rec-s1` from ${WS}. The grant is stored per cwd; issuing it from a different working directory will print success and never be seen by this hook. If the user did ask, say so and retry — the request must appear in their own message, not in yours."
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "[codexclaw MEMORY-WRITE-GATE] Blocked a write of a file under the Codex memories directory (${CODEX_HOME}/memories/n.md): this session has no explicit user request to remember anything. Memory notes outlive codexclaw and reach every later session, so they are written only when the user asks. Two ways forward: ask the user to confirm they want this remembered (a prompt such as \"기억해둬\" or \"remember this\" authorizes the next write), or record an explicit grant with `cxc memory allow-write --session rec-s1` from ${WS}. The grant is stored per cwd; issuing it from a different working directory will print success and never be seen by this hook. If the user did ask, say so and retry — the request must appear in their own message, not in yours.",
+            "additionalContext": "[codexclaw MEMORY-WRITE-GATE] Blocked a write of a file under the Codex memories directory (${CODEX_HOME}/memories/n.md): this session has no explicit user request to remember anything. Memory notes outlive codexclaw and reach every later session, so they are written only when the user asks. Two ways forward: ask the user to confirm they want this remembered (a prompt such as \"기억해둬\" or \"remember this\" authorizes the next write), or record an explicit grant with `cxc memory allow-write --session rec-s1` from ${WS}. The grant is stored per cwd; issuing it from a different working directory will print success and never be seen by this hook. If the user did ask, say so and retry — the request must appear in their own message, not in yours."
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "[codexclaw MEMORY-WRITE-GATE] Blocked a write of a file under the Codex memories directory (${CODEX_HOME}/memories/out.md): this session has no explicit user request to remember anything. Memory notes outlive codexclaw and reach every later session, so they are written only when the user asks. Two ways forward: ask the user to confirm they want this remembered (a prompt such as \"기억해둬\" or \"remember this\" authorizes the next write), or record an explicit grant with `cxc memory allow-write --session rec-s1` from ${WS}. The grant is stored per cwd; issuing it from a different working directory will print success and never be seen by this hook. If the user did ask, say so and retry — the request must appear in their own message, not in yours.",
+            "additionalContext": "[codexclaw MEMORY-WRITE-GATE] Blocked a write of a file under the Codex memories directory (${CODEX_HOME}/memories/out.md): this session has no explicit user request to remember anything. Memory notes outlive codexclaw and reach every later session, so they are written only when the user asks. Two ways forward: ask the user to confirm they want this remembered (a prompt such as \"기억해둬\" or \"remember this\" authorizes the next write), or record an explicit grant with `cxc memory allow-write --session rec-s1` from ${WS}. The grant is stored per cwd; issuing it from a different working directory will print success and never be seen by this hook. If the user did ask, say so and retry — the request must appear in their own message, not in yours."
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "[codexclaw MEMORY-WRITE-GATE] Blocked a write of a file under the Codex memories directory (${CODEX_HOME}/memories/MEMORY.md): this session has no explicit user request to remember anything. Memory notes outlive codexclaw and reach every later session, so they are written only when the user asks. Two ways forward: ask the user to confirm they want this remembered (a prompt such as \"기억해둬\" or \"remember this\" authorizes the next write), or record an explicit grant with `cxc memory allow-write --session rec-s1` from ${WS}. The grant is stored per cwd; issuing it from a different working directory will print success and never be seen by this hook. If the user did ask, say so and retry — the request must appear in their own message, not in yours.",
+            "additionalContext": "[codexclaw MEMORY-WRITE-GATE] Blocked a write of a file under the Codex memories directory (${CODEX_HOME}/memories/MEMORY.md): this session has no explicit user request to remember anything. Memory notes outlive codexclaw and reach every later session, so they are written only when the user asks. Two ways forward: ask the user to confirm they want this remembered (a prompt such as \"기억해둬\" or \"remember this\" authorizes the next write), or record an explicit grant with `cxc memory allow-write --session rec-s1` from ${WS}. The grant is stored per cwd; issuing it from a different working directory will print success and never be seen by this hook. If the user did ask, say so and retry — the request must appear in their own message, not in yours."
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "[codexclaw MEMORY-WRITE-GATE] Blocked a write of a file under the Codex memories directory (${CODEX_HOME}/memories/b.md): this session has no explicit user request to remember anything. Memory notes outlive codexclaw and reach every later session, so they are written only when the user asks. Two ways forward: ask the user to confirm they want this remembered (a prompt such as \"기억해둬\" or \"remember this\" authorizes the next write), or record an explicit grant with `cxc memory allow-write --session rec-s1` from ${WS}. The grant is stored per cwd; issuing it from a different working directory will print success and never be seen by this hook. If the user did ask, say so and retry — the request must appear in their own message, not in yours.",
+            "additionalContext": "[codexclaw MEMORY-WRITE-GATE] Blocked a write of a file under the Codex memories directory (${CODEX_HOME}/memories/b.md): this session has no explicit user request to remember anything. Memory notes outlive codexclaw and reach every later session, so they are written only when the user asks. Two ways forward: ask the user to confirm they want this remembered (a prompt such as \"기억해둬\" or \"remember this\" authorizes the next write), or record an explicit grant with `cxc memory allow-write --session rec-s1` from ${WS}. The grant is stored per cwd; issuing it from a different working directory will print success and never be seen by this hook. If the user did ask, say so and retry — the request must appear in their own message, not in yours."
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "[codexclaw MEMORY-WRITE-GATE] Blocked a write of a file under the Codex memories directory (${CODEX_HOME}/memories/b.md): this session has no explicit user request to remember anything. Memory notes outlive codexclaw and reach every later session, so they are written only when the user asks. Two ways forward: ask the user to confirm they want this remembered (a prompt such as \"기억해둬\" or \"remember this\" authorizes the next write), or record an explicit grant with `cxc memory allow-write --session rec-s1` from ${WS}. The grant is stored per cwd; issuing it from a different working directory will print success and never be seen by this hook. If the user did ask, say so and retry — the request must appear in their own message, not in yours.",
+            "additionalContext": "[codexclaw MEMORY-WRITE-GATE] Blocked a write of a file under the Codex memories directory (${CODEX_HOME}/memories/b.md): this session has no explicit user request to remember anything. Memory notes outlive codexclaw and reach every later session, so they are written only when the user asks. Two ways forward: ask the user to confirm they want this remembered (a prompt such as \"기억해둬\" or \"remember this\" authorizes the next write), or record an explicit grant with `cxc memory allow-write --session rec-s1` from ${WS}. The grant is stored per cwd; issuing it from a different working directory will print success and never be seen by this hook. If the user did ask, say so and retry — the request must appear in their own message, not in yours."
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      }
+    },
+    "calls": []
+  }
+}

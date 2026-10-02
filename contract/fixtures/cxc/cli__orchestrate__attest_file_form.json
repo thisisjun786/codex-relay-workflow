@@ -1,0 +1,181 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/orchestrate/transition",
+    "K8/ws/.codexclaw/sessions",
+    "K8/ws/.codexclaw/ledger.jsonl",
+    "A/pabcd-state/orchestrate-cli.test.ts"
+  ],
+  "note": "--attest-file reads the attest from a file resolved against --cwd.",
+  "given": {
+    "files": {
+      "ws/attest.json": "{\"from\":\"P\",\"to\":\"A\",\"did\":\"wrote the plan\",\"planUnit\":\"devlog/_plan/260101_demo\"}\n",
+      "ws/devlog/_plan/260101_demo/000_plan.md": "# 000 - demo plan\n",
+      "ws/devlog/_plan/260101_demo/010_phase1.md": "# 010 - phase 1\n"
+    },
+    "json": {
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "phase": "P",
+        "sessionId": "rec-s1",
+        "slug": "",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "flags": {
+          "interview": false,
+          "auditPassed": false,
+          "checkPassed": false
+        },
+        "supersededBy": null,
+        "injectedTurns": [],
+        "lastInjectedPhase": null,
+        "orchestrationActive": true,
+        "interview": null,
+        "stopBlockPhase": null,
+        "stopBlockCount": 0,
+        "stopBlockWorkPhaseId": null,
+        "stopMetricCursor": 0,
+        "stopBlockTotal": 0,
+        "stopBlockTurnId": null,
+        "stopBlockCapNotified": false,
+        "loopArmSeen": false,
+        "idleEditNudges": 0,
+        "memoryWriteRequested": false,
+        "memoryWriteTurn": null,
+        "memoryWriteGrant": false,
+        "unverifiedSubagents": [],
+        "unverifiedCorrupt": false,
+        "phaseEntrySource": null,
+        "planUnit": null,
+        "planEpoch": null,
+        "checkEpoch": null,
+        "dcloseRecovery": null
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "orchestrate",
+          "A",
+          "--session",
+          "rec-s1",
+          "--attest-file",
+          "attest.json",
+          "--cwd",
+          "${WS}"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "orchestrate A: current=P -> A (P → A, session rec-s1)\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/ledger.jsonl": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "ts": "<TS>",
+          "sessionId": "rec-s1",
+          "from": "P",
+          "to": "A",
+          "reason": "cli",
+          "evidence": "wrote the plan"
+        }
+      },
+      "ws/.codexclaw/sessions": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty-nonl",
+        "json": {
+          "phase": "A",
+          "sessionId": "rec-s1",
+          "slug": "",
+          "updatedAt": "<TS>",
+          "flags": {
+            "interview": false,
+            "auditPassed": false,
+            "checkPassed": false
+          },
+          "supersededBy": null,
+          "injectedTurns": [],
+          "lastInjectedPhase": "A",
+          "orchestrationActive": true,
+          "interview": null,
+          "stopBlockPhase": null,
+          "stopBlockCount": 0,
+          "stopBlockWorkPhaseId": null,
+          "stopMetricCursor": 0,
+          "stopBlockTotal": 0,
+          "stopBlockTurnId": null,
+          "stopBlockCapNotified": false,
+          "loopArmSeen": false,
+          "idleEditNudges": 0,
+          "memoryWriteRequested": false,
+          "memoryWriteTurn": null,
+          "memoryWriteGrant": false,
+          "unverifiedSubagents": [],
+          "unverifiedCorrupt": false,
+          "phaseEntrySource": null,
+          "planUnit": "devlog/_plan/260101_demo",
+          "planEpoch": "<NONCE_1>",
+          "checkEpoch": null,
+          "dcloseRecovery": null
+        }
+      },
+      "ws/attest.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "from": "P",
+          "to": "A",
+          "did": "wrote the plan",
+          "planUnit": "devlog/_plan/260101_demo"
+        }
+      },
+      "ws/devlog": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/devlog/_plan": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/devlog/_plan/260101_demo": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/devlog/_plan/260101_demo/000_plan.md": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "# 000 - demo plan\n"
+      },
+      "ws/devlog/_plan/260101_demo/010_phase1.md": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "# 010 - phase 1\n"
+      }
+    },
+    "calls": []
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/config/help",
+    "K6/exit-codes",
+    "A/plugin/cli-usage.test.mjs"
+  ],
+  "note": "`cxc config --help`: usage text and exit status; nothing written.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "config",
+          "--help"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "Usage:\n  cxc config list                          managed keys, their live values and side effects\n  cxc config get <table.key>\n  cxc config set <table.key> <true|false>\n  cxc config unset <table.key>             restore the value from before codexclaw set it\n  cxc config interview [off|new-unit|always]\n\nOnly whitelisted keys can be set; 'config list' shows them. Installation writes just the\nones marked auto-enable in managed-keys.ts, records the pre-install value, and 'cxc\ndisable' restores it; the rest stay an explicit choice. (Separate vocabulary: the\n[features] flags codexclaw needs to run ARE turned on by install and by SessionStart\nself-heal; see cxc doctor's `features` check.)\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

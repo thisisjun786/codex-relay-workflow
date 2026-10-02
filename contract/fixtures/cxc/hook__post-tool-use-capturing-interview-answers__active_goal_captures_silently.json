@@ -1,0 +1,141 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/post-tool-use-capturing-interview-answers",
+    "K8/ws/.codexclaw/interviews",
+    "A/pabcd-state/interview-ledger.test.ts"
+  ],
+  "note": "Goal firewall: phase I but the thread has an active goal in goals_1.sqlite, so the round is captured and nothing is injected.",
+  "given": {
+    "json": {
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "phase": "I",
+        "sessionId": "rec-s1"
+      }
+    },
+    "sqlite": {
+      "codex/goals_1.sqlite": [
+        "CREATE TABLE thread_goals (thread_id TEXT PRIMARY KEY, status TEXT)",
+        "INSERT INTO thread_goals VALUES ('rec-s1', 'active')"
+      ]
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "post-tool-use-capturing-interview-answers",
+        "stdin": {
+          "hook_event_name": "PostToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "request_user_input",
+          "tool_input": {
+            "questions": [
+              {
+                "id": "q1",
+                "header": "Scope",
+                "question": "Which scope?"
+              }
+            ]
+          },
+          "tool_use_id": "rec-call-1",
+          "tool_response": {
+            "answers": {
+              "q1": {
+                "answers": [
+                  "Small"
+                ]
+              }
+            }
+          }
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "codex/goals_1.sqlite": {
+        "type": "file",
+        "mode": "0644",
+        "form": "sqlite",
+        "json": {
+          "tables": [
+            {
+              "name": "thread_goals",
+              "sql": "CREATE TABLE thread_goals (thread_id TEXT PRIMARY KEY, status TEXT)",
+              "rows": [
+                {
+                  "thread_id": "rec-s1",
+                  "status": "active"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/interviews": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/interviews/rec-s1.jsonl": {
+        "type": "file",
+        "mode": "0644",
+        "form": "jsonl",
+        "jsonl": [
+          {
+            "ts": "<TS>",
+            "sessionId": "rec-s1",
+            "turnId": "rec-t1",
+            "event": "question_asked",
+            "questionId": "q1",
+            "eventId": "rec-t1:q1:question_asked",
+            "question": "Which scope?"
+          },
+          {
+            "ts": "<TS>",
+            "sessionId": "rec-s1",
+            "turnId": "rec-t1",
+            "event": "answer_recorded",
+            "questionId": "q1",
+            "eventId": "rec-t1:q1:answer_recorded",
+            "answers": [
+              "Small"
+            ]
+          }
+        ]
+      },
+      "ws/.codexclaw/sessions": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "phase": "I",
+          "sessionId": "rec-s1"
+        }
+      }
+    },
+    "calls": []
+  }
+}

@@ -1,0 +1,89 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/skill/search",
+    "K8/cxc-home/skill-cache",
+    "A/skill-search/cli.test.ts",
+    "K13/CODEXCLAW_HOME"
+  ],
+  "note": "Plain search output: id (source, score), marks (bins), description, raw URL, and the `skill show` footer pointer; --limit 1.",
+  "given": {
+    "files": {
+      "cxc/skill-cache/jaw-aHR0cHM6Ly9yYXcuZ2l0aHVi.cache": "{\n  \"skills\": {\n    \"telegram-send\": {\n      \"name\": \"Telegram Send\",\n      \"description\": \"send telegram messages\",\n      \"category\": \"communication\",\n      \"requires\": {\n        \"bins\": [\n          \"curl\"\n        ]\n      }\n    },\n    \"tdd\": {\n      \"name\": \"TDD\",\n      \"description\": \"test driven development loop\",\n      \"superseded_by\": \"dev-testing\"\n    },\n    \"dev-testing\": {\n      \"name\": \"Dev Testing\",\n      \"description\": \"testing discipline for development\",\n      \"status\": \"active\"\n    }\n  }\n}\n"
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "skill",
+          "search",
+          "telegram"
+        ]
+      },
+      {
+        "cli": [
+          "skill",
+          "search",
+          "testing",
+          "--limit",
+          "1"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "telegram-send (jaw, 11)  bins: curl\n  send telegram messages\n  https://raw.githubusercontent.com/lidge-jun/cli-jaw-skills/main/telegram-send/SKILL.md\n# external skills: load with `node \"${PLUGIN_ROOT}/bin/cxc.mjs\" skill show <id>` (adapter preamble applies; cxc-dev wins on conflict)\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "dev-testing (jaw, 11)  [active]\n  testing discipline for development\n  https://raw.githubusercontent.com/lidge-jun/cli-jaw-skills/main/dev-testing/SKILL.md\n# external skills: load with `node \"${PLUGIN_ROOT}/bin/cxc.mjs\" skill show <id>` (adapter preamble applies; cxc-dev wins on conflict)\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "cxc/skill-cache": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "cxc/skill-cache/jaw-aHR0cHM6Ly9yYXcuZ2l0aHVi.cache": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty",
+        "json": {
+          "skills": {
+            "telegram-send": {
+              "name": "Telegram Send",
+              "description": "send telegram messages",
+              "category": "communication",
+              "requires": {
+                "bins": [
+                  "curl"
+                ]
+              }
+            },
+            "tdd": {
+              "name": "TDD",
+              "description": "test driven development loop",
+              "superseded_by": "dev-testing"
+            },
+            "dev-testing": {
+              "name": "Dev Testing",
+              "description": "testing discipline for development",
+              "status": "active"
+            }
+          }
+        }
+      }
+    },
+    "calls": []
+  }
+}

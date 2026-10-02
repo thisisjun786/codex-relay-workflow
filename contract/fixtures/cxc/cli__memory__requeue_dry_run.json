@@ -1,0 +1,210 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/memory/requeue",
+    "K7/memory",
+    "K11/memories-jobs",
+    "A/recall/memory-requeue.test.ts"
+  ],
+  "note": "Dry run (no --apply): selects exhausted transient failures, leaves context-window ones alone with the hint; --include-context-window --kind stage1 --json widens and filters. The seeded db is observed unchanged.",
+  "given": {
+    "sqlite": {
+      "codex/memories_1.sqlite": [
+        "CREATE TABLE jobs (kind TEXT NOT NULL, job_key TEXT NOT NULL, status TEXT NOT NULL, retry_remaining INTEGER NOT NULL, retry_at INTEGER, last_error TEXT, input_watermark INTEGER, last_success_watermark INTEGER, finished_at INTEGER)",
+        "INSERT INTO jobs VALUES ('stage1','t-ok1','done',3,NULL,NULL,10,10,1767222000)",
+        "INSERT INTO jobs VALUES ('stage1','t-ok2','done',3,NULL,NULL,11,11,1766880000)",
+        "INSERT INTO jobs VALUES ('stage1','t-cap','error',0,NULL,'rate limit exceeded (429)',12,NULL,1767200000)",
+        "INSERT INTO jobs VALUES ('stage1','t-ctx','error',0,NULL,'input exceeds the context window',13,NULL,1767200100)",
+        "INSERT INTO jobs VALUES ('stage1','t-inc','error',0,NULL,'incomplete response',14,NULL,1767200200)",
+        "INSERT INTO jobs VALUES ('consolidate','c-1','error',0,NULL,'stream closed before completion',15,NULL,1767200300)",
+        "INSERT INTO jobs VALUES ('stage1','t-retry','error',2,1767300000,'rate limit',16,NULL,1767200400)",
+        "INSERT INTO jobs VALUES ('stage1','t-run','running',3,NULL,NULL,17,NULL,NULL)"
+      ]
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "memory",
+          "requeue"
+        ]
+      },
+      {
+        "cli": [
+          "memory",
+          "requeue",
+          "--include-context-window",
+          "--kind",
+          "stage1",
+          "--json"
+        ]
+      },
+      {
+        "cli": [
+          "memory",
+          "requeue",
+          "--home",
+          "${TMP}"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 1,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "memory requeue: ${CODEX_HOME}/memories_1.sqlite\n  selected: 3 [stream-closed=1, capacity=1, incomplete-response=1]\n  left alone: context-window=1\n    context-window failures repeat unless the extraction input changes; --include-context-window overrides\n  dry run — nothing written (pass --apply)\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-pretty",
+        "stdout_json": {
+          "state": "ok",
+          "detail": "",
+          "storePath": "${CODEX_HOME}/memories_1.sqlite",
+          "applied": false,
+          "selected": [
+            {
+              "kind": "stage1",
+              "jobKey": "t-cap",
+              "cause": "capacity"
+            },
+            {
+              "kind": "stage1",
+              "jobKey": "t-ctx",
+              "cause": "context-window"
+            },
+            {
+              "kind": "stage1",
+              "jobKey": "t-inc",
+              "cause": "incomplete-response"
+            }
+          ],
+          "skippedByCause": {
+            "stream-closed": 1
+          },
+          "changed": 0,
+          "retries": 3
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "text",
+        "stdout": "memory requeue: unavailable — no memories store found under ${TMP}\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/memories_1.sqlite": {
+        "type": "file",
+        "mode": "0644",
+        "form": "sqlite",
+        "json": {
+          "tables": [
+            {
+              "name": "jobs",
+              "sql": "CREATE TABLE jobs (kind TEXT NOT NULL, job_key TEXT NOT NULL, status TEXT NOT NULL, retry_remaining INTEGER NOT NULL, retry_at INTEGER, last_error TEXT, input_watermark INTEGER, last_success_watermark INTEGER, finished_at INTEGER)",
+              "rows": [
+                {
+                  "kind": "stage1",
+                  "job_key": "t-ok1",
+                  "status": "done",
+                  "retry_remaining": 3,
+                  "retry_at": null,
+                  "last_error": null,
+                  "input_watermark": 10,
+                  "last_success_watermark": 10,
+                  "finished_at": 1767222000
+                },
+                {
+                  "kind": "stage1",
+                  "job_key": "t-ok2",
+                  "status": "done",
+                  "retry_remaining": 3,
+                  "retry_at": null,
+                  "last_error": null,
+                  "input_watermark": 11,
+                  "last_success_watermark": 11,
+                  "finished_at": 1766880000
+                },
+                {
+                  "kind": "stage1",
+                  "job_key": "t-cap",
+                  "status": "error",
+                  "retry_remaining": 0,
+                  "retry_at": null,
+                  "last_error": "rate limit exceeded (429)",
+                  "input_watermark": 12,
+                  "last_success_watermark": null,
+                  "finished_at": 1767200000
+                },
+                {
+                  "kind": "stage1",
+                  "job_key": "t-ctx",
+                  "status": "error",
+                  "retry_remaining": 0,
+                  "retry_at": null,
+                  "last_error": "input exceeds the context window",
+                  "input_watermark": 13,
+                  "last_success_watermark": null,
+                  "finished_at": 1767200100
+                },
+                {
+                  "kind": "stage1",
+                  "job_key": "t-inc",
+                  "status": "error",
+                  "retry_remaining": 0,
+                  "retry_at": null,
+                  "last_error": "incomplete response",
+                  "input_watermark": 14,
+                  "last_success_watermark": null,
+                  "finished_at": 1767200200
+                },
+                {
+                  "kind": "consolidate",
+                  "job_key": "c-1",
+                  "status": "error",
+                  "retry_remaining": 0,
+                  "retry_at": null,
+                  "last_error": "stream closed before completion",
+                  "input_watermark": 15,
+                  "last_success_watermark": null,
+                  "finished_at": 1767200300
+                },
+                {
+                  "kind": "stage1",
+                  "job_key": "t-retry",
+                  "status": "error",
+                  "retry_remaining": 2,
+                  "retry_at": 1767300000,
+                  "last_error": "rate limit",
+                  "input_watermark": 16,
+                  "last_success_watermark": null,
+                  "finished_at": 1767200400
+                },
+                {
+                  "kind": "stage1",
+                  "job_key": "t-run",
+                  "status": "running",
+                  "retry_remaining": 3,
+                  "retry_at": null,
+                  "last_error": null,
+                  "input_watermark": 17,
+                  "last_success_watermark": null,
+                  "finished_at": null
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "calls": []
+  }
+}

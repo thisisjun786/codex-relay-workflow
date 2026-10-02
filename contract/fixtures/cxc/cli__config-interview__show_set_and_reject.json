@@ -1,0 +1,80 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/config/interview",
+    "K8/ws/codexclaw.json",
+    "A/pabcd-state/interview-policy.test.ts"
+  ],
+  "note": "config interview prints the policy, writes codexclaw.json, and rejects an unknown policy with exit 2.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "config",
+          "interview"
+        ]
+      },
+      {
+        "cli": [
+          "config",
+          "interview",
+          "always"
+        ]
+      },
+      {
+        "cli": [
+          "config",
+          "interview"
+        ]
+      },
+      {
+        "cli": [
+          "config",
+          "interview",
+          "sometimes"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 2,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "Usage:\n  cxc config interview [off|new-unit|always]\n\n  off       only an explicit 'interview' / '인터뷰' request opens the Interview\n  new-unit  also open it on the first plan request of a new unit (default)\n  always    open it on every plan request\n\nThe Interview is advisory: it never changes the PABCD phase, and goal mode always suppresses it.\ncurrent: new-unit\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "interview policy: always (${WS}/codexclaw.json)\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "Usage:\n  cxc config interview [off|new-unit|always]\n\n  off       only an explicit 'interview' / '인터뷰' request opens the Interview\n  new-unit  also open it on the first plan request of a new unit (default)\n  always    open it on every plan request\n\nThe Interview is advisory: it never changes the PABCD phase, and goal mode always suppresses it.\ncurrent: always\n",
+        "stderr": ""
+      },
+      {
+        "exit": 2,
+        "stdout_form": "empty",
+        "stderr": "config interview: unknown policy 'sometimes'\nUsage:\n  cxc config interview [off|new-unit|always]\n\n  off       only an explicit 'interview' / '인터뷰' request opens the Interview\n  new-unit  also open it on the first plan request of a new unit (default)\n  always    open it on every plan request\n\nThe Interview is advisory: it never changes the PABCD phase, and goal mode always suppresses it.\n"
+      }
+    ],
+    "tree": {
+      "ws/codexclaw.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty",
+        "json": {
+          "interview": "always"
+        }
+      }
+    },
+    "calls": []
+  }
+}
