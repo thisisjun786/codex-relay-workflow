@@ -133,8 +133,13 @@ public-repository linkback settings; repository prose does not enforce them.
 Review public PR comments and their edit history as well as the Git diff before
 publishing an existing private repository.
 
-Keep the skills and their shared references consistent. CXC and Paperthin remain
-external runtime dependencies; do not vendor their source. The task bridge and the
+Keep the skills and their shared references consistent. Paperthin remains an
+external runtime dependency; do not vendor its source. CXC v0.2.40 (lidge-jun/codexclaw,
+MIT) is being self-ported into the Go runtime with its MIT notice kept: [NOTICE](NOTICE)
+carries the notices, [provenance](docs/port-cxc/provenance.md) the origin and
+[known defects](docs/port-cxc/known-defects.md) the upstream defects the port records.
+Until the port is switched on, installed skills and hooks still run against the
+installed CXC plugin. The task bridge and the
 session relay began as imported source under `packages/`; their Go ports are the product,
 and the bridge's upstream MIT notice and provenance stay in `packages/codex-thread-bridge`.
 Record tested versions, consumer
@@ -150,7 +155,8 @@ App Server, or delivery on any host. Changing source does not change what is ins
 anywhere.
 
 This repository uses the [MIT license](LICENSE). Preserve source attribution and
-applicable notices for adapted material. Licensing does not authorize publication;
+applicable notices for adapted material; the notices for ported CXC material are in
+[NOTICE](NOTICE). Licensing does not authorize publication;
 review history, private reporting and contributor readiness before making a
 private repository public or publishing a release.
 
