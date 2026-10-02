@@ -33,61 +33,53 @@ type JudgeResult struct {
 // Eligible is whether the judgement lets the pull request go to the merge lane.
 func (r JudgeResult) Eligible() bool { return r.Outcome == OutcomeEligible }
 
-const (
-	conclusionSuccess = "success"
-	maxRounds         = 2
-)
+const maxRounds = 2
 
 // completedConclusions are the answers a finished check gives; anything else (empty, pending, queued, in_progress) has not finished.
 var completedConclusions = map[string]bool{"success": true, "failure": true, "neutral": true, "skipped": true, "cancelled": true, "timed_out": true, "action_required": true, "startup_failure": true, "stale": true}
 
-func passingConclusion(c string) bool {
-	return c == conclusionSuccess || c == "neutral" || c == "skipped"
-}
-
-// requiredChecks classifies the checks the base branch requires for the exact head of the pull request. A required name with no check on that head, or whose newest run has not finished,
-// is pending; failures are the newest runs that finished and did not pass. They count only when every required check has finished, so one red job seen before its siblings finish never uses
-// up the retry (audit round 1 #15).
+// requiredChecks classifies the checks the base branch requires for the exact head of the pull request, the way merge-evidence and the merge lane's own check read them: of every run
+// only its newest attempt counts, every such run of a required name (and of the provider the branch rule names for it) has to be a success, and no run ordering is guessed from the
+// opaque run ids. A required name with no run on that head, or with a run that has not finished, is pending; the runs that finished and are not a success are the failures. They count only
+// when every required check has finished, so one red job seen before its siblings finish never uses up the retry.
 func requiredChecks(pr PullRequest) (pending, failed []string) {
+	newest := map[string]Check{}
+	for _, c := range pr.Checks {
+		if c.HeadSHA != pr.HeadSHA {
+			continue
+		}
+		if cur, ok := newest[c.RunID]; !ok || c.Attempt > cur.Attempt {
+			newest[c.RunID] = c
+		}
+	}
+	runs := make([]string, 0, len(newest))
+	for id := range newest {
+		runs = append(runs, id)
+	}
+	slices.Sort(runs)
 	for _, name := range pr.RequiredDeclared {
-		var newest *Check
-		for i := range pr.Checks {
-			c := &pr.Checks[i]
-			if c.Name != name || c.HeadSHA != pr.HeadSHA {
+		providers := pr.RequiredProviders[name]
+		answered := false
+		for _, id := range runs {
+			c := newest[id]
+			if c.Name != name || (len(providers) > 0 && !slices.Contains(providers, c.Provider)) {
 				continue
 			}
-			if newest == nil || c.Attempt > newest.Attempt || (c.Attempt == newest.Attempt && runOrder(c.RunID, newest.RunID) > 0) {
-				newest = c
+			answered = true
+			switch {
+			case !completedConclusions[c.Conclusion]:
+				pending = append(pending, name+": run "+id+" has not finished")
+			case c.Conclusion != "success":
+				failed = append(failed, name+"|"+id+"|"+strconv.FormatInt(c.Attempt, 10))
 			}
 		}
-		switch {
-		case newest == nil:
-			pending = append(pending, name+": no check of the head")
-		case !completedConclusions[newest.Conclusion]:
-			pending = append(pending, name+": not finished")
-		case !passingConclusion(newest.Conclusion):
-			failed = append(failed, name+"|"+newest.RunID+"|"+strconv.FormatInt(newest.Attempt, 10))
+		if !answered {
+			pending = append(pending, name+": no run of the head")
 		}
 	}
 	slices.Sort(pending)
 	slices.Sort(failed)
 	return pending, failed
-}
-
-// runOrder compares two run ids as numbers when both are numbers, else as text.
-func runOrder(a, b string) int {
-	x, errA := strconv.ParseInt(a, 10, 64)
-	y, errB := strconv.ParseInt(b, 10, 64)
-	if errA == nil && errB == nil {
-		switch {
-		case x < y:
-			return -1
-		case x > y:
-			return 1
-		}
-		return 0
-	}
-	return strings.Compare(a, b)
 }
 
 // mergeable reads the relationship of an accepted result for a judgement: not cancelled or paused (contract 3.2), and the caller is its parent. An archived relationship is fine, its child's
@@ -100,8 +92,8 @@ func mergeable(ctx context.Context, q store.Querier, acc Acceptance, actor strin
 	if !found {
 		return refuse(contract.RefusalUnregisteredRelationship, "relationship %s of the accepted result is not in the store", acc.RelationshipID)
 	}
-	if rel.Status == "paused" || rel.Status == "cancelled" {
-		return refuse(contract.RefusalRelationshipNotActive, "the relationship %s is %s: nothing is judged for merge while it is", rel.ID, rel.Status)
+	if rel.Status == "paused" || rel.Status == "cancelled" || rel.Superseded {
+		return refuse(contract.RefusalRelationshipNotActive, "the relationship %s is %s: nothing is judged for merge while it is", rel.ID, map[bool]string{true: "superseded", false: rel.Status}[rel.Superseded])
 	}
 	if rel.ParentTaskID != actor {
 		return refuse(contract.RefusalScopeRoleMismatch, "task %s is not the parent of relationship %s, which is held by %s", actor, rel.ID, rel.ParentTaskID)
@@ -207,15 +199,23 @@ func (s *Scheduler) Judge(ctx context.Context, plan, node, actor string, in Judg
 		if err := mergeable(txCtx, tx, acc, actor); err != nil {
 			return err
 		}
-		history, err := loadMergeHistory(txCtx, tx, acc.AcceptanceID, pr.HeadSHA)
+		history, err := loadMergeHistory(txCtx, tx, plan, node, forge, number, pr.HeadSHA)
 		if err != nil {
 			return err
 		}
 		if history.evicted != nil {
-			// the eviction of this head is final: it is returned as it was recorded and nothing is written
+			// the eviction of this head of this pull request is final, whichever acceptance recorded it: a new acceptance of the same head does not bring back the retry the head used up.
+			// The acceptance in force carries the eviction too (the reading blocks it from its own history); an acceptance that already has it is only restated.
 			e := history.evicted
 			out.Outcome, out.Reason, out.Round, out.CheckSeq, out.FailedRequired, out.Replayed = e.outcome, e.reason, e.round, e.seq, e.failed, true
-			return nil
+			var one int
+			own, err := queryOne(txCtx, tx, "SELECT 1 FROM dag_merge_checks WHERE acceptance_id = ? AND outcome = ? AND observed_head_sha = ?", []any{acc.AcceptanceID, OutcomeEvicted, pr.HeadSHA}, &one)
+			if err != nil || own {
+				return err
+			}
+			seq, _, err := s.appendMergeCheck(txCtx, tx, mergeCheck{Acceptance: acc, Observed: pr, BaseTip: tip.SHA, ChecksBase: pr.BaseSHA, Failed: e.failed, Round: maxRounds, Outcome: OutcomeEvicted, Reason: e.reason})
+			out.CheckSeq, out.Replayed = seq, false
+			return err
 		}
 		effective, err := effectiveCriteria(txCtx, tx, acc)
 		if err != nil {
@@ -294,6 +294,7 @@ func subset(a, b []string) bool {
 
 type historicRow struct {
 	seq             int64
+	acceptance      string
 	outcome, reason string
 	round           int
 	failed          []string
@@ -307,9 +308,13 @@ type mergeHistory struct {
 	evicted      *historicRow
 }
 
-func loadMergeHistory(ctx context.Context, q store.Querier, acceptance, head string) (mergeHistory, error) {
+// loadMergeHistory reads what the judgements of one head of one pull request of a node already say, across every acceptance the node had of it: a head that used up its retry or was evicted
+// stays so when the node is accepted again at the same head. The rows come in the order they were written.
+func loadMergeHistory(ctx context.Context, q store.Querier, plan, node, forge string, number int64, head string) (mergeHistory, error) {
 	var h mergeHistory
-	rows, err := q.QueryContext(ctx, "SELECT check_seq, outcome, reason, round_no, failed_required_json, checks_digest, evidence_json FROM dag_merge_checks WHERE acceptance_id = ? AND observed_head_sha = ? ORDER BY check_seq", acceptance, head)
+	rows, err := q.QueryContext(ctx, "SELECT c.check_seq, c.acceptance_id, c.outcome, c.reason, c.round_no, c.failed_required_json, c.checks_digest, c.evidence_json FROM dag_merge_checks c"+
+		" JOIN dag_acceptances a ON a.acceptance_id = c.acceptance_id JOIN dag_acceptance_forge f ON f.acceptance_id = a.acceptance_id"+
+		" WHERE a.plan_id = ? AND a.node_id = ? AND f.forge_repository = ? AND f.pr_number = ? AND c.observed_head_sha = ? ORDER BY c.rowid", plan, node, forge, number, head)
 	if err != nil {
 		return h, err
 	}
@@ -317,15 +322,15 @@ func loadMergeHistory(ctx context.Context, q store.Querier, acceptance, head str
 	for rows.Next() {
 		var r historicRow
 		var failed, digest, evidence string
-		if err := rows.Scan(&r.seq, &r.outcome, &r.reason, &r.round, &failed, &digest, &evidence); err != nil {
+		if err := rows.Scan(&r.seq, &r.acceptance, &r.outcome, &r.reason, &r.round, &failed, &digest, &evidence); err != nil {
 			return h, err
 		}
 		// the history decides how many retries are left, so a row that no longer digests to what was recorded (B-13) is not history
 		if recomputed, err := RecomputeEvidenceDigest(evidence); err != nil || recomputed != digest {
-			return h, refuse(contract.RefusalRevisionMismatch, "merge check %d of acceptance %s no longer digests to what was recorded", r.seq, acceptance)
+			return h, refuse(contract.RefusalRevisionMismatch, "merge check %d of acceptance %s no longer digests to what was recorded", r.seq, r.acceptance)
 		}
 		if err := json.Unmarshal([]byte(failed), &r.failed); err != nil {
-			return h, fmt.Errorf("a merge check of %s holds a failed list that is not JSON: %w", acceptance, err)
+			return h, fmt.Errorf("a merge check of %s holds a failed list that is not JSON: %w", r.acceptance, err)
 		}
 		if r.outcome == OutcomeRetrySameSHA {
 			h.retries++
@@ -338,7 +343,7 @@ func loadMergeHistory(ctx context.Context, q store.Querier, acceptance, head str
 				}
 			}
 		}
-		if r.outcome == OutcomeEvicted {
+		if r.outcome == OutcomeEvicted && h.evicted == nil {
 			row := r
 			h.evicted = &row
 		}
@@ -420,8 +425,8 @@ func (s *Scheduler) RequestMergeTurn(ctx context.Context, plan, node, actor stri
 		return res, nil, err
 	}
 	// a holder has one live claim per target: asking again while the earlier turn is open answers that turn, which is not this node's
-	if head, _ := turn["candidateHead"].(string); head != acc.HeadSHA {
-		return res, nil, refuse(contract.RefusalDispositionConflict, "task %s already has the live merge turn %v on this target for head %s: land or return it before the pull request of %s asks for its own", actor, turn["turnId"], head, node)
+	if head, _ := turn["candidateHead"].(string); head != acc.HeadSHA || fmt.Sprint(turn["relationshipId"]) != acc.RelationshipID || fmt.Sprint(turn["prNumber"]) != strconv.FormatInt(acc.PRNumber, 10) || turn["projectKey"] != snap.ProjectKey {
+		return res, nil, refuse(contract.RefusalDispositionConflict, "task %s already has the live merge turn %v on this target (head %s, relationship %v, pull request %v): land or return it before the pull request of %s asks for its own", actor, turn["turnId"], head, turn["relationshipId"], turn["prNumber"], node)
 	}
 	return res, turn, nil
 }

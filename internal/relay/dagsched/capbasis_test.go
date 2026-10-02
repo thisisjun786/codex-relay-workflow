@@ -2,6 +2,7 @@ package dagsched
 
 import (
 	"context"
+	"math"
 	"testing"
 )
 
@@ -38,6 +39,8 @@ func TestRecordCapBasis(t *testing.T) {
 		"another task":                       {func(b *CapBasis) { b.DecidedBy = "intruder" }, "scope_role_mismatch"},
 		"no source for W":                    {func(b *CapBasis) { b.WSource = "" }, "malformed_receipt"},
 		"zero minutes":                       {func(b *CapBasis) { b.SMinutes = 0 }, "malformed_receipt"},
+		"infinite minutes":                   {func(b *CapBasis) { b.WMinutes = math.Inf(1) }, "malformed_receipt"},
+		"not a number":                       {func(b *CapBasis) { b.WMinutes = math.NaN() }, "malformed_receipt"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			b := basis

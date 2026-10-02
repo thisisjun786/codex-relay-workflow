@@ -18,9 +18,14 @@ type gitRepo struct {
 	path string
 }
 
-func newGitRepo(t *testing.T) *gitRepo {
+func newGitRepo(t *testing.T) *gitRepo { return newGitRepoAt(t, t.TempDir()) }
+
+func newGitRepoAt(t *testing.T, path string) *gitRepo {
 	t.Helper()
-	r := &gitRepo{t: t, path: t.TempDir()}
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	r := &gitRepo{t: t, path: path}
 	r.git("init", "-q", "-b", "dev")
 	r.git("config", "user.email", "t@example.com")
 	r.git("config", "user.name", "t")

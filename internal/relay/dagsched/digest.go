@@ -58,7 +58,9 @@ func digestOf(v any) string {
 // CheckRow is one check of an EvidenceBody.
 type CheckRow struct {
 	Name, RunID, HeadSHA, Conclusion string
-	Attempt                          int64
+	// Provider is part of the evidence only when the forge named one, so a body without providers digests as it always did.
+	Provider string
+	Attempt  int64
 }
 
 // EvidenceBody is the one serialization of what the relay observed of a pull request: the checks of the exact head, the
@@ -77,7 +79,7 @@ func EvidenceBodyOf(pr PullRequest) EvidenceBody {
 	b := EvidenceBody{Required: append([]string(nil), pr.RequiredDeclared...), ReviewDigest: pr.ReviewDigest}
 	for _, c := range pr.Checks {
 		if c.HeadSHA == pr.HeadSHA {
-			b.Checks = append(b.Checks, CheckRow{Name: c.Name, RunID: c.RunID, HeadSHA: c.HeadSHA, Conclusion: c.Conclusion, Attempt: c.Attempt})
+			b.Checks = append(b.Checks, CheckRow{Name: c.Name, RunID: c.RunID, HeadSHA: c.HeadSHA, Conclusion: c.Conclusion, Provider: c.Provider, Attempt: c.Attempt})
 		}
 	}
 	return b
@@ -97,7 +99,11 @@ func (b EvidenceBody) object() map[string]any {
 	})
 	rows := make([]any, 0, len(checks))
 	for _, c := range checks {
-		rows = append(rows, map[string]any{"name": c.Name, "run_id": c.RunID, "head_sha": c.HeadSHA, "conclusion": c.Conclusion, "attempt": c.Attempt})
+		row := map[string]any{"name": c.Name, "run_id": c.RunID, "head_sha": c.HeadSHA, "conclusion": c.Conclusion, "attempt": c.Attempt}
+		if c.Provider != "" {
+			row["provider"] = c.Provider
+		}
+		rows = append(rows, row)
 	}
 	required := append([]string(nil), b.Required...)
 	sort.Strings(required)
@@ -122,6 +128,7 @@ func RecomputeEvidenceDigest(evidenceJSON string) (string, error) {
 			RunID      string `json:"run_id"`
 			HeadSHA    string `json:"head_sha"`
 			Conclusion string `json:"conclusion"`
+			Provider   string `json:"provider"`
 			Attempt    int64  `json:"attempt"`
 		} `json:"checks"`
 		Required     []string `json:"required"`
@@ -132,7 +139,7 @@ func RecomputeEvidenceDigest(evidenceJSON string) (string, error) {
 	}
 	b := EvidenceBody{Required: wire.Required, ReviewDigest: wire.ReviewDigest}
 	for _, c := range wire.Checks {
-		b.Checks = append(b.Checks, CheckRow{Name: c.Name, RunID: c.RunID, HeadSHA: c.HeadSHA, Conclusion: c.Conclusion, Attempt: c.Attempt})
+		b.Checks = append(b.Checks, CheckRow{Name: c.Name, RunID: c.RunID, HeadSHA: c.HeadSHA, Conclusion: c.Conclusion, Provider: c.Provider, Attempt: c.Attempt})
 	}
 	return EvidenceDigest(b), nil
 }

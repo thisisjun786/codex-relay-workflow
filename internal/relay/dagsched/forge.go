@@ -81,7 +81,7 @@ func projectSnapshot(snapshot map[string]any, repository string, number int64) P
 		if c["attempt"] != nil {
 			attempt = evidence.Integer(c["attempt"]).Int64()
 		}
-		pr.Checks = append(pr.Checks, Check{RunID: textOf(c["runId"]), Name: textOf(c["name"]), HeadSHA: textOf(c["headSha"]), Conclusion: textOf(c["conclusion"]), Attempt: attempt})
+		pr.Checks = append(pr.Checks, Check{RunID: textOf(c["runId"]), Name: textOf(c["name"]), HeadSHA: textOf(c["headSha"]), Conclusion: textOf(c["conclusion"]), Provider: textOf(c["provider"]), Attempt: attempt})
 	}
 	// the collector holds the declared list as []string when it read it and nil when it could not: nil is "not declared", an empty list is "requires none".
 	switch declared := handoff["requiredDeclared"].(type) {
@@ -105,7 +105,7 @@ func projectSnapshot(snapshot map[string]any, repository string, number int64) P
 	}
 	var rows []any
 	for _, c := range pr.Checks {
-		rows = append(rows, map[string]any{"runId": c.RunID, "name": c.Name, "headSha": c.HeadSHA, "conclusion": c.Conclusion, "attempt": c.Attempt})
+		rows = append(rows, map[string]any{"runId": c.RunID, "name": c.Name, "headSha": c.HeadSHA, "conclusion": c.Conclusion, "attempt": c.Attempt, "provider": optionalProvider(c.Provider)})
 	}
 	for _, p := range evidence.ChecksProblemsWith(pr.HeadSHA, required, rows, true, pr.RequiredProviders) {
 		pr.CheckProblems = append(pr.CheckProblems, p.Code+": "+p.Detail)
@@ -149,4 +149,12 @@ func ClassifyPullRequest(pr PullRequest) error {
 		return nil
 	}
 	return fmt.Errorf("the pull request %s#%d has a verdict the scheduler does not know, %q", pr.Repository, pr.Number, pr.Verdict)
+}
+
+// optionalProvider is a check's provider as the collector gives it: absent is nil, not an empty text.
+func optionalProvider(p string) any {
+	if p == "" {
+		return nil
+	}
+	return p
 }

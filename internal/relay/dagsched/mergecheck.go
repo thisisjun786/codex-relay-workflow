@@ -44,14 +44,14 @@ func (s *Scheduler) appendMergeCheck(ctx context.Context, q store.Querier, m mer
 	digest := EvidenceDigest(body)
 	failed := failedJSON(m.Failed)
 	var lastSeq int64
-	var outcome, observed, lastDigest, lastFailed string
+	var outcome, observed, lastDigest, lastFailed, lastTip string
 	var round int
-	found, err := queryOne(ctx, q, "SELECT check_seq, outcome, observed_head_sha, checks_digest, failed_required_json, round_no FROM dag_merge_checks WHERE acceptance_id = ? ORDER BY check_seq DESC LIMIT 1",
-		[]any{m.Acceptance.AcceptanceID}, &lastSeq, &outcome, &observed, &lastDigest, &lastFailed, &round)
+	found, err := queryOne(ctx, q, "SELECT check_seq, outcome, observed_head_sha, checks_digest, failed_required_json, round_no, base_tip_sha FROM dag_merge_checks WHERE acceptance_id = ? ORDER BY check_seq DESC LIMIT 1",
+		[]any{m.Acceptance.AcceptanceID}, &lastSeq, &outcome, &observed, &lastDigest, &lastFailed, &round, &lastTip)
 	if err != nil {
 		return 0, false, err
 	}
-	if found && outcome == m.Outcome && observed == m.Observed.HeadSHA && lastDigest == digest && lastFailed == failed && round == m.Round {
+	if found && outcome == m.Outcome && observed == m.Observed.HeadSHA && lastDigest == digest && lastFailed == failed && round == m.Round && lastTip == m.BaseTip {
 		return lastSeq, false, nil
 	}
 	seq = lastSeq + 1

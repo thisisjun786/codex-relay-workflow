@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 )
 
 // judgeKit is an integration kit with node I accepted at the head of a real branch ("feature", cut from dev) whose pull request is scripted: the forge answers what the test says, while the
@@ -343,5 +345,93 @@ func TestEvidenceRowTamperIsBlocked(t *testing.T) {
 	}
 	if k.count("SELECT COUNT(*) FROM dag_merge_checks") != before {
 		t.Fatal("a judgement was written over a falsified history")
+	}
+}
+
+// D-12 is a limit of a head of a pull request, not of an acceptance: when the node is accepted again at the same head (a new report, an explicit supersede) the head does not get its
+// retry back, and the acceptance in force carries the eviction, so the reading blocks it from its own history.
+func TestEvictionSurvivesAFreshAcceptanceOfTheSameHead(t *testing.T) {
+	k := newJudgeKit(t)
+	k.setChecks("A:1:1:failure", "B:2:1:success")
+	k.judge()
+	k.setChecks("A:1:2:failure", "B:2:1:success")
+	if r := k.judge(); r.Outcome != OutcomeEvicted {
+		t.Fatalf("second failure = %+v", r)
+	}
+	k.exec("UPDATE dag_acceptances SET state = 'superseded' WHERE node_id = 'I'")
+	k.acceptNode("g", "I", acceptOpts{HeadSHA: k.feature, PR: 5, Forge: "owner/repo", Repository: k.repo.path, Suffix: "b"})
+	k.setChecks("A:1:3:success", "B:2:1:success")
+	again := k.judge()
+	if again.Outcome != OutcomeEvicted || again.Round != 2 {
+		t.Fatalf("the same head under a new acceptance = %+v", again)
+	}
+	if n := k.read("g").node("I"); n.Reason != BlockedEvicted {
+		t.Fatalf("I = %+v, want blocked:evicted from the acceptance's own history", n)
+	}
+	// and once it is carried, asking again only restates it
+	if rest := k.judge(); rest.Outcome != OutcomeEvicted || !rest.Replayed {
+		t.Fatalf("asking again = %+v", rest)
+	}
+	// a different head of the same pull request is a different matter: it needs its own acceptance, and starts with its own retry
+	if k.count("SELECT COUNT(*) FROM dag_merge_checks WHERE outcome = 'evicted'") != 2 {
+		t.Fatalf("history = %v", k.history())
+	}
+}
+
+// Two nodes that were accepted at one commit are two pull requests of two relationships: a turn that is open for the first is not an answer for the second.
+func TestMergeRequestIsNotAnsweredByAnotherNodesTurnAtTheSameHead(t *testing.T) {
+	k := newJudgeKit(t)
+	k.declare("g", "D", "d.txt")
+	k.acceptNode("g", "D", acceptOpts{HeadSHA: k.feature, PR: 6, Forge: "owner/repo", Repository: k.repo.path})
+	pr := k.pr
+	pr.Number = 6
+	k.forge.by["owner/repo#6"] = pr
+	first, turn, err := k.sched.RequestMergeTurn(context.Background(), "g", "I", "parent", MergeRequestInput{Host: "host"})
+	if err != nil || !first.Eligible() || turn["relationshipId"] != "rel-g-I" {
+		t.Fatalf("I = %v %+v %v", err, first, turn)
+	}
+	second, other, err := k.sched.RequestMergeTurn(context.Background(), "g", "D", "parent", MergeRequestInput{Host: "host"})
+	if refusalReason(err) != "disposition_conflict" || other != nil || !second.Eligible() || !strings.Contains(err.Error(), "rel-g-I") {
+		t.Fatalf("D at the same head = %v %+v %v", err, second, other)
+	}
+}
+
+// A relationship the registry replaced (archived and superseded) is not a holder of a merge turn, and a pause that lands while the pull request is read is seen under the lock.
+func TestMergeRequestRefusesASupersededRelationship(t *testing.T) {
+	k := newJudgeKit(t)
+	k.exec("PRAGMA foreign_keys = OFF")
+	k.exec("UPDATE relationships SET status = 'archived', superseded_by = 'rel-successor' WHERE relationship_id = 'rel-g-I'")
+	if _, turn, err := k.sched.RequestMergeTurn(context.Background(), "g", "I", "parent", MergeRequestInput{Host: "host"}); refusalReason(err) != "relationship_not_active" || turn != nil {
+		t.Fatalf("request = %v %v", err, turn)
+	}
+	if _, err := k.sched.Judge(context.Background(), "g", "I", "parent", JudgeInput{}); refusalReason(err) != "relationship_not_active" {
+		t.Fatalf("judge = %v", err)
+	}
+	if k.count("SELECT COUNT(*) FROM merge_turns") != 0 || k.count("SELECT COUNT(*) FROM dag_merge_checks") != 0 {
+		t.Fatal("something was written for a superseded relationship")
+	}
+}
+
+type tipStub struct{ sha string }
+
+func (t *tipStub) Tip(_ context.Context, repository, base string) (mergeturn.Tip, error) {
+	return mergeturn.Tip{SHA: t.sha, Source: "stub", Reference: "refs/heads/" + base, Repository: repository}, nil
+}
+
+// The base tip a judgement was made against is part of what it says: the same outcome against a tip that moved is a new row, so the history never claims the old tip.
+func TestMergeJudgementRecordsTheTipItWasMadeAgainst(t *testing.T) {
+	k := newJudgeKit(t)
+	older := k.feature // a tip the head contains: the head itself
+	tip := &tipStub{sha: k.repo.git("rev-parse", "dev")}
+	k.sched.Tips = tip
+	first := k.judge()
+	tip.sha = older
+	second := k.judge()
+	if !first.Eligible() || !second.Eligible() || second.Replayed || second.CheckSeq != 2 || second.BaseTipSHA != older {
+		t.Fatalf("first %+v second %+v", first, second)
+	}
+	var recorded string
+	if err := k.s.DB.QueryRow("SELECT base_tip_sha FROM dag_merge_checks WHERE check_seq = 2").Scan(&recorded); err != nil || recorded != older {
+		t.Fatalf("recorded tip = %s %v", recorded, err)
 	}
 }

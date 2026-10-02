@@ -2,6 +2,8 @@ package dagsched
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -118,4 +120,67 @@ func TestObserveConflictsRefusals(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The checkout is whatever git says it is: a linked working tree, a path with a colon in it (an environment list of alternates would split it) and a file whose name is a single space are all
+// measured, and a merge git could not compute is a failure and never a count of zero.
+func TestObserveConflictsInUnusualCheckouts(t *testing.T) {
+	conflict := func(t *testing.T, repo *gitRepo, name string) (string, string) {
+		t.Helper()
+		repo.commit(name, lines(12, nil))
+		return repo.parallel(map[string]string{name: lines(12, map[int]string{3: "left"})}, map[string]string{name: lines(12, map[int]string{3: "right"})})
+	}
+	observe := func(t *testing.T, k *integrationKit, path, left, right string) (ConflictResult, error) {
+		t.Helper()
+		return k.sched.ObserveConflicts(context.Background(), "g", "parent", ConflictInput{Repository: path, LeftNode: "D", RightNode: "I", LeftHead: left, RightHead: right})
+	}
+	t.Run("a linked working tree", func(t *testing.T) {
+		k := newIntegrationKit(t)
+		left, right := conflict(t, k.repo, "c.txt")
+		linked := filepath.Join(t.TempDir(), "linked")
+		k.repo.git("worktree", "add", "-q", linked, "-b", "linked-branch")
+		res, err := observe(t, k, linked, left, right)
+		if err != nil || res.Conflicts != 1 || strings.Join(res.Files, ",") != "c.txt" {
+			t.Fatalf("conflicts = %v %+v", err, res)
+		}
+	})
+	t.Run("a path with a colon", func(t *testing.T) {
+		k := newIntegrationKit(t)
+		colon := newGitRepoAt(t, filepath.Join(t.TempDir(), "a:b"))
+		left, right := conflict(t, colon, "c.txt")
+		res, err := observe(t, k, colon.path, left, right)
+		if err != nil || res.Conflicts != 1 {
+			t.Fatalf("conflicts = %v %+v", err, res)
+		}
+	})
+	t.Run("a file named with a space", func(t *testing.T) {
+		k := newIntegrationKit(t)
+		left, right := conflict(t, k.repo, " ")
+		res, err := observe(t, k, k.repo.path, left, right)
+		if err != nil || res.Conflicts != 1 || len(res.Files) != 1 || res.Files[0] != " " {
+			t.Fatalf("conflicts = %v %+v", err, res)
+		}
+	})
+	t.Run("a merge git cannot compute is not zero conflicts", func(t *testing.T) {
+		k := newIntegrationKit(t)
+		missing := strings.Repeat("7", 40)
+		if files, err := mergeTreeConflicts(context.Background(), k.repo.path, missing, missing); err == nil {
+			t.Fatalf("an impossible merge answered %v", files)
+		}
+		if k.count("SELECT COUNT(*) FROM dag_conflict_observations") != 0 {
+			t.Fatal("a row was written")
+		}
+	})
+	t.Run("the throwaway directory is removed", func(t *testing.T) {
+		k := newIntegrationKit(t)
+		left, right := conflict(t, k.repo, "c.txt")
+		tmp := t.TempDir()
+		t.Setenv("TMPDIR", tmp)
+		if _, err := observe(t, k, k.repo.path, left, right); err != nil {
+			t.Fatal(err)
+		}
+		if entries, _ := os.ReadDir(tmp); len(entries) != 0 {
+			t.Fatalf("left behind: %v", entries)
+		}
+	})
 }

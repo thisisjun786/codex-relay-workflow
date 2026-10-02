@@ -231,16 +231,16 @@ request (by the forge identity recorded with the acceptance) and the base branch
 
 | Outcome | When |
 | --- | --- |
-| `evicted` | a required check failed again on the same head after its retry (decision D-12). Final for that head: nothing later, green checks included, brings it back; a new head needs a new acceptance. The reading says `blocked:evicted` |
+| `evicted` | a required check failed again on the same head after its retry (decision D-12). Final for that head of that pull request, whichever acceptance recorded it: nothing later, green checks and a fresh acceptance of the same head included, brings it back (the acceptance in force is given the eviction in its own history); a new head needs a new acceptance and starts with its own retry. The reading says `blocked:evicted` |
 | `stale_criteria` | the plan's or the relationship's criteria are no longer the ones the acceptance stands on |
 | `stale_head` | the pull request is at another head than the accepted one (E-10); the row stores both heads, so the reading blocks the edges built on it |
 | `predecessor_not_landed` | an incoming `integrated` edge, or an incoming code-pinned edge (a stacked pull request), whose predecessor's accepted head is not yet in the edge's target |
 | `stale_base` | the base branch tip is not contained in the head, so the required checks did not run on the tree that would land. The dev ruleset is strict (D-11), so a head that contains the tip is that tree; the pull request's own base field says nothing about what the checks ran against and is stored for information only. The local ancestry check needs the head fetched into the checkout; a head it does not have is a failure of the host and writes nothing |
-| `checks_pending` | a required name has no check on the exact head, or its newest run has not finished, or the checks are not usable evidence |
+| `checks_pending` | a required name has no run on the exact head, or one of its runs has not finished, or the checks are not usable evidence |
 | `retry_same_sha` | every required check has finished and one failed, and no retry was spent on this head: run the failed checks again on the same head (no new generation, no reassignment). The same snapshot read again is the same judgement |
-| `eligible` | every required check passed (the newest attempt of each run decides; non-required checks never count). After a recorded failure the reason says so |
+| `eligible` | every required check passed. After a recorded failure the reason says so |
 
-Failures count only when every required check has finished, so one red job seen beside a running one never uses up the retry. A second, different failure after the retry round opened evicts. A pull request whose list of
+A required check is read the way merge-evidence and the merge lane's own check read it: of every run only its newest attempt counts, every run of a required name must be a `success` (a skipped or neutral run is not one, so a head the judgement lets in is not refused by the lane for the same check), a required check answers only for the integration its branch rule names, and the opaque run identities are never ordered. Failures count only when every required check has finished, so one red job seen beside a running one never uses up the retry. A second, different failure after the retry round opened evicts. A pull request whose list of
 required checks cannot be read is not judged (`merge_evidence_malformed`, nothing written): ignorance is not "none required". A draft, closed or merged pull request is `disposition_conflict`; evidence the relay could not read
 completely is the host's failure; both write nothing. A row of the history that no longer digests to what was recorded (B-13) is `revision_mismatch`, and the edges built on it read `blocked:evidence_mismatch`.
 
@@ -254,7 +254,7 @@ the only kind the DAG path lets into the lane, so every landed tree of it has an
 ## Conflict observations
 
 `crw relay dag-conflict-observe --plan P --actor A --repository PATH --left-node N --right-node M --left-head SHA --right-head SHA` records how many files git cannot merge between the heads of two parallel branches of a plan
-(`git merge-tree --write-tree`, git 2.38 or newer), the number criterion c7 asks to be recorded. The merge is computed in memory against a throwaway object directory, so the checkout gains no objects. The nodes are stored in sorted
+(`git merge-tree --write-tree`, git 2.38 or newer), the number criterion c7 asks to be recorded. The checkout is whatever git says it is (a working tree, a linked working tree or a bare repository, at any path). The merge is computed in memory against a throwaway object directory whose alternates file names the checkout's objects, so the checkout gains no objects; git's NUL separated answer is read for the file names, and an answer without the shape of a merge result is a failure and never a count of zero. The nodes are stored in sorted
 order with their heads, so asking either way round is one row, and the same two heads over the same base are a replay. It is a measurement: nothing in the reading waits for it.
 
 ## Cap basis

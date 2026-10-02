@@ -77,7 +77,9 @@ type PullRequest struct {
 // Check is one check run of the pull request's head as merge-evidence reports it.
 type Check struct {
 	RunID, Name, HeadSHA, Conclusion string
-	Attempt                          int64
+	// Provider is the integration that reported the check ("" when the forge names none): a required check answers only for the provider its branch rule names.
+	Provider string
+	Attempt  int64
 }
 
 // Problem is one problem code of a merge-evidence snapshot.

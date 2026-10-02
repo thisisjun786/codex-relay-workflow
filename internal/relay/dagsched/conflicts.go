@@ -70,21 +70,17 @@ func (s *Scheduler) ObserveConflicts(ctx context.Context, plan, actor string, in
 	if len(parents) != 1 || parents[0] != actor {
 		return out, refuse(contract.RefusalScopeRoleMismatch, "task %s is not the registered parent of project %s", actor, snap.ProjectKey)
 	}
-	gitdir := filepath.Join(in.Repository, ".git")
-	if _, err := os.Stat(gitdir); os.IsNotExist(err) {
-		gitdir = in.Repository
-	}
 	for _, head := range []string{leftHead, rightHead} {
-		if _, err := runGit(ctx, gitdir, nil, "cat-file", "-e", head+"^{commit}"); err != nil {
+		if _, err := runGit(ctx, in.Repository, nil, "cat-file", "-e", head+"^{commit}"); err != nil {
 			return out, refuse(contract.RefusalMergeTargetUnreadable, "commit %s is not in %s: fetch the branch first (%v)", head, in.Repository, err)
 		}
 	}
-	base, err := runGit(ctx, gitdir, nil, "merge-base", leftHead, rightHead)
+	base, err := runGit(ctx, in.Repository, nil, "merge-base", leftHead, rightHead)
 	if err != nil {
 		return out, refuse(contract.RefusalMergeTargetUnreadable, "the heads %s and %s have no common ancestor in %s: %v", leftHead, rightHead, in.Repository, err)
 	}
 	out.BaseSHA = strings.TrimSpace(base)
-	files, err := mergeTreeConflicts(ctx, gitdir, leftHead, rightHead)
+	files, err := mergeTreeConflicts(ctx, in.Repository, leftHead, rightHead)
 	if err != nil {
 		return out, err
 	}
@@ -125,15 +121,15 @@ func (s *Scheduler) ObserveConflicts(ctx context.Context, plan, actor string, in
 	return out, err
 }
 
-// runGit runs one git command against a repository and returns its standard output. A failure carries git's own words.
-func runGit(ctx context.Context, gitdir string, extraEnv []string, args ...string) (string, error) {
-	_, out, err := runGitExit(ctx, gitdir, extraEnv, args...)
+// runGit runs one git command in a checkout (a working tree, a linked working tree or a bare repository: git is asked, not guessed) and returns its standard output. A failure carries git's own words.
+func runGit(ctx context.Context, repository string, extraEnv []string, args ...string) (string, error) {
+	_, out, err := runGitExit(ctx, repository, extraEnv, args...)
 	return out, err
 }
 
 // runGitExit is runGit that also reports git's exit code: merge-tree uses 1 for "merged with conflicts", which is an answer and not a failure.
-func runGitExit(ctx context.Context, gitdir string, extraEnv []string, args ...string) (int, string, error) {
-	cmd := exec.CommandContext(ctx, "git", append([]string{"--git-dir=" + gitdir}, args...)...)
+func runGitExit(ctx context.Context, repository string, extraEnv []string, args ...string) (int, string, error) {
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", repository}, args...)...)
 	cmd.Env = append(cleanGitEnv(), extraEnv...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -147,35 +143,61 @@ func runGitExit(ctx context.Context, gitdir string, extraEnv []string, args ...s
 	return -1, "", fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
 }
 
+var treeIDPattern = regexp.MustCompile("^[0-9a-f]{40}([0-9a-f]{24})?$")
+
 // mergeTreeConflicts merges two commits in memory and returns the sorted names of the files that conflict (none when the merge is clean). The trees git writes go to a throwaway object
-// directory that falls back to the checkout's objects, so the checkout itself gains nothing.
-func mergeTreeConflicts(ctx context.Context, gitdir, left, right string) ([]string, error) {
+// directory whose alternates file names the checkout's objects (a file, not an environment list, so a path with a colon works), so the checkout itself gains nothing. The answer is read
+// from git's NUL separated output (a file name may hold any character but NUL) and trusted only when it has the shape git gives a merge: a tree id first. Anything else, exit 1 included, is
+// a failure to compute the merge and never a count.
+func mergeTreeConflicts(ctx context.Context, repository, left, right string) ([]string, error) {
+	objects, err := runGit(ctx, repository, nil, "rev-parse", "--path-format=absolute", "--git-path", "objects")
+	if err != nil {
+		return nil, err
+	}
 	scratch, err := os.MkdirTemp("", "dag-merge-tree-")
 	if err != nil {
 		return nil, err
 	}
 	defer os.RemoveAll(scratch)
-	env := []string{"GIT_OBJECT_DIRECTORY=" + scratch, "GIT_ALTERNATE_OBJECT_DIRECTORIES=" + filepath.Join(gitdir, "objects")}
-	code, out, err := runGitExit(ctx, gitdir, env, "merge-tree", "--write-tree", "--name-only", "--no-messages", left, right)
-	switch code {
-	case 0:
-		return nil, nil
-	case 1:
-		lines := strings.Split(out, "\n")
-		seen := map[string]bool{}
-		// the first line is the tree id, the conflicted file names follow up to the first blank line
-		for _, line := range lines[min(1, len(lines)):] {
-			if strings.TrimSpace(line) == "" {
-				break
-			}
-			seen[line] = true
-		}
-		files := make([]string, 0, len(seen))
-		for f := range seen {
-			files = append(files, f)
-		}
-		sort.Strings(files)
-		return files, nil
+	if err := os.MkdirAll(filepath.Join(scratch, "info"), 0o700); err != nil {
+		return nil, err
 	}
-	return nil, fmt.Errorf("git merge-tree could not merge %s and %s (git 2.38 or newer is needed): %w", left, right, err)
+	if err := os.WriteFile(filepath.Join(scratch, "info", "alternates"), []byte(strings.TrimSpace(objects)+"\n"), 0o600); err != nil {
+		return nil, err
+	}
+	code, out, err := runGitExit(ctx, repository, []string{"GIT_OBJECT_DIRECTORY=" + scratch}, "merge-tree", "-z", "--write-tree", "--name-only", "--no-messages", left, right)
+	if code != 0 && code != 1 {
+		return nil, fmt.Errorf("git merge-tree could not merge %s and %s (git 2.38 or newer is needed): %w", left, right, err)
+	}
+	records := strings.Split(out, "\x00")
+	if len(records) == 0 || !treeIDPattern.MatchString(records[0]) {
+		return nil, fmt.Errorf("git merge-tree answered %q for %s and %s, which is not a merge result: %w", firstLine(out), left, right, err)
+	}
+	if code == 0 {
+		return nil, nil
+	}
+	seen := map[string]bool{}
+	// the tree id is followed by the conflicted file names up to the first empty record
+	for _, name := range records[1:] {
+		if name == "" {
+			break
+		}
+		seen[name] = true
+	}
+	files := make([]string, 0, len(seen))
+	for f := range seen {
+		files = append(files, f)
+	}
+	sort.Strings(files)
+	if len(files) == 0 {
+		return nil, fmt.Errorf("git merge-tree reported a conflict for %s and %s and named no file", left, right)
+	}
+	return files, nil
+}
+
+func firstLine(s string) string {
+	if i := strings.IndexAny(s, "\n\x00"); i >= 0 {
+		return s[:i]
+	}
+	return s
 }
