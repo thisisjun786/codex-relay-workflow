@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -181,6 +182,25 @@ func init() {
 	})
 }
 
+func mustMarshal(t *testing.T, value any) []byte {
+	t.Helper()
+	raw, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+// normalizedJSON is a JSON document as plain values, so two spellings of one document compare equal.
+func normalizedJSON(t *testing.T, raw []byte) any {
+	t.Helper()
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		t.Fatal(err)
+	}
+	return value
+}
+
 // poolOpens counts the connections the store's own pool opens once countPoolOpens has installed it.
 type poolOpens struct{ n atomic.Int64 }
 
@@ -323,6 +343,17 @@ func TestCRW300OwedOmissionStillReadsItsReceipt(t *testing.T) {
 	}
 	if count != relationships {
 		t.Errorf("staged %d messages, want %d", count, relationships)
+	}
+	// The reading frozen on each message is the whole derivation's, field for field.
+	for _, rid := range w.rels {
+		var frozen string
+		if err := w.s.DB.QueryRowContext(w.ctx, "SELECT reading FROM supervisor_messages WHERE relationship_id=? AND obligation_kind='unreported'", rid).Scan(&frozen); err != nil {
+			t.Fatal(err)
+		}
+		whole := orderedMap(delivery.DeriveOmission(w.ctx, w.s, store.PathlibParent(w.s.Path), rid, "", delivery.ISOOf(omissionNow), 300))
+		if staged, derived := normalizedJSON(t, []byte(frozen)), normalizedJSON(t, mustMarshal(t, whole)); !reflect.DeepEqual(staged, derived) {
+			t.Errorf("%s: the staged reading is\n%v\nthe whole derivation reads\n%v", rid, staged, derived)
+		}
 	}
 	ctx, reads := store.WithArtifactReads(w.ctx)
 	w.tick(ctx)
