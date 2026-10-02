@@ -1,0 +1,132 @@
+NOTICE
+
+Codex Relay Workflow is distributed under the MIT License in LICENSE. Its Go
+runtime also ports the behavior of CodexClaw (CXC) v0.2.40, and this file carries
+the notices that port owes: CodexClaw's own, and those of the third-party
+material CodexClaw credits. Where a Go source file is translated from a file of
+that work, the notice below applies to the Go file as well. The bridge's
+separate upstream notice stays in packages/codex-thread-bridge/LICENSE.
+
+Release archives do not include this file yet. Adding it to them belongs to the
+distribution work, not to the change that introduced it.
+
+Where each copy came from and how it was compared is recorded in
+docs/port-cxc/provenance.md.
+
+
+1. CodexClaw (CXC), by lidge-jun
+--------------------------------
+
+Source:    https://github.com/lidge-jun/codexclaw, tag v0.2.40
+License:   MIT
+Copyright: Copyright (c) 2026 lidge-jun
+
+MIT License
+
+Copyright (c) 2026 lidge-jun
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+2. LazyCodex, by Yeongyu Kim
+----------------------------
+
+CodexClaw adapts material from the historical MIT-licensed LazyCodex snapshot
+(not from the current oh-my-openagent code, which is under a different license):
+its ast-grep skill and helper, and the transcript guard of its pabcd-state
+component. CodexClaw's workflow design also draws on ideas from OMO /
+oh-my-openagent (https://github.com/code-yeongyu/oh-my-openagent). This project
+is not affiliated with or endorsed by either.
+
+Source:    https://github.com/code-yeongyu/lazycodex, commit
+           db0f80f0aecdd43f95c6b739f12fdeb747cc250f
+License:   MIT
+Copyright: Copyright (c) 2026 Yeongyu Kim
+
+MIT License
+
+Copyright (c) 2026 Yeongyu Kim
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+3. RepoMapper, by Pete Davis
+----------------------------
+
+CodexClaw's repo-map skill vendors RepoMapper with local modifications.
+
+Source:    https://github.com/pdavis68/RepoMapper
+License:   MIT
+Copyright: Copyright (c) 2025 Pete Davis
+
+MIT License
+
+Copyright (c) 2025 Pete Davis
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+4. Aider tree-sitter query files
+--------------------------------
+
+The tree-sitter query files (*.scm) that CodexClaw's repo-map skill ships are
+derived from Aider.
+
+Source:    https://github.com/Aider-AI/aider
+License:   Apache License 2.0, https://www.apache.org/licenses/LICENSE-2.0
+
+No *.scm file has been copied into this repository yet. The change that first
+copies one adds the Apache License 2.0 text and a statement of its changes
+beside the file, and updates this section.
+
+
+Other separately licensed material and dependencies keep their own licenses and
+notices; this file does not relicense them.
