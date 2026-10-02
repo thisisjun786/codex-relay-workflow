@@ -41,11 +41,21 @@ const omissionNow = 1_800_000_000.0
 type omissionWorld struct {
 	*standingWorld
 	artifacts []string
+	frozen    []string
 	owed      map[string]bool
 }
 
-// newOmissionWorld seeds relationships relationships; the first owed of them are in the owed state.
+// newOmissionWorld seeds relationships relationships, the first owed of them in the owed state, and
+// stages what the project owes (see prepare).
 func newOmissionWorld(tb testing.TB, relationships, owed int) *omissionWorld {
+	tb.Helper()
+	w := seedOmissionWorld(tb, relationships, owed)
+	w.prepare()
+	return w
+}
+
+// seedOmissionWorld is newOmissionWorld without the first visit: nothing is staged.
+func seedOmissionWorld(tb testing.TB, relationships, owed int) *omissionWorld {
 	tb.Helper()
 	base := newStandingWorld(tb, relationships, 1)
 	w := &omissionWorld{standingWorld: base, owed: map[string]bool{}}
@@ -93,6 +103,7 @@ func newOmissionWorld(tb testing.TB, relationships, owed int) *omissionWorld {
 		w.exec("UPDATE events SET turn_thread_id=?, turn_id=?, revision_hash=?, receipt=?, manifest_ref=? WHERE event_id=?", child, turn, revision, string(receipt), frozen, event)
 		w.exec("UPDATE work_reports SET revision_hash=? WHERE event_id=?", revision, event)
 		w.artifacts = append(w.artifacts, artifact)
+		w.frozen = append(w.frozen, frozen)
 		if i < owed {
 			w.owed[rid] = true
 			w.exec("UPDATE events SET stage='staged', staged_at=?, turn_status='inProgress', manifest_ref=NULL WHERE event_id=?", settled, event)
@@ -101,7 +112,6 @@ func newOmissionWorld(tb testing.TB, relationships, owed int) *omissionWorld {
 			}
 		}
 	}
-	w.prepare()
 	return w
 }
 
