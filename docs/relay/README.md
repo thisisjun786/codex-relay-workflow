@@ -362,15 +362,21 @@ is refused for two reasons answers the one that can be asked first, so a request
 rival owner of its issue, a refusal that needs the created child, answers the settings refusal
 instead of `duplicate_scope_owner`.
 A request that names a `projectKey` holds that project's lock, shared, from before the readiness and
-scope checks until the creation has returned: `managed-start-project-<sha256 of the key>.lock` beside
-the store. Starts do not hold each other up, and a start of another project uses another file. A
-writer of the project's parent binding that takes the same lock exclusively waits for every start
-inside that span, and a start waits for it before it asks about the binding, so the binding cannot
-change between the last scope check and the creation. Only `managed-start` takes the lock today;
-the registry's writers (`linkage-bind`, `linkage-handover`) do not, so a binding they remove inside the
-span is not prevented, and registration refuses the new task as before. The wait is bounded at 30
-seconds: a holder that never lets go ends it with the retryable `LockWaitExpired` host error, the
-request stays armed, and the same request id continues it.
+scope checks until its child is registered: `managed-start-project-<sha256 of the key>.lock` beside
+the store. Starts do not hold each other up, and a start of another project uses another file. Every
+writer of the project's parent binding takes the same lock exclusively before its transaction and
+lets go when it returns: `linkage-bind --role parent`, `linkage-handover --role parent` and
+`linkage-supervise`. Such a writer waits for every start inside that span, and a start waits for it
+before it asks about the binding, so the binding cannot change between the last scope check, the
+creation and the registration (which would refuse a child whose thread already exists). Writers of
+other scopes (a child under an issue, a supervisor under an initiative) and of other projects take
+nothing and are not held up. The wait is bounded at 30 seconds: a start or a writer that waits that
+long answers the retryable `LockWaitExpired` host error (the host envelope, exit 3, detail
+`LockWaitExpired: the project binding lock was not acquired within 30s; retry` for a writer) having
+changed nothing; a start stays armed and the same request id continues it. That is the one new ending
+of the three linkage commands; their refusals, exit codes and other output are unchanged. A retry
+that already has the creation answer takes no lock; if the binding moved after a crash between the
+creation and the registration, registration refuses as before.
 Registration adds that retained child's ID to the declared recipients so the parent can
 return revision requests to its own child. Replay and pre-start checks verify this derived
 list; it does not authorize messages to an unrelated task.

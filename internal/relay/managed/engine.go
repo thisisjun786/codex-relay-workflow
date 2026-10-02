@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"sync"
 	"syscall"
 	"time"
 
@@ -176,9 +177,13 @@ func (m *Start) Run(ctx context.Context, raw []byte) (contract.OrderedObject, er
 	if err != nil {
 		return nil, err
 	}
+	// A start that creates holds the project's lock (create) until its child is registered; this lets it go
+	// on every way out, and right after Register on the way through.
+	projectLock := func() {}
+	defer func() { projectLock() }()
 	if receipt == nil || receipt["status"] == "not_attempted" {
 		var notReady string
-		receipt, notReady, err = m.create(ctx, identity, req, ledger)
+		receipt, notReady, projectLock, err = m.create(ctx, identity, req, ledger)
 		if err != nil {
 			return nil, err
 		}
@@ -253,6 +258,7 @@ func (m *Start) Run(ctx context.Context, raw []byte) (contract.OrderedObject, er
 	}
 	reg := &registry.Registry{Store: m.Store, Now: m.now}
 	record, err := reg.Register(ctx, registry.Registration{Parent: registry.Endpoint{TaskID: str(parent["taskId"]), HostID: str(parent["hostId"]), Cwd: nullableSQL(str(obj(parent["settings"])["cwd"]))}, Child: registry.Endpoint{TaskID: task, HostID: str(obj(req["child"])["hostId"]), Cwd: nullableSQL(identity.Workspace), CXCSession: nullableSQL(task)}, IssueKey: identity.IssueKey, ArtifactRoots: stringsOf(req["artifactRoots"]), AllowedRecipients: recipients, ScopeRef: nullableSQL(str(req["scopeRef"])), DispatchRequestID: identity.DispatchRequestID, DispatchTurnID: nullableSQL(standby), ProjectKey: str(req["projectKey"]), ManagedRequestID: identity.RequestID})
+	projectLock()
 	if err != nil {
 		return nil, err
 	}
@@ -488,46 +494,52 @@ func (m *Start) Run(ctx context.Context, raw []byte) (contract.OrderedObject, er
 // without the child is decided here, in the order it was always decided, and the last of them directly
 // before the host is asked: readiness, the project scope, the ledger, then the project scope again with
 // the request's own fields (requestRefusal). A request that names a project holds the project's lock
-// (LockProject) from before the first of these until CreateThread has returned, so a writer of the
-// project's binding that takes it exclusively cannot change the binding in between.
+// (LockProject) from before the first of these, and the caller keeps it until the child is registered,
+// so a writer of the project's parent binding, which takes the lock exclusively, can change the binding
+// neither between the last ask and the creation nor between the creation and the registration (where
+// registration would refuse a child whose thread already exists).
 //
-// It returns the host's receipt, or the readiness refusal code that stands in for it.
-func (m *Start) create(ctx context.Context, id Identity, req, ledger map[string]any) (map[string]any, string, error) {
+// It returns the host's receipt, or the readiness refusal code that stands in for it, and the function
+// that lets the lock go; the function is never nil, may be called more than once, and must be called on
+// every way out of the caller.
+func (m *Start) create(ctx context.Context, id Identity, req, ledger map[string]any) (map[string]any, string, func(), error) {
+	release := func() {}
 	if project := str(req["projectKey"]); project != "" {
-		release, err := LockProject(ctx, m.Store.Path, project)
+		held, err := LockProject(ctx, m.Store.Path, project)
 		if err != nil {
-			return nil, "", err
+			return nil, "", release, err
 		}
-		defer release()
+		var once sync.Once
+		release = func() { once.Do(func() { _ = held() }) }
 	}
 	readiness, err := m.ready(ctx, req)
 	if err != nil {
-		return nil, "", err
+		return nil, "", release, err
 	}
 	if readiness != "" {
-		return nil, readiness, nil
+		return nil, readiness, release, nil
 	}
 	// Asked right before the effect, as readiness is: the binding may have moved since the first ask.
 	if err := m.scopeRefusal(ctx, id, req); err != nil {
-		return nil, "", err
+		return nil, "", release, err
 	}
 	if err := m.Adapter.RequireLedger(ctx, ledger); err != nil {
-		return nil, "", err
+		return nil, "", release, err
 	}
 	// The ledger check is an adapter call and takes time: the last ask is the one after it, and nothing but
 	// the host call follows it.
 	if err := m.scopeRefusal(ctx, id, req); err != nil {
-		return nil, "", err
+		return nil, "", release, err
 	}
 	if err := m.requestRefusal(ctx, req); err != nil {
-		return nil, "", err
+		return nil, "", release, err
 	}
 	child := obj(req["child"])
 	settings := obj(child["settings"])
 	sandbox := obj(settings["sandbox"])
 	kind := map[string]string{"workspaceWrite": "workspace-write", "readOnly": "read-only", "dangerFullAccess": "danger-full-access"}[str(sandbox["type"])]
 	receipt, err := m.Adapter.CreateThread(ctx, CreateThreadRequest{RequestID: id.CreateRequestID, CWD: str(settings["cwd"]), Prompt: bootstrap, Title: str(child["title"]), Sandbox: kind, Model: str(settings["model"]), ReasoningEffort: str(settings["reasoningEffort"]), RuntimeWorkspaceRoots: stringsOf(settings["runtimeWorkspaceRoots"]), ExpectedSandboxPolicy: sandbox, Role: "child"})
-	return receipt, "", err
+	return receipt, "", release, err
 }
 
 // requestRefusal is what registration and the settings record refuse once the child exists and the request
