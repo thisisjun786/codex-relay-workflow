@@ -59,6 +59,10 @@ func (s *Scheduler) PrepareCorrection(ctx context.Context, plan, node, actor str
 	if len(roots) == 0 {
 		return out, refuse(contract.RefusalMalformedReceipt, "relationship %s has no artifact root to keep the manifest in", rel.ID)
 	}
+	// the line travels in a finding that the relay's renderer joins onto one line, so a path (or an issue key) with a character it splits lines on would reach the child as another text
+	if !lineSafe(roots[0]) || !lineSafe(n.IssueKey) {
+		return out, refuse(contract.RefusalMalformedReceipt, "the artifact root %q or the issue key %q has a line-breaking character, so the path of the manifest copy cannot be handed to the child in one line", roots[0], n.IssueKey)
+	}
 	if len(opts.ArtifactRoots) == 0 {
 		opts.ArtifactRoots = roots
 	}
@@ -92,10 +96,6 @@ func (s *Scheduler) PrepareCorrection(ctx context.Context, plan, node, actor str
 		return out, fmt.Errorf("manifest %s was stored and cannot be read back", digest)
 	}
 	canonical := []byte(dag.Canonical(keptBody))
-	// the line travels in a finding that the relay's renderer joins onto one line, so a path with a line break in it would reach the child as another path
-	if where := frozenManifestPath(roots[0], canonical); hasControl(where) {
-		return out, refuse(contract.RefusalMalformedReceipt, "the artifact root %q has a control character, so the path of the manifest copy cannot be handed to the child in one line", roots[0])
-	}
 	path, err := FreezeManifest(roots[0], canonical)
 	if err != nil {
 		return out, err
@@ -215,7 +215,7 @@ func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, sup
 			}
 			canonical := []byte(dag.Canonical(body))
 			want := CorrectionInstruction(n.IssueKey, rel.Generation, digest, frozenManifestPath(roots[0], canonical), shaOf(canonical))
-			if hasControl(want) {
+			if !lineSafe(want) {
 				return refuse(contract.RefusalMalformedReceipt, "the artifact root of %s has a control character: the relay's message would carry another path than the one the manifest copy has", rel.ID)
 			}
 			if !strings.Contains(note, want) {
@@ -231,6 +231,17 @@ func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, sup
 		return err
 	})
 	return out, err
+}
+
+// lineSafe is whether a text keeps its form when the relay's message joins the lines of a finding: it holds no character that Python's str.splitlines, which the renderer uses, splits on
+// (the ASCII control characters including \n \r \v \f and \x1c to \x1e, U+0085, U+2028 and U+2029) and no DEL.
+func lineSafe(s string) bool {
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f || r == 0x85 || r == 0x2028 || r == 0x2029 {
+			return false
+		}
+	}
+	return true
 }
 
 // relationshipRoots are the artifact roots of a relationship, the places its child reads and writes.

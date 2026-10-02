@@ -374,24 +374,33 @@ func TestPreparingACorrectionTwiceAgrees(t *testing.T) {
 	}
 }
 
-// The relay renders a finding onto one line, joining the lines of a note, so a path that has a line break in it would reach the child as another path. Such a root is refused when the copy
-// is prepared (nothing is written), and a ruling that carries a line-broken path is not bound.
+// The relay renders a finding onto one line, joining the lines of a note, so a path with a character the renderer splits lines on would reach the child as another path. Such a root is
+// refused when the copy is prepared, before anything is stored or written, and a ruling that carries one is not bound.
 func TestCorrectionRefusesAPathTheMessageWouldChange(t *testing.T) {
-	k := newReleaseKit(t)
-	rid := k.correctionKit()
-	broken := k.root + "/line" + string(rune(10)) + "break"
-	if err := os.MkdirAll(broken, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	roots, err := json.Marshal([]string{broken})
-	if err != nil {
-		t.Fatal(err)
-	}
-	k.exec("UPDATE relationships SET artifact_roots = ? WHERE relationship_id = ?", string(roots), rid)
-	if _, err := k.sched.PrepareCorrection(context.Background(), "rp", "A", "parent", ManifestInput{RuleVersion: k.request(false).RuleVersion}, VerifyOptions{}); refusalReason(err) != "malformed_receipt" {
-		t.Fatalf("prepare = %v", err)
-	}
-	if entries, _ := os.ReadDir(broken); len(entries) != 0 {
-		t.Fatalf("a copy was written before the path was refused: %v", entries)
+	for name, r := range map[string]rune{"LF": 0x0a, "CR": 0x0d, "VT": 0x0b, "FF": 0x0c, "FS": 0x1c, "RS": 0x1e, "NEL": 0x85, "LS": 0x2028, "PS": 0x2029, "DEL": 0x7f} {
+		ch := string(r)
+		t.Run(name, func(t *testing.T) {
+			k := newReleaseKit(t)
+			rid := k.correctionKit()
+			broken := k.root + "/line" + ch + "break"
+			if err := os.MkdirAll(broken, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			roots, err := json.Marshal([]string{broken})
+			if err != nil {
+				t.Fatal(err)
+			}
+			k.exec("UPDATE relationships SET artifact_roots = ? WHERE relationship_id = ?", string(roots), rid)
+			stored := k.count("SELECT COUNT(*) FROM dag_input_manifests")
+			if _, err := k.sched.PrepareCorrection(context.Background(), "rp", "A", "parent", ManifestInput{RuleVersion: k.request(false).RuleVersion}, VerifyOptions{}); refusalReason(err) != "malformed_receipt" {
+				t.Fatalf("prepare = %v", err)
+			}
+			if entries, _ := os.ReadDir(broken); len(entries) != 0 {
+				t.Fatalf("a copy was written before the path was refused: %v", entries)
+			}
+			if k.count("SELECT COUNT(*) FROM dag_input_manifests") != stored {
+				t.Fatal("a manifest was stored for a path that was refused")
+			}
+		})
 	}
 }
