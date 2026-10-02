@@ -221,6 +221,16 @@ func (s *Scheduler) accepted(ctx context.Context, q store.Querier, plan string, 
 			return out, nil
 		}
 	}
+	// the plan moved under what the accepted result consumed: it no longer counts as current (invalidation.go). The relationship's own facts above come first in the reading; the edges built on the
+	// result ask the same judgement and do not depend on this order.
+	stale, err := s.staleOf(ctx, q, plan, snap, n)
+	if err != nil {
+		return nodeState{}, err
+	}
+	if stale != nil {
+		out.State, out.Disp, out.Reason, out.Detail = StateStale, DispStale, stale.Reason(), stale.Text
+		return out, nil
+	}
 	out.State, out.Disp, out.Reason = StateAccepted, DispDone, DoneAccepted
 	out.Detail = "accepted as " + short(acc.AcceptanceID)
 	return out, nil

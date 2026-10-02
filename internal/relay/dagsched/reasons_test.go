@@ -204,7 +204,10 @@ func TestReadyReasonsAreClosed(t *testing.T) {
 }
 
 // B-14 (E-25): a node must not be built from two versions of one predecessor, however far down the second version enters. G consumes E and C;
-// E rests on B, which rested on the first acceptance of A, and C rests on the second. Every edge into G is satisfied on its own.
+// E rests on B, which rested on the first acceptance of A, and C rests on the second. Every edge into G is satisfied on its own as far as the edges' own checks go.
+// B consumed an acceptance that is no longer the active one of A, so B is stale (a seed, invalidation.go), E rests on B and is stale with it, and an edge built on a stale result is not
+// satisfied: G waits on eg with blocked:stale_predecessor, naming the edge and the version, before the closure of B-14 is asked. The closure still finds the mix where the judgement does not
+// see it, behind a landed node (TestMixedAcceptancesBehindALandedNodeAreStillInconsistentInputs).
 func TestReadyFrankenbuildClosure(t *testing.T) {
 	f := newFixture(t)
 	f.projectParent()
@@ -221,11 +224,12 @@ func TestReadyFrankenbuildClosure(t *testing.T) {
 	a2 := f.acceptNode("fk", "A", acceptOpts{Suffix: "-2"})
 	f.acceptNode("fk", "C", acceptOpts{Inputs: []any{consumes("ac", "A", a2)}})
 	_ = e
-	// B still rests on the superseded acceptance, so B's own successors are stale; but E (accepted on B) and C (accepted on A's second acceptance) are
-	// each current for their direct inputs, and only the closure sees that G would mix A's two versions.
 	reading := f.read("fk")
-	if g := reading.node("G"); g.Reason != BlockedInconsistentInputs {
-		t.Fatalf("G = %+v (%s), want %s", g, reading.brief(), BlockedInconsistentInputs)
+	if b, e := reading.node("B"), reading.node("E"); b.Reason != "stale:edge:ab" || e.Reason != "stale:edge:be" {
+		t.Fatalf("B = %+v, E = %+v: want both stale (B consumed the superseded acceptance, E rests on B)", b, e)
+	}
+	if g := reading.node("G"); g.Reason != BlockedStalePredecessor || !strings.Contains(g.Detail, "eg") {
+		t.Fatalf("G = %+v (%s), want %s naming the edge eg", g, reading.brief(), BlockedStalePredecessor)
 	}
 	// the control: both branches on the second acceptance read clean.
 	f2 := newFixture(t)

@@ -24,10 +24,11 @@ type Rank struct {
 type NodeReading struct {
 	NodeID, IssueKey, Kind string
 	State                  string
-	Disposition            string // ready | wait | defer | blocked | skip | done
+	Disposition            string // ready | wait | defer | blocked | skip | done | stale
 	Reason                 string // empty for a ready node
 	Detail                 string
-	Rank                   *Rank // candidates only
+	Rank                   *Rank  // candidates only
+	Stale                  *Stale // a stale node only: what its accepted result no longer matches (invalidation.go)
 	// Lifecycle is what the plan says of the node: paused, cancelled or archived. Empty for an active node, and then no key is printed (CRW-281).
 	Lifecycle string
 }
@@ -58,6 +59,9 @@ func (n NodeReading) object() contract.OrderedObject {
 		{Key: "node_id", Value: n.NodeID}, {Key: "issue_key", Value: n.IssueKey}, {Key: "kind", Value: n.Kind},
 		{Key: "state", Value: n.State}, {Key: "disposition", Value: n.Disposition},
 		{Key: "reason", Value: optionalText(n.Reason)}, {Key: "detail", Value: optionalText(n.Detail)},
+	}
+	if n.Stale != nil {
+		o = append(o, contract.Field{Key: "stale", Value: n.Stale.object()})
 	}
 	if n.Rank != nil {
 		o = append(o, contract.Field{Key: "rank", Value: n.Rank.object()})
