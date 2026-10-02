@@ -429,6 +429,7 @@ func FreezeManifest(root string, canonical []byte) (string, error) {
 
 // freezeManifestCopy is FreezeManifest that also says whether this call created the file (the exclusive create succeeded): a file that already existed was reused, and is not the call's to take back.
 // created stays true when a later step of the freeze fails, so the caller can take back what it wrote.
+// A write that fails part way (a full disk) leaves a file that holds a strict prefix of the bytes: the caller takes it back too, see removeCopy.
 func freezeManifestCopy(root string, canonical []byte) (path string, created bool, err error) {
 	dir := filepath.Join(root, frozenManifestDir)
 	path = frozenManifestPath(root, canonical)
@@ -443,7 +444,12 @@ func freezeManifestCopy(root string, canonical []byte) (path string, created boo
 	switch {
 	case err == nil:
 		created = true
-		_, werr := file.Write(canonical)
+		var werr error
+		if testFreezeWrite != nil {
+			werr = testFreezeWrite(file, canonical)
+		} else {
+			_, werr = file.Write(canonical)
+		}
 		if cerr := file.Close(); werr == nil {
 			werr = cerr
 		}

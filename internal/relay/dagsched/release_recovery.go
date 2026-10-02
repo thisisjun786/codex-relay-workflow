@@ -1,6 +1,7 @@
 package dagsched
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -38,6 +39,9 @@ const maxCopyBytes = 16 << 20
 
 // Test seams of the cleanup (nil in production): between the verification of a copy and its removal (an error stands for a removal that fails), and after the removal before the transaction commits.
 var testBeforeUnlink, testAfterUnlink func() error
+
+// testFreezeWrite replaces the write of a newly created copy (nil in production): a test writes part of the bytes and fails, the way a full disk does.
+var testFreezeWrite func(file *os.File, canonical []byte) error
 
 // RecoveryRequestID is the managed request id of the release that follows a closed intent of the same manifest: a pure function of the closed request, so a replay is the same request (no
 // attempt counter). It has the shape of ReleaseRequestID and stays within the engine's 128 characters.
@@ -120,7 +124,7 @@ func (s *Scheduler) discardFrozenCopy(ctx context.Context, c *frozenCopy, plan, 
 	var out CopyOutcome
 	err := s.Store.Compose(ctx, func(txCtx context.Context, _ *sql.Conn) error {
 		var err error
-		out, err = s.removeCopy(txCtx, s.Store.Q(txCtx), c.Root, c.Path, c.SHA, "", plan, node, cause, "", "", false)
+		out, err = s.removeCopy(txCtx, s.Store.Q(txCtx), c.Root, c.Path, c.SHA, "", plan, node, cause, "", "", false, c.Canonical)
 		return err
 	})
 	return out.Removed, err
@@ -152,7 +156,7 @@ type CopyOutcome struct {
 // frozen request names it, or when a stored manifest holds exactly these bytes (a bound release, an accepted node, a prepared or recorded correction). ownRequest is an intent that does not count (the one
 // being closed); at close the stored manifest counts only when it is bound to an execution, accepted, or an open relationship owns the issue, because the abandoned intent's own stored body is what the copy holds.
 // The unlink is the last act before the journal row: a failure after it loses that row (of a file nothing referenced), never a referenced file. decide runs on the transaction's own querier.
-func (s *Scheduler) removeCopy(ctx context.Context, q store.Querier, root, path, sha, issue, plan, node, cause, ownRequest, wantDigest string, atClose bool) (CopyOutcome, error) {
+func (s *Scheduler) removeCopy(ctx context.Context, q store.Querier, root, path, sha, issue, plan, node, cause, ownRequest, wantDigest string, atClose bool, intended []byte) (CopyOutcome, error) {
 	out := CopyOutcome{Path: path}
 	size := 0
 	keep := func(why string) (CopyOutcome, error) {
@@ -162,13 +166,17 @@ func (s *Scheduler) removeCopy(ctx context.Context, q store.Querier, root, path,
 	if filepath.Clean(path) != filepath.Join(filepath.Clean(root), frozenManifestDir, name) {
 		return keep("name_differs")
 	}
-	keptWhy := ""
+	keptWhy, removedWhy := "", cause
 	var decideErr error
 	removal, err := store.UnlinkPinned(filepath.Clean(root), frozenManifestDir, name, maxCopyBytes, func(raw []byte) (bool, error) {
 		size = len(raw)
 		if shaOf(raw) != sha {
-			keptWhy = "bytes_differ"
-			return false, nil
+			// the one file that does not hash to its name and is still the call's to take back: the copy its own failed write left, which holds the start of the bytes it meant to write (intended is nil at close)
+			if len(raw) >= len(intended) || !bytes.HasPrefix(intended, raw) {
+				keptWhy = "bytes_differ"
+				return false, nil
+			}
+			removedWhy = "incomplete_write"
 		}
 		if wantDigest != "" && manifestDigestOf(raw) != wantDigest {
 			keptWhy = "not_a_copy"
@@ -224,7 +232,7 @@ func (s *Scheduler) removeCopy(ctx context.Context, q store.Querier, root, path,
 			return out, err
 		}
 	}
-	return out, s.journalCopy(ctx, q, JournalCopyRemoved, plan, node, path, sha, size, cause, cause)
+	return out, s.journalCopy(ctx, q, JournalCopyRemoved, plan, node, path, sha, size, removedWhy, cause)
 }
 
 // copyReliedOn says why a copy must stay ("" when nothing relies on it).
@@ -434,7 +442,7 @@ func (s *Scheduler) settleCopy(ctx context.Context, result *CloseResult, issue, 
 	}
 	root, sha := filepath.Dir(filepath.Dir(c.Path)), strings.TrimSuffix(filepath.Base(c.Path), ".json")
 	_ = s.Store.Compose(context.WithoutCancel(ctx), func(txCtx context.Context, _ *sql.Conn) error {
-		_, err := s.removeCopy(txCtx, s.Store.Q(txCtx), root, c.Path, sha, issue, plan, node, "closed", result.RequestID, result.ManifestDigest, true)
+		_, err := s.removeCopy(txCtx, s.Store.Q(txCtx), root, c.Path, sha, issue, plan, node, "closed", result.RequestID, result.ManifestDigest, true, nil)
 		return err
 	})
 	_, err := os.Lstat(c.Path)
