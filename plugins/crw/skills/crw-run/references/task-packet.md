@@ -944,8 +944,9 @@ not checked.
   The internal independent review ends on the head the pull request is opened from and the hosted
   review follows on the open pull request, so `commitsAfter` lists what the review did not see: the
   commits after `reviewedHead` on the branch's first-parent line that are not merges of the base,
-  each with its cause, such as a hosted-review fix or a digest re-record. Whether and how often a
-  review runs is its workflow's decision and not this procedure's; this item only makes what
+  each with its cause, such as a hosted-review fix or a digest re-record. Where `reviewedHead` is
+  omitted, `commitsAfter` still lists any merge that is not a merge of the base. Whether and how
+  often a review runs is its workflow's decision and not this procedure's; this item only makes what
   happened visible.
 
 - **`decisionRequests`**: every finding above whose disposition is `rebutted` or `out_of_scope`,
@@ -968,8 +969,8 @@ not checked.
   covered it. A merge the parent made with the forge's update-branch call is an entry too, which the
   child checks with the same helper. An entry gives the `kind` below, the merge's first parent
   (`previous`), the merge commit (`head`) and its second parent, the base commit merged (`merged`,
-  in full). Consecutive merges are consecutive entries, each starting at the head of the one before.
-  A commit made after a merge, such as a digest re-record, is not part of the entry: it is listed in
+  in full). Consecutive merges are consecutive entries, each starting at its own first parent. A
+  commit made after a merge, such as a digest re-record, is not part of the entry: it is listed in
   `commitsAfter` with its cause, so the merge head and the final head are two facts. A branch with
   no merge of the base after the review says `[]`.
 

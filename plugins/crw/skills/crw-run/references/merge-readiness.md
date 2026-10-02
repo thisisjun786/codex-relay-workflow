@@ -333,9 +333,10 @@ task](../SKILL.md#return-corrections-to-the-existing-task)).
    `reviewedHead` (`ran` is `false`, or only checks limited to some hunks ran) the window starts at
    the assignment's baseline commit and only merges are compared:
    `git rev-list --first-parent --merges <baseline>..<head>` names exactly the merge commits of the
-   entries, so a base merge nobody listed does not escape the refresh checks, while ordinary commits
-   are the child's own work and are not listed one by one. The handoff's independence then rests on
-   the hosted review and the parent's own reading, and the verdict says so.
+   entries plus any merge listed in `commitsAfter` as not a merge of the base, so a base merge
+   nobody listed does not escape the refresh checks, while ordinary commits are the child's own work
+   and are not listed one by one. The handoff's independence then rests on the hosted review and the
+   parent's own reading, and the verdict says so.
 
 4. **Each refresh is the kind it says.** A refresh the child made is proved by the same check as one
    the parent made ([Refresh the base yourself when only the base
@@ -355,15 +356,15 @@ task](../SKILL.md#return-corrections-to-the-existing-task)).
    and read the answer:
 
    - Exit 0 confirms the entry, and the refresh reruns the gates only.
-   - Exit 1 is read by its reason. `no_update`: the entry names a refresh that did not happen, so it is
-     dropped. `not_built_on_previous`: a wrong anchor, more than a hundred merges or a walk that
-     reached the base, so the anchor is corrected. `not_a_merge` and `not_from_base`: a commit that
-     is not a merge of the base lies in the range. It is the child's own change, belongs in
+   - Exit 1 is read by its reason. `no_update`: the entry names a refresh that did not happen, so
+     it is dropped. `not_built_on_previous`: a wrong anchor, more than a hundred merges or a walk
+     that reached the base, so the anchor is corrected. `not_a_merge` and `not_from_base`: a commit
+     that is not a merge of the base lies in the range. It is the child's own change, belongs in
      `commitsAfter` and gets an independent check of that delta by impact, not of the whole diff.
      `merge_conflicts` and `tree_differs`: the merge carries resolutions or edits, so it is not
      `clean`, and it stays a `baseRefresh` entry. It is reclassified `mechanical` or `manual` by the
      hunks `git show --remerge-diff <head>` prints for it, an added file included, and checked as
-     that kind. The check stops at the first conflict it meets from the head and says nothing about
+     that kind. The check stops at the first refusal it meets from the head and says nothing about
      the commits before it, which is what the accounting in the previous item covers.
    - Exit 2 is no answer. The cause it names is addressed (fetch the commits, use a full checkout,
      git 2.41 or newer) and the entry is unverified until the check has run.
