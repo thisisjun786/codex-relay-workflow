@@ -465,8 +465,11 @@ func (rc *Reconciler) write(ctx context.Context, attempt, delivery Row, record O
 			if dispatchEvidence == nil {
 				dispatchEvidence = delivery.Opt("dispatch_evidence")
 			}
-			promoted, err := execSQL(ctx, rc.Store, "UPDATE deliveries SET state = ?, next_eligible_at = ?, hold_reason = CASE WHEN ? AND hold_reason IN (?, ?) THEN hold_reason ELSE ? END, dispatch_evidence = CASE WHEN ? THEN NULL ELSE ? END, dispatch_turn_id = CASE WHEN ? THEN NULL ELSE COALESCE(?, dispatch_turn_id) END, lease_owner = NULL, lease_until = NULL, updated_at = ? WHERE event_id = ? AND attempt_count = ? AND state NOT IN (?, 'acknowledged', 'superseded')",
-				aggregate, next, boolFlag(o.keepUnknown), UnknownSendLost, UnknownSendUndecided, o.hold, boolFlag(o.clearDispatch), dispatchEvidence, boolFlag(o.clearDispatch), o.dispatchTurn, now, attempt.S("event_id"), attempt.I("attempt_no"), Dispatched)
+			// A reading that finds the recipient busy never lifts the busy_cap hold: the cap counts the
+			// recipient's busy answers beyond this attempt (deferBusy), so it can stand with an attempt
+			// number below the attempt cap that settleFromReceipt compares.
+			promoted, err := execSQL(ctx, rc.Store, "UPDATE deliveries SET state = ?, next_eligible_at = ?, hold_reason = CASE WHEN ? AND hold_reason IN (?, ?) THEN hold_reason WHEN ? AND hold_reason = ? THEN hold_reason ELSE ? END, dispatch_evidence = CASE WHEN ? THEN NULL ELSE ? END, dispatch_turn_id = CASE WHEN ? THEN NULL ELSE COALESCE(?, dispatch_turn_id) END, lease_owner = NULL, lease_until = NULL, updated_at = ? WHERE event_id = ? AND attempt_count = ? AND state NOT IN (?, 'acknowledged', 'superseded')",
+				aggregate, next, boolFlag(o.keepUnknown), UnknownSendLost, UnknownSendUndecided, boolFlag(aggregate == DeferredBusy), BusyCap, o.hold, boolFlag(o.clearDispatch), dispatchEvidence, boolFlag(o.clearDispatch), o.dispatchTurn, now, attempt.S("event_id"), attempt.I("attempt_no"), Dispatched)
 			if err != nil {
 				return err
 			}

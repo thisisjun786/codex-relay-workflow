@@ -203,6 +203,41 @@ func TestBusy_the_combined_count_holds_a_delivery_a_transport_also_found_busy(t 
 	}
 }
 
+// The hold the combined count sets can stand with an attempt number below the attempt cap, and a
+// reconciliation of the transport's busy attempt computes its hold from that number alone. It must not
+// lift a busy_cap hold.
+func TestBusy_a_reconciliation_does_not_lift_the_busy_cap_the_combined_count_set(t *testing.T) {
+	w := newScaleWorld(t, 1)
+	f := w.f
+	w.busy(true)
+	event := w.emit(0)
+	busyUntilDue(t, f, event, int(f.delivery.Policy.BusyMaxAttempts-1))
+	w.busy(false)
+	f.host.script = []string{"busy"}
+	record := f.mustAttempt(event, at(f.clock.Now()))
+	if record == nil || str(record, "deliveryState") != DeferredBusy {
+		t.Fatalf("the transport's busy answer was not recorded as a deferred attempt: %v", record)
+	}
+	request := str(record, "requestId")
+	f.clock.T = f.row(event).F("next_eligible_at")
+	w.busy(true)
+	f.mustAttempt(event, at(f.clock.Now()))
+	if hold := f.row(event).S("hold_reason"); hold != BusyCap {
+		t.Fatalf("the delivery is held with %q, want %s from the combined count", hold, BusyCap)
+	}
+	if _, err := NewReconciler(f.delivery).ReconcileAttempt(f.ctx, request, f.host, nil); err != nil {
+		t.Fatal(err)
+	}
+	if hold := f.row(event).S("hold_reason"); hold != BusyCap {
+		t.Errorf("reconciling the transport's busy attempt left the delivery with hold %q, want %s kept", hold, BusyCap)
+	}
+	w.busy(false)
+	f.clock.Advance(1e6)
+	if len(f.eligible()) != 0 || len(accepted(f)) != 0 {
+		t.Errorf("a delivery held at the busy cap is due again: %v, accepted %v", f.eligible(), accepted(f))
+	}
+}
+
 // accepted is the events of the messages the host accepted, in order: a send the transport answered
 // busy is in the host's list too, and is not a delivery.
 func accepted(f *fixture) []string {

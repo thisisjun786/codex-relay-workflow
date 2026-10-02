@@ -286,14 +286,16 @@ const eligibleBase = " WHERE d.state IN (?,?,?) AND d.hold_reason IS NULL AND (d
 const eligibleOrder = " ORDER BY e.first_seen_at, d.created_at, d.event_id"
 
 // busyHeadSQL is a derived table with one row per recipient: the oldest delivery to it (in eligibleOrder)
-// that is waiting out a busy backoff and that a claim could otherwise take. Only a busy backoff holds a
-// line. A delivery that waits for another reason (withheld before the send, paced, held at a cap, its
-// relationship paused or superseded) holds nothing back, so one relationship's trouble cannot keep its
-// siblings' deliveries to the same parent waiting (CRW-259), and neither does a delivery whose event is
-// of a generation the relationship has left, or whose relationship has spent its hourly send budget
-// for the recipient (the same count eligibility reads for a candidate): a claim would refuse those when
-// their backoff ended. next_eligible_at is always finite (at most BusyMax ahead), so no delivery holds
-// a line for longer than one backoff at a time.
+// that is waiting out a busy backoff and that its rows say a claim could otherwise take. A delivery that
+// supervision has overtaken (an obsolete merge-turn grant, a superseded revision: SupersessionReason reads
+// more than these rows) is only found when it is attempted, so it can head a line until its backoff ends.
+// Only a busy backoff holds a line. A delivery that waits for another reason (withheld before the send,
+// paced, held at a cap, its relationship paused or superseded) holds nothing back, so one relationship's
+// trouble cannot keep its siblings' deliveries to the same parent waiting (CRW-259), and neither does a
+// delivery whose event is of a generation the relationship has left, or whose relationship has spent its
+// hourly send budget for the recipient (the same count eligibility reads for a candidate): a claim would
+// refuse those when their backoff ended. next_eligible_at is always finite (at most BusyMax ahead), so no
+// delivery holds a line for longer than one backoff at a time.
 //
 // It takes, in text order, the four stamps of store.RelationshipSendsArgs (the spent join), then the
 // state DeferredBusy, now and the hourly cap: see busyHeadArgs. A candidate is behind the head when the

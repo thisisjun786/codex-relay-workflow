@@ -535,10 +535,12 @@ A recipient that is mid-turn is never interrupted, and a delivery to it waits ou
 the recipient's busy answers. Each answer a delivery meets before it is claimed is journaled
 (`delivery_deferred_busy`, one row per answer, written in the transaction of the update that deferred
 it, so an answer the update refused is not counted), and the attempts the transport settled as busy
-count with them; the count is read from those rows, so it survives a restart. The delivery's next try is
-`BusyBase` (15 s) doubled for each answer, up to `BusyMax` (300 s), and the first pre-claim answer at or
-after the `BusyMaxAttempts`-th (the 40th) holds it with `busy_cap`. A streak of transport answers alone
-is held by the attempt cap, as before. `attempt_count` could not do this: only a claim raises it, and a
+count with them; the count is read from those rows, so it survives a restart. After a pre-claim answer the
+delivery's next try is `BusyBase` (15 s) doubled for each answer, up to `BusyMax` (300 s), and the first
+pre-claim answer at or after the `BusyMaxAttempts`-th (the 40th) holds it with `busy_cap`; a reconciliation
+that finds the recipient busy does not lift that hold. An attempt the transport settles as busy keeps its
+own attempt-number backoff (the first waits 30 s), and a streak of such answers alone is held by the
+attempt cap, as before. `attempt_count` could not do this: only a claim raises it, and a
 recipient that is busy at the lifecycle read is never claimed against, so the backoff used to stay at its
 base and the cap used to be out of reach.
 
@@ -549,7 +551,9 @@ because busy is a fact about the recipient and the guarantee above is across the
 write to one parent. Only a busy backoff holds a line: a delivery that waits for any other reason (a
 hold, a withhold before the send, the send budget), whose relationship is paused or superseded, whose
 event is of an earlier generation, or whose relationship has spent its hourly budget for the recipient
-holds nothing back, so one relationship's trouble cannot keep its siblings waiting (CRW-259). A line is
+holds nothing back, so one relationship's trouble cannot keep its siblings waiting (CRW-259). A delivery
+that supervision has overtaken (an obsolete merge-turn grant, a superseded revision) is only found when it
+is attempted, so it can still head a line until its backoff ends. A line is
 held for one backoff at a time, at most `BusyMax` ahead; a recipient that turns idle is reached when the
 oldest waiting delivery's backoff ends, up to five minutes and a tick later, and a delivery held at
 `busy_cap` stops holding. Two limits remain: a refusal marker an earlier tick left still starts the next
