@@ -133,9 +133,16 @@ type prs struct {
 	by    map[string]PullRequest
 	calls []string
 	err   error
+	// onRead runs while a read is in flight, before it answers: a test moves the store under the release at that moment.
+	onRead func()
 }
 
 func (p *prs) read(_ context.Context, repository string, number int64) (PullRequest, error) {
+	if p.onRead != nil {
+		hook := p.onRead
+		p.onRead = nil
+		hook()
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	key := fmt.Sprintf("%s#%d", repository, number)

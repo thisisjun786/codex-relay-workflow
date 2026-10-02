@@ -286,6 +286,7 @@ func TestReleaseReplayDoesNotRebuild(t *testing.T) {
 	}
 	k.putPlan("rp", 1, "rp-r2", addRelNode("Z", dag.NodeNonPR)) // an unrelated revision
 	k.tips.sha = "3333333333333333333333333333333333333333"     // the base moved
+	k.tips.err = fmt.Errorf("the target is unreachable now")    // and cannot be read at all: a replay reads no tip
 	changed := k.request(true)
 	changed.Instructions = "Different instructions entirely."
 	changed.RuleVersion.Model = "another-model"
@@ -459,14 +460,7 @@ func TestBlockedPathsTable(t *testing.T) {
 func TestReleaseFreezesALargeManifest(t *testing.T) {
 	k := newReleaseKit(t)
 	releasePlan(k.fixture, "rp")
-	a := k.acceptedA()
-	var entries []string
-	for i := 0; i < 320; i++ {
-		content := fmt.Sprintf("artifact number %d with a body that makes the entry distinct\n", i)
-		path := writeFile(t, a.Root, fmt.Sprintf("generated-artifact-%03d.md", i), content)
-		entries = append(entries, fmt.Sprintf(`{"path":%s,"sha256":"%s","bytes":%d}`, jsonString(path), shaOf([]byte(content)), len(content)))
-	}
-	k.exec("UPDATE events SET receipt = ? WHERE event_id = ?", `{"manifest":[`+strings.Join(entries, ",")+`]}`, a.Event)
+	k.acceptNode("rp", "A", acceptOpts{Artifacts: 320})
 	res := k.mustRelease("rp", "B")
 	frozen := filepath.Join(k.root, "dag-input-manifests", res.ManifestDigest+".json")
 	raw, err := os.ReadFile(frozen)
@@ -487,5 +481,37 @@ func TestReleaseFreezesALargeManifest(t *testing.T) {
 	}
 	if len(message) > 90000 {
 		t.Fatalf("message of %d characters", len(message))
+	}
+}
+
+// H4 (audit): the acceptance whose pull request the relay read is the acceptance the manifest consumes. A predecessor accepted again while the forge is being read is a head that was
+// never checked.
+func TestReleaseFreshnessBindsTheAcceptanceItChecked(t *testing.T) {
+	k := newReleaseKit(t)
+	releasePlan(k.fixture, "rp")
+	k.pinned()
+	second := "2222222222222222222222222222222222222222"
+	k.forge.by["owner/repo#8"] = openPR("owner/repo", 8, second)
+	k.forge.onRead = func() {
+		k.exec("UPDATE dag_acceptances SET state = 'superseded' WHERE node_id = 'I'")
+		k.acceptNode("rp", "I", acceptOpts{Suffix: "-2", HeadSHA: second, PR: 8, Forge: "owner/repo", Repository: "owner/repo"})
+	}
+	_, err := k.release("rp", "J")
+	if refusalReason(err) != "disposition_conflict" {
+		t.Fatalf("release = %v", err)
+	}
+	if rows := k.rows(); rows.releases != 0 || rows.requests != 0 || rows.slots != 0 || rows.conflicts != 0 {
+		t.Fatalf("rows = %+v, want no intent", rows)
+	}
+	if created, _ := k.host.counts(); created != 0 {
+		t.Fatal("a child was created on an unchecked head")
+	}
+	// repeated, the current acceptance is read and checked
+	res, err := k.release("rp", "J")
+	if err != nil || !res.Bound {
+		t.Fatalf("the repeat = %v %+v", err, res)
+	}
+	if strings.Join(k.forge.calls, ",") != "owner/repo#7,owner/repo#8" {
+		t.Fatalf("the forge was read as %v", k.forge.calls)
 	}
 }

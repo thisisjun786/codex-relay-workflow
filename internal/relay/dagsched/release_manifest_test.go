@@ -23,6 +23,10 @@ func TestReleaseManifestInputsPerEdgeKind(t *testing.T) {
 	i := k.acceptNode("mk", "I", pinnedOpts)
 	k.integrate(i, "owner/repo", "dev", true, true)
 	k.exec("INSERT INTO dag_decisions (decision_id, plan_id, subject, digest, disposition, authority_kind, authority_ref, revision, state, recorded_by_task_id, coordinator_epoch, recorded_at) VALUES ('dec-9', 'mk', 'merge holds', ?, 'approved', 'user', 'ref', 3, 'active', 'parent', 0, 't')", dig("subject dl"))
+	// decoys a looser query would pick: another plan's decision with a higher revision, and a later observation that was reverted
+	k.exec("INSERT INTO dag_plans (plan_id, project_key, created_by_task_id, created_at) VALUES ('other', 'P-TEST', 't', 't')")
+	k.exec("INSERT INTO dag_decisions (decision_id, plan_id, subject, digest, disposition, authority_kind, authority_ref, revision, state, recorded_by_task_id, coordinator_epoch, recorded_at) VALUES ('dec-other', 'other', 'merge holds', ?, 'approved', 'user', 'ref', 99, 'active', 'parent', 0, 't')", dig("subject dl"))
+	k.exec("INSERT INTO dag_integration_observations (observation_id, acceptance_id, repository, base_ref, subject_sha, tip_sha, is_ancestor, method, observed_seq, reverted_by, observed_at) VALUES ('decoy', ?, 'owner/repo', 'dev', ?, 'wrong-tip', 1, 'git', 99, 'someone', 't')", i.Acceptance.AcceptanceID, head1)
 	inputOf := func(node string) map[string]any {
 		res := k.mustRelease("mk", node)
 		body, found, err := k.repo.ReadManifest(context.Background(), res.ManifestDigest)
@@ -233,5 +237,116 @@ func TestAppendMergeCheckIsAHistory(t *testing.T) {
 	}
 	if seq, appended := check(head1, OutcomeEligible); seq != 3 || !appended {
 		t.Fatalf("back to the first observation after another one = %d %v, want a third row (a history, not a set)", seq, appended)
+	}
+}
+
+// H3: an artifact left out of a receipt's list is an omission the remaining files cannot reveal. The list must hash to the revision the parent accepted, in the reading, in a release and in
+// the verification of a manifest, whether or not the files are read.
+func TestReleaseDetectsAnArtifactLeftOutOfTheList(t *testing.T) {
+	k := newReleaseKit(t)
+	releasePlan(k.fixture, "rp")
+	a := k.acceptNode("rp", "A", acceptOpts{Artifacts: 2})
+	snap := k.snapshot("rp")
+	n, _ := nodeOf(snap, "B")
+	ctx := context.Background()
+	in := ManifestInput{RuleVersion: k.request(false).RuleVersion, CreatedByTaskID: "parent", CreatedAt: "2026-10-02T00:00:00Z"}
+	body, blocked, err := k.sched.BuildManifest(ctx, k.s.Q(ctx), "rp", snap, n, in, VerifyOptions{ArtifactRoots: []string{k.root}})
+	if err != nil || len(blocked) != 0 || len(body["inputs"].([]any)[0].(map[string]any)["artifacts"].([]any)) != 2 {
+		t.Fatalf("build: %v %+v", err, blocked)
+	}
+	// a manifest that lists one of the two, under its own recomputed digest, is not what the parent accepted (both with and without reading files)
+	short := map[string]any{}
+	for key, v := range body {
+		short[key] = v
+	}
+	input := map[string]any{}
+	for key, v := range body["inputs"].([]any)[0].(map[string]any) {
+		input[key] = v
+	}
+	input["artifacts"] = input["artifacts"].([]any)[:1]
+	short["inputs"] = []any{input}
+	short["manifest_digest"] = dag.ManifestDigest(short)
+	for _, skip := range []bool{false, true} {
+		findings, err := k.sched.VerifyManifest(ctx, k.s.Q(ctx), "rp", snap, n, short, VerifyOptions{SkipFileBytes: skip, ArtifactRoots: []string{k.root}})
+		if err != nil || len(findings) != 1 || findings[0].Code != "B-17" {
+			t.Fatalf("skip=%v: a manifest that lists one of two artifacts: %v %+v", skip, err, findings)
+		}
+	}
+	// and the receipt itself: one entry removed, both files still on disk
+	entries, _ := receiptEntries(k.receiptOf(a))
+	k.exec("UPDATE events SET receipt = ? WHERE event_id = ?", `{"manifest":[{"path":`+jsonString(entries[0].Path)+`,"sha256":"`+entries[0].SHA256+`","bytes":`+itoa64(*entries[0].Bytes)+`}]}`, a.Event)
+	before := k.rows()
+	if _, err := k.release("rp", "B"); refusalReason(err) != "manifest_unverified" {
+		t.Fatalf("release over a receipt with an entry removed = %v", err)
+	}
+	if k.rows() != before {
+		t.Fatalf("rows = %+v, want %+v", k.rows(), before)
+	}
+	if n := k.read("rp").node("B"); n.Reason != BlockedInputMissing {
+		t.Fatalf("B = %+v", n)
+	}
+	skipped, err := k.sched.Read(ctx, "rp", ReadyOptions{SkipArtifactBytes: true})
+	if err != nil || skipped.node("B").Reason != BlockedInputMissing {
+		t.Fatalf("the store half = %+v %v, want the list check kept", skipped.node("B"), err)
+	}
+}
+
+func (f *fixture) receiptOf(a accepted) string {
+	f.t.Helper()
+	var receipt string
+	if err := f.s.DB.QueryRow("SELECT receipt FROM events WHERE event_id = ?", a.Event).Scan(&receipt); err != nil {
+		f.t.Fatal(err)
+	}
+	return receipt
+}
+
+// A verifier that compared only the number of inputs would accept the same edge twice for an edge that has none.
+func TestVerifyManifestRejectsADuplicatedInput(t *testing.T) {
+	k := newReleaseKit(t)
+	k.putPlan("dup", 0, "dup-r1", addRelNode("A", dag.NodeNonPR), addRelNode("C", dag.NodeNonPR), addRelNode("G", dag.NodeNonPR),
+		addEdge("ag", "A", "G", dag.EdgeArtifactVerified, nil), addEdge("cg", "C", "G", dag.EdgeArtifactVerified, nil))
+	k.acceptNode("dup", "A", acceptOpts{})
+	k.acceptNode("dup", "C", acceptOpts{})
+	snap := k.snapshot("dup")
+	n, _ := nodeOf(snap, "G")
+	ctx := context.Background()
+	in := ManifestInput{RuleVersion: k.request(false).RuleVersion, CreatedByTaskID: "parent", CreatedAt: "2026-10-02T00:00:00Z"}
+	body, blocked, err := k.sched.BuildManifest(ctx, k.s.Q(ctx), "dup", snap, n, in, VerifyOptions{ArtifactRoots: []string{k.root}})
+	if err != nil || len(blocked) != 0 {
+		t.Fatalf("build: %v %+v", err, blocked)
+	}
+	forged := map[string]any{}
+	for key, v := range body {
+		forged[key] = v
+	}
+	inputs := body["inputs"].([]any)
+	forged["inputs"] = []any{inputs[0], inputs[0]}
+	forged["manifest_digest"] = dag.ManifestDigest(forged)
+	findings, err := k.sched.VerifyManifest(ctx, k.s.Q(ctx), "dup", snap, n, forged, VerifyOptions{ArtifactRoots: []string{k.root}})
+	if err != nil || len(findings) != 1 || findings[0].Code != "B-01" {
+		t.Fatalf("a manifest with one input twice: %v %+v", err, findings)
+	}
+}
+
+// The request document is written by hand in snake_case: every field of it must be read.
+func TestDecodeReleaseRequestReadsTheDocumentedFields(t *testing.T) {
+	req, err := DecodeReleaseRequest([]byte(`{
+	  "schema": "dag-release-request/1",
+	  "base": {"repository": "owner/repo", "ref": "dev"},
+	  "rule_version": {"skills_digest": "d1", "model": "gpt-5", "effort": "high", "prompt_template": "t1", "relay_build": "b1"},
+	  "volatile": [{"source": "linear:doc", "snapshot_uri": "/tmp/x/doc.md", "sha256": "abc", "captured_at": "2026-10-02T00:00:00Z"}],
+	  "instructions": "Do the work.",
+	  "criteria": [{"id": "c1", "title": "works", "required": true}],
+	  "criteria_source": "issue:CRW-1", "scope_ref": "issue:CRW-1",
+	  "artifact_roots": ["/tmp/x"], "allowed_recipients": ["parent"],
+	  "parent": {"host_id": "host", "settings": {"model": "gpt-5"}},
+	  "child": {"host_id": "host", "title": "Child", "settings": {"model": "gpt-5"}}
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if req.Base.Repository != "owner/repo" || req.Base.Ref != "dev" || req.RuleVersion.PromptTemplate != "t1" || req.RuleVersion.RelayBuild != "b1" || req.RuleVersion.SkillsDigest != "d1" ||
+		len(req.Volatile) != 1 || req.Volatile[0].SnapshotURI != "/tmp/x/doc.md" || req.Volatile[0].CapturedAt != "2026-10-02T00:00:00Z" || req.Child.Title != "Child" || req.ArtifactRoots[0] != "/tmp/x" {
+		t.Fatalf("request = %+v", req)
 	}
 }

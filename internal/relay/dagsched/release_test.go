@@ -6,6 +6,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/capacity"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -213,4 +214,75 @@ func TestReleaseRefusesSettingsMismatch(t *testing.T) {
 			}
 		})
 	}
+}
+
+// H1 (audit): a release whose manifest is no longer stored is not replayed.
+func TestReleaseReplayWithoutStoredManifest(t *testing.T) {
+	k := newReleaseKit(t)
+	releasePlan(k.fixture, "rp")
+	k.host.loseFirstCreation = true
+	if res, err := k.release("rp", "A"); err != nil || res.Bound {
+		t.Fatalf("first call = %v %+v", err, res)
+	}
+	k.exec("DELETE FROM dag_input_manifests")
+	if _, err := k.release("rp", "A"); refusalReason(err) != "revision_mismatch" {
+		t.Fatalf("replay with no manifest = %v", err)
+	}
+	if created, sent := k.host.counts(); created != 1 || sent != 0 {
+		t.Fatalf("created %d sent %d", created, sent)
+	}
+}
+
+// H2 (audit): a failure of the store while the slot is being reserved rolls the whole intent back. A slot that was written before the journal failed must not stay.
+func TestReleaseStoreFailureDuringReservationRollsBack(t *testing.T) {
+	k := newReleaseKit(t)
+	releasePlan(k.fixture, "rp")
+	k.exec("CREATE TRIGGER fail_journal BEFORE INSERT ON journal WHEN NEW.kind = 'slot_reserved' BEGIN SELECT RAISE(ABORT, 'the journal is full'); END")
+	if _, err := k.release("rp", "A"); err == nil || !strings.Contains(err.Error(), "the journal is full") {
+		t.Fatalf("release = %v", err)
+	}
+	if rows := k.rows(); rows != (rowCounts{}) {
+		t.Fatalf("rows after the failure = %+v, want none (the slot was committed without its intent)", rows)
+	}
+	if created, _ := k.host.counts(); created != 0 {
+		t.Fatal("a child was created")
+	}
+}
+
+// H5 (audit): the slot of an intent whose child was never created was returned; replaying it must not create a child above the ceilings, and may re-reserve under them.
+func TestReleaseReplayAfterTheSlotWasReturned(t *testing.T) {
+	setup := func(t *testing.T) *releaseKit {
+		k := newReleaseKit(t)
+		releasePlan(k.fixture, "rp")
+		k.host.loseFirstCreation = true
+		if res, err := k.release("rp", "A"); err != nil || res.Bound {
+			t.Fatalf("first call = %v %+v", err, res)
+		}
+		if _, err := (&capacity.Capacity{Store: k.s, Now: k.clock}).Release(context.Background(), capacity.Release{SubjectKind: SlotSubjectKind, SubjectKey: "rp:A", ReleasedBy: "parent", Reason: "operator"}); err != nil {
+			t.Fatal(err)
+		}
+		return k
+	}
+	t.Run("the ceilings are full", func(t *testing.T) {
+		k := setup(t)
+		k.holdSlots(6)
+		_, sentBefore := k.host.counts()
+		_, err := k.release("rp", "A")
+		if refusalReason(err) != "capacity_exhausted" {
+			t.Fatalf("replay = %v", err)
+		}
+		if _, sent := k.host.counts(); sent != sentBefore || k.count("SELECT COUNT(*) FROM dag_node_executions") != 0 {
+			t.Fatal("a child was bound without a slot")
+		}
+	})
+	t.Run("a slot is free again", func(t *testing.T) {
+		k := setup(t)
+		res, err := k.release("rp", "A")
+		if err != nil || !res.Bound || res.SlotID == "" || res.ChildTaskID != "child-1" {
+			t.Fatalf("replay = %v %+v", err, res)
+		}
+		if k.count("SELECT COUNT(*) FROM execution_slots WHERE subject_key = 'rp:A' AND state = 'held'") != 1 {
+			t.Fatal("the slot was not reserved again")
+		}
+	})
 }

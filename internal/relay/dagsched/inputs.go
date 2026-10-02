@@ -55,32 +55,59 @@ func (s *Scheduler) checkInputs(ctx context.Context, q store.Querier, plan strin
 	return verdict, nil
 }
 
-// checkArtifacts re-reads the files of one accepted predecessor the way receipt intake read them: by the roots of the predecessor's relationship, within
-// them, hashed again. An absent, empty or unreadable list is B-17: an artifact edge that hands over nothing is not a success.
+// acceptedEntries are the artifacts the accepted event's receipt declared and the roots of the predecessor's relationship, with a finding when the list cannot be used: an absent,
+// empty or malformed list, or roots that do not read, is not an input a successor can consume.
+func (s *Scheduler) acceptedEntries(ctx context.Context, q store.Querier, a Acceptance) (entries []consumed, roots []string, ref string, finding *BlockedFinding, err error) {
+	var receipt, rootsJSON string
+	found, err := queryOne(ctx, q, "SELECT e.receipt, COALESCE(e.manifest_ref, ''), r.artifact_roots FROM events e JOIN relationships r ON r.relationship_id = e.relationship_id WHERE e.event_id = ?",
+		[]any{a.EventID}, &receipt, &ref, &rootsJSON)
+	if err != nil {
+		return nil, nil, "", nil, err
+	}
+	if !found {
+		return nil, nil, "", &BlockedFinding{"B-17", BlockedInputMissing, "the accepted event " + a.EventID + " is not in the store"}, nil
+	}
+	entries, ok := receiptEntries(receipt)
+	if !ok || len(entries) == 0 {
+		return nil, nil, "", &BlockedFinding{"B-17", BlockedInputMissing, "the receipt of the accepted event declares no readable list of artifacts"}, nil
+	}
+	if json.Unmarshal([]byte(rootsJSON), &roots) != nil {
+		return nil, nil, "", &BlockedFinding{"B-05", BlockedInputOutOfScope, "the artifact roots of the predecessor's relationship are unreadable"}, nil
+	}
+	return entries, roots, ref, nil, nil
+}
+
+// checkRevision is the omission check: the artifact list a receipt declares must hash to the revision the parent accepted (MANIFEST-CANON-01, the digest receipt intake bound the
+// event to). A list from which an artifact was removed, or to which one was added, or whose path or digest was altered, no longer does, whatever the files that remain still hash to.
+func checkRevision(entries []consumed, a Acceptance) *BlockedFinding {
+	declared := make([]store.ManifestEntry, len(entries))
+	for i, e := range entries {
+		declared[i] = store.ManifestEntry{Path: e.Path, SHA256: e.SHA256, Bytes: e.Bytes}
+	}
+	revision, err := store.ManifestRevision(declared)
+	if err != nil {
+		return &BlockedFinding{"B-17", BlockedInputMissing, "the artifact list of the accepted receipt cannot be digested: " + err.Error()}
+	}
+	if revision != a.RevisionHash {
+		return &BlockedFinding{"B-17", BlockedInputMissing, "the artifact list of the accepted receipt digests to " + revision + " and the parent accepted revision " + a.RevisionHash + ": an artifact was left out, added or changed"}
+	}
+	return nil
+}
+
+// checkArtifacts re-reads the files of one accepted predecessor the way receipt intake read them: by the roots of the predecessor's relationship, within them, hashed again, and
+// the list itself checked against the accepted revision. An absent, empty or unreadable list is B-17: an artifact edge that hands over nothing is not a success. skipBytes leaves
+// the files and the frozen copy unread (the store half) and keeps the list check.
 func (s *Scheduler) checkArtifacts(ctx context.Context, q store.Querier, acceptanceID string, skipBytes bool) (*BlockedFinding, []string, error) {
 	a, err := loadAcceptanceByID(ctx, q, acceptanceID)
 	if err != nil {
 		return nil, nil, err
 	}
-	var receipt, ref, roots string
-	found, err := queryOne(ctx, q, "SELECT e.receipt, COALESCE(e.manifest_ref, ''), r.artifact_roots FROM events e JOIN relationships r ON r.relationship_id = e.relationship_id WHERE e.event_id = ?",
-		[]any{a.EventID}, &receipt, &ref, &roots)
-	if err != nil {
-		return nil, nil, err
-	}
-	if !found {
-		return &BlockedFinding{"B-17", BlockedInputMissing, "the accepted event " + a.EventID + " is not in the store"}, nil, nil
-	}
-	entries, ok := receiptEntries(receipt)
-	if !ok || len(entries) == 0 {
-		return &BlockedFinding{"B-17", BlockedInputMissing, "the receipt of the accepted event declares no readable list of artifacts"}, nil, nil
-	}
-	var artifactRoots []string
-	if json.Unmarshal([]byte(roots), &artifactRoots) != nil {
-		return &BlockedFinding{"B-05", BlockedInputOutOfScope, "the artifact roots of the predecessor's relationship are unreadable"}, nil, nil
+	entries, roots, ref, finding, err := s.acceptedEntries(ctx, q, a)
+	if err != nil || finding != nil {
+		return finding, nil, err
 	}
 	if skipBytes {
-		return nil, nil, nil
+		return checkRevision(entries, a), nil, nil
 	}
 	if ref != "" {
 		// the frozen copy is read, parsed and compared with the declared entries the way receipt intake reads it; a directory, a document that is not a
@@ -99,7 +126,7 @@ func (s *Scheduler) checkArtifacts(ctx context.Context, q store.Querier, accepta
 	}
 	var hashes []string
 	for _, entry := range entries {
-		finding, digest, err := hashEntry(ctx, entry, artifactRoots)
+		finding, digest, err := hashEntry(ctx, entry, roots)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -110,7 +137,7 @@ func (s *Scheduler) checkArtifacts(ctx context.Context, q store.Querier, accepta
 			return finding, hashes, nil
 		}
 	}
-	return nil, hashes, nil
+	return checkRevision(entries, a), hashes, nil
 }
 
 // hashEntry reads one declared artifact again: through the roots, hashed, compared with what was declared. A finding names the violated path of contract 4.4; digest

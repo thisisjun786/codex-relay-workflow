@@ -21,6 +21,10 @@ type EdgeStatus struct {
 	Detail       string
 	Since        string // the stored time the edge became satisfied; never a clock reading
 	AcceptanceID string
+	// The exact rows that satisfied the edge, so a manifest records the evidence the predicate used and not another row a looser query would pick.
+	ObservationID    string // integrated: the observation integratedAt accepted
+	DecisionID       string // decision: the decision or directive that settled it
+	DecisionRevision int64
 }
 
 func wait(e dag.SnapEdge, detail string) EdgeStatus {
@@ -335,7 +339,7 @@ func (s *Scheduler) integratedEdge(ctx context.Context, q store.Querier, plan st
 	}
 	switch {
 	case at.Satisfied:
-		return EdgeStatus{Satisfied: true, Since: at.Since, AcceptanceID: a.AcceptanceID}, nil
+		return EdgeStatus{Satisfied: true, Since: at.Since, AcceptanceID: a.AcceptanceID, ObservationID: at.Observation}, nil
 	case at.Unprovable:
 		return blocked(BlockedIntegrationUnprovable, "a merge landed this head but the target does not contain it (a squash or rebase landing)"), nil
 	}
@@ -350,14 +354,15 @@ func (s *Scheduler) decisionEdge(ctx context.Context, q store.Querier, plan stri
 		return EdgeStatus{}, err
 	}
 	var id, at string
-	found, err := queryOne(ctx, q, "SELECT x.decision_id, x.recorded_at FROM dag_decisions x WHERE x.plan_id = ? AND x.subject = ? AND x.digest = ?"+
+	var revision int64
+	found, err := queryOne(ctx, q, "SELECT x.decision_id, x.recorded_at, x.revision FROM dag_decisions x WHERE x.plan_id = ? AND x.subject = ? AND x.digest = ?"+
 		" AND x.disposition = 'approved' AND x.state = 'active' AND x.authority_kind IN (SELECT value FROM json_each(?)) ORDER BY x.revision DESC LIMIT 1",
-		[]any{plan, e.DecisionSubject, e.DecisionDigest, string(authority)}, &id, &at)
+		[]any{plan, e.DecisionSubject, e.DecisionDigest, string(authority)}, &id, &at, &revision)
 	if err != nil {
 		return EdgeStatus{}, err
 	}
 	if found {
-		return EdgeStatus{Satisfied: true, Since: at, AcceptanceID: ""}, nil
+		return EdgeStatus{Satisfied: true, Since: at, DecisionID: id, DecisionRevision: revision}, nil
 	}
 	var project string
 	if ok, err := queryOne(ctx, q, "SELECT project_key FROM dag_plans WHERE plan_id = ?", []any{plan}, &project); err != nil {
@@ -374,7 +379,7 @@ func (s *Scheduler) decisionEdge(ctx context.Context, q store.Querier, plan stri
 			return EdgeStatus{}, err
 		}
 		if found {
-			return EdgeStatus{Satisfied: true, Since: at}, nil
+			return EdgeStatus{Satisfied: true, Since: at, DecisionID: id}, nil
 		}
 	}
 	var one int

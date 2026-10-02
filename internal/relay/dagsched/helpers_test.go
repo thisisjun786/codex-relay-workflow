@@ -195,6 +195,7 @@ type acceptOpts struct {
 	Status     string // relationship status, active by default
 	Suffix     string // appended to the relationship id: a second acceptance of one node needs a second relationship
 	NoManifest bool   // a non_pr node's receipt declares no artifacts
+	Artifacts  int    // how many artifacts a non_pr node's receipt declares (1 by default)
 }
 
 // acceptNode writes the rows a verified, accepted result leaves, shaped as the intake, ack and verdict writers shape them (the
@@ -217,15 +218,38 @@ func (f *fixture) acceptNode(plan, node string, o acceptOpts) accepted {
 	root := f.t.TempDir()
 	var files []string
 	receipt := "{}"
+	revision := dig("revision " + rid)
 	if n.Kind == dag.NodeNonPR && !o.NoManifest {
-		file := filepath.Join(root, node+".md")
-		content := []byte("artifact of " + node + o.Suffix + "\n")
-		if err := os.WriteFile(file, content, 0o600); err != nil {
+		count := o.Artifacts
+		if count == 0 {
+			count = 1
+		}
+		var entries []store.ManifestEntry
+		var listed []string
+		for i := 0; i < count; i++ {
+			name := node + ".md"
+			if count > 1 {
+				name = fmt.Sprintf("%s-%03d.md", node, i)
+			}
+			file := filepath.Join(root, name)
+			content := []byte("artifact of " + node + o.Suffix + "\n")
+			if count > 1 {
+				content = []byte(fmt.Sprintf("artifact number %d of %s with a body that makes the entry distinct\n", i, node))
+			}
+			if err := os.WriteFile(file, content, 0o600); err != nil {
+				f.t.Fatal(err)
+			}
+			sum := sha256.Sum256(content)
+			size := int64(len(content))
+			files = append(files, file)
+			entries = append(entries, store.ManifestEntry{Path: file, SHA256: hex.EncodeToString(sum[:]), Bytes: &size})
+			listed = append(listed, fmt.Sprintf(`{"path":%s,"sha256":"%s","bytes":%d}`, jsonString(file), hex.EncodeToString(sum[:]), size))
+		}
+		receipt = `{"manifest":[` + strings.Join(listed, ",") + `]}`
+		var err error
+		if revision, err = store.ManifestRevision(entries); err != nil {
 			f.t.Fatal(err)
 		}
-		sum := sha256.Sum256(content)
-		files = append(files, file)
-		receipt = fmt.Sprintf(`{"manifest":[{"path":%s,"sha256":"%s","bytes":%d}]}`, jsonString(file), hex.EncodeToString(sum[:]), len(content))
 	}
 	if err := storeseed.RecordRelationship(context.Background(), f.s, store.Relationship{ID: rid, IssueKey: n.IssueKey, Status: status, ParentTaskID: "parent", ChildTaskID: "child-" + node,
 		Generation: 1, ArtifactRoots: "[" + jsonString(root) + "]", AllowedRecipients: "[\"parent\"]", CreatedAt: now, UpdatedAt: now},
@@ -233,7 +257,6 @@ func (f *fixture) acceptNode(plan, node string, o acceptOpts) accepted {
 			DispatchTurnID: sql.NullString{String: "turn-dispatch", Valid: true}, OpenedAt: now, BoundAt: sql.NullString{String: now, Valid: true}}, "host", "host"); err != nil {
 		f.t.Fatal(err)
 	}
-	revision := dig("revision " + rid)
 	event := "evt-" + rid
 	f.exec("INSERT INTO events (event_id, relationship_id, execution_generation, revision_hash, outcome, producer, turn_thread_id, turn_id, turn_status, receipt, stage, first_seen_at, last_seen_at)"+
 		" VALUES (?, ?, 1, ?, 'ready_for_review', 'child', ?, 'turn-1', 'completed', ?, 'final', ?, ?)", event, rid, revision, "child-"+node, receipt, now, now)

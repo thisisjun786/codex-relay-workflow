@@ -81,7 +81,7 @@ An edge is satisfied by what the store holds now. Every predicate is scoped to t
 
 When all incoming edges of a candidate are satisfied, the artifacts it would consume are read again: every file the predecessor's receipt declared must still
 exist, hash to the declared digest and size and lie under the predecessor's artifact roots; a frozen copy of the manifest must read and agree; an artifact
-edge that hands over no artifact is blocked, never an empty success; and following the consumed acceptances down through their manifests, no node may appear
+edge that hands over no artifact is blocked, never an empty success; the list of artifacts a receipt declares must hash to the revision the parent accepted (so an artifact left out of the list, or added to it, is found even when every remaining file is intact); and following the consumed acceptances down through their manifests, no node may appear
 under two acceptances. The first violated path decides the reason.
 
 ### Ranking and selection
@@ -124,7 +124,7 @@ settings.
 The release is idempotent and never creates a second child. In order:
 
 1. **Replay first.** An intent already recorded for the node is continued from the exact request bytes frozen with it (`dag_release_requests`) and never rebuilt: the managed engine fingerprints the whole
-   request, while the manifest digest leaves out fields that are still in the prompt, so a clock or a base tip that moved would read as a second release. A replay presented with another spelling of the marker
+   request, while the manifest digest leaves out fields that are still in the prompt, so a clock or a base tip that moved would read as a second release. A replay of an intent whose slot was returned meanwhile reserves it again under the same ceilings, and is refused `capacity_exhausted` when none is free. A replay presented with another spelling of the marker
    root, the socket or the state selector than the intent was frozen under is refused (`disposition_conflict`) before the engine is asked; a stored manifest or request that no longer digests to what was recorded is
    `revision_mismatch`.
 2. **Judge, without a transaction.** The reading says the node is ready (or deferred only for capacity: the ceiling is enforced in step 4, where the contest is recorded). For every pinned predecessor the relay reads
@@ -134,9 +134,9 @@ The release is idempotent and never creates a second child. In order:
 3. **Assemble the request.** Its id is derived from the node and the manifest digest only (`dag-` and 40 hex characters): no attempt counter, so a replay is the same request. The prompt carries the manifest inline,
    or the path and digest of its frozen copy (`<first artifact root>/dag-input-manifests/<digest>.json`, create-exclusive, mode 0600, re-read) when it exceeds 60000 characters, and tells the child, in English, to
    verify every uri, hash and size before consuming an input and to report `blocked_needs_input` on any mismatch.
-4. **Write the intent.** One transaction judges the store half again (a plan revision, an acceptance or a registration may have moved), checks the slice, the criteria and the incoming edges against the manifest,
+4. **Write the intent.** The acceptance whose pull request was read in step 2 must be the one the manifest consumes (a predecessor accepted again meanwhile is a head that was never checked: `disposition_conflict`, repeat the release). One transaction judges the store half again (a plan revision, an acceptance or a registration may have moved), checks the slice, the criteria and the incoming edges against the manifest,
    decides capacity, reserves a slot of subject kind `dag_node` and key `plan:node` (decision D-15) and writes the manifest, the frozen request and the release together, or nothing. When no slot is free the
-   contest is recorded and `capacity_exhausted` answered; a refusal of the reservation itself (another parent, a ceiling at initiative or store scope) leaves its conflict row and no intent.
+   contest is recorded and `capacity_exhausted` answered; a refusal of the reservation itself (another parent, a ceiling at initiative or store scope) leaves its conflict row and no intent, and any other failure of the store rolls the whole transaction back.
 5. **Start the child**, outside any transaction, with the frozen bytes. A refused or incomplete start (a creation whose outcome is unknown, settings that differ from what was asked) leaves the intent and the slot; the
    same call again reaches this step again and the engine reconciles with the creation it already made. A request another caller is advancing waits for that caller to bind its child.
 6. **Bind** the child to the node (`dag_node_executions`, kind `initial`). The engine already refuses a creation whose model, effort, sandbox or approval policy differ from the request; the bind refuses a
@@ -146,7 +146,7 @@ The slot is held from step 4 until the parent releases it with the acceptance of
 
 ### Input manifest
 
-The manifest (`dag-input-manifest/1`, contract 4.2) is content-addressed and records, for every incoming edge, the value that satisfied it: the acceptance and its revision, the pinned head, the artifacts with
+The manifest (`dag-input-manifest/1`, contract 4.2) is content-addressed and records, for every incoming edge, the value that satisfied it, read from the very rows the edge's predicate used (the observation that proved an integration, the decision that settled a decision edge): the acceptance and its revision, the pinned head, the artifacts with
 uri, sha256, size and the artifact root they lie under, the landed commit, or the recorded decision; the node's slice and criteria digests; the base; the rule version; the volatile snapshots. A manifest is released
 only when it is whole: a missing, mismatched or altered input, an unreadable store, or an empty rule-version field is never an empty success. The violated paths of contract 4.4 map onto the relay's existing refusal
 reasons:

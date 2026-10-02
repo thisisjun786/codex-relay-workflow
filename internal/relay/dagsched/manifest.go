@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -22,10 +21,21 @@ type BaseRef struct{ Repository, Ref, SHA string }
 
 // Volatile is a thing outside the store a node reads that can change (a Linear document, an issue): a snapshot of it taken before dispatch, so the node reads what the
 // manifest says and a later edit is a different manifest.
-type Volatile struct{ Source, SnapshotURI, SHA256, CapturedAt string }
+type Volatile struct {
+	Source      string `json:"source"`
+	SnapshotURI string `json:"snapshot_uri"`
+	SHA256      string `json:"sha256"`
+	CapturedAt  string `json:"captured_at"`
+}
 
 // RuleVersion names the rules a node was dispatched under (contract 4.2, 4.3): recorded with the manifest, left out of its digest, and every field required.
-type RuleVersion struct{ SkillsDigest, Model, Effort, PromptTemplate, RelayBuild string }
+type RuleVersion struct {
+	SkillsDigest   string `json:"skills_digest"`
+	Model          string `json:"model"`
+	Effort         string `json:"effort"`
+	PromptTemplate string `json:"prompt_template"`
+	RelayBuild     string `json:"relay_build"`
+}
 
 // ManifestInput is what a manifest needs that the store does not hold. CreatedAt is the one clock read of a release and is left out of the digest.
 type ManifestInput struct {
@@ -176,13 +186,10 @@ func (s *Scheduler) buildInput(ctx context.Context, q store.Querier, e dag.SnapE
 		if err != nil || finding != nil {
 			return nil, finding, err
 		}
-		var receipt, roots string
-		if _, err := queryOne(ctx, q, "SELECT e.receipt, r.artifact_roots FROM events e JOIN relationships r ON r.relationship_id = e.relationship_id WHERE e.event_id = ?", []any{a.EventID}, &receipt, &roots); err != nil {
-			return nil, nil, err
+		entries, artifactRoots, _, finding, err := s.acceptedEntries(ctx, q, a)
+		if err != nil || finding != nil {
+			return nil, finding, err
 		}
-		entries, _ := receiptEntries(receipt)
-		var artifactRoots []string
-		_ = json.Unmarshal([]byte(roots), &artifactRoots)
 		artifacts := make([]any, 0, len(entries))
 		for _, entry := range entries {
 			scope := scopeOf(entry.Path, artifactRoots)
@@ -203,44 +210,30 @@ func (s *Scheduler) buildInput(ctx context.Context, q store.Querier, e dag.SnapE
 		if err != nil {
 			return nil, nil, err
 		}
-		var landed string
-		if _, err := queryOne(ctx, q, "SELECT COALESCE(NULLIF(m.landed_sha, ''), o.tip_sha) FROM dag_integration_observations o LEFT JOIN merge_turns m ON m.turn_id = o.merge_turn_id"+
-			" WHERE o.acceptance_id = ? AND o.repository = ? AND o.base_ref = ? AND o.is_ancestor = 1 ORDER BY o.observed_seq DESC LIMIT 1",
-			[]any{a.AcceptanceID, e.TargetRepository, e.TargetBaseRef}, &landed); err != nil {
+		landed, err := landedOf(ctx, q, st.ObservationID)
+		if err != nil {
 			return nil, nil, err
 		}
 		input["acceptance_id"], input["head_sha"], input["landed_sha"] = a.AcceptanceID, a.HeadSHA, landed
 	case dag.EdgeDecision:
-		id, revision, err := s.decisionOf(ctx, q, e)
-		if err != nil {
-			return nil, nil, err
-		}
-		input["decision_id"], input["decision_digest"], input["decision_revision"] = id, e.DecisionDigest, revision
+		input["decision_id"], input["decision_digest"], input["decision_revision"] = st.DecisionID, e.DecisionDigest, st.DecisionRevision
 	}
 	return input, nil, nil
 }
 
-// decisionOf is the decision that satisfies a decision edge: the recorded decision with the highest revision (P-DEC-2) or, failing that, the supervisor directive that settled the digest (P-DEC-1).
-func (s *Scheduler) decisionOf(ctx context.Context, q store.Querier, e dag.SnapEdge) (string, int64, error) {
-	authority, err := json.Marshal(e.RequiredAuthority)
+// landedOf is the commit the target held when the integration was observed: the landed merge turn's landed commit when the observation was carried by one, else the tip the observation read.
+// It is read from the observation that satisfied the edge, never from another row of the same acceptance.
+func landedOf(ctx context.Context, q store.Querier, observation string) (string, error) {
+	var landed string
+	found, err := queryOne(ctx, q, "SELECT COALESCE(NULLIF(m.landed_sha, ''), o.tip_sha) FROM dag_integration_observations o LEFT JOIN merge_turns m ON m.turn_id = o.merge_turn_id WHERE o.observation_id = ?",
+		[]any{observation}, &landed)
 	if err != nil {
-		return "", 0, err
-	}
-	var id string
-	var revision int64
-	found, err := queryOne(ctx, q, "SELECT x.decision_id, x.revision FROM dag_decisions x WHERE x.subject = ? AND x.digest = ? AND x.disposition = 'approved' AND x.state = 'active'"+
-		" AND x.authority_kind IN (SELECT value FROM json_each(?)) ORDER BY x.revision DESC LIMIT 1", []any{e.DecisionSubject, e.DecisionDigest, string(authority)}, &id, &revision)
-	if err != nil || found {
-		return id, revision, err
-	}
-	found, err = queryOne(ctx, q, "SELECT directive_id FROM scope_directives WHERE digest = ? AND disposition = 'chosen' ORDER BY decided_at DESC LIMIT 1", []any{e.DecisionDigest}, &id)
-	if err != nil {
-		return "", 0, err
+		return "", err
 	}
 	if !found {
-		return "", 0, errors.New("the decision of edge " + e.EdgeID + " is not recorded")
+		return "", errors.New("the observation " + observation + " that satisfied an integrated edge is not in the store")
 	}
-	return id, 0, nil
+	return landed, nil
 }
 
 // scopeOf is the artifact root a path lies under: the longest one, so nested roots are told apart.
@@ -296,9 +289,14 @@ func (s *Scheduler) VerifyManifest(ctx context.Context, q store.Querier, plan st
 	}
 	statuses := map[string]EdgeStatus{}
 	var out []BlockedFinding
+	seenEdge := map[string]bool{}
 	for _, item := range items {
 		in, _ := item.(map[string]any)
 		id, _ := in["edge_id"].(string)
+		if seenEdge[id] {
+			return []BlockedFinding{{"B-01", BlockedManifestIncomplete, "the manifest names the input of edge " + id + " twice, so another incoming edge has none"}}, nil
+		}
+		seenEdge[id] = true
 		e, ok := byEdge[id]
 		if !ok || in["kind"] != e.Kind || in["from_node_id"] != e.FromNodeID {
 			return []BlockedFinding{{"B-01", BlockedManifestIncomplete, "an input of the manifest is not an incoming edge of the node: " + id}}, nil
@@ -352,16 +350,35 @@ func (s *Scheduler) verifyInput(ctx context.Context, q store.Querier, e dag.Snap
 		if (e.Kind == dag.EdgeIntegrated || e.PinsCodeHead) && in["head_sha"] != a.HeadSHA {
 			return &BlockedFinding{"B-09", BlockedStaleHead, "the manifest names head " + textOf(in["head_sha"]) + " and the accepted head is " + a.HeadSHA}, nil
 		}
-		if e.Kind == dag.EdgeArtifactVerified && !e.PinsCodeHead {
-			var roots string
-			if _, err := queryOne(ctx, q, "SELECT r.artifact_roots FROM relationships r WHERE r.relationship_id = ?", []any{a.RelationshipID}, &roots); err != nil {
+		if e.Kind == dag.EdgeIntegrated {
+			if landed, err := landedOf(ctx, q, st.ObservationID); err != nil {
 				return nil, err
+			} else if in["landed_sha"] != landed {
+				return &BlockedFinding{"B-12", BlockedIntegrationUnprovable, "the manifest names landed commit " + textOf(in["landed_sha"]) + " and the observation that proved the integration holds " + landed}, nil
 			}
-			var artifactRoots []string
-			_ = json.Unmarshal([]byte(roots), &artifactRoots)
+		}
+		if e.Kind == dag.EdgeArtifactVerified && !e.PinsCodeHead {
+			entries, artifactRoots, _, finding, err := s.acceptedEntries(ctx, q, a)
+			if err != nil || finding != nil {
+				return finding, err
+			}
 			artifacts, _ := in["artifacts"].([]any)
-			if len(artifacts) == 0 {
-				return &BlockedFinding{"B-17", BlockedInputMissing, "the input of edge " + e.EdgeID + " names no artifact"}, nil
+			// the manifest lists exactly the artifacts the accepted receipt declared: one left out, added or altered is not what the parent accepted.
+			if len(artifacts) != len(entries) {
+				return &BlockedFinding{"B-17", BlockedInputMissing, fmt.Sprintf("the input of edge %s lists %d artifacts and the accepted receipt declared %d", e.EdgeID, len(artifacts), len(entries))}, nil
+			}
+			declared := map[string]string{}
+			for _, entry := range entries {
+				declared[entry.Path] = entry.SHA256
+			}
+			for _, item := range artifacts {
+				art, _ := item.(map[string]any)
+				if sha, ok := declared[textOf(art["uri"])]; !ok || sha != textOf(art["sha256"]) {
+					return &BlockedFinding{"B-04", BlockedInputHashMismatch, textOf(art["uri"]) + " is not an artifact of the accepted receipt with digest " + textOf(art["sha256"])}, nil
+				}
+			}
+			if checkRevision(entries, a) != nil {
+				return checkRevision(entries, a), nil
 			}
 			for _, item := range artifacts {
 				art, _ := item.(map[string]any)
@@ -384,8 +401,8 @@ func (s *Scheduler) verifyInput(ctx context.Context, q store.Querier, e dag.Snap
 			}
 		}
 	case dag.EdgeDecision:
-		if in["decision_digest"] != e.DecisionDigest {
-			return &BlockedFinding{"B-11", BlockedDecisionMismatch, "the manifest names decision digest " + textOf(in["decision_digest"]) + " and the plan fixed " + e.DecisionDigest}, nil
+		if in["decision_digest"] != e.DecisionDigest || in["decision_id"] != st.DecisionID || in["decision_revision"] != st.DecisionRevision {
+			return &BlockedFinding{"B-11", BlockedDecisionMismatch, "the manifest names decision " + textOf(in["decision_id"]) + " (digest " + textOf(in["decision_digest"]) + ") and the edge is settled by " + st.DecisionID + " at the digest " + e.DecisionDigest}, nil
 		}
 	}
 	return nil, nil

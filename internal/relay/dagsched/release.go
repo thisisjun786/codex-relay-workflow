@@ -214,6 +214,13 @@ func (s *Scheduler) Release(ctx context.Context, plan, node, actor string, req R
 	} else if len(findings) > 0 {
 		return out, refusalOfFinding(findings[0])
 	}
+	// E-10 binds the acceptance whose pull request was read to the one the manifest consumes: a predecessor accepted again while the forge was being read is a different head that was
+	// never checked.
+	for _, p := range preds {
+		if !restsOn(body, p.Acceptance.AcceptanceID) {
+			return out, refuse(contract.RefusalDispositionConflict, "the acceptance of %s changed while its pull request %s#%d was being read; repeat the release so the current head is checked", p.Acceptance.NodeID, p.Forge, p.Number)
+		}
+	}
 	digest, _ := body["manifest_digest"].(string)
 	out.ManifestDigest, out.RequestID = digest, ReleaseRequestID(node, digest)
 	// 3. the request
@@ -235,10 +242,17 @@ func (s *Scheduler) Release(ctx context.Context, plan, node, actor string, req R
 			concurrent = true
 			return nil
 		}
-		if stash = s.rejudge(txCtx, tx, plan, node, body, opts, actor); stash != nil {
+		// a refusal is returned after the transaction (and the conflict row a refusal recorded commits with it); any other failure rolls everything back.
+		if refused, err := asRefusal(s.rejudge(txCtx, tx, plan, node, body, opts, actor)); err != nil {
+			return err
+		} else if refused != nil {
+			stash = refused
 			return nil
 		}
-		if stash = s.reserve(txCtx, tx, snap.ProjectKey, plan, node, actor, digest); stash != nil {
+		if refused, err := asRefusal(s.reserve(txCtx, tx, snap.ProjectKey, plan, node, actor, digest)); err != nil {
+			return err
+		} else if refused != nil {
+			stash = refused
 			return nil
 		}
 		if s.testAfterReserve != nil {
@@ -376,11 +390,28 @@ func (s *Scheduler) reserve(ctx context.Context, q store.Querier, project, plan,
 	}
 	_, err = (&capacity.Capacity{Store: s.Store, Now: s.now}).Reserve(ctx, capacity.Reservation{SubjectKind: SlotSubjectKind, SubjectKey: subject, ParentTask: actor, Project: project, ReservedBy: actor,
 		Detail: sql.NullString{String: digest, Valid: true}})
-	var refused *store.RefusedError
-	if errors.As(err, &refused) {
-		return err
-	}
 	return err
+}
+
+// asRefusal separates a refusal (an answer to the caller: the relay's own reason, with whatever conflict row it recorded) from a failure of the store or of anything else, which must
+// roll the transaction back.
+func asRefusal(err error) (refused, failure error) {
+	var r *store.RefusedError
+	if errors.As(err, &r) {
+		return err, nil
+	}
+	return nil, err
+}
+
+// restsOn is whether any input of the manifest rests on the acceptance.
+func restsOn(body map[string]any, acceptance string) bool {
+	inputs, _ := body["inputs"].([]any)
+	for _, item := range inputs {
+		if in, _ := item.(map[string]any); in["acceptance_id"] == acceptance {
+			return true
+		}
+	}
+	return false
 }
 
 // assemble builds the managed-start request of a release (contract 2.6): the id is derived from the node and the manifest, and the prompt carries the manifest (inline, or the
@@ -467,6 +498,27 @@ func (s *Scheduler) replay(ctx context.Context, plan, node, actor string, row re
 		out.Bound, out.RelationshipID, out.Generation, out.ChildTaskID, out.State = true, rid, generation, child, "admitted"
 		return out, nil
 	}
+	if slot == "" {
+		// the slot of an unbound intent was returned (an operator's slot-release, say): no child is created without one, and the reservation is made again under the same ceilings.
+		var project string
+		if _, err := queryOne(ctx, q, "SELECT project_key FROM dag_plans WHERE plan_id = ?", []any{plan}, &project); err != nil {
+			return out, err
+		}
+		var refused error
+		if err := s.Store.Compose(ctx, func(txCtx context.Context, _ *sql.Conn) error {
+			r, err := asRefusal(s.reserve(txCtx, s.Store.Q(txCtx), project, plan, node, actor, row.Digest))
+			refused = r
+			return err
+		}); err != nil {
+			return out, err
+		}
+		if refused != nil {
+			return out, refused
+		}
+		if out.SlotID, err = s.slotOf(ctx, q, plan, node); err != nil {
+			return out, err
+		}
+	}
 	var raw, sum, marker, socket, selector string
 	found, err := queryOne(ctx, q, "SELECT request_json, request_sha256, marker_root, socket, state_selector FROM dag_release_requests WHERE plan_id = ? AND node_id = ? AND manifest_digest = ?",
 		[]any{plan, node, row.Digest}, &raw, &sum, &marker, &socket, &selector)
@@ -476,12 +528,14 @@ func (s *Scheduler) replay(ctx context.Context, plan, node, actor string, row re
 	if !found || shaOf([]byte(raw)) != sum {
 		return out, refuse(contract.RefusalRevisionMismatch, "the request frozen with the release of %s is missing or no longer digests to %s", node, sum)
 	}
-	if _, _, err := dag.ReadManifestOn(ctx, q, row.Digest); err != nil {
+	if _, stored, err := dag.ReadManifestOn(ctx, q, row.Digest); err != nil {
 		var corrupt *dag.CorruptError
 		if errors.As(err, &corrupt) {
 			return out, refuse(contract.RefusalRevisionMismatch, "%s", corrupt.Detail)
 		}
 		return out, err
+	} else if !stored {
+		return out, refuse(contract.RefusalRevisionMismatch, "the manifest %s of the release of %s is not stored", row.Digest, node)
 	}
 	if marker != s.Selectors.MarkerRoot || socket != s.Selectors.Socket || selector != s.Selectors.StateSelector {
 		return out, refuse(contract.RefusalDispositionConflict, "the release of %s was frozen under marker root %q, socket %q and state %q and is replayed under other spellings", node, marker, socket, selector)
