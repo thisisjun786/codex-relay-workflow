@@ -23,9 +23,9 @@ import (
 )
 
 // runtimeDirectory is whether name is one of the installer's runtime directories,
-// bin-<version>-<digest>.
+// bin-<version>-<digest> (staging.RuntimeDirectory).
 func runtimeDirectory(name string) bool {
-	return strings.HasPrefix(name, "bin-")
+	return staging.RuntimeDirectory(name)
 }
 
 // processScope is what a process-table reading can see, stated in every answer that rests on
