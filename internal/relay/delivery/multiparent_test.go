@@ -17,7 +17,10 @@ import (
 var projects = map[string][3]string{"a": {"/repo-a", "AAA-1", "linear://project-alpha"}, "b": {"/repo-b", "BBB-1", "linear://project-beta"}}
 
 func (f *fixture) twoParentAssignment(name string, events int) (string, []string) {
-	p := projects[name]
+	p, known := projects[name]
+	if !known {
+		p = [3]string{"/repo-" + name, "ISSUE-" + name, "linear://project-" + name}
+	}
 	par, chi := "01parent-"+name, "01child-"+name
 	root := filepath.Join(f.root, name)
 	mustDo(f.t, os.MkdirAll(root, 0o755))

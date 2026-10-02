@@ -462,7 +462,7 @@ func TestScale_a_large_backlog_of_a_capped_relationship_is_set_aside_in_linear_t
 	began := time.Now()
 	parents, err := w.f.delivery.EligibleParents(w.f.ctx, w.f.clock.Now())
 	mustDo(t, err)
-	rows, err := w.f.delivery.EligibleRows(w.f.ctx, scaleParent, w.f.clock.Now())
+	rows, err := w.f.delivery.EligibleRows(w.f.ctx, scaleParent, w.f.clock.Now(), allDue)
 	mustDo(t, err)
 	if elapsed := time.Since(began); elapsed > 3*time.Second {
 		t.Errorf("selecting among %d queued deliveries took %v", backlog, elapsed)
