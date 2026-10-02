@@ -494,6 +494,25 @@ func TestProgressLandingSurvivesCancel(t *testing.T) {
 	assertNoFalseCompletionRate(t, p)
 }
 
+// The plan's cancel and a cancelled relationship both put a node in the cancelled stage, and only the plan's takes its acceptance out of the count: a relationship that was cancelled after the node was
+// accepted leaves the acceptance standing.
+func TestProgressCancelledRelationshipStillCountsItsAcceptance(t *testing.T) {
+	f := newFixture(t)
+	f.projectParent()
+	f.putPlan("cr", 0, "cr-r1", addNode("rel", dag.NodeNonPR), addNode("pln", dag.NodeNonPR))
+	f.acceptNode("cr", "rel", acceptOpts{Status: "cancelled"})
+	f.acceptNode("cr", "pln", acceptOpts{})
+	f.putPlan("cr", 1, "cr-r2", doc{"op": dag.OpCancelNode, "node_id": "pln"})
+	p := f.progress("cr")
+	wantStages(t, p, map[string][]string{StageCancelled: {"rel", "pln"}})
+	if n := p.nodeNamed("rel"); n.Lifecycle != "" || n.AcceptanceID == "" {
+		t.Errorf("rel = %+v: cancelled through its relationship, not by the plan", n)
+	}
+	if p.Cumulative.Accepted != (Measure{Nodes: 1, Of: 2}) {
+		t.Errorf("cumulative accepted = %+v, want rel (its acceptance stands) and not pln (the plan cancelled it): 1 of 2", p.Cumulative.Accepted)
+	}
+}
+
 // Every branch of the stage rule, and the states the rule refuses.
 func TestProgressStageOf(t *testing.T) {
 	cases := []struct {

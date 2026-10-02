@@ -358,8 +358,9 @@ func ProjectProgress(in ProgressInput) (Progress, error) {
 		if node.Links.Executions == nil {
 			node.Links.Executions = []ExecutionLink{}
 		}
-		// what the plan ended is not counted as done (the reading's own rule), unless it landed: a landing stays, and an integrated node is an accepted one
-		if facts.AcceptanceID != "" && (stage == StageIntegrated || stage != StageCancelled && stage != StageArchived) {
+		// what the plan ended is not counted as done (the reading's own rule), unless it landed: a landing stays, and an integrated node is an accepted one. The rule is the plan's: a node whose
+		// relationship was cancelled is in the cancelled stage too, and its acceptance still stands.
+		if facts.AcceptanceID != "" && (stage == StageIntegrated || n.Lifecycle != dag.LifeCancelled && n.Lifecycle != dag.LifeArchived) {
 			accepted++
 		}
 		if n.Disposition == DispBlocked {
