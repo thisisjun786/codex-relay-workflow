@@ -211,6 +211,56 @@ func lookup(o []delivery.F, key string) (any, bool) {
 
 func detailText(v any) string { s, _ := v.(string); return s }
 
+// The generation a registration names is compared with the relationship's current one as the guard
+// compares it: Python's != on the decoded value, so a bool is 0 or 1, an integer-valued float is that
+// integer, and a string or a fractional float is never the integer. Both readers answer alike, and
+// the mismatch names the registered value as str() spells it.
+func TestStoredReceiptGenerationIsComparedAsTheGuardDoes(t *testing.T) {
+	ctx := context.Background()
+	s := delivery.StageReceipt(t)
+	mismatch := func(registered string) string {
+		return "the assignment registered generation " + registered + " and the relationship now stands on generation 1"
+	}
+	for _, c := range []struct {
+		name       string
+		generation any
+		evidence   string
+		detail     string
+	}{
+		{"integer-equal", int64(1), "at_head", ""},
+		{"integer-different", int64(2), "registration_generation_mismatch", mismatch("2")},
+		{"true-is-one", true, "at_head", ""},
+		{"false-is-zero", false, "registration_generation_mismatch", mismatch("False")},
+		{"integral-float", 1.0, "at_head", ""},
+		{"integral-float-different", 2.0, "registration_generation_mismatch", mismatch("2.0")},
+		{"fractional-float", 1.5, "registration_generation_mismatch", mismatch("1.5")},
+		{"numeric-string-is-not-the-integer", "1", "registration_generation_mismatch", mismatch("1")},
+		{"no-stamp", nil, "at_head", ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			omission, err := s.OmissionReceiptFor(ctx, c.generation)
+			if err != nil {
+				t.Fatalf("the omission reader could not read the receipt: %v", err)
+			}
+			stop, readable, err := hook.LookupReceipt(ctx, s.Path, nil, s.Relationship, s.Session, s.Turn, c.generation, s.Dispatch)
+			if err != nil || !readable {
+				t.Fatalf("the Stop hook: readable=%v err=%v", readable, err)
+			}
+			for name, got := range map[string][]delivery.F{"omission": omission, "hook": stop} {
+				if evidence, _ := lookup(got, "evidence"); evidence != c.evidence {
+					t.Errorf("%s evidence = %v, want %s", name, evidence, c.evidence)
+				}
+				if detail, _ := lookup(got, "detail"); c.detail != "" && detailText(detail) != c.detail {
+					t.Errorf("%s detail = %v, want %q", name, detail, c.detail)
+				}
+			}
+			if !reflect.DeepEqual(omission, stop) {
+				t.Errorf("the readers disagree:\n omission %v\n hook     %v", omission, stop)
+			}
+		})
+	}
+}
+
 // hook.DeliverableState is the rule the omission reader now shares: for the same stored receipt it
 // names the state, binding and detail the omission's lookup carries.
 func TestOmissionReaderCarriesDeliverableState(t *testing.T) {

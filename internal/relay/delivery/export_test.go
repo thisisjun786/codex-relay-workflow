@@ -63,5 +63,11 @@ func (s *ReceiptStage) OmissionReceipt(ctx context.Context) (Obj, error) {
 	return omissionReceipt(ctx, s.Path, s.Relationship, s.Session, s.Turn, s.Generation, s.Dispatch)
 }
 
+// OmissionReceiptFor is OmissionReceipt with the generation the assignment registered given as the
+// marker would hold it, whatever its type.
+func (s *ReceiptStage) OmissionReceiptFor(ctx context.Context, generation any) (Obj, error) {
+	return omissionReceipt(ctx, s.Path, s.Relationship, s.Session, s.Turn, generation, s.Dispatch)
+}
+
 // OmissionReceiptFailure is the reason the omission is left unmeasured with when that lookup fails.
 func OmissionReceiptFailure(err error) string { return omissionReceiptFailure(err) }
