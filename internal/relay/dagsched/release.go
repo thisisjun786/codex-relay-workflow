@@ -244,7 +244,7 @@ func (s *Scheduler) Release(ctx context.Context, plan, node, actor string, req R
 		}
 	}
 	digest, _ := body["manifest_digest"].(string)
-	out.ManifestDigest, out.RequestID = digest, ReleaseRequestID(node, digest)
+	out.ManifestDigest, out.RequestID = digest, ReleaseRequestID(plan, node, digest)
 	// 3. the request
 	raw, err := s.assemble(plan, n, snap.ProjectKey, actor, req, base, body, digest)
 	if err != nil {
@@ -490,7 +490,7 @@ func (s *Scheduler) assemble(plan string, n dag.SnapNode, project, actor string,
 		allowed[i] = r
 	}
 	request := map[string]any{
-		"schema": managed.Schema, "requestId": ReleaseRequestID(n.NodeID, digest), "issueKey": n.IssueKey, "projectKey": project,
+		"schema": managed.Schema, "requestId": ReleaseRequestID(plan, n.NodeID, digest), "issueKey": n.IssueKey, "projectKey": project,
 		"parent":        map[string]any{"taskId": actor, "hostId": req.Parent.HostID, "settings": req.Parent.Settings},
 		"child":         map[string]any{"hostId": req.Child.HostID, "title": req.Child.Title, "settings": req.Child.Settings},
 		"artifactRoots": roots, "allowedRecipients": allowed, "criteria": criteria, "criteriaSource": req.CriteriaSource,

@@ -87,7 +87,8 @@ An edge is satisfied by what the store holds now. Every predicate is scoped to t
   pull request and the forge identity the edge pins. The latest merge check of the pull request, if any, must digest to its evidence and name
   the accepted head. A cancelled predecessor satisfies nothing.
 * `integrated`: an observation says the accepted head is an ancestor of the target branch, no later observation says otherwise, the parent marked
-  the same revision merged, and, when a merge turn carried the observation, that turn landed the same head on the same branch.
+  the same revision merged, and, when a merge turn carried the observation, that turn landed the same head on the same branch. A landing does not make a result current: as on an artifact edge, the acceptance
+  must also be whole and digest to its id, belong to an execution of the node, stand on the plan's and the relationship's criteria now, and rest on active acceptances. The head's own currency is not asked, because what landed is in the target.
 * `decision`: an active, approved decision of the subject with the plan's digest by an authority kind the edge names, or a settled supervisor
   directive with that digest. Authority text is opaque: it is compared, never read.
 
@@ -145,7 +146,7 @@ The release is idempotent and never creates a second child. In order:
    the pull request itself from the forge, by the owner/name it recorded at acceptance, and refuses when its head is no longer the accepted one after recording a `stale_head` observation (E-10); an unreadable or
    incomplete read is the host's failure, nothing is written, and a retry is allowed; a closed or merged pull request is fine, only the head is compared. The request's criteria must digest to the plan's. The manifest is
    built and verified, every artifact and volatile snapshot hashed again.
-3. **Assemble the request.** Its id is derived from the node and the manifest digest only (`dag-` and 40 hex characters): no attempt counter, so a replay is the same request. The prompt carries the manifest inline,
+3. **Assemble the request.** Its id is derived from the plan, the node and the manifest digest only (`dag-` and 40 hex characters; node ids are plan-local and request ids are global to the store): no attempt counter, so a replay is the same request. The prompt carries the manifest inline,
    or the path and hash of its frozen copy (`<first artifact root>/dag-input-manifests/<sha256 of the bytes>.json`, see *The frozen copy* below) when it exceeds 60000 UTF-8 bytes, and tells the child, in English, to
    verify every uri, hash and size before consuming an input and to report `blocked_needs_input` on any mismatch.
 4. **Write the intent.** The acceptance whose pull request was read in step 2 must be the one the manifest consumes (a predecessor accepted again meanwhile is a head that was never checked: `disposition_conflict`, repeat the release). One transaction judges the store half again (a plan revision, an acceptance or a registration may have moved), checks the slice, the criteria and the incoming edges against the manifest,
@@ -233,7 +234,7 @@ bytes, not the manifest digest: two bodies of one manifest differ in what the di
 open (inside the root, no link on the way, a regular file, never blocking on a pipe) and compared byte for byte. The child owns its artifact root, so a link or a pipe planted there makes the freeze fail and never makes it wait. A link planted between the check of the directory and the creation of the file, or an artifact
 root that is itself a link, can leave one file outside the root (it holds only a manifest the relay wrote); the read-back then refuses and nothing is bound. An artifact root with a control character is refused when a correction is prepared,
 because the relay's message joins the lines of a finding and the child would read another path. A correction uses the body the store holds for the digest, so preparing twice from the same inputs gives the same file and the same line. The directory is created by the freeze and is not
-cleaned up by it.
+cleaned up by it. A release that is refused for capacity after it froze an oversize manifest leaves that copy (a retry builds a new body with a new time, hence another file); the copies are small and unreferenced, and removing them is housekeeping of the artifact root.
 
 ## Merge eligibility
 
@@ -314,7 +315,7 @@ proof (M4). A forged `completed` (a report that was only staged, never acknowled
 Where the code reads the contract differently, or adds to it, and why:
 
 * Contract 7.2 names the `edit_regions` tables for regions; those are two-project agreements keyed by base revision with no unknown or hotspot rule, so per-node declarations have their own table and reuse only the place vocabulary.
-* Every predicate carries the plan id, which the contract's SQL predates. The acceptance digest includes the plan id too: acceptance ids are a store-wide key and node ids are plan-local.
+* The managed request id of a release is derived from the plan, the node and the manifest digest (contract 2.6 names the node and the digest): node ids are plan-local and request ids are global to the store. Every predicate carries the plan id, which the contract's SQL predates. The acceptance digest includes the plan id too: acceptance ids are a store-wide key and node ids are plan-local.
 * The reading's vocabulary adds `blocked:release_abandoned`, `blocked:evicted` (D-12) and `blocked:stale_predecessor`; `blocked:stale_epoch` is not emitted (coordinator fencing is a later issue). A `blocked_needs_input` receipt reads as `blocked:input_unverified_at_consumption` (B-15).
 * No new refusal reason: an unmet ready predicate reads `disposition_conflict` with the closed reason in the detail, tamper `revision_mismatch`, missing or altered inputs `manifest_unverified` and `scope_escape`, a stale head `merge_candidate_moved`, stale criteria `criteria_set_changed`.
 * Plan-level pause does not exist in the revision operations, so a plan is always active until coordinator fencing.

@@ -173,9 +173,11 @@ func parseEvidenceChecks(evidenceJSON string) ([]CheckRow, error) {
 	return rows, nil
 }
 
-// ReleaseRequestID is the managed-start request id of one release: derived from the node and its manifest digest only (contract
-// 2.6, E-17, E-23), within the engine's 128 characters. It carries no attempt counter: a replay is the same request.
-func ReleaseRequestID(nodeID, manifestDigest string) string {
-	h := sha256.Sum256([]byte(nodeID + "|" + manifestDigest))
+// ReleaseRequestID is the managed-start request id of one release: derived from the plan, the node and its manifest digest only
+// (contract 2.6, E-17, E-23, with the plan added because node ids are plan-local and request ids are global to the store: two plans
+// that release a node of the same name over the same inputs are two releases), within the engine's 128 characters. It carries no
+// attempt counter: a replay is the same request.
+func ReleaseRequestID(planID, nodeID, manifestDigest string) string {
+	h := sha256.Sum256([]byte(dag.Canonical([]any{planID, nodeID, manifestDigest})))
 	return "dag-" + hex.EncodeToString(h[:])[:40]
 }

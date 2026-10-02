@@ -331,3 +331,25 @@ func TestGitAncestryForgeCompare(t *testing.T) {
 		t.Error("an unreadable repository answered")
 	}
 }
+
+// A linked working tree has a .git file, not a directory, and a bare repository has no .git at all: git is asked about the checkout, so the ancestry is proven in either.
+func TestAncestryInLinkedAndBareCheckouts(t *testing.T) {
+	repo := newGitRepo(t)
+	base := repo.git("rev-parse", "HEAD")
+	repo.git("checkout", "-q", "-b", "feature")
+	feature := repo.commit("feature.txt", "feature")
+	repo.git("checkout", "-q", "dev")
+	linked := filepath.Join(t.TempDir(), "linked")
+	repo.git("worktree", "add", "-q", linked, "-b", "linked-branch", "dev")
+	bare := filepath.Join(t.TempDir(), "bare.git")
+	repo.git("clone", "-q", "--bare", repo.path, bare)
+	for name, path := range map[string]string{"plain": repo.path, "linked": linked, "bare": bare} {
+		in, method, err := GitAncestry{}.Ancestry(context.Background(), path, base, feature)
+		if err != nil || !in || method != "git merge-base --is-ancestor" {
+			t.Errorf("%s: the base in the feature = %v %q %v", name, in, method, err)
+		}
+		if out, _, err := (GitAncestry{}).Ancestry(context.Background(), path, feature, base); err != nil || out {
+			t.Errorf("%s: the feature in the base = %v %v", name, out, err)
+		}
+	}
+}

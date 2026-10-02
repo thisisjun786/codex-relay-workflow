@@ -276,7 +276,7 @@ func (f *fixture) reportNode(plan, node string, o acceptOpts) accepted {
 	}
 	manifest := f.putManifest(snap, node, inputs)
 	f.exec("INSERT INTO dag_node_executions (plan_id, node_id, relationship_id, execution_generation, manifest_digest, kind, managed_request_id) VALUES (?, ?, ?, 1, ?, 'initial', ?)",
-		plan, node, rid, manifest, ReleaseRequestID(node, manifest))
+		plan, node, rid, manifest, ReleaseRequestID(plan, node, manifest))
 	return accepted{Acceptance: Acceptance{RelationshipID: rid, EventID: event, RevisionHash: revision, ManifestDigest: manifest}, Event: event, Manifest: manifest, Root: root, Files: files}
 }
 
@@ -352,7 +352,7 @@ func (f *fixture) startNode(plan, node string) string {
 	}
 	manifest := f.putManifest(snap, node, []any{})
 	f.exec("INSERT INTO dag_node_executions (plan_id, node_id, relationship_id, execution_generation, manifest_digest, kind, managed_request_id) VALUES (?, ?, ?, 1, ?, 'initial', ?)",
-		plan, node, rid, manifest, ReleaseRequestID(node, manifest))
+		plan, node, rid, manifest, ReleaseRequestID(plan, node, manifest))
 	return rid
 }
 

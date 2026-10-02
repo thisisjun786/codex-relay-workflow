@@ -44,11 +44,8 @@ func (g GitAncestry) local(ctx context.Context, repository, subject, tip string)
 	if git == "" {
 		git = "git"
 	}
-	gitdir := filepath.Join(repository, ".git")
-	if _, err := os.Stat(gitdir); os.IsNotExist(err) {
-		gitdir = repository
-	}
-	cmd := exec.CommandContext(ctx, git, "--git-dir="+gitdir, "merge-base", "--is-ancestor", subject, tip)
+	// the checkout is whatever git says it is (a working tree, a linked working tree, which has a .git file, or a bare repository)
+	cmd := exec.CommandContext(ctx, git, "-C", repository, "merge-base", "--is-ancestor", subject, tip)
 	cmd.Env = cleanGitEnv()
 	err := cmd.Run()
 	method := "git merge-base --is-ancestor"

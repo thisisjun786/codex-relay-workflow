@@ -63,3 +63,59 @@ func TestStaleResultNeverOpensAnEdge(t *testing.T) {
 		})
 	}
 }
+
+// Contract 8.2 on an integrated edge: a landing is a fact about a commit, not a reason to trust the result it belongs to. After the head landed (observation and merged mark), anything that
+// makes the acceptance stale, altered or foreign closes what the landing opened, exactly as it does on an artifact edge.
+func TestStaleResultNeverOpensAnIntegratedEdge(t *testing.T) {
+	pinned := acceptOpts{HeadSHA: head1, PR: 7, Forge: "owner/repo", Repository: "owner/repo"}
+	cases := []struct {
+		name   string
+		reason string // "" = still satisfied
+		mutate func(f *fixture, a accepted)
+	}{
+		{name: "baseline"},
+		{name: "the criteria were registered again", reason: BlockedStaleCriteria, mutate: func(f *fixture, a accepted) {
+			f.exec("UPDATE canonical_criteria SET set_digest = ?", dig("registered again"))
+		}},
+		{name: "the plan changed the node's criteria", reason: BlockedStaleCriteria, mutate: func(f *fixture, a accepted) {
+			n := nodeDoc("impl-a", dag.NodeImplementation)
+			n["criteria_set_digest"] = dig("another plan criterion")
+			f.putPlan("p1", int(f.snapshot("p1").Revision), "p1-r2", doc{"op": dag.OpUpdateNode, "node": n})
+		}},
+		{name: "the acceptance row was altered", reason: BlockedAcceptanceTampered, mutate: func(f *fixture, a accepted) {
+			f.exec("UPDATE dag_acceptances SET revision_hash = ?", dig("another revision"))
+		}},
+		{name: "a required column of the acceptance is blank", reason: BlockedAcceptanceIncomplete, mutate: func(f *fixture, a accepted) {
+			f.exec("UPDATE dag_acceptances SET verdict_turn_id = ''")
+		}},
+		{name: "the acceptance is not tied to an execution of the node", reason: BlockedInputUnaccepted, mutate: func(f *fixture, a accepted) {
+			f.exec("DELETE FROM dag_node_executions")
+		}},
+		{name: "the latest merge check was altered", reason: BlockedEvidenceMismatch, mutate: func(f *fixture, a accepted) {
+			evidence := EvidenceBody{Required: []string{"dev-gate"}}.JSON()
+			f.exec("INSERT INTO dag_merge_checks (check_id, acceptance_id, check_seq, head_sha, observed_head_sha, base_tip_sha, checks_digest, evidence_json, failed_required_json, round_no, outcome, reason, recorded_at)"+
+				" VALUES ('dmc-x', ?, 1, ?, ?, ?, ?, ?, '[]', 1, 'eligible', 'x', 't')", a.Acceptance.AcceptanceID, head1, head1, head1, dig("not the digest"), evidence)
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFixture(t)
+			forkJoinPlan(f, "p1")
+			a := f.acceptNode("p1", "impl-a", pinned)
+			f.integrate(a, "owner/repo", "dev", true, true)
+			if st := f.status("p1", "e3"); !st.Satisfied {
+				t.Fatalf("the edge right after the landing = %+v", st)
+			}
+			if c.mutate != nil {
+				c.mutate(f, a)
+			}
+			st := f.status("p1", "e3")
+			if c.reason == "" && !st.Satisfied {
+				t.Fatalf("the edge = %+v, want it still satisfied", st)
+			}
+			if c.reason != "" && (st.Satisfied || st.Reason != c.reason) {
+				t.Fatalf("the edge = %+v, want %s", st, c.reason)
+			}
+		})
+	}
+}

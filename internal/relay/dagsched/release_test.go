@@ -31,7 +31,7 @@ func TestReleaseHappyPath(t *testing.T) {
 	if got := k.count("SELECT COUNT(*) FROM execution_slots WHERE subject_kind = 'dag_node' AND subject_key = 'rp/A' AND state = 'held'"); got != 1 {
 		t.Fatal("the slot is not held under the node's subject")
 	}
-	if got := k.count("SELECT COUNT(*) FROM managed_start_requests WHERE request_id = ? AND state = 'attached'", ReleaseRequestID("A", res.ManifestDigest)); got != 1 {
+	if got := k.count("SELECT COUNT(*) FROM managed_start_requests WHERE request_id = ? AND state = 'attached'", ReleaseRequestID("rp", "A", res.ManifestDigest)); got != 1 {
 		t.Fatal("the managed start is not attached under the derived request id")
 	}
 	reading := k.read("rp")
@@ -431,5 +431,27 @@ func TestReleaseReplayTombstoneRaceReclaimsNoSlot(t *testing.T) {
 	}
 	if k.count("SELECT COUNT(*) FROM execution_slots WHERE subject_kind = 'dag_node' AND state = 'held'") != 0 {
 		t.Fatal("a slot was reserved for a request that can never start")
+	}
+}
+
+// Request ids are global to the store and node ids are plan-local: a second plan that releases a node of the same name over the same inputs is a second release with its own child, not a
+// conflict with the first plan's managed request.
+func TestTwoPlansReleaseNodesOfTheSameName(t *testing.T) {
+	k := newReleaseKit(t)
+	releasePlan(k.fixture, "rp")
+	releasePlan(k.fixture, "rq")
+	first := k.mustRelease("rp", "A")
+	// the first plan's child has finished and its relationship is closed, as in a project that ran the same issue through two plans
+	k.exec("UPDATE relationships SET status = 'archived' WHERE relationship_id = ?", first.RelationshipID)
+	k.exec("UPDATE scope_bindings SET status = 'archived' WHERE role = 'child'")
+	second, err := k.release("rq", "A")
+	if err != nil || !second.Bound {
+		t.Fatalf("the second plan's release = %v %+v", err, second)
+	}
+	if first.RequestID == second.RequestID || first.RelationshipID == second.RelationshipID {
+		t.Fatalf("the two plans share a request or a relationship: %+v %+v", first, second)
+	}
+	if created, _ := k.host.counts(); created != 2 {
+		t.Fatalf("%d children for two releases", created)
 	}
 }

@@ -32,7 +32,7 @@ func (f *fixture) managedRow(request, issue, state, receipt string) {
 func (f *fixture) releaseRow(plan, node string) (digest, request string) {
 	f.t.Helper()
 	digest = dig("manifest " + plan + node)
-	request = ReleaseRequestID(node, digest)
+	request = ReleaseRequestID(plan, node, digest)
 	f.exec("INSERT INTO dag_releases (plan_id, node_id, manifest_digest, managed_request_id, coordinator_epoch, decided_at) VALUES (?, ?, ?, ?, 0, ?)", plan, node, digest, request, f.clock())
 	return digest, request
 }

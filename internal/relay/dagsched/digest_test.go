@@ -96,15 +96,23 @@ func TestEvidenceDigestOneSerialization(t *testing.T) {
 
 func TestReleaseRequestIDShape(t *testing.T) {
 	node := strings.Repeat("n", 128)
-	id := ReleaseRequestID(node, dig("m"))
+	id := ReleaseRequestID("plan", node, dig("m"))
 	if len(id) != 44 || !strings.HasPrefix(id, "dag-") {
 		t.Fatalf("request id %q has length %d, want 44 with the dag- prefix", id, len(id))
 	}
-	if id != ReleaseRequestID(node, dig("m")) {
+	if id != ReleaseRequestID("plan", node, dig("m")) {
 		t.Error("the request id is not deterministic")
 	}
-	if id == ReleaseRequestID(node, dig("m2")) || id == ReleaseRequestID("other", dig("m")) {
+	if id == ReleaseRequestID("plan", node, dig("m2")) || id == ReleaseRequestID("plan", "other", dig("m")) {
 		t.Error("a different manifest or node produced the same request id")
+	}
+	// request ids are global to the store and node ids are plan-local: the same node over the same inputs in another plan is another release
+	if id == ReleaseRequestID("another plan", node, dig("m")) {
+		t.Error("two plans produced the same request id for a node of the same name")
+	}
+	// the parts are not joined into one text: a plan and a node that would join to the same text are different
+	if ReleaseRequestID("a|b", "c", dig("m")) == ReleaseRequestID("a", "b|c", dig("m")) {
+		t.Error("the plan and the node were joined")
 	}
 }
 
