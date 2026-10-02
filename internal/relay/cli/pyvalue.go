@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -30,22 +31,9 @@ func decodeInput(data []byte) (any, error) {
 	return store.LoadsJSON(data)
 }
 
-// jsonKind names a decoded JSON value's type with an article: "an object", "a string".
-func jsonKind(v any) string {
-	switch v.(type) {
-	case nil:
-		return "null"
-	case bool:
-		return "a boolean"
-	case string:
-		return "a string"
-	case []any:
-		return "an array"
-	case contract.OrderedObject:
-		return "an object"
-	}
-	return "a number"
-}
+// jsonKind is quote.Kind. merge_evidence.go still calls it by this name; it goes with that file's
+// own rewrite.
+func jsonKind(v any) string { return quote.Kind(v) }
 
 // shown is a value as a message quotes it: its JSON text.
 func shown(v any) string {

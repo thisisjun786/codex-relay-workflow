@@ -1,6 +1,7 @@
 package delivery
 
 import (
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"math"
 	"testing"
 )
@@ -35,7 +36,7 @@ func TestVCU11_an_offline_ack_is_recorded_intent_and_upgraded_by_a_host(t *testi
 			rec, err := v.ack.Acknowledge(v.ctx, e, "parent-own-turn", AckProof(e, "parent-own-turn"), true, nil, nil)
 			mustDo(t, err)
 			out["ack"] = rec
-			if str(rec, "_verified") != "unverified_turn" || v.one("SELECT tier FROM ack_evidence WHERE event_id = ?", e).S("tier") != "unverified" {
+			if pyjson.Text(rec.Get("_verified")) != "unverified_turn" || v.one("SELECT tier FROM ack_evidence WHERE event_id = ?", e).S("tier") != "unverified" {
 				t.Fatalf("ack %v", rec)
 			}
 		})
@@ -59,7 +60,7 @@ func TestVCU11_an_offline_ack_is_recorded_intent_and_upgraded_by_a_host(t *testi
 			rec, err := v.ack.Acknowledge(v.ctx, e, turn, AckProof(e, turn), true, nil, nil)
 			mustDo(t, err)
 			out["ack"] = rec
-			if str(rec, "_verified") != "unverified_turn" {
+			if pyjson.Text(rec.Get("_verified")) != "unverified_turn" {
 				t.Fatal("unverified_turn")
 			}
 		})
@@ -106,7 +107,7 @@ func TestAckTurnStartIsReadAsAHostTime(t *testing.T) {
 				out["ack"] = result
 				got := result["reason"]
 				if record, ok := result["ok"].(Obj); ok {
-					got = str(record, "_verified")
+					got = pyjson.Text(record.Get("_verified"))
 				}
 				if got != c.want {
 					t.Fatalf("start %#v: want %s, got %v", c.started, c.want, result)

@@ -22,16 +22,16 @@ import (
 
 // VerdictOutput reconstructs only the three host fields, never forwarding guard data.
 func VerdictOutput(verdict Object) (string, bool) {
-	answer, ok := evidence.Object(get(verdict, "hook_output"))
+	answer, ok := evidence.Object(verdict.Get("hook_output"))
 	if !ok {
 		return "", false
 	}
-	decision := get(verdict, "decision")
+	decision := verdict.Get("decision")
 	if len(answer) == 0 {
 		return "", decision == "release"
 	}
-	reason, ok := get(answer, "reason").(string)
-	if decision != "block" || get(answer, "decision") != "block" || get(answer, "continue") != true || !ok || strings.TrimSpace(reason) == "" {
+	reason, ok := answer.Get("reason").(string)
+	if decision != "block" || answer.Get("decision") != "block" || answer.Get("continue") != true || !ok || strings.TrimSpace(reason) == "" {
 		return "", false
 	}
 	return pyjson.Dumps(Object{{Key: "decision", Value: "block"}, {Key: "reason", Value: reason}, {Key: "continue", Value: true}}, pyjson.Options{}), true
@@ -169,7 +169,7 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 	if err != nil {
 		return 0
 	}
-	if budget, ok := seconds(get(settings.config, "timeoutSeconds")); ok && budget < 5 {
+	if budget, ok := seconds(settings.config.Get("timeoutSeconds")); ok && budget < 5 {
 		absolute = started.Add(time.Duration(budget * float64(time.Second)))
 		ctx, cancel = context.WithDeadline(parent, absolute)
 		defer cancel()
@@ -181,7 +181,7 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 	// another registration of this Stop, so nothing is journalled, claimed or asked. Its
 	// configVersion rule (absent or 1) is already the validator's, which accepts only 1 and has
 	// released anything else in silence above.
-	if pluginLaunch && get(settings.config, "owner") != "plugin" {
+	if pluginLaunch && settings.config.Get("owner") != "plugin" {
 		return 0
 	}
 	// Keep final bookkeeping inside the caller's absolute deadline. No nested operation
@@ -196,10 +196,10 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 	record := Object{{Key: "recordVersion", Value: int64(RecordVersion)}, {Key: "event", Value: "Stop"}, {Key: "at", Value: now()}, {Key: "adapterOutcome", Value: nil}, {Key: "processEnding", Value: nil}, {Key: "stdoutReading", Value: nil}, {Key: "guardState", Value: nil}, {Key: "guardDecision", Value: nil}, {Key: "guardMode", Value: nil}, {Key: "assignmentId", Value: nil}, {Key: "guardRecordedAs", Value: nil}, {Key: "held", Value: false}, {Key: "eventKey", Value: nil}, {Key: "eventIdentity", Value: nil}, {Key: "identityScanMs", Value: nil}, {Key: "acceptance", Value: nil}, {Key: "acceptedAs", Value: nil}, {Key: "guardInvoked", Value: false}, {Key: "configuration", Value: pyvalue.FSDecode(path)}}
 	claimed := ""
 	finish := func(outcome string, detail any, answer string) {
-		record = set(record, "adapterOutcome", outcome)
-		record = set(record, "detail", detail)
-		record = set(record, "elapsedMs", time.Since(started).Milliseconds())
-		record = set(record, "held", answer != "")
+		record = record.Set("adapterOutcome", outcome)
+		record = record.Set("detail", detail)
+		record = record.Set("elapsedMs", time.Since(started).Milliseconds())
+		record = record.Set("held", answer != "")
 		// Once the guard's verdict has been accepted, bookkeeping must not spend
 		// the output budget and discard its block. Python returns that answer even
 		// if journalling crosses the guard budget. Emit synchronously: cancellation
@@ -230,10 +230,10 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 	// A failed invocation has no guard result. Preserve the exact prefix reached,
 	// as Python's BaseException path does; never invent exited/stdout fields.
 	recordFault := func(value any) {
-		record = set(record, "adapterOutcome", "adapter_faulted")
-		record = set(record, "fault", faultText(value))
-		record = set(record, "held", false)
-		record = set(record, "elapsedMs", time.Since(started).Milliseconds())
+		record = record.Set("adapterOutcome", "adapter_faulted")
+		record = record.Set("fault", faultText(value))
+		record = record.Set("held", false)
+		record = record.Set("elapsedMs", time.Since(started).Milliseconds())
 		_, _ = bounded(bookkeeping, func() (bool, error) {
 			row, err := Journal(bookkeeping, settings.config, record, slot)
 			var named any
@@ -271,10 +271,10 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 		finish("stdin_not_object", "the Stop payload is a "+pyvalue.TypeName(value)+", not an object", "")
 		return 0
 	}
-	record = set(record, "sessionId", get(stop, "session_id"))
-	record = set(record, "turnId", get(stop, "turn_id"))
-	record = set(record, "stopHookActive", get(stop, "stop_hook_active"))
-	record = set(record, "guardMode", get(settings.config, "mode"))
+	record = record.Set("sessionId", stop.Get("session_id"))
+	record = record.Set("turnId", stop.Get("turn_id"))
+	record = record.Set("stopHookActive", stop.Get("stop_hook_active"))
+	record = record.Set("guardMode", settings.config.Get("mode"))
 	state, err := bounded(work, func() (string, error) { return RoutingState(settings.config) })
 	if err != nil {
 		return 0
@@ -295,9 +295,9 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 		// Decision 32: the small create-once write is bounded by the 5 s absolute
 		// deadline (bookkeeping), so a late-scheduled invocation still leaves its row.
 		record = unreachableRecord(record, err, time.Since(dialStarted))
-		record = set(record, "adapterOutcome", "guard_unreachable")
-		record = set(record, "detail", "the configured runtime could not be run: "+store.StoredOSErrorText(&os.PathError{Op: "connect", Path: socket, Err: err}))
-		record = set(record, "elapsedMs", time.Since(started).Milliseconds())
+		record = record.Set("adapterOutcome", "guard_unreachable")
+		record = record.Set("detail", "the configured runtime could not be run: "+store.StoredOSErrorText(&os.PathError{Op: "connect", Path: socket, Err: err}))
+		record = record.Set("elapsedMs", time.Since(started).Milliseconds())
 		_, _ = bounded(bookkeeping, func() (string, error) { return Journal(bookkeeping, settings.config, record, slot) })
 		return 0
 	} // No retry, daemon start, writer lock or synchronous diagnostic fsync.
@@ -317,11 +317,11 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 		recordFault(err)
 		return 0
 	}
-	record = set(record, "identityScanMs", time.Since(scanStarted).Milliseconds())
-	record = set(record, "eventKey", nullable(identified.key))
-	record = set(record, "eventIdentity", identified.identity)
+	record = record.Set("identityScanMs", time.Since(scanStarted).Milliseconds())
+	record = record.Set("eventKey", nullable(identified.key))
+	record = record.Set("eventIdentity", identified.identity)
 	if identified.key == "" {
-		record = set(record, "acceptance", "unestablished")
+		record = record.Set("acceptance", "unestablished")
 	} else {
 		host, _ := hostLedger()
 		type claimResult struct {
@@ -336,8 +336,8 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 			recordFault(err)
 			return 0
 		}
-		record = set(record, "acceptance", claim.acceptance)
-		record = set(record, "acceptedAs", claim.where)
+		record = record.Set("acceptance", claim.acceptance)
+		record = record.Set("acceptedAs", claim.where)
 		switch claim.acceptance {
 		case "duplicate":
 			finish(DuplicateInvocation, DuplicateDetail, "")
@@ -349,7 +349,7 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 			claimed = identified.key
 		}
 	}
-	record = set(record, "guardInvoked", true)
+	record = record.Set("guardInvoked", true)
 	if dialErr != nil {
 		// Other transport failures use Python's ordinary post-identity failure
 		// shape, not a broader exception in the journal reader.
@@ -361,7 +361,7 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 	guardCtx, guardCancel := context.WithDeadline(work, guardStarted.Add(3500*time.Millisecond))
 	defer guardCancel()
 	verdict, err := bounded(guardCtx, func() (Object, error) {
-		options := GuardOptions{Root: text(get(settings.config, "markerRoot")), Mode: text(get(settings.config, "mode")), DBPath: text(get(settings.config, "dbPath")), SocketPath: text(get(settings.config, "socketPath")), Program: text(get(settings.config, "relayExecutable"))}
+		options := GuardOptions{Root: pyjson.Text(settings.config.Get("markerRoot")), Mode: pyjson.Text(settings.config.Get("mode")), DBPath: pyjson.Text(settings.config.Get("dbPath")), SocketPath: pyjson.Text(settings.config.Get("socketPath")), Program: pyjson.Text(settings.config.Get("relayExecutable"))}
 		options.DefaultDBPath = ownerFallback(state, options.SocketPath, options.Program)
 		if evaluator != nil {
 			return evaluator(guardCtx, stop, options)
@@ -386,11 +386,11 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 			return 0
 		}
 	}
-	record = set(record, "guardElapsedMs", time.Since(guardStarted).Milliseconds())
-	record = set(record, "exitCode", nil)
-	record = set(record, "signal", nil)
-	record = set(record, "errno", nil)
-	record = set(record, "guardStderr", "")
+	record = record.Set("guardElapsedMs", time.Since(guardStarted).Milliseconds())
+	record = record.Set("exitCode", nil)
+	record = record.Set("signal", nil)
+	record = record.Set("errno", nil)
+	record = record.Set("guardStderr", "")
 	if err != nil {
 		outcome := "adapter_faulted"
 		ending := "exited"
@@ -404,16 +404,16 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 				ending = "timed_out"
 			}
 		}
-		record = set(record, "processEnding", ending)
-		record = set(record, "stdoutReading", "said_nothing")
+		record = record.Set("processEnding", ending)
+		record = record.Set("stdoutReading", "said_nothing")
 		var response *responseError
 		if errors.As(err, &response) {
-			record = set(record, "stdoutReading", response.reading)
+			record = record.Set("stdoutReading", response.reading)
 			exit := int64(0)
 			if response.outcome == "guard_rejected_the_call" {
 				exit = 2
 			}
-			record = set(record, "exitCode", exit)
+			record = record.Set("exitCode", exit)
 			finish(response.outcome, nil, "")
 			return 0
 		}
@@ -425,10 +425,10 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 		finish(outcome, detail, "")
 		return 0
 	}
-	record = set(record, "processEnding", "exited")
-	record = set(record, "exitCode", int64(0))
-	record = set(record, "stdoutReading", "said_a_verdict")
-	if errorKind, present := evidence.Lookup(verdict, "error"); present {
+	record = record.Set("processEnding", "exited")
+	record = record.Set("exitCode", int64(0))
+	record = record.Set("stdoutReading", "said_a_verdict")
+	if errorKind, present := verdict.Lookup("error"); present {
 		outcome, exit := "guard_ended_unexpectedly", int64(0)
 		switch errorKind {
 		case "refused":
@@ -438,13 +438,13 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 		case "usage":
 			outcome, exit = "guard_usage_error", 4
 		}
-		record = set(record, "stdoutReading", "said_an_error_record")
-		record = set(record, "exitCode", exit)
+		record = record.Set("stdoutReading", "said_an_error_record")
+		record = record.Set("exitCode", exit)
 		finish(outcome, nil, "")
 		return 0
 	}
-	if _, present := evidence.Lookup(verdict, "decision"); !present {
-		record = set(record, "stdoutReading", "said_something_unreadable")
+	if _, present := verdict.Lookup("decision"); !present {
+		record = record.Set("stdoutReading", "said_something_unreadable")
 		finish("guard_output_unreadable", nil, "")
 		return 0
 	}
@@ -454,7 +454,7 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 		return 0
 	}
 	for _, pair := range [][2]string{{"guardState", "state"}, {"guardDecision", "decision"}, {"observation", "observation"}, {"assignmentId", "assignmentId"}, {"guardRecordedAs", "recordedAs"}, {"counters", "counters"}} {
-		record = set(record, pair[0], get(verdict, pair[1]))
+		record = record.Set(pair[0], verdict.Get(pair[1]))
 	}
 	finish("guard_answered", nil, answer)
 	return 0
@@ -470,7 +470,7 @@ func unreachableRecord(record Object, err error, elapsed time.Duration) Object {
 		} // Python errno.errorcode.get(e, e).
 	}
 	for _, f := range (Object{{Key: "guardInvoked", Value: true}, {Key: "processEnding", Value: "not_started"}, {Key: "stdoutReading", Value: "said_nothing"}, {Key: "exitCode", Value: nil}, {Key: "signal", Value: nil}, {Key: "errno", Value: name}, {Key: "guardElapsedMs", Value: elapsed.Milliseconds()}, {Key: "guardStderr", Value: ""}}) {
-		record = set(record, f.Key, f.Value)
+		record = record.Set(f.Key, f.Value)
 	}
 	return record
 }
@@ -491,7 +491,7 @@ func ownsGuard(ctx context.Context, state, configuredDB string) bool {
 		return false
 	}
 	record, ok := evidence.Object(v)
-	if !ok || get(record, "owner") != "go" || get(record, "phase") != "active" {
+	if !ok || record.Get("owner") != "go" || record.Get("phase") != "active" {
 		return false
 	}
 	path := configuredDB
@@ -551,7 +551,7 @@ func HandleControl(ctx context.Context, conn net.Conn, ownerState string) (err e
 	if refused != "" {
 		return answerHost(conn, refused)
 	}
-	if get(request, "method") != "guard-evaluate" || get(request, "protocol") != int64(1) {
+	if request.Get("method") != "guard-evaluate" || request.Get("protocol") != int64(1) {
 		return rejectControl(conn)
 	}
 	params, stop, at, refused := guardParams(request, time.Now())
@@ -576,7 +576,7 @@ func HandleControl(ctx context.Context, conn net.Conn, ownerState string) (err e
 		// owner to evaluate somewhere it does not, which is no Stop refusal (control.py owner_paths).
 		return answerHost(conn, refused)
 	}
-	v, err := evaluateOwner(ctx, stop, GuardOptions{Root: root, Now: text(get(params, "now")), Mode: text(get(params, "mode")), DBPath: db, NoRecord: get(params, "noRecord") == true, DefaultDBPath: ownerFallback(ownerState, text(get(params, "socketPath")), text(get(params, "program")))})
+	v, err := evaluateOwner(ctx, stop, GuardOptions{Root: root, Now: pyjson.Text(params.Get("now")), Mode: pyjson.Text(params.Get("mode")), DBPath: db, NoRecord: params.Get("noRecord") == true, DefaultDBPath: ownerFallback(ownerState, pyjson.Text(params.Get("socketPath")), pyjson.Text(params.Get("program")))})
 	if err != nil {
 		if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 			// The requester's deadline has passed: nobody is left to read an answer.
@@ -605,12 +605,12 @@ func ownerPaths(ownerState string, params Object) (root, db, refused string, err
 	if err != nil {
 		return "", "", "", err
 	}
-	requested, present := evidence.Lookup(params, "markerRoot")
+	requested, present := params.Lookup("markerRoot")
 	if !namesOwnPath(requested, selected.Path) {
 		return "", "", "control.sock evaluates Stops only under this owner's marker root " + selected.Path + "; the request named " + requestedPath(requested, present), nil
 	}
 	own := filepath.Join(ownerState, "relay.sqlite3")
-	requested, present = evidence.Lookup(params, "dbPath")
+	requested, present = params.Lookup("dbPath")
 	if !present || requested == nil {
 		return selected.Path, "", "", nil
 	}

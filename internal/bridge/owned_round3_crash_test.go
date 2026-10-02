@@ -12,6 +12,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 // The child half of the crash test: it launches against the parent's fakehost and is killed
@@ -80,7 +81,7 @@ func Test_round3_a_process_killed_while_the_prompt_is_in_flight_leaves_it_unknow
 	if err != nil {
 		t.Fatal(err)
 	}
-	if retained["phase"] != "dispatching_initial_prompt" || object(retained["initialPrompt"])["state"] != "outcome_unknown" || retained["status"] != "in_progress_or_unknown" || retained["recoveryRequired"] != true || retained["recovery"] != worktreeRecovery {
+	if retained["phase"] != "dispatching_initial_prompt" || pyjson.Map(retained["initialPrompt"])["state"] != "outcome_unknown" || retained["status"] != "in_progress_or_unknown" || retained["recoveryRequired"] != true || retained["recovery"] != worktreeRecovery {
 		t.Fatalf("a crash mid-dispatch left %v", retained)
 	}
 	// A restarted bridge answers the request id from that row and sends nothing again.
@@ -92,7 +93,7 @@ func Test_round3_a_process_killed_while_the_prompt_is_in_flight_leaves_it_unknow
 	input.RequestID, input.Prompt = "crash", "work"
 	before := host.Count("turn/start")
 	replay, err := New(client, store, executionPolicy()).CreateWorktreeThread(context.Background(), input)
-	if err != nil || replay["replayed"] != true || object(replay["initialPrompt"])["state"] != "outcome_unknown" || host.Count("turn/start") != before {
+	if err != nil || replay["replayed"] != true || pyjson.Map(replay["initialPrompt"])["state"] != "outcome_unknown" || host.Count("turn/start") != before {
 		t.Fatalf("replay=%v err=%v", replay, err)
 	}
 }

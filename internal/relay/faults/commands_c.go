@@ -84,7 +84,7 @@ func cPublication(ctx context.Context, l *Ledger, id string) (map[string]any, er
 		project = extra.Get("project_ref")
 		hold = extra.Get("hold_reason")
 		if extra.Get("payload") != nil {
-			payload, _ = loads(text(extra, "payload"))
+			payload, _ = loads(extra.Text("payload"))
 		}
 	}
 	out["payload"] = payload
@@ -193,7 +193,7 @@ func cShow(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
 			} else if key == "publications" {
 				list := make([]any, 0, len(rows))
 				for _, pub := range rows {
-					view, e := cPublication(ctx, l, text(pub, "publication_id"))
+					view, e := cPublication(ctx, l, pub.Text("publication_id"))
 					if e != nil {
 						return nil, e
 					}
@@ -243,12 +243,12 @@ func cShow(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
 		v["seq"] = r.Get("seq")
 		v["linkState"] = "none"
 		v["linkedProject"] = nil
-		occ, e := l.Store.All(ctx, "SELECT * FROM fault_occurrences WHERE fault_id=? ORDER BY rowid DESC LIMIT 3", text(r, "fault_id"))
+		occ, e := l.Store.All(ctx, "SELECT * FROM fault_occurrences WHERE fault_id=? ORDER BY rowid DESC LIMIT 3", r.Text("fault_id"))
 		if e != nil {
 			return nil, e
 		}
 		v["occurrences"] = cOccurrences(occ)
-		pub, e := l.Store.All(ctx, "SELECT publication_id,kind,trigger_key,state,attempts,external_ref,last_error FROM fault_publications WHERE fault_id=? ORDER BY rowid DESC LIMIT 21", text(r, "fault_id"))
+		pub, e := l.Store.All(ctx, "SELECT publication_id,kind,trigger_key,state,attempts,external_ref,last_error FROM fault_publications WHERE fault_id=? ORDER BY rowid DESC LIMIT 21", r.Text("fault_id"))
 		if e != nil {
 			return nil, e
 		}
@@ -258,7 +258,7 @@ func cShow(ctx context.Context, l *Ledger, a map[string]string) (any, error) {
 		}
 		slices.Reverse(pub)
 		v["publications"] = cList(pub)
-		clear, e := l.one(ctx, "SELECT COUNT(*) AS n FROM fault_timeline WHERE fault_id=? AND kind='cleared'", text(r, "fault_id"))
+		clear, e := l.one(ctx, "SELECT COUNT(*) AS n FROM fault_timeline WHERE fault_id=? AND kind='cleared'", r.Text("fault_id"))
 		if e != nil {
 			return nil, e
 		}
@@ -304,7 +304,7 @@ func cQueueState(ctx context.Context, l *Ledger, limit int) (any, error) {
 	chosen := map[string]bool{}
 	ready := []any{}
 	for _, r := range selected {
-		id := text(r, "publication_id")
+		id := r.Text("publication_id")
 		chosen[id] = true
 		view, e := cPublication(ctx, l, id)
 		if e != nil {
@@ -327,7 +327,7 @@ func cQueueState(ctx context.Context, l *Ledger, limit int) (any, error) {
 		pairs = pairs[:20]
 	}
 	for _, pair := range pairs {
-		kind, product := text(pair, "kind"), text(pair, "product")
+		kind, product := pair.Text("kind"), pair.Text("product")
 		maximum := int64(20)
 		if kind == openRecord {
 			maximum = 5
@@ -355,11 +355,11 @@ func cQueueState(ctx context.Context, l *Ledger, limit int) (any, error) {
 		budgets = append(budgets, map[string]any{"product": product, "kind": kind, "limit": maximum, "window": window, "used": count, "remaining": remaining, "source": source})
 	}
 	for _, r := range rows {
-		id := text(r, "publication_id")
+		id := r.Text("publication_id")
 		if chosen[id] {
 			continue
 		}
-		f, e := cFault(ctx, l, text(r, "fault_id"))
+		f, e := cFault(ctx, l, r.Text("fault_id"))
 		if e != nil {
 			return nil, e
 		}
@@ -370,7 +370,7 @@ func cQueueState(ctx context.Context, l *Ledger, limit int) (any, error) {
 			return nil, e
 		}
 		reasons := map[string]string{"ready": "budget_spent", "held": "budget_spent", "backingOff": "backing_off", "awaitingRecord": "awaiting_record", "awaitingTarget": "awaiting_target", "scopeKeyContested": "scope_key_contested", "kindUnregistered": "kind_unregistered", "issueOwned": "issue_owned"}
-		held = append(held, map[string]any{"publicationId": id, "kind": text(r, "kind"), "product": text(r, "fault_product"), "reason": reasons[reason]})
+		held = append(held, map[string]any{"publicationId": id, "kind": r.Text("kind"), "product": r.Text("fault_product"), "reason": reasons[reason]})
 		if len(held) >= limit {
 			break
 		}
@@ -427,7 +427,7 @@ func cReady(ctx context.Context, l *Ledger, limit int) ([]row, error) {
 	remaining := map[[2]string]int64{}
 	chosen := []row{}
 	for _, r := range rows {
-		pair := [2]string{text(r, "fault_product"), text(r, "kind")}
+		pair := [2]string{r.Text("fault_product"), r.Text("kind")}
 		if _, ok := remaining[pair]; !ok {
 			maximum := int64(20)
 			if pair[1] == openRecord {

@@ -161,24 +161,24 @@ func (p RolePolicy) exceptionCovers(name any, role string, model, effort, cwd an
 }
 
 func pairOf(settings contract.OrderedObject) (any, any) {
-	model, _ := getField(settings, "model")
-	effort, _ := getField(settings, "reasoningEffort")
+	model, _ := settings.Lookup("model")
+	effort, _ := settings.Lookup("reasoningEffort")
 	return model, effort
 }
 
 // citedRole and citedException are rolepolicy.cited_role / cited_exception.
 func citedRole(settings contract.OrderedObject) any {
-	v, _ := getField(settings, "citedRole")
+	v, _ := settings.Lookup("citedRole")
 	return v
 }
 func citedException(settings contract.OrderedObject) any {
-	v, _ := getField(settings, "citedException")
+	v, _ := settings.Lookup("citedException")
 	return v
 }
 
 func authorizedByException(settings contract.OrderedObject, role string, policy RolePolicy) bool {
 	model, effort := pairOf(settings)
-	cwd, _ := getField(settings, "cwd")
+	cwd, _ := settings.Lookup("cwd")
 	return policy.exceptionCovers(citedException(settings), role, model, effort, cwd)
 }
 

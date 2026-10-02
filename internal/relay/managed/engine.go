@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
@@ -50,8 +51,11 @@ func (m *Start) ready(ctx context.Context, req map[string]any) (string, error) {
 	}
 	return m.Readiness(ctx, req)
 }
-func obj(value any) map[string]any { result, _ := value.(map[string]any); return result }
-func str(value any) string         { result, _ := value.(string); return result }
+
+// obj, str and field are pyjson.Map, pyjson.Text and Object.Get. Start.Run still calls them by
+// these names; they go with its own split.
+func obj(value any) map[string]any { return pyjson.Map(value) }
+func str(value any) string         { return pyjson.Text(value) }
 func stringsOf(values any) []string {
 	out := []string{}
 	for _, v := range values.([]any) {
@@ -592,14 +596,7 @@ func deliveryValue(v any) any {
 		return v
 	}
 }
-func field(o delivery.Obj, key string) any {
-	for _, f := range o {
-		if f.Key == key {
-			return f.Value
-		}
-	}
-	return nil
-}
+func field(o delivery.Obj, key string) any { return o.Get(key) }
 func creationMatches(expected, created map[string]any) bool {
 	if created == nil {
 		return false

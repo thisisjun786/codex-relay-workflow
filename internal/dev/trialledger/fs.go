@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/pyload"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // The four states a reading of a record ends in: absent is a
@@ -133,28 +134,6 @@ func readJSON(path, what string) (string, string, any) {
 	return present, "", value
 }
 
-// pathlibForm is str(Path(p)): repeated separators and "." components collapse, ".." stays, a
-// trailing separator goes, and exactly two leading separators are kept.
-func pathlibForm(p string) string {
-	prefix := ""
-	switch {
-	case strings.HasPrefix(p, "//") && !strings.HasPrefix(p, "///"):
-		prefix = "//"
-	case strings.HasPrefix(p, "/"):
-		prefix = "/"
-	}
-	var kept []string
-	for _, part := range strings.Split(p, "/") {
-		if part != "" && part != "." {
-			kept = append(kept, part)
-		}
-	}
-	if joined := prefix + strings.Join(kept, "/"); joined != "" {
-		return joined
-	}
-	return "."
-}
-
 // join is str(Path(root) / name).
 func join(root, name string) string {
 	if strings.HasSuffix(root, "/") {
@@ -248,13 +227,13 @@ func within(child, parent string) bool {
 	if !strings.HasPrefix(child, "/") {
 		return false
 	}
-	here, root := pathlibForm(realpath(child)), pathlibForm(realpath(parent))
+	here, root := store.PathlibSpelling(realpath(child)), store.PathlibSpelling(realpath(parent))
 	return here == root || strings.HasPrefix(here, strings.TrimSuffix(root, "/")+"/")
 }
 
 // gitWorktreeOf is the nearest directory at or above the resolved path holding a .git, or "".
 func gitWorktreeOf(path string) string {
-	here := pathlibForm(realpath(path))
+	here := store.PathlibSpelling(realpath(path))
 	for {
 		if _, err := os.Stat(join(here, ".git")); err == nil {
 			return here

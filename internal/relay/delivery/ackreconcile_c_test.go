@@ -6,6 +6,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -38,16 +39,16 @@ func Test21_ACR21_recovery_reports_awaiting_acks_and_never_a_correction(t *testi
 			payload := h.readyPayload(h.rid, r.Generation, []string{h.artifact("revised.txt", "the corrected deliverable")}, 1, turn)
 			_, err = h.accept(payload, storeAcceptNone)
 			mustDo(t, err)
-			_, err = h.delivery.Enqueue(h.ctx, str(payload, "eventId"), "", "")
+			_, err = h.delivery.Enqueue(h.ctx, pyjson.Text(payload.Get("eventId")), "", "")
 			mustDo(t, err)
-			h.attemptOn(str(payload, "eventId"), h.host, nil)
+			h.attemptOn(pyjson.Text(payload.Get("eventId")), h.host, nil)
 
 			report := h.recoverOnStart()
 			h.eq(field(report, "awaitingAck"))
 			h.eq(listed(report, "awaitingAck", correction))
 			h.eq(field(report, "resent"))
 			h.eq(h.row(correction).S("state"))
-			h.eq(h.row(str(payload, "eventId")).S("state"))
+			h.eq(h.row(pyjson.Text(payload.Get("eventId"))).S("state"))
 			h.eq(len(h.host.sends))
 		})
 	})

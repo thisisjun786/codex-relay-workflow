@@ -24,11 +24,11 @@ func (l *Ledger) NoticeFacts(ctx context.Context, id string) (map[string]any, er
 		return nil, err
 	}
 	var where, issue, external, reason any
-	scope := loadsMap(text(r, "scope"))
+	scope := loadsMap(r.Text("scope"))
 	if anchor != nil {
-		where = text(anchor, "relationship_id")
-		if noticeIssue.MatchString(text(anchor, "issue_key")) {
-			issue = text(anchor, "issue_key")
+		where = anchor.Text("relationship_id")
+		if noticeIssue.MatchString(anchor.Text("issue_key")) {
+			issue = anchor.Text("issue_key")
 		}
 	} else if project, ok := scope["projectKey"].(string); ok && noticeIdentifier.MatchString(project) {
 		where = "project:" + project
@@ -36,17 +36,17 @@ func (l *Ledger) NoticeFacts(ctx context.Context, id string) (map[string]any, er
 			issue = key
 		}
 	}
-	ref := text(r, "external_ref")
+	ref := r.Text("external_ref")
 	if noticeIssue.MatchString(ref) || noticeLink.MatchString(ref) {
 		external = ref
 	}
-	raw := text(r, "reason")
+	raw := r.Text("reason")
 	if strings.HasPrefix(raw, "raised:") {
 		reason = "raised by a caller (its words are on the notification: fault-notifications)"
 	} else if p := noticeWrite.FindStringSubmatch(raw); p != nil {
 		reason = "write " + p[1] + " is " + p[2]
 	}
-	return map[string]any{"notificationId": id, "deliveryKey": "relay-notification:" + id, "faultId": text(r, "fault_id"), "kind": text(r, "kind"), "reason": reason, "cycle": r.Get("cycle"), "state": text(r, "state"), "leaseUntil": r.Get("lease_until"), "attempts": r.Get("attempts"), "product": text(r, "fault_product"), "faultClass": text(r, "fault_class"), "severity": text(r, "severity"), "faultState": text(r, "fault_state"), "externalRef": external, "issuePublished": ref != "", "anchor": where, "issueKey": issue}, nil
+	return map[string]any{"notificationId": id, "deliveryKey": "relay-notification:" + id, "faultId": r.Text("fault_id"), "kind": r.Text("kind"), "reason": reason, "cycle": r.Get("cycle"), "state": r.Text("state"), "leaseUntil": r.Get("lease_until"), "attempts": r.Get("attempts"), "product": r.Text("fault_product"), "faultClass": r.Text("fault_class"), "severity": r.Text("severity"), "faultState": r.Text("fault_state"), "externalRef": external, "issuePublished": ref != "", "anchor": where, "issueKey": issue}, nil
 }
 
 func unfitNotice(n map[string]any) string {

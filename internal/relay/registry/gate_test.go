@@ -51,7 +51,7 @@ func gateAnswers(t *testing.T) map[string]any {
 }
 
 func refusedReason(answer any) string {
-	r, _ := obj(answer)["refused"].(map[string]any)
+	r, _ := pyjson.Map(answer)["refused"].(map[string]any)
 	s, _ := r["reason"].(string)
 	return s
 }
@@ -93,11 +93,11 @@ func Test25_SPR4_a_record_refused_at_the_gate_withholds_with_its_reason(t *testi
 // workspace-write mode, the recorded policy fields as config, and no approval policy.
 func Test25_SPR5_the_ordinary_path_hands_the_settings_to_the_adapter(t *testing.T) {
 	got := gateAnswers(t)
-	params := obj(obj(got["ordinary"])["resumeParams"])
+	params := pyjson.Map(pyjson.Map(got["ordinary"])["resumeParams"])
 	if params["sandbox"] != "workspace-write" || params["approvalPolicy"] != nil {
 		t.Fatal(params)
 	}
-	if obj(obj(got["on_request"])["settings"])["approvalPolicy"] != "on-request" {
+	if pyjson.Map(pyjson.Map(got["on_request"])["settings"])["approvalPolicy"] != "on-request" {
 		t.Fatal(got["on_request"])
 	}
 }
@@ -111,8 +111,8 @@ func Test25_SPR9_the_record_rule_and_the_response_rule_stay_two_facts(t *testing
 		t.Fatal(got["untrusted"])
 	}
 	settings := sameSettingsAsGolden(t, "resp_approval_untrusted")
-	found := obj(settings["resp_approval_untrusted"])["mismatches"].([]any)
-	if len(found) != 1 || obj(found[0])["returned"] != "untrusted" {
+	found := pyjson.Map(settings["resp_approval_untrusted"])["mismatches"].([]any)
+	if len(found) != 1 || pyjson.Map(found[0])["returned"] != "untrusted" {
 		t.Fatal(found)
 	}
 	r := newRegistry(t)
@@ -137,7 +137,7 @@ func Test25_CLI35_every_field_a_send_transforms_or_constrains_is_covered(t *test
 	constraints := map[string][]string{"approvalPolicy": CarriedApprovalPolicies}
 	probe := func(field string, value any) (contractObject, error) {
 		r := newRegistry(t)
-		row := setField(copyObject(settingsFixture("/parent")), field, value)
+		row := copyObject(settingsFixture("/parent")).Set(field, value)
 		if _, err := r.Store.DB.ExecContext(ctx(), "INSERT INTO authorized_settings (task_id, settings, source, recorded_at) VALUES (?,?,?,?)",
 			parent, pyjson.Dumps(row, pyjson.Options{}), "raw", "t"); err != nil {
 			t.Fatal(err)
@@ -151,10 +151,10 @@ func Test25_CLI35_every_field_a_send_transforms_or_constrains_is_covered(t *test
 	}
 	for _, field := range transformations {
 		shown, gate := probe(field, 7)
-		if d, _ := getField(shown, "deliverable"); d != false || gate == nil {
+		if d, _ := shown.Lookup("deliverable"); d != false || gate == nil {
 			t.Errorf("transformation %s mutated to 7 is still deliverable", field)
 		}
-		if _, ok := getField(shown, "refusedIfPreserved"); ok {
+		if _, ok := shown.Lookup("refusedIfPreserved"); ok {
 			t.Errorf("%s: refusedIfPreserved key present", field)
 		}
 	}
@@ -162,7 +162,7 @@ func Test25_CLI35_every_field_a_send_transforms_or_constrains_is_covered(t *test
 		for _, literal := range allowed {
 			mutant := "not-" + literal
 			shown, gate := probe(field, mutant)
-			if d, _ := getField(shown, "deliverable"); d != false || gate == nil {
+			if d, _ := shown.Lookup("deliverable"); d != false || gate == nil {
 				t.Fatalf("constraint %s=%s is deliverable", field, mutant)
 			}
 			if !strings.Contains(gate.Error(), field) || !strings.Contains(gate.Error(), mutant) {
@@ -172,14 +172,14 @@ func Test25_CLI35_every_field_a_send_transforms_or_constrains_is_covered(t *test
 	}
 	// The record rule and the response rule constrain the same set.
 	for _, policy := range CarriedApprovalPolicies {
-		if found := (TaskSettings{settingsFixture("/parent")}).Mismatches(setField(copyObject(responseFor(settingsFixture("/parent"))), "approvalPolicy", policy), true, false, false); len(found) != 0 {
+		if found := (TaskSettings{settingsFixture("/parent")}).Mismatches(copyObject(responseFor(settingsFixture("/parent"))).Set("approvalPolicy", policy), true, false, false); len(found) != 0 {
 			t.Errorf("response policy %s refused: %v", policy, found)
 		}
 	}
 }
 
 func responseFor(row contractObject) contractObject {
-	get := func(k string) any { v, _ := getField(row, k); return v }
+	get := func(k string) any { v, _ := row.Lookup(k); return v }
 	return contractObject{{Key: "approvalPolicy", Value: get("approvalPolicy")}, {Key: "sandbox", Value: get("sandbox")}, {Key: "cwd", Value: get("cwd")},
 		{Key: "runtimeWorkspaceRoots", Value: get("runtimeWorkspaceRoots")}, {Key: "model", Value: get("model")},
 		{Key: "reasoningEffort", Value: get("reasoningEffort")}, {Key: "thread", Value: contractObject{{Key: "environments", Value: get("environments")}}}}

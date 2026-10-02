@@ -9,6 +9,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 func activeSteer(t *testing.T) (*Bridge, *fakehost.Server) {
@@ -23,7 +24,7 @@ func Test_test_steer_with_a_stale_turn_id_fails_and_does_not_retarget(t *testing
 	b, host := activeSteer(t)
 	host.Respond("turn/steer", fakehost.Reply{ErrorObject: map[string]any{"code": "expected_turn_mismatch", "message": "turn moved on"}})
 	receipt, err := b.SteerThread(context.Background(), "steer", "thread-1", "turn-0", "late instruction")
-	if err != nil || receipt["status"] != "failed" || object(receipt["rpcError"])["code"] != "expected_turn_mismatch" || receipt["delivery"] != nil || host.Count("turn/steer") != 1 {
+	if err != nil || receipt["status"] != "failed" || pyjson.Map(receipt["rpcError"])["code"] != "expected_turn_mismatch" || receipt["delivery"] != nil || host.Count("turn/steer") != 1 {
 		t.Fatalf("receipt=%v err=%v calls=%v", receipt, err, host.Requests())
 	}
 }
@@ -32,7 +33,7 @@ func Test_test_a_turn_id_we_did_not_guard_is_a_failure_not_an_acceptance(t *test
 	b, host := activeSteer(t)
 	host.Respond("turn/steer", fakehost.Reply{Result: map[string]any{"turnId": "turn-99"}})
 	receipt, err := b.SteerThread(context.Background(), "steer", "thread-1", "turn-1", "scope change")
-	if err != nil || receipt["status"] != "failed" || object(receipt["rpcError"])["code"] != "steered_turn_mismatch" || receipt["steeredTurnId"] != "turn-99" || receipt["expectedTurnId"] != "turn-1" || receipt["delivery"] == "accepted_not_applied" {
+	if err != nil || receipt["status"] != "failed" || pyjson.Map(receipt["rpcError"])["code"] != "steered_turn_mismatch" || receipt["steeredTurnId"] != "turn-99" || receipt["expectedTurnId"] != "turn-1" || receipt["delivery"] == "accepted_not_applied" {
 		t.Fatalf("receipt=%v err=%v", receipt, err)
 	}
 }
@@ -68,7 +69,7 @@ func Test_test_steer_reports_an_unsupported_method_without_claiming_a_host_wide_
 	b, host := activeSteer(t)
 	host.Respond("turn/steer", fakehost.Reply{Error: &fakehost.RPCError{Code: -32601, Message: "turn/steer"}})
 	receipt, err := b.SteerThread(context.Background(), "steer", "thread-1", "turn-1", "instruction")
-	if err != nil || receipt["status"] != "failed" || object(receipt["rpcError"])["code"] != json.Number("-32601") || host.Count("thread/resume") != 0 || host.Count("turn/start") != 0 {
+	if err != nil || receipt["status"] != "failed" || pyjson.Map(receipt["rpcError"])["code"] != json.Number("-32601") || host.Count("thread/resume") != 0 || host.Count("turn/start") != 0 {
 		t.Fatalf("receipt=%v err=%v calls=%v", receipt, err, host.Requests())
 	}
 }

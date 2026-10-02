@@ -4,6 +4,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -56,7 +57,7 @@ func (a *anb) lostSettleWrite() (string, string) {
 	a.host.script = []string{"in_progress"}
 	record := a.mustAttempt(rev, at(a.clock.Now()))
 	turn := a.host.startTurn(child, "", "inProgress", "")
-	request := str(record, "requestId")
+	request := pyjson.Text(record.Get("requestId"))
 	a.host.ledger[request] = Obj{{Key: "requestId", Value: request}, {Key: "status", Value: "accepted"}, {Key: "resumed", Value: Obj{{Key: "approvalPolicy", Value: "never"}}}, {Key: "turnId", Value: turn.TurnID}}
 	return rev, turn.TurnID
 }
@@ -97,12 +98,12 @@ func TestANB01_every_route_to_dispatched_binds_the_new_anchor(t *testing.T) {
 		runANB(t, "tick", func(a *anb, out map[string]any) {
 			rev := a.dispatchRevision("")
 			out["record"] = a.mustAttempt(rev, at(a.clock.Now()))
-			out["pending"] = str(a.gen2(), "anchorState")
+			out["pending"] = pyjson.Text(a.gen2().Get("anchorState"))
 			report := &AnchorReport{}
 			reconciled := []any{}
 			mustDo(t, AnchorPasses(a.ctx, a.ack, report, func() error {
 				r := a.recover()
-				v, _ := get(r, "reconciled")
+				v, _ := r.Lookup("reconciled")
 				reconciled = v.([]any)
 				return nil
 			}))
@@ -115,7 +116,7 @@ func TestANB01_every_route_to_dispatched_binds_the_new_anchor(t *testing.T) {
 		runANB(t, "recovery", func(a *anb, out map[string]any) {
 			rev := a.dispatchRevision("")
 			out["record"] = a.mustAttempt(rev, at(a.clock.Now()))
-			out["pending"] = str(a.gen2(), "anchorState")
+			out["pending"] = pyjson.Text(a.gen2().Get("anchorState"))
 			out["bound"], out["again"] = a.bindPending(), a.bindPending()
 			out["gen2"] = a.gen2()
 			out["receipt"] = a.childReceipt()
@@ -136,7 +137,7 @@ func TestANB01_every_route_to_dispatched_binds_the_new_anchor(t *testing.T) {
 			rev, turn := a.lostSettleWrite()
 			out["recovered"] = a.recover()
 			out["gen2"] = a.gen2()
-			if a.row(rev).S("state") != Dispatched || str(out["gen2"].(Obj), "dispatchTurnId") != turn {
+			if a.row(rev).S("state") != Dispatched || pyjson.Text(out["gen2"].(Obj).Get("dispatchTurnId")) != turn {
 				t.Fatal("bound in the promotion")
 			}
 			out["receipt"] = a.childReceipt()
@@ -171,8 +172,8 @@ func TestBindAnchor_concurrent_turns_never_replace_the_winner(t *testing.T) {
 		winner, loser = second, first
 	}
 	if winner.err != nil || Reason(loser.err) != "anchor_already_bound" ||
-		str(winner.row, "dispatchTurnId") != winner.turn ||
-		str(a.gen2(), "dispatchTurnId") != winner.turn {
+		pyjson.Text(winner.row.Get("dispatchTurnId")) != winner.turn ||
+		pyjson.Text(a.gen2().Get("dispatchTurnId")) != winner.turn {
 		t.Fatalf("winner=%+v loser=%+v generation=%v", winner, loser, a.gen2())
 	}
 	if _, err := BindAnchor(a.ctx, a.store, a.clock, a.rid, 2, winner.turn); err != nil {
@@ -188,7 +189,7 @@ func TestBindPendingAnchors_recovers_acknowledged_revision(t *testing.T) {
 	rev := a.dispatchRevision("")
 	a.clock.Advance(3600)
 	a.mustAttempt(rev, at(a.clock.Now()))
-	if str(a.gen2(), "anchorState") != "anchor_pending" {
+	if pyjson.Text(a.gen2().Get("anchorState")) != "anchor_pending" {
 		t.Fatalf("expected pending generation: %v", a.gen2())
 	}
 	_, err := execSQL(a.ctx, a.store, "UPDATE deliveries SET state = ? WHERE event_id = ?", Acknowledged, rev)
@@ -196,7 +197,7 @@ func TestBindPendingAnchors_recovers_acknowledged_revision(t *testing.T) {
 	// Python ack.bind_dispatched_revision rejects ACKNOWLEDGED despite selecting it
 	// in bind_pending_anchors. Recovery must bind it rather than pin that defect.
 	bound := a.bindPending()
-	if len(bound) != 1 || bound[0] != rev || str(a.gen2(), "anchorState") != "bound" || len(a.bindPending()) != 0 {
+	if len(bound) != 1 || bound[0] != rev || pyjson.Text(a.gen2().Get("anchorState")) != "bound" || len(a.bindPending()) != 0 {
 		t.Fatalf("bound=%v generation=%v", bound, a.gen2())
 	}
 }
@@ -205,7 +206,7 @@ func TestANB02_an_unbound_generation_refuses_the_childs_receipt(t *testing.T) {
 	runANB(t, "unbound", func(a *anb, out map[string]any) {
 		rev := a.dispatchRevision("")
 		out["record"] = a.mustAttempt(rev, at(a.clock.Now()))
-		out["pending"] = str(a.gen2(), "anchorState")
+		out["pending"] = pyjson.Text(a.gen2().Get("anchorState"))
 		out["receipt"] = a.childReceipt()
 		if out["receipt"].(map[string]any)["reason"] != "unbound_generation" {
 			t.Fatal("unbound_generation")
@@ -236,7 +237,7 @@ func TestANB04_a_stale_reconciliation_binds_nothing(t *testing.T) {
 		defer func() { forceCurrent = false }()
 		out["recovered"] = a.recover()
 		out["gen2"] = a.gen2()
-		if str(out["gen2"].(Obj), "anchorState") != "anchor_pending" {
+		if pyjson.Text(out["gen2"].(Obj).Get("anchorState")) != "anchor_pending" {
 			t.Fatal("a stale attempt bound the generation")
 		}
 	})
@@ -248,9 +249,9 @@ func TestANB05_a_revision_request_is_retired_once_the_child_answers(t *testing.T
 			runANB(t, mode, func(a *anb, out map[string]any) {
 				rev := a.dispatchRevision("")
 				out["record"] = a.mustAttempt(rev, at(a.clock.Now()))
-				out["pending"] = str(a.gen2(), "anchorState")
+				out["pending"] = pyjson.Text(a.gen2().Get("anchorState"))
 				a.bindPending()
-				anchor := str(a.gen2(), "dispatchTurnId")
+				anchor := pyjson.Text(a.gen2().Get("dispatchTurnId"))
 				switch mode {
 				case "retired_ready":
 					out["receipt"] = a.childReceipt()
@@ -286,7 +287,7 @@ func TestANB06_binding_is_idempotent_and_needs_a_dispatch(t *testing.T) {
 				}
 				rev := a.dispatchRevision(script)
 				out["record"] = a.mustAttempt(rev, at(a.clock.Now()))
-				out["pending"] = str(a.gen2(), "anchorState")
+				out["pending"] = pyjson.Text(a.gen2().Get("anchorState"))
 				out["bound"], out["again"] = a.bindPending(), a.bindPending()
 				out["gen2"] = a.gen2()
 			})

@@ -45,7 +45,7 @@ func TestTheRecordedSandboxsBuiltinProfileIsVerifiedWithTheSandbox(t *testing.T)
 			found := TaskSettings{decoded(t, row+"}").(contract.OrderedObject)}.Mismatches(decoded(t, response+"}"), true, false, false)
 			var codes []string
 			for _, f := range found {
-				code, _ := getField(f, "code")
+				code, _ := f.Lookup("code")
 				codes = append(codes, code.(string))
 			}
 			if got := strings.Join(codes, ","); got != c.want {

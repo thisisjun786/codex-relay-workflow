@@ -42,9 +42,9 @@ type BridgeRecord struct {
 
 // ReadBridgeRecord reads a decoded bridge record.
 func ReadBridgeRecord(document contract.OrderedObject) BridgeRecord {
-	r := BridgeRecord{VersionValue: evidence.Get(document, "recordVersion"), Owner: evidence.Get(document, "owner"),
-		ServerName: evidence.Get(document, "serverName"), ExecutableValue: evidence.Get(document, "bridgeExecutable"),
-		ArgsValue: evidence.Get(document, "args"), ArgsOK: true}
+	r := BridgeRecord{VersionValue: document.Get("recordVersion"), Owner: document.Get("owner"),
+		ServerName: document.Get("serverName"), ExecutableValue: document.Get("bridgeExecutable"),
+		ArgsValue: document.Get("args"), ArgsOK: true}
 	for _, n := range []int64{1, 2} {
 		if equalsInt(r.VersionValue, n) {
 			r.Version = n
@@ -63,7 +63,7 @@ func ReadBridgeRecord(document contract.OrderedObject) BridgeRecord {
 			r.Args = nil
 		}
 	}
-	r.Policy, r.HasPolicy = evidence.Lookup(document, policyField)
+	r.Policy, r.HasPolicy = document.Lookup(policyField)
 	return r
 }
 
@@ -108,10 +108,10 @@ type PolicyReference struct {
 // ReadPolicyReference reads an executionPolicy reference.
 func ReadPolicyReference(reference any) PolicyReference {
 	object, ok := evidence.Object(reference)
-	_, hasPath := evidence.Lookup(object, "path")
-	_, hasDigest := evidence.Lookup(object, "digest")
+	_, hasPath := object.Lookup("path")
+	_, hasDigest := object.Lookup("digest")
 	p := PolicyReference{Shaped: ok && len(object) == 2 && hasPath && hasDigest,
-		File: ReadPolicyPath(evidence.Get(object, "path")), DigestValue: evidence.Get(object, "digest")}
+		File: ReadPolicyPath(object.Get("path")), DigestValue: object.Get("digest")}
 	p.Digest, _ = p.DigestValue.(string)
 	p.DigestOK = digestPattern.MatchString(p.Digest)
 	return p

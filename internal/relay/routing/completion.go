@@ -3,6 +3,7 @@ package routing
 import (
 	"crypto/sha256"
 	"fmt"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"slices"
 	"strings"
 )
@@ -63,7 +64,7 @@ func ReadReading(value any) (Object, error) {
 func completionException(reading Object, check string, bindings Object) (string, string) {
 	var chosen Object
 	for _, x := range list(reading["exceptions"]) {
-		e := object(x)
+		e := pyjson.Map(x)
 		if e["check"] == check {
 			chosen = e
 		}
@@ -81,7 +82,7 @@ func completionException(reading Object, check string, bindings Object) (string,
 	if ref == subject {
 		return "exception_unverified", "a subject cannot be its own follow-up"
 	}
-	b := object(bindings[text(ref)])
+	b := pyjson.Map(bindings[pyjson.Text(ref)])
 	if b == nil || b["kind"] != "issue" {
 		return "exception_unverified", fmt.Sprintf("%s is not a bound issue of %s", ref, reading["product"])
 	}
@@ -89,7 +90,7 @@ func completionException(reading Object, check string, bindings Object) (string,
 		return "exception_unverified", fmt.Sprintf("%s is %s, so it carries nothing forward", ref, b["state"])
 	}
 	for _, x := range list(b["followUpOf"]) {
-		e := object(x)
+		e := pyjson.Map(x)
 		if e["issue"] == subject && contains(e["checks"], check) {
 			return "excepted", fmt.Sprintf("%s took over %s of %s", ref, check, subject)
 		}
@@ -97,7 +98,7 @@ func completionException(reading Object, check string, bindings Object) (string,
 	return "exception_unverified", fmt.Sprintf("%s does not record taking over %s of %s", ref, check, subject)
 }
 func completionObserved(reading Object, check string, context Object) (string, string) {
-	required := object(reading["requires"])[check]
+	required := pyjson.Map(reading["requires"])[check]
 	if required == false {
 		if contains(context["openMismatches"], check) {
 			return "requirement_changed_without_approval", "the requirement was dropped after a mismatch with no approved exception, so the mismatch stands"
@@ -107,7 +108,7 @@ func completionObserved(reading Object, check string, context Object) (string, s
 	if required == "unknown" {
 		return "unverified", "whether this is required is unknown"
 	}
-	observed := text(object(reading["observed"])[check])
+	observed := pyjson.Text(pyjson.Map(reading["observed"])[check])
 	if observed == "unobservable" {
 		return "unverified", "the result could not be observed"
 	}
@@ -119,7 +120,7 @@ func completionObserved(reading Object, check string, context Object) (string, s
 func completionCheck(reading Object, check string, context Object) (string, string) {
 	claim := map[string]string{"acceptance": "linearDone", "install": "prMerged", "realUse": "prMerged", "handoff": "sessionEnded"}[check]
 	var verdict, reason string
-	if object(reading["claims"])[claim] == true {
+	if pyjson.Map(reading["claims"])[claim] == true {
 		verdict, reason = completionObserved(reading, check, context)
 	} else if contains(context["openMismatches"], check) {
 		verdict = "claim_withdrawn_without_closure"
@@ -130,7 +131,7 @@ func completionCheck(reading Object, check string, context Object) (string, stri
 	if !slices.Contains([]string{"mismatch", "requirement_changed_without_approval", "claim_withdrawn_without_closure", "unverified"}, verdict) {
 		return verdict, reason
 	}
-	ex, why := completionException(reading, check, object(context["bindings"]))
+	ex, why := completionException(reading, check, pyjson.Map(context["bindings"]))
 	if ex == "" {
 		return verdict, reason
 	}
@@ -156,7 +157,7 @@ func EvaluateCompletion(reading, context Object) Object {
 	for _, check := range Checks {
 		verdict, reason := completionCheck(reading, check, context)
 		entry := Object{"check": check, "verdict": verdict, "reason": reason}
-		ev := object(object(reading["evidence"])[check])
+		ev := pyjson.Map(pyjson.Map(reading["evidence"])[check])
 		if verdict == "consistent" && contains(context["openMismatches"], check) {
 			missing := []any{}
 			for _, key := range []string{"fix", "verification"} {
@@ -180,11 +181,11 @@ func EvaluateCompletion(reading, context Object) Object {
 		checks = append(checks, entry)
 	}
 	for _, x := range list(context["recurrences"]) {
-		item := object(x)
+		item := pyjson.Map(x)
 		recurrences = append(recurrences, Object{"check": "recurrence", "verdict": "mismatch", "faultId": item["faultId"], "reason": item["reason"]})
 		mismatch = true
 	}
-	if reason := text(context["recurrenceUnknown"]); reason != "" {
+	if reason := pyjson.Text(context["recurrenceUnknown"]); reason != "" {
 		recurrences = append(recurrences, Object{"check": "recurrence", "verdict": "unverified", "faultId": nil, "reason": reason})
 		unverified = true
 	}

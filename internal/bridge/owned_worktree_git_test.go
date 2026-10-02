@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"testing"
 )
 
@@ -52,7 +53,7 @@ func Test_test_concurrent_requests_cannot_adopt_same_destination(t *testing.T) {
 	rival := input
 	rival.RequestID = "rival"
 	rivalReceipt, err := other.CreateWorktreeThread(context.Background(), rival)
-	if err != nil || rivalReceipt["status"] != "failed" || !strings.Contains(text(rivalReceipt["error"]), "destination must be absent") || otherHost.Count("thread/start") != 0 {
+	if err != nil || rivalReceipt["status"] != "failed" || !strings.Contains(pyjson.Text(rivalReceipt["error"]), "destination must be absent") || otherHost.Count("thread/start") != 0 {
 		t.Fatalf("rival adopted a reserved destination: receipt=%v err=%v calls=%v", rivalReceipt, err, otherHost.Requests())
 	}
 	for _, id := range []string{"first", "second"} {

@@ -1,11 +1,13 @@
 package routing
 
+import "github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+
 // Obligations keeps queued history but drops open work contradicted by a new placement.
 func Obligations(decision, existing Object, cause any, labels []any) []any {
 	labelled := (decision["disposition"] == "new_issue" || decision["disposition"] == "follow_up") && decision["owner"] == nil
 	owed := []any{}
-	for _, x := range list(object(existing["target"])["obligations"]) {
-		o := object(x)
+	for _, x := range list(pyjson.Map(existing["target"])["obligations"]) {
+		o := pyjson.Map(x)
 		contradicted := false
 		switch o["kind"] {
 		case "add_label":
@@ -38,10 +40,10 @@ func Obligations(decision, existing Object, cause any, labels []any) []any {
 		wanted = append(wanted, makeOwed("add_relation", nil, cause, nil))
 	}
 	for _, x := range wanted {
-		o := object(x)
+		o := pyjson.Map(x)
 		found := false
 		for _, y := range owed {
-			p := object(y)
+			p := pyjson.Map(y)
 			if o["kind"] == p["kind"] && o["toIssue"] == p["toIssue"] && o["toFault"] == p["toFault"] && o["label"] == p["label"] {
 				found = true
 				break
@@ -60,12 +62,12 @@ func Attention(snapshot Object) any {
 		return "awaiting_classification"
 	}
 	if snapshot["stage"] == "held" {
-		return "held_" + text(snapshot["hold"])
+		return "held_" + pyjson.Text(snapshot["hold"])
 	}
 	active := snapshot["state"] == "observed" || snapshot["state"] == "open" || snapshot["state"] == "fix_pending"
 	if snapshot["disposition"] == "project_proposal" {
 		if snapshot["hold"] != nil {
-			return "held_" + text(snapshot["hold"])
+			return "held_" + pyjson.Text(snapshot["hold"])
 		}
 		if snapshot["stage"] == "filed" && snapshot["project"] == nil && active {
 			return "project_proposed"
@@ -75,7 +77,7 @@ func Attention(snapshot Object) any {
 	if snapshot["linkState"] == "unlinked" {
 		return "link_incomplete"
 	}
-	if len(object(snapshot["unverifiedCause"])) > 0 {
+	if len(pyjson.Map(snapshot["unverifiedCause"])) > 0 {
 		return "cause_unverified"
 	}
 	if snapshot["disposition"] == "completion_mismatch" && active {

@@ -15,6 +15,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
 )
@@ -87,7 +88,7 @@ func (a *Adapter) RequireLedger(ctx context.Context, expected map[string]any) er
 	if captured == nil {
 		return &HostUnavailable{"this adapter has no ledger to revalidate"}
 	}
-	observed, err := LedgerIdentity(text(captured["realPath"]))
+	observed, err := LedgerIdentity(pyjson.Text(captured["realPath"]))
 	if err != nil {
 		return &HostUnavailable{"ledger identity changed or is unknown; refusing before mutation"}
 	}

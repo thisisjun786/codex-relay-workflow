@@ -272,23 +272,23 @@ func (s *Service) supervisorOf(ctx context.Context, project string) (string, err
 	}
 	var parents []string
 	for _, o := range owners {
-		if field(o, "role") == "parent" {
-			parents = append(parents, fmt.Sprint(field(o, "taskId")))
+		if o.Get("role") == "parent" {
+			parents = append(parents, fmt.Sprint(o.Get("taskId")))
 		}
 	}
 	if len(parents) != 1 {
 		return "", nil
 	}
 	walk := s.Registry.Up(ctx, registry.UpSelector{Task: nullable(parents[0]), Scope: nullable(project)})
-	if field(walk, "readable") != true || field(walk, "state") == "ambiguous" {
+	if walk.Get("readable") != true || walk.Get("state") == "ambiguous" {
 		return "", nil
 	}
-	levels, _ := field(walk, "levels").([]any)
+	levels, _ := walk.Get("levels").([]any)
 	for _, item := range levels {
 		level, _ := item.(contract.OrderedObject)
-		if field(level, "scopeKind") == "initiative" {
-			owner, _ := field(level, "owner").(contract.OrderedObject)
-			task, _ := field(owner, "taskId").(string)
+		if level.Get("scopeKind") == "initiative" {
+			owner, _ := level.Get("owner").(contract.OrderedObject)
+			task, _ := owner.Get("taskId").(string)
 			return task, nil
 		}
 	}
@@ -313,15 +313,6 @@ func (s *Service) authority(ctx context.Context, r store.MergeTurnsRow, actor, w
 		which = ", which is " + pyvalue.StrRepr(supervisor)
 	}
 	return &registry.CoordinationRefusal{Reason: contract.RefusalScopeRoleMismatch, Detail: "task " + pyvalue.StrRepr(actor) + " is neither the holder of turn " + pyvalue.StrRepr(r.TurnID) + " nor the supervisor above project " + pyvalue.StrRepr(r.ProjectKey) + which + ", so it cannot " + what, Domain: registry.DomainMergeTarget, Subject: r.TargetKey, Incumbent: r.HolderTaskID, Challenger: actor}, nil
-}
-
-func field(o contract.OrderedObject, key string) any {
-	for _, f := range o {
-		if f.Key == key {
-			return f.Value
-		}
-	}
-	return nil
 }
 
 // Withdraw is MergeTurn.withdraw: a waiting claim taken back by its claimant.

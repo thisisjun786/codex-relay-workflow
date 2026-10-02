@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
 func gitAt(t *testing.T, dir string, args ...string) string {
@@ -166,7 +167,7 @@ func Test_test_readiness_launch_retains_exact_base_without_carrying_dirty_change
 	worktreeHost(host, input.Destination)
 	input.Prompt = "READY"
 	receipt, err := b.CreateWorktreeThread(context.Background(), input)
-	if err != nil || receipt["status"] != "accepted" || object(receipt["worktree"])["initialRevision"] != input.Revision || object(receipt["creation"])["cwd"] != input.Destination || receipt["checkoutBeforeDispatch"].(map[string]any)["initialRevision"] != input.Revision {
+	if err != nil || receipt["status"] != "accepted" || pyjson.Map(receipt["worktree"])["initialRevision"] != input.Revision || pyjson.Map(receipt["creation"])["cwd"] != input.Destination || receipt["checkoutBeforeDispatch"].(map[string]any)["initialRevision"] != input.Revision {
 		t.Fatalf("receipt=%v err=%v", receipt, err)
 	}
 	checked, err := os.ReadFile(filepath.Join(input.Destination, "tracked"))
@@ -194,7 +195,7 @@ func Test_test_readiness_launch_retains_exact_base_without_carrying_dirty_change
 			t.Fatalf("source %s missing: %v", name, err)
 		}
 	}
-	if object(receipt["worktree"])["ownership"] != "bridge-managed" || object(receipt["worktree"])["lifecycle"] != "retained-until-manual-cleanup" || receipt["permissionReceipt"] == nil || receipt["desktopProjectAssociation"] == nil || host.Count("thread/goal/set") != 0 {
+	if pyjson.Map(receipt["worktree"])["ownership"] != "bridge-managed" || pyjson.Map(receipt["worktree"])["lifecycle"] != "retained-until-manual-cleanup" || receipt["permissionReceipt"] == nil || receipt["desktopProjectAssociation"] == nil || host.Count("thread/goal/set") != 0 {
 		t.Fatalf("receipt=%v", receipt)
 	}
 	common := gitAt(t, input.Destination, "rev-parse", "--path-format=absolute", "--git-common-dir")

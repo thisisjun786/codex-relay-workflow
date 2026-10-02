@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/faults"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -28,7 +29,7 @@ func target(decision, registry, incident Object, owed []any, cause, claim any) O
 	if registry != nil {
 		team = registry["team"]
 		if incident["origin"] == "simulated" {
-			team = object(registry["testTarget"])["team"]
+			team = pyjson.Map(registry["testTarget"])["team"]
 		}
 	}
 	if owed == nil {
@@ -41,7 +42,7 @@ func target(decision, registry, incident Object, owed []any, cause, claim any) O
 	return Object{"team": team, "project": decision["project"], "owner": decision["owner"], "relate": related, "hold": decision["hold"], "labels": IssueLabels(incident), "cause": cause, "unverifiedCause": claim, "obligations": owed}
 }
 func watched(registry, incident Object) error {
-	spec := object(object(registry["surfaces"])[text(incident["surface"])])
+	spec := pyjson.Map(pyjson.Map(registry["surfaces"])[pyjson.Text(incident["surface"])])
 	if spec == nil || spec["active"] != true {
 		return routeRefused("route_surface_unwatched", fmt.Sprintf("%s does not watch %s; nothing from an unconnected surface is collected", registry["product"], incident["surface"]))
 	}
@@ -51,7 +52,7 @@ func watched(registry, incident Object) error {
 	return nil
 }
 func observation(product, workspace, class, severity string, signature Object, incident Object, project any) faults.Observation {
-	return faults.Observation{Product: product, FaultClass: class, Severity: severity, Signature: signature, OccurrenceKey: text(incident["occurrenceKey"]), Scope: scope(workspace, project), ObservedAt: incident["observedAt"], Detail: DetailText(incident), Evidence: list(incident["evidence"])}
+	return faults.Observation{Product: product, FaultClass: class, Severity: severity, Signature: signature, OccurrenceKey: pyjson.Text(incident["occurrenceKey"]), Scope: scope(workspace, project), ObservedAt: incident["observedAt"], Detail: DetailText(incident), Evidence: list(incident["evidence"])}
 }
 
 type replayed struct{ answer Object }
@@ -73,7 +74,7 @@ func occurrenceAttempt(ctx context.Context, s *store.Store, run func() error) (e
 	return run()
 }
 func unchanged(route, answer Object) Object {
-	t := object(route["target"])
+	t := pyjson.Map(route["target"])
 	out := clone(answer)
 	for k, v := range (Object{"disposition": route["disposition"], "stage": route["stage"], "project": t["project"], "owner": t["owner"], "hold": t["hold"], "unverifiedCause": t["unverifiedCause"], "recorded": false, "publication": nil, "reason": "the ledger already recorded this occurrence; nothing changed"}) {
 		out[k] = v
@@ -110,7 +111,7 @@ func (r *Router) intake(ctx context.Context, incident Object) (Object, error) {
 		return nil, err
 	}
 	product, why := ResolveProduct(registries, incident)
-	registry := registries[text(product)]
+	registry := registries[pyjson.Text(product)]
 	if registry != nil {
 		if err := watched(registry, incident); err != nil {
 			return nil, err
@@ -136,8 +137,8 @@ func (r *Router) unresolved(ctx context.Context, incident Object, workspace, why
 		return nil, err
 	}
 	if route != nil && route["stage"] == "superseded" {
-		classification := object(route["classification"])
-		registry, err := r.Registry(ctx, text(classification["product"]))
+		classification := pyjson.Map(route["classification"])
+		registry, err := r.Registry(ctx, pyjson.Text(classification["product"]))
 		if err != nil {
 			return nil, err
 		}
@@ -163,7 +164,7 @@ func (r *Router) unresolved(ctx context.Context, incident Object, workspace, why
 		if route != nil && answer["recorded"] != true {
 			return &replayed{answer}
 		}
-		if err = r.routes().Upsert(ctx, Object{"fault_id": id, "product": "unclassified", "workspace": workspace, "disposition": "pending_classification", "stage": "pending_classification", "target": target(Object{}, nil, incident, nil, nil, nil), "origin": incident["origin"], "claimed_severity": incident["severity"], "goal": object(incident["goal"])["key"], "detail": why}); err != nil {
+		if err = r.routes().Upsert(ctx, Object{"fault_id": id, "product": "unclassified", "workspace": workspace, "disposition": "pending_classification", "stage": "pending_classification", "target": target(Object{}, nil, incident, nil, nil, nil), "origin": incident["origin"], "claimed_severity": incident["severity"], "goal": pyjson.Map(incident["goal"])["key"], "detail": why}); err != nil {
 			return err
 		}
 		keep := store.MaxStoredIncidents
@@ -177,18 +178,18 @@ func (r *Router) unresolved(ctx context.Context, incident Object, workspace, why
 		return nil, err
 	}
 	if incident["severity"] == "broken" {
-		if _, err = r.Ledger.Notify(ctx, id, "awaiting_classification", text(incident["occurrenceKey"])); err != nil {
+		if _, err = r.Ledger.Notify(ctx, id, "awaiting_classification", pyjson.Text(incident["occurrenceKey"])); err != nil {
 			return nil, err
 		}
 	}
 	return Object{"faultId": id, "product": nil, "workspace": workspace, "disposition": "pending_classification", "stage": "pending_classification", "reason": why}, nil
 }
 func (r *Router) place(ctx context.Context, incident, registry Object, workspace string) (Object, error) {
-	cause := object(incident["cause"])
+	cause := pyjson.Map(incident["cause"])
 	var causeID, claim any
 	var causeRow Object
 	if cause != nil && cause["product"] != registry["product"] {
-		row, err := r.Ledger.Get(ctx, text(cause["faultId"]))
+		row, err := r.Ledger.Get(ctx, pyjson.Text(cause["faultId"]))
 		if err != nil {
 			return nil, err
 		}
@@ -224,19 +225,19 @@ func (r *Router) place(ctx context.Context, incident, registry Object, workspace
 	return r.file(ctx, incident, registry, workspace, causeID, claim, causeRow)
 }
 func (r *Router) file(ctx context.Context, incident, registry Object, workspace string, cause, unverified any, causeRow Object) (Object, error) {
-	product := text(registry["product"])
+	product := pyjson.Text(registry["product"])
 	bindings, err := r.Bindings(ctx, product)
 	if err != nil {
 		return nil, err
 	}
-	run, err := r.RunIssue(ctx, object(incident["context"])["run"])
+	run, err := r.RunIssue(ctx, pyjson.Map(incident["context"])["run"])
 	if err != nil {
 		return nil, err
 	}
 	r.test.read(ctx, "decide")
 	decision := Decide(incident, registry, bindings, run)
 	observe := decision["disposition"] == "observe"
-	class, severity := "product_defect", text(incident["severity"])
+	class, severity := "product_defect", pyjson.Text(incident["severity"])
 	if observe {
 		class, severity = "product_expected", "notice"
 	}
@@ -254,13 +255,13 @@ func (r *Router) file(ctx context.Context, incident, registry Object, workspace 
 		return nil, err
 	}
 	if existing != nil && existing["stage"] == "filed" {
-		kept := object(existing["target"])
+		kept := pyjson.Map(existing["target"])
 		decision = clone(decision)
 		for k, v := range (Object{"disposition": existing["disposition"], "stage": "filed", "project": kept["project"], "owner": kept["owner"], "hold": nil, "relate": kept["relate"], "reason": "filed earlier; the ledger's record carries this occurrence"}) {
 			decision[k] = v
 		}
 	}
-	before := object(existing["target"])
+	before := pyjson.Map(existing["target"])
 	claim := unverified
 	if claim == nil && cause == nil {
 		claim = before["unverifiedCause"]
@@ -277,7 +278,7 @@ func (r *Router) file(ctx context.Context, incident, registry Object, workspace 
 	first := firstRow == nil
 	var adopt *faults.Adoption
 	if decision["owner"] != nil && first {
-		adopt = &faults.Adoption{ExternalRef: text(decision["owner"]), Scope: scope(workspace, decision["project"])}
+		adopt = &faults.Adoption{ExternalRef: pyjson.Text(decision["owner"]), Scope: scope(workspace, decision["project"])}
 	}
 	var result Object
 	record := func(project any, adoption *faults.Adoption) error {
@@ -302,7 +303,7 @@ func (r *Router) file(ctx context.Context, incident, registry Object, workspace 
 			if err != nil {
 				return err
 			}
-			o := observation(text(causeRow["product"]), text(placed["workspace"]), text(causeRow["fault_class"]), text(causeRow["severity"]), sig, incident, placed["projectKey"])
+			o := observation(pyjson.Text(causeRow["product"]), pyjson.Text(placed["workspace"]), pyjson.Text(causeRow["fault_class"]), pyjson.Text(causeRow["severity"]), sig, incident, placed["projectKey"])
 			o.OccurrenceKey = fmt.Sprintf("affected:%s:%s:%v:%s", product, id, row["episode"], incident["occurrenceKey"])
 			o.Detail = product + " was affected by this fault"
 			if _, err = r.Ledger.RecordObservation(ctx, o, nil); err != nil {
@@ -313,12 +314,12 @@ func (r *Router) file(ctx context.Context, incident, registry Object, workspace 
 	}
 	err = occurrenceAttempt(ctx, r.Store, func() error {
 		if decision["owner"] != nil && !first && before["owner"] == nil {
-			if _, err := r.Ledger.Adopt(ctx, id, text(decision["owner"]), scope(workspace, decision["project"])); err != nil {
+			if _, err := r.Ledger.Adopt(ctx, id, pyjson.Text(decision["owner"]), scope(workspace, decision["project"])); err != nil {
 				return err
 			}
 		}
 		if decision["project"] != nil {
-			if _, err := r.Ledger.SetWorkspaceTarget(ctx, product, workspace, text(decision["project"]), text(destination["team"]), text(decision["project"])); err != nil {
+			if _, err := r.Ledger.SetWorkspaceTarget(ctx, product, workspace, pyjson.Text(decision["project"]), pyjson.Text(destination["team"]), pyjson.Text(decision["project"])); err != nil {
 				return err
 			}
 		}
@@ -356,7 +357,7 @@ func (r *Router) file(ctx context.Context, incident, registry Object, workspace 
 	}
 	if decision["stage"] == "held" {
 		if incident["severity"] == "broken" {
-			if _, err = r.Ledger.Notify(ctx, id, "held_"+text(decision["hold"]), text(incident["occurrenceKey"])); err != nil {
+			if _, err = r.Ledger.Notify(ctx, id, "held_"+pyjson.Text(decision["hold"]), pyjson.Text(incident["occurrenceKey"])); err != nil {
 				return nil, err
 			}
 		}
@@ -372,7 +373,7 @@ func (r *Router) file(ctx context.Context, incident, registry Object, workspace 
 		}
 	}
 	if unverified != nil && incident["severity"] == "broken" {
-		if _, err = r.Ledger.Notify(ctx, id, "cause_unverified", text(incident["occurrenceKey"])); err != nil {
+		if _, err = r.Ledger.Notify(ctx, id, "cause_unverified", pyjson.Text(incident["occurrenceKey"])); err != nil {
 			return nil, err
 		}
 	}
@@ -393,7 +394,7 @@ func (r *Router) saveIncident(ctx context.Context, id, product, workspace string
 	if err := r.test.write(ctx, "save"); err != nil {
 		return err
 	}
-	if err := r.routes().Upsert(ctx, Object{"fault_id": id, "product": product, "workspace": workspace, "disposition": decision["disposition"], "stage": decision["stage"], "target": destination, "origin": incident["origin"], "claimed_severity": incident["severity"], "goal": object(incident["goal"])["key"], "detail": decision["reason"]}); err != nil {
+	if err := r.routes().Upsert(ctx, Object{"fault_id": id, "product": product, "workspace": workspace, "disposition": decision["disposition"], "stage": decision["stage"], "target": destination, "origin": incident["origin"], "claimed_severity": incident["severity"], "goal": pyjson.Map(incident["goal"])["key"], "detail": decision["reason"]}); err != nil {
 		return err
 	}
 	keep := store.MaxStoredIncidents
@@ -415,10 +416,10 @@ func (r *Router) discharge(ctx context.Context, id string) ([]any, error) {
 	if route == nil {
 		return queued, nil
 	}
-	destination := object(route["target"])
+	destination := pyjson.Map(route["target"])
 	pending := []Object{}
 	for _, v := range list(destination["obligations"]) {
-		o := object(v)
+		o := pyjson.Map(v)
 		if o["state"] == "open" {
 			pending = append(pending, o)
 		}
@@ -450,7 +451,7 @@ func (r *Router) discharge(ctx context.Context, id string) ([]any, error) {
 			default:
 				other := o["toIssue"]
 				if other == nil && o["toFault"] != nil {
-					row, err := r.Ledger.Get(ctx, text(o["toFault"]))
+					row, err := r.Ledger.Get(ctx, pyjson.Text(o["toFault"]))
 					if err != nil {
 						return err
 					}
@@ -461,7 +462,7 @@ func (r *Router) discharge(ctx context.Context, id string) ([]any, error) {
 				}
 				value = Object{"type": "related", "issue": other}
 			}
-			if _, err := r.Ledger.RequestUpdate(ctx, id, text(o["kind"]), value); err != nil {
+			if _, err := r.Ledger.RequestUpdate(ctx, id, pyjson.Text(o["kind"]), value); err != nil {
 				return err
 			}
 			o["state"] = "queued"
@@ -493,7 +494,7 @@ func (r *Router) Classify(ctx context.Context, id string, value any) (Object, er
 			answer = Object{"faultId": id, "successor": route["superseded_by"], "replayed": 0, "changed": false}
 			return nil
 		}
-		registry, err := r.Registry(ctx, text(classification["product"]))
+		registry, err := r.Registry(ctx, pyjson.Text(classification["product"]))
 		if err != nil {
 			return err
 		}
@@ -508,13 +509,13 @@ func (r *Router) Classify(ctx context.Context, id string, value any) (Object, er
 			return routeRefused("route_state_conflict", id+" keeps no incident")
 		}
 		for _, v := range stored {
-			if err = watched(registry, classified(object(v), classification)); err != nil {
+			if err = watched(registry, classified(pyjson.Map(v), classification)); err != nil {
 				return err
 			}
 		}
 		var successor any
 		for _, v := range stored {
-			applied := classified(object(v), classification)
+			applied := classified(pyjson.Map(v), classification)
 			workspace, err := WorkspaceFor(applied, registry)
 			if err != nil {
 				return err
@@ -525,8 +526,8 @@ func (r *Router) Classify(ctx context.Context, id string, value any) (Object, er
 			}
 			successor = placed["faultId"]
 		}
-		o := observation("unclassified", text(route["workspace"]), "unclassified_incident", "notice", PendingSignature(object(stored[0])), object(stored[0]), nil)
-		o.OccurrenceKey = "classified:" + text(successor)
+		o := observation("unclassified", pyjson.Text(route["workspace"]), "unclassified_incident", "notice", PendingSignature(pyjson.Map(stored[0])), pyjson.Map(stored[0]), nil)
+		o.OccurrenceKey = "classified:" + pyjson.Text(successor)
 		o.Detail = "classified"
 		o.Evidence = []any{}
 		o.ObservedAt = nil
@@ -536,7 +537,7 @@ func (r *Router) Classify(ctx context.Context, id string, value any) (Object, er
 		}
 		recorded := clone(classification)
 		recorded["at"] = r.Clock.ISO()
-		if err = r.routes().Upsert(ctx, Object{"fault_id": id, "product": "unclassified", "workspace": route["workspace"], "disposition": route["disposition"], "stage": "superseded", "target": route["target"], "origin": route["origin"], "claimed_severity": route["claimed_severity"], "classification": recorded, "superseded_by": successor, "detail": "classified by " + text(classification["by"])}); err != nil {
+		if err = r.routes().Upsert(ctx, Object{"fault_id": id, "product": "unclassified", "workspace": route["workspace"], "disposition": route["disposition"], "stage": "superseded", "target": route["target"], "origin": route["origin"], "claimed_severity": route["claimed_severity"], "classification": recorded, "superseded_by": successor, "detail": "classified by " + pyjson.Text(classification["by"])}); err != nil {
 			return err
 		}
 		answer = Object{"faultId": id, "successor": successor, "replayed": len(stored), "changed": true}

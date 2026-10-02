@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 )
 
@@ -57,8 +58,8 @@ func createOnce(ctx context.Context, path string, document Object, keepTorn bool
 	return true, err
 }
 func ClaimEvent(ctx context.Context, config Object, key string, identity, stop Object, slot Slot, host string) (string, any) {
-	root := text(get(config, "journalRoot"))
-	base := Object{{Key: "ledgerVersion", Value: int64(LedgerVersion)}, {Key: "eventKey", Value: key}, {Key: "sessionId", Value: get(stop, "session_id")}, {Key: "turnId", Value: get(stop, "turn_id")}, {Key: "stopHookActive", Value: get(stop, "stop_hook_active")}, {Key: "answerItem", Value: get(identity, "answerItem")}, {Key: "claimedAt", Value: now()}}
+	root := pyjson.Text(config.Get("journalRoot"))
+	base := Object{{Key: "ledgerVersion", Value: int64(LedgerVersion)}, {Key: "eventKey", Value: key}, {Key: "sessionId", Value: stop.Get("session_id")}, {Key: "turnId", Value: stop.Get("turn_id")}, {Key: "stopHookActive", Value: stop.Get("stop_hook_active")}, {Key: "answerItem", Value: identity.Get("answerItem")}, {Key: "claimedAt", Value: now()}}
 	if host != "" {
 		if ctx.Err() != nil {
 			return "unarbitrated", nil
@@ -66,7 +67,7 @@ func ClaimEvent(ctx context.Context, config Object, key string, identity, stop O
 		if err := os.MkdirAll(host, 0777); err != nil {
 			return "unarbitrated", nil
 		}
-		document := set(append(Object{}, base...), "claimedBy", Object{{Key: "pid", Value: os.Getpid()}, {Key: "journalRoot", Value: nullable(root)}, {Key: "attemptRow", Value: slot.Name()}})
+		document := append(Object{}, base...).Set("claimedBy", Object{{Key: "pid", Value: os.Getpid()}, {Key: "journalRoot", Value: nullable(root)}, {Key: "attemptRow", Value: slot.Name()}})
 		// Python _arbitrate suppresses a post-O_EXCL write failure, keeps the
 		// inode, and grants ownership. Deleting or treating it as unowned would
 		// permit replay or silently change Python's hold behavior.
@@ -93,7 +94,7 @@ func ClaimEvent(ctx context.Context, config Object, key string, identity, stop O
 		return "claim_failed", nil
 	}
 	// The host ledger is named as Python holds a path from the environment: os.fsdecode's str.
-	document := set(base, "claimedBy", Object{{Key: "pid", Value: os.Getpid()}, {Key: "attemptRow", Value: slot.Name()}, {Key: "hostLedger", Value: nullable(pyvalue.FSDecode(host))}})
+	document := base.Set("claimedBy", Object{{Key: "pid", Value: os.Getpid()}, {Key: "attemptRow", Value: slot.Name()}, {Key: "hostLedger", Value: nullable(pyvalue.FSDecode(host))}})
 	// claim_event likewise returns ACCEPTED after a failed write, never unlinking.
 	created, err := createOnce(ctx, filepath.Join(directory, key+".json"), document, true)
 	name := LedgerDirectory + "/" + key + ".json"
@@ -106,14 +107,14 @@ func ClaimEvent(ctx context.Context, config Object, key string, identity, stop O
 	return "accepted", name
 }
 func Journal(ctx context.Context, config, record Object, slot Slot) (string, error) {
-	policy := text(get(config, "journalPolicy"))
+	policy := pyjson.Text(config.Get("journalPolicy"))
 	if policy == "no_journal" {
 		return "", nil
 	}
-	if policy == "faults_only" && (get(record, "adapterOutcome") == "guard_answered" || get(record, "adapterOutcome") == "duplicate_invocation") && (get(record, "acceptance") == "accepted" || get(record, "acceptance") == "duplicate") {
+	if policy == "faults_only" && (record.Get("adapterOutcome") == "guard_answered" || record.Get("adapterOutcome") == "duplicate_invocation") && (record.Get("acceptance") == "accepted" || record.Get("acceptance") == "duplicate") {
 		return "", nil
 	}
-	root := text(get(config, "journalRoot"))
+	root := pyjson.Text(config.Get("journalRoot"))
 	if root == "" {
 		return "", nil
 	}
@@ -136,7 +137,7 @@ func Journal(ctx context.Context, config, record Object, slot Slot) (string, err
 	return path, nil
 }
 func RecordOutcome(ctx context.Context, config Object, key string, record Object, row any) error {
-	root := text(get(config, "journalRoot"))
+	root := pyjson.Text(config.Get("journalRoot"))
 	if root == "" || key == "" {
 		return nil
 	}
@@ -144,11 +145,11 @@ func RecordOutcome(ctx context.Context, config Object, key string, record Object
 	if !encoded {
 		return errUnencodable
 	}
-	policy := get(config, "journalPolicy")
+	policy := config.Get("journalPolicy")
 	if !pyvalue.Truthy(policy) {
 		policy = EveryInvocation
 	}
-	out := Object{{Key: "ledgerVersion", Value: int64(LedgerVersion)}, {Key: "eventKey", Value: key}, {Key: "sessionId", Value: get(record, "sessionId")}, {Key: "turnId", Value: get(record, "turnId")}, {Key: "journalPolicy", Value: policy}, {Key: "adapterOutcome", Value: get(record, "adapterOutcome")}, {Key: "guardDecision", Value: get(record, "guardDecision")}, {Key: "guardState", Value: get(record, "guardState")}, {Key: "held", Value: get(record, "held")}, {Key: "attemptRow", Value: row}, {Key: "at", Value: now()}}
+	out := Object{{Key: "ledgerVersion", Value: int64(LedgerVersion)}, {Key: "eventKey", Value: key}, {Key: "sessionId", Value: record.Get("sessionId")}, {Key: "turnId", Value: record.Get("turnId")}, {Key: "journalPolicy", Value: policy}, {Key: "adapterOutcome", Value: record.Get("adapterOutcome")}, {Key: "guardDecision", Value: record.Get("guardDecision")}, {Key: "guardState", Value: record.Get("guardState")}, {Key: "held", Value: record.Get("held")}, {Key: "attemptRow", Value: row}, {Key: "at", Value: now()}}
 	_, err := createOnce(ctx, filepath.Join(root, LedgerDirectory, key+OutcomeSuffix), out, false)
 	return err
 }

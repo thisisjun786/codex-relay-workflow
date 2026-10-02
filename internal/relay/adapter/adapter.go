@@ -18,6 +18,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -141,7 +142,10 @@ func object(value any) (map[string]any, error) {
 	}
 	return nil, attributeError(value, "get")
 }
-func text(value any) string { s, _ := value.(string); return s }
+
+// text is pyjson.Text. worker_observation.go still calls it by this name; it goes with that
+// file's own rewrite.
+func text(value any) string { return pyjson.Text(value) }
 
 func rawEntries(page map[string]any) ([]any, error) {
 	value, exists := page["data"]
@@ -480,7 +484,7 @@ func itemText(value any) (string, error) {
 func itemKind(value any) string {
 	entry, _ := value.(map[string]any)
 	item, _ := entry["item"].(map[string]any)
-	return text(item["type"])
+	return pyjson.Text(item["type"])
 }
 func (a *Adapter) FindToken(thread, token string, limit int, messageOnly bool) (delivery.TokenScan, error) {
 	ctx, release, err := a.admitRead(context.Background())
