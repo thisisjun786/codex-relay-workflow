@@ -332,6 +332,7 @@ Three readings are kept whatever the plan says, because the plan cannot take the
 every `blocked:*` reason (a creation of unknown outcome included: its detail says that a repeat of the release is refused until the plan lets the node run) and, for a pause only, `done:accepted` (a pause does not
 invalidate an acceptance). A node the plan paused, cancelled or archived carries `lifecycle` in its reading and a paused plan carries `plan_state` at the top; both keys are absent otherwise, and the pass
 record keeps the same optional key. Edit regions follow the relationship and not the plan: a child that still runs after the plan cancelled its node still holds its regions.
+A stale node the plan cancels or archives reads as ended (state `cancelled` or `archived`, no stale object) and its detail keeps what made it stale; a stale node the plan pauses keeps its stale reading.
 
 **What is blocked downstream.** A node the plan cancelled or archived is never released again, and nothing is released from its result: its artifact and decision edges stay unsatisfied
 (`blocked:predecessor_cancelled`, `blocked:predecessor_archived`) until the plan is revised, and its integrated edge only when the landing is observed (see the edge rules above). The same gate follows what an accepted

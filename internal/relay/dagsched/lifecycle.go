@@ -86,7 +86,14 @@ func (l lifeView) overlayOwned(r *NodeReading, st nodeState) {
 		}
 	case l.ended() || st.Reason == SkipAlreadyOwned:
 		r.Disposition, r.Reason = dispositionOf(reason), reason
-		r.Stale = nil // the reading is no longer stale, so it carries no stale object (invalidation.go keeps the two together)
+		if st.State == StateStale {
+			// an ended node is no longer judged stale: the reading says it is ended, in its state as in its reason, and carries no stale object (invalidation.go keeps the state, the reason and the
+			// object together); the detail below keeps what made it stale
+			r.State, r.Stale = StateCancelled, nil
+			if l.node == dag.LifeArchived {
+				r.State = StateArchivedNode
+			}
+		}
 		r.Detail = detail + "; its execution: " + st.Detail
 	default:
 		r.Detail += "; " + detail

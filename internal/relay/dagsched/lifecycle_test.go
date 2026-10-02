@@ -900,6 +900,10 @@ func TestAStaleNodeThePlanHoldsKeepsTheStaleReadingsInvariant(t *testing.T) {
 			if a := after.node("A"); a.Reason != tc.reason {
 				t.Fatalf("A reads %+v, want %s", a, tc.reason)
 			}
+			// an ended node is not stale any more, in its state as in its reason and its object; the detail keeps what made it stale
+			if a := after.node("A"); tc.op != "pause_node" && (a.State == invStale || a.Stale != nil || !strings.Contains(a.Detail, "its execution:")) {
+				t.Fatalf("A, ended by the plan, reads state %q with stale object %v and detail %q", a.State, a.Stale, a.Detail)
+			}
 			wantStale := []string{"A", "C"}
 			if tc.op != "pause_node" {
 				wantStale = []string{"C"}
