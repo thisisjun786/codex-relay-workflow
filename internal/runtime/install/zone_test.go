@@ -838,3 +838,32 @@ func TestTheBackupAndItsManifestAreSyncedInTheirParents(t *testing.T) {
 		}
 	}
 }
+
+// A mode set on a copy reaches the disk only when that copy is synced after it is set: the file and the directory are
+// synced with the mode they are to keep, not before it.
+func TestTheModesOfTheBackupAreSyncedAfterTheyAreSet(t *testing.T) {
+	h, _, second, _, _ := zoneInstalled(t)
+	zoneStore(t, h)
+	dest := backupOf(h, "modes")
+	synced := map[string][]os.FileMode{}
+	restore := install.ReplaceModeSync(func(path string, real func(string) error) error {
+		rel, _ := filepath.Rel(dest, path)
+		if info, err := os.Stat(path); err == nil {
+			synced[rel] = append(synced[rel], info.Mode().Perm())
+		}
+		return real(path)
+	})
+	defer restore()
+	o := h.options()
+	o.StateBackup = dest
+	result, code := install.Install(context.Background(), o, "update", install.Source{From: second})
+	if code != install.OK || at(result, "swapGate", "stateBackup", "made") != true {
+		t.Fatalf("exit %d\n%s", code, golden.Canon(at(result, "swapGate")))
+	}
+	for path, mode := range map[string]os.FileMode{"ledger.log": 0o640, "tool.sh": 0o755, filepath.Join("scopes", "one"): 0o750} {
+		got := synced[path]
+		if len(got) != 1 || got[0] != mode {
+			t.Errorf("%s was synced with modes %v, want one sync with %v", path, got, mode)
+		}
+	}
+}

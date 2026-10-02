@@ -47,6 +47,14 @@ func ReplaceDirectorySync(wrap func(path string, next func(string) error) error)
 	return func() { syncDirectory = saved }
 }
 
+// ReplaceModeSync makes the sync of an entry after its mode is set go through wrap, which is given the path and the
+// real sync, until restored.
+func ReplaceModeSync(wrap func(path string, next func(string) error) error) (restore func()) {
+	saved := syncAfterMode
+	syncAfterMode = func(path string) error { return wrap(path, saved) }
+	return func() { syncAfterMode = saved }
+}
+
 // ReplaceBeforeWriteLock runs between every settings or bridge record write's decision and the
 // lock it acts under, until restored.
 func ReplaceBeforeWriteLock(between func(path string)) (restore func()) {

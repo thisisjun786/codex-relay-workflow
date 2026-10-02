@@ -39,6 +39,11 @@ var stateBackupStep = func(step string) error { return nil }
 // syncDirectory makes a directory's entries durable; a seam so a test can see which directories were synced and when.
 var syncDirectory = syncPath
 
+// syncAfterMode makes a copy's mode durable: a mode set on an inode reaches the disk only when that inode is synced
+// after it is set, and syncing its parent persists the name and not the mode. A seam so a test can see the mode an
+// entry had when it was synced.
+var syncAfterMode = syncPath
+
 // ManifestSuffix names the record written beside a backup (not inside it, so the backup holds exactly what the
 // state directory held).
 const ManifestSuffix = ".manifest.json"
@@ -125,7 +130,7 @@ func backupState(ctx context.Context, o Options, dest string) (Object, error) {
 		if _, err := os.Lstat(path); err == nil {
 			return failure(false, "%s already exists: a backup is never written over anything", path)
 		} else if !errors.Is(err, fs.ErrNotExist) {
-			return failure(false, "%s could not be examined: %v", path, err)
+			return failure(false, "%s could not be examined: %w", path, err)
 		}
 	}
 	entries, skipped, err := listState(source, selection.DBPath())
@@ -217,17 +222,29 @@ func backupState(ctx context.Context, o Options, dest string) (Object, error) {
 	// the modes of the source, now that every byte is in place and verified (a mode set earlier could make a copy
 	// unreadable to the verification, a directory first would refuse its own children): files, then directories
 	// deepest first. The directory the backup is made in keeps the 0700 it was created with.
+	// Each is synced right after its mode is set, while it can still be opened: a mode the source's owner could
+	// read through is one the copy's owner can open to sync.
+	setMode := func(e backedUp) error {
+		path := filepath.Join(dest, filepath.FromSlash(e.Path))
+		if err := os.Chmod(path, fs.FileMode(e.Mode)); err != nil {
+			return fmt.Errorf("the mode of the copy of %s could not be set: %v", e.Path, err)
+		}
+		if err := syncAfterMode(path); err != nil {
+			return fmt.Errorf("the mode of the copy of %s could not be made durable: %w", e.Path, err)
+		}
+		return nil
+	}
 	for _, e := range copied {
 		if e.Kind != "dir" {
-			if err := os.Chmod(filepath.Join(dest, filepath.FromSlash(e.Path)), fs.FileMode(e.Mode)); err != nil {
-				return failure(true, "the mode of the copy of %s could not be set: %v", e.Path, err)
+			if err := setMode(e); err != nil {
+				return failure(true, "%v", err)
 			}
 		}
 	}
 	for i := len(copied) - 1; i >= 0; i-- {
 		if e := copied[i]; e.Kind == "dir" {
-			if err := os.Chmod(filepath.Join(dest, filepath.FromSlash(e.Path)), fs.FileMode(e.Mode)); err != nil {
-				return failure(true, "the mode of the copy of %s could not be set: %v", e.Path, err)
+			if err := setMode(e); err != nil {
+				return failure(true, "%v", err)
 			}
 		}
 	}
@@ -547,11 +564,11 @@ func digestOf(path string) (string, error) {
 func syncPath(path string) error {
 	d, err := os.Open(path)
 	if err != nil {
-		return fmt.Errorf("%s could not be opened to sync it: %v", path, err)
+		return fmt.Errorf("%s could not be opened to sync it: %w", path, err)
 	}
 	defer d.Close()
 	if err := d.Sync(); err != nil {
-		return fmt.Errorf("%s could not be synced: %v", path, err)
+		return fmt.Errorf("%s could not be synced: %w", path, err)
 	}
 	return nil
 }
