@@ -24,7 +24,7 @@ func TestSupervisorMessages_stage_once_and_list_claimable_rows_in_staging_order(
 	_, err = s.StageSupervisorMessage(ctx, message("m3", "sup", "t0", "sending"))
 	must(t, err)
 	// When: the claimable rows are listed.
-	rows, err := s.ClaimableSupervisorMessages(ctx, [3]string{"queued", "deferred_busy", "withheld_pre_send"}, 100, 10)
+	rows, err := s.ClaimableSupervisorMessages(ctx, 100, 10)
 	must(t, err)
 	kept, err := s.SupervisorMessage(ctx, "m2")
 	must(t, err)

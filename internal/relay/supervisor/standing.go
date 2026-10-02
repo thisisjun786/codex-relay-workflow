@@ -175,7 +175,7 @@ func (c *Channel) ReportHolds(ctx context.Context, standing map[string]any) ([]m
 			if d["report"] != true {
 				continue
 			}
-		} else if state != "queued" && state != "deferred_busy" && state != "withheld_pre_send" {
+		} else if !store.SupervisorUnsent(state) {
 			continue
 		}
 		rid, _ := o["relationId"].(string)
