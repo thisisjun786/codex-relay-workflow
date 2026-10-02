@@ -108,6 +108,12 @@ func newHotWorld(tb testing.TB, name string, events, perEvent, revisionEvery int
 		dir = tb.TempDir()
 	}
 	path := filepath.Join(dir, name, "relay.sqlite3")
+	if _, err := os.Stat(path); err == nil {
+		// A store a benchmark kept on an earlier run: seed it again from nothing, not on top of itself.
+		if err := os.RemoveAll(filepath.Dir(path)); err != nil {
+			tb.Fatal(err)
+		}
+	}
 	ctx := context.Background()
 	s, err := store.Open(ctx, path, "")
 	if err != nil {
