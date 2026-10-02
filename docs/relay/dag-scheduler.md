@@ -361,7 +361,9 @@ nothing is created and no slot is reserved), `dag-accept` and `dag-correct` (pre
 follow only after it committed). A frozen release is also refused when the plan ended a node whose result its frozen manifest consumed since the intent was written, by the same gate as a new release. The landing of an accepted pull request (`dag-merge-judge`, `dag-merge-request`, `dag-integration-observe`)
 is refused for a paused or cancelled node and a paused plan, and not for an archived node, as it is not for an archived relationship. A refusal is `disposition_conflict` with the closed reason and the node in the
 detail, writes nothing, and is made again inside each command's transaction, because a pause moves neither the slice digest nor the criteria digest those transactions compare. A release already bound to its
-child answers as it always did. `dag-decision-record` and `dag-region-declare` record facts and are not refused.
+child answers as it always did. `dag-decision-record` and `dag-region-declare` record facts and are not refused, and neither is `dag-release-close`: it ends an abandoned intent and creates no
+child, so the operator can still return the slot of an abandoned release of a node the plan holds. The release that follows the close is refused like any other while the node is held, and the successor
+request a close leads to is a frozen release, which the check below stops until the plan lets the node run.
 
 A release asks again at the last point the DAG can stop a child: just before the managed start, for a new release and a continuation alike, and a node that left the plan (retired or replaced) is refused there as
 `unregistered_scope`; the refusal leaves the intent and the slot where they are, and the resume lets the same release go on. That last check is a read, so a pause that commits after it, including while the managed
