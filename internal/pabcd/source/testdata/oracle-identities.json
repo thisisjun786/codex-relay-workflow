@@ -1,0 +1,316 @@
+{
+ "clean": {
+  "kind": "resolved",
+  "commitSha": "fc65696793ea53998c3f24d39e545e27cfd091f4",
+  "dirty": false,
+  "statusZ": ""
+ },
+ "modified_tracked": {
+  "kind": "resolved",
+  "commitSha": "fc65696793ea53998c3f24d39e545e27cfd091f4",
+  "dirty": true,
+  "treeHash": "995db38d766793ca12fe532492dbc82ae98593f1124da1eb6c5d0c265844281e",
+  "statusZ": "IE0gdHJhY2tlZC50cwA="
+ },
+ "untracked_new": {
+  "kind": "resolved",
+  "commitSha": "fc65696793ea53998c3f24d39e545e27cfd091f4",
+  "dirty": true,
+  "treeHash": "d350e6346affad6a121014ccc56b05a5047ab42d47a50fdcfcdbd00d9e1653da",
+  "statusZ": "Pz8gbmV3LnRzAA=="
+ },
+ "ignored_file": {
+  "kind": "resolved",
+  "commitSha": "fc65696793ea53998c3f24d39e545e27cfd091f4",
+  "dirty": false,
+  "statusZ": ""
+ },
+ "deleted_tracked": {
+  "kind": "resolved",
+  "commitSha": "fc65696793ea53998c3f24d39e545e27cfd091f4",
+  "dirty": true,
+  "treeHash": "692b4a56e7f61f099a426176b98512dcf9eada44e20d1d9bbf9d65276ad97a85",
+  "statusZ": "IEQgdHJhY2tlZC50cwA="
+ },
+ "renamed_tracked": {
+  "kind": "resolved",
+  "commitSha": "fc65696793ea53998c3f24d39e545e27cfd091f4",
+  "dirty": true,
+  "treeHash": "9da38546ea10fc8143b209611fb3cfb7f6e79303ef3b99439ea3d53af8d2b261",
+  "statusZ": "UiAgbW92ZWQudHMAdHJhY2tlZC50cwA="
+ },
+ "staged_added": {
+  "kind": "resolved",
+  "commitSha": "fc65696793ea53998c3f24d39e545e27cfd091f4",
+  "dirty": true,
+  "treeHash": "f8dfea1449fa37d6f17129a0b5da2980406e75640781fa8f757b19b94428bc0b",
+  "statusZ": "QSAgc3RhZ2VkLnRzAA=="
+ },
+ "added_then_removed_untracked": {
+  "kind": "resolved",
+  "commitSha": "fc65696793ea53998c3f24d39e545e27cfd091f4",
+  "dirty": false,
+  "statusZ": ""
+ },
+ "second_commit_same_tree_shape": {
+  "kind": "resolved",
+  "commitSha": "3202ca78748906814fa44cc92e1bcf89b7241aed",
+  "dirty": false,
+  "statusZ": ""
+ },
+ "non_git": {
+  "kind": "unavailable",
+  "commitSha": "",
+  "dirty": false
+ },
+ "unborn_empty": {
+  "kind": "resolved",
+  "commitSha": "",
+  "dirty": false,
+  "statusZ": ""
+ },
+ "unborn_untracked": {
+  "kind": "resolved",
+  "commitSha": "",
+  "dirty": true,
+  "treeHash": "1df0f3f52b22119e5b0178fb9f7c3706832c74f94c9f94456aeac1629b71e64a",
+  "statusZ": "Pz8gYS50cwA/PyBkL2IudHMA"
+ },
+ "quoted_path": {
+  "kind": "resolved",
+  "commitSha": "fc65696793ea53998c3f24d39e545e27cfd091f4",
+  "dirty": true,
+  "treeHash": "8f88b18538b86df50305f64c56016ddbd134d4082d83f478b8ec78295e30714b",
+  "statusZ": "Pz8gdW50cmFja2VkICJxdW90ZSIgYW5kIHNwYWNlLnRzAA=="
+ },
+ "untracked_dir_file": {
+  "kind": "resolved",
+  "commitSha": "fc65696793ea53998c3f24d39e545e27cfd091f4",
+  "dirty": true,
+  "treeHash": "53a967759e2864eca349f2cbd477d701951327b7885af17d709cae34c22107b7",
+  "statusZ": "Pz8gdW50cmFja2VkIGRpci9uZXcudHMA"
+ },
+ "renamed_then_edited": {
+  "kind": "resolved",
+  "commitSha": "fc65696793ea53998c3f24d39e545e27cfd091f4",
+  "dirty": true,
+  "treeHash": "6c5cce5a4934594b2be7091bd54ed642cff0808e6e7a404fe3db5974d8e38480",
+  "statusZ": "Uk0gcmVuYW1lZC50cwB0cmFja2VkLnRzAA=="
+ },
+ "mm_edited_again": {
+  "kind": "resolved",
+  "commitSha": "fc65696793ea53998c3f24d39e545e27cfd091f4",
+  "dirty": true,
+  "treeHash": "833162445ead718e931559c6ed7f0d05fc3b871caf29f85979f5f24baf4bd113",
+  "statusZ": "TU0gdHJhY2tlZC50cwA="
+ },
+ "rename_source_swapped": {
+  "kind": "resolved",
+  "commitSha": "fc65696793ea53998c3f24d39e545e27cfd091f4",
+  "dirty": true,
+  "treeHash": "d81c31f41da06f67aff8a19d5fbbe5cede410d66e1ce2681fec203f1fd586332",
+  "statusZ": "UkQgYS50cwB0cmFja2VkLnRzAD8/IGIudHMA"
+ },
+ "md_and_ad": {
+  "kind": "resolved",
+  "commitSha": "fc65696793ea53998c3f24d39e545e27cfd091f4",
+  "dirty": true,
+  "treeHash": "07d8da932bb4e940069615f4e786465e58603f0b7737ce06f1c5c893e6da7dbb",
+  "statusZ": "QUQgYWRkZWQudHMATUQgdHJhY2tlZC50cwA="
+ },
+ "symlink_untracked": {
+  "kind": "resolved",
+  "commitSha": "fc65696793ea53998c3f24d39e545e27cfd091f4",
+  "dirty": true,
+  "treeHash": "76c44e991716b65cff16249891a88eca9393a7be8592de04bfd2c72891b6f179",
+  "statusZ": "Pz8gbGluawA="
+ },
+ "symlink_to_dir_untracked": {
+  "kind": "resolved",
+  "commitSha": "fc65696793ea53998c3f24d39e545e27cfd091f4",
+  "dirty": true,
+  "treeHash": "b2c53d81919bc28ee4b4fe0b5a47f63c0b38ebab75dbe843e0d29ee80f07ef8d",
+  "statusZ": "Pz8gZGlybGluawA="
+ },
+ "symlink_dangling_untracked": {
+  "kind": "resolved",
+  "commitSha": "fc65696793ea53998c3f24d39e545e27cfd091f4",
+  "dirty": true,
+  "treeHash": "4897b023832fee26d87337633a70b2d2f509700338e03d7e6f02d811beecdec7",
+  "statusZ": "Pz8gZGFuZ2xpbmcA"
+ },
+ "symlink_unicode_target": {
+  "kind": "resolved",
+  "commitSha": "fc65696793ea53998c3f24d39e545e27cfd091f4",
+  "dirty": true,
+  "treeHash": "21dee3ce6891026d4ab2fde51f19d0f122f2baaa45765cfa0a63071133fc3d39",
+  "statusZ": "Pz8gdWxpbmsA"
+ },
+ "symlink_invalid_target": {
+  "kind": "resolved",
+  "commitSha": "fc65696793ea53998c3f24d39e545e27cfd091f4",
+  "dirty": true,
+  "treeHash": "2dfc8a168cf70a11799c92aec0657114f8343df10e0380fd14e2e2df999072c1",
+  "statusZ": "Pz8gYmFkbGluawA="
+ },
+ "typechange_to_symlink": {
+  "kind": "resolved",
+  "commitSha": "fc65696793ea53998c3f24d39e545e27cfd091f4",
+  "dirty": true,
+  "treeHash": "99ac65f668d21f14f87a44bff22bb641c2df7c05d3ccd4db86fed61a7dd2842c",
+  "statusZ": "IFQgdHJhY2tlZC50cwA="
+ },
+ "empty_untracked_file": {
+  "kind": "resolved",
+  "commitSha": "fc65696793ea53998c3f24d39e545e27cfd091f4",
+  "dirty": true,
+  "treeHash": "0d77b58c1ec5fb9c33c8099e4d88a6b37db27f07ca036eba0a357f9b8a2be82b",
+  "statusZ": "Pz8gZW1wdHkudHMA"
+ },
+ "unicode_paths": {
+  "kind": "resolved",
+  "commitSha": "fc65696793ea53998c3f24d39e545e27cfd091f4",
+  "dirty": true,
+  "treeHash": "6a8829b10665df52a1d241bf86ed0a45f5418a300ad7058453c224d38df21cf3",
+  "statusZ": "Pz8g5pel5pysL+iqni50cwA/PyDtlZzquIAgw6kudHMA"
+ },
+ "newline_and_tab_in_path": {
+  "kind": "resolved",
+  "commitSha": "fc65696793ea53998c3f24d39e545e27cfd091f4",
+  "dirty": true,
+  "treeHash": "9e5afc6b43fe251777d556554ab2062b2098bd4aa2b4b96ccc4a6fcbae1b2b1d",
+  "statusZ": "Pz8gYQpiLnRzAD8/IHQJYWIudHMA"
+ },
+ "astral_vs_private_use_order": {
+  "kind": "resolved",
+  "commitSha": "fc65696793ea53998c3f24d39e545e27cfd091f4",
+  "dirty": true,
+  "treeHash": "e55a02cf41aa8103ed00186176aad94f5c5774e176124f7fc969168d25e853a9",
+  "statusZ": "Pz8gei50cwA/PyDugIAudHMAPz8g772GLnRzAD8/IPCdkpwudHMA"
+ },
+ "invalid_utf8_path": {
+  "kind": "resolved",
+  "commitSha": "fc65696793ea53998c3f24d39e545e27cfd091f4",
+  "dirty": true,
+  "treeHash": "d8dd7dae0a350678065a2997f154c23bf8c9595d206aa32e709edbfcce8b9a0c",
+  "statusZ": "Pz8gYmFk/y50cwA="
+ },
+ "invalid_utf8_collide": {
+  "kind": "resolved",
+  "commitSha": "fc65696793ea53998c3f24d39e545e27cfd091f4",
+  "dirty": true,
+  "treeHash": "be4d3eaa77905e808babe93e798f55e8c4df8b3c012c7a37fc15214917a7b6e7",
+  "statusZ": "Pz8gYeEudHMAPz8gYf4udHMAPz8gYf8udHMA"
+ },
+ "invalid_utf8_truncated_sequence": {
+  "kind": "resolved",
+  "commitSha": "fc65696793ea53998c3f24d39e545e27cfd091f4",
+  "dirty": true,
+  "treeHash": "a86d3d8a7534c3ea7e6d342ab9c574025786d2beabb91fc827ad73187fe8c1ba",
+  "statusZ": "Pz8geOKCLnRzAD8/IHjiguKCoi50cwA="
+ },
+ "invalid_utf8_overlong_surrogate_toolarge": {
+  "kind": "resolved",
+  "commitSha": "fc65696793ea53998c3f24d39e545e27cfd091f4",
+  "dirty": true,
+  "treeHash": "327d6716e78db1d624eb0c2fd3ffe3e685dfd8c553cd6079848c94accf472a16",
+  "statusZ": "Pz8gZvSQgIAudHMAPz8gb8CALnRzAD8/IHPtoIAudHMAPz8gdPCfmC50cwA="
+ },
+ "nested_repo": {
+  "kind": "resolved",
+  "commitSha": "fc65696793ea53998c3f24d39e545e27cfd091f4",
+  "dirty": true,
+  "treeHash": "f67ccc70fb33366cde5eeb3a778f48ee99202ecbbbe68a3e8e3fa92d0add6e1f",
+  "statusZ": "Pz8gbmVzdGVkLwA="
+ },
+ "intent_to_add_rename": {
+  "kind": "resolved",
+  "commitSha": "fc65696793ea53998c3f24d39e545e27cfd091f4",
+  "dirty": true,
+  "treeHash": "e56f8319157275d24140c72b8cbe30c3e15a9e737eb441bdf2e9712f7126da14",
+  "statusZ": "IFIgbW92ZWQudHMAdHJhY2tlZC50cwA="
+ },
+ "intent_to_add_rename_unicode_source": {
+  "kind": "resolved",
+  "commitSha": "6cecf6eba8e4429c32124ffebe291f6601185d91",
+  "dirty": true,
+  "treeHash": "65940abdaa37eea683f95b69a4bd295e617864e9fb379956263ddfd131cf69e7",
+  "statusZ": "IFIgbW92ZWQudHMAw6lhYmMudHMA"
+ },
+ "intent_to_add_rename_cjk_source": {
+  "kind": "resolved",
+  "commitSha": "a55bac2b830911e73f2cf71eab6e5f57a5ef9a9f",
+  "dirty": true,
+  "treeHash": "d437c116f1b8c9af4e2120fe96970e7a2c1c5174905029eeae247aa268647710",
+  "statusZ": "IFIgbW92ZWQudHMA7ZWc6riAYWJjLnRzAA=="
+ },
+ "intent_to_add_rename_astral_split_in_xy": {
+  "kind": "resolved",
+  "commitSha": "2dfdbae68a87a571bbcf3922191d23f43eaf0918",
+  "dirty": true,
+  "treeHash": "cb094040690e1d4cad6b58a4fae150951808293ebbe435893c04124abe87e34e",
+  "statusZ": "IFIgbW92ZWQudHMAYfCfmIBiLnRzAA=="
+ },
+ "intent_to_add_rename_astral_split_after_xy": {
+  "kind": "resolved",
+  "commitSha": "4650eb14e9b5c97d80108deb739ebfe965b441ed",
+  "dirty": true,
+  "treeHash": "561d1bfecd29f2fd0fdc46ac760b73de023f07bb2c0653ab1bf7f75069c23fe7",
+  "statusZ": "IFIgbW92ZWQudHMA8J+YgPCfmIB4LnRzAA=="
+ },
+ "file_over_2_gib_untracked": {
+  "kind": "resolved",
+  "commitSha": "fc65696793ea53998c3f24d39e545e27cfd091f4",
+  "dirty": true,
+  "treeHash": "dd6a12c34eeffd05b85245d31f4552ac1f1626954d8746b3b3cb5f6c8b7fc1fd",
+  "statusZ": "Pz8gaHVnZS5zcGFyc2UA"
+ },
+ "generated_exact_file": {
+  "kind": "resolved",
+  "commitSha": "fc65696793ea53998c3f24d39e545e27cfd091f4",
+  "dirty": true,
+  "treeHash": "5b0ae12be90f89bf6ab0940fd30b00f6958b3aa0f358da35e7df8b6638f30b47",
+  "statusZ": "IE0gdHJhY2tlZC50cwA/PyBnZW4uanNvbgA="
+ },
+ "generated_prefix_dir": {
+  "kind": "resolved",
+  "commitSha": "fc65696793ea53998c3f24d39e545e27cfd091f4",
+  "dirty": true,
+  "treeHash": "4608d75462fe2ee1e00bfbed27ebb854495c51faf1da95b54e36788cde3bef0d",
+  "statusZ": "IE0gdHJhY2tlZC50cwA/PyBzdWIveS50cwA/PyBzdWJ3YXkvei50cwA="
+ },
+ "generated_all_filtered": {
+  "kind": "resolved",
+  "commitSha": "fc65696793ea53998c3f24d39e545e27cfd091f4",
+  "dirty": false,
+  "statusZ": "Pz8gZ2VuLmpzb24A"
+ },
+ "generated_empty_string_ignored": {
+  "kind": "resolved",
+  "commitSha": "fc65696793ea53998c3f24d39e545e27cfd091f4",
+  "dirty": true,
+  "treeHash": "8f5c07b61e203c809f47f82385fde0cf0b1ee15c8ac3359106e12e55e3491f0c",
+  "statusZ": "Pz8gZ2VuLmpzb24A"
+ },
+ "generated_trailing_slash": {
+  "kind": "resolved",
+  "commitSha": "fc65696793ea53998c3f24d39e545e27cfd091f4",
+  "dirty": true,
+  "treeHash": "8478df465c353a57e7e02ea43d643b0a4d66460488ab00ba03e75a087fa779f0",
+  "statusZ": "Pz8gc3ViL3kudHMA"
+ },
+ "intent_to_add_rename_lone_surrogate_sorts_before_private_use": {
+  "kind": "resolved",
+  "commitSha": "c65d6b3eab5fae05b0e12587e56293ee9e3e5521",
+  "dirty": true,
+  "treeHash": "6c2c4e68b2c5e9e0629cc71425f28cea5dddaf8d363f2d0036dd9cb981445467",
+  "statusZ": "IFIgbW92ZWQudHMAYWLwn5iALnRzAD8/IO6AgC50cwA="
+ },
+ "intent_to_add_rename_lone_surrogate_is_not_a_replacement_char": {
+  "kind": "resolved",
+  "commitSha": "c65d6b3eab5fae05b0e12587e56293ee9e3e5521",
+  "dirty": true,
+  "treeHash": "6c2c4e68b2c5e9e0629cc71425f28cea5dddaf8d363f2d0036dd9cb981445467",
+  "statusZ": "IFIgbW92ZWQudHMAYWLwn5iALnRzAD8/IO6AgC50cwA="
+ }
+}

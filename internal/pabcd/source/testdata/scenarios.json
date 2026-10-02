@@ -1,0 +1,219 @@
+[
+ {
+  "id": "clean",
+  "script": ""
+ },
+ {
+  "id": "modified_tracked",
+  "script": "printf 'changed\\n' > tracked.ts"
+ },
+ {
+  "id": "untracked_new",
+  "script": "printf 'n\\n' > new.ts"
+ },
+ {
+  "id": "ignored_file",
+  "script": "mkdir -p ignored; printf 'j\\n' > ignored/junk.ts"
+ },
+ {
+  "id": "deleted_tracked",
+  "script": "rm tracked.ts"
+ },
+ {
+  "id": "renamed_tracked",
+  "script": "git mv tracked.ts moved.ts"
+ },
+ {
+  "id": "staged_added",
+  "script": "printf 's\\n' > staged.ts; git add staged.ts"
+ },
+ {
+  "id": "added_then_removed_untracked",
+  "script": "printf 't\\n' > temp.ts; rm temp.ts"
+ },
+ {
+  "id": "second_commit_same_tree_shape",
+  "script": "printf 'c\\n' > tracked.ts; git add -A; git commit -qm second"
+ },
+ {
+  "id": "non_git",
+  "base": "nogit",
+  "script": ""
+ },
+ {
+  "id": "unborn_empty",
+  "base": "unborn",
+  "script": ""
+ },
+ {
+  "id": "unborn_untracked",
+  "base": "unborn",
+  "script": "printf 'a\\n' > a.ts; mkdir d; printf 'b\\n' > d/b.ts"
+ },
+ {
+  "id": "quoted_path",
+  "script": "printf 'w\\n' > 'untracked \"quote\" and space.ts'"
+ },
+ {
+  "id": "untracked_dir_file",
+  "script": "mkdir 'untracked dir'; printf 'two\\n' > 'untracked dir/new.ts'"
+ },
+ {
+  "id": "renamed_then_edited",
+  "script": "git mv tracked.ts renamed.ts; printf 'two\\n' > renamed.ts"
+ },
+ {
+  "id": "mm_edited_again",
+  "script": "printf 'staged\\n' > tracked.ts; git add tracked.ts; printf 'two\\n' > tracked.ts"
+ },
+ {
+  "id": "rename_source_swapped",
+  "script": "git mv tracked.ts a.ts; mv a.ts b.ts"
+ },
+ {
+  "id": "md_and_ad",
+  "script": "printf 'staged\\n' > tracked.ts; git add tracked.ts; rm tracked.ts; printf 'added\\n' > added.ts; git add added.ts; rm added.ts"
+ },
+ {
+  "id": "symlink_untracked",
+  "script": "ln -s tracked.ts link"
+ },
+ {
+  "id": "symlink_to_dir_untracked",
+  "script": "ln -s sub dirlink"
+ },
+ {
+  "id": "symlink_dangling_untracked",
+  "script": "ln -s nowhere dangling"
+ },
+ {
+  "id": "symlink_unicode_target",
+  "script": "ln -s '대상-é.ts' ulink"
+ },
+ {
+  "id": "symlink_invalid_target",
+  "script": "ln -s \"$(printf 'tg\\377\\376')\" badlink"
+ },
+ {
+  "id": "typechange_to_symlink",
+  "script": "rm tracked.ts; ln -s sub tracked.ts"
+ },
+ {
+  "id": "empty_untracked_file",
+  "script": ": > empty.ts"
+ },
+ {
+  "id": "unicode_paths",
+  "script": "printf 'u\\n' > '한글 é.ts'; mkdir 日本; printf 'j\\n' > '日本/語.ts'"
+ },
+ {
+  "id": "newline_and_tab_in_path",
+  "script": "printf 'n\\n' > \"$(printf 'a\\nb.ts')\"; printf 't\\n' > \"$(printf 't\\tab.ts')\""
+ },
+ {
+  "id": "astral_vs_private_use_order",
+  "script": "printf 'astral\\n' > '𝒜.ts'; printf 'fullwidth\\n' > 'ｆ.ts'; printf 'pua\\n' > '.ts'; printf 'z\\n' > z.ts"
+ },
+ {
+  "id": "invalid_utf8_path",
+  "script": "printf 'bad\\n' > \"$(printf 'bad\\377.ts')\""
+ },
+ {
+  "id": "invalid_utf8_collide",
+  "script": "printf 'one\\n' > \"$(printf 'a\\341.ts')\"; printf 'two\\n' > \"$(printf 'a\\377.ts')\"; printf 'three\\n' > \"$(printf 'a\\376.ts')\""
+ },
+ {
+  "id": "invalid_utf8_truncated_sequence",
+  "script": "printf 't\\n' > \"$(printf 'x\\342\\202.ts')\"; printf 'u\\n' > \"$(printf 'x\\342\\202\\342\\202\\242.ts')\""
+ },
+ {
+  "id": "invalid_utf8_overlong_surrogate_toolarge",
+  "script": "printf 'overlong\\n' > \"$(printf 'o\\300\\200.ts')\"; printf 'surrogate\\n' > \"$(printf 's\\355\\240\\200.ts')\"; printf 'toolarge\\n' > \"$(printf 'f\\364\\220\\200\\200.ts')\"; printf 'truncated4\\n' > \"$(printf 't\\360\\237\\230.ts')\""
+ },
+ {
+  "id": "nested_repo",
+  "script": "mkdir nested; printf 'x\\n' > nested/f.ts; git -C nested init -q"
+ },
+ {
+  "id": "intent_to_add_rename",
+  "script": "mv tracked.ts moved.ts; git add -N moved.ts"
+ },
+ {
+  "id": "intent_to_add_rename_unicode_source",
+  "script": "printf 'a\\n' > 'éabc.ts'; git add -A; git commit -qm more; mv 'éabc.ts' moved.ts; git add -N moved.ts"
+ },
+ {
+  "id": "intent_to_add_rename_cjk_source",
+  "script": "printf 'a\\n' > '한글abc.ts'; git add -A; git commit -qm more; mv '한글abc.ts' moved.ts; git add -N moved.ts"
+ },
+ {
+  "id": "intent_to_add_rename_astral_split_in_xy",
+  "script": "printf 'a\\n' > 'a😀b.ts'; git add -A; git commit -qm more; mv 'a😀b.ts' moved.ts; git add -N moved.ts"
+ },
+ {
+  "id": "intent_to_add_rename_astral_split_after_xy",
+  "script": "printf 'a\\n' > '😀😀x.ts'; git add -A; git commit -qm more; mv '😀😀x.ts' moved.ts; git add -N moved.ts"
+ },
+ {
+  "id": "file_over_2_gib_untracked",
+  "script": "truncate -s 2147483648 huge.sparse"
+ },
+ {
+  "id": "generated_exact_file",
+  "options": {
+   "generatedPaths": [
+    "gen.json"
+   ]
+  },
+  "script": "printf '{}\\n' > gen.json; printf 'edit\\n' > tracked.ts"
+ },
+ {
+  "id": "generated_prefix_dir",
+  "options": {
+   "generatedPaths": [
+    "sub"
+   ]
+  },
+  "script": "printf 'y\\n' > sub/y.ts; mkdir subway; printf 'z\\n' > subway/z.ts; printf 'edit\\n' > tracked.ts"
+ },
+ {
+  "id": "generated_all_filtered",
+  "options": {
+   "generatedPaths": [
+    "gen.json"
+   ]
+  },
+  "script": "printf '{}\\n' > gen.json"
+ },
+ {
+  "id": "generated_empty_string_ignored",
+  "options": {
+   "generatedPaths": [
+    ""
+   ]
+  },
+  "script": "printf '{}\\n' > gen.json"
+ },
+ {
+  "id": "generated_trailing_slash",
+  "options": {
+   "generatedPaths": [
+    "sub/"
+   ]
+  },
+  "script": "printf 'y\\n' > sub/y.ts"
+ },
+ {
+  "id": "intent_to_add_rename_lone_surrogate_sorts_before_private_use",
+  "script": "printf 'a\\n' > 'ab😀.ts'; git add -A; git commit -qm more; mv 'ab😀.ts' moved.ts; git add -N moved.ts; printf 'pua\\n' > '.ts'"
+ },
+ {
+  "id": "intent_to_add_rename_lone_surrogate_is_not_a_replacement_char",
+  "options": {
+   "generatedPaths": [
+    "�.ts"
+   ]
+  },
+  "script": "printf 'a\\n' > 'ab😀.ts'; git add -A; git commit -qm more; mv 'ab😀.ts' moved.ts; git add -N moved.ts; printf 'pua\\n' > '.ts'"
+ }
+]
