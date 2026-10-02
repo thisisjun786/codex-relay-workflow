@@ -35,8 +35,13 @@ passes it as `CRW_TEST_BINARY`, so no package links its own; `internal/testsuppo
 one per test process when the variable is unset, and `CRWDevPath` and `BuildCRW` build `crw-dev` and
 the seam builds a few tests need (a link-time clock, a build tag, an overlay) the same way. Every
 package's `TestMain` is `testsupport.Main`, which points the homes, the XDG directories and the
-relay's roots at one temporary tree, keeps `CRW_REFUSE_LIVE_STATE=1`, and removes the tree and every
-binary the process built after the tests. The Makefile names the slowest packages as parts
+relay's roots at one temporary tree (`crw-relay-test-*` in `TMPDIR`), keeps `CRW_REFUSE_LIVE_STATE=1`, and
+removes the tree and every binary the process built after the tests. A helper process a test starts from
+its own test binary (a crash child, a lock holder) passes through that `TestMain` as well; it makes its
+tree inside its starter's, named by `CRW_TEST_ISOLATION_ROOT`, so a helper killed by a signal or ended by
+`os.Exit` leaves nothing once its starter removes its own tree. `CRW_TEST_KEEP_ROOT=1` keeps the trees of a
+run and prints their paths, for debugging on your own machine ([leftover trees](#leftover-isolation-trees)).
+The Makefile names the slowest packages as parts
 and `rest` takes every other package plus the `dev`-tagged tests, so the parts are disjoint, add
 up to `make test`, and a new package lands in `rest`; a renamed package makes its part fail in
 `go list`, never skip. The `dist` leg builds the release binaries, then runs the isolated-home
@@ -66,6 +71,25 @@ During iteration run the affected tests and reuse valid evidence for unchanged s
 and environments. CI concurrency cancels obsolete runs within the same PR or branch. An
 interrupted dev push is not release evidence: rerun that exact push run if the owner later
 chooses its commit.
+
+## Leftover isolation trees
+
+Nothing removes a `crw-relay-test-*` directory a run leaves: a test binary killed by `go test -timeout` or by
+SIGKILL skips its removal, `CRW_TEST_KEEP_ROOT` keeps them on purpose, and the suite before the helper trees
+were nested left about six per full run. To see the ones in `TMPDIR` that are more than a day old (a younger
+one may belong to a run in progress), which removes nothing:
+
+```sh
+find "${TMPDIR:-/tmp}" -maxdepth 1 -type d -name 'crw-relay-test-*' -mtime +0
+```
+
+To remove them, repairing permissions first because a tree may hold read-only directories, once you have
+checked the list and no test run of yours is still going:
+
+```sh
+find "${TMPDIR:-/tmp}" -maxdepth 1 -type d -name 'crw-relay-test-*' -mtime +0 \
+  -exec sh -c 'chmod -R u+w -- "$@" && rm -rf -- "$@"' sh {} +
+```
 
 ## Plugin package
 
