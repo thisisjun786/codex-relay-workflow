@@ -16,8 +16,6 @@ type refreshRepo struct {
 	path string
 }
 
-func newRefreshRepo(t *testing.T) *refreshRepo { return newRefreshRepoFormat(t, "sha1") }
-
 func newRefreshRepoFormat(t *testing.T, format string) *refreshRepo {
 	t.Helper()
 	r := &refreshRepo{t: t, path: t.TempDir()}
