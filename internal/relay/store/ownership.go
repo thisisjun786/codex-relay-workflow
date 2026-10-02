@@ -272,8 +272,9 @@ func requiredSchema() ([]requiredTable, error) {
 // in the DDL's order, so the first refusal and its words are the ones the per-table reads gave.
 //
 // The digest speaks only for plain tables of the main database. When a required table is missing,
-// is spelled with another case or is a view (whose columns come from other objects), the answer is
-// not a function of the text and the per-table read of every table decides, uncached.
+// is spelled with another case, is a view (whose columns come from other objects) or is hidden by a
+// temporary table or view of the connection, the answer is not a function of the text and the
+// per-table read of every table decides, uncached, as it always did.
 func ValidateOwnershipSchema(ctx context.Context, db ownership.Queryer) error {
 	required, err := requiredSchema()
 	if err != nil {
@@ -335,12 +336,18 @@ func requiredNames(required []requiredTable) map[string]bool {
 	return names
 }
 
-// catalogDigest reads the main database's tables and views and returns the digest of the required
-// tables, and whether the schema is plain: every required table is there as a table under the
-// DDL's own spelling and none is shadowed by a view.
+// catalogDigest reads the main database's tables and views and the names of the connection's
+// temporary ones, and returns the digest of the required tables and whether the schema is plain:
+// every required table is there as a table under the DDL's own spelling, none is shadowed by a
+// view, and no temporary table or view hides one (SQLite resolves an unqualified name to the
+// temporary schema first, in any case).
 func catalogDigest(ctx context.Context, db ownership.Queryer, required []requiredTable) (string, bool, error) {
 	names := requiredNames(required)
-	rows, err := db.QueryContext(ctx, "SELECT type, name, sql FROM sqlite_master WHERE type IN ('table', 'view') ORDER BY name")
+	lower := make(map[string]bool, len(names))
+	for name := range names {
+		lower[strings.ToLower(name)] = true
+	}
+	rows, err := db.QueryContext(ctx, "SELECT type, name, sql FROM sqlite_master WHERE type IN ('table', 'view') UNION ALL SELECT 'temp', name, NULL FROM sqlite_temp_master WHERE type IN ('table', 'view') ORDER BY name")
 	if err != nil {
 		return "", false, err
 	}
@@ -352,6 +359,10 @@ func catalogDigest(ctx context.Context, db ownership.Queryer, required []require
 		var createText sql.RawBytes
 		if err = rows.Scan(&kind, &name, &createText); err != nil {
 			break
+		}
+		if kind == "temp" {
+			plain = plain && !lower[strings.ToLower(name)]
+			continue
 		}
 		if !names[name] {
 			continue

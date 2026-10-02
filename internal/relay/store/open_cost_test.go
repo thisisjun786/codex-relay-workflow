@@ -616,6 +616,8 @@ func TestValidateOwnershipSchemaAnswersAsThePerTableValidationDoes(t *testing.T)
 		{"two tables missing", []string{"DROP TABLE " + later, "DROP TABLE " + earlier}, "required table missing: " + earlier},
 		{"a table spelled in another case", []string{"ALTER TABLE journal RENAME TO journal_tmp", "ALTER TABLE journal_tmp RENAME TO Journal"}, ""},
 		{"a view in place of a table", []string{"ALTER TABLE journal RENAME TO journal_rows", "CREATE VIEW journal AS SELECT * FROM journal_rows"}, ""},
+		{"a temporary table hiding a required one", []string{"CREATE TEMP TABLE journal (at TEXT)"}, "required column missing: journal."},
+		{"a temporary table of another case hiding a required one", []string{"CREATE TEMP TABLE JOURNAL (at TEXT)"}, "required column missing: journal."},
 		{"a view without a required column", []string{"ALTER TABLE journal RENAME TO journal_rows", "CREATE VIEW journal AS SELECT at, kind, subject FROM journal_rows"}, "required column missing: journal."},
 	}
 	for _, c := range cases {
