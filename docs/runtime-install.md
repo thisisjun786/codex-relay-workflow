@@ -264,7 +264,7 @@ Readable JSON at that path is not proof, and neither is a claim the retired Pyth
 | No claim, and the directory holds files | Somebody else's. Refused, nothing touched, even when the host record selects something inside it |
 | No claim, and the directory is empty | Taken over as it stands |
 | A claim of this command's, the lock held | Another run is building it. Refused, nothing touched |
-| A claim of this command's, the lock free, nothing selecting or naming it | An abandoned staging. Removed (through a tombstone, as [remove](#removing-a-runtime) removes) and built again, but only under remove's rules, read again under the promotion lock: kept, and the run refused, while a process may run out of it, a relay daemon record cannot be read, or a registration names it or cannot be read. One the record's `outgoing` names was in service, so it is kept and its claim settled. Where there is no process table (darwin) it is kept too, and the answer gives the recovery for a staging that was never promoted |
+| A claim of this command's, the lock free, nothing selecting or naming it | An abandoned staging. Removed (through a tombstone, as [remove](#removing-a-runtime) removes) and built again, but only under remove's rules, read again under the promotion lock: kept, and the run refused, while a process may run out of it, a relay daemon record cannot be read, or a registration names it or cannot be read. One the record's `outgoing` names was in service, so it is kept and its claim settled. Where there is no process table (darwin) it is kept too, and the answer gives the recovery for a staging that was never promoted. A tombstone (`.crw-removing-<name>`) that holds such a claim is not reclaimed this way: an install reclaims the directory under a runtime's own name, never a tombstone for its own sake, and `crw install remove` finishes it ([Removing a runtime](#removing-a-runtime)) |
 | A claim, and whether anyone holds it could not be established | Kept, and reported with what recovery needs |
 | A settled claim, every component selects it and the pointer names it | Already installed. Reported, nothing rebuilt |
 | A settled claim the record selects for one component and not another | Refused, naming each component's selection; `crw install rollback <dir>` selects every component and swaps nothing |
@@ -479,9 +479,13 @@ deletion that does not finish exits 3 naming the tombstone. A kill anywhere leav
 directory or a tombstone. `crw install status` lists every tombstone under `interruptedRemovals`,
 and `crw install remove` of the tombstone, or of the runtime's name when only its tombstone is left,
 finishes it once no process runs out of it and no registration names it. Do not delete a tombstone
-by hand: finishing it also drops what the host record still lists under the runtime's name. A
-tombstone that carries no claim of this command's is somebody else's directory: status reports it
-`ours: false`, and nothing removes it.
+by hand: finishing it also drops what the host record still lists under the runtime's name.
+`crw doctor`'s residue lists a tombstone whose claim is an abandoned staging's (a reclaim, or a
+failed run's candidate, killed before its deletion finished) and names the same `crw install
+remove` for it as status does. A tombstone a removal of a settled runtime left, or an empty one,
+is not residue by the [staging decision](#the-claim-a-run-leaves-behind), so status alone reports it. A
+tombstone that holds files and carries no claim of this command's is somebody else's directory:
+status reports it `ours: false`, and nothing removes it.
 
 What remove cannot see is a command fixed before the update that will start a process later: a
 turn holds the hook command it resolved when it started until it ends
@@ -565,8 +569,10 @@ Two read-only commands, each answering a different question:
 - `crw doctor` is the host diagnosis: the host record reading, which runtime kind is selected, the
   Codex CLI version against the one the wiring was measured on, the App Server observed through the
   selected bridge, the pointer, the promotion lock, the settings records and every executable they
-  name, the [classification](#installation-ownership) of each component, the residue a later install
-  would reclaim, the relay's own scope reading, and [the six results](#six-results-that-never-imply-one-another).
+  name, the [classification](#installation-ownership) of each component, the residue on the
+  destination (an abandoned staging a later install would reclaim, and the tombstone of an
+  interrupted removal, which `crw install remove` finishes), the relay's own scope reading, and
+  [the six results](#six-results-that-never-imply-one-another).
   `--temporary` records the destination as a temporary one, so a proof taken there is never read as
   a claim about a host.
 
