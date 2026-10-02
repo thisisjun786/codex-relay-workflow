@@ -518,7 +518,7 @@ were created (the event's first sighting, then when its delivery was queued). Th
 rows form one queue per recipient; a persistent per-parent pointer holds the recipient last
 attempted and the tick takes the queues after it, so a recipient that cannot take a send (busy,
 withheld, inside its gap) costs one attempt and never keeps another recipient of the same parent
-waiting (a recipient whose rows are refused can use the parent's attempts of one tick, and the pointer has moved on by the next). Inside a queue the walk starts after a marker, the key of the last row the previous tick
+waiting (a recipient whose rows are refused can use the parent's attempts of one tick, and the pointer has moved on by the next). A parent's turn reads only the due rows it can attempt, however many are due: its attempts are the smaller of `MaxSendsPerParentPerTick` and what is left of the tick's budget, it takes that many recipient queues, and a queue is reached only after the queues before it have each spent an attempt, so the i-th (from 0) reads at most that many attempts less i rows (three rows in all at the defaults). Inside a queue the walk starts after a marker, the key of the last row the previous tick
 refused, and a refusal is an attempt that returned an error or returned nothing while its row did
 not move: that row stays as it is, no hold and no reschedule, the walk goes on to the recipient's
 next row within the tick's attempts, and the next tick starts after it. Without this a delivery
@@ -526,9 +526,9 @@ that fails before changing its own state stays due, stays oldest and blocks ever
 that parent indefinitely. A tick that refuses nothing clears the marker, so with nothing refused a
 recipient's deliveries go out in creation order: a backlog that built up while the parent was busy
 leaves one a tick, oldest first, once its turn has ended and the oldest delivery's busy backoff (below)
-has run out. Both are keys, not positions, because a
+has run out. Both are keys, as is the parent rotation (below), not positions, because a
 position into a list that changes between ticks drifts when rows leave and come back; a cursor an
-older scheduler wrote (an index) reads as no pointer. A relationship that has spent its hour is
+older scheduler wrote (an index) reads as no pointer (the parent rotation starts some parent once and is then replaced by an id). A relationship that has spent its hour is
 not due (see "When the send budget holds a delivery"), so its queued rows spend no attempt.
 
 A recipient that is mid-turn is never interrupted, and a delivery to it waits out a backoff that counts
@@ -999,7 +999,12 @@ asks how much each of them has, then takes a bounded share from each, dealt one 
 A single oldest-first window let one parent's backlog take every slot. Reconciliation is
 selected the same way. A recipient that sends, defers or is busy ends its own queue for that tick; a row that errors is refused, the next row of that recipient is tried, and none of it reserves capacity or creates a hold. The tick has one budget of attempts
 (`max_sends_per_tick`, 4), whatever their outcome, and a parent may use two of them
-(`MaxSendsPerParentPerTick`). A tick wakes a recipient at most once, because its instant is fixed
+(`MaxSendsPerParentPerTick`). Parents take turns in id order, starting after the parent of the first walk of the
+previous tick: `delivery_parents` holds that parent's id, so a parent that gains or loses work does not move anyone
+else's turn (it used to be a position in the list of parents with work, which skipped one parent or served one
+twice when another came or went). The first round gives each parent with something due one attempt while the budget
+lasts, so a tick opens only as many parents as it has attempts and reads no other parent. The reconciliation pass still
+rotates its parents by position. A tick wakes a recipient at most once, because its instant is fixed
 and the gap is longer, so through the daemon (20 s ticks) one parent receives at most 180
 deliveries an hour and the scheduler as a whole 720; a recipient reached outside the daemon (the
 `deliver` command) is held to 720 an hour by the gap alone.

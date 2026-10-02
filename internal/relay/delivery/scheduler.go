@@ -6,6 +6,7 @@ import (
 	"slices"
 	"sort"
 	"strconv"
+	"strings"
 )
 
 // TickCounts are the delivery counters of the daemon's TickReport.
@@ -22,8 +23,18 @@ type Scheduler struct {
 	// MaxSendsTick is policy.max_sends_per_tick: 0 means its default 4, a negative value 0. It is
 	// the tick's budget of attempts, whatever their outcome.
 	MaxSendsTick int
+	// afterParents is a test seam: it runs between the read of the parents with due deliveries and the
+	// opening of their walks, where a parent's deliveries can be taken.
+	afterParents func()
 }
 
+// parentsKey is where the parent rotation is kept: the id of the parent of the first walk of the
+// previous tick.
+const parentsKey = "delivery_parents"
+
+// cursor and advance keep a position into a list that can change between ticks. ReconcilePass still
+// rotates its parents and their rows with them; the delivery pass keys its rotation (parentsKey,
+// pointer).
 func (sc *Scheduler) cursor(ctx context.Context, listing string, size int) (int, error) {
 	if size <= 0 {
 		return 0, nil
@@ -60,7 +71,8 @@ func (sc *Scheduler) setCursor(ctx context.Context, listing, value string) error
 
 // pointer is a cursor that holds a key rather than a position: "" when none is stored. A
 // position into a list that changes between ticks drifts when rows leave and come back; a key
-// does not, because the walk resumes at the first entry after it.
+// does not, because the walk resumes at the first entry after it. A cursor an older scheduler
+// wrote (an index) is only an odd key: it starts the walk somewhere once and is then replaced.
 func (sc *Scheduler) pointer(ctx context.Context, listing string) (string, error) {
 	row, err := one(ctx, sc.Delivery.Store, "SELECT cursor FROM discovery_cursors WHERE task_id = 'scheduler' AND listing = ?", listing)
 	if err != nil || row == nil {
@@ -82,10 +94,21 @@ func rowKey(r Row) string {
 	return r.S("first_seen_at") + "|" + r.S("created_at") + "|" + r.S("event_id")
 }
 
+// splitKey is rowKey read back into its three parts. ok is false for a string that is not a key
+// (an index an older scheduler stored), which the readers treat as no marker.
+func splitKey(key string) (firstSeen, created, event string, ok bool) {
+	parts := strings.SplitN(key, "|", 3)
+	if len(parts) != 3 {
+		return "", "", "", false
+	}
+	return parts[0], parts[1], parts[2], true
+}
+
 // queue is one recipient's due deliveries of one parent, in the order this tick walks them.
 type queue struct {
 	recipient string
-	// rows start after the marker and wrap once, so a tick with no marker walks creation order.
+	// rows start after the marker and wrap once, so a tick with no marker walks creation order. They
+	// are the first rows of that order the tick can use, not all of them.
 	rows []Row
 	// marker is the key of the row the previous tick refused last, "" when it refused none.
 	marker string
@@ -96,9 +119,10 @@ type queue struct {
 	done      bool
 }
 
-// parentWalk is one parent's turn in a tick: up to MaxSendsPerParentPerTick recipient queues, taken
-// round robin by recipient id from the one after the recipient last attempted, so a recipient that
-// cannot take a send never keeps another recipient of the same parent waiting.
+// parentWalk is one parent's turn in a tick: up to share recipient queues (share is the most
+// attempts the turn can make), taken round robin by recipient id from the one after the recipient
+// last attempted, so a recipient that cannot take a send never keeps another recipient of the
+// same parent waiting.
 type parentWalk struct {
 	parent   string
 	share    int
@@ -111,70 +135,75 @@ type parentWalk struct {
 func pointerKey(parent string) string           { return "deliver:" + parent }
 func markerKey(parent, recipient string) string { return "deliver:" + parent + ">" + recipient }
 
-// open builds a parent's walk from its due rows. It returns nil when none are due.
-func (sc *Scheduler) open(ctx context.Context, parent string, now float64, share int) (*parentWalk, error) {
-	rows, err := sc.Delivery.EligibleRows(ctx, parent, now)
-	if err != nil || len(rows) == 0 || share <= 0 {
-		return nil, err
+// add puts a recipient's queue in the walk. A recipient whose due rows were taken between the read
+// of the recipients and the read of its rows has no queue: next indexes the first row of the queue
+// it is given.
+func (w *parentWalk) add(recipient, marker string, rows []Row) {
+	if len(rows) == 0 {
+		return
 	}
-	byRecipient := map[string][]Row{}
-	var recipients []string
-	for _, r := range rows {
-		id := r.S("recipient_task_id")
-		if _, seen := byRecipient[id]; !seen {
-			recipients = append(recipients, id)
-		}
-		byRecipient[id] = append(byRecipient[id], r)
+	w.queues = append(w.queues, &queue{recipient: recipient, rows: rows, marker: marker})
+}
+
+// open builds a parent's walk from the due rows its turn can use, and no more. attempts is the
+// most attempts the turn can make: the parent's share of the tick, or what is left of the tick's
+// budget when that is less. The turn takes up to attempts recipient queues, and a queue is only
+// reached after the queues before it are done, which each took an attempt to become: the i-th
+// (from 0) can use at most attempts-i rows, and that is how many it reads, attempts*(attempts+1)/2 in
+// all. It returns nil when none are due.
+func (sc *Scheduler) open(ctx context.Context, parent string, now float64, attempts int) (*parentWalk, error) {
+	if attempts <= 0 {
+		return nil, nil
 	}
-	sort.Strings(recipients)
+	d := sc.Delivery
 	after, err := sc.pointer(ctx, pointerKey(parent))
 	if err != nil {
 		return nil, err
 	}
-	// The first recipient after the pointer, wrapping; a legacy integer pointer sorts before or
-	// after every id and the walk simply starts at the first queue.
-	start := sort.Search(len(recipients), func(i int) bool { return recipients[i] > after })
-	w := &parentWalk{parent: parent, share: share}
-	for i := 0; i < len(recipients) && len(w.queues) < share; i++ {
-		id := recipients[(start+i)%len(recipients)]
+	// The first recipients after the pointer, wrapping.
+	recipients, err := d.dueRecipients(ctx, parent, now, after, attempts)
+	if err != nil {
+		return nil, err
+	}
+	w := &parentWalk{parent: parent, share: attempts}
+	for _, id := range recipients {
 		marker, err := sc.pointer(ctx, markerKey(parent, id))
 		if err != nil {
 			return nil, err
 		}
-		w.queues = append(w.queues, &queue{recipient: id, rows: afterMarker(byRecipient[id], marker), marker: marker})
+		rows, err := d.dueRows(ctx, parent, now, id, marker, attempts-len(w.queues))
+		if err != nil {
+			return nil, err
+		}
+		w.add(id, marker, rows)
+	}
+	if len(w.queues) == 0 {
+		return nil, nil
 	}
 	return w, nil
-}
-
-// afterMarker puts the rows after the marker first and the rest, wrapped, behind them.
-func afterMarker(rows []Row, marker string) []Row {
-	if marker == "" {
-		return rows
-	}
-	split := sort.Search(len(rows), func(i int) bool { return rowKey(rows[i]) > marker })
-	return append(slices.Clone(rows[split:]), rows[:split]...)
 }
 
 // Deliver is daemon._deliver: a fair slice, one struggling parent never spending the budget.
 //
 // The tick has one budget of attempts (MaxSendsTick) and each parent may use at most
-// MaxSendsPerParentPerTick of it; parents take turns one attempt at a time, in the order the
-// delivery_parents cursor rotates. Within a parent the queue of a recipient goes oldest event
-// first. An attempt that sends, finds the recipient busy, withholds, or is refused by the
-// recipient's gap ends that recipient's queue for the tick. An attempt that is refused outright (it
-// returned an error, or nothing while its row did not move) does not: the next row of that
-// recipient is tried, within the budget, and the refused row's key is kept as a marker so the next
-// tick starts after it and a row that cannot be sent never holds back the rows behind it. A tick
-// that refuses nothing clears the marker, so with nothing refused a recipient's rows go out in
-// creation order.
+// MaxSendsPerParentPerTick of it; parents take turns one attempt at a time, in id order starting
+// after the parent of the first walk of the previous tick. The delivery_parents cursor holds that
+// parent's id, not a position, so a parent that gains or loses work moves nobody else's turn. A tick
+// that fails to open a walk (a read error) stores nothing and starts again where it did.
+//
+// The first round gives each parent with a due delivery one attempt while the budget lasts, so only
+// as many parents as the budget has attempts are opened, and a parent reads only the rows its turn
+// can attempt (open). Within a parent the queue of a recipient goes oldest event first. An attempt
+// that sends, finds the recipient busy, withholds, or is refused by the recipient's gap ends that
+// recipient's queue for the tick. An attempt that is refused outright (it returned an error, or
+// nothing while its row did not move) does not: the next row of that recipient is tried, within the
+// budget, and the refused row's key is kept as a marker so the next tick starts after it and a row
+// that cannot be sent never holds back the rows behind it. A tick that refuses nothing clears the
+// marker, so with nothing refused a recipient's rows go out in creation order.
 func (sc *Scheduler) Deliver(ctx context.Context, adapter Adapter, now float64, report *TickCounts) error {
 	d := sc.Delivery
 	parents, err := d.EligibleParents(ctx, now)
 	if err != nil || len(parents) == 0 {
-		return err
-	}
-	cursor, err := sc.cursor(ctx, "delivery_parents", len(parents))
-	if err != nil {
 		return err
 	}
 	budget := sc.MaxSendsTick
@@ -184,19 +213,40 @@ func (sc *Scheduler) Deliver(ctx context.Context, adapter Adapter, now float64, 
 	if budget < 0 {
 		budget = 0
 	}
-	order := append(slices.Clone(parents[cursor:]), parents[:cursor]...)
-	if err := sc.advance(ctx, "delivery_parents", 1, len(parents)); err != nil {
+	// The first parent with an id after the one that started the previous tick, wrapping.
+	after, err := sc.pointer(ctx, parentsKey)
+	if err != nil {
 		return err
+	}
+	start := sort.Search(len(parents), func(i int) bool { return parents[i] > after }) % len(parents)
+	order := append(slices.Clone(parents[start:]), parents[:start]...)
+	attempts := min(d.Policy.MaxSendsPerParentPerTick, budget)
+	if sc.afterParents != nil {
+		sc.afterParents()
 	}
 	var walks []*parentWalk
 	for _, parent := range order {
-		w, err := sc.open(ctx, parent, now, d.Policy.MaxSendsPerParentPerTick)
+		if len(walks) >= budget {
+			break
+		}
+		w, err := sc.open(ctx, parent, now, attempts)
 		if err != nil {
 			return err
 		}
 		if w != nil {
 			walks = append(walks, w)
 		}
+	}
+	// The parent of the first walk started the tick. When no walk opened (no budget, or the rows of
+	// every parent listed were taken since) the first parent listed did, so the rotation still moves on.
+	// Storing the first parent listed when its own walk is empty would start the parent after it
+	// again in the next tick.
+	started := order[0]
+	if len(walks) > 0 {
+		started = walks[0].parent
+	}
+	if err := sc.setCursor(ctx, parentsKey, started); err != nil {
+		return err
 	}
 	for budget > 0 {
 		progressed := false
