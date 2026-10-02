@@ -46,6 +46,16 @@ func zoneStore(t *testing.T, h *host) (outside string) {
 	if err := syscall.Mkfifo(filepath.Join(h.relayState, "control.fifo"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// a link that goes through another link: state/indirect.log -> chain/current/ledger, current -> chain/one
+	chain := t.TempDir()
+	write(t, filepath.Join(chain, "one", "ledger"), "OLD\n")
+	write(t, filepath.Join(chain, "two", "ledger"), "NEW\n")
+	if err := os.Symlink(filepath.Join(chain, "one"), filepath.Join(chain, "current")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(chain, "current", "ledger"), filepath.Join(h.relayState, "indirect.log")); err != nil {
+		t.Fatal(err)
+	}
 	return outside
 }
 
@@ -380,6 +390,17 @@ func TestABackupThatFailsOrIsNotOfOneMomentRefusesTheSwapAndKeepsWhatItCopied(t 
 		"a copied file is damaged": {func(h *host) error {
 			return os.WriteFile(filepath.Join(backupOf(h, "partial"), "ledger.log"), []byte("damaged"), 0o600)
 		}, "copy of ledger.log"},
+		"a link in the chain behind a linked file is repointed": {func(h *host) error {
+			target, err := os.Readlink(filepath.Join(h.relayState, "indirect.log"))
+			if err != nil {
+				return err
+			}
+			current := filepath.Dir(target)
+			if err := os.Remove(current); err != nil {
+				return err
+			}
+			return os.Symlink(filepath.Join(filepath.Dir(current), "two"), current)
+		}, "changed"},
 		"a file of the store grows": {func(h *host) error { return appendTo(filepath.Join(h.relayState, "relay.sqlite3"), "x") }, "changed"},
 		"a file is added":           {func(h *host) error { return os.WriteFile(filepath.Join(h.relayState, "new.log"), []byte("n"), 0o600) }, "changed"},
 		"a file goes":               {func(h *host) error { return os.Remove(filepath.Join(h.relayState, "ledger.log")) }, "changed"},
@@ -677,4 +698,49 @@ func TestTheBackupOfALinkedStoreCarriesItsLog(t *testing.T) {
 	if err := restored.QueryRow("SELECT value FROM schema_meta WHERE key = 'probe'").Scan(&got); err != nil || got != "only in the log" {
 		t.Fatalf("the backup does not hold the commit that only the log held: %q, %v", got, err)
 	}
+}
+
+// A refusal after the backup was taken still reports it, on every path that moves the pointer: the copy is there, it is
+// kept, and the result says where, so "nothing was written" is never told of a run that wrote a backup.
+func TestARefusalAfterTheBackupStillReportsItOnResumeAndOnRollback(t *testing.T) {
+	failPlacement := func() func() {
+		return install.ReplacePointerPlacement(func(path, target string) error { return errors.New("injected: the pointer move failed") })
+	}
+	check := func(t *testing.T, h *host, result record.Object, code int, backup string, pointerWas string) {
+		t.Helper()
+		if code != install.Refused || at(result, "swapGate", "stateBackup", "made") != true || at(result, "swapGate", "stateBackup", "kept") != true ||
+			at(result, "swapGate", "stateBackup", "destination") != backup || !strings.Contains(text(at(result, "note")), "stays at "+backup) {
+			t.Fatalf("exit %d\n%s\nnote: %v", code, golden.Canon(at(result, "swapGate")), at(result, "note"))
+		}
+		if _, err := os.Stat(backup + install.ManifestSuffix); err != nil {
+			t.Fatalf("the manifest of the kept backup: %v", err)
+		}
+		if h.pointerTarget(t) != pointerWas {
+			t.Fatal("the pointer moved")
+		}
+	}
+	t.Run("resume", func(t *testing.T) {
+		h, _, second, old, next := zoneInstalled(t)
+		h.mustInstall(t, "update", second)
+		if err := pointer.Place(pointer.Path(h.dest), old); err != nil {
+			t.Fatal(err)
+		}
+		write(t, staging.ClaimPath(next), string(record.Encode(staging.NewPayload(staging.Staging, "CRW-158", "1"))))
+		zoneStore(t, h)
+		defer failPlacement()()
+		o := h.options()
+		o.StateBackup = backupOf(h, "resume-after")
+		result, code := install.Install(context.Background(), o, "update", install.Source{From: second})
+		check(t, h, result, code, backupOf(h, "resume-after"), old)
+	})
+	t.Run("rollback", func(t *testing.T) {
+		h, _, second, _, next := zoneInstalled(t)
+		h.mustInstall(t, "update", second)
+		zoneStore(t, h)
+		defer failPlacement()()
+		o := h.options()
+		o.StateBackup = backupOf(h, "rollback-after")
+		result, code := install.Rollback(context.Background(), o, "")
+		check(t, h, result, code, backupOf(h, "rollback-after"), next)
+	})
 }

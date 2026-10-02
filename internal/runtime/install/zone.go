@@ -16,6 +16,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/swapgate"
@@ -70,6 +71,29 @@ func swapGate(ctx context.Context, o Options, rec Object, candidate string, cand
 		return record.Set(gate, "blockedBy", append([]any{"stateBackup: " + err.Error()}, blocked...))
 	}
 	return swapgate.DecideWithRelease(cells, &swapgate.Release{Backup: backup})
+}
+
+// gateFields is the swap gate as a result carries it, nothing when the gate was not asked.
+func gateFields(gate Object) []contract.Field {
+	if gate == nil {
+		return nil
+	}
+	return []contract.Field{field("swapGate", gate)}
+}
+
+// afterBackup is what a refusal that comes after the gate must still say when the gate took the backup: the copy
+// exists and is kept, so "nothing was written" would not be true of the state directory's neighbour.
+func afterBackup(gate Object, note string) string {
+	backup, _ := record.Get(gate, "stateBackup").(Object)
+	if record.Get(backup, "made") != true {
+		return note
+	}
+	return note + " The copy of the state directory taken before this step stays at " + record.Text(backup, "destination") + " (with its manifest beside it), and a rerun needs a new destination."
+}
+
+// refusedAfterGate is a refusal of the swap after the gate answered: it carries the gate, and with it the backup.
+func (r *run) refusedAfterGate(detail, note string, extra ...contract.Field) (Object, int) {
+	return refusedResult(r.command, detail, afterBackup(r.gate, note), append(extra, gateFields(r.gate)...)...)
 }
 
 // backupState copies the whole state directory the gate read to dest and returns the record of it. dest and
@@ -378,7 +402,11 @@ func kindOf(mode fs.FileMode) string {
 
 // listingDiff is how two readings of the state directory differ, or "".
 func listingDiff(a []backedUp, askipped []string, b []backedUp, bskipped []string) string {
-	key := func(e backedUp) string { return fmt.Sprintf("%s|%s|%d|%s", e.Path, e.Kind, e.Size, e.LinkTarget) }
+	// the resolved file the bytes come from is part of what a reading says: a link in the chain that was pointed
+	// elsewhere between the two readings is a change, even where the new file is the same size
+	key := func(e backedUp) string {
+		return fmt.Sprintf("%s|%s|%d|%s|%s", e.Path, e.Kind, e.Size, e.LinkTarget, e.source)
+	}
 	seen := map[string]bool{}
 	for _, e := range a {
 		seen[key(e)] = true

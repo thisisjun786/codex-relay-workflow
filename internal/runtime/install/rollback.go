@@ -195,8 +195,16 @@ func Rollback(ctx context.Context, o Options, named string) (Object, int) {
 		return append(base, field("environment", environment), field("refused", "the host record changed while this run took its locks: the runtime to return to is now "+environment+", not "+candidate), field("note", "nothing was written; rerun to decide against the record as it now stands.")), Refused
 	}
 	base = append(base, field("environment", environment))
+	var gate Object
 	nothing := func(detail string, extra ...contract.Field) (Object, int) {
-		return append(append(base, field("refused", detail)), append(extra, field("note", "nothing was written; the pointer still names the runtime it named."))...), Refused
+		has := false
+		for _, f := range extra {
+			has = has || f.Key == "swapGate"
+		}
+		if !has {
+			extra = append(extra, gateFields(gate)...)
+		}
+		return append(append(base, field("refused", detail)), append(extra, field("note", afterBackup(gate, "nothing was written; the pointer still names the runtime it named.")))...), Refused
 	}
 	current, _ := record.Get(rec, "selected").(Object)
 	current = copyObject(current)
@@ -230,7 +238,6 @@ func Rollback(ctx context.Context, o Options, named string) (Object, int) {
 		return nothing("the pointer would name a runtime that cannot be launched as it stands: "+strings.Join(append(problems, unread...), "; "),
 			field("launchable", Object{field("problems", strs(problems)), field("unread", strs(unread))}))
 	}
-	var gate Object
 	if moving {
 		gate = swapGate(ctx, o, rec, environment, nil)
 		if record.Get(gate, "verdict") != swapgate.Allowed {
@@ -252,7 +259,7 @@ func Rollback(ctx context.Context, o Options, named string) (Object, int) {
 	}
 	transition := checkSettings(o.CodexHome, pointerPath)
 	if transition.refused != "" {
-		return append(base, field("refused", transition.refused), field("settings", transition.report), field("note", "nothing was written.")), Refused
+		return append(base, append([]contract.Field{field("refused", transition.refused), field("settings", transition.report)}, append(gateFields(gate), field("note", afterBackup(gate, "nothing was written.")))...)...), Refused
 	}
 	delta := record.Delta{Select: selection, Pointer: Object{field("path", pointerPath), field("recordedAt", o.stamp()), field("recordedBy", o.Issue)}}
 	var outgoing any = outgoingBefore
@@ -275,21 +282,21 @@ func Rollback(ctx context.Context, o Options, named string) (Object, int) {
 		}
 	}
 	if err := ctx.Err(); err != nil {
-		return append(base, field("refused", interrupted(err)), field("settings", transition.report), field("note", "the pointer was not moved.")), Refused
+		return append(base, append([]contract.Field{field("refused", interrupted(err)), field("settings", transition.report)}, append(gateFields(gate), field("note", afterBackup(gate, "the pointer was not moved.")))...)...), Refused
 	}
 	outgoingObject, _ := outgoingBefore.(Object)
 	s := swap(ctx, o, pointerPath, environment, delta, moving, before, ownedBefore, current, outgoingObject)
 	if s.commitFailed() {
-		return append(base, field("refused", "the selection could not be committed: "+commitDetail(s.committed, s.commitErr)), field("settings", transition.report),
-			field("note", "the pointer was not moved.")), Refused
+		return append(base, append([]contract.Field{field("refused", "the selection could not be committed: "+commitDetail(s.committed, s.commitErr)), field("settings", transition.report)},
+			append(gateFields(gate), field("note", afterBackup(gate, "the pointer was not moved.")))...)...), Refused
 	}
 	if !s.landed {
 		var putBack any = "this run did not move the pointer"
 		if moving {
 			putBack = s.pointerRestored
 		}
-		return append(base, field("refused", s.placement(environment)), field("pointerRestored", putBack), field("selectionRestored", s.restored), field("settings", transition.report),
-			field("note", "the selection and the pointer were put back to what this run found.")), Refused
+		return append(base, append([]contract.Field{field("refused", s.placement(environment)), field("pointerRestored", putBack), field("selectionRestored", s.restored), field("settings", transition.report)},
+			append(gateFields(gate), field("note", afterBackup(gate, "the selection and the pointer were put back to what this run found.")))...)...), Refused
 	}
 	left := settleLeft(o, leaving, environment)
 	exclusive.Release()

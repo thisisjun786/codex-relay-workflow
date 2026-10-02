@@ -823,14 +823,14 @@ func (r *run) resume() (Object, int) {
 	// start through as a promotion does.
 	owners, conflict := secondOwners(r.o.CodexHome, r.pointerPath)
 	if conflict != "" {
-		return refusedResult(r.command, conflict, "nothing was written; the selection stays as the interrupted run committed it, and a rerun finishes it once one owner registers each surface.", field("environment", r.environment), field("secondOwner", owners))
+		return r.refusedAfterGate(conflict, "nothing was written; the selection stays as the interrupted run committed it, and a rerun finishes it once one owner registers each surface.", field("environment", r.environment), field("secondOwner", owners))
 	}
 	if err := r.ctx.Err(); err != nil {
-		return refusedResult(r.command, interrupted(err), "nothing was written.", field("environment", r.environment))
+		return r.refusedAfterGate(interrupted(err), "nothing was written.", field("environment", r.environment))
 	}
 	transition := checkSettings(r.o.CodexHome, r.pointerPath)
 	if transition.refused != "" {
-		return refusedResult(r.command, transition.refused, "nothing was written.", field("environment", r.environment), field("settings", transition.report))
+		return r.refusedAfterGate(transition.refused, "nothing was written.", field("environment", r.environment), field("settings", transition.report))
 	}
 	if names == nil || !*names {
 		// The placement is recorded before the link moves, and put back with it when the move does
@@ -838,10 +838,10 @@ func (r *run) resume() (Object, int) {
 		s := swap(r.ctx, r.o, r.pointerPath, r.environment, record.Delta{Pointer: Object{field("path", r.pointerPath), field("recordedAt", r.o.stamp()), field("recordedBy", r.o.Issue)}},
 			true, before, ownedBefore, nil, nil)
 		if s.commitFailed() {
-			return refusedResult(r.command, "the pointer ownership could not be recorded: "+commitDetail(s.committed, s.commitErr), "the pointer was not moved.", field("environment", r.environment), field("settings", transition.report))
+			return r.refusedAfterGate("the pointer ownership could not be recorded: "+commitDetail(s.committed, s.commitErr), "the pointer was not moved.", field("environment", r.environment), field("settings", transition.report))
 		}
 		if !s.landed {
-			return refusedResult(r.command, s.placement("this runtime"), "the pointer and its ownership were put back; the selection stays as the interrupted run committed it.", field("environment", r.environment), field("pointerRestored", s.pointerRestored), field("settings", transition.report))
+			return r.refusedAfterGate(s.placement("this runtime"), "the pointer and its ownership were put back; the selection stays as the interrupted run committed it.", field("environment", r.environment), field("pointerRestored", s.pointerRestored), field("settings", transition.report))
 		}
 	}
 	r.step("replace the owned pointer", true, field("target", r.environment))
