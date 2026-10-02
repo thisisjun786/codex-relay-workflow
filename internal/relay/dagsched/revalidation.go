@@ -42,8 +42,7 @@ func StaleActions() []string {
 
 // consumedChange is what is no longer as an accepted node consumed it, the criteria aside. It is nil, and the text empty, only when no acceptance the node consumed was replaced and the manifest rebuilt
 // from the store as the node consumed it (its criteria taken as the consumed ones) is complete and digests to the one it consumed: that is the one case in which a change of the criteria leaves the node
-// able to be ruled again as it is. Otherwise it is the stale result an incoming edge rests on, or, when no stale result explains the difference (an input that is not there, a value an edge reports on
-// its own), the sentence that says so.
+// able to be ruled again as it is. Otherwise it is the change that explains the difference, or, when none does (an input that is not there, a value an edge reports on its own), the sentence that says so.
 func (s *Scheduler) consumedChange(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, n dag.SnapNode) (*Stale, string, error) {
 	ctx, m := memoFor(ctx, plan, snap)
 	if err := s.prepare(ctx, q, plan, snap, m); err != nil {
@@ -103,6 +102,36 @@ func (s *Scheduler) reviewOpen(ctx context.Context, q store.Querier, rel relRow,
 	return rows > 0 && distinct == 1 && registered != nil && *registered != ruled, nil
 }
 
+// restsOnStale is the stale result an incoming artifact or integrated edge of the node rests on, when there is one: the first such edge, by id, whose predecessor's accepted result is itself stale. It is
+// asked for every cause, because what a node consumed having been replaced says nothing of whether what replaced it is current, and a node cannot be rebuilt, corrected or ruled again on a stale result.
+func (s *Scheduler) restsOnStale(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, n dag.SnapNode) (*Stale, error) {
+	ctx, m := memoFor(ctx, plan, snap)
+	if err := s.prepare(ctx, q, plan, snap, m); err != nil {
+		return nil, err
+	}
+	var inputs map[string]map[string]any
+	if c := m.consumed[n.NodeID]; c != nil {
+		inputs = consumedInputs(c.body)
+	}
+	for _, e := range incomingEdges(snap, n.NodeID) {
+		if e.Kind != dag.EdgeArtifactVerified && e.Kind != dag.EdgeIntegrated {
+			continue
+		}
+		pred, ok := nodeOf(snap, e.FromNodeID)
+		if !ok {
+			continue
+		}
+		above, err := s.staleOf(ctx, q, plan, snap, pred)
+		if err != nil {
+			return nil, err
+		}
+		if above != nil {
+			return s.stalePredecessorReading(ctx, q, plan, snap, e, textOf(inputs[e.EdgeID]["acceptance_id"]), above)
+		}
+	}
+	return nil, nil
+}
+
 // holdOnPredecessor is the route of a node that rests on a stale predecessor: nothing to do on it until that is repaired.
 func holdOnPredecessor(n dag.SnapNode, st *Stale) (string, string) {
 	return ActionHold, fmt.Sprintf("nothing to do on %s yet: over edge %s it rests on %s, whose accepted result is stale (it stems from %s); repair that first, and the route of this node follows from what it then consumes",
@@ -119,9 +148,15 @@ func (s *Scheduler) routeStale(ctx context.Context, q store.Querier, plan string
 	if err != nil {
 		return "", "", err
 	}
+	above := st
+	if st.Cause != CausePredecessorStale {
+		if above, err = s.restsOnStale(ctx, q, plan, snap, n); err != nil {
+			return "", "", err
+		}
+	}
 	switch {
-	case st.Cause == CausePredecessorStale:
-		action, detail = holdOnPredecessor(n, st)
+	case above != nil:
+		action, detail = holdOnPredecessor(n, above)
 		return action, detail, nil
 	case !found || rel.Superseded || rel.Status == "archived" || rel.Status == "cancelled":
 		return ActionRedefine, fmt.Sprintf("the relationship of %s has ended, so there is no child to send a correction to: reworking this output is a redefinition of the node, a new relationship registered with supersedes (contract 5, decision D-08), "+
@@ -142,9 +177,6 @@ func (s *Scheduler) routeStale(ctx context.Context, q store.Querier, plan string
 		case changed == nil && unavailable == "":
 			return ActionRevalidate, fmt.Sprintf("only the criteria of %s changed: what it consumed and its output are as they were. Rule the same output again under the plan's criteria and accept it again with dag-accept: "+
 				"the acceptance is re-verified, with no new generation and no new child", n.NodeID), nil
-		case changed != nil && changed.Cause == CausePredecessorStale:
-			action, detail = holdOnPredecessor(n, changed)
-			return action, detail, nil
 		case changed == nil:
 			return ActionHold, unavailable + ": the output cannot be ruled again as it stands, and a correction cannot be prepared until the inputs are there again", nil
 		}

@@ -310,8 +310,8 @@ func (s *Scheduler) prepare(ctx context.Context, q store.Querier, plan string, s
 
 // landedNode is whether an accepted implementation node's head landed everywhere it has to (contract E-20: a node that landed is never invalidated, its result is in the target).
 func (s *Scheduler) landedNode(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, n dag.SnapNode, c *consumedOf, m *invalidation) (bool, error) {
-	if n.Kind != dag.NodeImplementation || c.acc.HeadSHA == "" {
-		return false, nil
+	if c.acc.HeadSHA == "" {
+		return false, nil // a node with an accepted head can have landed, whatever kind a later revision gives it (revalidation.go)
 	}
 	if landed, known := m.landed[n.NodeID]; known {
 		return landed, nil

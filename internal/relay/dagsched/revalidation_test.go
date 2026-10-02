@@ -450,17 +450,6 @@ func TestOutputReworkGoesToTheSameChildAsANewGeneration(t *testing.T) {
 	}
 }
 
-// rvOpenGeneration is what the relay leaves when it opened the next generation of one relationship for a needs_changes ruling on one event (the rows the verdict writer writes, scoped to that event and
-// relationship so that the other nodes' rulings stay as they are).
-func (k *releaseKit) rvOpenGeneration(relationship, event string) {
-	k.t.Helper()
-	now := k.clock()
-	k.exec("INSERT INTO generations (relationship_id, execution_generation, dispatch_request_id, anchor_state, dispatch_turn_id, reason, opened_at, bound_at) VALUES (?, 2, ?, 'bound', 'turn-r2', 'needs_changes_revision', ?, ?)", relationship, "revision-"+relationship, now, now)
-	k.exec("UPDATE relationships SET execution_generation = 2 WHERE relationship_id = ?", relationship)
-	k.exec("UPDATE verdicts SET verdict = 'needs_changes', next_generation = 2 WHERE event_id = ?", event)
-	k.exec("UPDATE verdict_context SET findings = '[]' WHERE event_id = ?", event)
-}
-
 // rvMerged is the plan U -> I -> K over a real repository with U and K settled and I, an implementation node, accepted and landed on dev: it reads integrated, and K, which rests on its landing, is accepted.
 func rvMerged(t *testing.T) (*integrationKit, accepted) {
 	t.Helper()
@@ -532,16 +521,6 @@ func TestMergedNodeIsNeverRerunWhenItsUpstreamChanges(t *testing.T) {
 		t.Fatalf("the refusal does not name the way on: %v", err)
 	}
 	unchanged("a prepared correction")
-	k.rvOpenGeneration(a.Acceptance.RelationshipID, a.Event)
-	if _, err := k.sched.RecordCorrection(context.Background(), "g", "I", "parent", ""); refusalReason(err) != "disposition_conflict" {
-		t.Fatalf("record a correction of the merged node = %v, want disposition_conflict", err)
-	}
-	if k.count("SELECT COUNT(*) FROM dag_node_executions WHERE node_id = 'I'") != 1 || k.count("SELECT COUNT(*) FROM dag_node_executions WHERE node_id = 'I' AND execution_generation = 2") != 0 {
-		t.Fatal("a generation was recorded as a rerun of the merged node")
-	}
-	if k.count("SELECT COUNT(*) FROM generations WHERE relationship_id = ?", a.Acceptance.RelationshipID) != generations+1 {
-		t.Fatal("the test did not open the generation it refuses to record")
-	}
 
 	// the change is carried by successors in a new plan revision
 	k.putPlan("g", int(k.snapshot("g").Revision), "g-r5", addRelNode("N2", dag.NodeNonPR), addRelNode("N3", dag.NodeNonPR),
@@ -563,6 +542,23 @@ func TestMergedNodeIsNeverRerunWhenItsUpstreamChanges(t *testing.T) {
 	}
 	if n := k.read("g").node("I"); n.State != StateIntegrated {
 		t.Fatalf("I = %+v", n)
+	}
+
+	// the relay's own verdict writer opens the next generation for the merged node when its review is open (the criteria registered for it changed): that is the relay's act, and the scheduler refuses to
+	// record the generation as an execution of the node, so nothing the scheduler binds or accepts is a rerun of it
+	other := dig("the second edition of I's criteria")
+	k.rvReregister("g", "I", "g-r6", a.Acceptance.RelationshipID, other, nil)
+	k.rvRule(a.Acceptance.RelationshipID, "needs_changes", other, restoration("do it again"))
+	if k.count("SELECT COUNT(*) FROM generations WHERE relationship_id = ?", a.Acceptance.RelationshipID) != generations+1 {
+		t.Fatal("the relay's verdict writer did not open the generation the scheduler is to refuse")
+	}
+	if _, err := k.sched.RecordCorrection(context.Background(), "g", "I", "parent", ""); refusalReason(err) != "disposition_conflict" {
+		t.Fatalf("record a correction of the merged node = %v, want disposition_conflict", err)
+	} else if !strings.Contains(err.Error(), "successor") {
+		t.Fatalf("the refusal does not name the way on: %v", err)
+	}
+	if k.count("SELECT COUNT(*) FROM dag_node_executions WHERE node_id = 'I'") != 1 {
+		t.Fatal("a generation was recorded as a rerun of the merged node")
 	}
 }
 
@@ -598,6 +594,12 @@ func TestStaleRouteFollowsTheCause(t *testing.T) {
 		{name: "the criteria of A changed while R, which A rests on, is stale", setup: func(k *releaseKit, accepted map[string]AcceptResult) {
 			k.invRevise("sr", "R", "sr-r2", invTitle("R revised"))
 			k.rvReregister("sr", "A", "sr-r3", accepted["A"].RelationshipID, dig("A's new criteria"), nil)
+		}, want: []route{{"R", rvCorrect}, {"A", rvHold}, {"B", rvHold}, {"C", rvHold}}},
+		{name: "R was accepted again and is stale again while the criteria of A changed", setup: func(k *releaseKit, accepted map[string]AcceptResult) {
+			k.invRevise("sr", "R", "sr-r2", invTitle("R revised"))
+			k.invSettleAgain("sr", "R", accepted["R"])
+			k.invRevise("sr", "R", "sr-r3", invTitle("R revised again"))
+			k.rvReregister("sr", "A", "sr-r4", accepted["A"].RelationshipID, dig("A's new criteria"), nil)
 		}, want: []route{{"R", rvCorrect}, {"A", rvHold}, {"B", rvHold}, {"C", rvHold}}},
 	}
 	for _, c := range cases {
@@ -709,6 +711,9 @@ func TestAMergedNodeIsNotCorrectableWhateverItsKindBecomes(t *testing.T) {
 	k.putPlan("g", int(k.snapshot("g").Revision), "g-r2", doc{"op": dag.OpUpdateNode, "node": relNode("D", dag.NodeNonPR)})
 	if n, _ := nodeOf(k.snapshot("g"), "D"); n.Kind != dag.NodeNonPR {
 		t.Fatalf("the revision did not change the kind of D: %+v", n)
+	}
+	if got := invStaleIDs(k.read("g")); len(got) != 0 {
+		t.Fatalf("stale = %v: a node that landed is not stale whatever kind the plan gives it", got)
 	}
 	if _, err := k.sched.PrepareCorrection(context.Background(), "g", "D", "parent", ManifestInput{RuleVersion: k.request(false).RuleVersion}, VerifyOptions{ArtifactRoots: []string{k.root}}); refusalReason(err) != "disposition_conflict" {
 		t.Fatalf("prepare a correction of a node that landed and is now another kind = %v, want disposition_conflict", err)
