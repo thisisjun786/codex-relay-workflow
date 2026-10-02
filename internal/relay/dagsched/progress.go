@@ -637,13 +637,14 @@ func (s *Scheduler) nodeLinks(ctx context.Context, q store.Querier, plan string,
 	return links, nil
 }
 
-// managedStartOf is the managed start the node's latest release made, and the child it already created: a release has a thread before it has a relationship.
+// managedStartOf is the managed start of the node's open intent (the release, or the successor release after a close, whose request nobody closed), and the child it already created: a release
+// has a thread before it has a relationship. A node whose intent was closed has none.
 func managedStartOf(ctx context.Context, q store.Querier, plan, node string) (*ManagedLink, *ThreadLink, error) {
-	var request string
-	found, err := queryOne(ctx, q, "SELECT managed_request_id FROM dag_releases WHERE plan_id = ? AND node_id = ? ORDER BY decided_at DESC, manifest_digest DESC LIMIT 1", []any{plan, node}, &request)
+	open, found, err := latestRelease(ctx, q, plan, node)
 	if err != nil || !found {
 		return nil, nil, err
 	}
+	request := open.Request
 	var state string
 	var receipt, child sql.NullString
 	found, err = queryOne(ctx, q, "SELECT state, receipt_status, child_task_id FROM managed_start_requests WHERE request_id = ?", []any{request}, &state, &receipt, &child)

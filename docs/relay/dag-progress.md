@@ -133,7 +133,7 @@ null; none is guessed.
 | `relationship` | the relationship the node stands on now: `id`, `execution_generation`, `status` (`assignment-show --relationship ID` opens it) |
 | `thread` | `child_task_id` and `parent_task_id` of that relationship; for a release that has no relationship yet, the child its managed start already created |
 | `executions` | every relationship the plan ever bound to the node: `relationship_id`, `execution_generation`, `kind` |
-| `managed_start` | for a node with no relationship, the managed start of its latest release: `request_id`, `state`, `receipt_status` |
+| `managed_start` | for a node with no relationship, the managed start of its open intent (the release, or the successor release after a close, whose request nobody closed; a closed release owns nothing): `request_id`, `state`, `receipt_status` |
 | `pull_request` | an implementation node's pull request: `repository`, `number`, `head_sha`, `url`, `source`, `event_id` |
 
 `pull_request` has two sources. `acceptance`: the forge identity recorded with the active acceptance (repository and number from the forge row, `head_sha` the head the parent accepted;

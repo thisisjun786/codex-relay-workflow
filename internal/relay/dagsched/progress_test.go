@@ -576,6 +576,34 @@ func TestProgressLinks(t *testing.T) {
 	}
 }
 
+// A release that was closed (the abandoned managed start ended, its slot returned) no longer owns the node: the node is planned again and shows no managed start. The release that follows a
+// close of the same manifest is the node's open intent under its successor request id, and that is the managed start the node shows.
+func TestProgressManagedStartFollowsTheOpenIntent(t *testing.T) {
+	f := newFixture(t)
+	f.projectParent()
+	f.putPlan("c", 0, "c-r1", addNode("n", dag.NodeNonPR))
+	digest, request := f.releaseRow("c", "n")
+	f.managedRow(request, "CRW-n", "released", "")
+	p := f.progress("c")
+	if n := p.nodeNamed("n"); n.Stage != StageReleasing || n.Reason != BlockedReleaseAbandoned || n.Links.Managed == nil || n.Links.Managed.RequestID != request || n.Links.Managed.State != "released" {
+		t.Fatalf("an abandoned release = %+v links %+v", n, n.Links)
+	}
+	f.exec("INSERT INTO dag_release_recoveries (plan_id, node_id, manifest_digest, abandoned_request_id, action, slot_released, reason, recorded_by, recorded_at) VALUES ('c', 'n', ?, ?, 'closed', 1, 'abandoned', 'parent', ?)", digest, request, f.clock())
+	p = f.progress("c")
+	if n := p.nodeNamed("n"); n.Stage != StageReady || n.Links.Managed != nil || n.Links.Thread != nil {
+		t.Errorf("a closed release still owns the node: %+v links %+v", n, n.Links)
+	}
+	successor := "dag-" + dig("successor")[:40]
+	f.managedRow(successor, "CRW-n", "create_armed", "accepted")
+	f.exec("UPDATE managed_start_requests SET child_task_id = 'child-again' WHERE request_id = ?", successor)
+	f.exec("INSERT INTO dag_release_recoveries (plan_id, node_id, manifest_digest, abandoned_request_id, action, successor_request_id, request_sha256, request_json, marker_root, socket, state_selector, reason, recorded_by, recorded_at)"+
+		" VALUES ('c', 'n', ?, ?, 'rereleased', ?, ?, '{}', 'markers', 'socket', 'state', 'released again', 'parent', ?)", digest, request, successor, dig("request"), f.clock())
+	p = f.progress("c")
+	if n := p.nodeNamed("n"); n.Stage != StageReleasing || n.Links.Managed == nil || n.Links.Managed.RequestID != successor || n.Links.Thread == nil || n.Links.Thread.ChildTaskID != "child-again" {
+		t.Errorf("the successor release = %+v links %+v", n, n.Links)
+	}
+}
+
 // The store-only path (criterion c2), through the production call and the layers below it: Progress marks its context, and under the mark no artifact is stat'ed and the assignment view
 // spells recovery commands with a fixed program name. dag-ready, which does not mark, is unchanged, and the control proves the fixture reaches the stat. The plan is a diamond: d rests on p1 and
 // p2; when p1 changes d is rebuilt, and p2, which did not change, hands over an artifact whose receipt declared no size.
