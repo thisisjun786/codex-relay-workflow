@@ -202,7 +202,7 @@ func master(t *testing.T, path string) []string {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	rows, err := db.Query("SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name, tbl_name")
+	rows, err := db.Query("SELECT type, name, tbl_name, sql FROM sqlite_master WHERE name NOT LIKE 'dag\\_%' ESCAPE '\\' AND tbl_name NOT LIKE 'dag\\_%' ESCAPE '\\' ORDER BY type, name, tbl_name")
 	if err != nil {
 		t.Fatal(err)
 	}

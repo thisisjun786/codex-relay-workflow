@@ -21,6 +21,7 @@ import (
 	// are the packages cmd/crw links, so Registered agrees with the binary.
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/capacity"
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
+	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/routing"

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -178,6 +179,25 @@ func OperationIDs(requestID string) (string, string) {
 	sum := sha256.Sum256([]byte(requestID))
 	digest := hex.EncodeToString(sum[:])
 	return "managed-create-" + digest, "managed-business-" + digest
+}
+
+const fieldSeparatorDetail = " must not contain '|', which is the field separator"
+
+// separatorRefusal is what registration says of a field that holds the field separator '|', asked while the
+// child does not exist. Register refuses the parent's task id and then the issue key as a plain error, in
+// that order (its identity error names the first); with a project it refuses the child's host id as
+// unregistered_scope (the parent's host id equals it). A request with no project is not asked about the
+// host id, as registration does not ask. The child's own task id is the host's to give and cannot be asked.
+func separatorRefusal(req map[string]any) error {
+	for _, field := range []struct{ name, value string }{{"parent_task_id", str(obj(req["parent"])["taskId"])}, {"issue_key", str(req["issueKey"])}} {
+		if strings.Contains(field.value, "|") {
+			return errors.New(field.name + fieldSeparatorDetail)
+		}
+	}
+	if str(req["projectKey"]) != "" && strings.Contains(str(obj(req["child"])["hostId"]), "|") {
+		return refusal("unregistered_scope", "the child host id"+fieldSeparatorDetail)
+	}
+	return nil
 }
 
 // loneSurrogate is whether a key or a string anywhere in value holds a lone surrogate.

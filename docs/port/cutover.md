@@ -69,6 +69,8 @@ owner `go` and the frozen schema, before any statement of the open writes; it ta
 `write-gate SH` for the store's lifetime and no longer reads or judges the mirror, copies the
 database, or rereads the stamp per transaction. A new store still gets the six keys and the mirror
 below, the socket binding still republishes the mirror, and no writer rewrites or deletes either.
+The frozen schema the open requires is the v1 table list (`relay-sqlite.sql`); the additive DAG zone (decision 74) is created after that
+validation and is not part of it.
 What follows describes the record both runtimes kept during the cutover.
 
 Ownership has two halves. The durable truth lives in the existing `schema_meta` table; the
@@ -760,7 +762,11 @@ Where a command's own argument refusal falls follows `cli.py` `main`: a read-onl
 (`merge-turn-show`'s selectors, `linkage-up`'s `--scope`) answers that refusal and creates
 nothing, never `store_absent`; a write form's store is opened by `_ownership_preflight` before
 its handler, so its own argument refusal comes after admission: an absent store is left
-initialized and a store another runtime owns answers `store_owned_by_other` (decision 31).
+initialized and a store another runtime owns answers `store_owned_by_other` (decision 31). A command
+that judges the root options its line gives (`dispatch.Command.Validate`, run after `check_start`:
+`reporting-show` requires `--state` and takes no `--socket`; `reporting-derive` takes no `--socket`) answers that
+usage error before the selected store's recorded socket is compared, so a store recording another socket
+does not turn it into `state_directory_serves_another_socket`.
 
 ### The live-state guard (test isolation only)
 

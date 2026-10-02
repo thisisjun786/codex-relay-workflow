@@ -744,5 +744,15 @@
   {"flag":"--page-size","type":"int"},
   {"flag":"--page-budget","type":"int","help":"how many pages one connection may take before the read is reported unfinished rather than answered"},
   {"flag":"--call-budget","type":"int"},
-  {"flag":"--timeout","type":"int"}]}
+  {"flag":"--timeout","type":"int"}]},
+{"name":"dag-plan-put","summary":"appends one revision to a DAG plan: typed changes (add_node, update_node, replace_node, retire_node, add_edge, retire_edge) folded onto the plan's head, validated as the plan they produce, and recorded in the append-only revision log. A request id already recorded returns that revision; a stale expected parent is plan_revision_conflict. A rejected revision writes nothing","options":[
+  {"flag":"--request","required":true,"help":"the dag-plan-revision/1 document as JSON, or @file"}]},
+{"name":"dag-plan-show","summary":"a DAG plan as of one revision (the head by default): its nodes with their slice digests and its edges, read in one snapshot with every digest recomputed. Reads only; a store without plans answers unregistered_scope","options":[
+  {"flag":"--plan","required":true},
+  {"flag":"--revision","type":"int","help":"the exact revision to read; the head by default"},
+  {"flag":"--verify","kind":"true","help":"also replay the whole log from the empty plan and require it to reproduce every recorded digest and the stored rows"}]},
+{"name":"dag-plan-log","summary":"the revisions of a DAG plan after a cursor, in order, with their typed changes: what a reader resumes from, or replays onto the snapshot it holds","options":[
+  {"flag":"--plan","required":true},
+  {"flag":"--after","type":"int","help":"the last revision already seen; 0 reads from the first"},
+  {"flag":"--limit","type":"int","help":"at most this many revisions (1 to 1000; 100 by default)"}]}
 ]

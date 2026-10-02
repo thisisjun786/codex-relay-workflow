@@ -154,7 +154,7 @@ func tables(t *testing.T, home string) string {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	names, err := db.Query("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+	names, err := db.Query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'dag\\_%' ESCAPE '\\' AND tbl_name NOT LIKE 'dag\\_%' ESCAPE '\\' ORDER BY name")
 	if err != nil {
 		t.Fatal(err)
 	}

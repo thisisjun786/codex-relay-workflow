@@ -72,6 +72,12 @@ type Options struct {
 	// started with that set reads and claims its scope there alone, and so do they
 	// (doctor.RecordedDaemons).
 	ScopeRegistry string
+	// StateBackup is the operator's acknowledgement that the additive DAG zone arrives (--backup-state-to): the
+	// directory the whole relay state directory is copied to before the swap that brings it (zone.go). "" is
+	// no acknowledgement, and that arrival then refuses naming this route.
+	StateBackup string
+	// CandidateSchema is a seam: nil asks the candidate binary for its declared schema.
+	CandidateSchema func(ctx context.Context, binary string) Object
 }
 
 func (o Options) stamp() string {
@@ -571,9 +577,9 @@ func (r *run) measure(installs Object, digest string) (Object, []record.Named) {
 	return record.Set(out, "qualifyingPoint", true), points
 }
 
-// swapGate is OPS-4.4 asked of the relay the record selects now (the candidate's own on a
-// first install) and of the candidate binary's declared schema.
-func swapGate(ctx context.Context, o Options, rec Object, candidate string, candidateSchema Object) Object {
+// gateCells reads the three cells of OPS-4.4 and OPS-4.5 of the relay the record selects now (the candidate's
+// own on a first install) and of the candidate binary's declared schema; swapGate (zone.go) decides on them.
+func gateCells(ctx context.Context, o Options, rec Object, candidate string, candidateSchema Object) map[string]Object {
 	executable := filepath.Join(candidate, "bin", definition.Relay)
 	if install := selectedInstall(rec, definition.Relay); install != nil {
 		if entry, ok := record.Get(install, "entryPoint").(string); ok && entry != "" {
@@ -581,13 +587,18 @@ func swapGate(ctx context.Context, o Options, rec Object, candidate string, cand
 		}
 	}
 	if candidateSchema == nil {
-		candidateSchema = swapgate.CandidateSchema(ctx, filepath.Join(candidate, "bin", Binary))
+		binary := filepath.Join(candidate, "bin", Binary)
+		if o.CandidateSchema != nil {
+			candidateSchema = o.CandidateSchema(ctx, binary)
+		} else {
+			candidateSchema = swapgate.CandidateSchema(ctx, binary)
+		}
 	}
-	return swapgate.Decide(map[string]Object{
+	return map[string]Object{
 		"daemon":      swapgate.DaemonCell(scope.Relay(ctx, []string{"service", "status"}, executable, o.Socket, o.State, o.Env, false, 0)),
 		"inFlight":    swapgate.InflightCell(scope.Relay(ctx, []string{"doctor"}, executable, o.Socket, o.State, o.Env, false, 0), swapgate.StorePresence(o.State, o.Socket)),
 		"storeSchema": swapgate.SchemaCell(swapgate.StoreSchema(ctx, o.State, o.Socket), candidateSchema),
-	})
+	}
 }
 
 // selectedInstall is the install entry the record's selection names for component name.
@@ -812,14 +823,14 @@ func (r *run) resume() (Object, int) {
 	// start through as a promotion does.
 	owners, conflict := secondOwners(r.o.CodexHome, r.pointerPath)
 	if conflict != "" {
-		return refusedResult(r.command, conflict, "nothing was written; the selection stays as the interrupted run committed it, and a rerun finishes it once one owner registers each surface.", field("environment", r.environment), field("secondOwner", owners))
+		return r.refusedAfterGate(conflict, "nothing was written; the selection stays as the interrupted run committed it, and a rerun finishes it once one owner registers each surface.", field("environment", r.environment), field("secondOwner", owners))
 	}
 	if err := r.ctx.Err(); err != nil {
-		return refusedResult(r.command, interrupted(err), "nothing was written.", field("environment", r.environment))
+		return r.refusedAfterGate(interrupted(err), "nothing was written.", field("environment", r.environment))
 	}
 	transition := checkSettings(r.o.CodexHome, r.pointerPath)
 	if transition.refused != "" {
-		return refusedResult(r.command, transition.refused, "nothing was written.", field("environment", r.environment), field("settings", transition.report))
+		return r.refusedAfterGate(transition.refused, "nothing was written.", field("environment", r.environment), field("settings", transition.report))
 	}
 	if names == nil || !*names {
 		// The placement is recorded before the link moves, and put back with it when the move does
@@ -827,10 +838,10 @@ func (r *run) resume() (Object, int) {
 		s := swap(r.ctx, r.o, r.pointerPath, r.environment, record.Delta{Pointer: Object{field("path", r.pointerPath), field("recordedAt", r.o.stamp()), field("recordedBy", r.o.Issue)}},
 			true, before, ownedBefore, nil, nil)
 		if s.commitFailed() {
-			return refusedResult(r.command, "the pointer ownership could not be recorded: "+commitDetail(s.committed, s.commitErr), "the pointer was not moved.", field("environment", r.environment), field("settings", transition.report))
+			return r.refusedAfterGate("the pointer ownership could not be recorded: "+commitDetail(s.committed, s.commitErr), "the pointer was not moved.", field("environment", r.environment), field("settings", transition.report))
 		}
 		if !s.landed {
-			return refusedResult(r.command, s.placement("this runtime"), "the pointer and its ownership were put back; the selection stays as the interrupted run committed it.", field("environment", r.environment), field("pointerRestored", s.pointerRestored), field("settings", transition.report))
+			return r.refusedAfterGate(s.placement("this runtime"), "the pointer and its ownership were put back; the selection stays as the interrupted run committed it.", field("environment", r.environment), field("pointerRestored", s.pointerRestored), field("settings", transition.report))
 		}
 	}
 	r.step("replace the owned pointer", true, field("target", r.environment))

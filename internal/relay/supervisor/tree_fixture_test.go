@@ -385,7 +385,7 @@ func openRaw(path string) (*sql.DB, error) {
 }
 
 func schemaDigest(ctx context.Context, db *sql.DB) (string, error) {
-	rows, err := db.QueryContext(ctx, "SELECT type, name, tbl_name, coalesce(sql, '') FROM sqlite_master")
+	rows, err := db.QueryContext(ctx, "SELECT type, name, tbl_name, coalesce(sql, '') FROM sqlite_master WHERE name NOT LIKE 'dag\\_%' ESCAPE '\\' AND tbl_name NOT LIKE 'dag\\_%' ESCAPE '\\'")
 	if err != nil {
 		return "", err
 	}
@@ -407,7 +407,7 @@ func schemaDigest(ctx context.Context, db *sql.DB) (string, error) {
 }
 
 func tableNames(ctx context.Context, db *sql.DB) ([]string, error) {
-	rows, err := db.QueryContext(ctx, "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+	rows, err := db.QueryContext(ctx, "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'dag\\_%' ESCAPE '\\' AND tbl_name NOT LIKE 'dag\\_%' ESCAPE '\\' ORDER BY name")
 	if err != nil {
 		return nil, err
 	}
@@ -526,7 +526,7 @@ func loadRows(path string, dump *storeDump) (err error) {
 		return err
 	}
 	var triggers []string
-	rows, err := db.QueryContext(ctx, "SELECT name, sql FROM sqlite_master WHERE type='trigger' ORDER BY rowid")
+	rows, err := db.QueryContext(ctx, "SELECT name, sql FROM sqlite_master WHERE type='trigger' AND name NOT LIKE 'dag\\_%' ESCAPE '\\' AND tbl_name NOT LIKE 'dag\\_%' ESCAPE '\\' ORDER BY rowid")
 	if err != nil {
 		return err
 	}
