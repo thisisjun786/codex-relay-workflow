@@ -277,7 +277,7 @@ func (s *Scheduler) journalCopy(ctx context.Context, q store.Querier, kind, plan
 	return err
 }
 
-var copyNamedInPrompt = regexp.MustCompile("stored at (.+?) \\(sha256 ([0-9a-f]{64})\\)")
+var copyNamedInPrompt = regexp.MustCompile(`stored at (.+?) \(sha256 ([0-9a-f]{64})\)`)
 
 // frozenCopyNamedBy is the copy a frozen release request tells the child to read: its path and the first artifact root it lies under. ok is false when the prompt carries the manifest inline or names
 // a file that is not <root>/dag-input-manifests/<sha256>.json.
