@@ -252,6 +252,9 @@ func (d *Daemon) settle(ctx context.Context, r delivery.Relationship, turn store
 			return nil
 		})
 	}
+	if d.beforeSettle != nil {
+		d.beforeSettle(turn)
+	}
 	err := commit(true, nil)
 	if err != nil {
 		var refused *store.RefusedError
