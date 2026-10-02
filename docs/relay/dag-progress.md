@@ -162,9 +162,61 @@ The scheduler's reading guarantees none of these happens; the check is what make
 * `ProjectProgress(ProgressInput)` is the pure half, with no I/O: a reading, the denominators per revision, the facts of each node. A consumer that rebuilt a reading from a snapshot passes it
   through this to get the same stages, the same guards and the same digest.
 * `Progress.Object()` is the printed document; `Progress.Reading` is the reading it was built on.
+* `ProgressDelta`, `ReadProgressDelta`, `ProgressSnapshotOf`, `ReadProgressSnapshot`, `ApplyProgressDelta` and `ProgressSnapshot.Project` rebuild the view from events and a cursor ([below](#rebuilding-the-view)).
+
+## Rebuilding the view
+
+A reader that keeps its own copy of the view (the Linear summary the next issue builds, a dashboard) has to resume from where it stopped, and what it assembles has to be what a live query prints. The rebuild is Go in `internal/relay/dagsched` (CRW-287). It adds no command, no table, no zone statement and no refusal reason, and it writes nothing: the readers are read transactions and the fold is a pure function. [DAG plans](dag-plans.md#events-cursors-and-snapshots) defines events, cursors and snapshots for the plan; this section applies the same boundary to the whole view.
+
+### What an event is
+
+The view rests on the plan log and on execution rows, and they have different histories. The plan log is a true log: committed revisions, appended and never changed, each with its own position. The execution rows are not: the store updates them in place (a relationship's status, a managed start's state, a merge turn's state, a slot's state, an acceptance's state, an observation's `reverted_by`), keeps no sequence that spans tables and journals only some of the writers, so the order in which they changed cannot be recovered and there is nothing to replay. What can be replayed is what the view takes from them: the scheduler's reading of each node with the node's facts (the inputs of `ProjectProgress`) and the one aggregate of the nodes the revisions took out of the plan. Each is content-addressed by a digest of its printed fields. An event is therefore one of:
+
+| Kind | What it says | Holds |
+| --- | --- | --- |
+| `plan` | the plan's identity, sent when the cursor holds no plan (or another plan) | `PlanID`, `ProjectKey` |
+| `revision` | a committed revision of the plan log, folded with `dag.Replay` (which checks the state digest the revision recorded) | the `dag.Event` |
+| `removed` | a node the reader holds a record of that is no longer live | `NodeID` |
+| `outside` | the nodes that left the plan (the `outside_denominator` of the document), when it differs from the reader's | `ProgressOutside` |
+| `node` | the record of a live node whose digest differs from the reader's, or that the reader does not hold: its reading (state, disposition, reason, detail, stale object, lifecycle) and its facts (title, acceptance, slot, links); it does not carry the node's stage, which `ProjectProgress` derives again | `ProgressRecord` |
+
+`ProgressEvent.ID()` names an event by its kind, its subject and its digest (`node/n1@<digest>`, `revision/3@<state digest>`), so two events with one ID are the same change.
+
+### The cursor
+
+A `ProgressCursor` is the state the reader holds, as digests: the plan, the last revision it holds with a hash chain over the log metadata of the revisions up to it (revision, `recorded_at`, request id, author, epoch, state digest and operations of each, which a reader computes from its own revisions), the digest of its outside aggregate and the digest of every node record it holds. The zero value holds nothing and is the beginning. `ProgressSnapshot.Cursor()` is the cursor of a snapshot; `ProgressCursor.String()` is JSON with every key in a fixed order and `ParseProgressCursor` reads it back (the empty text is the beginning), so a consumer can keep a cursor in its own table.
+
+The cursor is the reader's state and not a position in a list, so a read from it is "what differs from that" and no page remembers anything. A cursor of another plan holds nothing of this one: the read starts from the beginning with the `plan` event, and a fold that holds the other plan is reset by it.
+
+### The read
+
+`(*Scheduler).ProgressDelta(ctx, q, plan, after, limit)` returns a `ProgressDelta` inside the caller's transaction, as `Progress` does; `ReadProgressDelta` is the same in a read transaction of its own, as `ReadProgress` is (inside a plain `Transaction` it is `store.ErrNestedTransaction`, inside `Compose` it joins the caller's). It reads the live view once, so a page is one state of the store, and sends in this order: the `plan` event when the cursor holds no plan, the `revision` events after the cursor, a `removed` event for every record the cursor holds that is no longer live, the `outside` event when the aggregate differs, and a `node` event for every live node whose digest differs, by node id. Removals come before records so a reader never holds more than the plan's limit of 64 nodes while a node is replaced. `limit` is 1 to `dag.MaxPage` and counts events of every kind. The delta carries `Events`, `Cursor` (the reader's cursor advanced over the events returned, from which the next call continues exactly there), `More` and `Fingerprint`, the digest of the live view the page was read at.
+
+`(*Scheduler).ProgressSnapshotOf(ctx, q, plan)` and `ReadProgressSnapshot` give the live view as the state a reader holds, with the view it was taken from. A `ProgressSnapshot` is the plan as of its revision (a `dag.Snapshot`), the denominators of every revision, one record per live node and the outside aggregate.
+
+### The fold
+
+`ApplyProgressDelta(snapshot, delta)` is the only way a snapshot is folded. It is pure, copies what it is given and returns the zero snapshot with an `InvariantError` (the host's failure class) for whatever a log cannot contain: an event that does not follow the one before or a revision twice (`dag.Replay`), a record or outside aggregate whose digest is not its content, a `revision` event of another plan (`dag.Replay` does not look at the plan id), a delta of another plan than the snapshot holds unless it starts with the `plan` event, and a fold whose cursor is not the delta's. It rebuilds the denominator of each revision from the plan before and after it (`revisionCountOf`: the nodes each side holds, the nodes that came and went, the nodes whose version the revision introduced), not from a copy, so the revisions of a rebuilt snapshot are the revisions read from the rows. While `More` is true the result is not complete. On the page with `More` false it projects the result and requires its digest to be the delta's `Fingerprint` before it marks the snapshot complete, so a fold that dropped an event, folded a page that was not read from its cursor or was read from another store cannot say it caught up.
+
+`ProgressSnapshot.Project()` is `ProjectProgress` over a reading rebuilt from the snapshot (the plan's identity, head and state from the replayed plan, the records as the readings and facts of the nodes), so the stages, the guards and the digest are those of `dag-progress`. It refuses a snapshot that is not complete: the zero value, one cut between pages, one built by hand. A snapshot cut between pages can pass the checks `ProjectProgress` has (the head revision and the node count) while two of its records are from different states of the store, and would print a hybrid.
+
+Replaying from the beginning is a read from the zero cursor folded into the zero snapshot; a snapshot plus the events after its cursor is a read from `snapshot.Cursor()` folded into the snapshot. Both end at the document `dag-progress` prints for the store state the last page was read at, byte for byte and with its digest. The rebuilt `Progress.Reading` holds what the document prints (the plan, its head and state, the nodes' readings); the capacity side of the pass, the ready order, the ranks and the input digest of `dag-ready` are not part of the view and are not rebuilt.
+
+### Errors
+
+No refusal reason is added. A cursor that names a revision the plan does not have, and an unknown plan, are `unregistered_scope` (what `dag-plan-log --after` answers). A cursor whose revision chain is not the log's, whether the state digest of a revision or only its request, author, time, epoch or operations differ, is `revision_mismatch`: the reader's log is not this one and it starts over from the zero cursor. A cursor text that is not a cursor is `malformed_receipt`. The counts a revision derives (nodes, added, retired, updated) are not part of the chain: they differ only if the fold and the rows differ, and the fingerprint reports that.
+
+### What it guarantees, and what it does not
+
+* **No duplicates, no omissions.** On a store that is not moving, the read from a cursor is one list; pages of any size are that list cut in order, and from the cursor a page returns, as a value or as text, the pages are the rest of the list. No (kind, subject, digest) pair, which is what `ID()` names, is sent twice.
+* **A store that moves.** Nothing is lost or repeated that the reader holds: a record that changed after it was read is read again as a new event, a record that did not change is not sent again, and the fold still ends at the view of the page with `More` false. A store that keeps moving can delay that page without bound (liveness, not correctness), and only the fingerprint of the page with `More` false means anything for the fold.
+* **Coalescing.** The events of the execution half are the differences between what the reader holds and the store now, so transitions between two reads are one change (running, reported, verifying is one `node` event). Only the plan's revisions are complete history; there is no "execution events after time T". The passes `dag-ready --record` keeps are the record of readings over time.
+* **No durable format for snapshots or events.** They are values in the process; only the cursor has a text form. A reader that has to keep a view across restarts keeps the cursor and rebuilds from the zero cursor, or keeps the document.
+* **Transactions.** The reads are read transactions like `ReadProgress`: on a store opened for writing a transaction takes the write lock (`BEGIN IMMEDIATE`) though it writes nothing, and a reader that must not take it opens the store read-only, as `dag-progress` does. Through a read-only store (`mode=ro`, `query_only`) every function here works and writes nothing; the tests hash every row of every table, the journal included, before and after.
+
 
 ## What is not here
 
-* Cursor and snapshot reconstruction of the progress view, and the Linear summary, are later issues that call the functions above.
+* The Linear summary is a later issue that calls the functions above and [the rebuild](#rebuilding-the-view). No command wraps the rebuild: a command that prints a delta would be a new document to specify and would add a command to the relay.
 * The metrics contract 8.6 records for the evaluation (makespan, idle slot minutes, wake latencies) are not derived here, and no figure here is a target.
 * The byte checks of the artifacts are `dag-ready`'s ([the scheduler](dag-scheduler.md#input-checks)).
