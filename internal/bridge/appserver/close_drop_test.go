@@ -10,10 +10,10 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 )
 
 // droppingHost is an App Server stand-in that answers the initialize handshake and then, as
@@ -21,13 +21,7 @@ import (
 // connection when the client's close frame arrives without answering it with its own.
 func droppingHost(t *testing.T) string {
 	t.Helper()
-	// Not t.TempDir: this test's long name would push the socket path past the 108-byte limit.
-	dir, err := os.MkdirTemp("", "crw-drophost-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	path := filepath.Join(dir, "app.sock")
+	path := fakehost.SocketPath(t, "app.sock")
 	listener, err := net.Listen("unix", path)
 	if err != nil {
 		t.Fatal(err)

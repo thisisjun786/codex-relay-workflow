@@ -18,30 +18,17 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// helperEnv makes this test binary one of its helper processes (runHelper) in place of its tests.
-const helperEnv = "CRW_SERVICE_TEST_HELPER"
-
-// The helpers run from init, before TestMain, on the main thread: a leader thread that exits
-// must be the thread the kernel reports for the process.
-func init() {
-	if helper := os.Getenv(helperEnv); helper != "" {
-		os.Exit(runHelper(helper, os.Getenv(helperEnv+"_ARG")))
-	}
-}
-
-// runHelper is one helper process, the fixtures that were Python scripts until todo 44:
+// runPlatformHelper is a helper process only Linux can run (runHelper, helper_test.go, takes the
+// rest), the fixtures that were Python scripts until todo 44:
 //
 //   - "controller": the parent of a worker it controls waitpid for. A zombie remains unreaped
 //     until the test releases stdin; no elapsed-time delay decides which process state the stop
 //     command observes. arg is "gone" (reaped before it answers) or "exited" (reaped after).
-//   - "idle": a process that stays alive until its stdin is closed and then exits, as cat did.
-//     It is the controller's worker and the supervisor reapStop stops, so these tests start no
-//     program found on PATH.
 //   - "leader-gone": a worker whose leader thread has exited while another thread keeps the
 //     descriptor table the threads share, and the daemon lock (arg) in it, until stdin is
 //     written: a multithreaded service process on its way out, held there. SIGTERM is ignored,
 //     so only SIGKILL ends it. SYS_exit ends the calling thread alone.
-func runHelper(role, arg string) int {
+func runPlatformHelper(role, arg string) int {
 	switch role {
 	case "controller":
 		worker := helper(context.Background(), "idle", "")
@@ -83,9 +70,6 @@ func runHelper(role, arg string) int {
 		}
 		_ = unix.Close(fd)
 		return 0
-	case "idle":
-		_, _ = io.Copy(io.Discard, os.Stdin)
-		return 0
 	case "leader-gone":
 		lock, err := os.OpenFile(arg, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o600)
 		if err == nil {
@@ -106,14 +90,6 @@ func runHelper(role, arg string) int {
 	}
 	fmt.Fprintf(os.Stderr, "unknown helper %q\n", role)
 	return 2
-}
-
-// helper starts one of this binary's helper processes.
-func helper(ctx context.Context, name, arg string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^$")
-	cmd.Env = append(os.Environ(), helperEnv+"="+name, helperEnv+"_ARG="+arg)
-	cmd.Stderr = os.Stderr
-	return cmd
 }
 
 func controlledWorker(t *testing.T, state string) (int, int64) {

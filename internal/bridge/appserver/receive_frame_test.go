@@ -6,18 +6,19 @@ import (
 	"errors"
 	"net"
 	"net/http"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/coder/websocket"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 )
 
 // A frame that is not JSON fails the pending request as a TransportError reading "App Server
 // transport failed: a frame is not JSON: ...".
 func TestReceive_non_json_frame_fails_pending_request_as_a_transport_error(t *testing.T) {
-	socket := filepath.Join(t.TempDir(), "app.sock")
+	socket := fakehost.SocketPath(t, "app.sock")
 	listener, err := net.Listen("unix", socket)
 	if err != nil {
 		t.Fatal(err)

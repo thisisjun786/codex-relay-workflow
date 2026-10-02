@@ -53,7 +53,7 @@ func mirror(t *testing.T, module, name string, body func(h *hl)) {
 	h.checks = &TurnChecks{Reconciler: h.rc, Budget: 4}
 	body(h)
 	key := module + "/" + name
-	opts := []golden.Option{golden.Substitute(tree, "<tree>"), golden.Substitute(root, "<root>"), golden.Substitute(installationDir(t), "<installation>")}
+	opts := []golden.Option{golden.Substitute(tree, "<tree>"), golden.Substitute(root, "<root>"), golden.Substitute(installationDir(), "<installation>")}
 	golden.CheckJSON(t, key+" captures", capturedValues(t, h.got), opts...)
 	golden.CheckJSON(t, key+" delivery tables", deliveryTableRows(t, f), opts...)
 	golden.CheckJSON(t, key+" fault tables", stalledFaultRows(t, f), opts...)
@@ -61,21 +61,14 @@ func mirror(t *testing.T, module, name string, body func(h *hl)) {
 }
 
 // captureTree is the tree module's Class.method name runs in, and the root of every tree of
-// module: a process-lifetime parityTree, because the golden values hold ids derived from the
-// tree's paths.
+// module: fixed paths, because the golden values hold ids derived from them (lockCaptureTree),
+// the tree held for this test only.
 func captureTree(t *testing.T, module, name string) (string, string) {
 	t.Helper()
-	root := processParityTree(t, "capture/"+module)
-	return root, filepath.Join(root, name)
-}
-
-// installationDir is the installation directory the Go sweeper is given (sweeper): the fault sweep
-// names it in every observation's evidence and digests that evidence, so the golden holds a digest
-// of this path, which is therefore a fixed one. It began as the directory the captured Python ran
-// its relay package from, and keeps that tree's key.
-func installationDir(t testing.TB) string {
-	t.Helper()
-	return filepath.Join(processParityTree(t, "python-package"), "codex_session_relay")
+	root, tree, release, err := lockCaptureTree(module, name)
+	mustDo(t, err)
+	t.Cleanup(release)
+	return root, tree
 }
 
 var storeAcceptNone = store.AcceptOptions{}
