@@ -13,6 +13,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/daemon"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"golang.org/x/sys/unix"
 )
 
@@ -179,7 +180,8 @@ func sameObject(a, b Object) bool {
 // existingLockHeld is _existing_lock_held: whether another open description holds path's
 // flock, found by contention alone and without creating a missing file. A lock that cannot be
 // opened, examined or tried for another reason is the OSError read_worker_policy answers
-// worker_policy_unreadable for, never "unheld".
+// worker_policy_unreadable for, never "unheld". It is the one lock probe of the worker-policy
+// reading, whichever entry reads.
 func existingLockHeld(path string) (bool, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -212,7 +214,44 @@ func existingLockHeld(path string) (bool, error) {
 // read; tests change the observation there, as Python's patch of service.record does.
 var beforeRecheck = func() {}
 
+// openProcess opens the handle a reading holds on the worker; tests replace it.
+var openProcess = OpenProcess
+
+// ReadWorkerPolicy is the one reading of the worker policy a service run publishes: the worker's
+// receipt checked against the service's record, the scope claim, the process and both locks, and
+// then looked at again. Everything that observes a worker reads through it: service status, doctor
+// (after its own pre-checks) and managed-start (through ObserveWorkerPolicy).
 func (s *Service) ReadWorkerPolicy(ctx context.Context) Object {
+	return s.readWorkerPolicy(ctx, func() string { return s.StoreID }, true)
+}
+
+// ObserveWorkerPolicy is ReadWorkerPolicy for a process that is not the service and has no store
+// open: it is handed the state directory, the socket and the scope registry it observes, and the
+// installation (the directory of its executable) it runs from. The store's identity is read from
+// the database as it stands, only once the checks before the identity comparison have passed, so
+// a refusal before that never opens the database. It holds no pidfd on the worker, which the
+// service does (and refuses a worker it cannot hold): the observer answers from the worker's
+// /proc entry alone, so a host that refuses pidfd_open does not refuse every managed start.
+func ObserveWorkerPolicy(ctx context.Context, selection store.StateSelection, socket, installation string, scope *ScopeRegistry) Object {
+	observer := &Service{Selection: selection, Socket: socket, InstallationID: installationIDFor(installation, selection.Path), Scope: scope}
+	return observer.readWorkerPolicy(ctx, func() string { return readOnlyStoreID(ctx, selection) }, false)
+}
+
+// readOnlyStoreID is the store identity the database at selection records, or "" where it cannot
+// be read or names none. It creates and migrates nothing.
+func readOnlyStoreID(ctx context.Context, selection store.StateSelection) string {
+	id := ""
+	read := store.ReadOnlyRows(ctx, selection, "SELECT value FROM schema_meta WHERE key='store_id'", nil, func(row store.RowScanner) error { return row.Scan(&id) })
+	if !read.Readable {
+		return ""
+	}
+	return id
+}
+
+// readWorkerPolicy is the reading; storeID answers the identity of the store the record is
+// compared with, and is asked once, before the comparisons that need it. holdPidfd says whether
+// the reading holds a pidfd on the worker and refuses a worker it cannot hold.
+func (s *Service) readWorkerPolicy(ctx context.Context, storeID func() string, holdPidfd bool) Object {
 	absent := func(reason string) Object { return obj("observed", false, "reason", reason, "policy", nil) }
 	r := s.Record()
 	raw, err := os.ReadFile(s.path("worker-policy.json"))
@@ -263,14 +302,19 @@ func (s *Service) ReadWorkerPolicy(ctx context.Context) Object {
 		identity = set(identity, k, get(r, k))
 	}
 	identity = set(identity, "dbDevice", int64(stat.Dev), "dbInode", int64(stat.Ino))
-	if !sameObject(run, identity) || !truth(get(r, "token")) || s.StoreID == "" || get(r, "storeId") != s.StoreID || get(r, "installationId") != s.InstallationID || get(r, "stateDir") != s.Selection.Path || !equal(get(r, "socketPath"), nullable(s.Socket)) || get(r, "scopeRoot") != s.Scope.Root || get(r, "scopeAuthority") != s.Scope.Authority {
+	currentStoreID := storeID()
+	if !sameObject(run, identity) || !truth(get(r, "token")) || currentStoreID == "" || get(r, "storeId") != currentStoreID || get(r, "installationId") != s.InstallationID || get(r, "stateDir") != s.Selection.Path || !equal(get(r, "socketPath"), nullable(s.Socket)) || get(r, "scopeRoot") != s.Scope.Root || get(r, "scopeAuthority") != s.Scope.Authority {
 		return absent("worker_policy_service_mismatch")
 	}
-	h := OpenProcess(num(pid))
-	defer h.Close()
+	held := !holdPidfd
+	if holdPidfd {
+		h := openProcess(num(pid))
+		defer h.Close()
+		held = h.FD >= 0
+	}
 	unavailable := func() bool {
 		st := ProcessState(num(pid))
-		return h.FD < 0 || st == "" || strings.ContainsAny(st, "TtZXx") || !equal(StartTicks(num(pid)), ticks)
+		return !held || st == "" || strings.ContainsAny(st, "TtZXx") || !equal(StartTicks(num(pid)), ticks)
 	}
 	if unavailable() {
 		return absent("worker_policy_process_unavailable")
