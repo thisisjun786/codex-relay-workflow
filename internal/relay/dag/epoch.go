@@ -68,6 +68,11 @@ func StaleEpoch(format string, args ...any) error {
 	return &store.RefusedError{Reason: string(contract.RefusalStaleCoordinatorEpoch), Detail: fmt.Sprintf(format, args...)}
 }
 
+// isStaleEpoch is whether a refusal is the fence's.
+func isStaleEpoch(refusal *store.RefusedError) bool {
+	return refusal.Reason == string(contract.RefusalStaleCoordinatorEpoch)
+}
+
 // CheckCoordinatorEpoch is the fence. It is the first statement of every write that decides, inside the transaction that writes, so the
 // answer and the write see one state of the store. A write names the epoch its session holds (expected) and who it is (actor):
 //

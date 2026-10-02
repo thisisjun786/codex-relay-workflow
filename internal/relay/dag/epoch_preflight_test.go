@@ -46,6 +46,7 @@ func TestPreflightFencesBeforeItJudgesThePlan(t *testing.T) {
 		{"a revision the plan's rules reject", epochDoc("plan", "r4", 2, "t1", 1, "P-TEST", addEdge("e1", "a", "ghost", EdgeArtifactVerified))},
 		{"a request that names no epoch", epochDoc("plan", "r5", 2, "t1", 0, "P-TEST", addNode("c", NodeNonPR))},
 		{"a request from another task", epochDoc("plan", "r6", 2, "t2", 2, "P-TEST", addNode("c", NodeNonPR))},
+		{"its own recorded request, repeated after a newer claim", epochDoc("plan", "r1", 0, "t1", 1, "P-TEST", addNode("a", NodeNonPR))},
 	} {
 		if err := Preflight(ctx, path, decode(t, c.rev)); !isStale(err) {
 			t.Errorf("%s: Preflight = %v, want stale_coordinator_epoch", c.name, err)
@@ -58,6 +59,29 @@ func TestPreflightFencesBeforeItJudgesThePlan(t *testing.T) {
 	rejected(t, Preflight(ctx, path, decode(t, epochDoc("plan", "r4", 2, "t1", 2, "P-TEST", addEdge("e1", "a", "ghost", EdgeArtifactVerified)))))
 	if err := Preflight(ctx, path, decode(t, epochDoc("plan", "r7", 2, "t1", 2, "P-TEST", addNode("c", NodeNonPR)))); err != nil {
 		t.Errorf("the holder with a valid revision = %v", err)
+	}
+}
+
+// The early form hands a request on once it finds it in the log, because that request may have committed between two of its reads. That fallback is for the plan's own refusals: a session that
+// was replaced and repeats a revision it recorded is stale, and hears so from Preflight itself and not only from Put.
+func TestPreflightDoesNotHandAReplacedSessionsReplayOn(t *testing.T) {
+	ctx := context.Background()
+	r, s, path := newRepo(t)
+	parentBinding(t, s, "b1", "t1", "P-TEST", "active")
+	claimRow(t, s, "plan", 1, "b1", "t1", "n1")
+	if _, err := r.Put(ctx, decode(t, epochDoc("plan", "r1", 0, "t1", 1, "P-TEST", addNode("a", NodeNonPR)))); err != nil {
+		t.Fatal(err)
+	}
+	second := epochDoc("plan", "r2", 1, "t1", 1, "P-TEST", addNode("b", NodeNonPR))
+	if _, err := r.Put(ctx, decode(t, second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := Preflight(ctx, path, decode(t, second)); err != nil {
+		t.Fatalf("the holder repeating its request = %v, want it handed on to Put", err)
+	}
+	claimRow(t, s, "plan", 2, "b1", "t1", "n2")
+	if err := Preflight(ctx, path, decode(t, second)); !isStale(err) {
+		t.Fatalf("a replaced session repeating a revision it recorded = %v, want stale_coordinator_epoch", err)
 	}
 }
 

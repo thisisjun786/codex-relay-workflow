@@ -666,7 +666,8 @@ func preflightFence(ctx context.Context, dbPath string, rev Revision) error {
 // conflicting. So a refusal (a stale parent, a plan the rules reject) is handed on, not given, once the request
 // is found in the log: the writing open answers it with the stored result, and judges it again as the authority.
 // A request that is not in the log is refused as it was. A failure to read the store is the host's and is
-// returned as it is, the look-up included.
+// returned as it is, the look-up included. The coordinator epoch is the exception: its check is the first read, nothing a writer commits during the later reads
+// makes a stale session current, and a session that was replaced and repeats a request it recorded is refused here, not handed on to the writing open.
 func preflightRead(ctx context.Context, q Queryer, rev Revision) error {
 	err := judgeAgainstStore(ctx, q, rev)
 	if err == nil {
@@ -675,6 +676,9 @@ func preflightRead(ctx context.Context, q Queryer, rev Revision) error {
 	var refusal *store.RefusedError
 	if !errors.As(err, &refusal) {
 		return err // a failure to read the store is the host's, and a request is not looked up again to hide it
+	}
+	if isStaleEpoch(refusal) {
+		return err
 	}
 	_, found, lookup := revisionByRequest(ctx, q, rev.PlanID, rev.RequestID)
 	if lookup != nil {
