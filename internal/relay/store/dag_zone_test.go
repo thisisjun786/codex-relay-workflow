@@ -42,6 +42,7 @@ var zoneInventory = map[string][]string{
 	"dag_acceptance_forge":         {"acceptance_id", "forge_repository", "pr_number"},
 	"dag_passes":                   {"plan_id", "pass_seq", "plan_revision", "input_digest", "ready_count", "free_slots", "ceiling", "held", "deciding_limit", "order_json", "dispositions_json", "recorded_by", "recorded_at"},
 	"dag_release_requests":         {"plan_id", "node_id", "manifest_digest", "request_sha256", "request_json", "marker_root", "socket", "state_selector", "recorded_at"},
+	"dag_conflict_observations":    {"observation_id", "plan_id", "left_node_id", "right_node_id", "repository", "left_head", "right_head", "base_sha", "conflict_count", "method", "observed_by", "observed_at"},
 	"dag_node_regions":             {"plan_id", "node_id", "declaration_seq", "repository", "path", "region_kind", "region_key", "change", "exclusive", "declared_by", "declared_at"},
 }
 

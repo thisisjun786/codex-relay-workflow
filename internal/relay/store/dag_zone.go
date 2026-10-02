@@ -383,4 +383,24 @@ BEGIN SELECT RAISE(ABORT, 'dag_edges rows are never deleted'); END`,
     recorded_at     TEXT NOT NULL,
     PRIMARY KEY (plan_id, node_id, manifest_digest)
 )`,
+
+	// How many files git cannot merge between the heads of two parallel branches of a plan (git merge-tree --write-tree), recorded for the measurement criterion
+	// c7. The nodes are stored in sorted order (left < right, the heads follow them), so asking either way round is one row; nothing in the scheduler's reading
+	// waits for it. The unique index makes a repeat of the same branches and base a replay.
+	`CREATE TABLE IF NOT EXISTS dag_conflict_observations (
+    observation_id TEXT PRIMARY KEY,
+    plan_id        TEXT NOT NULL REFERENCES dag_plans (plan_id),
+    left_node_id   TEXT NOT NULL,
+    right_node_id  TEXT NOT NULL,
+    repository     TEXT NOT NULL CHECK (repository <> ''),
+    left_head      TEXT NOT NULL,
+    right_head     TEXT NOT NULL,
+    base_sha       TEXT NOT NULL,
+    conflict_count INTEGER NOT NULL CHECK (conflict_count >= 0),
+    method         TEXT NOT NULL,
+    observed_by    TEXT NOT NULL,
+    observed_at    TEXT NOT NULL,
+    CHECK (left_node_id < right_node_id)
+)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS dag_conflict_observations_pair ON dag_conflict_observations (plan_id, left_node_id, right_node_id, left_head, right_head, base_sha)`,
 }

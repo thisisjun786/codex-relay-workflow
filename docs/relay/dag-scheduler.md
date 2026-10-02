@@ -223,6 +223,46 @@ root that is itself a link, can leave one file outside the root (it holds only a
 because the relay's message joins the lines of a finding and the child would read another path. A correction uses the body the store holds for the digest, so preparing twice from the same inputs gives the same file and the same line. The directory is created by the freeze and is not
 cleaned up by it.
 
+## Merge eligibility
+
+`crw relay dag-merge-judge --plan P --node N --actor A [--repository OWNER/NAME --pull-request N]` decides whether the accepted pull request of an implementation node may go to the merge lane (criterion c8). The relay reads the pull
+request (by the forge identity recorded with the acceptance) and the base branch itself; then one transaction applies these rules in order, the first decisive one winning, and appends the judgement to the node's history in
+`dag_merge_checks` (a judgement that restates the latest one writes nothing, so the history is readable afterwards: the retry, the stale head, the eviction).
+
+| Outcome | When |
+| --- | --- |
+| `evicted` | a required check failed again on the same head after its retry (decision D-12). Final for that head: nothing later, green checks included, brings it back; a new head needs a new acceptance. The reading says `blocked:evicted` |
+| `stale_criteria` | the plan's or the relationship's criteria are no longer the ones the acceptance stands on |
+| `stale_head` | the pull request is at another head than the accepted one (E-10); the row stores both heads, so the reading blocks the edges built on it |
+| `predecessor_not_landed` | an incoming `integrated` edge, or an incoming code-pinned edge (a stacked pull request), whose predecessor's accepted head is not yet in the edge's target |
+| `stale_base` | the base branch tip is not contained in the head, so the required checks did not run on the tree that would land. The dev ruleset is strict (D-11), so a head that contains the tip is that tree; the pull request's own base field says nothing about what the checks ran against and is stored for information only. The local ancestry check needs the head fetched into the checkout; a head it does not have is a failure of the host and writes nothing |
+| `checks_pending` | a required name has no check on the exact head, or its newest run has not finished, or the checks are not usable evidence |
+| `retry_same_sha` | every required check has finished and one failed, and no retry was spent on this head: run the failed checks again on the same head (no new generation, no reassignment). The same snapshot read again is the same judgement |
+| `eligible` | every required check passed (the newest attempt of each run decides; non-required checks never count). After a recorded failure the reason says so |
+
+Failures count only when every required check has finished, so one red job seen beside a running one never uses up the retry. A second, different failure after the retry round opened evicts. A pull request whose list of
+required checks cannot be read is not judged (`merge_evidence_malformed`, nothing written): ignorance is not "none required". A draft, closed or merged pull request is `disposition_conflict`; evidence the relay could not read
+completely is the host's failure; both write nothing. A row of the history that no longer digests to what was recorded (B-13) is `revision_mismatch`, and the edges built on it read `blocked:evidence_mismatch`.
+
+`crw relay dag-merge-request --plan P --node N --actor A --host H` judges again now (never from the history) and, only when the node is eligible, asks the existing merge lane for a turn with the accepted head, the pull request and the
+relationship. A node that is not eligible gets no turn and the refusal is the relay's own reason (`merge_candidate_moved` for a stale head, `merge_currency_stale` for a stale base, `criteria_set_changed` for stale criteria,
+`disposition_conflict` naming the outcome for the rest); the judgement stays in the history, which is what counts the retry. The lane is not changed: a holder has one live claim per target, so the parent merges one pull request of
+a project at a time (a second request while the first turn is open is `disposition_conflict` naming that turn), and turns of different projects are served first in, first out (D-16, `requested_at` then turn id). The parent's order is
+accept, `dag-merge-request`, acknowledge the grant, `merge-turn-check`, merge on the forge, `merge-turn-land`, `assignment-mark merged`, `dag-integration-observe`. A pull request that went through `dag-merge-request` is
+the only kind the DAG path lets into the lane, so every landed tree of it has an `eligible` judgement of the very head that landed.
+
+## Conflict observations
+
+`crw relay dag-conflict-observe --plan P --actor A --repository PATH --left-node N --right-node M --left-head SHA --right-head SHA` records how many files git cannot merge between the heads of two parallel branches of a plan
+(`git merge-tree --write-tree`, git 2.38 or newer), the number criterion c7 asks to be recorded. The merge is computed in memory against a throwaway object directory, so the checkout gains no objects. The nodes are stored in sorted
+order with their heads, so asking either way round is one row, and the same two heads over the same base are a replay. It is a measurement: nothing in the reading waits for it.
+
+## Cap basis
+
+`crw relay dag-cap-basis-record --limit L --revision R --w-minutes W --w-source S --s-minutes S --s-source S --actor A` records the evidence a runs ceiling above the standing cap of 6 rests on. The reading honours such a
+ceiling only for a limit revision that has a row here, and clamps it to 6 otherwise. The value of a ceiling is decision D-05, which is not made: this writes evidence and raises nothing. Only the task that declared the limit or the
+project's registered parent records, and a basis is not rewritten.
+
 ## Commands
 
 | Command | Reads or writes | Answer |
@@ -234,6 +274,10 @@ cleaned up by it.
 | `dag-integration-observe --plan P --node N --actor A [--target REPO@REF]` | appends `dag_integration_observations`; returns an implementation node's slot when it is integrated | the observations, `integrated`, `mark_present`, `slot_released` |
 | `dag-decision-record --plan P --actor A --subject S --digest D --disposition X --authority-kind K --authority-ref R` | writes `dag_decisions` | the decision id and revision, `replayed`, the decision it superseded |
 | `dag-correct --plan P --node N --actor A [--prepare --manifest-request R] [--manifest-digest D]` | `--prepare` stores a manifest; otherwise writes `dag_node_executions` (kind `correction`) | the instruction line and manifest digest, or the generation bound and `carried_over` |
+| `dag-merge-judge --plan P --node N --actor A` | appends `dag_merge_checks` (when the judgement differs from the latest) | the outcome, reason, round, check sequence, heads, base tip and failed required checks |
+| `dag-merge-request --plan P --node N --actor A --host H` | the judgement as above; asks the merge lane for a turn (`merge_turns`) when eligible | the judgement and the turn |
+| `dag-conflict-observe --plan P --actor A --repository PATH --left-node N --right-node M --left-head SHA --right-head SHA` | writes `dag_conflict_observations` | the number of conflicting files and their names |
+| `dag-cap-basis-record --limit L --revision R --w-minutes W --w-source S --s-minutes S --s-source S --actor A` | writes `dag_cap_basis` | the basis recorded |
 
 Refusals use the relay's existing reasons: `unregistered_scope` (a plan or node that is not there), `malformed_receipt` (a region or a request that is not valid),
 `disposition_conflict` (a node that edits no repository, or whose regions are held, or that is not ready), and the reasons of the table above. Exit codes are the relay's: 0, 2 refusal, 3 host, 4 usage.
@@ -241,7 +285,7 @@ Refusals use the relay's existing reasons: `unregistered_scope` (a plan or node 
 ## The store
 
 The scheduler adds tables to the DAG zone ([DAG plans](dag-plans.md#the-store)) as appended statements. `dag_passes` and `dag_node_regions` are described above; `dag_release_requests` freezes the request of a release with its intent;
-`dag_merge_checks`, `dag_acceptance_revalidations` and `dag_acceptance_forge` hold what the relay observed of an accepted pull request, re-verification of an accepted
+`dag_conflict_observations` holds the merge-tree conflict counts of parallel branches; `dag_merge_checks`, `dag_acceptance_revalidations` and `dag_acceptance_forge` hold what the relay observed of an accepted pull request, re-verification of an accepted
 output under new criteria, and the forge identity of an accepted implementation node.
 
 ## How the acceptance path is verified

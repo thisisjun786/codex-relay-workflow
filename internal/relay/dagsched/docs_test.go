@@ -24,7 +24,7 @@ func TestSchedulerPageNamesEveryReasonAndCommand(t *testing.T) {
 			t.Errorf("docs/relay/dag-scheduler.md does not say that %s is reserved", reserved)
 		}
 	}
-	for _, command := range []string{"dag-ready", "dag-region-declare", "dag-release", "dag-accept", "dag-integration-observe", "dag-decision-record", "dag-correct"} {
+	for _, command := range []string{"dag-ready", "dag-region-declare", "dag-release", "dag-accept", "dag-integration-observe", "dag-decision-record", "dag-correct", "dag-merge-judge", "dag-merge-request", "dag-conflict-observe", "dag-cap-basis-record"} {
 		if !strings.Contains(page, "`"+command) {
 			t.Errorf("docs/relay/dag-scheduler.md does not describe %s", command)
 		}

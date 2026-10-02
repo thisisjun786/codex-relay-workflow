@@ -30,6 +30,10 @@ func init() {
 		dispatch.Command{Name: "dag-integration-observe", Run: runObserve},
 		dispatch.Command{Name: "dag-decision-record", Run: runDecision},
 		dispatch.Command{Name: "dag-correct", Run: runCorrect},
+		dispatch.Command{Name: "dag-merge-judge", Run: runMergeJudge},
+		dispatch.Command{Name: "dag-merge-request", Run: runMergeRequest},
+		dispatch.Command{Name: "dag-conflict-observe", Run: runConflictObserve},
+		dispatch.Command{Name: "dag-cap-basis-record", Run: runCapBasis},
 	)
 }
 
@@ -302,4 +306,97 @@ func runCorrect(ctx context.Context, services dispatch.Services, args dispatch.A
 	return contract.OrderedObject{{Key: "ok", Value: true}, {Key: "schema", Value: "dag-correct/1"}, {Key: "plan_id", Value: result.PlanID}, {Key: "node_id", Value: result.NodeID},
 		{Key: "relationship_id", Value: result.RelationshipID}, {Key: "execution_generation", Value: result.Generation}, {Key: "manifest_digest", Value: result.ManifestDigest},
 		{Key: "replayed", Value: result.Replayed}, {Key: "carried_over", Value: result.CarriedOver}}, nil
+}
+
+// namedPullRequest is the optional --repository/--pull-request pair of the merge commands.
+func namedPullRequest(args dispatch.Args) (*PRRef, error) {
+	if !args.Given("repository") && !args.Given("pull-request") {
+		return nil, nil
+	}
+	if !args.Given("repository") || !args.Given("pull-request") {
+		return nil, usage("--repository and --pull-request name a pull request together")
+	}
+	return &PRRef{Repository: args.Text("repository"), Number: args.Integer("pull-request").Int64()}, nil
+}
+
+func judgeObject(schema string, r JudgeResult) contract.OrderedObject {
+	failed := make([]any, len(r.FailedRequired))
+	for i, f := range r.FailedRequired {
+		failed[i] = f
+	}
+	return contract.OrderedObject{{Key: "ok", Value: true}, {Key: "schema", Value: schema}, {Key: "plan_id", Value: r.PlanID}, {Key: "node_id", Value: r.NodeID}, {Key: "acceptance_id", Value: optionalText(r.AcceptanceID)},
+		{Key: "outcome", Value: r.Outcome}, {Key: "reason", Value: r.Reason}, {Key: "eligible", Value: r.Eligible()}, {Key: "round", Value: int64(r.Round)}, {Key: "check_seq", Value: r.CheckSeq},
+		{Key: "accepted_head", Value: optionalText(r.HeadSHA)}, {Key: "observed_head", Value: optionalText(r.ObservedHeadSHA)}, {Key: "base_tip", Value: optionalText(r.BaseTipSHA)},
+		{Key: "failed_required", Value: failed}, {Key: "replayed", Value: r.Replayed}}
+}
+
+func runMergeJudge(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
+	named, err := namedPullRequest(args)
+	if err != nil {
+		return nil, err
+	}
+	sched, closeStore, err := openScheduler(ctx, services)
+	if err != nil {
+		return nil, err
+	}
+	defer closeStore()
+	sched.Tips, sched.Ancestry, sched.PRs = mergeturn.TargetReader{}, GitAncestry{}.Ancestry, ForgePullRequestReader(ExecRunner)
+	result, err := sched.Judge(ctx, args.Text("plan"), args.Text("node"), args.Text("actor"), JudgeInput{PullRequest: named})
+	if err != nil {
+		return nil, hostFailure(err)
+	}
+	return judgeObject("dag-merge-judge/1", result), nil
+}
+
+func runMergeRequest(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
+	named, err := namedPullRequest(args)
+	if err != nil {
+		return nil, err
+	}
+	sched, closeStore, err := openScheduler(ctx, services)
+	if err != nil {
+		return nil, err
+	}
+	defer closeStore()
+	sched.Tips, sched.Ancestry, sched.PRs = mergeturn.TargetReader{}, GitAncestry{}.Ancestry, ForgePullRequestReader(ExecRunner)
+	result, turn, err := sched.RequestMergeTurn(ctx, args.Text("plan"), args.Text("node"), args.Text("actor"), MergeRequestInput{PullRequest: named, Host: args.Text("host")})
+	if err != nil {
+		return nil, hostFailure(err)
+	}
+	return append(judgeObject("dag-merge-request/1", result), contract.Field{Key: "merge_turn", Value: turn}), nil
+}
+
+func runConflictObserve(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
+	sched, closeStore, err := openScheduler(ctx, services)
+	if err != nil {
+		return nil, err
+	}
+	defer closeStore()
+	result, err := sched.ObserveConflicts(ctx, args.Text("plan"), args.Text("actor"), ConflictInput{Repository: args.Text("repository"), LeftNode: args.Text("left-node"), RightNode: args.Text("right-node"),
+		LeftHead: args.Text("left-head"), RightHead: args.Text("right-head")})
+	if err != nil {
+		return nil, hostFailure(err)
+	}
+	files := make([]any, len(result.Files))
+	for i, f := range result.Files {
+		files[i] = f
+	}
+	return contract.OrderedObject{{Key: "ok", Value: true}, {Key: "schema", Value: "dag-conflict-observe/1"}, {Key: "plan_id", Value: result.PlanID}, {Key: "observation_id", Value: result.ObservationID},
+		{Key: "left_node_id", Value: result.LeftNode}, {Key: "right_node_id", Value: result.RightNode}, {Key: "left_head", Value: result.LeftHead}, {Key: "right_head", Value: result.RightHead},
+		{Key: "base_sha", Value: result.BaseSHA}, {Key: "conflicts", Value: int64(result.Conflicts)}, {Key: "files", Value: files}, {Key: "method", Value: result.Method}, {Key: "replayed", Value: result.Replayed}}, nil
+}
+
+func runCapBasis(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
+	sched, closeStore, err := openScheduler(ctx, services)
+	if err != nil {
+		return nil, err
+	}
+	defer closeStore()
+	basis := CapBasis{LimitID: args.Text("limit"), Revision: args.Integer("revision").Int64(), WMinutes: args.Float("w-minutes"), WSource: args.Text("w-source"),
+		SMinutes: args.Float("s-minutes"), SSource: args.Text("s-source"), DecidedBy: args.Text("actor")}
+	if err := sched.RecordCapBasis(ctx, basis); err != nil {
+		return nil, hostFailure(err)
+	}
+	return contract.OrderedObject{{Key: "ok", Value: true}, {Key: "schema", Value: "dag-cap-basis-record/1"}, {Key: "limit_id", Value: basis.LimitID}, {Key: "limit_revision", Value: basis.Revision},
+		{Key: "w_minutes", Value: basis.WMinutes}, {Key: "s_minutes", Value: basis.SMinutes}}, nil
 }

@@ -798,5 +798,34 @@
   {"flag":"--actor","required":true},
   {"flag":"--prepare","kind":"true","help":"prepare the manifest and print the instruction instead of recording the generation"},
   {"flag":"--manifest-request","help":"with --prepare: {base, rule_version, volatile, artifact_roots} as JSON or @file"},
-  {"flag":"--manifest-digest","help":"cross-check: the digest the child was told"}]}
+  {"flag":"--manifest-digest","help":"cross-check: the digest the child was told"}]},
+{"name":"dag-merge-judge","summary":"judges whether an accepted pull request may go to the merge lane: the relay reads the pull request and the base branch itself, and the judgement (eligible, retry_same_sha, evicted, checks_pending, stale_head, stale_base, stale_criteria or predecessor_not_landed) is appended to the node's history of merge checks. A required check that fails is retried once on the same head and a second failure evicts the node (D-12)","options":[
+  {"flag":"--plan","required":true},
+  {"flag":"--node","required":true},
+  {"flag":"--actor","required":true,"help":"the parent of the node's relationship"},
+  {"flag":"--repository","help":"optional cross-check: the forge repository (owner/name) of the accepted pull request"},
+  {"flag":"--pull-request","type":"int","help":"optional cross-check: the accepted pull request number"}]},
+{"name":"dag-merge-request","summary":"asks the merge lane for a turn for an accepted pull request after a judgement made now says it is eligible. A pull request that is not eligible gets no merge turn and the refusal names the reason; the turn order stays the lane's (first in, first out)","options":[
+  {"flag":"--plan","required":true},
+  {"flag":"--node","required":true},
+  {"flag":"--actor","required":true,"help":"the project's registered parent, who holds the turn"},
+  {"flag":"--host","required":true,"help":"the host the holder runs on"},
+  {"flag":"--repository","help":"optional cross-check: the forge repository (owner/name) of the accepted pull request"},
+  {"flag":"--pull-request","type":"int","help":"optional cross-check: the accepted pull request number"}]},
+{"name":"dag-conflict-observe","summary":"records how many files git cannot merge between the heads of two parallel implementation branches of a plan (git merge-tree --write-tree, computed in memory), for measurement; nothing waits for it","options":[
+  {"flag":"--plan","required":true},
+  {"flag":"--actor","required":true,"help":"the project's registered parent"},
+  {"flag":"--repository","required":true,"help":"an absolute path of a local checkout that holds both heads"},
+  {"flag":"--left-node","required":true},
+  {"flag":"--right-node","required":true},
+  {"flag":"--left-head","required":true},
+  {"flag":"--right-head","required":true}]},
+{"name":"dag-cap-basis-record","summary":"records the evidence (W and S minutes and where each came from) that a runs ceiling above the standing cap of 6 rests on; the scheduler honours such a ceiling only for a limit revision that has one. It decides no ceiling","options":[
+  {"flag":"--limit","required":true},
+  {"flag":"--revision","type":"int","required":true},
+  {"flag":"--w-minutes","type":"float","required":true},
+  {"flag":"--w-source","required":true},
+  {"flag":"--s-minutes","type":"float","required":true},
+  {"flag":"--s-source","required":true},
+  {"flag":"--actor","required":true,"help":"the task that declared the limit or the registered parent of its project"}]}
 ]

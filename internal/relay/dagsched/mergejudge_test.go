@@ -1,0 +1,347 @@
+package dagsched
+
+import (
+	"context"
+	"strings"
+	"testing"
+)
+
+// judgeKit is an integration kit with node I accepted at the head of a real branch ("feature", cut from dev) whose pull request is scripted: the forge answers what the test says, while the
+// base branch and the ancestry come from the real repository.
+type judgeKit struct {
+	*integrationKit
+	feature string
+	pr      PullRequest
+}
+
+func newJudgeKit(t *testing.T) *judgeKit {
+	t.Helper()
+	k := &judgeKit{integrationKit: newIntegrationKit(t)}
+	repo := k.repo
+	repo.git("checkout", "-q", "-b", "feature")
+	k.feature = repo.commit("feature.txt", "feature")
+	repo.git("checkout", "-q", "dev")
+	k.declare("g", "I", "feature.txt")
+	k.acceptNode("g", "I", acceptOpts{HeadSHA: k.feature, PR: 5, Forge: "owner/repo", Repository: repo.path})
+	k.pr = PullRequest{Repository: "owner/repo", Number: 5, State: "open", HeadSHA: k.feature, BaseRef: "dev", BaseSHA: repo.git("rev-parse", "dev"), Verdict: "ready", RequiredDeclared: []string{"A", "B"}, RequiredReadable: true}
+	k.setChecks("A:1:1:success", "B:2:1:success")
+	return k
+}
+
+// setChecks scripts the checks of the pull request's head: each entry is name:runId:attempt:conclusion (an empty conclusion has not finished).
+func (k *judgeKit) setChecks(specs ...string) {
+	k.t.Helper()
+	k.pr.Checks = nil
+	for _, spec := range specs {
+		f := strings.Split(spec, ":")
+		attempt := int64(f[2][0] - '0')
+		k.pr.Checks = append(k.pr.Checks, Check{Name: f[0], RunID: f[1], Attempt: attempt, Conclusion: f[3], HeadSHA: k.pr.HeadSHA})
+	}
+	k.forge.by["owner/repo#5"] = k.pr
+}
+
+func (k *judgeKit) judge() JudgeResult {
+	k.t.Helper()
+	res, err := k.sched.Judge(context.Background(), "g", "I", "parent", JudgeInput{})
+	if err != nil {
+		k.t.Fatalf("judge: %v", err)
+	}
+	return res
+}
+
+func (k *judgeKit) history() []string {
+	k.t.Helper()
+	rows, err := k.s.DB.Query("SELECT outcome || ':' || round_no FROM dag_merge_checks ORDER BY acceptance_id, check_seq")
+	if err != nil {
+		k.t.Fatal(err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			k.t.Fatal(err)
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+// Criterion c8 and decision D-12: a required check that fails is retried once on the same head and a second, different failure evicts the node for good. A failure is counted only when every
+// required check has finished, a non-required check never counts, the same snapshot read again is not a second failure, and a head that is evicted stays evicted.
+func TestMergeEligibilityRetryOnceThenEvict(t *testing.T) {
+	t.Run("a flaky check passes after one retry", func(t *testing.T) {
+		k := newJudgeKit(t)
+		// A is red while B is still running: nothing is counted yet
+		k.setChecks("A:1:1:failure", "B:2:1:")
+		if r := k.judge(); r.Outcome != OutcomeChecksPending || r.Round != 1 || len(r.FailedRequired) != 0 {
+			t.Fatalf("a red job beside a running one = %+v", r)
+		}
+		k.setChecks("A:1:1:failure", "B:2:1:success")
+		first := k.judge()
+		if first.Outcome != OutcomeRetrySameSHA || first.Round != 1 || strings.Join(first.FailedRequired, ",") != "A|1|1" || first.Replayed {
+			t.Fatalf("the first failure = %+v", first)
+		}
+		// the same snapshot again is the same judgement
+		if again := k.judge(); again.Outcome != OutcomeRetrySameSHA || !again.Replayed || again.CheckSeq != first.CheckSeq {
+			t.Fatalf("the same snapshot = %+v", again)
+		}
+		// the retry (the same run, the next attempt) passes, and a non-required check is red
+		k.setChecks("A:1:2:success", "B:2:1:success", "lint:3:1:failure")
+		done := k.judge()
+		if !done.Eligible() || done.Round != 2 || !strings.Contains(done.Reason, "flaky") {
+			t.Fatalf("after the retry = %+v", done)
+		}
+		if got := strings.Join(k.history(), " "); got != "checks_pending:1 retry_same_sha:1 eligible:2" {
+			t.Fatalf("history = %s", got)
+		}
+	})
+	t.Run("the newest attempt of a run decides", func(t *testing.T) {
+		k := newJudgeKit(t)
+		// a listing that still carries the first, failed attempt of a run beside its second, passing one
+		k.setChecks("A:1:1:failure", "A:1:2:success", "B:2:1:success")
+		if r := k.judge(); !r.Eligible() || len(r.FailedRequired) != 0 {
+			t.Fatalf("the retried run = %+v", r)
+		}
+	})
+	t.Run("a second failure evicts for good", func(t *testing.T) {
+		k := newJudgeKit(t)
+		k.setChecks("A:1:1:failure", "B:2:1:success")
+		if r := k.judge(); r.Outcome != OutcomeRetrySameSHA {
+			t.Fatalf("first = %+v", r)
+		}
+		k.setChecks("A:1:2:failure", "B:2:1:success")
+		evicted := k.judge()
+		if evicted.Outcome != OutcomeEvicted || evicted.Round != 2 || strings.Join(evicted.FailedRequired, ",") != "A|1|2" {
+			t.Fatalf("second failure = %+v", evicted)
+		}
+		// nothing later brings the head back: green checks, the same snapshot, and the reading
+		k.setChecks("A:1:3:success", "B:2:1:success")
+		if later := k.judge(); later.Outcome != OutcomeEvicted || !later.Replayed || later.CheckSeq != evicted.CheckSeq {
+			t.Fatalf("after green checks = %+v", later)
+		}
+		if n := k.read("g").node("I"); n.Reason != BlockedEvicted {
+			t.Fatalf("I = %+v, want blocked:evicted", n)
+		}
+		if got := strings.Join(k.history(), " "); got != "retry_same_sha:1 evicted:2" {
+			t.Fatalf("history = %s", got)
+		}
+	})
+	t.Run("another check failing in the retry round also evicts, an unrelated one does not", func(t *testing.T) {
+		k := newJudgeKit(t)
+		k.setChecks("A:1:1:failure", "B:2:1:success")
+		k.judge()
+		// a non-required check finishing red changes the snapshot but not the required failures
+		k.setChecks("A:1:1:failure", "B:2:1:success", "lint:3:1:failure")
+		if r := k.judge(); r.Outcome != OutcomeRetrySameSHA {
+			t.Fatalf("an unrelated red check = %+v", r)
+		}
+		k.setChecks("A:1:2:success", "B:2:2:failure")
+		if r := k.judge(); r.Outcome != OutcomeEvicted {
+			t.Fatalf("B failing in the retry round = %+v", r)
+		}
+	})
+}
+
+// The history appends only what changed: the same judgement again writes nothing, a change of criteria is a row of its own and so is the return.
+func TestMergeJudgeHistoryAppends(t *testing.T) {
+	k := newJudgeKit(t)
+	first := k.judge()
+	if !first.Eligible() || first.CheckSeq != 1 {
+		t.Fatalf("first = %+v", first)
+	}
+	if again := k.judge(); !again.Replayed || again.CheckSeq != 1 {
+		t.Fatalf("again = %+v", again)
+	}
+	digest := dig("registered again")
+	k.exec("UPDATE canonical_criteria SET set_digest = ?", digest)
+	if r := k.judge(); r.Outcome != OutcomeStaleCriteria || r.CheckSeq != 2 {
+		t.Fatalf("criteria registered again = %+v", r)
+	}
+	node, _ := nodeOf(k.snapshot("g"), "I")
+	k.exec("UPDATE canonical_criteria SET set_digest = ?", node.CriteriaSetDigest)
+	if r := k.judge(); !r.Eligible() || r.CheckSeq != 3 {
+		t.Fatalf("criteria restored = %+v", r)
+	}
+	if got := strings.Join(k.history(), " "); got != "eligible:1 stale_criteria:1 eligible:1" {
+		t.Fatalf("history = %s", got)
+	}
+}
+
+// Rule 4 asks whether the base tip is IN the head, which the repository can answer; the pull request's own base field is only what the forge shows and says nothing about what the checks
+// ran against, so it is neither trusted nor needed.
+func TestMergeStaleBaseIsHeadContainsTip(t *testing.T) {
+	k := newJudgeKit(t)
+	repo := k.repo
+	// the base moves on after the branch was cut; the forge still shows the new tip as the pull request's base, as it does for any open pull request
+	tip := repo.commit("newer.txt", "newer")
+	k.pr.BaseSHA = tip
+	k.setChecks("A:1:1:success", "B:2:1:success")
+	stale := k.judge()
+	if stale.Outcome != OutcomeStaleBase || stale.BaseTipSHA != tip || !strings.Contains(stale.Reason, tip) {
+		t.Fatalf("a head that lacks the new tip = %+v", stale)
+	}
+	// a head built on the new tip is eligible although the field the forge shows is an old commit
+	repo.git("checkout", "-q", "-b", "second", tip)
+	second := repo.commit("second.txt", "second")
+	repo.git("checkout", "-q", "dev")
+	k.declare("g", "D", "second.txt")
+	k.acceptNode("g", "D", acceptOpts{HeadSHA: second, PR: 6, Forge: "owner/repo", Repository: repo.path})
+	pr := k.pr
+	pr.Number, pr.HeadSHA, pr.BaseSHA = 6, second, strings.Repeat("0", 40)
+	pr.Checks = []Check{{Name: "A", RunID: "1", Attempt: 1, Conclusion: "success", HeadSHA: second}, {Name: "B", RunID: "2", Attempt: 1, Conclusion: "success", HeadSHA: second}}
+	k.forge.by["owner/repo#6"] = pr
+	if r, err := k.sched.Judge(context.Background(), "g", "D", "parent", JudgeInput{}); err != nil || !r.Eligible() {
+		t.Fatalf("a head that contains the tip = %v %+v", err, r)
+	}
+	// the head commit is not in the local repository (the pull request was never fetched): the question cannot be answered, which is the host's failure and writes nothing
+	before := k.count("SELECT COUNT(*) FROM dag_merge_checks")
+	absent := strings.Repeat("9", 40)
+	k.exec("UPDATE dag_acceptances SET head_sha = ? WHERE node_id = 'I'", absent)
+	k.pr.HeadSHA = absent
+	k.setChecks("A:1:1:success", "B:2:1:success")
+	if _, err := k.sched.Judge(context.Background(), "g", "I", "parent", JudgeInput{}); err == nil || refusalReason(err) != "not a refusal: "+err.Error() {
+		t.Fatalf("an absent head = %v", err)
+	}
+	if k.count("SELECT COUNT(*) FROM dag_merge_checks") != before {
+		t.Fatal("a judgement that could not be made wrote a row")
+	}
+}
+
+// Each rule is decided in its order and the cases that cannot be judged write nothing.
+func TestMergeEligibilityStaleAndOrder(t *testing.T) {
+	t.Run("the pull request moved after the acceptance", func(t *testing.T) {
+		k := newJudgeKit(t)
+		k.pr.HeadSHA = strings.Repeat("2", 40)
+		k.setChecks("A:1:1:success", "B:2:1:success")
+		r := k.judge()
+		if r.Outcome != OutcomeStaleHead || r.ObservedHeadSHA != k.pr.HeadSHA || r.HeadSHA != k.feature {
+			t.Fatalf("judge = %+v", r)
+		}
+		var observed string
+		if err := k.s.DB.QueryRow("SELECT observed_head_sha FROM dag_merge_checks").Scan(&observed); err != nil || observed != k.pr.HeadSHA {
+			t.Fatalf("observed = %q %v", observed, err)
+		}
+	})
+	for _, kind := range []string{"integrated", "pinned"} {
+		t.Run("a predecessor that has not landed ("+kind+")", func(t *testing.T) {
+			k := newJudgeKit(t)
+			repo := k.repo
+			extra := doc{"target_repository": repo.path, "target_base_ref": "dev"}
+			edgeKind := "integrated"
+			if kind == "pinned" {
+				edgeKind = "artifact_verified"
+				extra["pins_code_head"] = true
+			}
+			k.putPlan("g", int(k.snapshot("g").Revision), "g-r2", addEdge("id", "I", "D", edgeKind, extra))
+			tip := repo.git("rev-parse", "dev")
+			repo.git("checkout", "-q", "-b", "stacked", k.feature)
+			second := repo.commit("stacked.txt", "stacked")
+			repo.git("checkout", "-q", "dev")
+			_ = tip
+			k.declare("g", "D", "stacked.txt")
+			a := k.acceptNode("g", "D", acceptOpts{HeadSHA: second, PR: 6, Forge: "owner/repo", Repository: repo.path})
+			pr := k.pr
+			pr.Number, pr.HeadSHA = 6, second
+			pr.Checks = []Check{{Name: "A", RunID: "1", Attempt: 1, Conclusion: "success", HeadSHA: second}, {Name: "B", RunID: "2", Attempt: 1, Conclusion: "success", HeadSHA: second}}
+			k.forge.by["owner/repo#6"] = pr
+			judgeD := func() JudgeResult {
+				r, err := k.sched.Judge(context.Background(), "g", "D", "parent", JudgeInput{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				return r
+			}
+			if r := judgeD(); r.Outcome != OutcomePredecessor || !strings.Contains(r.Reason, "I") {
+				t.Fatalf("predecessor not landed = %+v", r)
+			}
+			_ = a
+			// the predecessor lands: its head is observed in the target and the parent marked it merged
+			k.integrate(accepted{Acceptance: mustActive(t, k.fixture, "g", "I"), Event: "evt-rel-g-I"}, repo.path, "dev", true, true)
+			if r := judgeD(); !r.Eligible() {
+				t.Fatalf("predecessor landed = %+v", r)
+			}
+		})
+	}
+	t.Run("what cannot be judged writes nothing", func(t *testing.T) {
+		k := newJudgeKit(t)
+		for name, c := range map[string]struct {
+			mutate func(*PullRequest)
+			reason string
+		}{
+			"required checks unreadable": {func(p *PullRequest) { p.RequiredReadable = false }, "merge_evidence_malformed"},
+			"a draft":                    {func(p *PullRequest) { p.IsDraft = true }, "disposition_conflict"},
+			"closed":                     {func(p *PullRequest) { p.State = "closed" }, "disposition_conflict"},
+			"already merged":             {func(p *PullRequest) { p.State = "merged" }, "disposition_conflict"},
+			"moved while it was read": {func(p *PullRequest) {
+				p.Verdict, p.Problems = "stale", []Problem{{Code: "candidate_moved"}}
+			}, "merge_candidate_moved"},
+			"unreadable": {func(p *PullRequest) { p.Verdict = "unknown" }, "not a refusal: "},
+		} {
+			pr := k.pr
+			c.mutate(&pr)
+			k.forge.by["owner/repo#5"] = pr
+			_, err := k.sched.Judge(context.Background(), "g", "I", "parent", JudgeInput{})
+			if got := refusalReason(err); !strings.HasPrefix(got, c.reason) {
+				t.Fatalf("%s: judge = %v, want %s", name, err, c.reason)
+			}
+		}
+		if k.count("SELECT COUNT(*) FROM dag_merge_checks") != 0 {
+			t.Fatal("a case that could not be judged wrote a row")
+		}
+		k.forge.err = context.DeadlineExceeded
+		if _, err := k.sched.Judge(context.Background(), "g", "I", "parent", JudgeInput{}); err == nil || k.count("SELECT COUNT(*) FROM dag_merge_checks") != 0 {
+			t.Fatalf("a forge that cannot be reached = %v", err)
+		}
+		k.forge.err = nil
+		for name, c := range map[string]struct {
+			actor, node string
+			in          JudgeInput
+			reason      string
+		}{
+			"another task":          {"intruder", "I", JudgeInput{}, "scope_role_mismatch"},
+			"another pull request":  {"parent", "I", JudgeInput{PullRequest: &PRRef{Repository: "owner/repo", Number: 9}}, "disposition_conflict"},
+			"a node with no branch": {"parent", "K", JudgeInput{}, "disposition_conflict"},
+			"a node with no result": {"parent", "D", JudgeInput{}, "disposition_conflict"},
+			"a node the plan lacks": {"parent", "Z", JudgeInput{}, "unregistered_scope"},
+		} {
+			if _, err := k.sched.Judge(context.Background(), "g", c.node, c.actor, c.in); refusalReason(err) != c.reason {
+				t.Fatalf("%s: judge = %v, want %s", name, err, c.reason)
+			}
+		}
+	})
+}
+
+func mustActive(t *testing.T, f *fixture, plan, node string) Acceptance {
+	t.Helper()
+	ctx := context.Background()
+	a, found, err := loadActiveAcceptance(ctx, f.s.Q(ctx), plan, node)
+	if err != nil || !found {
+		t.Fatalf("no active acceptance of %s: %v", node, err)
+	}
+	return a
+}
+
+// B-13: a judgement is evidence the relay reads again, and a row that no longer digests to what was recorded is neither history nor a head: the edges built on it are blocked, and the next
+// judgement refuses instead of counting retries on a falsified record.
+func TestEvidenceRowTamperIsBlocked(t *testing.T) {
+	k := newJudgeKit(t)
+	repo := k.repo
+	k.putPlan("g", int(k.snapshot("g").Revision), "g-r2", addEdge("id", "I", "D", "artifact_verified", doc{"pins_code_head": true, "target_repository": repo.path, "target_base_ref": "dev"}))
+	k.integrate(accepted{Acceptance: mustActive(t, k.fixture, "g", "I"), Event: "evt-rel-g-I"}, repo.path, "dev", true, true)
+	k.judge()
+	if st := k.status("g", "id"); !st.Satisfied {
+		t.Fatalf("before the tamper the edge is %+v", st)
+	}
+	k.exec("UPDATE dag_merge_checks SET evidence_json = replace(evidence_json, 'success', 'failure')")
+	if st := k.status("g", "id"); st.Satisfied || st.Reason != BlockedEvidenceMismatch {
+		t.Fatalf("after the tamper the edge is %+v", st)
+	}
+	before := k.count("SELECT COUNT(*) FROM dag_merge_checks")
+	if _, err := k.sched.Judge(context.Background(), "g", "I", "parent", JudgeInput{}); refusalReason(err) != "revision_mismatch" {
+		t.Fatalf("judge on a falsified history = %v", err)
+	}
+	if k.count("SELECT COUNT(*) FROM dag_merge_checks") != before {
+		t.Fatal("a judgement was written over a falsified history")
+	}
+}
