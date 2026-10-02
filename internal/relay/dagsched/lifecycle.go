@@ -86,6 +86,7 @@ func (l lifeView) overlayOwned(r *NodeReading, st nodeState) {
 		}
 	case l.ended() || st.Reason == SkipAlreadyOwned:
 		r.Disposition, r.Reason = dispositionOf(reason), reason
+		r.Stale = nil // the reading is no longer stale, so it carries no stale object (invalidation.go keeps the two together)
 		r.Detail = detail + "; its execution: " + st.Detail
 	default:
 		r.Detail += "; " + detail
@@ -107,8 +108,8 @@ func lifecycleRefusal(snap dag.Snapshot, n dag.SnapNode, doing string, landing b
 	return refuse(contract.RefusalDispositionConflict, "%s (%s): %s: %s is refused", n.NodeID, reason, detail, doing)
 }
 
-// lifecycleOpen reads the plan as the reader sees it now and refuses when the plan holds the node. It is called inside the transactions of the commands (the slice and criteria digests they compare
-// do not move for a pause) and beside their other checks. A node the plan does not hold is the caller's business.
+// lifecycleOpen reads the plan as the reader sees it now and refuses when the plan holds the node, or no longer has it (a node retired or replaced since the command read the plan is not one to advance). It is
+// called inside the transactions of the commands (the slice and criteria digests they compare do not move for a pause) and beside their other checks.
 func lifecycleOpen(ctx context.Context, q store.Querier, plan, node, doing string, landing bool) error {
 	snap, _, err := dag.SnapshotAt(ctx, q, plan, 0)
 	if err != nil {
@@ -116,7 +117,7 @@ func lifecycleOpen(ctx context.Context, q store.Querier, plan, node, doing strin
 	}
 	n, ok := nodeOf(snap, node)
 	if !ok {
-		return nil
+		return refuse(contract.RefusalUnregisteredScope, "plan %s has no live node %s: %s is refused", plan, node, doing)
 	}
 	return lifecycleRefusal(snap, n, doing, landing)
 }
@@ -205,7 +206,7 @@ func releaseGate(ctx context.Context, q store.Querier, plan, node, manifest stri
 	}
 	n, ok := nodeOf(snap, node)
 	if !ok {
-		return nil
+		return refuse(contract.RefusalUnregisteredScope, "plan %s has no live node %s: starting its child is refused", plan, node)
 	}
 	if err := lifecycleRefusal(snap, n, "starting its child", false); err != nil {
 		return err

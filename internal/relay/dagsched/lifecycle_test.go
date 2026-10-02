@@ -827,3 +827,86 @@ func TestAPauseThatLandsWhileACorrectionIsPreparedLeavesNothing(t *testing.T) {
 		t.Fatalf("a manifest file was frozen (%v)", err)
 	}
 }
+
+// A node the plan retired or replaced since a command read it is not one to advance: the gates that ask the plan again inside a transaction refuse an absent node (unregistered_scope) as they
+// refuse a held one, so a retry of a frozen release, or a correction in the middle of its preparation, never starts a child or stores a manifest for a node that left the plan.
+func retireNodeA() []doc {
+	return []doc{{"op": dag.OpRetireEdge, "edge_id": "ab"}, {"op": dag.OpRetireNode, "node_id": "A"}}
+}
+
+func TestANodeThatLeftThePlanIsNotStartedOrCorrected(t *testing.T) {
+	t.Run("a frozen release", func(t *testing.T) {
+		k := newReleaseKit(t)
+		releasePlan(k.fixture, "rp")
+		real := k.sched.Start
+		calls := 0
+		k.sched.Start = func(context.Context, []byte) (StartAnswer, error) {
+			calls++
+			return StartAnswer{}, errors.New("the host is not reachable")
+		}
+		if _, err := k.release("rp", "A"); err == nil || calls != 1 {
+			t.Fatalf("the first start was meant to fail once: %v after %d starts", err, calls)
+		}
+		(&lifeLog{t: t, f: k.fixture, plan: "rp", rev: 1}).put(retireNodeA()...)
+		k.sched.Start = func(ctx context.Context, raw []byte) (StartAnswer, error) { calls++; return real(ctx, raw) }
+		_, err := k.release("rp", "A")
+		if refusalReason(err) != "unregistered_scope" {
+			t.Fatalf("the retry of a retired node's release = %v, want unregistered_scope", err)
+		}
+		if created, _ := k.host.counts(); calls != 1 || created != 0 {
+			t.Fatalf("the managed start ran for a node that left the plan (%d starts, %d children)", calls, created)
+		}
+	})
+	t.Run("a correction in the middle of its preparation", func(t *testing.T) {
+		k := newReleaseKit(t)
+		rid := k.correctionKit()
+		k.openCorrection(rid, nil)
+		l := &lifeLog{t: t, f: k.fixture, plan: "rp", rev: 1}
+		fired := false
+		k.sched.testBeforePrepareTx = func() { fired = true; l.put(retireNodeA()...) }
+		manifests := k.count("SELECT COUNT(*) FROM dag_input_manifests")
+		prepared, err := k.sched.PrepareCorrection(context.Background(), "rp", "A", "parent", ManifestInput{RuleVersion: k.request(false).RuleVersion}, VerifyOptions{ArtifactRoots: []string{k.root}})
+		if !fired {
+			t.Fatal("the seam did not fire")
+		}
+		if refusalReason(err) != "unregistered_scope" || prepared.Instruction != "" {
+			t.Fatalf("prepare = %v %+v, want unregistered_scope and no instruction", err, prepared)
+		}
+		if got := k.count("SELECT COUNT(*) FROM dag_input_manifests"); got != manifests {
+			t.Fatalf("%d manifests were stored", got-manifests)
+		}
+	})
+}
+
+// The reading keeps one rule the stale reading set down: a node that is not stale carries no stale object. A paused node keeps its stale reading (a pause overrides only that the node is owned); a node the plan
+// cancelled or archived reads as ended and drops the object with the reason it explained.
+func TestAStaleNodeThePlanHoldsKeepsTheStaleReadingsInvariant(t *testing.T) {
+	for _, tc := range []struct{ op, reason string }{
+		{"pause_node", invSliceChanged},
+		{"cancel_node", "skip:node_cancelled"},
+		{"archive_node", "skip:node_archived"},
+	} {
+		t.Run(tc.op, func(t *testing.T) {
+			k := newReleaseKit(t)
+			invSharedRoot(k)
+			k.invRevise("sr", "A", "sr-r2", invTitle("a changed title"))
+			before := k.read("sr")
+			if got := invStaleIDs(before); !reflect.DeepEqual(got, []string{"A", "C"}) {
+				t.Fatalf("before the plan holds A, the stale nodes are %v", got)
+			}
+			(&lifeLog{t: t, f: k.fixture, plan: "sr", rev: 2}).put(lifeOp(tc.op, "A"))
+			after := k.read("sr")
+			invAssertReasons(t, after)
+			if a := after.node("A"); a.Reason != tc.reason {
+				t.Fatalf("A reads %+v, want %s", a, tc.reason)
+			}
+			wantStale := []string{"A", "C"}
+			if tc.op != "pause_node" {
+				wantStale = []string{"C"}
+			}
+			if got := invStaleIDs(after); !reflect.DeepEqual(got, wantStale) {
+				t.Fatalf("the stale nodes after %s are %v, want %v", tc.op, got, wantStale)
+			}
+		})
+	}
+}

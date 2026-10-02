@@ -315,8 +315,8 @@ the only kind the DAG path lets into the lane, so every landed tree of it has an
 The plan holds or ends a node by a revision ([DAG plans](dag-plans.md#pause-resume-cancel-and-archive)): `pause_node`, `resume_node`, `cancel_node`, `archive_node`, `pause_plan` and `resume_plan`.
 The scheduler reads that state at the revision it reads the plan at and obeys it in the reading and in the commands that advance a node. It reaches nothing in the relay: no relationship is paused
 or cancelled by a plan change, a child keeps running and reporting, and a slot stays held until an explicit `slot-release` (contract 7.4 and 3.2). What the plan stops is the scheduler releasing a node,
-accepting its result, correcting it or sending it to the merge lane. A slot a node holds stays held, and keeps counting against the ceilings, when the node is paused, when the plan is paused and when the node is
-cancelled or archived, until an explicit `slot-release`.
+accepting its result, correcting it or sending it to the merge lane. A lifecycle change releases no slot: a slot a node holds stays held, and keeps counting against the ceilings, while the node is paused or
+ended and while the plan is paused, until it is returned as it always is (an explicit `slot-release`, the acceptance of a non-PR node, or the integration of an implementation node, which an archived node can still reach).
 
 **The reading.** The plan's hold is read before the edges, so a held node is never a candidate whatever its edges say. The reason is the first that applies of: the node is cancelled or archived, the
 plan is paused, the node is paused. The state word is the node's own lifecycle when it has one and `planned` for a node of a paused plan:
@@ -337,7 +337,7 @@ record keeps the same optional key. Edit regions follow the relationship and not
 (`blocked:predecessor_cancelled`, `blocked:predecessor_archived`) until the plan is revised, and its integrated edge only when the landing is observed (see the edge rules above). The same gate follows what an accepted
 node consumed: following the manifest of its acceptance, and then the acceptances its inputs rest on, an input whose node the plan cancelled or archived blocks the edges out of it, so a node accepted on the
 result of A is not a base for what follows it once the plan cancels A. An integrated input is not followed (what it handed over is in the target). This is a gate and not an invalidation: no acceptance
-row changes, and judging an acceptance stale is a later issue's.
+row changes, and whether an acceptance is stale is the invalidation reading's, above.
 
 **The commands.** A node the plan paused, cancelled or archived, and every node of a paused plan, is refused the work: `dag-release` (a new release, and a frozen unbound intent that would create its child:
 nothing is created and no slot is reserved), `dag-accept` and `dag-correct` (prepare and record; the manifest of a correction is stored in the transaction that asks again, and the file and the instruction
@@ -346,9 +346,10 @@ is refused for a paused or cancelled node and a paused plan, and not for an arch
 detail, writes nothing, and is made again inside each command's transaction, because a pause moves neither the slice digest nor the criteria digest those transactions compare. A release already bound to its
 child answers as it always did. `dag-decision-record` and `dag-region-declare` record facts and are not refused.
 
-A release asks again at the last point the DAG can stop a child: just before the managed start, for a new release and a continuation alike; the refusal leaves the intent and the slot where they are, and
-the resume lets the same release go on. A pause that commits while the managed start is running cannot undo a creation already begun outside the store: the child is then bound as it always is, and the node
-reads as running under the plan's hold (`defer:node_paused`); pausing or cancelling its relationship is the relay's own operation.
+A release asks again at the last point the DAG can stop a child: just before the managed start, for a new release and a continuation alike, and a node that left the plan (retired or replaced) is refused there as
+`unregistered_scope`; the refusal leaves the intent and the slot where they are, and the resume lets the same release go on. That last check is a read, so a pause that commits after it, including while the managed
+start is running, cannot undo a creation already begun outside the store: the child is then bound as it always is, and the node reads as running under the plan's hold (`defer:node_paused`); pausing or cancelling its
+relationship is the relay's own operation.
 
 **What a pause leaves alone.** An acceptance recorded before the pause is a value the pause does not touch: it stays active, the edges it satisfied stay satisfied, and the node reads `done:accepted` with
 `lifecycle` beside it. A result that a child reports after the pause is recorded by the relay as every report is, but it is not accepted while the pause lasts, so the edges it would satisfy stay open and no successor
