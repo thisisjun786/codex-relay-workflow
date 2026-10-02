@@ -39,4 +39,3 @@ for (const sc of JSON.parse(readFileSync(scenarioFile, "utf8"))) {
   rmSync(root, { recursive: true, force: true });
 }
 process.stdout.write(JSON.stringify(out, null, 1) + "\n");
-
