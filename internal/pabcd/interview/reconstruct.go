@@ -15,8 +15,7 @@ func tail[T any](s []T) []T {
 	return append([]T{}, s...)
 }
 
-// number reads v as the oracle's typeof v === "number". A number too large for a float64
-// reads as an infinity, which every caller rejects.
+// number reads v as the oracle's typeof v === "number"; one too large for a float64 is ±Inf.
 func number(v any) (float64, bool) {
 	switch n := v.(type) {
 	case float64:
@@ -103,10 +102,9 @@ func reconstructScore(v any) DimensionScore {
 	return DimensionScore{Level: levelOf(str(m["level"])), Known: strArray(m["known"]), Unknown: strArray(m["unknown"]), Confidence: confidence(m["confidence"])}
 }
 
-// ReconstructInterview rebuilds a persisted tracker from a decoded JSON value, strictly,
-// bounded and fail-closed; nil for anything but an object (a fresh session reads null). A
-// non-object contradiction stays as a high-severity sentinel and a non-object assumption as
-// an unrecorded one, so corrupt entries keep blocking readiness instead of being dropped.
+// ReconstructInterview rebuilds a persisted tracker from a decoded JSON value, bounded and fail-closed;
+// nil for anything but an object (a fresh session reads null). A non-object contradiction becomes a
+// high-severity sentinel and a non-object assumption an unrecorded one, until the cap evicts it.
 func ReconstructInterview(v any) *Tracker {
 	m, ok := v.(map[string]any)
 	if !ok {
@@ -204,10 +202,9 @@ func cleanOntology(in []OntologyEntity) []OntologyEntity {
 	return tail(out)
 }
 
-// Normalize is the write-side normalisation: every array is capped at MaxTrackerArray
-// (drop-oldest), each score gets the fail-closed rules and no array is left nil. It returns a
-// new tracker; nil stays nil. Like the oracle it does not re-validate contradiction or
-// assumption entries.
+// Normalize is the write-side normalisation: every array is capped at MaxTrackerArray (drop-oldest),
+// each score gets the fail-closed rules and no array is left nil. It returns a new tracker, nil stays
+// nil, and like the oracle it does not re-validate contradiction or assumption entries.
 func Normalize(t *Tracker) *Tracker {
 	if t == nil {
 		return nil

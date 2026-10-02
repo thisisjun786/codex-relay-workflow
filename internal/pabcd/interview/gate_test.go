@@ -56,9 +56,8 @@ func TestContradictionsAndUnrecordedAssumptionsBlockReadiness(t *testing.T) {
 	}
 }
 
-// 131: scan-evidence is required for readiness (scanRounds 0 blocks, 1 allows); a negative
-// count reads as 0. Reconstruct defaults the scan fields to 0, so a legacy tracker is not
-// silently ready.
+// 131: scan-evidence is required for readiness (0 blocks, 1 allows, negative reads as 0), and
+// reconstruct defaults the scan fields to 0, so a legacy tracker is not silently ready.
 func TestScanEvidenceIsRequiredForReadiness(t *testing.T) {
 	tr := readyTracker()
 	for rounds, want := range map[int64]bool{0: false, -1: false, 1: true} {
@@ -73,8 +72,9 @@ func TestScanEvidenceIsRequiredForReadiness(t *testing.T) {
 	}
 }
 
-// CRITICAL-2: a partial {level:"max"} dimension is NOT ready (full shape required). A missing
-// array is a nil slice, which is also what a direct decode of the partial JSON gives.
+// CRITICAL-2: a partial {level:"max"} dimension is NOT ready (full shape required). A missing array
+// is a nil slice, as a direct decode gives; a missing confidence decodes to a valid 0, which is why
+// persisted JSON goes through ReconstructInterview.
 func TestAPartialMaxDimensionIsNotReady(t *testing.T) {
 	in := `{"roundId":1,"scanRounds":1,"dimensions":` + dimsJSON(`{"level":"max"}`) + `,"contradictions":[],"assumptions":[]}`
 	var decoded Tracker

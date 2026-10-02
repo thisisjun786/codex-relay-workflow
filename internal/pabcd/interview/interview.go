@@ -3,10 +3,11 @@
 // readiness predicate (the one source of the session's interview flag) and the I->P soft gate.
 // It is a pure library: it reads no file and starts no process.
 //
-// Behaviour is ported as-is. Malformed or lossy data reconstructs fail closed: an invalid level
-// is "low", an invalid confidence 0, a legacy assumption unrecorded, an unknown severity
-// "high", so corrupted data never becomes a ready tracker. Arrays are capped at
-// MaxTrackerArray, dropping the oldest. Three representations are not literal:
+// Behaviour is ported as-is: lossy data reconstructs to fail-closed defaults (an invalid level
+// is "low", an invalid confidence 0, a legacy assumption unrecorded, an unknown severity "high")
+// and arrays are capped at MaxTrackerArray, dropping the oldest. Persisted JSON enters through
+// ReconstructInterview; a direct json.Unmarshal into Tracker is not equivalent, as a missing
+// confidence decodes to a valid 0. Three representations are not literal:
 //
 //   - Counters are int64; the oracle floors a finite non-negative JavaScript number, and a
 //     value at or above 2^63 saturates at math.MaxInt64 (no writer produces one).
@@ -46,6 +47,11 @@ const (
 	LevelMax  DimensionLevel = "max"
 )
 
+// DimensionLevels is the oracle's DIMENSION_LEVELS, lowest first.
+func DimensionLevels() [4]DimensionLevel {
+	return [4]DimensionLevel{LevelLow, LevelMid, LevelHigh, LevelMax}
+}
+
 // ContradictionSeverity is how serious an open contradiction is.
 type ContradictionSeverity string
 
@@ -56,12 +62,8 @@ const (
 	SeverityHigh   ContradictionSeverity = "high"
 )
 
-const (
-	// MaxTrackerArray caps every tracker array, dropping the oldest.
-	MaxTrackerArray = 50
-	// MaxAutoRounds is the most auto-resolve rounds one interview may spend.
-	MaxAutoRounds = 5
-)
+// MaxTrackerArray caps every tracker array, dropping the oldest.
+const MaxTrackerArray = 50
 
 // DimensionScore is the state of one dimension; Confidence is within [0, 1].
 type DimensionScore struct {
@@ -102,7 +104,8 @@ type Contradiction struct {
 }
 
 // Assumption is an assumption the interview made; readiness needs every one recorded.
-// RequiresUserReview marks a recorded assumption the user still has to review.
+// RequiresUserReview marks a recorded assumption the user still has to review; no oracle writer
+// emits it false, so an explicit false is not representable.
 type Assumption struct {
 	ID                 string                `json:"id"`
 	Text               string                `json:"text"`
@@ -125,8 +128,8 @@ type OntologyEntity struct {
 }
 
 // Tracker is the interview tracker persisted in the session state. ScanRounds counts the
-// recorded contradiction scans and LastScanRoundID is the RoundID of the latest (0 = none);
-// AutoResolveCount is capped by MaxAutoRounds. OntologySchema is absent unless non-empty.
+// recorded contradiction scans and LastScanRoundID is the RoundID of the latest (0 = none).
+// OntologySchema is absent unless non-empty.
 type Tracker struct {
 	RoundID                 int64            `json:"roundId"`
 	Dimensions              Dimensions       `json:"dimensions"`

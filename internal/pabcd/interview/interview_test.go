@@ -12,8 +12,7 @@ import (
 	"testing"
 )
 
-// fromJSON decodes text as JSON.parse hands a value to the oracle (objects map[string]any,
-// arrays []any, numbers float64).
+// fromJSON decodes text as JSON.parse does: map[string]any, []any, float64.
 func fromJSON(t *testing.T, s string) any {
 	t.Helper()
 	var v any
@@ -37,8 +36,9 @@ func dimsJSON(score string) string {
 func TestDimensionsAreTheFourInterviewAxesInOrder(t *testing.T) {
 	want := [4]Dimension{"goal", "constraint", "success", "ontology"}
 	var d Dimensions
-	if DimensionOrder() != want || d.Score("goal") != &d.Goal || d.Score("ontology") != &d.Ontology || d.Score("other") != nil {
-		t.Fatalf("DimensionOrder() = %v, want %v, and Score must name the fields", DimensionOrder(), want)
+	if DimensionOrder() != want || DimensionLevels() != [4]DimensionLevel{"low", "mid", "high", "max"} ||
+		d.Score("goal") != &d.Goal || d.Score("ontology") != &d.Ontology || d.Score("other") != nil {
+		t.Fatalf("DimensionOrder() = %v, want %v; DimensionLevels and Score must name the oracle's values", DimensionOrder(), want)
 	}
 }
 
@@ -62,8 +62,7 @@ func TestReconstructInvalidLevelAndConfidenceFailClosed(t *testing.T) {
 	}
 }
 
-// reconstructInterview: legacy assumption w/o recorded -> recorded:false (T3). Only the
-// boolean true records one, and a severity outside the three known ones is dropped.
+// reconstructInterview: legacy assumption w/o recorded -> recorded:false (T3); only true records.
 func TestReconstructLegacyAssumptionIsUnrecorded(t *testing.T) {
 	r := ReconstructInterview(fromJSON(t, `{"assumptions":[{"id":"a","text":"t"},{"id":"b","text":"t","recorded":true,"severity":"low","requiresUserReview":true},`+
 		`{"id":"c","recorded":"true","severity":"bogus","requiresUserReview":"yes"}]}`))
@@ -95,9 +94,8 @@ func TestReconstructCapsArraysDroppingTheOldest(t *testing.T) {
 	}
 }
 
-// CRITICAL-1: malformed persisted contradiction/assumption entries BLOCK readiness. The
-// oracle test leaves scanRounds unset, which blocks readiness by itself; here scanRounds is 1
-// and a clean control is ready, so only the malformed entry can be the cause.
+// CRITICAL-1: malformed persisted contradiction/assumption entries BLOCK readiness. Unlike the
+// oracle test, scanRounds is 1 and a clean control is ready, so only the entry can be the cause.
 func TestMalformedPersistedEntriesBlockReadiness(t *testing.T) {
 	build := func(contradictions, assumptions string) *Tracker {
 		return ReconstructInterview(fromJSON(t, fmt.Sprintf(`{"roundId":1,"scanRounds":1,"dimensions":%s,"contradictions":%s,"assumptions":%s}`,
@@ -122,16 +120,20 @@ func TestMalformedPersistedEntriesBlockReadiness(t *testing.T) {
 // the per-score fail-closed rules and leaves no nil array.
 func TestNormalizeCapsOversizedArrays(t *testing.T) {
 	tr := DefaultInterview(3)
-	for i := 0; i < MaxTrackerArray+9; i++ {
-		tr.Dimensions.Goal.Known = append(tr.Dimensions.Goal.Known, fmt.Sprintf("k%d", i))
+	for i := 0; i < MaxTrackerArray+9; i++ { // the oracle's three arrays overflow by 7, 9 and 5
+		if i < MaxTrackerArray+7 {
+			tr.Dimensions.Goal.Known = append(tr.Dimensions.Goal.Known, fmt.Sprintf("k%d", i))
+		}
 		tr.Contradictions = append(tr.Contradictions, Contradiction{ContradictionID: fmt.Sprintf("c%d", i)})
-		tr.Assumptions = append(tr.Assumptions, Assumption{ID: fmt.Sprintf("a%d", i), Recorded: true})
+		if i < MaxTrackerArray+5 {
+			tr.Assumptions = append(tr.Assumptions, Assumption{ID: fmt.Sprintf("a%d", i), Recorded: true})
+		}
 	}
 	n := Normalize(tr)
 	if len(n.Dimensions.Goal.Known) != MaxTrackerArray || len(n.Contradictions) != MaxTrackerArray || len(n.Assumptions) != MaxTrackerArray {
 		t.Fatalf("lens = %d, %d, %d, want %d each", len(n.Dimensions.Goal.Known), len(n.Contradictions), len(n.Assumptions), MaxTrackerArray)
 	}
-	if n.RoundID != 3 || n.Dimensions.Goal.Known[0] != "k9" || n.Contradictions[0].ContradictionID != "c9" || n.Assumptions[0].ID != "a9" {
+	if n.RoundID != 3 || n.Dimensions.Goal.Known[0] != "k7" || n.Contradictions[0].ContradictionID != "c9" || n.Assumptions[0].ID != "a5" {
 		t.Errorf("Normalize must keep roundId and drop the oldest entries")
 	}
 	if len(tr.Contradictions) != MaxTrackerArray+9 || Normalize(nil) != nil {
@@ -216,9 +218,8 @@ func TestMalformedOntologyEntriesAreDropped(t *testing.T) {
 	}
 }
 
-// The tracker the oracle persisted in two corpus fixtures is reproduced byte for byte by
-// reconstruct + normalize + marshal: key order, [] arrays and number forms. It does not replay
-// the fixtures, which need the scan and orchestrate commands.
+// The tracker the oracle persisted in two corpus fixtures is reproduced byte for byte by reconstruct
+// + normalize + marshal. It does not replay the fixtures, which need the scan and orchestrate commands.
 func TestPersistedTrackerBytesMatchOracleFixtures(t *testing.T) {
 	for _, id := range []string{"cli__scan__record_round_updates_tracker", "cli__scan__derive_from_captured_answers"} {
 		raw, err := os.ReadFile(filepath.Join("..", "..", "..", "contract", "fixtures", "cxc", id+".json"))
