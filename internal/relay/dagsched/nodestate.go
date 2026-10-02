@@ -66,15 +66,15 @@ func (s *Scheduler) stateOf(ctx context.Context, q store.Querier, plan string, s
 
 // unbound is a node with no execution: either nobody has touched it, or a release was decided and its child is not yet bound to it.
 func (s *Scheduler) unbound(ctx context.Context, q store.Querier, plan string, n dag.SnapNode) (nodeState, error) {
-	var digest, request string
-	found, err := queryOne(ctx, q, "SELECT manifest_digest, managed_request_id FROM dag_releases WHERE plan_id = ? AND node_id = ? ORDER BY decided_at DESC, manifest_digest DESC LIMIT 1",
-		[]any{plan, n.NodeID}, &digest, &request)
+	// the node's open intent: a release whose managed request was not closed explicitly (dag-release-close); a closed one no longer owns the node
+	open, found, err := latestRelease(ctx, q, plan, n.NodeID)
 	if err != nil {
 		return nodeState{}, err
 	}
 	if !found {
 		return nodeState{State: StatePlanned}, nil
 	}
+	digest, request := open.Digest, open.Request
 	var state string
 	var receipt *string
 	managed, err := queryOne(ctx, q, "SELECT state, receipt_status FROM managed_start_requests WHERE request_id = ?", []any{request}, &state, &receipt)
@@ -85,7 +85,7 @@ func (s *Scheduler) unbound(ctx context.Context, q store.Querier, plan string, n
 	case !managed:
 		return ownedAs(StateReleasing, SkipAlreadyOwned, "a release is decided (manifest "+short(digest)+") and the managed start has not begun", true), nil
 	case state == "released":
-		return ownedAs(StateReleasing, BlockedReleaseAbandoned, "the managed start "+request+" was released before it created a child; a plan revision that changes the slice, or the operator's slot-release, is the way on", false), nil
+		return ownedAs(StateReleasing, BlockedReleaseAbandoned, "the managed start "+request+" was released before it created a child; dag-release-close --request-id "+request+" ends the intent and returns its slot, and the node can then be released again", false), nil
 	case state == "create_armed" && (receipt == nil || *receipt != "accepted"):
 		return ownedAs(StateCreationUnknown, BlockedCreationUnknown, "the creation of the child for "+request+" was armed and its outcome is not known; a repeat of the release reconciles it", true), nil
 	}
@@ -218,6 +218,16 @@ func (s *Scheduler) accepted(ctx context.Context, q store.Querier, plan string, 
 			out.Disp, out.Reason, out.Detail = DispBlocked, BlockedEffectUnknown, "a merge turn for the accepted head ended with an unknown effect; whether it landed is not known"
 			return out, nil
 		}
+	}
+	// the plan moved under what the accepted result consumed: it no longer counts as current (invalidation.go). The relationship's own facts above come first in the reading; the edges built on the
+	// result ask the same judgement and do not depend on this order.
+	stale, err := s.staleOf(ctx, q, plan, snap, n)
+	if err != nil {
+		return nodeState{}, err
+	}
+	if stale != nil {
+		out.State, out.Disp, out.Reason, out.Detail = StateStale, DispStale, stale.Reason(), stale.Text
+		return out, nil
 	}
 	out.State, out.Disp, out.Reason = StateAccepted, DispDone, DoneAccepted
 	out.Detail = "accepted as " + short(acc.AcceptanceID)
