@@ -210,7 +210,11 @@ func (f *workerFixture) serveAs(pid int, ticks any) {
 // child starts a process that is not this one and returns it with its start ticks.
 func (f *workerFixture) child() (*exec.Cmd, any) {
 	f.t.Helper()
-	cmd := exec.Command("sleep", "60")
+	// The idle helper lives while its stdin is open, which the command keeps until Wait.
+	cmd := service.IdleHelper(context.Background())
+	if _, err := cmd.StdinPipe(); err != nil {
+		f.t.Fatal(err)
+	}
 	if err := cmd.Start(); err != nil {
 		f.t.Fatal(err)
 	}

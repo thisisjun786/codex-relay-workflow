@@ -277,8 +277,13 @@ func (r *Registry) BindScopeAs(ctx context.Context, role, key string, endpoint E
 	}
 	l := r.linkage()
 	now := r.now()
+	release, err := r.lockProjectParent(ctx, role, key)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	var refused *linkRefusal
-	err := r.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
+	err = r.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
 		plan, refusal, err := l.bindingPlan(ctx, role, key, endpoint, "")
 		if err != nil {
 			return err
@@ -352,9 +357,14 @@ func (r *Registry) RegisterSupervision(ctx context.Context, initiative, project 
 	lid := linkID(kind, scopeInitiative, initiative, scopeProject, project)
 	now := r.now()
 	l := r.linkage()
+	release, err := r.lockProjectParent(ctx, roleParent, project)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	var refused *linkRefusal
 	var replayed contract.OrderedObject
-	err := r.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
+	err = r.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
 		replay, err := r.Store.One(ctx, "SELECT * FROM scope_links WHERE link_id = ?", lid)
 		if err != nil {
 			return err
@@ -779,8 +789,13 @@ func (r *Registry) Handover(ctx context.Context, role, key, expect string, endpo
 	}
 	newID := bindingID(role, kind, key, endpoint.TaskID)
 	l := r.linkage()
+	release, err := r.lockProjectParent(ctx, role, key)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	var refused *linkRefusal
-	err := r.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
+	err = r.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
 		row, err := r.Store.One(ctx, "SELECT * FROM scope_bindings"+
 			"  WHERE scope_kind = ? AND scope_key = ? AND role = ?"+
 			"    AND status IN ('active','paused') AND superseded_by IS NULL"+

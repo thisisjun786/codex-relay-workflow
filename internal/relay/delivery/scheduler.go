@@ -295,6 +295,19 @@ func (sc *Scheduler) attempt(ctx context.Context, adapter Adapter, row Row, now 
 			report.Notes = append(report.Notes, "delivery "+event+" not re-read: "+err.Error())
 			return false
 		}
+		if !moved {
+			// Not refused, not its turn: an older delivery to this recipient was deferred as busy after the
+			// rows were listed. The recipient's queue ends here, and no marker makes the next tick start
+			// after this row.
+			behind, err := d.behindBusyHead(ctx, event, now)
+			if err != nil {
+				report.Notes = append(report.Notes, "delivery "+event+" not re-read: "+err.Error())
+				return false
+			}
+			if behind {
+				return false
+			}
+		}
 		return !moved
 	}
 	if v, _ := get(record, "withheldReason"); truthy(v) {

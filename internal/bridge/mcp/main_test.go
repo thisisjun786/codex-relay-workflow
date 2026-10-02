@@ -164,9 +164,10 @@ func Test_a_stdio_round_trip_creates_a_thread_on_the_host_and_replays_it(t *test
 }
 
 func Test_with_no_socket_the_server_still_lists_its_tools_and_explains_the_failure_on_stderr(t *testing.T) {
-	// Given a socket path where nothing listens
+	// Given a socket path where nothing listens (its directory exists, so the dial fails with
+	// "no such file or directory" however long TMPDIR is)
 	home, env := isolated(t)
-	s := serve(t, []string{"--socket", filepath.Join(home, "absent.sock"), "--state-dir", filepath.Join(home, "ledger")}, env)
+	s := serve(t, []string{"--socket", fakehost.SocketPath(t, "absent.sock"), "--state-dir", filepath.Join(home, "ledger")}, env)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	// When tools are listed and a thread is requested
