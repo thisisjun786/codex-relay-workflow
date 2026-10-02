@@ -17,54 +17,69 @@ import (
 // building a manifest from a plan's state and judging it fit to release is the scheduler's.
 
 type manifestRule struct {
-	required []string
+	// texts are non-empty strings; ints are whole numbers.
+	texts []string
+	ints  []string
 }
 
 // perKind lists the fields 4.2 requires of an input of each edge kind. The head of a code artifact is
 // judged by the scheduler, which knows whether the source is code.
 var perKind = map[string]manifestRule{
-	EdgeArtifactVerified: {required: []string{"acceptance_id", "relationship_id", "execution_generation", "event_id", "revision_hash"}},
-	EdgeIntegrated:       {required: []string{"acceptance_id", "head_sha", "landed_sha"}},
-	EdgeDecision:         {required: []string{"decision_id", "decision_digest", "decision_revision"}},
+	EdgeArtifactVerified: {texts: []string{"acceptance_id", "relationship_id", "event_id", "revision_hash"}, ints: []string{"execution_generation"}},
+	EdgeIntegrated:       {texts: []string{"acceptance_id", "head_sha", "landed_sha"}},
+	EdgeDecision:         {texts: []string{"decision_id", "decision_digest"}, ints: []string{"decision_revision"}},
 }
 
-func missing(v any) bool {
-	switch x := v.(type) {
-	case nil:
-		return true
-	case string:
-		return x == ""
-	}
-	return false
-}
-
-// CheckManifest reads a manifest body strictly: the required fields of 4.2 present and non-empty (a missing
-// value, null and the empty string are the same thing, 4.1) and every input shaped for its edge kind.
+// CheckManifest reads a manifest body strictly: the required fields of 4.2 present and of their type (a missing
+// value, null and the empty string are the same thing, 4.1), every input shaped for its edge kind, and the optional
+// base, artifacts and volatile snapshots shaped as 4.2 shapes them. Whether a base is required depends on the node's
+// kind (an implementation node has one, a non_pr node may have none), which the scheduler knows and a manifest does not carry.
 func CheckManifest(body map[string]any) []Violation {
 	var vs []Violation
 	add := func(rule, path, format string, args ...any) {
 		vs = append(vs, Violation{Rule: rule, Path: path, Detail: fmt.Sprintf(format, args...)})
 	}
-	for _, f := range []string{"node_id", "issue_key", "created_by_task_id", "created_at"} {
-		if s, ok := body[f].(string); !ok || s == "" {
-			add(RuleMissingField, "$."+f, "required text field is missing or empty")
+	text := func(obj map[string]any, path, key string) {
+		if s, ok := obj[key].(string); !ok || s == "" {
+			add(RuleMissingField, path+"."+key, "required text field is missing, empty or not text")
 		}
+	}
+	digest := func(obj map[string]any, path, key string) {
+		if s, ok := obj[key].(string); !ok || !digestPattern.MatchString(s) {
+			add(RuleBadDigest, path+"."+key, "must be 64 lowercase hexadecimal characters")
+		}
+	}
+	whole := func(obj map[string]any, path, key string, min int64) {
+		n, ok := obj[key].(int64)
+		switch {
+		case obj[key] == nil:
+			add(RuleMissingField, path+"."+key, "required whole number is missing")
+		case !ok || n < min:
+			add(RuleWrongType, path+"."+key, "must be a whole number of at least %d", min)
+		}
+	}
+	for _, f := range []string{"node_id", "issue_key", "created_by_task_id", "created_at"} {
+		text(body, "$", f)
 	}
 	if body["schema"] != SchemaManifest {
 		add(RuleBadSchema, "$.schema", "must be %q", SchemaManifest)
 	}
-	for _, f := range []string{"node_slice_digest", "criteria_set_digest"} {
-		if s, ok := body[f].(string); !ok || !digestPattern.MatchString(s) {
-			add(RuleBadDigest, "$."+f, "must be 64 lowercase hexadecimal characters")
-		}
-	}
-	for _, f := range []string{"plan_revision_no", "coordinator_epoch"} {
-		if _, ok := body[f].(int64); !ok {
-			add(RuleWrongType, "$."+f, "must be a whole number")
-		}
-	}
+	digest(body, "$", "node_slice_digest")
+	digest(body, "$", "criteria_set_digest")
+	whole(body, "$", "plan_revision_no", 0)
+	whole(body, "$", "coordinator_epoch", 0)
 	if rv, ok := body["rule_version"].(map[string]any); !ok || len(rv) == 0 {
 		add(RuleMissingField, "$.rule_version", "required object is missing or empty")
+	}
+	if base, present := body["base"]; present {
+		obj, ok := base.(map[string]any)
+		if !ok {
+			add(RuleNotAnObject, "$.base", "must be a JSON object with repository, ref and sha")
+		} else {
+			for _, f := range []string{"repository", "ref", "sha"} {
+				text(obj, "$.base", f)
+			}
+		}
 	}
 	inputs, ok := body["inputs"].([]any)
 	if !ok {
@@ -83,10 +98,47 @@ func CheckManifest(body map[string]any) []Violation {
 			add(RuleUnknownEdgeKind, path+".kind", "%q is not one of %s, %s, %s", kind, EdgeArtifactVerified, EdgeIntegrated, EdgeDecision)
 			continue
 		}
-		for _, f := range append([]string{"edge_id", "from_node_id"}, rule.required...) {
-			if missing(in[f]) {
-				add(RuleMissingField, path+"."+f, "required for an %s input and missing or empty", kind)
+		for _, f := range append([]string{"edge_id", "from_node_id"}, rule.texts...) {
+			text(in, path, f)
+		}
+		for _, f := range rule.ints {
+			whole(in, path, f, 0)
+		}
+		if artifacts, present := in["artifacts"]; present {
+			list, ok := artifacts.([]any)
+			if !ok {
+				add(RuleWrongType, path+".artifacts", "must be a list")
 			}
+			for j, a := range list {
+				ap := fmt.Sprintf("%s.artifacts[%d]", path, j)
+				obj, ok := a.(map[string]any)
+				if !ok {
+					add(RuleNotAnObject, ap, "must be a JSON object with uri, sha256, bytes and scope")
+					continue
+				}
+				text(obj, ap, "uri")
+				text(obj, ap, "scope")
+				digest(obj, ap, "sha256")
+				whole(obj, ap, "bytes", 0)
+			}
+		}
+	}
+	if volatile, present := body["volatile"]; present {
+		list, ok := volatile.([]any)
+		if !ok {
+			add(RuleWrongType, "$.volatile", "must be a list")
+		}
+		for i, v := range list {
+			vp := fmt.Sprintf("$.volatile[%d]", i)
+			obj, ok := v.(map[string]any)
+			if !ok {
+				add(RuleNotAnObject, vp, "must be a JSON object with source, snapshot_uri, sha256 and captured_at")
+				continue
+			}
+			text(obj, vp, "source")
+			text(obj, vp, "snapshot_uri")
+			text(obj, vp, "captured_at")
+			digest(obj, vp, "sha256")
 		}
 	}
 	return vs

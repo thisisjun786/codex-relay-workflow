@@ -103,6 +103,15 @@ func TestManifestShapeIsStrict(t *testing.T) {
 		"unknown input kind":    {func(d doc) { d["inputs"].([]any)[0].(doc)["kind"] = "blocks" }, RuleUnknownEdgeKind, "$.inputs[0].kind"},
 		"integrated needs head": {func(d doc) { delete(d["inputs"].([]any)[0].(doc), "head_sha") }, RuleMissingField, "$.inputs[0].head_sha"},
 		"artifact needs event":  {func(d doc) { d["inputs"].([]any)[1].(doc)["event_id"] = "" }, RuleMissingField, "$.inputs[1].event_id"},
+		"generation as text":    {func(d doc) { d["inputs"].([]any)[1].(doc)["execution_generation"] = "one" }, RuleWrongType, "$.inputs[1].execution_generation"},
+		"acceptance as number":  {func(d doc) { d["inputs"].([]any)[0].(doc)["acceptance_id"] = 7 }, RuleMissingField, "$.inputs[0].acceptance_id"},
+		"base is null":          {func(d doc) { d["base"] = nil }, RuleNotAnObject, "$.base"},
+		"base without a sha":    {func(d doc) { delete(d["base"].(doc), "sha") }, RuleMissingField, "$.base.sha"},
+		"artifact not a digest": {func(d doc) { d["inputs"].([]any)[1].(doc)["artifacts"].([]any)[0].(doc)["sha256"] = "x" }, RuleBadDigest, "$.inputs[1].artifacts[0].sha256"},
+		"artifact bytes text":   {func(d doc) { d["inputs"].([]any)[1].(doc)["artifacts"].([]any)[0].(doc)["bytes"] = "two" }, RuleWrongType, "$.inputs[1].artifacts[0].bytes"},
+		"artifacts not a list":  {func(d doc) { d["inputs"].([]any)[1].(doc)["artifacts"] = "x" }, RuleWrongType, "$.inputs[1].artifacts"},
+		"volatile without uri":  {func(d doc) { delete(d["volatile"].([]any)[0].(doc), "snapshot_uri") }, RuleMissingField, "$.volatile[0].snapshot_uri"},
+		"revision as text":      {func(d doc) { d["plan_revision_no"] = "4" }, RuleWrongType, "$.plan_revision_no"},
 	} {
 		d := manifestBody()
 		tc.mutate(d)
@@ -114,6 +123,13 @@ func TestManifestShapeIsStrict(t *testing.T) {
 		if !found {
 			t.Errorf("%s: want %s at %s, got %v", name, tc.rule, tc.path, vs)
 		}
+	}
+	// no base is allowed (a non_pr node with no repository has none), and no volatile snapshot
+	noBase := manifestBody()
+	delete(noBase, "base")
+	delete(noBase, "volatile")
+	if vs := CheckManifest(parseBody(t, noBase)); len(vs) != 0 {
+		t.Errorf("a manifest without a base or snapshots: %v", vs)
 	}
 	// an empty input list is allowed (a node with no incoming edge) and is not the same as a missing one
 	d := manifestBody()
