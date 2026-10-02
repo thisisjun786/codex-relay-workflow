@@ -354,11 +354,12 @@ record S25c holds and not from a new reading of goalplans. For a multi-cycle loo
 work a docs-only roadmap cycle, and a single-cycle task skips it. A correction generation (the same
 deliverable of the same issue), a base-refresh generation (a merge of the base and the resolution of
 its conflicts) and a separated publication step (the push and the pull request) all come after the
-first work-phase of the issue's work, so a docs-only cycle there only adds round trips. S25c counted
-three generation-2 corrections and one implementation followed by a publication phase, and none
-opened a docs-only phase; it reports no separately identified base-refresh observation. That is
-practice, which is why the line is written and not relied on. It stands in the Loop bullet of the
-Launch packet, in the workflow bullet of the Restoration block and in the Default independent
+first work-phase of the issue's work, so the reasoning for the decision is that a docs-only cycle
+there would only add round trips; S25c measured whether such cycles opened and not what they cost.
+It counted three generation-2 corrections and one implementation followed by a publication phase,
+and none opened a docs-only phase; it reports no separately identified base-refresh observation.
+That is practice, which is why the line is written and not relied on. It stands in the Loop bullet
+of the Launch packet, in the workflow bullet of the Restoration block and in the Default independent
 execution paragraph, which the packet points to. It does not waive `LOOP-DOCS-FIRST-01` when a loop
 is entered, or the roadmap debt for new scope found later: it says only that these three later steps
 are not the first work-phase of new work. The CXC rule text is not changed and still counts
