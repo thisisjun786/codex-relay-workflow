@@ -1,0 +1,130 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/pre-tool-use-attaching-skills",
+    "K5/hook-rendered",
+    "A/subagent-config/spawn-attach-hook.test.ts",
+    "K13/CODEXCLAW_HOME"
+  ],
+  "note": "A Fernet-shaped V2 message (public generate.json vector) is native ciphertext: message bytes are preserved (no guard, skill text or prompt override), the configured global explorer model and effort are still injected as separate fields, and additionalContext discloses the omission.",
+  "given": {
+    "json": {
+      "cxc/subagents.json": {
+        "roles": {
+          "explorer": {
+            "mode": "model",
+            "model": "rec/explorer-model",
+            "effort": "high",
+            "promptOverride": "EXPLORER-PROMPT: be terse.",
+            "fallback": null
+          }
+        }
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "pre-tool-use-attaching-skills",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "spawn_agent",
+          "tool_input": {
+            "task_name": "t",
+            "fork_turns": "none",
+            "message": "gAAAAAAdwJ6wAAECAwQFBgcICQoLDA0ODy021cpGVWKZ_eEwCGM4BLLF_5CV9dOPmrhuVUPgJobwOz7JcbmrR64jVmpU4IwqDA=="
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+            "updatedInput": {
+              "task_name": "t",
+              "fork_turns": "none",
+              "message": "gAAAAAAdwJ6wAAECAwQFBgcICQoLDA0ODy021cpGVWKZ_eEwCGM4BLLF_5CV9dOPmrhuVUPgJobwOz7JcbmrR64jVmpU4IwqDA==",
+              "model": "rec/explorer-model",
+              "reasoning_effort": "high"
+            },
+            "additionalContext": "[codexclaw] Native V2 task ciphertext was preserved. Hook-added skill text, scope instructions and prompt overrides were not attached; native recursion checks and separate routing fields still apply."
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "cxc/subagents.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "roles": {
+            "explorer": {
+              "mode": "model",
+              "model": "rec/explorer-model",
+              "effort": "high",
+              "promptOverride": "EXPLORER-PROMPT: be terse.",
+              "fallback": null
+            }
+          }
+        }
+      }
+    },
+    "calls": [
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

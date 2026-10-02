@@ -1,0 +1,161 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/stop-checking-pabcd-continuation",
+    "K5/hook-rendered",
+    "A/pabcd-state/hook-continuation.test.ts",
+    "K13/CODEX_SQLITE_HOME",
+    "K11/goals"
+  ],
+  "note": "Phase P under an active goal: the P continuation reason.",
+  "given": {
+    "json": {
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "phase": "P",
+        "sessionId": "rec-s1",
+        "slug": "",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "flags": {
+          "interview": false,
+          "auditPassed": false,
+          "checkPassed": false
+        },
+        "supersededBy": null,
+        "injectedTurns": [],
+        "lastInjectedPhase": null,
+        "orchestrationActive": true,
+        "interview": null,
+        "stopBlockPhase": null,
+        "stopBlockCount": 0,
+        "stopBlockWorkPhaseId": null,
+        "stopMetricCursor": 0,
+        "stopBlockTotal": 0,
+        "stopBlockTurnId": null,
+        "stopBlockCapNotified": false,
+        "loopArmSeen": false,
+        "idleEditNudges": 0,
+        "memoryWriteRequested": false,
+        "memoryWriteTurn": null,
+        "memoryWriteGrant": false,
+        "unverifiedSubagents": [],
+        "unverifiedCorrupt": false,
+        "phaseEntrySource": null,
+        "planUnit": null,
+        "planEpoch": null,
+        "checkEpoch": null,
+        "dcloseRecovery": null
+      }
+    },
+    "sqlite": {
+      "codex/goals_1.sqlite": [
+        "CREATE TABLE thread_goals (thread_id TEXT PRIMARY KEY NOT NULL, status TEXT NOT NULL, objective TEXT)",
+        "INSERT INTO thread_goals (thread_id, status, objective) VALUES ('rec-s1', 'active', 'ship the feature')"
+      ]
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "stop-checking-pabcd-continuation",
+        "stdin": {
+          "hook_event_name": "Stop",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "stop_hook_active": false,
+          "last_assistant_message": "Done."
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "decision": "block",
+          "reason": "[codexclaw — continue PABCD] You are mid-cycle at P (PLAN) with an active goal.\nDo the real work of this phase, then self-advance with the concrete next command:\n`node \"${PLUGIN_ROOT}/bin/cxc.mjs\" orchestrate A --session rec-s1 --attest '{\"from\":\"P\",\"to\":\"A\",\"did\":\"diff-level plan written with files and acceptance criteria\",\"planUnit\":\"devlog/_plan/YYMMDD_slug\",\"workPhaseId\":\"<bound goalplan only>\"}'`\nC→D requires checkOutput+exitCode. D is not a resting state; close the cycle back to IDLE."
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "codex/goals_1.sqlite": {
+        "type": "file",
+        "mode": "0644",
+        "form": "sqlite",
+        "json": {
+          "tables": [
+            {
+              "name": "thread_goals",
+              "sql": "CREATE TABLE thread_goals (thread_id TEXT PRIMARY KEY NOT NULL, status TEXT NOT NULL, objective TEXT)",
+              "rows": [
+                {
+                  "thread_id": "rec-s1",
+                  "status": "active",
+                  "objective": "ship the feature"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/sessions": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty-nonl",
+        "json": {
+          "phase": "P",
+          "sessionId": "rec-s1",
+          "slug": "",
+          "updatedAt": "<TS>",
+          "flags": {
+            "interview": false,
+            "auditPassed": false,
+            "checkPassed": false
+          },
+          "supersededBy": null,
+          "injectedTurns": [],
+          "lastInjectedPhase": null,
+          "orchestrationActive": true,
+          "interview": null,
+          "stopBlockPhase": "P",
+          "stopBlockCount": 1,
+          "stopBlockWorkPhaseId": null,
+          "stopMetricCursor": 0,
+          "stopBlockTotal": 1,
+          "stopBlockTurnId": null,
+          "stopBlockCapNotified": false,
+          "loopArmSeen": false,
+          "idleEditNudges": 0,
+          "memoryWriteRequested": false,
+          "memoryWriteTurn": null,
+          "memoryWriteGrant": false,
+          "unverifiedSubagents": [],
+          "unverifiedCorrupt": false,
+          "phaseEntrySource": null,
+          "planUnit": null,
+          "planEpoch": null,
+          "checkEpoch": null,
+          "dcloseRecovery": null
+        }
+      }
+    },
+    "calls": []
+  }
+}

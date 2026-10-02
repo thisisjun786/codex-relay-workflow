@@ -1,0 +1,44 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/skill/help",
+    "K6/exit-codes",
+    "A/plugin/cli-usage.test.mjs",
+    "K14/skill-search"
+  ],
+  "note": "`cxc skill show --help`: whether the subcommand treats --help as help, and what it writes.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "skill",
+          "show",
+          "--help"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 1,
+    "steps": [
+      {
+        "exit": 1,
+        "stdout_form": "empty",
+        "stderr": "skill-search: no skill \"--help\" in source(s) jaw\n"
+      }
+    ],
+    "tree": {},
+    "calls": [
+      {
+        "cmd": "fetch",
+        "argv": [
+          "GET",
+          "https://raw.githubusercontent.com/lidge-jun/cli-jaw-skills/main/registry.json"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

@@ -1,0 +1,62 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/session-start-ensuring-provider-bridge",
+    "K2/SessionStart",
+    "K13/PLUGIN_ROOT",
+    "K13/CODEX_HOME",
+    "K4/hook-observations",
+    "K12/ocx",
+    "K5/hook-rendered"
+  ],
+  "note": "The leg's declared command with a minimal well-formed payload in an empty workspace and empty homes: the leg's quiet default and its side effects.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "session-start-ensuring-provider-bridge",
+        "stdin": {
+          "hook_event_name": "SessionStart",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "source": "startup",
+          "model": "gpt-5.5",
+          "transcript_path": null
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": "{\"provider\":\"ocx\",\"mode\":\"error\",\"ocxPath\":\"${STUBS}/ocx\",\"reason\":\"ocx status exited 127\"}"
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      }
+    },
+    "calls": [
+      {
+        "cmd": "ocx",
+        "argv": [
+          "status",
+          "--json"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

@@ -1,0 +1,68 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/freeze",
+    "A/pabcd-state/freeze.test.ts"
+  ],
+  "note": "freeze with --cwd but no --session: v0.2.40 writes a manifest for slug default.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "freeze",
+          "--cwd",
+          "${WS}"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "[codexclaw freeze]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: default\nplanFiles: 0\nplanHash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\ninterviewReady: false\nopenAssumptions: 0\nstale-check: no prior manifest\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/.gitignore": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n"
+      },
+      "ws/.codexclaw/interview": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/interview/freeze.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty-nonl",
+        "json": {
+          "frozenAt": "<TS>",
+          "planFiles": [],
+          "planHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "objective": "default",
+          "slug": "default",
+          "evidenceBundle": {
+            "dimensions": null,
+            "openAssumptions": [],
+            "contradictions": [],
+            "acceptanceCriteria": [],
+            "researchReportRef": null
+          }
+        }
+      }
+    },
+    "calls": []
+  }
+}

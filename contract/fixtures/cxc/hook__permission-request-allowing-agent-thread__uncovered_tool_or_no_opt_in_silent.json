@@ -1,0 +1,207 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/permission-request-allowing-agent-thread",
+    "K8/cxc/config.json",
+    "A/pabcd-state/agent-thread-permissions.test.ts",
+    "K13/CODEXCLAW_HOME"
+  ],
+  "note": "No decision: an uncovered tool (view_image, a malformed mcp__ name); then with the opt-in missing, false, or the string \"true\" via alternative CODEXCLAW_HOME roots.",
+  "given": {
+    "files": {
+      "codex/config.toml": "approval_policy = \"never\"\nsandbox_mode = \"danger-full-access\"\n",
+      "codex/sessions/rollout-agent.jsonl": "{\"type\": \"session_meta\", \"payload\": {\"id\": \"rec-s1\", \"thread_source\": \"agent_created_thread\"}}\n",
+      "cxc/config.json": "{\"permissions\":{\"agentCreatedThreadAutoAllow\":true}}",
+      "tmp/claw-off/config.json": "{\"permissions\":{\"agentCreatedThreadAutoAllow\":false}}",
+      "tmp/claw-str/config.json": "{\"permissions\":{\"agentCreatedThreadAutoAllow\":\"true\"}}"
+    },
+    "dirs": [
+      "tmp/claw-empty"
+    ]
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "permission-request-allowing-agent-thread",
+        "stdin": {
+          "hook_event_name": "PermissionRequest",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "transcript_path": "${CODEX_HOME}/sessions/rollout-agent.jsonl",
+          "permission_mode": "default",
+          "tool_name": "view_image",
+          "tool_input": {
+            "command": "git push"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "permission-request-allowing-agent-thread",
+        "stdin": {
+          "hook_event_name": "PermissionRequest",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "transcript_path": "${CODEX_HOME}/sessions/rollout-agent.jsonl",
+          "permission_mode": "default",
+          "tool_name": "mcp____tool",
+          "tool_input": {
+            "command": "git push"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "permission-request-allowing-agent-thread",
+        "stdin": {
+          "hook_event_name": "PermissionRequest",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "transcript_path": "${CODEX_HOME}/sessions/rollout-agent.jsonl",
+          "permission_mode": "default",
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "git push"
+          },
+          "tool_use_id": "rec-call-1"
+        },
+        "env": {
+          "CODEXCLAW_HOME": "${TMP}/claw-empty"
+        }
+      },
+      {
+        "hook": "permission-request-allowing-agent-thread",
+        "stdin": {
+          "hook_event_name": "PermissionRequest",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "transcript_path": "${CODEX_HOME}/sessions/rollout-agent.jsonl",
+          "permission_mode": "default",
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "git push"
+          },
+          "tool_use_id": "rec-call-1"
+        },
+        "env": {
+          "CODEXCLAW_HOME": "${TMP}/claw-off"
+        }
+      },
+      {
+        "hook": "permission-request-allowing-agent-thread",
+        "stdin": {
+          "hook_event_name": "PermissionRequest",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "transcript_path": "${CODEX_HOME}/sessions/rollout-agent.jsonl",
+          "permission_mode": "default",
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "git push"
+          },
+          "tool_use_id": "rec-call-1"
+        },
+        "env": {
+          "CODEXCLAW_HOME": "${TMP}/claw-str"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/config.toml": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "approval_policy = \"never\"\nsandbox_mode = \"danger-full-access\"\n"
+      },
+      "codex/sessions": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "codex/sessions/rollout-agent.jsonl": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "{\"type\": \"session_meta\", \"payload\": {\"id\": \"rec-s1\", \"thread_source\": \"agent_created_thread\"}}\n"
+      },
+      "cxc/config.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json",
+        "json": {
+          "permissions": {
+            "agentCreatedThreadAutoAllow": true
+          }
+        }
+      },
+      "tmp/claw-empty": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "tmp/claw-off": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "tmp/claw-off/config.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json",
+        "json": {
+          "permissions": {
+            "agentCreatedThreadAutoAllow": false
+          }
+        }
+      },
+      "tmp/claw-str": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "tmp/claw-str/config.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json",
+        "json": {
+          "permissions": {
+            "agentCreatedThreadAutoAllow": "true"
+          }
+        }
+      }
+    },
+    "calls": []
+  }
+}

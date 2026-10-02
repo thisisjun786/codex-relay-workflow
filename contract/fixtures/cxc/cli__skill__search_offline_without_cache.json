@@ -1,0 +1,44 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/skill/search",
+    "K14/skill-search",
+    "A/skill-search/cli.test.ts"
+  ],
+  "note": "No cache and a closed network: the jaw fetch fails, stderr reports the source failure, stdout says no matching skills, exit 0; the attempted fetch is recorded.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "skill",
+          "search",
+          "telegram"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "no matching skills\n",
+        "stderr": "skill-search: source jaw failed (fetch failed)\n"
+      }
+    ],
+    "tree": {},
+    "calls": [
+      {
+        "cmd": "fetch",
+        "argv": [
+          "GET",
+          "https://raw.githubusercontent.com/lidge-jun/cli-jaw-skills/main/registry.json"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

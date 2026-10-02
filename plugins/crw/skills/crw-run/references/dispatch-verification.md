@@ -164,6 +164,10 @@ a case whose owner has moved or been reworded before relying on it.
 | S20 | A relay-managed child that finishes on a goal-continuation or post-restart turn attaches a continuation claim naming the generation's anchor, read from the relay, and does not read the `unassigned_turn` refusal as a delivery defect; a turn of another task stays refused whatever it claims | [Launch packet](task-packet.md#launch-packet) relay bullet on which turn the receipt is emitted from, and [Completing on a later turn of the same child](relay.md#completing-on-a-later-turn-of-the-same-child) | Recovery | added 2026-10-02; did not occur in the receipts read in P-CRW-115, see below |
 | S22 | A candidate whose only block is BEHIND is updated by the parent itself with a guarded update-branch call, then proved again on the new head (the base-refresh check, every required job, the `Devin Review` status, the child's threads) before an expected-head merge; in a DAG-managed project the update comes before `dag-accept` | [Refresh the base yourself when only the base moved](merge-readiness.md#refresh-the-base-yourself-when-only-the-base-moved) | Recovery | added 2026-10-03; basis below |
 | S22b | What still goes back to the child: a conflict (before any update, so the correction names the unchanged head and needs no sync); on the new head, a refusal from the check, a failed job or Devin status, a new thread or a blocking finding (the correction names the new head and has the child fast-forward its worktree first); and a base that moves after `dag-accept`. A job still pending is waited on, not returned | Same section, and [Restoration block](task-packet.md#restoration-block) | Recovery | added 2026-10-03; same basis, see below |
+| S23 | The packet's `Title:` names the Codex task, and the child titles its own pull request in English under the target repository's rules | [Child task titles](task-packet.md#child-task-titles) and the `Title:` line of the [Launch packet](task-packet.md#launch-packet) | Default settings | added 2026-10-03; measured on published pull request titles, not on a child that read the rule, see below |
+| S23b | A temporary directory the packet names is short enough for a Unix socket under it to bind, and the packet states the socket path limit | The `Capacity and large artifacts:` line of the [Launch packet](task-packet.md#launch-packet) and [First full assignment required fields](task-packet.md#first-full-assignment-required-fields) | Default settings | added 2026-10-03; limit measured on this Linux host and read for macOS, see below |
+| S23c | A make target, CI check or repository script a packet names under `Verification:` exists in the target repository, and the packet's writer confirmed it when writing the packet | The `Verification:` line of the [Launch packet](task-packet.md#launch-packet) and [First full assignment required fields](task-packet.md#first-full-assignment-required-fields) | Default settings | added 2026-10-03; failure mode measured at dev 53c7e4e8, see below |
+
 S14 and S17 are the pair that is easiest to confuse. S14 removed the readiness turn; S17
 added a capability check the coordinator performs before creating the task. A check that
 happens on the coordinator's side, before anything exists to answer, is not a turn spent
@@ -205,7 +209,7 @@ record, which the managed-start routing text still tells a child to name for a c
 claim (an open entry in the refactor backlog's real-use run 3 list).
 
 S22 and S22b rest on a reading of the code and on tests, not on a live parent run. The code
-read is dev 53c7e4e8: `dagsched` (`Accept` records the head the forge shows and refuses the same output
+read is dev 53c7e4e8, read again at aae27cce after dev was merged in: `dagsched` (`Accept` records the head the forge shows and refuses the same output
 at another head, `Judge` rules `stale_head` before `stale_base`), `mergeturn` (`merge-turn-ready --head`
 resets readiness, `merge-turn-check` compares the head with any recorded work report) and `evidence`
 (the problems `merge-evidence --restate` raises for a moved head and a moved base). The helper behind
@@ -215,6 +219,41 @@ each with exactly the tree git merges from its parents. The `Devin Review` statu
 merge-only head, where it completed in 2 seconds and left no review object; its behaviour on other
 heads was not measured. Not measured at all: the forge's update-branch call on a live pull request,
 an installed runtime, and the rule under load.
+
+S23, S23b and S23c were read on 2026-10-03 against the pull requests #278 to #294 as GitHub
+showed them and this checkout at dev 53c7e4e8. They measure published artifacts and this host.
+None of them measures a child that read the new wording, which waits for the next run, and
+a title alone does not show why a child chose it.
+
+S23: the seventeen titles were read with `gh pr view N --json title` and tested for Hangul. Six
+are the Korean task title in the task-title shape: #282, #285, #287, #292, #293 and #294. The
+other eleven are English, in several shapes (`CRW-263: ...`, `fix(relay): [CRW-271] ...`,
+`CRW-270 · per-parent due cap and parent-id rotation`). CONTRIBUTING.md and POLICY.md of this
+repository state no title format, so the rule defers to the rules of the target repository and
+has the packet name a shape where there is none. The packets of those children are not in the
+repository: the refactor backlog records that the packets of #282 and #285 carried a `Language:`
+line naming the pull request's title, and nobody checked it for the other four.
+
+S23b: on this Linux host a Unix socket bound at a path of 107 bytes and failed with `AF_UNIX path
+too long` at 108, probed with a Python `bind` in a temporary directory. The macOS bound of 104 is
+read from internal/bridge/appserver/fakehost/fakehost.go (lines 166 to 169) and from the body of
+PR #285, not measured. The rule gives no length for `TMPDIR` itself: the test adds its own
+directory and file names, and the body of PR #280 reports a socket path of 111 bytes, set by a
+test's own name, under a `TMPDIR` already shorter than the one that failed elsewhere.
+
+S23c: at dev 53c7e4e8 `make -n contract` prints `make: Nothing to be done for 'contract'.` and
+exits 0, because the Makefile has no `contract` rule (`.PHONY` on line 23 lists build, test,
+test-binary, test-part, lint, dist and crw-dev) and a directory `contract/` exists, while
+`make -n nosuchtarget` prints `No rule to make target` and exits 2. A gate that ran `make
+contract` would have passed with nothing checked; the bodies of PRs #281 and #282 both report
+the missing target. A focused test is confirmed with an anchored `go test -list '^Name$' ./pkg`,
+run with the verification's own package and tags. In `./internal/bridge/appserver/fakehost` of this
+checkout the pattern `TestStart_bindsAndServes` without anchors lists
+`TestStart_bindsAndServes_whenTMPDIRIsLong` although no test has that exact name, the anchored
+`^TestStart_bindsAndServes$` lists nothing for it, and `go test -run '^TestNoSuchTest$'` on the same
+package exits 0 with `[no tests to run]`. An empty listing means no matching top-level test in that
+build, since `-list` does not print subtests; a missing package, and a package whose files are all
+behind the `dev` tag listed without `-tags dev`, fail with exit 1.
 
 ## Negative cases
 

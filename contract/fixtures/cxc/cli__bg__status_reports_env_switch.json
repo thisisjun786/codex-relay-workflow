@@ -1,0 +1,37 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/bg/status",
+    "A/bg-wake/cli.test.ts",
+    "K13/CXC_BGWAKE"
+  ],
+  "note": "CXC_BGWAKE=off turns the reported wake OFF while the file flag stays on.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "bg",
+          "status"
+        ],
+        "env": {
+          "CXC_BGWAKE": "off"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "wake: OFF\n  파일 플래그: on\n  CXC_BGWAKE: off\n  작업 0건\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

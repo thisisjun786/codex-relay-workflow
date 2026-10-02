@@ -1,0 +1,35 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/loop/help",
+    "K6/exit-codes",
+    "A/plugin/cli-usage.test.mjs",
+    "A/pabcd-state/help-verbs.test.ts"
+  ],
+  "note": "`cxc loop meet-criterion --help`: whether the subcommand treats --help as help, and what it writes.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "loop",
+          "meet-criterion",
+          "--help"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 1,
+    "steps": [
+      {
+        "exit": 1,
+        "stdout_form": "empty",
+        "stderr": "loop: meet-criterion: unknown flag '--help'\n"
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

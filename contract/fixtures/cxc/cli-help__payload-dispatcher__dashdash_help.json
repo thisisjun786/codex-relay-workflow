@@ -1,0 +1,33 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/payload-dispatcher",
+    "A/plugin/payload-bin.test.mjs"
+  ],
+  "note": "The plugin's own bin/cxc.mjs (payload dispatcher): help, version, unknown verb, and the repo-only map/gui pointer.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "--help"
+        ],
+        "payload": true
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "cxc (payload dispatcher) — codexclaw operator CLI\n\nUsage:\n  node \"<payloadRoot>/bin/cxc.mjs\" <command> [args]\n\nPABCD / loop:\n  session current|bind|source   verify native identity / bind a source worktree\n  orchestrate <verb>             drive IPABCD state (try: orchestrate --help)\n  freeze | metric | divergence   interview freeze / metrics / divergence state\n  loop <verb>                    manage the project-local goalplan; run loop --help for the exact flag table\n  plan init <slug>               scaffold the devlog/_plan unit for the P>A gate\n  scan record --session <id>     record an interview contradiction-scan round\n  review-round open|show|abort   manage the plan-audit round the A>B gate reads\n  receipt test -- <cmd>          run a check and record it for the C>D gate\n\nCore:\n  enable | disable | status      declared Codex feature flags\n  config                         managed config.toml keys + interview policy\n  doctor | reset | hooks         plugin health / state reset / hook re-trust\n\nWorkspace intelligence:\n  chat search \"q\" | memory search \"q\"   recall over ~/.codex artifacts\n  memory allow-write --session <id>     grant one cwd-scoped memory write\n  skill search|show              dormant-skill discovery\n\nOperations:\n  subagents | provider | serve | service\n  bg run|list|get|off            background tasks + completion wake (cxc bg removal to uninstall)\n\nRepo-checkout only (not in the payload dispatcher):\n  gui, map — use a git checkout of codexclaw (README: Development)\n\nAgent notes:\n  Mutating PABCD commands require the session id: orchestrate P --session <id>\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

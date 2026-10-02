@@ -1,0 +1,180 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/subagents/dispatch",
+    "A/subagent-config/fallback-dispatch.test.ts",
+    "K9/dispatch-lock"
+  ],
+  "note": "fallback-dispatch.ts:137-139: mkdirSync(lock) without stale-lock recovery.",
+  "given": {
+    "json": {
+      "ws/.codexclaw/dispatches/rec-s1/one.json": {
+        "version": 1,
+        "sessionId": "rec-s1",
+        "id": "one",
+        "role": "executor",
+        "candidates": [
+          {
+            "model": "rec/exec-primary",
+            "effort": "high"
+          },
+          {
+            "model": "rec/exec-fallback",
+            "effort": null
+          }
+        ],
+        "attempts": [
+          {
+            "id": "att-1",
+            "candidate": {
+              "model": "rec/exec-primary",
+              "effort": "high"
+            },
+            "claimed": false,
+            "agentId": null,
+            "observedModel": null,
+            "code": null,
+            "taskFailure": null,
+            "status": "ready",
+            "reconciliation": null,
+            "spawnIssued": false,
+            "toolUseId": null
+          }
+        ],
+        "status": "active"
+      }
+    },
+    "dirs": [
+      "ws/.codexclaw/dispatches/rec-s1/one.json.lock"
+    ]
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "subagents",
+          "dispatch"
+        ],
+        "stdin": {
+          "action": "status",
+          "sessionId": "rec-s1",
+          "dispatchId": "one"
+        }
+      },
+      {
+        "cli": [
+          "subagents",
+          "dispatch"
+        ],
+        "stdin": {
+          "action": "claim",
+          "sessionId": "rec-s1",
+          "dispatchId": "one",
+          "attemptId": "att-1"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 1,
+    "steps": [
+      {
+        "exit": 1,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "error": "EEXIST: file already exists, mkdir '${WS}/.codexclaw/dispatches/rec-s1/one.json.lock'"
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "error": "EEXIST: file already exists, mkdir '${WS}/.codexclaw/dispatches/rec-s1/one.json.lock'"
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/dispatches": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/dispatches/rec-s1": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/dispatches/rec-s1/one.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "version": 1,
+          "sessionId": "rec-s1",
+          "id": "one",
+          "role": "executor",
+          "candidates": [
+            {
+              "model": "rec/exec-primary",
+              "effort": "high"
+            },
+            {
+              "model": "rec/exec-fallback",
+              "effort": null
+            }
+          ],
+          "attempts": [
+            {
+              "id": "att-1",
+              "candidate": {
+                "model": "rec/exec-primary",
+                "effort": "high"
+              },
+              "claimed": false,
+              "agentId": null,
+              "observedModel": null,
+              "code": null,
+              "taskFailure": null,
+              "status": "ready",
+              "reconciliation": null,
+              "spawnIssued": false,
+              "toolUseId": null
+            }
+          ],
+          "status": "active"
+        }
+      },
+      "ws/.codexclaw/dispatches/rec-s1/one.json.lock": {
+        "type": "dir",
+        "mode": "0755"
+      }
+    },
+    "calls": [
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

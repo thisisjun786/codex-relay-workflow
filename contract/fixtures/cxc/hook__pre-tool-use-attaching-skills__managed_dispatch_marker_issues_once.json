@@ -1,0 +1,371 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/pre-tool-use-attaching-skills",
+    "K5/hook-rendered",
+    "K8/ws/.codexclaw/dispatches",
+    "A/subagent-config/fallback-dispatch.test.ts",
+    "K13/CODEXCLAW_HOME"
+  ],
+  "note": "A claimed attempt's [CXC-DISPATCH:one:att-1] marker: the hook allows with the candidate model/effort (overriding caller fields), records spawnIssued and the tool_use_id; a repeat with the same tool_use_id is idempotent; a different tool_use_id is denied.",
+  "given": {
+    "json": {
+      "cxc/subagents.json": {
+        "roles": {
+          "executor": {
+            "mode": "model",
+            "model": "rec/exec-primary",
+            "effort": "high",
+            "promptOverride": null,
+            "fallback": {
+              "model": "rec/exec-fallback",
+              "effort": null
+            }
+          }
+        }
+      },
+      "ws/.codexclaw/dispatches/rec-s1/one.json": {
+        "version": 1,
+        "sessionId": "rec-s1",
+        "id": "one",
+        "role": "executor",
+        "candidates": [
+          {
+            "model": "rec/exec-primary",
+            "effort": "high"
+          },
+          {
+            "model": "rec/exec-fallback",
+            "effort": null
+          }
+        ],
+        "attempts": [
+          {
+            "id": "att-1",
+            "candidate": {
+              "model": "rec/exec-primary",
+              "effort": "high"
+            },
+            "claimed": true,
+            "agentId": null,
+            "observedModel": null,
+            "code": null,
+            "taskFailure": null,
+            "status": "claimed",
+            "reconciliation": null,
+            "spawnIssued": false,
+            "toolUseId": null
+          }
+        ],
+        "status": "active"
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "pre-tool-use-attaching-skills",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "spawn_agent",
+          "tool_input": {
+            "message": "[CXC-DISPATCH:one:att-1]\nTASK: implement the fix",
+            "agent_type": "worker",
+            "model": "caller/model"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-attaching-skills",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "spawn_agent",
+          "tool_input": {
+            "message": "[CXC-DISPATCH:one:att-1]\nTASK: implement the fix",
+            "agent_type": "worker"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-attaching-skills",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "spawn_agent",
+          "tool_use_id": "rec-call-2",
+          "tool_input": {
+            "message": "[CXC-DISPATCH:one:att-1]\nTASK: implement the fix",
+            "agent_type": "worker"
+          }
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+            "updatedInput": {
+              "message": "[CXC-SUBAGENT-SCOPE] This is one bounded delegated task. The parent\nowns cxc orchestration, loop, and goal state; do not invoke those\ncommands. Stay within the stated file/write scope and report any\nrequired expansion.\nYou run in the parent's own working directory, on its branch and HEAD - not a\ncopy - so your edits are the parent's uncommitted changes. Do not run\nbranch-level git commands (checkout, switch, branch, stash, reset, rebase,\nmerge, pull); another agent may be working in the same tree.\n\n[CXC-DISPATCH:one:att-1]\nTASK: implement the fix",
+              "agent_type": "worker",
+              "model": "rec/exec-primary",
+              "reasoning_effort": "high"
+            }
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+            "updatedInput": {
+              "message": "[CXC-SUBAGENT-SCOPE] This is one bounded delegated task. The parent\nowns cxc orchestration, loop, and goal state; do not invoke those\ncommands. Stay within the stated file/write scope and report any\nrequired expansion.\nYou run in the parent's own working directory, on its branch and HEAD - not a\ncopy - so your edits are the parent's uncommitted changes. Do not run\nbranch-level git commands (checkout, switch, branch, stash, reset, rebase,\nmerge, pull); another agent may be working in the same tree.\n\n[CXC-DISPATCH:one:att-1]\nTASK: implement the fix",
+              "agent_type": "worker",
+              "model": "rec/exec-primary",
+              "reasoning_effort": "high"
+            }
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "managed dispatch: attempt already issued to another native call; reconcile before retry"
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "cxc/subagents.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "roles": {
+            "executor": {
+              "mode": "model",
+              "model": "rec/exec-primary",
+              "effort": "high",
+              "promptOverride": null,
+              "fallback": {
+                "model": "rec/exec-fallback",
+                "effort": null
+              }
+            }
+          }
+        }
+      },
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/dispatches": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/dispatches/rec-s1": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/dispatches/rec-s1/one.json": {
+        "type": "file",
+        "mode": "0600",
+        "form": "json-pretty",
+        "json": {
+          "version": 1,
+          "sessionId": "rec-s1",
+          "id": "one",
+          "role": "executor",
+          "candidates": [
+            {
+              "model": "rec/exec-primary",
+              "effort": "high"
+            },
+            {
+              "model": "rec/exec-fallback",
+              "effort": null
+            }
+          ],
+          "attempts": [
+            {
+              "id": "att-1",
+              "candidate": {
+                "model": "rec/exec-primary",
+                "effort": "high"
+              },
+              "claimed": true,
+              "agentId": null,
+              "observedModel": null,
+              "code": null,
+              "taskFailure": null,
+              "status": "claimed",
+              "reconciliation": null,
+              "spawnIssued": true,
+              "toolUseId": "rec-call-1"
+            }
+          ],
+          "status": "active"
+        }
+      }
+    },
+    "calls": [
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

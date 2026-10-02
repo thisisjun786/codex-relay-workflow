@@ -1,0 +1,82 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/session-start-injecting-recall-context",
+    "K5/hook-rendered",
+    "K11/memories-jobs",
+    "A/recall/memory-status.test.ts"
+  ],
+  "note": "A memories store whose jobs table lacks the required columns yields the 'unsupported store schema' notice line.",
+  "given": {
+    "sqlite": {
+      "codex/memories_1.sqlite": [
+        "CREATE TABLE jobs (kind TEXT, status TEXT)"
+      ]
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "session-start-injecting-recall-context",
+        "stdin": {
+          "hook_event_name": "SessionStart",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "source": "startup",
+          "model": "gpt-5.5",
+          "transcript_path": null
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": "memory pipeline: unsupported store schema — jobs table is missing column(s): retry_remaining, last_error, finished_at\n\n[cxc-recall] Past-session recall is available (read-only). Before asking the user\nabout prior work — unfamiliar terms, lost context, \"그때/지난번/last time\" — recover it.\nRecall: node \"${PLUGIN_ROOT}/bin/cxc.mjs\" chat search \"<terms>\" --days 0  |  node \"${PLUGIN_ROOT}/bin/cx\nDetails: $cxc-recall."
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "codex/memories_1.sqlite": {
+        "type": "file",
+        "mode": "0644",
+        "form": "sqlite",
+        "json": {
+          "tables": [
+            {
+              "name": "jobs",
+              "sql": "CREATE TABLE jobs (kind TEXT, status TEXT)",
+              "rows": []
+            }
+          ]
+        }
+      }
+    },
+    "calls": [
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "config",
+          "--get",
+          "remote.origin.url"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

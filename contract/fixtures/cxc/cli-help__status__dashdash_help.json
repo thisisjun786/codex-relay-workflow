@@ -1,0 +1,34 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/status/help",
+    "K6/exit-codes",
+    "A/plugin/cli-usage.test.mjs"
+  ],
+  "note": "`cxc status --help`: usage text and exit status; nothing written.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "status",
+          "--help"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "Usage:\n  cxc enable                         activate declared Codex feature flags\n  cxc disable | uninstall            revert flags codexclaw enabled when safe\n  cxc status                         show declared feature-flag state\n\n  --help / -h / help in any argument position prints this text and writes nothing.\n  enable writes $CODEX_HOME/config.toml and a timestamped .bak; disable/uninstall revert.\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

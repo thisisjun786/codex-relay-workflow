@@ -1,0 +1,35 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/scan/help",
+    "K6/exit-codes",
+    "A/plugin/cli-usage.test.mjs",
+    "A/pabcd-state/help-verbs.test.ts"
+  ],
+  "note": "`cxc scan --help`: usage text and exit status; nothing written.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "scan",
+          "--help"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "cxc scan — record an interview rescan round and fold answers into the tracker\n\nUsage:\n  cxc scan record --session <id> [--cwd <path>] [--contradictions N] [--high N]\n                  [--derive] [--map <questionId>=<dimension>]...\n                  [--dim <dimension>=<level>]... [--known <dimension>=<text>]...\n                  [--unknown <dimension>=<text>]... [--confidence <dimension>=<0..1>]...\n  cxc scan --help\n\nNotes:\n  --session is required; there is no latest-session fallback for a mutating command.\n  --cwd matters when the answer ledger lives outside the process cwd:\n  answers are read from <cwd>/.codexclaw/interviews/<session>.jsonl.\n  --derive folds captured answers in; --map attributes a questionId to a dimension.\n  --derive is what makes a dimension count for I->P readiness: the gate re-reads the\n  ledger and requires an asked+answered+mapped question per dimension. --known records\n  a fact but lends no provenance, and --dim cannot set 'max'.\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

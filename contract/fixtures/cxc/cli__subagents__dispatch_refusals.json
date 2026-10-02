@@ -1,0 +1,304 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/subagents/dispatch",
+    "A/subagent-config/fallback-dispatch-cli.test.ts",
+    "A/subagent-config/fallback-dispatch.test.ts",
+    "K13/CODEX_THREAD_ID"
+  ],
+  "note": "dispatch input errors print {error} and exit 1: invalid JSON, empty input, invalid sessionId, a session that does not match CODEX_THREAD_ID, a corrupt state file, a stale attemptId, and a report before claim.",
+  "given": {
+    "json": {
+      "ws/.codexclaw/dispatches/rec-s1/bad.json": {},
+      "ws/.codexclaw/dispatches/rec-s1/one.json": {
+        "version": 1,
+        "sessionId": "rec-s1",
+        "id": "one",
+        "role": "executor",
+        "candidates": [
+          {
+            "model": "rec/exec-primary",
+            "effort": "high"
+          },
+          {
+            "model": "rec/exec-fallback",
+            "effort": null
+          }
+        ],
+        "attempts": [
+          {
+            "id": "att-1",
+            "candidate": {
+              "model": "rec/exec-primary",
+              "effort": "high"
+            },
+            "claimed": false,
+            "agentId": null,
+            "observedModel": null,
+            "code": null,
+            "taskFailure": null,
+            "status": "ready",
+            "reconciliation": null,
+            "spawnIssued": false,
+            "toolUseId": null
+          }
+        ],
+        "status": "active"
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "subagents",
+          "dispatch"
+        ],
+        "stdin": "{"
+      },
+      {
+        "cli": [
+          "subagents",
+          "dispatch"
+        ],
+        "stdin": ""
+      },
+      {
+        "cli": [
+          "subagents",
+          "dispatch"
+        ],
+        "stdin": {
+          "action": "status",
+          "sessionId": "../x",
+          "dispatchId": "one"
+        }
+      },
+      {
+        "cli": [
+          "subagents",
+          "dispatch"
+        ],
+        "stdin": {
+          "action": "status",
+          "sessionId": "rec-s1",
+          "dispatchId": "one"
+        },
+        "env": {
+          "CODEX_THREAD_ID": "rec-other"
+        }
+      },
+      {
+        "cli": [
+          "subagents",
+          "dispatch"
+        ],
+        "stdin": {
+          "action": "status",
+          "sessionId": "rec-s1",
+          "dispatchId": "bad"
+        }
+      },
+      {
+        "cli": [
+          "subagents",
+          "dispatch"
+        ],
+        "stdin": {
+          "action": "claim",
+          "sessionId": "rec-s1",
+          "dispatchId": "one",
+          "attemptId": "att-0"
+        }
+      },
+      {
+        "cli": [
+          "subagents",
+          "dispatch"
+        ],
+        "stdin": {
+          "action": "report",
+          "sessionId": "rec-s1",
+          "dispatchId": "one",
+          "attemptId": "att-1",
+          "outcome": "created",
+          "agentId": "child-a"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 1,
+    "steps": [
+      {
+        "exit": 1,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "error": "Expected property name or '}' in JSON at position 1 (line 1 column 2)"
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "error": "Unexpected end of JSON input"
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "error": "invalid sessionId"
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "error": "sessionId must match the native main session"
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "error": "invalid dispatch identity"
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "error": "stale or missing attemptId; inspect status"
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "error": "claim the attempt before reporting an outcome"
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/dispatches": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/dispatches/rec-s1": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/dispatches/rec-s1/bad.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {}
+      },
+      "ws/.codexclaw/dispatches/rec-s1/one.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "version": 1,
+          "sessionId": "rec-s1",
+          "id": "one",
+          "role": "executor",
+          "candidates": [
+            {
+              "model": "rec/exec-primary",
+              "effort": "high"
+            },
+            {
+              "model": "rec/exec-fallback",
+              "effort": null
+            }
+          ],
+          "attempts": [
+            {
+              "id": "att-1",
+              "candidate": {
+                "model": "rec/exec-primary",
+                "effort": "high"
+              },
+              "claimed": false,
+              "agentId": null,
+              "observedModel": null,
+              "code": null,
+              "taskFailure": null,
+              "status": "ready",
+              "reconciliation": null,
+              "spawnIssued": false,
+              "toolUseId": null
+            }
+          ],
+          "status": "active"
+        }
+      }
+    },
+    "calls": [
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

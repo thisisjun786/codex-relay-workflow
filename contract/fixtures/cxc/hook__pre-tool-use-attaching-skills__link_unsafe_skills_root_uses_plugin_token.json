@@ -1,0 +1,116 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/pre-tool-use-attaching-skills",
+    "K5/hook-rendered",
+    "A/subagent-config/spawn-attach-hook.test.ts",
+    "K13/CXC_SKILLS_DIR"
+  ],
+  "note": "When the skills root (CXC_SKILLS_DIR) contains whitespace a skill:// link would be unsafe, so known mentions normalise to the plugin-prefixed $codexclaw:cxc-<folder> token instead of a link.",
+  "given": {
+    "files": {
+      "home/my skills/orchestrate/SKILL.md": "---\nname: cxc-orchestrate\ndescription: rec fixture skill\n---\nbody\n"
+    },
+    "env": {
+      "CXC_SKILLS_DIR": "${HOME}/my skills"
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "pre-tool-use-attaching-skills",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "spawn_agent",
+          "tool_input": {
+            "message": "follow $cxc-orchestrate now",
+            "agent_type": "explorer"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+            "updatedInput": {
+              "message": "[CXC-SUBAGENT-SCOPE] This is one bounded delegated task. The parent\nowns cxc orchestration, loop, and goal state; do not invoke those\ncommands. Stay within the stated file/write scope and report any\nrequired expansion.\nYou run in the parent's own working directory, on its branch and HEAD - not a\ncopy - so your edits are the parent's uncommitted changes. Do not run\nbranch-level git commands (checkout, switch, branch, stash, reset, rebase,\nmerge, pull); another agent may be working in the same tree.\n\nfollow $codexclaw:cxc-orchestrate now",
+              "agent_type": "explorer"
+            }
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "home/my skills": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "home/my skills/orchestrate": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "home/my skills/orchestrate/SKILL.md": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "---\nname: cxc-orchestrate\ndescription: rec fixture skill\n---\nbody\n"
+      }
+    },
+    "calls": [
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

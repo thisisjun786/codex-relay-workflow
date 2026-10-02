@@ -1,0 +1,67 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/subagent-stop-verifying-evidence",
+    "K8/ws/.codexclaw/evidence",
+    "A/pabcd-state/subagent-evidence.test.ts"
+  ],
+  "note": "A non-empty receipt under .codexclaw/evidence named by EVIDENCE_RECORDED passes.",
+  "given": {
+    "files": {
+      "ws/.codexclaw/evidence/proof.md": "tests: 12 passed\n"
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "subagent-stop-verifying-evidence",
+        "stdin": {
+          "hook_event_name": "SubagentStop",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "agent_id": "rec-a1",
+          "agent_type": "executor",
+          "last_assistant_message": "Implemented the parser.\nEVIDENCE_RECORDED: .codexclaw/evidence/proof.md",
+          "stop_hook_active": false
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/evidence": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/evidence/proof.md": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "tests: 12 passed\n"
+      },
+      "ws/.codexclaw/sessions": {
+        "type": "dir",
+        "mode": "0755"
+      }
+    },
+    "calls": []
+  }
+}

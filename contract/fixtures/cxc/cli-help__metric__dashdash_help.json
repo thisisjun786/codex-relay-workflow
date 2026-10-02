@@ -1,0 +1,35 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/metric/help",
+    "K6/exit-codes",
+    "A/plugin/cli-usage.test.mjs",
+    "A/pabcd-state/help-verbs.test.ts"
+  ],
+  "note": "`cxc metric --help`: usage text and exit status; nothing written.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "metric",
+          "--help"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "cxc metric — session-scoped objective metrics for maximize-goal loops\n\nUsage:\n  cxc metric record --session <id> --name <metric> --value <number> [--source operator-entered|evaluate.sh] [--work-phase <id>] [--json]\n  cxc metric ingest --session <id> --source evaluate.sh [--json]   (reads stdin)\n  cxc metric show --session <id> [--json]\n  cxc metric kind --session <id> [--set satisfy|maximize] [--json]\n  cxc metric parse-line --session <id>                             (reads stdin)\n  cxc metric --help\n\nNotes:\n  Two non-improving rows on the same metric switch the Stop block to\n  \"step back and re-plan with divergence\" (cxc-loop objective plateau).\n  --source records HOW the number was obtained; an operator-entered value and\n  an evaluate.sh value are not interchangeable evidence.\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

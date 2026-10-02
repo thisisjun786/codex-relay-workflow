@@ -1,0 +1,136 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/pre-tool-use-attaching-skills",
+    "A/subagent-config/spawn-attach-hook.test.ts",
+    "A/plugin/probe-compiled-hooks.test.mjs"
+  ],
+  "note": "D1 LEAF-TOPOLOGY-01: a spawn issued by a subagent (payload agent_id and/or agent_type) is denied before mention normalisation and without updatedInput: a v2 spawn; a v1 spawn with no message at all (the deny runs before the message-validity no-op); a message carrying the public CXC-SUBSPAWN-ALLOWED token; a well-formed [CXC-SUBSPAWN-GRANT:<64 hex>] with no parent-minted grant file.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "pre-tool-use-attaching-skills",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "spawn_agent",
+          "agent_id": "child-1",
+          "agent_type": "explorer",
+          "tool_input": {
+            "task_name": "recursive",
+            "fork_turns": "none",
+            "message": "$cxc-kwrite spawn a helper"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-attaching-skills",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "spawn_agent",
+          "agent_type": "worker",
+          "tool_input": {},
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-attaching-skills",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "spawn_agent",
+          "agent_id": "child-1",
+          "tool_input": {
+            "message": "CXC-SUBSPAWN-ALLOWED spawn a helper"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-attaching-skills",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "spawn_agent",
+          "agent_id": "child-1",
+          "tool_input": {
+            "message": "[CXC-SUBSPAWN-GRANT:abababababababababababababababababababababababababababababababab] spawn a helper"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "codexclaw LEAF-TOPOLOGY-01: sub-agents are leaf agents and may not spawn their own sub-agents (multi_agent_v2 enforces no depth limit upstream, so recursion is denied by dispatcher policy). Finish your own scope and report the need for delegation in your final answer. A dispatcher can authorize recursion for a specific spawn by including the recursion grant token in the spawn message."
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "codexclaw LEAF-TOPOLOGY-01: sub-agents are leaf agents and may not spawn their own sub-agents (multi_agent_v2 enforces no depth limit upstream, so recursion is denied by dispatcher policy). Finish your own scope and report the need for delegation in your final answer. A dispatcher can authorize recursion for a specific spawn by including the recursion grant token in the spawn message."
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "codexclaw LEAF-TOPOLOGY-01: sub-agents are leaf agents and may not spawn their own sub-agents (multi_agent_v2 enforces no depth limit upstream, so recursion is denied by dispatcher policy). Finish your own scope and report the need for delegation in your final answer. A dispatcher can authorize recursion for a specific spawn by including the recursion grant token in the spawn message."
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "codexclaw LEAF-TOPOLOGY-01: sub-agents are leaf agents and may not spawn their own sub-agents (multi_agent_v2 enforces no depth limit upstream, so recursion is denied by dispatcher policy). Finish your own scope and report the need for delegation in your final answer. A dispatcher can authorize recursion for a specific spawn by including the recursion grant token in the spawn message."
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      }
+    },
+    "calls": []
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/config/help",
+    "K6/exit-codes",
+    "A/plugin/cli-usage.test.mjs"
+  ],
+  "note": "`cxc config set --help`: whether the subcommand treats --help as help, and what it writes.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "config",
+          "set",
+          "--help"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 2,
+    "steps": [
+      {
+        "exit": 2,
+        "stdout_form": "empty",
+        "stderr": "config set: the value must be true or false, got ''\n"
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

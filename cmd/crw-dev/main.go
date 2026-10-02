@@ -1,8 +1,9 @@
 //go:build dev
 
 // Command crw-dev carries the repository's development tooling: the CI checks, the skill links a
-// checkout installs, and the readings a live trial is judged by (the per-event Stop judge and the
-// intervention ledger). It is built only with -tags dev and is never part of a release archive.
+// checkout installs, the readings a live trial is judged by (the per-event Stop judge and the
+// intervention ledger), and the recorder of the CXC v0.2.40 behaviour corpus (which runs the Node
+// oracle). It is built only with -tags dev and is never part of a release archive.
 package main
 
 import (
@@ -11,6 +12,7 @@ import (
 	"os"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/ci"
+	"github.com/thisisjun786/codex-relay-workflow/internal/dev/cxccorpus"
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/skills"
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/stopevents"
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/trialledger"
@@ -19,6 +21,7 @@ import (
 // commands is the top-level command tree; each entry owns its own arguments.
 var commands = map[string]func(args []string, stdout, stderr io.Writer) int{
 	"ci":           ci.Run,
+	"cxc":          cxccorpus.Run,
 	"skills":       skills.Run,
 	"stop-events":  stopevents.Run,
 	"trial-ledger": trialledger.Run,
@@ -29,7 +32,7 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
-	const usage = "usage: crw-dev {ci,skills,stop-events,trial-ledger} ..."
+	const usage = "usage: crw-dev {ci,cxc,skills,stop-events,trial-ledger} ..."
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, usage)
 		fmt.Fprintln(stderr, "crw-dev: error: the following arguments are required: command")

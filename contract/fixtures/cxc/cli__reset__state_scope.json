@@ -1,0 +1,102 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/reset/state",
+    "K8/ws/.codexclaw",
+    "A/cxc-ops/cxc-ops.test.ts"
+  ],
+  "note": "`reset --state` removes session JSONs, the ledger, interviews/ and affordance-recovery/, and leaves interview/, goalplans/, bg/ and non-JSON session files.",
+  "given": {
+    "files": {
+      "ws/.codexclaw/affordance-recovery/abc.pending": "pending\n",
+      "ws/.codexclaw/bg/x.json": "{}\n",
+      "ws/.codexclaw/goalplans/g1/plan.json": "{}\n",
+      "ws/.codexclaw/interview/plan.md": "# plan\n",
+      "ws/.codexclaw/interviews/rec-s1.jsonl": "{}\n",
+      "ws/.codexclaw/ledger.jsonl": "{\"event\":\"x\"}\n",
+      "ws/.codexclaw/sessions/notes.txt": "keep\n",
+      "ws/.codexclaw/sessions/rec-s1.json": "{\"phase\":\"B\"}\n",
+      "ws/.codexclaw/sessions/rec-s2.json": "{\"phase\":\"P\"}\n",
+      "ws/keep.txt": "outside\n"
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "reset",
+          "--state"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "reset --state: removed 5 path(s)\n  - ${WS}/.codexclaw/sessions/rec-s1.json\n  - ${WS}/.codexclaw/sessions/rec-s2.json\n  - ${WS}/.codexclaw/ledger.jsonl\n  - ${WS}/.codexclaw/interviews\n  - ${WS}/.codexclaw/affordance-recovery\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/bg": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/bg/x.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {}
+      },
+      "ws/.codexclaw/goalplans": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/goalplans/g1": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/goalplans/g1/plan.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {}
+      },
+      "ws/.codexclaw/interview": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/interview/plan.md": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "# plan\n"
+      },
+      "ws/.codexclaw/sessions": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/sessions/notes.txt": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "keep\n"
+      },
+      "ws/keep.txt": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "outside\n"
+      }
+    },
+    "calls": []
+  }
+}

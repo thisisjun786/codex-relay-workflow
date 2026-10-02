@@ -1,0 +1,277 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/pre-tool-use-attaching-skills",
+    "K5/hook-rendered",
+    "A/subagent-config/spawn-items-managed.test.ts",
+    "A/subagent-config/fallback-dispatch.test.ts",
+    "K13/CODEXCLAW_HOME"
+  ],
+  "note": "Items form with a claimed fallback attempt whose effort is null: the candidate model is set and reasoning_effort is deleted (not reinjected from the primary config), with single native issuance recorded.",
+  "given": {
+    "json": {
+      "cxc/subagents.json": {
+        "roles": {
+          "executor": {
+            "mode": "model",
+            "model": "rec/exec-primary",
+            "effort": "high",
+            "promptOverride": null,
+            "fallback": {
+              "model": "rec/exec-fallback",
+              "effort": null
+            }
+          }
+        }
+      },
+      "ws/.codexclaw/dispatches/rec-s1/one.json": {
+        "version": 1,
+        "sessionId": "rec-s1",
+        "id": "one",
+        "role": "executor",
+        "candidates": [
+          {
+            "model": "rec/exec-primary",
+            "effort": "high"
+          },
+          {
+            "model": "rec/exec-fallback",
+            "effort": null
+          }
+        ],
+        "attempts": [
+          {
+            "id": "att-1",
+            "candidate": {
+              "model": "rec/exec-primary",
+              "effort": "high"
+            },
+            "claimed": true,
+            "agentId": null,
+            "observedModel": null,
+            "code": "insufficient_quota",
+            "taskFailure": null,
+            "status": "failed",
+            "reconciliation": "native tool rejected before creation",
+            "spawnIssued": false,
+            "toolUseId": null
+          },
+          {
+            "id": "att-2",
+            "candidate": {
+              "model": "rec/exec-fallback",
+              "effort": null
+            },
+            "claimed": true,
+            "agentId": null,
+            "observedModel": null,
+            "code": null,
+            "taskFailure": null,
+            "status": "claimed",
+            "reconciliation": null,
+            "spawnIssued": false,
+            "toolUseId": null
+          }
+        ],
+        "status": "active"
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "pre-tool-use-attaching-skills",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "spawn_agent",
+          "tool_input": {
+            "agent_type": "worker",
+            "reasoning_effort": "high",
+            "items": [
+              {
+                "type": "text",
+                "text": "[CXC-DISPATCH:one:att-2]\nTASK: implement the fix"
+              },
+              {
+                "type": "image",
+                "image_url": "data:image/png;base64,QUJD"
+              }
+            ]
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+            "updatedInput": {
+              "agent_type": "worker",
+              "items": [
+                {
+                  "type": "text",
+                  "text": "[CXC-SUBAGENT-SCOPE] This is one bounded delegated task. The parent\nowns cxc orchestration, loop, and goal state; do not invoke those\ncommands. Stay within the stated file/write scope and report any\nrequired expansion.\nYou run in the parent's own working directory, on its branch and HEAD - not a\ncopy - so your edits are the parent's uncommitted changes. Do not run\nbranch-level git commands (checkout, switch, branch, stash, reset, rebase,\nmerge, pull); another agent may be working in the same tree.\n\n[CXC-DISPATCH:one:att-2]\nTASK: implement the fix"
+                },
+                {
+                  "type": "image",
+                  "image_url": "data:image/png;base64,QUJD"
+                }
+              ],
+              "model": "rec/exec-fallback"
+            }
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "cxc/subagents.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "roles": {
+            "executor": {
+              "mode": "model",
+              "model": "rec/exec-primary",
+              "effort": "high",
+              "promptOverride": null,
+              "fallback": {
+                "model": "rec/exec-fallback",
+                "effort": null
+              }
+            }
+          }
+        }
+      },
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/dispatches": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/dispatches/rec-s1": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/dispatches/rec-s1/one.json": {
+        "type": "file",
+        "mode": "0600",
+        "form": "json-pretty",
+        "json": {
+          "version": 1,
+          "sessionId": "rec-s1",
+          "id": "one",
+          "role": "executor",
+          "candidates": [
+            {
+              "model": "rec/exec-primary",
+              "effort": "high"
+            },
+            {
+              "model": "rec/exec-fallback",
+              "effort": null
+            }
+          ],
+          "attempts": [
+            {
+              "id": "att-1",
+              "candidate": {
+                "model": "rec/exec-primary",
+                "effort": "high"
+              },
+              "claimed": true,
+              "agentId": null,
+              "observedModel": null,
+              "code": "insufficient_quota",
+              "taskFailure": null,
+              "status": "failed",
+              "reconciliation": "native tool rejected before creation",
+              "spawnIssued": false,
+              "toolUseId": null
+            },
+            {
+              "id": "att-2",
+              "candidate": {
+                "model": "rec/exec-fallback",
+                "effort": null
+              },
+              "claimed": true,
+              "agentId": null,
+              "observedModel": null,
+              "code": null,
+              "taskFailure": null,
+              "status": "claimed",
+              "reconciliation": null,
+              "spawnIssued": true,
+              "toolUseId": "rec-call-1"
+            }
+          ],
+          "status": "active"
+        }
+      }
+    },
+    "calls": [
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

@@ -1,0 +1,152 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/user-prompt-submit-guiding-worktree-rename",
+    "K5/hook-rendered",
+    "K8/ws/.codexclaw/worktree-guard",
+    "A/pabcd-state/worktree-guard.test.ts"
+  ],
+  "note": "Korean rename intent on a managed worktree injects WORKTREE-GUARD-02 and writes the once-per-session marker <cwd>/.codexclaw/worktree-guard/<session>.json; the same session asking again (English) is silent; a new session gets the guidance again.",
+  "given": {
+    "files": {
+      "codex/worktrees/7627/repo/.git": "gitdir: /fake/main/.git/worktrees/7627\n",
+      "codex/worktrees/7627/repo/README.md": "managed checkout\n"
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "user-prompt-submit-guiding-worktree-rename",
+        "stdin": {
+          "hook_event_name": "UserPromptSubmit",
+          "session_id": "rec-s1",
+          "cwd": "${CODEX_HOME}/worktrees/7627/repo",
+          "turn_id": "rec-t1",
+          "prompt": "워크트리 이름 바꾸고 시작하자",
+          "model": "gpt-5.5",
+          "transcript_path": null
+        }
+      },
+      {
+        "hook": "user-prompt-submit-guiding-worktree-rename",
+        "stdin": {
+          "hook_event_name": "UserPromptSubmit",
+          "session_id": "rec-s1",
+          "cwd": "${CODEX_HOME}/worktrees/7627/repo",
+          "turn_id": "rec-t2",
+          "prompt": "rename the worktree please",
+          "model": "gpt-5.5",
+          "transcript_path": null
+        }
+      },
+      {
+        "hook": "user-prompt-submit-guiding-worktree-rename",
+        "stdin": {
+          "hook_event_name": "UserPromptSubmit",
+          "session_id": "rec-s2",
+          "cwd": "${CODEX_HOME}/worktrees/7627/repo",
+          "turn_id": "rec-t1",
+          "prompt": "rename the worktree please",
+          "model": "gpt-5.5",
+          "transcript_path": null
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": "[codexclaw: MANAGED WORKTREE — rename/adopt guidance (WORKTREE-GUARD-02)]\nRename request on a managed worktree. ADOPT IN PLACE — do not delete/recreate:\n1. Stay in this worktree. It is bound to the app thread; recreating breaks that.\n2. Name the BRANCH: `git switch -c <name>` (detached HEAD) or `git branch -m <name>`.\n3. Commit the work early — the app auto-deletes managed worktrees on archive\n   (snapshot kept) and retains only the latest N.\n4. The app THREAD TITLE is renamed by the user in the app sidebar; neither the\n   directory nor the branch rename changes it.\n5. Do NOT `git worktree move` the ACTIVE worktree (session cwd dies). Move/repair\n   are for OTHER inactive worktrees: `git worktree move <old> <new>`,\n   `git worktree repair <new>` — feature-detect with `-h`, no version gates.\nSlot protected by the PreToolUse guard: ${CODEX_HOME}/worktrees/7627."
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": "[codexclaw: MANAGED WORKTREE — rename/adopt guidance (WORKTREE-GUARD-02)]\nRename request on a managed worktree. ADOPT IN PLACE — do not delete/recreate:\n1. Stay in this worktree. It is bound to the app thread; recreating breaks that.\n2. Name the BRANCH: `git switch -c <name>` (detached HEAD) or `git branch -m <name>`.\n3. Commit the work early — the app auto-deletes managed worktrees on archive\n   (snapshot kept) and retains only the latest N.\n4. The app THREAD TITLE is renamed by the user in the app sidebar; neither the\n   directory nor the branch rename changes it.\n5. Do NOT `git worktree move` the ACTIVE worktree (session cwd dies). Move/repair\n   are for OTHER inactive worktrees: `git worktree move <old> <new>`,\n   `git worktree repair <new>` — feature-detect with `-h`, no version gates.\nSlot protected by the PreToolUse guard: ${CODEX_HOME}/worktrees/7627."
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "codex/worktrees": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "codex/worktrees/7627": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "codex/worktrees/7627/repo": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "codex/worktrees/7627/repo/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "codex/worktrees/7627/repo/.codexclaw/.gitignore": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n"
+      },
+      "codex/worktrees/7627/repo/.codexclaw/worktree-guard": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "codex/worktrees/7627/repo/.codexclaw/worktree-guard/rec-s1.json": {
+        "type": "file",
+        "mode": "0600",
+        "form": "json",
+        "json": {
+          "injectedAt": "<TS>",
+          "slot": "7627"
+        }
+      },
+      "codex/worktrees/7627/repo/.codexclaw/worktree-guard/rec-s2.json": {
+        "type": "file",
+        "mode": "0600",
+        "form": "json",
+        "json": {
+          "injectedAt": "<TS>",
+          "slot": "7627"
+        }
+      },
+      "codex/worktrees/7627/repo/.git": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "gitdir: /fake/main/.git/worktrees/7627\n"
+      },
+      "codex/worktrees/7627/repo/README.md": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "managed checkout\n"
+      }
+    },
+    "calls": []
+  }
+}

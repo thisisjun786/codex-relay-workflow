@@ -1,0 +1,180 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K10/tools/call/catalog_list",
+    "A/subagent-config/mcp.test.ts",
+    "K8/cxc-home/model-catalog.json"
+  ],
+  "note": "catalog_list with no ocx on PATH reads ${CODEX_HOME}/models_cache.json: routed provider/model slugs are labelled ocx, hidden and duplicate rows are dropped, reasoning efforts are flattened. The successful read persists ${CXC_HOME}/model-catalog.json keyed by <CATALOGKEY>.",
+  "given": {
+    "json": {
+      "codex/models_cache.json": {
+        "models": [
+          {
+            "slug": "gpt-5.5",
+            "supported_reasoning_levels": [
+              {
+                "effort": "low"
+              },
+              {
+                "effort": "medium"
+              },
+              {
+                "effort": "high"
+              }
+            ]
+          },
+          {
+            "slug": "kiro/claude-opus-4.6"
+          },
+          {
+            "slug": "hidden-model",
+            "visibility": "hide"
+          },
+          {
+            "slug": "gpt-5.5"
+          }
+        ]
+      }
+    },
+    "stubs": {
+      "ocx": null
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "mcp": [
+          {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+              "protocolVersion": "2024-11-05",
+              "capabilities": {},
+              "clientInfo": {
+                "name": "rec",
+                "version": "0"
+              }
+            }
+          },
+          {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+              "name": "catalog_list"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "jsonl",
+        "stdout_jsonl": [
+          {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+              "protocolVersion": "2024-11-05",
+              "capabilities": {
+                "tools": {}
+              },
+              "serverInfo": {
+                "name": "codexclaw-subagent-config",
+                "version": "0.1.1"
+              }
+            }
+          },
+          {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"state\":\"native-catalog\",\"entries\":[{\"id\":\"gpt-5.5\",\"source\":\"native\",\"label\":\"gpt-5.5\",\"reasoningEfforts\":[\"low\",\"medium\",\"high\"]},{\"id\":\"kiro/claude-opus-4.6\",\"source\":\"ocx\",\"label\":\"kiro/claude-opus-4.6\",\"reasoningEfforts\":null}],\"status\":\"fresh\",\"source\":\"native\",\"fetchedAt\":\"<TS>\"}"
+                }
+              ]
+            }
+          }
+        ],
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/models_cache.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "models": [
+            {
+              "slug": "gpt-5.5",
+              "supported_reasoning_levels": [
+                {
+                  "effort": "low"
+                },
+                {
+                  "effort": "medium"
+                },
+                {
+                  "effort": "high"
+                }
+              ]
+            },
+            {
+              "slug": "kiro/claude-opus-4.6"
+            },
+            {
+              "slug": "hidden-model",
+              "visibility": "hide"
+            },
+            {
+              "slug": "gpt-5.5"
+            }
+          ]
+        }
+      },
+      "cxc/model-catalog.json": {
+        "type": "file",
+        "mode": "0600",
+        "form": "json-line",
+        "json": {
+          "key": "<CATALOGKEY_1>",
+          "catalog": {
+            "state": "native-catalog",
+            "entries": [
+              {
+                "id": "gpt-5.5",
+                "source": "native",
+                "label": "gpt-5.5",
+                "reasoningEfforts": [
+                  "low",
+                  "medium",
+                  "high"
+                ]
+              },
+              {
+                "id": "kiro/claude-opus-4.6",
+                "source": "ocx",
+                "label": "kiro/claude-opus-4.6",
+                "reasoningEfforts": null
+              }
+            ],
+            "status": "fresh",
+            "source": "native",
+            "fetchedAt": "<TS>"
+          }
+        }
+      }
+    },
+    "calls": []
+  }
+}
