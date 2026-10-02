@@ -833,7 +833,12 @@ func generationRecord(g Row) Obj {
 
 // pendingAnchorsSQL reads the dispatched revision requests whose generation still waits for its anchor,
 // oldest update first; its arguments are Revision, Dispatched, Acknowledged, "anchor_pending" and a limit.
-const pendingAnchorsSQL = "SELECT d.event_id FROM deliveries d JOIN events e ON e.event_id = d.event_id JOIN generations g ON g.relationship_id = e.relationship_id AND g.execution_generation = e.execution_generation WHERE d.kind = ? AND d.state IN (?,?) AND d.dispatch_turn_id IS NOT NULL AND g.anchor_state = ? ORDER BY d.updated_at LIMIT ?"
+//
+// It starts from the generations (CROSS JOIN keeps the tables in the order written) and reaches the events
+// of those that wait by events_relationship, then each delivery by its key. The product never runs ANALYZE,
+// so left to choose, SQLite starts from the deliveries in state IN (dispatched, acknowledged), which is
+// nearly every delivery the store has kept, and looks each one's generation up: on every tick, twice.
+const pendingAnchorsSQL = "SELECT d.event_id FROM generations g CROSS JOIN events e ON e.relationship_id = g.relationship_id AND e.execution_generation = g.execution_generation CROSS JOIN deliveries d ON d.event_id = e.event_id WHERE d.kind = ? AND d.state IN (?,?) AND d.dispatch_turn_id IS NOT NULL AND g.anchor_state = ? ORDER BY d.updated_at LIMIT ?"
 
 // pendingAnchorsLimit is how many anchors one recovery pass binds.
 const pendingAnchorsLimit = 50

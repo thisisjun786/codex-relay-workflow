@@ -287,7 +287,13 @@ func (d *Service) ClearIntent(ctx context.Context, eventID string) error {
 
 // eligibleBase is what makes a delivery due: unsent, not held, past its own backoff, its relationship
 // live and its event final.
-const eligibleBase = " WHERE d.state IN (?,?,?) AND d.hold_reason IS NULL AND (d.next_eligible_at IS NULL OR d.next_eligible_at <= ?) AND r.status = 'active' AND r.superseded_by IS NULL AND e.stage = 'final'"
+//
+// The event's stage is written +e.stage so that the planner cannot start from events_stage. The product
+// never runs ANALYZE, so without statistics SQLite takes an equality on an index for ten rows and would
+// read every event of stage 'final' (every event the store has kept, nearly all of them delivered long
+// ago) and look its delivery up, on every tick. A delivery is due only in one of three states, so the due
+// deliveries are found by deliveries_state and each one's event is read by its key.
+const eligibleBase = " WHERE d.state IN (?,?,?) AND d.hold_reason IS NULL AND (d.next_eligible_at IS NULL OR d.next_eligible_at <= ?) AND r.status = 'active' AND r.superseded_by IS NULL AND +e.stage = 'final'"
 
 // eligibleOrder is event creation order: when the relay first saw the event, then when its delivery
 // was queued, then the event id. A delivery queued late (a refused enqueue retried) keeps the place
