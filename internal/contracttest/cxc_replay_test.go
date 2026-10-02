@@ -121,6 +121,7 @@ var cxcRows = []cxcRow{
 		claim: cxcClaim{State: cxcChanged, Set: map[string]string{"steps/0/stdout": "a:x\ncwd:${WS}\nnew\n"}}},
 	{name: "remove drops an expected key the port does not produce", tree: `{"tmp/gone":{"type":"file","mode":"0644","form":"text","text":"x"}}`,
 		claim: cxcClaim{State: cxcChanged, Remove: []string{"tree/tmp/gone"}}},
+	{name: "a different exit status is reported by key", given: script("exit 3"), err: "steps/0/exit"},
 	{name: "a set value is not a stand-in for a missing key", claim: cxcClaim{State: cxcChanged, Set: map[string]string{"tree/tmp/new/content": ""}}, err: "<absent>"},
 	{name: "remove must match a key", claim: cxcClaim{State: cxcChanged, Remove: []string{"tree/none"}}, err: "matches no"},
 }
@@ -225,8 +226,8 @@ func TestCXCNotes(t *testing.T) {
 	}{
 		{"all pending", map[string]string{"pending.json": pending}, map[string]string{"a": "pending pending", "c": "pending pending"}, ""},
 		{"an issue file beats the shared one, whatever the file order",
-			map[string]string{"pending.json": pending, "0.json": `{"issue":"0","identical":["a"],"intentionally-changed":[{"id":"b","reason":"r","set":{"k":"v"},"remove":["p"]}]}`},
-			map[string]string{"a": "identical 0", "b": "intentionally-changed 0 map[k:v] [p]", "c": "pending pending"}, ""},
+			map[string]string{"pending.json": pending, "0.json": `{"issue":"0","identical":["a"],"intentionally-changed":[{"id":"b","reason":"r","set":{"k":"v\n"},"remove":["p"]}]}`},
+			map[string]string{"a": "identical 0", "b": "intentionally-changed 0 map[k:v\n] [p]", "c": "pending pending"}, ""},
 		{"an unregistered fixture has no claim", map[string]string{"x.json": `{"issue":"x","pending":["a","b"]}`}, map[string]string{"c": ""}, ""},
 		{"two files claiming one fixture", map[string]string{"p.json": `{"issue":"p","identical":["a"]}`, "q.json": `{"issue":"q","identical":["a"]}`}, nil, "claimed by"},
 		{"one file claiming it twice", map[string]string{"p.json": `{"issue":"p","identical":["a"],"intentionally-changed":[{"id":"a","reason":"r"}]}`}, nil, "claimed by"},
