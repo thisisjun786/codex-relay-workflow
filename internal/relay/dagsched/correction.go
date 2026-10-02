@@ -92,6 +92,10 @@ func (s *Scheduler) PrepareCorrection(ctx context.Context, plan, node, actor str
 		return out, fmt.Errorf("manifest %s was stored and cannot be read back", digest)
 	}
 	canonical := []byte(dag.Canonical(keptBody))
+	// the line travels in a finding that the relay's renderer joins onto one line, so a path with a line break in it would reach the child as another path
+	if where := frozenManifestPath(roots[0], canonical); hasControl(where) {
+		return out, refuse(contract.RefusalMalformedReceipt, "the artifact root %q has a control character, so the path of the manifest copy cannot be handed to the child in one line", roots[0])
+	}
 	path, err := FreezeManifest(roots[0], canonical)
 	if err != nil {
 		return out, err
@@ -210,7 +214,11 @@ func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, sup
 				return refuse(contract.RefusalManifestUnverified, "relationship %s has no artifact root, so the child cannot have been given the manifest %s", rel.ID, digest)
 			}
 			canonical := []byte(dag.Canonical(body))
-			if want := CorrectionInstruction(n.IssueKey, rel.Generation, digest, frozenManifestPath(roots[0], canonical), shaOf(canonical)); !strings.Contains(note, want) {
+			want := CorrectionInstruction(n.IssueKey, rel.Generation, digest, frozenManifestPath(roots[0], canonical), shaOf(canonical))
+			if hasControl(want) {
+				return refuse(contract.RefusalMalformedReceipt, "the artifact root of %s has a control character: the relay's message would carry another path than the one the manifest copy has", rel.ID)
+			}
+			if !strings.Contains(note, want) {
 				return refuse(contract.RefusalDispositionConflict, "the restoration note does not carry the instruction manifest %s was prepared with (generation %d, its path and its file hash): the child was not told this manifest as prepared", digest, rel.Generation)
 			}
 		}

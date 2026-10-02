@@ -254,6 +254,9 @@ func TestCorrectionReachesTheChildThroughTheRealVerdictWriter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !strings.Contains(message, prepared.Instruction) {
+		t.Fatalf("the message the child receives does not carry the instruction word for word:\n%s", message)
+	}
 	for _, want := range []string{"revision request", prepared.FrozenPath, prepared.ManifestDigest, "blocked_needs_input"} {
 		if !strings.Contains(message, want) {
 			t.Fatalf("the message the child receives does not carry %q:\n%s", want, message)
@@ -368,5 +371,27 @@ func TestPreparingACorrectionTwiceAgrees(t *testing.T) {
 	res, err := k.correct("")
 	if err != nil || res.ManifestDigest != first.ManifestDigest || res.CarriedOver {
 		t.Fatalf("correction = %v %+v", err, res)
+	}
+}
+
+// The relay renders a finding onto one line, joining the lines of a note, so a path that has a line break in it would reach the child as another path. Such a root is refused when the copy
+// is prepared (nothing is written), and a ruling that carries a line-broken path is not bound.
+func TestCorrectionRefusesAPathTheMessageWouldChange(t *testing.T) {
+	k := newReleaseKit(t)
+	rid := k.correctionKit()
+	broken := k.root + "/line" + string(rune(10)) + "break"
+	if err := os.MkdirAll(broken, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	roots, err := json.Marshal([]string{broken})
+	if err != nil {
+		t.Fatal(err)
+	}
+	k.exec("UPDATE relationships SET artifact_roots = ? WHERE relationship_id = ?", string(roots), rid)
+	if _, err := k.sched.PrepareCorrection(context.Background(), "rp", "A", "parent", ManifestInput{RuleVersion: k.request(false).RuleVersion}, VerifyOptions{}); refusalReason(err) != "malformed_receipt" {
+		t.Fatalf("prepare = %v", err)
+	}
+	if entries, _ := os.ReadDir(broken); len(entries) != 0 {
+		t.Fatalf("a copy was written before the path was refused: %v", entries)
 	}
 }

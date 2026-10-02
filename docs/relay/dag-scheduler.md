@@ -218,8 +218,9 @@ is refused, also when the generation is already bound. The previous acceptance s
 A manifest that a child has to read from a file (an oversize release prompt, or a correction) is kept as `<first artifact root>/dag-input-manifests/<sha256 of its canonical bytes>.json`. The name is the hash of the
 bytes, not the manifest digest: two bodies of one manifest differ in what the digest leaves out (the time of the build, the rule version), so a second release attempt or a second preparation never meets a file it did
 not write. The file is created exclusively with mode 0600, in a directory that must be a directory of its own (a link is refused, so nothing is written outside the root), and is read back through the relay's authorized
-open (inside the root, no link on the way, a regular file, never blocking on a pipe) and compared byte for byte. The child owns its artifact root, so a link or a pipe planted there makes the freeze fail; it never
-writes elsewhere or waits. A correction uses the body the store holds for the digest, so preparing twice from the same inputs gives the same file and the same line. The directory is created by the freeze and is not
+open (inside the root, no link on the way, a regular file, never blocking on a pipe) and compared byte for byte. The child owns its artifact root, so a link or a pipe planted there makes the freeze fail and never makes it wait. A link planted between the check of the directory and the creation of the file, or an artifact
+root that is itself a link, can leave one file outside the root (it holds only a manifest the relay wrote); the read-back then refuses and nothing is bound. An artifact root with a control character is refused when a correction is prepared,
+because the relay's message joins the lines of a finding and the child would read another path. A correction uses the body the store holds for the digest, so preparing twice from the same inputs gives the same file and the same line. The directory is created by the freeze and is not
 cleaned up by it.
 
 ## Commands
