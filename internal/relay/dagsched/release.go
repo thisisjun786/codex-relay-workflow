@@ -24,8 +24,12 @@ import (
 // SchemaReleaseRequest names the document dag-release reads.
 const SchemaReleaseRequest = "dag-release-request/1"
 
-// SlotSubjectKind is the subject kind of the execution slot a release holds (D-15: release is coupled with slot reservation); the subject key is plan:node.
+// SlotSubjectKind is the subject kind of the execution slot a release holds (D-15: release is coupled with slot reservation).
 const SlotSubjectKind = "dag_node"
+
+// SlotSubjectKey is the subject key of a node's slot: the plan and the node joined by a character neither id may contain (ids are letters, digits and . _ : -), so two different nodes can
+// never share a slot (with a colon, plan "a:b" node "c" and plan "a" node "b:c" would, and a second release would read as the replay of the first).
+func SlotSubjectKey(plan, node string) string { return plan + "/" + node }
 
 // Criterion is one completion criterion of the child's assignment.
 type Criterion struct {
@@ -127,7 +131,7 @@ func boundChild(ctx context.Context, q store.Querier, plan, node, request string
 
 func (s *Scheduler) slotOf(ctx context.Context, q store.Querier, plan, node string) (string, error) {
 	var id string
-	_, err := queryOne(ctx, q, "SELECT slot_id FROM execution_slots WHERE subject_kind = ? AND subject_key = ? AND state = 'held' ORDER BY tenure DESC LIMIT 1", []any{SlotSubjectKind, plan + ":" + node}, &id)
+	_, err := queryOne(ctx, q, "SELECT slot_id FROM execution_slots WHERE subject_kind = ? AND subject_key = ? AND state = 'held' ORDER BY tenure DESC LIMIT 1", []any{SlotSubjectKind, SlotSubjectKey(plan, node)}, &id)
 	return id, err
 }
 
@@ -177,6 +181,9 @@ func (s *Scheduler) Release(ctx context.Context, plan, node, actor string, req R
 	if err != nil {
 		return out, err
 	}
+	if s.testAfterReading != nil {
+		s.testAfterReading()
+	}
 	r, known := reading.find(node)
 	if !known {
 		return out, refuse(contract.RefusalUnregisteredScope, "plan %s has no live node %s", plan, node)
@@ -200,6 +207,9 @@ func (s *Scheduler) Release(ctx context.Context, plan, node, actor string, req R
 	if err := s.freshness(ctx, preds); err != nil {
 		return out, err
 	}
+	if s.testAfterFreshness != nil {
+		s.testAfterFreshness()
+	}
 	opts := VerifyOptions{ArtifactRoots: req.ArtifactRoots}
 	in := ManifestInput{Base: base, Volatile: req.Volatile, RuleVersion: req.RuleVersion, CreatedByTaskID: actor, CreatedAt: s.now()}
 	body, blocked, err := s.BuildManifest(ctx, q, plan, snap, n, in, opts)
@@ -216,6 +226,18 @@ func (s *Scheduler) Release(ctx context.Context, plan, node, actor string, req R
 	}
 	// E-10 binds the acceptance whose pull request was read to the one the manifest consumes: a predecessor accepted again while the forge was being read is a different head that was
 	// never checked.
+	checked := map[string]bool{}
+	for _, p := range preds {
+		checked[p.Acceptance.AcceptanceID] = true
+	}
+	for _, e := range incomingEdges(snap, node) {
+		if !e.PinsCodeHead {
+			continue
+		}
+		if acceptance := inputAcceptance(body, e.EdgeID); !checked[acceptance] {
+			return out, refuse(contract.RefusalDispositionConflict, "the manifest rests on acceptance %s for the pinned edge %s, whose pull request the relay did not read: the predecessor's acceptance changed while the release was judged; repeat it", acceptance, e.EdgeID)
+		}
+	}
 	for _, p := range preds {
 		if !restsOn(body, p.Acceptance.AcceptanceID) {
 			return out, refuse(contract.RefusalDispositionConflict, "the acceptance of %s changed while its pull request %s#%d was being read; repeat the release so the current head is checked", p.Acceptance.NodeID, p.Forge, p.Number)
@@ -371,7 +393,7 @@ func (s *Scheduler) rejudge(ctx context.Context, q store.Querier, plan, node str
 // contest it is and refused; otherwise Reserve is the first write, and what it refuses (the actor is not the project's registered parent, another parent holds the subject, a
 // ceiling at initiative or store scope) is returned after the conflict row it recorded commits with the transaction. A non-nil result is a refusal to return, not a failure.
 func (s *Scheduler) reserve(ctx context.Context, q store.Querier, project, plan, node, actor, digest string) error {
-	subject := plan + ":" + node
+	subject := SlotSubjectKey(plan, node)
 	c, err := s.capacity(ctx, q, project)
 	if err != nil {
 		return err
@@ -401,6 +423,17 @@ func asRefusal(err error) (refused, failure error) {
 		return err, nil
 	}
 	return nil, err
+}
+
+// inputAcceptance is the acceptance the manifest's input for an edge rests on.
+func inputAcceptance(body map[string]any, edge string) string {
+	inputs, _ := body["inputs"].([]any)
+	for _, item := range inputs {
+		if in, _ := item.(map[string]any); in["edge_id"] == edge {
+			return textOf(in["acceptance_id"])
+		}
+	}
+	return ""
 }
 
 // restsOn is whether any input of the manifest rests on the acceptance.

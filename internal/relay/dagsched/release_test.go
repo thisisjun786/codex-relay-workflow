@@ -27,7 +27,7 @@ func TestReleaseHappyPath(t *testing.T) {
 	if rows != (rowCounts{releases: 1, requests: 1, manifests: 1, executions: 1, slots: 1}) {
 		t.Fatalf("rows = %+v", rows)
 	}
-	if got := k.count("SELECT COUNT(*) FROM execution_slots WHERE subject_kind = 'dag_node' AND subject_key = 'rp:A' AND state = 'held'"); got != 1 {
+	if got := k.count("SELECT COUNT(*) FROM execution_slots WHERE subject_kind = 'dag_node' AND subject_key = 'rp/A' AND state = 'held'"); got != 1 {
 		t.Fatal("the slot is not held under the node's subject")
 	}
 	if got := k.count("SELECT COUNT(*) FROM managed_start_requests WHERE request_id = ? AND state = 'attached'", ReleaseRequestID("A", res.ManifestDigest)); got != 1 {
@@ -258,7 +258,7 @@ func TestReleaseReplayAfterTheSlotWasReturned(t *testing.T) {
 		if res, err := k.release("rp", "A"); err != nil || res.Bound {
 			t.Fatalf("first call = %v %+v", err, res)
 		}
-		if _, err := (&capacity.Capacity{Store: k.s, Now: k.clock}).Release(context.Background(), capacity.Release{SubjectKind: SlotSubjectKind, SubjectKey: "rp:A", ReleasedBy: "parent", Reason: "operator"}); err != nil {
+		if _, err := (&capacity.Capacity{Store: k.s, Now: k.clock}).Release(context.Background(), capacity.Release{SubjectKind: SlotSubjectKind, SubjectKey: SlotSubjectKey("rp", "A"), ReleasedBy: "parent", Reason: "operator"}); err != nil {
 			t.Fatal(err)
 		}
 		return k
@@ -281,8 +281,30 @@ func TestReleaseReplayAfterTheSlotWasReturned(t *testing.T) {
 		if err != nil || !res.Bound || res.SlotID == "" || res.ChildTaskID != "child-1" {
 			t.Fatalf("replay = %v %+v", err, res)
 		}
-		if k.count("SELECT COUNT(*) FROM execution_slots WHERE subject_key = 'rp:A' AND state = 'held'") != 1 {
+		if k.count("SELECT COUNT(*) FROM execution_slots WHERE subject_key = 'rp/A' AND state = 'held'") != 1 {
 			t.Fatal("the slot was not reserved again")
 		}
 	})
+}
+
+// R2-H1 (audit): ids may contain a colon, so a slot key built with one would give two different nodes one slot, and the second release would read as the replay of the first.
+func TestSlotKeysOfDifferentNodesNeverCollide(t *testing.T) {
+	if SlotSubjectKey("a:b", "c") == SlotSubjectKey("a", "b:c") {
+		t.Fatal("two nodes share a slot key")
+	}
+	k := newReleaseKit(t)
+	k.putPlan("a:b", 0, "r1", addRelNode("c", dag.NodeNonPR))
+	k.putPlan("a", 0, "r1", addRelNode("b:c", dag.NodeNonPR))
+	for _, c := range [][2]string{{"a:b", "c"}, {"a", "b:c"}} {
+		res, err := k.sched.Release(context.Background(), c[0], c[1], "parent", k.request(false))
+		if err != nil || !res.Bound {
+			t.Fatalf("release of %v = %v %+v", c, err, res)
+		}
+	}
+	if got := k.count("SELECT COUNT(*) FROM execution_slots WHERE subject_kind = 'dag_node' AND state = 'held'"); got != 2 {
+		t.Fatalf("%d held slots for two children, want 2", got)
+	}
+	if created, _ := k.host.counts(); created != 2 {
+		t.Fatalf("created %d", created)
+	}
 }

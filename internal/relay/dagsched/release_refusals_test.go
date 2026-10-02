@@ -515,3 +515,28 @@ func TestReleaseFreshnessBindsTheAcceptanceItChecked(t *testing.T) {
 		t.Fatalf("the forge was read as %v", k.forge.calls)
 	}
 }
+
+// R2-H2 (audit): a pinned predecessor whose acceptance is out of sight while the pull requests are collected cannot drop out of the freshness check by reappearing before the manifest is
+// built: every pinned edge of the manifest must rest on a predecessor whose pull request the relay read.
+func TestReleaseFreshnessCannotOmitAPinnedPredecessor(t *testing.T) {
+	k := newReleaseKit(t)
+	releasePlan(k.fixture, "rp")
+	a := k.pinned()
+	k.forge.err = fmt.Errorf("the forge is down: nothing may be read")
+	k.sched.testAfterReading = func() {
+		k.exec("UPDATE dag_acceptances SET state = 'superseded' WHERE acceptance_id = ?", a.Acceptance.AcceptanceID)
+	}
+	k.sched.testAfterFreshness = func() {
+		k.exec("UPDATE dag_acceptances SET state = 'active' WHERE acceptance_id = ?", a.Acceptance.AcceptanceID)
+	}
+	_, err := k.release("rp", "J")
+	if refusalReason(err) != "disposition_conflict" {
+		t.Fatalf("release = %v", err)
+	}
+	if rows := k.rows(); rows.releases != 0 || rows.slots != 0 {
+		t.Fatalf("rows = %+v", rows)
+	}
+	if created, _ := k.host.counts(); created != 0 {
+		t.Fatal("a child was created on a head the relay never checked")
+	}
+}

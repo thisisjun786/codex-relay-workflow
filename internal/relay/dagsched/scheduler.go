@@ -27,6 +27,8 @@ type Scheduler struct {
 	Now func() string
 
 	// Test seams (zero in production): between the unlocked judgement and the intent, after the slot is reserved, and between the managed start and the bind.
+	testAfterReading         func()
+	testAfterFreshness       func()
 	testBetweenReadAndIntent func()
 	testAfterReserve         func() error
 	testAfterStart           func() error
