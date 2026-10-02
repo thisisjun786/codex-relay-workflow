@@ -242,3 +242,21 @@ func (w *standingWorld) archive(rid string) {
 	w.exec("UPDATE scope_bindings SET status='archived' WHERE scope_kind='issue' AND scope_key=?", issue)
 	w.exec("UPDATE scope_links SET status='archived' WHERE lower_kind='issue' AND lower_key=?", issue)
 }
+
+// retake registers a new child on the issue of relationship rid once rid was archived, as a fresh
+// registration does when it names no successor: a live owner binding and the live execution edge up
+// to the project. The old relationship stays archived with no successor, and its report can be
+// addressed again.
+func (w *standingWorld) retake(rid string) {
+	w.tb.Helper()
+	var issue string
+	if err := w.s.DB.QueryRowContext(w.ctx, "SELECT issue_key FROM relationships WHERE relationship_id=?", rid).Scan(&issue); err != nil {
+		w.tb.Fatal(err)
+	}
+	if err := storeseed.InsertScopeBinding(w.ctx, w.s, store.ScopeBindingsRow{BindingID: "b-new-" + rid, Role: "child", ScopeKind: "issue", ScopeKey: issue, TaskID: "child-new", HostID: "host", Status: "active", Revision: 2, CreatedAt: "t", UpdatedAt: "t"}); err != nil {
+		w.tb.Fatal(err)
+	}
+	if err := storeseed.InsertScopeLink(w.ctx, w.s, store.ScopeLinksRow{LinkID: "lnk-new-" + rid, LinkKind: "execution", UpperKind: "project", UpperKey: worldProject, UpperTaskID: "parent", LowerKind: "issue", LowerKey: issue, LowerTaskID: "child-new", Status: "active", Revision: 2, CreatedAt: "t", UpdatedAt: "t"}); err != nil {
+		w.tb.Fatal(err)
+	}
+}

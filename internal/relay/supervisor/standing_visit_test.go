@@ -1,6 +1,7 @@
 package supervisor
 
 import (
+	"database/sql"
 	"fmt"
 	"testing"
 )
@@ -44,9 +45,9 @@ func TestCRW299VisitCostDoesNotGrowWithReleasedRelationships(t *testing.T) {
 	}
 }
 
-// Only a relationship that nothing can be addressed for is left out of the visit: archived with
-// no successor. An archived relationship its successor replaced still reaches the level above
-// through the successor's issue edge, so its report is still staged.
+// Only a relationship that nothing can be addressed for is left out of the visit: archived, and
+// its issue's owner and edge released. An archived relationship its successor replaced still
+// reaches the level above through the successor's issue edge, so its report is still staged.
 func TestCRW299VisitSkipsReleasedRelationshipsAndKeepsSuperseded(t *testing.T) {
 	w := newStandingWorld(t, 3, 3)
 	w.archive(w.rels[0])
@@ -65,5 +66,61 @@ func TestCRW299VisitSkipsReleasedRelationshipsAndKeepsSuperseded(t *testing.T) {
 	}
 	if want := fmt.Sprint([]string{w.rels[1], w.rels[2]}); fmt.Sprint(got) != want {
 		t.Fatalf("staged for %v, want %v: the superseded relationship keeps its report and the released one has none", got, want)
+	}
+}
+
+func (w *standingWorld) messageRelationships() []string {
+	w.tb.Helper()
+	rows, err := w.s.All(w.ctx, "SELECT relationship_id FROM supervisor_messages ORDER BY relationship_id")
+	if err != nil {
+		w.tb.Fatal(err)
+	}
+	var out []string
+	for _, row := range rows {
+		out = append(out, row.Get("relationship_id").(string))
+	}
+	return out
+}
+
+// Registering a new child for the issue of an archived relationship (no successor named) gives its
+// report an addressee again, so the visit must go on raising it: archived alone does not release a
+// relationship.
+func TestCRW299VisitKeepsAnArchivedRelationshipWhoseIssueWasTakenAgain(t *testing.T) {
+	w := newStandingWorld(t, 2, 3)
+	w.archive(w.rels[0])
+	w.retake(w.rels[0])
+	answer := w.visit()
+	if refused := answer["refused"].([]any); len(refused) != 0 {
+		t.Fatalf("refused: %v", refused)
+	}
+	if got, want := fmt.Sprint(w.messageRelationships()), fmt.Sprint(w.rels); got != want {
+		t.Fatalf("staged for %s, want %s: the report of the archived relationship whose issue was taken again was not raised", got, want)
+	}
+}
+
+// The same relationship with a report already staged and held because its hierarchy was gone
+// (hierarchy_unresolved, what an attempt does once the assignment is archived): the visit keeps
+// the hold while nothing can be addressed, and re-addresses the report once the issue is taken
+// again.
+func TestCRW299VisitReleasesAHierarchyHoldWhenTheIssueIsTakenAgain(t *testing.T) {
+	w := newStandingWorld(t, 2, 3)
+	w.visit()
+	w.exec("UPDATE supervisor_messages SET hold_reason='hierarchy_unresolved' WHERE relationship_id=?", w.rels[0])
+	w.archive(w.rels[0])
+	w.visit()
+	hold := func() sql.NullString {
+		var hold sql.NullString
+		if err := w.s.DB.QueryRowContext(w.ctx, "SELECT hold_reason FROM supervisor_messages WHERE relationship_id=?", w.rels[0]).Scan(&hold); err != nil {
+			t.Fatal(err)
+		}
+		return hold
+	}
+	if h := hold(); !h.Valid || h.String != "hierarchy_unresolved" {
+		t.Fatalf("the hold on a report nothing can be addressed for changed to %v", h)
+	}
+	w.retake(w.rels[0])
+	w.visit()
+	if h := hold(); h.Valid {
+		t.Fatalf("the report is addressable again but the visit left it held as %q", h.String)
 	}
 }
