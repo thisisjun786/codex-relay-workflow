@@ -1,6 +1,6 @@
 ---
 name: crw-check
-description: "Compare canonical Linear documents and issue criteria with delivery evidence, and route in-scope corrections back to managed execution tasks. Use for requirement drift or completion checks; use crw-logic for contradictions and crw-run for execution. Formerly linear-check."
+description: "Compare canonical Linear documents and issue criteria with delivery evidence, and route in-scope corrections back to managed execution tasks. Use for requirement drift or completion checks; use crw-logic for contradictions and crw-run for execution."
 ---
 
 # CRW Check

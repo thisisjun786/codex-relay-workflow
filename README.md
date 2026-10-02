@@ -66,15 +66,6 @@ go run -tags dev ./cmd/crw-dev skills link --check
 links a checkout, and a release archive has none. Its Python predecessor,
 `scripts/install.py`, left with the Python execution path in todo 44.
 
-### Retired skill migration
-
-Skills installed under their retired names (`linear-focus`, `linear-next`,
-`linear-plan`, `linear-run`, `linear-check`, `linear-logic`, `crw-focus`) are not
-removed by any linker, and `crw-dev skills link` does not look for them (the Python
-linker that reported them as `LEGACY` lines left in todo 44): inspect who owns each
-entry, then move it outside the skills directory Codex discovers
-(`$CODEX_HOME/skills`, or `~/.codex/skills`).
-
 Or install the same skills as a versioned plugin, which needs no checkout to stay
 in place. The plugin also declares an MCP server and a Stop hook that run the installed
 runtime, so on a host that will use them [install the runtime](#install-the-runtime)
