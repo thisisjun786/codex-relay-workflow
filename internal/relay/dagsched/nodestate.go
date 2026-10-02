@@ -26,6 +26,8 @@ const (
 	StateCancelled       = "cancelled"
 	StateClosedNode      = "closed"
 	StateAmbiguousNode   = "ambiguous"
+	// StateArchivedNode is a node the plan archived and nobody owns (CRW-281); a node the plan cancelled or paused reads StateCancelled or StatePausedNode.
+	StateArchivedNode = "archived"
 )
 
 // nodeState is what the execution records say of one node. An owned node has a release or an execution: it is not a candidate, and Disp/Reason

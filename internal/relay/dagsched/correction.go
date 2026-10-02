@@ -45,6 +45,9 @@ func (s *Scheduler) PrepareCorrection(ctx context.Context, plan, node, actor str
 	if !ok {
 		return out, refuse(contract.RefusalUnregisteredScope, "plan %s has no live node %s", plan, node)
 	}
+	if err := lifecycleRefusal(snap, n, "correcting it", false); err != nil {
+		return out, err
+	}
 	rel, found, err := currentRelationshipOf(ctx, q, plan, node)
 	if err != nil {
 		return out, err
@@ -130,6 +133,9 @@ func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, sup
 		n, ok := nodeOf(snap, node)
 		if !ok {
 			return refuse(contract.RefusalUnregisteredScope, "plan %s has no live node %s", plan, node)
+		}
+		if err := lifecycleRefusal(snap, n, "correcting it", false); err != nil {
+			return err
 		}
 		rel, found, err := currentRelationshipOf(txCtx, tx, plan, node)
 		if err != nil {

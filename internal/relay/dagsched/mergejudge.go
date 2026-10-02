@@ -38,6 +38,9 @@ var completedConclusions = map[string]bool{"success": true, "failure": true, "ne
 // mergeable reads the relationship of an accepted result for a judgement: not cancelled or paused (contract 3.2), and the caller is its parent. An archived relationship is fine, its child's
 // work ended and the pull request still has to land.
 func mergeable(ctx context.Context, q store.Querier, acc Acceptance, actor string) error {
+	if err := lifecycleOpen(ctx, q, acc.PlanID, acc.NodeID, "judging or requesting a merge of its pull request", true); err != nil {
+		return err
+	}
 	rel, found, err := loadRelationship(ctx, q, acc.RelationshipID)
 	if err != nil {
 		return err
@@ -136,6 +139,9 @@ func (s *Scheduler) Judge(ctx context.Context, plan, node, actor string, in Judg
 			return out, err
 		}
 		tipInHead = &contained
+	}
+	if s.testBeforeJudgeTx != nil {
+		s.testBeforeJudgeTx()
 	}
 	err = s.Store.Compose(ctx, func(txCtx context.Context, _ *sql.Conn) error {
 		tx := s.Store.Q(txCtx)

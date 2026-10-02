@@ -50,6 +50,14 @@ const (
 	DoneAccepted   = "done:accepted"
 	DoneIntegrated = "done:integrated"
 
+	// What the plan's own lifecycle says (CRW-281, lifecycle.go): a paused plan or node is held until a resume revision; a cancelled or archived node is never released again and its
+	// descendants are blocked.
+	DeferPlanPaused            = "defer:plan_paused"
+	DeferNodePaused            = "defer:node_paused"
+	SkipNodeCancelled          = "skip:node_cancelled"
+	SkipNodeArchived           = "skip:node_archived"
+	BlockedPredecessorArchived = "blocked:predecessor_archived"
+
 	// BlockedStaleEpoch is reserved for the coordinator fencing of CRW-185: nothing in this package emits it.
 	BlockedStaleEpoch = "blocked:stale_epoch"
 
@@ -70,6 +78,7 @@ var emittedReasons = []string{
 	BlockedInputUnverifiedAtUse, BlockedStalePredecessor, BlockedCreationUnknown, BlockedEffectUnknown,
 	BlockedPredecessorCancelled, BlockedReleaseAbandoned, BlockedEvicted, BlockedAmbiguousHead,
 	DoneAccepted, DoneIntegrated,
+	DeferPlanPaused, DeferNodePaused, SkipNodeCancelled, SkipNodeArchived, BlockedPredecessorArchived,
 }
 
 // ReservedReasons are in the contract's vocabulary and not emitted by this build.

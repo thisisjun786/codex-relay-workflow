@@ -121,10 +121,21 @@ func (s *Scheduler) edgeStatus(ctx context.Context, q store.Querier, plan string
 	} else if found && rel.Status == "cancelled" {
 		cancelled = true
 	}
+	// the plan can end a node as the relay can end its relationship (CRW-281): a cancelled or archived node satisfies nothing it has not already landed
+	if from.Lifecycle == dag.LifeCancelled {
+		cancelled = true
+	}
+	archived := from.Lifecycle == dag.LifeArchived
 	switch e.Kind {
 	case dag.EdgeArtifactVerified:
 		if cancelled {
 			return blocked(BlockedPredecessorCancelled, "the predecessor was cancelled; its outgoing artifact edges stay unsatisfied until the plan is revised"), nil
+		}
+		if archived {
+			return blocked(BlockedPredecessorArchived, "the predecessor was archived; its outgoing artifact edges stay unsatisfied until the plan is revised"), nil
+		}
+		if st, err := s.endedPredecessor(ctx, q, plan, snap, from); err != nil || st != nil {
+			return valueOf(st), err
 		}
 		return s.artifactVerified(ctx, q, plan, e, from)
 	case dag.EdgeIntegrated:
@@ -135,10 +146,25 @@ func (s *Scheduler) edgeStatus(ctx context.Context, q store.Querier, plan string
 		if !st.Satisfied && cancelled {
 			return blocked(BlockedPredecessorCancelled, "the predecessor was cancelled before its merge landed"), nil
 		}
+		if !st.Satisfied && archived {
+			return blocked(BlockedPredecessorArchived, "the predecessor was archived before its merge landed"), nil
+		}
+		if !st.Satisfied {
+			// a landing is a fact the plan cannot take back, so a satisfied integrated edge is not looked behind; one that is not yet is blocked when what its predecessor rests on was ended
+			if ended, err := s.endedPredecessor(ctx, q, plan, snap, from); err != nil || ended != nil {
+				return valueOf(ended), err
+			}
+		}
 		return st, nil
 	case dag.EdgeDecision:
 		if cancelled {
 			return blocked(BlockedPredecessorCancelled, "the predecessor was cancelled; its outgoing decision edges stay unsatisfied until the plan is revised"), nil
+		}
+		if archived {
+			return blocked(BlockedPredecessorArchived, "the predecessor was archived; its outgoing decision edges stay unsatisfied until the plan is revised"), nil
+		}
+		if st, err := s.endedPredecessor(ctx, q, plan, snap, from); err != nil || st != nil {
+			return valueOf(st), err
 		}
 		return s.decisionEdge(ctx, q, plan, e)
 	}

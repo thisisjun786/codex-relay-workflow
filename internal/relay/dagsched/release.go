@@ -545,6 +545,11 @@ func (s *Scheduler) replay(ctx context.Context, plan, node, actor string, row re
 	var refused error
 	if err := s.Store.Compose(ctx, func(txCtx context.Context, _ *sql.Conn) error {
 		tx := s.Store.Q(txCtx)
+		// a frozen release is a continuation of an earlier one and creates a child: it is not continued for a node the plan holds, and nothing is reserved for it
+		if err := lifecycleOpen(txCtx, tx, plan, node, "continuing its release", false); err != nil {
+			refused = err
+			return nil
+		}
 		var managedState string
 		if _, err := queryOne(txCtx, tx, "SELECT state FROM managed_start_requests WHERE request_id = ?", []any{row.Request}, &managedState); err != nil {
 			return err
