@@ -408,6 +408,8 @@ type spanHost struct {
 	entered  chan string               // creation request ids, as each CreateThread begins
 	created  map[string]int
 	threads  []any // the threads the host has created, as its thread list shows them
+	// afterCreate runs as CreateThread is about to return its receipt, outside the host's lock.
+	afterCreate func()
 }
 
 func newSpanHost(fake *managedFake) *spanHost {
@@ -439,6 +441,14 @@ func (h *spanHost) GetOperation(ctx context.Context, id string) (map[string]any,
 }
 
 func (h *spanHost) CreateThread(ctx context.Context, in CreateThreadRequest) (map[string]any, error) {
+	receipt, err := h.createThread(ctx, in)
+	if err == nil && h.afterCreate != nil {
+		h.afterCreate()
+	}
+	return receipt, err
+}
+
+func (h *spanHost) createThread(ctx context.Context, in CreateThreadRequest) (map[string]any, error) {
 	h.mu.Lock()
 	h.created[in.RequestID]++
 	h.mu.Unlock()
