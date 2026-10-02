@@ -47,7 +47,7 @@ func entryObject(e SummaryEntry) contract.OrderedObject {
 }
 
 func runSummaryEnqueue(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
-	sched, closeStore, err := openScheduler(ctx, services)
+	sched, closeStore, err := openScheduler(ctx, services, args)
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +96,7 @@ func runSummaryStatus(ctx context.Context, services dispatch.Services, args disp
 }
 
 func runSummaryClaim(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
-	sched, closeStore, err := openScheduler(ctx, services)
+	sched, closeStore, err := openScheduler(ctx, services, args)
 	if err != nil {
 		return nil, err
 	}
@@ -175,7 +175,7 @@ func runSummaryComplete(ctx context.Context, services dispatch.Services, args di
 	if err != nil {
 		return nil, err
 	}
-	sched, closeStore, err := openScheduler(ctx, services)
+	sched, closeStore, err := openScheduler(ctx, services, args)
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +188,7 @@ func runSummaryComplete(ctx context.Context, services dispatch.Services, args di
 }
 
 func runSummaryFail(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
-	sched, closeStore, err := openScheduler(ctx, services)
+	sched, closeStore, err := openScheduler(ctx, services, args)
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +201,7 @@ func runSummaryFail(ctx context.Context, services dispatch.Services, args dispat
 }
 
 func runSummaryRetry(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
-	sched, closeStore, err := openScheduler(ctx, services)
+	sched, closeStore, err := openScheduler(ctx, services, args)
 	if err != nil {
 		return nil, err
 	}

@@ -166,7 +166,7 @@ connector once the container changed.
   the relay never confirms such a document, and a person removes the surplus text. Two sessions of the parent that both initialise a container are made safe by the conditional replacement of the whole document, not by the relay.
 * A failure has no backoff. The eighth parks the entry, so a parent that fails in a loop cannot burn more than eight attempts on one entry, and they can all be spent in one turn.
 * A change of the progress document's content between builds gives a different digest: one extra entry after an upgrade, never a wrong one.
-* Progress replay, stale handling, coordinator fencing and the parent's base refresh are later issues. An epoch check on these writers is CRW-285's; the column is there.
+* Progress replay, stale handling, coordinator fencing and the parent's base refresh are later issues. These writers decide nothing about the plan and are not fenced by [the coordinator epoch](dag-scheduler.md#the-coordinator-epoch): a summary states the store's current progress, enqueueing it again is a replay, and the claim token fences a replaced session's confirmation or failure (a restart claims again and kills the old token). `coordinator_epoch` is 0 on every entry, so a later fence has the column.
 
 ## The store
 
