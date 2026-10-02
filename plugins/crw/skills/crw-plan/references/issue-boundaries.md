@@ -51,6 +51,27 @@ separating two candidate parts is that they touch different files, they are one 
 large single-landing change is one issue, and three one-line changes in three
 repositories are three.
 
+## Check the size of an issue
+
+Run `crw skill issue-size check` on each implementation issue this skill writes or refines, giving it the issue as
+Linear returns it (`id`, `title`, `description`) and, where the plan knows them, `deliverables` (the separately
+deliverable outputs, one item each: a new package, a command family, a store table, a skill document) and `depends_on`
+(which criterion needs which earlier one; the planner writes it and the command never derives it). The command counts what
+the body states under the headings it knows (completion criteria, research reinforcement, deliverables, verification, scope, in Korean or
+English; the report names the headings it left unread, so write the criteria as list items or pipe-table rows under one of them, not under a bold label) and answers `ok` or `split_recommended` with its reasons. It is a count against limits read from recorded
+delivery, not a judgment of the work: the same issue gets the same answer, and the report prints the limits it applied, so
+this page states none. Write an issue's separately deliverable outputs under a Deliverables heading at the same level as its
+other sections, so the count has something to read; an issue that declares none is reported as not measured, which is not zero.
+
+`ok` changes nothing. `split_recommended` reopens the boundary decision above for that issue and for nothing else, because size
+alone splits nothing. Read the draft as a guess at where the criteria fall apart and apply the boundary rules to each bundle:
+it becomes an issue only with an observable result of its own, verifiable apart or landing after a prerequisite, and the
+closing check records the order edges. A bundle that fails those rules is not an issue. Where the parts cannot pass
+verification apart, the issue stays one issue, and the plan reports the answer, the draft and that reason to the user instead of
+writing a split. Only the user can grant an exception: the user's own statement naming this issue, carried in the
+`exception` object the command validates, and passed on to `crw-run` with its record. Check an issue again after it is changed,
+and check every issue a split writes as an issue.
+
 ## Non-PR work and unresolved targets
 
 A research question, a contract or design decision, or an operational verification names
@@ -194,3 +215,6 @@ wrong row, and both are fixed here.
 | 23 | The target repository runs no required checks, one part can be reviewed and accepted on its own, and the unfinished remainder has an observable criterion of its own. | 2 issues split on reviewability apart, 0 issues split on the absence of a gate. | Reviewable apart where checks are absent. |
 | 24 | A proposed second issue would carry only the remainder of the work, with no result of its own. | 0 new issues; the work stays with the issue that names a deliverable, 0 issues whose only criterion is the rest. | Forbidden: no observable result of its own. |
 | 25 | A prior plan split the work by directory and the directories have since been reorganized. | Issues rematched by deliverable against accepted criteria, 0 issues recreated beside the old ones, 0 splits derived from the new layout. | Convergence: layout is not a deliverable. |
+| 26 | The size check answers `split_recommended` for an implementation issue and drafts four bundles; two of them can be verified apart and the other two only together. | 3 issues: each independent bundle its own issue, the coupled two as 1 issue keeping every criterion, order edges where the regions overlap; 0 issues written from the draft as given. | Size check: the draft is a guess, the boundary rules decide. |
+| 27 | `split_recommended` and no bundle can pass verification apart. | 1 issue, 0 splits; the answer, the draft and the reason reported to the user; it reaches dispatch only with the user's recorded exception. | Size check: parts that cannot pass apart stay one issue. |
+| 28 | The size check answers `ok` for an issue that also needs a change in a second repository. | 2 issues by the repository rule; the answer changes nothing in the boundary rules. | Size check: `ok` changes nothing. |

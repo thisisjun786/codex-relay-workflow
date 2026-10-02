@@ -510,12 +510,10 @@ func (s *Store) SupervisorMessageFor(ctx context.Context, obligationKind, obliga
 }
 
 // ClaimableSupervisorMessages is supervisorchannel.py:1927: eligible rows in staging order.
-// states are the three claimable states (queued, deferred_busy, withheld_pre_send).
-func (s *Store) ClaimableSupervisorMessages(ctx context.Context, states [3]string, now float64, limit int) ([]SupervisorMessagesRow, error) {
+func (s *Store) ClaimableSupervisorMessages(ctx context.Context, now float64, limit int) ([]SupervisorMessagesRow, error) {
 	return queryRows(ctx, s, scanSupervisorMessages, "SELECT "+supervisorMessagesColumns+" FROM supervisor_messages"+
-		" WHERE state IN (?,?,?) AND hold_reason IS NULL"+
-		"   AND (next_eligible_at IS NULL OR next_eligible_at <= ?)"+
-		" ORDER BY staged_at, message_id LIMIT ?", states[0], states[1], states[2], now, limit)
+		" WHERE "+SupervisorClaimableSQL("")+
+		" ORDER BY staged_at, message_id LIMIT ?", now, limit)
 }
 
 // InsertSupervisorAttempt is supervisorchannel.py:2518: retry_safe 0 and no turn until settled.

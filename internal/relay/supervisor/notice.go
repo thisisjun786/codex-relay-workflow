@@ -103,7 +103,7 @@ func (c *Channel) refreshNotice(ctx context.Context, row store.SupervisorMessage
 		return false, err
 	}
 	encoded := pyjson.Dumps(packet, pyjson.Options{})
-	result, err := c.Store.Q(ctx).ExecContext(ctx, "UPDATE supervisor_messages SET packet=?,updated_at=? WHERE message_id=? AND state IN ('queued','deferred_busy','withheld_pre_send','sending') AND NOT EXISTS(SELECT 1 FROM supervisor_attempts WHERE message_id=? AND attempt_no<>? AND (send_attempted<>'no' OR retry_safe=0))", encoded, at, row.MessageID, row.MessageID, currentAttempt)
+	result, err := c.Store.Q(ctx).ExecContext(ctx, "UPDATE supervisor_messages SET packet=?,updated_at=? WHERE message_id=? AND "+store.SupervisorRestatableSQL("")+" AND NOT EXISTS(SELECT 1 FROM supervisor_attempts WHERE message_id=? AND attempt_no<>? AND "+store.SupervisorAttemptMayHaveGoneSQL("")+")", encoded, at, row.MessageID, row.MessageID, currentAttempt)
 	if err != nil {
 		return false, err
 	}

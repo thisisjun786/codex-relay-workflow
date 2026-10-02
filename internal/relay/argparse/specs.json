@@ -745,7 +745,7 @@
   {"flag":"--page-budget","type":"int","help":"how many pages one connection may take before the read is reported unfinished rather than answered"},
   {"flag":"--call-budget","type":"int"},
   {"flag":"--timeout","type":"int"}]},
-{"name":"dag-plan-put","summary":"appends one revision to a DAG plan: typed changes (add_node, update_node, replace_node, retire_node, add_edge, retire_edge) folded onto the plan's head, validated as the plan they produce, and recorded in the append-only revision log. A request id already recorded returns that revision; a stale expected parent is plan_revision_conflict. A rejected revision writes nothing","options":[
+{"name":"dag-plan-put","summary":"appends one revision to a DAG plan: typed changes (add_node, update_node, replace_node, retire_node, add_edge, retire_edge, and the lifecycle changes pause_node, resume_node, cancel_node, archive_node, pause_plan, resume_plan) folded onto the plan's head, validated as the plan they produce, and recorded in the append-only revision log. A request id already recorded returns that revision; a stale expected parent is plan_revision_conflict. A rejected revision writes nothing","options":[
   {"flag":"--request","required":true,"help":"the dag-plan-revision/1 document as JSON, or @file"}]},
 {"name":"dag-plan-show","summary":"a DAG plan as of one revision (the head by default): its nodes with their slice digests and its edges, read in one snapshot with every digest recomputed. Reads only; a store without plans answers unregistered_scope","options":[
   {"flag":"--plan","required":true},
@@ -770,6 +770,13 @@
   {"flag":"--actor","required":true,"help":"the project's registered parent, who owns the slot and the child"},
   {"flag":"--request","required":true,"help":"the dag-release-request/1 document as JSON, or @file"},
   {"flag":"--marker-root","required":true}]},
+{"name":"dag-release-close","summary":"ends the release of a DAG node whose managed start was released before it created a child (blocked:release_abandoned): in one transaction it records the closure of that request and returns the node's slot (reason dag_release_closed); its frozen manifest copy is then removed unless something live names it. The node reads planned again and the ordinary dag-release releases it again, a changed manifest as a new release and an unchanged one under a successor request id. The same request again answers the recorded closure. It creates no child and refuses a release that is running or still in flight","options":[
+  {"flag":"--plan","required":true},
+  {"flag":"--node","required":true},
+  {"flag":"--actor","required":true,"help":"a registered parent of the plan's project that holds the node's slot"},
+  {"flag":"--manifest","required":true,"help":"the manifest digest of the abandoned release"},
+  {"flag":"--request-id","required":true,"help":"the managed request id of the abandoned release (dag-release prints it; dag-ready names it in the node's detail): the key that makes a retry exact"},
+  {"flag":"--reason","required":true,"help":"why the release is closed (kept with the closure)"}]},
 {"name":"dag-accept","summary":"records that the parent accepted a DAG node's result: written only when the result is the current head of its generation, acknowledged and verified by the host, ruled verified under the current criteria, and, for an implementation node, on the pull request head the relay reads from the forge itself. The same output again is a replay; the same output re-ruled under re-registered criteria is a revalidation of the same acceptance; a new output replaces an active acceptance only with --supersedes","options":[
   {"flag":"--plan","required":true},
   {"flag":"--node","required":true},

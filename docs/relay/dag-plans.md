@@ -22,6 +22,8 @@ DAG execution contract (CRW-182, sections 1, 2, 4, 5 and 6.2); where this page r
   `retire_edge`) applied to the plan the previous revision produced. The plan at any revision is the fold of the log up to it.
   `update_node` replaces a node's whole spec and keeps its id; `replace_node` introduces a new node that supersedes a live one.
   Edges are never edited: retire one and add another. Ids are never reused within a plan, so a retired id cannot come back.
+* A **lifecycle change** holds or ends a node, or pauses the plan: `pause_node`, `resume_node`, `cancel_node`, `archive_node` and, for the plan, `pause_plan` and `resume_plan`
+  ([pause, resume, cancel and archive](#pause-resume-cancel-and-archive)). They are changes of the same log; nothing else records them.
 
 ## The revision document
 
@@ -43,6 +45,9 @@ An edge is `{edge_id, from_node_id, to_node_id, kind}` plus, by kind: `target_re
 (artifact_verified, integrated); `decision_subject`, `decision_digest`, `required_authority` (decision). `required_authority`
 entries are opaque text: the format of an authority is undecided (D-09) and is not invented here.
 
+A lifecycle change is `{"op":"pause_node","node_id":"n1"}` (likewise `resume_node`, `cancel_node`, `archive_node`: the op and the node, nothing else) or `{"op":"pause_plan"}`
+(likewise `resume_plan`: the op alone). A field that is not named is rejected like any other.
+
 ## What is rejected, before anything is written
 
 A revision is validated as the plan it would produce, so every rule is judged on the whole graph. All violations are
@@ -54,6 +59,7 @@ always answers the same way. A rejected revision writes nothing.
 | `empty_changes`, `empty_graph` | the revision carries no change; the plan would hold no node |
 | `duplicate_node_id`, `duplicate_edge_id` | an id is added twice, is already in the plan, or was retired (ids are never reused) |
 | `unknown_node`, `unknown_edge`, `conflicting_changes` | a change addresses a node or edge the parent plan does not hold, or two changes of one revision address the same one |
+| `invalid_lifecycle_transition` | a lifecycle change the node or the plan is not in a state for: a pause of a paused node, a resume of one that is not paused, any change to a cancelled or archived node, a resume of an active plan. A lifecycle change addresses a node like every other change to it, so it is `unknown_node` for a node that is not in the parent plan (one added in the same revision included) and `conflicting_changes` beside another change to the same node or to the plan's lifecycle |
 | `missing_predecessor`, `missing_successor`, `self_reference` | an edge starts or ends at a node that is not in the plan, or at itself |
 | `cycle` | the edges form a cycle; the detail names one (`a -> b -> a`) |
 | `unknown_edge_kind`, `unknown_node_kind` | a kind outside the vocabulary |
@@ -76,6 +82,9 @@ Digests are sha256 of canonical JSON (sorted keys, no whitespace), the serializa
 * A plan's **state digest** covers its live content (plan id, project, nodes with their slice digests, edges). Two revisions
   that produce the same plan produce the same state digest.
 * A request's digest covers what it asks, not how the JSON was spelled.
+* A node's lifecycle is no part of its slice digest: a pause is neither a change of the node's spec nor of its incoming edges, so it moves no slice digest and invalidates no manifest or
+  acceptance. The state digest covers the lifecycle only when it is not the default (a `lifecycle` key on a node that is paused, cancelled or archived, a `plan_state` key while the plan is paused), so
+  every plan that never had a lifecycle change digests as it always did, and a resume returns the plan to the state digest it had before the pause.
 
 ## The log
 
@@ -137,6 +146,34 @@ structured document that is malformed, as the linkage envelope uses it), an unkn
 **`plan_revision_conflict`** is new: a plan write that lost to another writer (a stale parent) or that reuses a request id for a
 different request (decision D-02). A stale coordinator epoch is not a reason here, because nothing fences by epoch yet.
 
+## Pause, resume, cancel and archive
+
+A node, or the plan as a whole, is held or ended by a revision (CRW-281). `pause_node` and `resume_node` hold a node and let it go, `cancel_node` and `archive_node` end it, and `pause_plan`
+and `resume_plan` hold every node at once. Each state a change may start from, and where it leads:
+
+| Change | From | To |
+| --- | --- | --- |
+| `pause_node` | active | paused |
+| `resume_node` | paused | active |
+| `cancel_node` | active, paused | cancelled |
+| `archive_node` | active, paused | archived |
+| `pause_plan` | active | paused |
+| `resume_plan` | paused | active |
+
+Cancelled and archived are final: nothing in the plan moves a node out of them, so a cancel is never shown as reverted. The work is done again with a new node (`replace_node`). A change from
+any other state is `invalid_lifecycle_transition`. The state belongs to the node id: `update_node` of a paused node leaves it paused, `replace_node` introduces a new node that is active, and
+`retire_node` takes the node out of the plan with its state.
+
+The state is the fold of these changes and is kept nowhere else: no table, no row that is updated, no command of its own (`dag-plan-put` appends the revision), and no statement added to the zone.
+A reader derives it from the log up to the revision it reads. Reading checks the transition table and that the node was ever in the plan: a stored change that is not a legal transition, or that names a
+node the plan never held, is the host's failure (exit 3) whatever digest the revision recorded. The other rules of a revision (two changes of one subject in a revision, a target that was live in the parent
+revision) are judged by the writer and by `--verify`, which replays the log through the fold, and not by an ordinary read. `dag-plan-show` prints `lifecycle` on a node that is paused, cancelled or archived and `plan_state` while the plan is
+paused; both keys are absent otherwise, so a plan with no lifecycle change reads as it always did. The plan as of an earlier revision reads as it was then.
+
+A runtime that predates these changes cannot read a log that holds one: its strict reader refuses an operation it does not know, and the plan reads as corrupt. The store itself is unchanged, so
+such a runtime still opens it; installing one over a store whose plans carry a lifecycle change is a rollback to avoid. What the scheduler does with the state is in
+[the scheduler](dag-scheduler.md#pause-resume-cancel-and-archive).
+
 ## The store
 
 The log lives in the relay's host-shared store, in tables the writable open creates after it has validated the frozen v1
@@ -149,8 +186,8 @@ tables (decision D-01):
 * the zone is the twelve `dag_*` tables of the contract: `dag_plans`, `dag_plan_revisions`, `dag_nodes`, `dag_edges`,
   `dag_input_manifests`, and the tables the scheduler writes (`dag_node_executions`, `dag_releases`,
   `dag_acceptances`, `dag_integration_observations`, `dag_decisions`, `dag_cap_basis`; `dag_coordinator_claims` has no writer until
-  coordinator fencing), and seven tables the scheduler appended to it (`dag_merge_checks`, `dag_acceptance_revalidations`, `dag_acceptance_forge`,
-  `dag_passes`, `dag_node_regions`, `dag_release_requests`, `dag_conflict_observations`; see [the scheduler's store](dag-scheduler.md#the-store)). Node-keyed
+  coordinator fencing), and eight tables the scheduler appended to it (`dag_merge_checks`, `dag_acceptance_revalidations`, `dag_acceptance_forge`,
+  `dag_passes`, `dag_node_regions`, `dag_release_requests`, `dag_conflict_observations`, `dag_release_recoveries`; see [the scheduler's store](dag-scheduler.md#the-store)). Node-keyed
   tables carry `plan_id`, so node ids need only be unique within a plan;
 * a command that declares itself read-only never creates the zone: it arrives with the first write open;
 * the zone is an append-only ledger of statements (`internal/relay/store/dag_zone.go`). A shipped statement is never edited; a column a
@@ -178,6 +215,10 @@ only the install command takes the backup. The route, its backup and its refusal
   manifest has no plan id by contract 4.1, so `dag_input_manifests` has exactly the contract's columns and a manifest is content-addressed: the
   same consumption in two plans is one row.
 * `dag_plans` (the plan's identity and project) is an addition to the contract's table list.
+* Contract 3.2 gives the plan one pause (a new plan state, resumed by a revision) and gives a node's pause and cancel as the relay's relationship states. Here a node's pause, resume, cancel
+  and archive are revision changes as well (the issue asks for typed revision changes and no separate update path), and the relationship's own status stays a separate fact the scheduler also
+  honours. The contract has no plan-level cancel or archive and no archive row at all; this page adds none for the plan and reads a node's archive as a final state (see
+  [the scheduler's departures](dag-scheduler.md#departures-from-the-contract)).
 * `dag_input_manifests` has a digest function and a minimal write/read (`internal/relay/dag`: `ManifestDigest`, `PutManifest`,
   `ReadManifest`) so the table has an owner now. A manifest is checked for the fields 4.2 requires and for their types (ids and digests are text, a
   generation or revision is a whole number, an artifact or snapshot has its uri, digest and size); whether a base is required depends on the node's
@@ -187,4 +228,5 @@ only the install command takes the backup. The route, its backup and its refusal
 ## What a consumer reads
 
 `internal/relay/dag`: `Repo.Snapshot` (the plan at a revision, verified), `Repo.Events` and `Replay` (the log from a cursor), `Repo.Put`, and the
-`dag_plans`, `dag_plan_revisions`, `dag_nodes` (live rows: `retired_rev IS NULL`) and `dag_edges` tables. Only a committed revision is in them.
+`dag_plans`, `dag_plan_revisions`, `dag_nodes` (live rows: `retired_rev IS NULL`) and `dag_edges` tables. Only a committed revision is in them. A snapshot carries `PlanState` and, on each node,
+`Lifecycle` (empty for an active one); `Replay` from a snapshot keeps them.
