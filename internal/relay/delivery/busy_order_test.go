@@ -381,7 +381,7 @@ func TestBusy_a_newer_delivery_does_not_overtake_an_older_one_in_backoff(t *test
 		o := newOvertaking(t, false, false)
 		f := o.w.f
 		f.clock.Advance(4)
-		rows, err := f.delivery.EligibleRows(f.ctx, scaleParent, f.clock.Now())
+		rows, err := f.delivery.EligibleRows(f.ctx, scaleParent, f.clock.Now(), allDue)
 		mustDo(t, err)
 		for _, r := range rows {
 			if r.S("event_id") == o.newer {
@@ -460,7 +460,7 @@ func TestBusy_only_a_busy_backoff_holds_the_line(t *testing.T) {
 	check := func(t *testing.T, o *overtaking, now float64, blocked bool) {
 		t.Helper()
 		f := o.w.f
-		rows, err := f.delivery.EligibleRows(f.ctx, scaleParent, now)
+		rows, err := f.delivery.EligibleRows(f.ctx, scaleParent, now, allDue)
 		mustDo(t, err)
 		listed := false
 		for _, r := range rows {
@@ -513,7 +513,7 @@ func TestBusy_only_a_busy_backoff_holds_the_line(t *testing.T) {
 		f := o.w.f
 		request := o.w.create(1)
 		o.w.queue(request, Revision, o.w.rels[1].child)
-		rows, err := f.delivery.EligibleRows(f.ctx, scaleParent, now)
+		rows, err := f.delivery.EligibleRows(f.ctx, scaleParent, now, allDue)
 		mustDo(t, err)
 		var ids []string
 		for _, r := range rows {
@@ -554,7 +554,7 @@ func TestBusy_the_scheduler_ends_the_queue_when_an_older_busy_row_appears_after_
 	f.clock.Advance(1)
 	newer := w.emit(1)
 	now := f.clock.Now()
-	rows, err := f.delivery.EligibleRows(f.ctx, scaleParent, now)
+	rows, err := f.delivery.EligibleRows(f.ctx, scaleParent, now, allDue)
 	mustDo(t, err)
 	if len(rows) != 2 || rows[0].S("event_id") != older || rows[1].S("event_id") != newer {
 		t.Fatalf("listed %d rows, want the older then the newer", len(rows))
@@ -613,7 +613,7 @@ func TestBusy_many_waiting_heads_are_listed_in_linear_time(t *testing.T) {
 			began := time.Now()
 			parents, err := f.delivery.EligibleParents(f.ctx, base)
 			mustDo(t, err)
-			rows, err := f.delivery.EligibleRows(f.ctx, scaleParent, base)
+			rows, err := f.delivery.EligibleRows(f.ctx, scaleParent, base, allDue)
 			mustDo(t, err)
 			if elapsed := time.Since(began); elapsed > 3*time.Second {
 				t.Errorf("listing %d deliveries behind %d waiting heads took %v", shape.recipients*(1+shape.followers)+free, shape.recipients, elapsed)

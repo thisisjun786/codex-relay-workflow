@@ -40,7 +40,16 @@ type Service struct {
 	RoleGate                 RoleGate
 	// RateLimited replaces the preflight when set (tests blind it to reach the claim's check).
 	RateLimited func(recipient string, now float64) bool
+	// dueRead, when set, is told after each due-delivery read what it returned: its kind (readRows or
+	// readRecipients), the parent and how many. Tests count what a tick reads and act between two reads.
+	dueRead func(kind, parent string, n int)
 }
+
+// The kinds of due read the dueRead hook is told of.
+const (
+	readRows       = "rows"
+	readRecipients = "recipients"
+)
 
 // NewService builds a service with Python's defaults.
 func NewService(s *store.Store, clock Clock) *Service {
@@ -345,10 +354,13 @@ func (d *Service) eligibility(now float64) (string, string, []any) {
 	return join, eligibleBase + " AND COALESCE(sbspent.spent, 0) < ? AND bh.event_id IS NULL", args
 }
 
+// dueFrom is what the due-delivery reads select from: a delivery with its relationship and event.
+const dueFrom = " FROM deliveries d JOIN relationships r ON r.relationship_id = d.relationship_id JOIN events e ON e.event_id = d.event_id"
+
 // EligibleParents is eligible_parents.
 func (d *Service) EligibleParents(ctx context.Context, now float64) ([]string, error) {
 	join, where, args := d.eligibility(now)
-	rows, err := all(ctx, d.Store, "SELECT DISTINCT r.parent_task_id AS parent_task_id FROM deliveries d JOIN relationships r ON r.relationship_id = d.relationship_id JOIN events e ON e.event_id = d.event_id"+join+where+" ORDER BY r.parent_task_id", args...)
+	rows, err := all(ctx, d.Store, "SELECT DISTINCT r.parent_task_id AS parent_task_id"+dueFrom+join+where+" ORDER BY r.parent_task_id", args...)
 	var out []string
 	for _, r := range rows {
 		out = append(out, r.S("parent_task_id"))
@@ -356,16 +368,61 @@ func (d *Service) EligibleParents(ctx context.Context, now float64) ([]string, e
 	return out, err
 }
 
-// EligibleRows is every due delivery of one parent, in event creation order. Each row carries the
-// event's first_seen_at, which the scheduler's refusal marker is keyed by.
-func (d *Service) EligibleRows(ctx context.Context, parent string, now float64) ([]Row, error) {
+// EligibleRows is the oldest limit due deliveries of one parent, in event creation order. Each row
+// carries the event's first_seen_at, which the scheduler's refusal marker is keyed by. A limit below
+// one reads nothing (SQLite takes a negative LIMIT as no limit, so it is answered here).
+func (d *Service) EligibleRows(ctx context.Context, parent string, now float64, limit int) ([]Row, error) {
+	return d.dueRows(ctx, parent, now, "", "", limit)
+}
+
+// dueRows is the first limit due deliveries of one parent, of one recipient when recipient is set,
+// in event creation order: starting after the refusal marker (the key a previous tick refused
+// last) and wrapping to the rows up to it when marker is a key. A marker that is not one is no marker.
+func (d *Service) dueRows(ctx context.Context, parent string, now float64, recipient, marker string, limit int) ([]Row, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
 	join, where, args := d.eligibility(now)
-	return all(ctx, d.Store, "SELECT d.*, r.parent_task_id AS parent_task_id, e.first_seen_at AS first_seen_at FROM deliveries d JOIN relationships r ON r.relationship_id = d.relationship_id JOIN events e ON e.event_id = d.event_id"+join+where+" AND r.parent_task_id = ?"+eligibleOrder, append(args, parent)...)
+	query := "SELECT d.*, r.parent_task_id AS parent_task_id, e.first_seen_at AS first_seen_at" + dueFrom + join + where + " AND r.parent_task_id = ?"
+	args = append(args, parent)
+	if recipient != "" {
+		query += " AND d.recipient_task_id = ?"
+		args = append(args, recipient)
+	}
+	order := eligibleOrder
+	if firstSeen, created, event, ok := splitKey(marker); ok {
+		order = " ORDER BY CASE WHEN (e.first_seen_at, d.created_at, d.event_id) > (?,?,?) THEN 0 ELSE 1 END, e.first_seen_at, d.created_at, d.event_id"
+		args = append(args, firstSeen, created, event)
+	}
+	rows, err := all(ctx, d.Store, query+order+" LIMIT ?", append(args, limit)...)
+	if d.dueRead != nil {
+		d.dueRead(readRows, parent, len(rows))
+	}
+	return rows, err
+}
+
+// dueRecipients is the first limit recipients of one parent that have a due delivery: those after
+// the recipient last attempted (after, "" for none) in id order, then the ones up to it.
+func (d *Service) dueRecipients(ctx context.Context, parent string, now float64, after string, limit int) ([]string, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	join, where, args := d.eligibility(now)
+	rows, err := all(ctx, d.Store, "SELECT d.recipient_task_id AS recipient_task_id"+dueFrom+join+where+" AND r.parent_task_id = ? GROUP BY d.recipient_task_id ORDER BY d.recipient_task_id <= ?, d.recipient_task_id LIMIT ?", append(args, parent, after, limit)...)
+	var out []string
+	for _, r := range rows {
+		out = append(out, r.S("recipient_task_id"))
+	}
+	if d.dueRead != nil {
+		d.dueRead(readRecipients, parent, len(out))
+	}
+	return out, err
 }
 
 // Eligible lists due deliveries: every eligible parent, then a bounded share of each parent's
-// oldest rows, dealt one at a time. The scheduler does not use it (it walks EligibleRows with its
-// refusal cursors); the deliver command lists with it.
+// oldest rows, dealt one at a time. The scheduler does not use it (it reads the recipients and rows
+// of the parents it opens with its refusal cursors, dueRecipients and dueRows); the deliver command
+// lists with it.
 func (d *Service) Eligible(ctx context.Context, now float64, limit, perParent, cursor int) ([]Row, error) {
 	if limit <= 0 {
 		return nil, nil
@@ -383,11 +440,11 @@ func (d *Service) Eligible(ctx context.Context, now float64, limit, perParent, c
 	order := append(slices.Clone(parents[start:]), parents[:start]...)
 	queues := map[string][]Row{}
 	for _, parent := range order {
-		rows, err := d.EligibleRows(ctx, parent, now)
+		rows, err := d.EligibleRows(ctx, parent, now, share)
 		if err != nil {
 			return nil, err
 		}
-		queues[parent] = rows[:min(share, len(rows))]
+		queues[parent] = rows
 	}
 	var selected []Row
 	for len(selected) < limit {
