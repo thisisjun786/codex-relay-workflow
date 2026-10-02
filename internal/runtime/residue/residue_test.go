@@ -3,6 +3,7 @@ package residue_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/golden"
@@ -198,6 +199,35 @@ func TestDestinationsAreComparedByTheFilesystem(t *testing.T) {
 		survey = residue.Survey(&dest, path, placed, nothingSelected, nil)
 		if finding := golden.Obj(record.Get(survey, "pointer")); record.Get(finding, "finding") != residue.UnreadablePointerTarget || record.Get(finding, "residual") != false {
 			t.Fatalf("an unreadable target: %s", golden.Canon(finding))
+		}
+	}
+}
+
+// An abandoned staging that is the tombstone of a runtime directory (a removal killed part-way)
+// is finished by crw install remove, which is also what crw install status names for it: an
+// install reclaims the directory under a runtime's own name, never a tombstone for its own
+// sake. A directory that only looks like one - a name crw install remove refuses - and an
+// ordinary abandoned staging keep the install's recovery. What is residue is the same either way.
+func TestATombstoneIsRecoveredByRemove(t *testing.T) {
+	dest := t.TempDir()
+	tombstone := filepath.Join(dest, ".crw-removing-bin-0.3.0-aaaaaaaaaaaa")
+	lookalike := filepath.Join(dest, ".crw-removing-notaruntime")
+	plain := filepath.Join(dest, "bin-0.3.0-bbbbbbbbbbbb")
+	for _, dir := range []string{tombstone, lookalike, plain} {
+		staged(t, dir, staging.Staging)
+	}
+	survey := residue.Survey(&dest, "", nil, nothingSelected, nil)
+	paths := residual(survey)
+	recoveries := golden.List(record.Get(survey, "recoveryRequires"))
+	if len(paths) != 3 || len(recoveries) != 3 || paths[0] != tombstone || paths[1] != lookalike || paths[2] != plain {
+		t.Fatalf("what is residue changed: %s", golden.Canon(survey))
+	}
+	if got, _ := recoveries[0].(string); !strings.Contains(got, "crw install remove "+tombstone) || strings.Contains(got, "next install") {
+		t.Errorf("a tombstone: %s", got)
+	}
+	for i, path := range paths[1:] {
+		if got, _ := recoveries[i+1].(string); !strings.Contains(got, "let the next install of this same combination reclaim "+path) || strings.Contains(got, "crw install remove") {
+			t.Errorf("%s: %s", path, got)
 		}
 	}
 }
