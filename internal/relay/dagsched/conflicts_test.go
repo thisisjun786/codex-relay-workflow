@@ -212,3 +212,20 @@ func TestObserveConflictsIgnoresTheCheckoutsConfigurationAndAttributes(t *testin
 		t.Fatalf("with an uncommitted attribute = %v %+v", err, again)
 	}
 }
+
+// The attributes that count are the ones committed in the left head: a union merge driver named in .gitattributes of the commits is built in to git and resolves the file, so a pair that
+// git itself merges cleanly is not counted as a conflict.
+func TestObserveConflictsHonoursCommittedAttributes(t *testing.T) {
+	k := newIntegrationKit(t)
+	repo := k.repo
+	repo.commit("c.txt", lines(12, nil))
+	repo.commit(".gitattributes", "c.txt merge=union\n")
+	left, right := repo.parallel(map[string]string{"c.txt": lines(12, map[int]string{3: "left"})}, map[string]string{"c.txt": lines(12, map[int]string{3: "right"})})
+	if out := repo.git("merge-tree", "--write-tree", "--name-only", left, right); strings.Contains(out, "c.txt") {
+		t.Skipf("this git does not resolve the pair with the committed attribute: %s", out)
+	}
+	res, err := k.sched.ObserveConflicts(context.Background(), "g", "parent", ConflictInput{Repository: repo.path, LeftNode: "D", RightNode: "I", LeftHead: left, RightHead: right})
+	if err != nil || res.Conflicts != 0 {
+		t.Fatalf("conflicts = %v %+v", err, res)
+	}
+}

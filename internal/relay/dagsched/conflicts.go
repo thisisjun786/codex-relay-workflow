@@ -192,11 +192,15 @@ func (g *isolated) close() { _ = os.RemoveAll(g.dir) }
 
 // run runs git in the throwaway repository (or, for init, on the path it is given) and returns the exit code, the standard output and, for a failure, git's own words.
 func (g *isolated) run(ctx context.Context, args ...string) (int, string, error) {
+	return g.runWith(ctx, nil, args...)
+}
+
+func (g *isolated) runWith(ctx context.Context, extraEnv []string, args ...string) (int, string, error) {
 	argv := args
 	if args[0] != "init" {
 		argv = append([]string{"--git-dir=" + g.gitdir}, args...)
 	}
-	return runGitExit(ctx, "", g.env, argv...)
+	return runGitExit(ctx, "", append(append([]string{}, g.env...), extraEnv...), argv...)
 }
 
 var treeIDPattern = regexp.MustCompile("^[0-9a-f]{40}([0-9a-f]{24})?$")
@@ -215,7 +219,8 @@ func mergeTreeConflicts(ctx context.Context, checkout, left, right string) ([]st
 // name may hold any character but NUL) and trusted only when it has the shape git gives a merge: a tree id first. Anything else, exit 1 included, is a failure to compute the merge and never
 // a count.
 func (g *isolated) mergeTree(ctx context.Context, left, right string) ([]string, error) {
-	code, out, err := g.run(ctx, "merge-tree", "-z", "--write-tree", "--name-only", "--no-messages", left, right)
+	// the attributes are the ones committed in the left head (git 2.40 and newer read them from the commit named in GIT_ATTR_SOURCE; an older git reads none), never a working tree's
+	code, out, err := g.runWith(ctx, []string{"GIT_ATTR_SOURCE=" + left}, "merge-tree", "-z", "--write-tree", "--name-only", "--no-messages", left, right)
 	if code != 0 && code != 1 {
 		return nil, fmt.Errorf("git merge-tree could not merge %s and %s (git 2.38 or newer is needed): %w", left, right, err)
 	}

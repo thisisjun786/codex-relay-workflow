@@ -83,8 +83,8 @@ func requiredChecks(pr PullRequest) (pending, failed []string) {
 				pending = append(pending, n.name+": run "+id+" has not finished")
 			case c.Conclusion != "success":
 				tuple := n.name + "|" + id + "|" + strconv.FormatInt(c.Attempt, 10)
-				if strings.HasPrefix(id, "status:") && c.Stamp != "" {
-					// a commit status has no attempt: when the forge last changed it is what makes a new failure a different failure
+				if c.Stamp != "" {
+					// when the forge last changed the run: a commit status has no attempt and a check run can be reset in place, so this is what makes a new failure a different failure
 					tuple += "|" + c.Stamp
 				}
 				if !seen[tuple] {
@@ -312,7 +312,7 @@ func (s *Scheduler) judgeChecks(m *mergeCheck, h mergeHistory) {
 		}
 	case h.retries == 0:
 		m.Outcome, m.Round, m.Reason = OutcomeRetrySameSHA, 1, "required checks failed ("+strings.Join(failed, ", ")+"): run them again on the same head, once"
-	case subset(failed, h.failedBefore):
+	case subset(failed, h.failedBefore) && !h.rerunSeen:
 		// the snapshot the retry round was opened on, read again: it is not a second failure
 		m.Outcome, m.Round, m.Reason = OutcomeRetrySameSHA, 1, "required checks failed ("+strings.Join(failed, ", ")+") and the retry round is open: run them again on the same head, once"
 	default:
@@ -339,8 +339,10 @@ type historicRow struct {
 
 // mergeHistory is what the judgements of one head already say: how many retry rounds were opened, every failed check seen, and the eviction when there is one.
 type mergeHistory struct {
-	retries      int
-	failures     int
+	retries  int
+	failures int
+	// rerunSeen: after the retry round opened, a judgement saw the checks not failed (still running, or passing): a failure after that is a new failure, whatever identity the forge gives it
+	rerunSeen    bool
 	failedBefore []string
 	evicted      *historicRow
 }
@@ -372,6 +374,8 @@ func loadMergeHistory(ctx context.Context, q store.Querier, plan, node, forge, h
 		}
 		if r.outcome == OutcomeRetrySameSHA {
 			h.retries++
+		} else if h.retries > 0 && (r.outcome == OutcomeChecksPending || r.outcome == OutcomeEligible) {
+			h.rerunSeen = true
 		}
 		if len(r.failed) > 0 {
 			h.failures++
@@ -477,23 +481,37 @@ func (s *Scheduler) RequestMergeTurn(ctx context.Context, plan, node, actor stri
 		} else if !fresh {
 			return refuse(contract.RefusalCriteriaSetChanged, "the criteria of %s changed while its merge turn was requested", node)
 		}
-		var latest string
-		if _, err := queryOne(txCtx, tx, "SELECT outcome FROM dag_merge_checks WHERE acceptance_id = ? ORDER BY check_seq DESC LIMIT 1", []any{acc.AcceptanceID}, &latest); err != nil {
+		if landed, why, err := s.predecessorsLanded(txCtx, tx, plan, current, node); err != nil {
 			return err
+		} else if !landed {
+			return refuse(contract.RefusalDispositionConflict, "%s: %s, so no merge turn is requested", node, why)
 		}
-		if latest != OutcomeEligible {
-			return refuse(contract.RefusalDispositionConflict, "the latest judgement of %s is %s, no longer eligible, so no merge turn is requested", node, latest)
+		// the judgement the turn rests on is the latest one, it is of this acceptance and head, and the evidence it recorded is what it digests to
+		var latest, observed, accepted, digest, evidence string
+		if found, err := queryOne(txCtx, tx, "SELECT outcome, observed_head_sha, head_sha, checks_digest, evidence_json FROM dag_merge_checks WHERE acceptance_id = ? ORDER BY check_seq DESC LIMIT 1",
+			[]any{acc.AcceptanceID}, &latest, &observed, &accepted, &digest, &evidence); err != nil {
+			return err
+		} else if !found || latest != OutcomeEligible || observed != acc.HeadSHA || accepted != acc.HeadSHA {
+			return refuse(contract.RefusalDispositionConflict, "the latest judgement of %s is %s at %s, not an eligible one of the accepted head, so no merge turn is requested", node, latest, observed)
 		}
+		if recomputed, err := RecomputeEvidenceDigest(evidence); err != nil || recomputed != digest {
+			return refuse(contract.RefusalRevisionMismatch, "the judgement of %s no longer digests to what was recorded, so no merge turn is requested", node)
+		}
+		conflicts := func() (n int64) {
+			_ = tx.QueryRowContext(txCtx, "SELECT COUNT(*) FROM coordination_conflicts").Scan(&n)
+			return n
+		}
+		before := conflicts()
 		t, err := service.Request(txCtx, acc.Repository, res.BaseRef, current.ProjectKey, actor, in.Host, acc.HeadSHA, true,
 			mergeturn.ClaimOptions{PR: sql.NullInt64{Int64: acc.PRNumber, Valid: true}, Relationship: sql.NullString{String: acc.RelationshipID, Valid: true}})
 		if err != nil {
-			// a refusal of the lane is an answer, and the conflict row it recorded is kept; anything else rolls the transaction back
-			if answer, failure := asRefusal(err); failure != nil {
-				return failure
-			} else {
+			// a refusal the lane recorded as a conflict (another project's claim, an owner that is paused) is an answer and its row is kept; a refusal with no row is the lane's own integrity
+			// check failing after it wrote part of a turn, and the whole transaction goes back
+			if answer, failure := asRefusal(err); failure == nil && conflicts() > before {
 				refused = answer
+				return nil
 			}
-			return nil
+			return err
 		}
 		// a holder has one live claim per target: asking again while the earlier turn is open answers that turn, which is not this node's
 		if head, _ := t["candidateHead"].(string); head != acc.HeadSHA || fmt.Sprint(t["relationshipId"]) != acc.RelationshipID || fmt.Sprint(t["prNumber"]) != strconv.FormatInt(acc.PRNumber, 10) || t["projectKey"] != current.ProjectKey {

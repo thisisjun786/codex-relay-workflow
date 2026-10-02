@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 )
 
 // judgeKit is an integration kit with node I accepted at the head of a real branch ("feature", cut from dev) whose pull request is scripted: the forge answers what the test says, while the
@@ -104,6 +105,20 @@ func TestMergeEligibilityRetryOnceThenEvict(t *testing.T) {
 		k.setChecks("A:1:1:failure", "A:1:2:success", "B:2:1:success")
 		if r := k.judge(); !r.Eligible() || len(r.FailedRequired) != 0 {
 			t.Fatalf("the retried run = %+v", r)
+		}
+	})
+	t.Run("a failure seen after the checks were seen running again is a second failure", func(t *testing.T) {
+		k := newJudgeKit(t)
+		k.setChecks("A:1:1:failure", "B:2:1:success")
+		k.judge()
+		// the retry has started: the run is in progress, then fails with an identity the forge gives no way to tell from the first
+		k.setChecks("A:1:1:", "B:2:1:success")
+		if r := k.judge(); r.Outcome != OutcomeChecksPending {
+			t.Fatalf("running = %+v", r)
+		}
+		k.setChecks("A:1:1:failure", "B:2:1:success")
+		if r := k.judge(); r.Outcome != OutcomeEvicted {
+			t.Fatalf("failed again after running = %+v", r)
 		}
 	})
 	t.Run("a second failure evicts for good", func(t *testing.T) {
@@ -478,4 +493,62 @@ func TestMergeRequestReadsAgainWhereItWrites(t *testing.T) {
 	if k.count("SELECT COUNT(*) FROM merge_turns") != 0 {
 		t.Fatal("a turn was created for criteria that moved")
 	}
+}
+
+// The judgement the turn rests on is checked again in the transaction that creates the turn, all of it: a predecessor edge that appears, a falsified record of the judgement and an
+// integrity failure of the lane in the middle of writing a turn each leave no turn, no grant and no half-written ledger.
+func TestMergeRequestCheckedAgainInTheTransactionThatCreatesTheTurn(t *testing.T) {
+	ask := func(k *judgeKit) error {
+		_, turn, err := k.sched.RequestMergeTurn(context.Background(), "g", "I", "parent", MergeRequestInput{Host: "host"})
+		if err != nil && turn != nil {
+			t.Fatalf("a refusal came with a turn: %v", turn)
+		}
+		return err
+	}
+	nothing := func(k *judgeKit) {
+		t.Helper()
+		if k.count("SELECT COUNT(*) FROM merge_turns") != 0 || k.count("SELECT COUNT(*) FROM merge_turn_ledger") != 0 {
+			t.Fatal("something of a turn was written")
+		}
+	}
+	t.Run("a predecessor appears", func(t *testing.T) {
+		k := newJudgeKit(t)
+		k.sched.testBetweenJudgeAndAsk = func() {
+			k.putPlan("g", int(k.snapshot("g").Revision), "g-r2", addEdge("di", "D", "I", "integrated", doc{"target_repository": k.repo.path, "target_base_ref": "dev"}))
+			k.acceptNode("g", "D", acceptOpts{HeadSHA: strings.Repeat("3", 40), PR: 6, Forge: "owner/repo", Repository: k.repo.path})
+		}
+		if err := ask(k); refusalReason(err) != "disposition_conflict" || !strings.Contains(err.Error(), "has not landed") {
+			t.Fatalf("request = %v", err)
+		}
+		nothing(k)
+	})
+	t.Run("the record of the judgement is falsified", func(t *testing.T) {
+		k := newJudgeKit(t)
+		k.sched.testBetweenJudgeAndAsk = func() {
+			k.exec("UPDATE dag_merge_checks SET evidence_json = replace(evidence_json, 'success', 'failure')")
+		}
+		if err := ask(k); refusalReason(err) != "revision_mismatch" {
+			t.Fatalf("request = %v", err)
+		}
+		nothing(k)
+	})
+	t.Run("the lane fails its own integrity check after writing part of the turn", func(t *testing.T) {
+		k := newJudgeKit(t)
+		target, err := mergeturn.TargetKey(k.repo.path, "dev")
+		if err != nil {
+			t.Fatal(err)
+		}
+		turn := mergeturn.TurnID(target, "parent", 1)
+		// an entry of the ledger already holds the identity the new turn's claim writes, as something else
+		k.exec("PRAGMA foreign_keys = OFF")
+		k.exec("INSERT INTO merge_turn_ledger (entry_id, turn_id, kind, from_state, to_state, evidence_kind, actor_task_id, evidence, idempotency_key, recorded_at) VALUES (?, ?, 'transition', NULL, 'holding', 'claim', 'someone-else', 'something else', 'request:1', 't')",
+			registry.CoordinationID("mte", turn, "request:1"), turn)
+		before := k.count("SELECT COUNT(*) FROM merge_turn_ledger")
+		if err := ask(k); refusalReason(err) != "merge_evidence_required" {
+			t.Fatalf("request = %v", err)
+		}
+		if k.count("SELECT COUNT(*) FROM merge_turns") != 0 || k.count("SELECT COUNT(*) FROM merge_turn_ledger") != before {
+			t.Fatal("a half-written turn was committed")
+		}
+	})
 }

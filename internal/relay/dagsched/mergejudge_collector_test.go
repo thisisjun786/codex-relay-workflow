@@ -20,6 +20,13 @@ func checkRun(id int, name, head, conclusion string, app int) map[string]any {
 	return map[string]any{"id": id, "name": name, "head_sha": head, "status": "completed", "conclusion": conclusion, "app": map[string]any{"id": app}}
 }
 
+// checkRunAt is a check run with the time it completed.
+func checkRunAt(id int, name, head, conclusion string, app int, completed string) map[string]any {
+	c := checkRun(id, name, head, conclusion, app)
+	c["completed_at"] = completed
+	return c
+}
+
 func collectorScript(head string, required []any, checks ...any) *ghScript {
 	g := newGHScript()
 	g.rules = []any{map[string]any{"type": "required_status_checks", "parameters": map[string]any{"strict_required_status_checks_policy": false, "required_status_checks": required}}}
@@ -147,5 +154,28 @@ func TestAStatusThatFailsAgainIsASecondFailure(t *testing.T) {
 	gate("success", "2026-10-02T00:00:20Z")
 	if later := k.judge(); later.Outcome != OutcomeEvicted {
 		t.Fatalf("success after the eviction = %+v", later)
+	}
+}
+
+// Failures that the forge reports with the same identity are told apart by when they happened: a check run that the app reset and ran again keeps its id but completes at another time, and
+// the same completed run read twice is one failure.
+func TestACheckRunResetInPlaceIsASecondFailure(t *testing.T) {
+	k := newJudgeKit(t)
+	required := []any{map[string]any{"context": "dev-gate", "integration_id": 42}}
+	run := func(at string) {
+		k.useCollector(collectorScript(k.feature, required, checkRunAt(11, "dev-gate", k.feature, "failure", 42, at)))
+	}
+	run("2026-10-02T00:00:01Z")
+	first := k.judge()
+	if first.Outcome != OutcomeRetrySameSHA {
+		t.Fatalf("first = %+v", first)
+	}
+	run("2026-10-02T00:00:01Z")
+	if again := k.judge(); !again.Replayed {
+		t.Fatalf("the same completed run again = %+v", again)
+	}
+	run("2026-10-02T00:05:00Z")
+	if second := k.judge(); second.Outcome != OutcomeEvicted {
+		t.Fatalf("the same check run reset and failed again = %+v", second)
 	}
 }
