@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 )
 
 // Transport vocabulary (transport.py). These spellings are stored in the database and read by
@@ -28,7 +30,7 @@ const (
 var knownMethods = []string{"initialize", "thread/read", "thread/resume", "turn/start"}
 
 // SettingsRefusals are the resume refusals decided before any turn/start (transport.py).
-var SettingsRefusals = []string{"settings_not_preserved", "setting_unobservable", "environments_unknown", "unverifiable_permission_profile", "settings_differ_after_load"}
+var SettingsRefusals = []string{registry.SettingsNotPreserved, registry.SettingUnobservable, registry.EnvironmentsUnknown, registry.UnverifiablePermissionProfile, registry.SettingsDifferAfterLoad}
 
 // Facts is transport.TransportFacts: one receipt turned into delivery facts.
 type Facts struct {
