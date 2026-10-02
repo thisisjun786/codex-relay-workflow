@@ -2,7 +2,9 @@ package dagsched
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
+	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
@@ -38,6 +40,102 @@ const (
 // StaleActions are the routes of a stale node, in the order the documentation lists them.
 func StaleActions() []string {
 	return []string{ActionRevalidate, ActionCorrect, ActionHold, ActionRedefine}
+}
+
+// How a correction generation was opened (CorrectionResult.OpenedBy).
+const (
+	OpenedByRuling         = "ruling"
+	OpenedByGenerationOpen = "generation_open"
+)
+
+// CorrectionRequestID is the dispatch request id a correction generation opened by hand carries (generation-open --dispatch-request-id): derived from the plan, the node, the manifest and the generation, so
+// the generation row itself names the one manifest it was opened for and a generation opened under any other id is not bound to a manifest by dag-correct.
+func CorrectionRequestID(plan, node, manifestDigest string, generation int64) string {
+	return "dag-correct-" + shaOf([]byte(strings.Join([]string{plan, node, manifestDigest, itoa64(generation)}, "|")))[:40]
+}
+
+// describeOpening says how the recorded generation of a node was opened, from the row dag-correct wrote and the generation the relay holds.
+func (s *Scheduler) describeOpening(ctx context.Context, q store.Querier, plan, node string, rel relRow, out *CorrectionResult) error {
+	var kind string
+	var request sql.NullString
+	found, err := queryOne(ctx, q, "SELECT kind, managed_request_id FROM dag_node_executions WHERE plan_id = ? AND node_id = ? AND relationship_id = ? AND execution_generation = ?", []any{plan, node, rel.ID, rel.Generation}, &kind, &request)
+	if err != nil || !found || kind != "correction" {
+		return err
+	}
+	out.OpenedBy = OpenedByRuling
+	if !request.Valid {
+		return nil
+	}
+	var turn sql.NullString
+	if _, err := queryOne(ctx, q, "SELECT dispatch_turn_id FROM generations WHERE relationship_id = ? AND execution_generation = ?", []any{rel.ID, rel.Generation}, &turn); err != nil {
+		return err
+	}
+	out.OpenedBy, out.DispatchRequestID, out.DispatchTurnID = OpenedByGenerationOpen, request.String, turn.String
+	return nil
+}
+
+// recordHandOpened binds a generation the coordinator opened by hand (the relay's generation-open, store-only, then generation-bind to the turn that carried the instruction line to the child) to the manifest
+// dag-correct --prepare made for it. It is the way a correction reaches the same child when no needs_changes ruling can open the generation: the relay's verdict writer answers a replay to a second ruling on
+// a head it ruled verified unless the criteria registered for the relationship changed (a node whose consumed input was replaced, its criteria untouched). The verdict writer is not touched, and the route
+// is bounded so that it cannot make a rerun or bind a manifest nobody was told:
+//
+//   - the node's accepted result is stale and its route, without this generation, is a correction: a result that is current is corrected by a ruling, a change of the criteria alone is a revalidation and
+//     opens no generation, and a node that landed was refused before this;
+//   - the manifest is named (--manifest-digest) and is the one stored for this node at its current slice and criteria, as on the ruling route;
+//   - the generation was opened under the dispatch request id derived from that manifest (CorrectionRequestID), so it was opened for this manifest and no other;
+//   - the generation is bound to a dispatch turn: the instruction line reached the child in it (a child reports in a bound generation only).
+//
+// What is recorded of how the instruction reached the child is that request id (dag_node_executions.managed_request_id, which a ruling leaves NULL) and the bound dispatch turn. It is the coordinator's
+// statement: the relay does not read the child's thread, so unlike the ruling route (which compares the restoration note with the instruction line) nothing here compares the dispatching message with the
+// line; the child checks the manifest file against the digest and hash the line names and answers blocked_needs_input on a mismatch.
+func (s *Scheduler) recordHandOpened(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, n dag.SnapNode, rel relRow, suppliedDigest string, out *CorrectionResult) error {
+	notRuled := fmt.Sprintf("no needs_changes ruling on generation %d of %s opened generation %d", rel.Generation-1, rel.ID, rel.Generation)
+	st, err := s.staleOf(ctx, q, plan, snap, n)
+	if err != nil {
+		return err
+	}
+	if st == nil {
+		return refuse(contract.RefusalDispositionConflict, "%s, and the accepted result of %s is not stale, so it is not corrected by a generation opened by hand either: a result that is current is corrected by a ruling", notRuled, n.NodeID)
+	}
+	// the same route a stale node has without the generation: a change of the criteria alone is ruled again (a revalidation, no generation), and what rests on a stale predecessor or an input that is not
+	// there waits; only a result that must be reworked is corrected
+	if action, detail, err := s.routeOf(ctx, q, plan, snap, n, st, true); err != nil {
+		return err
+	} else if action != ActionCorrect {
+		return refuse(contract.RefusalDispositionConflict, "%s, and the route of %s is %s, not a correction by hand: %s", notRuled, n.NodeID, action, detail)
+	}
+	if suppliedDigest == "" {
+		return refuse(contract.RefusalDispositionConflict, "%s: a generation opened by hand is bound to the manifest it was opened for, so name it with --manifest-digest", notRuled)
+	}
+	body, stored, err := dag.ReadManifestOn(ctx, q, suppliedDigest)
+	if err != nil {
+		return refuse(contract.RefusalRevisionMismatch, "the manifest %s does not digest to its name: %v", suppliedDigest, err)
+	}
+	if !stored || body["node_id"] != n.NodeID || body["issue_key"] != n.IssueKey {
+		return refuse(contract.RefusalDispositionConflict, "the manifest %s is not stored for node %s of %s", suppliedDigest, n.NodeID, n.IssueKey)
+	}
+	if body["node_slice_digest"] != n.SliceDigest || body["criteria_set_digest"] != n.CriteriaSetDigest {
+		return refuse(contract.RefusalDispositionConflict, "the manifest %s was prepared for another version of node %s than the plan holds now: prepare it again and open the generation again", suppliedDigest, n.NodeID)
+	}
+	var request, anchor string
+	var turn sql.NullString
+	if _, err := queryOne(ctx, q, "SELECT dispatch_request_id, anchor_state, dispatch_turn_id FROM generations WHERE relationship_id = ? AND execution_generation = ?", []any{rel.ID, rel.Generation}, &request, &anchor, &turn); err != nil {
+		return err
+	}
+	want := CorrectionRequestID(plan, n.NodeID, suppliedDigest, rel.Generation)
+	if request != want {
+		return refuse(contract.RefusalDispositionConflict, "generation %d of %s was opened under dispatch request %q: the request id for manifest %s is %q, so the generation was not opened for this manifest (open it with the id dag-correct --prepare printed)",
+			rel.Generation, rel.ID, request, suppliedDigest, want)
+	}
+	if anchor != "bound" || strings.TrimSpace(turn.String) == "" {
+		return refuse(contract.RefusalDispositionConflict, "generation %d of %s has no dispatch turn: send the instruction line to the child and bind the turn that carried it (generation-bind --dispatch-turn-id) before the generation is recorded", rel.Generation, rel.ID)
+	}
+	if _, err := q.ExecContext(ctx, "INSERT INTO dag_node_executions (plan_id, node_id, relationship_id, execution_generation, manifest_digest, kind, managed_request_id) VALUES (?,?,?,?,?,'correction',?)",
+		plan, n.NodeID, rel.ID, rel.Generation, suppliedDigest, want); err != nil {
+		return err
+	}
+	out.ManifestDigest, out.OpenedBy, out.DispatchRequestID, out.DispatchTurnID = suppliedDigest, OpenedByGenerationOpen, want, turn.String
+	return nil
 }
 
 // consumedChange is what is no longer as an accepted node consumed it, the criteria aside. It is nil, and the text empty, only when no acceptance the node consumed was replaced and the manifest rebuilt
@@ -147,6 +245,12 @@ func holdOnPredecessor(n dag.SnapNode, st *Stale) (string, string) {
 
 // routeStale is what is done about the stale result of a node: its route and the sentence that says why. Nothing is written.
 func (s *Scheduler) routeStale(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, n dag.SnapNode, st *Stale) (action, detail string, err error) {
+	return s.routeOf(ctx, q, plan, snap, n, st, false)
+}
+
+// routeOf is routeStale; ignoreOpen leaves out the generation a correction already opened, which routeStale reports as hold: dag-correct asks what the route of the node is without the generation it is
+// about to record.
+func (s *Scheduler) routeOf(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, n dag.SnapNode, st *Stale, ignoreOpen bool) (action, detail string, err error) {
 	rel, found, err := currentRelationshipOf(ctx, q, plan, n.NodeID)
 	if err != nil {
 		return "", "", err
@@ -181,8 +285,8 @@ func (s *Scheduler) routeStale(ctx context.Context, q store.Querier, plan string
 			"which the parent decides and which makes a new child", n.NodeID), nil
 	case rel.Status != "active":
 		return ActionHold, fmt.Sprintf("relationship %s of %s is %s: resume it (relationship-resume) before a ruling or a correction can reach its child", short(rel.ID), n.NodeID, rel.Status), nil
-	case hasAcc && rel.Generation > acc.ExecutionGeneration:
-		return ActionHold, fmt.Sprintf("generation %d of relationship %s is open, a correction of %s that goes to its child: wait for its report, then accept it with dag-accept --supersedes %s",
+	case !ignoreOpen && hasAcc && rel.Generation > acc.ExecutionGeneration:
+		return ActionHold, fmt.Sprintf("generation %d of relationship %s is open, a correction of %s that goes to its child: record it with dag-correct if that is not done yet, wait for its report, then accept it with dag-accept --supersedes %s",
 			rel.Generation, short(rel.ID), n.NodeID, short(acc.AcceptanceID)), nil
 	}
 	why := st.Cause
@@ -200,18 +304,19 @@ func (s *Scheduler) routeStale(ctx context.Context, q store.Querier, plan string
 		}
 		why = st.Cause + " and " + changed.Cause
 	}
-	ruling := "the accepted head is not open to another ruling, so the relay's verdict writer answers one with a replay and opens no generation: the review reopens when the criteria registered for the relationship change"
+	ruling := "the accepted head is not open to another ruling, so the relay's verdict writer answers one with a replay and opens no generation: open the generation by hand instead (generation-open --relationship " + rel.ID +
+		" --dispatch-request-id <the id dag-correct --prepare prints> --reason needs_changes_revision), send the instruction line to the child in the dispatching message, bind that turn (generation-bind --dispatch-turn-id), and record it with dag-correct --manifest-digest <the digest>; the review also reopens when the criteria registered for the relationship change"
 	if hasAcc {
 		open, err := s.reviewOpen(ctx, q, rel, acc)
 		if err != nil {
 			return "", "", err
 		}
 		if open {
-			ruling = "the relay's review of the accepted head is open (the criteria registered for the relationship are not the set it was ruled under), so a needs_changes ruling opens the next generation"
+			ruling = "the relay's review of the accepted head is open (the criteria registered for the relationship are not the set it was ruled under), so a needs_changes ruling opens the next generation; a generation opened by hand with the id dag-correct --prepare prints works as well"
 		}
 	}
-	return ActionCorrect, fmt.Sprintf("the output of %s must be reworked (%s). It goes to the same child as generation %d of relationship %s: dag-correct --prepare, the needs_changes ruling carrying its instruction as the restoration "+
-		"finding, then dag-correct; accept the reworked result with dag-accept --supersedes %s. %s", n.NodeID, why, rel.Generation+1, short(rel.ID), short(acc.AcceptanceID), ruling), nil
+	return ActionCorrect, fmt.Sprintf("the output of %s must be reworked (%s). It goes to the same child as generation %d of relationship %s: dag-correct --prepare, then a needs_changes ruling carrying its instruction as the restoration "+
+		"finding or a generation opened by hand, then dag-correct; accept the reworked result with dag-accept --supersedes %s. %s", n.NodeID, why, rel.Generation+1, short(rel.ID), short(acc.AcceptanceID), ruling), nil
 }
 
 // withRoute is the stale reading with its route: a copy, because the verdict the memo holds is shared by every question asked of one pass.

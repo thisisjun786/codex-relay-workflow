@@ -14,6 +14,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -731,4 +732,223 @@ func TestAMergedNodeIsNotCorrectableWhateverItsKindBecomes(t *testing.T) {
 	} else if !strings.Contains(err.Error(), "landed") {
 		t.Fatalf("the refusal does not say why: %v", err)
 	}
+}
+
+// rvHandKit is a stale node whose criteria did not change: A is revised and accepted again, so C, which consumed the first acceptance of A, rests on a replaced input and nothing else. The relay's
+// verdict writer holds C's head as ruled verified under the criteria registered now.
+func rvHandKit(t *testing.T) (*releaseKit, map[string]AcceptResult, string, Prepared) {
+	t.Helper()
+	k, accepted := rvSettledSharedRoot(t)
+	k.invRevise("sr", "A", "sr-r2", invTitle("A revised"))
+	k.invSettleAgain("sr", "A", accepted["A"])
+	reading := k.read("sr")
+	if n := reading.node("C"); n.Disposition != DispStale {
+		t.Fatalf("C = %+v, want it stale: %s", n, reading.brief())
+	}
+	return k, accepted, accepted["C"].RelationshipID, k.rvPrepare("sr", "C")
+}
+
+// rvOpenByHand is the coordinator's act with the relay's own commands: generation-open under the request id dag-correct --prepare printed, then generation-bind to the turn that carried the instruction.
+func rvOpenByHand(t *testing.T, k *releaseKit, relationship, request string, bind bool) {
+	t.Helper()
+	reg := &registry.Registry{Store: k.s}
+	if _, err := reg.OpenGeneration(context.Background(), relationship, request, "needs_changes_revision", sql.NullString{}); err != nil {
+		t.Fatalf("generation-open: %v", err)
+	}
+	if bind {
+		if _, err := reg.BindAnchor(context.Background(), relationship, 2, "turn-dispatch-"+relationship, "dispatch_receipt"); err != nil {
+			t.Fatalf("generation-bind: %v", err)
+		}
+	}
+}
+
+// Criterion c2, generation 2 of the packet: a node made stale because an input it consumed was replaced, its criteria untouched, is corrected by the same child through a generation the coordinator opens by hand
+// (the relay's generation-open and generation-bind, the verdict writer untouched). The relay's own writer answers a replay to a ruling on that head, which the test shows first; then dag-correct binds the hand-opened
+// generation to the manifest it was prepared for, records how the instruction reached the child, and the reworked output is accepted with --supersedes. No relationship and no child is made.
+func TestReworkWithUnchangedCriteriaGoesThroughAGenerationOpenedByHand(t *testing.T) {
+	k, accepted, ridC, prepared := rvHandKit(t)
+	var childBefore string
+	if err := k.s.DB.QueryRow("SELECT child_task_id FROM relationships WHERE relationship_id = ?", ridC).Scan(&childBefore); err != nil {
+		t.Fatal(err)
+	}
+	siblings := map[string]string{"R": rvRecords(k, "sr", "R"), "B": rvRecords(k, "sr", "B"), "A": rvRecords(k, "sr", "A")}
+	fleet := k.rvFleet()
+	prefix := strings.Split(fleet, " generations=")[0]
+
+	reading := k.read("sr")
+	obj := invStaleObject(t, reading, "C")
+	if invField(obj, "cause") != "input_changed" || rvAction(t, reading, "C") != rvCorrect {
+		t.Fatalf("C = %v, route %q", obj, rvAction(t, reading, "C"))
+	}
+	if detail := rvDetail(t, reading, "C"); !strings.Contains(detail, "generation-open") || !strings.Contains(detail, "replay") || !strings.Contains(detail, "generation-bind") {
+		t.Fatalf("the route of C does not name the generation opened by hand: %q", detail)
+	}
+
+	// the relay's own verdict writer takes no second ruling on that head: a replay, no generation
+	var child string
+	if err := k.s.DB.QueryRow("SELECT child_task_id FROM relationships WHERE relationship_id = ?", ridC).Scan(&child); err != nil {
+		t.Fatal(err)
+	}
+	k.exec("UPDATE relationships SET allowed_recipients = ? WHERE relationship_id = ?", `["parent","`+child+`"]`, ridC)
+	record, err := delivery.NewAck(delivery.NewService(k.s, delivery.SystemClock{})).RecordVerdict(context.Background(), "evt-"+ridC, "needs_changes", "verdict-turn-probe", nil, []any{restoration("do it again")}, nil, releaseCriteriaDigest())
+	replayed := false
+	for _, f := range record {
+		replayed = replayed || f.Key == "_replay"
+	}
+	if err != nil || !replayed || k.count("SELECT COUNT(*) FROM generations WHERE relationship_id = ?", ridC) != 1 {
+		t.Fatalf("the relay's writer on C's settled head = %v %v (replayed %v): the premise of the hand-opened route does not hold", record, err, replayed)
+	}
+
+	// the coordinator opens the generation under the id the prepare printed, sends the instruction, binds the turn
+	if prepared.DispatchRequestID == "" || prepared.DispatchRequestID != CorrectionRequestID("sr", "C", prepared.ManifestDigest, 2) {
+		t.Fatalf("prepared = %+v", prepared)
+	}
+	rvOpenByHand(t, k, ridC, prepared.DispatchRequestID, true)
+	res, err := k.sched.RecordCorrection(context.Background(), "sr", "C", "parent", prepared.ManifestDigest)
+	if err != nil || res.Replayed || res.Generation != 2 || res.RelationshipID != ridC || res.ManifestDigest != prepared.ManifestDigest || res.OpenedBy != OpenedByGenerationOpen ||
+		res.DispatchRequestID != prepared.DispatchRequestID || res.DispatchTurnID != "turn-dispatch-"+ridC {
+		t.Fatalf("dag-correct for the hand-opened generation = %v %+v", err, res)
+	}
+	var kind, bound string
+	var request sql.NullString
+	if err := k.s.DB.QueryRow("SELECT kind, manifest_digest, managed_request_id FROM dag_node_executions WHERE relationship_id = ? AND execution_generation = 2", ridC).Scan(&kind, &bound, &request); err != nil ||
+		kind != "correction" || bound != prepared.ManifestDigest || request.String != prepared.DispatchRequestID {
+		t.Fatalf("the execution row = %s %s %v %v", kind, bound, request, err)
+	}
+	var childAfter string
+	if err := k.s.DB.QueryRow("SELECT child_task_id FROM relationships WHERE relationship_id = ?", ridC).Scan(&childAfter); err != nil || childAfter != childBefore {
+		t.Fatalf("the correction went to %q, the child of C is %q (%v)", childAfter, childBefore, err)
+	}
+	if got := k.rvFleet(); !strings.HasPrefix(got, prefix) {
+		t.Fatalf("the hand-opened correction made a relationship or a child:\nbefore %s\nafter  %s", fleet, got)
+	}
+	if got := rvAction(t, k.read("sr"), "C"); got != rvHold {
+		t.Fatalf("the route of C while generation 2 is open = %q, want %q", got, rvHold)
+	}
+	// recording again is a replay that says how the generation was opened; another digest is refused
+	if again, err := k.sched.RecordCorrection(context.Background(), "sr", "C", "parent", prepared.ManifestDigest); err != nil || !again.Replayed || again.OpenedBy != OpenedByGenerationOpen || again.DispatchTurnID != res.DispatchTurnID {
+		t.Fatalf("replay = %v %+v", err, again)
+	}
+	if _, err := k.sched.RecordCorrection(context.Background(), "sr", "C", "parent", dig("another manifest")); refusalReason(err) != "disposition_conflict" {
+		t.Fatalf("replay with another digest = %v", err)
+	}
+
+	// the child reports the reworked output in the bound generation and the parent accepts it in place of the first one
+	k.rvReportGeneration(ridC, "C", 2, releaseCriteriaDigest())
+	second, err := k.accept("sr", "C", AcceptInput{Supersedes: accepted["C"].AcceptanceID})
+	if err != nil || second.SupersededID != accepted["C"].AcceptanceID || second.Generation != 2 || second.AcceptanceID == accepted["C"].AcceptanceID {
+		t.Fatalf("accept of the reworked C = %v %+v", err, second)
+	}
+	after := k.read("sr")
+	if got := invStaleIDs(after); len(got) != 0 {
+		t.Fatalf("after C was reworked %v are still stale: %s", got, after.brief())
+	}
+	if got := k.rvFleet(); !strings.HasPrefix(got, prefix) {
+		t.Fatalf("the rework made a relationship or a child:\nbefore %s\nafter  %s", fleet, got)
+	}
+	for node, before := range siblings {
+		if now := rvRecords(k, "sr", node); now != before {
+			t.Fatalf("the records of the unrelated node %s changed:\nbefore %s\nafter  %s", node, before, now)
+		}
+	}
+}
+
+// What dag-correct will not bind for a generation opened by hand: one opened for another manifest, one nobody bound to a turn, one without a named manifest, a manifest that is not the node's, and a
+// node whose result is not stale (those are corrected by a ruling). Each leaves no execution row.
+func TestAGenerationOpenedByHandIsBoundOnlyToTheManifestItWasOpenedFor(t *testing.T) {
+	bound := func(k *releaseKit) int {
+		return k.count("SELECT COUNT(*) FROM dag_node_executions WHERE node_id = 'C' AND execution_generation = 2")
+	}
+	t.Run("opened under another request id", func(t *testing.T) {
+		k, _, ridC, prepared := rvHandKit(t)
+		rvOpenByHand(t, k, ridC, "some-other-request", true)
+		if _, err := k.sched.RecordCorrection(context.Background(), "sr", "C", "parent", prepared.ManifestDigest); refusalReason(err) != "disposition_conflict" || bound(k) != 0 {
+			t.Fatalf("correction = %v (%d bound)", err, bound(k))
+		} else if !strings.Contains(err.Error(), "not opened for this manifest") {
+			t.Fatalf("the refusal does not say why: %v", err)
+		}
+	})
+	t.Run("opened for a manifest prepared before the plan moved", func(t *testing.T) {
+		k, _, ridC, prepared := rvHandKit(t)
+		rvOpenByHand(t, k, ridC, prepared.DispatchRequestID, true)
+		k.invRevise("sr", "C", "sr-r3", invTitle("C revised after the prepare"))
+		if _, err := k.sched.RecordCorrection(context.Background(), "sr", "C", "parent", prepared.ManifestDigest); refusalReason(err) != "disposition_conflict" || bound(k) != 0 {
+			t.Fatalf("correction = %v (%d bound)", err, bound(k))
+		} else if !strings.Contains(err.Error(), "prepare it again") {
+			t.Fatalf("the refusal does not say why: %v", err)
+		}
+		// generation 2 stays open and unrecorded; preparing again names generation 3, and opening that one is refused at the gap with the relay's own words: no further generation is opened for the node
+		// and nothing is bound, so the coordinator reports the refusal and stops
+		again := k.rvPrepare("sr", "C")
+		if again.ManifestDigest == prepared.ManifestDigest || !strings.Contains(again.Instruction, "generation 3") {
+			t.Fatalf("the second prepare = %+v", again)
+		}
+		reg := &registry.Registry{Store: k.s}
+		if _, err := reg.OpenGeneration(context.Background(), ridC, again.DispatchRequestID, "needs_changes_revision", sql.NullString{String: "turn-dispatch-3", Valid: true}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := k.sched.RecordCorrection(context.Background(), "sr", "C", "parent", again.ManifestDigest); refusalReason(err) != "disposition_conflict" || !strings.Contains(err.Error(), "follows generation 2") ||
+			k.count("SELECT COUNT(*) FROM dag_node_executions WHERE node_id = 'C' AND execution_generation > 1") != 0 {
+			t.Fatalf("the second correction = %v", err)
+		}
+	})
+	t.Run("no turn bound to the generation yet", func(t *testing.T) {
+		k, _, ridC, prepared := rvHandKit(t)
+		rvOpenByHand(t, k, ridC, prepared.DispatchRequestID, false)
+		if _, err := k.sched.RecordCorrection(context.Background(), "sr", "C", "parent", prepared.ManifestDigest); refusalReason(err) != "disposition_conflict" || bound(k) != 0 {
+			t.Fatalf("correction = %v (%d bound)", err, bound(k))
+		} else if !strings.Contains(err.Error(), "generation-bind") {
+			t.Fatalf("the refusal does not name the way on: %v", err)
+		}
+		if _, err := (&registry.Registry{Store: k.s}).BindAnchor(context.Background(), ridC, 2, "turn-dispatch-late", "dispatch_receipt"); err != nil {
+			t.Fatal(err)
+		}
+		if res, err := k.sched.RecordCorrection(context.Background(), "sr", "C", "parent", prepared.ManifestDigest); err != nil || res.DispatchTurnID != "turn-dispatch-late" {
+			t.Fatalf("after the bind = %v %+v", err, res)
+		}
+	})
+	t.Run("no manifest named", func(t *testing.T) {
+		k, _, ridC, prepared := rvHandKit(t)
+		rvOpenByHand(t, k, ridC, prepared.DispatchRequestID, true)
+		if _, err := k.sched.RecordCorrection(context.Background(), "sr", "C", "parent", ""); refusalReason(err) != "disposition_conflict" || bound(k) != 0 {
+			t.Fatalf("correction = %v (%d bound)", err, bound(k))
+		} else if !strings.Contains(err.Error(), "--manifest-digest") {
+			t.Fatalf("the refusal does not ask for the manifest: %v", err)
+		}
+	})
+	t.Run("a manifest that is not stored for the node", func(t *testing.T) {
+		k, _, ridC, prepared := rvHandKit(t)
+		rvOpenByHand(t, k, ridC, prepared.DispatchRequestID, true)
+		if _, err := k.sched.RecordCorrection(context.Background(), "sr", "C", "parent", dig("invented")); refusalReason(err) != "disposition_conflict" || bound(k) != 0 {
+			t.Fatalf("correction = %v (%d bound)", err, bound(k))
+		} else if !strings.Contains(err.Error(), "not stored for node") {
+			t.Fatalf("the refusal does not say why: %v", err)
+		}
+	})
+	t.Run("a change of the criteria alone is revalidated, not corrected by hand", func(t *testing.T) {
+		k, accepted := rvSettledSharedRoot(t)
+		k.rvReregister("sr", "A", "sr-r2", accepted["A"].RelationshipID, dig("A's new criteria"), nil)
+		if got := rvAction(t, k.read("sr"), "A"); got != rvRevalidate {
+			t.Fatalf("the route of A = %q, want %q", got, rvRevalidate)
+		}
+		ridA := accepted["A"].RelationshipID
+		prepared := k.rvPrepare("sr", "A")
+		rvOpenByHand(t, k, ridA, prepared.DispatchRequestID, true)
+		if _, err := k.sched.RecordCorrection(context.Background(), "sr", "A", "parent", prepared.ManifestDigest); refusalReason(err) != "disposition_conflict" || k.count("SELECT COUNT(*) FROM dag_node_executions WHERE node_id = 'A' AND execution_generation = 2") != 0 {
+			t.Fatalf("correction = %v", err)
+		} else if !strings.Contains(err.Error(), "revalidate") {
+			t.Fatalf("the refusal does not name the route: %v", err)
+		}
+	})
+	t.Run("a node whose result is not stale is corrected by a ruling", func(t *testing.T) {
+		k, accepted, _, _ := rvHandKit(t)
+		ridB := accepted["B"].RelationshipID
+		prepared := k.rvPrepare("sr", "B")
+		rvOpenByHand(t, k, ridB, prepared.DispatchRequestID, true)
+		if _, err := k.sched.RecordCorrection(context.Background(), "sr", "B", "parent", prepared.ManifestDigest); refusalReason(err) != "disposition_conflict" || k.count("SELECT COUNT(*) FROM dag_node_executions WHERE node_id = 'B' AND execution_generation = 2") != 0 {
+			t.Fatalf("correction = %v", err)
+		} else if !strings.Contains(err.Error(), "not stale") {
+			t.Fatalf("the refusal does not say why: %v", err)
+		}
+	})
 }
