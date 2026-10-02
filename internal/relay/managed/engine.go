@@ -839,5 +839,27 @@ func (m *Start) registeredProblem(ctx context.Context, id Identity, row store.Ma
 func (m *Start) packet(id Identity, row store.ManagedStartRequestsRow, req map[string]any, assignment string) string {
 	control := map[string]any{"taskId": row.ChildTaskID.String, "standbyTurnId": row.StandbyTurnID.String, "dispatchRequestId": id.DispatchRequestID, "assignmentId": assignment, "relationshipId": row.RelationshipID.String, "executionGeneration": row.ExecutionGeneration.Int64, "state": store.PathlibParent(m.Store.Path), "socket": m.Socket, "workspace": id.Workspace, "markerRoot": id.MarkerRoot}
 	encoded, _ := compactPythonJSON(control)
-	return "Managed assignment routing record:\n" + string(encoded) + "\nFirst publish your own intent-claim using this task, assignment and dispatch request. Publish your own per-turn disposition; continuation claims must name standbyTurnId. Do not fabricate completion, ACK or verification. Report through the registered relay. The following is the authorized business assignment:\n\n" + str(req["prompt"])
+	// The row's standby turn is the anchor of the row's generation: the send is refused unless
+	// generations.dispatch_turn_id of row.ExecutionGeneration is this very turn (the guard in Run), and
+	// registration records generation 1, so the text managed-start sends today is generation 1's.
+	return routingText(string(encoded), row.ExecutionGeneration.Int64, row.StandbyTurnID.String, str(req["prompt"]))
+}
+
+// routingText is the message that carries a child its routing record and its assignment. Its bytes are
+// part of what the bridge ledger fingerprints for the send under the dispatch request id, so a retry of a
+// request first sent before a change of this text would end in a ledger conflict: generation 1's text is
+// frozen (continuationClaim) and the later generations' wording is the only part that varies.
+func routingText(record string, generation int64, anchor, prompt string) string {
+	return "Managed assignment routing record:\n" + record + "\nFirst publish your own intent-claim using this task, assignment and dispatch request. Publish your own per-turn disposition; " + continuationClaim(generation, anchor) + ". Do not fabricate completion, ACK or verification. Report through the registered relay. The following is the authorized business assignment:\n\n" + prompt
+}
+
+// continuationClaim is the instruction naming the turn a continuation claim must name: the anchor of the
+// generation the text is for. standbyTurnId in the routing record is the anchor of generation 1 only; a
+// later generation is anchored to the turn its revision request arrived in, so naming standbyTurnId there
+// is refused as a claim against the wrong anchor.
+func continuationClaim(generation int64, anchor string) string {
+	if generation > 1 {
+		return fmt.Sprintf("continuation claims must name this generation's anchor turn %s (the dispatch turn bound for executionGeneration %d; standbyTurnId anchors generation 1 only)", anchor, generation)
+	}
+	return "continuation claims must name standbyTurnId"
 }
