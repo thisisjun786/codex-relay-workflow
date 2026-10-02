@@ -215,13 +215,30 @@ func stageDeliverable(t *testing.T, c deliverableCase) ([]store.ManifestEntry, s
 	return entries, revision, named, []string{work}
 }
 
-// The omission reader replays guard.lookup_receipt, so a stored receipt's deliverable is judged
-// by guard.deliverable_state's rule: a frozen copy nobody could reach, like live bytes nobody
-// could read, leaves the deliverable unverifiable (the omission's receipt_unreadable), one that
-// was read and is not a manifest is a changed deliverable with the fence's exception words, and
-// one nested deeper than json.loads descends raises out of it (the omission's
-// evidence_unreadable, Test24_OMI_7b). Each answer is checked against the golden, which began as
-// guard.deliverable_state's (an unverifiable one without its detail: the omission keeps none).
+// deliverableOf is the judgment of a stored receipt's deliverable (store.DeliverableState, which
+// the lookup both the Stop hook and the omission reader use calls) as the golden spells it: the
+// binding when the deliverable stands, the detail when it changed, an error when the comparison
+// could not happen, and the exception the fence raises out of guard.deliverable_state.
+func deliverableOf(ctx context.Context, payload any, reference string, roots any) (string, string, error) {
+	state, binding, detail, err := store.DeliverableState(ctx, payload, reference, roots)
+	switch {
+	case err != nil:
+		return "", "", err
+	case state == store.DeliverableCurrent:
+		return binding, "", nil
+	case state == store.DeliverableUnverifiable:
+		return "", "", errors.New(detail)
+	}
+	return "", detail, nil
+}
+
+// A stored receipt's deliverable is judged by guard.deliverable_state's rule: a frozen copy
+// nobody could reach, like live bytes nobody could read, leaves the deliverable unverifiable (the
+// omission's receipt_unreadable), one that was read and is not a manifest is a changed
+// deliverable with the fence's exception words, and one nested deeper than json.loads descends
+// raises out of it (the omission's evidence_unreadable, Test24_OMI_7b). Each answer is checked
+// against the golden, which began as guard.deliverable_state's (an unverifiable one without its
+// detail: the omission keeps none).
 func TestOmissionDeliverableAnswersAsTheGuard(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root bypasses the permissions these cases depend on")
@@ -230,7 +247,7 @@ func TestOmissionDeliverableAnswersAsTheGuard(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			entries, revision, reference, roots := stageDeliverable(t, c)
 			payload, rootsValue := storedReceiptValues(t, entries, revision, roots)
-			binding, detail, err := omissionDeliverable(context.Background(), payload, reference, rootsValue)
+			binding, detail, err := deliverableOf(context.Background(), payload, reference, rootsValue)
 			var got []any
 			var raised *store.ManifestException
 			switch {
@@ -248,25 +265,27 @@ func TestOmissionDeliverableAnswersAsTheGuard(t *testing.T) {
 	}
 }
 
-// The omission reader hashes and reads under the context it was given, as the Stop hook does: a
-// comparison a ended context cut off did not happen, so the omission is left without a receipt
-// (receipt_unreadable), where the same receipt under a live context is current. A context that has
-// ended before omissionReceipt is called stops at its first SQL statement, so this is the path a
-// context that ends between the snapshot and the artifact reads takes.
+// The lookup hashes and reads under the context it was given, for the Stop hook and the omission
+// reader alike: a comparison an ended context cut off did not happen, so the lookup is not readable
+// and the omission is left without a receipt (receipt_unreadable), where the same receipt under a
+// live context is current. A context that has ended before the lookup stops at its first SQL
+// statement, so this is the path a context that ends between the snapshot and the artifact reads
+// takes.
 func TestOmissionDeliverableLeavesACutOffComparisonUnreadable(t *testing.T) {
 	entries, revision, reference, roots := stageDeliverable(t, deliverableCases()[0])
 	payload, rootsValue := storedReceiptValues(t, entries, revision, roots)
 
-	if binding, _, err := omissionDeliverable(context.Background(), payload, reference, rootsValue); err != nil || binding != "live" {
+	if binding, _, err := deliverableOf(context.Background(), payload, reference, rootsValue); err != nil || binding != "live" {
 		t.Fatalf("a live context: %q %v", binding, err)
 	}
 	ended, cancel := context.WithCancel(context.Background())
 	cancel()
-	binding, detail, err := omissionDeliverable(ended, payload, reference, rootsValue)
-	if err == nil || binding != "" || detail != "" {
-		t.Fatalf("an ended context: %q %q %v", binding, detail, err)
+	state, binding, detail, err := store.DeliverableState(ended, payload, reference, rootsValue)
+	if err != nil || state != store.DeliverableUnverifiable || binding != "" || detail == "" {
+		t.Fatalf("an ended context: %q %q %q %v", state, binding, detail, err)
 	}
-	if got := omissionReceiptFailure(err); got != "receipt_unreadable" {
+	// Unverifiable is not readable, and not readable leaves the omission receipt_unreadable.
+	if got := omissionReceiptUnmeasured(false, nil); got != "receipt_unreadable" {
 		t.Fatalf("the omission is left %q", got)
 	}
 }
