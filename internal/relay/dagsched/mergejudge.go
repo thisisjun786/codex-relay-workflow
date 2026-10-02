@@ -57,24 +57,48 @@ func requiredChecks(pr PullRequest) (pending, failed []string) {
 		runs = append(runs, id)
 	}
 	slices.Sort(runs)
+	// what the branch rule requires is a set of (name, integration) pairs: a name with two integrations needs both to have reported, a name with none named is answered by any
+	type need struct{ name, provider string }
+	var needs []need
 	for _, name := range pr.RequiredDeclared {
-		providers := pr.RequiredProviders[name]
+		if providers := pr.RequiredProviders[name]; len(providers) > 0 {
+			for _, p := range providers {
+				needs = append(needs, need{name, p})
+			}
+		} else {
+			needs = append(needs, need{name, ""})
+		}
+	}
+	seen := map[string]bool{}
+	for _, n := range needs {
 		answered := false
 		for _, id := range runs {
 			c := newest[id]
-			if c.Name != name || (len(providers) > 0 && !slices.Contains(providers, c.Provider)) {
+			if c.Name != n.name || (n.provider != "" && c.Provider != n.provider) {
 				continue
 			}
 			answered = true
 			switch {
 			case !completedConclusions[c.Conclusion]:
-				pending = append(pending, name+": run "+id+" has not finished")
+				pending = append(pending, n.name+": run "+id+" has not finished")
 			case c.Conclusion != "success":
-				failed = append(failed, name+"|"+id+"|"+strconv.FormatInt(c.Attempt, 10))
+				tuple := n.name + "|" + id + "|" + strconv.FormatInt(c.Attempt, 10)
+				if strings.HasPrefix(id, "status:") && c.Stamp != "" {
+					// a commit status has no attempt: when the forge last changed it is what makes a new failure a different failure
+					tuple += "|" + c.Stamp
+				}
+				if !seen[tuple] {
+					seen[tuple] = true
+					failed = append(failed, tuple)
+				}
 			}
 		}
 		if !answered {
-			pending = append(pending, name+": no run of the head")
+			label := n.name
+			if n.provider != "" {
+				label += " (integration " + n.provider + ")"
+			}
+			pending = append(pending, label+": no run of the head")
 		}
 	}
 	slices.Sort(pending)
@@ -199,7 +223,7 @@ func (s *Scheduler) Judge(ctx context.Context, plan, node, actor string, in Judg
 		if err := mergeable(txCtx, tx, acc, actor); err != nil {
 			return err
 		}
-		history, err := loadMergeHistory(txCtx, tx, plan, node, forge, number, pr.HeadSHA)
+		history, err := loadMergeHistory(txCtx, tx, plan, node, forge, pr.HeadSHA)
 		if err != nil {
 			return err
 		}
@@ -208,27 +232,26 @@ func (s *Scheduler) Judge(ctx context.Context, plan, node, actor string, in Judg
 			// The acceptance in force carries the eviction too (the reading blocks it from its own history); an acceptance that already has it is only restated.
 			e := history.evicted
 			out.Outcome, out.Reason, out.Round, out.CheckSeq, out.FailedRequired, out.Replayed = e.outcome, e.reason, e.round, e.seq, e.failed, true
-			var one int
-			own, err := queryOne(txCtx, tx, "SELECT 1 FROM dag_merge_checks WHERE acceptance_id = ? AND outcome = ? AND observed_head_sha = ?", []any{acc.AcceptanceID, OutcomeEvicted, pr.HeadSHA}, &one)
-			if err != nil || own {
+			var ownSeq int64
+			own, err := queryOne(txCtx, tx, "SELECT check_seq FROM dag_merge_checks WHERE acceptance_id = ? AND outcome = ? AND observed_head_sha = ? ORDER BY check_seq LIMIT 1", []any{acc.AcceptanceID, OutcomeEvicted, pr.HeadSHA}, &ownSeq)
+			if err != nil {
 				return err
+			}
+			if own {
+				out.CheckSeq = ownSeq
+				return nil
 			}
 			seq, _, err := s.appendMergeCheck(txCtx, tx, mergeCheck{Acceptance: acc, Observed: pr, BaseTip: tip.SHA, ChecksBase: pr.BaseSHA, Failed: e.failed, Round: maxRounds, Outcome: OutcomeEvicted, Reason: e.reason})
 			out.CheckSeq, out.Replayed = seq, false
 			return err
 		}
-		effective, err := effectiveCriteria(txCtx, tx, acc)
+		fresh, err := s.criteriaCurrent(txCtx, tx, cn, acc)
 		if err != nil {
-			return err
-		}
-		var rows, distinct int
-		var canonical sql.NullString
-		if _, err := queryOne(txCtx, tx, "SELECT COUNT(*), COUNT(DISTINCT set_digest), MIN(set_digest) FROM canonical_criteria WHERE relationship_id = ?", []any{acc.RelationshipID}, &rows, &distinct, &canonical); err != nil {
 			return err
 		}
 		m := mergeCheck{Acceptance: acc, Observed: pr, BaseTip: tip.SHA, ChecksBase: pr.BaseSHA, Round: min(1+history.retries, maxRounds)}
 		switch {
-		case cn.CriteriaSetDigest != effective || rows == 0 || distinct != 1 || canonical.String != effective:
+		case !fresh:
 			m.Outcome, m.Reason = OutcomeStaleCriteria, "the criteria of the plan or of the relationship are no longer the ones the acceptance stands on"
 		case pr.HeadSHA != acc.HeadSHA:
 			m.Outcome, m.Reason = OutcomeStaleHead, "the pull request head is "+pr.HeadSHA+" and the accepted head is "+acc.HeadSHA
@@ -254,6 +277,20 @@ func (s *Scheduler) Judge(ctx context.Context, plan, node, actor string, in Judg
 		return nil
 	})
 	return out, err
+}
+
+// criteriaCurrent is whether the plan's criteria for the node and the criteria registered for its relationship are both the ones the acceptance stands on now.
+func (s *Scheduler) criteriaCurrent(ctx context.Context, q store.Querier, cn dag.SnapNode, acc Acceptance) (bool, error) {
+	effective, err := effectiveCriteria(ctx, q, acc)
+	if err != nil {
+		return false, err
+	}
+	var rows, distinct int
+	var canonical sql.NullString
+	if _, err := queryOne(ctx, q, "SELECT COUNT(*), COUNT(DISTINCT set_digest), MIN(set_digest) FROM canonical_criteria WHERE relationship_id = ?", []any{acc.RelationshipID}, &rows, &distinct, &canonical); err != nil {
+		return false, err
+	}
+	return cn.CriteriaSetDigest == effective && rows > 0 && distinct == 1 && canonical.String == effective, nil
 }
 
 // judgeChecks applies the required-checks rule (5) to m, given the history of the same head.
@@ -308,13 +345,14 @@ type mergeHistory struct {
 	evicted      *historicRow
 }
 
-// loadMergeHistory reads what the judgements of one head of one pull request of a node already say, across every acceptance the node had of it: a head that used up its retry or was evicted
-// stays so when the node is accepted again at the same head. The rows come in the order they were written.
-func loadMergeHistory(ctx context.Context, q store.Querier, plan, node, forge string, number int64, head string) (mergeHistory, error) {
+// loadMergeHistory reads what the judgements of one head of a node already say, across every acceptance the node had of it and whichever pull request (or spelling of the repository: the forge
+// does not tell owner/name apart by case) carried it: the checks ran on the commit, so a head that used up its retry or was evicted stays so when the node is accepted again at the same head.
+// The rows come in the order they were written.
+func loadMergeHistory(ctx context.Context, q store.Querier, plan, node, forge, head string) (mergeHistory, error) {
 	var h mergeHistory
 	rows, err := q.QueryContext(ctx, "SELECT c.check_seq, c.acceptance_id, c.outcome, c.reason, c.round_no, c.failed_required_json, c.checks_digest, c.evidence_json FROM dag_merge_checks c"+
 		" JOIN dag_acceptances a ON a.acceptance_id = c.acceptance_id JOIN dag_acceptance_forge f ON f.acceptance_id = a.acceptance_id"+
-		" WHERE a.plan_id = ? AND a.node_id = ? AND f.forge_repository = ? AND f.pr_number = ? AND c.observed_head_sha = ? ORDER BY c.rowid", plan, node, forge, number, head)
+		" WHERE a.plan_id = ? AND a.node_id = ? AND lower(f.forge_repository) = lower(?) AND c.observed_head_sha = ? ORDER BY c.rowid", plan, node, forge, head)
 	if err != nil {
 		return h, err
 	}
@@ -406,27 +444,70 @@ func (s *Scheduler) RequestMergeTurn(ctx context.Context, plan, node, actor stri
 		}
 		return res, nil, refuse(contract.RefusalDispositionConflict, "%s", detail)
 	}
-	q := s.Store.Q(ctx)
-	snap, _, err := dag.SnapshotAt(ctx, q, plan, 0)
-	if err != nil {
-		return res, nil, err
-	}
-	acc, found, err := loadActiveAcceptance(ctx, q, plan, node)
-	if err != nil || !found || acc.AcceptanceID != res.AcceptanceID {
-		if err == nil {
-			err = refuse(contract.RefusalDispositionConflict, "the accepted result of %s changed while its merge turn was requested", node)
-		}
-		return res, nil, err
+	if s.testBetweenJudgeAndAsk != nil {
+		s.testBetweenJudgeAndAsk()
 	}
 	service := &mergeturn.Service{Store: s.Store, Registry: &registry.Registry{Store: s.Store, Now: s.now}, Now: s.now, Delivery: mergeturn.StoreDelivery{Store: s.Store}}
-	turn, err := service.Request(ctx, acc.Repository, res.BaseRef, snap.ProjectKey, actor, in.Host, acc.HeadSHA, true,
-		mergeturn.ClaimOptions{PR: sql.NullInt64{Int64: acc.PRNumber, Valid: true}, Relationship: sql.NullString{String: acc.RelationshipID, Valid: true}})
+	var turn map[string]any
+	var refused error
+	// The lane's own transaction joins this one, and everything the judgement rested on is read again inside it: a pause, a new acceptance, new criteria or a later judgement that is not
+	// eligible any more that lands between the judgement and the request creates no turn and no grant.
+	err = s.Store.Compose(ctx, func(txCtx context.Context, _ *sql.Conn) error {
+		tx := s.Store.Q(txCtx)
+		current, _, err := dag.SnapshotAt(txCtx, tx, plan, 0)
+		if err != nil {
+			return err
+		}
+		cn, ok := nodeOf(current, node)
+		if !ok {
+			return refuse(contract.RefusalUnregisteredScope, "plan %s no longer has the live node %s", plan, node)
+		}
+		acc, found, err := loadActiveAcceptance(txCtx, tx, plan, node)
+		if err != nil {
+			return err
+		}
+		if !found || acc.AcceptanceID != res.AcceptanceID {
+			return refuse(contract.RefusalDispositionConflict, "the accepted result of %s changed while its merge turn was requested", node)
+		}
+		if err := mergeable(txCtx, tx, acc, actor); err != nil {
+			return err
+		}
+		if fresh, err := s.criteriaCurrent(txCtx, tx, cn, acc); err != nil {
+			return err
+		} else if !fresh {
+			return refuse(contract.RefusalCriteriaSetChanged, "the criteria of %s changed while its merge turn was requested", node)
+		}
+		var latest string
+		if _, err := queryOne(txCtx, tx, "SELECT outcome FROM dag_merge_checks WHERE acceptance_id = ? ORDER BY check_seq DESC LIMIT 1", []any{acc.AcceptanceID}, &latest); err != nil {
+			return err
+		}
+		if latest != OutcomeEligible {
+			return refuse(contract.RefusalDispositionConflict, "the latest judgement of %s is %s, no longer eligible, so no merge turn is requested", node, latest)
+		}
+		t, err := service.Request(txCtx, acc.Repository, res.BaseRef, current.ProjectKey, actor, in.Host, acc.HeadSHA, true,
+			mergeturn.ClaimOptions{PR: sql.NullInt64{Int64: acc.PRNumber, Valid: true}, Relationship: sql.NullString{String: acc.RelationshipID, Valid: true}})
+		if err != nil {
+			// a refusal of the lane is an answer, and the conflict row it recorded is kept; anything else rolls the transaction back
+			if answer, failure := asRefusal(err); failure != nil {
+				return failure
+			} else {
+				refused = answer
+			}
+			return nil
+		}
+		// a holder has one live claim per target: asking again while the earlier turn is open answers that turn, which is not this node's
+		if head, _ := t["candidateHead"].(string); head != acc.HeadSHA || fmt.Sprint(t["relationshipId"]) != acc.RelationshipID || fmt.Sprint(t["prNumber"]) != strconv.FormatInt(acc.PRNumber, 10) || t["projectKey"] != current.ProjectKey {
+			refused = refuse(contract.RefusalDispositionConflict, "task %s already has the live merge turn %v on this target (head %s, relationship %v, pull request %v): land or return it before the pull request of %s asks for its own", actor, t["turnId"], head, t["relationshipId"], t["prNumber"], node)
+			return nil
+		}
+		turn = t
+		return nil
+	})
 	if err != nil {
 		return res, nil, err
 	}
-	// a holder has one live claim per target: asking again while the earlier turn is open answers that turn, which is not this node's
-	if head, _ := turn["candidateHead"].(string); head != acc.HeadSHA || fmt.Sprint(turn["relationshipId"]) != acc.RelationshipID || fmt.Sprint(turn["prNumber"]) != strconv.FormatInt(acc.PRNumber, 10) || turn["projectKey"] != snap.ProjectKey {
-		return res, nil, refuse(contract.RefusalDispositionConflict, "task %s already has the live merge turn %v on this target (head %s, relationship %v, pull request %v): land or return it before the pull request of %s asks for its own", actor, turn["turnId"], head, turn["relationshipId"], turn["prNumber"], node)
+	if refused != nil {
+		return res, nil, refused
 	}
 	return res, turn, nil
 }

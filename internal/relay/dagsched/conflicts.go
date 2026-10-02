@@ -70,17 +70,22 @@ func (s *Scheduler) ObserveConflicts(ctx context.Context, plan, actor string, in
 	if len(parents) != 1 || parents[0] != actor {
 		return out, refuse(contract.RefusalScopeRoleMismatch, "task %s is not the registered parent of project %s", actor, snap.ProjectKey)
 	}
+	iso, err := isolate(ctx, in.Repository)
+	if err != nil {
+		return out, refuse(contract.RefusalMergeTargetUnreadable, "%s is not a repository git can read: %v", in.Repository, err)
+	}
+	defer iso.close()
 	for _, head := range []string{leftHead, rightHead} {
-		if _, err := runGit(ctx, in.Repository, nil, "cat-file", "-e", head+"^{commit}"); err != nil {
+		if code, _, err := iso.run(ctx, "cat-file", "-e", head+"^{commit}"); code != 0 {
 			return out, refuse(contract.RefusalMergeTargetUnreadable, "commit %s is not in %s: fetch the branch first (%v)", head, in.Repository, err)
 		}
 	}
-	base, err := runGit(ctx, in.Repository, nil, "merge-base", leftHead, rightHead)
-	if err != nil {
+	code, base, err := iso.run(ctx, "merge-base", leftHead, rightHead)
+	if code != 0 {
 		return out, refuse(contract.RefusalMergeTargetUnreadable, "the heads %s and %s have no common ancestor in %s: %v", leftHead, rightHead, in.Repository, err)
 	}
 	out.BaseSHA = strings.TrimSpace(base)
-	files, err := mergeTreeConflicts(ctx, in.Repository, leftHead, rightHead)
+	files, err := iso.mergeTree(ctx, leftHead, rightHead)
 	if err != nil {
 		return out, err
 	}
@@ -129,7 +134,11 @@ func runGit(ctx context.Context, repository string, extraEnv []string, args ...s
 
 // runGitExit is runGit that also reports git's exit code: merge-tree uses 1 for "merged with conflicts", which is an answer and not a failure.
 func runGitExit(ctx context.Context, repository string, extraEnv []string, args ...string) (int, string, error) {
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", repository}, args...)...)
+	argv := args
+	if repository != "" {
+		argv = append([]string{"-C", repository}, args...)
+	}
+	cmd := exec.CommandContext(ctx, "git", argv...)
 	cmd.Env = append(cleanGitEnv(), extraEnv...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -143,29 +152,70 @@ func runGitExit(ctx context.Context, repository string, extraEnv []string, args 
 	return -1, "", fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
 }
 
+// isolated is a throwaway bare repository that reads a checkout's objects through an alternates file and has nothing else of the checkout: no configuration, no hooks, no attributes, no
+// index, no refs. Every git command of a conflict observation runs against it, so what the checkout's own configuration says (a merge driver is a command it would run) or the state of its
+// working tree (an uncommitted .gitattributes) can neither run code nor change the answer, and the two commits are merged the same way wherever they are asked about.
+type isolated struct {
+	dir    string
+	gitdir string
+	env    []string
+}
+
+func isolate(ctx context.Context, checkout string) (*isolated, error) {
+	// where the checkout keeps its objects is git's to say (a linked working tree shares the main one); only this question is put to the checkout itself
+	objects, err := runGit(ctx, checkout, nil, "rev-parse", "--path-format=absolute", "--git-path", "objects")
+	if err != nil {
+		return nil, err
+	}
+	dir, err := os.MkdirTemp("", "dag-merge-tree-")
+	if err != nil {
+		return nil, err
+	}
+	g := &isolated{dir: dir, gitdir: filepath.Join(dir, "g.git")}
+	g.env = []string{"GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_TEMPLATE_DIR=", "HOME=" + dir, "XDG_CONFIG_HOME=" + dir}
+	if _, _, err := g.run(ctx, "init", "--bare", "-q", g.gitdir); err != nil {
+		g.close()
+		return nil, err
+	}
+	if err := os.MkdirAll(filepath.Join(g.gitdir, "objects", "info"), 0o700); err != nil {
+		g.close()
+		return nil, err
+	}
+	if err := os.WriteFile(filepath.Join(g.gitdir, "objects", "info", "alternates"), []byte(strings.TrimSpace(objects)+"\n"), 0o600); err != nil {
+		g.close()
+		return nil, err
+	}
+	return g, nil
+}
+
+func (g *isolated) close() { _ = os.RemoveAll(g.dir) }
+
+// run runs git in the throwaway repository (or, for init, on the path it is given) and returns the exit code, the standard output and, for a failure, git's own words.
+func (g *isolated) run(ctx context.Context, args ...string) (int, string, error) {
+	argv := args
+	if args[0] != "init" {
+		argv = append([]string{"--git-dir=" + g.gitdir}, args...)
+	}
+	return runGitExit(ctx, "", g.env, argv...)
+}
+
 var treeIDPattern = regexp.MustCompile("^[0-9a-f]{40}([0-9a-f]{24})?$")
 
-// mergeTreeConflicts merges two commits in memory and returns the sorted names of the files that conflict (none when the merge is clean). The trees git writes go to a throwaway object
-// directory whose alternates file names the checkout's objects (a file, not an environment list, so a path with a colon works), so the checkout itself gains nothing. The answer is read
-// from git's NUL separated output (a file name may hold any character but NUL) and trusted only when it has the shape git gives a merge: a tree id first. Anything else, exit 1 included, is
-// a failure to compute the merge and never a count.
-func mergeTreeConflicts(ctx context.Context, repository, left, right string) ([]string, error) {
-	objects, err := runGit(ctx, repository, nil, "rev-parse", "--path-format=absolute", "--git-path", "objects")
+// mergeTreeConflicts is the conflicts between two commits of a checkout, asked in a throwaway isolated repository.
+func mergeTreeConflicts(ctx context.Context, checkout, left, right string) ([]string, error) {
+	g, err := isolate(ctx, checkout)
 	if err != nil {
 		return nil, err
 	}
-	scratch, err := os.MkdirTemp("", "dag-merge-tree-")
-	if err != nil {
-		return nil, err
-	}
-	defer os.RemoveAll(scratch)
-	if err := os.MkdirAll(filepath.Join(scratch, "info"), 0o700); err != nil {
-		return nil, err
-	}
-	if err := os.WriteFile(filepath.Join(scratch, "info", "alternates"), []byte(strings.TrimSpace(objects)+"\n"), 0o600); err != nil {
-		return nil, err
-	}
-	code, out, err := runGitExit(ctx, repository, []string{"GIT_OBJECT_DIRECTORY=" + scratch}, "merge-tree", "-z", "--write-tree", "--name-only", "--no-messages", left, right)
+	defer g.close()
+	return g.mergeTree(ctx, left, right)
+}
+
+// mergeTree merges two commits in memory and returns the sorted names of the files that conflict (none when the merge is clean). The answer is read from git's NUL separated output (a file
+// name may hold any character but NUL) and trusted only when it has the shape git gives a merge: a tree id first. Anything else, exit 1 included, is a failure to compute the merge and never
+// a count.
+func (g *isolated) mergeTree(ctx context.Context, left, right string) ([]string, error) {
+	code, out, err := g.run(ctx, "merge-tree", "-z", "--write-tree", "--name-only", "--no-messages", left, right)
 	if code != 0 && code != 1 {
 		return nil, fmt.Errorf("git merge-tree could not merge %s and %s (git 2.38 or newer is needed): %w", left, right, err)
 	}

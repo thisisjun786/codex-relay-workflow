@@ -28,6 +28,7 @@ type Scheduler struct {
 
 	// Test seams (zero in production): between the unlocked judgement and the intent, after the slot is reserved, and between the managed start and the bind.
 	testBeforeObserveTx      func()
+	testBetweenJudgeAndAsk   func()
 	testBeforeReplayTx       func()
 	testAfterReading         func()
 	testAfterFreshness       func()
@@ -79,7 +80,9 @@ type Check struct {
 	RunID, Name, HeadSHA, Conclusion string
 	// Provider is the integration that reported the check ("" when the forge names none): a required check answers only for the provider its branch rule names.
 	Provider string
-	Attempt  int64
+	// Stamp is when the forge last changed the check (a commit status has no attempt, so this is what tells a status that failed again from the same status read twice).
+	Stamp   string
+	Attempt int64
 }
 
 // Problem is one problem code of a merge-evidence snapshot.

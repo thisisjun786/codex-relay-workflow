@@ -74,6 +74,16 @@ func projectSnapshot(snapshot map[string]any, repository string, number int64) P
 	if merged, _ := pinned["merged"].(bool); merged {
 		pr.State = "merged"
 	}
+	stamps := map[string]string{}
+	details, _ := snapshot["checkDetail"].([]any)
+	for _, item := range details {
+		d, _ := item.(map[string]any)
+		if stamp := textOf(d["updatedAt"]); stamp != "" {
+			stamps[textOf(d["runId"])] = stamp
+		} else if stamp := textOf(d["completedAt"]); stamp != "" {
+			stamps[textOf(d["runId"])] = stamp
+		}
+	}
 	checkItems, _ := handoff["checks"].([]any)
 	for _, item := range checkItems {
 		c, _ := item.(map[string]any)
@@ -81,7 +91,7 @@ func projectSnapshot(snapshot map[string]any, repository string, number int64) P
 		if c["attempt"] != nil {
 			attempt = evidence.Integer(c["attempt"]).Int64()
 		}
-		pr.Checks = append(pr.Checks, Check{RunID: textOf(c["runId"]), Name: textOf(c["name"]), HeadSHA: textOf(c["headSha"]), Conclusion: textOf(c["conclusion"]), Provider: textOf(c["provider"]), Attempt: attempt})
+		pr.Checks = append(pr.Checks, Check{RunID: textOf(c["runId"]), Name: textOf(c["name"]), HeadSHA: textOf(c["headSha"]), Conclusion: textOf(c["conclusion"]), Provider: textOf(c["provider"]), Stamp: stamps[textOf(c["runId"])], Attempt: attempt})
 	}
 	// the collector holds the declared list as []string when it read it and nil when it could not: nil is "not declared", an empty list is "requires none".
 	switch declared := handoff["requiredDeclared"].(type) {

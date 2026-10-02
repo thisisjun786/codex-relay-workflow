@@ -184,3 +184,31 @@ func TestObserveConflictsInUnusualCheckouts(t *testing.T) {
 		}
 	})
 }
+
+// The checkout's own configuration and working tree are not part of the question: a merge driver it configures would be a command run for whoever observes it, and an uncommitted
+// .gitattributes would change the count of the same two commits. Neither runs, and neither changes the answer.
+func TestObserveConflictsIgnoresTheCheckoutsConfigurationAndAttributes(t *testing.T) {
+	k := newIntegrationKit(t)
+	repo := k.repo
+	repo.commit("c.txt", lines(12, nil))
+	left, right := repo.parallel(map[string]string{"c.txt": lines(12, map[int]string{3: "left"})}, map[string]string{"c.txt": lines(12, map[int]string{3: "right"})})
+	marker := filepath.Join(t.TempDir(), "driver-ran")
+	repo.git("config", "merge.x.driver", "touch "+marker)
+	if err := os.WriteFile(filepath.Join(repo.path, ".gitattributes"), []byte("c.txt merge=x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, err := k.sched.ObserveConflicts(context.Background(), "g", "parent", ConflictInput{Repository: repo.path, LeftNode: "D", RightNode: "I", LeftHead: left, RightHead: right})
+	if err != nil || res.Conflicts != 1 {
+		t.Fatalf("with a merge driver configured = %v %+v", err, res)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("the checkout's merge driver was run")
+	}
+	// an uncommitted attribute that would make git resolve the file by union
+	if err := os.WriteFile(filepath.Join(repo.path, ".gitattributes"), []byte("c.txt merge=union\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if again, err := k.sched.ObserveConflicts(context.Background(), "g", "parent", ConflictInput{Repository: repo.path, LeftNode: "D", RightNode: "I", LeftHead: left, RightHead: right}); err != nil || !again.Replayed || again.Conflicts != 1 {
+		t.Fatalf("with an uncommitted attribute = %v %+v", err, again)
+	}
+}

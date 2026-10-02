@@ -104,3 +104,48 @@ func TestMergeJudgeAgreesWithTheLanesReadingOfNeutralChecks(t *testing.T) {
 		t.Fatalf("a neutral required check made the head eligible: %+v", r)
 	}
 }
+
+func statusOf(id int, context, state, at string) map[string]any {
+	return map[string]any{"id": id, "context": context, "state": state, "updated_at": at, "target_url": "u"}
+}
+
+// A name that two integrations are required to answer needs both of them: one integration's failure, seen before the other has reported, is not a finished set of checks and uses no retry.
+func TestEveryRequiredIntegrationMustReport(t *testing.T) {
+	k := newJudgeKit(t)
+	required := []any{map[string]any{"context": "dev-gate", "integration_id": 42}, map[string]any{"context": "dev-gate", "integration_id": 43}}
+	k.useCollector(collectorScript(k.feature, required, checkRun(11, "dev-gate", k.feature, "failure", 42)))
+	if r := k.judge(); r.Outcome != OutcomeChecksPending || len(r.FailedRequired) != 0 {
+		t.Fatalf("one of two integrations reported a failure = %+v", r)
+	}
+	k.useCollector(collectorScript(k.feature, required, checkRun(11, "dev-gate", k.feature, "failure", 42), checkRun(12, "dev-gate", k.feature, "success", 43)))
+	if r := k.judge(); r.Outcome != OutcomeRetrySameSHA || len(r.FailedRequired) != 1 {
+		t.Fatalf("both reported = %+v", r)
+	}
+}
+
+// A commit status has no attempt and no run: the forge changes it in place. The time it last changed is what tells a status that failed again from the same status read twice, so the second
+// failure of a status evicts and a duplicate wake does not.
+func TestAStatusThatFailsAgainIsASecondFailure(t *testing.T) {
+	k := newJudgeKit(t)
+	gate := func(state, at string) {
+		g := collectorScript(k.feature, []any{map[string]any{"context": "dev-gate"}})
+		g.statuses = []any{statusOf(len(at), "dev-gate", state, at)}
+		k.useCollector(g)
+	}
+	gate("error", "2026-10-02T00:00:01Z")
+	first := k.judge()
+	if first.Outcome != OutcomeRetrySameSHA || len(first.FailedRequired) != 1 {
+		t.Fatalf("first = %+v", first)
+	}
+	if again := k.judge(); !again.Replayed || again.CheckSeq != first.CheckSeq {
+		t.Fatalf("the same status read again = %+v", again)
+	}
+	gate("failure", "2026-10-02T00:00:09Z")
+	if second := k.judge(); second.Outcome != OutcomeEvicted {
+		t.Fatalf("the status failed again = %+v", second)
+	}
+	gate("success", "2026-10-02T00:00:20Z")
+	if later := k.judge(); later.Outcome != OutcomeEvicted {
+		t.Fatalf("success after the eviction = %+v", later)
+	}
+}

@@ -26,6 +26,8 @@ type ghScript struct {
 	pullsOK bool // false: the pull request endpoint fails
 	// checkTotal, when set, is the total_count the check-run endpoint reports whatever it returns
 	checkTotal int
+	// statuses are the commit statuses (the combined status endpoint lists the newest of each context)
+	statuses []any
 }
 
 func newGHScript() *ghScript {
@@ -97,7 +99,7 @@ func (g *ghScript) runner(argv []string, _ time.Duration) (int, string, string, 
 	case strings.Contains(last, "/check-runs"):
 		return encode(page(g.checks, "check_runs", g.checkTotal))
 	case strings.Contains(last, "/status"):
-		return encode(map[string]any{"total_count": 0, "statuses": []any{}})
+		return encode(page(g.statuses, "statuses", 0))
 	}
 	return 1, "", "unexpected " + last, nil
 }

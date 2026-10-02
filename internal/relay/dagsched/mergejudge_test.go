@@ -368,9 +368,13 @@ func TestEvictionSurvivesAFreshAcceptanceOfTheSameHead(t *testing.T) {
 	if n := k.read("g").node("I"); n.Reason != BlockedEvicted {
 		t.Fatalf("I = %+v, want blocked:evicted from the acceptance's own history", n)
 	}
-	// and once it is carried, asking again only restates it
-	if rest := k.judge(); rest.Outcome != OutcomeEvicted || !rest.Replayed {
-		t.Fatalf("asking again = %+v", rest)
+	// and once it is carried, asking again only restates it, with the sequence of the acceptance's own row
+	if rest := k.judge(); rest.Outcome != OutcomeEvicted || !rest.Replayed || rest.CheckSeq != again.CheckSeq {
+		t.Fatalf("asking again = %+v, the carried row is %d", rest, again.CheckSeq)
+	}
+	var own int
+	if err := k.s.DB.QueryRow("SELECT COUNT(*) FROM dag_merge_checks c JOIN dag_acceptances a ON a.acceptance_id = c.acceptance_id WHERE a.state = 'active' AND c.check_seq = ? AND c.outcome = 'evicted'", again.CheckSeq).Scan(&own); err != nil || own != 1 {
+		t.Fatalf("no row of the acceptance in force has the sequence %d (%d, %v)", again.CheckSeq, own, err)
 	}
 	// a different head of the same pull request is a different matter: it needs its own acceptance, and starts with its own retry
 	if k.count("SELECT COUNT(*) FROM dag_merge_checks WHERE outcome = 'evicted'") != 2 {
@@ -433,5 +437,45 @@ func TestMergeJudgementRecordsTheTipItWasMadeAgainst(t *testing.T) {
 	var recorded string
 	if err := k.s.DB.QueryRow("SELECT base_tip_sha FROM dag_merge_checks WHERE check_seq = 2").Scan(&recorded); err != nil || recorded != older {
 		t.Fatalf("recorded tip = %s %v", recorded, err)
+	}
+}
+
+// The forge does not tell owner/name apart by case and a pull request can be replaced by another from the same commit: neither gives a head the retry it used up.
+func TestEvictionIsOfTheCommitNotOfTheSpellingOrThePullRequest(t *testing.T) {
+	k := newJudgeKit(t)
+	k.setChecks("A:1:1:failure", "B:2:1:success")
+	k.judge()
+	k.setChecks("A:1:2:failure", "B:2:1:success")
+	if r := k.judge(); r.Outcome != OutcomeEvicted {
+		t.Fatalf("second failure = %+v", r)
+	}
+	k.exec("UPDATE dag_acceptances SET state = 'superseded' WHERE node_id = 'I'")
+	k.acceptNode("g", "I", acceptOpts{HeadSHA: k.feature, PR: 9, Forge: "OWNER/REPO", Repository: k.repo.path, Suffix: "c"})
+	pr := k.pr
+	pr.Number, pr.Repository = 9, "OWNER/REPO"
+	pr.Checks = []Check{{Name: "A", RunID: "1", Attempt: 3, Conclusion: "success", HeadSHA: k.feature}, {Name: "B", RunID: "2", Attempt: 1, Conclusion: "success", HeadSHA: k.feature}}
+	k.forge.by["OWNER/REPO#9"] = pr
+	if r := k.judge(); r.Outcome != OutcomeEvicted {
+		t.Fatalf("the same commit under another spelling and another pull request = %+v", r)
+	}
+}
+
+// Everything the judgement rested on is read again in the transaction that creates the turn: a pause that lands between the two creates neither a turn nor a grant.
+func TestMergeRequestReadsAgainWhereItWrites(t *testing.T) {
+	k := newJudgeKit(t)
+	k.sched.testBetweenJudgeAndAsk = func() { k.exec("UPDATE relationships SET status = 'paused'") }
+	if _, turn, err := k.sched.RequestMergeTurn(context.Background(), "g", "I", "parent", MergeRequestInput{Host: "host"}); refusalReason(err) != "relationship_not_active" || turn != nil {
+		t.Fatalf("request = %v %v", err, turn)
+	}
+	if k.count("SELECT COUNT(*) FROM merge_turns") != 0 || k.count("SELECT COUNT(*) FROM merge_turn_ledger") != 0 {
+		t.Fatal("a turn or a ledger entry was created for a paused relationship")
+	}
+	k.exec("UPDATE relationships SET status = 'active'")
+	k.sched.testBetweenJudgeAndAsk = func() { k.exec("UPDATE canonical_criteria SET set_digest = ?", dig("registered meanwhile")) }
+	if _, turn, err := k.sched.RequestMergeTurn(context.Background(), "g", "I", "parent", MergeRequestInput{Host: "host"}); refusalReason(err) != "criteria_set_changed" || turn != nil {
+		t.Fatalf("request after the criteria moved = %v %v", err, turn)
+	}
+	if k.count("SELECT COUNT(*) FROM merge_turns") != 0 {
+		t.Fatal("a turn was created for criteria that moved")
 	}
 }
