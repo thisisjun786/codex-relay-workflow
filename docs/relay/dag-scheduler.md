@@ -445,6 +445,7 @@ An unknown merge turn stays unknown until the head is observed; the merge lane a
 | `dag-coordinator-claim --plan P --actor A --session-nonce N [--project K]` | writes `dag_coordinator_claims` | the claim: epoch, task, binding, nonce, whether it replayed, the epoch and task it replaced |
 | `dag-adopt --plan P --node N --actor A [--expect-epoch E]` | writes `dag_node_executions` (kind `parent_handover`) | the successor relationship bound to the node, the child, the generation, whether it replayed |
 | `dag-restart --plan P --actor A` | reads | the newest claim, whether the actor holds it, and per owned node what to do ([Restart and adoption](#restart-and-adoption)) |
+| `dag-progress --plan P` | reads only, and opens the store read-only | the progress of the plan: stage distribution, cumulative counts, denominator per revision, a reason per blocked or stale node, links ([DAG progress](dag-progress.md)) |
 
 The commands that decide take `--expect-epoch E`, the epoch the session holds: `dag-region-declare`, `dag-release`, `dag-release-close`, `dag-accept`, `dag-integration-observe`, `dag-decision-record`, `dag-correct` (both forms), `dag-merge-judge`, `dag-merge-request`, `dag-adopt`, `dag-cap-basis-record`, and, in the revision document, `dag-plan-put`. `dag-ready --record` and `dag-conflict-observe` record measurements and decide nothing, and are not fenced.
 

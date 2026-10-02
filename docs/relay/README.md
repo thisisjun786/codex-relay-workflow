@@ -34,7 +34,8 @@ store lives outside repositories; caller-selected receipt and artifact locations
 | CLI | implemented | `internal/relay/cli`; the corpus's `cli-shape` and `exit-codes` domains |
 | frozen-schema conformance | implemented | `internal/relay/store`; the corpus's `records` domain |
 | DAG plans: validated, append-only revision log and its additive store zone | implemented | [DAG plans](dag-plans.md); `internal/relay/dag`, `internal/relay/store` |
-| DAG scheduler: ready set, edit regions, capacity and pass records; release of a ready node to a Codex child; acceptance, integration, decisions and corrections; merge eligibility, conflict observations and cap basis; the coordinator epoch that fences these writes, restart and adoption | implemented (progress projection and installed proof are later issues) | [DAG scheduler](dag-scheduler.md); `internal/relay/dagsched` |
+| DAG scheduler: ready set, edit regions, capacity and pass records; release of a ready node to a Codex child; acceptance, integration, decisions and corrections; merge eligibility, conflict observations and cap basis; the coordinator epoch that fences these writes, restart and adoption | implemented (installed proof is a later issue) | [DAG scheduler](dag-scheduler.md); `internal/relay/dagsched` |
+| DAG progress: a read-only query of a plan's stage distribution, cumulative accepted and integrated counts, denominator per revision, a reason per blocked or stale node, and links | implemented (cursor and snapshot reconstruction and the Linear summary are later issues) | [DAG progress](dag-progress.md); `internal/relay/dagsched` |
 
 Until todo 44 each row's proof was a test of the Python package under
 `packages/codex-session-relay/tests`; [the test map](../port/test-map.md) names where each one's
