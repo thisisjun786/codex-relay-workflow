@@ -194,24 +194,36 @@ func loadState(ctx context.Context, q Queryer, planID, project string, head int6
 //
 // A request that fails at any step leaves every table as it was.
 func (r *Repo) Put(ctx context.Context, rev Revision) (Result, error) {
+	rev, err := Checked(rev)
+	if err != nil {
+		return Result{}, err
+	}
 	digest := RequestDigest(rev)
 	var result Result
-	err := r.Store.Transaction(ctx, func(ctx context.Context, conn *sql.Conn) error {
+	err = r.Store.Transaction(ctx, func(ctx context.Context, conn *sql.Conn) error {
 		if existing, found, err := revisionByRequest(ctx, conn, rev.PlanID, rev.RequestID); err != nil {
 			return err
 		} else if found {
 			if existing.RequestDigest != digest {
 				return conflict("request id %s already produced revision %d of plan %s for a different request; a request id names one request", rev.RequestID, existing.RevisionNo, rev.PlanID)
 			}
-			project, _, err := loadHeader(ctx, conn, rev.PlanID)
+			project, hasHeader, err := loadHeader(ctx, conn, rev.PlanID)
 			if err != nil {
 				return err
 			}
-			st, err := loadState(ctx, conn, rev.PlanID, project, existing.RevisionNo)
+			if !hasHeader {
+				return &CorruptError{Detail: fmt.Sprintf("plan %s has revisions and no header", rev.PlanID)}
+			}
+			head, err := headRevision(ctx, conn, rev.PlanID)
 			if err != nil {
 				return err
 			}
-			result = resultOf(existing, project, st.At(existing.RevisionNo), true)
+			// The stored result is answered only from rows that still agree with the log: the same checks a read makes.
+			_, snap, err := verifiedState(ctx, conn, rev.PlanID, project, head, existing.RevisionNo)
+			if err != nil {
+				return err
+			}
+			result = resultOf(existing, project, snap, true)
 			return nil
 		}
 		project, exists, err := loadHeader(ctx, conn, rev.PlanID)
@@ -222,12 +234,20 @@ func (r *Repo) Put(ctx context.Context, rev Revision) (Result, error) {
 		if err != nil {
 			return err
 		}
+		if exists && head == 0 {
+			return &CorruptError{Detail: fmt.Sprintf("plan %s has a header and no revision", rev.PlanID)}
+		}
+		if !exists && head > 0 {
+			return &CorruptError{Detail: fmt.Sprintf("plan %s has revisions and no header", rev.PlanID)}
+		}
 		if rev.ExpectedParent != head {
 			return conflict("the request expects parent revision %d, but plan %s is at revision %d", rev.ExpectedParent, rev.PlanID, head)
 		}
 		st := State{PlanID: rev.PlanID, ProjectKey: project, Revision: head}
 		if exists {
-			if st, err = loadState(ctx, conn, rev.PlanID, project, head); err != nil {
+			// The next revision is built only on rows that agree with the log, so it never carries a damaged
+			// plan forward under digests that look right.
+			if st, _, err = verifiedState(ctx, conn, rev.PlanID, project, head, head); err != nil {
 				return err
 			}
 		}
@@ -371,25 +391,37 @@ func SnapshotAt(ctx context.Context, q Queryer, planID string, rev int64) (Snaps
 	if rev < 1 || rev > head {
 		return Snapshot{}, head, notFound("plan %s has no revision %d; its revisions are 1 to %d", planID, rev, head)
 	}
-	st, err := loadState(ctx, q, planID, project, head)
+	_, snap, err := verifiedState(ctx, q, planID, project, head, rev)
 	if err != nil {
 		return Snapshot{}, 0, err
+	}
+	return snap, head, nil
+}
+
+// verifiedState reads the rows of a plan whose head is head and the plan as of revision rev, and
+// checks them against the log: every node's slice digest is recomputed from the edges beside it, and
+// the plan's state digest must be the one the revision recorded. Rows that disagree with the log are
+// a *CorruptError and never a plan, for a read and for a write alike.
+func verifiedState(ctx context.Context, q Queryer, planID, project string, head, rev int64) (State, Snapshot, error) {
+	st, err := loadState(ctx, q, planID, project, head)
+	if err != nil {
+		return State{}, Snapshot{}, err
 	}
 	snap := st.At(rev)
 	if err := verifySlices(snap); err != nil {
-		return Snapshot{}, 0, err
+		return State{}, Snapshot{}, err
 	}
 	events, err := queryEvents(ctx, q, "SELECT "+revisionColumns+" FROM dag_plan_revisions WHERE plan_id = ? AND revision_no = ?", planID, rev)
 	if err != nil {
-		return Snapshot{}, 0, err
+		return State{}, Snapshot{}, err
 	}
 	if len(events) != 1 {
-		return Snapshot{}, 0, &CorruptError{Detail: fmt.Sprintf("plan %s has no revision row %d", planID, rev)}
+		return State{}, Snapshot{}, &CorruptError{Detail: fmt.Sprintf("plan %s has no revision row %d", planID, rev)}
 	}
 	if events[0].StateDigest != snap.StateDigest {
-		return Snapshot{}, 0, &CorruptError{Detail: fmt.Sprintf("the rows of plan %s at revision %d digest to %s, but the revision recorded %s", planID, rev, snap.StateDigest, events[0].StateDigest)}
+		return State{}, Snapshot{}, &CorruptError{Detail: fmt.Sprintf("the rows of plan %s at revision %d digest to %s, but the revision recorded %s", planID, rev, snap.StateDigest, events[0].StateDigest)}
 	}
-	return snap, head, nil
+	return st, snap, nil
 }
 
 // verifySlices recomputes each node's slice digest from the edges live beside it.
@@ -547,6 +579,10 @@ func sameRows(a, b State) bool {
 // authority; this one is a refusal's early form. A failure to read the store is the host's failure
 // and is returned as it is, never handed on to the writing open.
 func Preflight(ctx context.Context, dbPath string, rev Revision) error {
+	rev, err := Checked(rev)
+	if err != nil {
+		return err
+	}
 	if rev.ExpectedParent == 0 {
 		_, _, violations := Apply(State{PlanID: rev.PlanID}, rev)
 		if len(violations) > 0 {
@@ -562,6 +598,27 @@ func Preflight(ctx context.Context, dbPath string, rev Revision) error {
 		return fmt.Errorf("checking the plan before writing: %w", err)
 	}
 	defer ro.Close()
+	return preflightRead(ctx, ro, rev)
+}
+
+// preflightRead is Preflight's reading of an existing store. Its reads are separate queries, so another
+// writer's commit can land between them; when one of them is this very request (a repeated request racing
+// its own first copy), every later read sees the plan after that commit and the request looks stale or
+// conflicting. So a refusal is handed on, not given, once the request is found in the log: the writing open
+// answers it with the stored result, and judges it again as the authority. A request that is not in the log
+// is refused as it was.
+func preflightRead(ctx context.Context, q Queryer, rev Revision) error {
+	err := judgeAgainstStore(ctx, q, rev)
+	if err == nil {
+		return nil
+	}
+	if _, found, lookup := revisionByRequest(ctx, q, rev.PlanID, rev.RequestID); lookup == nil && found {
+		return nil
+	}
+	return err
+}
+
+func judgeAgainstStore(ctx context.Context, ro Queryer, rev Revision) error {
 	if _, found, err := revisionByRequest(ctx, ro, rev.PlanID, rev.RequestID); err != nil {
 		return err
 	} else if found {

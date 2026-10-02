@@ -413,3 +413,37 @@ func DecodeChanges(stored string) ([]Change, error) {
 	}
 	return changes, nil
 }
+
+// Checked is the revision a typed request is, judged by the rules of a revision document: it
+// writes the request as the document it would have been and reads that back with DecodeRevision, so
+// a Go caller of Put cannot store what the command line would have refused (an empty change list,
+// an op that does not exist, a malformed digest or identifier, a change without its node or edge).
+// What it returns is the normalised revision Put goes on with.
+func Checked(rev Revision) (Revision, error) {
+	var shape []Violation
+	for i, c := range rev.Changes {
+		missing := ""
+		switch {
+		case (c.Op == OpAddNode || c.Op == OpUpdateNode || c.Op == OpReplaceNode) && c.Node == nil:
+			missing = "node"
+		case c.Op == OpAddEdge && c.Edge == nil:
+			missing = "edge"
+		}
+		if missing != "" {
+			shape = append(shape, Violation{Rule: RuleMissingField, Path: fmt.Sprintf("$.changes[%d].%s", i, missing),
+				Detail: fmt.Sprintf("%s needs its %s", c.Op, missing)})
+		}
+	}
+	if len(shape) > 0 {
+		return Revision{}, &PlanRejected{Violations: shape}
+	}
+	changes := make([]any, len(rev.Changes))
+	for i, c := range rev.Changes {
+		changes[i] = changeObject(c)
+	}
+	return DecodeRevision([]byte(canonical(map[string]any{
+		"schema": SchemaRevision, "plan_id": rev.PlanID, "project_key": rev.ProjectKey, "request_id": rev.RequestID,
+		"expected_parent_revision": rev.ExpectedParent, "coordinator_epoch": rev.CoordinatorEpoch, "author_task_id": rev.AuthorTaskID,
+		"changes": changes,
+	})))
+}

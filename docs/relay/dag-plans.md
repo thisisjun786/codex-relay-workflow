@@ -107,6 +107,13 @@ replays the whole log from the empty plan with every rule and requires the rows 
 or a store that holds no plans, is the refusal `unregistered_scope`; it is never read as an empty plan. A state directory with no store at all
 is `store_absent`, the reason every read-only relay command gives (a read never creates a store), so a wrong `--state` is not mistaken for an unknown plan.
 
+A writer does not trust them either. Inside the transaction `dag-plan-put` makes the same checks before it uses the rows: a repeated request is
+answered, and the next revision is built, only from rows whose slice digests and state digest agree with the log, so a plan that was damaged
+outside the product is the host's failure on a write too and never carries forward under digests that look right. The Go entry point `Repo.Put`
+takes a typed revision and judges it by the rules of a revision document (`Checked`), so a caller that never wrote a document cannot store an
+empty change list, an op that does not exist or a malformed digest. The early check before the writing open (`Preflight`) hands a request on
+once it finds it in the log, because that request may have committed between two of its reads.
+
 ## Commands
 
 All three are relay commands (`codex-session-relay [--state DIR] <command>`); output is JSON on stdout.
