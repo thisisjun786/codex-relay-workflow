@@ -44,6 +44,8 @@ var zoneInventory = map[string][]string{
 	"dag_release_requests":         {"plan_id", "node_id", "manifest_digest", "request_sha256", "request_json", "marker_root", "socket", "state_selector", "recorded_at"},
 	"dag_conflict_observations":    {"observation_id", "plan_id", "left_node_id", "right_node_id", "repository", "left_head", "right_head", "base_sha", "conflict_count", "method", "observed_by", "observed_at"},
 	"dag_node_regions":             {"plan_id", "node_id", "declaration_seq", "repository", "path", "region_kind", "region_key", "change", "exclusive", "declared_by", "declared_at"},
+	// CRW-282 (appended statements).
+	"dag_release_recoveries": {"plan_id", "node_id", "manifest_digest", "abandoned_request_id", "action", "successor_request_id", "request_sha256", "request_json", "marker_root", "socket", "state_selector", "slot_id", "slot_released", "copy_path", "reason", "recorded_by", "coordinator_epoch", "recorded_at"},
 }
 
 // rawDB opens path without any of the store's open rules, as an operator's sqlite3 would.
