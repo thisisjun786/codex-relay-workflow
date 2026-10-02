@@ -42,6 +42,7 @@ No refusal reason is added.
 | --- | --- |
 | `ok`, `schema` | `true`, `dag-progress/1` |
 | `plan_id`, `project_key`, `plan_revision`, `state_digest` | the plan, its project, the head revision the reading was taken at and that revision's state digest |
+| `plan_state` | `paused` while the plan is paused, else null |
 | `denominator` | the denominator at the head ([below](#the-denominator-per-plan-revision)) |
 | `revisions` | the denominator at every revision, oldest first |
 | `stages` | the stage distribution, a partition of the live nodes |
@@ -71,10 +72,13 @@ The stages partition the live nodes: the counts of `stages` add up to `denominat
 | `accepted` | the parent accepted the result, and it has not landed and is not stale |
 | `integrated` | the accepted head is contained in every target it has to land on and the parent marked it merged (`done:integrated`) |
 | `stale` | an accepted result that no longer matches the plan (`stale:slice_changed`, `stale:criteria_changed`, `stale:edge:<edge_id>`; contract 3.1, E-18, E-24) |
-| `paused` | the relationship is paused (contract 7.4: it keeps its issue and its slot, and an acceptance it holds stands) |
-| `cancelled` | the relationship was cancelled |
+| `paused` | the relationship is paused (contract 7.4: it keeps its issue and its slot, and an acceptance it holds stands), or the plan paused the node, or the plan is paused and nobody owns the node (`defer:node_paused`, `defer:plan_paused`) |
+| `cancelled` | the relationship was cancelled, or the plan cancelled the node whatever its execution says (`skip:node_cancelled`) |
+| `archived` | the plan archived the node whatever its execution says (`skip:node_archived`) |
 | `closed` | the relationship is closed or archived |
 | `ambiguous` | the relationship has more than one head revision, or an execution has no relationship |
+
+The plan's own lifecycle (pause, cancel and archive of a node, pause of the plan) is read from the plan as the reading reads it. A node the plan cancelled or archived is in that stage unless its pull request landed: the plan cannot take a landing back, so an integrated node stays `integrated`. A node the plan paused that already has a relationship keeps the stage of its execution, because the plan stops the scheduler and not the child; its `lifecycle` and its reason (`defer:node_paused`, or `defer:plan_paused` in a paused plan) say that the plan holds it.
 
 A node whose derived state or disposition the rule does not cover is not dropped: the projection refuses it (see [What it refuses](#what-it-refuses)).
 
@@ -87,7 +91,7 @@ turn ended with an unknown effect is `accepted` and listed as blocked (`blocked:
 ### Every node that is not moving has a reason
 
 Each entry of `nodes` names the node (`node_id`, `issue_key`, `kind`, `title`) and carries `stage`, the reading's `state`, `disposition` and `reason` (a member of the closed set of [the scheduler's reasons](dag-scheduler.md#dispositions-and-reasons))
-and a `detail` sentence. A stale node also carries a `stale` object: `cause`, `seed_node_id`, `edge_id`, `predecessor_node_id`, `consumed_acceptance_id`, `current_acceptance_id`,
+and a `detail` sentence, and `lifecycle` (what the plan says of the node: `paused`, `cancelled`, `archived`, else null). A stale node also carries a `stale` object: `cause`, `seed_node_id`, `edge_id`, `predecessor_node_id`, `consumed_acceptance_id`, `current_acceptance_id`,
 `consumed_decision`, `current_decision`, `consumed_slice_digest`, `current_slice_digest` and `consumed_manifest_digest`, as `dag-ready` prints it. The reasons of a running node
 (`skip:already_owned`) and of an accepted one (`done:accepted`) are the scheduler's too, so a reader can join the two commands.
 
@@ -95,8 +99,8 @@ and a `detail` sentence. A stale node also carries a `stale` object: `cause`, `s
 
 `cumulative` has two measures, each `{nodes, of}` with `of` the denominator:
 
-* `accepted`: the live nodes that hold an active acceptance, whatever has happened to them since. A node that is integrated, stale, paused or blocked is still counted. It is not the `accepted`
-  stage, which is a node that has been accepted and not yet landed.
+* `accepted`: the live nodes that hold an active acceptance, whatever has happened to them since. A node that is integrated, stale, paused or blocked is still counted. A node the plan cancelled or
+  archived whose pull request did not land is not: the plan does not count what it produced as done. It is not the `accepted` stage, which is a node that has been accepted and not yet landed.
 * `integrated`: the live nodes in the integrated state, the same nodes as the `integrated` stage. An integrated node whose result is later replaced by a new acceptance leaves it (a revision
   above a landed node makes a new node, not a rerun: contract E-20).
 
@@ -113,6 +117,7 @@ The denominator is the number of live nodes. `revisions` has one entry per revis
 | `nodes` | the live nodes this revision left |
 | `previous_nodes`, `delta` | the count before it (0 for revision 1) and the difference |
 | `denominator_changed` | true when a node entered or left the plan, even when the count is the same (a node replaced by another) |
+| `ops` | the typed changes of the revision, in order (`add_node`, `pause_plan`, `cancel_node`, ...): what the plan was told to do |
 | `added`, `retired` | the node ids that entered and left |
 | `updated` | node ids live before and after whose version was re-introduced at this revision (the node's spec or its incoming edges changed); they do not change the denominator |
 
@@ -161,6 +166,5 @@ The scheduler's reading guarantees none of these happens; the check is what make
 ## What is not here
 
 * Cursor and snapshot reconstruction of the progress view, and the Linear summary, are later issues that call the functions above.
-* No plan-level paused stage: the plan store has no plan status.
 * The metrics contract 8.6 records for the evaluation (makespan, idle slot minutes, wake latencies) are not derived here, and no figure here is a target.
 * The byte checks of the artifacts are `dag-ready`'s ([the scheduler](dag-scheduler.md#input-checks)).

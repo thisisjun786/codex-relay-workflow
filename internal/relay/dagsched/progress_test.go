@@ -387,6 +387,113 @@ func TestProgressResourceIsNotActivity(t *testing.T) {
 	}
 }
 
+// Criterion c4 (pause) through the plan's own lifecycle changes: a node the plan cancelled or archived is in that stage and is not counted as done, a node it paused and a node of a paused plan
+// that nobody owns are paused, an owned node the plan holds keeps its execution's stage (the plan stops the scheduler, not the child), and the document says what the plan did, revision by revision.
+func TestProgressPlanLifecycle(t *testing.T) {
+	f := newFixture(t)
+	f.projectParent()
+	f.putPlan("lc", 0, "lc-r1", addNode("un", dag.NodeNonPR), addNode("ar", dag.NodeNonPR), addNode("ca", dag.NodeNonPR), addNode("pa", dag.NodeNonPR),
+		addNode("ru", dag.NodeNonPR), addNode("ac", dag.NodeNonPR), addNode("ad", dag.NodeNonPR))
+	f.startNode("lc", "ru")
+	f.holdSlotsFor("lc", "ru")
+	f.acceptNode("lc", "ac", acceptOpts{})
+	f.acceptNode("lc", "ad", acceptOpts{})
+	p := f.progress("lc")
+	wantStages(t, p, map[string][]string{StageReady: {"un", "ar", "ca", "pa"}, StageRunning: {"ru"}, StageAccepted: {"ac", "ad"}})
+	if p.PlanState != "" || p.Cumulative.Accepted != (Measure{Nodes: 2, Of: 7}) {
+		t.Fatalf("before the plan changes anything: plan state %q cumulative %+v", p.PlanState, p.Cumulative)
+	}
+
+	f.putPlan("lc", 1, "lc-r2", doc{"op": dag.OpCancelNode, "node_id": "ca"}, doc{"op": dag.OpArchiveNode, "node_id": "ar"}, doc{"op": dag.OpPauseNode, "node_id": "pa"},
+		doc{"op": dag.OpPauseNode, "node_id": "ru"}, doc{"op": dag.OpCancelNode, "node_id": "ac"}, doc{"op": dag.OpPauseNode, "node_id": "ad"})
+	p = f.progress("lc")
+	wantStages(t, p, map[string][]string{
+		StageReady: {"un"}, StageCancelled: {"ca", "ac"}, StageArchived: {"ar"}, StagePaused: {"pa"}, StageRunning: {"ru"}, StageAccepted: {"ad"},
+	})
+	for id, want := range map[string]struct{ life, reason string }{
+		"ca": {"cancelled", SkipNodeCancelled}, "ar": {"archived", SkipNodeArchived}, "pa": {"paused", DeferNodePaused}, "ru": {"paused", DeferNodePaused}, "ac": {"cancelled", SkipNodeCancelled},
+	} {
+		if n := p.nodeNamed(id); n.Lifecycle != want.life || n.Reason != want.reason {
+			t.Errorf("%s = lifecycle %q reason %q, want %q and %q", id, n.Lifecycle, n.Reason, want.life, want.reason)
+		}
+	}
+	if n := p.nodeNamed("ac"); n.State != StateAccepted || n.AcceptanceID == "" {
+		t.Errorf("ac keeps the relay's word and its acceptance row: %+v", n)
+	}
+	if n := p.nodeNamed("ad"); n.Reason != DoneAccepted || n.Lifecycle != "paused" {
+		t.Errorf("a pause does not invalidate an acceptance: %+v", n)
+	}
+	if !p.nodeNamed("ru").HoldsSlot {
+		t.Error("a node the plan paused keeps its slot")
+	}
+	if p.Cumulative.Accepted != (Measure{Nodes: 1, Of: 7}) {
+		t.Errorf("cumulative accepted = %+v: ac was cancelled by the plan and is not counted as done; ad is paused and still counts", p.Cumulative.Accepted)
+	}
+	assertEveryNonMovingNodeHasAReason(t, p)
+	assertNoFalseCompletionRate(t, p)
+
+	f.putPlan("lc", 2, "lc-r3", doc{"op": dag.OpPausePlan})
+	p = f.progress("lc")
+	if p.PlanState != dag.LifePaused {
+		t.Errorf("plan state = %q", p.PlanState)
+	}
+	wantStages(t, p, map[string][]string{
+		StagePaused: {"un", "pa"}, StageCancelled: {"ca", "ac"}, StageArchived: {"ar"}, StageRunning: {"ru"}, StageAccepted: {"ad"},
+	})
+	if n := p.nodeNamed("un"); n.State != StatePlanned || n.Reason != DeferPlanPaused || n.Stage != StagePaused {
+		t.Errorf("un in a paused plan = %+v", n)
+	}
+	if n := p.nodeNamed("ru"); n.Reason != DeferPlanPaused || n.Stage != StageRunning {
+		t.Errorf("a running node of a paused plan keeps running: %+v", n)
+	}
+	assertEveryNonMovingNodeHasAReason(t, p)
+
+	f.putPlan("lc", 3, "lc-r4", doc{"op": dag.OpResumePlan})
+	p = f.progress("lc")
+	if p.PlanState != "" || p.nodeNamed("un").Stage != StageReady {
+		t.Errorf("after the resume: plan state %q, un %s", p.PlanState, p.nodeNamed("un").Stage)
+	}
+	ops := make([]string, len(p.Revisions))
+	for i, r := range p.Revisions {
+		ops[i] = strings.Join(r.Ops, ",")
+		if r.DenominatorChanged != (i == 0) {
+			t.Errorf("revision %d: denominator_changed = %v, a lifecycle change moves no node in or out", r.Revision, r.DenominatorChanged)
+		}
+	}
+	if want := []string{"add_node,add_node,add_node,add_node,add_node,add_node,add_node", "cancel_node,archive_node,pause_node,pause_node,cancel_node,pause_node", "pause_plan", "resume_plan"}; !equalStrings(ops, want) {
+		t.Errorf("ops per revision = %q, want %q", ops, want)
+	}
+	doc := p.decoded(t)
+	if _, present := doc["plan_state"]; !present || doc["plan_state"] != nil {
+		t.Errorf("an active plan prints plan_state null: %v present %v", doc["plan_state"], present)
+	}
+}
+
+// A landing is not taken back by the plan: a node whose pull request landed stays integrated, and counted, when the plan cancels it, while a node accepted and not landed that the plan cancels is not
+// counted as done.
+func TestProgressLandingSurvivesCancel(t *testing.T) {
+	f := newFixture(t)
+	forkJoinPlan(f, "p1")
+	f.projectParent()
+	f.acceptNode("p1", "research", acceptOpts{})
+	f.acceptNode("p1", "design", acceptOpts{})
+	a := f.acceptNode("p1", "impl-a", pinnedAcceptance(head1, 7))
+	f.integrate(a, "owner/repo", "dev", true, true)
+	f.putPlan("p1", 1, "p1-r2", doc{"op": dag.OpCancelNode, "node_id": "impl-a"}, doc{"op": dag.OpCancelNode, "node_id": "design"})
+	p := f.progress("p1")
+	if n := p.nodeNamed("impl-a"); n.Stage != StageIntegrated || n.Lifecycle != "cancelled" || n.Reason != DoneIntegrated {
+		t.Errorf("impl-a = %+v: the landing stays", n)
+	}
+	if n := p.nodeNamed("design"); n.Stage != StageCancelled || n.State != StateAccepted {
+		t.Errorf("design = %+v", n)
+	}
+	if p.Cumulative.Accepted != (Measure{Nodes: 2, Of: 7}) || p.Cumulative.Integrated != (Measure{Nodes: 1, Of: 7}) {
+		t.Errorf("cumulative = %+v, want research and the landed impl-a accepted (2) and impl-a integrated (1)", p.Cumulative)
+	}
+	assertEveryNonMovingNodeHasAReason(t, p)
+	assertNoFalseCompletionRate(t, p)
+}
+
 // Every branch of the stage rule, and the states the rule refuses.
 func TestProgressStageOf(t *testing.T) {
 	cases := []struct {
@@ -453,6 +560,41 @@ func TestProgressStageOf(t *testing.T) {
 	for _, c := range cases {
 		if c.want != "" && !seen[c.want] {
 			t.Errorf("stage %s is returned by the rule and missing from ProgressStages", c.want)
+		}
+	}
+}
+
+// The stage rule with the plan's lifecycle: the plan's end beats the execution's state except for a landing; a pause on an owned node does not move it; a paused plan holds a node nobody owns.
+func TestProgressStageOfLifecycle(t *testing.T) {
+	cases := []struct {
+		state, disposition, reason, life string
+		want                             string
+	}{
+		{StateRunning, DispSkip, SkipNodeCancelled, dag.LifeCancelled, StageCancelled},
+		{StateAccepted, DispSkip, SkipNodeCancelled, dag.LifeCancelled, StageCancelled},
+		{StateCreationUnknown, DispBlocked, BlockedCreationUnknown, dag.LifeArchived, StageArchived},
+		{StateArchivedNode, DispSkip, SkipNodeArchived, dag.LifeArchived, StageArchived},
+		{StateCancelled, DispSkip, SkipNodeCancelled, dag.LifeCancelled, StageCancelled},
+		{StateIntegrated, DispDone, DoneIntegrated, dag.LifeCancelled, StageIntegrated},
+		{StateIntegrated, DispDone, DoneIntegrated, dag.LifeArchived, StageIntegrated},
+		{StateRunning, DispDefer, DeferNodePaused, dag.LifePaused, StageRunning},
+		{StateAccepted, DispDone, DoneAccepted, dag.LifePaused, StageAccepted},
+		{StatePausedNode, DispDefer, DeferNodePaused, dag.LifePaused, StagePaused},
+		{StatePlanned, DispDefer, DeferPlanPaused, "", StagePaused},
+		{StatePlanned, DispSkip, SkipAlreadyOwned, "", ""},
+		{StatePlanned, DispDefer, DeferNoCapacity, "", ""},
+	}
+	for _, c := range cases {
+		got, err := stageOf(NodeReading{NodeID: "n", State: c.state, Disposition: c.disposition, Reason: c.reason, Lifecycle: c.life, Detail: "d"})
+		if c.want == "" {
+			var invariant *InvariantError
+			if !errors.As(err, &invariant) {
+				t.Errorf("stageOf(%s %s %s %q) = %q, %v, want an InvariantError", c.state, c.disposition, c.reason, c.life, got, err)
+			}
+			continue
+		}
+		if err != nil || got != c.want {
+			t.Errorf("stageOf(%s %s %s %q) = %q, %v, want %s", c.state, c.disposition, c.reason, c.life, got, err, c.want)
 		}
 	}
 }

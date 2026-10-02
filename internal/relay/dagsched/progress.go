@@ -45,6 +45,7 @@ const (
 	StageStale              = "stale"
 	StagePaused             = "paused"
 	StageCancelled          = "cancelled"
+	StageArchived           = "archived"
 	StageClosed             = "closed"
 	StageAmbiguous          = "ambiguous"
 )
@@ -52,7 +53,7 @@ const (
 // ProgressStages are the stages in the order the document lists them: from waiting to finished, then the states that stand apart from that line.
 var ProgressStages = []string{
 	StageWaitingPredecessor, StageWaitingDecision, StageWaitingResource, StageReady, StageReleasing, StageCreationUnknown, StageRunning, StageReported, StageVerifying,
-	StageCorrecting, StageAccepted, StageIntegrated, StageStale, StagePaused, StageCancelled, StageClosed, StageAmbiguous,
+	StageCorrecting, StageAccepted, StageIntegrated, StageStale, StagePaused, StageCancelled, StageArchived, StageClosed, StageAmbiguous,
 }
 
 // The sources of a pull request link: the forge identity recorded with the active acceptance, or the work report of the head event (written by an earlier build; this build has no writer).
@@ -81,6 +82,8 @@ type RevisionCount struct {
 	Nodes, PreviousNodes, Delta                      int
 	DenominatorChanged                               bool
 	Added, Retired, Updated                          []string
+	// Ops are the typed changes of the revision, in order: what the plan was told to do (add_node, pause_plan, cancel_node, ...).
+	Ops []string
 }
 
 // Denominator is the head revision's: the node count, the one before it, and the last revision at which the set of live nodes changed.
@@ -112,7 +115,8 @@ type BlockedOverlay struct {
 type Measure struct{ Nodes, Of int }
 
 // Cumulative keeps what has been accepted and integrated apart from the stage distribution. Accepted is the live nodes that hold an active acceptance whatever has happened to them since
-// (integrated, stale, paused, blocked); Integrated is the live nodes in the integrated state.
+// (integrated, stale, paused, blocked), except a node the plan ended (cancelled or archived) whose pull request did not land: the plan does not count what it produced as done. Integrated is the live
+// nodes in the integrated state.
 type Cumulative struct{ Accepted, Integrated Measure }
 
 // OutsideDenominator is what a revision took out of the plan: node ids that are no longer live, how many of them had an acceptance and how many still hold an execution slot. Their accepted work is not in
@@ -171,15 +175,19 @@ type NodeProgress struct {
 	NodeID, IssueKey, Kind, Title             string
 	Stage, State, Disposition, Reason, Detail string
 	Stale                                     *Stale
-	AcceptanceID                              string
-	HoldsSlot                                 bool
-	Links                                     NodeLinks
+	// Lifecycle is what the plan says of the node: paused, cancelled or archived; empty for an active node.
+	Lifecycle    string
+	AcceptanceID string
+	HoldsSlot    bool
+	Links        NodeLinks
 }
 
 // Progress is the projection. Reading is the reading it is built on (artifact bytes are not read), kept so a consumer that needs the nodes' dispositions asks nothing again.
 type Progress struct {
-	Reading     Reading
-	ProjectKey  string
+	Reading    Reading
+	ProjectKey string
+	// PlanState is paused while the plan is paused; empty for an active plan.
+	PlanState   string
 	Revisions   []RevisionCount
 	Denominator Denominator
 	Stages      []StageCount
@@ -258,9 +266,19 @@ func (s *Scheduler) Progress(ctx context.Context, q store.Querier, plan string) 
 }
 
 // stageOf is the stage of a node's reading. An owned node keeps the stage of its derived state; a node nobody owns is waiting on a predecessor (an edge not satisfied, or an input that cannot
-// be used), on a decision, or on a resource (a ready node held back by capacity, edit regions, a merge window, ownership or another owner of the issue), or ready. A combination the rule does not
-// know is refused, so a node can neither be dropped from the distribution nor counted twice.
+// be used), on a decision, or on a resource (a ready node held back by capacity, edit regions, a merge window, ownership or another owner of the issue), or ready. The plan's own lifecycle
+// adds two things: a node the plan ended (cancelled or archived) is in that stage whatever its execution says, unless its pull request landed (the plan cannot take a landing back), and a node
+// nobody owns in a paused plan is paused. A node the plan paused that is owned keeps its execution's stage: the plan stops the scheduler, not the child. A combination the rule does not know is
+// refused, so a node can neither be dropped from the distribution nor counted twice.
 func stageOf(n NodeReading) (string, error) {
+	if n.State != StateIntegrated {
+		switch n.Lifecycle {
+		case dag.LifeCancelled:
+			return StageCancelled, nil
+		case dag.LifeArchived:
+			return StageArchived, nil
+		}
+	}
 	switch n.State {
 	case StateWaiting, StateReady:
 		switch {
@@ -273,8 +291,13 @@ func stageOf(n NodeReading) (string, error) {
 		case n.Disposition == DispDefer || n.Disposition == DispSkip:
 			return StageWaitingResource, nil
 		}
+	case StatePlanned:
+		// a node of a paused plan that nobody owns: the plan holds it before any edge is looked at
+		if n.Disposition == DispDefer && n.Reason == DeferPlanPaused {
+			return StagePaused, nil
+		}
 	case StateReleasing, StateCreationUnknown, StateRunning, StateReported, StateVerifying, StateCorrecting, StateAccepted, StateIntegrated, StateStale,
-		StatePausedNode, StateCancelled, StateClosedNode, StateAmbiguousNode:
+		StatePausedNode, StateCancelled, StateArchivedNode, StateClosedNode, StateAmbiguousNode:
 		return n.State, nil
 	}
 	return "", invariant("node %s has state %q and disposition %q, which no stage covers", n.NodeID, n.State, n.Disposition)
@@ -325,7 +348,7 @@ func ProjectProgress(in ProgressInput) (Progress, error) {
 		}
 		facts := in.Facts[n.NodeID]
 		node := NodeProgress{NodeID: n.NodeID, IssueKey: n.IssueKey, Kind: n.Kind, Title: facts.Title, Stage: stage, State: n.State, Disposition: n.Disposition, Reason: n.Reason, Detail: n.Detail,
-			AcceptanceID: facts.AcceptanceID, HoldsSlot: facts.HoldsSlot, Links: facts.Links}
+			Lifecycle: n.Lifecycle, AcceptanceID: facts.AcceptanceID, HoldsSlot: facts.HoldsSlot, Links: facts.Links}
 		if n.Stale != nil {
 			// the digest of the manifest rebuilt now is computed from the size of a file when a receipt declared none: it is not a function of the store, so it is not carried
 			stale := *n.Stale
@@ -335,7 +358,8 @@ func ProjectProgress(in ProgressInput) (Progress, error) {
 		if node.Links.Executions == nil {
 			node.Links.Executions = []ExecutionLink{}
 		}
-		if facts.AcceptanceID != "" {
+		// what the plan ended is not counted as done (the reading's own rule), unless it landed: a landing stays, and an integrated node is an accepted one
+		if facts.AcceptanceID != "" && (stage == StageIntegrated || stage != StageCancelled && stage != StageArchived) {
 			accepted++
 		}
 		if n.Disposition == DispBlocked {
@@ -357,7 +381,7 @@ func ProjectProgress(in ProgressInput) (Progress, error) {
 	}
 	outside := in.Outside
 	outside.NodeIDs = append([]string{}, outside.NodeIDs...)
-	p := Progress{Reading: r, ProjectKey: in.ProjectKey, Revisions: in.Revisions, Denominator: denominator, Stages: stages, Blocked: overlay, Outside: outside, Nodes: nodes,
+	p := Progress{Reading: r, ProjectKey: in.ProjectKey, PlanState: r.PlanState, Revisions: in.Revisions, Denominator: denominator, Stages: stages, Blocked: overlay, Outside: outside, Nodes: nodes,
 		Cumulative: Cumulative{Accepted: Measure{Nodes: accepted, Of: head.Nodes}, Integrated: Measure{Nodes: len(members[StageIntegrated]), Of: head.Nodes}}}
 	printed, err := pyjson.Encode(p.body(), pyjson.Options{})
 	if err != nil {
@@ -381,7 +405,7 @@ func (r RevisionCount) object() contract.OrderedObject {
 		{Key: "revision", Value: r.Revision}, {Key: "recorded_at", Value: optionalText(r.RecordedAt)}, {Key: "request_id", Value: optionalText(r.RequestID)},
 		{Key: "author_task_id", Value: optionalText(r.AuthorTaskID)}, {Key: "coordinator_epoch", Value: r.CoordinatorEpoch}, {Key: "state_digest", Value: optionalText(r.StateDigest)},
 		{Key: "nodes", Value: r.Nodes}, {Key: "previous_nodes", Value: r.PreviousNodes}, {Key: "delta", Value: r.Delta}, {Key: "denominator_changed", Value: r.DenominatorChanged},
-		{Key: "added", Value: listOf(r.Added)}, {Key: "retired", Value: listOf(r.Retired)}, {Key: "updated", Value: listOf(r.Updated)},
+		{Key: "added", Value: listOf(r.Added)}, {Key: "retired", Value: listOf(r.Retired)}, {Key: "updated", Value: listOf(r.Updated)}, {Key: "ops", Value: listOf(r.Ops)},
 	}
 }
 
@@ -430,7 +454,7 @@ func (n NodeProgress) object() contract.OrderedObject {
 	if n.Stale != nil {
 		o = append(o, contract.Field{Key: "stale", Value: staleObject(*n.Stale)})
 	}
-	return append(o, contract.Field{Key: "acceptance_id", Value: optionalText(n.AcceptanceID)}, contract.Field{Key: "holds_slot", Value: n.HoldsSlot}, contract.Field{Key: "links", Value: n.Links.object()})
+	return append(o, contract.Field{Key: "lifecycle", Value: optionalText(n.Lifecycle)}, contract.Field{Key: "acceptance_id", Value: optionalText(n.AcceptanceID)}, contract.Field{Key: "holds_slot", Value: n.HoldsSlot}, contract.Field{Key: "links", Value: n.Links.object()})
 }
 
 // body is the printed document without its digest.
@@ -454,7 +478,7 @@ func (p Progress) body() contract.OrderedObject {
 	d := p.Denominator
 	return contract.OrderedObject{
 		{Key: "ok", Value: true}, {Key: "schema", Value: SchemaProgress}, {Key: "plan_id", Value: p.Reading.PlanID}, {Key: "project_key", Value: p.ProjectKey},
-		{Key: "plan_revision", Value: p.Reading.PlanRevision}, {Key: "state_digest", Value: p.Reading.StateDigest},
+		{Key: "plan_revision", Value: p.Reading.PlanRevision}, {Key: "state_digest", Value: p.Reading.StateDigest}, {Key: "plan_state", Value: optionalText(p.PlanState)},
 		{Key: "denominator", Value: contract.OrderedObject{{Key: "revision", Value: d.Revision}, {Key: "nodes", Value: d.Nodes}, {Key: "previous_revision", Value: d.PreviousRevision},
 			{Key: "previous_nodes", Value: d.PreviousNodes}, {Key: "delta", Value: d.Delta}, {Key: "changed", Value: d.Changed}, {Key: "last_changed_revision", Value: d.LastChangedRevision}}},
 		{Key: "revisions", Value: revisions}, {Key: "stages", Value: stages},
@@ -499,24 +523,22 @@ func revisionCounts(ctx context.Context, q store.Querier, plan string, head int6
 		return nil, err
 	}
 	meta := map[int64]RevisionCount{}
-	log, err := q.QueryContext(ctx, "SELECT revision_no, request_id, author_task_id, coordinator_epoch, recorded_at, state_digest FROM dag_plan_revisions WHERE plan_id = ? ORDER BY revision_no", plan)
-	if err != nil {
-		return nil, err
-	}
-	for log.Next() {
-		var r RevisionCount
-		if err := log.Scan(&r.Revision, &r.RequestID, &r.AuthorTaskID, &r.CoordinatorEpoch, &r.RecordedAt, &r.StateDigest); err != nil {
-			_ = log.Close()
+	for after := int64(0); after < head; {
+		page, err := dag.EventsAfter(ctx, q, plan, after, dag.MaxPage)
+		if err != nil {
 			return nil, err
 		}
-		meta[r.Revision] = r
-	}
-	if err := log.Err(); err != nil {
-		_ = log.Close()
-		return nil, err
-	}
-	if err := log.Close(); err != nil {
-		return nil, err
+		if len(page.Events) == 0 {
+			break
+		}
+		for _, e := range page.Events {
+			r := RevisionCount{Revision: e.RevisionNo, RequestID: e.RequestID, AuthorTaskID: e.AuthorTaskID, CoordinatorEpoch: e.CoordinatorEpoch, RecordedAt: e.RecordedAt, StateDigest: e.StateDigest, Ops: []string{}}
+			for _, change := range e.Changes {
+				r.Ops = append(r.Ops, change.Op)
+			}
+			meta[e.RevisionNo] = r
+		}
+		after = page.Cursor
 	}
 	liveAt := func(r int64) map[string]bool {
 		live := map[string]bool{}
