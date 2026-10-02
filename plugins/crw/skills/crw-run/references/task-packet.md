@@ -962,15 +962,16 @@ not checked.
   class is a fix whatever the child concluded.
 
 - **`baseRefresh`**: one entry for each merge of the base on the first-parent line after
-  `reviewedHead`, whoever made it and in whichever generation: entries already reported in an
-  earlier generation are carried forward, and a merge the parent made with the forge's update-branch
-  call is an entry too, which the child checks with the same helper. Where no review ran, the window
-  starts at the assignment's baseline commit. An entry gives the `kind` below, the merge's first
-  parent (`previous`), the merge commit (`head`) and its second parent, the base commit merged
-  (`merged`, in full). Consecutive merges are consecutive entries, each starting at the head of the
-  one before. A commit made after a merge, such as a digest re-record, is not part of the entry: it
-  is listed in `commitsAfter` with its cause, so the merge head and the final head are two facts. A
-  branch with no merge of the base after the review says `[]`.
+  `reviewedHead` (since the assignment's baseline commit where there is no `reviewedHead`), whoever
+  made it and in whichever generation. The window runs through every generation, so an entry stays
+  in the list while its merge lies after `reviewedHead` and is dropped once a later review has
+  covered it. A merge the parent made with the forge's update-branch call is an entry too, which the
+  child checks with the same helper. An entry gives the `kind` below, the merge's first parent
+  (`previous`), the merge commit (`head`) and its second parent, the base commit merged (`merged`,
+  in full). Consecutive merges are consecutive entries, each starting at the head of the one before.
+  A commit made after a merge, such as a digest re-record, is not part of the entry: it is listed in
+  `commitsAfter` with its cause, so the merge head and the final head are two facts. A branch with
+  no merge of the base after the review says `[]`.
 
 - **`changedPaths`**: where the assignment declares edit regions, the paths the branch changed, from
   `git diff --name-only origin/dev...<head>` (the merge-base form, so merging the base does not show
