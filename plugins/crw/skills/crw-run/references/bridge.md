@@ -366,3 +366,20 @@ observation-failure handling in [OPS-8.1](operations.md#ops-81-parent-continuati
 Check app listing independently for visibility/project association. If Desktop
 tools cannot find the task, retain the backend ID and disclose the limitation;
 never substitute a guessed Desktop project ID.
+
+### What `read_thread` shows of a long text
+
+`read_thread` cuts long texts in its own response and marks each cut inside the text. The cut is a limit on display: the bridge clips after the host has answered, so neither the thread's record nor any message the relay stored is changed. A reader who takes the cut for the stored text can report a loss that never happened. In one run a parent read a revision request through `read_thread`, saw the text end at 4,000 characters with the marker below, and reported that the relay had cut a restoration block, while the message the relay stored was whole at 8,145 characters.
+
+This was checked against the bridge source on 2026-10-02: `ReadThread` in `internal/bridge/read.go`, `clipped` in `internal/bridge/observe.go` and the default in `internal/bridge/mcp/schema.go`. As with everything above, the installed bridge is a separate fact ([OPS-2.2](operations.md#ops-22-five-classes-and-their-rules)).
+
+| Question | Answer |
+|---|---|
+| Limit | `max_text_chars`: default 4000, accepted 100 to 20000, counted in characters, not bytes. |
+| What is cut | Only a value under the key `text`, `preview`, `summary`, `objective` or `aggregatedOutput`: a message's text (in the turn summary and in the newest turn's item detail alike), the thread preview, a reasoning summary, a command's output. No other field is cut. |
+| Format | The first `max_text_chars` characters, then a new line `[truncated; original length N characters]`, N being the length of the whole text. The marker line is added to the limit, not counted in it. |
+| Other tools | `get_goal`, `list_threads`, `wait_thread` and the goal receipts cut the same keys at a fixed 4000 and take no argument. |
+
+The marker says only that the bridge's display ended there. It is not evidence that the relay cut anything, because the relay words its own cuts differently: `omitted: ...` and `(truncated; full value in the record)` inside a rendered message, and a `truncated` or `budget_dropped` outcome for a restoration block ([relay.md](relay.md#the-parent-verifies)).
+
+To read the whole text, read the same page again (same `cursor`) with a larger `max_text_chars`. 20000 is the most this tool will show, so a text whose N is larger needs another route. For a message the relay sent, `codex-session-relay --state <dir> show --event <id> --message` returns the text the relay stored for each delivery attempt as `attemptMessages[].message`, with each attempt's `status`; the text of a `dispatched` attempt is what the relay sent. Otherwise read the thread's rollout file where the host reports its path as `thread.path` in the metadata `read_thread` returns (a host field marked unstable that may be null) and the file is there. Before reporting that the relay cut a message, compare the marker's N with the length of the text `show --message` returns: they match when the relay sent the message whole and only this display cut it.
