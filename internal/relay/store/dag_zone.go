@@ -403,4 +403,33 @@ BEGIN SELECT RAISE(ABORT, 'dag_edges rows are never deleted'); END`,
     CHECK (left_node_id < right_node_id)
 )`,
 	`CREATE UNIQUE INDEX IF NOT EXISTS dag_conflict_observations_pair ON dag_conflict_observations (plan_id, left_node_id, right_node_id, left_head, right_head, base_sha)`,
+	// CRW-282: how a release whose managed start was released before it created a child is ended and released again. A managed request id that was released is refused forever and dag_releases / dag_release_requests are unique on
+	// (plan, node, manifest digest), so the recovery has its own rows. A 'closed' row ends the abandoned intent explicitly (the slot is returned in the same transaction; slot_id, slot_released and copy_path record what
+	// that did, so the same close answers the same). A 'rereleased' row is the next release of a digest whose newest intent is closed: it carries the successor request id and the exact request bytes and selectors the managed start is
+	// fingerprinted with, as dag_release_requests does for the first one. The node's open intent is the dag_releases row or rereleased row whose request has no closed row.
+	`CREATE TABLE IF NOT EXISTS dag_release_recoveries (
+    plan_id              TEXT NOT NULL REFERENCES dag_plans (plan_id),
+    node_id              TEXT NOT NULL,
+    manifest_digest      TEXT NOT NULL,
+    abandoned_request_id TEXT NOT NULL,
+    action               TEXT NOT NULL CHECK (action IN ('closed', 'rereleased')),
+    successor_request_id TEXT,
+    request_sha256       TEXT,
+    request_json         TEXT,
+    marker_root          TEXT,
+    socket               TEXT,
+    state_selector       TEXT,
+    slot_id              TEXT,
+    slot_released        INTEGER NOT NULL DEFAULT 0 CHECK (slot_released IN (0, 1)),
+    copy_path            TEXT,
+    reason               TEXT NOT NULL CHECK (reason <> ''),
+    recorded_by          TEXT NOT NULL,
+    coordinator_epoch    INTEGER NOT NULL DEFAULT 0 CHECK (coordinator_epoch >= 0),
+    recorded_at          TEXT NOT NULL,
+    PRIMARY KEY (plan_id, node_id, manifest_digest, abandoned_request_id, action),
+    CHECK (action <> 'rereleased' OR (successor_request_id IS NOT NULL AND request_sha256 IS NOT NULL AND request_json IS NOT NULL
+                                      AND marker_root IS NOT NULL AND socket IS NOT NULL AND state_selector IS NOT NULL)),
+    CHECK (action <> 'closed' OR (successor_request_id IS NULL AND request_sha256 IS NULL AND request_json IS NULL))
+)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS dag_release_recoveries_successor ON dag_release_recoveries (successor_request_id) WHERE successor_request_id IS NOT NULL`,
 }
