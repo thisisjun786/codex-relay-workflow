@@ -660,7 +660,7 @@ func managedStartOf(ctx context.Context, q store.Querier, plan, node string) (*M
 
 // pullRequestOf is the pull request an implementation node is about. The forge identity recorded with the active acceptance comes first (repository and number from the forge row, the head
 // the parent accepted); before any acceptance the work report of the relationship's current head event does, bound to that event, generation and revision so a later push cannot inherit an
-// earlier report. No head, an ambiguous head or no report is no link: the store is not guessed from.
+// earlier report, and the newest submission of that event decides. No head, an ambiguous head, no report or a newest report that names no pull request is no link: the store is not guessed from.
 func (s *Scheduler) pullRequestOf(ctx context.Context, q store.Querier, rel relRow, hasRelationship bool, acc Acceptance, hasAcceptance bool) (*PullRequestLink, error) {
 	if hasAcceptance {
 		link := &PullRequestLink{HeadSHA: acc.HeadSHA, Number: acc.PRNumber, Source: PRSourceAcceptance}
@@ -688,14 +688,16 @@ func (s *Scheduler) pullRequestOf(ctx context.Context, q store.Querier, rel relR
 	if head.EventID == "" || head.Ambiguous() {
 		return nil, nil
 	}
+	// the newest submission of the head event is the report: a later submission that names no pull request withdraws the link, and an earlier one is not consulted
 	link := &PullRequestLink{Source: PRSourceWorkReport, EventID: head.EventID}
+	var number sql.NullInt64
 	var url, headSHA sql.NullString
 	found, err := queryOne(ctx, q, "SELECT repository, pr_number, pr_url, head_sha FROM work_reports WHERE event_id = ? AND relationship_id = ? AND execution_generation = ? AND revision_hash = ?"+
-		" AND pr_number IS NOT NULL ORDER BY submission_no DESC LIMIT 1", []any{head.EventID, rel.ID, rel.Generation, head.RevisionHash}, &link.Repository, &link.Number, &url, &headSHA)
-	if err != nil || !found {
+		" ORDER BY submission_no DESC LIMIT 1", []any{head.EventID, rel.ID, rel.Generation, head.RevisionHash}, &link.Repository, &number, &url, &headSHA)
+	if err != nil || !found || !number.Valid {
 		return nil, err
 	}
-	link.URL, link.HeadSHA = url.String, headSHA.String
+	link.Number, link.URL, link.HeadSHA = number.Int64, url.String, headSHA.String
 	return link, nil
 }
 

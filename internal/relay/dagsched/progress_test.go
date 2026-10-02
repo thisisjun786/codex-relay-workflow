@@ -504,7 +504,7 @@ func TestProgressLinks(t *testing.T) {
 	f := newFixture(t)
 	f.projectParent()
 	f.putPlan("l", 0, "l-r1", addNode("run", dag.NodeNonPR), addNode("rel", dag.NodeNonPR), addNode("acc", dag.NodeImplementation), addNode("rep", dag.NodeImplementation),
-		addNode("sup", dag.NodeImplementation), addNode("frk", dag.NodeImplementation), addNode("plain", dag.NodeNonPR))
+		addNode("sup", dag.NodeImplementation), addNode("wd", dag.NodeImplementation), addNode("frk", dag.NodeImplementation), addNode("plain", dag.NodeNonPR))
 	// a node that runs: relationship, thread, one execution, no pull request
 	f.startNode("l", "run")
 	// a node being released: the managed request and the child it already has, no relationship yet
@@ -520,6 +520,11 @@ func TestProgressLinks(t *testing.T) {
 	ridSup, evSup := f.seedReceived("l", "sup")
 	f.workReport(ridSup, evSup, 1, dig("revision "+ridSup), 12, head1)
 	f.supersedeReport(ridSup, "sup", "l", "newer")
+	// a node whose newest work report names no pull request: it withdrew the link, and the earlier submission that named one is not consulted
+	ridWd, evWd := f.seedReceived("l", "wd")
+	f.workReport(ridWd, evWd, 1, dig("revision "+ridWd), 14, head1)
+	f.exec("INSERT INTO work_reports (event_id, submission_no, relationship_id, execution_generation, revision_hash, repository, pr_number, pr_url, head_sha, cxc_status, cxc_reason, contract_version, summary, next_action, recorded_at)"+
+		" VALUES (?, 2, ?, 1, ?, 'owner/repo', NULL, NULL, NULL, 'DONE', 'proved', 'v1', 'done', 'merge', ?)", evWd, ridWd, dig("revision "+ridWd), f.clock())
 	// a node whose head is ambiguous: two revisions that do not name each other
 	ridFrk := f.startNode("l", "frk")
 	f.finalReport(ridFrk, "evt-frk-1", dig("frk one"))
@@ -545,6 +550,9 @@ func TestProgressLinks(t *testing.T) {
 	}
 	if pr := p.nodeNamed("sup").Links.PullRequest; pr != nil {
 		t.Errorf("sup pull request = %+v: the report belongs to a superseded head and must not become the new head's link", pr)
+	}
+	if pr := p.nodeNamed("wd").Links.PullRequest; pr != nil {
+		t.Errorf("wd pull request = %+v: the newest submission names none, so the older one's link is withdrawn", pr)
 	}
 	if n := p.nodeNamed("frk"); n.Stage != StageAmbiguous || n.Links.PullRequest != nil {
 		t.Errorf("frk = %+v: an ambiguous head names no pull request", n)

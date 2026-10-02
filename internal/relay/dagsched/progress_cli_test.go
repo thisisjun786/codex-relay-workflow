@@ -254,6 +254,23 @@ func TestCLIProgressRefusals(t *testing.T) {
 	if _, err := os.Stat(absent); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("dag-progress created %s", absent)
 	}
+
+	// a partial store (a write gate with no database) is refused as dag-ready refuses it, not reported as absent
+	partial := filepath.Join(t.TempDir(), "partial")
+	if err := os.MkdirAll(partial, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(partial, "write-gate.lock"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	readyOut, _, readyCode = crwRun(t, partial, nil, "dag-ready", "--plan", "p1")
+	progressOut, _, progressCode = crwRun(t, partial, nil, "dag-progress", "--plan", "p1")
+	if progressCode != readyCode || progressOut != readyOut || parseOut(t, progressOut)["reason"] == "store_absent" {
+		t.Errorf("a partial store: dag-ready exit %d %s, dag-progress exit %d %s", readyCode, readyOut, progressCode, progressOut)
+	}
+	if _, err := os.Stat(filepath.Join(partial, "relay.sqlite3")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("dag-progress created a database in the partial store directory")
+	}
 }
 
 // Criterion c2 and c3 end to end: with every artifact file deleted the printed document is the same bytes, where dag-ready, which reads the files, now blocks a node.
