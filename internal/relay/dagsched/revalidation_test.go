@@ -964,6 +964,9 @@ func TestAGenerationOpenedByHandIsBoundOnlyToTheManifestItWasOpenedFor(t *testin
 		if _, err := k.sched.RecordCorrection(context.Background(), "sr", "C", "parent", next.ManifestDigest); refusalReason(err) != "disposition_conflict" || !strings.Contains(err.Error(), "already open") ||
 			k.count("SELECT COUNT(*) FROM dag_node_executions WHERE node_id = 'C' AND execution_generation = 3") != 0 {
 			t.Fatalf("a second correction beside the open one = %v", err)
+		} else if !strings.Contains(err.Error(), "open no further generation") || strings.Contains(err.Error(), "wait for its report") {
+			// opening the second generation moved the relationship past the one the first correction is accepted on, so waiting for that report is not a way on: the refusal must say to report and stop
+			t.Fatalf("the refusal offers a way on that is not there: %v", err)
 		}
 	})
 	t.Run("a change of the criteria alone is revalidated, not corrected by hand", func(t *testing.T) {
