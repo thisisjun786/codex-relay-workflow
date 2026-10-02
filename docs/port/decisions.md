@@ -2393,7 +2393,8 @@ Each Go reader answers as the fence's reader of the same function, outside the b
   recorded. The ScopeError of a frozen record is a refusal, as it is in the fence. The receipt's
   own digests are read by the same rule: a `sha256` or `revisionHash` ending in a newline is
   `malformed_receipt` in both runtimes;
-- the omission reader (`delivery.omissionDeliverable`) and the Stop hook (`hook.DeliverableState`)
+- the omission reader and the Stop hook (both through `delivery.LookupStoredReceipt` and
+  `LookupStoredReceiptAt`, which call `store.DeliverableState`, as `hook.DeliverableState` does)
   follow `guard.deliverable_state`. An unreachable frozen copy, a manifest that cannot be read, a
   ScopeError, and unreadable live bytes that no frozen copy answers for are unverifiable, which
   the omission reports as `receipt_unreadable`. A frozen copy that is not a manifest is changed,
@@ -2473,7 +2474,7 @@ Evidence: `packages/codex-session-relay/src/codex_session_relay/manifest.py:269-
 `PythonManifestEntries`, `PythonRevisionHash`, `PythonStr`, `PythonEqual`, the `json.loads`
 decoder), `internal/relay/store/manifest.go:84-176` (`FreezeManifest`, `ReadFrozenBlob`,
 `VerifyFrozen`), `receipt_intake.go:186` (`verifyBytes`), `ownership.go:120` (`PythonHostDetail`),
-`internal/relay/delivery/omitted.go:660-720` (`omissionDeliverable`, `omissionReceiptFailure`),
+`internal/relay/delivery/receipt.go` (`judgeReceiptHead`), `internal/relay/delivery/omitted.go` (`omissionReceiptFailure`),
 `internal/relay/hook/receipt.go:150-306` (`DeliverableState`, `raisedState`, `verifyEntries`,
 `verifyFrozen`), `settings.go:158-199` (`unbounded`, `readRegular`),
 `internal/relay/hook/guard.go:110-120` (the fault). Tests: `internal/testsupport/frozen.go` (`FrozenManifests`, 29 frozen documents

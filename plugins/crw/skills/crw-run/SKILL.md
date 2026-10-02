@@ -801,7 +801,10 @@ per-finding trail, and accept them as the evidence table above defines them.
 Acceptance keeps its own work, which was never the child's. Confirm the reported
 head is the head the pull request has now, the base is current and the merge is
 clean, every accepted criterion maps to evidence that still applies at that head,
-and any finding still open is named. The one head that differs from the report on
+and any finding still open is named. The handoff's disclosures are part of that: every decision
+request is answered before the verdict, under
+[what the handoff discloses, checked at the verdict](references/merge-readiness.md#what-the-handoff-discloses-checked-at-the-verdict).
+The one head that differs from the report on
 purpose is a base refresh the parent made itself under
 [Merge readiness](references/merge-readiness.md#refresh-the-base-yourself-when-only-the-base-moved),
 confirmed by that rule's own checks. Any other moved head invalidates the reused result,
@@ -857,6 +860,12 @@ forbids. Nor is there a supported way to send it again afterwards: the verdict d
 resend. Record it as an undelivered correction and hand the decision to whoever owns the
 assignment, per [codex-session-relay](references/relay.md#the-parent-verifies) and
 [the restoration block](references/task-packet.md#restoration-block).
+
+A correction that asks only for the base to be brought up to date is not new scope, and the packet
+says so: the child merges the base, names the kind of each merge ([the kinds and what reruns for
+each](references/task-packet.md#what-a-handoff-discloses)) and reruns that kind's checks and no
+more, so the correction does not ask for an audit of what the base moved under. The restoration
+block carries the siblings' landings and the conflicts the parent expects.
 
 Refresh the task's identity, ownership, current turn, checkout, and prior
 correction receipts before sending. Reuse its agreed model, effort, workflow,
@@ -925,6 +934,19 @@ observed; installing, starting a service, or creating a task to find out are
 separate actions under their own authorization, and
 [OPS-2.4](references/operations.md#ops-24-update-and-recovery) owns the update
 path when one is actually authorized.
+
+### Close the project's merged assignments
+
+When a relay-managed project is finished, its parent closes the merged assignments it leaves live, so the next parent can take
+the project over with `linkage-handover` and the store stops counting finished work. Read `linkage-completion --project <key>`
+first and keep that reading as the completion evidence, because afterwards it reads `unregistered` while nothing is live. Run
+`relationship-close-merged --project <key> --actor <own task id>` without `--apply`, read `closable` and `kept`, then repeat
+it with `--apply`. A non-empty `kept` is not a finished project: report each kept assignment with its reason. For a supervised
+project read `supervisor-standing --project <key>` and do not apply while an entry for a `closable`
+assignment (its `relationId`) lacks a `decision.priorReport`, since a report not yet staged cannot be sent once its assignment
+is closed; entries of assignments already closed do not block.
+[Close the merged assignments](references/relay.md#close-the-merged-assignments-when-the-project-is-done) has the commands and
+the way back.
 
 ### Account for the resources this run leaves behind
 

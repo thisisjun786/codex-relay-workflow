@@ -104,6 +104,7 @@ const (
 	RefusalSettingsRecordStaleForRole      RefusalReason = "settings_record_stale_for_role"
 	RefusalSettingsUnavailable             RefusalReason = "settings_unavailable"
 	RefusalSlotUnknown                     RefusalReason = "slot_unknown"
+	RefusalStaleCoordinatorEpoch           RefusalReason = "stale_coordinator_epoch"
 	RefusalStaleGeneration                 RefusalReason = "stale_generation"
 	RefusalStaleMarkContext                RefusalReason = "stale_mark_context"
 	RefusalStoreOwnedByOther               RefusalReason = "store_owned_by_other"

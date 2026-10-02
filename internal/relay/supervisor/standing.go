@@ -13,8 +13,29 @@ import (
 
 const standingLimits = "derived from this store's rows only. It says what is owed upward, never that a supervisor received anything, and never that the project is complete. A turn that ended without reporting has no row here at all, so it is present only when a reading of it was passed in: one taken through the marker (reporting-show), or one this store derives from the declarations a child's relay recorded here (omitted.derive), which the supervisor channel and supervisor-standing pass in themselves"
 
+// Standing is the project's whole answer: every relationship attached to it, archived ones
+// included, and every obligation the events of those raise. It is what supervisor-standing prints
+// and supervisor-stage --project stages, and the documentation says it keeps listing a report
+// still owed for an archived assignment.
 func (c *Channel) Standing(ctx context.Context, project string, observations []any) (map[string]any, error) {
+	return c.standing(ctx, project, observations, false)
+}
+
+// standing is Standing. With visit it is what the daemon's visit to the project needs: the
+// events of released relationships are not read, so their reports (which nothing can be addressed
+// for) are not raised and the visit costs what the relationships that can still report cost. A
+// relationship is released when it is archived and its issue has neither a live owner nor a live
+// execution edge above it: archiving releases both, and they are what its report goes up by
+// (StoreLinkage.Up starts from the issue). One whose issue was taken again, by its successor or
+// by a new registration for the issue, can be addressed again and is not released. The answer is
+// otherwise the same: it still lists every relationship, and a reading about a released one is
+// still placed by its status.
+func (c *Channel) standing(ctx context.Context, project string, observations []any, visit bool) (map[string]any, error) {
 	relations, err := c.Store.All(ctx, "SELECT r.relationship_id,r.status,r.superseded_by FROM relationships r JOIN relationship_scope s ON s.relationship_id = r.relationship_id WHERE s.project_key = ? ORDER BY r.created_at", project)
+	if err != nil {
+		return nil, err
+	}
+	raised, err := c.projectObligations(ctx, project, visit)
 	if err != nil {
 		return nil, err
 	}
@@ -68,18 +89,7 @@ func (c *Channel) Standing(ctx context.Context, project string, observations []a
 	for _, idAny := range names {
 		id := idAny.(string)
 		about := statuses[id]
-		events, err := c.Store.All(ctx, "SELECT event_id FROM events WHERE relationship_id = ? ORDER BY first_seen_at", id)
-		if err != nil {
-			return nil, err
-		}
-		for _, event := range events {
-			o, err := c.FromEvent(ctx, event.Get("event_id").(string))
-			if err != nil {
-				return nil, err
-			}
-			if o == nil {
-				continue
-			}
+		for _, o := range raised[id] {
 			if err = add(o, about.Get("status"), about.Get("superseded_by")); err != nil {
 				return nil, err
 			}

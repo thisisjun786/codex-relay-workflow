@@ -18,6 +18,9 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
+// statArtifact reads the size of an artifact whose receipt declared none. It is a variable so a test can count the calls: a store-only read (Progress) never makes one.
+var statArtifact = os.Stat
+
 // BaseRef is the branch a node's work starts from: the repository, the ref and the commit the ref pointed at when the manifest was built.
 type BaseRef struct{ Repository, Ref, SHA string }
 
@@ -145,7 +148,7 @@ func (s *Scheduler) BuildManifest(ctx context.Context, q store.Querier, plan str
 	}
 	body := map[string]any{
 		"schema": dag.SchemaManifest, "node_id": node.NodeID, "issue_key": node.IssueKey, "node_slice_digest": node.SliceDigest, "criteria_set_digest": node.CriteriaSetDigest,
-		"inputs": inputs, "rule_version": in.RuleVersion.object(), "plan_revision_no": snap.Revision, "coordinator_epoch": int64(0),
+		"inputs": inputs, "rule_version": in.RuleVersion.object(), "plan_revision_no": snap.Revision, "coordinator_epoch": s.ExpectedEpoch,
 		"created_by_task_id": in.CreatedByTaskID, "created_at": in.CreatedAt,
 	}
 	if in.Base != nil {
@@ -201,8 +204,10 @@ func (s *Scheduler) buildInput(ctx context.Context, q store.Querier, e dag.SnapE
 			size := int64(0)
 			if entry.Bytes != nil {
 				size = *entry.Bytes
-			} else if info, err := os.Stat(entry.Path); err == nil {
-				size = info.Size()
+			} else if !storeOnly(ctx) {
+				if info, err := statArtifact(entry.Path); err == nil {
+					size = info.Size()
+				}
 			}
 			artifacts = append(artifacts, map[string]any{"uri": entry.Path, "sha256": entry.SHA256, "bytes": size, "scope": scope})
 		}
