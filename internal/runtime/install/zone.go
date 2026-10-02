@@ -52,7 +52,8 @@ type backedUp struct {
 	Path       string `json:"path"`
 	Kind       string `json:"kind"` // dir, file, link-file (a symbolic link to a regular file: its bytes are copied)
 	Size       int64  `json:"size"`
-	Mode       uint32 `json:"mode"`
+	Mode       uint32 `json:"mode"`     // the source permission bits
+	CopyMode   uint32 `json:"copyMode"` // the copy: the source, with the owner able to open it (see copyMode)
 	SHA256     string `json:"sha256,omitempty"`
 	LinkTarget string `json:"linkTarget,omitempty"`
 	source     string // where the bytes are read from
@@ -226,7 +227,7 @@ func backupState(ctx context.Context, o Options, dest string) (Object, error) {
 	// read through is one the copy's owner can open to sync.
 	setMode := func(e backedUp) error {
 		path := filepath.Join(dest, filepath.FromSlash(e.Path))
-		if err := os.Chmod(path, fs.FileMode(e.Mode)); err != nil {
+		if err := os.Chmod(path, fs.FileMode(e.CopyMode)); err != nil {
 			return fmt.Errorf("the mode of the copy of %s could not be set: %v", e.Path, err)
 		}
 		if err := syncAfterMode(path); err != nil {
@@ -392,9 +393,9 @@ func listState(source, dbPath string) ([]backedUp, []string, error) {
 		}
 		switch mode := info.Mode(); {
 		case mode.IsDir():
-			entries = append(entries, backedUp{Path: rel, Kind: "dir", Mode: uint32(mode.Perm())})
+			entries = append(entries, backedUp{Path: rel, Kind: "dir", Mode: uint32(mode.Perm()), CopyMode: uint32(copyMode(true, mode.Perm()))})
 		case mode.IsRegular():
-			entries = append(entries, backedUp{Path: rel, Kind: "file", Size: info.Size(), Mode: uint32(mode.Perm()), source: path})
+			entries = append(entries, backedUp{Path: rel, Kind: "file", Size: info.Size(), Mode: uint32(mode.Perm()), CopyMode: uint32(copyMode(false, mode.Perm())), source: path})
 		case mode&fs.ModeSymlink != 0:
 			target, err := os.Readlink(path)
 			if err != nil {
@@ -408,7 +409,7 @@ func listState(source, dbPath string) ([]backedUp, []string, error) {
 			if err != nil || !real.Mode().IsRegular() {
 				return fmt.Errorf("%s is a link to %s, which is not a regular file, so there is no byte-identical copy of it to make", rel, target)
 			}
-			entries = append(entries, backedUp{Path: rel, Kind: "link-file", Size: real.Size(), Mode: uint32(real.Mode().Perm()), LinkTarget: target, source: resolved})
+			entries = append(entries, backedUp{Path: rel, Kind: "link-file", Size: real.Size(), Mode: uint32(real.Mode().Perm()), CopyMode: uint32(copyMode(false, real.Mode().Perm())), LinkTarget: target, source: resolved})
 		default:
 			skipped = append(skipped, rel+" ("+kindOf(mode)+")")
 		}
@@ -435,12 +436,23 @@ func listState(source, dbPath string) ([]backedUp, []string, error) {
 			if have[name] {
 				return nil, nil, fmt.Errorf("the state directory already holds %s, which the store's log %s would have to be copied over", name, resolved+suffix)
 			}
-			entries = append(entries, backedUp{Path: name, Kind: "link-file", Size: info.Size(), Mode: uint32(info.Mode().Perm()), LinkTarget: resolved + suffix, source: resolved + suffix})
+			entries = append(entries, backedUp{Path: name, Kind: "link-file", Size: info.Size(), Mode: uint32(info.Mode().Perm()), CopyMode: uint32(copyMode(false, info.Mode().Perm())), LinkTarget: resolved + suffix, source: resolved + suffix})
 		}
 	}
 	sort.SliceStable(entries, func(i, j int) bool { return entries[i].Path < entries[j].Path })
 	sort.Strings(skipped)
 	return entries, skipped, nil
+}
+
+// copyMode is the mode a copy is given: the source, with the owner able to open it. The installer owns every copy,
+// and a source it could read through its group (a file of another user) may leave its own owner no read bit, which
+// would leave the copy unopenable to the user who took the backup, to sync it or to restore from it. The manifest
+// records both modes.
+func copyMode(dir bool, mode fs.FileMode) fs.FileMode {
+	if dir {
+		return mode | 0o700
+	}
+	return mode | 0o400
 }
 
 func kindOf(mode fs.FileMode) string {

@@ -867,3 +867,50 @@ func TestTheModesOfTheBackupAreSyncedAfterTheyAreSet(t *testing.T) {
 		}
 	}
 }
+
+// A copy is opened by the user who took the backup, to sync it and to restore from it: the owner can always read it,
+// whatever the mode of a source that was readable only through its group.
+func TestACopyIsGivenTheSourcesModeWithTheOwnerAbleToOpenIt(t *testing.T) {
+	for _, tc := range []struct {
+		dir  bool
+		mode os.FileMode
+		want os.FileMode
+	}{
+		{false, 0o640, 0o640}, {false, 0o755, 0o755}, {false, 0o600, 0o600},
+		{false, 0o040, 0o440}, {false, 0o044, 0o444}, {false, 0o000, 0o400},
+		{true, 0o750, 0o750}, {true, 0o755, 0o755},
+		{true, 0o050, 0o750}, {true, 0o500, 0o700}, {true, 0o000, 0o700},
+	} {
+		if got := install.CopyMode(tc.dir, tc.mode); got != tc.want {
+			t.Errorf("dir %v, source %04o: copy %04o, want %04o", tc.dir, tc.mode, got, tc.want)
+		}
+	}
+}
+
+// The listing records the mode of the source and the mode its copy is to be given, for a file and for a directory.
+func TestTheListingRecordsTheModeOfTheCopyBesideTheModeOfTheSource(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "group-only"), "x")
+	write(t, filepath.Join(dir, "plain"), "x")
+	write(t, filepath.Join(dir, "sub", "inner"), "x")
+	for _, step := range []struct {
+		path string
+		mode os.FileMode
+	}{{"group-only", 0o040}, {"plain", 0o644}, {filepath.Join("sub", "inner"), 0o600}, {"sub", 0o550}} {
+		if err := os.Chmod(filepath.Join(dir, step.path), step.mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	defer func() { _ = os.Chmod(filepath.Join(dir, "sub"), 0o700) }()
+	modes, err := install.ListedModes(dir, filepath.Join(dir, "relay.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for path, want := range map[string][2]os.FileMode{
+		"group-only": {0o040, 0o440}, "plain": {0o644, 0o644}, "sub": {0o550, 0o750},
+	} {
+		if modes[path] != want {
+			t.Errorf("%s: source and copy modes %04o, want %04o", path, modes[path], want)
+		}
+	}
+}

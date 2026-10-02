@@ -2,6 +2,7 @@ package install
 
 import (
 	"context"
+	"os"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
@@ -54,6 +55,23 @@ func ReplaceModeSync(wrap func(path string, next func(string) error) error) (res
 	syncAfterMode = func(path string) error { return wrap(path, saved) }
 	return func() { syncAfterMode = saved }
 }
+
+// ListedModes is what the backup's listing of a state directory records for each entry: its mode in the source and
+// the mode its copy is to be given.
+func ListedModes(source, dbPath string) (map[string][2]os.FileMode, error) {
+	entries, _, err := listState(source, dbPath)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string][2]os.FileMode{}
+	for _, e := range entries {
+		out[e.Path] = [2]os.FileMode{os.FileMode(e.Mode), os.FileMode(e.CopyMode)}
+	}
+	return out, nil
+}
+
+// CopyMode is the mode a backup's copy of an entry is given.
+func CopyMode(dir bool, mode os.FileMode) os.FileMode { return copyMode(dir, mode) }
 
 // ReplaceBeforeWriteLock runs between every settings or bridge record write's decision and the
 // lock it acts under, until restored.
