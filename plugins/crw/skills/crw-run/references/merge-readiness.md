@@ -321,7 +321,9 @@ task](../SKILL.md#return-corrections-to-the-existing-task)).
 3. **Every commit after the review is accounted for.**
    `git rev-list --first-parent <reviewedHead>..<head>` names exactly the merge commits of the
    `baseRefresh` entries and the commits of `commitsAfter`; a commit in neither, or a listed one
-   that is not there, means the record does not describe the candidate. The first-parent line is the
+   that is not there, means the record does not describe the candidate. The window runs from the
+   head the latest independent review covered through every generation, whoever made each merge, and
+   a later generation's handoff carries the earlier entries forward. The first-parent line is the
    window on purpose: a merge of the base made before the review is history the review covered, and
    an unrestricted range would also list the base's own commits. The listed commits are changes the
    review did not see. Hosted-review fixes, base merges and digest re-records are expected; the
@@ -331,12 +333,16 @@ task](../SKILL.md#return-corrections-to-the-existing-task)).
    the verdict says so, and the entries are still checked one by one.
 
 4. **Each refresh is the kind it says.** A refresh the child made is proved by the same check as one
-   the parent made ([Refresh the base yourself when only the base moved](#refresh-the-base-yourself-when-only-the-base-moved)).
-   For every entry, of any kind, first confirm that the merge's first parent is the entry's
-   `previous` and that its `merged` commit is an ancestor of the base tip the parent observed itself
-   (`git merge-base --is-ancestor <merged> origin/dev`, or the tip seen before the landing): the
-   helper's own test that the second parent is on the base is empty when the caller names that parent
-   as the base. Then, for an entry named `clean`, run
+   the parent made ([Refresh the base yourself when only the base
+   moved](#refresh-the-base-yourself-when-only-the-base-moved)). For every entry, of any kind, first
+   read the merge's parents with `git rev-list --parents -n 1 <head>`: there are exactly two, the
+   first is the entry's `previous` and the second is its `merged`, and that second parent is an
+   ancestor of the base tip the parent observed itself
+   (`git merge-base --is-ancestor <merged> origin/dev`, or the tip seen before the landing). The
+   helper's own test that the second parent is on the base is empty when the caller names that
+   parent as the base, and it only runs for a `clean` entry. A merge that fails any of these is not
+   a base refresh: what it brings in is the child's own change, belongs in `commitsAfter` and is
+   judged by impact. Then, for an entry named `clean`, run
    `crw skill base-refresh check --repo <a checkout that has fetched both heads and the base> --previous <previous> --head <head> --base origin/dev`
    and read the answer:
 
@@ -362,11 +368,12 @@ task](../SKILL.md#return-corrections-to-the-existing-task)).
 5. **The paths are the ones changed.** `git diff --name-only origin/dev...<head>` against
    `changedPaths`: a path left out, or placed in the wrong region, means the record does not
    describe the candidate. Where a region covers part of a file the entry's hunk ranges are compared
-   with the declared section the same way (`git diff -U0`); a verdict that compared paths only
-   records those regions as unverified, and the count of paths outside every region is kept apart
-   from the count of hunks outside a section. Both counts go in the coordination record beside the
-   merge ([Recheck, integrate, and record](#recheck-integrate-and-record)). Nothing else consumes
-   them yet, and that record is where a later calibration of the declarations can read them.
+   with the declared section the same way (`git diff -U0 origin/dev...<head> -- <path>`); a verdict
+   that compared paths only records those regions as unverified, and the count of paths outside
+   every region is kept apart from the count of hunks outside a section. Both counts go in the
+   coordination record beside the merge ([Recheck, integrate, and
+   record](#recheck-integrate-and-record)). Nothing else consumes them yet, and that record is where
+   a later calibration of the declarations can read them.
 
 6. **Sibling impact is read before the merge order is chosen.** The registry entries the child added
    are what a union check keeps when the next sibling's branch is refreshed onto this one, and a

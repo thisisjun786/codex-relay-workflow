@@ -929,17 +929,19 @@ not checked.
    "siblingImpact": {"sharedInterfaces": [], "registryEntries": [], "siblingWork": []}}}
 ```
 
-- **`internalReview`**: whether an independent review ran inside this task (`ran`) and the head it
-  covered (`reviewedHead`). For every finding it rated High or blocker, or the top tier of whatever
-  scale it used, one entry with the `id`, a one-line summary and exactly one disposition: `applied`
-  with the commit that applied it, `rebutted` with the evidence that it is not a defect, or
-  `out_of_scope` with the boundary that excludes it and where it goes instead. A review that ran and
-  raised no such finding says so, and a task that ran none says `ran: false`. The internal
-  independent review ends on the head the pull request is opened from and the hosted review follows
-  on the open pull request, so `commitsAfter` lists what the review did not see: the commits after
-  `reviewedHead` on the branch's first-parent line that are not merges of the base, each with its
-  cause, such as a hosted-review fix or a digest re-record. Whether and how often a review runs is
-  its workflow's decision and not this procedure's; this item only makes what happened visible.
+- **`internalReview`**: whether an independent review ran inside this task (`ran`) and the head the
+  latest independent review covered (`reviewedHead`; a later generation that reviews again names the
+  new head, and one that does not keeps the old one). For every finding it rated High or blocker, or
+  the top tier of whatever scale it used, one entry with the `id`, a one-line summary and exactly
+  one disposition: `applied` with the commit that applied it, `rebutted` with the evidence that it
+  is not a defect, or `out_of_scope` with the boundary that excludes it and where it goes instead. A
+  review that ran and raised no such finding says so, and a task that ran none says `ran: false`.
+  The internal independent review ends on the head the pull request is opened from and the hosted
+  review follows on the open pull request, so `commitsAfter` lists what the review did not see: the
+  commits after `reviewedHead` on the branch's first-parent line that are not merges of the base,
+  each with its cause, such as a hosted-review fix or a digest re-record. Whether and how often a
+  review runs is its workflow's decision and not this procedure's; this item only makes what
+  happened visible.
 
 - **`decisionRequests`**: every finding above whose disposition is `rebutted` or `out_of_scope`,
   unless the parent has already ruled on it, in which case the entry names that ruling. A rejection
@@ -954,22 +956,25 @@ not checked.
   [impact](merge-readiness.md#judge-a-finding-by-its-impact), so a High that falls in a blocking
   class is a fix whatever the child concluded.
 
-- **`baseRefresh`**: one entry for each merge of the base the child made on the first-parent line
-  after `reviewedHead` (after the head the parent last verified, in a later generation; since the
-  assignment's baseline commit where no review ran). An entry gives the `kind` below, the merge's
-  first parent (`previous`), the merge commit (`head`) and its second parent, the base commit merged
+- **`baseRefresh`**: one entry for each merge of the base on the first-parent line after
+  `reviewedHead`, whoever made it and in whichever generation: entries already reported in an
+  earlier generation are carried forward, and a merge the parent made with the forge's update-branch
+  call is an entry too, which the child checks with the same helper. Where no review ran, the window
+  starts at the assignment's baseline commit. An entry gives the `kind` below, the merge's first
+  parent (`previous`), the merge commit (`head`) and its second parent, the base commit merged
   (`merged`, in full). Consecutive merges are consecutive entries, each starting at the head of the
   one before. A commit made after a merge, such as a digest re-record, is not part of the entry: it
   is listed in `commitsAfter` with its cause, so the merge head and the final head are two facts. A
-  child that merged the base not at all after the review says `[]`.
+  branch with no merge of the base after the review says `[]`.
 
 - **`changedPaths`**: where the assignment declares edit regions, the paths the branch changed, from
   `git diff --name-only origin/dev...<head>` (the merge-base form, so merging the base does not show
   a sibling's files as this branch's), each placed in a region the assignment declared, in a file it
   names as an expected overlap, or outside every region, with the paths outside and their count. A
   region declared for part of a file, a section of it for example, is invisible to a path
-  comparison, so for such a file the entry lists the hunk ranges changed (`git diff -U0`) and places
-  each in or outside the section. Where the assignment declares no regions the item says so.
+  comparison, so for such a file the entry lists the hunk ranges changed
+  (`git diff -U0 origin/dev...<head> -- <path>`) and places each in or outside the section. Where
+  the assignment declares no regions the item says so.
 
 - **`siblingImpact`**: the shared interfaces the change altered (a command, a field or a function
   the work of another issue may call); the registry entries it added (rows of a table, ids, list
