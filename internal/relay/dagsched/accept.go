@@ -192,6 +192,10 @@ func (s *Scheduler) Accept(ctx context.Context, plan, node, actor string, in Acc
 	if !ok {
 		return out, refuse(contract.RefusalUnregisteredScope, "plan %s has no live node %s", plan, node)
 	}
+	// the plan's hold is read before the forge is (a node the plan paused or ended is not accepted); the transaction below reads it again
+	if err := lifecycleRefusal(snap, n, "accepting its result", false); err != nil {
+		return out, err
+	}
 	implementation := n.Kind == dag.NodeImplementation
 	var pr PullRequest
 	if implementation {
@@ -210,6 +214,9 @@ func (s *Scheduler) Accept(ctx context.Context, plan, node, actor string, in Acc
 	} else if in.PullRequest != nil {
 		return out, refuse(contract.RefusalMalformedReceipt, "node %s is a %s node: it has no pull request to name", node, n.Kind)
 	}
+	if s.testBeforeAcceptTx != nil {
+		s.testBeforeAcceptTx()
+	}
 	err = s.Store.Compose(ctx, func(txCtx context.Context, _ *sql.Conn) error {
 		tx := s.Store.Q(txCtx)
 		if err := s.fence(txCtx, tx, plan, actor); err != nil {
@@ -221,6 +228,9 @@ func (s *Scheduler) Accept(ctx context.Context, plan, node, actor string, in Acc
 		}
 		if cn, ok := nodeOf(current, node); !ok || cn.SliceDigest != n.SliceDigest || cn.CriteriaSetDigest != n.CriteriaSetDigest {
 			return refuse(contract.RefusalDispositionConflict, "the plan changed while the result of %s was being verified", node)
+		} else if err := lifecycleRefusal(current, cn, "accepting its result", false); err != nil {
+			// a pause does not move the slice or criteria digests, so the plan's hold is asked again here
+			return err
 		}
 		rel, found, err := currentRelationshipOf(txCtx, tx, plan, node)
 		if err != nil {

@@ -26,6 +26,8 @@ func init() {
 		dispatch.Command{Name: "dag-region-declare", Run: runRegionDeclare},
 		// dag-release starts a managed task: like managed-start it opens its own admitted connection and needs the explicit --state and --socket.
 		dispatch.Command{Name: "dag-release", OwnAdmission: true, Exempt: true, Run: runRelease},
+		// dag-release-close ends an abandoned release (it starts nothing, so it needs no socket): the node can then be released again.
+		dispatch.Command{Name: "dag-release-close", Run: runReleaseClose},
 		dispatch.Command{Name: "dag-accept", Run: runAccept},
 		dispatch.Command{Name: "dag-integration-observe", Run: runObserve},
 		dispatch.Command{Name: "dag-decision-record", Run: runDecision},
@@ -191,6 +193,19 @@ func runRelease(ctx context.Context, services dispatch.Services, args dispatch.A
 	if !result.Bound {
 		// the managed start was refused or left incomplete: the intent and the slot stay, and the same call again continues it.
 		return nil, &dispatch.PayloadExit{Payload: result.Object(), Code: contract.ExitRefused}
+	}
+	return result.Object(), nil
+}
+
+func runReleaseClose(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
+	sched, closeStore, err := openScheduler(ctx, services, args)
+	if err != nil {
+		return nil, err
+	}
+	defer closeStore()
+	result, err := sched.CloseRelease(ctx, args.Text("plan"), args.Text("node"), args.Text("actor"), args.Text("manifest"), args.Text("reason"), args.Text("request-id"))
+	if err != nil {
+		return nil, hostFailure(err)
 	}
 	return result.Object(), nil
 }

@@ -181,7 +181,39 @@ func loadState(ctx context.Context, q Queryer, planID, project string, head int6
 		}
 		st.Edges = append(st.Edges, e)
 	}
-	return st, errors.Join(edges.Err(), edges.Close())
+	if err := errors.Join(edges.Err(), edges.Close()); err != nil {
+		return st, err
+	}
+	if st.Lifecycle, err = loadLifecycle(ctx, q, planID, head); err != nil {
+		return st, err
+	}
+	known := map[string]bool{}
+	for _, n := range st.Nodes {
+		known[n.NodeID] = true
+	}
+	for _, row := range st.Lifecycle {
+		if row.NodeID != "" && !known[row.NodeID] {
+			return st, &CorruptError{Detail: fmt.Sprintf("the log of plan %s changes the lifecycle of node %s, which the plan never held", planID, row.NodeID)}
+		}
+	}
+	return st, nil
+}
+
+// loadLifecycle is the lifecycle history of a plan up to its head revision. It is not stored anywhere: the log holds the typed changes and this is
+// their fold (lifecycle.go), the same fold the writer applies, so a read and a write agree on it by construction. The state digest each revision
+// recorded covers the result, so a log whose lifecycle changes were edited reads as the corrupt plan it is.
+func loadLifecycle(ctx context.Context, q Queryer, planID string, head int64) ([]LifeRow, error) {
+	events, err := queryEvents(ctx, q, "SELECT "+revisionColumns+" FROM dag_plan_revisions WHERE plan_id = ? AND revision_no <= ? ORDER BY revision_no", planID, head)
+	if err != nil {
+		return nil, err
+	}
+	var rows []LifeRow
+	for _, ev := range events {
+		if rows, err = applyLifecycle(rows, ev.RevisionNo, ev.Changes); err != nil {
+			return nil, &CorruptError{Detail: fmt.Sprintf("revision %d of plan %s does not apply: %v", ev.RevisionNo, planID, err)}
+		}
+	}
+	return rows, nil
 }
 
 // Put appends a revision to a plan, in one store transaction:
@@ -560,7 +592,7 @@ func sameRows(a, b State) bool {
 	sort.Slice(b.Nodes, func(i, j int) bool { return key(b.Nodes[i]) < key(b.Nodes[j]) })
 	sort.Slice(a.Edges, func(i, j int) bool { return a.Edges[i].EdgeID < a.Edges[j].EdgeID })
 	sort.Slice(b.Edges, func(i, j int) bool { return b.Edges[i].EdgeID < b.Edges[j].EdgeID })
-	if len(a.Nodes) != len(b.Nodes) || len(a.Edges) != len(b.Edges) {
+	if len(a.Nodes) != len(b.Nodes) || len(a.Edges) != len(b.Edges) || !sameLife(a.Lifecycle, b.Lifecycle) {
 		return false
 	}
 	for i := range a.Nodes {

@@ -113,13 +113,11 @@ func DecodeReleaseRequest(raw []byte) (ReleaseRequest, error) {
 	return req, nil
 }
 
-// releaseRow is a decided release: the manifest it was decided on and the managed-start request id derived from it.
-type releaseRow struct{ Digest, Request string }
-
-func latestRelease(ctx context.Context, q store.Querier, plan, node string) (releaseRow, bool, error) {
-	var r releaseRow
-	found, err := queryOne(ctx, q, "SELECT manifest_digest, managed_request_id FROM dag_releases WHERE plan_id = ? AND node_id = ? ORDER BY decided_at DESC, manifest_digest DESC LIMIT 1", []any{plan, node}, &r.Digest, &r.Request)
-	return r, found, err
+// releaseRow is a decided release: the manifest it was decided on and the managed-start request id derived from it. Recovered says the request is the successor of a closed intent (a rereleased row of
+// dag_release_recoveries, release_recovery.go) and not the one dag_releases holds for the digest.
+type releaseRow struct {
+	Digest, Request string
+	Recovered       bool
 }
 
 // boundChild is the execution a release's request id is bound to, if any.
@@ -145,8 +143,16 @@ func (s *Scheduler) slotOf(ctx context.Context, q store.Querier, plan, node stri
 //  6. the child it created is bound to the node.
 //
 // A refused or incomplete start leaves the intent and the slot in place: the next call reaches step 5 again and the managed engine reconciles with the creation it already made.
-func (s *Scheduler) Release(ctx context.Context, plan, node, actor string, req ReleaseRequest) (ReleaseResult, error) {
-	out := ReleaseResult{PlanID: plan, NodeID: node}
+func (s *Scheduler) Release(ctx context.Context, plan, node, actor string, req ReleaseRequest) (out ReleaseResult, err error) {
+	out = ReleaseResult{PlanID: plan, NodeID: node}
+	// The manifest copy this call froze is taken back when the call ends without an intent of its own (a refusal, a failure, a lost race): see discardFrozenCopy.
+	var frozen *frozenCopy
+	recorded := false
+	defer func() {
+		if frozen != nil && !recorded {
+			s.discardAfterRelease(ctx, frozen, plan, node, err)
+		}
+	}()
 	// 0. a session that does not hold the plan's epoch decides nothing, and is told nothing about the release (the transactions below check again, where they write)
 	q := s.Store.Q(ctx)
 	if err := s.fence(ctx, q, plan, actor); err != nil {
@@ -248,9 +254,18 @@ func (s *Scheduler) Release(ctx context.Context, plan, node, actor string, req R
 		}
 	}
 	digest, _ := body["manifest_digest"].(string)
-	out.ManifestDigest, out.RequestID = digest, ReleaseRequestID(plan, node, digest)
+	// The request id is derived from the manifest alone, or, when the node's release of this very manifest was closed, from the closed request: a released managed request id is refused for good, so the
+	// release that follows a close of the same manifest takes a successor id.
+	requestID, closedBase := ReleaseRequestID(plan, node, digest), ""
+	if closed, ok, cerr := closedChainEnd(ctx, q, plan, node, digest); cerr != nil {
+		return out, cerr
+	} else if ok {
+		requestID, closedBase = RecoveryRequestID(plan, node, digest, closed), closed
+	}
+	out.ManifestDigest, out.RequestID = digest, requestID
 	// 3. the request
-	raw, err := s.assemble(plan, n, snap.ProjectKey, actor, req, base, body, digest)
+	raw, copied, err := s.assemble(plan, n, snap.ProjectKey, actor, req, base, body, digest, requestID)
+	frozen = copied
 	if err != nil {
 		return out, err
 	}
@@ -265,10 +280,17 @@ func (s *Scheduler) Release(ctx context.Context, plan, node, actor string, req R
 		if err := s.fence(txCtx, tx, plan, actor); err != nil {
 			return err
 		}
-		if _, exists, err := existingRelease(txCtx, tx, plan, node, digest); err != nil {
+		// at most one intent of a node is open: another call that recorded one first is the concurrent release this call replays
+		if _, open, err := latestRelease(txCtx, tx, plan, node); err != nil {
 			return err
-		} else if exists {
+		} else if open {
 			concurrent = true
+			return nil
+		}
+		if base, _, err := closedChainEnd(txCtx, tx, plan, node, digest); err != nil {
+			return err
+		} else if base != closedBase {
+			stash = refuse(contract.RefusalDispositionConflict, "the closed release of %s under manifest %s changed while the request was assembled; repeat the release", node, digest)
 			return nil
 		}
 		// a refusal is returned after the transaction (and the conflict row a refusal recorded commits with it); any other failure rolls everything back.
@@ -289,6 +311,17 @@ func (s *Scheduler) Release(ctx context.Context, plan, node, actor string, req R
 				return err
 			}
 		}
+		// the copy the prompt names is there when the intent is recorded: a release that lost a race over identical bytes may have taken back a file this call only reused, and freezing it again is idempotent
+		if frozen != nil {
+			_, created, err := freezeManifestCopy(frozen.Root, frozen.Canonical)
+			if created {
+				// the file this call only reused was taken back by its creator and is this call's now (also when a later step of the freeze failed): if the transaction fails, no intent names it
+				frozen.Created = true
+			}
+			if err != nil {
+				return err
+			}
+		}
 		stored, err := json.Marshal(body)
 		if err != nil {
 			return err
@@ -297,6 +330,12 @@ func (s *Scheduler) Release(ctx context.Context, plan, node, actor string, req R
 			return err
 		}
 		at := s.now()
+		if closedBase != "" {
+			_, err = tx.ExecContext(txCtx, "INSERT INTO dag_release_recoveries (plan_id, node_id, manifest_digest, abandoned_request_id, action, successor_request_id, request_sha256, request_json, marker_root, socket, state_selector, reason, recorded_by, coordinator_epoch, recorded_at)"+
+				" VALUES (?,?,?,?,'rereleased',?,?,?,?,?,?,?,?,?,?)", plan, node, digest, closedBase, out.RequestID, shaOf(raw), string(raw), s.Selectors.MarkerRoot, s.Selectors.Socket, s.Selectors.StateSelector,
+				"released again after the close of "+closedBase, actor, s.ExpectedEpoch, at)
+			return err
+		}
 		if _, err := tx.ExecContext(txCtx, "INSERT INTO dag_release_requests (plan_id, node_id, manifest_digest, request_sha256, request_json, marker_root, socket, state_selector, recorded_at) VALUES (?,?,?,?,?,?,?,?,?)",
 			plan, node, digest, shaOf(raw), string(raw), s.Selectors.MarkerRoot, s.Selectors.Socket, s.Selectors.StateSelector, at); err != nil {
 			return err
@@ -317,13 +356,8 @@ func (s *Scheduler) Release(ctx context.Context, plan, node, actor string, req R
 		}
 		return s.replay(ctx, plan, node, actor, row)
 	}
+	recorded = true
 	return s.startAndBind(ctx, plan, node, actor, out, raw, false)
-}
-
-func existingRelease(ctx context.Context, q store.Querier, plan, node, digest string) (string, bool, error) {
-	var request string
-	found, err := queryOne(ctx, q, "SELECT managed_request_id FROM dag_releases WHERE plan_id = ? AND node_id = ? AND manifest_digest = ?", []any{plan, node, digest}, &request)
-	return request, found, err
 }
 
 // checkCriteria is B-10 at release: the criteria the child will be registered with are the plan's.
@@ -456,14 +490,20 @@ func restsOn(body map[string]any, acceptance string) bool {
 
 // assemble builds the managed-start request of a release (contract 2.6): the id is derived from the node and the manifest, and the prompt carries the manifest (inline, or the
 // path and digest of its frozen copy when it is large) and the instruction to verify every input before consuming it. The bytes are what the intent freezes.
-func (s *Scheduler) assemble(plan string, n dag.SnapNode, project, actor string, req ReleaseRequest, base *BaseRef, body map[string]any, digest string) ([]byte, error) {
+func (s *Scheduler) assemble(plan string, n dag.SnapNode, project, actor string, req ReleaseRequest, base *BaseRef, body map[string]any, digest, requestID string) ([]byte, *frozenCopy, error) {
 	manifest := dag.Canonical(body)
 	where := "inline below"
 	text := manifest
+	var copied *frozenCopy
 	if len(manifest) > maxInlineManifest {
-		path, err := FreezeManifest(req.ArtifactRoots[0], []byte(manifest))
+		root := req.ArtifactRoots[0]
+		path, created, err := freezeManifestCopy(root, []byte(manifest))
+		// the copy is handed back whether or not a later step refuses: the caller takes back a file this call created when no intent follows
+		if created || err == nil {
+			copied = &frozenCopy{Root: root, Path: frozenManifestPath(root, []byte(manifest)), SHA: shaOf([]byte(manifest)), Canonical: []byte(manifest), Created: created}
+		}
 		if err != nil {
-			return nil, err
+			return nil, copied, err
 		}
 		where, text = "stored at "+path+" (sha256 "+shaOf([]byte(manifest))+")", "(see the stored copy)"
 	}
@@ -474,7 +514,7 @@ func (s *Scheduler) assemble(plan string, n dag.SnapNode, project, actor string,
 	prompt.WriteString(text)
 	prompt.WriteString("\n\nBefore you consume any input, verify every uri, sha256 and byte count listed in the manifest against the files on disk. If any input is missing, differs from the manifest or lies outside its scope, stop and report blocked_needs_input naming it. Do not continue on a mismatch.\n")
 	if prompt.Len() > 90000 {
-		return nil, refuse(contract.RefusalMalformedReceipt, "the assignment prompt is %d characters; a request carries at most 90000", prompt.Len())
+		return nil, copied, refuse(contract.RefusalMalformedReceipt, "the assignment prompt is %d characters; a request carries at most 90000", prompt.Len())
 	}
 	recipients := append([]string(nil), req.AllowedRecipients...)
 	if !contains(recipients, actor) {
@@ -497,7 +537,7 @@ func (s *Scheduler) assemble(plan string, n dag.SnapNode, project, actor string,
 		allowed[i] = r
 	}
 	request := map[string]any{
-		"schema": managed.Schema, "requestId": ReleaseRequestID(plan, n.NodeID, digest), "issueKey": n.IssueKey, "projectKey": project,
+		"schema": managed.Schema, "requestId": requestID, "issueKey": n.IssueKey, "projectKey": project,
 		"parent":        map[string]any{"taskId": actor, "hostId": req.Parent.HostID, "settings": req.Parent.Settings},
 		"child":         map[string]any{"hostId": req.Child.HostID, "title": req.Child.Title, "settings": req.Child.Settings},
 		"artifactRoots": roots, "allowedRecipients": allowed, "criteria": criteria, "criteriaSource": req.CriteriaSource,
@@ -505,12 +545,12 @@ func (s *Scheduler) assemble(plan string, n dag.SnapNode, project, actor string,
 	}
 	raw, err := json.Marshal(request)
 	if err != nil {
-		return nil, err
+		return nil, copied, err
 	}
 	if _, err := managed.ParseRequest(raw); err != nil {
-		return nil, refuse(contract.RefusalMalformedReceipt, "the managed-start request cannot be admitted: %v", err)
+		return nil, copied, refuse(contract.RefusalMalformedReceipt, "the managed-start request cannot be admitted: %v", err)
 	}
-	return raw, nil
+	return raw, copied, nil
 }
 
 func contains(list []string, v string) bool {
@@ -555,12 +595,17 @@ func (s *Scheduler) replay(ctx context.Context, plan, node, actor string, row re
 		if err := s.fence(txCtx, tx, plan, actor); err != nil {
 			return err
 		}
+		// a frozen release is a continuation of an earlier one and creates a child: it is not continued for a node the plan holds or whose frozen inputs the plan ended since, and nothing is reserved for it
+		if err := releaseGate(txCtx, tx, plan, node, row.Digest); err != nil {
+			refused = err
+			return nil
+		}
 		var managedState string
 		if _, err := queryOne(txCtx, tx, "SELECT state FROM managed_start_requests WHERE request_id = ?", []any{row.Request}, &managedState); err != nil {
 			return err
 		}
 		if managedState == "released" {
-			refused = refuse(contract.RefusalDispositionConflict, "%s: the managed start %s of the release of %s was released before it created a child; a plan revision that changes the slice is the way on", BlockedReleaseAbandoned, row.Request, node)
+			refused = refuse(contract.RefusalDispositionConflict, "%s: the managed start %s of the release of %s was released before it created a child; dag-release-close ends this intent (naming this request id) and the node can then be released again", BlockedReleaseAbandoned, row.Request, node)
 			return nil
 		}
 		var holder, heldProject string
@@ -588,14 +633,12 @@ func (s *Scheduler) replay(ctx context.Context, plan, node, actor string, row re
 	if out.SlotID, err = s.slotOf(ctx, q, plan, node); err != nil {
 		return out, err
 	}
-	var raw, sum, marker, socket, selector string
-	found, err := queryOne(ctx, q, "SELECT request_json, request_sha256, marker_root, socket, state_selector FROM dag_release_requests WHERE plan_id = ? AND node_id = ? AND manifest_digest = ?",
-		[]any{plan, node, row.Digest}, &raw, &sum, &marker, &socket, &selector)
+	frozenReq, found, err := frozenRequestOf(ctx, q, plan, node, row)
 	if err != nil {
 		return out, err
 	}
-	if !found || shaOf([]byte(raw)) != sum {
-		return out, refuse(contract.RefusalRevisionMismatch, "the request frozen with the release of %s is missing or no longer digests to %s", node, sum)
+	if !found || shaOf([]byte(frozenReq.Raw)) != frozenReq.SHA {
+		return out, refuse(contract.RefusalRevisionMismatch, "the request frozen with the release of %s is missing or no longer digests to %s", node, frozenReq.SHA)
 	}
 	if _, stored, err := dag.ReadManifestOn(ctx, q, row.Digest); err != nil {
 		var corrupt *dag.CorruptError
@@ -606,10 +649,10 @@ func (s *Scheduler) replay(ctx context.Context, plan, node, actor string, row re
 	} else if !stored {
 		return out, refuse(contract.RefusalRevisionMismatch, "the manifest %s of the release of %s is not stored", row.Digest, node)
 	}
-	if marker != s.Selectors.MarkerRoot || socket != s.Selectors.Socket || selector != s.Selectors.StateSelector {
-		return out, refuse(contract.RefusalDispositionConflict, "the release of %s was frozen under marker root %q, socket %q and state %q and is replayed under other spellings", node, marker, socket, selector)
+	if frozenReq.Marker != s.Selectors.MarkerRoot || frozenReq.Socket != s.Selectors.Socket || frozenReq.Selector != s.Selectors.StateSelector {
+		return out, refuse(contract.RefusalDispositionConflict, "the release of %s was frozen under marker root %q, socket %q and state %q and is replayed under other spellings", node, frozenReq.Marker, frozenReq.Socket, frozenReq.Selector)
 	}
-	return s.startAndBind(ctx, plan, node, actor, out, []byte(raw), true)
+	return s.startAndBind(ctx, plan, node, actor, out, []byte(frozenReq.Raw), true)
 }
 
 // startAndBind runs the managed start with the frozen bytes and binds the child it admitted to the node.
@@ -617,6 +660,14 @@ func (s *Scheduler) startAndBind(ctx context.Context, plan, node, actor string, 
 	out.Replayed = replayed
 	if s.Start == nil {
 		return out, errors.New("this scheduler has no managed-start engine")
+	}
+	// The last point at which the DAG can still stop a child from being created: a pause that committed since the intent was written (or since the replay's transaction) is read here. A pause that
+	// commits while the managed start runs cannot undo a creation already begun, outside the store: the child is then bound, and the node reads as running under the plan's hold.
+	if s.testBeforeStart != nil {
+		s.testBeforeStart()
+	}
+	if err := releaseGate(ctx, s.Store.Q(ctx), plan, node, out.ManifestDigest); err != nil {
+		return out, err
 	}
 	answer, err := s.Start(ctx, raw)
 	if errors.Is(err, managed.ErrBusy) {

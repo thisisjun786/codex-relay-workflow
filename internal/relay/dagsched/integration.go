@@ -194,6 +194,9 @@ func (s *Scheduler) ObserveIntegration(ctx context.Context, plan, node, actor st
 // observableRelationship refuses an observation for a relationship that is not the parent's to advance: paused or cancelled (contract 3.2), or another parent's. An archived
 // relationship is fine: the node's work ended and its landing is still to be observed.
 func (s *Scheduler) observableRelationship(ctx context.Context, q store.Querier, acc Acceptance, actor string) error {
+	if err := lifecycleOpen(ctx, q, acc.PlanID, acc.NodeID, "observing its integration", true); err != nil {
+		return err
+	}
 	rel, found, err := loadRelationship(ctx, q, acc.RelationshipID)
 	if err != nil {
 		return err

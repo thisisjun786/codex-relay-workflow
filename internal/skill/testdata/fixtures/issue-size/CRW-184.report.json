@@ -1,0 +1,136 @@
+{
+  "schema": "crw-issue-size-check/1",
+  "issue": "CRW-184",
+  "title": "CRW-184 (structure of the recorded issue, synthetic wording)",
+  "decision": "split_recommended",
+  "assignable": false,
+  "reasons": [
+    "criteria_total 14 exceeds the limit 8 (7 completion + 7 research-reinforcement criteria)",
+    "research_criteria 7 exceeds the limit 3"
+  ],
+  "signals": {
+    "criteria": 7,
+    "research_criteria": 7,
+    "criteria_total": 14,
+    "deliverables": null,
+    "edit_regions": 0,
+    "verification_kinds": 0
+  },
+  "limits": {
+    "criteria_total": 8,
+    "research_criteria": 3,
+    "deliverables": 7
+  },
+  "observed": {
+    "edit_regions": [],
+    "verification_kinds": [],
+    "unread_headings": []
+  },
+  "proposal": {
+    "status": "draft",
+    "note": "Draft only. Bundles keep the order of the issue's criteria; a research-reinforcement row joins the bundle whose criteria share the most wording with it, or the latest bundle among the criteria the planner declared it needs. A bundle becomes its own issue only where the crw-plan boundary rules hold (an observable result of its own, verifiable apart or landing after a prerequisite). Order edges come from the prerequisites the planner declared and from the regions the criteria name, with unknown regions counted as overlapping; crw-plan decides the real relations.",
+    "bundles": [
+      {
+        "id": "B1",
+        "criteria": [
+          {
+            "id": "C1",
+            "text": "Criterion 1 of CRW-184."
+          },
+          {
+            "id": "C2",
+            "text": "Criterion 2 of CRW-184."
+          },
+          {
+            "id": "R1",
+            "text": "Research row 1 of CRW-184 | text | text"
+          },
+          {
+            "id": "R2",
+            "text": "Research row 2 of CRW-184 | text | text"
+          }
+        ],
+        "regions": [],
+        "criteria_total": 4
+      },
+      {
+        "id": "B2",
+        "criteria": [
+          {
+            "id": "C3",
+            "text": "Criterion 3 of CRW-184."
+          },
+          {
+            "id": "C4",
+            "text": "Criterion 4 of CRW-184."
+          },
+          {
+            "id": "R3",
+            "text": "Research row 3 of CRW-184 | text | text"
+          },
+          {
+            "id": "R4",
+            "text": "Research row 4 of CRW-184 | text | text"
+          }
+        ],
+        "regions": [],
+        "criteria_total": 4
+      },
+      {
+        "id": "B3",
+        "criteria": [
+          {
+            "id": "C5",
+            "text": "Criterion 5 of CRW-184."
+          },
+          {
+            "id": "C6",
+            "text": "Criterion 6 of CRW-184."
+          },
+          {
+            "id": "R5",
+            "text": "Research row 5 of CRW-184 | text | text"
+          },
+          {
+            "id": "R6",
+            "text": "Research row 6 of CRW-184 | text | text"
+          }
+        ],
+        "regions": [],
+        "criteria_total": 4
+      },
+      {
+        "id": "B4",
+        "criteria": [
+          {
+            "id": "C7",
+            "text": "Criterion 7 of CRW-184."
+          },
+          {
+            "id": "R7",
+            "text": "Research row 7 of CRW-184 | text | text"
+          }
+        ],
+        "regions": [],
+        "criteria_total": 2
+      }
+    ],
+    "order": [
+      {
+        "from": "B1",
+        "to": "B2",
+        "reason": "unknown_regions"
+      },
+      {
+        "from": "B2",
+        "to": "B3",
+        "reason": "unknown_regions"
+      },
+      {
+        "from": "B3",
+        "to": "B4",
+        "reason": "unknown_regions"
+      }
+    ]
+  }
+}
