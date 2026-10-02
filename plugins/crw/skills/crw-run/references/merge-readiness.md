@@ -340,9 +340,12 @@ task](../SKILL.md#return-corrections-to-the-existing-task)).
    ancestor of the base tip the parent observed itself
    (`git merge-base --is-ancestor <merged> origin/dev`, or the tip seen before the landing). The
    helper's own test that the second parent is on the base is empty when the caller names that
-   parent as the base, and it only runs for a `clean` entry. A merge that fails any of these is not
-   a base refresh: what it brings in is the child's own change, belongs in `commitsAfter` and is
-   judged by impact. Then, for an entry named `clean`, run
+   parent as the base, and it only runs for a `clean` entry. A field that disagrees with the actual
+   parents is a wrong receipt: the entry returns to be corrected and the checks run again. Only when
+   the actual parents show that the commit is not a merge of the base, because it has not exactly
+   two parents or its second parent is not on the observed base, is what it brings in the child's
+   own change; it then belongs in `commitsAfter` and is judged by impact. Then, for an entry named
+   `clean`, run
    `crw skill base-refresh check --repo <a checkout that has fetched both heads and the base> --previous <previous> --head <head> --base origin/dev`
    and read the answer:
 
