@@ -156,11 +156,15 @@ tables (decision D-01):
   same text. `testdata/dag_zone_shipped.json` holds the text each object had when it shipped.
 
 **The schema gate.** The swap gate compares the text of the objects a store holds with the text a candidate declares
-([runtime installation](../runtime-install.md#why-the-schema-reading-compares-statements-and-not-versions)). This build declares the zone, so
-installing it onto a store that has no zone reads `EXTENDS`, and installing a build without the zone onto a store this build has opened reads
-`NARROWS`; both are refusals under OPS-4.5 and each is its own decision with a copy of the state directory first. Opening a store with this
-build for writing is itself a schema change, so an installed relay of this version is the one that creates the zone. Making the gate aware of an
-additive zone is a follow-up decision, not made here.
+([runtime installation](../runtime-install.md#why-the-schema-reading-compares-statements-and-not-versions)). This build declares the zone, and the
+gate has an answer of its own for the zone and for nothing else (the zone's objects are the ones the zone statements create). Installing it onto a
+store that has no zone reads `EXTENDS_ZONE` and refuses until the install command is run with `--backup-state-to DIR`, which copies the whole state
+directory (copy only, byte for byte, after the daemon and in-flight cells pass and before the swap) and records the copy: that is the OPS-4.5
+backup, taken by the route itself. Returning to a build without the zone, on a store this build has opened, reads `NARROWS_ZONE` and is not refused,
+since an older runtime opens a store that has the zone and ignores it. Anything else, an object defined differently (a `dag_*` object included) or
+another object arriving or leaving, refuses as it always has, with the acknowledgement as without it. Opening a store with this build for writing
+is itself the schema change and creates the zone, so run no write command of this build against a live state directory outside the install route:
+only the install command takes the backup. The route, its backup and its refusals are written in [runtime installation](../runtime-install.md#why-the-schema-reading-compares-statements-and-not-versions).
 
 ## Where this page reads the contract
 

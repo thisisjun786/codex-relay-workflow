@@ -31,6 +31,14 @@ func ReplacePointerPlacement(place func(path, target string) error) (restore fun
 	return func() { placePointer = saved }
 }
 
+// ReplaceStateBackupStep makes the state-directory backup call step (it is called with "copied", after the copy and
+// before its verification) until restored: a test makes the backup fail there, or changes the state directory under it.
+func ReplaceStateBackupStep(step func(string) error) (restore func()) {
+	saved := stateBackupStep
+	stateBackupStep = step
+	return func() { stateBackupStep = saved }
+}
+
 // ReplaceBeforeWriteLock runs between every settings or bridge record write's decision and the
 // lock it acts under, until restored.
 func ReplaceBeforeWriteLock(between func(path string)) (restore func()) {

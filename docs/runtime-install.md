@@ -114,6 +114,10 @@ release instead of `--from`. Either way the archive has to be named for this hos
 and architecture, be listed exactly once in `SHA256SUMS` and hash to the listed digest, and nothing
 under the destination or in the host record is created before all three hold.
 
+`--backup-state-to <dir>` (on `install`, `update` and `rollback`) is the acknowledgement that the swap brings the additive DAG zone to a store
+that predates it: the command copies the whole relay state directory to `<dir>` before promoting, and without it that swap refuses and names the
+flag ([the route](#why-the-schema-reading-compares-statements-and-not-versions)).
+
 What follows is one run, in this order, and the result lists the steps it took:
 
 1. Claim the runtime directory with an exclusive `mkdir` and a claim file
@@ -332,6 +336,8 @@ outside quoted text are normalised away and nothing else is.
 | `EXTENDS` | the candidate declares objects the store does not hold | refused |
 | `DIFFERS` | a shared object is defined differently | refused |
 | `NARROWS` | the store holds objects the candidate does not declare | refused |
+| `EXTENDS_ZONE` | the only difference is the additive DAG zone arriving: every added object is the zone's | refused, unless the command takes the OPS-4.5 backup (below) |
+| `NARROWS_ZONE` | the only difference is the additive DAG zone leaving: every object the candidate does not declare is the zone's | allowed |
 
 The relay applies its whole schema on every write-open, so a candidate whose schema is not the
 store's applies the difference the moment its daemon first starts. OPS-4.5 reserves that for its own
@@ -341,11 +347,41 @@ through. The Go and Python runtimes execute the same schema statements
 ([cutover](port/cutover.md#commit-point)).
 
 The one release that changes the schema is the one that adds the DAG zone ([DAG plans](relay/dag-plans.md#the-store), decision 74): its
-`dag_*` tables are created by the first write-open and are declared by that build. Installing it onto a store that has no zone therefore
-reads `EXTENDS`, and installing a build without the zone onto a store that build has opened reads `NARROWS`. Both are refusals, and each is
-its own decision under OPS-4.5 with a copy of the state directory taken first. The zone is additive, so a runtime without it still opens a store that
-has it; it is the gate, not the open, that stands in front of a rollback. Opening a store for writing with this build is itself the schema change, so
-run no write command of it against a live state directory before that decision is made.
+`dag_*` tables are created by the first write-open and are declared by that build. That decision is made (D-01), so the gate has an answer of
+its own for the zone and for nothing else, and the supported install command has a route through it.
+
+**The zone arrives (`EXTENDS_ZONE`).** Installing a build that declares the zone onto a store that has none (every store there is) refuses,
+and the refusal names the route: `crw install update --from ... --backup-state-to DIR` (the same flag is on `install` and `rollback`). The flag is the
+operator's acknowledgement, and under it the command itself takes the OPS-4.5 backup, so the backup is guaranteed by the route and not by
+anyone's memory. Inside the promotion lock, after the daemon-stopped and no-open-attempt cells have answered and before anything is promoted,
+it copies the whole state directory the gate read to `DIR`: copy only, byte for byte, the source opened read-only and nothing moved, recreated
+or deleted, here or on a failure. Directories and regular files are copied with their bytes; a symbolic link to a regular file is copied as the
+file's bytes under the link's name (a link alone would back up nothing), and when `relay.sqlite3` is such a link the real file's `-wal` and `-shm`
+are copied beside it, so a restore opens with the commits only the log held; a socket, a FIFO or a device is listed as skipped. Each file is
+hashed while it is read and synced; then the state directory is read again, and the listing, every size and every file's digest, and the digest of
+every file in the copy, must be what was copied. Any difference, in any file, refuses the swap ("the state directory changed under the copy"):
+the copy is of one moment or it is not made. `DIR` and its manifest must not exist, must not lie inside the state directory, and must not lie
+inside the runtime destination tree (a failed run removes its candidate runtime, and a backup there would go with it); the free space on its
+filesystem must cover the directory. The record is written last, beside the backup and not inside it (`DIR.manifest.json`: source, destination,
+time, issue, every entry with its size, mode and digest, what was skipped, an aggregate digest), and the command's result carries the same facts
+as `swapGate.stateBackup`. A backup that fails part-way stays where it is and is reported with `partial: true`; a swap that fails after the backup keeps
+it too, and a rerun needs a new destination.
+
+The route carries the zone arriving alone. A running daemon, an open attempt, a cell that could not be read, another schema object arriving or
+leaving, or any object defined differently (a `dag_*` object included) still refuses with the acknowledgement as without it, and no backup is
+taken for a swap that does not happen. The zone's objects are the ones the build's own zone statements create, not whatever starts with `dag_`: an
+object this build does not know, or a later step of the zone ledger, is a plain `EXTENDS` or `DIFFERS` until a build that knows it is the one asking.
+The acknowledgement where nothing arrives is not a refusal and takes no backup. The route exists in a build that carries it: the installed
+`current/bin/crw` of an earlier build reads the same arrival as a plain `EXTENDS`, so the update is run with the new build's binary from the archive
+(the documented path).
+
+**The zone leaves (`NARROWS_ZONE`).** Returning to a runtime that does not declare the zone, on an update, on a promotion an interrupted run left to
+finish, or on a rollback that moves the pointer, is not refused for that reason: the zone is additive, so an older runtime opens a store that has
+it (it validates only the frozen tables) and never reads or writes the zone, which stays in the store for a newer runtime to read again.
+
+The warning against write commands stays: opening a store for writing with this build creates the zone, and that happens outside this route (a
+relay command run by hand against a live state directory takes no backup), so the route makes the warning unnecessary only inside the install
+command. Run no write command of this build against a live state directory before the install has taken its backup.
 
 ### The order a swap commits in
 

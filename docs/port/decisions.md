@@ -4713,10 +4713,15 @@ zone validates only the frozen tables, so it opens a store that has the zone and
 existing table, column or record changes (decision 14 stands). A command that declares itself read-only does not create the zone.
 
 The zone is a ledger: a shipped statement is never edited, a later column is an appended `ALTER TABLE ... ADD COLUMN` that every open runs, and
-`testdata/dag_zone_shipped.json` holds the shipped text, because the runtime swap gate compares `sqlite_master` text (a build that adds the zone
-reads `EXTENDS` against a store without it, and a build without it reads `NARROWS` against a store that has it; both refuse under OPS-4.5, and
-making the gate aware of an additive zone is left to a later decision). The model, the commands and the one new refusal reason,
-`plan_revision_conflict`, are in [DAG plans](../relay/dag-plans.md).
+`testdata/dag_zone_shipped.json` holds the shipped text, because the runtime swap gate compares `sqlite_master` text. The gate is aware of the zone, and of nothing else (generation 2 of CRW-183):
+a build that adds the zone reads `EXTENDS_ZONE` against a store without it and refuses until the install command is run with
+`--backup-state-to DIR`, which takes the OPS-4.5 backup of the whole state directory itself (copy only, byte for byte, after the daemon and in-flight
+cells pass and before the swap, recorded beside the backup); a build without the zone reads `NARROWS_ZONE` against a store that has it and is not
+refused; every other difference, a `dag_*` object defined differently included, refuses as before with the acknowledgement as without it
+([runtime installation](../runtime-install.md#why-the-schema-reading-compares-statements-and-not-versions)). The model, the commands and the one
+new refusal reason, `plan_revision_conflict`, are in [DAG plans](../relay/dag-plans.md).
 
-Where: internal/relay/store/dag_zone.go, store.go (`open`); internal/runtime/swapgate/swapgate.go (`DeclaredSchema`); internal/relay/dag;
-tests internal/relay/store/dag_zone_test.go, internal/runtime/swapgate/dag_zone_test.go, internal/relay/dag/*_test.go.
+Where: internal/relay/store/dag_zone.go, store.go (`open`); internal/runtime/swapgate/swapgate.go (`DeclaredSchema`, `SchemaCell`,
+`ZoneArrivalOnly`, `DecideWithRelease`); internal/runtime/install/zone.go (the route and the backup), cli.go (`--backup-state-to`), install.go
+(`gateCells`); internal/relay/dag; tests internal/relay/store/dag_zone_test.go, internal/runtime/swapgate/dag_zone_test.go,
+internal/runtime/install/zone_test.go, internal/relay/dag/*_test.go.
