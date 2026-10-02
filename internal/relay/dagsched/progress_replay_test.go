@@ -185,8 +185,8 @@ func TestProgressDeltaConvergesWhenTheStoreMoves(t *testing.T) {
 		}
 	}
 	for id, r := range before.Records {
-		if after, ok := live.Records[id]; ok && after.Digest == r.Digest && seen["node/"+id+"@"+r.Digest] != 1 {
-			t.Errorf("record %s did not change and was delivered %d times", id, seen["node/"+id+"@"+r.Digest])
+		if after, ok := live.Records[id]; ok && after.Digest == r.Digest && seen["p1/node/"+id+"@"+r.Digest] != 1 {
+			t.Errorf("record %s did not change and was delivered %d times", id, seen["p1/node/"+id+"@"+r.Digest])
 		}
 	}
 }
@@ -725,9 +725,9 @@ func TestProgressDeltaSeesEveryPrintedFieldOfARecord(t *testing.T) {
 		change func()
 		want   []string // the kinds and subjects of the events, in order
 	}{
-		{"a link alone (a work report names a pull request)", func() { f.workReport(rid, event, 1, dig("revision "+rid), 11, progHead2) }, []string{"node/im"}},
-		{"the slot alone", func() { f.holdSlotsFor("pf", "b") }, []string{"node/b"}},
-		{"the title alone", func() { f.putPlan("pf", 1, "pf-r2", doc{"op": dag.OpUpdateNode, "node": retitled}) }, []string{"revision/2", "node/a"}},
+		{"a link alone (a work report names a pull request)", func() { f.workReport(rid, event, 1, dig("revision "+rid), 11, progHead2) }, []string{"pf/node/im"}},
+		{"the slot alone", func() { f.holdSlotsFor("pf", "b") }, []string{"pf/node/b"}},
+		{"the title alone", func() { f.putPlan("pf", 1, "pf-r2", doc{"op": dag.OpUpdateNode, "node": retitled}) }, []string{"pf/revision/2", "pf/node/a"}},
 	}
 	ctx := context.Background()
 	for _, c := range cases {
@@ -757,6 +757,56 @@ func TestProgressDeltaSeesEveryPrintedFieldOfARecord(t *testing.T) {
 			t.Fatalf("%s: %v", c.name, err)
 		}
 		assertRebuilt(t, c.name, folded, live, liveProgress)
+	}
+}
+
+// A record that returns to an earlier state is delivered again and folded: the ID of the event that brings it back is the earlier state's ID, which is why an ID counts deliveries inside one
+// read and never deduplicates across reads, and the cursor is what says what a reader holds. The case: a relationship paused and resumed between reads. Node ids are plan-local, so the IDs
+// of two plans with the same node names are different.
+func TestProgressDeltaStateCycleIsDeliveredEveryTime(t *testing.T) {
+	f := newFixture(t)
+	runningPlan(f, "pq", 2)
+	ctx := context.Background()
+	first, _ := f.catchUp("pq", ProgressSnapshot{}, dag.MaxPage)
+	initial := first.Records["n00"].Digest
+	idOf := func(snap ProgressSnapshot, id string) string {
+		return ProgressEvent{Kind: ProgressEventNode, PlanID: "pq", NodeID: id, Record: &ProgressRecord{Digest: snap.Records[id].Digest}}.ID()
+	}
+	snap := first
+	for _, status := range []string{"paused", "active"} {
+		f.exec("UPDATE relationships SET status = ? WHERE relationship_id = 'rel-pq-n00'", status)
+		d, err := f.sched.ReadProgressDelta(ctx, "pq", snap.Cursor(), dag.MaxPage)
+		if err != nil || len(d.Events) != 1 || d.Events[0].Kind != ProgressEventNode || d.Events[0].NodeID != "n00" {
+			t.Fatalf("after %s: events %v, %v", status, idsOf(d.Events), err)
+		}
+		if snap, err = ApplyProgressDelta(snap, d); err != nil {
+			t.Fatalf("after %s: %v", status, err)
+		}
+		live, liveProgress, err := f.sched.ReadProgressSnapshot(ctx, "pq")
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertRebuilt(t, "after "+status, snap, live, liveProgress)
+	}
+	if snap.Records["n00"].Digest != initial {
+		t.Fatal("the record did not return to its first state: the case does not cycle")
+	}
+	if got, want := idOf(snap, "n00"), idOf(first, "n00"); got != want {
+		t.Errorf("the returning event is %s, the first state's is %s: they are expected to be the same ID", got, want)
+	}
+
+	forkJoinPlan(f, "p1")
+	forkJoinPlan(f, "p2")
+	ids := map[string]string{}
+	for _, plan := range []string{"p1", "p2"} {
+		for _, e := range f.pagesFrom(plan, ProgressCursor{}, dag.MaxPage) {
+			if e.Kind == ProgressEventNode && e.NodeID == "design" {
+				ids[plan] = e.ID()
+			}
+		}
+	}
+	if ids["p1"] == "" || ids["p1"] == ids["p2"] {
+		t.Errorf("the same node of two plans has the IDs %q and %q: node ids are plan-local", ids["p1"], ids["p2"])
 	}
 }
 

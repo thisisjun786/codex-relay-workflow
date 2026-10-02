@@ -63,8 +63,8 @@ type ProgressOutside struct {
 	Digest  string
 }
 
-// ProgressEvent is one change a reader has not seen. Kind says which fields are set: the plan header (PlanID, ProjectKey), a revision (Revision), a removed node (NodeID), the outside
-// aggregate (Outside), a node's record (NodeID and Record).
+// ProgressEvent is one change a reader has not seen. Kind says which fields are set: the plan header (PlanID, ProjectKey), a revision (Revision), a removed node (PlanID, NodeID), the outside
+// aggregate (PlanID, Outside), a node's record (PlanID, NodeID and Record).
 type ProgressEvent struct {
 	Kind               string
 	PlanID, ProjectKey string
@@ -74,29 +74,35 @@ type ProgressEvent struct {
 	Outside            *ProgressOutside
 }
 
-// ID names an event by its kind, its subject and the digest of what it says (a revision by its number and its state digest), so a read that delivers one ID twice has delivered a change twice.
-// It is for counting deliveries: the log metadata of a revision is covered by the hash chain of the cursor, not by the ID.
+// ID names an event by its plan, its kind, its subject and the digest of what it says (a revision by its number and its state digest). Node ids are plan-local, so the plan is part of it.
+// It is for counting deliveries inside one read of a store that is not moving: such a read never sends one ID twice. It is not for deduplicating across reads. A record that returns to an
+// earlier state (running, paused, running) has the earlier state's ID again, and the event that brings it back must still be folded; what a reader has seen is what its cursor says, and a
+// reader folds every event it is given. The log metadata of a revision is covered by the hash chain of the cursor, not by the ID.
 func (e ProgressEvent) ID() string {
+	plan := e.PlanID
+	if e.Kind == ProgressEventRevision && e.Revision != nil {
+		plan = e.Revision.PlanID
+	}
 	switch e.Kind {
 	case ProgressEventPlan:
-		return "plan/" + e.PlanID
+		return "plan/" + plan
 	case ProgressEventRevision:
 		if e.Revision == nil {
-			return "revision/"
+			return plan + "/revision/"
 		}
-		return fmt.Sprintf("revision/%d@%s", e.Revision.RevisionNo, e.Revision.StateDigest)
+		return fmt.Sprintf("%s/revision/%d@%s", plan, e.Revision.RevisionNo, e.Revision.StateDigest)
 	case ProgressEventRemoved:
-		return "node/" + e.NodeID + "@removed"
+		return plan + "/node/" + e.NodeID + "@removed"
 	case ProgressEventOutside:
 		if e.Outside == nil {
-			return "outside@"
+			return plan + "/outside@"
 		}
-		return "outside@" + e.Outside.Digest
+		return plan + "/outside@" + e.Outside.Digest
 	case ProgressEventNode:
 		if e.Record == nil {
-			return "node/" + e.NodeID + "@"
+			return plan + "/node/" + e.NodeID + "@"
 		}
-		return "node/" + e.NodeID + "@" + e.Record.Digest
+		return plan + "/node/" + e.NodeID + "@" + e.Record.Digest
 	}
 	return e.Kind
 }
@@ -507,11 +513,11 @@ func (s *Scheduler) ProgressDelta(ctx context.Context, q store.Querier, plan str
 	}
 	sort.Strings(removed)
 	for _, id := range removed {
-		events = append(events, ProgressEvent{Kind: ProgressEventRemoved, NodeID: id})
+		events = append(events, ProgressEvent{Kind: ProgressEventRemoved, PlanID: live.Plan.PlanID, NodeID: id})
 	}
 	if live.Outside != nil && after.Outside != live.Outside.Digest {
 		outside := *live.Outside
-		events = append(events, ProgressEvent{Kind: ProgressEventOutside, Outside: &outside})
+		events = append(events, ProgressEvent{Kind: ProgressEventOutside, PlanID: live.Plan.PlanID, Outside: &outside})
 	}
 	ids := make([]string, 0, len(live.Records))
 	for id := range live.Records {
@@ -520,7 +526,7 @@ func (s *Scheduler) ProgressDelta(ctx context.Context, q store.Querier, plan str
 	sort.Strings(ids)
 	for _, id := range ids {
 		if record := live.Records[id]; after.Records[id] != record.Digest {
-			events = append(events, ProgressEvent{Kind: ProgressEventNode, NodeID: id, Record: &record})
+			events = append(events, ProgressEvent{Kind: ProgressEventNode, PlanID: live.Plan.PlanID, NodeID: id, Record: &record})
 		}
 	}
 	if len(events) > limit {
@@ -578,6 +584,11 @@ func revisionCountOf(before, after dag.Snapshot, ev dag.Event) RevisionCount {
 func (s *ProgressSnapshot) applyEvent(d ProgressDelta, ev ProgressEvent) error {
 	if ev.Kind != ProgressEventPlan && s.Plan.PlanID == "" {
 		return invariant("a %s event before the plan header", ev.Kind)
+	}
+	if ev.Kind == ProgressEventRemoved || ev.Kind == ProgressEventOutside || ev.Kind == ProgressEventNode {
+		if ev.PlanID != d.PlanID {
+			return invariant("a %s event of plan %q in a delta of plan %q", ev.Kind, ev.PlanID, d.PlanID)
+		}
 	}
 	switch ev.Kind {
 	case ProgressEventPlan:
