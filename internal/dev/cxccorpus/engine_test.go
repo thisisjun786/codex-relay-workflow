@@ -172,7 +172,8 @@ func TestRunScenario_drives_a_go_runtime(t *testing.T) {
 }
 
 // What the engine writes for the given and for write steps, and the git work it runs, comes out
-// with the modes of umask 022 whatever the process umask is; directories made on the way too.
+// with the modes of umask 022 whatever the process umask is; directories made on the way too. A
+// write step that rewrites an existing file leaves its mode alone, as os.WriteFile does.
 func TestRunScenario_modes_do_not_depend_on_the_process_umask(t *testing.T) {
 	git, err := exec.LookPath("git")
 	if err != nil {
@@ -183,11 +184,12 @@ func TestRunScenario_modes_do_not_depend_on_the_process_umask(t *testing.T) {
 	s := Scenario{
 		ID: "cli__sh__modes",
 		Given: Given{
-			Files: map[string]string{"ws/f/g.txt": "x"}, Dirs: []string{"ws/d/e"},
+			Files: map[string]string{"ws/f/g.txt": "x", "ws/run.sh": "#!/bin/sh\n", "ws/secret": "s"}, Dirs: []string{"ws/d/e"},
+			Modes: map[string]int{"ws/run.sh": 0o755, "ws/secret": 0o600}, Symlinks: map[string]string{"ws/link.sh": "${WS}/run.sh"},
 			JSON: map[string]json.RawMessage{"ws/j/k.json": json.RawMessage("{}")},
 			Git:  &Git{Commit: "c", Worktrees: []GitWorktree{{Path: "tmp/wt", Branch: "b"}}},
 		},
-		Steps:   []Step{{Write: map[string]string{"ws/w/x.txt": "y"}}},
+		Steps:   []Step{{Write: map[string]string{"ws/w/x.txt": "y", "ws/run.sh": "#!/bin/sh\necho 2\n", "ws/secret": "t", "ws/link.sh": "z"}}},
 		Observe: []string{"ws", "tmp"},
 	}
 	got, err := RunScenario(shRuntime{git: git}, shOptions(t), s)
@@ -201,6 +203,9 @@ func TestRunScenario_modes_do_not_depend_on_the_process_umask(t *testing.T) {
 		want := "0644"
 		if entry.Type == "dir" {
 			want = "0755"
+		}
+		if mode, kept := map[string]string{"ws/run.sh": "0755", "ws/secret": "0600"}[path]; kept {
+			want = mode
 		}
 		if entry.Mode != want {
 			t.Errorf("%s has mode %s, want %s", path, entry.Mode, want)

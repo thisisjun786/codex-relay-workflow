@@ -1,8 +1,6 @@
-// The corpus engine: the part of a run that does not depend on what is being run. A recording drives
-// the Node oracle through it (record.go) and a replay drives a Go build through the same code, so
-// both start from the same case root, build the same given, shape their steps the same way and
-// observe the same tree. What differs is a Runtime. These files carry no build tag so a Go test can
-// import them; nothing in crw imports this package.
+// The corpus engine: what a run does whatever it runs. The Node recorder (record.go) and a Go replay
+// both build the case root, the given and the observed tree through it; a Runtime supplies what
+// differs. These files carry no build tag so a Go test can import them; nothing in crw does.
 
 package cxccorpus
 
@@ -76,12 +74,11 @@ func (c *Case) Expand(text string) string {
 	return strings.NewReplacer(pairs...).Replace(text)
 }
 
-// NewCase makes the isolated root under scratch. The name is fixed-width, so a byte count or a cut
-// that depends on an expanded path is the same in every case. It holds the five roots, the stub,
-// tool and record directories, the git configuration, the scripted network replies of the given and
-// an empty call log, and the base environment of every process of the case: nothing is inherited.
-// homeVar names the variable that points at the CXC home root (CODEXCLAW_HOME for the oracle). A
-// partial Case comes back with its error, so the caller can remove what was made.
+// NewCase makes the isolated root under scratch, with a fixed-width name (a byte count or a cut over
+// an expanded path is then the same in every case): the five roots, the stub, tool and record
+// directories, the git configuration, the scripted network replies and an empty call log, and the
+// base environment of every process of the case (nothing is inherited). homeVar names the variable
+// that points at the CXC home root. A partial Case comes back with its error, to be removed.
 func NewCase(scratch, homeVar string, g Given) (*Case, error) {
 	var suffix [8]byte
 	if _, err := rand.Read(suffix[:]); err != nil {
@@ -170,8 +167,7 @@ func InstallStubs(c *Case, g Given, install func(name string) error) error {
 	return nil
 }
 
-// mkdirAll is os.MkdirAll with mode 0755 on every directory it creates, so what a case holds does
-// not depend on the process umask.
+// mkdirAll is os.MkdirAll with mode 0755 on every directory it creates, whatever the umask.
 func mkdirAll(path string) error {
 	if info, err := os.Stat(path); err == nil && info.IsDir() {
 		return nil
@@ -179,21 +175,26 @@ func mkdirAll(path string) error {
 	if err := mkdirAll(filepath.Dir(path)); err != nil {
 		return err
 	}
-	if err := os.Mkdir(path, 0o755); err != nil && !errors.Is(err, fs.ErrExist) {
+	if err := os.Mkdir(path, 0o755); err != nil {
 		return err
 	}
 	return os.Chmod(path, 0o755)
 }
 
-// writeFile writes a file with mode 0644 whatever the process umask is, making its directory first.
+// writeFile writes a file, making its directory first. A file it creates gets mode 0644 whatever the
+// umask is; one that already exists keeps its mode, as with os.WriteFile.
 func writeFile(path string, data []byte) error {
 	if err := mkdirAll(filepath.Dir(path)); err != nil {
 		return err
 	}
+	_, statErr := os.Stat(path)
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return err
 	}
-	return os.Chmod(path, 0o644)
+	if errors.Is(statErr, fs.ErrNotExist) {
+		return os.Chmod(path, 0o644)
+	}
+	return nil
 }
 
 // Runtime is what differs between recording the Node oracle and replaying a Go build.
@@ -372,9 +373,9 @@ func casePath(c *Case, rel string) (string, error) {
 	return filepath.Join(c.Root, clean), nil
 }
 
-// setUp writes the given state. Everything it creates or runs has the modes of umask 022, whatever
-// the process umask is: files and directories are chmod-ed when made, and git runs under umask 022.
-// The runtime seeds SQLite databases and pins the umask of the processes it starts itself.
+// setUp writes the given state. What it creates has the modes of umask 022 whatever the process
+// umask is (files and directories are chmod-ed when made, git runs under umask 022); SQLite seeding
+// and the step processes are the runtime's, and so is their umask.
 func setUp(c *Case, g Given, rt Runtime) error {
 	for _, dir := range g.Dirs {
 		path, err := casePath(c, dir)
