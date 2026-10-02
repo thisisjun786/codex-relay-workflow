@@ -244,6 +244,15 @@ The scheduler adds tables to the DAG zone ([DAG plans](dag-plans.md#the-store)) 
 `dag_merge_checks`, `dag_acceptance_revalidations` and `dag_acceptance_forge` hold what the relay observed of an accepted pull request, re-verification of an accepted
 output under new criteria, and the forge identity of an accepted implementation node.
 
+## How the acceptance path is verified
+
+The tests drive the real Go store, the real managed engine and bridge adapter over a fake App Server, a real git repository, the relay's own verdict writer and renderer, and the merge lane's own check and landing.
+Two things are scripted and say so: the forge (a pull request's head, base and checks are what the test scripts, since no forge is reachable), and the child's report. The rows of a verified report (the final event, its
+lineage, the acknowledgement and its evidence, the ruling and its context, the registered criteria) are written by a test helper in the shape the intake, acknowledgement and verdict writers give them; the verdict
+writer itself is exercised for corrections (`needs_changes`, the generation it opens, the revision request the child receives and its rendering) and for a ruling accepted afterwards. The whole path from a child's
+completion receipt through delivery and acknowledgement to a ruling is therefore not run end to end here; it is the relay's existing, separately tested path, and a real-model run of it is part of the installed
+proof (M4). A forged `completed` (a report that was only staged, never acknowledged, never ruled, ruled for another head, or whose criteria moved) opens no edge: each link of P-AV-1 has a case that breaks only that link.
+
 ## Departures from the contract
 
 * Contract 7.2 names the `edit_regions` tables for regions; those are two-project agreements keyed by base revision, so per-node declarations have their own table.
