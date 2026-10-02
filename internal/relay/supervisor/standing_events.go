@@ -35,8 +35,9 @@ const (
 )
 
 // projectObligations is the obligations the events of a project's relationships raise, by
-// relationship, each relationship's in the order its events came in. Both statements read the
-// project once, whatever the number of its relationships and events.
+// relationship, each relationship's in the order its events came in. With visit it leaves out the
+// events of released relationships. It is one statement for the project, whatever the number of its
+// relationships and events.
 func (c *Channel) projectObligations(ctx context.Context, project string, visit bool) (_ map[string][]*Obligation, err error) {
 	query := projectEventsSQL
 	if visit {
