@@ -1,0 +1,62 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/pre-tool-use-guarding-goal-complete",
+    "K2/PreToolUse",
+    "K13/PLUGIN_ROOT",
+    "K13/CODEX_HOME",
+    "K4/hook-observations"
+  ],
+  "note": "The leg's declared command with a minimal well-formed payload in an empty workspace and empty homes: the leg's quiet default and its side effects.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "pre-tool-use-guarding-goal-complete",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "update_goal",
+          "tool_input": {
+            "status": "complete"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/.gitignore": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n"
+      },
+      "ws/.codexclaw/evidence-unrecordable": {
+        "type": "dir",
+        "mode": "0755"
+      }
+    },
+    "calls": []
+  }
+}

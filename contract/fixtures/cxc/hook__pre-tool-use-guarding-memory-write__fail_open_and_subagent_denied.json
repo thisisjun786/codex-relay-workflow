@@ -1,0 +1,133 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/pre-tool-use-guarding-memory-write",
+    "K5/hook-rendered",
+    "A/pabcd-state/memory-write-gate.test.ts"
+  ],
+  "note": "Fail-open only on crash or non-write: malformed JSON, a PostToolUse event and an unrelated Bash read pass. A memory write with an empty cwd cannot prove authorization and is denied (reason falls back to 'the session working directory'); a subagent-stamped write is denied too because the gate sits above the root-only exit.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "pre-tool-use-guarding-memory-write",
+        "stdin": "not json"
+      },
+      {
+        "hook": "pre-tool-use-guarding-memory-write",
+        "stdin": {
+          "hook_event_name": "PostToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "memoriesadd_ad_hoc_note",
+          "tool_input": {
+            "filename": "note.md",
+            "note": "x"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-guarding-memory-write",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "ls"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-guarding-memory-write",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "",
+          "turn_id": "rec-t1",
+          "tool_name": "memoriesadd_ad_hoc_note",
+          "tool_input": {
+            "filename": "note.md",
+            "note": "x"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-guarding-memory-write",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "memoriesadd_ad_hoc_note",
+          "tool_input": {
+            "filename": "note.md",
+            "note": "x"
+          },
+          "tool_use_id": "rec-call-1",
+          "agent_id": "rec-a1",
+          "agent_type": "worker"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "[codexclaw MEMORY-WRITE-GATE] Blocked a write of a memory note (note.md): this session has no explicit user request to remember anything. Memory notes outlive codexclaw and reach every later session, so they are written only when the user asks. Two ways forward: ask the user to confirm they want this remembered (a prompt such as \"기억해둬\" or \"remember this\" authorizes the next write), or record an explicit grant with `cxc memory allow-write --session rec-s1` from the session working directory. The grant is stored per cwd; issuing it from a different working directory will print success and never be seen by this hook. If the user did ask, say so and retry — the request must appear in their own message, not in yours.",
+            "additionalContext": "[codexclaw MEMORY-WRITE-GATE] Blocked a write of a memory note (note.md): this session has no explicit user request to remember anything. Memory notes outlive codexclaw and reach every later session, so they are written only when the user asks. Two ways forward: ask the user to confirm they want this remembered (a prompt such as \"기억해둬\" or \"remember this\" authorizes the next write), or record an explicit grant with `cxc memory allow-write --session rec-s1` from the session working directory. The grant is stored per cwd; issuing it from a different working directory will print success and never be seen by this hook. If the user did ask, say so and retry — the request must appear in their own message, not in yours."
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "[codexclaw MEMORY-WRITE-GATE] Blocked a write of a memory note (note.md): this session has no explicit user request to remember anything. Memory notes outlive codexclaw and reach every later session, so they are written only when the user asks. Two ways forward: ask the user to confirm they want this remembered (a prompt such as \"기억해둬\" or \"remember this\" authorizes the next write), or record an explicit grant with `cxc memory allow-write --session rec-s1` from ${WS}. The grant is stored per cwd; issuing it from a different working directory will print success and never be seen by this hook. If the user did ask, say so and retry — the request must appear in their own message, not in yours.",
+            "additionalContext": "[codexclaw MEMORY-WRITE-GATE] Blocked a write of a memory note (note.md): this session has no explicit user request to remember anything. Memory notes outlive codexclaw and reach every later session, so they are written only when the user asks. Two ways forward: ask the user to confirm they want this remembered (a prompt such as \"기억해둬\" or \"remember this\" authorizes the next write), or record an explicit grant with `cxc memory allow-write --session rec-s1` from ${WS}. The grant is stored per cwd; issuing it from a different working directory will print success and never be seen by this hook. If the user did ask, say so and retry — the request must appear in their own message, not in yours."
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      }
+    },
+    "calls": []
+  }
+}

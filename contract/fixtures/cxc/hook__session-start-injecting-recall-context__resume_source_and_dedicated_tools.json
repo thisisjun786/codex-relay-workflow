@@ -1,0 +1,72 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/session-start-injecting-recall-context",
+    "K5/hook-rendered",
+    "K8/codex-home/config.toml",
+    "A/recall/hook.test.ts"
+  ],
+  "note": "source=resume adds the resumed-after-a-pause line; a config.toml with [memories] dedicated_tools = true makes the recall pointer name the native memories.search tool.",
+  "given": {
+    "files": {
+      "codex/config.toml": "[memories]\ndedicated_tools = true\n"
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "session-start-injecting-recall-context",
+        "stdin": {
+          "hook_event_name": "SessionStart",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "source": "resume",
+          "model": "gpt-5.5",
+          "transcript_path": null
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": "[cxc-recall] Past-session recall is available (read-only). Before asking the user\nabout prior work — unfamiliar terms, lost context, \"그때/지난번/last time\" — recover it.\nThis session was resumed after a pause, so earlier turns may be missing here.\nRecall: memories.search \"<topic>\" (native tool). Also: node \"${PLUGIN_ROOT}/bin/cxc.mjs\" memory search \"<topic>\"\nDetails: $cxc-recall."
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "codex/config.toml": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "[memories]\ndedicated_tools = true\n"
+      }
+    },
+    "calls": [
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "config",
+          "--get",
+          "remote.origin.url"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

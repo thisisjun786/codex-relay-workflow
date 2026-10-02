@@ -1,0 +1,125 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K10/tools/call/subagents_set",
+    "K8/cxc-home/subagents.json",
+    "A/subagent-config/mcp.test.ts",
+    "A/subagent-config/scoped-surfaces.test.ts",
+    "K13/CODEXCLAW_HOME"
+  ],
+  "note": "subagents_set with inherit: true removes the whole role override from the global store and returns the re-read settings.",
+  "given": {
+    "json": {
+      "cxc/subagents.json": {
+        "roles": {
+          "explorer": {
+            "mode": "model",
+            "model": "rec/explorer-model",
+            "effort": "high",
+            "promptOverride": null,
+            "fallback": null
+          },
+          "reviewer": {
+            "mode": "default",
+            "model": null,
+            "effort": "low",
+            "promptOverride": null,
+            "fallback": null
+          }
+        }
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "mcp": [
+          {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+              "protocolVersion": "2024-11-05",
+              "capabilities": {},
+              "clientInfo": {
+                "name": "rec",
+                "version": "0"
+              }
+            }
+          },
+          {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+              "name": "subagents_set",
+              "arguments": {
+                "scope": "global",
+                "role": "explorer",
+                "inherit": true
+              }
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "jsonl",
+        "stdout_jsonl": [
+          {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+              "protocolVersion": "2024-11-05",
+              "capabilities": {
+                "tools": {}
+              },
+              "serverInfo": {
+                "name": "codexclaw-subagent-config",
+                "version": "0.1.1"
+              }
+            }
+          },
+          {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"reviewer\":{\"mode\":\"default\",\"model\":null,\"effort\":\"low\",\"promptOverride\":null,\"fallback\":null},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null}},\"scope\":\"global\",\"sources\":{\"explorer\":\"session\",\"reviewer\":\"global\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":false,\"reviewer\":true,\"executor\":false,\"architect\":false}}"
+                }
+              ]
+            }
+          }
+        ],
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "cxc/subagents.json": {
+        "type": "file",
+        "mode": "0600",
+        "form": "json-pretty",
+        "json": {
+          "roles": {
+            "reviewer": {
+              "mode": "default",
+              "model": null,
+              "effort": "low",
+              "promptOverride": null,
+              "fallback": null
+            }
+          }
+        }
+      }
+    },
+    "calls": []
+  }
+}

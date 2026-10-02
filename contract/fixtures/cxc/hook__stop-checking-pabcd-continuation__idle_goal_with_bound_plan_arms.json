@@ -1,0 +1,291 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/stop-checking-pabcd-continuation",
+    "K5/hook-rendered",
+    "K8/ws/.codexclaw/sessions",
+    "K8/ws/.codexclaw/goalplans",
+    "A/pabcd-state/hook-continuation.test.ts",
+    "K13/CODEX_SQLITE_HOME",
+    "K11/goals"
+  ],
+  "note": "IDLE with an active goal and a bound plan with remaining work: the GOAL-IDLE arming block names the arming command.",
+  "given": {
+    "json": {
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "phase": "IDLE",
+        "sessionId": "rec-s1",
+        "slug": "",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "flags": {
+          "interview": false,
+          "auditPassed": false,
+          "checkPassed": false
+        },
+        "supersededBy": null,
+        "injectedTurns": [],
+        "lastInjectedPhase": null,
+        "orchestrationActive": false,
+        "interview": null,
+        "stopBlockPhase": null,
+        "stopBlockCount": 0,
+        "stopBlockWorkPhaseId": null,
+        "stopMetricCursor": 0,
+        "stopBlockTotal": 0,
+        "stopBlockTurnId": null,
+        "stopBlockCapNotified": false,
+        "loopArmSeen": false,
+        "idleEditNudges": 0,
+        "memoryWriteRequested": false,
+        "memoryWriteTurn": null,
+        "memoryWriteGrant": false,
+        "unverifiedSubagents": [],
+        "unverifiedCorrupt": false,
+        "phaseEntrySource": null,
+        "planUnit": null,
+        "planEpoch": null,
+        "checkEpoch": null,
+        "dcloseRecovery": null
+      }
+    },
+    "git": {
+      "commit": "initial"
+    },
+    "sqlite": {
+      "codex/goals_1.sqlite": [
+        "CREATE TABLE thread_goals (thread_id TEXT PRIMARY KEY NOT NULL, status TEXT NOT NULL, objective TEXT)",
+        "INSERT INTO thread_goals (thread_id, status, objective) VALUES ('rec-s1', 'active', 'ship the feature')"
+      ]
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "loop",
+          "init",
+          "--objective",
+          "Ship the export feature",
+          "--session",
+          "rec-s1",
+          "--cwd",
+          "${WS}"
+        ]
+      },
+      {
+        "cli": [
+          "loop",
+          "add-work-phase",
+          "--session",
+          "rec-s1",
+          "--id",
+          "wp1",
+          "--title",
+          "Exporter",
+          "--cwd",
+          "${WS}"
+        ]
+      },
+      {
+        "hook": "stop-checking-pabcd-continuation",
+        "stdin": {
+          "hook_event_name": "Stop",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "stop_hook_active": false,
+          "last_assistant_message": "Done."
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "[codexclaw loop: ship-the-export-feature]\nobjective: Ship the export feature\nhost: armed=false source=none\nworkPhases: 0 (remaining 0)\ncriteria: 0 (unmet 0)\ncomplete: true\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "[codexclaw loop: ship-the-export-feature]\nobjective: Ship the export feature\nhost: armed=false source=none\nworkPhases: 1 (remaining 1)\ncriteria: 0 (unmet 0)\ncomplete: false\n  - wp1 [pending] Exporter\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "decision": "block",
+          "reason": "[codexclaw — goal continuation] A host goal is ACTIVE but no PABCD cycle is in flight.\nGOAL-IDLE-CONTINUE-01: IDLE is not the end while the goal is active (LOOP-CONTINUE-01). Do not end the turn here.\nEither start the next work-phase now: `node \"${PLUGIN_ROOT}/bin/cxc.mjs\" orchestrate P --session rec-s1 --attest '{\"from\":\"IDLE\",\"to\":\"P\",\"did\":\"<diff-level plan for the next work-phase>\"}'`\nor close the goal honestly: `update_goal` status \"complete\" (only when the recorded criteria are proven — the E8 gate checks a bound goalplan) or status \"blocked\" for an external blocker.\nLOOP-UNIT-CHAIN-01: work-phases chain HETEROGENEOUS units in one session — an independent feature/plan discovered mid-loop is simply the NEXT work-phase (append it to the goalplan, then orchestrate P). \"Needs its own PABCD\" is a plan statement, not a session boundary; do not close the goal while naming remaining features that fit the objective.\nReady work phases: wp1 (Exporter)\nRecord progress in: .codexclaw/goalplans/ship-the-export-feature/ledger.jsonl"
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "codex/goals_1.sqlite": {
+        "type": "file",
+        "mode": "0644",
+        "form": "sqlite",
+        "json": {
+          "tables": [
+            {
+              "name": "thread_goals",
+              "sql": "CREATE TABLE thread_goals (thread_id TEXT PRIMARY KEY NOT NULL, status TEXT NOT NULL, objective TEXT)",
+              "rows": [
+                {
+                  "thread_id": "rec-s1",
+                  "status": "active",
+                  "objective": "ship the feature"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/goalplans": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "ws/.codexclaw/goalplans/ship-the-export-feature": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "ws/.codexclaw/goalplans/ship-the-export-feature/goalplan.json": {
+        "type": "file",
+        "mode": "0600",
+        "form": "json-pretty-nonl",
+        "json": {
+          "objective": "Ship the export feature",
+          "slug": "ship-the-export-feature",
+          "createdAt": "<TS>",
+          "updatedAt": "<TS>",
+          "activeWorkPhaseId": null,
+          "workPhases": [
+            {
+              "id": "wp1",
+              "title": "Exporter",
+              "status": "pending",
+              "tasks": [],
+              "criteriaIds": []
+            }
+          ],
+          "criteria": [],
+          "host": {
+            "armed": false,
+            "armedAt": null,
+            "source": "none"
+          },
+          "schemaVersion": 1,
+          "steeringLog": [
+            {
+              "idempotencyKey": "add-work-phase-09ae6d9b5003",
+              "rationale": "cxc loop add-work-phase",
+              "evidence": "wp1: Exporter",
+              "appliedAt": "<TS>",
+              "summary": "1 op(s): add-work-phase"
+            }
+          ]
+        }
+      },
+      "ws/.codexclaw/goalplans/ship-the-export-feature/ledger.jsonl": {
+        "type": "file",
+        "mode": "0600",
+        "form": "jsonl",
+        "jsonl": [
+          {
+            "ts": "<TS>",
+            "slug": "ship-the-export-feature",
+            "event": "created",
+            "detail": "init objective=\"Ship the export feature\" criteria=0"
+          },
+          {
+            "ts": "<TS>",
+            "slug": "ship-the-export-feature",
+            "event": "steered",
+            "detail": "add-work-phase-09ae6d9b5003: 1 op(s): add-work-phase — cxc loop add-work-phase"
+          }
+        ]
+      },
+      "ws/.codexclaw/sessions": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty-nonl",
+        "json": {
+          "phase": "IDLE",
+          "sessionId": "rec-s1",
+          "slug": "ship-the-export-feature",
+          "updatedAt": "<TS>",
+          "flags": {
+            "interview": false,
+            "auditPassed": false,
+            "checkPassed": false
+          },
+          "supersededBy": null,
+          "injectedTurns": [],
+          "lastInjectedPhase": null,
+          "orchestrationActive": false,
+          "interview": null,
+          "stopBlockPhase": "IDLE",
+          "stopBlockCount": 1,
+          "stopBlockWorkPhaseId": "wp1",
+          "stopMetricCursor": 0,
+          "stopBlockTotal": 1,
+          "stopBlockTurnId": null,
+          "stopBlockCapNotified": false,
+          "loopArmSeen": false,
+          "idleEditNudges": 0,
+          "memoryWriteRequested": false,
+          "memoryWriteTurn": null,
+          "memoryWriteGrant": false,
+          "unverifiedSubagents": [],
+          "unverifiedCorrupt": false,
+          "phaseEntrySource": null,
+          "planUnit": null,
+          "planEpoch": null,
+          "checkEpoch": null,
+          "dcloseRecovery": null
+        }
+      },
+      "ws/.git": {
+        "type": "dir",
+        "mode": "0755"
+      }
+    },
+    "calls": [
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "HEAD"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "status",
+          "--porcelain=v1",
+          "-z",
+          "--untracked-files=all"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

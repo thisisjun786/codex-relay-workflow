@@ -1,0 +1,75 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/session-start-detecting-managed-worktree",
+    "K5/hook-rendered",
+    "A/pabcd-state/worktree-guard.test.ts",
+    "K13/CODEXCLAW_WORKTREE_ROOTS"
+  ],
+  "note": "CODEXCLAW_WORKTREE_ROOTS (':'-separated, first entry unused) adds a root outside CODEX_HOME; a checkout under it is managed with its own slot.",
+  "given": {
+    "files": {
+      "tmp/custom-root/ab12/repo/.git": "gitdir: /fake\n"
+    },
+    "env": {
+      "CODEXCLAW_WORKTREE_ROOTS": "${TMP}/unused:${TMP}/custom-root"
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "session-start-detecting-managed-worktree",
+        "stdin": {
+          "hook_event_name": "SessionStart",
+          "session_id": "rec-s1",
+          "cwd": "${TMP}/custom-root/ab12/repo",
+          "source": "startup",
+          "model": "gpt-5.5",
+          "transcript_path": null
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": "[codexclaw: MANAGED WORKTREE — identity guard (WORKTREE-GUARD-01)]\nThis session runs inside a Codex-app-managed worktree: ${TMP}/custom-root/ab12/repo\n(cwd: ${TMP}/custom-root/ab12/repo; slot: ${TMP}/custom-root/ab12; worktrees root: ${TMP}/custom-root).\n- This thread is BOUND to this worktree. NEVER delete, recreate, or \"start fresh\"\n  to rename it — that destroys uncommitted work and breaks the app binding.\n- App worktrees usually start detached-HEAD: the \"worktree name\" is the directory\n  slot, not a branch. branch ≠ worktree ≠ thread title (three namespaces).\n- To name things, ADOPT IN PLACE: stay here; `git switch -c <name>` (detached) or\n  `git branch -m <name>` names the branch; commit early. The app thread title is\n  renamed by the user in the app sidebar — agents cannot rename it.\n- Do NOT `git worktree move` the ACTIVE worktree: it invalidates this session's\n  cwd and app rebinding is not guaranteed. Move only OTHER/inactive worktrees.\n- The app may auto-delete this worktree on chat archive (snapshot kept) and\n  retains only the latest N managed worktrees: commit early, push on approval.\n- Detection covers the default root + CODEXCLAW_WORKTREE_ROOTS; a custom app\n  worktree root needs that env. Full procedures: $codexclaw:cxc-worktree-guardian."
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "tmp/custom-root": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "tmp/custom-root/ab12": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "tmp/custom-root/ab12/repo": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "tmp/custom-root/ab12/repo/.git": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "gitdir: /fake\n"
+      }
+    },
+    "calls": []
+  }
+}

@@ -1,0 +1,90 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/enable/help",
+    "K6/disable/help",
+    "K6/uninstall/help",
+    "K6/status/help",
+    "A/plugin/cli-usage.test.mjs"
+  ],
+  "note": "--help, -h or help in any position of enable/disable/uninstall/status prints the feature usage, exits 0, calls no codex and writes nothing.",
+  "given": {
+    "files": {
+      "codex/config.toml": "model = \"gpt-5.5\"\n\n[features]\nhooks = true\n"
+    },
+    "stubs": {
+      "codex": {
+        "stdout": "default_mode_request_user_input  under development  false\ngoals                            stable             false\nhooks                            stable             true\nmulti_agent                      stable             false\n",
+        "exit": 0
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "enable",
+          "--help"
+        ]
+      },
+      {
+        "cli": [
+          "disable",
+          "-h"
+        ]
+      },
+      {
+        "cli": [
+          "uninstall",
+          "--force",
+          "help"
+        ]
+      },
+      {
+        "cli": [
+          "status",
+          "--help"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "Usage:\n  cxc enable                         activate declared Codex feature flags\n  cxc disable | uninstall            revert flags codexclaw enabled when safe\n  cxc status                         show declared feature-flag state\n\n  --help / -h / help in any argument position prints this text and writes nothing.\n  enable writes $CODEX_HOME/config.toml and a timestamped .bak; disable/uninstall revert.\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "Usage:\n  cxc enable                         activate declared Codex feature flags\n  cxc disable | uninstall            revert flags codexclaw enabled when safe\n  cxc status                         show declared feature-flag state\n\n  --help / -h / help in any argument position prints this text and writes nothing.\n  enable writes $CODEX_HOME/config.toml and a timestamped .bak; disable/uninstall revert.\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "Usage:\n  cxc enable                         activate declared Codex feature flags\n  cxc disable | uninstall            revert flags codexclaw enabled when safe\n  cxc status                         show declared feature-flag state\n\n  --help / -h / help in any argument position prints this text and writes nothing.\n  enable writes $CODEX_HOME/config.toml and a timestamped .bak; disable/uninstall revert.\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "Usage:\n  cxc enable                         activate declared Codex feature flags\n  cxc disable | uninstall            revert flags codexclaw enabled when safe\n  cxc status                         show declared feature-flag state\n\n  --help / -h / help in any argument position prints this text and writes nothing.\n  enable writes $CODEX_HOME/config.toml and a timestamped .bak; disable/uninstall revert.\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/config.toml": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "model = \"gpt-5.5\"\n\n[features]\nhooks = true\n"
+      }
+    },
+    "calls": []
+  }
+}

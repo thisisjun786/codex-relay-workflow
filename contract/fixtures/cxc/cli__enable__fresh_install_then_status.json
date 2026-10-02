@@ -1,0 +1,158 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/enable/run",
+    "K6/status/run",
+    "K12/codex",
+    "K8/codex-home/config.toml",
+    "K8/codex-home/.codexclaw-install.json",
+    "A/config-guard/activate.test.ts",
+    "A/config-guard/auto-enable.test.ts"
+  ],
+  "note": "`cxc enable` probes the flags, enables each not-true declared flag through `codex features enable`, backs up config.toml (timestamped .bak), writes [memories] dedicated_tools = true with its caution, and writes the v2 manifest; `cxc status` lists the declared flags.",
+  "given": {
+    "files": {
+      "codex/config.toml": "model = \"gpt-5.5\"\n\n[features]\nhooks = true\n"
+    },
+    "stubs": {
+      "codex": {
+        "stdout": "default_mode_request_user_input  under development  false\ngoals                            stable             false\nhooks                            stable             true\nmulti_agent                      stable             false\n",
+        "exit": 0
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "enable"
+        ]
+      },
+      {
+        "cli": [
+          "status"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "codexclaw: enabled [multi_agent, goals, default_mode_request_user_input]\nconfig keys: memories.dedicated_tools\n  memories/{list,read,search,add_ad_hoc_note} 네 도구가 열립니다. add_ad_hoc_note는 메모리에 새 노트를 만드는 쓰기 경로이지만, codexclaw 의 PreToolUse 메모리 쓰기 게이트가 명시 요청 없는 쓰기를 거부합니다. 설치가 이 키를 켜고, 'cxc disable' 이 설치 이전 값으로 되돌립니다.\nbackup: ${CODEX_HOME}/config.toml.codexclaw-2026-01-01T00-00-00-000Z.bak\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "multi_agent: disabled\ngoals: disabled\nhooks: enabled\ndefault_mode_request_user_input: disabled\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/.codexclaw-install.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty",
+        "json": {
+          "version": 2,
+          "activatedAt": "<TS>",
+          "configPath": "${CODEX_HOME}/config.toml",
+          "backupPath": "${CODEX_HOME}/config.toml.codexclaw-2026-01-01T00-00-00-000Z.bak",
+          "postActivateHash": "12d9f55fb80673158b08e5f3ae7e450fcaf32804d4cf309e35ee5d57c4d0938a",
+          "flags": {
+            "multi_agent": {
+              "priorEnabled": false,
+              "enabledByCodexclaw": true,
+              "enableFailed": false
+            },
+            "goals": {
+              "priorEnabled": false,
+              "enabledByCodexclaw": true,
+              "enableFailed": false
+            },
+            "hooks": {
+              "priorEnabled": true,
+              "enabledByCodexclaw": false,
+              "enableFailed": false
+            },
+            "default_mode_request_user_input": {
+              "priorEnabled": false,
+              "enabledByCodexclaw": true,
+              "enableFailed": false
+            }
+          },
+          "tableKeys": {
+            "memories.dedicated_tools": {
+              "table": "memories",
+              "key": "dedicated_tools",
+              "priorValue": null,
+              "appliedValue": "true",
+              "setByCodexclaw": true
+            }
+          }
+        }
+      },
+      "codex/config.toml": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "model = \"gpt-5.5\"\n\n[features]\nhooks = true\n\n[memories]\ndedicated_tools = true\n"
+      },
+      "codex/config.toml.codexclaw-2026-01-01T00-00-00-000Z.bak": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "model = \"gpt-5.5\"\n\n[features]\nhooks = true\n"
+      }
+    },
+    "calls": [
+      {
+        "cmd": "codex",
+        "argv": [
+          "features",
+          "list"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "codex",
+        "argv": [
+          "features",
+          "enable",
+          "multi_agent"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "codex",
+        "argv": [
+          "features",
+          "enable",
+          "goals"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "codex",
+        "argv": [
+          "features",
+          "enable",
+          "default_mode_request_user_input"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "codex",
+        "argv": [
+          "features",
+          "list"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

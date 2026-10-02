@@ -1,0 +1,149 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/loop",
+    "K8/ws/.codexclaw/goalplans",
+    "A/pabcd-state/goalplan-public-surface.test.ts",
+    "A/pabcd-state/nongit-bound-cycle.test.ts"
+  ],
+  "note": "schemaVersion 2 needs an approved final gate; in a non-git workspace the bound cycle is refused without a git fatal.",
+  "given": {
+    "json": {
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "phase": "IDLE",
+        "sessionId": "rec-s1",
+        "slug": "",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "flags": {
+          "interview": false,
+          "auditPassed": false,
+          "checkPassed": false
+        },
+        "supersededBy": null,
+        "injectedTurns": [],
+        "lastInjectedPhase": null,
+        "orchestrationActive": false,
+        "interview": null,
+        "stopBlockPhase": null,
+        "stopBlockCount": 0,
+        "stopBlockWorkPhaseId": null,
+        "stopMetricCursor": 0,
+        "stopBlockTotal": 0,
+        "stopBlockTurnId": null,
+        "stopBlockCapNotified": false,
+        "loopArmSeen": false,
+        "idleEditNudges": 0,
+        "memoryWriteRequested": false,
+        "memoryWriteTurn": null,
+        "memoryWriteGrant": false,
+        "unverifiedSubagents": [],
+        "unverifiedCorrupt": false,
+        "phaseEntrySource": null,
+        "planUnit": null,
+        "planEpoch": null,
+        "checkEpoch": null,
+        "dcloseRecovery": null
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "loop",
+          "init",
+          "--objective",
+          "Ship the export feature",
+          "--session",
+          "rec-s1",
+          "--schema-version",
+          "2",
+          "--cwd",
+          "${WS}"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 1,
+    "steps": [
+      {
+        "exit": 1,
+        "stdout_form": "text",
+        "stdout": "loop init: this workspace has no resolvable git source identity, and a goalplan-bound\ncycle cannot be closed without one: C -> D requires a testReceiptPath\n(CHECK-BINDING-01) and `cxc receipt test` refuses to write a receipt it cannot\nbind to a commit.\n\nPick one:\n  - bind a git source tree:  cxc session source <absolute-path> --json\n  - or run this cycle unbound (no `cxc loop init --session`), which closes D on\n    checkOutput + exitCode alone.\nNothing was written.\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/sessions": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "phase": "IDLE",
+          "sessionId": "rec-s1",
+          "slug": "",
+          "updatedAt": "<TS>",
+          "flags": {
+            "interview": false,
+            "auditPassed": false,
+            "checkPassed": false
+          },
+          "supersededBy": null,
+          "injectedTurns": [],
+          "lastInjectedPhase": null,
+          "orchestrationActive": false,
+          "interview": null,
+          "stopBlockPhase": null,
+          "stopBlockCount": 0,
+          "stopBlockWorkPhaseId": null,
+          "stopMetricCursor": 0,
+          "stopBlockTotal": 0,
+          "stopBlockTurnId": null,
+          "stopBlockCapNotified": false,
+          "loopArmSeen": false,
+          "idleEditNudges": 0,
+          "memoryWriteRequested": false,
+          "memoryWriteTurn": null,
+          "memoryWriteGrant": false,
+          "unverifiedSubagents": [],
+          "unverifiedCorrupt": false,
+          "phaseEntrySource": null,
+          "planUnit": null,
+          "planEpoch": null,
+          "checkEpoch": null,
+          "dcloseRecovery": null
+        }
+      }
+    },
+    "calls": [
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "HEAD"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "status",
+          "--porcelain=v1",
+          "-z",
+          "--untracked-files=all"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

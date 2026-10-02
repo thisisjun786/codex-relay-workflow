@@ -1,0 +1,147 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/pre-tool-use-guarding-memory-write",
+    "K3/user-prompt-submit-checking-pabcd-trigger",
+    "K8/ws/.codexclaw/sessions",
+    "A/pabcd-state/memory-write-gate.test.ts"
+  ],
+  "note": "The prompt marker belongs to its turn: a write attributed to another turn is denied and does not consume it; the asking turn still passes.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "user-prompt-submit-checking-pabcd-trigger",
+        "stdin": {
+          "hook_event_name": "UserPromptSubmit",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "prompt": "기억해둬: 배포는 금요일에 하지 않는다",
+          "model": "gpt-5.5",
+          "transcript_path": null
+        }
+      },
+      {
+        "hook": "pre-tool-use-guarding-memory-write",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t9",
+          "tool_name": "memoriesadd_ad_hoc_note",
+          "tool_input": {
+            "filename": "note.md",
+            "note": "x"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-guarding-memory-write",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "memoriesadd_ad_hoc_note",
+          "tool_input": {
+            "filename": "note.md",
+            "note": "x"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "[codexclaw MEMORY-WRITE-GATE] Blocked a write of a memory note (note.md): this session has no explicit user request to remember anything. Memory notes outlive codexclaw and reach every later session, so they are written only when the user asks. Two ways forward: ask the user to confirm they want this remembered (a prompt such as \"기억해둬\" or \"remember this\" authorizes the next write), or record an explicit grant with `cxc memory allow-write --session rec-s1` from ${WS}. The grant is stored per cwd; issuing it from a different working directory will print success and never be seen by this hook. If the user did ask, say so and retry — the request must appear in their own message, not in yours.",
+            "additionalContext": "[codexclaw MEMORY-WRITE-GATE] Blocked a write of a memory note (note.md): this session has no explicit user request to remember anything. Memory notes outlive codexclaw and reach every later session, so they are written only when the user asks. Two ways forward: ask the user to confirm they want this remembered (a prompt such as \"기억해둬\" or \"remember this\" authorizes the next write), or record an explicit grant with `cxc memory allow-write --session rec-s1` from ${WS}. The grant is stored per cwd; issuing it from a different working directory will print success and never be seen by this hook. If the user did ask, say so and retry — the request must appear in their own message, not in yours."
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/.gitignore": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n"
+      },
+      "ws/.codexclaw/sessions": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty-nonl",
+        "json": {
+          "phase": "IDLE",
+          "sessionId": "rec-s1",
+          "slug": "",
+          "updatedAt": "<TS>",
+          "flags": {
+            "interview": false,
+            "auditPassed": false,
+            "checkPassed": false
+          },
+          "supersededBy": null,
+          "injectedTurns": [],
+          "lastInjectedPhase": null,
+          "orchestrationActive": false,
+          "interview": null,
+          "stopBlockPhase": null,
+          "stopBlockCount": 0,
+          "stopBlockWorkPhaseId": null,
+          "stopMetricCursor": 0,
+          "stopBlockTotal": 0,
+          "stopBlockTurnId": "rec-t1",
+          "stopBlockCapNotified": false,
+          "loopArmSeen": false,
+          "idleEditNudges": 0,
+          "memoryWriteRequested": false,
+          "memoryWriteTurn": null,
+          "memoryWriteGrant": false,
+          "unverifiedSubagents": [],
+          "unverifiedCorrupt": false,
+          "phaseEntrySource": null,
+          "planUnit": null,
+          "planEpoch": null,
+          "checkEpoch": null,
+          "dcloseRecovery": null
+        }
+      }
+    },
+    "calls": []
+  }
+}

@@ -1,6 +1,6 @@
 ---
 name: crw-next
-description: "Choose one concrete next action from a Linear product's goals, repository, and execution evidence. Use for '다음에 뭐 하지?', uncertainty about where to start, or what follows a completed task; use crw-run to execute an authorized choice. Formerly linear-next."
+description: "Choose one concrete next action from a Linear product's goals, repository, and execution evidence. Use for '다음에 뭐 하지?', uncertainty about where to start, or what follows a completed task; use crw-run to execute an authorized choice."
 ---
 
 # CRW Next

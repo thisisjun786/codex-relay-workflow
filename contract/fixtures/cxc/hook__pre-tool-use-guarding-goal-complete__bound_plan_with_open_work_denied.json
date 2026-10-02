@@ -1,0 +1,272 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/pre-tool-use-guarding-goal-complete",
+    "K5/hook-rendered",
+    "A/pabcd-state/goal-gate.test.ts"
+  ],
+  "note": "At IDLE with a bound goalplan that still has open work, completing the goal is denied.",
+  "given": {
+    "json": {
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "phase": "IDLE",
+        "sessionId": "rec-s1",
+        "slug": "",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "flags": {
+          "interview": false,
+          "auditPassed": false,
+          "checkPassed": false
+        },
+        "supersededBy": null,
+        "injectedTurns": [],
+        "lastInjectedPhase": null,
+        "orchestrationActive": false,
+        "interview": null,
+        "stopBlockPhase": null,
+        "stopBlockCount": 0,
+        "stopBlockWorkPhaseId": null,
+        "stopMetricCursor": 0,
+        "stopBlockTotal": 0,
+        "stopBlockTurnId": null,
+        "stopBlockCapNotified": false,
+        "loopArmSeen": false,
+        "idleEditNudges": 0,
+        "memoryWriteRequested": false,
+        "memoryWriteTurn": null,
+        "memoryWriteGrant": false,
+        "unverifiedSubagents": [],
+        "unverifiedCorrupt": false,
+        "phaseEntrySource": null,
+        "planUnit": null,
+        "planEpoch": null,
+        "checkEpoch": null,
+        "dcloseRecovery": null
+      }
+    },
+    "git": {
+      "commit": "initial"
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "loop",
+          "init",
+          "--objective",
+          "Ship the export feature",
+          "--session",
+          "rec-s1",
+          "--cwd",
+          "${WS}"
+        ]
+      },
+      {
+        "cli": [
+          "loop",
+          "add-work-phase",
+          "--session",
+          "rec-s1",
+          "--id",
+          "wp1",
+          "--title",
+          "Exporter",
+          "--cwd",
+          "${WS}"
+        ]
+      },
+      {
+        "hook": "pre-tool-use-guarding-goal-complete",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "update_goal",
+          "tool_input": {
+            "status": "complete"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "[codexclaw loop: ship-the-export-feature]\nobjective: Ship the export feature\nhost: armed=false source=none\nworkPhases: 0 (remaining 0)\ncriteria: 0 (unmet 0)\ncomplete: true\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "[codexclaw loop: ship-the-export-feature]\nobjective: Ship the export feature\nhost: armed=false source=none\nworkPhases: 1 (remaining 1)\ncriteria: 0 (unmet 0)\ncomplete: false\n  - wp1 [pending] Exporter\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "GOAL-COMPLETE-GATE-01: the session-bound goalplan 'ship-the-export-feature' fails the E8 quality/integrity gate: 1 work phase(s) not done: wp1. Repair invalid dependency, outcome, and criteria references first; then finish remaining work and record fresh capturedEvidence in .codexclaw/goalplans/ship-the-export-feature/goalplan.json (check with `node \"${PLUGIN_ROOT}/bin/cxc.mjs\" loop validate --session rec-s1 --slug \"ship-the-export-feature\"`), or use update_goal status \"blocked\" if an external blocker prevents completion. Do not shrink the objective to escape the gate (LOOP-CONTINUE-01).",
+            "additionalContext": "GOAL-COMPLETE-GATE-01: the session-bound goalplan 'ship-the-export-feature' fails the E8 quality/integrity gate: 1 work phase(s) not done: wp1. Repair invalid dependency, outcome, and criteria references first; then finish remaining work and record fresh capturedEvidence in .codexclaw/goalplans/ship-the-export-feature/goalplan.json (check with `node \"${PLUGIN_ROOT}/bin/cxc.mjs\" loop validate --session rec-s1 --slug \"ship-the-export-feature\"`), or use update_goal status \"blocked\" if an external blocker prevents completion. Do not shrink the objective to escape the gate (LOOP-CONTINUE-01)."
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/evidence-unrecordable": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/goalplans": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "ws/.codexclaw/goalplans/ship-the-export-feature": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "ws/.codexclaw/goalplans/ship-the-export-feature/goalplan.json": {
+        "type": "file",
+        "mode": "0600",
+        "form": "json-pretty-nonl",
+        "json": {
+          "objective": "Ship the export feature",
+          "slug": "ship-the-export-feature",
+          "createdAt": "<TS>",
+          "updatedAt": "<TS>",
+          "activeWorkPhaseId": null,
+          "workPhases": [
+            {
+              "id": "wp1",
+              "title": "Exporter",
+              "status": "pending",
+              "tasks": [],
+              "criteriaIds": []
+            }
+          ],
+          "criteria": [],
+          "host": {
+            "armed": false,
+            "armedAt": null,
+            "source": "none"
+          },
+          "schemaVersion": 1,
+          "steeringLog": [
+            {
+              "idempotencyKey": "add-work-phase-09ae6d9b5003",
+              "rationale": "cxc loop add-work-phase",
+              "evidence": "wp1: Exporter",
+              "appliedAt": "<TS>",
+              "summary": "1 op(s): add-work-phase"
+            }
+          ]
+        }
+      },
+      "ws/.codexclaw/goalplans/ship-the-export-feature/ledger.jsonl": {
+        "type": "file",
+        "mode": "0600",
+        "form": "jsonl",
+        "jsonl": [
+          {
+            "ts": "<TS>",
+            "slug": "ship-the-export-feature",
+            "event": "created",
+            "detail": "init objective=\"Ship the export feature\" criteria=0"
+          },
+          {
+            "ts": "<TS>",
+            "slug": "ship-the-export-feature",
+            "event": "steered",
+            "detail": "add-work-phase-09ae6d9b5003: 1 op(s): add-work-phase — cxc loop add-work-phase"
+          }
+        ]
+      },
+      "ws/.codexclaw/sessions": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty-nonl",
+        "json": {
+          "phase": "IDLE",
+          "sessionId": "rec-s1",
+          "slug": "ship-the-export-feature",
+          "updatedAt": "<TS>",
+          "flags": {
+            "interview": false,
+            "auditPassed": false,
+            "checkPassed": false
+          },
+          "supersededBy": null,
+          "injectedTurns": [],
+          "lastInjectedPhase": null,
+          "orchestrationActive": false,
+          "interview": null,
+          "stopBlockPhase": null,
+          "stopBlockCount": 0,
+          "stopBlockWorkPhaseId": null,
+          "stopMetricCursor": 0,
+          "stopBlockTotal": 0,
+          "stopBlockTurnId": null,
+          "stopBlockCapNotified": false,
+          "loopArmSeen": false,
+          "idleEditNudges": 0,
+          "memoryWriteRequested": false,
+          "memoryWriteTurn": null,
+          "memoryWriteGrant": false,
+          "unverifiedSubagents": [],
+          "unverifiedCorrupt": false,
+          "phaseEntrySource": null,
+          "planUnit": null,
+          "planEpoch": null,
+          "checkEpoch": null,
+          "dcloseRecovery": null
+        }
+      },
+      "ws/.git": {
+        "type": "dir",
+        "mode": "0755"
+      }
+    },
+    "calls": [
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "HEAD"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "status",
+          "--porcelain=v1",
+          "-z",
+          "--untracked-files=all"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

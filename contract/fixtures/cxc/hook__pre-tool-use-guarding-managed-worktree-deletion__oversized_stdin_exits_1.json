@@ -1,0 +1,72 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/pre-tool-use-guarding-managed-worktree-deletion",
+    "K9/stdin-cap",
+    "A/pabcd-state/cli-bounds.test.ts"
+  ],
+  "note": "Oracle quirk pinned: the deletion guard's verb `worktree-guard-pretool` does not start with `pre-tool-use`, so an oversized payload gets no deny envelope; the CLI exits 1 with empty stdout.",
+  "given": {
+    "files": {
+      "codex/worktrees/7627/repo/.git": "gitdir: /fake/main/.git/worktrees/7627\n",
+      "codex/worktrees/7627/repo/README.md": "managed checkout\n"
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "pre-tool-use-guarding-managed-worktree-deletion",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${CODEX_HOME}/worktrees/7627/repo",
+          "turn_id": "rec-t1",
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "rm -rf ${CODEX_HOME}/worktrees/7627"
+          },
+          "tool_use_id": "rec-call-1"
+        },
+        "stdin_pad": 4194368
+      }
+    ]
+  },
+  "expect": {
+    "exit": 1,
+    "steps": [
+      {
+        "exit": 1,
+        "stdout_form": "empty",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/worktrees": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "codex/worktrees/7627": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "codex/worktrees/7627/repo": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "codex/worktrees/7627/repo/.git": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "gitdir: /fake/main/.git/worktrees/7627\n"
+      },
+      "codex/worktrees/7627/repo/README.md": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "managed checkout\n"
+      }
+    },
+    "calls": []
+  }
+}

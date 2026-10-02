@@ -1,0 +1,155 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/orchestrate/transition",
+    "K8/ws/.codexclaw/sessions",
+    "K8/ws/.codexclaw/ledger.jsonl",
+    "A/pabcd-state/orchestrate-cli.test.ts",
+    "K6/orchestrate/reset"
+  ],
+  "note": "reset returns an in-flight session to IDLE.",
+  "given": {
+    "json": {
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "phase": "B",
+        "sessionId": "rec-s1",
+        "slug": "",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "flags": {
+          "interview": false,
+          "auditPassed": false,
+          "checkPassed": false
+        },
+        "supersededBy": null,
+        "injectedTurns": [],
+        "lastInjectedPhase": null,
+        "orchestrationActive": true,
+        "interview": null,
+        "stopBlockPhase": null,
+        "stopBlockCount": 0,
+        "stopBlockWorkPhaseId": null,
+        "stopMetricCursor": 0,
+        "stopBlockTotal": 0,
+        "stopBlockTurnId": null,
+        "stopBlockCapNotified": false,
+        "loopArmSeen": false,
+        "idleEditNudges": 0,
+        "memoryWriteRequested": false,
+        "memoryWriteTurn": null,
+        "memoryWriteGrant": false,
+        "unverifiedSubagents": [],
+        "unverifiedCorrupt": false,
+        "phaseEntrySource": null,
+        "planUnit": null,
+        "planEpoch": null,
+        "checkEpoch": null,
+        "dcloseRecovery": null
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "orchestrate",
+          "reset",
+          "--session",
+          "rec-s1",
+          "--cwd",
+          "${WS}"
+        ]
+      },
+      {
+        "cli": [
+          "orchestrate",
+          "status",
+          "--session",
+          "rec-s1",
+          "--cwd",
+          "${WS}"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "orchestrate reset: current=B -> IDLE (session rec-s1)\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "session=rec-s1 phase=IDLE interview=false auditPassed=false checkPassed=false\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/ledger.jsonl": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "ts": "<TS>",
+          "sessionId": "rec-s1",
+          "from": "B",
+          "to": "IDLE",
+          "reason": "reset"
+        }
+      },
+      "ws/.codexclaw/sessions": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty-nonl",
+        "json": {
+          "phase": "IDLE",
+          "sessionId": "rec-s1",
+          "slug": "",
+          "updatedAt": "<TS>",
+          "flags": {
+            "interview": false,
+            "auditPassed": false,
+            "checkPassed": false
+          },
+          "supersededBy": null,
+          "injectedTurns": [],
+          "lastInjectedPhase": null,
+          "orchestrationActive": false,
+          "interview": null,
+          "stopBlockPhase": null,
+          "stopBlockCount": 0,
+          "stopBlockWorkPhaseId": null,
+          "stopMetricCursor": 0,
+          "stopBlockTotal": 0,
+          "stopBlockTurnId": null,
+          "stopBlockCapNotified": false,
+          "loopArmSeen": false,
+          "idleEditNudges": 0,
+          "memoryWriteRequested": false,
+          "memoryWriteTurn": null,
+          "memoryWriteGrant": false,
+          "unverifiedSubagents": [],
+          "unverifiedCorrupt": false,
+          "phaseEntrySource": null,
+          "planUnit": null,
+          "planEpoch": null,
+          "checkEpoch": null,
+          "dcloseRecovery": null
+        }
+      }
+    },
+    "calls": []
+  }
+}

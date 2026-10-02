@@ -1,0 +1,913 @@
+{
+  "description": "The CXC v0.2.40 -> CRW rename table as data (Wave 0 name-substitution.md and cli-names.md, with the decisions of decisions.md). A Go replayer applies `rules` in order to a fixture's expected text, tree paths and tree contents (never to the fixture file), after normalisation.json. Regex rules use Go regexp (RE2) syntax and Go replacement templates (${1} is a group, $$ a literal dollar); a rule with repeat is applied until the text stops changing, because RE2 has no lookaround and a captured boundary character cannot start the next match. resolver and rewrite rules are not plain text edits: their note says what replaces the text. `cli` maps the argv prefix of each cxc step to the crw command; the rest of argv is kept. `never` lists text no rule may touch, `input_side` the recognizers whose rename changes what is accepted, `env` and `skills` the renamed names. Hook legs keep their declarations (decision 3: 32 registrations, statusMessage R24, the command becomes the crw hook entry for that leg).",
+  "source": "The CRW-189 Wave 0 analysis (name-substitution.md, cli-names.md, decisions.md), kept outside the repository with the other planning documents",
+  "apply": [
+    "normalise both sides with normalisation.json",
+    "replace the expectation's text with these rules in order",
+    "map step argv with cli",
+    "replace the replay's resolved crw invocation with {CRW} (R27)",
+    "compare"
+  ],
+  "rules": [
+    {
+      "id": "R1",
+      "kind": "regex",
+      "regex": "\\$codexclaw:cxc-([a-z0-9-]+)",
+      "replace": "$$crw:crw-${1}",
+      "site": "pabcd-state/src/hook.ts PHASE_DIRECTIVES; subagent-config/src/spawn-attach-hook.ts:133"
+    },
+    {
+      "id": "R2",
+      "kind": "regex",
+      "regex": "codexclaw:cxc-([a-z0-9-]+)",
+      "replace": "crw:crw-${1}",
+      "site": "pabcd-state/src/hook.ts:247,287,317"
+    },
+    {
+      "id": "R3",
+      "kind": "regex",
+      "regex": "\\[\\$cxc-([a-z0-9-]+)\\]\\(skill://",
+      "replace": "[$$crw-${1}](skill://",
+      "site": "spawn-attach-hook.ts:134",
+      "note": "the link target path changes too (skill folder X becomes crw-X); that is not textual"
+    },
+    {
+      "id": "R4",
+      "kind": "regex",
+      "regex": "<skill name=\"cxc-",
+      "replace": "<skill name=\"crw-",
+      "site": "spawn-attach-hook.ts:596"
+    },
+    {
+      "id": "R5",
+      "kind": "regex",
+      "regex": "\\[CXC-DISPATCH:",
+      "replace": "[CRW-DISPATCH:",
+      "site": "subagent-config/src/fallback-dispatch.ts:160,239,252; spawn-attach-hook.ts:422,445",
+      "note": "parsed back: writer and parser are renamed together"
+    },
+    {
+      "id": "R6",
+      "kind": "regex",
+      "regex": "\\[CXC-SUBSPAWN-GRANT:",
+      "replace": "[CRW-SUBSPAWN-GRANT:",
+      "site": "spawn-attach-hook.ts:280,432,977",
+      "note": "parsed back"
+    },
+    {
+      "id": "R7",
+      "kind": "regex",
+      "regex": "CXC-SUBSPAWN-ALLOWED",
+      "replace": "CRW-SUBSPAWN-ALLOWED",
+      "site": "spawn-attach-hook.ts:279; agents/{executor,explorer,reviewer}.toml"
+    },
+    {
+      "id": "R8",
+      "kind": "regex",
+      "regex": "\\[CXC-(LEAF-GUARD|SUBAGENT-SCOPE|SKILL-AFFORDANCE|CONFIG-IGNORED|FINAL-GATE)\\]",
+      "replace": "[CRW-${1}]",
+      "site": "spawn-attach-hook.ts:284,321,425,601,927; final-gate-guard.ts:24",
+      "note": "FINAL-GATE is parsed back (final-gate-guard.ts:9)"
+    },
+    {
+      "id": "R9",
+      "kind": "regex",
+      "regex": "CXC-ROLE:",
+      "replace": "CRW-ROLE:",
+      "site": "spawn-attach-hook.ts:500; attest.ts:188; review-round-cli.ts:199-200",
+      "note": "parsed back"
+    },
+    {
+      "id": "R10",
+      "kind": "regex",
+      "regex": "\\$cxc-([a-z0-9-]+)",
+      "replace": "$$crw-${1}",
+      "site": "spawn-attach-hook.ts:162,677,834; recall/src/hook.ts:117"
+    },
+    {
+      "id": "R11",
+      "kind": "regex",
+      "regex": "(^|[^\\w-])cxc-(ast-grep|dev(?:-[a-z-]+)?|interview|kwrite|loop|lunasearch|pabcd|qa|recall|repo-map|search|worktree-guardian)($|[^\\w-])",
+      "replace": "${1}crw-${2}${3}",
+      "site": "skill frontmatter name; hook.ts:247,268,287,295,317",
+      "note": "PCRE (?<![\\w-])/(?![\\w-]) rewritten for RE2 as captured boundaries; repeat until no change so adjacent names separated by one character are all renamed",
+      "repeat": true
+    },
+    {
+      "id": "R12",
+      "kind": "regex",
+      "regex": "CODEXCLAW_CXC",
+      "replace": "CRW_BIN",
+      "site": "cxc-ops/src/cxc-resolve.ts:12,79",
+      "note": "decision: CRW_BIN, not the literal CRW_CXC"
+    },
+    {
+      "id": "R13",
+      "kind": "regex",
+      "regex": "CODEXCLAW_HOME",
+      "replace": "CRW_HOME",
+      "site": "skill-search/src/cache.ts:15; recall/src/index-db.ts:21; subagent-config/src/store.ts:130; agent-thread-permissions.ts:112",
+      "note": "decision 1"
+    },
+    {
+      "id": "R14",
+      "kind": "regex",
+      "regex": "CODEXCLAW_([A-Z0-9_]+)",
+      "replace": "CRW_${1}",
+      "site": "every other CODEXCLAW_* variable (env table)"
+    },
+    {
+      "id": "R15",
+      "kind": "regex",
+      "regex": "\\bCXC_(BGWAKE|SKILLS_DIR)\\b",
+      "replace": "CRW_${1}",
+      "site": "bg-wake/src/registry.ts:174; spawn-attach-hook.ts:55"
+    },
+    {
+      "id": "R16",
+      "kind": "regex",
+      "regex": "~/\\.codexclaw\\b",
+      "replace": "~/.crw",
+      "site": "agent-thread-permissions.ts:9 (USER_ADVICE)",
+      "note": "decision 1"
+    },
+    {
+      "id": "R17",
+      "kind": "regex",
+      "regex": "# codexclaw-managed: ",
+      "replace": "# crw-managed: ",
+      "site": "subagent-config/src/role-registration.ts:51,62",
+      "note": "parsed back; CXC-managed role files become foreign (no alias)"
+    },
+    {
+      "id": "R18",
+      "kind": "regex",
+      "regex": "codexclaw-self-heal\\.json",
+      "replace": "crw-self-heal.json",
+      "site": "config-guard/src/self-heal.ts:25 (in CODEX_HOME)"
+    },
+    {
+      "id": "R19",
+      "kind": "rewrite",
+      "regex": "\\.codexclaw-install\\.json",
+      "site": "config-guard/src/activate.ts:18,196",
+      "note": "no textual rule: the install manifest is absorbed into the crw install record (a .crw- name would sit in CRW's reserved temp prefix); a replay compares its effect, not its name"
+    },
+    {
+      "id": "R20",
+      "kind": "regex",
+      "regex": "\\.codexclaw-([0-9TZ:.-]+)\\.bak",
+      "replace": ".crw-${1}.bak",
+      "site": "config-guard/src/activate.ts:216; config-set.ts:101,132 (config.toml backups in CODEX_HOME)"
+    },
+    {
+      "id": "R21",
+      "kind": "regex",
+      "regex": "codexclaw-subspawn-",
+      "replace": "crw-subspawn-",
+      "site": "spawn-attach-hook.ts:367 ($TMPDIR grant store)"
+    },
+    {
+      "id": "R22",
+      "kind": "regex",
+      "regex": "codexclaw-skill-search",
+      "replace": "crw-skill-search",
+      "site": "skill-search/src/cli.ts:46 (HTTP user-agent)"
+    },
+    {
+      "id": "R23",
+      "kind": "regex",
+      "regex": "\\[codexclaw([\\]: —])",
+      "replace": "[crw${1}",
+      "site": "88 markers: [codexclaw: PLAN], [codexclaw — refused: ...], [codexclaw bg], [codexclaw loop validate: <slug>]",
+      "note": "PCRE lookahead rewritten as a captured following character; repeat until no change",
+      "repeat": true
+    },
+    {
+      "id": "R24",
+      "kind": "regex",
+      "regex": "\\(codexclaw\\) ",
+      "replace": "(crw) ",
+      "site": "all 32 statusMessages (hook-declarations.json)"
+    },
+    {
+      "id": "R25",
+      "kind": "regex",
+      "regex": "\\b(?:CodexClaw|Codexclaw)\\b",
+      "replace": "CRW",
+      "site": "codexclaw-dir.ts:4 GITIGNORE_TEXT; pabcd-state/src/hook.ts:1832,1853 (Stop cap systemMessage)"
+    },
+    {
+      "id": "R26",
+      "kind": "regex",
+      "regex": "(^|[^\\w~])\\.codexclaw\\b",
+      "replace": "${1}.crw",
+      "site": "135 sites: .codexclaw/sessions/, /goalplans/, /evidence/, /bg/ ... and tree paths ws/.codexclaw/...",
+      "note": "after R16-R21 so file-name forms are gone; PCRE lookbehind rewritten as a captured preceding character; repeat until no change",
+      "repeat": true
+    },
+    {
+      "id": "R27",
+      "kind": "resolver",
+      "regex": "node \"\\$\\{PLUGIN_ROOT\\}/bin/cxc\\.mjs\"",
+      "replace": "{CRW}",
+      "site": "hook.ts:226-232 resolveCxcInDirective; goal-gate.ts:179; map-affordance.ts:44,332; recall/src/hook.ts:60; cxc-resolve.ts:74-87",
+      "note": "the oracle's resolved invocation (always this form in the corpus: cxc is not on the recording PATH) becomes {CRW} in the expectation; the Go replay replaces its own resolved invocation (CRW_BIN, else the pointer path \"$HOME/.local/share/crw-runtime/current/bin/crw\", decision 2) with {CRW} in its output. The words after it follow the cli table (e.g. {CRW} orchestrate becomes {CRW} pabcd orchestrate)"
+    },
+    {
+      "id": "R28",
+      "kind": "regex",
+      "regex": "codexclaw\\.json",
+      "replace": "crw.json",
+      "site": "pabcd-state/src/interview-policy.ts:27 (project root file)",
+      "note": "decision 1"
+    },
+    {
+      "id": "R29",
+      "kind": "rewrite",
+      "regex": "\\bcxc-ops\\b",
+      "site": "cxc-ops/src/cli.ts:98 (cxc-ops hooks retrust ... usage)",
+      "note": "component names never reach CRW users: the usage text follows the cli table (crw doctor retrust), not a word rule"
+    },
+    {
+      "id": "R30",
+      "kind": "rewrite",
+      "regex": "codexclaw-subagent-config",
+      "site": ".mcp.json server key codexclaw; mcp.ts:25 serverInfo",
+      "note": "the three tools (subagents_get, subagents_set, catalog_list) move into the existing crw MCP server (decision 7); serverInfo and protocol version are the crw server's, tool names and schemas carry no brand"
+    },
+    {
+      "id": "R31",
+      "kind": "regex",
+      "regex": "\\bCXC\\b",
+      "replace": "CRW",
+      "site": "fallback-dispatch-cli.ts:9 DISPATCH_GUIDANCE (\"CXC selects at most two native attempts\")",
+      "note": "only after R5-R9"
+    },
+    {
+      "id": "R32",
+      "kind": "regex",
+      "regex": "\\bcodexclaw\\b",
+      "replace": "crw",
+      "site": "agent-thread-permissions.ts:9; config-set.ts:53-54,93,97,126; pabcd-state/src/cli.ts:531; config-guard/src/cli.ts:28-34; self-heal.ts:246"
+    },
+    {
+      "id": "R33",
+      "kind": "regex",
+      "regex": "\\bcxc\\b",
+      "replace": "crw",
+      "site": "bin/cxc.mjs:140,146,152; bin/codexclaw.mjs:318,458; static help and error text naming the command",
+      "note": "after R27; the verb after it follows the cli table (cxc orchestrate becomes crw pabcd orchestrate); messages the Go CLI replaces with its own (cli table, dropped verbs) are compared only where the port keeps them"
+    }
+  ],
+  "cli": [
+    {
+      "cxc": [
+        "orchestrate"
+      ],
+      "crw": [
+        "pabcd",
+        "orchestrate"
+      ]
+    },
+    {
+      "cxc": [
+        "freeze"
+      ],
+      "crw": [
+        "pabcd",
+        "freeze"
+      ]
+    },
+    {
+      "cxc": [
+        "metric"
+      ],
+      "crw": [
+        "pabcd",
+        "metric"
+      ]
+    },
+    {
+      "cxc": [
+        "divergence"
+      ],
+      "crw": [
+        "pabcd",
+        "divergence"
+      ]
+    },
+    {
+      "cxc": [
+        "loop"
+      ],
+      "crw": [
+        "pabcd",
+        "loop"
+      ]
+    },
+    {
+      "cxc": [
+        "plan"
+      ],
+      "crw": [
+        "pabcd",
+        "plan"
+      ]
+    },
+    {
+      "cxc": [
+        "scan"
+      ],
+      "crw": [
+        "pabcd",
+        "scan"
+      ]
+    },
+    {
+      "cxc": [
+        "review-round"
+      ],
+      "crw": [
+        "pabcd",
+        "review-round"
+      ]
+    },
+    {
+      "cxc": [
+        "receipt"
+      ],
+      "crw": [
+        "pabcd",
+        "receipt"
+      ]
+    },
+    {
+      "cxc": [
+        "evidence"
+      ],
+      "crw": [
+        "pabcd",
+        "evidence"
+      ]
+    },
+    {
+      "cxc": [
+        "config",
+        "interview"
+      ],
+      "crw": [
+        "pabcd",
+        "config",
+        "interview"
+      ]
+    },
+    {
+      "cxc": [
+        "memory",
+        "allow-write"
+      ],
+      "crw": [
+        "pabcd",
+        "memory",
+        "allow-write"
+      ]
+    },
+    {
+      "cxc": [
+        "reset"
+      ],
+      "crw": [
+        "pabcd",
+        "reset"
+      ],
+      "note": "decision 9: the one oracle bug fixed in the port is that `reset --help` performs `reset --state`; its fixture is tagged intentionally changed"
+    },
+    {
+      "cxc": [
+        "session"
+      ],
+      "crw": [
+        "relay",
+        "session"
+      ],
+      "note": "absorbed into the relay registry: each fixture is tagged identical or intentionally changed"
+    },
+    {
+      "cxc": [
+        "bg"
+      ],
+      "crw": [
+        "relay",
+        "job"
+      ],
+      "note": "decision 4: commands and ownership move to relay, the registry stays a local file store (.crw/bg/)"
+    },
+    {
+      "cxc": [
+        "subagents"
+      ],
+      "crw": [
+        "role",
+        "helper"
+      ],
+      "note": "bare `subagents` lists; --global and trust-token are dropped (global layer only)"
+    },
+    {
+      "cxc": [
+        "chat"
+      ],
+      "crw": [
+        "recall",
+        "chat"
+      ]
+    },
+    {
+      "cxc": [
+        "memory",
+        "search"
+      ],
+      "crw": [
+        "recall",
+        "memory",
+        "search"
+      ]
+    },
+    {
+      "cxc": [
+        "memory",
+        "status"
+      ],
+      "crw": [
+        "recall",
+        "memory",
+        "status"
+      ]
+    },
+    {
+      "cxc": [
+        "memory",
+        "requeue"
+      ],
+      "crw": [
+        "recall",
+        "memory",
+        "requeue"
+      ]
+    },
+    {
+      "cxc": [
+        "skill"
+      ],
+      "crw": [
+        "skill"
+      ]
+    },
+    {
+      "cxc": [
+        "doctor"
+      ],
+      "crw": [
+        "doctor",
+        "harness"
+      ],
+      "note": "decision 8: crw doctor (JSON, exit 0) is unchanged; the CXC checks are a subcommand that keeps text output and exit 1 on FAIL"
+    },
+    {
+      "cxc": [
+        "hooks",
+        "retrust"
+      ],
+      "crw": [
+        "doctor",
+        "retrust"
+      ],
+      "note": "decision 8"
+    },
+    {
+      "cxc": [
+        "enable"
+      ],
+      "crw": [
+        "install",
+        "features",
+        "enable"
+      ]
+    },
+    {
+      "cxc": [
+        "disable"
+      ],
+      "crw": [
+        "install",
+        "features",
+        "disable"
+      ]
+    },
+    {
+      "cxc": [
+        "status"
+      ],
+      "crw": [
+        "install",
+        "features",
+        "status"
+      ]
+    },
+    {
+      "cxc": [
+        "config"
+      ],
+      "crw": [
+        "install",
+        "config"
+      ],
+      "note": "config list|get|set|unset; config interview is the pabcd row above"
+    },
+    {
+      "cxc": [
+        "map"
+      ],
+      "crw": [
+        "map"
+      ]
+    },
+    {
+      "cxc": [
+        "provider"
+      ],
+      "crw": [
+        "provider",
+        "detect"
+      ],
+      "note": "CXC ignores every argument after provider"
+    },
+    {
+      "cxc": [
+        "version"
+      ],
+      "crw": [
+        "version"
+      ]
+    },
+    {
+      "cxc": [
+        "--version"
+      ],
+      "crw": [
+        "--version"
+      ]
+    },
+    {
+      "cxc": [
+        "help"
+      ],
+      "crw": [
+        "help"
+      ]
+    },
+    {
+      "cxc": [
+        "--help"
+      ],
+      "crw": [
+        "--help"
+      ]
+    },
+    {
+      "cxc": [
+        "-h"
+      ],
+      "crw": [
+        "-h"
+      ]
+    },
+    {
+      "cxc": [
+        "-v"
+      ],
+      "crw": null,
+      "note": "dropped alias"
+    },
+    {
+      "cxc": [
+        "uninstall"
+      ],
+      "crw": null,
+      "note": "dropped alias of disable (must not become crw install remove)"
+    },
+    {
+      "cxc": [
+        "goalplan"
+      ],
+      "crw": null,
+      "note": "dropped deprecated alias of loop"
+    },
+    {
+      "cxc": [
+        "release"
+      ],
+      "crw": null,
+      "note": "CXC release tooling, out of scope"
+    },
+    {
+      "cxc": [
+        "serve"
+      ],
+      "crw": null,
+      "note": "messenger bridge, out of scope"
+    },
+    {
+      "cxc": [
+        "service"
+      ],
+      "crw": null,
+      "note": "messenger bridge, out of scope"
+    },
+    {
+      "cxc": [
+        "gui"
+      ],
+      "crw": null,
+      "note": "out of scope"
+    }
+  ],
+  "never": [
+    {
+      "text": "github.com/lidge-jun/codexclaw, lidge-jun.github.io/codexclaw, lidge-jun",
+      "why": "upstream origin and author; messages pointing at the CXC repo are dropped, not renamed"
+    },
+    {
+      "text": "NOTICE.md CodexClaw licensing and provenance text",
+      "why": "attribution must stay accurate; CRW carries its own NOTICE saying the code derives from CodexClaw (MIT)"
+    },
+    {
+      "text": "cli-jaw, jaw, hermes, clawhub, lazycodex, omx, OMO, oh-my-openagent",
+      "why": "upstream and other projects"
+    },
+    {
+      "text": "ocx, OCX, opencodex",
+      "why": "a foreign tool; in \"OCX owns provider retries; CXC selects ...\" only the CXC half changes"
+    },
+    {
+      "text": "CODEX_HOME, CODEX_SQLITE_HOME, CODEX_THREAD_ID, CODEX_SURFACE, CODEX_APP_PORT, CODEX_BIN, CODEX_MODELS_CACHE_PATH, goals_1.sqlite, state_<N>.sqlite, codex_app, PLUGIN_ROOT",
+      "why": "host contracts that contain \"codex\", not \"codexclaw\"; a codex(claw)? regex would hit them"
+    },
+    {
+      "text": "identifiers (ensureCodexclawDir, cxcInvocation, runCxcOps, @codexclaw/* ...) and comments",
+      "why": "never visible output"
+    }
+  ],
+  "input_side": [
+    {
+      "site": "pabcd-state/src/hook.ts:247",
+      "before": "^(?:\\$?(?:codexclaw:)?cxc-(?:loop|pabcd)|orchestrate\\s+[ipabc])$",
+      "after": "^(?:\\$?(?:crw:)?crw-(?:loop|pabcd)|orchestrate\\s+[ipabc])$"
+    },
+    {
+      "site": "pabcd-state/src/hook.ts:268 NEGATED_TAIL",
+      "before": "cxc-?(?:loop|pabcd)",
+      "after": "crw-?(?:loop|pabcd)"
+    },
+    {
+      "site": "pabcd-state/src/hook.ts:287,295 detectTrigger",
+      "before": "\\bcxc-pabcd\\b|\\bcodexclaw:cxc-pabcd\\b|\\[\\$?cxc-pabcd\\]\\(skill://...\\)",
+      "after": "\\bcrw-pabcd\\b|\\bcrw:crw-pabcd\\b|\\[\\$?crw-pabcd\\]\\(skill://...\\)"
+    },
+    {
+      "site": "pabcd-state/src/hook.ts:317 detectLoopArmRequest",
+      "before": "\\bcxc-?loop\\b|\\bcodexclaw:cxc-loop\\b|\\[\\$?cxc-loop\\]\\(skill://...\\)",
+      "after": "\\bcrw-?loop\\b|\\bcrw:crw-loop\\b|\\[\\$?crw-loop\\]\\(skill://...\\)",
+      "hazard": "crw-loop is an existing CRW skill whose prompts carry action words: after the rename those prompts arm the PABCD loop in the prompt hook (decision 6: parent sessions skip it); crwloop becomes a trigger word"
+    },
+    {
+      "site": "pabcd-state/src/orchestrate-grammar.ts:43 PREFIX",
+      "before": "^(?:\\$codexclaw:cxc-|\\$cxc-|cxc\\s+|/)?",
+      "after": "^(?:\\$crw:crw-|\\$crw-|crw\\s+|/)?",
+      "hazard": "the stub $crw-orchestrate is not ported, yet the prefix still accepts it"
+    },
+    {
+      "site": "pabcd-state/src/hook.ts:1543",
+      "before": "/cxc orchestrate (\\S+)/",
+      "after": "follows the cli table (crw pabcd orchestrate)"
+    },
+    {
+      "site": "recall/src/hook.ts:116-117 ALREADY_RECALLING",
+      "before": "\\bcxc\\s+(chat|memory)\\s+(search|index)\\b|\\bcodexclaw(\\.mjs)?\\s+(chat|memory)...|\\$cxc-recall\\b",
+      "after": "\\bcrw\\s+recall\\s+(chat|memory)\\s+(search|index)\\b|\\$crw-recall\\b",
+      "hazard": "the CLI shape changes (crw recall ...); the codexclaw.mjs alternative is dropped"
+    },
+    {
+      "site": "subagent-config/src/spawn-attach-hook.ts:144,162,834",
+      "before": "\\[\\$(?:codexclaw:)?cxc-([a-z0-9-]+)\\], \\$(?:codexclaw:)?cxc-([a-z0-9-]+)",
+      "after": "crw forms",
+      "hazard": "the capture is the skill folder; with CRW folders named crw-X it must capture the whole name"
+    },
+    {
+      "site": "fallback-dispatch.ts:239,252; spawn-attach-hook.ts:280,422,432,445,500; role-registration.ts:62",
+      "before": "CXC-DISPATCH, CXC-SUBSPAWN-GRANT, CXC-ROLE, # codexclaw-managed:",
+      "after": "R5-R9, R17",
+      "hazard": "live threads and role files created by CXC stop being recognised (intended: no aliases)"
+    }
+  ],
+  "env": [
+    {
+      "cxc": "CODEXCLAW_HOME",
+      "crw": "CRW_HOME",
+      "note": "${CXC_HOME} in the fixtures; with the variable set the skill cache is $CODEXCLAW_HOME/skill-cache, not $CODEXCLAW_HOME/.codexclaw/..."
+    },
+    {
+      "cxc": "CODEXCLAW_CXC",
+      "crw": "CRW_BIN"
+    },
+    {
+      "cxc": "CODEXCLAW_PABCD",
+      "crw": "CRW_PABCD"
+    },
+    {
+      "cxc": "CODEXCLAW_WORKTREE_ROOTS",
+      "crw": "CRW_WORKTREE_ROOTS"
+    },
+    {
+      "cxc": "CODEXCLAW_TRACE_ACTIVATIONS",
+      "crw": "CRW_TRACE_ACTIVATIONS",
+      "note": "only read by activation-trace.ts, a dead module (decision 9)"
+    },
+    {
+      "cxc": "CODEXCLAW_SPAWN_V1",
+      "crw": "CRW_SPAWN_V1"
+    },
+    {
+      "cxc": "CODEXCLAW_MAX_AGENTS",
+      "crw": "CRW_MAX_AGENTS",
+      "note": "only read by capabilities.ts, a dead module"
+    },
+    {
+      "cxc": "CODEXCLAW_MAX_SEARCHES",
+      "crw": "CRW_MAX_SEARCHES",
+      "note": "only read by capabilities.ts, a dead module"
+    },
+    {
+      "cxc": "CODEXCLAW_TRUST_PROJECT_SUBAGENTS",
+      "crw": "",
+      "note": "dropped: the per-project helper-role store is out of scope (global layer only)"
+    },
+    {
+      "cxc": "CODEXCLAW_PYTHON",
+      "crw": "CRW_PYTHON",
+      "note": "soft collision with the CRW_PYTHON fixture text and the CRW_PYTHON_ORACLE prefix; CRW_MAP_PYTHON is the alternative"
+    },
+    {
+      "cxc": "CODEXCLAW_MAP_BOOTSTRAP",
+      "crw": "CRW_MAP_BOOTSTRAP"
+    },
+    {
+      "cxc": "CODEXCLAW_REPOMAP_CACHE",
+      "crw": "CRW_REPOMAP_CACHE"
+    },
+    {
+      "cxc": "CODEXCLAW_AST_GREP_SG_PATH",
+      "crw": "CRW_AST_GREP_SG_PATH"
+    },
+    {
+      "cxc": "CODEXCLAW_AGBROWSE_PATH",
+      "crw": "CRW_AGBROWSE_PATH"
+    },
+    {
+      "cxc": "CXC_BGWAKE",
+      "crw": "CRW_BGWAKE",
+      "note": "if the relay job absorption keeps a kill switch"
+    },
+    {
+      "cxc": "CXC_SKILLS_DIR",
+      "crw": "CRW_SKILLS_DIR"
+    }
+  ],
+  "skills": [
+    {
+      "cxc": "cxc-loop",
+      "crw": "crw-loop",
+      "treatment": "merged into the existing CRW crw-loop (PABCD loop only; the old parent-goal procedure is crw-run goal mode)"
+    },
+    {
+      "cxc": "cxc-ast-grep",
+      "crw": "crw-ast-grep",
+      "treatment": "renamed; folder renamed to crw-ast-grep"
+    },
+    {
+      "cxc": "cxc-dev",
+      "crw": "crw-dev",
+      "treatment": "renamed; folder renamed to crw-dev"
+    },
+    {
+      "cxc": "cxc-dev-backend",
+      "crw": "crw-dev-backend",
+      "treatment": "renamed; folder renamed to crw-dev-backend"
+    },
+    {
+      "cxc": "cxc-dev-code-reviewer",
+      "crw": "crw-dev-code-reviewer",
+      "treatment": "renamed; folder renamed to crw-dev-code-reviewer"
+    },
+    {
+      "cxc": "cxc-dev-data",
+      "crw": "crw-dev-data",
+      "treatment": "renamed; folder renamed to crw-dev-data"
+    },
+    {
+      "cxc": "cxc-dev-devops",
+      "crw": "crw-dev-devops",
+      "treatment": "renamed; folder renamed to crw-dev-devops"
+    },
+    {
+      "cxc": "cxc-dev-frontend",
+      "crw": "crw-dev-frontend",
+      "treatment": "renamed; folder renamed to crw-dev-frontend"
+    },
+    {
+      "cxc": "cxc-dev-pabcd",
+      "crw": "crw-dev-pabcd",
+      "treatment": "renamed; folder renamed to crw-dev-pabcd"
+    },
+    {
+      "cxc": "cxc-dev-scaffolding",
+      "crw": "crw-dev-scaffolding",
+      "treatment": "renamed; folder renamed to crw-dev-scaffolding"
+    },
+    {
+      "cxc": "cxc-dev-testing",
+      "crw": "crw-dev-testing",
+      "treatment": "renamed; folder renamed to crw-dev-testing"
+    },
+    {
+      "cxc": "cxc-dev-visualizer",
+      "crw": "crw-dev-visualizer",
+      "treatment": "renamed; folder renamed to crw-dev-visualizer"
+    },
+    {
+      "cxc": "cxc-interview",
+      "crw": "crw-interview",
+      "treatment": "renamed; folder renamed to crw-interview"
+    },
+    {
+      "cxc": "cxc-kwrite",
+      "crw": "crw-kwrite",
+      "treatment": "renamed; folder renamed to crw-kwrite"
+    },
+    {
+      "cxc": "cxc-lunasearch",
+      "crw": "crw-lunasearch",
+      "treatment": "renamed; folder renamed to crw-lunasearch"
+    },
+    {
+      "cxc": "cxc-pabcd",
+      "crw": "crw-pabcd",
+      "treatment": "renamed; folder renamed to crw-pabcd"
+    },
+    {
+      "cxc": "cxc-qa",
+      "crw": "crw-qa",
+      "treatment": "renamed; folder renamed to crw-qa"
+    },
+    {
+      "cxc": "cxc-recall",
+      "crw": "crw-recall",
+      "treatment": "renamed; folder renamed to crw-recall"
+    },
+    {
+      "cxc": "cxc-repo-map",
+      "crw": "crw-repo-map",
+      "treatment": "renamed; folder renamed to crw-repo-map"
+    },
+    {
+      "cxc": "cxc-search",
+      "crw": "crw-search",
+      "treatment": "renamed; folder renamed to crw-search"
+    },
+    {
+      "cxc": "cxc-worktree-guardian",
+      "crw": "crw-worktree-guardian",
+      "treatment": "renamed; folder renamed to crw-worktree-guardian"
+    },
+    {
+      "cxc": "cxc-goalplan",
+      "treatment": "redirect stub, not ported: a reference produced by R10/R11 is dangling and is removed from the text, not renamed"
+    },
+    {
+      "cxc": "cxc-orchestrate",
+      "treatment": "redirect stub, not ported: a reference produced by R10/R11 is dangling and is removed from the text, not renamed"
+    },
+    {
+      "cxc": "cxc-skill-hub",
+      "treatment": "redirect stub, not ported: a reference produced by R10/R11 is dangling and is removed from the text, not renamed"
+    },
+    {
+      "cxc": "cxc-dev-diagram-viewer",
+      "treatment": "redirect stub, not ported: a reference produced by R10/R11 is dangling and is removed from the text, not renamed"
+    },
+    {
+      "cxc": "cxc-remote",
+      "treatment": "out of scope"
+    }
+  ]
+}

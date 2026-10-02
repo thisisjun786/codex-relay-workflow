@@ -1,0 +1,398 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/pre-tool-use-attaching-skills",
+    "A/subagent-config/fallback-dispatch.test.ts",
+    "A/subagent-config/spawn-items-boundaries.test.ts",
+    "K13/CODEXCLAW_HOME"
+  ],
+  "note": "Managed markers fail closed: an attempt that is not claimed, a dispatch record that does not exist, a full-history fork, and an already-issued attempt replayed by a host that sends no tool_use_id are each denied with a managed-dispatch reason.",
+  "given": {
+    "json": {
+      "cxc/subagents.json": {
+        "roles": {
+          "executor": {
+            "mode": "model",
+            "model": "rec/exec-primary",
+            "effort": "high",
+            "promptOverride": null,
+            "fallback": {
+              "model": "rec/exec-fallback",
+              "effort": null
+            }
+          }
+        }
+      },
+      "ws/.codexclaw/dispatches/rec-s1/one.json": {
+        "version": 1,
+        "sessionId": "rec-s1",
+        "id": "one",
+        "role": "executor",
+        "candidates": [
+          {
+            "model": "rec/exec-primary",
+            "effort": "high"
+          },
+          {
+            "model": "rec/exec-fallback",
+            "effort": null
+          }
+        ],
+        "attempts": [
+          {
+            "id": "att-1",
+            "candidate": {
+              "model": "rec/exec-primary",
+              "effort": "high"
+            },
+            "claimed": false,
+            "agentId": null,
+            "observedModel": null,
+            "code": null,
+            "taskFailure": null,
+            "status": "ready",
+            "reconciliation": null,
+            "spawnIssued": false,
+            "toolUseId": null
+          }
+        ],
+        "status": "active"
+      },
+      "ws/.codexclaw/dispatches/rec-s1/two.json": {
+        "version": 1,
+        "sessionId": "rec-s1",
+        "id": "two",
+        "role": "executor",
+        "candidates": [
+          {
+            "model": "rec/exec-primary",
+            "effort": "high"
+          },
+          {
+            "model": "rec/exec-fallback",
+            "effort": null
+          }
+        ],
+        "attempts": [
+          {
+            "id": "att-1",
+            "candidate": {
+              "model": "rec/exec-primary",
+              "effort": "high"
+            },
+            "claimed": true,
+            "agentId": null,
+            "observedModel": null,
+            "code": null,
+            "taskFailure": null,
+            "status": "claimed",
+            "reconciliation": null,
+            "spawnIssued": true,
+            "toolUseId": null
+          }
+        ],
+        "status": "active"
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "pre-tool-use-attaching-skills",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "spawn_agent",
+          "tool_input": {
+            "message": "[CXC-DISPATCH:one:att-1]\nTASK: implement",
+            "agent_type": "worker"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-attaching-skills",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "spawn_agent",
+          "tool_input": {
+            "message": "[CXC-DISPATCH:nope:att-9]\nTASK: implement",
+            "agent_type": "worker"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-attaching-skills",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "spawn_agent",
+          "tool_input": {
+            "task_name": "t",
+            "fork_turns": "all",
+            "message": "[CXC-DISPATCH:one:att-1]\nTASK: implement",
+            "agent_type": "worker"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-attaching-skills",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "spawn_agent",
+          "tool_input": {
+            "message": "[CXC-DISPATCH:two:att-1]\nTASK: implement",
+            "agent_type": "worker"
+          }
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "managed dispatch: managed spawn attempt is not claimed or no longer current"
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "managed dispatch: ENOENT: no such file or directory, lstat '${WS}/.codexclaw/dispatches/rec-s1/nope.json'"
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "managed fallback requires a fresh context"
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "managed dispatch: attempt already issued to another native call; reconcile before retry"
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "cxc/subagents.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "roles": {
+            "executor": {
+              "mode": "model",
+              "model": "rec/exec-primary",
+              "effort": "high",
+              "promptOverride": null,
+              "fallback": {
+                "model": "rec/exec-fallback",
+                "effort": null
+              }
+            }
+          }
+        }
+      },
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/dispatches": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/dispatches/rec-s1": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/dispatches/rec-s1/one.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "version": 1,
+          "sessionId": "rec-s1",
+          "id": "one",
+          "role": "executor",
+          "candidates": [
+            {
+              "model": "rec/exec-primary",
+              "effort": "high"
+            },
+            {
+              "model": "rec/exec-fallback",
+              "effort": null
+            }
+          ],
+          "attempts": [
+            {
+              "id": "att-1",
+              "candidate": {
+                "model": "rec/exec-primary",
+                "effort": "high"
+              },
+              "claimed": false,
+              "agentId": null,
+              "observedModel": null,
+              "code": null,
+              "taskFailure": null,
+              "status": "ready",
+              "reconciliation": null,
+              "spawnIssued": false,
+              "toolUseId": null
+            }
+          ],
+          "status": "active"
+        }
+      },
+      "ws/.codexclaw/dispatches/rec-s1/two.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "version": 1,
+          "sessionId": "rec-s1",
+          "id": "two",
+          "role": "executor",
+          "candidates": [
+            {
+              "model": "rec/exec-primary",
+              "effort": "high"
+            },
+            {
+              "model": "rec/exec-fallback",
+              "effort": null
+            }
+          ],
+          "attempts": [
+            {
+              "id": "att-1",
+              "candidate": {
+                "model": "rec/exec-primary",
+                "effort": "high"
+              },
+              "claimed": true,
+              "agentId": null,
+              "observedModel": null,
+              "code": null,
+              "taskFailure": null,
+              "status": "claimed",
+              "reconciliation": null,
+              "spawnIssued": true,
+              "toolUseId": null
+            }
+          ],
+          "status": "active"
+        }
+      }
+    },
+    "calls": [
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

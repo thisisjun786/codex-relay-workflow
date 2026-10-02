@@ -1,0 +1,63 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/hooks/retrust",
+    "K8/codex-home/config.toml",
+    "A/cxc-ops/hook-trust.test.ts"
+  ],
+  "note": "One existing trust entry with a wrong hash: no entry matches its recomputed hash, so the safety pin refuses (exit 1) with and without --bootstrap-ok, and config.toml is unchanged.",
+  "given": {
+    "files": {
+      "codex/config.toml": "model = \"gpt-5.5\"\n\n[plugins.\"codexclaw@local\"]\nenabled = true\n\n[hooks.state.\"codexclaw@local:hooks/session-start-ensuring-provider-bridge.json:session_start:0:0\"]\ntrusted_hash = \"sha256:0000000000000000000000000000000000000000000000000000000000000000\"\n"
+    },
+    "stubs": {
+      "codex": {
+        "exit": 0
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "hooks",
+          "retrust"
+        ]
+      },
+      {
+        "cli": [
+          "hooks",
+          "retrust",
+          "--key",
+          "codexclaw@local",
+          "--bootstrap-ok"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 1,
+    "steps": [
+      {
+        "exit": 1,
+        "stdout_form": "empty",
+        "stderr": "cxc-ops hooks retrust: safety pin failed: no existing hook trust entry matches its recomputed hash\n"
+      },
+      {
+        "exit": 1,
+        "stdout_form": "empty",
+        "stderr": "cxc-ops hooks retrust: safety pin failed: no existing hook trust entry matches its recomputed hash\n"
+      }
+    ],
+    "tree": {
+      "codex/config.toml": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "model = \"gpt-5.5\"\n\n[plugins.\"codexclaw@local\"]\nenabled = true\n\n[hooks.state.\"codexclaw@local:hooks/session-start-ensuring-provider-bridge.json:session_start:0:0\"]\ntrusted_hash = \"sha256:0000000000000000000000000000000000000000000000000000000000000000\"\n"
+      }
+    },
+    "calls": []
+  }
+}

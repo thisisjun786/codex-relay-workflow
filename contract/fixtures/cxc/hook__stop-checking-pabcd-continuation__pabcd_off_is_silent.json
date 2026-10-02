@@ -1,0 +1,169 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/stop-checking-pabcd-continuation",
+    "A/plugin/hook-e2e.test.mjs",
+    "K13/CODEX_SQLITE_HOME",
+    "K11/goals"
+  ],
+  "note": "codexclaw.json disabling PABCD silences Stop even under an active goal mid-cycle.",
+  "given": {
+    "files": {
+      "ws/codexclaw.json": "{\"pabcd\":{\"enabled\":false}}"
+    },
+    "json": {
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "phase": "B",
+        "sessionId": "rec-s1",
+        "slug": "",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "flags": {
+          "interview": false,
+          "auditPassed": false,
+          "checkPassed": false
+        },
+        "supersededBy": null,
+        "injectedTurns": [],
+        "lastInjectedPhase": null,
+        "orchestrationActive": true,
+        "interview": null,
+        "stopBlockPhase": null,
+        "stopBlockCount": 0,
+        "stopBlockWorkPhaseId": null,
+        "stopMetricCursor": 0,
+        "stopBlockTotal": 0,
+        "stopBlockTurnId": null,
+        "stopBlockCapNotified": false,
+        "loopArmSeen": false,
+        "idleEditNudges": 0,
+        "memoryWriteRequested": false,
+        "memoryWriteTurn": null,
+        "memoryWriteGrant": false,
+        "unverifiedSubagents": [],
+        "unverifiedCorrupt": false,
+        "phaseEntrySource": null,
+        "planUnit": null,
+        "planEpoch": null,
+        "checkEpoch": null,
+        "dcloseRecovery": null
+      }
+    },
+    "sqlite": {
+      "codex/goals_1.sqlite": [
+        "CREATE TABLE thread_goals (thread_id TEXT PRIMARY KEY NOT NULL, status TEXT NOT NULL, objective TEXT)",
+        "INSERT INTO thread_goals (thread_id, status, objective) VALUES ('rec-s1', 'active', 'ship the feature')"
+      ]
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "stop-checking-pabcd-continuation",
+        "stdin": {
+          "hook_event_name": "Stop",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "stop_hook_active": false,
+          "last_assistant_message": "Done."
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "codex/goals_1.sqlite": {
+        "type": "file",
+        "mode": "0644",
+        "form": "sqlite",
+        "json": {
+          "tables": [
+            {
+              "name": "thread_goals",
+              "sql": "CREATE TABLE thread_goals (thread_id TEXT PRIMARY KEY NOT NULL, status TEXT NOT NULL, objective TEXT)",
+              "rows": [
+                {
+                  "thread_id": "rec-s1",
+                  "status": "active",
+                  "objective": "ship the feature"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/sessions": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "phase": "B",
+          "sessionId": "rec-s1",
+          "slug": "",
+          "updatedAt": "<TS>",
+          "flags": {
+            "interview": false,
+            "auditPassed": false,
+            "checkPassed": false
+          },
+          "supersededBy": null,
+          "injectedTurns": [],
+          "lastInjectedPhase": null,
+          "orchestrationActive": true,
+          "interview": null,
+          "stopBlockPhase": null,
+          "stopBlockCount": 0,
+          "stopBlockWorkPhaseId": null,
+          "stopMetricCursor": 0,
+          "stopBlockTotal": 0,
+          "stopBlockTurnId": null,
+          "stopBlockCapNotified": false,
+          "loopArmSeen": false,
+          "idleEditNudges": 0,
+          "memoryWriteRequested": false,
+          "memoryWriteTurn": null,
+          "memoryWriteGrant": false,
+          "unverifiedSubagents": [],
+          "unverifiedCorrupt": false,
+          "phaseEntrySource": null,
+          "planUnit": null,
+          "planEpoch": null,
+          "checkEpoch": null,
+          "dcloseRecovery": null
+        }
+      },
+      "ws/codexclaw.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json",
+        "json": {
+          "pabcd": {
+            "enabled": false
+          }
+        }
+      }
+    },
+    "calls": []
+  }
+}

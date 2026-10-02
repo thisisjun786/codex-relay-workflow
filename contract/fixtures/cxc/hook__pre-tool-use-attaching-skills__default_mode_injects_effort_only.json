@@ -1,0 +1,126 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/pre-tool-use-attaching-skills",
+    "K5/hook-rendered",
+    "A/subagent-config/spawn-attach-hook.test.ts",
+    "K13/CODEXCLAW_HOME"
+  ],
+  "note": "A default-mode role with a configured effort injects reasoning_effort but no model.",
+  "given": {
+    "json": {
+      "cxc/subagents.json": {
+        "roles": {
+          "explorer": {
+            "mode": "default",
+            "model": null,
+            "effort": "low",
+            "promptOverride": null,
+            "fallback": null
+          }
+        }
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "pre-tool-use-attaching-skills",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "spawn_agent",
+          "tool_input": {
+            "message": "map the parser",
+            "agent_type": "explorer"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+            "updatedInput": {
+              "message": "[CXC-SUBAGENT-SCOPE] This is one bounded delegated task. The parent\nowns cxc orchestration, loop, and goal state; do not invoke those\ncommands. Stay within the stated file/write scope and report any\nrequired expansion.\nYou run in the parent's own working directory, on its branch and HEAD - not a\ncopy - so your edits are the parent's uncommitted changes. Do not run\nbranch-level git commands (checkout, switch, branch, stash, reset, rebase,\nmerge, pull); another agent may be working in the same tree.\n\nmap the parser",
+              "agent_type": "explorer",
+              "reasoning_effort": "low"
+            }
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "cxc/subagents.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "roles": {
+            "explorer": {
+              "mode": "default",
+              "model": null,
+              "effort": "low",
+              "promptOverride": null,
+              "fallback": null
+            }
+          }
+        }
+      }
+    },
+    "calls": [
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

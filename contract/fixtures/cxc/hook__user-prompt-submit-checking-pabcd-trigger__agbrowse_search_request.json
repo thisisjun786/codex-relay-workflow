@@ -1,0 +1,118 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/user-prompt-submit-checking-pabcd-trigger",
+    "K5/hook-rendered",
+    "A/plugin/hook-e2e.test.mjs"
+  ],
+  "note": "A natural-language agbrowse search request injects the cxc-search guidance.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "session-start-bootstrapping-pabcd-state",
+        "stdin": {
+          "hook_event_name": "SessionStart",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "source": "startup"
+        }
+      },
+      {
+        "hook": "user-prompt-submit-checking-pabcd-trigger",
+        "stdin": {
+          "hook_event_name": "UserPromptSubmit",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "prompt": "Search the latest Node release notes through agbrowse."
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": "[codexclaw: SEARCH — agbrowse requested]\nHonor the user's agbrowse preference when the required capability is available and authorized.\nLoad cxc-search and the shared dev/references/browser-routing.md policy when available.\nagbrowse and Aside are optional tools; inspect the actual CLI/tool schema and session access.\nFor a known public URL, prefer HTTP proof such as `agbrowse fetch \"<url>\" --json --browser never`.\nDiscover candidate URLs with available hosted search first. Never use plain `agbrowse search \"<query>\"` as discovery.\nFor independent extraction or built-UI QA, use a suitable available browser capability.\nPrefer suitable Aside for authenticated/judgment-heavy work unless the user specifies another tool.\nIf a preferred tool is absent, use a capability-preserving alternative and disclose the limitation; respect explicit tool restrictions.\nStart a browser only for a diagnosed CDP connection failure and only when the session is task-owned.\nHTTP, authentication, and missing-content failures do not justify blindly starting Chrome.\nInspect whether a side effect completed before retrying or switching tools; never assume cookies transfer.\nDo not install tools or change accounts without authorization. No equivalent capability means report the gap, not PASS.\nVerify inspect -> act -> re-inspect, read captured evidence, and confirm the actual source claim or interaction."
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/.gitignore": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n"
+      },
+      "ws/.codexclaw/sessions": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty-nonl",
+        "json": {
+          "phase": "IDLE",
+          "sessionId": "rec-s1",
+          "slug": "",
+          "updatedAt": "<TS>",
+          "flags": {
+            "interview": false,
+            "auditPassed": false,
+            "checkPassed": false
+          },
+          "supersededBy": null,
+          "injectedTurns": [
+            "rec-t1"
+          ],
+          "lastInjectedPhase": null,
+          "orchestrationActive": false,
+          "interview": null,
+          "stopBlockPhase": null,
+          "stopBlockCount": 0,
+          "stopBlockWorkPhaseId": null,
+          "stopMetricCursor": 0,
+          "stopBlockTotal": 0,
+          "stopBlockTurnId": "rec-t1",
+          "stopBlockCapNotified": false,
+          "loopArmSeen": false,
+          "idleEditNudges": 0,
+          "memoryWriteRequested": false,
+          "memoryWriteTurn": null,
+          "memoryWriteGrant": false,
+          "unverifiedSubagents": [],
+          "unverifiedCorrupt": false,
+          "phaseEntrySource": null,
+          "planUnit": null,
+          "planEpoch": null,
+          "checkEpoch": null,
+          "dcloseRecovery": null
+        }
+      }
+    },
+    "calls": []
+  }
+}

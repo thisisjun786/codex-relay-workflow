@@ -1,0 +1,111 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/session-start-healing-declared-features",
+    "K5/hook-rendered",
+    "K12/codex",
+    "K8/codex-home/codexclaw-self-heal.json",
+    "A/config-guard/self-heal.test.ts",
+    "A/config-guard/soft-failure-visibility.test.ts"
+  ],
+  "note": "Self-heal's enable call exits 1: the context names the impact and the recovery command, and the marker records allEnabled false with no healedKeys.",
+  "given": {
+    "files": {
+      "codex/config.toml": "model = \"gpt-5.5\"\n\n[features]\nhooks = true\n"
+    },
+    "stubs": {
+      "codex": {
+        "stdout": "default_mode_request_user_input  under development  false\ngoals                            stable             true\nhooks                            stable             true\nmulti_agent                      stable             true\nmulti_agent_v2                   experimental       false\nplugin_hooks                     stable             false\n",
+        "exit": 0,
+        "cases": [
+          {
+            "argv": [
+              "features",
+              "enable",
+              "default_mode_request_user_input"
+            ],
+            "stderr": "error: unknown feature 'default_mode_request_user_input'\n",
+            "exit": 1
+          }
+        ]
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "session-start-healing-declared-features",
+        "stdin": {
+          "hook_event_name": "SessionStart",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "source": "startup",
+          "model": "gpt-5.5",
+          "transcript_path": null
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": "[codexclaw] Could not enable 'default_mode_request_user_input' (exit 1). Default 모드에서 질문선택지 UI(request_user_input)가 모델에게 노출되지 않는다. Plan 모드에서는 계속 동작한다. Recover with: codex features enable default_mode_request_user_input\n"
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "codex/codexclaw-self-heal.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty",
+        "json": {
+          "checkedAt": "<TS>",
+          "allEnabled": false,
+          "healedKeys": [],
+          "cachedKeys": [
+            "default_mode_request_user_input"
+          ],
+          "configMtimeMs": "<MS>"
+        }
+      },
+      "codex/config.toml": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "model = \"gpt-5.5\"\n\n[features]\nhooks = true\n"
+      }
+    },
+    "calls": [
+      {
+        "cmd": "codex",
+        "argv": [
+          "features",
+          "list"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "codex",
+        "argv": [
+          "features",
+          "enable",
+          "default_mode_request_user_input"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

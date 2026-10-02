@@ -1,0 +1,64 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/post-compact-injecting-bg-terminal-affordance.post-compact",
+    "K2/PostCompact",
+    "K13/PLUGIN_ROOT",
+    "K13/CODEX_HOME",
+    "K4/hook-observations"
+  ],
+  "note": "The leg's declared command with a minimal well-formed payload in an empty workspace and empty homes: the leg's quiet default and its side effects.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "post-compact-injecting-bg-terminal-affordance.post-compact",
+        "stdin": {
+          "hook_event_name": "PostCompact",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "trigger": "auto",
+          "transcript_path": null
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/.gitignore": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n"
+      },
+      "ws/.codexclaw/affordance-recovery": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "ws/.codexclaw/affordance-recovery/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702.pending": {
+        "type": "file",
+        "mode": "0600",
+        "form": "text",
+        "text": "pending\n"
+      }
+    },
+    "calls": []
+  }
+}

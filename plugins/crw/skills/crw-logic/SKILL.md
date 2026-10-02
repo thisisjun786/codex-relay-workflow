@@ -1,6 +1,6 @@
 ---
 name: crw-logic
-description: "Find consequential contradictions and broken invariants across canonical Linear specifications, design decisions, calculations, implementation evidence, and evaluations, using focused Paperthin checks. Use for a requested logical-consistency or invariant audit; crw-check owns requirement-to-delivery coverage. Formerly linear-logic."
+description: "Find consequential contradictions and broken invariants across canonical Linear specifications, design decisions, calculations, implementation evidence, and evaluations, using focused Paperthin checks. Use for a requested logical-consistency or invariant audit; crw-check owns requirement-to-delivery coverage."
 ---
 
 # CRW Logic

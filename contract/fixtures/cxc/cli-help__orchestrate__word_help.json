@@ -1,0 +1,35 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/orchestrate/help",
+    "K6/exit-codes",
+    "A/plugin/cli-usage.test.mjs",
+    "A/pabcd-state/help-verbs.test.ts"
+  ],
+  "note": "`cxc orchestrate help`: usage text and exit status; nothing written.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "orchestrate",
+          "help"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "cxc orchestrate — agent-gated IPABCD phase control\n\nUsage:\n  cxc orchestrate <I|P|A|B|C|D|status|reset> [--session <id>] [--attest <json> | --attest-file <path>] [--cwd <path>] [--json]\n  cxc orchestrate --help\n\nPhases:\n  IDLE -> P -> A -> B -> C -> D -> IDLE\n  I can be entered from IDLE/P/A/B/C/D to clarify requirements.\n  D is a closing action; the resting state after D is IDLE.\n\nAgent safety:\n  Mutating verbs (I/P/A/B/C/D/reset) require explicit --session <id>.\n  Use your current SessionStart id, or the reserved terminal key 'cli'.\n  status uses native CODEX_THREAD_ID when present; plain terminals may use latest-session fallback.\n  Missing/inherited binding? Run cxc session current, then cxc session bind in the native cwd.\n\nAttestation examples:\n  cxc orchestrate A --session <id> --attest '{\"from\":\"P\",\"to\":\"A\",\"did\":\"wrote and audited the plan\",\"planUnit\":\"devlog/_plan/260714_slug\",\"workPhaseId\":\"wp1\"}'\n  cxc orchestrate B --session <id> --attest '{\"from\":\"A\",\"to\":\"B\",\"did\":\"audit passed\",\"auditOutput\":\"VERDICT: PASS\",\"auditVerdict\":\"pass\",\"workPhaseId\":\"wp1\"}'\n  cxc orchestrate C --session <id> --attest '{\"from\":\"B\",\"to\":\"C\",\"did\":\"implemented <files>\",\"workPhaseId\":\"wp1\"}'\n  cxc orchestrate D --session <id> --attest '{\"from\":\"C\",\"to\":\"D\",\"did\":\"verified\",\"checkOutput\":\"tests passed\",\"exitCode\":0,\"testReceiptPath\":\".codexclaw/evidence/<session>/test-receipt.json\",\"workPhaseId\":\"wp1\"}'\n  Every attest carries from/to naming the edge; they are coerced before any gate runs.\n  (workPhaseId is required on gated edges whenever a goalplan is bound to the session,\n   and testReceiptPath is required on C -> D for a bound session — see `cxc receipt test`)\n\nStatus:\n  cxc orchestrate status --session <id>\n  cxc orchestrate status --session <id> --json\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

@@ -1,0 +1,1415 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/orchestrate/transition",
+    "K8/ws/.codexclaw/sessions",
+    "K8/ws/.codexclaw/ledger.jsonl",
+    "A/pabcd-state/orchestrate-cli.test.ts",
+    "K6/session",
+    "K6/receipt/test",
+    "K8/ws/.codexclaw/sources",
+    "K11/threads",
+    "K12/git",
+    "A/pabcd-state/split-cwd-cycle.test.ts",
+    "A/pabcd-state/worktree-source-integration.test.ts",
+    "K12/git",
+    "K13/CODEX_THREAD_ID"
+  ],
+  "note": "#109: the FSM cwd is not a repository but holds one at src/. A bound loop init is refused until `session source` binds src/; then a whole bound cycle runs and closes on a receipt carrying the real commit.",
+  "given": {
+    "files": {
+      "ws/devlog/_plan/260911_probe/000_plan.md": "# probe\n\nobjective and constraints.\n",
+      "ws/src/tracked.txt": "x\n"
+    },
+    "json": {
+      "ws/.codexclaw/sessions/0190cafe-0279-7000-8000-000000000279.json": {
+        "phase": "IDLE",
+        "sessionId": "0190cafe-0279-7000-8000-000000000279",
+        "slug": "",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "flags": {
+          "interview": false,
+          "auditPassed": false,
+          "checkPassed": false
+        },
+        "supersededBy": null,
+        "injectedTurns": [],
+        "lastInjectedPhase": null,
+        "orchestrationActive": false,
+        "interview": null,
+        "stopBlockPhase": null,
+        "stopBlockCount": 0,
+        "stopBlockWorkPhaseId": null,
+        "stopMetricCursor": 0,
+        "stopBlockTotal": 0,
+        "stopBlockTurnId": null,
+        "stopBlockCapNotified": false,
+        "loopArmSeen": false,
+        "idleEditNudges": 0,
+        "memoryWriteRequested": false,
+        "memoryWriteTurn": null,
+        "memoryWriteGrant": false,
+        "unverifiedSubagents": [],
+        "unverifiedCorrupt": false,
+        "phaseEntrySource": null,
+        "planUnit": null,
+        "planEpoch": null,
+        "checkEpoch": null,
+        "dcloseRecovery": null
+      }
+    },
+    "env": {
+      "CODEX_THREAD_ID": "0190cafe-0279-7000-8000-000000000279"
+    },
+    "git": {
+      "dir": "ws/src",
+      "commit": "init"
+    },
+    "sqlite": {
+      "codex/state_5.sqlite": [
+        "CREATE TABLE threads (id TEXT PRIMARY KEY, cwd TEXT, archived INTEGER, source TEXT)",
+        "INSERT INTO threads (id, cwd, archived, source) VALUES ('0190cafe-0279-7000-8000-000000000279', '${WS}', 0, 'cli')"
+      ]
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "loop",
+          "init",
+          "--objective",
+          "split cwd probe objective",
+          "--session",
+          "0190cafe-0279-7000-8000-000000000279",
+          "--criterion",
+          "the probe closes a cycle",
+          "--cwd",
+          "${WS}"
+        ]
+      },
+      {
+        "cli": [
+          "session",
+          "source",
+          "${WS}/src",
+          "--json"
+        ]
+      },
+      {
+        "cli": [
+          "loop",
+          "init",
+          "--objective",
+          "split cwd probe objective",
+          "--session",
+          "0190cafe-0279-7000-8000-000000000279",
+          "--criterion",
+          "the probe closes a cycle",
+          "--cwd",
+          "${WS}"
+        ]
+      },
+      {
+        "cli": [
+          "loop",
+          "add-work-phase",
+          "--session",
+          "0190cafe-0279-7000-8000-000000000279",
+          "--id",
+          "wp0",
+          "--title",
+          "the split-cwd probe unit",
+          "--cwd",
+          "${WS}"
+        ]
+      },
+      {
+        "cli": [
+          "orchestrate",
+          "P",
+          "--session",
+          "0190cafe-0279-7000-8000-000000000279",
+          "--cwd",
+          "${WS}"
+        ]
+      },
+      {
+        "cli": [
+          "orchestrate",
+          "A",
+          "--session",
+          "0190cafe-0279-7000-8000-000000000279",
+          "--cwd",
+          "${WS}",
+          "--attest",
+          "{\"from\":\"P\",\"to\":\"A\",\"did\":\"split-cwd probe work\",\"planUnit\":\"devlog/_plan/260911_probe\",\"workPhaseId\":\"wp0\"}"
+        ]
+      },
+      {
+        "cli": [
+          "orchestrate",
+          "B",
+          "--session",
+          "0190cafe-0279-7000-8000-000000000279",
+          "--cwd",
+          "${WS}",
+          "--attest",
+          "{\"from\":\"A\",\"to\":\"B\",\"did\":\"split-cwd probe work\",\"auditOutput\":\"VERDICT: PASS\",\"auditVerdict\":\"pass\",\"workPhaseId\":\"wp0\"}"
+        ]
+      },
+      {
+        "write": {
+          "ws/src/tracked.txt": "implemented\n"
+        }
+      },
+      {
+        "cli": [
+          "orchestrate",
+          "C",
+          "--session",
+          "0190cafe-0279-7000-8000-000000000279",
+          "--cwd",
+          "${WS}",
+          "--attest",
+          "{\"from\":\"B\",\"to\":\"C\",\"did\":\"split-cwd probe work\",\"workPhaseId\":\"wp0\"}"
+        ]
+      },
+      {
+        "cli": [
+          "receipt",
+          "test",
+          "--session",
+          "0190cafe-0279-7000-8000-000000000279",
+          "--cwd",
+          "${WS}",
+          "--",
+          "node",
+          "-e",
+          "console.log(process.cwd())"
+        ]
+      },
+      {
+        "cli": [
+          "orchestrate",
+          "D",
+          "--session",
+          "0190cafe-0279-7000-8000-000000000279",
+          "--cwd",
+          "${WS}",
+          "--attest",
+          "{\"from\":\"C\",\"to\":\"D\",\"did\":\"split-cwd probe work\",\"checkOutput\":\"ok\",\"exitCode\":0,\"workPhaseId\":\"wp0\",\"testReceiptPath\":\".codexclaw/evidence/0190cafe-0279-7000-8000-000000000279/test-receipt.json\"}"
+        ]
+      },
+      {
+        "cli": [
+          "loop",
+          "show",
+          "--session",
+          "0190cafe-0279-7000-8000-000000000279",
+          "--cwd",
+          "${WS}"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 1,
+        "stdout_form": "text",
+        "stdout": "loop init: this workspace has no resolvable git source identity, and a goalplan-bound\ncycle cannot be closed without one: C -> D requires a testReceiptPath\n(CHECK-BINDING-01) and `cxc receipt test` refuses to write a receipt it cannot\nbind to a commit.\n\nPick one:\n  - bind a git source tree:  cxc session source <absolute-path> --json\n  - or run this cycle unbound (no `cxc loop init --session`), which closes D on\n    checkOutput + exitCode alone.\nNothing was written.\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "ok": true,
+          "sessionId": "<UUID_1>",
+          "cwd": "${WS}",
+          "sourceCwd": "${WS}/src",
+          "sourceIdentity": {
+            "kind": "resolved",
+            "commitSha": "76bdd1ab3b05b1c1e8ad8ac40a9dce05bedaca76",
+            "dirty": false,
+            "capturedAt": "<TS>",
+            "sourceRoot": "${WS}/src"
+          },
+          "source": "CODEX_THREAD_ID",
+          "dbPath": "${CODEX_HOME}/state_5.sqlite",
+          "statePath": "${WS}/.codexclaw/sessions/<UUID_1>.json",
+          "stateExists": true,
+          "phase": "IDLE",
+          "created": false,
+          "hooksVerified": false
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "[codexclaw loop: split-cwd-probe-objective]\nobjective: split cwd probe objective\nhost: armed=false source=none\nworkPhases: 0 (remaining 0)\ncriteria: 1 (unmet 1)\ncomplete: false\n  - c-1 [open] the probe closes a cycle\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "[codexclaw loop: split-cwd-probe-objective]\nobjective: split cwd probe objective\nhost: armed=false source=none\nworkPhases: 1 (remaining 1)\ncriteria: 1 (unmet 1)\ncomplete: false\n  - wp0 [pending] the split-cwd probe unit\n  - c-1 [open] the probe closes a cycle\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "orchestrate P: current=IDLE -> P (IDLE → P, session <UUID_1>) [formal P: architect proposal -> main executable plan -> same-architect reflection before A (cxc-pabcd phase-plan)]\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "orchestrate A: current=P -> A (P → A, session <UUID_1>)\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "orchestrate B: current=A -> B (A → B, session <UUID_1>)\n",
+        "stderr": ""
+      },
+      {
+        "action": "write",
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "orchestrate C: current=B -> C (B → C, session <UUID_1>)\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "${WS}/src\n${WS}/.codexclaw/evidence/<UUID_1>/test-receipt.json\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "orchestrate D: close target wp0 is complete (cycle closed, session <UUID_1>)\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "[codexclaw loop: split-cwd-probe-objective]\nobjective: split cwd probe objective\nhost: armed=false source=none\nworkPhases: 1 (remaining 0)\ncriteria: 1 (unmet 1)\ncomplete: false\nwriteLock: absent path=${WS}/.codexclaw/goalplans/split-cwd-probe-objective/.goalplan.lock\n  - wp0 [done] the split-cwd probe unit\n  - c-1 [open] the probe closes a cycle\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/state_5.sqlite": {
+        "type": "file",
+        "mode": "0644",
+        "form": "sqlite",
+        "json": {
+          "tables": [
+            {
+              "name": "threads",
+              "sql": "CREATE TABLE threads (id TEXT PRIMARY KEY, cwd TEXT, archived INTEGER, source TEXT)",
+              "rows": [
+                {
+                  "id": "<UUID_1>",
+                  "cwd": "${WS}",
+                  "archived": 0,
+                  "source": "cli"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/evidence": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/evidence/<UUID_1>": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/evidence/<UUID_1>/test-receipt.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty",
+        "json": {
+          "kind": "test",
+          "sourceIdentity": {
+            "kind": "resolved",
+            "commitSha": "76bdd1ab3b05b1c1e8ad8ac40a9dce05bedaca76",
+            "dirty": true,
+            "treeHash": "e1606daccf24fbb5ed79a12d5650c5d172fa20fcb3d65ad4d27d7da92857cc9d",
+            "capturedAt": "<TS>",
+            "sourceRoot": "${WS}/src"
+          },
+          "command": "node -e console.log(process.cwd())",
+          "exitCode": 0,
+          "createdAt": "<TS>",
+          "ownerSessionId": "<UUID_1>",
+          "checkEpoch": "<NONCE_1>"
+        }
+      },
+      "ws/.codexclaw/goalplans": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "ws/.codexclaw/goalplans/split-cwd-probe-objective": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "ws/.codexclaw/goalplans/split-cwd-probe-objective/goalplan.json": {
+        "type": "file",
+        "mode": "0600",
+        "form": "json-pretty-nonl",
+        "json": {
+          "objective": "split cwd probe objective",
+          "slug": "split-cwd-probe-objective",
+          "createdAt": "<TS>",
+          "updatedAt": "<TS>",
+          "activeWorkPhaseId": null,
+          "workPhases": [
+            {
+              "id": "wp0",
+              "title": "the split-cwd probe unit",
+              "status": "done",
+              "tasks": [],
+              "criteriaIds": []
+            }
+          ],
+          "criteria": [
+            {
+              "id": "c-1",
+              "scenario": "the probe closes a cycle",
+              "expectedEvidence": "",
+              "capturedEvidence": null,
+              "status": "open",
+              "surface": "logic"
+            }
+          ],
+          "host": {
+            "armed": false,
+            "armedAt": null,
+            "source": "none"
+          },
+          "schemaVersion": 1,
+          "steeringLog": [
+            {
+              "idempotencyKey": "add-work-phase-3aaffe1f9ed1",
+              "rationale": "cxc loop add-work-phase",
+              "evidence": "wp0: the split-cwd probe unit",
+              "appliedAt": "<TS>",
+              "summary": "1 op(s): add-work-phase"
+            }
+          ]
+        }
+      },
+      "ws/.codexclaw/goalplans/split-cwd-probe-objective/ledger.jsonl": {
+        "type": "file",
+        "mode": "0600",
+        "form": "jsonl",
+        "jsonl": [
+          {
+            "ts": "<TS>",
+            "slug": "split-cwd-probe-objective",
+            "event": "created",
+            "detail": "init objective=\"split cwd probe objective\" criteria=1"
+          },
+          {
+            "ts": "<TS>",
+            "slug": "split-cwd-probe-objective",
+            "event": "steered",
+            "detail": "add-work-phase-3aaffe1f9ed1: 1 op(s): add-work-phase — cxc loop add-work-phase"
+          },
+          {
+            "ts": "<TS>",
+            "slug": "split-cwd-probe-objective",
+            "event": "workphase_done",
+            "detail": "closed wp0"
+          }
+        ]
+      },
+      "ws/.codexclaw/ledger.jsonl": {
+        "type": "file",
+        "mode": "0644",
+        "form": "jsonl",
+        "jsonl": [
+          {
+            "ts": "<TS>",
+            "sessionId": "<UUID_1>",
+            "from": "IDLE",
+            "to": "P",
+            "reason": "cli"
+          },
+          {
+            "ts": "<TS>",
+            "sessionId": "<UUID_1>",
+            "from": "P",
+            "to": "A",
+            "reason": "cli",
+            "evidence": "split-cwd probe work"
+          },
+          {
+            "ts": "<TS>",
+            "sessionId": "<UUID_1>",
+            "from": "A",
+            "to": "B",
+            "reason": "cli",
+            "evidence": "split-cwd probe work"
+          },
+          {
+            "ts": "<TS>",
+            "sessionId": "<UUID_1>",
+            "from": "B",
+            "to": "C",
+            "reason": "cli",
+            "evidence": "split-cwd probe work"
+          },
+          {
+            "ts": "<TS>",
+            "sessionId": "<UUID_1>",
+            "from": "C",
+            "to": "IDLE",
+            "reason": "done",
+            "checkEpoch": "<NONCE_1>",
+            "closedWorkPhaseId": "wp0",
+            "evidence": "split-cwd probe work"
+          }
+        ]
+      },
+      "ws/.codexclaw/render-observations.jsonl": {
+        "type": "file",
+        "mode": "0644",
+        "form": "empty"
+      },
+      "ws/.codexclaw/sessions": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/sessions/<UUID_1>.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty-nonl",
+        "json": {
+          "phase": "IDLE",
+          "sessionId": "<UUID_1>",
+          "slug": "split-cwd-probe-objective",
+          "updatedAt": "<TS>",
+          "flags": {
+            "interview": false,
+            "auditPassed": false,
+            "checkPassed": false
+          },
+          "supersededBy": null,
+          "injectedTurns": [],
+          "lastInjectedPhase": null,
+          "orchestrationActive": false,
+          "interview": null,
+          "stopBlockPhase": null,
+          "stopBlockCount": 0,
+          "stopBlockWorkPhaseId": null,
+          "stopMetricCursor": 0,
+          "stopBlockTotal": 0,
+          "stopBlockTurnId": null,
+          "stopBlockCapNotified": false,
+          "loopArmSeen": false,
+          "idleEditNudges": 0,
+          "memoryWriteRequested": false,
+          "memoryWriteTurn": null,
+          "memoryWriteGrant": false,
+          "unverifiedSubagents": [],
+          "unverifiedCorrupt": false,
+          "phaseEntrySource": null,
+          "boundSourceRoot": "${WS}/src",
+          "planUnit": null,
+          "planEpoch": null,
+          "checkEpoch": null,
+          "dcloseRecovery": null
+        }
+      },
+      "ws/.codexclaw/sources": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/sources/<UUID_1>.json": {
+        "type": "file",
+        "mode": "0600",
+        "form": "json-pretty",
+        "json": {
+          "version": 1,
+          "ownerSessionId": "<UUID_1>",
+          "nativeCwd": "${WS}",
+          "sourceRoot": "${WS}/src",
+          "commonDir": "${WS}/src/.git",
+          "gitDir": "${WS}/src/.git"
+        }
+      },
+      "ws/devlog": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/devlog/_plan": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/devlog/_plan/260911_probe": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/devlog/_plan/260911_probe/000_plan.md": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "# probe\n\nobjective and constraints.\n"
+      },
+      "ws/src": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/src/.git": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/src/tracked.txt": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "implemented\n"
+      }
+    },
+    "calls": [
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "HEAD"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "status",
+          "--porcelain=v1",
+          "-z",
+          "--untracked-files=all"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--git-dir"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--path-format=absolute",
+          "--git-common-dir"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--absolute-git-dir"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--git-dir"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--path-format=absolute",
+          "--git-common-dir"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--absolute-git-dir"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--git-dir"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--path-format=absolute",
+          "--git-common-dir"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--absolute-git-dir"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "HEAD"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "status",
+          "--porcelain=v1",
+          "-z",
+          "--untracked-files=all"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--git-dir"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--path-format=absolute",
+          "--git-common-dir"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--absolute-git-dir"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "HEAD"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "status",
+          "--porcelain=v1",
+          "-z",
+          "--untracked-files=all"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--git-dir"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--path-format=absolute",
+          "--git-common-dir"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--absolute-git-dir"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--git-dir"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--path-format=absolute",
+          "--git-common-dir"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--absolute-git-dir"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "HEAD"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "status",
+          "--porcelain=v1",
+          "-z",
+          "--untracked-files=all"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--git-dir"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--path-format=absolute",
+          "--git-common-dir"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--absolute-git-dir"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--git-dir"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--path-format=absolute",
+          "--git-common-dir"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--absolute-git-dir"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--git-dir"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--path-format=absolute",
+          "--git-common-dir"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--absolute-git-dir"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "HEAD"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "status",
+          "--porcelain=v1",
+          "-z",
+          "--untracked-files=all"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--git-dir"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--path-format=absolute",
+          "--git-common-dir"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--absolute-git-dir"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--git-dir"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--path-format=absolute",
+          "--git-common-dir"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--absolute-git-dir"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "HEAD"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "status",
+          "--porcelain=v1",
+          "-z",
+          "--untracked-files=all"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--git-dir"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--path-format=absolute",
+          "--git-common-dir"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--absolute-git-dir"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--git-dir"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--path-format=absolute",
+          "--git-common-dir"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--absolute-git-dir"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "HEAD"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "status",
+          "--porcelain=v1",
+          "-z",
+          "--untracked-files=all"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--git-dir"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--path-format=absolute",
+          "--git-common-dir"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--absolute-git-dir"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "HEAD"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "status",
+          "--porcelain=v1",
+          "-z",
+          "--untracked-files=all"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--git-dir"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--path-format=absolute",
+          "--git-common-dir"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--absolute-git-dir"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--git-dir"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--path-format=absolute",
+          "--git-common-dir"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "--absolute-git-dir"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "HEAD"
+        ],
+        "cwd": "${WS}/src"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "status",
+          "--porcelain=v1",
+          "-z",
+          "--untracked-files=all"
+        ],
+        "cwd": "${WS}/src"
+      }
+    ]
+  }
+}

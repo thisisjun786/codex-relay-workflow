@@ -1,0 +1,58 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/skill/search",
+    "K12/gh",
+    "A/skill-search/gh-launch.test.ts"
+  ],
+  "note": "gh exits non-zero with a message: the message is surfaced on stderr, no rows, exit 0.",
+  "given": {
+    "stubs": {
+      "gh": {
+        "stderr": "To get started with GitHub CLI, please run:  gh auth login\n",
+        "exit": 4
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "skill",
+          "search",
+          "telegram",
+          "--source",
+          "gh"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "no matching skills\n",
+        "stderr": "skill-search: gh code search failed (To get started with GitHub CLI, please run:  gh auth login)\n"
+      }
+    ],
+    "tree": {},
+    "calls": [
+      {
+        "cmd": "gh",
+        "argv": [
+          "search",
+          "code",
+          "filename:SKILL.md telegram",
+          "--limit",
+          "10",
+          "--json",
+          "repository,path"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/hooks/retrust",
+    "K8/codex-home/config.toml",
+    "A/cxc-ops/hook-trust.test.ts"
+  ],
+  "note": "No enabled codexclaw@* plugin section in config.toml: the install key is ambiguous (0 candidates), exit 1, nothing written.",
+  "given": {
+    "files": {
+      "codex/config.toml": "model = \"gpt-5.5\"\n"
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "hooks",
+          "retrust"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 1,
+    "steps": [
+      {
+        "exit": 1,
+        "stdout_form": "empty",
+        "stderr": "cxc-ops hooks retrust: enabled install key is ambiguous (0); candidates: (none); pass --key <plugin@marketplace>\n"
+      }
+    ],
+    "tree": {
+      "codex/config.toml": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "model = \"gpt-5.5\"\n"
+      }
+    },
+    "calls": []
+  }
+}

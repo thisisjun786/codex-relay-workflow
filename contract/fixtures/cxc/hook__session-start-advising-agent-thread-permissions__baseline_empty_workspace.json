@@ -1,0 +1,40 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/session-start-advising-agent-thread-permissions",
+    "K2/SessionStart",
+    "K13/PLUGIN_ROOT",
+    "K13/CODEX_HOME",
+    "K4/hook-observations"
+  ],
+  "note": "The leg's declared command with a minimal well-formed payload in an empty workspace and empty homes: the leg's quiet default and its side effects.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "session-start-advising-agent-thread-permissions",
+        "stdin": {
+          "hook_event_name": "SessionStart",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "source": "startup",
+          "model": "gpt-5.5",
+          "transcript_path": null
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

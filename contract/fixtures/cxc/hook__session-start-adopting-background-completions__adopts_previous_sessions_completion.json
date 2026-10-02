@@ -1,0 +1,145 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/session-start-adopting-background-completions",
+    "K3/stop-waking-on-background-completion",
+    "K5/hook-rendered",
+    "K8/ws/.codexclaw/bg",
+    "A/bg-wake/hook.test.ts"
+  ],
+  "note": "A completion left undelivered by a previous session is adopted by the new session at SessionStart (adoptedBy, ledger 'adopted'), announced with the affordance line, and then delivered by that session's Stop.",
+  "given": {
+    "json": {
+      "ws/.codexclaw/bg/build1.json": {
+        "id": "build1",
+        "sessionId": "rec-old",
+        "adoptedBy": null,
+        "cwd": "${WS}",
+        "command": [
+          "npm",
+          "run",
+          "build"
+        ],
+        "note": null,
+        "pid": null,
+        "startToken": null,
+        "status": "complete",
+        "exitCode": 0,
+        "startedAt": "2025-12-31T23:50:00.000Z",
+        "endedAt": "2025-12-31T23:54:12.000Z",
+        "deliveredAt": null
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "session-start-adopting-background-completions",
+        "stdin": {
+          "hook_event_name": "SessionStart",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "source": "startup",
+          "model": "gpt-5.5",
+          "transcript_path": null
+        }
+      },
+      {
+        "hook": "stop-waking-on-background-completion",
+        "stdin": {
+          "hook_event_name": "Stop",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "stop_hook_active": false,
+          "last_assistant_message": "Done.",
+          "transcript_path": null
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": "[codexclaw bg] 이전 세션에서 끝난 백그라운드 작업 1건이 아직 전달되지 않았습니다.\n- build1 (complete, exit 0, 4m12s) — npm run build\n[codexclaw bg] 백그라운드 작업은 `cxc bg list`로 보고 `cxc bg get <id> --tail 40`으로 출력을 읽습니다."
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "decision": "block",
+          "reason": "[codexclaw bg] 백그라운드 작업 1건이 끝났습니다.\n- build1 (complete, exit 0, 4m12s) — npm run build\n출력은 `cxc bg get <id> --tail 40`으로 봅니다. 전체 목록은 `cxc bg list`.\n결과를 확인하고 필요한 후속 작업을 이어가세요."
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/bg": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/bg/build1.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty",
+        "json": {
+          "id": "build1",
+          "sessionId": "rec-old",
+          "adoptedBy": "rec-s1",
+          "cwd": "${WS}",
+          "command": [
+            "npm",
+            "run",
+            "build"
+          ],
+          "note": null,
+          "pid": null,
+          "startToken": null,
+          "status": "complete",
+          "exitCode": 0,
+          "startedAt": "<TS>",
+          "endedAt": "<TS>",
+          "deliveredAt": "<TS>"
+        }
+      },
+      "ws/.codexclaw/bg/ledger.jsonl": {
+        "type": "file",
+        "mode": "0644",
+        "form": "jsonl",
+        "jsonl": [
+          {
+            "at": "<TS>",
+            "event": "adopted",
+            "id": "build1",
+            "sessionId": "rec-s1"
+          },
+          {
+            "at": "<TS>",
+            "event": "delivered",
+            "id": "build1",
+            "sessionId": "rec-s1"
+          }
+        ]
+      }
+    },
+    "calls": []
+  }
+}

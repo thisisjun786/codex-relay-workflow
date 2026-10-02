@@ -1,0 +1,196 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K10/initialize",
+    "K10/tools/list",
+    "A/subagent-config/mcp.test.ts",
+    "A/plugin/build.test.mjs"
+  ],
+  "note": "initialize returns protocol 2024-11-05 and serverInfo; tools/list advertises subagents_get, subagents_set and catalog_list with their input schemas.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "mcp": [
+          {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+              "protocolVersion": "2024-11-05",
+              "capabilities": {},
+              "clientInfo": {
+                "name": "rec",
+                "version": "0"
+              }
+            }
+          },
+          {
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized"
+          },
+          {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/list"
+          }
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "jsonl",
+        "stdout_jsonl": [
+          {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+              "protocolVersion": "2024-11-05",
+              "capabilities": {
+                "tools": {}
+              },
+              "serverInfo": {
+                "name": "codexclaw-subagent-config",
+                "version": "0.1.1"
+              }
+            }
+          },
+          {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "result": {
+              "tools": [
+                {
+                  "name": "subagents_get",
+                  "description": "Read the per-role subagent config (explorer/reviewer/executor/architect): mode, model, effort, promptOverride, source and scope. Project defaults to global, then original session.",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                      "scope": {
+                        "type": "string",
+                        "enum": [
+                          "project",
+                          "global"
+                        ]
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                {
+                  "name": "subagents_set",
+                  "description": "Update one role's subagent config. mode is 'default' (main model) or 'model' (requires a model id); effort is a reasoning-effort override (null inherits the parent session's effort).",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                      "scope": {
+                        "type": "string",
+                        "enum": [
+                          "project",
+                          "global"
+                        ]
+                      },
+                      "inherit": {
+                        "type": "boolean",
+                        "description": "Remove this entire role override and inherit the next scope; do not combine with role settings."
+                      },
+                      "role": {
+                        "type": "string",
+                        "enum": [
+                          "explorer",
+                          "reviewer",
+                          "executor",
+                          "architect"
+                        ]
+                      },
+                      "mode": {
+                        "type": "string",
+                        "enum": [
+                          "default",
+                          "model"
+                        ]
+                      },
+                      "model": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "effort": {
+                        "type": [
+                          "string",
+                          "null"
+                        ],
+                        "enum": [
+                          "low",
+                          "medium",
+                          "high",
+                          "xhigh",
+                          null
+                        ]
+                      },
+                      "fallback": {
+                        "type": [
+                          "object",
+                          "null"
+                        ],
+                        "description": "Optional first fallback. Null clears; omitted nested effort inherits existing fallback effort or session effort.",
+                        "properties": {
+                          "model": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "effort": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "enum": [
+                              "low",
+                              "medium",
+                              "high",
+                              "xhigh",
+                              null
+                            ]
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "promptOverride": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "role"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                {
+                  "name": "catalog_list",
+                  "description": "List selectable models: Codex-native entries first, then ocx-backed entries when ocx is active.",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": false
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

@@ -1,0 +1,103 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/pre-tool-use-linting-apply-patch",
+    "K5/hook-rendered",
+    "A/pabcd-state/comment-lint.test.ts",
+    "A/plugin/hook-e2e.test.mjs",
+    "K13/CODEXCLAW_PABCD"
+  ],
+  "note": "CODEXCLAW_PABCD=off: the lint still denies, and a clean patch in a loop-armed IDLE session stays silent because the idle-edit advisory is PABCD-only.",
+  "given": {
+    "json": {
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "phase": "IDLE",
+        "sessionId": "rec-s1",
+        "loopArmSeen": true
+      }
+    },
+    "env": {
+      "CODEXCLAW_PABCD": "off"
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "pre-tool-use-linting-apply-patch",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "apply_patch",
+          "tool_input": {
+            "command": "+++ b/x.ts\n+const x = foo as any;\n"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-linting-apply-patch",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "apply_patch",
+          "tool_input": {
+            "command": "+++ b/x.ts\n+const x: number = 1;\n"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "[codexclaw comment-lint] `as any` cast — use a precise type or add a trailing `// justified: <reason>` to opt out (line: const x = foo as any;)"
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/sessions": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "phase": "IDLE",
+          "sessionId": "rec-s1",
+          "loopArmSeen": true
+        }
+      }
+    },
+    "calls": []
+  }
+}
