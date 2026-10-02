@@ -1046,10 +1046,11 @@ when it would otherwise strand it; the sweep below closes them without a handove
 
 Read `linkage-completion` first and keep that reading as the completion evidence: once nothing is live it reads
 `unregistered`, which says that nothing is attached, not that everything finished. For a supervised project (a live
-initiative link over it) read `supervisor-standing --project <key>` first and close only the assignments whose entry carries a
-`decision.priorReport`: an entry without one is a report not yet staged, which cannot be sent once its assignment is closed, so
-that assignment stays active until it is. A project with no supervisor stages nothing, and there that list is not a stop
-condition. The first `relationship-close-merged` is the dry run. It changes no relationship, link, binding or journal row and names `closable` and `kept`, each kept assignment with its
+initiative link over it) read `supervisor-standing --project <key>` first and do not apply while any entry lacks a
+`decision.priorReport`: such an entry is a report not yet staged, which cannot be sent once its assignment is closed, and the
+command cannot leave one assignment out, so the apply waits until the report is staged. A discharged obligation is not
+listed, so a list without such an entry does not block. A project with no supervisor stages nothing, and there that list is
+not a stop condition. The first `relationship-close-merged` is the dry run. It changes no relationship, link, binding or journal row and names `closable` and `kept`, each kept assignment with its
 state and the reason it stays: it is not merged, a delivery or a supervisor message of it is still owed, or its plan node has
 no active acceptance of the current head and criteria. Apply only when every `closable` entry is work this run integrated.
 A non-empty `kept` means the project is not closed: report each one with its reason.

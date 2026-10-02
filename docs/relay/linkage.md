@@ -224,9 +224,9 @@ the completion evidence.
 What the registry cannot decide is a completion report of a supervised project that was never staged. The supervisor
 package derives it from the events and keeps it standing when the project has no coordination target, so it cannot be told
 from a report nobody will ever stage. It stays listed by `supervisor-standing` after the close, but staging and sending it
-are refused `unregistered_scope`. For a supervised project `supervisor-standing --project` is read first and an assignment whose
-entry has no `decision.priorReport` is left active; a project with no supervisor stages nothing, and there that list is not a
-stop condition.
+are refused `unregistered_scope`. For a supervised project `supervisor-standing --project` is read first, and neither a bulk apply nor a handover
+runs while any entry lacks a `decision.priorReport` (a discharged obligation is not listed, so a list without such an entry
+does not block); a project with no supervisor stages nothing, and there that list is not a stop condition.
 
 ## Where an instruction stands
 
