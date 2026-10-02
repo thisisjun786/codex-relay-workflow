@@ -191,6 +191,11 @@ Execution:
   end: implement, test, commit, push, open the pull request, then triage, fix, reply
   to and recheck its reviews. Report once the current head's required checks and
   reviews have finished and their blockers are resolved, not when the code is written.
+  That publication scope is the explicit push approval CXC `DEV-GIT-PUSH-01` requires, the
+  standing authorization of
+  [Default dev integration](../../crw-plan/references/integrations.md#default-dev-integration)
+  carried by this packet: push your task branch and open the pull request without stopping
+  to ask, and never merge; no force-push, no tag, no push to `dev` or `main`.
   Without that authorization, or without the access to use it, commit locally or
   return the frozen diff and say which publication you did not perform.
 - Finish your own independent review before you open the pull request. The review meant here is the
@@ -298,11 +303,21 @@ Execution:
   by a DIFFERENT task, that is a conflict rather than a delay and it is not recovered through
   you. Report it naming the owner the lookup returned, preserve your artifact, and write
   nothing into that relationship; the coordinator reconciles your work with that owner.
+- If you need something only a person can give, such as a decision, a credential or an
+  approval this packet does not carry, do not ask with `request_user_input`: CXC denies it
+  while your goal is active. Write the question out, record `blocked_needs_input` on your
+  turn and, where a relay holds the assignment, emit that outcome over a file that states
+  it; where none does, return the CXC status the case takes (BLOCKED, UNSAFE or NEEDS_HUMAN)
+  with the question. Then end the turn. Your parent takes the question to Jun. See
+  [Default dev integration](../../crw-plan/references/integrations.md#default-dev-integration).
 - [When CXC Loop is the effective workflow:]
   `$codexclaw:cxc-loop` — invoke the installed skill, or attach it through the
   creation tool's supported skill field, and run this bounded objective under it and
   `cxc-pabcd` using your own session binding, host goal, and goalplan.
   If a required loop capability is absent, report the exact gap before starting.
+  CXC `LOOP-DOCS-FIRST-01` applies to your own issue as CXC states it: a single-cycle issue
+  skips the docs-only first cycle, and a child that plans two or more work-phases opens with
+  one, with CXC's roadmap debt for scope found later.
   On a correction or a resume, read whether that goal and goalplan exist before making
   either. Usually they do, and the work is to continue them: opening a second goal for
   the same assignment is a duplicate rather than a resume, and the coordinator reads it
@@ -409,6 +424,10 @@ field in brackets where that reduced shape names it differently.
   packet carries the literal installed-skill invocation and names the applicable surface
   skills; naming the skills descriptively is not the invocation. Where an explicit
   non-Loop or no-goal alternative is effective, that workflow is named in its place.
+  Where Loop is effective the packet also says how `LOOP-DOCS-FIRST-01` applies to the
+  child's own issue, as
+  [Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution)
+  states it.
 - Issue scope — `Issue/PR mapping:` and `Outcome and scope:` [`Scope:` with its
   `Input baseline:`], including the exclusions.
 - Verification boundary — `Verification:`, covering what this child verifies itself and
@@ -416,6 +435,16 @@ field in brackets where that reduced shape names it differently.
 - Handoff and completion boundary — the delivery contract under `Authorized execution:`
   and the `Return:` block [`Scope:` write authority and `Return:`]: what finishing means
   here, what the coordinator owns after it.
+- Publication scope — the publication sentence under `Execution:` and the `Delivery:` line
+  under `Authorized execution:`. The packet says that its publication scope is the explicit
+  push approval CXC `DEV-GIT-PUSH-01` requires (push the task branch, open the pull request,
+  never merge), or that its scope excludes publication and the child pushes nothing.
+  [Default dev integration](../../crw-plan/references/integrations.md#default-dev-integration)
+  owns the rule; this line checks that the packet carries it. [A Non-PR packet has no
+  publication to approve.]
+- Escalation route — the `Execution:` bullet on a question only a person can answer:
+  `blocked_needs_input` with the question written out, never `request_user_input`. [A Non-PR
+  packet carries it in `Workflow/settings:`.]
 - Model and effort — `Effective model/effort:` [`Workflow/settings:`], applied through
   the creation tool's real arguments and read back from the receipt.
 - Language — `Language:`, the same in both shapes: what the child writes is English from its
@@ -591,7 +620,9 @@ Title: [the Codex task title: issue ID · descriptive title of up to 20 characte
 Coordinator: [actual task/host IDs if delegated; project ID only if one exists]
 Scope: [accepted question/outcome, exclusions, dependencies and write authority]
 Input baseline: [source IDs, revisions/updated-at evidence and known gaps]
-Workflow/settings: [effective workflow, model/effort and actual permission profile]
+Workflow/settings: [effective workflow, model/effort and actual permission profile; a
+  question only a person can answer goes to the parent as `blocked_needs_input` with the
+  question written out, never `request_user_input`]
 Language: English for everything you write, as in the launch packet
 Working location: [permitted cwd/artifact roots; no invented Git repository]
 Workspace ownership: [what is already present at that working location and those artifact
@@ -1043,6 +1074,15 @@ says, so read the level first and the fields second:
   [Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution),
   or the explicit override its assignment carried. Like the workflow it has no transport field,
   and a child that lost its first assignment answers a review in whatever language it drifts to.
+- The publication scope and the escalation route, restated. Like the workflow and the language
+  they have no transport field, and a child that compacted away its first assignment is left with
+  CXC's own rules, which say never to push without approval and point a question at the
+  user. Say whether its publication scope is still the explicit push approval
+  `DEV-GIT-PUSH-01` requires (push its task branch, update the pull request, never merge, nothing
+  wider) or that it is not, and that a question only a person can answer goes to the parent as
+  `blocked_needs_input` with the question written out. These are pointers to
+  [Default dev integration](../../crw-plan/references/integrations.md#default-dev-integration),
+  not a copy of it.
 - Assignment identity: the issue, this task's own id, and where a relay holds the
   assignment its relationship id and the generation to emit under, read from the
   assignment rather than copied from the coordinator's own state. On a needs-changes

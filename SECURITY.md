@@ -24,7 +24,10 @@ authorization service. Skills can request actions from the host; the host's actu
 permissions and the user's task scope remain the boundary. Review source changes
 before updating a linked installation: edits become visible through symlinks.
 
-Report defects in a separately installed bridge, relay, CXC, or Paperthin to that
+Report defects in a separately installed bridge, relay, or Paperthin to that
 component's maintainer unless the problem is in this repository's instructions
-or installer. Offline fixtures do not prove that a live host integration is safe
-or compatible.
+or installer. CXC v0.2.40 is being self-ported into this repository's Go runtime:
+report a defect in the ported code here. A defect in the installed upstream CXC
+plugin goes to its maintainer, and one the port reproduces on purpose is listed in
+[known defects](docs/port-cxc/known-defects.md). Offline fixtures do not prove that
+a live host integration is safe or compatible.
