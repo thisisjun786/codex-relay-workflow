@@ -130,7 +130,7 @@ func flt17Rows(t *testing.T, ctx context.Context, dir string) map[string][]strin
 	t.Helper()
 	tables := map[string][]string{}
 	readStore(t, ctx, filepath.Join(dir, "relay.sqlite3"), func(ctx context.Context, s *store.Store) error {
-		names, err := s.All(ctx, "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+		names, err := s.All(ctx, "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'dag\\_%' ESCAPE '\\' ORDER BY name")
 		if err != nil {
 			return err
 		}

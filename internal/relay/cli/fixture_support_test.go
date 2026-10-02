@@ -207,7 +207,7 @@ func relaySchema() ([][2]string, error) {
 }
 
 func readSchema(db *sql.DB) ([][2]string, error) {
-	rows, err := db.Query("SELECT type, name, sql FROM sqlite_master ORDER BY rowid")
+	rows, err := db.Query("SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'dag\\_%' ESCAPE '\\' AND tbl_name NOT LIKE 'dag\\_%' ESCAPE '\\' ORDER BY rowid")
 	if err != nil {
 		return nil, err
 	}
@@ -273,7 +273,7 @@ func dumpSQLite(path string) (sqliteImage, error) {
 		return image, err
 	}
 	var tables []string
-	rows, err := db.Query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY rowid")
+	rows, err := db.Query("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'dag\\_%' ESCAPE '\\' AND tbl_name NOT LIKE 'dag\\_%' ESCAPE '\\' ORDER BY rowid")
 	if err != nil {
 		return image, err
 	}
@@ -518,7 +518,7 @@ func restoreRelayStore(path string, image sqliteImage) (err error) {
 	defer func() { err = errors.Join(err, db.Close()) }()
 	db.SetMaxOpenConns(1)
 	var tables []string
-	rows, err := db.Query("SELECT name FROM sqlite_master WHERE type = 'table'")
+	rows, err := db.Query("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'dag\\_%' ESCAPE '\\' AND tbl_name NOT LIKE 'dag\\_%' ESCAPE '\\'")
 	if err != nil {
 		return err
 	}

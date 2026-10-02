@@ -217,6 +217,15 @@ func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ 
 	if _, err = db.ExecContext(ctx, sections[0]); err != nil {
 		return nil, fmt.Errorf("initialize schema: %w", err)
 	}
+	// The additive DAG zone follows the v1 script and is not part of what the open validated
+	// (dag_zone.go): a store that predates it gains it here. A command that declares itself read-only
+	// opens the store through this path too (openForRead tries the writable open first), and it
+	// must not change the schema, so it leaves the zone to the next write.
+	if !ReadOnlyCommand(ctx) {
+		if err = installDAGZone(ctx, db); err != nil {
+			return nil, err
+		}
+	}
 	result := &Store{DB: db, Path: pathlibSpelling(path), gate: gate}
 	guards := strings.SplitN(sections[1], seedMarker, 2)
 	if len(guards) != 2 {

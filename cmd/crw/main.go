@@ -22,6 +22,7 @@ import (
 	// The relay commands register in the relay command table when their packages load; cli
 	// brings its own and the registry, delivery and fault families.
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/capacity"
+	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 	_ "github.com/thisisjun786/codex-relay-workflow/internal/relay/routing"

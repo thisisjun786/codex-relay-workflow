@@ -1,0 +1,281 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"slices"
+)
+
+// The additive DAG zone (D-01 of the DAG execution contract, docs/relay/dag-plans.md).
+//
+// A writable open validates the frozen v1 tables first (ValidateOwnershipSchema, which reads only
+// relay-sqlite.sql: a store missing one of them is refused and never repaired) and creates the
+// v1 objects, and then creates the zone below with the same CREATE ... IF NOT EXISTS statements.
+// The zone is not part of relay-sqlite.sql, so it is not part of what an open validates:
+//
+//   - a store that predates the zone (every store that exists today) opens, keeps every row, and gains
+//     the zone;
+//   - a runtime without the zone validates only the frozen tables, so it opens a store that carries
+//     the zone and never reads or writes it;
+//   - SchemaVersion stays "1"; no record is rewritten and no v1 object changes.
+//
+// A command that declares itself read-only never creates the zone (ReadOnlyCommand): the zone arrives
+// with the first write open, and a reader of a store without it finds no plan.
+//
+// The statements are a LEDGER. The swap gate compares the sqlite_master text of every object a
+// store holds with the text a candidate declares (runtime/swapgate), so a shipped statement is
+// never edited: a column that a later issue needs arrives as an appended ALTER TABLE ADD COLUMN step
+// that every open runs (on a fresh store and on an upgraded one alike, so both read the same text
+// afterwards), and a new table arrives as an appended CREATE. testdata/dag_zone_shipped.json holds
+// the text each shipped object had when it shipped and the tests fail when one changes. Foreign
+// keys point inside the zone only: PRAGMA foreign_keys=ON holds on every connection, and a key into a
+// v1 table would make a v1 write depend on a zone row.
+//
+// What is append-only is enforced here and not only by the writer: triggers abort UPDATE and DELETE
+// of a plan and of a revision, and a node or an edge row may change once, from live to retired.
+
+// DAGZoneStatements are the zone's statements in the order an open runs them: what the swap gate
+// declares as the zone's schema (swapgate.DeclaredSchema) and what installDAGZone executes.
+func DAGZoneStatements() []string { return slices.Clone(dagZone) }
+
+// installDAGZone creates the zone on the writable database db, after the v1 script. Every step is
+// idempotent, so a crash between two steps is completed by the next open.
+func installDAGZone(ctx context.Context, db *sql.DB) error {
+	for i, statement := range dagZone {
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("initialize DAG zone (step %d): %w", i+1, err)
+		}
+	}
+	return nil
+}
+
+var dagZone = []string{
+	// The plan: its identity and the Linear project it belongs to, written once with revision 1. The
+	// head revision is MAX(revision_no) of the log, never a column here, so nothing about a plan is updated.
+	`CREATE TABLE IF NOT EXISTS dag_plans (
+    plan_id            TEXT PRIMARY KEY,
+    project_key        TEXT NOT NULL CHECK (project_key <> ''),
+    created_by_task_id TEXT NOT NULL,
+    created_at         TEXT NOT NULL
+)`,
+
+	// The revision log: one row per committed change set, an append-only chain. parent_revision_no is
+	// NOT NULL (0 for the first revision) because SQLite treats NULLs as distinct in a UNIQUE, so a nullable
+	// parent would admit two first revisions. UNIQUE(plan_id, parent_revision_no) is what keeps a chain
+	// from branching; UNIQUE(plan_id, request_id) is what makes a repeated request one revision.
+	`CREATE TABLE IF NOT EXISTS dag_plan_revisions (
+    plan_id            TEXT NOT NULL REFERENCES dag_plans (plan_id),
+    revision_no        INTEGER NOT NULL CHECK (revision_no >= 1),
+    parent_revision_no INTEGER NOT NULL,
+    request_id         TEXT NOT NULL CHECK (request_id <> ''),
+    request_digest     TEXT NOT NULL,
+    change_json        TEXT NOT NULL,
+    state_digest       TEXT NOT NULL,
+    coordinator_epoch  INTEGER NOT NULL DEFAULT 0 CHECK (coordinator_epoch >= 0),
+    author_task_id     TEXT NOT NULL,
+    recorded_at        TEXT NOT NULL,
+    PRIMARY KEY (plan_id, revision_no),
+    UNIQUE (plan_id, request_id),
+    UNIQUE (plan_id, parent_revision_no),
+    CHECK (parent_revision_no = revision_no - 1)
+)`,
+
+	// The fold of the log, node by node. A row is one VERSION of a node: when a revision changes a node's
+	// spec or its incoming edges the old row is retired at that revision and a new row is introduced, so
+	// the plan as of any revision is a query (introduced_rev <= R AND (retired_rev IS NULL OR retired_rev > R)).
+	// slice_digest covers the node's spec and its incoming edges only (contract 4.2), never the whole plan.
+	`CREATE TABLE IF NOT EXISTS dag_nodes (
+    plan_id             TEXT NOT NULL REFERENCES dag_plans (plan_id),
+    node_id             TEXT NOT NULL,
+    introduced_rev      INTEGER NOT NULL,
+    retired_rev         INTEGER,
+    slice_digest        TEXT NOT NULL,
+    issue_key           TEXT NOT NULL,
+    node_kind           TEXT NOT NULL CHECK (node_kind IN ('implementation', 'non_pr')),
+    title               TEXT,
+    criteria_set_digest TEXT NOT NULL,
+    supersedes_node_id  TEXT,
+    PRIMARY KEY (plan_id, node_id, introduced_rev),
+    FOREIGN KEY (plan_id, introduced_rev) REFERENCES dag_plan_revisions (plan_id, revision_no),
+    FOREIGN KEY (plan_id, retired_rev) REFERENCES dag_plan_revisions (plan_id, revision_no),
+    CHECK (retired_rev IS NULL OR retired_rev > introduced_rev)
+)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS dag_nodes_live ON dag_nodes (plan_id, node_id) WHERE retired_rev IS NULL`,
+
+	// The edges of the fold. An edge is never edited (retire it and add another); the CHECKs repeat the
+	// edge-integrity rejections of contract 2.4 so a validator bug still cannot store such an edge.
+	`CREATE TABLE IF NOT EXISTS dag_edges (
+    plan_id            TEXT NOT NULL REFERENCES dag_plans (plan_id),
+    edge_id            TEXT NOT NULL,
+    introduced_rev     INTEGER NOT NULL,
+    retired_rev        INTEGER,
+    from_node_id       TEXT NOT NULL,
+    to_node_id         TEXT NOT NULL,
+    kind               TEXT NOT NULL CHECK (kind IN ('artifact_verified', 'integrated', 'decision')),
+    target_repository  TEXT,
+    target_base_ref    TEXT,
+    pins_code_head     INTEGER NOT NULL DEFAULT 0 CHECK (pins_code_head IN (0, 1)),
+    decision_subject   TEXT,
+    decision_digest    TEXT,
+    required_authority TEXT,
+    PRIMARY KEY (plan_id, edge_id),
+    FOREIGN KEY (plan_id, introduced_rev) REFERENCES dag_plan_revisions (plan_id, revision_no),
+    FOREIGN KEY (plan_id, retired_rev) REFERENCES dag_plan_revisions (plan_id, revision_no),
+    CHECK (retired_rev IS NULL OR retired_rev > introduced_rev),
+    CHECK (from_node_id <> to_node_id),
+    CHECK (kind <> 'integrated' OR (target_repository IS NOT NULL AND target_base_ref IS NOT NULL)),
+    CHECK (pins_code_head = 0 OR (target_repository IS NOT NULL AND target_base_ref IS NOT NULL)),
+    CHECK (kind <> 'decision' OR (decision_subject IS NOT NULL AND decision_digest IS NOT NULL
+                                  AND required_authority IS NOT NULL AND required_authority <> '[]'))
+)`,
+	`CREATE INDEX IF NOT EXISTS dag_edges_incoming ON dag_edges (plan_id, to_node_id, retired_rev)`,
+
+	// What a node consumed (contract 4.2): content-addressed by the manifest digest, which has no plan id,
+	// so the same node, slice and inputs in two plans is one row.
+	`CREATE TABLE IF NOT EXISTS dag_input_manifests (
+    manifest_digest   TEXT PRIMARY KEY,
+    node_id           TEXT NOT NULL,
+    body_json         TEXT NOT NULL,
+    rule_version_json TEXT NOT NULL,
+    coordinator_epoch INTEGER NOT NULL DEFAULT 0 CHECK (coordinator_epoch >= 0),
+    created_at        TEXT NOT NULL
+)`,
+
+	// Rows the first writers (CRW-184 and CRW-185) fill; the shapes are the contract's (4.5, 4.3, 2.2,
+	// 2.3, 6.2). plan_id is added to every table keyed by a node because node ids are plan-local, and
+	// each uniqueness 4.5 states over node_id is scoped by it. Nothing in this package writes them.
+	`CREATE TABLE IF NOT EXISTS dag_node_executions (
+    plan_id              TEXT NOT NULL,
+    node_id              TEXT NOT NULL,
+    relationship_id      TEXT NOT NULL,
+    execution_generation INTEGER NOT NULL,
+    manifest_digest      TEXT NOT NULL,
+    kind                 TEXT NOT NULL CHECK (kind IN ('initial', 'correction', 'redefinition', 'parent_handover', 'child_replacement')),
+    managed_request_id   TEXT,
+    PRIMARY KEY (relationship_id, execution_generation)
+)`,
+	`CREATE INDEX IF NOT EXISTS dag_node_executions_node ON dag_node_executions (plan_id, node_id)`,
+	`CREATE TABLE IF NOT EXISTS dag_releases (
+    plan_id            TEXT NOT NULL,
+    node_id            TEXT NOT NULL,
+    manifest_digest    TEXT NOT NULL,
+    managed_request_id TEXT NOT NULL,
+    coordinator_epoch  INTEGER NOT NULL CHECK (coordinator_epoch >= 0),
+    decided_at         TEXT NOT NULL,
+    PRIMARY KEY (plan_id, node_id, manifest_digest)
+)`,
+	`CREATE TABLE IF NOT EXISTS dag_acceptances (
+    acceptance_id            TEXT PRIMARY KEY,
+    plan_id                  TEXT NOT NULL,
+    node_id                  TEXT NOT NULL,
+    manifest_digest          TEXT NOT NULL,
+    relationship_id          TEXT NOT NULL,
+    execution_generation     INTEGER NOT NULL,
+    event_id                 TEXT NOT NULL,
+    revision_hash            TEXT NOT NULL,
+    criteria_set_digest      TEXT NOT NULL,
+    verdict                  TEXT NOT NULL CHECK (verdict = 'verified'),
+    head_sha                 TEXT,
+    repository               TEXT,
+    pr_number                INTEGER,
+    output_manifest_ref      TEXT,
+    evidence_digest          TEXT,
+    ack_tier                 TEXT NOT NULL CHECK (ack_tier <> 'unverified'),
+    verdict_turn_id          TEXT NOT NULL,
+    rule_version_json        TEXT NOT NULL,
+    accepted_by_task_id      TEXT NOT NULL,
+    coordinator_epoch        INTEGER NOT NULL CHECK (coordinator_epoch >= 0),
+    accepted_at              TEXT NOT NULL,
+    supersedes_acceptance_id TEXT,
+    state                    TEXT NOT NULL CHECK (state IN ('active', 'superseded', 'revoked'))
+)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS dag_acceptances_active ON dag_acceptances (plan_id, node_id) WHERE state = 'active'`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS dag_acceptances_effect ON dag_acceptances (relationship_id, execution_generation, revision_hash)`,
+	`CREATE TABLE IF NOT EXISTS dag_integration_observations (
+    observation_id TEXT PRIMARY KEY,
+    acceptance_id  TEXT NOT NULL,
+    repository     TEXT NOT NULL,
+    base_ref       TEXT NOT NULL,
+    subject_sha    TEXT NOT NULL,
+    tip_sha        TEXT NOT NULL,
+    is_ancestor    INTEGER NOT NULL CHECK (is_ancestor IN (0, 1)),
+    method         TEXT NOT NULL,
+    merge_turn_id  TEXT,
+    observed_seq   INTEGER NOT NULL,
+    reverted_by    TEXT,
+    observed_at    TEXT NOT NULL,
+    UNIQUE (acceptance_id, repository, base_ref, observed_seq)
+)`,
+	`CREATE TABLE IF NOT EXISTS dag_decisions (
+    decision_id         TEXT PRIMARY KEY,
+    plan_id             TEXT NOT NULL,
+    subject             TEXT NOT NULL,
+    digest              TEXT NOT NULL,
+    disposition         TEXT NOT NULL,
+    authority_kind      TEXT NOT NULL,
+    authority_ref       TEXT NOT NULL,
+    revision            INTEGER NOT NULL,
+    state               TEXT NOT NULL CHECK (state IN ('active', 'superseded', 'revoked')),
+    recorded_by_task_id TEXT NOT NULL,
+    coordinator_epoch   INTEGER NOT NULL CHECK (coordinator_epoch >= 0),
+    recorded_at         TEXT NOT NULL
+)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS dag_decisions_active ON dag_decisions (plan_id, subject) WHERE state = 'active'`,
+	`CREATE TABLE IF NOT EXISTS dag_coordinator_claims (
+    plan_id          TEXT NOT NULL,
+    epoch            INTEGER NOT NULL CHECK (epoch >= 1),
+    binding_id       TEXT NOT NULL,
+    binding_revision INTEGER NOT NULL,
+    task_id          TEXT NOT NULL,
+    session_nonce    TEXT NOT NULL,
+    claimed_at       TEXT NOT NULL,
+    PRIMARY KEY (plan_id, epoch)
+)`,
+	`CREATE TABLE IF NOT EXISTS dag_cap_basis (
+    limit_id       TEXT NOT NULL,
+    limit_revision INTEGER NOT NULL,
+    w_minutes      REAL NOT NULL,
+    w_source       TEXT NOT NULL,
+    s_minutes      REAL NOT NULL,
+    s_source       TEXT NOT NULL,
+    decided_by     TEXT NOT NULL,
+    decided_at     TEXT NOT NULL,
+    PRIMARY KEY (limit_id, limit_revision)
+)`,
+
+	// Append-only, enforced where the rows live. A plan and a revision are never updated or deleted; a node
+	// or an edge row is never deleted and may change once, from live (retired_rev NULL) to retired. A
+	// revision's parent must already exist (parent 0 is the empty plan).
+	`CREATE TRIGGER IF NOT EXISTS dag_plans_no_update BEFORE UPDATE ON dag_plans
+BEGIN SELECT RAISE(ABORT, 'dag_plans rows are append-only: never updated'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_plans_no_delete BEFORE DELETE ON dag_plans
+BEGIN SELECT RAISE(ABORT, 'dag_plans rows are append-only: never deleted'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_plan_revisions_no_update BEFORE UPDATE ON dag_plan_revisions
+BEGIN SELECT RAISE(ABORT, 'dag_plan_revisions rows are append-only: never updated'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_plan_revisions_no_delete BEFORE DELETE ON dag_plan_revisions
+BEGIN SELECT RAISE(ABORT, 'dag_plan_revisions rows are append-only: never deleted'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_plan_revisions_parent BEFORE INSERT ON dag_plan_revisions
+WHEN NEW.parent_revision_no > 0 AND NOT EXISTS (
+    SELECT 1 FROM dag_plan_revisions WHERE plan_id = NEW.plan_id AND revision_no = NEW.parent_revision_no)
+BEGIN SELECT RAISE(ABORT, 'dag_plan_revisions: the parent revision does not exist'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_nodes_retire_only BEFORE UPDATE ON dag_nodes
+WHEN OLD.retired_rev IS NOT NULL OR NEW.retired_rev IS NULL
+  OR NEW.plan_id IS NOT OLD.plan_id OR NEW.node_id IS NOT OLD.node_id OR NEW.introduced_rev IS NOT OLD.introduced_rev
+  OR NEW.slice_digest IS NOT OLD.slice_digest OR NEW.issue_key IS NOT OLD.issue_key OR NEW.node_kind IS NOT OLD.node_kind
+  OR NEW.title IS NOT OLD.title OR NEW.criteria_set_digest IS NOT OLD.criteria_set_digest
+  OR NEW.supersedes_node_id IS NOT OLD.supersedes_node_id
+BEGIN SELECT RAISE(ABORT, 'dag_nodes rows are immutable except for their one retirement'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_nodes_no_delete BEFORE DELETE ON dag_nodes
+BEGIN SELECT RAISE(ABORT, 'dag_nodes rows are never deleted'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_edges_retire_only BEFORE UPDATE ON dag_edges
+WHEN OLD.retired_rev IS NOT NULL OR NEW.retired_rev IS NULL
+  OR NEW.plan_id IS NOT OLD.plan_id OR NEW.edge_id IS NOT OLD.edge_id OR NEW.introduced_rev IS NOT OLD.introduced_rev
+  OR NEW.from_node_id IS NOT OLD.from_node_id OR NEW.to_node_id IS NOT OLD.to_node_id OR NEW.kind IS NOT OLD.kind
+  OR NEW.target_repository IS NOT OLD.target_repository OR NEW.target_base_ref IS NOT OLD.target_base_ref
+  OR NEW.pins_code_head IS NOT OLD.pins_code_head OR NEW.decision_subject IS NOT OLD.decision_subject
+  OR NEW.decision_digest IS NOT OLD.decision_digest OR NEW.required_authority IS NOT OLD.required_authority
+BEGIN SELECT RAISE(ABORT, 'dag_edges rows are immutable except for their one retirement'); END`,
+	`CREATE TRIGGER IF NOT EXISTS dag_edges_no_delete BEFORE DELETE ON dag_edges
+BEGIN SELECT RAISE(ABORT, 'dag_edges rows are never deleted'); END`,
+}

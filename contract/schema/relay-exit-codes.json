@@ -116,6 +116,7 @@
     "MERGE_BASE_MISMATCH": "merge_base_mismatch",
     "MERGE_BASE_NOT_ADVANCED": "merge_base_not_advanced",
     "MERGE_EVIDENCE_MALFORMED": "merge_evidence_malformed",
-    "STORE_OWNED_BY_OTHER": "store_owned_by_other"
+    "STORE_OWNED_BY_OTHER": "store_owned_by_other",
+    "PLAN_REVISION_CONFLICT": "plan_revision_conflict"
   }
 }

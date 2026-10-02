@@ -433,6 +433,13 @@ func DeclaredSchema(ctx context.Context) Object {
 			return unreadable(err)
 		}
 	}
+	// The additive DAG zone is part of what this build installs on every writable open, so a store
+	// it opened agrees with what it declares.
+	for _, statement := range store.DAGZoneStatements() {
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			return unreadable(err)
+		}
+	}
 	rows, err := db.QueryContext(ctx, SchemaObjectsQuery)
 	if err != nil {
 		return unreadable(err)

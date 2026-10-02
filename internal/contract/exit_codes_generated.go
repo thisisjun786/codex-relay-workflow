@@ -74,6 +74,7 @@ const (
 	RefusalOutcomeInconsistent             RefusalReason = "outcome_inconsistent"
 	RefusalPathChanged                     RefusalReason = "path_changed"
 	RefusalPathRelocated                   RefusalReason = "path_relocated"
+	RefusalPlanRevisionConflict            RefusalReason = "plan_revision_conflict"
 	RefusalProducerNotPermitted            RefusalReason = "producer_not_permitted"
 	RefusalReadbackMismatch                RefusalReason = "readback_mismatch"
 	RefusalRecipientNotAuthorized          RefusalReason = "recipient_not_authorized"

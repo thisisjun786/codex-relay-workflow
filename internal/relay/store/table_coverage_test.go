@@ -118,7 +118,7 @@ func TestEverySchemaTable_has_a_go_query_referencing_it(t *testing.T) {
 	tables := schemaTables(t)
 	s := recordStore(t)
 	var created int
-	if err := s.DB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").Scan(&created); err != nil {
+	if err := s.DB.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'dag\\_%' ESCAPE '\\'").Scan(&created); err != nil {
 		t.Fatal(err)
 	}
 	if len(tables) != created || created == 0 {
