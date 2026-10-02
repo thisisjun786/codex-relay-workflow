@@ -32,7 +32,7 @@ func (a cancelledDelivery) ListTurnIDs(string, int) ([]any, error) { return []an
 func allTables(t *testing.T, s *store.Store) map[string]any {
 	t.Helper()
 	ctx := context.Background()
-	rows, err := s.Querier(ctx).QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name`)
+	rows, err := s.Querier(ctx).QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'dag\_%' ESCAPE '\' ORDER BY name`)
 	if err != nil {
 		t.Fatal(err)
 	}

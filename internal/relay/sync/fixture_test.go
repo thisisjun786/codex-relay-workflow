@@ -87,7 +87,7 @@ func openSQLite(path, mode string) (*sql.DB, error) {
 }
 
 func readSchema(ctx context.Context, db *sql.DB) ([][4]*string, error) {
-	rows, err := db.QueryContext(ctx, "SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY rowid")
+	rows, err := db.QueryContext(ctx, "SELECT type, name, tbl_name, sql FROM sqlite_master WHERE name NOT LIKE 'dag\\_%' ESCAPE '\\' AND tbl_name NOT LIKE 'dag\\_%' ESCAPE '\\' ORDER BY rowid")
 	if err != nil {
 		return nil, err
 	}

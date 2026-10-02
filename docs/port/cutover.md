@@ -69,6 +69,8 @@ owner `go` and the frozen schema, before any statement of the open writes; it ta
 `write-gate SH` for the store's lifetime and no longer reads or judges the mirror, copies the
 database, or rereads the stamp per transaction. A new store still gets the six keys and the mirror
 below, the socket binding still republishes the mirror, and no writer rewrites or deletes either.
+The frozen schema the open requires is the v1 table list (`relay-sqlite.sql`); the additive DAG zone (decision 74) is created after that
+validation and is not part of it.
 What follows describes the record both runtimes kept during the cutover.
 
 Ownership has two halves. The durable truth lives in the existing `schema_meta` table; the

@@ -74,14 +74,18 @@ func Rows(t testing.TB, db Querier, query string, args ...any) []map[string]any 
 }
 
 // TableRows are the rows of each table of db that where selects, by table name: where is a
-// condition on sqlite_master's name ("name LIKE 'fault_%'"; "" selects every table, schema_meta
-// and sqlite_sequence included), and each table's rows are Rows in rowid order. A table without
-// rows maps to an empty list.
+// condition on sqlite_master's name ("name LIKE 'fault_%'"; "" selects every table of the frozen v1
+// schema, schema_meta and sqlite_sequence included), and each table's rows are Rows in rowid order. A table
+// without rows maps to an empty list. The additive DAG zone (store/dag_zone.go) is outside what a
+// golden of the v1 schema holds: a where that does not name it ("dag") never selects its tables.
 func TableRows(t testing.TB, db Querier, where string) map[string][]map[string]any {
 	t.Helper()
 	query := "SELECT name FROM sqlite_master WHERE type='table'"
 	if where != "" {
 		query += " AND (" + where + ")"
+	}
+	if !strings.Contains(where, "dag") {
+		query += " AND name NOT LIKE 'dag\\_%' ESCAPE '\\'"
 	}
 	tables := map[string][]map[string]any{}
 	for _, table := range Rows(t, db, query+" ORDER BY name") {

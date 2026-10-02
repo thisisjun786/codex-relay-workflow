@@ -201,7 +201,7 @@ func storeReplay(t *testing.T, names ...string) {
 			}
 			e = beforeDB.ReadSnapshot(context.Background(), func(ctx context.Context, s *store.Store) error {
 				var e error
-				beforeRows, e = s.All(ctx, "SELECT name, sql FROM sqlite_master WHERE type='table' ORDER BY name")
+				beforeRows, e = s.All(ctx, "SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'dag\\_%' ESCAPE '\\' ORDER BY name")
 				if e != nil {
 					return e
 				}
@@ -313,7 +313,7 @@ func storeReplay(t *testing.T, names ...string) {
 				t.Fatal(err)
 			}
 			err = ro.ReadSnapshot(context.Background(), func(ctx context.Context, s *store.Store) error {
-				after, err := s.All(ctx, "SELECT name, sql FROM sqlite_master WHERE type='table' ORDER BY name")
+				after, err := s.All(ctx, "SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'dag\\_%' ESCAPE '\\' ORDER BY name")
 				if err != nil {
 					return err
 				}

@@ -2832,7 +2832,8 @@ Evidence: `internal/relay/delivery/cli.go`, `internal/relay/faults/cli.go` (no q
 Decision: a writable open of an existing store no longer runs the fence's admission. It opens the
 database read-write and, on that connection and before any statement of the open writes, reads
 `schema_meta`: the six ownership keys must be present and valid and `owner` must be `go`, and
-every table and column of the frozen v1 schema must exist; then it takes `write-gate.lock` SH for
+every table and column of the frozen v1 schema must exist (the additive DAG zone of decision 74 is created after this
+check and is not part of it); then it takes `write-gate.lock` SH for
 the store's lifetime (binding the store to the App Server socket it names first, when the store
 records none). Removed: `ownership.Admission` (`Admit`, the per-connection `Check`, the
 per-transaction `Revalidate` and `Compose`'s revalidation), the start preflight's `CheckStart`
@@ -4707,3 +4708,26 @@ internal/bridge/mcp/main_test.go (the empty `CODEX_HOME`, `XDG_STATE_HOME` and `
 `Defaults`) and internal/runtime/integration/isolated_home_test.go (IS-1's Stop dials the default
 socket's directory); docs/relay/operations.md (Where the state lives);
 plugins/crw/skills/crw-run/references/relay.md (One shared state directory).
+
+## 74. The DAG zone is created after the frozen schema is validated (CRW-183, contract decision D-01)
+
+Decision: the DAG plan tables live in an additive zone, `internal/relay/store/dag_zone.go`, that is not part of
+`relay-sqlite.sql` and so not part of what a writable open validates. The open still requires every table and column of the frozen
+v1 schema before any statement writes (decision 56) and refuses a store missing one, and then runs the v1 script and the zone's
+`CREATE ... IF NOT EXISTS` statements. A store that predates the zone opens, keeps every row and gains the zone; a runtime without the
+zone validates only the frozen tables, so it opens a store that has the zone and never reads or writes it. `SchemaVersion` stays `1` and no
+existing table, column or record changes (decision 14 stands). A command that declares itself read-only does not create the zone.
+
+The zone is a ledger: a shipped statement is never edited, a later column is an appended `ALTER TABLE ... ADD COLUMN` that every open runs, and
+`testdata/dag_zone_shipped.json` holds the shipped text, because the runtime swap gate compares `sqlite_master` text. The gate is aware of the zone, and of nothing else (generation 2 of CRW-183):
+a build that adds the zone reads `EXTENDS_ZONE` against a store without it and refuses until the install command is run with
+`--backup-state-to DIR`, which takes the OPS-4.5 backup of the whole state directory itself (copy only, byte for byte, after the daemon and in-flight
+cells pass and before the swap, recorded beside the backup); a build without the zone reads `NARROWS_ZONE` against a store that has it and is not
+refused; every other difference, a `dag_*` object defined differently included, refuses as before with the acknowledgement as without it
+([runtime installation](../runtime-install.md#why-the-schema-reading-compares-statements-and-not-versions)). The model, the commands and the one
+new refusal reason, `plan_revision_conflict`, are in [DAG plans](../relay/dag-plans.md).
+
+Where: internal/relay/store/dag_zone.go, store.go (`open`); internal/runtime/swapgate/swapgate.go (`DeclaredSchema`, `SchemaCell`,
+`ZoneArrivalOnly`, `DecideWithRelease`); internal/runtime/install/zone.go (the route and the backup), cli.go (`--backup-state-to`), install.go
+(`gateCells`); internal/relay/dag; tests internal/relay/store/dag_zone_test.go, internal/runtime/swapgate/dag_zone_test.go,
+internal/runtime/install/zone_test.go, internal/relay/dag/*_test.go.

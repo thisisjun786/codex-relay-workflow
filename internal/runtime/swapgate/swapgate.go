@@ -21,6 +21,7 @@ import (
 	"os/exec"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -48,6 +49,13 @@ const (
 	Narrows = "NARROWS"
 	Differs = "DIFFERS"
 	NoStore = "NO_STORE"
+	// ExtendsZone is an EXTENDS whose every added object belongs to the additive DAG zone and where
+	// nothing else differs (D-01): it still refuses, unless the swap is run on the route that takes
+	// the OPS-4.5 backup of the state directory first (DecideWithRelease). NarrowsZone is the
+	// opposite, a store that holds only zone objects the candidate does not declare: an older
+	// runtime ignores the zone's tables, so returning to it loses nothing and is not refused.
+	ExtendsZone = "EXTENDS_ZONE"
+	NarrowsZone = "NARROWS_ZONE"
 )
 
 // SchemaObjectsQuery is the one question both schema readings ask the catalog: every object
@@ -86,7 +94,7 @@ func Blocking(name string, cell Object) *bool {
 	case "inFlight":
 		refuses = !isZero(answer)
 	case "storeSchema":
-		refuses = answer == Narrows || answer == Extends || answer == Differs
+		refuses = answer == Narrows || answer == Extends || answer == Differs || answer == ExtendsZone
 	}
 	return &refuses
 }
@@ -226,6 +234,22 @@ func SchemaCell(storeAnswer, candidate Object) Object {
 	sort.Strings(changed)
 	evidenceValue := Object{{Key: "dbPath", Value: record.Get(storeAnswer, "dbPath")}, {Key: "onlyInStore", Value: strs(lost)}, {Key: "onlyInCandidate", Value: strs(added)}, {Key: "definedDifferently", Value: strs(changed)}}
 	backup := " OPS-4.5 makes a schema change its own decision, in its own issue, with a copied backup of the whole state directory taken first, so this update refuses rather than letting the new runtime apply it on its first write-open."
+	// The additive zone is a decision of its own (D-01) and its arrival and its removal are the only two
+	// differences with an answer of their own; a changed object, or any object outside the zone, never
+	// reaches either and keeps the answers below.
+	if len(changed) == 0 && (len(lost) == 0) != (len(added) == 0) {
+		zone, err := zoneObjects()
+		if err != nil {
+			return Cell(reading.Unreadable, false, "which schema objects belong to the additive DAG zone could not be derived: "+err.Error(), command, nil)
+		}
+		zoneEvidence := append(evidenceValue, record.Object{{Key: "zoneOnly", Value: true}}...)
+		switch {
+		case len(lost) > 0 && inZone(lost, zone):
+			return Cell(NarrowsZone, true, "the store holds objects of the additive DAG zone that this candidate does not declare: "+strings.Join(lost, ", ")+". An older runtime opens such a store and ignores the zone's tables (D-01), so returning to it loses nothing and is not refused; the zone stays in the store and a newer runtime reads it again.", command, zoneEvidence)
+		case len(added) > 0 && inZone(added, zone):
+			return Cell(ExtendsZone, true, "the candidate declares objects of the additive DAG zone that the store does not hold: "+strings.Join(added, ", ")+". Nothing in the store is lost or rewritten, and the candidate creates them on its first write-open (D-01). OPS-4.5 still requires a copied backup of the whole state directory first, so this refuses unless the command is run with --backup-state-to DIR: it copies the state directory (copy only, byte for byte) after the daemon and in-flight cells pass and before the swap, records the copy, and then allows the swap.", command, zoneEvidence)
+		}
+	}
 	switch {
 	case len(lost) > 0:
 		return Cell(Narrows, true, "the store holds schema objects this candidate does not declare, so installing it would leave data no runtime can read: "+strings.Join(lost, ", "), command, evidenceValue)
@@ -243,6 +267,49 @@ func strs(values []string) []any {
 		out[i] = v
 	}
 	return out
+}
+
+// zoneObjects are the schema objects (the keys SchemaObjectsQuery gives: kind, a space and the name) that
+// the additive DAG zone creates: its statements applied alone to an empty in-memory database, the same
+// statements a writable open runs and DeclaredSchema declares. They are derived, not matched by a name
+// prefix, so a dag_ object this build does not know is not the zone's and keeps the plain answers.
+var zoneObjects = sync.OnceValues(func() (map[string]bool, error) {
+	db, err := sql.Open("sqlite", "file::memory:")
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	ctx := context.Background()
+	for _, statement := range store.DAGZoneStatements() {
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			return nil, err
+		}
+	}
+	rows, err := db.QueryContext(ctx, SchemaObjectsQuery)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	objects := map[string]bool{}
+	for rows.Next() {
+		var name string
+		var statement sql.NullString
+		if err := rows.Scan(&name, &statement); err != nil {
+			return nil, err
+		}
+		objects[name] = true
+	}
+	return objects, rows.Err()
+})
+
+func inZone(names []string, zone map[string]bool) bool {
+	for _, name := range names {
+		if !zone[name] {
+			return false
+		}
+	}
+	return true
 }
 
 func sameStatement(a, b any) bool {
@@ -300,8 +367,41 @@ func isSpace(r rune) bool { return unicode.IsSpace(r) || r >= 0x1c && r <= 0x1f 
 // Decide is swapgate.decide: the verdict, and which cells produced it. An established refusal
 // is reported as a refusal even when another cell could not answer.
 func Decide(cells map[string]Object) Object {
+	return DecideWithRelease(cells, nil)
+}
+
+// Release is the one thing that lets a refusing storeSchema cell stand: the record of the OPS-4.5
+// backup of the state directory, taken because the only difference is the additive zone arriving.
+type Release struct{ Backup Object }
+
+// ZoneArrivalOnly is whether the swap refuses for one reason only: the candidate brings the additive
+// DAG zone to a store that lacks it, with the daemon stopped and no attempt open both established.
+// Anything else (a running daemon, an open attempt, a cell that could not be read, another schema
+// difference) is not the arrival alone, and no backup is taken for it.
+func ZoneArrivalOnly(cells map[string]Object) bool {
+	schema := cells["storeSchema"]
+	if schema == nil || !pyvalue.Truthy(record.Get(schema, "readable")) || record.Get(schema, "answer") != ExtendsZone {
+		return false
+	}
+	for _, name := range []string{"daemon", "inFlight"} {
+		cell := cells[name]
+		if cell == nil {
+			return false
+		}
+		if refuses := Blocking(name, cell); refuses == nil || *refuses {
+			return false
+		}
+	}
+	return true
+}
+
+// DecideWithRelease is Decide with a release: when the only difference is the zone arriving
+// (ZoneArrivalOnly) the storeSchema cell does not refuse, and the verdict carries the backup. A nil
+// release is Decide, and every other cell still refuses as it does.
+func DecideWithRelease(cells map[string]Object, release *Release) Object {
 	var blockers, unread []any
 	reported := Object{}
+	released := release != nil && ZoneArrivalOnly(cells)
 	for _, name := range Cells {
 		given, present := cells[name]
 		cell := given
@@ -309,6 +409,10 @@ func Decide(cells map[string]Object) Object {
 			cell = Cell(reading.AccessError, false, "this cell was not read at all", nil, nil)
 		}
 		refuses := Blocking(name, cell)
+		if released && name == "storeSchema" && refuses != nil && *refuses {
+			stands := false
+			refuses = &stands
+		}
 		switch {
 		case refuses == nil:
 			unread = append(unread, name+": "+reading.Text(record.Get(cell, "detail")))
@@ -333,13 +437,17 @@ func Decide(cells map[string]Object) Object {
 	if unread == nil {
 		unread = []any{}
 	}
-	return Object{
+	out := Object{
 		{Key: "verdict", Value: verdict},
 		{Key: "cells", Value: reported},
 		{Key: "blockedBy", Value: blockers},
 		{Key: "unreadable", Value: unread},
 		{Key: "note", Value: "OPS-4.4 replaces a runtime only with the daemon stopped and open attempts reconciled, and this command never starts or stops one: the service belongs to the scope operator (OPS-4.1). A cell that could not be read keeps the existing installation exactly as a refusal does."},
 	}
+	if released {
+		out = append(out, record.Object{{Key: "stateBackup", Value: release.Backup}}...)
+	}
+	return out
 }
 
 // StorePresence is runtime_install.store_presence without the interpreter: whether a store
@@ -429,6 +537,13 @@ func DeclaredSchema(ctx context.Context) Object {
 		return unreadable(err)
 	}
 	for _, statement := range guards {
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			return unreadable(err)
+		}
+	}
+	// The additive DAG zone is part of what this build installs on every writable open, so a store
+	// it opened agrees with what it declares.
+	for _, statement := range store.DAGZoneStatements() {
 		if _, err := db.ExecContext(ctx, statement); err != nil {
 			return unreadable(err)
 		}

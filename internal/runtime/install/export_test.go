@@ -2,6 +2,7 @@ package install
 
 import (
 	"context"
+	"os"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
@@ -30,6 +31,47 @@ func ReplacePointerPlacement(place func(path, target string) error) (restore fun
 	placePointer = place
 	return func() { placePointer = saved }
 }
+
+// ReplaceStateBackupStep makes the state-directory backup call step (it is called with "copied", after the copy and
+// before its verification) until restored: a test makes the backup fail there, or changes the state directory under it.
+func ReplaceStateBackupStep(step func(string) error) (restore func()) {
+	saved := stateBackupStep
+	stateBackupStep = step
+	return func() { stateBackupStep = saved }
+}
+
+// ReplaceDirectorySync makes the backup's directory syncs go through wrap, which is given the directory and the real
+// sync, until restored.
+func ReplaceDirectorySync(wrap func(path string, next func(string) error) error) (restore func()) {
+	saved := syncDirectory
+	syncDirectory = func(path string) error { return wrap(path, saved) }
+	return func() { syncDirectory = saved }
+}
+
+// ReplaceModeSync makes the sync of an entry after its mode is set go through wrap, which is given the path and the
+// real sync, until restored.
+func ReplaceModeSync(wrap func(path string, next func(string) error) error) (restore func()) {
+	saved := syncAfterMode
+	syncAfterMode = func(path string) error { return wrap(path, saved) }
+	return func() { syncAfterMode = saved }
+}
+
+// ListedModes is what the backup's listing of a state directory records for each entry: its mode in the source and
+// the mode its copy is to be given.
+func ListedModes(source, dbPath string) (map[string][2]os.FileMode, error) {
+	entries, _, err := listState(source, dbPath)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string][2]os.FileMode{}
+	for _, e := range entries {
+		out[e.Path] = [2]os.FileMode{os.FileMode(e.Mode), os.FileMode(e.CopyMode)}
+	}
+	return out, nil
+}
+
+// CopyMode is the mode a backup's copy of an entry is given.
+func CopyMode(dir bool, mode os.FileMode) os.FileMode { return copyMode(dir, mode) }
 
 // ReplaceBeforeWriteLock runs between every settings or bridge record write's decision and the
 // lock it acts under, until restored.

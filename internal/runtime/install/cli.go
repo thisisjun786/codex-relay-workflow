@@ -23,6 +23,9 @@ import (
 // --issue names nothing else: the installer's own issue.
 const DefaultIssue = "CRW-158"
 
+// backupHelp is the flag that acknowledges the additive DAG zone arriving (D-01, OPS-4.5).
+const backupHelp = "the directory the whole relay state directory is copied to (copy only, byte for byte, recorded) before a swap that brings the additive DAG zone to a store that predates it; the acknowledgement that route needs"
+
 // Commands are `crw install`'s subcommands.
 var Commands = []string{"install", "update", "rollback", "remove", "status", "register-mcp", "hook"}
 
@@ -82,7 +85,7 @@ func Main(ctx context.Context, args []string, env scope.Env, stdout, stderr io.W
 	state := flags.String("state", "", "the relay state directory the gate reads")
 	var from, sums, release, releaseURL, owner, name, bridgeCommand, relayCommand, markerRoot, dbPath, journalRoot, mode, isolation *string
 	var bridgeArgs repeated
-	var policy given
+	var policy, backup given
 	var dryRun *bool
 	var guardTimeout, timeout *int64
 	switch command {
@@ -91,7 +94,10 @@ func Main(ctx context.Context, args []string, env scope.Env, stdout, stderr io.W
 		sums = flags.String("sums", "", "the SHA256SUMS that lists it (default: beside the archive)")
 		release = flags.String("release", "", "a release tag whose archive and SHA256SUMS are fetched")
 		releaseURL = flags.String("release-url", ReleaseURL, "where release assets are fetched from")
-	case "rollback", "remove", "status":
+		flags.Var(&backup, "backup-state-to", backupHelp)
+	case "rollback":
+		flags.Var(&backup, "backup-state-to", backupHelp)
+	case "remove", "status":
 	case "register-mcp":
 		owner = flags.String("owner", OwnerPlugin, "who registers the bridge: plugin (the only supported owner)")
 		name = flags.String("name", ServerName, "the server name the plugin declares")
@@ -146,7 +152,14 @@ func Main(ctx context.Context, args []string, env scope.Env, stdout, stderr io.W
 		fmt.Fprintln(stderr, "crw install rollback: error: argument directory: an empty directory names no runtime; name one, or give no directory to return to the outgoing selection")
 		return Usage
 	}
+	if backup.set && strings.TrimSpace(backup.value) == "" {
+		fmt.Fprintln(stderr, "crw install "+command+": error: argument --backup-state-to: an empty value names no directory; name the directory the state directory is to be copied to")
+		return Usage
+	}
 	var paths []namedValue
+	if backup.set {
+		paths = append(paths, namedValue{"--backup-state-to", backup.value})
+	}
 	for _, one := range []struct {
 		flag  string
 		value *string
@@ -177,6 +190,12 @@ func Main(ctx context.Context, args []string, env scope.Env, stdout, stderr io.W
 				fmt.Fprintln(stderr, "crw install "+command+": "+err.Error())
 			}
 			return Refused
+		}
+	}
+	if backup.set {
+		if o.StateBackup, err = absolute(backup.value); err != nil {
+			fmt.Fprintln(stderr, "crw install "+command+": error: --backup-state-to: "+err.Error())
+			return Usage
 		}
 	}
 	var result Object
