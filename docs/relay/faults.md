@@ -898,11 +898,13 @@ scanned at most `SCAN_WINDOW` (4096) of their rows per sweep, however few of tho
 that does not fill inside the window leaves the cursor where the scan stopped, so the next sweep
 goes on from there, and the rotation ends only when a scan reaches the captured upper key: a sweep
 costs the same over a long history as over a short one, where a short page used to start the source
-again and read all of it every tick. A source of no more rows than a window is read whole in one
-sweep, as before. What this costs is detection latency: a delivery that becomes held while the scan
-is elsewhere is read when the rotation next reaches it. A rotation takes a tick for every 32 rows
-that match, as it always did, a tick for every 4096 rows scanned, and the one that reaches its end,
-so a store of 20,000 deliveries with none held is covered in 5 ticks where one used to cover it.
+again and read all of it every tick. A source of no more rows than a window is paged exactly as
+before: one sweep reads it whole when fewer than 32 of its rows match, and a page that fills goes on
+from its last row on the next sweep. What this costs is detection latency: a delivery that becomes
+held while the scan is elsewhere is read when the rotation next reaches it. A rotation takes at most
+a tick for every 32 rows that match, as it always did, a tick for every 4096 rows scanned, and the
+one that reaches its end, so a store of 20,000 deliveries with none held is covered in 5 ticks where
+one used to cover it.
 The presence check of an open `delivery_stalled` fault reaches a delivery's
 attempts through their (event, attempt number) key, so it is linear in the deliveries and not in the
 deliveries times the attempts.

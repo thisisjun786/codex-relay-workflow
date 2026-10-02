@@ -119,7 +119,8 @@ func Test_CRW293_ScanWindowStepsARotationThroughASource(t *testing.T) {
 	}
 }
 
-// A source of no more rows than the window is read whole in one sweep, as it always was.
+// A source of no more rows than the window is paged as it always was: one sweep reads it whole when
+// fewer than a page of its rows match.
 func Test_CRW293_ASourceWithinTheWindowIsReadWholeInOneSweep(t *testing.T) {
 	l, c := testLedger(t)
 	seedSweepHistory(t, l, c, 3, func(i int) bool { return i == 1 }, "held")

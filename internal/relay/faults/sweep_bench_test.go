@@ -112,7 +112,8 @@ func BenchmarkFaultSweepTick(b *testing.B) {
 	}
 }
 
-// BenchmarkFaultSweepReads is the same tick without recording: the reads alone.
+// BenchmarkFaultSweepReads is the same tick without recording: the reads alone. No cursor moves, so
+// each sweep is the first of a rotation.
 func BenchmarkFaultSweepReads(b *testing.B) {
 	for _, deliveries := range []int{5000, 10000, historyDeliveries} {
 		b.Run(fmt.Sprintf("deliveries=%d", deliveries), func(b *testing.B) {
