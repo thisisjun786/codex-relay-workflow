@@ -1,0 +1,58 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/post-compact-injecting-bg-terminal-affordance.post-compact",
+    "A/cxc-ops/compact-affordance.test.ts"
+  ],
+  "note": "A PostCompact carrying agent_id is a child's compaction: no marker and no .codexclaw directory are created; a relative cwd is refused the same way.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "post-compact-injecting-bg-terminal-affordance.post-compact",
+        "stdin": {
+          "hook_event_name": "PostCompact",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "trigger": "auto",
+          "transcript_path": null,
+          "agent_id": "rec-a1",
+          "agent_type": "explorer"
+        }
+      },
+      {
+        "hook": "post-compact-injecting-bg-terminal-affordance.post-compact",
+        "stdin": {
+          "hook_event_name": "PostCompact",
+          "session_id": "rec-s1",
+          "cwd": "ws",
+          "trigger": "auto",
+          "transcript_path": null
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      }
+    },
+    "calls": []
+  }
+}

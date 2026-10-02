@@ -1,0 +1,87 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/post-tool-use-capturing-interview-answers",
+    "K8/ws/.codexclaw/interviews",
+    "A/pabcd-state/interview-ledger.test.ts",
+    "A/plugin/hook-e2e.test.mjs"
+  ],
+  "note": "Host wire shape: tool_input and tool_response as JSON strings (Korean text) still record question_asked and answer_recorded.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "post-tool-use-capturing-interview-answers",
+        "stdin": {
+          "hook_event_name": "PostToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "request_user_input",
+          "tool_input": "{\"questions\": [{\"id\": \"item3\", \"header\": \"기준 형태\", \"question\": \"항목 3의 기준 문서를 어떤 형태로 쓸까요?\"}]}",
+          "tool_use_id": "rec-call-1",
+          "tool_response": "{\"answers\": {\"item3\": {\"answers\": [\"신규 채택에만 적용\"]}}}"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/.gitignore": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n"
+      },
+      "ws/.codexclaw/interviews": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/interviews/rec-s1.jsonl": {
+        "type": "file",
+        "mode": "0644",
+        "form": "jsonl",
+        "jsonl": [
+          {
+            "ts": "<TS>",
+            "sessionId": "rec-s1",
+            "turnId": "rec-t1",
+            "event": "question_asked",
+            "questionId": "item3",
+            "eventId": "rec-t1:item3:question_asked",
+            "question": "항목 3의 기준 문서를 어떤 형태로 쓸까요?"
+          },
+          {
+            "ts": "<TS>",
+            "sessionId": "rec-s1",
+            "turnId": "rec-t1",
+            "event": "answer_recorded",
+            "questionId": "item3",
+            "eventId": "rec-t1:item3:answer_recorded",
+            "answers": [
+              "신규 채택에만 적용"
+            ]
+          }
+        ]
+      }
+    },
+    "calls": []
+  }
+}

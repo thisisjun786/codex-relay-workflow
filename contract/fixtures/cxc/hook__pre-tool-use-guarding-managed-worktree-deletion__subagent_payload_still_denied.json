@@ -1,0 +1,85 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/pre-tool-use-guarding-managed-worktree-deletion",
+    "K5/hook-rendered",
+    "A/pabcd-state/worktree-guard.test.ts"
+  ],
+  "note": "The deletion guard is dispatched above the subagent early exit (audit B3): a payload stamped with agent_id/agent_type is still denied.",
+  "given": {
+    "files": {
+      "codex/worktrees/7627/repo/.git": "gitdir: /fake/main/.git/worktrees/7627\n",
+      "codex/worktrees/7627/repo/README.md": "managed checkout\n"
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "pre-tool-use-guarding-managed-worktree-deletion",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${CODEX_HOME}/worktrees/7627/repo",
+          "turn_id": "rec-t1",
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "rm -rf ${CODEX_HOME}/worktrees/7627"
+          },
+          "tool_use_id": "rec-call-1",
+          "agent_id": "rec-a1",
+          "agent_type": "worker"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "[codexclaw: WORKTREE-GUARD-03] blocked `rm -r ${CODEX_HOME}/worktrees/7627`: it deletes this session's own Codex-app-managed worktree (slot: ${CODEX_HOME}/worktrees/7627). This thread is bound to that worktree; deletion destroys uncommitted work. Remedies: finish and commit here; rename in place (git switch -c / branch -m); teardown of THIS session's worktree is done by the user (archive the thread in the app — snapshot preserved — or remove it from OUTSIDE this session). See $codexclaw:cxc-worktree-guardian.",
+            "additionalContext": "[codexclaw: WORKTREE-GUARD-03] blocked `rm -r ${CODEX_HOME}/worktrees/7627`: it deletes this session's own Codex-app-managed worktree (slot: ${CODEX_HOME}/worktrees/7627). This thread is bound to that worktree; deletion destroys uncommitted work. Remedies: finish and commit here; rename in place (git switch -c / branch -m); teardown of THIS session's worktree is done by the user (archive the thread in the app — snapshot preserved — or remove it from OUTSIDE this session). See $codexclaw:cxc-worktree-guardian."
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "codex/worktrees": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "codex/worktrees/7627": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "codex/worktrees/7627/repo": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "codex/worktrees/7627/repo/.git": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "gitdir: /fake/main/.git/worktrees/7627\n"
+      },
+      "codex/worktrees/7627/repo/README.md": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "managed checkout\n"
+      }
+    },
+    "calls": []
+  }
+}

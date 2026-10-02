@@ -1,0 +1,68 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/memory/search",
+    "A/recall/format-freshness.test.ts",
+    "A/recall/chat-fallback.test.ts"
+  ],
+  "note": "The plain memory envelope: (origin/kind) location, [age: Nd] labels and the newer-relpath pointer between same-topic hits; the chat-fallback warning in plain form.",
+  "given": {
+    "files": {
+      "codex/memories/MEMORY.md": "# Task Group: search infrastructure\n\n## Task 1: ship the trigram sidecar index, success\n\nkeywords: trigram, sidecar, 한글 검색\n",
+      "codex/memories/rollout_summaries/summary-aaa.md": "thread_id: 019f0000-0000-7000-8000-00000000aaaa\nupdated_at: 2025-12-31T01:00:00.000Z\n\n# Deployed the trigram index\n\nRollout context: korean trigram deployment succeeded.\n",
+      "codex/memories/windows-notes.md": "# CRLF notes\r\n\r\nthe wombat migration finished on windows\r\n",
+      "codex/sessions/2025/11/01/rollout-2025-11-01T01-00-00-019f0000-0000-7000-8000-00000000dddd.jsonl": "{\"timestamp\":\"2025-11-01T01:00:00.000Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"019f0000-0000-7000-8000-00000000dddd\",\"timestamp\":\"2025-11-01T01:00:00.000Z\",\"cwd\":\"${WS}\",\"originator\":\"codex-tui\",\"cli_version\":\"0.130.0\",\"instructions\":\"base instructions\"}}\n{\"timestamp\":\"2025-11-01T01:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"ancient question about the trigram index\"}]}}\n{\"timestamp\":\"2025-11-01T01:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"ancient answer\"}]}}\n",
+      "codex/sessions/2025/12/30/rollout-2025-12-30T05-00-00-019f0000-0000-7000-8000-00000000cccc.jsonl": "{\"timestamp\":\"2025-12-30T05:00:00.000Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"019f0000-0000-7000-8000-00000000cccc\",\"timestamp\":\"2025-12-30T05:00:00.000Z\",\"cwd\":\"/proj/elsewhere\",\"originator\":\"codex-tui\",\"cli_version\":\"0.130.0\",\"instructions\":\"base instructions\"}}\n{\"timestamp\":\"2025-12-30T05:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"unrelated project question about the trigram index\"}]}}\n{\"timestamp\":\"2025-12-30T05:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"unrelated answer\"}]}}\n",
+      "codex/sessions/2025/12/31/rollout-2025-12-31T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl": "{\"timestamp\":\"2025-12-31T01:00:00.000Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"019f0000-0000-7000-8000-00000000aaaa\",\"timestamp\":\"2025-12-31T01:00:00.000Z\",\"cwd\":\"${WS}\",\"originator\":\"codex-tui\",\"cli_version\":\"0.130.0\",\"instructions\":\"base instructions\"}}\n{\"timestamp\":\"2025-12-31T01:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"# AGENTS.md instructions injected preamble mentioning zebra\"}]}}\n{\"timestamp\":\"2025-12-31T01:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"please deploy the trigram index for korean search\"}]}}\n{\"timestamp\":\"2025-12-31T01:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"deployed the trigram index; korean 한글 검색 works now\"}]}}\n{\"timestamp\":\"2025-12-31T01:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",\"name\":\"exec_command\",\"arguments\":\"{\\\"cmd\\\":\\\"rg zebra-in-tool-arguments\\\"}\",\"call_id\":\"tool_1\"}}\n{\"timestamp\":\"2025-12-31T01:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"function_call_output\",\"call_id\":\"tool_1\",\"output\":\"tool output: zebra-in-tool-output\"}}\n{\"timestamp\":\"2025-12-31T01:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"한글 트라이그램 결과 확인해줘\"}]}}\n{\"timestamp\":\"2025-12-31T01:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"확인 완료: 트라이그램 인덱스 정상\"}]}}\n",
+      "codex/sessions/2025/12/31/rollout-2025-12-31T02-00-00-019f0000-0000-7000-8000-00000000bbbb.jsonl": "{\"timestamp\":\"2025-12-31T02:00:00.000Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"019f0000-0000-7000-8000-00000000bbbb\",\"timestamp\":\"2025-12-31T02:00:00.000Z\",\"cwd\":\"${WS}\",\"originator\":\"codex_exec\",\"cli_version\":\"0.130.0\",\"instructions\":\"base instructions\",\"thread_source\":\"subagent\",\"source\":{\"subagent\":{\"parent_thread_id\":\"019f0000-0000-7000-8000-00000000aaaa\",\"depth\":1}}}}\n{\"timestamp\":\"2025-12-31T02:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"subagent task about the trigram index\"}]}}\n{\"timestamp\":\"2025-12-31T02:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"subagent reply mentioning zebra too\"}]}}\n"
+    },
+    "sqlite": {
+      "codex/memories_1.sqlite": [
+        "CREATE TABLE stage1_outputs (thread_id TEXT PRIMARY KEY, source_updated_at INTEGER NOT NULL, raw_memory TEXT NOT NULL, rollout_summary TEXT NOT NULL)",
+        "INSERT INTO stage1_outputs VALUES ('019f0000-0000-7000-8000-00000000aaaa', 1767150000, 'raw memory about trigram deployment', 'summary duplicate')",
+        "INSERT INTO stage1_outputs VALUES ('019f0000-0000-7000-8000-00000000bbbb', 1767150000, 'db-only memory row about quagga migrations', 'quagga summary')"
+      ]
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "memory",
+          "search",
+          "trigram"
+        ]
+      },
+      {
+        "cli": [
+          "memory",
+          "search",
+          "unrelated"
+        ]
+      }
+    ],
+    "observe": [
+      "cxc"
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "# 4 memory hits (3 files scanned, <DURATION>ms)\n\n(file/handbook) MEMORY.md:3 [<TS>] [age: 0d]\n## Task 1: ship the trigram sidecar index, success\n---\n\n(file/handbook) MEMORY.md:5 [<TS>] [age: 0d]\nkeywords: trigram, sidecar, 한글 검색\n---\n\n(file/rollout) rollout_summaries/summary-aaa.md:4 [<TS>] [age: 0d]\n# Deployed the trigram index\n---\n\n(file/rollout) rollout_summaries/summary-aaa.md:6 [<TS>] [age: 0d]\nRollout context: korean trigram deployment succeeded.\n---\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "# 2 memory hits (3 files scanned, <DURATION>ms)\n\n(chat/chat) ${CODEX_HOME}/sessions/2025/12/30/rollout-2025-12-30T05-00-00-<UUID_1>.jsonl [<TS>] {/proj/elsewhere} [age: 1d]\nunrelated project question about the trigram index\n---\n\n(chat/chat) ${CODEX_HOME}/sessions/2025/12/30/rollout-2025-12-30T05-00-00-<UUID_1>.jsonl [<TS>] {/proj/elsewhere} [age: 1d]\nunrelated answer\n---\n\n--- warnings ---\nno memory artifacts matched — 2 raw session message(s) shown instead (tool logs excluded)\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

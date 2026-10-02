@@ -1,0 +1,168 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/chat/search",
+    "K6/memory/search",
+    "A/recall/nl-query.test.ts"
+  ],
+  "note": "Long Korean natural-language queries: memory search relaxes the all-words AND and reaches a partial document; chat search for the P2 sentence finds nothing without --synonyms (the transcript says Codex, not 코덱스) and reaches it with --synonyms.",
+  "given": {
+    "files": {
+      "codex/memories/nl-d3.md": "# dogfooding\n\n로컬 소스를 실제 서비스에 연결하고 정상 동작까지 확인. bun link healthz 10100.\n",
+      "codex/memories/nl-r2.md": "# 2.49.0 provenance\n\n2.49.0 npm 패키지가 그 소스인지 검증한 기록. gitHead SLSA.\n",
+      "codex/sessions/2025/12/31/rollout-2025-12-31T11-00-00-019f0000-0000-7000-8000-00000000d222.jsonl": "{\"timestamp\":\"2025-12-31T11:00:00.000Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"019f0000-0000-7000-8000-00000000d222\",\"timestamp\":\"2025-12-31T11:00:00.000Z\",\"cwd\":\"/proj/alpha\",\"originator\":\"codex-tui\",\"cli_version\":\"0.130.0\",\"instructions\":\"base instructions\"}}\n{\"timestamp\":\"2025-12-31T11:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"코덱스 재시작하니 플러그인이 사라짐\"}]}}\n{\"timestamp\":\"2025-12-31T11:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"Codex를 재시작하면 BundledPluginsMarketplace 플러그인이 사라지는 문제가 재현된다. plugin wipe.\"}]}}\n"
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "memory",
+          "search",
+          "지난번 로컬 소스를 실제 서비스에 연결하고 정상 동작까지 확인한 방법",
+          "--json"
+        ]
+      },
+      {
+        "cli": [
+          "memory",
+          "search",
+          "2.49.0 배포하고 npm 패키지가 진짜 그 소스인지 검증한 기록",
+          "--json"
+        ]
+      },
+      {
+        "cli": [
+          "chat",
+          "search",
+          "코덱스를 재시작하면 플러그인이 사라지는 문제",
+          "--days",
+          "0",
+          "--scan",
+          "--json"
+        ]
+      },
+      {
+        "cli": [
+          "chat",
+          "search",
+          "코덱스를 재시작하면 플러그인이 사라지는 문제",
+          "--days",
+          "0",
+          "--scan",
+          "--synonyms",
+          "--json"
+        ]
+      }
+    ],
+    "observe": [
+      "cxc"
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-pretty",
+        "stdout_json": {
+          "hits": [
+            {
+              "origin": "file",
+              "kind": "other",
+              "relpath": "nl-d3.md",
+              "threadId": null,
+              "updatedAt": "<TS>",
+              "excerpt": "로컬 소스를 실제 서비스에 연결하고 정상 동작까지 확인. bun link healthz 10100.",
+              "startLine": 3,
+              "cwd": null,
+              "score": 15.499999998280884
+            }
+          ],
+          "warnings": [
+            "memories db not found (stage1 search off)"
+          ],
+          "scannedFiles": 2,
+          "elapsedMs": "<DURATION>"
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-pretty",
+        "stdout_json": {
+          "hits": [
+            {
+              "origin": "file",
+              "kind": "other",
+              "relpath": "nl-r2.md",
+              "threadId": null,
+              "updatedAt": "<TS>",
+              "excerpt": "2.49.0 npm 패키지가 그 소스인지 검증한 기록. gitHead SLSA.",
+              "startLine": 3,
+              "cwd": null,
+              "score": 13.499999998280884
+            }
+          ],
+          "warnings": [
+            "memories db not found (stage1 search off)"
+          ],
+          "scannedFiles": 2,
+          "elapsedMs": "<DURATION>"
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-pretty",
+        "stdout_json": {
+          "hits": [],
+          "warnings": [
+            "state db not found (metadata enrichment off)"
+          ],
+          "scannedFiles": 1,
+          "matchedFiles": 0,
+          "totalFiles": 1,
+          "elapsedMs": "<DURATION>",
+          "mode": "scan",
+          "clipped": false
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-pretty",
+        "stdout_json": {
+          "hits": [
+            {
+              "ts": "<TS>",
+              "role": "assistant",
+              "text": "Codex를 재시작하면 BundledPluginsMarketplace 플러그인이 사라지는 문제가 재현된다. plugin wipe.",
+              "matchField": "content",
+              "threadId": "<UUID_1>",
+              "title": null,
+              "cwd": "/proj/alpha",
+              "gitBranch": null,
+              "source": "main",
+              "file": "${CODEX_HOME}/sessions/2025/12/31/rollout-2025-12-31T11-00-00-<UUID_1>.jsonl",
+              "context": []
+            }
+          ],
+          "warnings": [
+            "state db not found (metadata enrichment off)"
+          ],
+          "scannedFiles": 1,
+          "matchedFiles": 1,
+          "totalFiles": 1,
+          "elapsedMs": "<DURATION>",
+          "mode": "scan",
+          "clipped": false
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

@@ -1,0 +1,434 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/stop-waking-on-background-completion",
+    "K5/hook-rendered",
+    "K8/ws/.codexclaw/bg",
+    "A/bg-wake/hook.test.ts"
+  ],
+  "note": "Seven undelivered completions: the first Stop delivers the five oldest by endedAt, the second the remaining two, the third releases.",
+  "given": {
+    "json": {
+      "ws/.codexclaw/bg/job1.json": {
+        "id": "job1",
+        "sessionId": "rec-s1",
+        "adoptedBy": null,
+        "cwd": "${WS}",
+        "command": [
+          "make",
+          "t1"
+        ],
+        "note": null,
+        "pid": null,
+        "startToken": null,
+        "status": "complete",
+        "exitCode": 0,
+        "startedAt": "2025-12-31T23:40:00.000Z",
+        "endedAt": "2025-12-31T23:51:00.000Z",
+        "deliveredAt": null
+      },
+      "ws/.codexclaw/bg/job2.json": {
+        "id": "job2",
+        "sessionId": "rec-s1",
+        "adoptedBy": null,
+        "cwd": "${WS}",
+        "command": [
+          "make",
+          "t2"
+        ],
+        "note": null,
+        "pid": null,
+        "startToken": null,
+        "status": "complete",
+        "exitCode": 0,
+        "startedAt": "2025-12-31T23:40:00.000Z",
+        "endedAt": "2025-12-31T23:52:00.000Z",
+        "deliveredAt": null
+      },
+      "ws/.codexclaw/bg/job3.json": {
+        "id": "job3",
+        "sessionId": "rec-s1",
+        "adoptedBy": null,
+        "cwd": "${WS}",
+        "command": [
+          "make",
+          "t3"
+        ],
+        "note": null,
+        "pid": null,
+        "startToken": null,
+        "status": "complete",
+        "exitCode": 0,
+        "startedAt": "2025-12-31T23:40:00.000Z",
+        "endedAt": "2025-12-31T23:53:00.000Z",
+        "deliveredAt": null
+      },
+      "ws/.codexclaw/bg/job4.json": {
+        "id": "job4",
+        "sessionId": "rec-s1",
+        "adoptedBy": null,
+        "cwd": "${WS}",
+        "command": [
+          "make",
+          "t4"
+        ],
+        "note": null,
+        "pid": null,
+        "startToken": null,
+        "status": "complete",
+        "exitCode": 0,
+        "startedAt": "2025-12-31T23:40:00.000Z",
+        "endedAt": "2025-12-31T23:54:00.000Z",
+        "deliveredAt": null
+      },
+      "ws/.codexclaw/bg/job5.json": {
+        "id": "job5",
+        "sessionId": "rec-s1",
+        "adoptedBy": null,
+        "cwd": "${WS}",
+        "command": [
+          "make",
+          "t5"
+        ],
+        "note": null,
+        "pid": null,
+        "startToken": null,
+        "status": "complete",
+        "exitCode": 0,
+        "startedAt": "2025-12-31T23:40:00.000Z",
+        "endedAt": "2025-12-31T23:55:00.000Z",
+        "deliveredAt": null
+      },
+      "ws/.codexclaw/bg/job6.json": {
+        "id": "job6",
+        "sessionId": "rec-s1",
+        "adoptedBy": null,
+        "cwd": "${WS}",
+        "command": [
+          "make",
+          "t6"
+        ],
+        "note": null,
+        "pid": null,
+        "startToken": null,
+        "status": "complete",
+        "exitCode": 0,
+        "startedAt": "2025-12-31T23:40:00.000Z",
+        "endedAt": "2025-12-31T23:56:00.000Z",
+        "deliveredAt": null
+      },
+      "ws/.codexclaw/bg/job7.json": {
+        "id": "job7",
+        "sessionId": "rec-s1",
+        "adoptedBy": null,
+        "cwd": "${WS}",
+        "command": [
+          "make",
+          "t7"
+        ],
+        "note": null,
+        "pid": null,
+        "startToken": null,
+        "status": "complete",
+        "exitCode": 0,
+        "startedAt": "2025-12-31T23:40:00.000Z",
+        "endedAt": "2025-12-31T23:57:00.000Z",
+        "deliveredAt": null
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "stop-waking-on-background-completion",
+        "stdin": {
+          "hook_event_name": "Stop",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "stop_hook_active": false,
+          "last_assistant_message": "Done.",
+          "transcript_path": null
+        }
+      },
+      {
+        "hook": "stop-waking-on-background-completion",
+        "stdin": {
+          "hook_event_name": "Stop",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "stop_hook_active": false,
+          "last_assistant_message": "Done.",
+          "transcript_path": null
+        }
+      },
+      {
+        "hook": "stop-waking-on-background-completion",
+        "stdin": {
+          "hook_event_name": "Stop",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "stop_hook_active": false,
+          "last_assistant_message": "Done.",
+          "transcript_path": null
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "decision": "block",
+          "reason": "[codexclaw bg] 백그라운드 작업 5건이 끝났습니다.\n- job1 (complete, exit 0, 11m00s) — make t1\n- job2 (complete, exit 0, 12m00s) — make t2\n- job3 (complete, exit 0, 13m00s) — make t3\n- job4 (complete, exit 0, 14m00s) — make t4\n- job5 (complete, exit 0, 15m00s) — make t5\n출력은 `cxc bg get <id> --tail 40`으로 봅니다. 전체 목록은 `cxc bg list`.\n결과를 확인하고 필요한 후속 작업을 이어가세요."
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "decision": "block",
+          "reason": "[codexclaw bg] 백그라운드 작업 2건이 끝났습니다.\n- job6 (complete, exit 0, 16m00s) — make t6\n- job7 (complete, exit 0, 17m00s) — make t7\n출력은 `cxc bg get <id> --tail 40`으로 봅니다. 전체 목록은 `cxc bg list`.\n결과를 확인하고 필요한 후속 작업을 이어가세요."
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/bg": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/bg/job1.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty",
+        "json": {
+          "id": "job1",
+          "sessionId": "rec-s1",
+          "adoptedBy": null,
+          "cwd": "${WS}",
+          "command": [
+            "make",
+            "t1"
+          ],
+          "note": null,
+          "pid": null,
+          "startToken": null,
+          "status": "complete",
+          "exitCode": 0,
+          "startedAt": "<TS>",
+          "endedAt": "<TS>",
+          "deliveredAt": "<TS>"
+        }
+      },
+      "ws/.codexclaw/bg/job2.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty",
+        "json": {
+          "id": "job2",
+          "sessionId": "rec-s1",
+          "adoptedBy": null,
+          "cwd": "${WS}",
+          "command": [
+            "make",
+            "t2"
+          ],
+          "note": null,
+          "pid": null,
+          "startToken": null,
+          "status": "complete",
+          "exitCode": 0,
+          "startedAt": "<TS>",
+          "endedAt": "<TS>",
+          "deliveredAt": "<TS>"
+        }
+      },
+      "ws/.codexclaw/bg/job3.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty",
+        "json": {
+          "id": "job3",
+          "sessionId": "rec-s1",
+          "adoptedBy": null,
+          "cwd": "${WS}",
+          "command": [
+            "make",
+            "t3"
+          ],
+          "note": null,
+          "pid": null,
+          "startToken": null,
+          "status": "complete",
+          "exitCode": 0,
+          "startedAt": "<TS>",
+          "endedAt": "<TS>",
+          "deliveredAt": "<TS>"
+        }
+      },
+      "ws/.codexclaw/bg/job4.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty",
+        "json": {
+          "id": "job4",
+          "sessionId": "rec-s1",
+          "adoptedBy": null,
+          "cwd": "${WS}",
+          "command": [
+            "make",
+            "t4"
+          ],
+          "note": null,
+          "pid": null,
+          "startToken": null,
+          "status": "complete",
+          "exitCode": 0,
+          "startedAt": "<TS>",
+          "endedAt": "<TS>",
+          "deliveredAt": "<TS>"
+        }
+      },
+      "ws/.codexclaw/bg/job5.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty",
+        "json": {
+          "id": "job5",
+          "sessionId": "rec-s1",
+          "adoptedBy": null,
+          "cwd": "${WS}",
+          "command": [
+            "make",
+            "t5"
+          ],
+          "note": null,
+          "pid": null,
+          "startToken": null,
+          "status": "complete",
+          "exitCode": 0,
+          "startedAt": "<TS>",
+          "endedAt": "<TS>",
+          "deliveredAt": "<TS>"
+        }
+      },
+      "ws/.codexclaw/bg/job6.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty",
+        "json": {
+          "id": "job6",
+          "sessionId": "rec-s1",
+          "adoptedBy": null,
+          "cwd": "${WS}",
+          "command": [
+            "make",
+            "t6"
+          ],
+          "note": null,
+          "pid": null,
+          "startToken": null,
+          "status": "complete",
+          "exitCode": 0,
+          "startedAt": "<TS>",
+          "endedAt": "<TS>",
+          "deliveredAt": "<TS>"
+        }
+      },
+      "ws/.codexclaw/bg/job7.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty",
+        "json": {
+          "id": "job7",
+          "sessionId": "rec-s1",
+          "adoptedBy": null,
+          "cwd": "${WS}",
+          "command": [
+            "make",
+            "t7"
+          ],
+          "note": null,
+          "pid": null,
+          "startToken": null,
+          "status": "complete",
+          "exitCode": 0,
+          "startedAt": "<TS>",
+          "endedAt": "<TS>",
+          "deliveredAt": "<TS>"
+        }
+      },
+      "ws/.codexclaw/bg/ledger.jsonl": {
+        "type": "file",
+        "mode": "0644",
+        "form": "jsonl",
+        "jsonl": [
+          {
+            "at": "<TS>",
+            "event": "delivered",
+            "id": "job1",
+            "sessionId": "rec-s1"
+          },
+          {
+            "at": "<TS>",
+            "event": "delivered",
+            "id": "job2",
+            "sessionId": "rec-s1"
+          },
+          {
+            "at": "<TS>",
+            "event": "delivered",
+            "id": "job3",
+            "sessionId": "rec-s1"
+          },
+          {
+            "at": "<TS>",
+            "event": "delivered",
+            "id": "job4",
+            "sessionId": "rec-s1"
+          },
+          {
+            "at": "<TS>",
+            "event": "delivered",
+            "id": "job5",
+            "sessionId": "rec-s1"
+          },
+          {
+            "at": "<TS>",
+            "event": "delivered",
+            "id": "job6",
+            "sessionId": "rec-s1"
+          },
+          {
+            "at": "<TS>",
+            "event": "delivered",
+            "id": "job7",
+            "sessionId": "rec-s1"
+          }
+        ]
+      }
+    },
+    "calls": []
+  }
+}

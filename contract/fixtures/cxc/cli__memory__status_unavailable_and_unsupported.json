@@ -1,0 +1,76 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/memory/status",
+    "K11/memories-jobs",
+    "A/recall/memory-status.test.ts"
+  ],
+  "note": "No store under --home: unavailable, exit 1. A jobs table missing columns: unsupported, exit 0.",
+  "given": {
+    "dirs": [
+      "tmp/emptyhome"
+    ],
+    "sqlite": {
+      "codex/memories_1.sqlite": [
+        "CREATE TABLE jobs (kind TEXT, status TEXT)"
+      ]
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "memory",
+          "status",
+          "--home",
+          "${TMP}/emptyhome"
+        ]
+      },
+      {
+        "cli": [
+          "memory",
+          "status"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 1,
+        "stdout_form": "text",
+        "stdout": "memory pipeline: unavailable — no memories store found under ${TMP}/emptyhome\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "memory pipeline: unsupported — jobs table is missing column(s): retry_remaining, last_error, finished_at\n  observation: jobs-db; effective extraction route: unknown; startup guard decision: unknown (job history does not establish the current route or guard decision)\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/memories_1.sqlite": {
+        "type": "file",
+        "mode": "0644",
+        "form": "sqlite",
+        "json": {
+          "tables": [
+            {
+              "name": "jobs",
+              "sql": "CREATE TABLE jobs (kind TEXT, status TEXT)",
+              "rows": []
+            }
+          ]
+        }
+      },
+      "tmp/emptyhome": {
+        "type": "dir",
+        "mode": "0755"
+      }
+    },
+    "calls": []
+  }
+}

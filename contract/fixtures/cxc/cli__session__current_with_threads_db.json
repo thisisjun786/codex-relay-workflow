@@ -1,0 +1,184 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/session",
+    "K11/threads",
+    "K13/CODEX_THREAD_ID",
+    "A/pabcd-state/session-binding.test.ts"
+  ],
+  "note": "With CODEX_THREAD_ID and a threads row for this cwd: current reads it; bind creates the missing state.",
+  "given": {
+    "env": {
+      "CODEX_THREAD_ID": "0190cafe-0279-7000-8000-000000000279"
+    },
+    "sqlite": {
+      "codex/state_5.sqlite": [
+        "CREATE TABLE threads (id TEXT PRIMARY KEY, cwd TEXT, archived INTEGER, source TEXT)",
+        "INSERT INTO threads (id, cwd, archived, source) VALUES ('0190cafe-0279-7000-8000-000000000279', '${WS}', 0, 'cli')"
+      ]
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "session",
+          "current",
+          "--json"
+        ]
+      },
+      {
+        "cli": [
+          "session",
+          "bind",
+          "--json"
+        ]
+      },
+      {
+        "cli": [
+          "session",
+          "current",
+          "--json"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "ok": true,
+          "sessionId": "<UUID_1>",
+          "cwd": "${WS}",
+          "sourceCwd": "${WS}",
+          "source": "CODEX_THREAD_ID",
+          "dbPath": "${CODEX_HOME}/state_5.sqlite",
+          "statePath": "${WS}/.codexclaw/sessions/<UUID_1>.json",
+          "stateExists": false,
+          "phase": null,
+          "created": false,
+          "hooksVerified": false
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "ok": true,
+          "sessionId": "<UUID_1>",
+          "cwd": "${WS}",
+          "sourceCwd": "${WS}",
+          "source": "CODEX_THREAD_ID",
+          "dbPath": "${CODEX_HOME}/state_5.sqlite",
+          "statePath": "${WS}/.codexclaw/sessions/<UUID_1>.json",
+          "stateExists": true,
+          "phase": "IDLE",
+          "created": true,
+          "hooksVerified": false
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "ok": true,
+          "sessionId": "<UUID_1>",
+          "cwd": "${WS}",
+          "sourceCwd": "${WS}",
+          "source": "CODEX_THREAD_ID",
+          "dbPath": "${CODEX_HOME}/state_5.sqlite",
+          "statePath": "${WS}/.codexclaw/sessions/<UUID_1>.json",
+          "stateExists": true,
+          "phase": "IDLE",
+          "created": false,
+          "hooksVerified": false
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/state_5.sqlite": {
+        "type": "file",
+        "mode": "0644",
+        "form": "sqlite",
+        "json": {
+          "tables": [
+            {
+              "name": "threads",
+              "sql": "CREATE TABLE threads (id TEXT PRIMARY KEY, cwd TEXT, archived INTEGER, source TEXT)",
+              "rows": [
+                {
+                  "id": "<UUID_1>",
+                  "cwd": "${WS}",
+                  "archived": 0,
+                  "source": "cli"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/.gitignore": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n"
+      },
+      "ws/.codexclaw/sessions": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/sessions/<UUID_1>.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty-nonl",
+        "json": {
+          "phase": "IDLE",
+          "sessionId": "<UUID_1>",
+          "slug": "",
+          "updatedAt": "<TS>",
+          "flags": {
+            "interview": false,
+            "auditPassed": false,
+            "checkPassed": false
+          },
+          "supersededBy": null,
+          "injectedTurns": [],
+          "lastInjectedPhase": null,
+          "orchestrationActive": false,
+          "interview": null,
+          "stopBlockPhase": null,
+          "stopBlockCount": 0,
+          "stopBlockWorkPhaseId": null,
+          "stopMetricCursor": 0,
+          "stopBlockTotal": 0,
+          "stopBlockTurnId": null,
+          "stopBlockCapNotified": false,
+          "loopArmSeen": false,
+          "idleEditNudges": 0,
+          "memoryWriteRequested": false,
+          "memoryWriteTurn": null,
+          "memoryWriteGrant": false,
+          "unverifiedSubagents": [],
+          "unverifiedCorrupt": false,
+          "phaseEntrySource": null,
+          "planUnit": null,
+          "planEpoch": null,
+          "checkEpoch": null,
+          "dcloseRecovery": null
+        }
+      }
+    },
+    "calls": []
+  }
+}

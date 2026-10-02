@@ -1,0 +1,83 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/provider/detect",
+    "K12/ocx",
+    "A/provider-bridge/detect.test.ts"
+  ],
+  "note": "`cxc provider` prints the raw status line (no envelope); extra arguments, even --help, are ignored and the same probe runs.",
+  "given": {
+    "stubs": {
+      "ocx": {
+        "stdout": "{\"proxy\": {\"running\": true, \"pid\": 4242}, \"defaultProvider\": \"openai\", \"listen\": {\"host\": \"127.0.0.1\", \"port\": 10100}}",
+        "exit": 0
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "provider"
+        ]
+      },
+      {
+        "cli": [
+          "provider",
+          "--help"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "provider": "ocx",
+          "mode": "provider",
+          "ocxPath": "${STUBS}/ocx",
+          "running": true,
+          "defaultProvider": "openai",
+          "port": 10100
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "provider": "ocx",
+          "mode": "provider",
+          "ocxPath": "${STUBS}/ocx",
+          "running": true,
+          "defaultProvider": "openai",
+          "port": 10100
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": [
+      {
+        "cmd": "ocx",
+        "argv": [
+          "status",
+          "--json"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "ocx",
+        "argv": [
+          "status",
+          "--json"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

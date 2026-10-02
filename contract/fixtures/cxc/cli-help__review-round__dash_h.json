@@ -1,0 +1,35 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/review-round/help",
+    "K6/exit-codes",
+    "A/plugin/cli-usage.test.mjs",
+    "A/pabcd-state/help-verbs.test.ts"
+  ],
+  "note": "`cxc review-round -h`: usage text and exit status; nothing written.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "review-round",
+          "-h"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "cxc review-round — the opt-in A-gate plan-audit round (LEAN-REVIEW-01)\n\nUsage:\n  cxc review-round open --session <id> [--plan-path <path>]... [--cwd <path>] [--json]\n  cxc review-round show --session <id> [--cwd <path>] [--json]\n  cxc review-round abort --session <id> [--reason <text>] [--cwd <path>]\n  cxc review-round --help\n\nNotes:\n  A round is OPTIONAL. With no round open, A>B advances on the attest alone.\n  With a round whose verdict was RECORDED, that verdict is binding: you cannot\n  attest \"pass\" over a reviewer's \"fail\".\n  open requires the session to be at phase A with a bound goalplan and a plan\n  binding recorded by P>A.\n  abort closes a round that no reviewer will finish, so the cycle is not stuck.\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

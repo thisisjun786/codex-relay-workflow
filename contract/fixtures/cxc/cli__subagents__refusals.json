@@ -1,0 +1,113 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/subagents/set",
+    "K6/subagents/get",
+    "A/subagent-config/cli.test.ts"
+  ],
+  "note": "Parse and store refusals exit 1 with a 'subagents:' line and leave the store unwritten: unknown role, invalid --effort, --mode model without --model, set with no flags, unknown flag, reset with an extra argument.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "subagents",
+          "get",
+          "nobody",
+          "--global"
+        ]
+      },
+      {
+        "cli": [
+          "subagents",
+          "set",
+          "explorer",
+          "--effort",
+          "max",
+          "--global"
+        ]
+      },
+      {
+        "cli": [
+          "subagents",
+          "set",
+          "explorer",
+          "--mode",
+          "model",
+          "--global"
+        ]
+      },
+      {
+        "cli": [
+          "subagents",
+          "set",
+          "explorer",
+          "--global"
+        ]
+      },
+      {
+        "cli": [
+          "subagents",
+          "set",
+          "explorer",
+          "--color",
+          "red",
+          "--global"
+        ]
+      },
+      {
+        "cli": [
+          "subagents",
+          "reset",
+          "explorer",
+          "extra",
+          "--global"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 1,
+    "steps": [
+      {
+        "exit": 1,
+        "stdout_form": "text",
+        "stdout": "subagents: unknown role 'nobody' (expected explorer|reviewer|executor|architect)\n",
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "text",
+        "stdout": "subagents: --effort must be low|medium|high|xhigh (got 'max')\n",
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "text",
+        "stdout": "subagents: mode \"model\" requires a non-empty model id\n",
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "text",
+        "stdout": "subagents: set requires at least one of --mode/--model/--effort/--clear-effort/--prompt/--clear-prompt/--fallback-model/--fallback-effort/--clear-fallback\n",
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "text",
+        "stdout": "subagents: unknown flag '--color'\n",
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "text",
+        "stdout": "subagents: reset requires exactly one valid role\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

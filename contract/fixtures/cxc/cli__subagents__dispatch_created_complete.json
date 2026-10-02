@@ -1,0 +1,323 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/subagents/dispatch",
+    "K7/subagents",
+    "K8/ws/.codexclaw/dispatches",
+    "A/subagent-config/fallback-dispatch-cli.test.ts"
+  ],
+  "note": "created moves a claimed attempt to running (wait) with observedModel; complete with the recorded agentId closes the dispatch; status then reports complete and a later claim cannot reopen it.",
+  "given": {
+    "json": {
+      "ws/.codexclaw/dispatches/rec-s1/one.json": {
+        "version": 1,
+        "sessionId": "rec-s1",
+        "id": "one",
+        "role": "executor",
+        "candidates": [
+          {
+            "model": "rec/exec-primary",
+            "effort": "high"
+          },
+          {
+            "model": "rec/exec-fallback",
+            "effort": null
+          }
+        ],
+        "attempts": [
+          {
+            "id": "att-1",
+            "candidate": {
+              "model": "rec/exec-primary",
+              "effort": "high"
+            },
+            "claimed": true,
+            "agentId": null,
+            "observedModel": null,
+            "code": null,
+            "taskFailure": null,
+            "status": "claimed",
+            "reconciliation": null,
+            "spawnIssued": false,
+            "toolUseId": null
+          }
+        ],
+        "status": "active"
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "subagents",
+          "dispatch"
+        ],
+        "stdin": {
+          "action": "report",
+          "sessionId": "rec-s1",
+          "dispatchId": "one",
+          "attemptId": "att-1",
+          "outcome": "created",
+          "agentId": "child-a",
+          "observedModel": "rec/exec-primary"
+        }
+      },
+      {
+        "cli": [
+          "subagents",
+          "dispatch"
+        ],
+        "stdin": {
+          "action": "report",
+          "sessionId": "rec-s1",
+          "dispatchId": "one",
+          "attemptId": "att-1",
+          "outcome": "complete",
+          "agentId": "child-a"
+        }
+      },
+      {
+        "cli": [
+          "subagents",
+          "dispatch"
+        ],
+        "stdin": {
+          "action": "status",
+          "sessionId": "rec-s1",
+          "dispatchId": "one"
+        }
+      },
+      {
+        "cli": [
+          "subagents",
+          "dispatch"
+        ],
+        "stdin": {
+          "action": "claim",
+          "sessionId": "rec-s1",
+          "dispatchId": "one",
+          "attemptId": "att-1"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "action": "wait",
+          "dispatchId": "one",
+          "attemptId": "att-1",
+          "independentReviewRequired": false,
+          "attempts": [
+            {
+              "id": "att-1",
+              "candidate": {
+                "model": "rec/exec-primary",
+                "effort": "high"
+              },
+              "claimed": true,
+              "agentId": "child-a",
+              "observedModel": "rec/exec-primary",
+              "code": null,
+              "taskFailure": null,
+              "status": "running",
+              "reconciliation": null,
+              "spawnIssued": false,
+              "toolUseId": null
+            }
+          ]
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "action": "complete",
+          "dispatchId": "one",
+          "attemptId": "att-1",
+          "independentReviewRequired": false,
+          "attempts": [
+            {
+              "id": "att-1",
+              "candidate": {
+                "model": "rec/exec-primary",
+                "effort": "high"
+              },
+              "claimed": true,
+              "agentId": "child-a",
+              "observedModel": "rec/exec-primary",
+              "code": null,
+              "taskFailure": null,
+              "status": "complete",
+              "reconciliation": null,
+              "spawnIssued": false,
+              "toolUseId": null
+            }
+          ]
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "action": "complete",
+          "dispatchId": "one",
+          "attemptId": "att-1",
+          "independentReviewRequired": false,
+          "attempts": [
+            {
+              "id": "att-1",
+              "candidate": {
+                "model": "rec/exec-primary",
+                "effort": "high"
+              },
+              "claimed": true,
+              "agentId": "child-a",
+              "observedModel": "rec/exec-primary",
+              "code": null,
+              "taskFailure": null,
+              "status": "complete",
+              "reconciliation": null,
+              "spawnIssued": false,
+              "toolUseId": null
+            }
+          ]
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "action": "complete",
+          "dispatchId": "one",
+          "attemptId": "att-1",
+          "independentReviewRequired": false,
+          "attempts": [
+            {
+              "id": "att-1",
+              "candidate": {
+                "model": "rec/exec-primary",
+                "effort": "high"
+              },
+              "claimed": true,
+              "agentId": "child-a",
+              "observedModel": "rec/exec-primary",
+              "code": null,
+              "taskFailure": null,
+              "status": "complete",
+              "reconciliation": null,
+              "spawnIssued": false,
+              "toolUseId": null
+            }
+          ]
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/dispatches": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/dispatches/rec-s1": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/dispatches/rec-s1/one.json": {
+        "type": "file",
+        "mode": "0600",
+        "form": "json-pretty",
+        "json": {
+          "version": 1,
+          "sessionId": "rec-s1",
+          "id": "one",
+          "role": "executor",
+          "candidates": [
+            {
+              "model": "rec/exec-primary",
+              "effort": "high"
+            },
+            {
+              "model": "rec/exec-fallback",
+              "effort": null
+            }
+          ],
+          "attempts": [
+            {
+              "id": "att-1",
+              "candidate": {
+                "model": "rec/exec-primary",
+                "effort": "high"
+              },
+              "claimed": true,
+              "agentId": "child-a",
+              "observedModel": "rec/exec-primary",
+              "code": null,
+              "taskFailure": null,
+              "status": "complete",
+              "reconciliation": null,
+              "spawnIssued": false,
+              "toolUseId": null
+            }
+          ],
+          "status": "complete"
+        }
+      }
+    },
+    "calls": [
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

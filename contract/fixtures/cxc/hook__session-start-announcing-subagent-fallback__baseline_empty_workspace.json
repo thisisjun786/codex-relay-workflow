@@ -1,0 +1,65 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/session-start-announcing-subagent-fallback",
+    "K2/SessionStart",
+    "K13/PLUGIN_ROOT",
+    "K13/CODEX_HOME",
+    "K4/hook-observations",
+    "K5/hook-rendered"
+  ],
+  "note": "The leg's declared command with a minimal well-formed payload in an empty workspace and empty homes: the leg's quiet default and its side effects.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "session-start-announcing-subagent-fallback",
+        "stdin": {
+          "hook_event_name": "SessionStart",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "source": "startup",
+          "model": "gpt-5.5",
+          "transcript_path": null
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": "[codexclaw] Subagent dispatch: family unresolved at SessionStart; managed fallback first; swap the probe for the task. First Code Mode cell (resolves and calls):\nconst n = ALL_TOOLS.map(t => t.name), has = r => n.some(x => r.test(x));\nconst s = n.filter(x => /spawn_agent$/.test(x));\nif (s.length !== 1) throw new Error(\"expected one spawn_agent helper, found \" + s.length);\nconst v1 = has(/(send_input|close_agent|resume_agent)$/), v2 = has(/(followup_task|interrupt_agent|list_agents)$/);\nif (v1 === v2) throw new Error(\"collab family unresolved: v1=\" + v1 + \" v2=\" + v2);\nconst a = {message:\"Report your model and say OK; do not edit files.\",model:\"command-code/deepseek-deepseek-v4.1-flash\",reasoning_effort:\"low\"};\ntext(await tools[s[0]](v1 ? a : {...a, task_name:\"model_probe\", fork_turns:\"none\"}));\nAliases (map 2026-09-24; local Codex catalog membership only):\ndeepseek -> command-code/deepseek-deepseek-v4.1-flash (unverified, map 2026-09-24)\nswe2 -> devin/swe-2 (unverified, map 2026-09-24)\nkimi -> kimi/kimi-for-coding-highspeed (unverified, map 2026-09-24)\nsol -> gpt-6-sol (unverified, map 2026-09-24)\nluna -> gpt-6-luna (unverified, map 2026-09-24)"
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      }
+    },
+    "calls": [
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

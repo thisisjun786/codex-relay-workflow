@@ -1,0 +1,278 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K10/tools/call/subagents_set",
+    "K8/cxc-home/subagents.json",
+    "A/subagent-config/mcp.test.ts",
+    "K13/CODEXCLAW_HOME"
+  ],
+  "note": "Invalid subagents_set calls return isError results and leave the store unchanged: invalid mode, invalid effort, invalid nested fallback effort, unknown role, invalid scope, inherit combined with settings, non-boolean inherit.",
+  "given": {
+    "json": {
+      "cxc/subagents.json": {
+        "roles": {
+          "explorer": {
+            "mode": "model",
+            "model": "rec/explorer-model",
+            "effort": "high",
+            "promptOverride": null,
+            "fallback": null
+          }
+        }
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "mcp": [
+          {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+              "protocolVersion": "2024-11-05",
+              "capabilities": {},
+              "clientInfo": {
+                "name": "rec",
+                "version": "0"
+              }
+            }
+          },
+          {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+              "name": "subagents_set",
+              "arguments": {
+                "scope": "global",
+                "role": "explorer",
+                "mode": "turbo"
+              }
+            }
+          },
+          {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+              "name": "subagents_set",
+              "arguments": {
+                "scope": "global",
+                "role": "explorer",
+                "effort": "max"
+              }
+            }
+          },
+          {
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/call",
+            "params": {
+              "name": "subagents_set",
+              "arguments": {
+                "scope": "global",
+                "role": "executor",
+                "fallback": {
+                  "model": "rec/fb",
+                  "effort": "max"
+                }
+              }
+            }
+          },
+          {
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "tools/call",
+            "params": {
+              "name": "subagents_set",
+              "arguments": {
+                "scope": "global",
+                "role": "nobody",
+                "mode": "default"
+              }
+            }
+          },
+          {
+            "jsonrpc": "2.0",
+            "id": 6,
+            "method": "tools/call",
+            "params": {
+              "name": "subagents_set",
+              "arguments": {
+                "scope": "galaxy",
+                "role": "explorer",
+                "mode": "default"
+              }
+            }
+          },
+          {
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "tools/call",
+            "params": {
+              "name": "subagents_set",
+              "arguments": {
+                "scope": "global",
+                "role": "explorer",
+                "inherit": true,
+                "mode": "default"
+              }
+            }
+          },
+          {
+            "jsonrpc": "2.0",
+            "id": 8,
+            "method": "tools/call",
+            "params": {
+              "name": "subagents_set",
+              "arguments": {
+                "scope": "global",
+                "role": "explorer",
+                "inherit": "yes"
+              }
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "jsonl",
+        "stdout_jsonl": [
+          {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+              "protocolVersion": "2024-11-05",
+              "capabilities": {
+                "tools": {}
+              },
+              "serverInfo": {
+                "name": "codexclaw-subagent-config",
+                "version": "0.1.1"
+              }
+            }
+          },
+          {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"error\":\"invalid mode \\\"turbo\\\" (must be \\\"default\\\" or \\\"model\\\")\"}"
+                }
+              ],
+              "isError": true
+            }
+          },
+          {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"error\":\"invalid effort \\\"max\\\" (must be one of low/medium/high/xhigh or null)\"}"
+                }
+              ],
+              "isError": true
+            }
+          },
+          {
+            "jsonrpc": "2.0",
+            "id": 4,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"error\":\"invalid fallback effort \\\"max\\\" (must be one of low/medium/high/xhigh or null)\"}"
+                }
+              ],
+              "isError": true
+            }
+          },
+          {
+            "jsonrpc": "2.0",
+            "id": 5,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"error\":\"unknown role \\\"nobody\\\"\"}"
+                }
+              ],
+              "isError": true
+            }
+          },
+          {
+            "jsonrpc": "2.0",
+            "id": 6,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"error\":\"invalid scope \\\"galaxy\\\"\"}"
+                }
+              ],
+              "isError": true
+            }
+          },
+          {
+            "jsonrpc": "2.0",
+            "id": 7,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"error\":\"inherit cannot be combined with role settings\"}"
+                }
+              ],
+              "isError": true
+            }
+          },
+          {
+            "jsonrpc": "2.0",
+            "id": 8,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"error\":\"inherit must be a boolean\"}"
+                }
+              ],
+              "isError": true
+            }
+          }
+        ],
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "cxc/subagents.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "roles": {
+            "explorer": {
+              "mode": "model",
+              "model": "rec/explorer-model",
+              "effort": "high",
+              "promptOverride": null,
+              "fallback": null
+            }
+          }
+        }
+      }
+    },
+    "calls": []
+  }
+}

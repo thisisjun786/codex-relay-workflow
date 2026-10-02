@@ -1,0 +1,164 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/subagents/set",
+    "K6/subagents/get",
+    "K7/subagents",
+    "K8/cxc-home/subagents.json",
+    "A/subagent-config/cli.test.ts"
+  ],
+  "note": "set --global persists mode/model/effort/prompt to ${CXC_HOME}/subagents.json (0600, two-space JSON) and get/list read it back; architect is set without touching reviewer.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "subagents",
+          "set",
+          "explorer",
+          "--mode",
+          "model",
+          "--model",
+          "rec/explorer-model",
+          "--effort",
+          "high",
+          "--prompt",
+          "Be terse.",
+          "--global"
+        ]
+      },
+      {
+        "cli": [
+          "subagents",
+          "set",
+          "architect",
+          "--mode",
+          "model",
+          "--model",
+          "rec/architect-model",
+          "--global"
+        ]
+      },
+      {
+        "cli": [
+          "subagents",
+          "get",
+          "explorer",
+          "--global"
+        ]
+      },
+      {
+        "cli": [
+          "subagents",
+          "list",
+          "--global"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-pretty",
+        "stdout_json": {
+          "mode": "model",
+          "model": "rec/explorer-model",
+          "effort": "high",
+          "promptOverride": "Be terse.",
+          "fallback": null
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-pretty",
+        "stdout_json": {
+          "mode": "model",
+          "model": "rec/architect-model",
+          "effort": null,
+          "promptOverride": null,
+          "fallback": null
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-pretty",
+        "stdout_json": {
+          "mode": "model",
+          "model": "rec/explorer-model",
+          "effort": "high",
+          "promptOverride": "Be terse.",
+          "fallback": null
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-pretty",
+        "stdout_json": {
+          "roles": {
+            "explorer": {
+              "mode": "model",
+              "model": "rec/explorer-model",
+              "effort": "high",
+              "promptOverride": "Be terse.",
+              "fallback": null
+            },
+            "reviewer": {
+              "mode": "default",
+              "model": null,
+              "effort": null,
+              "promptOverride": null,
+              "fallback": null
+            },
+            "executor": {
+              "mode": "default",
+              "model": null,
+              "effort": null,
+              "promptOverride": null,
+              "fallback": null
+            },
+            "architect": {
+              "mode": "model",
+              "model": "rec/architect-model",
+              "effort": null,
+              "promptOverride": null,
+              "fallback": null
+            }
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "cxc/subagents.json": {
+        "type": "file",
+        "mode": "0600",
+        "form": "json-pretty",
+        "json": {
+          "roles": {
+            "explorer": {
+              "mode": "model",
+              "model": "rec/explorer-model",
+              "effort": "high",
+              "promptOverride": "Be terse.",
+              "fallback": null
+            },
+            "architect": {
+              "mode": "model",
+              "model": "rec/architect-model",
+              "effort": null,
+              "promptOverride": null,
+              "fallback": null
+            }
+          }
+        }
+      }
+    },
+    "calls": []
+  }
+}

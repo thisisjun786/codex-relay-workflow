@@ -1,0 +1,161 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K10/tools/call/subagents_get",
+    "A/subagent-config/mcp.test.ts",
+    "K13/CODEXCLAW_HOME"
+  ],
+  "note": "A native ${CODEX_HOME}/models_cache.json older than 24 h is not authoritative: with ocx absent, a configured model missing from it is reported staleModel null with staleReason \"catalog unavailable\" instead of true (mcp.ts:84-93,109-118).",
+  "given": {
+    "json": {
+      "codex/models_cache.json": {
+        "models": [
+          {
+            "slug": "gpt-5.5"
+          }
+        ]
+      },
+      "cxc/subagents.json": {
+        "roles": {
+          "reviewer": {
+            "mode": "model",
+            "model": "rec/gone-model",
+            "effort": null,
+            "promptOverride": null,
+            "fallback": null
+          }
+        }
+      }
+    },
+    "stubs": {
+      "ocx": null
+    },
+    "mtimes": {
+      "codex/models_cache.json": "2025-12-30T00:00:00Z"
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "mcp": [
+          {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+              "protocolVersion": "2024-11-05",
+              "capabilities": {},
+              "clientInfo": {
+                "name": "rec",
+                "version": "0"
+              }
+            }
+          },
+          {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+              "name": "subagents_get",
+              "arguments": {
+                "scope": "global"
+              }
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "jsonl",
+        "stdout_jsonl": [
+          {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+              "protocolVersion": "2024-11-05",
+              "capabilities": {
+                "tools": {}
+              },
+              "serverInfo": {
+                "name": "codexclaw-subagent-config",
+                "version": "0.1.1"
+              }
+            }
+          },
+          {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"roles\":{\"explorer\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"reviewer\":{\"mode\":\"model\",\"model\":\"rec/gone-model\",\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{\"model\":\"rec/gone-model\"},\"staleModel\":null,\"staleReason\":\"catalog unavailable\"},\"executor\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"},\"architect\":{\"mode\":\"default\",\"model\":null,\"effort\":null,\"promptOverride\":null,\"fallback\":null,\"spawnArgs\":{},\"staleModel\":null,\"staleReason\":\"role uses the default model\"}},\"scope\":\"global\",\"sources\":{\"explorer\":\"session\",\"reviewer\":\"global\",\"executor\":\"session\",\"architect\":\"session\"},\"overrides\":{\"explorer\":false,\"reviewer\":true,\"executor\":false,\"architect\":false}}"
+                }
+              ]
+            }
+          }
+        ],
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/models_cache.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "models": [
+            {
+              "slug": "gpt-5.5"
+            }
+          ]
+        }
+      },
+      "cxc/model-catalog.json": {
+        "type": "file",
+        "mode": "0600",
+        "form": "json-line",
+        "json": {
+          "key": "<CATALOGKEY_1>",
+          "catalog": {
+            "state": "native-catalog",
+            "entries": [
+              {
+                "id": "gpt-5.5",
+                "source": "native",
+                "label": "gpt-5.5",
+                "reasoningEfforts": null
+              }
+            ],
+            "status": "fresh",
+            "source": "native",
+            "fetchedAt": "<TS>"
+          }
+        }
+      },
+      "cxc/subagents.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "roles": {
+            "reviewer": {
+              "mode": "model",
+              "model": "rec/gone-model",
+              "effort": null,
+              "promptOverride": null,
+              "fallback": null
+            }
+          }
+        }
+      }
+    },
+    "calls": []
+  }
+}

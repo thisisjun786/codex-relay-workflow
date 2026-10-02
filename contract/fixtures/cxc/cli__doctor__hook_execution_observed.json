@@ -1,0 +1,197 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/doctor/json",
+    "K7/doctor",
+    "K8/codex-home/codexclaw/hook-observations",
+    "A/cxc-ops/hook-observation.test.ts",
+    "K13/CODEX_THREAD_ID"
+  ],
+  "note": "A hook run in session rec-s1 writes a hook-observation record; doctor --json with CODEX_THREAD_ID=rec-s1 reports hook-execution PASS listing it.",
+  "given": {
+    "env": {
+      "CODEX_THREAD_ID": "rec-s1"
+    },
+    "stubs": {
+      "codex": {
+        "stdout": "default_mode_request_user_input  under development  true\ngoals                            stable             true\nhooks                            stable             true\nmulti_agent                      stable             true\n",
+        "exit": 0
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "session-start-announcing-map-affordance",
+        "stdin": {
+          "hook_event_name": "SessionStart",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "source": "startup",
+          "model": "gpt-5.5",
+          "transcript_path": null
+        }
+      },
+      {
+        "cli": [
+          "doctor",
+          "--json"
+        ]
+      }
+    ],
+    "observe": [
+      "codex/codexclaw/hook-observations"
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": "[codexclaw] This session's id is `rec-s1`. Every mutating `node \"${PLUGIN_ROOT}/bin/cxc.mjs\" orchestrate` command (I/P/A/B/C/D/reset) MUST pass `--session rec-s1` — the implicit latest-session fallback is disabled for writes, which prevents ACCIDENTAL implicit-fallback collisions between concurrent/forked sessions. IDENTITY RULE: use the MOST RECENT SessionStart binding line, never a parent/history id. With native CODEX_THREAD_ID, verify via `node \"${PLUGIN_ROOT}/bin/cxc.mjs\" session current` before mutation. Missing/inherited/conflicting binding: use `node \"${PLUGIN_ROOT}/bin/cxc.mjs\" session current`, then `node \"${PLUGIN_ROOT}/bin/cxc.mjs\" session bind` in its verified cwd. Never set the environment id. Binding does not verify hooks or arm Stop-continuation.\n\n[codexclaw] External skill catalogs are searchable on demand. Priority: jaw (cli-jaw-skills, 1st-class, default) > clawhub (2nd) > hermes (3rd, sparse). When a task needs a capability you do not have loaded, browse `dev/references/skill-catalog.md` for the full jaw catalog first, or run `node \"${PLUGIN_ROOT}/bin/cxc.mjs\" skill search <query>` then `node \"${PLUGIN_ROOT}/bin/cxc.mjs\" skill show <id>` to load it (adapter preamble applies; cxc-dev discipline wins on conflict).\n\n[codexclaw] When writing Korean prose for the user (docs, answers, announcements), keep it human: no translationese (~에 대해/~를 통해/~함으로써), no AI idioms (시사하는 바가 크다/결론적으로/기대된다 endings), no 첫째/둘째 enumeration, one consistent register throughout. For explicit 윤문/polish requests or long-form Korean output, load the $cxc-kwrite skill for the full revision protocol.\n\n[codexclaw] Loop contract: for actual loop work load $codexclaw:cxc-loop + $codexclaw:cxc-pabcd. Bare cxc-loop means scoped HOTL; a mention alone grants no authority. Exact user limits and separately allowed actions scope this pointer and its owners. No-delegation means no dispatch. Read-only inspection remains allowed under no-goal/no-FSM; for actual loop work inspect `node \"${PLUGIN_ROOT}/bin/cxc.mjs\" orchestrate status --session <your id>` first. No-tests does not forbid an explicitly allowed build. One work-phase = one full PABCD cycle. No extra external permissions; do not bypass guards or invent evidence.\n\n[codexclaw] For PR work or dependent branches, read $codexclaw:cxc-dev references/stacked-prs.md (DEV-STACK-06/07/08). Use ordinary PRs/manual chains by default. Do not suggest or create GitHub native stacks unless the user clearly and strongly requests them for this task. Inspect existing membership and CI separately; a parent base or Can Stack banner is not opt-in. Parallel branch/PR lanes: one Codex task each, not subagents (same checkout); the lane request authorizes them. Per-PR CI is expected. This is guidance, not authorization to register, restack, cancel CI, or merge.\n\n[codexclaw] Long-running or collision-risky commands (dev servers, builds, test suites, 5min+ probes) SHOULD use managed background execution: `exec_command` with short `yield_time_ms` → get `session_id` → end turn or continue other work → poll later with `write_stdin` (empty chars = poll, no typing). Do NOT block the turn inline for commands that might outlive compaction or conflict with parallel work. CLI: `/ps` lists active background terminals; `/stop` terminates all in the current session. A session_id is NOT an OS PID — it is a Codex-managed execution handle.\n\n[codexclaw] User questions: main agents may leave useful questions during work, including active goals. Outside Interview, prefer exposed and host-allowed `request_user_input_async`; do not expect replies or wait. Continue authorized work with reasonable assumptions, incorporate later replies, and ask distinct useful questions without reminders. Interview uses `request_user_input` only; see $codexclaw:cxc-interview. Absent tools stay absent; silence grants no approval. Subagents send question candidates to main. Details: $codexclaw:cxc-dev references/async-questions.md.\n\n[codexclaw] `cxc` is not on PATH here; wherever docs say `cxc`, run: node \"${PLUGIN_ROOT}/bin/cxc.mjs\""
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-pretty",
+        "stdout_json": {
+          "schemaVersion": 1,
+          "overall": "WARN",
+          "checks": [
+            {
+              "name": "manifest",
+              "severity": "PASS",
+              "evidence": "plugin.json parsed, 31 hook(s) referenced"
+            },
+            {
+              "name": "hooks",
+              "severity": "PASS",
+              "evidence": "all hook target(s) present"
+            },
+            {
+              "name": "mcp-targets",
+              "severity": "PASS",
+              "evidence": "all mcp target(s) present"
+            },
+            {
+              "name": "skills",
+              "severity": "PASS",
+              "evidence": "29 skill(s) each have SKILL.md + agents/openai.yaml"
+            },
+            {
+              "name": "agents",
+              "severity": "PASS",
+              "evidence": "4 role TOML(s): architect.toml, executor.toml, explorer.toml, reviewer.toml"
+            },
+            {
+              "name": "drift:version",
+              "severity": "PASS",
+              "evidence": "declared plugin version <VERSION>"
+            },
+            {
+              "name": "drift:mcp",
+              "severity": "PASS",
+              "evidence": "./.mcp.json parses, 1 server(s) declared"
+            },
+            {
+              "name": "known-issues",
+              "severity": "PASS",
+              "evidence": "no known-issue signature matched"
+            },
+            {
+              "name": "hook-trust",
+              "severity": "WARN",
+              "evidence": "enabled install key is ambiguous (0): (none)"
+            },
+            {
+              "name": "hook-execution",
+              "severity": "PASS",
+              "evidence": "session=rec-s1 actor=root: 1 current invocation(s): cxc-ops/session-start (components/cxc-ops/dist/cli.js, <TS>); 0 ignored record(s). Declaration coverage and handler results remain unknown. Same-user writable/replayable diagnostics, not host attestations or proof of enforcement."
+            },
+            {
+              "name": "ast-grep",
+              "severity": "WARN",
+              "evidence": "python3 not found - install Python 3.9+ to run the ast-grep helper"
+            },
+            {
+              "name": "install-root",
+              "severity": "WARN",
+              "evidence": "no plugin cache at ${CODEX_HOME}/plugins/cache (running uninstalled?)"
+            },
+            {
+              "name": "pabcd-state",
+              "severity": "PASS",
+              "evidence": "no .codexclaw/sessions/ directory (clean state)"
+            },
+            {
+              "name": "features",
+              "severity": "PASS",
+              "evidence": "4/4 declared flag(s) enabled"
+            },
+            {
+              "name": "wsl",
+              "severity": "PASS",
+              "evidence": "not running under WSL"
+            }
+          ],
+          "pluginVersion": "<VERSION>",
+          "codexVersion": "default_mode_request_user_input  under development  true\ngoals                            stable             true\nhooks                            stable             true\nmulti_agent                      stable             true"
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw/hook-observations/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "codex/codexclaw/hook-observations/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "codex/codexclaw/hook-observations/a7ebc756248d381ccc48dd6f848ea947410156e164ffcee6f348b314915df702/74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b/675a2ac2cd1144212d1111d36f2d588faf68bd9d9111943d83866817d6f53fcb.json": {
+        "type": "file",
+        "mode": "0600",
+        "form": "json-line",
+        "json": {
+          "schemaVersion": 1,
+          "sessionId": "rec-s1",
+          "agentId": null,
+          "component": "cxc-ops",
+          "event": "session-start",
+          "observedAt": "<TS>",
+          "pluginRoot": "${PLUGIN_ROOT}",
+          "pluginVersion": "<VERSION>",
+          "manifestDigest": "<DIGEST>",
+          "entrypoint": "components/cxc-ops/dist/cli.js",
+          "entrypointDigest": "<DIGEST>",
+          "outcome": "invoked"
+        }
+      }
+    },
+    "calls": [
+      {
+        "cmd": "codex",
+        "argv": [
+          "features",
+          "list"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "codex",
+        "argv": [
+          "--version"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

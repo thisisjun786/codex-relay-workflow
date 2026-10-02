@@ -1,0 +1,271 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/permission-request-allowing-agent-thread",
+    "K8/codex/config.toml",
+    "A/pabcd-state/agent-thread-permissions.test.ts",
+    "K13/CODEX_HOME",
+    "K13/CODEXCLAW_HOME"
+  ],
+  "note": "The Codex config.toml decides: on-request approval, a top-level profile key, a missing file, an overflowing number (1e9999) and an invalid date mean no decision; large in-range numbers and a dotted table still allow. Each variant is a separate CODEX_HOME root.",
+  "given": {
+    "files": {
+      "codex/config.toml": "approval_policy = \"never\"\nsandbox_mode = \"danger-full-access\"\n",
+      "codex/sessions/rollout-agent.jsonl": "{\"type\": \"session_meta\", \"payload\": {\"id\": \"rec-s1\", \"thread_source\": \"agent_created_thread\"}}\n",
+      "cxc/config.json": "{\"permissions\":{\"agentCreatedThreadAutoAllow\":true}}",
+      "tmp/c-big/config.toml": "approval_policy = \"never\"\nsandbox_mode = \"danger-full-access\"\nbaz = 9223372036854775807\nhex = 0x7fff_ffff_ffff_ffff\n[tui]\ntheme = \"dark\"\n",
+      "tmp/c-date/config.toml": "approval_policy = \"never\"\nsandbox_mode = \"danger-full-access\"\nd = 2026-02-30\n",
+      "tmp/c-onreq/config.toml": "approval_policy = \"on-request\"\nsandbox_mode = \"danger-full-access\"\n",
+      "tmp/c-overflow/config.toml": "approval_policy = \"never\"\nsandbox_mode = \"danger-full-access\"\nfoo = 1e9999\n",
+      "tmp/c-profile/config.toml": "approval_policy = \"never\"\nsandbox_mode = \"danger-full-access\"\nprofile = \"team\"\n"
+    },
+    "dirs": [
+      "tmp/c-missing"
+    ]
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "permission-request-allowing-agent-thread",
+        "stdin": {
+          "hook_event_name": "PermissionRequest",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "transcript_path": "${CODEX_HOME}/sessions/rollout-agent.jsonl",
+          "permission_mode": "default",
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "git push"
+          },
+          "tool_use_id": "rec-call-1"
+        },
+        "env": {
+          "CODEX_HOME": "${TMP}/c-onreq"
+        }
+      },
+      {
+        "hook": "permission-request-allowing-agent-thread",
+        "stdin": {
+          "hook_event_name": "PermissionRequest",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "transcript_path": "${CODEX_HOME}/sessions/rollout-agent.jsonl",
+          "permission_mode": "default",
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "git push"
+          },
+          "tool_use_id": "rec-call-1"
+        },
+        "env": {
+          "CODEX_HOME": "${TMP}/c-profile"
+        }
+      },
+      {
+        "hook": "permission-request-allowing-agent-thread",
+        "stdin": {
+          "hook_event_name": "PermissionRequest",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "transcript_path": "${CODEX_HOME}/sessions/rollout-agent.jsonl",
+          "permission_mode": "default",
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "git push"
+          },
+          "tool_use_id": "rec-call-1"
+        },
+        "env": {
+          "CODEX_HOME": "${TMP}/c-missing"
+        }
+      },
+      {
+        "hook": "permission-request-allowing-agent-thread",
+        "stdin": {
+          "hook_event_name": "PermissionRequest",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "transcript_path": "${CODEX_HOME}/sessions/rollout-agent.jsonl",
+          "permission_mode": "default",
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "git push"
+          },
+          "tool_use_id": "rec-call-1"
+        },
+        "env": {
+          "CODEX_HOME": "${TMP}/c-overflow"
+        }
+      },
+      {
+        "hook": "permission-request-allowing-agent-thread",
+        "stdin": {
+          "hook_event_name": "PermissionRequest",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "transcript_path": "${CODEX_HOME}/sessions/rollout-agent.jsonl",
+          "permission_mode": "default",
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "git push"
+          },
+          "tool_use_id": "rec-call-1"
+        },
+        "env": {
+          "CODEX_HOME": "${TMP}/c-date"
+        }
+      },
+      {
+        "hook": "permission-request-allowing-agent-thread",
+        "stdin": {
+          "hook_event_name": "PermissionRequest",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "transcript_path": "${CODEX_HOME}/sessions/rollout-agent.jsonl",
+          "permission_mode": "default",
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "git push"
+          },
+          "tool_use_id": "rec-call-1"
+        },
+        "env": {
+          "CODEX_HOME": "${TMP}/c-big"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PermissionRequest",
+            "decision": {
+              "behavior": "allow"
+            }
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/config.toml": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "approval_policy = \"never\"\nsandbox_mode = \"danger-full-access\"\n"
+      },
+      "codex/sessions": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "codex/sessions/rollout-agent.jsonl": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "{\"type\": \"session_meta\", \"payload\": {\"id\": \"rec-s1\", \"thread_source\": \"agent_created_thread\"}}\n"
+      },
+      "cxc/config.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json",
+        "json": {
+          "permissions": {
+            "agentCreatedThreadAutoAllow": true
+          }
+        }
+      },
+      "tmp/c-big": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "tmp/c-big/config.toml": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "approval_policy = \"never\"\nsandbox_mode = \"danger-full-access\"\nbaz = 9223372036854775807\nhex = 0x7fff_ffff_ffff_ffff\n[tui]\ntheme = \"dark\"\n"
+      },
+      "tmp/c-date": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "tmp/c-date/config.toml": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "approval_policy = \"never\"\nsandbox_mode = \"danger-full-access\"\nd = 2026-02-30\n"
+      },
+      "tmp/c-missing": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "tmp/c-onreq": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "tmp/c-onreq/config.toml": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "approval_policy = \"on-request\"\nsandbox_mode = \"danger-full-access\"\n"
+      },
+      "tmp/c-overflow": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "tmp/c-overflow/config.toml": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "approval_policy = \"never\"\nsandbox_mode = \"danger-full-access\"\nfoo = 1e9999\n"
+      },
+      "tmp/c-profile": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "tmp/c-profile/config.toml": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "approval_policy = \"never\"\nsandbox_mode = \"danger-full-access\"\nprofile = \"team\"\n"
+      }
+    },
+    "calls": []
+  }
+}

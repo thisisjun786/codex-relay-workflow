@@ -1,0 +1,51 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/disable/run",
+    "K8/codex-home/codexclaw-self-heal.json",
+    "A/config-guard/self-heal.test.ts"
+  ],
+  "note": "`cxc disable` with no install manifest: 'nothing to revert', but the opt-out marker is still written.",
+  "given": {
+    "stubs": {
+      "codex": {
+        "stdout": "default_mode_request_user_input  under development  false\ngoals                            stable             true\nhooks                            stable             true\nmulti_agent                      stable             true\nmulti_agent_v2                   experimental       false\nplugin_hooks                     stable             false\n",
+        "exit": 0
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "disable"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "codexclaw: no install manifest; nothing to revert\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw-self-heal.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty",
+        "json": {
+          "optedOut": true,
+          "optedOutAt": "<TS>",
+          "allEnabled": false
+        }
+      }
+    },
+    "calls": []
+  }
+}

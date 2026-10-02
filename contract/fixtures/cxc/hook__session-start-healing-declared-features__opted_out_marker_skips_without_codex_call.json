@@ -1,0 +1,65 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/session-start-healing-declared-features",
+    "K8/codex-home/codexclaw-self-heal.json",
+    "A/config-guard/self-heal.test.ts"
+  ],
+  "note": "The opt-out marker (written by `cxc disable`) stops self-heal before any codex call.",
+  "given": {
+    "json": {
+      "codex/codexclaw-self-heal.json": {
+        "optedOut": true,
+        "optedOutAt": "2025-12-01T00:00:00.000Z"
+      }
+    },
+    "stubs": {
+      "codex": {
+        "stdout": "default_mode_request_user_input  under development  false\ngoals                            stable             true\nhooks                            stable             true\nmulti_agent                      stable             true\nmulti_agent_v2                   experimental       false\nplugin_hooks                     stable             false\n",
+        "exit": 0
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "session-start-healing-declared-features",
+        "stdin": {
+          "hook_event_name": "SessionStart",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "source": "startup",
+          "model": "gpt-5.5",
+          "transcript_path": null
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "codex/codexclaw-self-heal.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "optedOut": true,
+          "optedOutAt": "<TS>"
+        }
+      }
+    },
+    "calls": []
+  }
+}

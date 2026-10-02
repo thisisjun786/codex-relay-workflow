@@ -1,0 +1,118 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/user-prompt-submit-checking-pabcd-trigger",
+    "K5/hook-rendered",
+    "A/pabcd-state/hook.test.ts"
+  ],
+  "note": "The plugin-qualified mention ($codexclaw:cxc-pabcd) with an action word is a trigger.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "session-start-bootstrapping-pabcd-state",
+        "stdin": {
+          "hook_event_name": "SessionStart",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "source": "startup"
+        }
+      },
+      {
+        "hook": "user-prompt-submit-checking-pabcd-trigger",
+        "stdin": {
+          "hook_event_name": "UserPromptSubmit",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "prompt": "$codexclaw:cxc-pabcd start the plan for the export feature"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": "[codexclaw: INTERVIEW]\nApply this pointer and its owners within exact user limits and permissions. No-delegation means no dispatch.\nThis also scopes the Mind instructions below. Load $codexclaw:cxc-interview for dimensions, questions, loop classification and readiness. Do not implement.\nINTERVIEW-GROUND-01: when tracker writes are authorized, `node \"${PLUGIN_ROOT}/bin/cxc.mjs\" scan record --session <id> --derive --map <questionId>=<dimension> ...`\nrecords known[]/unknown[]; read `.codexclaw/sessions/<id>.json` before the next question. Report unmet actions, not false readiness.\nINTERVIEW-RENDER-01: show knowns, the weakest dimension and the answer's impact before the question.\nINTERVIEW-INDEPENDENT-01: batch only INDEPENDENT questions; independence governs, not a count.\n\n[codexclaw: INTERVIEW — Mind dispatch]\nYou (the main session) OWN this interview loop: select Minds, dispatch contradiction workers,\ntriage contradictions, ask the user if needed, edit the plan, update state, and re-question.\nThe hook only injects directives — it does not coordinate worker returns or plan edits.\nDispatch Minds ONLY from the top-level main session; if you are yourself a subagent, Mind\ndispatch is unavailable (no nested orchestration) — fall back to inline reasoning, do not nest.\nEach Mind is a read-only lens: it returns contradictions ONLY (never asks/edits/calls/writes).\nChoose Minds by lowest-scoring dimensions; concurrent cap 3.\nMIND-SPAWN-SHAPE-01: only when Mind dispatch is authorized, fully read cxc-interview's\nreferences/mind-dispatch.md before dispatch. Use the live tool schema; never invent unsupported arguments.\nKeep read-only explorer intent, mind_<mindname> labels, NON-full-history tasks and explicit user settings.\nMinds are stateless: pack the lens prompt PLUS a compact interview snapshot (dimension scores,\nknowns, open assumptions, draft plan path) into each task message.\nState + plan artifacts live under .codexclaw/ (session tracker + .codexclaw/plan/).\n\n[codexclaw: PHASE UNCHANGED — TRIGGER-AUTHORITY-01] A lexical phase hint is not execution authority. The phase on disk is unchanged; no-goal/no-FSM restrict creation/mutations, not read-only get_goal or orchestrate status. Do not start orchestration for ordinary work. Preserve adjacency, attestations and ledger checks. Only if a phase transition is authorized, use the cxc-pabcd phase-control owner and `node \"${PLUGIN_ROOT}/bin/cxc.mjs\" orchestrate <I|P|A|B|C|D> --session <id>` — work edges carry --attest.\n\nPrompt-time persisted snapshot: `IPABCD: IDLE (IDLE)`. At the end of your reply, print exactly one status line in the format `IPABCD: <phase> (<LABEL>)`, using the latest verified persisted phase and its matching label for the current SessionStart-bound session and cwd. A later authorized, successful phase transition supersedes this snapshot for reporting. Otherwise retain the latest verified state; a request, lexical hint, narration, or failed transition is not a persisted phase change. This reporting instruction requires no additional tool calls and authorizes no transitions or gate bypasses. D closes to IDLE; a later authorized successful re-entry supersedes that resting state too."
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/.gitignore": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "# CodexClaw wrote this when it created .codexclaw; everything here is local runtime state.\n*\n!.gitignore\n!rules/\n!rules/*.md\n"
+      },
+      "ws/.codexclaw/sessions": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty-nonl",
+        "json": {
+          "phase": "IDLE",
+          "sessionId": "rec-s1",
+          "slug": "",
+          "updatedAt": "<TS>",
+          "flags": {
+            "interview": false,
+            "auditPassed": false,
+            "checkPassed": false
+          },
+          "supersededBy": null,
+          "injectedTurns": [
+            "rec-t1"
+          ],
+          "lastInjectedPhase": null,
+          "orchestrationActive": false,
+          "interview": null,
+          "stopBlockPhase": null,
+          "stopBlockCount": 0,
+          "stopBlockWorkPhaseId": null,
+          "stopMetricCursor": 0,
+          "stopBlockTotal": 0,
+          "stopBlockTurnId": "rec-t1",
+          "stopBlockCapNotified": false,
+          "loopArmSeen": false,
+          "idleEditNudges": 0,
+          "memoryWriteRequested": false,
+          "memoryWriteTurn": null,
+          "memoryWriteGrant": false,
+          "unverifiedSubagents": [],
+          "unverifiedCorrupt": false,
+          "phaseEntrySource": null,
+          "planUnit": null,
+          "planEpoch": null,
+          "checkEpoch": null,
+          "dcloseRecovery": null
+        }
+      }
+    },
+    "calls": []
+  }
+}

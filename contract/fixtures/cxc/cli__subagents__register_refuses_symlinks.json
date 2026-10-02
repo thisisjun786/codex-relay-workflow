@@ -1,0 +1,91 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/subagents/register",
+    "A/subagent-config/role-registration.test.ts",
+    "K13/CODEX_HOME"
+  ],
+  "note": "A symlinked role file and a symlinked agents directory are both refused without following them.",
+  "given": {
+    "files": {
+      "ws/target.toml": "name = \"executor\"\n"
+    },
+    "dirs": [
+      "ws/agents-elsewhere"
+    ],
+    "symlinks": {
+      "codex/agents/executor.toml": "${WS}/target.toml",
+      "home/codex2/agents": "${WS}/agents-elsewhere"
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "subagents",
+          "register",
+          "executor"
+        ]
+      },
+      {
+        "cli": [
+          "subagents",
+          "register",
+          "architect"
+        ],
+        "env": {
+          "CODEX_HOME": "${HOME}/codex2"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 1,
+    "steps": [
+      {
+        "exit": 1,
+        "stdout_form": "text",
+        "stdout": "subagents: Refusing non-regular role file: ${CODEX_HOME}/agents/executor.toml\n",
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "text",
+        "stdout": "subagents: Refusing non-regular agents directory: ${HOME}/codex2/agents\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/agents": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "codex/agents/executor.toml": {
+        "type": "symlink",
+        "mode": "",
+        "target": "${WS}/target.toml"
+      },
+      "home/codex2": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "home/codex2/agents": {
+        "type": "symlink",
+        "mode": "",
+        "target": "${WS}/agents-elsewhere"
+      },
+      "ws/agents-elsewhere": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/target.toml": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "name = \"executor\"\n"
+      }
+    },
+    "calls": []
+  }
+}

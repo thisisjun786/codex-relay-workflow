@@ -1,0 +1,233 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/orchestrate/transition",
+    "K8/ws/.codexclaw/sessions",
+    "K8/ws/.codexclaw/ledger.jsonl",
+    "A/pabcd-state/orchestrate-cli.test.ts",
+    "K6/orchestrate/status",
+    "K13/CODEX_THREAD_ID",
+    "A/pabcd-state/session-status.test.ts",
+    "K11/threads",
+    "K13/CODEX_SQLITE_HOME"
+  ],
+  "note": "status for an explicit missing session, the plain-terminal latest-state fallback, a native thread whose state file is missing (no fallback to another file), and an invalid native DB home.",
+  "given": {
+    "json": {
+      "ws/.codexclaw/sessions/rec-older.json": {
+        "phase": "B",
+        "sessionId": "rec-older",
+        "slug": "",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "flags": {
+          "interview": false,
+          "auditPassed": false,
+          "checkPassed": false
+        },
+        "supersededBy": null,
+        "injectedTurns": [],
+        "lastInjectedPhase": null,
+        "orchestrationActive": true,
+        "interview": null,
+        "stopBlockPhase": null,
+        "stopBlockCount": 0,
+        "stopBlockWorkPhaseId": null,
+        "stopMetricCursor": 0,
+        "stopBlockTotal": 0,
+        "stopBlockTurnId": null,
+        "stopBlockCapNotified": false,
+        "loopArmSeen": false,
+        "idleEditNudges": 0,
+        "memoryWriteRequested": false,
+        "memoryWriteTurn": null,
+        "memoryWriteGrant": false,
+        "unverifiedSubagents": [],
+        "unverifiedCorrupt": false,
+        "phaseEntrySource": null,
+        "planUnit": null,
+        "planEpoch": null,
+        "checkEpoch": null,
+        "dcloseRecovery": null
+      }
+    },
+    "sqlite": {
+      "codex/state_5.sqlite": [
+        "CREATE TABLE threads (id TEXT PRIMARY KEY, cwd TEXT, archived INTEGER, source TEXT)",
+        "INSERT INTO threads (id, cwd, archived, source) VALUES ('0190cafe-0279-7000-8000-000000000279', '${WS}', 0, 'cli')"
+      ]
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "orchestrate",
+          "status",
+          "--session",
+          "rec-missing",
+          "--cwd",
+          "${WS}",
+          "--json"
+        ]
+      },
+      {
+        "cli": [
+          "orchestrate",
+          "status",
+          "--cwd",
+          "${WS}",
+          "--json"
+        ]
+      },
+      {
+        "cli": [
+          "orchestrate",
+          "status",
+          "--cwd",
+          "${WS}",
+          "--json"
+        ],
+        "env": {
+          "CODEX_THREAD_ID": "0190cafe-0279-7000-8000-000000000279"
+        }
+      },
+      {
+        "cli": [
+          "orchestrate",
+          "status",
+          "--cwd",
+          "${WS}",
+          "--json"
+        ],
+        "env": {
+          "CODEX_SQLITE_HOME": "${TMP}/nowhere",
+          "CODEX_THREAD_ID": "0190cafe-0279-7000-8000-000000000279"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 1,
+    "steps": [
+      {
+        "exit": 1,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "sessionId": "rec-missing",
+          "phase": null,
+          "stateExists": false,
+          "error": "session state is missing in this cwd; run cxc session current and cxc session bind from the native session cwd. Binding does not verify hook execution."
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "phase": "B",
+          "flags": {
+            "interview": false,
+            "auditPassed": false,
+            "checkPassed": false
+          },
+          "sessionId": "rec-older",
+          "selection": "latest-file"
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "sessionId": "<UUID_1>",
+          "phase": null,
+          "stateExists": false,
+          "error": "session state is missing in this cwd; run cxc session current and cxc session bind from the native session cwd. Binding does not verify hook execution."
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "error": "Cannot locate the native state database. Check CODEX_SQLITE_HOME or CODEX_HOME.",
+          "phase": null
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/state_5.sqlite": {
+        "type": "file",
+        "mode": "0644",
+        "form": "sqlite",
+        "json": {
+          "tables": [
+            {
+              "name": "threads",
+              "sql": "CREATE TABLE threads (id TEXT PRIMARY KEY, cwd TEXT, archived INTEGER, source TEXT)",
+              "rows": [
+                {
+                  "id": "<UUID_1>",
+                  "cwd": "${WS}",
+                  "archived": 0,
+                  "source": "cli"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/sessions": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/sessions/rec-older.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "phase": "B",
+          "sessionId": "rec-older",
+          "slug": "",
+          "updatedAt": "<TS>",
+          "flags": {
+            "interview": false,
+            "auditPassed": false,
+            "checkPassed": false
+          },
+          "supersededBy": null,
+          "injectedTurns": [],
+          "lastInjectedPhase": null,
+          "orchestrationActive": true,
+          "interview": null,
+          "stopBlockPhase": null,
+          "stopBlockCount": 0,
+          "stopBlockWorkPhaseId": null,
+          "stopMetricCursor": 0,
+          "stopBlockTotal": 0,
+          "stopBlockTurnId": null,
+          "stopBlockCapNotified": false,
+          "loopArmSeen": false,
+          "idleEditNudges": 0,
+          "memoryWriteRequested": false,
+          "memoryWriteTurn": null,
+          "memoryWriteGrant": false,
+          "unverifiedSubagents": [],
+          "unverifiedCorrupt": false,
+          "phaseEntrySource": null,
+          "planUnit": null,
+          "planEpoch": null,
+          "checkEpoch": null,
+          "dcloseRecovery": null
+        }
+      }
+    },
+    "calls": []
+  }
+}

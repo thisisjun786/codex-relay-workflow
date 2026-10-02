@@ -1,0 +1,182 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/disable/run",
+    "K12/codex",
+    "K8/codex-home/config.toml",
+    "K8/codex-home/.codexclaw-install.json",
+    "K8/codex-home/codexclaw-self-heal.json",
+    "A/config-guard/deactivate-drift.test.ts",
+    "A/config-guard/activate.test.ts"
+  ],
+  "note": "Seeded manifest (multi_agent and goals enabled by codexclaw, hooks pre-existing, the soft flag failed) and a listing reporting everything on: disable removes the managed key, runs `codex features disable` for multi_agent and goals only, keeps hooks, skips the failed soft flag, and writes the opt-out marker.",
+  "given": {
+    "files": {
+      "codex/config.toml": "model = \"gpt-5.5\"\n\n[features]\nhooks = true\n\n[memories]\ndedicated_tools = true\n"
+    },
+    "json": {
+      "codex/.codexclaw-install.json": {
+        "version": 2,
+        "activatedAt": "2025-12-01T00:00:00.000Z",
+        "configPath": "${CODEX_HOME}/config.toml",
+        "backupPath": null,
+        "postActivateHash": null,
+        "flags": {
+          "multi_agent": {
+            "priorEnabled": false,
+            "enabledByCodexclaw": true,
+            "enableFailed": false
+          },
+          "goals": {
+            "priorEnabled": false,
+            "enabledByCodexclaw": true,
+            "enableFailed": false
+          },
+          "hooks": {
+            "priorEnabled": true,
+            "enabledByCodexclaw": false,
+            "enableFailed": false
+          },
+          "default_mode_request_user_input": {
+            "priorEnabled": false,
+            "enabledByCodexclaw": false,
+            "enableFailed": true,
+            "failure": {
+              "exitCode": 1,
+              "message": "unknown feature"
+            }
+          }
+        },
+        "tableKeys": {
+          "memories.dedicated_tools": {
+            "table": "memories",
+            "key": "dedicated_tools",
+            "priorValue": null,
+            "appliedValue": "true",
+            "setByCodexclaw": true
+          }
+        }
+      }
+    },
+    "stubs": {
+      "codex": {
+        "stdout": "default_mode_request_user_input  under development  true\ngoals                            stable             true\nhooks                            stable             true\nmulti_agent                      stable             true\n",
+        "exit": 0
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "disable"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "codexclaw: disabled [multi_agent, goals]; kept pre-existing [hooks]\nrestored keys: memories.dedicated_tools\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/.codexclaw-install.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "version": 2,
+          "activatedAt": "<TS>",
+          "configPath": "${CODEX_HOME}/config.toml",
+          "backupPath": null,
+          "postActivateHash": null,
+          "flags": {
+            "multi_agent": {
+              "priorEnabled": false,
+              "enabledByCodexclaw": true,
+              "enableFailed": false
+            },
+            "goals": {
+              "priorEnabled": false,
+              "enabledByCodexclaw": true,
+              "enableFailed": false
+            },
+            "hooks": {
+              "priorEnabled": true,
+              "enabledByCodexclaw": false,
+              "enableFailed": false
+            },
+            "default_mode_request_user_input": {
+              "priorEnabled": false,
+              "enabledByCodexclaw": false,
+              "enableFailed": true,
+              "failure": {
+                "exitCode": 1,
+                "message": "unknown feature"
+              }
+            }
+          },
+          "tableKeys": {
+            "memories.dedicated_tools": {
+              "table": "memories",
+              "key": "dedicated_tools",
+              "priorValue": null,
+              "appliedValue": "true",
+              "setByCodexclaw": true
+            }
+          }
+        }
+      },
+      "codex/codexclaw-self-heal.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty",
+        "json": {
+          "optedOut": true,
+          "optedOutAt": "<TS>",
+          "allEnabled": false
+        }
+      },
+      "codex/config.toml": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "model = \"gpt-5.5\"\n\n[features]\nhooks = true\n\n[memories]\n"
+      }
+    },
+    "calls": [
+      {
+        "cmd": "codex",
+        "argv": [
+          "features",
+          "list"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "codex",
+        "argv": [
+          "features",
+          "disable",
+          "multi_agent"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "codex",
+        "argv": [
+          "features",
+          "disable",
+          "goals"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

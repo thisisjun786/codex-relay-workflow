@@ -1,0 +1,35 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/receipt/help",
+    "K6/exit-codes",
+    "A/plugin/cli-usage.test.mjs",
+    "A/pabcd-state/help-verbs.test.ts"
+  ],
+  "note": "`cxc receipt -h`: usage text and exit status; nothing written.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "receipt",
+          "-h"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "cxc receipt — record a check receipt that binds a command's result to a source tree\n\nUsage:\n  cxc receipt test --session <id> [--cwd <path>] [--generated <path>]... -- <command> [args...]\n  cxc receipt --help\n\nNotes:\n  Everything after `--` is the command; nothing before it is.\n  The session must be at phase C — a receipt is produced during Check.\n  The receipt is written to <cwd>/.codexclaw/evidence/<session>/test-receipt.json\n  and is refused if the command changes the source while it runs.\n  --generated declares paths the check REGENERATES by design (a validator that\n  rebuilds its own artifacts). Repeatable. Undeclared rewrites are still refused.\n\nExample:\n  cxc receipt test --session <id> -- npm test\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}
