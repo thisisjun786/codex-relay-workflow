@@ -74,7 +74,8 @@ type ProgressEvent struct {
 	Outside            *ProgressOutside
 }
 
-// ID names an event by what it is and what it says: two events with one ID are the same change, so a read that delivers an ID twice has delivered a change twice.
+// ID names an event by its kind, its subject and the digest of what it says (a revision by its number and its state digest), so a read that delivers one ID twice has delivered a change twice.
+// It is for counting deliveries: the log metadata of a revision is covered by the hash chain of the cursor, not by the ID.
 func (e ProgressEvent) ID() string {
 	switch e.Kind {
 	case ProgressEventPlan:
@@ -157,6 +158,9 @@ func ParseProgressCursor(text string) (ProgressCursor, error) {
 	bad := func(format string, args ...any) (ProgressCursor, error) {
 		return ProgressCursor{}, refuse(contract.RefusalMalformedReceipt, "progress cursor: "+format, args...)
 	}
+	if !strings.HasPrefix(text, "{") {
+		return bad("not an object")
+	}
 	dec := json.NewDecoder(strings.NewReader(text))
 	dec.DisallowUnknownFields()
 	var w cursorWire
@@ -193,6 +197,8 @@ func ParseProgressCursor(text string) (ProgressCursor, error) {
 // ProgressSnapshot is the view's inputs as a reader holds them: the plan as of its revision (a CRW-183 snapshot), the denominators of every revision, one record per live node and the outside
 // aggregate. A snapshot taken from the live view (ProgressSnapshotOf) is complete, and so is one that ApplyProgressDelta folded up to a page with more false and whose digest it checked; any
 // other (the zero value, one cut off between pages, one built by hand) is not, and Project refuses it. Outside is a pointer so that an aggregate not held differs from one held and empty.
+// A snapshot, its records and the events of a delta are read-only values: they share their nested data (links, stale objects, id lists) with the view they were taken from and with one another,
+// so a consumer that changes one in place changes every holder of it.
 type ProgressSnapshot struct {
 	Plan      dag.Snapshot
 	Revisions []RevisionCount

@@ -483,6 +483,7 @@ func TestProgressCursorText(t *testing.T) {
 	good := dig("x")
 	bad := map[string]string{
 		"not json":                          "not json",
+		"null":                              "null",
 		"an array":                          "[]",
 		"an unknown field":                  `{"plan_id":"p","extra":1}`,
 		"trailing data":                     `{"plan_id":"p"}{"plan_id":"q"}`,
@@ -704,6 +705,58 @@ func TestProgressRecordDigestIsKeyed(t *testing.T) {
 	}
 	if before.Outside.Digest != after.Outside.Digest || !before.Cursor().Equal(before.Cursor()) || before.Cursor().Equal(after.Cursor()) {
 		t.Error("the cursor must move with the one record and with nothing else")
+	}
+}
+
+// A change to one printed field of a record alone is exactly one node event, and the fold that takes it is the live view. The cases move one field each, in a plan whose nodes do not otherwise
+// change: a link, the slot a node holds, the title. A digest that left one of them out would send no event and the fold would end at a stale view. (The acceptance id is in the digest too, but
+// no case moves it alone: the detail of an accepted node names it, so a new acceptance moves two fields at once.)
+func TestProgressDeltaSeesEveryPrintedFieldOfARecord(t *testing.T) {
+	f := newFixture(t)
+	f.projectParent()
+	f.putPlan("pf", 0, "pf-r1", addNode("a", dag.NodeNonPR), addNode("b", dag.NodeNonPR), addNode("im", dag.NodeImplementation))
+	f.startNode("pf", "a")
+	f.startNode("pf", "b")
+	rid, event := f.seedReceived("pf", "im")
+	retitled := nodeDoc("a", dag.NodeNonPR)
+	retitled["title"] = "a, retitled"
+	cases := []struct {
+		name   string
+		change func()
+		want   []string // the kinds and subjects of the events, in order
+	}{
+		{"a link alone (a work report names a pull request)", func() { f.workReport(rid, event, 1, dig("revision "+rid), 11, progHead2) }, []string{"node/im"}},
+		{"the slot alone", func() { f.holdSlotsFor("pf", "b") }, []string{"node/b"}},
+		{"the title alone", func() { f.putPlan("pf", 1, "pf-r2", doc{"op": dag.OpUpdateNode, "node": retitled}) }, []string{"revision/2", "node/a"}},
+	}
+	ctx := context.Background()
+	for _, c := range cases {
+		held, _, err := f.sched.ReadProgressSnapshot(ctx, "pf")
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.change()
+		d, err := f.sched.ReadProgressDelta(ctx, "pf", held.Cursor(), dag.MaxPage)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, e := range d.Events {
+			id := e.ID()
+			got = append(got, id[:strings.Index(id, "@")])
+		}
+		if !equalStrings(got, c.want) {
+			t.Errorf("%s: the events are %v, want %v", c.name, got, c.want)
+		}
+		live, liveProgress, err := f.sched.ReadProgressSnapshot(ctx, "pf")
+		if err != nil {
+			t.Fatal(err)
+		}
+		folded, err := ApplyProgressDelta(held, d)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		assertRebuilt(t, c.name, folded, live, liveProgress)
 	}
 }
 
