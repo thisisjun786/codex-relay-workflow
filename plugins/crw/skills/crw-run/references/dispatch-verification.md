@@ -162,10 +162,16 @@ a case whose owner has moved or been reworded before relying on it.
 | S18 | A mismatch found after creation is reconciled on that same task | Same bullet list | Recovery | unchanged |
 | S19 | A child writes its messages, commits, pull request text and receipts in English, while task titles, Linear records and reports to the user stay Korean | [Default independent execution](../../crw-plan/references/integrations.md#default-independent-execution) language paragraph and the packets' `Language:` line | Default settings | added 2026-10-02; partly measured in P-CRW-115, inspected artifacts held, see below |
 | S20 | A relay-managed child that finishes on a goal-continuation or post-restart turn attaches a continuation claim naming the generation's anchor, read from the relay, and does not read the `unassigned_turn` refusal as a delivery defect; a turn of another task stays refused whatever it claims | [Launch packet](task-packet.md#launch-packet) relay bullet on which turn the receipt is emitted from, and [Completing on a later turn of the same child](relay.md#completing-on-a-later-turn-of-the-same-child) | Recovery | added 2026-10-02; did not occur in the receipts read in P-CRW-115, see below |
+| S21 | An implementation issue the size check answers `split_recommended` for is not assigned and is reported with its draft; an exception the user explicitly approved passes with its record; `ok` changes nothing | [Check the size before dispatch](../SKILL.md#check-the-size-before-dispatch) and [Check the size of an issue](../../crw-plan/references/issue-boundaries.md#check-the-size-of-an-issue) | Preserved limits | added with CRW-273; the command is tested and was replayed over the recorded issues, no run has had a parent apply the step yet |
 S14 and S17 are the pair that is easiest to confuse. S14 removed the readiness turn; S17
 added a capability check the coordinator performs before creating the task. A check that
 happens on the coordinator's side, before anything exists to answer, is not a turn spent
 asking the child whether it is ready.
+
+S21 is unobserved in a run. The command it relies on has Go tests over its answers, and the 33 recorded issues of five projects were replayed
+through it (the 31 that finished small answer `ok`, CRW-183 and CRW-184 answer `split_recommended`). Whether a parent runs it before
+`managed-start`, holds a flagged issue as `defer:size_check` and records an approved exception with the user's own statement is a reading of
+this text, not a measurement; the first project run after it lands is where to look.
 
 S19 and S20 were read against P-CRW-115, a relay-managed project run: its six issue
 children, whose pull requests are #271 to #276 (merges 14b01079, 6b5ba199, 9fb54f4b,
