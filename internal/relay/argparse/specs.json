@@ -745,7 +745,7 @@
   {"flag":"--page-budget","type":"int","help":"how many pages one connection may take before the read is reported unfinished rather than answered"},
   {"flag":"--call-budget","type":"int"},
   {"flag":"--timeout","type":"int"}]},
-{"name":"dag-plan-put","summary":"appends one revision to a DAG plan: typed changes (add_node, update_node, replace_node, retire_node, add_edge, retire_edge) folded onto the plan's head, validated as the plan they produce, and recorded in the append-only revision log. A request id already recorded returns that revision; a stale expected parent is plan_revision_conflict. A rejected revision writes nothing","options":[
+{"name":"dag-plan-put","summary":"appends one revision to a DAG plan: typed changes (add_node, update_node, replace_node, retire_node, add_edge, retire_edge, and the lifecycle changes pause_node, resume_node, cancel_node, archive_node, pause_plan, resume_plan) folded onto the plan's head, validated as the plan they produce, and recorded in the append-only revision log. A request id already recorded returns that revision; a stale expected parent is plan_revision_conflict. A rejected revision writes nothing","options":[
   {"flag":"--request","required":true,"help":"the dag-plan-revision/1 document as JSON, or @file"}]},
 {"name":"dag-plan-show","summary":"a DAG plan as of one revision (the head by default): its nodes with their slice digests and its edges, read in one snapshot with every digest recomputed. Reads only; a store without plans answers unregistered_scope","options":[
   {"flag":"--plan","required":true},
@@ -759,6 +759,8 @@
   {"flag":"--plan","required":true},
   {"flag":"--record","kind":"true","help":"keep this reading as a pass (dag_passes); needs --actor"},
   {"flag":"--actor","help":"the task asking for the recorded pass"}]},
+{"name":"dag-progress","summary":"how far a DAG plan has come, read from the relay store alone and opened read-only: the live nodes partitioned into stages (waiting on a predecessor, a decision or a resource, ready, releasing, running, reported, verifying, correcting, accepted, integrated, stale, paused and the rest), a blocked overlay with one closed reason per node, cumulative accepted and integrated counts kept apart from the stages, the denominator at every plan revision and whether it changed, and the exact relationship, thread and pull request of each node. Writes nothing and reads no clock, artifact or forge","options":[
+  {"flag":"--plan","required":true}]},
 {"name":"dag-region-declare","summary":"declares the edit regions of an implementation node before it is released: repository, path, kind (tree, file, symbol) and change (edit, rename, delete) for 1 to 64 regions. A node with no declaration counts as overlapping everything; renames, deletes and hotspots are exclusive. An identical declaration is a replay","options":[
   {"flag":"--plan","required":true},
   {"flag":"--node","required":true},

@@ -16,7 +16,8 @@ import (
 )
 
 // The one reading of a stored receipt that the Stop hook (hook.LookupReceipt) and the omission
-// reader (delivery.omissionReceipt) share. Both read a head event's receipt and its relationship's
+// reader (delivery.ObserveOmission, delivery.DeriveOmission) share, through delivery.LookupStoredReceipt
+// and LookupStoredReceiptAt. Both read a head event's receipt and its relationship's
 // artifact roots as the values json.loads makes of them, and judge them by
 // guard.deliverable_state's rule, so a path, digest or byte count of another type is compared,
 // printed and refused as the guard refuses it. Only text that is not JSON is unreadable.

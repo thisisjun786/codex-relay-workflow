@@ -215,14 +215,6 @@ status and the presence of the error rather than V8's wording.
 
 Recording surfaced behaviour that looks unintended in v0.2.40. The fixtures keep it as the
 oracle does (only the destructive `reset --help` is fixed by the port, decision 9); the port
-issues decide each one. Among them: `cxc reset --help` resets state; `cxc doctor --help` fails
-with "unknown hooks option"; `cxc provider` ignores every argument; `metric parse-line` cannot
-succeed through the dispatcher (it parses the argv after the verb, `--session` included, while
-its help says it reads stdin); `plan init --date` silently ignores a value that is not YYMMDD;
-`loop init` with a symlinked goalplans root dies with an uncaught error; the managed-worktree
-deletion guard exits 1 without a deny envelope on oversized stdin and denies any command that
-contains the slot id as a substring; Write/Edit are matched by the edit lint but never linted,
-and a subagent's edit skips it; `cxc memory grant` and `cxc memory` reach recall's usage with
-exit 0; the MCP server's default project scope is the plugin root; recall's recovery line is cut
-inside the plugin path; the spawn hook runs the same `git ls-files` three times per spawn and
-never sweeps unused grants; `cxc disable` keeps the install manifest after a revert.
+issues decide each one. The list, one line per defect with its fixture or source pointer, is
+[docs/port-cxc/known-defects.md](../../../docs/port-cxc/known-defects.md); a port issue that finds
+another adds a line there.

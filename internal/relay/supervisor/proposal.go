@@ -135,7 +135,7 @@ func (c *Channel) refreshProposal(ctx context.Context, row store.SupervisorMessa
 	if report.submission != 0 {
 		submission = sql.NullInt64{Int64: report.submission, Valid: true}
 	}
-	result, err := c.Store.Q(ctx).ExecContext(ctx, "UPDATE supervisor_messages SET packet=?,event_id=?,submission_no=?,updated_at=? WHERE message_id=? AND state IN ('queued','deferred_busy','withheld_pre_send','sending') AND recipient_task_id=? AND NOT EXISTS (SELECT 1 FROM supervisor_attempts WHERE message_id=? AND attempt_no<>? AND (send_attempted<>'no' OR retry_safe=0))", encoded, eventID, submission, at, row.MessageID, r.Recipient, row.MessageID, currentAttempt)
+	result, err := c.Store.Q(ctx).ExecContext(ctx, "UPDATE supervisor_messages SET packet=?,event_id=?,submission_no=?,updated_at=? WHERE message_id=? AND "+store.SupervisorRestatableSQL("")+" AND recipient_task_id=? AND NOT EXISTS (SELECT 1 FROM supervisor_attempts WHERE message_id=? AND attempt_no<>? AND "+store.SupervisorAttemptMayHaveGoneSQL("")+")", encoded, eventID, submission, at, row.MessageID, r.Recipient, row.MessageID, currentAttempt)
 	if err != nil {
 		return false, err
 	}
@@ -233,7 +233,7 @@ func (c *Channel) reopenAddressed(ctx context.Context, row store.SupervisorMessa
 		if err != nil || r.Sender != live.SenderTaskID || r.Recipient != live.RecipientTaskID || r.ProjectKey != live.ProjectKey.String {
 			return err
 		}
-		result, err := c.Store.Q(tx).ExecContext(tx, "UPDATE supervisor_messages SET hold_reason=NULL,updated_at=? WHERE message_id=? AND hold_reason='hierarchy_unresolved' AND state IN ('queued','deferred_busy','withheld_pre_send')", at, row.MessageID)
+		result, err := c.Store.Q(tx).ExecContext(tx, "UPDATE supervisor_messages SET hold_reason=NULL,updated_at=? WHERE message_id=? AND hold_reason='hierarchy_unresolved' AND "+store.SupervisorUnsentSQL(""), at, row.MessageID)
 		if err != nil {
 			return err
 		}
@@ -267,7 +267,7 @@ func (c *Channel) reopenProposal(ctx context.Context, row store.SupervisorMessag
 		if err != nil {
 			return err
 		}
-		result, err := c.Store.Q(tx).ExecContext(tx, "UPDATE supervisor_messages SET hold_reason=NULL,next_eligible_at=NULL,updated_at=? WHERE message_id=? AND hold_reason='superseded_by_report' AND state IN ('queued','deferred_busy','withheld_pre_send')", at, row.MessageID)
+		result, err := c.Store.Q(tx).ExecContext(tx, "UPDATE supervisor_messages SET hold_reason=NULL,next_eligible_at=NULL,updated_at=? WHERE message_id=? AND hold_reason='superseded_by_report' AND "+store.SupervisorUnsentSQL(""), at, row.MessageID)
 		if err != nil {
 			return err
 		}
