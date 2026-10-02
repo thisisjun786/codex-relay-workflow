@@ -93,7 +93,7 @@ An edge is satisfied by what the store holds now. Every predicate is scoped to t
 
 ### Input checks
 
-When all incoming edges of a candidate are satisfied, the artifacts it would consume are read again: every file the predecessor's receipt declared must still
+When all incoming edges of a candidate are satisfied, the artifacts it would consume are read again. These file checks apply to non-code `artifact_verified` inputs (a code-pinned input consumes the accepted head instead), and a frozen copy of the manifest is checked when the receipt records its reference: every file the predecessor's receipt declared must still
 exist, hash to the declared digest and size and lie under the predecessor's artifact roots; a frozen copy of the manifest must read and agree; an artifact
 edge that hands over no artifact is blocked, never an empty success; the list of artifacts a receipt declares must hash to the revision the parent accepted (so an artifact left out of the list, or added to it, is found even when every remaining file is intact); and following the consumed acceptances down through their manifests, no node may appear
 under two acceptances. The first violated path decides the reason.
@@ -101,8 +101,8 @@ under two acceptances. The first violated path decides the reason.
 ### Ranking and selection
 
 Candidates are ordered by the hop count of the longest chain each starts (critical path), then by the nodes below it, then by the stored time it became ready,
-then by node id. A long independent node therefore never holds back a short dependent chain: a node waits only for its own predecessors. The first candidates
-that fit the free slots are ready; each candidate cut is deferred with `defer:no_capacity` (or `defer:capacity_unmeasured`), and the pass records which limit decided
+then by node id. There is no wave barrier: a long independent node does not hold back a short dependent chain, because a node waits for its own predecessors. Capacity and edit-region conflicts may still defer a candidate. The first candidates
+that fit the free slots and do not overlap are ready; each candidate cut is deferred with `defer:no_capacity`, `defer:capacity_unmeasured` or `defer:edit_overlap`, and the pass records which limit decided
 the first cut: `none`, `no_capacity`, `edit_overlap` or `capacity_unmeasured`.
 
 ### Capacity
