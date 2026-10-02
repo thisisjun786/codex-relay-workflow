@@ -246,7 +246,7 @@ func (ManagedOmittedObserver) Observe(ctx context.Context, request ManagedReadin
 	}
 	if status == "failed" || status == "interrupted" {
 		var n int
-		err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM events WHERE relationship_id=? AND execution_generation=? AND turn_thread_id=? AND turn_id=? AND producer='daemon' AND stage='final' AND outcome=? AND turn_status=?", rid, opened, request.Session, request.Turn, status, status).Scan(&n)
+		err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM events WHERE relationship_id=? AND execution_generation=? AND turn_thread_id=? AND turn_id=? AND producer=? AND stage='final' AND outcome=? AND turn_status=?", rid, opened, request.Session, request.Turn, store.ProducerDaemon, status, status).Scan(&n)
 		if err != nil {
 			return answer("unmeasured", "store_unreadable: "+err.Error())
 		}
