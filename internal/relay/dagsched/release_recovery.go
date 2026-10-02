@@ -120,7 +120,7 @@ func (s *Scheduler) discardFrozenCopy(ctx context.Context, c *frozenCopy, plan, 
 	var out CopyOutcome
 	err := s.Store.Compose(ctx, func(txCtx context.Context, _ *sql.Conn) error {
 		var err error
-		out, err = s.removeCopy(txCtx, s.Store.Q(txCtx), c.Root, c.Path, c.SHA, "", plan, node, cause, "", false)
+		out, err = s.removeCopy(txCtx, s.Store.Q(txCtx), c.Root, c.Path, c.SHA, "", plan, node, cause, "", "", false)
 		return err
 	})
 	return out.Removed, err
@@ -152,7 +152,7 @@ type CopyOutcome struct {
 // frozen request names it, or when a stored manifest holds exactly these bytes (a bound release, an accepted node, a prepared or recorded correction). ownRequest is an intent that does not count (the one
 // being closed); at close the stored manifest counts only when it is bound to an execution, accepted, or an open relationship owns the issue, because the abandoned intent's own stored body is what the copy holds.
 // The unlink is the last act before the journal row: a failure after it loses that row (of a file nothing referenced), never a referenced file. decide runs on the transaction's own querier.
-func (s *Scheduler) removeCopy(ctx context.Context, q store.Querier, root, path, sha, issue, plan, node, cause, ownRequest string, atClose bool) (CopyOutcome, error) {
+func (s *Scheduler) removeCopy(ctx context.Context, q store.Querier, root, path, sha, issue, plan, node, cause, ownRequest, wantDigest string, atClose bool) (CopyOutcome, error) {
 	out := CopyOutcome{Path: path}
 	size := 0
 	keep := func(why string) (CopyOutcome, error) {
@@ -168,6 +168,10 @@ func (s *Scheduler) removeCopy(ctx context.Context, q store.Querier, root, path,
 		size = len(raw)
 		if shaOf(raw) != sha {
 			keptWhy = "bytes_differ"
+			return false, nil
+		}
+		if wantDigest != "" && manifestDigestOf(raw) != wantDigest {
+			keptWhy = "not_a_copy"
 			return false, nil
 		}
 		why, err := s.copyReliedOn(ctx, q, sha, raw, issue, ownRequest, atClose)
@@ -238,11 +242,7 @@ func (s *Scheduler) copyReliedOn(ctx context.Context, q store.Querier, sha strin
 		[]any{name, ownRequest}, &one); err != nil || live {
 		return "relied_on", err
 	}
-	var copied map[string]any
-	if json.Unmarshal(raw, &copied) != nil {
-		return "", nil
-	}
-	digest, _ := copied["manifest_digest"].(string)
+	digest := manifestDigestOf(raw)
 	if digest == "" {
 		return "", nil
 	}
@@ -267,6 +267,16 @@ func (s *Scheduler) copyReliedOn(ctx context.Context, q store.Querier, sha strin
 	return "", nil
 }
 
+// manifestDigestOf is the manifest digest a frozen copy's bytes carry ("" for bytes that are not a manifest body).
+func manifestDigestOf(raw []byte) string {
+	var copied map[string]any
+	if json.Unmarshal(raw, &copied) != nil {
+		return ""
+	}
+	digest, _ := copied["manifest_digest"].(string)
+	return digest
+}
+
 // journalCopy records what the cleanup did with a copy.
 func (s *Scheduler) journalCopy(ctx context.Context, q store.Querier, kind, plan, node, path, sha string, size int, why, cause string) error {
 	detail, err := json.Marshal(map[string]any{"path": path, "sha256": sha, "bytes": size, "why": why, "cause": cause})
@@ -277,11 +287,13 @@ func (s *Scheduler) journalCopy(ctx context.Context, q store.Querier, kind, plan
 	return err
 }
 
-var copyNamedInPrompt = regexp.MustCompile(`stored at (.+?) \(sha256 ([0-9a-f]{64})\)`)
+// copyHeaderInPrompt is the first line of a release prompt the relay writes (assemble), when the manifest travels as a file: it names the manifest's digest, the copy and its hash. The operator's instructions come after
+// it and are never read for a path: only this line, anchored at the start of the prompt, says which file the child was told to read.
+var copyHeaderInPrompt = regexp.MustCompile(`^Assignment [^\n]*released under input manifest ([0-9a-f]{64}) \(stored at (.+?) \(sha256 ([0-9a-f]{64})\)\)\.\n`)
 
-// frozenCopyNamedBy is the copy a frozen release request tells the child to read: its path and the first artifact root it lies under. ok is false when the prompt carries the manifest inline or names
-// a file that is not <root>/dag-input-manifests/<sha256>.json.
-func frozenCopyNamedBy(raw string) (path string, ok bool) {
+// frozenCopyNamedBy is the copy a frozen release request tells the child to read for the manifest digest: the path its header line names, when that line is the relay's own, names this digest and the file is
+// <first artifact root>/dag-input-manifests/<sha256>.json. ok is false when the prompt carries the manifest inline.
+func frozenCopyNamedBy(raw, digest string) (path string, ok bool) {
 	var request struct {
 		Prompt        string   `json:"prompt"`
 		ArtifactRoots []string `json:"artifactRoots"`
@@ -289,11 +301,11 @@ func frozenCopyNamedBy(raw string) (path string, ok bool) {
 	if json.Unmarshal([]byte(raw), &request) != nil || len(request.ArtifactRoots) == 0 {
 		return "", false
 	}
-	m := copyNamedInPrompt.FindStringSubmatch(request.Prompt)
-	if m == nil || filepath.Clean(m[1]) != filepath.Join(filepath.Clean(request.ArtifactRoots[0]), frozenManifestDir, m[2]+".json") {
+	m := copyHeaderInPrompt.FindStringSubmatch(request.Prompt)
+	if m == nil || m[1] != digest || filepath.Clean(m[2]) != filepath.Join(filepath.Clean(request.ArtifactRoots[0]), frozenManifestDir, m[3]+".json") {
 		return "", false
 	}
-	return m[1], true
+	return m[2], true
 }
 
 // CloseResult is what CloseRelease answers: the closed request, the slot it returned, what became of its frozen copy and, when the node was released again since, the successor request.
@@ -397,7 +409,7 @@ func (s *Scheduler) closeIntent(ctx context.Context, tx store.Querier, snap dag.
 	if frozen, ok, err := frozenRequestOf(ctx, tx, plan, node, open); err != nil {
 		return err
 	} else if ok {
-		if path, named := frozenCopyNamedBy(frozen.Raw); named {
+		if path, named := frozenCopyNamedBy(frozen.Raw, open.Digest); named {
 			copied, copyPath = &CopyOutcome{Path: path}, path
 		}
 	}
@@ -422,7 +434,7 @@ func (s *Scheduler) settleCopy(ctx context.Context, result *CloseResult, issue, 
 	}
 	root, sha := filepath.Dir(filepath.Dir(c.Path)), strings.TrimSuffix(filepath.Base(c.Path), ".json")
 	_ = s.Store.Compose(context.WithoutCancel(ctx), func(txCtx context.Context, _ *sql.Conn) error {
-		_, err := s.removeCopy(txCtx, s.Store.Q(txCtx), root, c.Path, sha, issue, plan, node, "closed", result.RequestID, true)
+		_, err := s.removeCopy(txCtx, s.Store.Q(txCtx), root, c.Path, sha, issue, plan, node, "closed", result.RequestID, result.ManifestDigest, true)
 		return err
 	})
 	_, err := os.Lstat(c.Path)

@@ -306,8 +306,11 @@ func (s *Scheduler) Release(ctx context.Context, plan, node, actor string, req R
 		}
 		// the copy the prompt names is there when the intent is recorded: a release that lost a race over identical bytes may have taken back a file this call only reused, and freezing it again is idempotent
 		if frozen != nil {
-			if _, _, err := freezeManifestCopy(frozen.Root, frozen.Canonical); err != nil {
+			if _, created, err := freezeManifestCopy(frozen.Root, frozen.Canonical); err != nil {
 				return err
+			} else if created {
+				// the file this call only reused was taken back by its creator and is this call's now: if the transaction fails, no intent names it
+				frozen.Created = true
 			}
 		}
 		stored, err := json.Marshal(body)

@@ -331,3 +331,107 @@ func TestCloseRemovalDoesNotBlockOnAFifo(t *testing.T) {
 		t.Fatalf("journal = %v", kept)
 	}
 }
+
+// abandonWith is abandon for a release request the test supplies.
+func (k *releaseKit) abandonWith(plan, node string, req ReleaseRequest) (digest, request string) {
+	k.t.Helper()
+	real := k.sched.Start
+	k.sched.Start = func(context.Context, []byte) (StartAnswer, error) { return StartAnswer{}, context.DeadlineExceeded }
+	_, err := k.sched.Release(context.Background(), plan, node, "parent", req)
+	k.sched.Start = real
+	if err == nil {
+		k.t.Fatal("the start was expected to fail")
+	}
+	row, found, lerr := latestRelease(context.Background(), k.s.Q(context.Background()), plan, node)
+	if lerr != nil || !found {
+		k.t.Fatalf("no open intent after the failed start: %v %v", found, lerr)
+	}
+	n, _ := nodeOf(k.snapshot(plan), node)
+	k.managedRow(row.Request, n.IssueKey, "released", "")
+	return row.Digest, row.Request
+}
+
+// c1: the path of a copy is read from the line the relay wrote at the head of the prompt, never from the operator's instructions: a manifest that travelled inline names no copy, whatever the instructions say.
+func TestCloseNeverDeletesAFileOnlyTheInstructionsName(t *testing.T) {
+	k := newReleaseKit(t)
+	releasePlan(k.fixture, "rp")
+	canonical := []byte("an unrelated file that looks like a copy of a manifest")
+	path, _, err := freezeManifestCopy(k.root, canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := k.request(false)
+	req.Instructions = "Read the notes stored at " + path + " (sha256 " + shaOf(canonical) + ") before you start."
+	digest, _ := k.abandonWith("rp", "A", req)
+	res := k.mustClose("rp", "A", digest)
+	if res.Copy != nil {
+		t.Fatalf("close = %+v: an inline manifest has no copy to take back", res)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("a file only the instructions named was removed: %v", err)
+	}
+}
+
+// c1: at close the file must be the closed intent's own manifest: a copy-shaped file of another manifest that a (tampered) frozen request names is kept.
+func TestCloseKeepsAFileThatIsNotTheClosedManifest(t *testing.T) {
+	k := newReleaseKit(t)
+	k.largeB()
+	digest, _ := k.abandon("rp", "B")
+	other := []byte("{\"manifest_digest\":\"" + dig("another manifest") + "\"}")
+	path, _, err := freezeManifestCopy(k.root, other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prompt := "Assignment CRW-B: node B of DAG plan rp, released under input manifest " + digest + " (stored at " + path + " (sha256 " + shaOf(other) + ")).\n\nx"
+	raw, err := json.Marshal(map[string]any{"prompt": prompt, "artifactRoots": []string{k.root}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	k.exec("UPDATE dag_release_requests SET request_json = ? WHERE plan_id = 'rp' AND node_id = 'B'", string(raw))
+	res := k.mustClose("rp", "B", digest)
+	if res.Copy == nil || res.Copy.Removed || res.Copy.Path != path {
+		t.Fatalf("close = %+v", res)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("a file that is not the closed manifest was removed: %v", err)
+	}
+	if kept := k.journal("dag_manifest_copy_kept"); len(kept) != 1 || kept[0]["why"] != "not_a_copy" {
+		t.Fatalf("journal = %v", kept)
+	}
+}
+
+// c1: a copy this call only reused, taken back by its creator and frozen again inside the intent transaction, is this call's: when the transaction then fails, no intent names it and it goes.
+func TestFailedIntentAfterARefreezeRemovesTheCopyItRecreated(t *testing.T) {
+	k := newReleaseKit(t)
+	k.largeB()
+	k.sched.Now = func() string { return "2026-10-02T01:00:00.000000+00:00" }
+	k.holdSlots(6)
+	var saved []byte
+	var savedPath string
+	testBeforeUnlink = func() error {
+		testBeforeUnlink = nil
+		savedPath = k.copies()[0]
+		var err error
+		saved, err = os.ReadFile(savedPath)
+		return err
+	}
+	t.Cleanup(func() { testBeforeUnlink = nil })
+	first, err := k.release("rp", "B")
+	if refusalReason(err) != "capacity_exhausted" || savedPath == "" {
+		t.Fatalf("first attempt = %v %+v", err, first)
+	}
+	// the creator took the copy back; put it where the next attempt will find it, as a file that already exists
+	if err := os.WriteFile(savedPath, saved, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	k.exec("DELETE FROM execution_slots WHERE subject_key LIKE 'held-%'")
+	// the store refuses the intent after the copy was frozen again: a request row of the same key that no release row accompanies
+	k.exec("INSERT INTO dag_release_requests (plan_id, node_id, manifest_digest, request_sha256, request_json, marker_root, socket, state_selector, recorded_at) VALUES ('rp', 'B', ?, 'x', '{}', 'm', 's', 'x', 't')", first.ManifestDigest)
+	k.sched.testAfterReserve = func() error { return os.Remove(savedPath) }
+	if _, err := k.release("rp", "B"); err == nil {
+		t.Fatal("the release was expected to fail")
+	}
+	if got := k.copies(); len(got) != 0 {
+		t.Fatalf("a copy that no intent names is left: %v", got)
+	}
+}

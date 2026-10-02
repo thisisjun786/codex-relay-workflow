@@ -755,14 +755,16 @@ func TestCLIReleaseClose(t *testing.T) {
 	}
 }
 
-// c3: the page names the command, the table and the journal evidence it relies on.
+// c3: the page names the command, the table, the successor id, the removal's mechanism and every reason the journal evidence can give.
 func TestSchedulerPageDescribesTheRecoveryAndTheCleanup(t *testing.T) {
 	raw, err := os.ReadFile("../../../docs/relay/dag-scheduler.md")
 	if err != nil {
 		t.Fatal(err)
 	}
 	page := string(raw)
-	for _, name := range []string{"dag-release-close", "dag_release_recoveries", "dag_manifest_copy_removed", "dag_manifest_copy_kept", "dag_release_closed"} {
+	for _, name := range []string{"dag-release-close", "--request-id", "dag_release_recoveries", "dag_manifest_copy_removed", "dag_manifest_copy_kept", "dag_release_closed", "RecoveryRequestID", "store.UnlinkPinned", "rereleased",
+		// every reason the cleanup gives for keeping a copy
+		"relied_on", "link_in_path", "not_a_copy", "bytes_differ", "too_large", "changed", "remove_failed", "name_differs", "unsupported_platform", "reliance_unknown"} {
 		if !strings.Contains(page, name) {
 			t.Errorf("docs/relay/dag-scheduler.md does not mention %s", name)
 		}
