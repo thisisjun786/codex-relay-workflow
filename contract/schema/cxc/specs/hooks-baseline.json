@@ -1,0 +1,886 @@
+{
+  "group": "hooks-baseline",
+  "scenarios": [
+    {
+      "id": "hook__session-start-ensuring-provider-bridge__baseline_empty_workspace",
+      "covers": [
+        "K3/session-start-ensuring-provider-bridge",
+        "K2/SessionStart",
+        "K13/PLUGIN_ROOT",
+        "K13/CODEX_HOME",
+        "K4/hook-observations",
+        "K12/ocx",
+        "K5/hook-rendered"
+      ],
+      "note": "The leg's declared command with a minimal well-formed payload in an empty workspace and empty homes: the leg's quiet default and its side effects.",
+      "given": {},
+      "steps": [
+        {
+          "hook": "session-start-ensuring-provider-bridge",
+          "stdin": {
+            "hook_event_name": "SessionStart",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "source": "startup",
+            "model": "gpt-5.5",
+            "transcript_path": null
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__session-start-bootstrapping-pabcd-state__baseline_empty_workspace",
+      "covers": [
+        "K3/session-start-bootstrapping-pabcd-state",
+        "K2/SessionStart",
+        "K13/PLUGIN_ROOT",
+        "K13/CODEX_HOME",
+        "K4/hook-observations"
+      ],
+      "note": "The leg's declared command with a minimal well-formed payload in an empty workspace and empty homes: the leg's quiet default and its side effects.",
+      "given": {},
+      "steps": [
+        {
+          "hook": "session-start-bootstrapping-pabcd-state",
+          "stdin": {
+            "hook_event_name": "SessionStart",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "source": "startup",
+            "model": "gpt-5.5",
+            "transcript_path": null
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__session-start-healing-declared-features__baseline_empty_workspace",
+      "covers": [
+        "K3/session-start-healing-declared-features",
+        "K2/SessionStart",
+        "K13/PLUGIN_ROOT",
+        "K13/CODEX_HOME",
+        "K4/hook-observations",
+        "K12/codex"
+      ],
+      "note": "The leg's declared command with a minimal well-formed payload in an empty workspace and empty homes: the leg's quiet default and its side effects.",
+      "given": {},
+      "steps": [
+        {
+          "hook": "session-start-healing-declared-features",
+          "stdin": {
+            "hook_event_name": "SessionStart",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "source": "startup",
+            "model": "gpt-5.5",
+            "transcript_path": null
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__session-start-announcing-map-affordance__baseline_empty_workspace",
+      "covers": [
+        "K3/session-start-announcing-map-affordance",
+        "K2/SessionStart",
+        "K13/PLUGIN_ROOT",
+        "K13/CODEX_HOME",
+        "K4/hook-observations",
+        "K5/hook-rendered"
+      ],
+      "note": "The leg's declared command with a minimal well-formed payload in an empty workspace and empty homes: the leg's quiet default and its side effects.",
+      "given": {},
+      "steps": [
+        {
+          "hook": "session-start-announcing-map-affordance",
+          "stdin": {
+            "hook_event_name": "SessionStart",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "source": "startup",
+            "model": "gpt-5.5",
+            "transcript_path": null
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__session-start-advising-agent-thread-permissions__baseline_empty_workspace",
+      "covers": [
+        "K3/session-start-advising-agent-thread-permissions",
+        "K2/SessionStart",
+        "K13/PLUGIN_ROOT",
+        "K13/CODEX_HOME",
+        "K4/hook-observations"
+      ],
+      "note": "The leg's declared command with a minimal well-formed payload in an empty workspace and empty homes: the leg's quiet default and its side effects.",
+      "given": {},
+      "steps": [
+        {
+          "hook": "session-start-advising-agent-thread-permissions",
+          "stdin": {
+            "hook_event_name": "SessionStart",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "source": "startup",
+            "model": "gpt-5.5",
+            "transcript_path": null
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__user-prompt-submit-checking-pabcd-trigger__baseline_empty_workspace",
+      "covers": [
+        "K3/user-prompt-submit-checking-pabcd-trigger",
+        "K2/UserPromptSubmit",
+        "K13/PLUGIN_ROOT",
+        "K13/CODEX_HOME",
+        "K4/hook-observations"
+      ],
+      "note": "The leg's declared command with a minimal well-formed payload in an empty workspace and empty homes: the leg's quiet default and its side effects.",
+      "given": {},
+      "steps": [
+        {
+          "hook": "user-prompt-submit-checking-pabcd-trigger",
+          "stdin": {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "prompt": "Summarise the README.",
+            "model": "gpt-5.5",
+            "transcript_path": null
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__stop-checking-pabcd-continuation__baseline_empty_workspace",
+      "covers": [
+        "K3/stop-checking-pabcd-continuation",
+        "K2/Stop",
+        "K13/PLUGIN_ROOT",
+        "K13/CODEX_HOME",
+        "K4/hook-observations"
+      ],
+      "note": "The leg's declared command with a minimal well-formed payload in an empty workspace and empty homes: the leg's quiet default and its side effects.",
+      "given": {},
+      "steps": [
+        {
+          "hook": "stop-checking-pabcd-continuation",
+          "stdin": {
+            "hook_event_name": "Stop",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "stop_hook_active": false,
+            "last_assistant_message": "Done.",
+            "transcript_path": null
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__pre-tool-use-guarding-goal-budget__baseline_empty_workspace",
+      "covers": [
+        "K3/pre-tool-use-guarding-goal-budget",
+        "K2/PreToolUse",
+        "K13/PLUGIN_ROOT",
+        "K13/CODEX_HOME",
+        "K4/hook-observations"
+      ],
+      "note": "The leg's declared command with a minimal well-formed payload in an empty workspace and empty homes: the leg's quiet default and its side effects.",
+      "given": {},
+      "steps": [
+        {
+          "hook": "pre-tool-use-guarding-goal-budget",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "create_goal",
+            "tool_input": {
+              "objective": "ship the feature"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__permission-request-allowing-agent-thread__baseline_empty_workspace",
+      "covers": [
+        "K3/permission-request-allowing-agent-thread",
+        "K2/PermissionRequest",
+        "K13/PLUGIN_ROOT",
+        "K13/CODEX_HOME",
+        "K4/hook-observations"
+      ],
+      "note": "The leg's declared command with a minimal well-formed payload in an empty workspace and empty homes: the leg's quiet default and its side effects.",
+      "given": {},
+      "steps": [
+        {
+          "hook": "permission-request-allowing-agent-thread",
+          "stdin": {
+            "hook_event_name": "PermissionRequest",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "Bash",
+            "tool_input": {
+              "command": "ls"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__pre-tool-use-guarding-interview-in-goal__baseline_empty_workspace",
+      "covers": [
+        "K3/pre-tool-use-guarding-interview-in-goal",
+        "K2/PreToolUse",
+        "K13/PLUGIN_ROOT",
+        "K13/CODEX_HOME",
+        "K4/hook-observations"
+      ],
+      "note": "The leg's declared command with a minimal well-formed payload in an empty workspace and empty homes: the leg's quiet default and its side effects.",
+      "given": {},
+      "steps": [
+        {
+          "hook": "pre-tool-use-guarding-interview-in-goal",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "request_user_input",
+            "tool_input": {
+              "questions": [
+                {
+                  "id": "q1",
+                  "question": "Which?",
+                  "options": [
+                    {
+                      "label": "A"
+                    }
+                  ]
+                }
+              ]
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__pre-tool-use-guarding-goal-complete__baseline_empty_workspace",
+      "covers": [
+        "K3/pre-tool-use-guarding-goal-complete",
+        "K2/PreToolUse",
+        "K13/PLUGIN_ROOT",
+        "K13/CODEX_HOME",
+        "K4/hook-observations"
+      ],
+      "note": "The leg's declared command with a minimal well-formed payload in an empty workspace and empty homes: the leg's quiet default and its side effects.",
+      "given": {},
+      "steps": [
+        {
+          "hook": "pre-tool-use-guarding-goal-complete",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "update_goal",
+            "tool_input": {
+              "status": "complete"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__post-tool-use-capturing-interview-answers__baseline_empty_workspace",
+      "covers": [
+        "K3/post-tool-use-capturing-interview-answers",
+        "K2/PostToolUse",
+        "K13/PLUGIN_ROOT",
+        "K13/CODEX_HOME",
+        "K4/hook-observations"
+      ],
+      "note": "The leg's declared command with a minimal well-formed payload in an empty workspace and empty homes: the leg's quiet default and its side effects.",
+      "given": {},
+      "steps": [
+        {
+          "hook": "post-tool-use-capturing-interview-answers",
+          "stdin": {
+            "hook_event_name": "PostToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "request_user_input",
+            "tool_input": {
+              "questions": [
+                {
+                  "id": "q1",
+                  "question": "Which?"
+                }
+              ]
+            },
+            "tool_use_id": "rec-call-1",
+            "tool_response": {
+              "answers": {
+                "q1": {
+                  "answers": [
+                    "A"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__subagent-stop-verifying-evidence__baseline_empty_workspace",
+      "covers": [
+        "K3/subagent-stop-verifying-evidence",
+        "K2/SubagentStop",
+        "K13/PLUGIN_ROOT",
+        "K13/CODEX_HOME",
+        "K4/hook-observations",
+        "K5/hook-rendered"
+      ],
+      "note": "The leg's declared command with a minimal well-formed payload in an empty workspace and empty homes: the leg's quiet default and its side effects.",
+      "given": {},
+      "steps": [
+        {
+          "hook": "subagent-stop-verifying-evidence",
+          "stdin": {
+            "hook_event_name": "SubagentStop",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "agent_id": "rec-a1",
+            "agent_type": "executor",
+            "last_assistant_message": "Done.",
+            "agent_transcript_path": null,
+            "stop_hook_active": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__subagent-stop-observing-review__baseline_empty_workspace",
+      "covers": [
+        "K3/subagent-stop-observing-review",
+        "K2/SubagentStop",
+        "K13/PLUGIN_ROOT",
+        "K13/CODEX_HOME",
+        "K4/hook-observations"
+      ],
+      "note": "The leg's declared command with a minimal well-formed payload in an empty workspace and empty homes: the leg's quiet default and its side effects.",
+      "given": {},
+      "steps": [
+        {
+          "hook": "subagent-stop-observing-review",
+          "stdin": {
+            "hook_event_name": "SubagentStop",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "agent_id": "rec-a1",
+            "agent_type": "explorer",
+            "last_assistant_message": "Done.",
+            "agent_transcript_path": null,
+            "stop_hook_active": false
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__pre-tool-use-attaching-skills__baseline_empty_workspace",
+      "covers": [
+        "K3/pre-tool-use-attaching-skills",
+        "K2/PreToolUse",
+        "K13/PLUGIN_ROOT",
+        "K13/CODEX_HOME",
+        "K4/hook-observations",
+        "K5/hook-rendered"
+      ],
+      "note": "The leg's declared command with a minimal well-formed payload in an empty workspace and empty homes: the leg's quiet default and its side effects.",
+      "given": {},
+      "steps": [
+        {
+          "hook": "pre-tool-use-attaching-skills",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "spawn_agent",
+            "tool_input": {
+              "message": "Investigate the parser.",
+              "agent_type": "explorer"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__session-start-announcing-subagent-fallback__baseline_empty_workspace",
+      "covers": [
+        "K3/session-start-announcing-subagent-fallback",
+        "K2/SessionStart",
+        "K13/PLUGIN_ROOT",
+        "K13/CODEX_HOME",
+        "K4/hook-observations",
+        "K5/hook-rendered"
+      ],
+      "note": "The leg's declared command with a minimal well-formed payload in an empty workspace and empty homes: the leg's quiet default and its side effects.",
+      "given": {},
+      "steps": [
+        {
+          "hook": "session-start-announcing-subagent-fallback",
+          "stdin": {
+            "hook_event_name": "SessionStart",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "source": "startup",
+            "model": "gpt-5.5",
+            "transcript_path": null
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__post-compact-resetting-reinject-cursor__baseline_empty_workspace",
+      "covers": [
+        "K3/post-compact-resetting-reinject-cursor",
+        "K2/PostCompact",
+        "K13/PLUGIN_ROOT",
+        "K13/CODEX_HOME",
+        "K4/hook-observations"
+      ],
+      "note": "The leg's declared command with a minimal well-formed payload in an empty workspace and empty homes: the leg's quiet default and its side effects.",
+      "given": {},
+      "steps": [
+        {
+          "hook": "post-compact-resetting-reinject-cursor",
+          "stdin": {
+            "hook_event_name": "PostCompact",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "trigger": "auto",
+            "transcript_path": null
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__pre-tool-use-linting-apply-patch__baseline_empty_workspace",
+      "covers": [
+        "K3/pre-tool-use-linting-apply-patch",
+        "K2/PreToolUse",
+        "K13/PLUGIN_ROOT",
+        "K13/CODEX_HOME",
+        "K4/hook-observations"
+      ],
+      "note": "The leg's declared command with a minimal well-formed payload in an empty workspace and empty homes: the leg's quiet default and its side effects.",
+      "given": {},
+      "steps": [
+        {
+          "hook": "pre-tool-use-linting-apply-patch",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "apply_patch",
+            "tool_input": {
+              "command": "*** Begin Patch\n*** Add File: src/x.ts\n+export const x = 1;\n*** End Patch\n"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__post-tool-use-tracking-render-observations__baseline_empty_workspace",
+      "covers": [
+        "K3/post-tool-use-tracking-render-observations",
+        "K2/PostToolUse",
+        "K13/PLUGIN_ROOT",
+        "K13/CODEX_HOME",
+        "K4/hook-observations"
+      ],
+      "note": "The leg's declared command with a minimal well-formed payload in an empty workspace and empty homes: the leg's quiet default and its side effects.",
+      "given": {},
+      "steps": [
+        {
+          "hook": "post-tool-use-tracking-render-observations",
+          "stdin": {
+            "hook_event_name": "PostToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "view_image",
+            "tool_input": {
+              "path": "${WS}/shot.png"
+            },
+            "tool_use_id": "rec-call-1",
+            "tool_response": {
+              "ok": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__session-start-injecting-recall-context__baseline_empty_workspace",
+      "covers": [
+        "K3/session-start-injecting-recall-context",
+        "K2/SessionStart",
+        "K13/PLUGIN_ROOT",
+        "K13/CODEX_HOME",
+        "K4/hook-observations",
+        "K5/hook-rendered"
+      ],
+      "note": "The leg's declared command with a minimal well-formed payload in an empty workspace and empty homes: the leg's quiet default and its side effects.",
+      "given": {},
+      "steps": [
+        {
+          "hook": "session-start-injecting-recall-context",
+          "stdin": {
+            "hook_event_name": "SessionStart",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "source": "startup",
+            "model": "gpt-5.5",
+            "transcript_path": null
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__post-compact-injecting-recall-context__baseline_empty_workspace",
+      "covers": [
+        "K3/post-compact-injecting-recall-context",
+        "K2/PostCompact",
+        "K13/PLUGIN_ROOT",
+        "K13/CODEX_HOME",
+        "K4/hook-observations"
+      ],
+      "note": "The leg's declared command with a minimal well-formed payload in an empty workspace and empty homes: the leg's quiet default and its side effects.",
+      "given": {},
+      "steps": [
+        {
+          "hook": "post-compact-injecting-recall-context",
+          "stdin": {
+            "hook_event_name": "PostCompact",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "trigger": "auto",
+            "transcript_path": null
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__post-compact-injecting-bg-terminal-affordance.post-compact__baseline_empty_workspace",
+      "covers": [
+        "K3/post-compact-injecting-bg-terminal-affordance.post-compact",
+        "K2/PostCompact",
+        "K13/PLUGIN_ROOT",
+        "K13/CODEX_HOME",
+        "K4/hook-observations"
+      ],
+      "note": "The leg's declared command with a minimal well-formed payload in an empty workspace and empty homes: the leg's quiet default and its side effects.",
+      "given": {},
+      "steps": [
+        {
+          "hook": "post-compact-injecting-bg-terminal-affordance.post-compact",
+          "stdin": {
+            "hook_event_name": "PostCompact",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "trigger": "auto",
+            "transcript_path": null
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__post-compact-injecting-bg-terminal-affordance.user-prompt-submit__baseline_empty_workspace",
+      "covers": [
+        "K3/post-compact-injecting-bg-terminal-affordance.user-prompt-submit",
+        "K2/UserPromptSubmit",
+        "K13/PLUGIN_ROOT",
+        "K13/CODEX_HOME",
+        "K4/hook-observations"
+      ],
+      "note": "The leg's declared command with a minimal well-formed payload in an empty workspace and empty homes: the leg's quiet default and its side effects.",
+      "given": {},
+      "steps": [
+        {
+          "hook": "post-compact-injecting-bg-terminal-affordance.user-prompt-submit",
+          "stdin": {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "prompt": "Summarise the README.",
+            "model": "gpt-5.5",
+            "transcript_path": null
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__user-prompt-submit-detecting-recall-intent__baseline_empty_workspace",
+      "covers": [
+        "K3/user-prompt-submit-detecting-recall-intent",
+        "K2/UserPromptSubmit",
+        "K13/PLUGIN_ROOT",
+        "K13/CODEX_HOME",
+        "K4/hook-observations"
+      ],
+      "note": "The leg's declared command with a minimal well-formed payload in an empty workspace and empty homes: the leg's quiet default and its side effects.",
+      "given": {},
+      "steps": [
+        {
+          "hook": "user-prompt-submit-detecting-recall-intent",
+          "stdin": {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "prompt": "Summarise the README.",
+            "model": "gpt-5.5",
+            "transcript_path": null
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__session-start-detecting-managed-worktree__baseline_empty_workspace",
+      "covers": [
+        "K3/session-start-detecting-managed-worktree",
+        "K2/SessionStart",
+        "K13/PLUGIN_ROOT",
+        "K13/CODEX_HOME",
+        "K4/hook-observations"
+      ],
+      "note": "The leg's declared command with a minimal well-formed payload in an empty workspace and empty homes: the leg's quiet default and its side effects.",
+      "given": {},
+      "steps": [
+        {
+          "hook": "session-start-detecting-managed-worktree",
+          "stdin": {
+            "hook_event_name": "SessionStart",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "source": "startup",
+            "model": "gpt-5.5",
+            "transcript_path": null
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__user-prompt-submit-guiding-worktree-rename__baseline_empty_workspace",
+      "covers": [
+        "K3/user-prompt-submit-guiding-worktree-rename",
+        "K2/UserPromptSubmit",
+        "K13/PLUGIN_ROOT",
+        "K13/CODEX_HOME",
+        "K4/hook-observations"
+      ],
+      "note": "The leg's declared command with a minimal well-formed payload in an empty workspace and empty homes: the leg's quiet default and its side effects.",
+      "given": {},
+      "steps": [
+        {
+          "hook": "user-prompt-submit-guiding-worktree-rename",
+          "stdin": {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "prompt": "Summarise the README.",
+            "model": "gpt-5.5",
+            "transcript_path": null
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__pre-tool-use-guarding-managed-worktree-deletion__baseline_empty_workspace",
+      "covers": [
+        "K3/pre-tool-use-guarding-managed-worktree-deletion",
+        "K2/PreToolUse",
+        "K13/PLUGIN_ROOT",
+        "K13/CODEX_HOME",
+        "K4/hook-observations"
+      ],
+      "note": "The leg's declared command with a minimal well-formed payload in an empty workspace and empty homes: the leg's quiet default and its side effects.",
+      "given": {},
+      "steps": [
+        {
+          "hook": "pre-tool-use-guarding-managed-worktree-deletion",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "Bash",
+            "tool_input": {
+              "command": "ls"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__pre-tool-use-guarding-memory-write__baseline_empty_workspace",
+      "covers": [
+        "K3/pre-tool-use-guarding-memory-write",
+        "K2/PreToolUse",
+        "K13/PLUGIN_ROOT",
+        "K13/CODEX_HOME",
+        "K4/hook-observations"
+      ],
+      "note": "The leg's declared command with a minimal well-formed payload in an empty workspace and empty homes: the leg's quiet default and its side effects.",
+      "given": {},
+      "steps": [
+        {
+          "hook": "pre-tool-use-guarding-memory-write",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "Bash",
+            "tool_input": {
+              "command": "ls"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__stop-waking-on-background-completion__baseline_empty_workspace",
+      "covers": [
+        "K3/stop-waking-on-background-completion",
+        "K2/Stop",
+        "K13/PLUGIN_ROOT",
+        "K13/CODEX_HOME",
+        "K4/hook-observations"
+      ],
+      "note": "The leg's declared command with a minimal well-formed payload in an empty workspace and empty homes: the leg's quiet default and its side effects.",
+      "given": {},
+      "steps": [
+        {
+          "hook": "stop-waking-on-background-completion",
+          "stdin": {
+            "hook_event_name": "Stop",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "stop_hook_active": false,
+            "last_assistant_message": "Done.",
+            "transcript_path": null
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__user-prompt-submit-delivering-background-completions__baseline_empty_workspace",
+      "covers": [
+        "K3/user-prompt-submit-delivering-background-completions",
+        "K2/UserPromptSubmit",
+        "K13/PLUGIN_ROOT",
+        "K13/CODEX_HOME",
+        "K4/hook-observations"
+      ],
+      "note": "The leg's declared command with a minimal well-formed payload in an empty workspace and empty homes: the leg's quiet default and its side effects.",
+      "given": {},
+      "steps": [
+        {
+          "hook": "user-prompt-submit-delivering-background-completions",
+          "stdin": {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "prompt": "Summarise the README.",
+            "model": "gpt-5.5",
+            "transcript_path": null
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__session-start-adopting-background-completions__baseline_empty_workspace",
+      "covers": [
+        "K3/session-start-adopting-background-completions",
+        "K2/SessionStart",
+        "K13/PLUGIN_ROOT",
+        "K13/CODEX_HOME",
+        "K4/hook-observations"
+      ],
+      "note": "The leg's declared command with a minimal well-formed payload in an empty workspace and empty homes: the leg's quiet default and its side effects.",
+      "given": {},
+      "steps": [
+        {
+          "hook": "session-start-adopting-background-completions",
+          "stdin": {
+            "hook_event_name": "SessionStart",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "source": "startup",
+            "model": "gpt-5.5",
+            "transcript_path": null
+          }
+        }
+      ]
+    },
+    {
+      "id": "hook__pre-tool-use-guarding-automation-ownership__baseline_empty_workspace",
+      "covers": [
+        "K3/pre-tool-use-guarding-automation-ownership",
+        "K2/PreToolUse",
+        "K13/PLUGIN_ROOT",
+        "K13/CODEX_HOME",
+        "K4/hook-observations",
+        "K5/hook-rendered"
+      ],
+      "note": "The leg's declared command with a minimal well-formed payload in an empty workspace and empty homes: the leg's quiet default and its side effects.",
+      "given": {},
+      "steps": [
+        {
+          "hook": "pre-tool-use-guarding-automation-ownership",
+          "stdin": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "rec-s1",
+            "cwd": "${WS}",
+            "turn_id": "rec-t1",
+            "tool_name": "automation_update",
+            "tool_input": {
+              "id": "auto-1",
+              "prompt": "x"
+            },
+            "tool_use_id": "rec-call-1"
+          }
+        }
+      ]
+    }
+  ]
+}

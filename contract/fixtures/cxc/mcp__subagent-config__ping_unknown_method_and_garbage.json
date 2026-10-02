@@ -1,0 +1,110 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K10/ping",
+    "K10/unknown-method",
+    "A/subagent-config/mcp.test.ts"
+  ],
+  "note": "ping returns {}; an unknown method with an id gets -32601; an unknown notification and a non-JSON line are ignored; an unknown tool name is an isError result.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "mcp": [
+          {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+              "protocolVersion": "2024-11-05",
+              "capabilities": {},
+              "clientInfo": {
+                "name": "rec",
+                "version": "0"
+              }
+            }
+          },
+          {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "ping"
+          },
+          {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "resources/list"
+          },
+          {
+            "jsonrpc": "2.0",
+            "method": "notifications/whatever"
+          },
+          "not json",
+          {
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/call",
+            "params": {
+              "name": "no_such_tool",
+              "arguments": {}
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "jsonl",
+        "stdout_jsonl": [
+          {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+              "protocolVersion": "2024-11-05",
+              "capabilities": {
+                "tools": {}
+              },
+              "serverInfo": {
+                "name": "codexclaw-subagent-config",
+                "version": "0.1.1"
+              }
+            }
+          },
+          {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "result": {}
+          },
+          {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "error": {
+              "code": -32601,
+              "message": "method not found: resources/list"
+            }
+          },
+          {
+            "jsonrpc": "2.0",
+            "id": 4,
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"error\":\"unknown tool: no_such_tool\"}"
+                }
+              ],
+              "isError": true
+            }
+          }
+        ],
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

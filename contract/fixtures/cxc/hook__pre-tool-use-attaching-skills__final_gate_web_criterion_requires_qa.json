@@ -1,0 +1,179 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/pre-tool-use-attaching-skills",
+    "A/subagent-config/final-gate-guard.test.ts"
+  ],
+  "note": "A web criterion demands a QA receipt: with the test receipt present (no git, so identity is unavailable and never stale) and no QA path recorded, the spawn is denied naming only the QA gap.",
+  "given": {
+    "json": {
+      "ws/.codexclaw/evidence/test.json": {
+        "kind": "test",
+        "sourceIdentity": {
+          "kind": "resolved",
+          "commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "dirty": false
+        }
+      },
+      "ws/.codexclaw/goalplans/demo/goalplan.json": {
+        "finalGate": {
+          "testReceiptPath": ".codexclaw/evidence/test.json"
+        },
+        "criteria": [
+          {
+            "id": "c1",
+            "surface": "web"
+          }
+        ]
+      },
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "sessionId": "rec-s1",
+        "slug": "demo"
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "pre-tool-use-attaching-skills",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "spawn_agent",
+          "tool_input": {
+            "message": "[CXC-FINAL-GATE] please review the final gate"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "[codexclaw — final gate] This spawn is marked as the final gate, but its prerequisites are not in place:\n  - QA receipt path is not recorded in finalGate\nRun the checks, record their receipts under .codexclaw/evidence/, then dispatch the gate reviewer."
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/evidence": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/evidence/test.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "kind": "test",
+          "sourceIdentity": {
+            "kind": "resolved",
+            "commitSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "dirty": false
+          }
+        }
+      },
+      "ws/.codexclaw/goalplans": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/goalplans/demo": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/goalplans/demo/goalplan.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "finalGate": {
+            "testReceiptPath": ".codexclaw/evidence/test.json"
+          },
+          "criteria": [
+            {
+              "id": "c1",
+              "surface": "web"
+            }
+          ]
+        }
+      },
+      "ws/.codexclaw/sessions": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "sessionId": "rec-s1",
+          "slug": "demo"
+        }
+      }
+    },
+    "calls": [
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "-C",
+          "${WS}",
+          "ls-files",
+          "--error-unmatch",
+          "--",
+          ".codexclaw/subagents.json"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "HEAD"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "status",
+          "--porcelain=v1",
+          "-z",
+          "--untracked-files=all"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

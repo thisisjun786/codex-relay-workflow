@@ -1,0 +1,82 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/skill/help",
+    "A/skill-search/cli.test.ts"
+  ],
+  "note": "`skill --help` prints usage and exits 1 (it is an unknown subcommand), bare `skill` prints usage and exits 0, `skill search` without a query and `skill show` without an id exit 1, an unknown --source exits 1.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "skill",
+          "--help"
+        ]
+      },
+      {
+        "cli": [
+          "skill"
+        ]
+      },
+      {
+        "cli": [
+          "skill",
+          "search"
+        ]
+      },
+      {
+        "cli": [
+          "skill",
+          "show"
+        ]
+      },
+      {
+        "cli": [
+          "skill",
+          "search",
+          "x",
+          "--source",
+          "npm"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 1,
+    "steps": [
+      {
+        "exit": 1,
+        "stdout_form": "text",
+        "stdout": "cxc skill <search <query...> [--source jaw|hermes|clawhub|gh|all] [--limit N] [--json] [--refresh] | show <id> [--source ...]>\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "cxc skill <search <query...> [--source jaw|hermes|clawhub|gh|all] [--limit N] [--json] [--refresh] | show <id> [--source ...]>\n",
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "text",
+        "stdout": "cxc skill <search <query...> [--source jaw|hermes|clawhub|gh|all] [--limit N] [--json] [--refresh] | show <id> [--source ...]>\n",
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "text",
+        "stdout": "cxc skill <search <query...> [--source jaw|hermes|clawhub|gh|all] [--limit N] [--json] [--refresh] | show <id> [--source ...]>\n",
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "empty",
+        "stderr": "skill-search: unknown source \"npm\"\n"
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

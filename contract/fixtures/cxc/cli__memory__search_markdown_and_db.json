@@ -1,0 +1,164 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/memory/search",
+    "K7/memory",
+    "A/recall/memory-search.test.ts"
+  ],
+  "note": "memory search over MEMORY.md, the rollout summaries and stage1_outputs (md-covered thread deduped, db-only row surfaces): all --json (the plain envelope prints a wall-clock duration); a Korean query.",
+  "given": {
+    "files": {
+      "codex/memories/MEMORY.md": "# Task Group: search infrastructure\n\n## Task 1: ship the trigram sidecar index, success\n\nkeywords: trigram, sidecar, 한글 검색\n",
+      "codex/memories/rollout_summaries/summary-aaa.md": "thread_id: 019f0000-0000-7000-8000-00000000aaaa\nupdated_at: 2025-12-31T01:00:00.000Z\n\n# Deployed the trigram index\n\nRollout context: korean trigram deployment succeeded.\n",
+      "codex/memories/windows-notes.md": "# CRLF notes\r\n\r\nthe wombat migration finished on windows\r\n"
+    },
+    "sqlite": {
+      "codex/memories_1.sqlite": [
+        "CREATE TABLE stage1_outputs (thread_id TEXT PRIMARY KEY, source_updated_at INTEGER NOT NULL, raw_memory TEXT NOT NULL, rollout_summary TEXT NOT NULL)",
+        "INSERT INTO stage1_outputs VALUES ('019f0000-0000-7000-8000-00000000aaaa', 1767150000, 'raw memory about trigram deployment', 'summary duplicate')",
+        "INSERT INTO stage1_outputs VALUES ('019f0000-0000-7000-8000-00000000bbbb', 1767150000, 'db-only memory row about quagga migrations', 'quagga summary')"
+      ]
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "memory",
+          "search",
+          "trigram",
+          "--json"
+        ]
+      },
+      {
+        "cli": [
+          "memory",
+          "search",
+          "quagga",
+          "--json"
+        ]
+      },
+      {
+        "cli": [
+          "memory",
+          "search",
+          "한글 검색",
+          "--json"
+        ]
+      }
+    ],
+    "observe": [
+      "cxc"
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-pretty",
+        "stdout_json": {
+          "hits": [
+            {
+              "origin": "file",
+              "kind": "handbook",
+              "relpath": "MEMORY.md",
+              "threadId": null,
+              "updatedAt": "<TS>",
+              "excerpt": "## Task 1: ship the trigram sidecar index, success",
+              "startLine": 3,
+              "cwd": null,
+              "score": 6
+            },
+            {
+              "origin": "file",
+              "kind": "handbook",
+              "relpath": "MEMORY.md",
+              "threadId": null,
+              "updatedAt": "<TS>",
+              "excerpt": "keywords: trigram, sidecar, 한글 검색",
+              "startLine": 5,
+              "cwd": null,
+              "score": 5
+            },
+            {
+              "origin": "file",
+              "kind": "rollout",
+              "relpath": "rollout_summaries/summary-aaa.md",
+              "threadId": "<UUID_1>",
+              "updatedAt": "<TS>",
+              "excerpt": "# Deployed the trigram index",
+              "startLine": 4,
+              "cwd": null,
+              "score": 4.4999999982808845
+            },
+            {
+              "origin": "file",
+              "kind": "rollout",
+              "relpath": "rollout_summaries/summary-aaa.md",
+              "threadId": "<UUID_1>",
+              "updatedAt": "<TS>",
+              "excerpt": "Rollout context: korean trigram deployment succeeded.",
+              "startLine": 6,
+              "cwd": null,
+              "score": 3.499999998280885
+            }
+          ],
+          "warnings": [],
+          "scannedFiles": 3,
+          "elapsedMs": "<DURATION>"
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-pretty",
+        "stdout_json": {
+          "hits": [
+            {
+              "origin": "stage1",
+              "kind": "stage1",
+              "relpath": "stage1_outputs/<UUID_2>",
+              "threadId": "<UUID_2>",
+              "updatedAt": "<TS>",
+              "excerpt": "db-only memory row about quagga migrations\nquagga summary",
+              "startLine": null,
+              "cwd": null,
+              "score": 4.375506063230572
+            }
+          ],
+          "warnings": [],
+          "scannedFiles": 3,
+          "elapsedMs": "<DURATION>"
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-pretty",
+        "stdout_json": {
+          "hits": [
+            {
+              "origin": "file",
+              "kind": "handbook",
+              "relpath": "MEMORY.md",
+              "threadId": null,
+              "updatedAt": "<TS>",
+              "excerpt": "keywords: trigram, sidecar, 한글 검색",
+              "startLine": 5,
+              "cwd": null,
+              "score": 12
+            }
+          ],
+          "warnings": [],
+          "scannedFiles": 3,
+          "elapsedMs": "<DURATION>"
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

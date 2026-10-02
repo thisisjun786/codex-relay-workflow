@@ -1,0 +1,73 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/user-prompt-submit-detecting-recall-intent",
+    "K5/hook-rendered",
+    "A/recall/hook.test.ts"
+  ],
+  "note": "English idioms: 'what did we decide ... last time' with a CamelCase symbol and a quoted phrase; and 'remember when' alone (no terms line).",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "user-prompt-submit-detecting-recall-intent",
+        "stdin": {
+          "hook_event_name": "UserPromptSubmit",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "prompt": "What did we decide last time about HookRunner and \"retry budget\"?",
+          "model": "gpt-5.5",
+          "transcript_path": null
+        }
+      },
+      {
+        "hook": "user-prompt-submit-detecting-recall-intent",
+        "stdin": {
+          "hook_event_name": "UserPromptSubmit",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "prompt": "remember when we split the bridge?",
+          "model": "gpt-5.5",
+          "transcript_path": null
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": "[cxc-recall] The prompt references past work. Before asking the user to re-explain,\nsearch prior sessions (read-only):\n  node \"${PLUGIN_ROOT}/bin/cxc.mjs\" chat search \"<distinctive terms>\" --days 0   # full-history FTS over ~/.codex\n  node \"${PLUGIN_ROOT}/bin/cxc.mjs\" memory search \"<topic>\"                      # durable per-thread summaries\nAdd --context 2 to read around a hit, --cwd <repo> to scope. Details: $cxc-recall.\nSuggested recall terms: HookRunner retry budget (search not run by this hook)."
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": "[cxc-recall] The prompt references past work. Before asking the user to re-explain,\nsearch prior sessions (read-only):\n  node \"${PLUGIN_ROOT}/bin/cxc.mjs\" chat search \"<distinctive terms>\" --days 0   # full-history FTS over ~/.codex\n  node \"${PLUGIN_ROOT}/bin/cxc.mjs\" memory search \"<topic>\"                      # durable per-thread summaries\nAdd --context 2 to read around a hit, --cwd <repo> to scope. Details: $cxc-recall."
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      }
+    },
+    "calls": []
+  }
+}

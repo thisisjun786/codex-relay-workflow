@@ -1,0 +1,132 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/pre-tool-use-guarding-automation-ownership",
+    "K5/hook-rendered",
+    "K8/codex/automations",
+    "A/pabcd-state/automation-ownership-gate.test.ts"
+  ],
+  "note": "Symlinks deny: an automation.toml that is a symlink to a valid own store, and an automation directory that is a symlink to a valid own directory.",
+  "given": {
+    "files": {
+      "codex/real/automation.toml": "version = 1\nid = \"linked-file\"\nkind = \"heartbeat\"\nname = \"Example\"\nprompt = \"A prompt\"\nrrule = \"FREQ=HOURLY\"\nstatus = \"ACTIVE\"\ntarget_thread_id = \"rec-s1\"\ncreated_at = 123\nupdated_at = 456\n",
+      "codex/realdir/automation.toml": "version = 1\nid = \"linked-dir\"\nkind = \"heartbeat\"\nname = \"Example\"\nprompt = \"A prompt\"\nrrule = \"FREQ=HOURLY\"\nstatus = \"ACTIVE\"\ntarget_thread_id = \"rec-s1\"\ncreated_at = 123\nupdated_at = 456\n"
+    },
+    "dirs": [
+      "codex/automations/linked-file"
+    ],
+    "symlinks": {
+      "codex/automations/linked-dir": "${CODEX_HOME}/realdir",
+      "codex/automations/linked-file/automation.toml": "${CODEX_HOME}/real/automation.toml"
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "pre-tool-use-guarding-automation-ownership",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "mcp__codex_app__automation_update",
+          "tool_input": {
+            "mode": "delete",
+            "id": "linked-file"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-guarding-automation-ownership",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "mcp__codex_app__automation_update",
+          "tool_input": {
+            "mode": "delete",
+            "id": "linked-dir"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "AUTOMATION-OWNERSHIP-01: Cannot verify automation ownership from the native payload and supported local store. No mutation is permitted."
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "AUTOMATION-OWNERSHIP-01: Cannot verify automation ownership from the native payload and supported local store. No mutation is permitted."
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/automations": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "codex/automations/linked-dir": {
+        "type": "symlink",
+        "mode": "",
+        "target": "${CODEX_HOME}/realdir"
+      },
+      "codex/automations/linked-file": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "codex/automations/linked-file/automation.toml": {
+        "type": "symlink",
+        "mode": "",
+        "target": "${CODEX_HOME}/real/automation.toml"
+      },
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "codex/real": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "codex/real/automation.toml": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "version = 1\nid = \"linked-file\"\nkind = \"heartbeat\"\nname = \"Example\"\nprompt = \"A prompt\"\nrrule = \"FREQ=HOURLY\"\nstatus = \"ACTIVE\"\ntarget_thread_id = \"rec-s1\"\ncreated_at = 123\nupdated_at = 456\n"
+      },
+      "codex/realdir": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "codex/realdir/automation.toml": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "version = 1\nid = \"linked-dir\"\nkind = \"heartbeat\"\nname = \"Example\"\nprompt = \"A prompt\"\nrrule = \"FREQ=HOURLY\"\nstatus = \"ACTIVE\"\ntarget_thread_id = \"rec-s1\"\ncreated_at = 123\nupdated_at = 456\n"
+      }
+    },
+    "calls": []
+  }
+}

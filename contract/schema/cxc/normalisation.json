@@ -1,0 +1,200 @@
+{
+  "description": "How a raw CXC v0.2.40 recording becomes a stored fixture, and how a Go replay's output is brought to the same form before comparison (contracts.md section 3). Applied in this order to every stdout, stderr, stub call argument, observed path and observed file text: placeholders (each bound absolute path, longest first, as given and symlink-resolved), then the text rules in order, then the aliases. Stderr first loses the lines drop_stderr_lines matches. The oracle also runs under a frozen clock (2026-01-01T00:00:00.000Z, +1 ms per Date reading) with TZ=UTC; the text rules still replace timestamps, because a Go replay has no frozen clock.",
+  "placeholders": [
+    {
+      "placeholder": "${PLUGIN_ROOT}",
+      "is": "the oracle's plugins/codexclaw directory (the host's PLUGIN_ROOT); a Go replay binds the crw plugin root"
+    },
+    {
+      "placeholder": "${CXC_ROOT}",
+      "is": "the oracle checkout root (bin/codexclaw.mjs lives here); a Go replay binds nothing, no crw text names it"
+    },
+    {
+      "placeholder": "${WS}",
+      "is": "the case workspace: the process cwd and the hook payload cwd"
+    },
+    {
+      "placeholder": "${CODEX_HOME}",
+      "is": "CODEX_HOME and CODEX_SQLITE_HOME"
+    },
+    {
+      "placeholder": "${CXC_HOME}",
+      "is": "CODEXCLAW_HOME; a Go replay binds CRW_HOME here (name-substitution.json R13)"
+    },
+    {
+      "placeholder": "${HOME}",
+      "is": "HOME (os.homedir())"
+    },
+    {
+      "placeholder": "${TMP}",
+      "is": "TMPDIR (os.tmpdir())"
+    },
+    {
+      "placeholder": "${STUBS}",
+      "is": "the directory of fake external programs at the head of PATH"
+    },
+    {
+      "placeholder": "${BIN}",
+      "is": "the directory holding only node and git, the rest of PATH"
+    },
+    {
+      "placeholder": "${REC}",
+      "is": "the recorder's own files (fake clock, stub scripts, call log); never observed"
+    },
+    {
+      "placeholder": "${ROOT}",
+      "is": "the case root holding all of the above"
+    },
+    {
+      "placeholder": "${NODE}",
+      "is": "the node executable"
+    }
+  ],
+  "text": [
+    {
+      "name": "plugin-version",
+      "regex": "0\\.2\\.40\\+codex\\.\\d{14}",
+      "replace": "<VERSION>",
+      "why": "the payload manifest version; a Go replay prints its own"
+    },
+    {
+      "name": "iso-timestamp",
+      "regex": "\\b\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})",
+      "replace": "<TS>",
+      "why": "updatedAt, createdAt, at, ts, injectedAt, observedAt, acquiredAt, startedAt, finishedAt and receipt times"
+    },
+    {
+      "name": "json-compact-stamp",
+      "regex": "([:\\[,]\\s*)20\\d{12}\\b",
+      "replace": "${1}\"<STAMP>\"",
+      "why": "a 14-digit stamp stored as a JSON number stays valid JSON once replaced"
+    },
+    {
+      "name": "compact-stamp",
+      "regex": "\\b20\\d{12}\\b",
+      "replace": "<STAMP>",
+      "why": "the 14-digit UTC stamp inside cycle and epoch nonces (orchestrate-cli.ts:97, hook.ts:120,129)"
+    },
+    {
+      "name": "json-epoch-ms",
+      "regex": "([:\\[,]\\s*)1[6-9]\\d{11}\\b",
+      "replace": "${1}\"<MS>\"",
+      "why": "Date.now() stored as a JSON number (state, records, SQLite rows dumped as JSON) stays valid JSON once replaced"
+    },
+    {
+      "name": "epoch-ms",
+      "regex": "\\b1[6-9]\\d{11}\\b",
+      "replace": "<MS>",
+      "why": "Date.now() values and names derived from them (evidence-unrecordable/<s>-<a>-<ms>.json, tmp names)"
+    },
+    {
+      "name": "node-pid",
+      "regex": "\\(node:\\d+\\)",
+      "replace": "(node:<PID>)",
+      "why": "Node prefixes its own diagnostics with the pid"
+    },
+    {
+      "name": "json-pid",
+      "regex": "(\"(?:pid|ownerPid|holderPid)\"\\s*:\\s*)\\d+",
+      "replace": "${1}\"<PID>\"",
+      "why": "lock owner and background-job pids (state.ts:676, goalplan owner.json, bg records)"
+    },
+    {
+      "name": "lock-pid-line",
+      "regex": "(?m)^(pid[ =:]\\s*)\\d+$",
+      "replace": "${1}<PID>",
+      "why": "plain-text lock files"
+    },
+    {
+      "name": "json-duration",
+      "regex": "(\"(?:durationMs|elapsedMs|tookMs|ms)\"\\s*:\\s*)\\d+(?:\\.\\d+)?",
+      "replace": "${1}\"<DURATION>\"",
+      "why": "receipt and recall timings"
+    },
+    {
+      "name": "text-duration",
+      "regex": "(\\(|, )\\d+ms\\)",
+      "replace": "${1}<DURATION>ms)",
+      "why": "wall-clock timings in recall's plain-text headers: '(3/4 files scanned, 1ms)', 'pruned, 2ms)'"
+    },
+    {
+      "name": "uid-dir",
+      "regex": "codexclaw-subspawn-\\d+",
+      "replace": "codexclaw-subspawn-<UID>",
+      "why": "the spawn grant store is per uid (spawn-attach-hook.ts:365)"
+    },
+    {
+      "name": "manifest-digest",
+      "regex": "(\"(?:manifestDigest|entrypointDigest)\"\\s*:\\s*)\"[0-9a-f]{64}\"",
+      "replace": "${1}\"<DIGEST>\"",
+      "why": "digests of the Node payload files; a Go build digests its own binary, so these never compare"
+    }
+  ],
+  "alias": [
+    {
+      "name": "uuid",
+      "regex": "\\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\b",
+      "alias": "UUID",
+      "why": "randomUUID: dispatch attempt ids, temporary names"
+    },
+    {
+      "name": "nonce",
+      "regex": "\\b[a-z]-<STAMP>-[0-9a-f]{6}\\b",
+      "alias": "NONCE",
+      "why": "cycle (c-), epoch (e-) and other <prefix>-<stamp>-<3 random bytes> ids"
+    },
+    {
+      "name": "bg-id",
+      "regex": "\\bbg[0-9a-f]{6}\\b",
+      "alias": "BG",
+      "why": "background job ids: bg + 3 random bytes (bg-wake/src/spawn.ts:28)"
+    },
+    {
+      "name": "spawn-nonce",
+      "regex": "GRANT:\\s*([0-9a-f]{64})",
+      "alias": "GRANT",
+      "why": "the subspawn grant nonce (32 random bytes) after GRANT: in the [CXC-SUBSPAWN-GRANT:...] marker (spawn-attach-hook.ts:378); only the nonce is aliased",
+      "group": 1
+    },
+    {
+      "name": "claimed-suffix",
+      "regex": "\\.claimed-(\\d+-[0-9a-f]{8})",
+      "group": 1,
+      "alias": "CLAIM",
+      "why": "the random suffix of a claimed grant file (spawn-attach-hook.ts:397)"
+    },
+    {
+      "name": "subspawn-grant-path",
+      "regex": "codexclaw-subspawn-<UID>/([0-9a-f]{64})",
+      "group": 1,
+      "alias": "GRANTDIR",
+      "why": "the grant directory is sha256(absolute cwd, session) (spawn-attach-hook.ts:364-367), so it differs with the case root"
+    },
+    {
+      "name": "subspawn-grant-file",
+      "regex": "codexclaw-subspawn-<UID>/<GRANTDIR_\\d+>/([0-9a-f]{64})",
+      "group": 1,
+      "alias": "GRANTFILE",
+      "why": "a grant file is named sha256(random nonce) (spawn-attach-hook.ts:370-372)"
+    },
+    {
+      "name": "catalog-key",
+      "regex": "\"key\"\\s*:\\s*\"([0-9a-f]{64})\"",
+      "group": 1,
+      "alias": "CATALOGKEY",
+      "why": "model-catalog.json key = sha256 of CODEX_HOME, CODEX_MODELS_CACHE_PATH, PATH, OPENCODEX_HOME (live-catalog.ts:55-58), all case-root paths"
+    }
+  ],
+  "drop_stderr_lines": [
+    {
+      "name": "node-warning",
+      "regex": "^\\(node:\\d+\\) [A-Za-z]*Warning: ",
+      "why": "Node's own runtime warnings (ExperimentalWarning for node:sqlite, stripTypeScriptTypes); not CXC output"
+    },
+    {
+      "name": "node-warning-hint",
+      "regex": "^\\(Use `node --trace-warnings \\.\\.\\.` to show where the warning was created\\)$",
+      "why": "the hint line Node prints after its first warning"
+    }
+  ]
+}

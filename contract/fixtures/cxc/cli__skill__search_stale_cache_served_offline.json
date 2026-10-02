@@ -1,0 +1,103 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/skill/search",
+    "K14/skill-search",
+    "K8/cxc-home/skill-cache",
+    "A/skill-search/cache.test.ts",
+    "K13/CODEXCLAW_HOME"
+  ],
+  "note": "A jaw cache older than the 1 h TTL triggers a refetch; offline it fails and the stale catalog is served with the 'serving stale cache' stderr line.",
+  "given": {
+    "files": {
+      "cxc/skill-cache/jaw-aHR0cHM6Ly9yYXcuZ2l0aHVi.cache": "{\n  \"skills\": {\n    \"telegram-send\": {\n      \"name\": \"Telegram Send\",\n      \"description\": \"send telegram messages\",\n      \"category\": \"communication\",\n      \"requires\": {\n        \"bins\": [\n          \"curl\"\n        ]\n      }\n    },\n    \"tdd\": {\n      \"name\": \"TDD\",\n      \"description\": \"test driven development loop\",\n      \"superseded_by\": \"dev-testing\"\n    },\n    \"dev-testing\": {\n      \"name\": \"Dev Testing\",\n      \"description\": \"testing discipline for development\",\n      \"status\": \"active\"\n    }\n  }\n}\n"
+    },
+    "mtimes": {
+      "cxc/skill-cache/jaw-aHR0cHM6Ly9yYXcuZ2l0aHVi.cache": "2025-12-31T00:00:00Z"
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "skill",
+          "search",
+          "telegram",
+          "--json"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-pretty",
+        "stdout_json": [
+          {
+            "id": "telegram-send",
+            "source": "jaw",
+            "name": "Telegram Send",
+            "description": "send telegram messages",
+            "category": "communication",
+            "rawUrl": "https://raw.githubusercontent.com/lidge-jun/cli-jaw-skills/main/telegram-send/SKILL.md",
+            "requires": {
+              "bins": [
+                "curl"
+              ]
+            },
+            "score": 11
+          }
+        ],
+        "stderr": "skill-search: network fetch failed for jaw-aHR0cHM6Ly9yYXcuZ2l0aHVi; serving stale cache (fetch failed)\n"
+      }
+    ],
+    "tree": {
+      "cxc/skill-cache": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "cxc/skill-cache/jaw-aHR0cHM6Ly9yYXcuZ2l0aHVi.cache": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty",
+        "json": {
+          "skills": {
+            "telegram-send": {
+              "name": "Telegram Send",
+              "description": "send telegram messages",
+              "category": "communication",
+              "requires": {
+                "bins": [
+                  "curl"
+                ]
+              }
+            },
+            "tdd": {
+              "name": "TDD",
+              "description": "test driven development loop",
+              "superseded_by": "dev-testing"
+            },
+            "dev-testing": {
+              "name": "Dev Testing",
+              "description": "testing discipline for development",
+              "status": "active"
+            }
+          }
+        }
+      }
+    },
+    "calls": [
+      {
+        "cmd": "fetch",
+        "argv": [
+          "GET",
+          "https://raw.githubusercontent.com/lidge-jun/cli-jaw-skills/main/registry.json"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

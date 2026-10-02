@@ -1,0 +1,513 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/receipt/test",
+    "K8/ws/.codexclaw/evidence",
+    "A/pabcd-state/receipt-generated.test.ts",
+    "K12/git"
+  ],
+  "note": "At phase C with a check binding: a failing command, a command that changes the source while it runs, then a passing one.",
+  "given": {
+    "files": {
+      "ws/devlog/_plan/260101_demo/000_plan.md": "# 000 - demo plan\n",
+      "ws/devlog/_plan/260101_demo/010_phase1.md": "# 010 - phase 1\n",
+      "ws/src/a.ts": "export const a = 1;\n"
+    },
+    "json": {
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "phase": "IDLE",
+        "sessionId": "rec-s1",
+        "slug": "",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "flags": {
+          "interview": false,
+          "auditPassed": false,
+          "checkPassed": false
+        },
+        "supersededBy": null,
+        "injectedTurns": [],
+        "lastInjectedPhase": null,
+        "orchestrationActive": false,
+        "interview": null,
+        "stopBlockPhase": null,
+        "stopBlockCount": 0,
+        "stopBlockWorkPhaseId": null,
+        "stopMetricCursor": 0,
+        "stopBlockTotal": 0,
+        "stopBlockTurnId": null,
+        "stopBlockCapNotified": false,
+        "loopArmSeen": false,
+        "idleEditNudges": 0,
+        "memoryWriteRequested": false,
+        "memoryWriteTurn": null,
+        "memoryWriteGrant": false,
+        "unverifiedSubagents": [],
+        "unverifiedCorrupt": false,
+        "phaseEntrySource": null,
+        "planUnit": null,
+        "planEpoch": null,
+        "checkEpoch": null,
+        "dcloseRecovery": null
+      }
+    },
+    "git": {
+      "commit": "initial"
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "orchestrate",
+          "P",
+          "--session",
+          "rec-s1",
+          "--cwd",
+          "${WS}"
+        ]
+      },
+      {
+        "cli": [
+          "orchestrate",
+          "A",
+          "--session",
+          "rec-s1",
+          "--cwd",
+          "${WS}",
+          "--attest",
+          "{\"from\":\"P\",\"to\":\"A\",\"did\":\"planned\",\"planUnit\":\"devlog/_plan/260101_demo\"}"
+        ]
+      },
+      {
+        "cli": [
+          "orchestrate",
+          "B",
+          "--session",
+          "rec-s1",
+          "--cwd",
+          "${WS}",
+          "--attest",
+          "{\"from\":\"A\",\"to\":\"B\",\"did\":\"audited\",\"auditOutput\":\"VERDICT: PASS\",\"auditVerdict\":\"pass\"}"
+        ]
+      },
+      {
+        "write": {
+          "ws/src/a.ts": "export const a = 2;\n"
+        }
+      },
+      {
+        "cli": [
+          "orchestrate",
+          "C",
+          "--session",
+          "rec-s1",
+          "--cwd",
+          "${WS}",
+          "--attest",
+          "{\"from\":\"B\",\"to\":\"C\",\"did\":\"implemented\"}"
+        ]
+      },
+      {
+        "cli": [
+          "receipt",
+          "test",
+          "--session",
+          "rec-s1",
+          "--cwd",
+          "${WS}",
+          "--",
+          "node",
+          "-e",
+          "console.log('1 failed'); process.exit(3)"
+        ]
+      },
+      {
+        "cli": [
+          "receipt",
+          "test",
+          "--session",
+          "rec-s1",
+          "--cwd",
+          "${WS}",
+          "--",
+          "node",
+          "-e",
+          "require('fs').writeFileSync('src/a.ts', 'changed'); console.log('ok')"
+        ]
+      },
+      {
+        "cli": [
+          "receipt",
+          "test",
+          "--session",
+          "rec-s1",
+          "--cwd",
+          "${WS}",
+          "--",
+          "node",
+          "-e",
+          "console.log('tests 4 passed')"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "orchestrate P: current=IDLE -> P (IDLE → P, session rec-s1) [formal P: architect proposal -> main executable plan -> same-architect reflection before A (cxc-pabcd phase-plan)]\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "orchestrate A: current=P -> A (P → A, session rec-s1)\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "orchestrate B: current=A -> B (A → B, session rec-s1)\n",
+        "stderr": ""
+      },
+      {
+        "action": "write",
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "orchestrate C: current=B -> C (B → C, session rec-s1)\n",
+        "stderr": ""
+      },
+      {
+        "exit": 3,
+        "stdout_form": "text",
+        "stdout": "1 failed\nreceipt test: the command exited 3; no receipt written\n",
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "text",
+        "stdout": "ok\nreceipt test: the command changed the source while running (uncommitted changes differ); no receipt written — a check cannot certify a tree it rewrote.\nIf the check REGENERATES artifacts by design, declare them:\n  cxc receipt test --session <id> --generated <path> -- <command>\n(repeatable; a path covers that file or that directory. Undeclared rewrites are still refused.)\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "tests 4 passed\n${WS}/.codexclaw/evidence/rec-s1/test-receipt.json\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/evidence": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/evidence/rec-s1": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/evidence/rec-s1/test-receipt.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty",
+        "json": {
+          "kind": "test",
+          "sourceIdentity": {
+            "kind": "resolved",
+            "commitSha": "bbcf192d6184f1b71578e6f68b1654be6dfe7c28",
+            "dirty": true,
+            "treeHash": "61762260cf86dfd95355a159440ad99a7869edd9395b21a5096b0f2abf74cffb",
+            "capturedAt": "<TS>"
+          },
+          "command": "node -e console.log('tests 4 passed')",
+          "exitCode": 0,
+          "createdAt": "<TS>",
+          "ownerSessionId": "rec-s1",
+          "checkEpoch": "<NONCE_1>"
+        }
+      },
+      "ws/.codexclaw/ledger.jsonl": {
+        "type": "file",
+        "mode": "0644",
+        "form": "jsonl",
+        "jsonl": [
+          {
+            "ts": "<TS>",
+            "sessionId": "rec-s1",
+            "from": "IDLE",
+            "to": "P",
+            "reason": "cli"
+          },
+          {
+            "ts": "<TS>",
+            "sessionId": "rec-s1",
+            "from": "P",
+            "to": "A",
+            "reason": "cli",
+            "evidence": "planned"
+          },
+          {
+            "ts": "<TS>",
+            "sessionId": "rec-s1",
+            "from": "A",
+            "to": "B",
+            "reason": "cli",
+            "evidence": "audited"
+          },
+          {
+            "ts": "<TS>",
+            "sessionId": "rec-s1",
+            "from": "B",
+            "to": "C",
+            "reason": "cli",
+            "evidence": "implemented"
+          }
+        ]
+      },
+      "ws/.codexclaw/render-observations.jsonl": {
+        "type": "file",
+        "mode": "0644",
+        "form": "empty"
+      },
+      "ws/.codexclaw/sessions": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty-nonl",
+        "json": {
+          "phase": "C",
+          "sessionId": "rec-s1",
+          "slug": "",
+          "updatedAt": "<TS>",
+          "flags": {
+            "interview": false,
+            "auditPassed": true,
+            "checkPassed": false
+          },
+          "supersededBy": null,
+          "injectedTurns": [],
+          "lastInjectedPhase": "C",
+          "orchestrationActive": true,
+          "interview": null,
+          "stopBlockPhase": null,
+          "stopBlockCount": 0,
+          "stopBlockWorkPhaseId": null,
+          "stopMetricCursor": 0,
+          "stopBlockTotal": 0,
+          "stopBlockTurnId": null,
+          "stopBlockCapNotified": false,
+          "loopArmSeen": false,
+          "idleEditNudges": 0,
+          "memoryWriteRequested": false,
+          "memoryWriteTurn": null,
+          "memoryWriteGrant": false,
+          "unverifiedSubagents": [],
+          "unverifiedCorrupt": false,
+          "phaseEntrySource": null,
+          "planUnit": null,
+          "planEpoch": null,
+          "checkEpoch": "<NONCE_1>",
+          "dcloseRecovery": null
+        }
+      },
+      "ws/.git": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/devlog": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/devlog/_plan": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/devlog/_plan/260101_demo": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/devlog/_plan/260101_demo/000_plan.md": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "# 000 - demo plan\n"
+      },
+      "ws/devlog/_plan/260101_demo/010_phase1.md": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "# 010 - phase 1\n"
+      },
+      "ws/src": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/src/a.ts": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "changed"
+      }
+    },
+    "calls": [
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "HEAD"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "status",
+          "--porcelain=v1",
+          "-z",
+          "--untracked-files=all"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "HEAD"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "status",
+          "--porcelain=v1",
+          "-z",
+          "--untracked-files=all"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "HEAD"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "status",
+          "--porcelain=v1",
+          "-z",
+          "--untracked-files=all"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "HEAD"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "status",
+          "--porcelain=v1",
+          "-z",
+          "--untracked-files=all"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "HEAD"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "status",
+          "--porcelain=v1",
+          "-z",
+          "--untracked-files=all"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "HEAD"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "status",
+          "--porcelain=v1",
+          "-z",
+          "--untracked-files=all"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "HEAD"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "status",
+          "--porcelain=v1",
+          "-z",
+          "--untracked-files=all"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "HEAD"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "status",
+          "--porcelain=v1",
+          "-z",
+          "--untracked-files=all"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

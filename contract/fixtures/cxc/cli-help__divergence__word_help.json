@@ -1,0 +1,35 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/divergence/help",
+    "K6/exit-codes",
+    "A/plugin/cli-usage.test.mjs",
+    "A/pabcd-state/help-verbs.test.ts"
+  ],
+  "note": "`cxc divergence help`: usage text and exit status; nothing written.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "divergence",
+          "help"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "cxc divergence — record the deliberate divergence mode and its candidates\n\nUsage:\n  cxc divergence mode on --session <id> --collapse P|D --reason <why> [--json]\n  cxc divergence mode off --session <id> --reason <why> [--json]\n  cxc divergence candidate add --session <id> --kind strong-1|add-1|alternative\n      --change-class parameter-tweak|branch-toggle|state-space-redesign|evaluator-change\n      --title <text> --rationale <text> --source <url> [--source <url>]...\n      [--killed-at-phase P|A|B|C|D] [--json]\n  cxc divergence candidate list --session <id> [--json]\n  cxc divergence --help\n\nNotes:\n  Collapse EARLY at P for satisfy-spec work; collapse LATE at D for\n  maximize-metric work where the local metric can deceive (cxc-loop).\n  Turn divergence off once the plateau is broken — it is a mode, not a state.\n  Every candidate needs at least one --source: an unsourced candidate is a guess.\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

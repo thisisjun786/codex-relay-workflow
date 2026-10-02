@@ -1,0 +1,211 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/freeze",
+    "K8/ws/.codexclaw/interview/freeze.json",
+    "A/pabcd-state/freeze.test.ts"
+  ],
+  "note": "freeze hashes .codexclaw/plan/<slug>/: dry run writes nothing, then the manifest is written, then a second run reports it fresh.",
+  "given": {
+    "files": {
+      "ws/.codexclaw/plan/demo/000_plan.md": "# plan\n",
+      "ws/.codexclaw/plan/demo/010_phase.md": "# phase\n"
+    },
+    "json": {
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "phase": "IDLE",
+        "sessionId": "rec-s1",
+        "slug": "demo",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "flags": {
+          "interview": false,
+          "auditPassed": false,
+          "checkPassed": false
+        },
+        "supersededBy": null,
+        "injectedTurns": [],
+        "lastInjectedPhase": null,
+        "orchestrationActive": false,
+        "interview": null,
+        "stopBlockPhase": null,
+        "stopBlockCount": 0,
+        "stopBlockWorkPhaseId": null,
+        "stopMetricCursor": 0,
+        "stopBlockTotal": 0,
+        "stopBlockTurnId": null,
+        "stopBlockCapNotified": false,
+        "loopArmSeen": false,
+        "idleEditNudges": 0,
+        "memoryWriteRequested": false,
+        "memoryWriteTurn": null,
+        "memoryWriteGrant": false,
+        "unverifiedSubagents": [],
+        "unverifiedCorrupt": false,
+        "phaseEntrySource": null,
+        "planUnit": null,
+        "planEpoch": null,
+        "checkEpoch": null,
+        "dcloseRecovery": null
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "freeze",
+          "--dry-run",
+          "--session",
+          "rec-s1",
+          "--cwd",
+          "${WS}"
+        ]
+      },
+      {
+        "cli": [
+          "freeze",
+          "--session",
+          "rec-s1",
+          "--cwd",
+          "${WS}"
+        ]
+      },
+      {
+        "cli": [
+          "freeze",
+          "--session",
+          "rec-s1",
+          "--cwd",
+          "${WS}"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "[codexclaw freeze --dry-run]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: no prior manifest\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "[codexclaw freeze]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: no prior manifest\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "[codexclaw freeze]\nmanifest: ${WS}/.codexclaw/interview/freeze.json\nslug: demo\nplanFiles: 2\nplanHash: 6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d\ninterviewReady: false\nopenAssumptions: 0\nstale-check: fresh — frozen manifest matches current plan\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/interview": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/interview/freeze.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty-nonl",
+        "json": {
+          "frozenAt": "<TS>",
+          "planFiles": [
+            {
+              "path": "000_plan.md",
+              "sha256": "98acf32e1a70004b64cf74fc3195fbc6427da37e3987a4cec001ff107f09b844"
+            },
+            {
+              "path": "010_phase.md",
+              "sha256": "635e473f0d89b30497c98f33dfcff06cedfbc099aa47b19798efb1976c08d40c"
+            }
+          ],
+          "planHash": "6c5855c4b5f207b0cabb4588df92be128473bb22076823bdbfd1a9a76e310a4d",
+          "objective": "demo",
+          "slug": "demo",
+          "evidenceBundle": {
+            "dimensions": null,
+            "openAssumptions": [],
+            "contradictions": [],
+            "acceptanceCriteria": [],
+            "researchReportRef": null
+          }
+        }
+      },
+      "ws/.codexclaw/plan": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/plan/demo": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/plan/demo/000_plan.md": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "# plan\n"
+      },
+      "ws/.codexclaw/plan/demo/010_phase.md": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "# phase\n"
+      },
+      "ws/.codexclaw/sessions": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "phase": "IDLE",
+          "sessionId": "rec-s1",
+          "slug": "demo",
+          "updatedAt": "<TS>",
+          "flags": {
+            "interview": false,
+            "auditPassed": false,
+            "checkPassed": false
+          },
+          "supersededBy": null,
+          "injectedTurns": [],
+          "lastInjectedPhase": null,
+          "orchestrationActive": false,
+          "interview": null,
+          "stopBlockPhase": null,
+          "stopBlockCount": 0,
+          "stopBlockWorkPhaseId": null,
+          "stopMetricCursor": 0,
+          "stopBlockTotal": 0,
+          "stopBlockTurnId": null,
+          "stopBlockCapNotified": false,
+          "loopArmSeen": false,
+          "idleEditNudges": 0,
+          "memoryWriteRequested": false,
+          "memoryWriteTurn": null,
+          "memoryWriteGrant": false,
+          "unverifiedSubagents": [],
+          "unverifiedCorrupt": false,
+          "phaseEntrySource": null,
+          "planUnit": null,
+          "planEpoch": null,
+          "checkEpoch": null,
+          "dcloseRecovery": null
+        }
+      }
+    },
+    "calls": []
+  }
+}

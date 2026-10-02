@@ -1,0 +1,411 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/loop",
+    "K8/ws/.codexclaw/goalplans",
+    "A/pabcd-state/goalplan-public-surface.test.ts",
+    "A/pabcd-state/steering.test.ts"
+  ],
+  "note": "Criteria (an unknown id, then the generated c-1), the ask/decide record and an idempotent steer batch (same key twice).",
+  "given": {
+    "json": {
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "phase": "IDLE",
+        "sessionId": "rec-s1",
+        "slug": "",
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "flags": {
+          "interview": false,
+          "auditPassed": false,
+          "checkPassed": false
+        },
+        "supersededBy": null,
+        "injectedTurns": [],
+        "lastInjectedPhase": null,
+        "orchestrationActive": false,
+        "interview": null,
+        "stopBlockPhase": null,
+        "stopBlockCount": 0,
+        "stopBlockWorkPhaseId": null,
+        "stopMetricCursor": 0,
+        "stopBlockTotal": 0,
+        "stopBlockTurnId": null,
+        "stopBlockCapNotified": false,
+        "loopArmSeen": false,
+        "idleEditNudges": 0,
+        "memoryWriteRequested": false,
+        "memoryWriteTurn": null,
+        "memoryWriteGrant": false,
+        "unverifiedSubagents": [],
+        "unverifiedCorrupt": false,
+        "phaseEntrySource": null,
+        "planUnit": null,
+        "planEpoch": null,
+        "checkEpoch": null,
+        "dcloseRecovery": null
+      }
+    },
+    "git": {
+      "commit": "initial"
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "loop",
+          "init",
+          "--objective",
+          "Ship the export feature",
+          "--session",
+          "rec-s1",
+          "--cwd",
+          "${WS}"
+        ]
+      },
+      {
+        "cli": [
+          "loop",
+          "add-criterion",
+          "--session",
+          "rec-s1",
+          "--criterion",
+          "Export renders in the web UI",
+          "--surface",
+          "web",
+          "--cwd",
+          "${WS}"
+        ]
+      },
+      {
+        "cli": [
+          "loop",
+          "meet-criterion",
+          "--session",
+          "rec-s1",
+          "--id",
+          "c1",
+          "--evidence",
+          "screenshot shows the export button",
+          "--cwd",
+          "${WS}"
+        ]
+      },
+      {
+        "cli": [
+          "loop",
+          "meet-criterion",
+          "--session",
+          "rec-s1",
+          "--id",
+          "c-1",
+          "--evidence",
+          "screenshot shows the export button",
+          "--cwd",
+          "${WS}"
+        ]
+      },
+      {
+        "cli": [
+          "loop",
+          "ask",
+          "--session",
+          "rec-s1",
+          "--id",
+          "q1",
+          "--question",
+          "CSV or XLSX?",
+          "--recommendation",
+          "CSV",
+          "--option",
+          "CSV",
+          "--option",
+          "XLSX",
+          "--cwd",
+          "${WS}"
+        ]
+      },
+      {
+        "cli": [
+          "loop",
+          "decide",
+          "--session",
+          "rec-s1",
+          "--id",
+          "q1",
+          "--answer",
+          "CSV first",
+          "--cwd",
+          "${WS}"
+        ]
+      },
+      {
+        "cli": [
+          "loop",
+          "steer",
+          "--session",
+          "rec-s1",
+          "--batch-json",
+          "{\"idempotencyKey\": \"k1\", \"rationale\": \"user asked\", \"evidence\": \"chat\", \"ops\": [{\"kind\": \"annotate\", \"note\": \"prefer streaming\"}]}",
+          "--cwd",
+          "${WS}"
+        ]
+      },
+      {
+        "cli": [
+          "loop",
+          "steer",
+          "--session",
+          "rec-s1",
+          "--batch-json",
+          "{\"idempotencyKey\": \"k1\", \"rationale\": \"user asked\", \"evidence\": \"chat\", \"ops\": [{\"kind\": \"annotate\", \"note\": \"prefer streaming\"}]}",
+          "--cwd",
+          "${WS}"
+        ]
+      },
+      {
+        "cli": [
+          "loop",
+          "show",
+          "--session",
+          "rec-s1",
+          "--cwd",
+          "${WS}"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "[codexclaw loop: ship-the-export-feature]\nobjective: Ship the export feature\nhost: armed=false source=none\nworkPhases: 0 (remaining 0)\ncriteria: 0 (unmet 0)\ncomplete: true\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "[codexclaw loop: ship-the-export-feature]\nobjective: Ship the export feature\nhost: armed=false source=none\nworkPhases: 0 (remaining 0)\ncriteria: 1 (unmet 1)\ncomplete: false\n  - c-1 [open] Export renders in the web UI\n",
+        "stderr": ""
+      },
+      {
+        "exit": 1,
+        "stdout_form": "text",
+        "stdout": "loop meet-criterion: criterion 'c1' is not in this plan\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "loop meet-criterion: ship-the-export-feature c-1 applied\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "loop ask: ship-the-export-feature q1 applied\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "loop decide: ship-the-export-feature q1 applied\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "loop steer: applied k1 (1 op(s): annotate)\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "loop steer: k1 was already applied at <TS> — nothing to do\n",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "[codexclaw loop: ship-the-export-feature]\nobjective: Ship the export feature\nhost: armed=false source=none\nworkPhases: 0 (remaining 0)\ncriteria: 1 (unmet 0)\ncomplete: true\nwriteLock: absent path=${WS}/.codexclaw/goalplans/ship-the-export-feature/.goalplan.lock\n  - c-1 [met] Export renders in the web UI\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "ws/.codexclaw": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/goalplans": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "ws/.codexclaw/goalplans/ship-the-export-feature": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "ws/.codexclaw/goalplans/ship-the-export-feature/goalplan.json": {
+        "type": "file",
+        "mode": "0600",
+        "form": "json-pretty-nonl",
+        "json": {
+          "objective": "Ship the export feature",
+          "slug": "ship-the-export-feature",
+          "createdAt": "<TS>",
+          "updatedAt": "<TS>",
+          "activeWorkPhaseId": null,
+          "workPhases": [],
+          "criteria": [
+            {
+              "id": "c-1",
+              "scenario": "Export renders in the web UI",
+              "expectedEvidence": "",
+              "capturedEvidence": "screenshot shows the export button",
+              "status": "met",
+              "surface": "web"
+            }
+          ],
+          "host": {
+            "armed": false,
+            "armedAt": null,
+            "source": "none"
+          },
+          "decisions": [
+            {
+              "id": "q1",
+              "question": "CSV or XLSX?",
+              "status": "decided",
+              "answer": "CSV first",
+              "askedAt": "<TS>",
+              "decidedAt": "<TS>",
+              "recommendation": "CSV",
+              "options": [
+                "CSV",
+                "XLSX"
+              ]
+            }
+          ],
+          "schemaVersion": 1,
+          "steeringLog": [
+            {
+              "idempotencyKey": "add-criterion-74e3b2bacec6",
+              "rationale": "cxc loop add-criterion",
+              "evidence": "Export renders in the web UI",
+              "appliedAt": "<TS>",
+              "summary": "1 op(s): add-criterion"
+            },
+            {
+              "idempotencyKey": "k1",
+              "rationale": "user asked",
+              "evidence": "chat",
+              "appliedAt": "<TS>",
+              "summary": "1 op(s): annotate"
+            }
+          ]
+        }
+      },
+      "ws/.codexclaw/goalplans/ship-the-export-feature/ledger.jsonl": {
+        "type": "file",
+        "mode": "0600",
+        "form": "jsonl",
+        "jsonl": [
+          {
+            "ts": "<TS>",
+            "slug": "ship-the-export-feature",
+            "event": "created",
+            "detail": "init objective=\"Ship the export feature\" criteria=0"
+          },
+          {
+            "ts": "<TS>",
+            "slug": "ship-the-export-feature",
+            "event": "steered",
+            "detail": "add-criterion-74e3b2bacec6: 1 op(s): add-criterion — cxc loop add-criterion"
+          },
+          {
+            "ts": "<TS>",
+            "slug": "ship-the-export-feature",
+            "event": "criterion_met",
+            "detail": "screenshot shows the export button"
+          },
+          {
+            "ts": "<TS>",
+            "slug": "ship-the-export-feature",
+            "event": "steered",
+            "detail": "k1: 1 op(s): annotate — user asked"
+          }
+        ]
+      },
+      "ws/.codexclaw/sessions": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "ws/.codexclaw/sessions/rec-s1.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-pretty-nonl",
+        "json": {
+          "phase": "IDLE",
+          "sessionId": "rec-s1",
+          "slug": "ship-the-export-feature",
+          "updatedAt": "<TS>",
+          "flags": {
+            "interview": false,
+            "auditPassed": false,
+            "checkPassed": false
+          },
+          "supersededBy": null,
+          "injectedTurns": [],
+          "lastInjectedPhase": null,
+          "orchestrationActive": false,
+          "interview": null,
+          "stopBlockPhase": null,
+          "stopBlockCount": 0,
+          "stopBlockWorkPhaseId": null,
+          "stopMetricCursor": 0,
+          "stopBlockTotal": 0,
+          "stopBlockTurnId": null,
+          "stopBlockCapNotified": false,
+          "loopArmSeen": false,
+          "idleEditNudges": 0,
+          "memoryWriteRequested": false,
+          "memoryWriteTurn": null,
+          "memoryWriteGrant": false,
+          "unverifiedSubagents": [],
+          "unverifiedCorrupt": false,
+          "phaseEntrySource": null,
+          "planUnit": null,
+          "planEpoch": null,
+          "checkEpoch": null,
+          "dcloseRecovery": null
+        }
+      },
+      "ws/.git": {
+        "type": "dir",
+        "mode": "0755"
+      }
+    },
+    "calls": [
+      {
+        "cmd": "git",
+        "argv": [
+          "rev-parse",
+          "HEAD"
+        ],
+        "cwd": "${WS}"
+      },
+      {
+        "cmd": "git",
+        "argv": [
+          "status",
+          "--porcelain=v1",
+          "-z",
+          "--untracked-files=all"
+        ],
+        "cwd": "${WS}"
+      }
+    ]
+  }
+}

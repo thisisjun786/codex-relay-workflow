@@ -1,0 +1,81 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/pre-tool-use-guarding-interview-in-goal",
+    "K5/hook-rendered",
+    "K11/goals",
+    "A/pabcd-state/goal-gate.test.ts",
+    "K13/CODEX_SQLITE_HOME"
+  ],
+  "note": "An unreadable goals DB fails closed for the interview gate.",
+  "given": {
+    "sqlite": {
+      "codex/goals_1.sqlite": [
+        "CREATE TABLE unrelated (x INTEGER)"
+      ]
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "pre-tool-use-guarding-interview-in-goal",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "request_user_input",
+          "tool_input": {
+            "questions": [
+              {
+                "id": "q1",
+                "question": "Which?"
+              }
+            ]
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "Goal mode denies blocking Interview / request_user_input, also when goal state is unreadable. For useful mid-work questions, use exposed and host-allowed request_user_input_async without expecting a reply; keep working with verified facts and authorized assumptions. Silence grants no approval.",
+            "additionalContext": "Goal mode denies blocking Interview / request_user_input, also when goal state is unreadable. For useful mid-work questions, use exposed and host-allowed request_user_input_async without expecting a reply; keep working with verified facts and authorized assumptions. Silence grants no approval. (goal-active=unreadable)"
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "codex/goals_1.sqlite": {
+        "type": "file",
+        "mode": "0644",
+        "form": "sqlite",
+        "json": {
+          "tables": [
+            {
+              "name": "unrelated",
+              "sql": "CREATE TABLE unrelated (x INTEGER)",
+              "rows": []
+            }
+          ]
+        }
+      }
+    },
+    "calls": []
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/session-start-announcing-map-affordance",
+    "K5/hook-rendered",
+    "A/cxc-ops/map-affordance.test.ts"
+  ],
+  "note": "A payload without session_id omits the binding line; with a `cxc` program on PATH the not-on-PATH pointer disappears while payload-table commands still resolve to the plugin dispatcher.",
+  "given": {
+    "stubs": {
+      "cxc": {
+        "exit": 0
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "session-start-announcing-map-affordance",
+        "stdin": {
+          "hook_event_name": "SessionStart",
+          "cwd": "${WS}",
+          "source": "startup",
+          "model": "gpt-5.5",
+          "transcript_path": null
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": "[codexclaw] External skill catalogs are searchable on demand. Priority: jaw (cli-jaw-skills, 1st-class, default) > clawhub (2nd) > hermes (3rd, sparse). When a task needs a capability you do not have loaded, browse `dev/references/skill-catalog.md` for the full jaw catalog first, or run `node \"${PLUGIN_ROOT}/bin/cxc.mjs\" skill search <query>` then `node \"${PLUGIN_ROOT}/bin/cxc.mjs\" skill show <id>` to load it (adapter preamble applies; cxc-dev discipline wins on conflict).\n\n[codexclaw] When writing Korean prose for the user (docs, answers, announcements), keep it human: no translationese (~에 대해/~를 통해/~함으로써), no AI idioms (시사하는 바가 크다/결론적으로/기대된다 endings), no 첫째/둘째 enumeration, one consistent register throughout. For explicit 윤문/polish requests or long-form Korean output, load the $cxc-kwrite skill for the full revision protocol.\n\n[codexclaw] Loop contract: for actual loop work load $codexclaw:cxc-loop + $codexclaw:cxc-pabcd. Bare cxc-loop means scoped HOTL; a mention alone grants no authority. Exact user limits and separately allowed actions scope this pointer and its owners. No-delegation means no dispatch. Read-only inspection remains allowed under no-goal/no-FSM; for actual loop work inspect `node \"${PLUGIN_ROOT}/bin/cxc.mjs\" orchestrate status --session <your id>` first. No-tests does not forbid an explicitly allowed build. One work-phase = one full PABCD cycle. No extra external permissions; do not bypass guards or invent evidence.\n\n[codexclaw] For PR work or dependent branches, read $codexclaw:cxc-dev references/stacked-prs.md (DEV-STACK-06/07/08). Use ordinary PRs/manual chains by default. Do not suggest or create GitHub native stacks unless the user clearly and strongly requests them for this task. Inspect existing membership and CI separately; a parent base or Can Stack banner is not opt-in. Parallel branch/PR lanes: one Codex task each, not subagents (same checkout); the lane request authorizes them. Per-PR CI is expected. This is guidance, not authorization to register, restack, cancel CI, or merge.\n\n[codexclaw] Long-running or collision-risky commands (dev servers, builds, test suites, 5min+ probes) SHOULD use managed background execution: `exec_command` with short `yield_time_ms` → get `session_id` → end turn or continue other work → poll later with `write_stdin` (empty chars = poll, no typing). Do NOT block the turn inline for commands that might outlive compaction or conflict with parallel work. CLI: `/ps` lists active background terminals; `/stop` terminates all in the current session. A session_id is NOT an OS PID — it is a Codex-managed execution handle.\n\n[codexclaw] User questions: main agents may leave useful questions during work, including active goals. Outside Interview, prefer exposed and host-allowed `request_user_input_async`; do not expect replies or wait. Continue authorized work with reasonable assumptions, incorporate later replies, and ask distinct useful questions without reminders. Interview uses `request_user_input` only; see $codexclaw:cxc-interview. Absent tools stay absent; silence grants no approval. Subagents send question candidates to main. Details: $codexclaw:cxc-dev references/async-questions.md."
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

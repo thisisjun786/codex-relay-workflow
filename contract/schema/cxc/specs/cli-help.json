@@ -1,0 +1,2572 @@
+{
+  "group": "cli-help",
+  "scenarios": [
+    {
+      "id": "cli-help__top-level__dashdash_help",
+      "covers": [
+        "K6/top-level/help",
+        "A/plugin/cli-usage.test.mjs"
+      ],
+      "note": "Top-level help of the repository dispatcher (the cxc on a user's PATH).",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__top-level__dash_h",
+      "covers": [
+        "K6/top-level/help",
+        "A/plugin/cli-usage.test.mjs"
+      ],
+      "note": "Top-level help of the repository dispatcher (the cxc on a user's PATH).",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "-h"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__top-level__word_help",
+      "covers": [
+        "K6/top-level/help",
+        "A/plugin/cli-usage.test.mjs"
+      ],
+      "note": "Top-level help of the repository dispatcher (the cxc on a user's PATH).",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__top-level__no_arguments",
+      "covers": [
+        "K6/top-level/help"
+      ],
+      "note": "No verb defaults to help.",
+      "given": {},
+      "steps": [
+        {
+          "cli": []
+        }
+      ]
+    },
+    {
+      "id": "cli-help__top-level__dashdash_version",
+      "covers": [
+        "K6/top-level/version"
+      ],
+      "note": "Version prints the payload manifest version.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "--version"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__top-level__dash_v",
+      "covers": [
+        "K6/top-level/version"
+      ],
+      "note": "Version prints the payload manifest version.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "-v"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__top-level__word_version",
+      "covers": [
+        "K6/top-level/version"
+      ],
+      "note": "Version prints the payload manifest version.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "version"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__top-level__unknown_verb",
+      "covers": [
+        "K6/top-level/unknown",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs"
+      ],
+      "note": "An unknown verb: message, pointer to --help, exit 1.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "frobnicate"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__payload-dispatcher__dashdash_help",
+      "covers": [
+        "K6/payload-dispatcher",
+        "A/plugin/payload-bin.test.mjs"
+      ],
+      "note": "The plugin's own bin/cxc.mjs (payload dispatcher): help, version, unknown verb, and the repo-only map/gui pointer.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "--help"
+          ],
+          "payload": true
+        }
+      ]
+    },
+    {
+      "id": "cli-help__payload-dispatcher__word_version",
+      "covers": [
+        "K6/payload-dispatcher",
+        "A/plugin/payload-bin.test.mjs"
+      ],
+      "note": "The plugin's own bin/cxc.mjs (payload dispatcher): help, version, unknown verb, and the repo-only map/gui pointer.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "version"
+          ],
+          "payload": true
+        }
+      ]
+    },
+    {
+      "id": "cli-help__payload-dispatcher__unknown_verb",
+      "covers": [
+        "K6/payload-dispatcher",
+        "A/plugin/payload-bin.test.mjs"
+      ],
+      "note": "The plugin's own bin/cxc.mjs (payload dispatcher): help, version, unknown verb, and the repo-only map/gui pointer.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "frobnicate"
+          ],
+          "payload": true
+        }
+      ]
+    },
+    {
+      "id": "cli-help__payload-dispatcher__map_pointer",
+      "covers": [
+        "K6/payload-dispatcher",
+        "A/plugin/payload-bin.test.mjs"
+      ],
+      "note": "The plugin's own bin/cxc.mjs (payload dispatcher): help, version, unknown verb, and the repo-only map/gui pointer.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "map"
+          ],
+          "payload": true
+        }
+      ]
+    },
+    {
+      "id": "cli-help__payload-dispatcher__gui_pointer",
+      "covers": [
+        "K6/payload-dispatcher",
+        "A/plugin/payload-bin.test.mjs"
+      ],
+      "note": "The plugin's own bin/cxc.mjs (payload dispatcher): help, version, unknown verb, and the repo-only map/gui pointer.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "gui"
+          ],
+          "payload": true
+        }
+      ]
+    },
+    {
+      "id": "cli-help__enable__dashdash_help",
+      "covers": [
+        "K6/enable/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs"
+      ],
+      "note": "`cxc enable --help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "enable",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__enable__dash_h",
+      "covers": [
+        "K6/enable/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs"
+      ],
+      "note": "`cxc enable -h`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "enable",
+            "-h"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__enable__word_help",
+      "covers": [
+        "K6/enable/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs"
+      ],
+      "note": "`cxc enable help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "enable",
+            "help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__disable__dashdash_help",
+      "covers": [
+        "K6/disable/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs"
+      ],
+      "note": "`cxc disable --help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "disable",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__disable__dash_h",
+      "covers": [
+        "K6/disable/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs"
+      ],
+      "note": "`cxc disable -h`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "disable",
+            "-h"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__disable__word_help",
+      "covers": [
+        "K6/disable/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs"
+      ],
+      "note": "`cxc disable help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "disable",
+            "help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__status__dashdash_help",
+      "covers": [
+        "K6/status/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs"
+      ],
+      "note": "`cxc status --help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "status",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__status__dash_h",
+      "covers": [
+        "K6/status/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs"
+      ],
+      "note": "`cxc status -h`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "status",
+            "-h"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__status__word_help",
+      "covers": [
+        "K6/status/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs"
+      ],
+      "note": "`cxc status help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "status",
+            "help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__config__dashdash_help",
+      "covers": [
+        "K6/config/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs"
+      ],
+      "note": "`cxc config --help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "config",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__config__dash_h",
+      "covers": [
+        "K6/config/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs"
+      ],
+      "note": "`cxc config -h`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "config",
+            "-h"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__config__word_help",
+      "covers": [
+        "K6/config/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs"
+      ],
+      "note": "`cxc config help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "config",
+            "help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__doctor__dashdash_help",
+      "covers": [
+        "K6/doctor/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs"
+      ],
+      "note": "`cxc doctor --help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "doctor",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__doctor__dash_h",
+      "covers": [
+        "K6/doctor/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs"
+      ],
+      "note": "`cxc doctor -h`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "doctor",
+            "-h"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__doctor__word_help",
+      "covers": [
+        "K6/doctor/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs"
+      ],
+      "note": "`cxc doctor help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "doctor",
+            "help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__hooks__dashdash_help",
+      "covers": [
+        "K6/hooks/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs"
+      ],
+      "note": "`cxc hooks --help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "hooks",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__hooks__dash_h",
+      "covers": [
+        "K6/hooks/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs"
+      ],
+      "note": "`cxc hooks -h`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "hooks",
+            "-h"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__hooks__word_help",
+      "covers": [
+        "K6/hooks/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs"
+      ],
+      "note": "`cxc hooks help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "hooks",
+            "help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__session__dashdash_help",
+      "covers": [
+        "K6/session/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc session --help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "session",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__session__dash_h",
+      "covers": [
+        "K6/session/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc session -h`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "session",
+            "-h"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__session__word_help",
+      "covers": [
+        "K6/session/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc session help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "session",
+            "help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__orchestrate__dashdash_help",
+      "covers": [
+        "K6/orchestrate/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc orchestrate --help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "orchestrate",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__orchestrate__dash_h",
+      "covers": [
+        "K6/orchestrate/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc orchestrate -h`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "orchestrate",
+            "-h"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__orchestrate__word_help",
+      "covers": [
+        "K6/orchestrate/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc orchestrate help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "orchestrate",
+            "help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__freeze__dashdash_help",
+      "covers": [
+        "K6/freeze/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc freeze --help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "freeze",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__freeze__dash_h",
+      "covers": [
+        "K6/freeze/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc freeze -h`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "freeze",
+            "-h"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__freeze__word_help",
+      "covers": [
+        "K6/freeze/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc freeze help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "freeze",
+            "help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__metric__dashdash_help",
+      "covers": [
+        "K6/metric/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc metric --help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "metric",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__metric__dash_h",
+      "covers": [
+        "K6/metric/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc metric -h`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "metric",
+            "-h"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__metric__word_help",
+      "covers": [
+        "K6/metric/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc metric help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "metric",
+            "help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__divergence__dashdash_help",
+      "covers": [
+        "K6/divergence/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc divergence --help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "divergence",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__divergence__dash_h",
+      "covers": [
+        "K6/divergence/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc divergence -h`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "divergence",
+            "-h"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__divergence__word_help",
+      "covers": [
+        "K6/divergence/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc divergence help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "divergence",
+            "help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__loop__dashdash_help",
+      "covers": [
+        "K6/loop/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc loop --help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "loop",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__loop__dash_h",
+      "covers": [
+        "K6/loop/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc loop -h`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "loop",
+            "-h"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__loop__word_help",
+      "covers": [
+        "K6/loop/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc loop help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "loop",
+            "help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__plan__dashdash_help",
+      "covers": [
+        "K6/plan/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc plan --help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "plan",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__plan__dash_h",
+      "covers": [
+        "K6/plan/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc plan -h`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "plan",
+            "-h"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__plan__word_help",
+      "covers": [
+        "K6/plan/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc plan help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "plan",
+            "help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__scan__dashdash_help",
+      "covers": [
+        "K6/scan/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc scan --help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "scan",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__scan__dash_h",
+      "covers": [
+        "K6/scan/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc scan -h`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "scan",
+            "-h"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__scan__word_help",
+      "covers": [
+        "K6/scan/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc scan help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "scan",
+            "help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__review-round__dashdash_help",
+      "covers": [
+        "K6/review-round/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc review-round --help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "review-round",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__review-round__dash_h",
+      "covers": [
+        "K6/review-round/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc review-round -h`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "review-round",
+            "-h"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__review-round__word_help",
+      "covers": [
+        "K6/review-round/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc review-round help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "review-round",
+            "help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__receipt__dashdash_help",
+      "covers": [
+        "K6/receipt/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc receipt --help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "receipt",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__receipt__dash_h",
+      "covers": [
+        "K6/receipt/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc receipt -h`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "receipt",
+            "-h"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__receipt__word_help",
+      "covers": [
+        "K6/receipt/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc receipt help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "receipt",
+            "help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__evidence__dashdash_help",
+      "covers": [
+        "K6/evidence/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc evidence --help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "evidence",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__evidence__dash_h",
+      "covers": [
+        "K6/evidence/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc evidence -h`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "evidence",
+            "-h"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__evidence__word_help",
+      "covers": [
+        "K6/evidence/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc evidence help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "evidence",
+            "help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__chat__dashdash_help",
+      "covers": [
+        "K6/chat/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/recall/cli-arg-hygiene.test.ts"
+      ],
+      "note": "`cxc chat --help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "chat",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__chat__dash_h",
+      "covers": [
+        "K6/chat/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/recall/cli-arg-hygiene.test.ts"
+      ],
+      "note": "`cxc chat -h`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "chat",
+            "-h"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__chat__word_help",
+      "covers": [
+        "K6/chat/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/recall/cli-arg-hygiene.test.ts"
+      ],
+      "note": "`cxc chat help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "chat",
+            "help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__memory__dashdash_help",
+      "covers": [
+        "K6/memory/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts",
+        "A/recall/cli-arg-hygiene.test.ts"
+      ],
+      "note": "`cxc memory --help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "memory",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__memory__dash_h",
+      "covers": [
+        "K6/memory/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts",
+        "A/recall/cli-arg-hygiene.test.ts"
+      ],
+      "note": "`cxc memory -h`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "memory",
+            "-h"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__memory__word_help",
+      "covers": [
+        "K6/memory/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts",
+        "A/recall/cli-arg-hygiene.test.ts"
+      ],
+      "note": "`cxc memory help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "memory",
+            "help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__skill__dashdash_help",
+      "covers": [
+        "K6/skill/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "K14/skill-search"
+      ],
+      "note": "`cxc skill --help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "skill",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__skill__dash_h",
+      "covers": [
+        "K6/skill/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "K14/skill-search"
+      ],
+      "note": "`cxc skill -h`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "skill",
+            "-h"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__skill__word_help",
+      "covers": [
+        "K6/skill/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "K14/skill-search"
+      ],
+      "note": "`cxc skill help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "skill",
+            "help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__subagents__dashdash_help",
+      "covers": [
+        "K6/subagents/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs"
+      ],
+      "note": "`cxc subagents --help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "subagents",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__subagents__dash_h",
+      "covers": [
+        "K6/subagents/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs"
+      ],
+      "note": "`cxc subagents -h`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "subagents",
+            "-h"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__subagents__word_help",
+      "covers": [
+        "K6/subagents/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs"
+      ],
+      "note": "`cxc subagents help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "subagents",
+            "help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__provider__dashdash_help",
+      "covers": [
+        "K6/provider/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "K12/ocx"
+      ],
+      "note": "`cxc provider --help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "provider",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__provider__dash_h",
+      "covers": [
+        "K6/provider/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "K12/ocx"
+      ],
+      "note": "`cxc provider -h`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "provider",
+            "-h"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__provider__word_help",
+      "covers": [
+        "K6/provider/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "K12/ocx"
+      ],
+      "note": "`cxc provider help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "provider",
+            "help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__bg__dashdash_help",
+      "covers": [
+        "K6/bg/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs"
+      ],
+      "note": "`cxc bg --help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "bg",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__bg__dash_h",
+      "covers": [
+        "K6/bg/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs"
+      ],
+      "note": "`cxc bg -h`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "bg",
+            "-h"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__bg__word_help",
+      "covers": [
+        "K6/bg/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs"
+      ],
+      "note": "`cxc bg help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "bg",
+            "help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__map__dashdash_help",
+      "covers": [
+        "K6/map/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "K12/uv"
+      ],
+      "note": "`cxc map --help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "map",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__map__dash_h",
+      "covers": [
+        "K6/map/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "K12/uv"
+      ],
+      "note": "`cxc map -h`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "map",
+            "-h"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__map__word_help",
+      "covers": [
+        "K6/map/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "K12/uv"
+      ],
+      "note": "`cxc map help`: usage text and exit status; nothing written.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "map",
+            "help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__orchestrate__status_dashdash_help",
+      "covers": [
+        "K6/orchestrate/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc orchestrate status --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "orchestrate",
+            "status",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__loop__init_dashdash_help",
+      "covers": [
+        "K6/loop/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc loop init --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "loop",
+            "init",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__loop__show_dashdash_help",
+      "covers": [
+        "K6/loop/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc loop show --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "loop",
+            "show",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__loop__validate_dashdash_help",
+      "covers": [
+        "K6/loop/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc loop validate --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "loop",
+            "validate",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__loop__steer_dashdash_help",
+      "covers": [
+        "K6/loop/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc loop steer --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "loop",
+            "steer",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__loop__add-criterion_dashdash_help",
+      "covers": [
+        "K6/loop/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc loop add-criterion --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "loop",
+            "add-criterion",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__loop__add-work-phase_dashdash_help",
+      "covers": [
+        "K6/loop/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc loop add-work-phase --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "loop",
+            "add-work-phase",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__loop__ready_dashdash_help",
+      "covers": [
+        "K6/loop/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc loop ready --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "loop",
+            "ready",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__loop__add-task_dashdash_help",
+      "covers": [
+        "K6/loop/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc loop add-task --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "loop",
+            "add-task",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__loop__complete-task_dashdash_help",
+      "covers": [
+        "K6/loop/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc loop complete-task --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "loop",
+            "complete-task",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__loop__meet-criterion_dashdash_help",
+      "covers": [
+        "K6/loop/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc loop meet-criterion --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "loop",
+            "meet-criterion",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__loop__ask_dashdash_help",
+      "covers": [
+        "K6/loop/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc loop ask --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "loop",
+            "ask",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__loop__decide_dashdash_help",
+      "covers": [
+        "K6/loop/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc loop decide --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "loop",
+            "decide",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__session__current_dashdash_help",
+      "covers": [
+        "K6/session/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc session current --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "session",
+            "current",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__session__bind_dashdash_help",
+      "covers": [
+        "K6/session/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc session bind --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "session",
+            "bind",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__session__source_dashdash_help",
+      "covers": [
+        "K6/session/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc session source --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "session",
+            "source",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__memory__allow-write_dashdash_help",
+      "covers": [
+        "K6/memory/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts",
+        "A/recall/cli-arg-hygiene.test.ts"
+      ],
+      "note": "`cxc memory allow-write --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "memory",
+            "allow-write",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__memory__search_dashdash_help",
+      "covers": [
+        "K6/memory/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts",
+        "A/recall/cli-arg-hygiene.test.ts"
+      ],
+      "note": "`cxc memory search --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "memory",
+            "search",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__memory__status_dashdash_help",
+      "covers": [
+        "K6/memory/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts",
+        "A/recall/cli-arg-hygiene.test.ts"
+      ],
+      "note": "`cxc memory status --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "memory",
+            "status",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__memory__requeue_dashdash_help",
+      "covers": [
+        "K6/memory/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts",
+        "A/recall/cli-arg-hygiene.test.ts"
+      ],
+      "note": "`cxc memory requeue --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "memory",
+            "requeue",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__chat__search_dashdash_help",
+      "covers": [
+        "K6/chat/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/recall/cli-arg-hygiene.test.ts"
+      ],
+      "note": "`cxc chat search --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "chat",
+            "search",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__chat__index_dashdash_help",
+      "covers": [
+        "K6/chat/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/recall/cli-arg-hygiene.test.ts"
+      ],
+      "note": "`cxc chat index --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "chat",
+            "index",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__metric__record_dashdash_help",
+      "covers": [
+        "K6/metric/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc metric record --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "metric",
+            "record",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__metric__ingest_dashdash_help",
+      "covers": [
+        "K6/metric/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc metric ingest --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "metric",
+            "ingest",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__metric__show_dashdash_help",
+      "covers": [
+        "K6/metric/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc metric show --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "metric",
+            "show",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__metric__kind_dashdash_help",
+      "covers": [
+        "K6/metric/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc metric kind --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "metric",
+            "kind",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__metric__parse-line_dashdash_help",
+      "covers": [
+        "K6/metric/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc metric parse-line --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "metric",
+            "parse-line",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__divergence__mode_dashdash_help",
+      "covers": [
+        "K6/divergence/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc divergence mode --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "divergence",
+            "mode",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__divergence__candidate_dashdash_help",
+      "covers": [
+        "K6/divergence/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc divergence candidate --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "divergence",
+            "candidate",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__review-round__open_dashdash_help",
+      "covers": [
+        "K6/review-round/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc review-round open --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "review-round",
+            "open",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__review-round__show_dashdash_help",
+      "covers": [
+        "K6/review-round/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc review-round show --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "review-round",
+            "show",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__review-round__abort_dashdash_help",
+      "covers": [
+        "K6/review-round/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc review-round abort --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "review-round",
+            "abort",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__receipt__test_dashdash_help",
+      "covers": [
+        "K6/receipt/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc receipt test --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "receipt",
+            "test",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__evidence__resolve_dashdash_help",
+      "covers": [
+        "K6/evidence/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc evidence resolve --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "evidence",
+            "resolve",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__scan__record_dashdash_help",
+      "covers": [
+        "K6/scan/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc scan record --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "scan",
+            "record",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__scan__show_dashdash_help",
+      "covers": [
+        "K6/scan/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc scan show --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "scan",
+            "show",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__plan__init_dashdash_help",
+      "covers": [
+        "K6/plan/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "A/pabcd-state/help-verbs.test.ts"
+      ],
+      "note": "`cxc plan init --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "plan",
+            "init",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__config__interview_dashdash_help",
+      "covers": [
+        "K6/config/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs"
+      ],
+      "note": "`cxc config interview --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "config",
+            "interview",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__config__list_dashdash_help",
+      "covers": [
+        "K6/config/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs"
+      ],
+      "note": "`cxc config list --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "config",
+            "list",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__config__get_dashdash_help",
+      "covers": [
+        "K6/config/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs"
+      ],
+      "note": "`cxc config get --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "config",
+            "get",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__config__set_dashdash_help",
+      "covers": [
+        "K6/config/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs"
+      ],
+      "note": "`cxc config set --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "config",
+            "set",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__config__unset_dashdash_help",
+      "covers": [
+        "K6/config/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs"
+      ],
+      "note": "`cxc config unset --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "config",
+            "unset",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__hooks__retrust_dashdash_help",
+      "covers": [
+        "K6/hooks/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs"
+      ],
+      "note": "`cxc hooks retrust --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "hooks",
+            "retrust",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__skill__search_dashdash_help",
+      "covers": [
+        "K6/skill/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "K14/skill-search"
+      ],
+      "note": "`cxc skill search --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "skill",
+            "search",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__skill__show_dashdash_help",
+      "covers": [
+        "K6/skill/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs",
+        "K14/skill-search"
+      ],
+      "note": "`cxc skill show --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "skill",
+            "show",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__subagents__list_dashdash_help",
+      "covers": [
+        "K6/subagents/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs"
+      ],
+      "note": "`cxc subagents list --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "subagents",
+            "list",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__subagents__get_dashdash_help",
+      "covers": [
+        "K6/subagents/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs"
+      ],
+      "note": "`cxc subagents get --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "subagents",
+            "get",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__subagents__set_dashdash_help",
+      "covers": [
+        "K6/subagents/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs"
+      ],
+      "note": "`cxc subagents set --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "subagents",
+            "set",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__subagents__reset_dashdash_help",
+      "covers": [
+        "K6/subagents/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs"
+      ],
+      "note": "`cxc subagents reset --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "subagents",
+            "reset",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__subagents__register_dashdash_help",
+      "covers": [
+        "K6/subagents/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs"
+      ],
+      "note": "`cxc subagents register --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "subagents",
+            "register",
+            "--help"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cli-help__subagents__dispatch_dashdash_help",
+      "covers": [
+        "K6/subagents/help",
+        "K6/exit-codes",
+        "A/plugin/cli-usage.test.mjs"
+      ],
+      "note": "`cxc subagents dispatch --help`: whether the subcommand treats --help as help, and what it writes.",
+      "given": {},
+      "steps": [
+        {
+          "cli": [
+            "subagents",
+            "dispatch",
+            "--help"
+          ]
+        }
+      ]
+    }
+  ]
+}

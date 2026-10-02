@@ -1,0 +1,56 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/subagents/register",
+    "A/subagent-config/role-registration.test.ts"
+  ],
+  "note": "An abandoned .executor-update.lock makes an upgrade fail closed (exit 1) and the managed file is preserved.",
+  "given": {
+    "files": {
+      "codex/agents/executor.toml": "# codexclaw-managed: 5a07e07ec4942f99a395e56ba1232e81ab29462531280eb3b6cf391dff63b3f3\nname = \"executor\"\ndeveloper_instructions = \"old managed prompt\"\n"
+    },
+    "dirs": [
+      "codex/agents/.executor-update.lock"
+    ]
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "subagents",
+          "register",
+          "executor"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 1,
+    "steps": [
+      {
+        "exit": 1,
+        "stdout_form": "text",
+        "stdout": "subagents: EEXIST: file already exists, mkdir '${CODEX_HOME}/agents/.executor-update.lock'\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/agents": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "codex/agents/.executor-update.lock": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "codex/agents/executor.toml": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "# codexclaw-managed: 5a07e07ec4942f99a395e56ba1232e81ab29462531280eb3b6cf391dff63b3f3\nname = \"executor\"\ndeveloper_instructions = \"old managed prompt\"\n"
+      }
+    },
+    "calls": []
+  }
+}

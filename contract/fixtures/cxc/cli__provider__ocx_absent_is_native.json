@@ -1,0 +1,40 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/provider/detect",
+    "A/provider-bridge/detect.test.ts"
+  ],
+  "note": "`cxc provider` with no ocx: the native line, exit 0.",
+  "given": {
+    "stubs": {
+      "ocx": null
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "provider"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "provider": "ocx",
+          "mode": "native",
+          "reason": "ocx not found on PATH; using native Codex catalog"
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

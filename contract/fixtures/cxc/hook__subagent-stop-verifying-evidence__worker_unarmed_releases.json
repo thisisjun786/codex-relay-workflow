@@ -1,0 +1,44 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/subagent-stop-verifying-evidence",
+    "A/plugin/hook-e2e.test.mjs"
+  ],
+  "note": "A legacy worker with no armed cycle is released.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "subagent-stop-verifying-evidence",
+        "stdin": {
+          "hook_event_name": "SubagentStop",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "agent_id": "rec-a1",
+          "agent_type": "worker",
+          "last_assistant_message": "Done.",
+          "stop_hook_active": false
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      }
+    },
+    "calls": []
+  }
+}

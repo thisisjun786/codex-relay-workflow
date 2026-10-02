@@ -1,0 +1,34 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/bg/help",
+    "K6/exit-codes",
+    "A/plugin/cli-usage.test.mjs"
+  ],
+  "note": "`cxc bg -h`: usage text and exit status; nothing written.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "bg",
+          "-h"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "cxc bg run [--note \"...\"] -- <command...>   백그라운드로 실행하고 id를 반환\ncxc bg list [--json]                        이 디렉터리의 백그라운드 작업\ncxc bg get <id> [--tail N]                  상태와 출력 꼬리\ncxc bg cancel <id>                          중지\ncxc bg off | on | status                    완료 웨이크 스위치 (이 워크트리)\ncxc bg drain --session <id> [--json]        미전달 완료를 받아가고 전달 표시\ncxc bg removal                              제거 체크리스트\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

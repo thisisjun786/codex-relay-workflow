@@ -1,0 +1,32 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/top-level/unknown",
+    "K6/exit-codes",
+    "A/plugin/cli-usage.test.mjs"
+  ],
+  "note": "An unknown verb: message, pointer to --help, exit 1.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "frobnicate"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 1,
+    "steps": [
+      {
+        "exit": 1,
+        "stdout_form": "empty",
+        "stderr": "codexclaw: unknown command 'frobnicate'\nRun `cxc --help` for usage.\n"
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

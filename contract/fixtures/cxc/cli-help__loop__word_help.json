@@ -1,0 +1,35 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/loop/help",
+    "K6/exit-codes",
+    "A/plugin/cli-usage.test.mjs",
+    "A/pabcd-state/help-verbs.test.ts"
+  ],
+  "note": "`cxc loop help`: usage text and exit status; nothing written.",
+  "given": {},
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "loop",
+          "help"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "text",
+        "stdout": "cxc loop — durable goalplan for a multi-cycle PABCD loop\n\nUsage:\n  cxc loop init --objective <text> [--session <id>] [--criterion <text>]... [--schema-version <n>] [--cwd <path>]\n  cxc loop show (--slug <slug> | --objective <text> | --session <id>) [--cwd <path>]\n  cxc loop validate (--slug <slug> | --objective <text> | --session <id>) [--cwd <path>]\n  cxc loop steer --session <id> --batch-json <path-or-json> [--cwd <path>]\n  cxc loop add-criterion --session <id> --criterion <text> [--surface logic|web|tui|desktop] [--presented native] [--cwd <path>]\n  cxc loop add-work-phase --session <id> --id <id> --title <text> [--depends-on <id>]... [--cwd <path>]\n  cxc loop ready (--slug <slug> | --objective <text> | --session <id>) [--json] [--cwd <path>]\n  cxc loop add-task --session <id> --work-phase <id> --id <id> --title <text> [--depends-on <task-id>]... [--cwd <path>]\n  cxc loop complete-task --session <id> --work-phase <id> --id <id> --outcome <text> [--cwd <path>]\n  cxc loop meet-criterion --session <id> --id <id> --evidence <text> [--cwd <path>]\n  cxc loop ask --session <id> --id <id> --question <text> [--recommendation <text>] [--option <text>]... [--work-phase <id>]... [--cwd <path>]\n  cxc loop decide --session <id> --id <id> --answer <text> [--cwd <path>]\n  cxc loop --help\n\nNotes:\n  Mutating verbs require --session <id>; show, validate, and ready are read-only.\n  Unknown flags, stray positionals, missing values, and flags on the wrong verb are rejected before dispatch.\n  Every value flag also accepts --flag=value; use it for a value that starts with --.\n  The goalplan lives at <cwd>/.codexclaw/goalplans/<slug>/goalplan.json, so --cwd\n  matters when the process cwd is not the workspace you are planning in.\n  Repeat --depends-on once per prerequisite; add-task accepts only existing task ids\n  from the same work phase; comma-separated values are one id.\n  complete-task requires non-empty outcome evidence and never replaces a stored outcome.\n  init declares schemaVersion 1 unless --schema-version says otherwise. 2 and 3\n  additionally require an approved finalGate, and no verb in this build opens a\n  final-gate review round, so opt in only if you can record that gate yourself.\n  meet-criterion requires non-empty captured evidence for the same reason.\n  Send the question through the host first, then record it with ask; ask never sends a message.\n  Record the user's reply with decide. It changes only the decision record.\n  Repeat --option once per offered option; the recommendation must be one of them, and the answer stays free text.\n\nsteer --batch-json expects an object with:\n  { \"idempotencyKey\": \"<unique>\", \"rationale\": \"<why>\", \"evidence\": \"<proof>\",\n    \"ops\": [ { \"kind\": \"annotate\", \"note\": \"...\" } ] }\n  op kinds: annotate | add-criterion | add-work-phase (all additive — steering\n  cannot weaken a completion criterion).\n",
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

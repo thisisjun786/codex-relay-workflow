@@ -1,0 +1,85 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/session-start-healing-declared-features",
+    "K12/codex",
+    "K8/codex-home/codexclaw-self-heal.json",
+    "A/config-guard/self-heal.test.ts"
+  ],
+  "note": "A marker whose configMtimeMs equals config.toml's mtime (the given frozen mtime, 1767225600000) and covers the soft keys is a cache hit: no codex call and no output.",
+  "given": {
+    "files": {
+      "codex/config.toml": "model = \"gpt-5.5\"\n\n[features]\nhooks = true\n"
+    },
+    "json": {
+      "codex/codexclaw-self-heal.json": {
+        "checkedAt": "2025-12-31T00:00:00.000Z",
+        "allEnabled": true,
+        "healedKeys": [],
+        "cachedKeys": [
+          "default_mode_request_user_input"
+        ],
+        "configMtimeMs": 1767225600000
+      }
+    },
+    "stubs": {
+      "codex": {
+        "stdout": "default_mode_request_user_input  under development  true\ngoals                            stable             true\nhooks                            stable             true\nmulti_agent                      stable             true\n",
+        "exit": 0
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "session-start-healing-declared-features",
+        "stdin": {
+          "hook_event_name": "SessionStart",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "source": "startup",
+          "model": "gpt-5.5",
+          "transcript_path": null
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      },
+      "codex/codexclaw-self-heal.json": {
+        "type": "file",
+        "mode": "0644",
+        "form": "json-line",
+        "json": {
+          "checkedAt": "<TS>",
+          "allEnabled": true,
+          "healedKeys": [],
+          "cachedKeys": [
+            "default_mode_request_user_input"
+          ],
+          "configMtimeMs": "<MS>"
+        }
+      },
+      "codex/config.toml": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "model = \"gpt-5.5\"\n\n[features]\nhooks = true\n"
+      }
+    },
+    "calls": []
+  }
+}

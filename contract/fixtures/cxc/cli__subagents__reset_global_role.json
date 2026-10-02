@@ -1,0 +1,126 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/subagents/reset",
+    "K7/subagents",
+    "K8/cxc-home/subagents.json",
+    "A/subagent-config/cli.test.ts",
+    "K13/CODEXCLAW_HOME"
+  ],
+  "note": "reset --global removes only that role's override; the next read inherits the default while the other role stays in the file.",
+  "given": {
+    "json": {
+      "cxc/subagents.json": {
+        "roles": {
+          "explorer": {
+            "mode": "model",
+            "model": "rec/explorer-model",
+            "effort": "high",
+            "promptOverride": null,
+            "fallback": null
+          },
+          "reviewer": {
+            "mode": "model",
+            "model": "rec/reviewer-model",
+            "effort": "low",
+            "promptOverride": null,
+            "fallback": null
+          }
+        }
+      }
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "subagents",
+          "reset",
+          "explorer",
+          "--global"
+        ]
+      },
+      {
+        "cli": [
+          "subagents",
+          "list",
+          "--global"
+        ]
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-pretty",
+        "stdout_json": {
+          "mode": "default",
+          "model": null,
+          "effort": null,
+          "promptOverride": null,
+          "fallback": null
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-pretty",
+        "stdout_json": {
+          "roles": {
+            "explorer": {
+              "mode": "default",
+              "model": null,
+              "effort": null,
+              "promptOverride": null,
+              "fallback": null
+            },
+            "reviewer": {
+              "mode": "model",
+              "model": "rec/reviewer-model",
+              "effort": "low",
+              "promptOverride": null,
+              "fallback": null
+            },
+            "executor": {
+              "mode": "default",
+              "model": null,
+              "effort": null,
+              "promptOverride": null,
+              "fallback": null
+            },
+            "architect": {
+              "mode": "default",
+              "model": null,
+              "effort": null,
+              "promptOverride": null,
+              "fallback": null
+            }
+          }
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "cxc/subagents.json": {
+        "type": "file",
+        "mode": "0600",
+        "form": "json-pretty",
+        "json": {
+          "roles": {
+            "reviewer": {
+              "mode": "model",
+              "model": "rec/reviewer-model",
+              "effort": "low",
+              "promptOverride": null,
+              "fallback": null
+            }
+          }
+        }
+      }
+    },
+    "calls": []
+  }
+}

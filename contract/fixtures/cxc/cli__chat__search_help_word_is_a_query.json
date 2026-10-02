@@ -1,0 +1,59 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K6/chat/search",
+    "A/recall/cli-arg-hygiene.test.ts"
+  ],
+  "note": "`chat search help` searches for the word 'help' (scan path) instead of printing usage.",
+  "given": {
+    "files": {
+      "codex/sessions/2025/11/01/rollout-2025-11-01T01-00-00-019f0000-0000-7000-8000-00000000dddd.jsonl": "{\"timestamp\":\"2025-11-01T01:00:00.000Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"019f0000-0000-7000-8000-00000000dddd\",\"timestamp\":\"2025-11-01T01:00:00.000Z\",\"cwd\":\"${WS}\",\"originator\":\"codex-tui\",\"cli_version\":\"0.130.0\",\"instructions\":\"base instructions\"}}\n{\"timestamp\":\"2025-11-01T01:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"ancient question about the trigram index\"}]}}\n{\"timestamp\":\"2025-11-01T01:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"ancient answer\"}]}}\n",
+      "codex/sessions/2025/12/30/rollout-2025-12-30T05-00-00-019f0000-0000-7000-8000-00000000cccc.jsonl": "{\"timestamp\":\"2025-12-30T05:00:00.000Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"019f0000-0000-7000-8000-00000000cccc\",\"timestamp\":\"2025-12-30T05:00:00.000Z\",\"cwd\":\"/proj/elsewhere\",\"originator\":\"codex-tui\",\"cli_version\":\"0.130.0\",\"instructions\":\"base instructions\"}}\n{\"timestamp\":\"2025-12-30T05:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"unrelated project question about the trigram index\"}]}}\n{\"timestamp\":\"2025-12-30T05:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"unrelated answer\"}]}}\n",
+      "codex/sessions/2025/12/31/rollout-2025-12-31T01-00-00-019f0000-0000-7000-8000-00000000aaaa.jsonl": "{\"timestamp\":\"2025-12-31T01:00:00.000Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"019f0000-0000-7000-8000-00000000aaaa\",\"timestamp\":\"2025-12-31T01:00:00.000Z\",\"cwd\":\"${WS}\",\"originator\":\"codex-tui\",\"cli_version\":\"0.130.0\",\"instructions\":\"base instructions\"}}\n{\"timestamp\":\"2025-12-31T01:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"# AGENTS.md instructions injected preamble mentioning zebra\"}]}}\n{\"timestamp\":\"2025-12-31T01:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"please deploy the trigram index for korean search\"}]}}\n{\"timestamp\":\"2025-12-31T01:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"deployed the trigram index; korean 한글 검색 works now\"}]}}\n{\"timestamp\":\"2025-12-31T01:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",\"name\":\"exec_command\",\"arguments\":\"{\\\"cmd\\\":\\\"rg zebra-in-tool-arguments\\\"}\",\"call_id\":\"tool_1\"}}\n{\"timestamp\":\"2025-12-31T01:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"function_call_output\",\"call_id\":\"tool_1\",\"output\":\"tool output: zebra-in-tool-output\"}}\n{\"timestamp\":\"2025-12-31T01:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"한글 트라이그램 결과 확인해줘\"}]}}\n{\"timestamp\":\"2025-12-31T01:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"확인 완료: 트라이그램 인덱스 정상\"}]}}\n",
+      "codex/sessions/2025/12/31/rollout-2025-12-31T02-00-00-019f0000-0000-7000-8000-00000000bbbb.jsonl": "{\"timestamp\":\"2025-12-31T02:00:00.000Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"019f0000-0000-7000-8000-00000000bbbb\",\"timestamp\":\"2025-12-31T02:00:00.000Z\",\"cwd\":\"${WS}\",\"originator\":\"codex_exec\",\"cli_version\":\"0.130.0\",\"instructions\":\"base instructions\",\"thread_source\":\"subagent\",\"source\":{\"subagent\":{\"parent_thread_id\":\"019f0000-0000-7000-8000-00000000aaaa\",\"depth\":1}}}}\n{\"timestamp\":\"2025-12-31T02:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"subagent task about the trigram index\"}]}}\n{\"timestamp\":\"2025-12-31T02:00:00.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"subagent reply mentioning zebra too\"}]}}\n"
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "cli": [
+          "chat",
+          "search",
+          "help",
+          "--scan",
+          "--days",
+          "0",
+          "--json"
+        ]
+      }
+    ],
+    "observe": [
+      "cxc"
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-pretty",
+        "stdout_json": {
+          "hits": [],
+          "warnings": [
+            "state db not found (metadata enrichment off)"
+          ],
+          "scannedFiles": 3,
+          "matchedFiles": 0,
+          "totalFiles": 4,
+          "elapsedMs": "<DURATION>",
+          "mode": "scan",
+          "clipped": false
+        },
+        "stderr": ""
+      }
+    ],
+    "tree": {},
+    "calls": []
+  }
+}

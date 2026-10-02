@@ -1,0 +1,230 @@
+{
+  "oracle": "v0.2.40 3c1459acadeb1906d97c00a598e1457327ae372d",
+  "covers": [
+    "K3/pre-tool-use-guarding-automation-ownership",
+    "K5/hook-rendered",
+    "A/pabcd-state/automation-ownership-gate.test.ts"
+  ],
+  "note": "Malformed dedicated payloads fail closed: empty stdin, `null`, `{}`, a null tool_input, a missing tool_name, a missing hook_event_name. Known unrelated calls pass: a PostToolUse event, an unrelated tool name, a view.",
+  "given": {
+    "files": {
+      "codex/automations/heartbeat-one/automation.toml": "version = 1\nid = \"heartbeat-one\"\nkind = \"heartbeat\"\nname = \"Example\"\nprompt = \"A prompt\"\nrrule = \"FREQ=HOURLY\"\nstatus = \"ACTIVE\"\ntarget_thread_id = \"rec-s1\"\ncreated_at = 123\nupdated_at = 456\n"
+    }
+  },
+  "run": {
+    "kind": "cxc",
+    "steps": [
+      {
+        "hook": "pre-tool-use-guarding-automation-ownership",
+        "stdin": ""
+      },
+      {
+        "hook": "pre-tool-use-guarding-automation-ownership",
+        "stdin": "null"
+      },
+      {
+        "hook": "pre-tool-use-guarding-automation-ownership",
+        "stdin": {}
+      },
+      {
+        "hook": "pre-tool-use-guarding-automation-ownership",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "mcp__codex_app__automation_update",
+          "tool_input": null,
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-guarding-automation-ownership",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_input": {
+            "mode": "delete",
+            "id": "heartbeat-one"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-guarding-automation-ownership",
+        "stdin": {
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "mcp__codex_app__automation_update",
+          "tool_input": {
+            "mode": "delete",
+            "id": "heartbeat-one"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-guarding-automation-ownership",
+        "stdin": {
+          "hook_event_name": "PostToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "mcp__codex_app__automation_update",
+          "tool_input": {
+            "mode": "delete",
+            "id": "heartbeat-one"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-guarding-automation-ownership",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "mcp__other__automation_update",
+          "tool_input": {
+            "mode": "delete",
+            "id": "heartbeat-one"
+          },
+          "tool_use_id": "rec-call-1"
+        }
+      },
+      {
+        "hook": "pre-tool-use-guarding-automation-ownership",
+        "stdin": {
+          "hook_event_name": "PreToolUse",
+          "session_id": "rec-s1",
+          "cwd": "${WS}",
+          "turn_id": "rec-t1",
+          "tool_name": "mcp__codex_app__automation_update",
+          "tool_input": {
+            "mode": "view",
+            "id": "../anything"
+          },
+          "tool_use_id": "rec-call-1",
+          "agent_id": "rec-a1"
+        }
+      }
+    ]
+  },
+  "expect": {
+    "exit": 0,
+    "steps": [
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "AUTOMATION-OWNERSHIP-01: Cannot verify automation ownership from the native payload and supported local store. No mutation is permitted."
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "AUTOMATION-OWNERSHIP-01: Malformed native hook payload."
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "AUTOMATION-OWNERSHIP-01: Native PreToolUse event is missing."
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "AUTOMATION-OWNERSHIP-01: Automation mutation input must be an object."
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "AUTOMATION-OWNERSHIP-01: Native tool name is missing."
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "json-line",
+        "stdout_json": {
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "AUTOMATION-OWNERSHIP-01: Native PreToolUse event is missing."
+          }
+        },
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      },
+      {
+        "exit": 0,
+        "stdout_form": "empty",
+        "stderr": ""
+      }
+    ],
+    "tree": {
+      "codex/automations": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "codex/automations/heartbeat-one": {
+        "type": "dir",
+        "mode": "0755"
+      },
+      "codex/automations/heartbeat-one/automation.toml": {
+        "type": "file",
+        "mode": "0644",
+        "form": "text",
+        "text": "version = 1\nid = \"heartbeat-one\"\nkind = \"heartbeat\"\nname = \"Example\"\nprompt = \"A prompt\"\nrrule = \"FREQ=HOURLY\"\nstatus = \"ACTIVE\"\ntarget_thread_id = \"rec-s1\"\ncreated_at = 123\nupdated_at = 456\n"
+      },
+      "codex/codexclaw": {
+        "type": "dir",
+        "mode": "0700"
+      }
+    },
+    "calls": []
+  }
+}
