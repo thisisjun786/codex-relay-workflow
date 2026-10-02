@@ -328,9 +328,10 @@ task](../SKILL.md#return-corrections-to-the-existing-task)).
    an unrestricted range would also list the base's own commits. The listed commits are changes the
    review did not see. Hosted-review fixes, base merges and digest re-records are expected; the
    parent asks for an independent check of a commit, and of that commit only, where it changes
-   behavior and nothing else covered it. Where `ran` is `false` there is no reviewed head and no
-   window; the handoff's independence then rests on the hosted review and the parent's own reading,
-   the verdict says so, and the entries are still checked one by one.
+   behavior and nothing else covered it. Where there is no `reviewedHead` (`ran` is `false`, or only
+   checks limited to some hunks ran) there is no window; the handoff's independence then rests on
+   the hosted review and the parent's own reading, the verdict says so, and the entries are still
+   checked one by one.
 
 4. **Each refresh is the kind it says.** A refresh the child made is proved by the same check as one
    the parent made ([Refresh the base yourself when only the base

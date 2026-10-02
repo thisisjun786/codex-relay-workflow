@@ -933,17 +933,20 @@ not checked.
   covered (`reviewedHead`: the latest head such that the independent reviews so far cover every
   change up to it. A later generation that reviews its correction on top of the earlier review names
   the new head. A check limited to some hunks or commits, such as the independent check of a manual
-  refresh's resolved hunks, is recorded with its entry and does not move it). For every finding it
-  rated High or blocker, or the top tier of whatever scale it used, one entry with the `id`, a
-  one-line summary and exactly one disposition: `applied` with the commit that applied it,
-  `rebutted` with the evidence that it is not a defect, or `out_of_scope` with the boundary that
-  excludes it and where it goes instead. A review that ran and raised no such finding says so, and a
-  task that ran none says `ran: false`. The internal independent review ends on the head the pull
-  request is opened from and the hosted review follows on the open pull request, so `commitsAfter`
-  lists what the review did not see: the commits after `reviewedHead` on the branch's first-parent
-  line that are not merges of the base, each with its cause, such as a hosted-review fix or a digest
-  re-record. Whether and how often a review runs is its workflow's decision and not this
-  procedure's; this item only makes what happened visible.
+  refresh's resolved hunks, is recorded with its entry and does not move it. A task whose reviews so
+  far cover no head completely, because none ran or only checks limited to some hunks ran, has no
+  `reviewedHead`: it omits the field, `ran` says whether any independent check ran, and its entries
+  start at the assignment's baseline commit). For every finding it rated High or blocker, or the top
+  tier of whatever scale it used, one entry with the `id`, a one-line summary and exactly one
+  disposition: `applied` with the commit that applied it, `rebutted` with the evidence that it is
+  not a defect, or `out_of_scope` with the boundary that excludes it and where it goes instead. A
+  review that ran and raised no such finding says so, and a task that ran none says `ran: false`.
+  The internal independent review ends on the head the pull request is opened from and the hosted
+  review follows on the open pull request, so `commitsAfter` lists what the review did not see: the
+  commits after `reviewedHead` on the branch's first-parent line that are not merges of the base,
+  each with its cause, such as a hosted-review fix or a digest re-record. Whether and how often a
+  review runs is its workflow's decision and not this procedure's; this item only makes what
+  happened visible.
 
 - **`decisionRequests`**: every finding above whose disposition is `rebutted` or `out_of_scope`,
   unless the parent has already ruled on it, in which case the entry names that ruling. A rejection
