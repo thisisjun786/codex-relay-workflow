@@ -2,7 +2,9 @@
 // line takes through it: the root parse (once, for the global options), the command's own
 // parse, the selected store's checks in cli.main's order (check_start, the selection refusal,
 // then admission or --kind-module), the handler, and one JSON document on stdout for every
-// ending but a line the parser cannot read (exit 2, usage on stderr).
+// ending but a line the parser cannot read (exit 2, usage on stderr). A command that judges the
+// selectors its line gives (Command.Validate) does so right after check_start, before any
+// refusal that depends on what the selected store records.
 //
 // Every relay command registers here from its own package (Register): cli's, the registry's
 // (with the linkage and merge-turn commands), delivery's (with the marker commands), the faults',
@@ -45,6 +47,13 @@ type Command struct {
 	// SelectsNoStore is _reads_no_selected_store for a form that answers without the store
 	// discovery picks (the marker commands'): no check_start, selection refusal or admission.
 	SelectsNoStore func(Args) bool
+	// Validate is the command's own judgment of the selectors its line gives, the root options
+	// it requires or forbids (reporting-show's --state, the --socket the reporting forms refuse).
+	// run asks it after check_start and before the selection refusal and the recorded-socket
+	// check, so an invalid line is the usage error whatever socket the selected store records.
+	// It reads the line and the resolved selection, never the store, and the command does not
+	// repeat the checks in Run. An Unselected command resolves no selection and sees the zero one.
+	Validate func(Services, Args) error
 	// Exempt commands are _refuse_ambiguous_state's exemptions: no ambiguous or unidentified
 	// discovery refusal. They are still refused a selected store that records another App Server
 	// socket than the one it must serve (selection.SocketMismatch), unless they report it
@@ -207,8 +216,9 @@ type globals struct {
 }
 
 // run is cli.main between the parse and the handler, in its order: the state directory, then
-// check_start for a write form, the selection refusal, and either the writable store's
-// admission (opened, then --kind-module imported) or --kind-module alone.
+// check_start for a write form, the command's own selector validation (Validate), the selection
+// refusal, and either the writable store's admission (opened, then --kind-module imported) or
+// --kind-module alone.
 func (c *Command) run(ctx context.Context, g globals, args Args) (any, error) {
 	readOnly := c.ReadOnly || c.ReadOnlyWhen != nil && c.ReadOnlyWhen(args)
 	if readOnly {
@@ -230,6 +240,11 @@ func (c *Command) run(ctx context.Context, g globals, args Args) (any, error) {
 	// refused before anything else is asked.
 	if selected && !readOnly {
 		if err := store.CheckStartLikeFence(ctx, services.Selection.DBPath()); err != nil {
+			return nil, err
+		}
+	}
+	if c.Validate != nil {
+		if err := c.Validate(services, args); err != nil {
 			return nil, err
 		}
 	}

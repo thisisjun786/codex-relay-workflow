@@ -14,14 +14,8 @@ import (
 
 // Reporting observation belongs to todo 24. omitted.py was carried from todo 21.
 var reportingShowCommand = dispatch.Command{
-	Name: "reporting-show", Exempt: true, ReadOnly: true,
+	Name: "reporting-show", Exempt: true, ReadOnly: true, Validate: validateReportingShowSelectors,
 	Run: func(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
-		if services.Selection.Source != "flag" {
-			return nil, &dispatch.UsageError{Detail: "reporting-show requires explicit --state", Code: contract.ExitUsage}
-		}
-		if services.SocketPath != "" {
-			return nil, &dispatch.UsageError{Detail: "reporting-show does not take --socket", Code: contract.ExitUsage}
-		}
 		assignment, _ := args.String("assignment")
 		session, _ := args.String("session")
 		turn, _ := args.String("turn")
@@ -41,11 +35,8 @@ var reportingShowCommand = dispatch.Command{
 }
 
 var reportingDeriveCommand = dispatch.Command{
-	Name: "reporting-derive", Exempt: true, ReadOnly: true, Defaults: map[string]any{"grace": 300.0},
+	Name: "reporting-derive", Exempt: true, ReadOnly: true, Validate: validateReportingDeriveSelectors, Defaults: map[string]any{"grace": 300.0},
 	Run: func(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
-		if services.SocketPath != "" {
-			return nil, &dispatch.UsageError{Detail: "reporting-derive does not take --socket", Code: contract.ExitUsage}
-		}
 		path := services.Selection.DBPath()
 		if _, err := os.Stat(path); os.IsNotExist(err) {
 			rid, _ := args.String("relationship")
@@ -63,6 +54,27 @@ var reportingDeriveCommand = dispatch.Command{
 		grace := args.Float("grace")
 		return delivery.DeriveOmission(ctx, s, services.Selection.Path, rid, turn, delivery.ISOOf(clockNow()), grace), nil
 	},
+}
+
+// The reporting forms judge the root options they take before dispatch compares the selected
+// store's recorded socket (dispatch.Command.Validate): an invalid line is the usage error whatever
+// that store records. reporting-show reads one explicitly selected store and takes no socket;
+// reporting-derive takes no socket either. Their other arguments are checked in Run.
+func validateReportingShowSelectors(services dispatch.Services, _ dispatch.Args) error {
+	if services.Selection.Source != "flag" {
+		return &dispatch.UsageError{Detail: "reporting-show requires explicit --state", Code: contract.ExitUsage}
+	}
+	if services.SocketPath != "" {
+		return &dispatch.UsageError{Detail: "reporting-show does not take --socket", Code: contract.ExitUsage}
+	}
+	return nil
+}
+
+func validateReportingDeriveSelectors(services dispatch.Services, _ dispatch.Args) error {
+	if services.SocketPath != "" {
+		return &dispatch.UsageError{Detail: "reporting-derive does not take --socket", Code: contract.ExitUsage}
+	}
+	return nil
 }
 
 func hexDispatch(s string) bool {
