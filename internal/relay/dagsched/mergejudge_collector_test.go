@@ -75,6 +75,8 @@ func TestRequiredChecksCountEveryRunAtItsNewestAttempt(t *testing.T) {
 		{"an older attempt of a run is not its result", []Check{c("workflow-run:7:dev-gate#0", 1, "failure"), c("workflow-run:7:dev-gate#0", 2, "success")}, 0, 0},
 		{"a skipped required check is not a success, as the lane reads it", []Check{c("check-run:1", 1, "skipped")}, 0, 1},
 		{"neutral is not a success either", []Check{c("check-run:1", 1, "neutral")}, 0, 1},
+		{"a commit status that errored has finished", []Check{c("status:dev-gate", 1, "error")}, 0, 1},
+		{"a commit status that is pending has not", []Check{c("status:dev-gate", 1, "pending")}, 1, 0},
 		{"nothing of the head", nil, 1, 0},
 		{"a check of another head", []Check{{Name: "dev-gate", RunID: "check-run:1", Attempt: 1, Conclusion: "success", HeadSHA: strings.Repeat("b", 40)}}, 1, 0},
 	}

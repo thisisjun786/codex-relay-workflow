@@ -36,7 +36,7 @@ func (r JudgeResult) Eligible() bool { return r.Outcome == OutcomeEligible }
 const maxRounds = 2
 
 // completedConclusions are the answers a finished check gives; anything else (empty, pending, queued, in_progress) has not finished.
-var completedConclusions = map[string]bool{"success": true, "failure": true, "neutral": true, "skipped": true, "cancelled": true, "timed_out": true, "action_required": true, "startup_failure": true, "stale": true}
+var completedConclusions = map[string]bool{"success": true, "failure": true, "neutral": true, "skipped": true, "cancelled": true, "timed_out": true, "action_required": true, "startup_failure": true, "stale": true, "error": true}
 
 // requiredChecks classifies the checks the base branch requires for the exact head of the pull request, the way merge-evidence and the merge lane's own check read them: of every run
 // only its newest attempt counts, every such run of a required name (and of the provider the branch rule names for it) has to be a success, and no run ordering is guessed from the
