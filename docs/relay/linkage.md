@@ -164,6 +164,21 @@ tried and both were wrong.
 Each assignment is moved by registering its successor with `supersedes`, which mints a correct
 new identity, carries the new parent's host and cwd, and repoints the project-to-issue edge.
 
+Merged work is the exception, and it is closed rather than moved. An assignment is *settled* when it reads
+`merged` (its merge mark matches its current head, generation and revision, and the criteria are still current) and
+nothing of it is still owed: no delivery of it that has not reached its parent (`queued`, `deferred_busy`,
+`withheld_pre_send`, `sending`, `held_uncertain` or `inbox_only`), no supervisor message of it that has not left (the same
+states without `inbox_only`), and, where it is the execution of a plan node, an active acceptance of this very head under
+the criteria now in force. A handover does not refuse for a settled row. It classifies the attached rows first, refuses on
+the others exactly as before, and only when every refusal check has passed (the binding plan included) archives each
+settled row that does not name the incoming parent, in the same transaction and before any binding or link moves. The row
+is journalled as `status_changed` with the reason `merged_settled`, and the answer lists the ids as `closedMerged` (the
+key is absent when none was closed). A row left active would keep naming the parent that stepped down and could reopen
+under it. Archived, it comes back only through `relationship-resume`, which is refused `foreign_scope` once the project
+has changed hands, so a fix after a handover is a new assignment under the current parent (the issue is free).
+`Attached` and `Outstanding` keep their meaning: `linkage-completion` reads `attached` as the live assignments, so a
+project whose assignments are all merged still reads `complete_candidate` until they are closed.
+
 Handing a project BACK is the case where "a correct new identity" is not available. The id is
 `sha256(parentTaskId|childTaskId|issueKey)`, so returning to an earlier parent with the same
 child derives the id that parent already used. That is not a collision: the same triple is the
@@ -187,6 +202,29 @@ The acknowledgement is still required and still means what the acceptance criter
 incoming owner restates the outgoing owner and the exact unfinished set, so nothing is taken
 over silently. It is now a check the caller passes on the way to a refusal that explains the
 rest, rather than a licence to proceed.
+
+## Closing merged assignments
+
+`relationship-close-merged (--project KEY | --all) --actor ID [--apply]` archives the live assignments that are settled
+(see Handover) and no others. Without `--apply` it only reads: it never creates a store and writes no relationship, link,
+binding or journal row (opening a store this runtime may write runs the idempotent settlement backfill that every
+writable open runs). The answer names `closable` (what is settled), `closed` (what `--apply` archived; empty without it)
+and `kept` (every other live assignment, with its state word and why it was left: not merged, or what is still owed).
+With `--apply` the decision and the writes share one transaction, so a mark that stopped counting meanwhile (a new
+generation, a new head, changed criteria) is not closed, and a second `--apply` closes nothing. `--project` takes the
+project's assignments; an assignment with no project is reached only by `--all`.
+
+A closed assignment reads `closed` and keeps its merge mark in `assignment-show`. Its issue scope is released, so the
+issue is free for a new assignment. The way back is `relationship-resume`, which restates the generation, the roots and
+the recipients; the row then reads `merged` again and `generation-open` reopens it for a fix. While it is closed
+`generation-open` is refused `relationship_not_active`. `linkage-completion` reads `unregistered` once nothing in a
+project is live, which says that nothing is attached rather than that everything finished, so it is read first and kept as
+the completion evidence.
+
+What the registry cannot decide is a completion report of a supervised project that was never staged. The supervisor
+package derives it from the events and keeps it standing when the project has no coordination target, so it cannot be told
+from a report nobody will ever stage. It stays listed by `supervisor-standing` after the close, but staging and sending it
+are refused `unregistered_scope`, so `supervisor-standing --project` is read before a supervised project is closed.
 
 ## Where an instruction stands
 
@@ -312,7 +350,7 @@ a linkage that demonstrably exists.
 | `duplicate_scope_owner` | a second owner for one scope, or a second execution edge for one project |
 | `role_already_bound` | one task asked for a second live scope of a role it already holds |
 | `handover_unconfirmed` | no evidence, the wrong outgoing owner, or an outstanding set that does not match |
-| `handover_would_strand` | live work the handover cannot carry across, named row by row in the refusal |
+| `handover_would_strand` | live work the handover cannot carry across, named row by row in the refusal. A merged assignment with nothing owed is closed by the handover and is not named |
 | `link_conflict` | the same link or binding asserted with different endpoints or another host; a supervising initiative also referencing its own project; a settled directive decided again differently; a purposed directive that would contest a live one for its place ([Where an instruction stands](#where-an-instruction-stands)) |
 | `link_not_active` | a status or disposition outside its vocabulary |
 
