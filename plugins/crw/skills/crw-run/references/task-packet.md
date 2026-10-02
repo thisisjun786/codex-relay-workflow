@@ -165,7 +165,7 @@ Workspace ownership:
   example `/var/tmp/crw-<n>`, on a volume with free space), and the packet states why: a Unix
   socket's whole path must stay under 104 bytes, since Linux refuses a path of 108 bytes or
   more and macOS one of 104 or more, and a test that binds a socket under `TMPDIR` adds its own
-  directory and file names to it, so a per-task scratch path used as `TMPDIR` is already too
+  directory and file names to it, so a per-task scratch path used as `TMPDIR` can be too
   long. Large disposable output goes under a scratch path the packet names separately]
 - Resource delta to report at close: [measured against the baseline above, what this task
   created, changed, retained, shared or cleaned, each with its owner, release condition and
@@ -403,8 +403,8 @@ field in brackets where that reduced shape names it differently.
   <target>` beside it as supporting evidence: `No rule to make target` means the name is no
   target, and `Nothing to be done for '<target>'` with exit status 0 means make found nothing
   to run, which is what a name without a rule prints when a file or directory of that name
-  exists. `make contract` did that beside a `contract/` directory, and a gate that ran it passed
-  with nothing checked. A target with a recipe prints it, or `'<target>' is up to date`. A CI
+  exists. `make contract` does that beside a `contract/` directory, and a gate that ran it would
+  pass with nothing checked. A target with a recipe prints it, or `'<target>' is up to date`. A CI
   check is confirmed by the command in the workflow file or the repository's CI document, run
   with its help or dry-run mode where it has one. A command nobody could confirm is replaced by
   the real one, or the packet says that check has no command; it is not passed along.
