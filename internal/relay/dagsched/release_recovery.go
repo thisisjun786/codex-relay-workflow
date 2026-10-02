@@ -339,6 +339,10 @@ func (s *Scheduler) CloseRelease(ctx context.Context, plan, node, actor, digest,
 	issue := ""
 	err := s.Store.Compose(ctx, func(txCtx context.Context, _ *sql.Conn) error {
 		tx := s.Store.Q(txCtx)
+		// closing a release lets the node be released again, so a session that does not hold the plan's epoch cannot end one (the close of an abandoned intent is a decision)
+		if err := s.fence(txCtx, tx, plan, actor); err != nil {
+			return err
+		}
 		snap, _, err := dag.SnapshotAt(txCtx, tx, plan, 0)
 		if err != nil {
 			return err
@@ -426,7 +430,7 @@ func (s *Scheduler) closeIntent(ctx context.Context, tx store.Querier, snap dag.
 		releasedFlag = 1
 	}
 	if _, err := tx.ExecContext(ctx, "INSERT INTO dag_release_recoveries (plan_id, node_id, manifest_digest, abandoned_request_id, action, slot_id, slot_released, copy_path, reason, recorded_by, coordinator_epoch, recorded_at)"+
-		" VALUES (?,?,?,?,'closed',?,?,?,?,?,0,?)", plan, node, open.Digest, open.Request, nilIfEmpty(slotID), releasedFlag, copyPath, strings.TrimSpace(reason), actor, s.now()); err != nil {
+		" VALUES (?,?,?,?,'closed',?,?,?,?,?,?,?)", plan, node, open.Digest, open.Request, nilIfEmpty(slotID), releasedFlag, copyPath, strings.TrimSpace(reason), actor, s.ExpectedEpoch, s.now()); err != nil {
 		return err
 	}
 	out.RequestID, out.SlotID, out.SlotReleased, out.Copy = open.Request, slotID, released, copied

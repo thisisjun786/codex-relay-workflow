@@ -213,7 +213,9 @@ func (c *Channel) stageUnsentWithReadings(ctx context.Context, project, at strin
 			byObligation[o.ID] = reading
 		}
 	}
-	standing, err := c.Standing(ctx, project, values)
+	// The visit reads only what can still report (standing's visit scope); a parent staging by hand
+	// (StageStanding, supervisor-standing) still gets the whole project.
+	standing, err := c.standing(ctx, project, values, true)
 	if err != nil {
 		return nil, err
 	}

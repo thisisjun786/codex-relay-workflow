@@ -661,7 +661,8 @@ nobody proposed has no row at all, so an absent overlap is unknown rather than n
 the **project** rather than to whichever task currently parents each row. `--task` narrows it to
 one parent's rows and is deliberately left off for a handover: filtering by the parent made a
 replacement appear to have no outstanding work at all, which let a second replacement take the
-project without acknowledging anything.
+project without acknowledging anything. A handover also closes the merged
+assignments with nothing owed that it would otherwise strand, and lists them as `closedMerged` in its answer.
 
 `merge-turn-show`, `capacity-show` and `region-show` carry `unenforcedIndexes` where the store
 could not install a guard index. An ambiguous answer and a missing index are the same fact seen
@@ -1026,10 +1027,42 @@ After the parent refreshed the branch itself
 ([merge readiness](merge-readiness.md#refresh-the-base-yourself-when-only-the-base-moved)) the
 head that landed is not the head the receipt names: `--expected-event` still pins the child's
 report, and the mark records a revision, not a commit. So the `--evidence` text names the head
-that landed, the head the report named, and the check between them (the `base-refresh check`
-answer and the `merge-evidence` verdict on the landed head). Nothing else in the record says
-why the two heads differ, and `merge-evidence` on the landed head is the reading to quote, not
-the child's record.
+that landed, the head the report named, and the check between them: the `evidence:` line of the
+`base-refresh check` as it printed it (previous head, dev tip, new head, tree OID and the rule
+applied, one line for each step of a chain) and the `merge-evidence` verdict on the landed head.
+Nothing else in the record says why the two heads differ, and `merge-evidence` on the landed head
+is the reading to quote, not the child's record.
+
+## Close the merged assignments when the project is done
+
+A merged assignment keeps its relationship `active`: `assignment-mark` records what landed and changes nothing else. When a
+project is finished, or before its parent hands it over, the parent closes the merged assignments, so the next parent can take
+the project over and the store stops carrying finished work as live. `linkage-handover` closes a settled assignment itself
+when it would otherwise strand it; the sweep below closes them without a handover.
+
+    codex-session-relay --state "$RELAY_STATE" linkage-completion --project <key>
+    codex-session-relay --state "$RELAY_STATE" relationship-close-merged --project <key> --actor <own task id>
+    codex-session-relay --state "$RELAY_STATE" supervisor-standing --project <key>
+    codex-session-relay --state "$RELAY_STATE" relationship-close-merged --project <key> --actor <own task id> --apply
+
+Read `linkage-completion` first and keep that reading as the completion evidence: once nothing is live it reads
+`unregistered`, which says that nothing is attached, not that everything finished. The first `relationship-close-merged` is the dry run. It changes no relationship, link, binding or journal row and names
+`closable` and `kept`, each kept assignment with its state and the reason it stays: it is not merged, a delivery or a supervisor message of it is still owed, or its plan node has
+no active acceptance of the current head and criteria. Apply only when every `closable` entry is work this run integrated.
+A non-empty `kept` means the project is not closed: report each one with its reason.
+
+For a supervised project (a live initiative link over it) also read `supervisor-standing --project <key>` after the dry run, and
+do not apply while an entry whose `relationId` is one of the `closable` assignments lacks a `decision.priorReport`: such an
+entry is a report not yet staged, which cannot be sent once its assignment is closed, and the command cannot leave one
+assignment out, so the apply waits until the report is staged. Entries of assignments that are already closed are history and
+do not block, a discharged obligation is not listed, and a project with no supervisor stages nothing, so there the list is not a
+stop condition.
+
+A closed assignment reads `closed` in `assignment-show` and still shows its merge mark. The way back for a fix is
+`relationship-resume`, restating the generation, the roots and the recipients as in the next section, and then
+`generation-open`. After a handover the project belongs to the new parent, `relationship-resume` is refused
+`foreign_scope`, and the fix is a new assignment under the current parent. `--all` sweeps every live assignment of the
+store, including those with no project; it is for an operator cleaning an old store.
 
 ## Re-reviewing after the criteria change
 

@@ -117,6 +117,7 @@
     "MERGE_BASE_NOT_ADVANCED": "merge_base_not_advanced",
     "MERGE_EVIDENCE_MALFORMED": "merge_evidence_malformed",
     "STORE_OWNED_BY_OTHER": "store_owned_by_other",
-    "PLAN_REVISION_CONFLICT": "plan_revision_conflict"
+    "PLAN_REVISION_CONFLICT": "plan_revision_conflict",
+    "STALE_COORDINATOR_EPOCH": "stale_coordinator_epoch"
   }
 }

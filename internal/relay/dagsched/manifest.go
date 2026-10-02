@@ -148,7 +148,7 @@ func (s *Scheduler) BuildManifest(ctx context.Context, q store.Querier, plan str
 	}
 	body := map[string]any{
 		"schema": dag.SchemaManifest, "node_id": node.NodeID, "issue_key": node.IssueKey, "node_slice_digest": node.SliceDigest, "criteria_set_digest": node.CriteriaSetDigest,
-		"inputs": inputs, "rule_version": in.RuleVersion.object(), "plan_revision_no": snap.Revision, "coordinator_epoch": int64(0),
+		"inputs": inputs, "rule_version": in.RuleVersion.object(), "plan_revision_no": snap.Revision, "coordinator_epoch": s.ExpectedEpoch,
 		"created_by_task_id": in.CreatedByTaskID, "created_at": in.CreatedAt,
 	}
 	if in.Base != nil {

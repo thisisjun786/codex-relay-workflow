@@ -38,6 +38,9 @@ const (
 	// ReasonPlanRevisionConflict is a DAG plan write that lost to another writer (a stale expected parent
 	// revision) or that reuses a request id for a different request (internal/relay/dag, D-02).
 	ReasonPlanRevisionConflict = string(contract.RefusalPlanRevisionConflict)
+	// ReasonStaleCoordinatorEpoch is a DAG write from a coordinator session that no longer holds the plan's epoch
+	// (internal/relay/dag, D-02): a newer session claimed it, or the claiming parent binding is gone.
+	ReasonStaleCoordinatorEpoch = string(contract.RefusalStaleCoordinatorEpoch)
 	// ReasonStoreAbsent is cli.py Services.store's refusal of a read-only command on a store
 	// that does not exist (no D, takeover.json or write-gate.lock); like "store_absent" in
 	// declarations.py it is a literal there, not a member of errors.RefusalReason.

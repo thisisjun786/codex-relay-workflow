@@ -1302,9 +1302,9 @@ returns to the child that produced it, through the correction path the assignmen
 
 The one head the parent makes itself, a base refresh under that rule, is a head the child's evidence
 never saw either, and it is handled the same way: the jobs and the review are read again on it, the
-check that it is only the verified head plus merges of the base is run, and no job or review result
-is carried over from the head it replaced. Only the child's judged dispositions of threads that both
-heads show stand.
+check that it is the verified head merged with the base tip and nothing else (one update, proved as a
+tree identity) is run, and no job or review result is carried over from the head it replaced. Only
+the child's judged dispositions of threads that both heads show stand.
 
 ## OPS-10 Which system owns which record
 

@@ -3,6 +3,8 @@
 // accepted and what landed. It is the code behind the relay commands dag-ready, dag-release, dag-accept,
 // dag-integration-observe, dag-decision-record, dag-correct, dag-region-declare, dag-conflict-observe,
 // dag-merge-judge, dag-merge-request and dag-cap-basis-record (docs/relay/dag-scheduler.md).
+// The coordinator epoch fences these writes (dag-coordinator-claim raises it, --expect-epoch carries it), and dag-restart and dag-adopt are what a parent that
+// starts again, or replaces another, uses to rebuild from the store and adopt a live child (epoch.go).
 //
 // The scheduler is a set of deterministic functions over the relay store and the declared artifact bytes. It
 // holds no goal, runs no loop, starts no daemon and opens no database of its own: a goal-free parent calls it

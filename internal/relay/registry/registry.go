@@ -917,26 +917,34 @@ func (r *Registry) SetStatus(ctx context.Context, rid, status, actor string) (Re
 	}
 	now := r.now()
 	err := r.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
-		q := r.Store.Querier(ctx)
-		var before sql.NullString
-		if err := q.QueryRowContext(ctx, "SELECT status FROM relationships WHERE relationship_id = ?", rid).Scan(&before); err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
-		if before.Valid && !isLive(before.String) && isLive(status) {
-			return refuse(contract.RefusalRelationshipNotActive, "%s is %s, so %s would bring it back to life. Restoring an assignment restates the generation and the scope it re-authorizes, which is relationship-resume; choosing a different live word does not make those checks optional", strconv.Quote(rid), strconv.Quote(before.String), strconv.Quote(status))
-		}
-		if _, err := q.ExecContext(ctx, "UPDATE relationships SET status = ?, updated_at = ? WHERE relationship_id = ?", status, now, rid); err != nil {
-			return err
-		}
-		if err := r.linkage().applyRelationshipStatus(ctx, rid, status, before.String, now); err != nil {
-			return err
-		}
-		return journal(ctx, r.Store, "status_changed", rid, contract.OrderedObject{{Key: "status", Value: status}, {Key: "actor", Value: actor}}, now)
+		return r.setStatusIn(ctx, rid, status, actor, now)
 	})
 	if err != nil {
 		return Relationship{}, r.recordRaced(ctx, err)
 	}
 	return r.Get(ctx, rid)
+}
+
+// setStatusIn is the write of SetStatus, inside a transaction the caller owns: the new status, the issue scope that
+// moves with it and the journal row. extra fields ride on that row, so a caller that closes for a reason of its own
+// (CRW-288: a merged relationship nothing is owed on) says so there.
+func (r *Registry) setStatusIn(ctx context.Context, rid, status, actor, now string, extra ...contract.Field) error {
+	q := r.Store.Querier(ctx)
+	var before sql.NullString
+	if err := q.QueryRowContext(ctx, "SELECT status FROM relationships WHERE relationship_id = ?", rid).Scan(&before); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if before.Valid && !isLive(before.String) && isLive(status) {
+		return refuse(contract.RefusalRelationshipNotActive, "%s is %s, so %s would bring it back to life. Restoring an assignment restates the generation and the scope it re-authorizes, which is relationship-resume; choosing a different live word does not make those checks optional", strconv.Quote(rid), strconv.Quote(before.String), strconv.Quote(status))
+	}
+	if _, err := q.ExecContext(ctx, "UPDATE relationships SET status = ?, updated_at = ? WHERE relationship_id = ?", status, now, rid); err != nil {
+		return err
+	}
+	if err := r.linkage().applyRelationshipStatus(ctx, rid, status, before.String, now); err != nil {
+		return err
+	}
+	detail := contract.OrderedObject{{Key: "status", Value: status}, {Key: "actor", Value: actor}}
+	return journal(ctx, r.Store, "status_changed", rid, append(detail, extra...), now)
 }
 
 // Resume is registry.resume: restate the generation and the whole scope.
