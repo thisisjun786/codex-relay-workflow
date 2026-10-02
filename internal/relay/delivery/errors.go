@@ -4,29 +4,31 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
-// Refusal reasons this package raises (errors.RefusalReason values, spelled as Python spells them).
+// Refusal reasons this package raises. Each is a member of the contract's generated refusal enum
+// (contract/schema/relay-exit-codes.json), so its spelling has one source.
 const (
-	NotClaimable              = "not_claimable"
-	RecipientNotAuthorized    = "recipient_not_authorized"
-	ScopeEscape               = "scope_escape"
-	RelationshipNotActive     = "relationship_not_active"
-	UnregisteredRelationship  = "unregistered_relationship"
-	UnknownGeneration         = "unknown_generation"
-	RelationUnreadable        = "relation_unreadable"
-	RelationOwnerDrift        = "relation_owner_drift"
-	DuplicateScopeOwner       = "duplicate_scope_owner"
-	LinkConflict              = "link_conflict"
-	UnregisteredScope         = "unregistered_scope"
-	SettingsUnavailable       = "settings_unavailable"
-	SettingsIncomplete        = "settings_incomplete"
-	SettingsMistyped          = "settings_mistyped"
-	UnsupportedSandboxType    = "unsupported_sandbox_type"
-	UnsupportedApprovalPolicy = "unsupported_approval_policy"
-	RolePolicyUnconfigured    = "role_policy_unconfigured"
-	RoleBindingMismatch       = "role_binding_mismatch"
+	NotClaimable              = string(contract.RefusalNotClaimable)
+	RecipientNotAuthorized    = string(contract.RefusalRecipientNotAuthorized)
+	ScopeEscape               = string(contract.RefusalScopeEscape)
+	RelationshipNotActive     = string(contract.RefusalRelationshipNotActive)
+	UnregisteredRelationship  = string(contract.RefusalUnregisteredRelationship)
+	UnknownGeneration         = string(contract.RefusalUnknownGeneration)
+	RelationUnreadable        = string(contract.RefusalRelationUnreadable)
+	RelationOwnerDrift        = string(contract.RefusalRelationOwnerDrift)
+	DuplicateScopeOwner       = string(contract.RefusalDuplicateScopeOwner)
+	LinkConflict              = string(contract.RefusalLinkConflict)
+	UnregisteredScope         = string(contract.RefusalUnregisteredScope)
+	SettingsUnavailable       = string(contract.RefusalSettingsUnavailable)
+	SettingsIncomplete        = string(contract.RefusalSettingsIncomplete)
+	SettingsMistyped          = string(contract.RefusalSettingsMistyped)
+	UnsupportedSandboxType    = string(contract.RefusalUnsupportedSandboxType)
+	UnsupportedApprovalPolicy = string(contract.RefusalUnsupportedApprovalPolicy)
+	RolePolicyUnconfigured    = string(contract.RefusalRolePolicyUnconfigured)
+	RoleBindingMismatch       = string(contract.RefusalRoleBindingMismatch)
 )
 
 // Refused is a RelayError: a machine reason and the human detail beside it. It reuses the store's
