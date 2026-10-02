@@ -159,7 +159,7 @@ func TestReaderRecomputesDigestsAndNeverReturnsAPartialPlan(t *testing.T) {
 				snap.Nodes[i].SliceDigest = forged
 			}
 		}
-		recomputed := stateDigest(snap.PlanID, snap.ProjectKey, snap.Nodes, snap.Edges)
+		recomputed := stateDigest(snap.PlanID, snap.ProjectKey, snap.PlanState, snap.Nodes, snap.Edges)
 		for _, statement := range []string{"DROP TRIGGER dag_nodes_retire_only", "DROP TRIGGER dag_plan_revisions_no_update",
 			"UPDATE dag_nodes SET slice_digest = '" + forged + "' WHERE node_id = 'join' AND retired_rev IS NULL",
 			"UPDATE dag_plan_revisions SET state_digest = '" + recomputed + "' WHERE revision_no = 4"} {
