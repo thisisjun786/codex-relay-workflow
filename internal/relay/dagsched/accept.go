@@ -259,6 +259,12 @@ func (s *Scheduler) Accept(ctx context.Context, plan, node, actor string, in Acc
 				out.Replayed = true
 				return nil
 			}
+			// ruling the same output again resolves a change of the criteria and nothing else (revalidation.go)
+			if cn, ok := nodeOf(current, node); ok {
+				if err := s.refuseRevalidation(txCtx, tx, plan, current, cn); err != nil {
+					return err
+				}
+			}
 			var last sql.NullInt64
 			if err := tx.QueryRowContext(txCtx, "SELECT MAX(reval_seq) FROM dag_acceptance_revalidations WHERE acceptance_id = ?", existing).Scan(&last); err != nil {
 				return err

@@ -178,7 +178,8 @@ func (s *Scheduler) blockedByChild(ctx context.Context, q store.Querier, rel rel
 // eviction, a landing whose effect is unknown) are shown as blocked, and a node with none is accepted.
 func (s *Scheduler) accepted(ctx context.Context, q store.Querier, plan string, snap dag.Snapshot, n dag.SnapNode, acc Acceptance, rel relRow, implementation bool) (nodeState, error) {
 	out := nodeState{Owned: true, Acc: acc, HasAcc: true}
-	if implementation {
+	// what landed is judged from the accepted head, whatever kind a later revision gave the node (revalidation.go: a node that landed is never run again)
+	if implementation || acc.HeadSHA != "" {
 		landed, _, err := s.nodeIntegrated(ctx, q, plan, snap, acc)
 		if err != nil {
 			return nodeState{}, err

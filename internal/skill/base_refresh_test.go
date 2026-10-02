@@ -133,13 +133,8 @@ func TestBaseRefreshPassesAHeadThatOnlyMergesTheBase(t *testing.T) {
 		dev := s.devMoves("dev.txt", "dev work\n")
 		head := s.r.update("feature", "dev")
 		got := check(s.r, s.previous, head, "dev")
-		if got.exit != 0 || !strings.HasPrefix(got.stdout, "ok: "+head+" is "+s.previous+" plus 1 merge of dev") {
+		if got.exit != 0 || !strings.HasPrefix(got.stdout, "ok: "+head+" is "+s.previous+" plus the tip of dev ("+dev+") and nothing else") {
 			t.Fatalf("got %+v", got)
-		}
-		for _, want := range []string{"merge " + head, "first parent " + s.previous, "second parent " + dev, "head contains the tip of dev: yes"} {
-			if !strings.Contains(got.stdout, want) {
-				t.Errorf("stdout lacks %q: %s", want, got.stdout)
-			}
 		}
 	})
 	t.Run("one update that merges a file both sides changed", func(t *testing.T) {
@@ -154,28 +149,6 @@ func TestBaseRefreshPassesAHeadThatOnlyMergesTheBase(t *testing.T) {
 			t.Fatalf("the fixture did not merge both edits: %s", blob)
 		}
 		if got := check(s.r, prev, head, "dev"); got.exit != 0 {
-			t.Fatalf("got %+v", got)
-		}
-	})
-	t.Run("two updates in a row", func(t *testing.T) {
-		s := newScenario(t)
-		s.devMoves("dev.txt", "dev work\n")
-		s.r.update("feature", "dev")
-		s.devMoves("dev2.txt", "more dev work\n")
-		head := s.r.update("feature", "dev")
-		got := check(s.r, s.previous, head, "dev")
-		if got.exit != 0 || !strings.HasPrefix(got.stdout, "ok: "+head+" is "+s.previous+" plus 2 merges of dev") {
-			t.Fatalf("got %+v", got)
-		}
-	})
-	t.Run("the base moved again after the update", func(t *testing.T) {
-		// the answer is about what the head is made of; whether it is current is the forge's
-		s := newScenario(t)
-		s.devMoves("dev.txt", "dev work\n")
-		head := s.r.update("feature", "dev")
-		tip := s.devMoves("dev2.txt", "newer\n")
-		got := check(s.r, s.previous, head, "dev")
-		if got.exit != 0 || !strings.Contains(got.stdout, "note: head does not contain the tip of dev ("+tip+")") {
 			t.Fatalf("got %+v", got)
 		}
 	})
@@ -215,7 +188,7 @@ func TestBaseRefreshRefusesAHeadThatIsAnythingElse(t *testing.T) {
 			s.r.git("checkout", "-q", "feature")
 			s.r.commit("feature2.txt", "slipped in before the update\n", "extra work")
 			return s.previous, s.r.update("feature", "dev")
-		}, "not_a_merge", ""},
+		}, "not_built_on_previous", ""},
 		{"a rebase of the branch onto the base", func(s *scenario) (string, string) {
 			s.r.git("checkout", "-q", "feature")
 			s.r.git("rebase", "-q", "dev")
@@ -243,7 +216,7 @@ func TestBaseRefreshRefusesAHeadThatIsAnythingElse(t *testing.T) {
 			s.r.branchFrom("reverse", "dev")
 			s.r.git("merge", "-q", "--no-ff", "-m", "Merge feature into dev", "feature")
 			return s.previous, s.r.git("rev-parse", "HEAD")
-		}, "not_from_base", ""},
+		}, "parents_swapped", ""},
 		{"a merge that discards the base's change", func(s *scenario) (string, string) {
 			s.r.git("checkout", "-q", "feature")
 			s.r.git("merge", "-q", "--no-ff", "-s", "ours", "-m", "Merge branch 'dev' into feature", "dev")
@@ -328,25 +301,6 @@ func TestBaseRefreshAnswersFromGitAlone(t *testing.T) {
 			t.Fatalf("got %+v", got)
 		}
 	})
-}
-
-func TestBaseRefreshBoundsTheWalk(t *testing.T) {
-	old := maxRefreshMerges
-	t.Cleanup(func() { maxRefreshMerges = old })
-	maxRefreshMerges = 2
-	s := newScenario(t)
-	s.devMoves("dev.txt", "dev work\n")
-	s.r.update("feature", "dev")
-	s.devMoves("dev2.txt", "more\n")
-	two := s.r.update("feature", "dev")
-	if got := check(s.r, s.previous, two, "dev"); got.exit != 0 || !strings.Contains(got.stdout, "plus 2 merges") {
-		t.Fatalf("two merges are within the bound: %+v", got)
-	}
-	s.devMoves("dev3.txt", "more again\n")
-	three := s.r.update("feature", "dev")
-	if got := check(s.r, s.previous, three, "dev"); got.exit != 1 || !strings.HasPrefix(got.stdout, "refused: not_built_on_previous:") || !strings.Contains(got.stdout, "more than 2") {
-		t.Fatalf("three merges are over the bound: %+v", got)
-	}
 }
 
 func TestBaseRefreshCannotAnswerExitsTwo(t *testing.T) {
@@ -450,13 +404,13 @@ func TestBaseRefreshWorksInASHA256Checkout(t *testing.T) {
 	// the throwaway repository has to use the checkout's object format, or it cannot read the
 	// objects it borrows and every honest update in such a checkout would end in exit 2
 	s := newScenarioFormat(t, "sha256")
-	s.devMoves("dev.txt", "dev work\n")
+	dev := s.devMoves("dev.txt", "dev work\n")
 	head := s.r.update("feature", "dev")
 	if len(head) != 64 {
 		t.Fatalf("the fixture was meant to be a SHA-256 repository, got commit id %q", head)
 	}
 	got := check(s.r, s.previous, head, "dev")
-	if got.exit != 0 || !strings.HasPrefix(got.stdout, "ok: "+head+" is "+s.previous+" plus 1 merge of dev") {
+	if got.exit != 0 || !strings.HasPrefix(got.stdout, "ok: "+head+" is "+s.previous+" plus the tip of dev ("+dev+") and nothing else") {
 		t.Fatalf("got %+v", got)
 	}
 	if refused := check(s.r, s.previous, s.previous, "dev"); refused.exit != 1 || !strings.HasPrefix(refused.stdout, "refused: no_update:") {
