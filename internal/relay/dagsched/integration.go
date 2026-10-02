@@ -97,6 +97,14 @@ func (s *Scheduler) ObserveIntegration(ctx context.Context, plan, node, actor st
 	}
 	err = s.Store.Compose(ctx, func(txCtx context.Context, _ *sql.Conn) error {
 		tx := s.Store.Q(txCtx)
+		// the targets are judged against the plan as it is now: an edge added while the tips were being read adds a target nobody has observed
+		now, _, err := dag.SnapshotAt(txCtx, tx, plan, 0)
+		if err != nil {
+			return err
+		}
+		if _, ok := nodeOf(now, node); !ok {
+			return refuse(contract.RefusalUnregisteredScope, "plan %s no longer has the live node %s", plan, node)
+		}
 		current, found, err := loadActiveAcceptance(txCtx, tx, plan, node)
 		if err != nil {
 			return err
@@ -153,7 +161,7 @@ func (s *Scheduler) ObserveIntegration(ctx context.Context, plan, node, actor st
 			out.Observations = append(out.Observations, obs)
 		}
 		// integrated: every REQUIRED target contains the head and the parent marked the merge
-		required, err := s.nodeTargets(txCtx, tx, snap, acc)
+		required, err := s.nodeTargets(txCtx, tx, now, acc)
 		if err != nil {
 			return err
 		}

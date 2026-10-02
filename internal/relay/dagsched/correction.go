@@ -5,10 +5,14 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
 	"regexp"
+	"sort"
+	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // A correction goes back to the same child (contract 3.2): the parent's needs_changes ruling opens the next generation of the SAME relationship and the existing verdict writer sends the
@@ -17,9 +21,10 @@ import (
 // (the one finding the relay renders into the correction message, delivery/criteria.go), and RecordCorrection, after the ruling, binds the generation to the manifest the restoration
 // block names.
 
-// CorrectionInstruction is the line a correction message must carry.
-func CorrectionInstruction(issue string, generation int64, digest, where string) string {
-	return fmt.Sprintf("Correction generation %d of %s: address the findings of the current ruling; before consuming any input, re-verify every uri, sha256 and byte count in manifest %s (%s) and answer blocked_needs_input on any mismatch.", generation, issue, digest, where)
+// CorrectionInstruction is the line a correction message must carry. The child cannot read the relay's store, so the manifest travels as a file under its own artifact root: the line names
+// the path, the manifest digest (the one name of the manifest in the line, which RecordCorrection reads back) and the sha256 of the file's bytes.
+func CorrectionInstruction(issue string, generation int64, digest, path, fileSHA string) string {
+	return fmt.Sprintf("Correction generation %d of %s: address the findings of the current ruling. Before consuming any input, read the input manifest at %s (manifest %s, file sha256 %s), re-verify every uri, sha256 and byte count in it against the files on disk, and answer blocked_needs_input on any mismatch.", generation, issue, path, digest, fileSHA)
 }
 
 // Prepared is what PrepareCorrection returns.
@@ -27,8 +32,9 @@ type Prepared struct {
 	ManifestDigest, Instruction, FrozenPath string
 }
 
-// PrepareCorrection rebuilds and verifies the node's input manifest from the store as it is now (the inputs may have moved since the first release), stores it, and returns the instruction
-// line the correction ruling must carry. The manifest carries the plan revision it was built at; nothing is released or started.
+// PrepareCorrection rebuilds and verifies the node's input manifest from the store as it is now (the inputs may have moved since the first release), stores it, keeps a copy of its
+// canonical bytes under the child's first artifact root (the file the child reads), and returns the instruction line the correction ruling must carry. The manifest carries the plan
+// revision it was built at; nothing is released or started.
 func (s *Scheduler) PrepareCorrection(ctx context.Context, plan, node, actor string, in ManifestInput, opts VerifyOptions) (Prepared, error) {
 	var out Prepared
 	q := s.Store.Q(ctx)
@@ -44,8 +50,18 @@ func (s *Scheduler) PrepareCorrection(ctx context.Context, plan, node, actor str
 	if err != nil {
 		return out, err
 	}
-	if !found || rel.Status != "active" || rel.ParentTaskID != actor {
+	if !found || rel.Status != "active" || rel.Superseded || rel.ParentTaskID != actor {
 		return out, refuse(contract.RefusalRelationshipNotActive, "node %s has no active relationship of task %s to correct", node, actor)
+	}
+	roots, err := relationshipRoots(ctx, q, rel.ID)
+	if err != nil {
+		return out, err
+	}
+	if len(roots) == 0 {
+		return out, refuse(contract.RefusalMalformedReceipt, "relationship %s has no artifact root to keep the manifest in", rel.ID)
+	}
+	if len(opts.ArtifactRoots) == 0 {
+		opts.ArtifactRoots = roots
 	}
 	in.CreatedByTaskID, in.CreatedAt = actor, s.now()
 	body, blocked, err := s.BuildManifest(ctx, q, plan, snap, n, in, opts)
@@ -68,8 +84,14 @@ func (s *Scheduler) PrepareCorrection(ctx context.Context, plan, node, actor str
 	if _, err := (&dag.Repo{Store: s.Store, Now: s.Now}).PutManifest(ctx, stored); err != nil {
 		return out, err
 	}
+	canonical := dag.Canonical(body)
+	path := frozenManifestPath(roots[0], digest)
+	if err := FreezeManifest(path, []byte(canonical)); err != nil {
+		return out, err
+	}
 	out.ManifestDigest = digest
-	out.Instruction = CorrectionInstruction(n.IssueKey, rel.Generation+1, digest, "stored in the relay as dag_input_manifests "+digest)
+	out.FrozenPath = path
+	out.Instruction = CorrectionInstruction(n.IssueKey, rel.Generation+1, digest, path, shaOf([]byte(canonical)))
 	return out, nil
 }
 
@@ -94,7 +116,8 @@ func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, sup
 		if err != nil {
 			return err
 		}
-		if _, ok := nodeOf(snap, node); !ok {
+		n, ok := nodeOf(snap, node)
+		if !ok {
 			return refuse(contract.RefusalUnregisteredScope, "plan %s has no live node %s", plan, node)
 		}
 		rel, found, err := currentRelationshipOf(txCtx, tx, plan, node)
@@ -104,8 +127,8 @@ func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, sup
 		if !found {
 			return refuse(contract.RefusalUnregisteredRelationship, "node %s has no execution to correct", node)
 		}
-		if rel.Status != "active" {
-			return refuse(contract.RefusalRelationshipNotActive, "the relationship %s of %s is %s: a correction goes to a child whose relationship is active", rel.ID, node, rel.Status)
+		if rel.Status != "active" || rel.Superseded {
+			return refuse(contract.RefusalRelationshipNotActive, "the relationship %s of %s is %s: a correction goes to a child whose relationship is active", rel.ID, node, map[bool]string{true: "superseded", false: rel.Status}[rel.Superseded])
 		}
 		if rel.ParentTaskID != actor {
 			return refuse(contract.RefusalScopeRoleMismatch, "task %s is not the parent of relationship %s", actor, rel.ID)
@@ -121,6 +144,9 @@ func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, sup
 				return err
 			}
 			out.ManifestDigest, out.Replayed = latest, true
+			if suppliedDigest != "" && suppliedDigest != latest {
+				return refuse(contract.RefusalDispositionConflict, "generation %d of %s is bound to manifest %s and the digest given is %s", rel.Generation, rel.ID, latest, suppliedDigest)
+			}
 			return nil
 		}
 		if !recorded.Valid || recorded.Int64 != rel.Generation-1 {
@@ -160,8 +186,24 @@ func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, sup
 			if err != nil {
 				return refuse(contract.RefusalRevisionMismatch, "the manifest %s named in the ruling does not digest to its name: %v", digest, err)
 			}
-			if !stored || body["node_id"] != node {
-				return refuse(contract.RefusalDispositionConflict, "the manifest %s named in the ruling is not stored for node %s", digest, node)
+			if !stored || body["node_id"] != node || body["issue_key"] != n.IssueKey {
+				return refuse(contract.RefusalDispositionConflict, "the manifest %s named in the ruling is not stored for node %s of %s", digest, node, n.IssueKey)
+			}
+			// a manifest is one version of one node: the same node id in another plan, or this node before a plan revision changed it, is not what the child should now consume
+			if body["node_slice_digest"] != n.SliceDigest || body["criteria_set_digest"] != n.CriteriaSetDigest {
+				return refuse(contract.RefusalDispositionConflict, "the manifest %s was prepared for another version of node %s than the plan holds now: prepare it again and rule again", digest, node)
+			}
+			// the child reads a file, so the file has to be there and be the manifest
+			roots, err := relationshipRoots(txCtx, tx, rel.ID)
+			if err != nil {
+				return err
+			}
+			if len(roots) == 0 {
+				return refuse(contract.RefusalManifestUnverified, "relationship %s has no artifact root, so the child cannot have been given the manifest %s", rel.ID, digest)
+			}
+			path := frozenManifestPath(roots[0], digest)
+			if err := checkFrozen(path, dag.Canonical(body)); err != nil {
+				return refuse(contract.RefusalManifestUnverified, "the copy of manifest %s the child was told to read is not usable: %v", digest, err)
 			}
 		}
 		if suppliedDigest != "" && suppliedDigest != digest {
@@ -175,8 +217,33 @@ func (s *Scheduler) RecordCorrection(ctx context.Context, plan, node, actor, sup
 	return out, err
 }
 
-// restorationDigest reads the manifest digest the ruling's restoration block names: the one finding declared with restoration true, whose note holds "manifest <64 hex>". Two different digests are
-// refused; none is "" (the previous manifest stays in force).
+// relationshipRoots are the artifact roots of a relationship, the places its child reads and writes.
+func relationshipRoots(ctx context.Context, q store.Querier, rid string) ([]string, error) {
+	var raw string
+	if found, err := queryOne(ctx, q, "SELECT artifact_roots FROM relationships WHERE relationship_id = ?", []any{rid}, &raw); err != nil || !found {
+		return nil, err
+	}
+	var roots []string
+	if json.Unmarshal([]byte(raw), &roots) != nil {
+		return nil, nil
+	}
+	return roots, nil
+}
+
+// checkFrozen reads the child's copy of a manifest and compares it with the canonical bytes. It writes nothing.
+func checkFrozen(path, canonical string) error {
+	read, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if string(read) != canonical {
+		return fmt.Errorf("%s holds other bytes than the manifest (%s, %s)", path, shaOf(read), shaOf([]byte(canonical)))
+	}
+	return nil
+}
+
+// restorationDigest reads the manifest digest the ruling's restoration block names: every "manifest <64 hex>" in the note of the one finding declared with restoration true. Two different
+// digests anywhere in the block are refused, because the child would be told two manifests; none is "" (the previous manifest stays in force).
 func restorationDigest(findings string) (string, error) {
 	if findings == "" {
 		return "", nil
@@ -185,18 +252,28 @@ func restorationDigest(findings string) (string, error) {
 	if err := json.Unmarshal([]byte(findings), &list); err != nil {
 		return "", nil
 	}
-	found := ""
+	found := map[string]bool{}
 	for _, f := range list {
 		if flag, _ := f["restoration"].(bool); !flag {
 			continue
 		}
 		note, _ := f["note"].(string)
-		if m := manifestNamePattern.FindStringSubmatch(note); m != nil {
-			if found != "" && found != m[1] {
-				return "", refuse(contract.RefusalDispositionConflict, "the restoration block names two manifests, %s and %s", found, m[1])
-			}
-			found = m[1]
+		for _, m := range manifestNamePattern.FindAllStringSubmatch(note, -1) {
+			found[m[1]] = true
 		}
 	}
-	return found, nil
+	switch len(found) {
+	case 0:
+		return "", nil
+	case 1:
+		for digest := range found {
+			return digest, nil
+		}
+	}
+	names := make([]string, 0, len(found))
+	for digest := range found {
+		names = append(names, digest)
+	}
+	sort.Strings(names)
+	return "", refuse(contract.RefusalDispositionConflict, "the restoration block names %d manifests (%s): the child would be told more than one", len(names), strings.Join(names, ", "))
 }

@@ -66,7 +66,7 @@ func TestCorrectionBindsTheManifestNamedInTheRestorationBlock(t *testing.T) {
 	if _, found, err := k.repo.ReadManifest(context.Background(), prepared.ManifestDigest); err != nil || !found {
 		t.Fatalf("the prepared manifest is not stored: %v %v", found, err)
 	}
-	k.openCorrection(rid, []map[string]any{{"criterion": "c1", "note": "please fix the thing", "restoration": false}, {"criterion": "c2", "note": prepared.Instruction, "restoration": true}})
+	k.openCorrection(rid, []map[string]any{{"id": "c1", "verdict": "needs_changes", "note": "please fix the thing", "restoration": false}, {"id": "c2", "verdict": "needs_changes", "note": prepared.Instruction, "restoration": true}})
 	// a digest the caller invents is refused; none is derived from the block
 	if _, err := k.correct(dig("something else")); refusalReason(err) != "disposition_conflict" {
 		t.Fatalf("a supplied digest that differs = %v", err)
@@ -103,7 +103,7 @@ func TestCorrectionDoesNotBindWhatTheChildWasNotTold(t *testing.T) {
 		var previous string
 		_ = k.s.DB.QueryRow("SELECT manifest_digest FROM dag_node_executions").Scan(&previous)
 		prepared := k.prepare()
-		k.openCorrection(rid, []map[string]any{{"criterion": "c1", "note": prepared.Instruction, "restoration": false}})
+		k.openCorrection(rid, []map[string]any{{"id": "c1", "verdict": "needs_changes", "note": prepared.Instruction, "restoration": false}})
 		res, err := k.correct("")
 		if err != nil || !res.CarriedOver || res.ManifestDigest != previous {
 			t.Fatalf("correction = %v %+v, want the previous manifest %s", err, res, previous)
@@ -112,7 +112,7 @@ func TestCorrectionDoesNotBindWhatTheChildWasNotTold(t *testing.T) {
 	t.Run("no restoration block", func(t *testing.T) {
 		k := newReleaseKit(t)
 		rid := k.correctionKit()
-		k.openCorrection(rid, []map[string]any{{"criterion": "c1", "note": "fix it"}})
+		k.openCorrection(rid, []map[string]any{{"id": "c1", "verdict": "needs_changes", "note": "fix it"}})
 		if res, err := k.correct(""); err != nil || !res.CarriedOver {
 			t.Fatalf("correction = %v %+v", err, res)
 		}
@@ -120,7 +120,7 @@ func TestCorrectionDoesNotBindWhatTheChildWasNotTold(t *testing.T) {
 	t.Run("two manifests in the block", func(t *testing.T) {
 		k := newReleaseKit(t)
 		rid := k.correctionKit()
-		k.openCorrection(rid, []map[string]any{{"criterion": "c1", "note": "manifest " + dig("one") + " and manifest " + dig("two"), "restoration": true}})
+		k.openCorrection(rid, []map[string]any{{"id": "c1", "verdict": "needs_changes", "note": "manifest " + dig("one") + " and manifest " + dig("two"), "restoration": true}})
 		// the block holds the first match only; two blocks naming different manifests is the refusal
 		k.exec("UPDATE verdict_context SET findings = ?", `[{"note":"manifest `+dig("one")+`","restoration":true},{"note":"manifest `+dig("two")+`","restoration":true}]`)
 		if _, err := k.correct(""); refusalReason(err) != "disposition_conflict" {
@@ -130,7 +130,7 @@ func TestCorrectionDoesNotBindWhatTheChildWasNotTold(t *testing.T) {
 	t.Run("the manifest named is not stored for the node", func(t *testing.T) {
 		k := newReleaseKit(t)
 		rid := k.correctionKit()
-		k.openCorrection(rid, []map[string]any{{"criterion": "c1", "note": "manifest " + dig("invented"), "restoration": true}})
+		k.openCorrection(rid, []map[string]any{{"id": "c1", "verdict": "needs_changes", "note": "manifest " + dig("invented"), "restoration": true}})
 		if _, err := k.correct(""); refusalReason(err) != "disposition_conflict" {
 			t.Fatalf("correction = %v", err)
 		}
@@ -209,7 +209,7 @@ func TestCorrectionPreconditions(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		k.openCorrection(rid, []map[string]any{{"criterion": "c1", "note": "manifest " + dig("n/a")}})
+		k.openCorrection(rid, []map[string]any{{"id": "c1", "verdict": "needs_changes", "note": "manifest " + dig("n/a")}})
 		if _, err := k.correct(""); err != nil {
 			t.Fatal(err)
 		}

@@ -292,8 +292,8 @@ func TestObserveRefusesPausedAndCancelled(t *testing.T) {
 func TestGitAncestryForgeCompare(t *testing.T) {
 	dir := t.TempDir()
 	script := func(name, body string) string {
-		p := filepath.Join(dir, name)
-		if err := os.WriteFile(p, []byte("#!/bin/sh\n"+body+"\n"), 0o700); err != nil {
+		p := filepath.Join(dir, strings.ReplaceAll(name, " ", "_"))
+		if err := os.WriteFile(p, []byte("#!/bin/sh\necho \"$*\" > "+p+".args\n"+body+"\n"), 0o700); err != nil {
 			t.Fatal(err)
 		}
 		return p
@@ -310,9 +310,15 @@ func TestGitAncestryForgeCompare(t *testing.T) {
 		"no field":  {`echo '{"status":"ahead"}'`, false, true},
 		"gh fails":  {`echo boom >&2; exit 1`, false, true},
 	} {
-		got, method, err := GitAncestry{GH: script(name, c.body)}.Ancestry(context.Background(), "owner/repo", head1, strings.Repeat("2", 40))
+		tip := strings.Repeat("2", 40)
+		gh := script(name, c.body)
+		got, method, err := GitAncestry{GH: gh}.Ancestry(context.Background(), "owner/repo", head1, tip)
 		if (err != nil) != c.fail || got != c.want || (err == nil && method != "gh api compare behind_by") {
 			t.Errorf("%s: %v %q %v, want %v (fail %v)", name, got, method, err, c.want, c.fail)
+		}
+		// the commit is the base of the comparison and the tip its head: with the two swapped the same answers would mean the opposite
+		if args, err := os.ReadFile(gh + ".args"); err != nil || strings.TrimSpace(string(args)) != "api --method GET repos/owner/repo/compare/"+head1+"..."+tip {
+			t.Errorf("%s: the comparison asked for was %q (%v)", name, args, err)
 		}
 	}
 	// a repository that is neither a path nor owner/name has no ancestry

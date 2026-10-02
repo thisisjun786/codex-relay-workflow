@@ -42,21 +42,24 @@ type AcceptResult struct {
 	Replayed, Revalidated, SlotReleased                                                 bool
 }
 
-// slotState is the state of the newest tenure of a node's slot ("" when it never had one).
-func (s *Scheduler) slotState(ctx context.Context, q store.Querier, plan, node string) (string, error) {
+// slotState is the state and tenure of the newest tenure of a node's slot ("" when it never had one). A slot returned and reserved again (a replay of a release whose slot was returned
+// meanwhile) has several tenures, and a release that does not name one is refused.
+func (s *Scheduler) slotState(ctx context.Context, q store.Querier, plan, node string) (string, int64, error) {
 	var state string
-	_, err := queryOne(ctx, q, "SELECT state FROM execution_slots WHERE subject_kind = ? AND subject_key = ? ORDER BY tenure DESC LIMIT 1", []any{SlotSubjectKind, SlotSubjectKey(plan, node)}, &state)
-	return state, err
+	var tenure int64
+	_, err := queryOne(ctx, q, "SELECT state, tenure FROM execution_slots WHERE subject_kind = ? AND subject_key = ? ORDER BY tenure DESC LIMIT 1", []any{SlotSubjectKind, SlotSubjectKey(plan, node)}, &state, &tenure)
+	return state, tenure, err
 }
 
 // releaseSlot returns the node's slot when its newest tenure is still held. An operator's earlier slot-release with another reason would make Release record a conflict and refuse, which would
-// roll the surrounding transaction back, so only a held slot is released.
+// roll the surrounding transaction back, so only a held slot is released, and the tenure read here is the one named.
 func (s *Scheduler) releaseSlot(ctx context.Context, q store.Querier, plan, node, actor, reason string) (bool, error) {
-	state, err := s.slotState(ctx, q, plan, node)
+	state, tenure, err := s.slotState(ctx, q, plan, node)
 	if err != nil || state != "held" {
 		return false, err
 	}
-	_, err = (&capacity.Capacity{Store: s.Store, Now: s.now}).Release(ctx, capacity.Release{SubjectKind: SlotSubjectKind, SubjectKey: SlotSubjectKey(plan, node), ReleasedBy: actor, Reason: reason})
+	_, err = (&capacity.Capacity{Store: s.Store, Now: s.now}).Release(ctx, capacity.Release{SubjectKind: SlotSubjectKind, SubjectKey: SlotSubjectKey(plan, node), ReleasedBy: actor, Reason: reason,
+		Tenure: sql.NullInt64{Int64: tenure, Valid: true}})
 	return err == nil, err
 }
 
@@ -178,9 +181,6 @@ func (s *Scheduler) Accept(ctx context.Context, plan, node, actor string, in Acc
 		if err := ClassifyPullRequest(pr); err != nil {
 			return out, err
 		}
-		if pr.State != "open" || pr.IsDraft {
-			return out, refuse(contract.RefusalDispositionConflict, "pull request %s#%d is %s%s: only an open, non-draft pull request is accepted", pr.Repository, pr.Number, pr.State, map[bool]string{true: " and a draft", false: ""}[pr.IsDraft])
-		}
 	} else if in.PullRequest != nil {
 		return out, refuse(contract.RefusalMalformedReceipt, "node %s is a %s node: it has no pull request to name", node, n.Kind)
 	}
@@ -200,8 +200,8 @@ func (s *Scheduler) Accept(ctx context.Context, plan, node, actor string, in Acc
 		if !found {
 			return refuse(contract.RefusalUnregisteredRelationship, "node %s has no execution to accept", node)
 		}
-		if rel.Status != "active" {
-			return refuse(contract.RefusalRelationshipNotActive, "the relationship %s of %s is %s: a result is accepted while its child's relationship is active", rel.ID, node, rel.Status)
+		if rel.Status != "active" || rel.Superseded {
+			return refuse(contract.RefusalRelationshipNotActive, "the relationship %s of %s is %s: a result is accepted while its child's relationship is active", rel.ID, node, map[bool]string{true: "superseded", false: rel.Status}[rel.Superseded])
 		}
 		if rel.ParentTaskID != actor {
 			return refuse(contract.RefusalScopeRoleMismatch, "task %s is not the parent of relationship %s, which is held by %s", actor, rel.ID, rel.ParentTaskID)
@@ -234,6 +234,12 @@ func (s *Scheduler) Accept(ctx context.Context, plan, node, actor string, in Acc
 			if err != nil {
 				return err
 			}
+			if implementation {
+				// the output is accepted already, on the pull request and at the head recorded then: a call that reads another pull request, or the same one at another head, is not a replay of it
+				if err := s.sameForgeReading(txCtx, tx, a, *in.PullRequest, pr); err != nil {
+					return err
+				}
+			}
 			effective, err := effectiveCriteria(txCtx, tx, a)
 			if err != nil {
 				return err
@@ -257,6 +263,9 @@ func (s *Scheduler) Accept(ctx context.Context, plan, node, actor string, in Acc
 		}
 
 		// a new output: it supersedes the node's active acceptance only explicitly
+		if implementation && (pr.State != "open" || pr.IsDraft) {
+			return refuse(contract.RefusalDispositionConflict, "pull request %s#%d is %s%s: only an open, non-draft pull request is accepted", pr.Repository, pr.Number, pr.State, map[bool]string{true: " and a draft", false: ""}[pr.IsDraft])
+		}
 		var activeID string
 		if active, err := queryOne(txCtx, tx, "SELECT acceptance_id FROM dag_acceptances WHERE plan_id = ? AND node_id = ? AND state = 'active'", []any{plan, node}, &activeID); err != nil {
 			return err
@@ -275,7 +284,7 @@ func (s *Scheduler) Accept(ctx context.Context, plan, node, actor string, in Acc
 			CriteriaSetDigest: head.SetDigest, Verdict: "verified", OutputManifestRef: head.ManifestRef, AckTier: head.AckTier, VerdictTurnID: head.VerdictTurn, RuleVersionJSON: ruleJSON, AcceptedByTask: actor,
 			AcceptedAt: s.now(), SupersedesAcceptanceID: activeID, State: "active"}
 		if implementation {
-			repository, err := s.acceptTarget(txCtx, tx, snap, node, in.PullRequest.Repository)
+			repository, err := s.acceptTarget(txCtx, tx, current, node, in.PullRequest.Repository)
 			if err != nil {
 				return err
 			}
@@ -336,4 +345,25 @@ func (s *Scheduler) acceptTarget(ctx context.Context, q store.Querier, snap dag.
 		}
 	}
 	return "", refuse(contract.RefusalMalformedReceipt, "the outgoing edges of %s name more than one repository; one acceptance is judged against one", node)
+}
+
+// sameForgeReading is what makes a repeated acceptance of an implementation node's output a replay: the pull request named is the one recorded with the acceptance, and the head the forge
+// shows now is the accepted one. A call that reads another pull request, or the same one at another head, is not a replay of that acceptance and is refused.
+func (s *Scheduler) sameForgeReading(ctx context.Context, q store.Querier, a Acceptance, named PRRef, pr PullRequest) error {
+	var forge string
+	var number int64
+	has, err := queryOne(ctx, q, "SELECT forge_repository, pr_number FROM dag_acceptance_forge WHERE acceptance_id = ?", []any{a.AcceptanceID}, &forge, &number)
+	if err != nil {
+		return err
+	}
+	if !has {
+		return refuse(contract.RefusalDispositionConflict, "acceptance %s has no forge identity recorded, so the pull request named cannot be compared with it", a.AcceptanceID)
+	}
+	if forge != named.Repository || number != named.Number {
+		return refuse(contract.RefusalDispositionConflict, "this output was accepted on pull request %s#%d and the call names %s#%d", forge, number, named.Repository, named.Number)
+	}
+	if pr.HeadSHA != a.HeadSHA {
+		return refuseCandidateMoved("pull request %s#%d is at %s and the accepted head of %s is %s", forge, number, pr.HeadSHA, a.NodeID, a.HeadSHA)
+	}
+	return nil
 }

@@ -79,22 +79,24 @@ func effectiveCriteria(ctx context.Context, q store.Querier, a Acceptance) (stri
 type relRow struct {
 	ID, Status, IssueKey, ParentTaskID string
 	Generation                         int64
+	// Superseded is a relationship the registry replaced with another (relationships.superseded_by): its result is nobody's to accept.
+	Superseded bool
 }
 
 func loadRelationship(ctx context.Context, q store.Querier, rid string) (relRow, bool, error) {
 	var r relRow
-	found, err := queryOne(ctx, q, "SELECT relationship_id, status, issue_key, parent_task_id, execution_generation FROM relationships WHERE relationship_id = ?", []any{rid}, &r.ID, &r.Status, &r.IssueKey, &r.ParentTaskID, &r.Generation)
+	found, err := queryOne(ctx, q, "SELECT relationship_id, status, issue_key, parent_task_id, execution_generation, superseded_by IS NOT NULL FROM relationships WHERE relationship_id = ?", []any{rid}, &r.ID, &r.Status, &r.IssueKey, &r.ParentTaskID, &r.Generation, &r.Superseded)
 	return r, found, err
 }
 
 // currentRelationshipOf is the relationship a node's executions currently stand on: a live one first, then the newest.
 func currentRelationshipOf(ctx context.Context, q store.Querier, plan, node string) (relRow, bool, error) {
 	var r relRow
-	found, err := queryOne(ctx, q, "SELECT r.relationship_id, r.status, r.issue_key, r.parent_task_id, r.execution_generation"+
+	found, err := queryOne(ctx, q, "SELECT r.relationship_id, r.status, r.issue_key, r.parent_task_id, r.execution_generation, r.superseded_by IS NOT NULL"+
 		" FROM dag_node_executions e JOIN relationships r ON r.relationship_id = e.relationship_id"+
 		" WHERE e.plan_id = ? AND e.node_id = ?"+
 		" ORDER BY CASE r.status WHEN 'active' THEN 0 WHEN 'paused' THEN 1 ELSE 2 END, r.created_at DESC, r.relationship_id DESC LIMIT 1",
-		[]any{plan, node}, &r.ID, &r.Status, &r.IssueKey, &r.ParentTaskID, &r.Generation)
+		[]any{plan, node}, &r.ID, &r.Status, &r.IssueKey, &r.ParentTaskID, &r.Generation, &r.Superseded)
 	return r, found, err
 }
 
