@@ -545,8 +545,8 @@ func (s *Scheduler) replay(ctx context.Context, plan, node, actor string, row re
 	var refused error
 	if err := s.Store.Compose(ctx, func(txCtx context.Context, _ *sql.Conn) error {
 		tx := s.Store.Q(txCtx)
-		// a frozen release is a continuation of an earlier one and creates a child: it is not continued for a node the plan holds, and nothing is reserved for it
-		if err := lifecycleOpen(txCtx, tx, plan, node, "continuing its release", false); err != nil {
+		// a frozen release is a continuation of an earlier one and creates a child: it is not continued for a node the plan holds or whose frozen inputs the plan ended since, and nothing is reserved for it
+		if err := releaseGate(txCtx, tx, plan, node, row.Digest); err != nil {
 			refused = err
 			return nil
 		}
@@ -612,6 +612,14 @@ func (s *Scheduler) startAndBind(ctx context.Context, plan, node, actor string, 
 	out.Replayed = replayed
 	if s.Start == nil {
 		return out, errors.New("this scheduler has no managed-start engine")
+	}
+	// The last point at which the DAG can still stop a child from being created: a pause that committed since the intent was written (or since the replay's transaction) is read here. A pause that
+	// commits while the managed start runs cannot undo a creation already begun, outside the store: the child is then bound, and the node reads as running under the plan's hold.
+	if s.testBeforeStart != nil {
+		s.testBeforeStart()
+	}
+	if err := releaseGate(ctx, s.Store.Q(ctx), plan, node, out.ManifestDigest); err != nil {
+		return out, err
 	}
 	answer, err := s.Start(ctx, raw)
 	if errors.Is(err, managed.ErrBusy) {

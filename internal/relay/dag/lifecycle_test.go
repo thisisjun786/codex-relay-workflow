@@ -85,9 +85,9 @@ func TestNodeLifecycleTransitions(t *testing.T) {
 					mustPut(t, r, revDoc("plan", fmt.Sprintf("r%d", head+1), head, lifeChange(step, "n")))
 					head++
 				}
+				was := lifeNodeOf(t, r, "plan", "n") // read before the change is tried: a refused change must leave exactly this
 				_, err := r.Put(context.Background(), decode(t, revDoc("plan", "rx", head, lifeChange(op, "n"))))
 				if !want.ok {
-					was := lifeNodeOf(t, r, "plan", "n")
 					if p := rejected(t, err); !hasRule(p, RuleInvalidLifecycleTransition, "changes[0].op") || len(p.Violations) != 1 {
 						t.Fatalf("want one invalid_lifecycle_transition, got %v", p.Violations)
 					}

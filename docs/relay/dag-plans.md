@@ -165,8 +165,9 @@ any other state is `invalid_lifecycle_transition`. The state belongs to the node
 `retire_node` takes the node out of the plan with its state.
 
 The state is the fold of these changes and is kept nowhere else: no table, no row that is updated, no command of its own (`dag-plan-put` appends the revision), and no statement added to the zone.
-A reader derives it from the log up to the revision it reads, with the rules the writer judged the changes by: a stored change that is not a legal transition, or that names a node the plan never
-held, is the host's failure (exit 3) whatever digest the revision recorded. `dag-plan-show` prints `lifecycle` on a node that is paused, cancelled or archived and `plan_state` while the plan is
+A reader derives it from the log up to the revision it reads. Reading checks the transition table and that the node was ever in the plan: a stored change that is not a legal transition, or that names a
+node the plan never held, is the host's failure (exit 3) whatever digest the revision recorded. The other rules of a revision (two changes of one subject in a revision, a target that was live in the parent
+revision) are judged by the writer and by `--verify`, which replays the log through the fold, and not by an ordinary read. `dag-plan-show` prints `lifecycle` on a node that is paused, cancelled or archived and `plan_state` while the plan is
 paused; both keys are absent otherwise, so a plan with no lifecycle change reads as it always did. The plan as of an earlier revision reads as it was then.
 
 A runtime that predates these changes cannot read a log that holds one: its strict reader refuses an operation it does not know, and the plan reads as corrupt. The store itself is unchanged, so

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -706,5 +708,122 @@ func TestAPassKeepsTheLifecycleOfTheNodesItRead(t *testing.T) {
 	rows := f.passRows("p1")
 	if len(rows) != 1 || !strings.Contains(rows[0].dispositions, "\"lifecycle\":\"cancelled\"") || strings.Count(rows[0].dispositions, "lifecycle") != 1 {
 		t.Fatalf("the pass kept %v", rows)
+	}
+}
+
+// A release whose intent was recorded and whose child was not created is a continuation of the earlier release, and what it rests on is asked again: if the plan ended the node the frozen manifest consumed
+// from, the retry never reaches the managed start (the edge-level and consumed-chain gates read the store as it is now; the frozen intent is the one place that did not).
+func TestAFrozenSuccessorReleaseIsNotContinuedWhenItsInputWasEnded(t *testing.T) {
+	for _, tc := range []struct{ op, reason string }{{"cancel_node", "blocked:predecessor_cancelled"}, {"archive_node", "blocked:predecessor_archived"}} {
+		t.Run(tc.op, func(t *testing.T) {
+			k := newReleaseKit(t)
+			releasePlan(k.fixture, "rp")
+			k.reportNode("rp", "A", acceptOpts{})
+			if _, err := k.accept("rp", "A", AcceptInput{}); err != nil {
+				t.Fatal(err)
+			}
+			real := k.sched.Start
+			calls := 0
+			unreachable := errors.New("the host is not reachable")
+			k.sched.Start = func(context.Context, []byte) (StartAnswer, error) { calls++; return StartAnswer{}, unreachable }
+			if _, err := k.release("rp", "B"); !errors.Is(err, unreachable) || calls != 1 {
+				t.Fatalf("the first release = %v after %d starts, want the host's failure after one", err, calls)
+			}
+			before := k.rows()
+			if before.releases != 1 || before.slots != 1 || before.executions != 1 { // B has an intent and a slot and no child; the one execution is the report of A
+				t.Fatalf("the failed start left %+v", before)
+			}
+			(&lifeLog{t: t, f: k.fixture, plan: "rp", rev: 1}).put(lifeOp(tc.op, "A"))
+			k.sched.Start = func(ctx context.Context, raw []byte) (StartAnswer, error) { calls++; return real(ctx, raw) }
+			_, err := k.release("rp", "B")
+			if refusalReason(err) != "disposition_conflict" || !strings.Contains(err.Error(), tc.reason) {
+				t.Fatalf("the retry = %v, want disposition_conflict naming %s", err, tc.reason)
+			}
+			if created, _ := k.host.counts(); calls != 1 || created != 0 || k.rows() != before {
+				t.Fatalf("the retry reached the managed start (%d starts, %d children) or changed rows: %+v", calls, created, k.rows())
+			}
+		})
+	}
+}
+
+// The last point at which the DAG can stop a child from being created is just before the managed start, for a new release and for a continuation alike: a pause that landed since the intent was
+// written stops it, with the intent and the slot left where they were, and the resume lets the same release go on.
+func TestAPauseThatLandsBeforeTheManagedStartStopsTheChild(t *testing.T) {
+	t.Run("a new release", func(t *testing.T) {
+		k := newReleaseKit(t)
+		releasePlan(k.fixture, "rp")
+		l := &lifeLog{t: t, f: k.fixture, plan: "rp", rev: 1}
+		fired := false
+		k.sched.testBeforeStart = func() { fired = true; l.put(lifeOp("pause_node", "A")) }
+		_, err := k.release("rp", "A")
+		if !fired {
+			t.Fatal("the seam did not fire")
+		}
+		refusedFor(t, err, "defer:node_paused")
+		if created, sent := k.host.counts(); created != 0 || sent != 0 {
+			t.Fatalf("the managed start ran: %d children, %d messages", created, sent)
+		}
+		if got := k.rows(); got.releases != 1 || got.slots != 1 || got.executions != 0 {
+			t.Fatalf("the intent and the slot were not left where they were: %+v", got)
+		}
+		k.sched.testBeforeStart = nil
+		l.put(lifeOp("resume_node", "A"))
+		if res, err := k.release("rp", "A"); err != nil || !res.Bound || !res.Replayed {
+			t.Fatalf("the release after the resume = %v %+v", err, res)
+		}
+		if created, _ := k.host.counts(); created != 1 {
+			t.Fatalf("%d children for one release", created)
+		}
+	})
+	t.Run("a frozen release", func(t *testing.T) {
+		k := newReleaseKit(t)
+		releasePlan(k.fixture, "rp")
+		real := k.sched.Start
+		k.sched.Start = func(context.Context, []byte) (StartAnswer, error) {
+			return StartAnswer{}, errors.New("the host is not reachable")
+		}
+		if _, err := k.release("rp", "A"); err == nil {
+			t.Fatal("the first start was meant to fail")
+		}
+		k.sched.Start = real
+		l := &lifeLog{t: t, f: k.fixture, plan: "rp", rev: 1}
+		fired := false
+		k.sched.testBeforeStart = func() { fired = true; l.put(lifeOp("pause_node", "A")) }
+		_, err := k.release("rp", "A")
+		if !fired {
+			t.Fatal("the seam did not fire")
+		}
+		refusedFor(t, err, "defer:node_paused")
+		if created, sent := k.host.counts(); created != 0 || sent != 0 {
+			t.Fatalf("the managed start ran: %d children, %d messages", created, sent)
+		}
+	})
+}
+
+// A correction is prepared from inputs read while the plan may move: the plan's hold is asked again in the transaction that stores the manifest, so a pause that lands while the inputs are
+// verified leaves no manifest, no frozen file and no instruction.
+func TestAPauseThatLandsWhileACorrectionIsPreparedLeavesNothing(t *testing.T) {
+	k := newReleaseKit(t)
+	rid := k.correctionKit()
+	k.openCorrection(rid, nil)
+	l := &lifeLog{t: t, f: k.fixture, plan: "rp", rev: 1}
+	fired := false
+	k.sched.testBeforePrepareTx = func() { fired = true; l.put(lifeOp("pause_node", "A")) }
+	manifests := k.count("SELECT COUNT(*) FROM dag_input_manifests")
+	snapshot := writeFile(t, k.root, "corrections.md", "the notes of the correction")
+	prepared, err := k.sched.PrepareCorrection(context.Background(), "rp", "A", "parent", ManifestInput{RuleVersion: k.request(false).RuleVersion,
+		Volatile: []Volatile{{Source: "linear:comment", SnapshotURI: snapshot, SHA256: shaOf([]byte("the notes of the correction")), CapturedAt: "2026-10-02T00:00:00Z"}}}, VerifyOptions{ArtifactRoots: []string{k.root}})
+	if !fired {
+		t.Fatal("the seam did not fire")
+	}
+	refusedFor(t, err, "defer:node_paused")
+	if prepared.Instruction != "" || prepared.FrozenPath != "" {
+		t.Fatalf("an instruction was handed out: %+v", prepared)
+	}
+	if got := k.count("SELECT COUNT(*) FROM dag_input_manifests"); got != manifests {
+		t.Fatalf("%d manifests were stored", got-manifests)
+	}
+	if _, err := os.Stat(filepath.Join(k.root, "dag-input-manifests")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a manifest file was frozen (%v)", err)
 	}
 }

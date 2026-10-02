@@ -133,7 +133,12 @@ func endedInInputs(ctx context.Context, q store.Querier, snap dag.Snapshot, a Ac
 		return nil, nil
 	}
 	seen[a.AcceptanceID] = true
-	body, found, err := dag.ReadManifestOn(ctx, q, a.ManifestDigest)
+	return endedInManifest(ctx, q, snap, a.ManifestDigest, seen)
+}
+
+// endedInManifest is endedInInputs for a manifest by its digest: the manifest of an acceptance, or the frozen manifest of a release that has not started its child yet.
+func endedInManifest(ctx context.Context, q store.Querier, snap dag.Snapshot, digest string, seen map[string]bool) (*endedInput, error) {
+	body, found, err := dag.ReadManifestOn(ctx, q, digest)
 	var corrupt *dag.CorruptError
 	switch {
 	case errors.As(err, &corrupt), err == nil && !found:
@@ -188,4 +193,30 @@ func (s *Scheduler) endedPredecessor(ctx context.Context, q store.Querier, plan 
 	}
 	st := blocked(reason, "the accepted result of "+from.NodeID+" rests on the result of node "+ended.node+", which the plan "+ended.life+"; the plan has to be revised before anything is released from it")
 	return &st, nil
+}
+
+// releaseGate is what the plan says of a release that is about to create a child, asked at the last points the DAG can still stop it: the node is not held by the plan (paused, cancelled,
+// archived, or the plan paused) and nothing the release rests on, the frozen manifest it consumed, was ended by the plan since the intent was written. A refusal leaves the intent and the slot where
+// they are (a pause keeps the slot, contract 7.4); the resume, or a revision that rewires the plan, lets the same release continue.
+func releaseGate(ctx context.Context, q store.Querier, plan, node, manifest string) error {
+	snap, _, err := dag.SnapshotAt(ctx, q, plan, 0)
+	if err != nil {
+		return err
+	}
+	n, ok := nodeOf(snap, node)
+	if !ok {
+		return nil
+	}
+	if err := lifecycleRefusal(snap, n, "starting its child", false); err != nil {
+		return err
+	}
+	ended, err := endedInManifest(ctx, q, snap, manifest, map[string]bool{})
+	if err != nil || ended == nil {
+		return err
+	}
+	reason := BlockedPredecessorCancelled
+	if ended.life == dag.LifeArchived {
+		reason = BlockedPredecessorArchived
+	}
+	return refuse(contract.RefusalDispositionConflict, "%s (%s): the release rests on the result of node %s, which the plan %s: starting its child is refused until the plan is revised", node, reason, ended.node, ended.life)
 }

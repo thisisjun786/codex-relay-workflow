@@ -32,6 +32,8 @@ type Scheduler struct {
 	testBeforeReplayTx       func()
 	testBeforeAcceptTx       func()
 	testBeforeJudgeTx        func()
+	testBeforeStart          func()
+	testBeforePrepareTx      func()
 	testAfterReading         func()
 	testAfterFreshness       func()
 	testBetweenReadAndIntent func()
