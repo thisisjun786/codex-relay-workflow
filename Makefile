@@ -11,8 +11,9 @@ LDFLAGS := -s -w -X main.version=$(VERSION) -X github.com/thisisjun786/codex-rel
 STATICCHECK := $(GO) run honnef.co/go/tools/cmd/staticcheck
 # Per-package test binary budget, go test's default. The slowest package, internal/relay/delivery,
 # took 190-235 s on four CPUs in wave R1 (it needed 20m while it drove a live Python oracle,
-# before todo 44). Its fixed /tmp/crw-delivery-parity trees are locked per process, so two
-# checkouts testing delivery at once on one machine wait for each other.
+# before todo 44). Its fixed /tmp/crw-delivery-parity trees are locked per test, so two
+# checkouts testing delivery at once on one machine wait for each other only while both are
+# inside the same test.
 TEST_TIMEOUT := -timeout 10m
 # The one crw every package's tests run (internal/testsupport CRW): built once per `make test`
 # or part, release-shaped (-trimpath), instead of once or more in each package that runs it.
