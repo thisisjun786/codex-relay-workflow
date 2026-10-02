@@ -975,7 +975,7 @@ request moves it onto the composer, which has a byte budget the plain renderer d
 that command re-measures and refuses there too, while there is still nothing sent to undo. The
 outcome is named either way — `carried`, `truncated`, `budget_dropped`, `not_carried` or
 `unmeasured` — and is reported beside the verdict record, as `_restoration`, and by
-`show --event <id>`.
+`show --event <id>`. A `[truncated; original length N characters]` line in a bridge `read_thread` result is that tool's display limit and none of these outcomes ([bridge.md](bridge.md#what-read_thread-shows-of-a-long-text)).
 
 Those two are preflight: each describes the message the NEXT attempt would render. What an
 attempt actually froze is recorded by that attempt, in the transaction that froze its bytes,
