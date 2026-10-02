@@ -16,29 +16,39 @@ import (
 	"time"
 )
 
-// maxRefreshMerges bounds the walk from the head down to the previous head: more merges than this
-// are refused rather than followed. A variable so that a test can lower it.
-var maxRefreshMerges = 100
-
 // refreshTimeout bounds one whole check; it is a handful of git commands over local objects.
 const refreshTimeout = 2 * time.Minute
 
-var baseRefresh = family{name: "base-refresh", description: `Check that a pull request head is only the previously verified head plus merges of its base.
+// refreshRule names the rule a pass applied, in the merged mark and the merge record. A later rule
+// (another kind of resolution) is another name, so the record says which proof was made.
+const refreshRule = "tree_identity"
+
+// The last line of every refusal names the safe side. Nothing here converts a refusal into a pass:
+// the three texts differ only in what the parent may do before it gives up and returns the
+// candidate to its child.
+const (
+	refreshSafeSide      = "safe side: this head is not accepted. Return the candidate to its child. A hand recheck (git range-diff of the child's commits, the differing paths named above) only decides what the correction says; it never turns this refusal into a pass"
+	refreshSafeSideChain = "safe side: this head is not accepted as one update. If it is a chain of updates, prove them one step at a time, each with the head the earlier proof named as --previous; a head that no proof names goes back to its child. It is not a pass until a proof names it"
+	refreshSafeSideMoved = "safe side: this head is not accepted against the commit named. If the base moved between reading its tip and the update, read the tip of the base from the forge again and prove against that tip; a commit that no forge reading named as the tip is never one to prove against, and without a pass the candidate goes back to its child"
+)
+
+var baseRefresh = family{name: "base-refresh", description: `Check that a pull request head is the previously verified head plus the tip of its base, and nothing else.
 
 crw-run/references/merge-readiness.md#refresh-the-base-yourself-when-only-the-base-moved owns the
 rule. A parent that updates a pull request branch itself (the forge's update-branch call, which
 merges the base into the branch with a merge commit) may merge the result only when nothing but
 that update separates the new head from the head that was verified. check answers that from git
-alone: walking down from the new head, every commit must be a merge of exactly two parents whose
-second parent is already on the base and whose tree is exactly what git merges from its two parents,
-and the walk must end at the previous head. An edit, a hand resolution or a file of its own cannot
-ride along in such a merge.
+alone, as an identity. It passes only when all three hold: the head has exactly two parents, the
+previous head first and the base tip second, in that order; git merge-tree --write-tree of those two
+commits exits 0; and the tree it writes is the tree of the head. An edit, a hand resolution, a file
+of its own, a second update or a reversed parent order cannot ride along in such a merge.
 
 check reads the checkout and writes nothing to it, and it is evidence about the commits it names:
-it does not say that a job, a review or a merge happened on them. Run it before the merge. A head
-that has landed is an ancestor of its base, so a replay afterwards names the base tip seen before
-the landing instead of the branch.`, commands: [][2]string{
-	{"check", "report whether the head is the previous head plus merges of the base only; exit 1 when it is not"},
+it does not say that a job, a review or a merge happened on them. A pass prints the evidence line the
+merged mark and the merge record carry. Run it before the merge. A head that has landed is an
+ancestor of its base, so a replay afterwards names the base tip seen before the landing instead of
+the branch.`, commands: [][2]string{
+	{"check", "report whether the head is the previous head plus the base tip and nothing else; exit 1 when it is not"},
 }}
 
 func runBaseRefresh(args []string, stdout, stderr io.Writer) int {
@@ -46,11 +56,11 @@ func runBaseRefresh(args []string, stdout, stderr io.Writer) int {
 	if !ok {
 		return code
 	}
-	line := newCommandLine("base-refresh", name, "Check that the head is the previous head plus merges of the base and nothing else.\n\nExit 0: it is. Exit 1: it is not (the first line names why). Exit 2: git could not answer.")
+	line := newCommandLine("base-refresh", name, "Check that the head is the previous head merged with the base tip and nothing else.\n\nExit 0: it is. Exit 1: it is not (the first line names why). Exit 2: git could not answer.")
 	repo := line.String("repo", ".", "a checkout of the repository (a working tree, a linked working tree or a bare repository) that holds the three commits")
-	previous := line.String("previous", "", "the head that was verified")
+	previous := line.String("previous", "", "the head that was verified, or the head an earlier proof of this chain named")
 	head := line.String("head", "", "the head after the update")
-	base := line.String("base", "", "the base branch as the checkout names it, such as origin/dev, or the tip commit seen before the head landed")
+	base := line.String("base", "", "the tip of the base the update merged: the commit read from the forge right before the update, or the base branch as the checkout names it, such as origin/dev")
 	if _, code := line.parse(args[1:], stdout, stderr); code >= 0 {
 		return code
 	}
@@ -76,42 +86,48 @@ func runBaseRefresh(args []string, stdout, stderr io.Writer) int {
 			return usageExit
 		}
 	}
-	merges, why, err := g.walk(ctx, ids[0], ids[1], ids[2])
+	proof, why, err := g.prove(ctx, ids[0], ids[1], ids[2])
 	if err != nil {
 		fmt.Fprintf(stderr, "%s: cannot read the history between %s and %s in %s: %v\n", line.Name(), ids[0], ids[1], *repo, err)
 		return usageExit
 	}
 	if why != nil {
 		fmt.Fprintf(stdout, "refused: %s: %s\n", why.code, why.detail)
+		fmt.Fprintf(stdout, "facts: previous=%s dev_tip=%s head=%s parents=%s merge_tree=%s head_tree=%s\n", ids[0], ids[2], ids[1], orNone(strings.Join(why.facts.parents, ",")), orNone(why.facts.mergeTree), orNone(why.facts.headTree))
+		fmt.Fprintln(stdout, why.safe)
 		return 1
 	}
-	tipInHead, err := g.isAncestor(ctx, ids[2], ids[1])
-	if err != nil {
-		fmt.Fprintf(stderr, "%s: cannot read the history of %s in %s: %v\n", line.Name(), ids[1], *repo, err)
-		return usageExit
-	}
-	noun := "merges"
-	if len(merges) == 1 {
-		noun = "merge"
-	}
-	fmt.Fprintf(stdout, "ok: %s is %s plus %d %s of %s\n", ids[1], ids[0], len(merges), noun, *base)
-	for i := len(merges) - 1; i >= 0; i-- {
-		m := merges[i]
-		fmt.Fprintf(stdout, "merge %s: first parent %s, second parent %s (on %s), tree %s is what git merges from the two\n", m.commit, m.first, m.second, *base, m.tree)
-	}
-	if tipInHead {
-		fmt.Fprintf(stdout, "head contains the tip of %s: yes\n", *base)
-	} else {
-		fmt.Fprintf(stdout, "note: head does not contain the tip of %s (%s): the base moved again, so the forge will still call the head behind\n", *base, ids[2])
-	}
+	fmt.Fprintf(stdout, "ok: %s is %s plus the tip of %s (%s) and nothing else\n", proof.head, proof.previous, *base, proof.devTip)
+	fmt.Fprintf(stdout, "evidence: previous=%s dev_tip=%s head=%s tree=%s rule=%s\n", proof.previous, proof.devTip, proof.head, proof.tree, refreshRule)
+	fmt.Fprintf(stdout, "parents: (%s, %s) in that order\n", proof.previous, proof.devTip)
+	fmt.Fprintf(stdout, "tree identity: git merge-tree --write-tree %s %s exits 0 and its tree %s is the tree of %s\n", proof.previous, proof.devTip, proof.tree, proof.head)
 	return 0
 }
 
-// refreshRefusal is an answer, not a failure: the head is something other than the previous head
-// plus merges of the base.
-type refreshRefusal struct{ code, detail string }
+func orNone(s string) string {
+	if s == "" {
+		return "none"
+	}
+	return s
+}
 
-type refreshMerge struct{ commit, first, second, tree string }
+// refreshRefusal is an answer, not a failure: the head is something other than the previous head
+// merged with the base tip. facts is what was read on the way to it.
+type refreshRefusal struct {
+	code, detail string
+	safe         string
+	facts        refreshFacts
+}
+
+// refreshFacts are the values a refusal quotes for the correction: the head's parents, the tree git
+// merges from the previous head and the tip, and the head's own tree. A value not reached is empty.
+type refreshFacts struct {
+	parents             []string
+	mergeTree, headTree string
+}
+
+// refreshProof is what a pass proves; its four commits and trees are the fields of the evidence line.
+type refreshProof struct{ previous, devTip, head, tree string }
 
 var (
 	commitIDPattern = regexp.MustCompile("^[0-9a-f]{40}([0-9a-f]{24})?$")
@@ -327,60 +343,77 @@ func (g *refreshGit) differing(ctx context.Context, computed, actual string) (st
 	return strings.Join(names, ", "), nil
 }
 
-// walk follows the first parents from head down to previous. It returns the merges it passed, or
-// the reason the head is something else; an error means git could not answer.
-func (g *refreshGit) walk(ctx context.Context, previous, head, base string) ([]refreshMerge, *refreshRefusal, error) {
+// prove decides whether head is previous merged with tip and nothing else: one merge commit whose
+// parents are exactly (previous, tip) in that order, whose tree is the tree git writes for merging
+// them. It returns the proof, or the reason the head is something else; an error means git could not
+// answer. The checks run in an order that gives the most specific reason: a reversed merge writes the
+// same tree as the right one under merge-ort, so the parent order is read before the tree.
+func (g *refreshGit) prove(ctx context.Context, previous, head, tip string) (*refreshProof, *refreshRefusal, error) {
 	if head == previous {
-		return nil, &refreshRefusal{"no_update", "the head is the previous head: nothing was updated"}, nil
+		return nil, &refreshRefusal{code: "no_update", detail: "the head is the previous head: nothing was updated", safe: refreshSafeSide}, nil
 	}
-	var merges []refreshMerge
-	for cur := head; cur != previous; {
-		if len(merges) >= maxRefreshMerges {
-			return nil, &refreshRefusal{"not_built_on_previous", fmt.Sprintf("more than %d merges lie between the head and %s", maxRefreshMerges, previous)}, nil
+	onBase, err := g.isAncestor(ctx, head, tip)
+	if err != nil {
+		return nil, nil, err
+	}
+	if onBase {
+		return nil, &refreshRefusal{code: "not_built_on_previous", detail: fmt.Sprintf("%s is already on the base (%s): a head that has landed is checked by naming the base tip seen before the landing", head, tip), safe: refreshSafeSide}, nil
+	}
+	parents, err := g.parents(ctx, head)
+	if err != nil {
+		return nil, nil, err
+	}
+	facts := refreshFacts{parents: parents}
+	refuse := func(safe, code, format string, args ...any) (*refreshProof, *refreshRefusal, error) {
+		return nil, &refreshRefusal{code: code, detail: fmt.Sprintf(format, args...), safe: safe, facts: facts}, nil
+	}
+	if len(parents) != 2 {
+		return refuse(refreshSafeSide, "not_a_merge", "%s has %d parent(s); an update is a merge of exactly two", head, len(parents))
+	}
+	first, second := parents[0], parents[1]
+	if first != previous {
+		if second == previous {
+			return refuse(refreshSafeSide, "parents_swapped", "the parents of %s are (%s, %s): the previous head is the second parent. An update has the parents (previous head, dev tip) in that order, and the reverse merges the branch into the base", head, first, second)
 		}
-		onBase, err := g.isAncestor(ctx, cur, base)
+		contains, err := g.isAncestor(ctx, previous, first)
 		if err != nil {
 			return nil, nil, err
 		}
-		if onBase {
-			return nil, &refreshRefusal{"not_built_on_previous", fmt.Sprintf("%s is already on the base, and the first parents from the head reached it without passing %s", cur, previous)}, nil
+		if contains {
+			return refuse(refreshSafeSideChain, "not_built_on_previous", "the first parent %s of %s is not %s, but already contains it: an earlier update or a commit of its own lies between them. Prove an update one step at a time, with the head the earlier proof named as --previous", first, head, previous)
 		}
-		parents, err := g.parents(ctx, cur)
-		if err != nil {
-			return nil, nil, err
-		}
-		if len(parents) != 2 {
-			return nil, &refreshRefusal{"not_a_merge", fmt.Sprintf("%s has %d parent(s); an update is a merge of exactly two", cur, len(parents))}, nil
-		}
-		first, second := parents[0], parents[1]
-		fromBase, err := g.isAncestor(ctx, second, base)
+		return refuse(refreshSafeSide, "not_built_on_previous", "the first parent %s of %s does not contain %s", first, head, previous)
+	}
+	if second != tip {
+		fromBase, err := g.isAncestor(ctx, second, tip)
 		if err != nil {
 			return nil, nil, err
 		}
 		if !fromBase {
-			return nil, &refreshRefusal{"not_from_base", fmt.Sprintf("%s merges %s, which is not on the base", cur, second)}, nil
+			return refuse(refreshSafeSideMoved, "not_from_base", "%s merges %s, which is not an ancestor of the commit named as the base tip (%s): a branch that is not the base, or a base that moved between reading its tip and the update", head, second, tip)
 		}
-		tree, conflicts, err := g.mergeTree(ctx, first, second)
-		if err != nil {
-			return nil, nil, err
-		}
-		if len(conflicts) > 0 {
-			return nil, &refreshRefusal{"merge_conflicts", fmt.Sprintf("git cannot merge %s and %s without a resolution (%s), so %s carries one", first, second, strings.Join(conflicts, ", "), cur)}, nil
-		}
-		_, actualOut, err := g.iso(ctx, nil, "rev-parse", "--verify", cur+"^{tree}")
-		if err != nil {
-			return nil, nil, err
-		}
-		actual := strings.TrimSpace(actualOut)
-		if actual != tree {
-			paths, err := g.differing(ctx, tree, actual)
-			if err != nil {
-				return nil, nil, err
-			}
-			return nil, &refreshRefusal{"tree_differs", fmt.Sprintf("the tree of %s is not what git merges from %s and %s; paths that differ: %s", cur, first, second, paths)}, nil
-		}
-		merges = append(merges, refreshMerge{commit: cur, first: first, second: second, tree: tree})
-		cur = first
+		return refuse(refreshSafeSideMoved, "not_the_dev_tip", "%s merges %s, which is on the base but is not the commit named as its tip (%s): the base moved after the update, or the wrong tip was named", head, second, tip)
 	}
-	return merges, nil, nil
+	tree, conflicts, err := g.mergeTree(ctx, previous, tip)
+	if err != nil {
+		return nil, nil, err
+	}
+	facts.mergeTree = tree
+	if len(conflicts) > 0 {
+		return refuse(refreshSafeSide, "merge_conflicts", "git cannot merge %s and %s without a resolution (%s), so %s carries one", previous, tip, strings.Join(conflicts, ", "), head)
+	}
+	_, actualOut, err := g.iso(ctx, nil, "rev-parse", "--verify", head+"^{tree}")
+	if err != nil {
+		return nil, nil, err
+	}
+	actual := strings.TrimSpace(actualOut)
+	facts.headTree = actual
+	if actual != tree {
+		paths, err := g.differing(ctx, tree, actual)
+		if err != nil {
+			return nil, nil, err
+		}
+		return refuse(refreshSafeSide, "tree_differs", "the tree of %s is not what git merges from %s and %s; paths that differ: %s", head, previous, tip, paths)
+	}
+	return &refreshProof{previous: previous, devTip: tip, head: head, tree: tree}, nil, nil
 }

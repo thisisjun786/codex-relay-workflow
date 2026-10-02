@@ -803,7 +803,10 @@ per-finding trail, and accept them as the evidence table above defines them.
 Acceptance keeps its own work, which was never the child's. Confirm the reported
 head is the head the pull request has now, the base is current and the merge is
 clean, every accepted criterion maps to evidence that still applies at that head,
-and any finding still open is named. The one head that differs from the report on
+and any finding still open is named. The handoff's disclosures are part of that: every decision
+request is answered before the verdict, under
+[what the handoff discloses, checked at the verdict](references/merge-readiness.md#what-the-handoff-discloses-checked-at-the-verdict).
+The one head that differs from the report on
 purpose is a base refresh the parent made itself under
 [Merge readiness](references/merge-readiness.md#refresh-the-base-yourself-when-only-the-base-moved),
 confirmed by that rule's own checks. Any other moved head invalidates the reused result,
@@ -859,6 +862,12 @@ forbids. Nor is there a supported way to send it again afterwards: the verdict d
 resend. Record it as an undelivered correction and hand the decision to whoever owns the
 assignment, per [codex-session-relay](references/relay.md#the-parent-verifies) and
 [the restoration block](references/task-packet.md#restoration-block).
+
+A correction that asks only for the base to be brought up to date is not new scope, and the packet
+says so: the child merges the base, names the kind of each merge ([the kinds and what reruns for
+each](references/task-packet.md#what-a-handoff-discloses)) and reruns that kind's checks and no
+more, so the correction does not ask for an audit of what the base moved under. The restoration
+block carries the siblings' landings and the conflicts the parent expects.
 
 Refresh the task's identity, ownership, current turn, checkout, and prior
 correction receipts before sending. Reuse its agreed model, effort, workflow,

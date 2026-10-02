@@ -1026,10 +1026,11 @@ After the parent refreshed the branch itself
 ([merge readiness](merge-readiness.md#refresh-the-base-yourself-when-only-the-base-moved)) the
 head that landed is not the head the receipt names: `--expected-event` still pins the child's
 report, and the mark records a revision, not a commit. So the `--evidence` text names the head
-that landed, the head the report named, and the check between them (the `base-refresh check`
-answer and the `merge-evidence` verdict on the landed head). Nothing else in the record says
-why the two heads differ, and `merge-evidence` on the landed head is the reading to quote, not
-the child's record.
+that landed, the head the report named, and the check between them: the `evidence:` line of the
+`base-refresh check` as it printed it (previous head, dev tip, new head, tree OID and the rule
+applied, one line for each step of a chain) and the `merge-evidence` verdict on the landed head.
+Nothing else in the record says why the two heads differ, and `merge-evidence` on the landed head
+is the reading to quote, not the child's record.
 
 ## Re-reviewing after the criteria change
 
