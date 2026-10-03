@@ -64,11 +64,13 @@ their verified successors were refused `merge_currency_stale`, and nothing could
 turn: `merge-turn-resolve` admits only an unknown one.
 
 So the merge turn reads one fact from the target itself: the commit its base branch points at. It
-reads it at the four moments it records a base, and at no other time:
+reads it at the four moments it records a base, and at no other time. One more reading, how the
+branch got from the last landing's base to that tip, is taken only by a check that finds the two
+differ (below):
 
 | Command | What it reads and records |
 | --- | --- |
-| `merge-turn-check` | The restated `--base-sha` must be the branch tip now; the reading, not the caller's text, is stored as the base the merge was checked against |
+| `merge-turn-check` | The restated `--base-sha` must be the branch tip now; the reading, not the caller's text, is stored as the base the merge was checked against. When the last landing recorded a different base, it also reads how the branch moved and may record that base again (see "A merge outside the lane") |
 | `merge-turn-land` | The branch after the merge, recorded as the base the next candidate must restate. `--landed-sha` is recorded as stated; `--observed-base-sha` is an optional cross-check |
 | `merge-turn-resolve` | The branch now, recorded with the outcome. `--observed-base-sha` is cross-checked |
 | `merge-turn-restate-base` | The branch now, recorded over the latest landing's base, with the value it replaces kept in the ledger |
@@ -109,7 +111,8 @@ target, and not while another turn there is merging or unknown. The ledger entry
 `baseRestatements`. It records what the branch reads now, which is what the next candidate has
 to restate, so it can also carry a commit written outside the relay after the landing. When a
 `merge-turn-check` is refused because the last landing recorded a different base, its detail
-names that landing, this command, and who may run it.
+names that landing, this command with the holder to run it as, and who else may run it. After a
+merge outside the lane the check usually does not need it: see the next section.
 
 Each reading is taken before the command's transaction, never inside it, so a branch that moves
 between the reading and the write is recorded as it was read. That errs one way only: the next
@@ -120,9 +123,70 @@ What this does not establish: `landedSha` is the holder's statement and is not c
 containment in the branch, so a merge that failed while another write moved the branch is
 recorded as landed, with the true base. On a resolved landing `landedSha` is the candidate head,
 because no landing commit was reported. The comparison with the last recorded landing is kept
-beside the reading on purpose: after an outside commit it stops a correct successor until the
-landing's holder or supervisor restates the base, and that restatement is the record of why the
-base moved outside the relay.
+beside the reading on purpose: a move of the branch that no landing recorded is never absorbed
+silently. Where the relay can confirm the move it records the base again itself, with the reason
+in the ledger; where it cannot, the check stops until the landing's holder or supervisor
+restates the base, and that restatement is the record of why the base moved.
+
+## A merge outside the lane
+
+A pull request merged outside the lane (a node the lane cannot serve, a parent using the older
+route) moves the base branch past the base the last landing recorded. Before CRW-403 the next
+parent's `merge-turn-check` was refused `merge_currency_stale` against that record, and only the
+landing's holder or its supervisor could correct it, so one parent's outside merge stopped every
+other parent and the waiting parents could not tell why.
+
+Now the check that finds the recorded base differs from the tip it states reads how the branch got
+there, before its transaction like the tip: the first-parent line of the base branch from the tip
+down to the recorded base, one commit at a time, at most 32 commits and 90 seconds in all: for a
+local path the stored commit objects through `git cat-file` with replacement off, so a replace
+ref, a grafts file or the commit graph cannot change what is read; for `owner/name` one
+`git/commits/<sha>` GET per commit. The move is **confirmed** when all of these hold, and any
+other result is unconfirmed:
+
+- the reading runs from the recorded base to the tip this check read, and the line from the tip
+  reaches the recorded base within 32 commits without a gap;
+- every commit on that line is a merge commit (two or more parents);
+- none of them is the `landedSha` of a landing on this target;
+- no other turn on the target is merging or unknown;
+- the latest landing is still the landing, with the recorded base, that was read.
+
+A confirmed move is recorded inside the check's own transaction, by the writer
+`merge-turn-restate-base` uses: one `landing_base_restated` ledger entry on the landing under the
+next `restate-base:<n>`, the landing's recorded base set to the tip, and the same
+`merge_turn_base_restated` journal row with `automatic` and `checkTurnId` added. The entry's
+actor is the checking holder; its evidence begins `automatic:` and lists each merge commit with
+its subject, so `baseRestatements` keeps the old value, the new value and the reason beside each
+other. The check goes on to its other gates, and the restatement stands even if one of them
+refuses, because it is a fact about the branch and not about the candidate. The check's answer
+carries `landingBaseRestated` (`turnId`, `from`, `to`, `sequence`, `source`, `mergeCommits`) only
+when it wrote one. No authority rule applies, because the relay writes what it read, not what the
+caller said; the manual command and its rule are unchanged.
+
+An unconfirmed move changes nothing and refuses `merge_currency_stale`, as before. The detail
+keeps its sentence, then names the base the branch now reads, says why the relay did not restate
+it (the reader cannot read how the branch moved, the read failed, the line does not reach the
+recorded base, a commit on it has one parent, a commit is a recorded landing, a turn is in flight,
+or the landing changed during the call), and gives the command with the landing and the holder
+filled in: `merge-turn-restate-base --turn <landing> --actor <holder> --evidence '<why the base
+moved>'`. The supervisor above the landing's project may run it too.
+
+What this does not establish. Confirmation is by commit shape, not by pull request identity: a
+hand-made merge commit counts, and branch protection, not the lane, decides who may merge. A
+repository whose pull requests land as squash or rebase commits has no merge commits on its
+line, so it is never confirmed and keeps the manual command. More than 32 merges since the last
+landing is unconfirmed. `landedSha` is a statement (a resolved landing records the candidate
+head), so excluding the lane's own landings is a consistency check and not proof. Nothing watches
+the branch: a recorded base is brought up to date only when a check finds it behind.
+
+**The merged mark.** `assignment-mark merged` was examined as another way for the lane base to
+follow the branch and is not wired to it. A mark names a relationship and the event it integrated,
+with free-text evidence; it carries no repository, base ref or commit, so it cannot say which
+branch tip it concerns, and reading its text would turn an assertion into a reading. The lane
+records only what it read from the target. A mark is also written after the merge, which an
+outside merge may never be followed by, and it is written by the registry package, which the
+merge lane imports, so a mark that wrote the lane base would need the registry to call back into
+the lane. The reading of the branch names the target by construction and is what the check uses.
 
 ## A message about a turn is not the turn moving
 
@@ -317,8 +381,9 @@ as `bad_invocation` at the command line.
   able to invoke the CLI is already inside the boundary.
 - **Forge evidence is cross-checked, never observed.** `merge-turn-check` verifies that what
   the caller restated is internally consistent and current against what this store knows. It
-  cannot see the pull request; the one thing it reads from the target is where the base branch
-  points (see above). An operator who wants proof that required CI was green reads
+  cannot see the pull request; what it reads from the target is where the base branch points
+  and, only when the last landing's recorded base is older than that tip, how the branch got
+  there (see above). An operator who wants proof that required CI was green reads
   the forge, not this record.
 
 - **An agreement confers nothing.** Not merge permission, not authority to instruct, not a
@@ -338,10 +403,11 @@ as `bad_invocation` at the command line.
   two totals and neither is a host-wide number.
 - **Required checks are restated, not discovered.** `merge-turn-check --required` is the
   caller's declaration of what branch protection requires, stored as `requiredDeclared`. The
-  merge turn never reads a forge's rules or checks; it reads only where the base branch points. What the check establishes is that the restated evidence is
+  merge turn never reads a forge's rules or checks; it reads where the base branch points and, in the one case described under "A merge outside the lane", how it moved. What the check establishes is that the restated evidence is
   internally consistent and current: every declared required name present and successful on the
   candidate head at its highest submitted attempt, the base matching the last landing recorded
-  here, and the review paginated to the end with nothing unresolved. When the turn names an
+  here (or restated by the check itself after a confirmed merge outside the lane), and the
+  review paginated to the end with nothing unresolved. When the turn names an
   assignment, the head must also be the one its current work reports name: the latest
   head-bearing submission of every event in the newest generation that names a head, read per
   event because submission numbers count per event. Two different current heads are refused as
