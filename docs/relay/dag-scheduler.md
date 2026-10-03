@@ -471,6 +471,9 @@ read through the tip reader); `dag-conflict-sweep` runs one on demand (trigger `
 A landing or an accepted receipt is swept once: the trigger reference is unique in the ledger (a partial unique index), so a repeat finds the sweep and writes nothing, two writers leave one row, and a sweep that failed before it wrote anything (its answer says `failed`, with the reason) is run again by the repeat of the command. A sweep with no checkout to measure in (`Scheduler.Checkout`, else the `parent_cwd` of a relationship
 of the plan that is a git checkout, else the command's `--repository`) is `skipped`; the command it followed is never failed by it. A manual sweep repeats freely and each leaves a ledger row.
 
+A sweep answers with a `state` (`recorded`, `already_swept`, `skipped` or `failed`), its `sweep_seq` and its members. Each member names where the heads it measured came from, `left_head_source` and `right_head_source`: `explicit` (the parent named it), `acceptance` (the head of the node's current accepted result) or `child_checkout` (the child's own checkout); the right side of a head
+against a tip is the tip, which has no source.
+
 **Receipt arrival is approximated.** Delivery writes the receipt into the relay's store and the scheduler does not run in that path (`dagsched` imports `delivery`; `delivery` imports nothing of `dagsched`, and a hook there would run git inside the relay daemon, which has no parent checkout). A receipt is measured when the parent takes it in (`dag-accept`) and, for a receipt that is not accepted yet (a correction
 round), when the parent runs `dag-conflict-sweep --trigger receipt --node N`, which the crw-run procedure puts at the start of every receipt-resumed turn, after a `git fetch`. A head that the relay can only know from its child's checkout is the child's `HEAD` at the time of the sweep.
 

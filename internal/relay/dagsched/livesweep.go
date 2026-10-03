@@ -352,19 +352,17 @@ func (s *Scheduler) recordSweep(ctx context.Context, plan, actor string, res *Sw
 
 // recordMeasured writes the observation of a measured member, or finds the one the same heads and base were recorded under, and gives the member its status, observation id and drift.
 func (s *Scheduler) recordMeasured(ctx context.Context, tx store.Querier, plan, actor, checkout string, names []string, declarations map[string][]Region, m *SweepMember) error {
-	var id, table, filesTable, find string
+	var id, find string
 	var findArgs []any
 	var nodes []string
 	switch m.Kind {
 	case MemberPair:
 		id = "dco-" + shaOf([]byte(strings.Join([]string{plan, m.LeftNode, m.RightNode, m.LeftHead, m.RightHead, m.base}, "|")))[:32]
-		table, filesTable = "dag_conflict_observations", "dag_conflict_observation_files"
 		find = "SELECT observation_id, conflict_count FROM dag_conflict_observations WHERE plan_id = ? AND left_node_id = ? AND right_node_id = ? AND left_head = ? AND right_head = ? AND base_sha = ?"
 		findArgs = []any{plan, m.LeftNode, m.RightNode, m.LeftHead, m.RightHead, m.base}
 		nodes = []string{m.LeftNode, m.RightNode}
 	default:
 		id = "dto-" + shaOf([]byte(strings.Join([]string{plan, m.LeftNode, m.LeftHead, m.RightHead, m.base}, "|")))[:32]
-		table, filesTable = "dag_tip_conflict_observations", "dag_tip_conflict_observation_files"
 		find = "SELECT observation_id, conflict_count FROM dag_tip_conflict_observations WHERE plan_id = ? AND node_id = ? AND head = ? AND tip_sha = ? AND base_sha = ?"
 		findArgs = []any{plan, m.LeftNode, m.LeftHead, m.RightHead, m.base}
 		nodes = []string{m.LeftNode}
@@ -386,10 +384,10 @@ func (s *Scheduler) recordMeasured(ctx context.Context, tx store.Querier, plan, 
 	}
 	m.Status, m.ObservationID = MemberObserved, id
 	if m.Kind == MemberPair {
-		_, err = tx.ExecContext(ctx, "INSERT INTO "+table+" (observation_id, plan_id, left_node_id, right_node_id, repository, left_head, right_head, base_sha, conflict_count, method, observed_by, observed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+		_, err = tx.ExecContext(ctx, "INSERT INTO dag_conflict_observations (observation_id, plan_id, left_node_id, right_node_id, repository, left_head, right_head, base_sha, conflict_count, method, observed_by, observed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
 			id, plan, m.LeftNode, m.RightNode, checkout, m.LeftHead, m.RightHead, m.base, m.Conflicts, mergeTreeMethod, actor, s.now())
 	} else {
-		_, err = tx.ExecContext(ctx, "INSERT INTO "+table+" (observation_id, plan_id, node_id, repository, head, head_source, tip_ref, tip_sha, base_sha, conflict_count, method, observed_by, observed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+		_, err = tx.ExecContext(ctx, "INSERT INTO dag_tip_conflict_observations (observation_id, plan_id, node_id, repository, head, head_source, tip_ref, tip_sha, base_sha, conflict_count, method, observed_by, observed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
 			id, plan, m.LeftNode, checkout, m.LeftHead, m.LeftSource, m.tipRef, m.RightHead, m.base, m.Conflicts, mergeTreeMethod, actor, s.now())
 	}
 	if err != nil {
@@ -398,7 +396,13 @@ func (s *Scheduler) recordMeasured(ctx context.Context, tx store.Querier, plan, 
 	// the files git could not merge, under each name the checkout is known by (CRW-409), and the nodes whose declarations do not cover them (drift)
 	for _, name := range names {
 		for _, file := range m.Files {
-			if _, err := tx.ExecContext(ctx, "INSERT INTO "+filesTable+" (observation_id, repository, path) VALUES (?,?,?)", id, name, file); err != nil {
+			var err error
+			if m.Kind == MemberPair {
+				_, err = tx.ExecContext(ctx, "INSERT INTO dag_conflict_observation_files (observation_id, repository, path) VALUES (?,?,?)", id, name, file)
+			} else {
+				_, err = tx.ExecContext(ctx, "INSERT INTO dag_tip_conflict_observation_files (observation_id, repository, path) VALUES (?,?,?)", id, name, file)
+			}
+			if err != nil {
 				return err
 			}
 		}

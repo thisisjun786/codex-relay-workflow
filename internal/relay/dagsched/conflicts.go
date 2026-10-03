@@ -35,6 +35,9 @@ var commitPattern = regexp.MustCompile("^[0-9a-f]{40}$")
 // working tree or a ref), as the measurement criterion c7 asks for: the number of merge-tree conflicts between parallel child branches. It is a record, not a gate: nothing in the
 // reading waits for it. The merge writes its trees into a throwaway object directory that borrows the checkout's objects, so the observed checkout is not changed. The pair is
 // stored once for a base and two heads: a repeat is a replay, and the nodes are stored in sorted order so the question asked either way round is one row.
+//
+// The measurement is recorded as a one-member sweep (trigger manual, livesweep.go): the observation, the files, the nodes whose declarations do not cover them (drift) and a ledger row, which orders it among the
+// measurements of the pair. Measuring every live pair and each head against the tip is ObserveLive's.
 func (s *Scheduler) ObserveConflicts(ctx context.Context, plan, actor string, in ConflictInput) (ConflictResult, error) {
 	out := ConflictResult{PlanID: plan}
 	left, right, leftHead, rightHead := in.LeftNode, in.RightNode, in.LeftHead, in.RightHead

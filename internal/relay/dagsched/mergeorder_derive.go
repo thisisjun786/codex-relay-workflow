@@ -100,8 +100,12 @@ func latestPairs(ctx context.Context, q store.Querier, plan string) ([]measuredP
 }
 
 // observedFiles are the files an observation could not merge, as the repository names they were recorded under, and the distinct paths.
-func observedFiles(ctx context.Context, q store.Querier, table, observation string) (names, files []string, err error) {
-	rows, err := q.QueryContext(ctx, "SELECT repository, path FROM "+table+" WHERE observation_id = ? ORDER BY repository, path", observation)
+func observedFiles(ctx context.Context, q store.Querier, tip bool, observation string) (names, files []string, err error) {
+	query := "SELECT repository, path FROM dag_conflict_observation_files WHERE observation_id = ? ORDER BY repository, path"
+	if tip {
+		query = "SELECT repository, path FROM dag_tip_conflict_observation_files WHERE observation_id = ? ORDER BY repository, path"
+	}
+	rows, err := q.QueryContext(ctx, query, observation)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -254,7 +258,7 @@ func (s *Scheduler) orderConstraints(ctx context.Context, q store.Querier, plan 
 		if !leftHolds || !rightHolds || p.conflicts == 0 {
 			continue
 		}
-		names, files, err := observedFiles(ctx, q, "dag_conflict_observation_files", p.observation)
+		names, files, err := observedFiles(ctx, q, false, p.observation)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -337,7 +341,7 @@ func latestTips(ctx context.Context, q store.Querier, plan string, holders map[s
 		if _, held := holders[m.node]; !held || m.conflicts == 0 || out[m.node] != nil {
 			continue
 		}
-		_, files, err := observedFiles(ctx, q, "dag_tip_conflict_observation_files", m.observation)
+		_, files, err := observedFiles(ctx, q, true, m.observation)
 		if err != nil {
 			return nil, err
 		}
