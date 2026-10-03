@@ -49,6 +49,11 @@ A holder that reached the currency check may already have merged. So:
 The refusal a caller gets in that state names `land` and `merge-turn-unknown` as the two routes
 out, because "wait longer" is the one answer that never helps.
 
+The one thing that moves because a holder went quiet is a turn that is still `holding`: a holder that
+follows the protocol has not begun to merge before `merge-turn-check`, so a holding turn silent past
+the holding limit can be passed on (below). That is a recorded act by another parent, not the
+passing of time, and it is no proof that the pull request is unmerged.
+
 ## The base a landing leaves behind
 
 A landing records the base branch it leaves behind, and the next candidate on that target has to
@@ -185,12 +190,89 @@ the lane. The reading of the branch names the target by construction and is what
 
 ## A message about a turn is not the turn moving
 
-`merge-turn-request-return` records somebody asking. `merge-turn-attest` with
+`merge-turn-request-return` records somebody asking, and queues a notice to the holder through the
+delivery engine, which wakes the holder's thread when it is idle. The notice is the grant channel's
+(the same delivery kind, recipient and address, so a turn that names no usable assignment is refused
+in the same way and journaled as `merge_turn_wake_unaddressed`) and is told apart by the kind inside
+its receipt, `merge_turn_return_request`. The ledger entry and the notice are written in one
+transaction: if the notice cannot be queued the transaction rolls back and no request is recorded.
+A request with nowhere to go is recorded and answered as such. The answer carries `returnNotice`:
+`queued` with the event id, `unaddressed` with the reason, or `not_sent` for a turn that holds
+nothing. `queued` means the notice is in the delivery queue; the delivery engine sends it and wakes an
+idle holder under its usual pacing and holds, so it is not a receipt. One requester asking again
+about the same turn keeps the original request and its text and reuses the notice already queued; if
+none was queued because the turn then had no address, the replay queues one once an address exists.
+The notice reads as current while the turn occupies the target and as `merge_turn_closed` once it
+does not; an acknowledgement of the grant does not answer it. `merge-turn-attest` with
 `--evidence-kind transport_accepted` records a delivery layer accepting that message. Neither
-changes state. Only the holder's own `merge-turn-release` returns the turn, and
+changes state. Only the holder's own `merge-turn-release` returns the turn (a silent holding turn can
+also be passed on, below), and
 `merge-turn-show` reports `returnRequestedAt`, `transportAcceptedAt` and `releasedAt` as three
 separate facts. The same rule from the other side is that a parent asserting its turn in
 conversation changes nothing: only a write by the registered project parent does.
+
+## Progress, the holding limit and passing a silent turn
+
+A holder works inside its turn for as long as a refresh, CI and a merge take, and nothing used to
+show whether it was still there: a holder whose session died kept the target occupied until
+somebody noticed (23 minutes, with two pull requests waiting). Three things change that.
+
+**The holder records progress.** `merge-turn-progress --turn <id> --actor <holder> --step <step>
+[--evidence <what>]` records one step: `base_refresh` after refreshing the candidate,
+`ci_started` when its checks start, `ci_polled` while they run, `ci_result` when they finish,
+`merge_attempt` when the merge is requested. Only the holder records, only while the turn is
+holding or merging, and under the checks `merge-turn-acknowledge` makes (the owning binding is
+current and not paused). A record is a ledger entry (`progress_recorded`, key `progress:<n>`).
+The turn's clock starts at the grant. After that the newest of these refreshes it, each written by
+the holder itself: a progress record, its acknowledgement of the grant, a restated head or
+readiness, and a successful currency check (`merge-turn-check`). A tie is decided by rank (a
+progress record, then the other things the holder does, then the grant) and then by sequence. A
+stored time that cannot be read, or a clock behind the last sign, is no evidence of silence.
+
+**`merge-turn-show` shows it.** The target answer, when a turn occupies the target, carries
+`lastProgressAt`, `lastProgress` (`evidenceKind`, `step`, `sequence`, `recordedAt`),
+`holdingLimitSeconds`, `stallsAt` and `stalled`; the answer for a single turn does not (a turn's
+progress records are in its ledger), and `merge-turn-progress` answers with its own `progress` object. A stalled holding turn reads
+`blocked.cause` `holder_stalled` unless the holder no longer owns its project or its binding is
+paused, which are read first; a stalled merging turn keeps `merge_in_flight`. `stalled` is true in
+both.
+
+**The holding limit is 1200 seconds**: the longest hosted CI job may run 900 seconds (the largest
+`timeout-minutes` in `.github/workflows/ci.yml`; a test fails when that changes) plus a 300 second
+margin. It measures silence between records, not a CI budget: a holder that records `ci_polled`
+while CI runs is not silent. It is a constant of the lane, shown in the target reading and copied
+into every pass record and return notice, not a store column.
+
+A turn that is still **holding** and stalled can be passed:
+`merge-turn-pass --turn <id> --actor <passer> --evidence <what was observed>`. The passer is the
+supervisor above the holder's project or the parent of a live waiting claim on the same target
+that still owns its project. Inside one transaction the relay re-reads the ledger, refuses unless
+the holder has been silent for the limit (`merge_turn_not_held`, naming when the turn would
+stall), writes a `turn_passed` entry that keeps the original values (holder, candidate head,
+`heldAt`, the last sign of life and its step, the limit, the seconds of silence, the passer and
+the evidence), closes the turn as `passed` with that text as its close reason, and promotes the
+next ready waiter in the ordinary order with its grant and wake. The turn keeps its holder,
+candidate head, `heldAt` and every ledger entry; only its closure (state, close reason and time) is
+written. A merging or unknown turn is never passed (`merge_turn_unresolved`): its holder may
+already have merged, and elapsed time is not an observation. A merging turn leaves through
+`merge-turn-land`, or `merge-turn-unknown` and then `merge-turn-resolve`; an unknown turn goes
+straight to `merge-turn-resolve`. A holder that follows the protocol runs
+`merge-turn-check` before it merges, which moves the turn to merging; that is why only a holding
+turn can be passed. A pass is a statement about the relay's record, not proof that the pull
+request is unmerged: a holder that merged without running `merge-turn-check`, against the protocol,
+leaves a merged pull request behind a holding turn that can be passed, so a passer reads the pull
+request before relying on the candidate being unmerged. A holder that ran the check and died stays
+merging, and a merging turn is never passed.
+
+After a pass the original holder is refused `merge_turn_not_held` on every operation that acts on
+that turn (land, release, readiness, check, acknowledge, progress, withdraw), with a detail that
+says the turn was passed, when, by whom and after how long, and that it claims the target again with
+`merge-turn-request` if the candidate is still wanted; reading the turn and asking about it still
+answer. Each refusal is recorded as a contest on the target; the contest is one row per refused task
+and state, so `merge-turn-show` keeps the newest attempt's detail. A pass can also reach a holder
+that is only slow to wake: a grant whose notice waits in delivery longer than the limit reads as
+silent before the holder has seen it, and the holder finds itself refused when it wakes. That costs
+a new claim, not a wrong merge.
 
 ## Counts and ceilings are different kinds of fact
 

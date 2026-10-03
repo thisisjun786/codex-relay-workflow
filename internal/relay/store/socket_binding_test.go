@@ -44,6 +44,7 @@ func readBoth(t *testing.T, path string) (ownership.Record, ownership.Stamp) {
 // appServerSocket and the scope key, and nothing else of the record changes. Read-only opens
 // never bind; a bound store opened for another socket is refused as the fence refuses it.
 func Test30SocketBindingBindsAnUnboundStoreOnce(t *testing.T) {
+	// Serial: sets process environment variables, which every other running test would see.
 	dir := stateDir(t)
 	path := filepath.Join(dir, "relay.sqlite3")
 	app, other := filepath.Join(dir, "app.sock"), filepath.Join(dir, "other.sock")
@@ -119,6 +120,7 @@ func Test30SocketBindingBindsAnUnboundStoreOnce(t *testing.T) {
 // admitted on the stamp and leaves the mirror as it is (decision 56); the next writable opener
 // passing the same socket completes the binding.
 func Test30TornSocketBindingIsCompletedOnlyByItsSocket(t *testing.T) {
+	// Serial: assigns the package-level bindFault seam, which every other running test would reach.
 	dir := stateDir(t)
 	path := filepath.Join(dir, "relay.sqlite3")
 	app, other := filepath.Join(dir, "app.sock"), filepath.Join(dir, "other.sock")
@@ -165,6 +167,7 @@ func Test30TornSocketBindingIsCompletedOnlyByItsSocket(t *testing.T) {
 // Go binds only a store it owns in phase active with no transition, and never the other
 // runtime's or one mid-transition: those are refused unchanged, as Python refuses them.
 func Test30SocketBindingNeverTouchesAForeignOrMovingStore(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ owner, phase string }{{"python", "active"}} {
 		t.Run(tc.owner+"-"+tc.phase, func(t *testing.T) {
 			dir := stateDir(t)
@@ -197,6 +200,7 @@ func Test30SocketBindingNeverTouchesAForeignOrMovingStore(t *testing.T) {
 // lifetime) at most ownership.LockWait; expiry is Python's retryable LockWaitExpired host
 // error and changes nothing.
 func Test30SocketBindingWaitsForWritersWithinTheBound(t *testing.T) {
+	// Serial: assigns ownership.LockWait, which every other running test would read, and bounds a wait by the wall clock.
 	dir := stateDir(t)
 	path := filepath.Join(dir, "relay.sqlite3")
 	app := filepath.Join(dir, "app.sock")

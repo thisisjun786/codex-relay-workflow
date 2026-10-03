@@ -7,6 +7,7 @@ import (
 )
 
 func TestEvidenceWrites_roundtrip_when_rows_are_recorded(t *testing.T) {
+	t.Parallel()
 	// Given: an isolated store and typed rows for the evidence tables the store writes.
 	s := recordStore(t)
 	ctx := context.Background()

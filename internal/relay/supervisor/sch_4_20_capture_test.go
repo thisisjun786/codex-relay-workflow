@@ -429,6 +429,7 @@ func Test24_SCH_6_Capture(t *testing.T) {
 	})
 }
 func Test24_SCH_5_Capture(t *testing.T) {
+	t.Parallel()
 	t.Run("decision", func(t *testing.T) {
 		supervisorMirror(t, "WhatTheMessageCarries.test_a_decision_upward_names_what_is_being_decided", "event", func(c *Channel, s *store.Store) []any {
 			ctx := context.Background()
@@ -448,6 +449,7 @@ func Test24_SCH_5_Capture(t *testing.T) {
 	})
 }
 func Test24_SCH_4_Capture(t *testing.T) {
+	t.Parallel()
 	t.Run("ordinary", func(t *testing.T) {
 		supervisorMirror(t, "WhatMayBeStaged.test_an_ordinary_event_is_not_news_and_has_no_obligation_to_stage", "ordinary-final", func(c *Channel, s *store.Store) []any {
 			o, err := c.FromEvent(context.Background(), captureEvent(t, s))

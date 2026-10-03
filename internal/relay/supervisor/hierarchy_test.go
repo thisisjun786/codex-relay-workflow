@@ -14,6 +14,7 @@ type staticLinkage struct{ reading map[string]any }
 func (s staticLinkage) Up(_ context.Context, _ string) (map[string]any, error) { return s.reading, nil }
 
 func Test24_SCH_1_LiveHierarchy(t *testing.T) {
+	t.Parallel()
 	supervisorMirror(t, "OnlyTheLiveHierarchyDecidesWhoIsTold.test_the_project_owner_sends_and_the_initiative_owner_receives", "setup", func(c *Channel, _ *store.Store) []any {
 		got, err := c.Resolve(context.Background(), captureRelationID(t, c))
 		if err != nil {
@@ -92,6 +93,7 @@ func Test24_SCH_1_LiveHierarchy(t *testing.T) {
 }
 
 func Test24_SCH_4_WrongRecipient(t *testing.T) {
+	t.Parallel()
 	supervisorMirror(t, "OnlyTheLiveHierarchyDecidesWhoIsTold.test_an_unreadable_hierarchy_is_not_a_missing_supervisor", "setup", func(c *Channel, _ *store.Store) []any {
 		c.Linkage = staticLinkage{map[string]any{"state": "unreadable", "readable": false, "levels": []any{}, "gaps": []any{}, "contention": []any{}}}
 		_, err := c.Resolve(context.Background(), "irrelevant")

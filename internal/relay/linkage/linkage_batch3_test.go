@@ -32,6 +32,7 @@ func (w *world) handedTo(incoming, supersedes, dispatch string) string {
 
 // Test26_LNK21: a returning tenure (A -> B -> A) and its refusals.
 func Test26_LNK21_a_returning_tenure(t *testing.T) {
+	t.Parallel()
 	back := registry.Endpoint{TaskID: child, HostID: host, Cwd: ns(root)}
 	t.Run("handback", func(t *testing.T) {
 		w := newWorld(t)
@@ -147,6 +148,7 @@ func (w *world) duplicateOwners() {
 
 // Test26_LNK22: writers refuse a contested project instead of picking an owner.
 func Test26_LNK22_writers_refuse_a_contested_project(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	w.superviseDefault()
 	rid := w.register()
@@ -164,6 +166,7 @@ func Test26_LNK22_writers_refuse_a_contested_project(t *testing.T) {
 
 // Test26_LNK23: walk answer states, the unreadable one included.
 func Test26_LNK23_walk_answer_states(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	w.step(w.r.Down(w.ctx, "initiative", "INIT-NEVER-SEEN"), nil)
 	w.superviseDefault()
@@ -218,6 +221,7 @@ func (w *world) strayLink(kind, init string, revision int, upperTask string) str
 
 // Test26_LNK24: walk contention words, the same in both directions.
 func Test26_LNK24_walk_contention_words(t *testing.T) {
+	t.Parallel()
 	t.Run("instruction_conflict", func(t *testing.T) {
 		w := newWorld(t)
 		execution := text(field(w.superviseDefault(), "linkId"))
@@ -286,6 +290,7 @@ func (w *world) counterpart(from, to string, q registry.CounterpartQuery) {
 
 // Test26_LNK25: counterpart answers never borrow another link.
 func Test26_LNK25_counterpart_never_borrows_a_link(t *testing.T) {
+	t.Parallel()
 	t.Run("counterpart", func(t *testing.T) {
 		w := newWorld(t)
 		w.scoped()
@@ -326,6 +331,7 @@ func Test26_LNK25_counterpart_never_borrows_a_link(t *testing.T) {
 
 // Test26_LNK26: the partial unique guard scope_bindings_one_live_owner.
 func Test26_LNK26_the_one_live_owner_guard(t *testing.T) {
+	t.Parallel()
 	t.Run("database_refuses", func(t *testing.T) {
 		w := newWorld(t)
 		w.must(w.r.BindScopeAs(w.ctx, "parent", project, parentEP(parent), "active"))
@@ -368,6 +374,7 @@ func Test26_LNK26_the_one_live_owner_guard(t *testing.T) {
 
 // Test26_LNK27: relay-owned ids keep 128 bits.
 func Test26_LNK27_relay_owned_ids_keep_128_bits(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	bid := registry.BindingID("parent", "project", project, parent)
 	lid := registry.LinkID("execution", "initiative", initiative, "project", project)
@@ -383,6 +390,7 @@ func Test26_LNK27_relay_owned_ids_keep_128_bits(t *testing.T) {
 
 // Test26_LNK28: CLI selectors of linkage-up.
 func Test26_LNK28_linkage_up_selectors(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	for _, argv := range [][]string{{"linkage-up"}, {"linkage-up", "--relationship", "rel-a", "--issue", issue}} {
 		if code, _, stderr := runCLI(t, w, argv...); code != 2 || !strings.Contains(stderr, "usage:") {
@@ -398,6 +406,7 @@ func Test26_LNK28_linkage_up_selectors(t *testing.T) {
 
 // Test26_LNK29: the assignment view of a contested project.
 func Test26_LNK29_assignment_view_of_a_contested_project(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	w.scoped()
 	w.contestTheProject()
@@ -416,6 +425,7 @@ func Test26_LNK29_assignment_view_of_a_contested_project(t *testing.T) {
 // Test26_LNK_literal_reasons: every literal reason this port emits outside errors.RefusalReason
 // lookups, and the bad-argument refusals, match Python's reason and detail.
 func Test26_LNK_literal_reasons(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t)
 	w.step(w.r.BindScopeAs(w.ctx, "parent", project, parentEP(parent), "bogus"))
 	w.step(w.r.SettleDirective(w.ctx, "dir-x", "bogus", "a", sql.NullString{}))
