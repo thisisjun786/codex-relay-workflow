@@ -515,3 +515,11 @@ The pinned oracle already publishes through an exclusive 0600 temporary file and
 ## CRW-358 — goalplan definition integrity
 
 - Repeated unknown `criteriaIds` produce repeated identical reasons, so a caller that displays only the first four reasons can hide later diagnoses (pabcd-state/src/goalplan.ts:1574-1578 at v0.2.40); port: kept.
+
+## CRW-522 — evidence resolve and memory allow-write libraries
+
+- Evidence argument lookup ignores unknown tokens, accepts a following flag as a value, uses the first duplicate and does not recognize equals syntax; `--override` is ignored when a receipt is present, rather than rejected (`pabcd-state/src/evidence-cli.ts:36-62`, recorded parser cases); port: kept.
+- Memory help anywhere masks unknown arguments and missing values; repeated session flags use the last value (`pabcd-state/src/memory-cli.ts:46-70`, recorded parser cases); port: kept.
+- Memory allow-write replaces unreadable/corrupt session bytes with default IDLE plus a grant (`pabcd-state/src/memory-cli.ts:80-82`, `TestMemoryDataLossPreservesUnreadableBytes` and recorded intentionally-changed data-loss case); port: fixed, refusing publication and preserving the original bytes.
+- Both writes publish a reconstructed verdict list that drops malformed entries or caps the list at 64 (`pabcd-state/src/evidence-cli.ts:100-101`, `memory-cli.ts:81-82`, `state.ts:57-90,587-589`; recorded intentionally-changed overflow/malformed cases and `TestCLIDataLossPreservesVerdictBytes`); port: fixed, refusing publication when the raw record count/shape cannot be retained.
+- Filesystem error diagnostics other than the stale-lock EEXIST case use the Go state owner's native error text instead of Node/libuv wording (`pabcd-state/src/evidence-cli.ts:132`, `memory-cli.ts:86`; `TestEvidenceAuditFailureAndUnresolvable`, `TestMemoryStateDirectoryFailure`); port: kept as a runtime diagnostic limitation, with exit/failure preservation unchanged.
