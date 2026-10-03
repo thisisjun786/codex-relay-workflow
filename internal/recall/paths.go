@@ -1,5 +1,4 @@
-// Storage paths from CXC v0.2.40 recall/src/paths.ts. This home deliberately
-// ignores CODEX_SQLITE_HOME, unlike the session-binding reader in host.
+// CXC v0.2.40 recall/src/paths.ts ignores CODEX_SQLITE_HOME.
 package recall
 
 import (
@@ -31,8 +30,7 @@ func codexHome(env ...host.LookupEnv) (string, error) {
 func sessionsDir(home string) string { return filepath.Join(home, "sessions") }
 func memoriesDir(home string) string { return filepath.Join(home, "memories") }
 
-// Missing home is null; a listing error on an existing path still propagates.
-// Sorted names break Number() ties, and matching non-file entries are not filtered.
+// Missing home is null; sorted names break Number ties, including non-files.
 func latestVersionedDb(home, prefix string) (string, error) {
 	if _, err := os.Stat(home); err != nil {
 		return "", nil
@@ -59,6 +57,5 @@ func latestVersionedDb(home, prefix string) (string, error) {
 	}
 	return filepath.Join(home, best), nil
 }
-
 func stateDbPath(home string) (string, error)    { return latestVersionedDb(home, "state") }
 func memoriesDbPath(home string) (string, error) { return latestVersionedDb(home, "memories") }

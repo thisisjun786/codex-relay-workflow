@@ -10,8 +10,7 @@ type ThreadMeta struct {
 	UpdatedAtMs             *float64
 }
 
-// IDs is the insertion order of the oracle Map; duplicates overwrite in place.
-// Empty Warning is null. ByID and IDs are non-nil even when enrichment fails.
+// IDs preserves Map order; empty Warning is null; failed enrichment keeps empty collections.
 type ThreadMetaResult struct {
 	ByID    map[string]ThreadMeta
 	IDs     []string

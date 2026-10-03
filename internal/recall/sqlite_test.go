@@ -92,7 +92,6 @@ func TestRecallSQLiteOpens(t *testing.T) {
 		}
 		_ = r.Close()
 	}
-	// The oracle also lets URI mode=memory override readOnly; keep that quirk.
 	uri, err := openDbReadOnly("file:recall-memory?mode=memory")
 	if err != nil {
 		t.Fatal(err)
@@ -234,10 +233,25 @@ func TestRecallSQLiteNamedOrderAndCachedAmbiguity(t *testing.T) {
 		want float64
 	}{
 		{NamedParams{{"x", 1}, {"$x", 2}}, 2}, {NamedParams{{"$x", 2}, {"x", 1}}, 1},
+		{NamedParams{{"$x\x00tail", 7}}, 7}, {NamedParams{{"x\x00tail", 7}}, 7},
 	} {
 		if got := recallRow(t, s, c.args)["x"]; got != c.want {
 			t.Fatal(got, c.want)
 		}
+		if rows, err := s.All(c.args); err != nil || rows[0]["x"] != c.want {
+			t.Fatal(rows, err)
+		}
+		if _, err := s.Run(c.args); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, key := range []string{"?1\x00tail", "1\x00tail"} {
+		if got := recallRow(t, recallStmt(t, d, "SELECT ?1 AS x"), NamedParams{{key, 7}})["x"]; got != float64(7) {
+			t.Fatal(key, got)
+		}
+	}
+	if _, err := s.Get(NamedParams{{"unknown\x00tail", 1}}); err == nil || err.Error() != "Unknown named parameter 'unknown\x00tail'" {
+		t.Fatal("unknown-name diagnostic lost original key", err)
 	}
 	if _, err := s.Get(map[string]any{"x": 1, "$x": 2}); err == nil {
 		t.Fatal("unordered aliases silently chose a write value")

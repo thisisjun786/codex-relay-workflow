@@ -1,5 +1,4 @@
-// CXC v0.2.40 recall/src/sqlite.ts uses the existing pure-Go SQLite engine
-// directly to preserve Node's raw values, errmsg and first-statement prepare.
+// CXC v0.2.40 recall/src/sqlite.ts, preserving Node values, errors and prepare.
 package recall
 
 import (
@@ -242,7 +241,6 @@ func (s *Stmt) row() (map[string]any, error) {
 		switch sqlite.Xsqlite3_column_type(s.db.tls, s.handle, i) {
 		case sqlite.SQLITE_INTEGER:
 			n := sqlite.Xsqlite3_column_int64(s.db.tls, s.handle, i)
-			// Node's absolute-value check overflows for int64's minimum; parity keeps it.
 			if n != -1<<63 && (n > 9007199254740991 || n < -9007199254740991) {
 				//lint:ignore ST1005 Exact node:sqlite diagnostic, pinned by the oracle.
 				return nil, fmt.Errorf("Value is too large to be represented as a JavaScript number: %d", n)
@@ -271,11 +269,7 @@ func (s *Stmt) bind(params []any) error {
 	sqlite.Xsqlite3_clear_bindings(s.db.tls, s.handle)
 	count := sqlite.Xsqlite3_bind_parameter_count(s.db.tls, s.handle)
 	if len(params) > 0 {
-		var named NamedParams
-		_, ordered := params[0].(NamedParams)
-		if ordered {
-			named = params[0].(NamedParams)
-		}
+		named, ordered := params[0].(NamedParams)
 		if values, ok := params[0].(map[string]any); ok {
 			keys := make([]string, 0, len(values))
 			for key := range values {
@@ -288,7 +282,6 @@ func (s *Stmt) bind(params []any) error {
 			ordered = true
 		}
 		if ordered {
-			// The oracle retains this partial cache if alias construction throws.
 			if s.bare == nil {
 				s.bare = map[string]string{}
 				for i := int32(1); i <= count; i++ {
@@ -307,25 +300,21 @@ func (s *Stmt) bind(params []any) error {
 			seen := map[int32]bool{}
 			_, unordered := params[0].(map[string]any)
 			for _, arg := range named {
-				key := arg.Name
+				key, _, _ := strings.Cut(arg.Name, "\x00")
 				alias := s.bare[key]
 				index := int32(0)
 				for i := int32(1); i <= count; i++ {
 					name := s.parameterName(i)
-					if name == "" {
-						continue
-					}
-					if name == key {
+					if name != "" && (name == key || name == alias) {
 						index = i
-						break
-					}
-					if alias != "" && name == alias {
-						index = i
+						if name == key {
+							break
+						}
 					}
 				}
 				if index == 0 {
 					//lint:ignore ST1005 Exact node:sqlite diagnostic, pinned by the oracle.
-					return fmt.Errorf("Unknown named parameter '%s'", key)
+					return fmt.Errorf("Unknown named parameter '%s'", arg.Name)
 				}
 				if unordered && seen[index] {
 					return errors.New("use NamedParams to preserve the order of aliases for one SQLite parameter")
