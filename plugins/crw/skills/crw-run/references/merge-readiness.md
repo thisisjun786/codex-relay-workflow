@@ -155,18 +155,18 @@ A pull request merges when all three hold on one and the same head:
    counts only where the repository's gate semantics make it legitimate); here `dev-gate` needs every other
    job, so that is every job of the CI workflow, all of them on the head the merge names and not on a mix of
    heads;
-2. the coordinator verified the candidate by its usual procedure: it read the diff and the code and ran the
-   tests the criteria rest on, or took the child's result for them where that result still applies at this
-   head under the reuse rule (same revision, criteria and environment);
+2. the coordinator verified the candidate by its usual procedure: it read the diff and the code and reran the
+   tests the criteria rest on (a result it already holds for this same head, criteria and environment is not
+   run twice);
 3. the local gates pass: the checks the repository names for the change, run through the repository's
    permitted local validation route.
 
-Gate 2 is the coordinator's own verification, not a restatement of the child's handoff. Reading the diff
-and the code is always its own; for the tests, the reuse rules of
-[Observe and verify](../SKILL.md#observe-and-verify) and
-[OPS-9.3](operations.md#ops-93-the-parent-merges-and-does-not-release) say when a result that still applies
-is taken instead of produced again, and they keep governing what the coordinator re-derives from the child's
-handoff: thread coverage, check runs and review dispositions, which it does not paginate or triage again.
+Gate 2 is the coordinator's own verification, not a restatement of the child's handoff. It is the
+exception to the rule that the coordinator reads a child's result that still applies instead of producing
+it again ([Observe and verify](../SKILL.md#observe-and-verify)). That rule and
+[OPS-9.3](operations.md#ops-93-the-parent-merges-and-does-not-release) keep governing what the coordinator
+re-derives from the child's handoff: thread coverage, check runs and review dispositions, which it does not
+paginate or triage again.
 
 Nothing else is a gate, and neither reviewer is one. A required review source or a mandatory formal approval
 that the target repository's own rules declare still applies as
@@ -187,7 +187,7 @@ Pull requests that change activation wiring, manifest declarations, the installe
 | --- | --- | --- |
 | Runs | once, when the pull request becomes ready | once, when the pull request is opened: a code review and a security review |
 | In progress | the `Devin Review` status description is `Analyzing your changes` (state pending): wait, with no time limit | the bot's eyes reaction is on the pull request, or any row of its summary comment is not `Completed` (observed: `🔄 Running since <time>`) |
-| Finished | the description is `Completed analysis in <time>` | the eyes reaction is gone and every row of its summary comment says `Completed`; a row that is not `Completed` outranks a thumbs-up |
+| Finished | the description is `Completed analysis in <time>` | the eyes reaction is gone and each of its two reviews, the code review and the security review, is either `Completed` in its summary comment or skipped by the bot's notice that names it; a thumbs-up counts for both when no row contradicts it |
 | Skipped, not waited for | the description is `Full review skipped: trial expired and no credits remaining` (state `success`) | the bot's issue comment that it skipped for limits, for the review it names (observed: `You have reached your Codex usage limits for security reviews. Please try again later.`, which ended the security review only) |
 | Findings | a review and inline threads by `devin-ai-integration` | a review by `chatgpt-codex-connector[bot]` whose inline comments start with a `P0` to `P3` badge |
 
@@ -196,8 +196,10 @@ The Codex summary comment is the bot's issue comment whose first line is
 and a hidden security-review record. A security row that says `Completed` while the eyes reaction is still
 on the pull request or the code review row is not Completed is still running: on pull request 368 the
 security row finished about half a minute before the code review did. The bot adds a thumbs-up when every
-review finished with no findings and posts a review with `P0` to `P3` comments when there are findings. A
-skip ends only the review it names; the other is still awaited.
+review finished with no findings and posts a review with `P0` to `P3` comments when there are findings; a row
+that is not `Completed` outranks a thumbs-up. A review with no `Completed` row, no skip notice and no thumbs-up is
+not finished, so a lone Completed Security Review row does not end the wait. A skip ends only the review it
+names; the other is still awaited.
 
 Read the Devin status by its description and never by its state: a state of `success` also marks a head
 Devin skipped, and `Completed analysis in 4s` stays a completion when the state is `failure`. A completion within

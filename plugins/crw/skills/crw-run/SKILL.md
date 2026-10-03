@@ -825,7 +825,9 @@ refreshes whatever a new head, a changed base or a changed dependency
 invalidated. Inside that, polling a check run the child is already carrying,
 reading again every finding on a hosted review it has resolved, and re-running a
 suite that passed and is still valid are the coordinator doing a level below
-itself. Read the head it reports, the conclusions on that head and its
+itself. The coordinator's own verification at the merge gate is the exception: it reads the diff and the
+code and reruns the tests the criteria rest on
+([the three gates](references/merge-readiness.md#the-three-gates)). Read the head it reports, the conclusions on that head and its
 per-finding trail, and accept them as the evidence table above defines them.
 
 Acceptance keeps its own work, which was never the child's. Confirm the reported
