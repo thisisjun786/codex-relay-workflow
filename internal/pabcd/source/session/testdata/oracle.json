@@ -1,0 +1,493 @@
+{
+ "bind_linked_worktree": [
+  {
+   "ok": "$R/wt"
+  },
+  {
+   "ok": {
+    "mode": "600",
+    "content": "{\n  \"version\": 1,\n  \"ownerSessionId\": \"s1\",\n  \"nativeCwd\": \"$R/main\",\n  \"sourceRoot\": \"$R/wt\",\n  \"commonDir\": \"$R/main/.git\",\n  \"gitDir\": \"$R/main/.git/worktrees/wt\"\n}\n"
+   }
+  },
+  {
+   "ok": [
+    "s1.json"
+   ]
+  },
+  {
+   "ok": "$R/wt"
+  },
+  {
+   "ok": "$R/wt"
+  },
+  {
+   "ok": {
+    "kind": "resolved",
+    "commitSha": "76bdd1ab3b05b1c1e8ad8ac40a9dce05bedaca76",
+    "dirty": false,
+    "treeHash": null,
+    "sourceRoot": "$R/wt"
+   }
+  },
+  {
+   "ok": {
+    "kind": "resolved",
+    "commitSha": "76bdd1ab3b05b1c1e8ad8ac40a9dce05bedaca76",
+    "dirty": true,
+    "treeHash": "c2c7a760c5053837430f83a84ab8602d4cfd8f54f25bc87a919bfa1b69541bb2",
+    "sourceRoot": "$R/wt"
+   }
+  },
+  {
+   "ok": {
+    "ok": true
+   }
+  }
+ ],
+ "bind_non_git_native": [
+  {
+   "ok": "$R/other"
+  },
+  {
+   "ok": "$R/other"
+  },
+  {
+   "ok": {
+    "kind": "resolved",
+    "commitSha": "0219fe570aee33ce0b74e349ea5d1bacc96825a4",
+    "dirty": false,
+    "treeHash": null,
+    "sourceRoot": "$R/other"
+   }
+  },
+  {
+   "ok": {
+    "ok": true
+   }
+  }
+ ],
+ "bind_refusals": [
+  {
+   "err": "Source worktree path must be absolute."
+  },
+  {
+   "err": "Source must be the root of a Git repository or worktree."
+  },
+  {
+   "err": "Source must be a linked worktree root in the native session's repository."
+  },
+  {
+   "err": "Source must be a linked worktree root in the native session's repository."
+  },
+  {
+   "err": "Cannot resolve source Git worktree identity."
+  },
+  {
+   "err": "Cannot resolve source Git worktree identity."
+  },
+  {
+   "err": "Invalid source-binding session ID."
+  },
+  {
+   "err": "Invalid source-binding session ID."
+  }
+ ],
+ "bind_phase": [
+  {
+   "err": "Bind the source before B. Preserve the old baseline and re-plan before binding."
+  },
+  {
+   "err": "Bind the source before B. Preserve the old baseline and re-plan before binding."
+  },
+  {
+   "ok": "$R/wt"
+  },
+  {
+   "ok": "$R/wt"
+  }
+ ],
+ "bind_immutable": [
+  {
+   "ok": "$R/wt"
+  },
+  {
+   "err": "Source binding is immutable; use a new session for a different worktree."
+  },
+  {
+   "ok": "$R/wt"
+  }
+ ],
+ "bind_pinned": [
+  {
+   "err": "Cannot replace the session's pinned source worktree."
+  },
+  {
+   "err": "Source binding is missing for the pinned worktree; restore the same binding before continuing."
+  },
+  {
+   "ok": "$R/wt2"
+  },
+  {
+   "ok": "$R/wt2"
+  },
+  {
+   "ok": {
+    "mode": "600",
+    "content": "{\n  \"version\": 1,\n  \"ownerSessionId\": \"s1\",\n  \"nativeCwd\": \"$R/main\",\n  \"sourceRoot\": \"$R/wt2\",\n  \"commonDir\": \"$R/main/.git\",\n  \"gitDir\": \"$R/main/.git/worktrees/wt2\"\n}\n"
+   }
+  }
+ ],
+ "resolve_unbound": [
+  {
+   "ok": "$R/main"
+  },
+  {
+   "ok": "$R/plain"
+  },
+  {
+   "ok": {
+    "kind": "resolved",
+    "commitSha": "76bdd1ab3b05b1c1e8ad8ac40a9dce05bedaca76",
+    "dirty": false,
+    "treeHash": null,
+    "sourceRoot": null
+   }
+  },
+  {
+   "ok": {
+    "kind": "unavailable",
+    "commitSha": "",
+    "dirty": false,
+    "treeHash": null,
+    "sourceRoot": null
+   }
+  },
+  {
+   "ok": {
+    "ok": false,
+    "reason": "this workspace has no resolvable git source identity, and a goalplan-bound\ncycle cannot be closed without one: C -> D requires a testReceiptPath\n(CHECK-BINDING-01) and `cxc receipt test` refuses to write a receipt it cannot\nbind to a commit.\n\nPick one:\n  - bind a git source tree:  cxc session source <absolute-path> --json\n  - or run this cycle unbound (no `cxc loop init --session`), which closes D on\n    checkOutput + exitCode alone."
+   }
+  },
+  {
+   "ok": {
+    "ok": true
+   }
+  },
+  {
+   "ok": {
+    "ok": true
+   }
+  }
+ ],
+ "resolve_pinned_without_binding": [
+  {
+   "err": "Source binding is missing for the pinned worktree; restore the same binding before continuing."
+  },
+  {
+   "err": "Source binding is missing for the pinned worktree; restore the same binding before continuing."
+  },
+  {
+   "ok": {
+    "ok": false,
+    "reason": "Source binding is missing for the pinned worktree; restore the same binding before continuing."
+   }
+  }
+ ],
+ "resolve_pin_mismatch": [
+  {
+   "ok": "$R/wt"
+  },
+  {
+   "err": "Source binding differs from the session's pinned worktree."
+  },
+  {
+   "ok": {
+    "ok": false,
+    "reason": "Source binding differs from the session's pinned worktree."
+   }
+  }
+ ],
+ "resolve_corrupt_binding": [
+  {
+   "err": "Source binding is unreadable or corrupt; existing bytes were preserved."
+  },
+  {
+   "err": "Source binding is unreadable or corrupt; existing bytes were preserved."
+  },
+  {
+   "ok": {
+    "ok": false,
+    "reason": "Source binding is unreadable or corrupt; existing bytes were preserved."
+   }
+  },
+  {
+   "ok": {
+    "mode": "600",
+    "content": "{not json"
+   }
+  },
+  {
+   "err": "Source binding is unreadable or corrupt; existing bytes were preserved."
+  },
+  {
+   "err": "Invalid source binding."
+  },
+  {
+   "err": "Invalid source binding."
+  },
+  {
+   "err": "Source binding has invalid identity or paths."
+  }
+ ],
+ "resolve_invalid_binding_fields": [
+  {
+   "ok": "$R/wt"
+  },
+  {
+   "err": "Source binding has invalid identity or paths."
+  },
+  {
+   "err": "Source binding has invalid identity or paths."
+  },
+  {
+   "err": "Source binding has invalid identity or paths."
+  },
+  {
+   "err": "Source binding has invalid identity or paths."
+  },
+  {
+   "err": "Bound source worktree moved or its repository identity changed."
+  },
+  {
+   "ok": {
+    "ok": false,
+    "reason": "Bound source worktree moved or its repository identity changed."
+   }
+  },
+  {
+   "err": "Bound source worktree moved or its repository identity changed."
+  },
+  {
+   "ok": "$R/wt"
+  },
+  {
+   "ok": "$R/wt"
+  },
+  {
+   "ok": "$R/wt"
+  }
+ ],
+ "resolve_symlinks_and_non_files": [
+  {
+   "err": "Source binding must be a regular file."
+  },
+  {
+   "err": "Source binding must be a regular file."
+  },
+  {
+   "err": "Source binding must be a regular file."
+  },
+  {
+   "err": "Source-binding directories must be real directories."
+  },
+  {
+   "err": "Source-binding directories must be real directories."
+  },
+  {
+   "err": "Source-binding directories must be real directories."
+  },
+  {
+   "err": "Source-binding directories must be real directories."
+  }
+ ],
+ "resolve_symlink_to_a_file": [
+  {
+   "err": "Source binding must be a regular file."
+  },
+  {
+   "err": "Source binding must be a regular file."
+  }
+ ],
+ "bind_path_with_invalid_utf8": [
+  {
+   "err": "Cannot resolve source Git worktree identity."
+  },
+  {
+   "ok": "$R/main"
+  }
+ ],
+ "resolve_moved_or_removed_worktree": [
+  {
+   "ok": "$R/wt"
+  },
+  {
+   "err": "Cannot resolve source Git worktree identity."
+  },
+  {
+   "ok": {
+    "ok": false,
+    "reason": "Cannot resolve source Git worktree identity."
+   }
+  },
+  {
+   "ok": "$R/wt"
+  },
+  {
+   "err": "Cannot resolve source Git worktree identity."
+  },
+  {
+   "err": "Cannot resolve source Git worktree identity."
+  },
+  {
+   "ok": {
+    "ok": false,
+    "reason": "Cannot resolve source Git worktree identity."
+   }
+  }
+ ],
+ "gate_cases": [
+  {
+   "ok": {
+    "ok": false,
+    "reason": "this workspace has no resolvable git source identity, and a goalplan-bound\ncycle cannot be closed without one: C -> D requires a testReceiptPath\n(CHECK-BINDING-01) and `cxc receipt test` refuses to write a receipt it cannot\nbind to a commit.\n\nPick one:\n  - bind a git source tree:  cxc session source <absolute-path> --json\n  - or run this cycle unbound (no `cxc loop init --session`), which closes D on\n    checkOutput + exitCode alone."
+   }
+  },
+  {
+   "ok": {
+    "ok": true
+   }
+  },
+  {
+   "ok": {
+    "ok": true
+   }
+  },
+  {
+   "ok": "$R/other"
+  },
+  {
+   "ok": {
+    "ok": true
+   }
+  },
+  {
+   "ok": {
+    "ok": false,
+    "reason": "Source binding is unreadable or corrupt; existing bytes were preserved."
+   }
+  }
+ ],
+ "capture_bound_excludes_state_dir": [
+  {
+   "ok": "$R/wt"
+  },
+  {
+   "ok": {
+    "kind": "resolved",
+    "commitSha": "76bdd1ab3b05b1c1e8ad8ac40a9dce05bedaca76",
+    "dirty": false,
+    "treeHash": null,
+    "sourceRoot": "$R/wt"
+   }
+  },
+  {
+   "ok": {
+    "kind": "resolved",
+    "commitSha": "76bdd1ab3b05b1c1e8ad8ac40a9dce05bedaca76",
+    "dirty": true,
+    "treeHash": "3604b2db067fe93e5248af677595307052a14b444e86d5db0590acc1c05323d9",
+    "sourceRoot": "$R/wt"
+   }
+  },
+  {
+   "ok": {
+    "kind": "resolved",
+    "commitSha": "76bdd1ab3b05b1c1e8ad8ac40a9dce05bedaca76",
+    "dirty": true,
+    "treeHash": "1e7c9e4b6b1a8027246664e5c16ab1857540a6b7b296f3081ea39ec94d10c28d",
+    "sourceRoot": "$R/wt"
+   }
+  },
+  {
+   "ok": {
+    "kind": "resolved",
+    "commitSha": "76bdd1ab3b05b1c1e8ad8ac40a9dce05bedaca76",
+    "dirty": true,
+    "treeHash": "3604b2db067fe93e5248af677595307052a14b444e86d5db0590acc1c05323d9",
+    "sourceRoot": "$R/wt"
+   }
+  },
+  {
+   "ok": {
+    "kind": "resolved",
+    "commitSha": "76bdd1ab3b05b1c1e8ad8ac40a9dce05bedaca76",
+    "dirty": false,
+    "treeHash": null,
+    "sourceRoot": "$R/wt"
+   }
+  },
+  {
+   "ok": {
+    "kind": "resolved",
+    "commitSha": "76bdd1ab3b05b1c1e8ad8ac40a9dce05bedaca76",
+    "dirty": true,
+    "treeHash": "1e7c9e4b6b1a8027246664e5c16ab1857540a6b7b296f3081ea39ec94d10c28d",
+    "sourceRoot": null
+   }
+  },
+  {
+   "ok": {
+    "ok": true
+   }
+  }
+ ],
+ "bind_target_path_resolution": [
+  {
+   "errno": "ENOENT"
+  },
+  {
+   "ok": "$R/main"
+  },
+  {
+   "ok": "$R/main"
+  }
+ ],
+ "bind_native_inside_source": [
+  {
+   "err": "Source must be a linked worktree root in the native session's repository."
+  },
+  {
+   "err": "Source root must not contain the session's own working directory; bind the repository itself, not an ancestor of it."
+  },
+  {
+   "ok": "$R/main/sub"
+  }
+ ],
+ "bind_bare_native": [
+  {
+   "err": "Cannot resolve source Git worktree identity."
+  },
+  {
+   "ok": "$R/bare.git"
+  },
+  {
+   "ok": {
+    "ok": false,
+    "reason": "this workspace has no resolvable git source identity, and a goalplan-bound\ncycle cannot be closed without one: C -> D requires a testReceiptPath\n(CHECK-BINDING-01) and `cxc receipt test` refuses to write a receipt it cannot\nbind to a commit.\n\nPick one:\n  - bind a git source tree:  cxc session source <absolute-path> --json\n  - or run this cycle unbound (no `cxc loop init --session`), which closes D on\n    checkOutput + exitCode alone."
+   }
+  }
+ ],
+ "env_object_dir_breaks_probes": [
+  {
+   "err": "Cannot resolve source Git worktree identity."
+  },
+  {
+   "ok": "$R/main"
+  },
+  {
+   "ok": {
+    "ok": true
+   }
+  }
+ ]
+}

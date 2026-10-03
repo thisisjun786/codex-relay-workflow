@@ -1,0 +1,189 @@
+{
+ "world": "git init -q -b main main\ncd main\necho x > tracked.txt\ngit add tracked.txt\ngit commit -qm init\ngit worktree add -q -b work ../wt\ngit worktree add -q -b work2 ../wt2\ncd ..\ngit init -q -b main other\ncd other\necho y > f\ngit add f\ngit commit -qm init\ncd ..\nmkdir plain main/sub\nln -s main/sub lnk\ngit init -q --bare bare.git",
+ "scenarios": [
+  {"id": "bind_linked_worktree", "steps": [
+   {"do":"bind","cwd":"main","session":"s1","target":"wt"},
+   {"do":"read","path":"main/.codexclaw/sources/s1.json"},
+   {"do":"ls","path":"main/.codexclaw/sources"},
+   {"do":"resolve","cwd":"main","session":"s1"},
+   {"do":"bind","cwd":"main","session":"s1","target":"wt"},
+   {"do":"capture","cwd":"main","session":"s1","options":{}},
+   {"do":"sh","script":"echo new > wt/new.txt"},
+   {"do":"capture","cwd":"main","session":"s1","options":{}},
+   {"do":"gate","cwd":"main","session":"s1"}
+  ]},
+  {"id": "bind_non_git_native", "steps": [
+   {"do":"bind","cwd":"plain","session":"s1","target":"other"},
+   {"do":"resolve","cwd":"plain","session":"s1"},
+   {"do":"capture","cwd":"plain","session":"s1","options":{}},
+   {"do":"gate","cwd":"plain","session":"s1"}
+  ]},
+  {"id": "bind_refusals", "steps": [
+   {"do":"bind","cwd":"main","session":"s1","rawTarget":"wt"},
+   {"do":"bind","cwd":"main","session":"s1","target":"main/sub"},
+   {"do":"bind","cwd":"main","session":"s1","target":"main"},
+   {"do":"bind","cwd":"main","session":"s1","target":"other"},
+   {"do":"bind","cwd":"main","session":"s1","target":"plain"},
+   {"do":"bind","cwd":"plain","session":"s1","target":"plain"},
+   {"do":"bind","cwd":"main","session":"bad id","target":"wt"},
+   {"do":"bind","cwd":"main","session":"","target":"wt"}
+  ]},
+  {"id": "bind_phase", "steps": [
+   {"do":"state","cwd":"main","session":"s1","json":{"phase":"B"}},
+   {"do":"bind","cwd":"main","session":"s1","target":"wt"},
+   {"do":"state","cwd":"main","session":"s1","json":{"phase":"D"}},
+   {"do":"bind","cwd":"main","session":"s1","target":"wt"},
+   {"do":"state","cwd":"main","session":"s1","json":{"phase":"A"}},
+   {"do":"bind","cwd":"main","session":"s1","target":"wt"},
+   {"do":"resolve","cwd":"main","session":"s1"}
+  ]},
+  {"id": "bind_immutable", "steps": [
+   {"do":"bind","cwd":"main","session":"s1","target":"wt"},
+   {"do":"bind","cwd":"main","session":"s1","target":"wt2"},
+   {"do":"resolve","cwd":"main","session":"s1"}
+  ]},
+  {"id": "bind_pinned", "steps": [
+   {"do":"state","cwd":"main","session":"s1","json":{"phase":"B","boundSourceRoot":"$R/wt2"}},
+   {"do":"bind","cwd":"main","session":"s1","target":"wt"},
+   {"do":"resolve","cwd":"main","session":"s1"},
+   {"do":"bind","cwd":"main","session":"s1","target":"wt2"},
+   {"do":"resolve","cwd":"main","session":"s1"},
+   {"do":"read","path":"main/.codexclaw/sources/s1.json"}
+  ]},
+  {"id": "resolve_unbound", "steps": [
+   {"do":"resolve","cwd":"main","session":"s1"},
+   {"do":"resolve","cwd":"plain","session":"s1"},
+   {"do":"capture","cwd":"main","session":"s1","options":{}},
+   {"do":"capture","cwd":"plain","session":"s1","options":{}},
+   {"do":"gate","cwd":"plain","session":"s1"},
+   {"do":"gate","cwd":"main","session":"s1"},
+   {"do":"sh","script":"echo changed > main/tracked.txt\necho new > main/untracked.txt"},
+   {"do":"gate","cwd":"main","session":"s1"}
+  ]},
+  {"id": "resolve_pinned_without_binding", "steps": [
+   {"do":"state","cwd":"main","session":"s1","json":{"phase":"B","boundSourceRoot":"$R/wt"}},
+   {"do":"resolve","cwd":"main","session":"s1"},
+   {"do":"capture","cwd":"main","session":"s1","options":{}},
+   {"do":"gate","cwd":"main","session":"s1"}
+  ]},
+  {"id": "resolve_pin_mismatch", "steps": [
+   {"do":"bind","cwd":"main","session":"s1","target":"wt"},
+   {"do":"state","cwd":"main","session":"s1","json":{"phase":"B","boundSourceRoot":"$R/wt2"}},
+   {"do":"resolve","cwd":"main","session":"s1"},
+   {"do":"gate","cwd":"main","session":"s1"}
+  ]},
+  {"id": "resolve_corrupt_binding", "steps": [
+   {"do":"sh","script":"mkdir -p main/.codexclaw/sources && printf '%s' '{not json' > main/.codexclaw/sources/s1.json && chmod 600 main/.codexclaw/sources/s1.json"},
+   {"do":"resolve","cwd":"main","session":"s1"},
+   {"do":"bind","cwd":"main","session":"s1","target":"wt"},
+   {"do":"gate","cwd":"main","session":"s1"},
+   {"do":"read","path":"main/.codexclaw/sources/s1.json"},
+   {"do":"sh","script":"mkdir -p main/.codexclaw/sources && printf '%s' '' > main/.codexclaw/sources/s1.json && chmod 600 main/.codexclaw/sources/s1.json"},
+   {"do":"resolve","cwd":"main","session":"s1"},
+   {"do":"sh","script":"mkdir -p main/.codexclaw/sources && printf '%s' '[]' > main/.codexclaw/sources/s1.json && chmod 600 main/.codexclaw/sources/s1.json"},
+   {"do":"resolve","cwd":"main","session":"s1"},
+   {"do":"sh","script":"mkdir -p main/.codexclaw/sources && printf '%s' 'null' > main/.codexclaw/sources/s1.json && chmod 600 main/.codexclaw/sources/s1.json"},
+   {"do":"resolve","cwd":"main","session":"s1"},
+   {"do":"sh","script":"mkdir -p main/.codexclaw/sources && printf '%s' '{}' > main/.codexclaw/sources/s1.json && chmod 600 main/.codexclaw/sources/s1.json"},
+   {"do":"resolve","cwd":"main","session":"s1"}
+  ]},
+  {"id": "resolve_invalid_binding_fields", "steps": [
+   {"do":"bind","cwd":"main","session":"s1","target":"wt"},
+   {"do":"sh","script":"sed -i 's/\"version\": 1/\"version\": 2/' main/.codexclaw/sources/s1.json"},
+   {"do":"resolve","cwd":"main","session":"s1"},
+   {"do":"sh","script":"sed -i 's/\"version\": 2/\"version\": 1/; s/\"ownerSessionId\": \"s1\"/\"ownerSessionId\": \"s2\"/' main/.codexclaw/sources/s1.json"},
+   {"do":"resolve","cwd":"main","session":"s1"},
+   {"do":"sh","script":"sed -i 's/\"ownerSessionId\": \"s2\"/\"ownerSessionId\": \"s1\"/; s#\"nativeCwd\": \"[^\"]*\"#\"nativeCwd\": \"/elsewhere\"#' main/.codexclaw/sources/s1.json"},
+   {"do":"resolve","cwd":"main","session":"s1"},
+   {"do":"sh","script":"sed -i 's#\"nativeCwd\": \"[^\"]*\"#\"nativeCwd\": \"$R/main\"#; s#\"sourceRoot\": \"[^\"]*\"#\"sourceRoot\": \"wt\"#' main/.codexclaw/sources/s1.json"},
+   {"do":"resolve","cwd":"main","session":"s1"},
+   {"do":"sh","script":"sed -i 's#\"sourceRoot\": \"[^\"]*\"#\"sourceRoot\": \"$R/wt\"#; s#\"commonDir\": \"[^\"]*\"#\"commonDir\": \"/nowhere\"#' main/.codexclaw/sources/s1.json"},
+   {"do":"resolve","cwd":"main","session":"s1"},
+   {"do":"gate","cwd":"main","session":"s1"},
+   {"do":"sh","script":"sed -i 's#\"commonDir\": \"[^\"]*\"#\"commonDir\": \"$R/main/.git\"#; s#\"gitDir\": \"[^\"]*\"#\"gitDir\": \"/nowhere\"#' main/.codexclaw/sources/s1.json"},
+   {"do":"resolve","cwd":"main","session":"s1"},
+   {"do":"sh","script":"sed -i 's#\"gitDir\": \"[^\"]*\"#\"gitDir\": \"$R/main/.git/worktrees/wt\"#' main/.codexclaw/sources/s1.json"},
+   {"do":"resolve","cwd":"main","session":"s1"},
+   {"do":"sh","script":"sed -i 's/\"version\": 1,/\"version\": 1.0, \"extra\": [7],/' main/.codexclaw/sources/s1.json"},
+   {"do":"resolve","cwd":"main","session":"s1"},
+   {"do":"sh","script":"sed -i 's/\"version\": 1.0,/\"version\": 1e0,/' main/.codexclaw/sources/s1.json"},
+   {"do":"resolve","cwd":"main","session":"s1"}
+  ]},
+  {"id": "resolve_symlinks_and_non_files", "steps": [
+   {"do":"sh","script":"mkdir -p main/.codexclaw/sources real && ln -s ../../../real main/.codexclaw/sources/s1.json"},
+   {"do":"resolve","cwd":"main","session":"s1"},
+   {"do":"bind","cwd":"main","session":"s1","target":"wt"},
+   {"do":"sh","script":"rm main/.codexclaw/sources/s1.json && mkdir main/.codexclaw/sources/s1.json"},
+   {"do":"resolve","cwd":"main","session":"s1"},
+   {"do":"sh","script":"rmdir main/.codexclaw/sources/s1.json && mv main/.codexclaw/sources real/sources && ln -s ../../real/sources main/.codexclaw/sources"},
+   {"do":"resolve","cwd":"main","session":"s1"},
+   {"do":"bind","cwd":"main","session":"s1","target":"wt"},
+   {"do":"sh","script":"rm main/.codexclaw/sources && mv real/sources main/.codexclaw/sources && mv main/.codexclaw real/crw && ln -s ../real/crw main/.codexclaw"},
+   {"do":"resolve","cwd":"main","session":"s1"},
+   {"do":"bind","cwd":"main","session":"s1","target":"wt"}
+  ]},
+  {"id": "resolve_symlink_to_a_file", "steps": [
+   {"do":"sh","script":"mkdir -p main/.codexclaw/sources && echo '{}' > real.json && ln -s ../../../real.json main/.codexclaw/sources/s1.json"},
+   {"do":"resolve","cwd":"main","session":"s1"},
+   {"do":"bind","cwd":"main","session":"s1","target":"wt"}
+  ]},
+
+  {"id": "bind_path_with_invalid_utf8", "setup": "git -C main worktree add -q -b bad \"../$(printf 'bad\\377')\" && ln -s \"$(printf 'bad\\377')\" badlink", "steps": [
+   {"do":"bind","cwd":"main","session":"s1","target":"badlink"},
+   {"do":"resolve","cwd":"main","session":"s1"}
+  ]},
+  {"id": "resolve_moved_or_removed_worktree", "steps": [
+   {"do":"bind","cwd":"main","session":"s1","target":"wt"},
+   {"do":"sh","script":"mv wt wt-moved"},
+   {"do":"resolve","cwd":"main","session":"s1"},
+   {"do":"gate","cwd":"main","session":"s1"},
+   {"do":"sh","script":"mv wt-moved wt"},
+   {"do":"resolve","cwd":"main","session":"s1"},
+   {"do":"sh","script":"git -C main worktree remove --force ../wt"},
+   {"do":"resolve","cwd":"main","session":"s1"},
+   {"do":"capture","cwd":"main","session":"s1","options":{}},
+   {"do":"gate","cwd":"main","session":"s1"}
+  ]},
+  {"id": "gate_cases", "steps": [
+   {"do":"gate","cwd":"plain","session":"s1"},
+   {"do":"gate","cwd":"main","session":"s1"},
+   {"do":"sh","script":"echo changed > main/tracked.txt\necho new > main/untracked.txt"},
+   {"do":"gate","cwd":"main","session":"s1"},
+   {"do":"bind","cwd":"plain","session":"s1","target":"other"},
+   {"do":"gate","cwd":"plain","session":"s1"},
+   {"do":"sh","script":"mkdir -p main/.codexclaw/sources && printf '%s' '{' > main/.codexclaw/sources/s1.json && chmod 600 main/.codexclaw/sources/s1.json"},
+   {"do":"gate","cwd":"main","session":"s1"}
+  ]},
+  {"id": "capture_bound_excludes_state_dir", "steps": [
+   {"do":"bind","cwd":"main","session":"s1","target":"wt"},
+   {"do":"capture","cwd":"main","session":"s1","options":{}},
+   {"do":"sh","script":"mkdir -p wt/.codexclaw && echo a > wt/.codexclaw/a && echo b > wt/b.txt"},
+   {"do":"capture","cwd":"main","session":"s1","options":{}},
+   {"do":"capture","cwd":"main","session":"s1","options":{"excludeCodexclawArtifacts":false},"noHash":true},
+   {"do":"capture","cwd":"main","session":"s1","options":{"excludeCodexclawArtifacts":true}},
+   {"do":"capture","cwd":"main","session":"s1","options":{"generatedPaths":["b.txt"],"excludeCodexclawArtifacts":true}},
+   {"do":"capture","cwd":"wt","session":"s1","options":{},"noHash":true},
+   {"do":"gate","cwd":"main","session":"s1"}
+  ]},
+  {"id": "bind_target_path_resolution", "steps": [
+   {"do":"bind","cwd":"plain","session":"s1","rawTarget":"$R/nosuch/.."},
+   {"do":"bind","cwd":"plain","session":"s1","rawTarget":"$R/lnk/.."},
+   {"do":"resolve","cwd":"plain","session":"s1"}
+  ]},
+  {"id": "bind_native_inside_source", "steps": [
+   {"do":"bind","cwd":"main/sub","session":"s1","target":"main"},
+   {"do":"bind","cwd":"main/sub","session":"s1","target":"main","env":{"GIT_CEILING_DIRECTORIES":"$R/main"}},
+   {"do":"resolve","cwd":"main/sub","session":"s1"}
+  ]},
+  {"id": "bind_bare_native", "steps": [
+   {"do":"bind","cwd":"bare.git","session":"s1","target":"wt"},
+   {"do":"resolve","cwd":"bare.git","session":"s1"},
+   {"do":"gate","cwd":"bare.git","session":"s1"}
+  ]},
+  {"id": "env_object_dir_breaks_probes", "steps": [
+   {"do":"bind","cwd":"main","session":"s1","target":"wt","env":{"GIT_OBJECT_DIRECTORY":"$R/nonexistent-objects","GIT_ALTERNATE_OBJECT_DIRECTORIES":"$R/nonexistent-alternates"}},
+   {"do":"resolve","cwd":"main","session":"s1","env":{"GIT_OBJECT_DIRECTORY":"$R/nonexistent-objects","GIT_ALTERNATE_OBJECT_DIRECTORIES":"$R/nonexistent-alternates"}},
+   {"do":"gate","cwd":"main","session":"s1","env":{"GIT_OBJECT_DIRECTORY":"$R/nonexistent-objects","GIT_ALTERNATE_OBJECT_DIRECTORIES":"$R/nonexistent-alternates"}}
+  ]}
+ ]
+}
