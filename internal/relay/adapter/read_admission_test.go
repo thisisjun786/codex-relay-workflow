@@ -195,7 +195,7 @@ func awaitRefusal(t *testing.T, a *Adapter, host *gatedHost) {
 			t.Fatal("the client closed before Close refused a read: Close did not wait for a read in flight")
 		default:
 		}
-		_, err := a.ReadGoalStatus("probe")
+		_, err := a.ReadGoalStatus(context.Background(), "probe")
 		if errors.Is(err, ErrTransportClosing) {
 			return
 		}
@@ -223,7 +223,7 @@ func TestReadAdmission_CloseWaitsForAnInFlightRead(t *testing.T) {
 	}
 	read := make(chan outcome, 1)
 	go func() {
-		facts, err := a.ReadThread("thread-held")
+		facts, err := a.ReadThread(context.Background(), "thread-held")
 		read <- outcome{facts, err}
 	}()
 	waitEdge(t, host.entered)
@@ -253,7 +253,7 @@ func TestReadAdmission_CloseCancelsAReadThatOutlivesTheDrainBudget(t *testing.T)
 	host.hold(t, "thread/read")
 	read := make(chan error, 1)
 	go func() {
-		_, err := a.ReadThread("thread-held")
+		_, err := a.ReadThread(context.Background(), "thread-held")
 		read <- err
 	}()
 	waitEdge(t, host.entered)
@@ -281,7 +281,7 @@ func TestReadAdmission_ACancelledScanEndsBeforeTheClientCloses(t *testing.T) {
 	}
 	read := make(chan outcome, 1)
 	go func() {
-		archived, err := a.IsArchived("thread-held", nil)
+		archived, err := a.IsArchived(context.Background(), "thread-held", nil)
 		read <- outcome{archived, err}
 	}()
 	waitEdge(t, host.entered)
@@ -315,17 +315,17 @@ func TestReadAdmission_ReadsAfterCloseAreRefused(t *testing.T) {
 		read func() error
 	}{
 		{"HostCall", func() error { _, err := a.HostCall(ctx, "thread/read", map[string]any{"threadId": "t"}); return err }},
-		{"ReadThread", func() error { _, err := a.ReadThread("t"); return err }},
-		{"ReadGoalStatus", func() error { _, err := a.ReadGoalStatus("t"); return err }},
-		{"ListTurnIDs", func() error { _, err := a.ListTurnIDs("t", 5); return err }},
-		{"ReadTurn", func() error { _, err := a.ReadTurn("t", "turn"); return err }},
-		{"IsArchived", func() error { _, err := a.IsArchived("t", nil); return err }},
-		{"FindToken", func() error { _, err := a.FindToken("t", "token", 5, false); return err }},
-		{"RecipientFingerprint", func() error { _, err := a.RecipientFingerprint("t"); return err }},
-		{"FindDispatchedTurn", func() error { _, err := a.FindDispatchedTurn("t", "turn", 0); return err }},
-		{"FindTokenSince", func() error { _, err := a.FindTokenSince("t", "token", nil, 5); return err }},
-		{"FindTokenInTurn", func() error { _, err := a.FindTokenInTurn("t", "token", "turn", 5); return err }},
-		{"GetOperation", func() error { _, err := a.GetOperation("operation"); return err }},
+		{"ReadThread", func() error { _, err := a.ReadThread(context.Background(), "t"); return err }},
+		{"ReadGoalStatus", func() error { _, err := a.ReadGoalStatus(context.Background(), "t"); return err }},
+		{"ListTurnIDs", func() error { _, err := a.ListTurnIDs(context.Background(), "t", 5); return err }},
+		{"ReadTurn", func() error { _, err := a.ReadTurn(context.Background(), "t", "turn"); return err }},
+		{"IsArchived", func() error { _, err := a.IsArchived(context.Background(), "t", nil); return err }},
+		{"FindToken", func() error { _, err := a.FindToken(context.Background(), "t", "token", 5, false); return err }},
+		{"RecipientFingerprint", func() error { _, err := a.RecipientFingerprint(context.Background(), "t"); return err }},
+		{"FindDispatchedTurn", func() error { _, err := a.FindDispatchedTurn(context.Background(), "t", "turn", 0); return err }},
+		{"FindTokenSince", func() error { _, err := a.FindTokenSince(context.Background(), "t", "token", nil, 5); return err }},
+		{"FindTokenInTurn", func() error { _, err := a.FindTokenInTurn(context.Background(), "t", "token", "turn", 5); return err }},
+		{"GetOperation", func() error { _, err := a.GetOperation(context.Background(), "operation"); return err }},
 		{"Managed.GetOperation", func() error { _, err := managedAdapter.GetOperation(ctx, "operation"); return err }},
 		{"Managed.ReadTurn", func() error { _, err := managedAdapter.ReadTurn(ctx, "t", "turn"); return err }},
 	}
@@ -513,7 +513,7 @@ func TestReadAdmission_OneAdmissionCoversAMultiPageRead(t *testing.T) {
 	}
 	read := make(chan outcome, 1)
 	go func() {
-		turn, err := a.ReadTurn("thread-1", "turn-wanted")
+		turn, err := a.ReadTurn(context.Background(), "thread-1", "turn-wanted")
 		read <- outcome{turn, err}
 	}()
 	waitEdge(t, host.entered)
@@ -662,7 +662,7 @@ func TestReadAdmission_ACancelledCallerReleasesItsAdmission(t *testing.T) {
 func TestReadAdmission_AnAdapterWithoutATransportStillReads(t *testing.T) {
 	host := newGatedHost()
 	a := New(Options{RPC: host})
-	if status, err := a.ReadGoalStatus("thread-1"); err != nil || status != "active" {
+	if status, err := a.ReadGoalStatus(context.Background(), "thread-1"); err != nil || status != "active" {
 		t.Fatalf("a read-only adapter has no transport to refuse on: %v %v", status, err)
 	}
 	if err := a.Close(); err != nil {

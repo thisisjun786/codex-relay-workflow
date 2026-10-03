@@ -311,6 +311,21 @@ one omission share its message id, and where they agree field for field they are
 as far as staging is concerned, so a parent's `reporting-show` staging and the daemon's
 derivation converge on one message.
 
+Those three keep a store-derived reading only when it is owed, so they ask for exactly that
+(`DeriveOwedOmission`). It gives the whole derivation's answer for every omission that is owed.
+For the rest it says there is nothing to keep, and for a turn that declared `ready_for_review` it
+says so without reading the turn's stored receipt whenever the facts the store holds already settle
+it: the turn has not settled, a final receipt of the turn exists (it goes upward as its own fact),
+a later turn was admitted, the grace has not passed, the daemon's own report of a failed or
+interrupted turn exists, or the admission or the settlement cannot be placed. Reading the receipt
+hashes the artifacts it names, and every tick used to do that for every such relationship whatever
+the facts said, so a turn that had reported was hashed again and again to learn that nothing was
+owed. The answer cannot change: a receipt makes a `ready_for_review` turn `reported` (it stands at
+the head), `unmeasured` (it could not be read or judged), or leaves the label `receipt_missing`,
+which is the reading the facts alone already give. `reporting-derive`, the staging lock, the claim
+and the transport start still ask the whole derivation, because they show, quote or compare its
+words.
+
 Where the turn's session records its declarations here, the store decides for EVERY omission,
 whatever reading it arrives with: staging asks it under the write lock and the transport start
 asks it again (`_omission_withdrawn`, from `_proposal_now`). A parent's `reporting-show`

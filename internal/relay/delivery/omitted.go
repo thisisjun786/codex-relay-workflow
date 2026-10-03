@@ -606,7 +606,7 @@ func observeOmission(ctx context.Context, selection store.StateSelection, root, 
 	if err = omissionConfinedFacts(directory, rootPath, session, turn); err != nil {
 		return fail(err)
 	}
-	marker, unreadable := ReadAssignment(directory)
+	marker, unreadable := ReadAssignment(ctx, directory)
 	if len(unreadable) > 0 {
 		return omissionUnmeasured(result, "marker_unreadable")
 	}
@@ -681,7 +681,7 @@ func observeOmission(ctx context.Context, selection store.StateSelection, root, 
 	}
 	result = result.Set("turnAdmission", admission)
 	result = result.Set("managedRequests", c.Managed)
-	dispositionRaw, readable := ReadDisposition(directory, session, turn)
+	dispositionRaw, readable := ReadDisposition(ctx, directory, session, turn)
 	if !readable {
 		return omissionUnmeasured(result, "disposition_unreadable_or_malformed")
 	}
@@ -747,6 +747,40 @@ func recordOmissionTerminal(result Obj, c omissionContext, verdict Obj) Obj {
 
 // DeriveOmission reads the declaration mirror from one already-open store.
 func DeriveOmission(ctx context.Context, s *store.Store, stateDir, rid, turn, now string, grace float64) Obj {
+	answer, _ := deriveOmission(ctx, s, stateDir, rid, turn, now, grace, false)
+	return answer
+}
+
+// DeriveOwedOmission is DeriveOmission for a caller that keeps a reading only when it is an omission
+// that is owed (reportingState "unreported" and owed true: the daemon's visit, supervisor-standing and
+// supervisor-stage --project). It answers (reading, true) exactly as DeriveOmission would, and
+// (nil, false) when the state alone settles that the reading is not one to keep, without reading the
+// turn's stored receipt, which is what hashes the artifacts it names.
+//
+// Only a turn declared ready_for_review reads a receipt, and the receipt moves the answer between three
+// outcomes: a receipt that stands at the relationship's head gives the label declared_ready_receipted
+// ("reported", whatever else is true), a lookup that cannot be read or judged leaves the omission
+// unmeasured, and anything else gives the label receipt_missing. Nothing but that label comes from the
+// receipt: the settlement, the admissions, the child's final events and the grace are read from the
+// store before it. So the answer the facts give with the label receipt_missing is the only one of the
+// three that can be unreported, and when it is not unreported and owed, no receipt can make it so.
+func DeriveOwedOmission(ctx context.Context, s *store.Store, stateDir, rid, turn, now string, grace float64) (Obj, bool) {
+	return deriveOmission(ctx, s, stateDir, rid, turn, now, grace, true)
+}
+
+// owedWithoutReceipt is whether the facts, with the receipt not standing at the head (the label
+// receipt_missing, witnessed), make the omission owed: the only reading of a ready_for_review turn
+// that a receipt can leave unreported.
+func owedWithoutReceipt(c omissionContext, turn, admission, now string, grace float64) bool {
+	witness := omissionLabels["receipt_missing"]
+	verdict := ClassifyOmission(factsFromContext(c, turn, &witness, admission, "receipt_missing", now, grace))
+	return fieldOf(verdict, "reportingState") == "unreported" && fieldOf(verdict, "owed") == true
+}
+
+// deriveOmission is DeriveOmission. With owedOnly, a ready_for_review turn the state already settles as
+// not owed answers (nil, false) before its receipt is read (see DeriveOwedOmission); every other answer
+// is whole and true.
+func deriveOmission(ctx context.Context, s *store.Store, stateDir, rid, turn, now string, grace float64, owedOnly bool) (Obj, bool) {
 	result := append(Obj{{Key: "schema", Value: OmittedSchema}, {Key: "source", Value: OmittedStoreSource}}, omissionBase(now)[1:]...)
 	result = append(result, F{Key: "selectors", Value: nil}, F{Key: "relationshipId", Value: rid}, F{Key: "relationshipStatus", Value: nil}, F{Key: "terminalObservation", Value: Obj{{Key: "source", Value: "relay_settlement"}, {Key: "status", Value: "unobserved"}}}, F{Key: "currentObservation", Value: nil}, F{Key: "turnAdmission", Value: "unmeasured"}, F{Key: "declaration", Value: nil}, F{Key: "receipt", Value: nil}, F{Key: "owed", Value: false}, F{Key: "owedReason", Value: OmittedNotOwed})
 	var status, parent, child, issue, dispatch, dispatchTurn string
@@ -754,10 +788,10 @@ func DeriveOmission(ctx context.Context, s *store.Store, stateDir, rid, turn, no
 	var superseded sql.NullString
 	err := s.Q(ctx).QueryRowContext(ctx, `SELECT r.status,r.parent_task_id,r.child_task_id,r.issue_key,r.execution_generation,r.superseded_by,g.dispatch_request_id,COALESCE(g.dispatch_turn_id,'') FROM relationships r JOIN generations g ON g.relationship_id=r.relationship_id AND g.execution_generation=r.execution_generation WHERE r.relationship_id=?`, rid).Scan(&status, &parent, &child, &issue, &generation, &superseded, &dispatch, &dispatchTurn)
 	if errors.Is(err, sql.ErrNoRows) {
-		return omissionUnmeasured(result, "registration_unresolved")
+		return omissionUnmeasured(result, "registration_unresolved"), true
 	}
 	if err != nil {
-		return omissionUnmeasured(result, "evidence_unreadable: "+pythonStr(err))
+		return omissionUnmeasured(result, "evidence_unreadable: "+pythonStr(err)), true
 	}
 	result = result.Set("relationshipStatus", status)
 	result = result.Set("executionGeneration", generation)
@@ -765,11 +799,11 @@ func DeriveOmission(ctx context.Context, s *store.Store, stateDir, rid, turn, no
 	assignment := AssignmentID(dispatch)
 	claimed, err := s.ReportingSession(ctx, assignment, child)
 	if err != nil || claimed.DispatchRequestID != dispatch || claimed.Capability != "declarations/1" {
-		return omissionUnmeasured(result, OmittedDeclarationsMissing)
+		return omissionUnmeasured(result, OmittedDeclarationsMissing), true
 	}
 	c, err := readOmissionContext(ctx, s.Q(ctx), rid, child, dispatchTurn, dispatch)
 	if err != nil {
-		return omissionUnmeasured(result, "registration_unresolved")
+		return omissionUnmeasured(result, "registration_unresolved"), true
 	}
 	if turn == "" {
 		turn = dispatchTurn
@@ -779,21 +813,21 @@ func DeriveOmission(ctx context.Context, s *store.Store, stateDir, rid, turn, no
 		}
 	}
 	if !ValidSegment(turn) {
-		return omissionUnmeasured(result, "admission_unrecorded")
+		return omissionUnmeasured(result, "admission_unrecorded"), true
 	}
 	result = result.Set("selectors", Obj{{Key: "state", Value: stateDir}, {Key: "markerRoot", Value: claimed.MarkerRoot}, {Key: "workspace", Value: claimed.Workspace}, {Key: "assignment", Value: assignment}, {Key: "session", Value: child}, {Key: "turn", Value: turn}})
 	c, err = readOmissionContext(ctx, s.Q(ctx), rid, child, turn, dispatch)
 	if err != nil {
-		return omissionUnmeasured(result, "registration_unresolved")
+		return omissionUnmeasured(result, "registration_unresolved"), true
 	}
 	claimedWorkspace, workspaceErr := resolvedPath(claimed.Workspace)
 	childWorkspace, childErr := resolvedPath(c.ChildCwd.String)
 	if c.Child != child || !claimed.IssueKey.Valid || c.Issue != claimed.IssueKey.String || AssignmentID(c.Dispatch) != assignment || !c.ChildCwd.Valid || workspaceErr != nil || childErr != nil || claimedWorkspace != childWorkspace {
-		return omissionUnmeasured(result, "registry_identity_mismatch")
+		return omissionUnmeasured(result, "registry_identity_mismatch"), true
 	}
 	admission, ok := admissionFor(c, turn)
 	if !ok {
-		return omissionUnmeasured(result, "stale_generation")
+		return omissionUnmeasured(result, "stale_generation"), true
 	}
 	result = result.Set("turnAdmission", admission)
 	result = result.Set("managedRequests", []any{})
@@ -804,10 +838,13 @@ func DeriveOmission(ctx context.Context, s *store.Store, stateDir, rid, turn, no
 	}
 	var receipt Obj
 	if pyjson.Text(disposition.Get("outcome")) == "ready_for_review" {
+		if owedOnly && !owedWithoutReceipt(c, turn, admission, now, grace) {
+			return nil, false
+		}
 		var readable bool
 		receipt, readable, err = LookupStoredReceipt(ctx, s, ReceiptQuery{Relationship: rid, Session: child, Turn: turn, Generation: generation, Dispatch: dispatch})
 		if reason := omissionReceiptUnmeasured(readable, err); reason != "" {
-			return omissionUnmeasured(result, reason)
+			return omissionUnmeasured(result, reason), true
 		}
 	}
 	label := declarationLabel(disposition, child, turn, fieldOf(receipt, "atCurrentHead") == true)
@@ -817,7 +854,7 @@ func DeriveOmission(ctx context.Context, s *store.Store, stateDir, rid, turn, no
 	w := omissionLabels[label]
 	verdict := ClassifyOmission(factsFromContext(c, turn, &w, admission, label, now, grace))
 	result = recordOmissionTerminal(result, c, verdict)
-	return appendAnswer(result, verdict)
+	return appendAnswer(result, verdict), true
 }
 
 // pythonStr is str(error) for a failure an omission reading reports: a str sqlite3 or a hash could

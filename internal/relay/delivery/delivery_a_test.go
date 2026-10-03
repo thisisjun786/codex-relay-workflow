@@ -1,6 +1,7 @@
 package delivery
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -149,7 +150,7 @@ func TestDEL05_an_active_recipient_is_deferred_without_an_attempt_or_interruptio
 	if record != nil {
 		t.Fatalf("a busy recipient returns None: %v", record)
 	}
-	still, _ := f.host.ReadTurn(parent, turn.TurnID)
+	still, _ := f.host.ReadTurn(context.Background(), parent, turn.TurnID)
 	expected.same("turn", still.Status)
 	if still.Status != "inProgress" {
 		t.Fatal("the running turn was interrupted")

@@ -21,7 +21,7 @@ import (
 // (_frozen_document_access). A document that was reached and could not be read, or was read and
 // is not a manifest, is the exception the fence raises instead of an answer (ManifestException,
 // or the ScopeError revision_hash raises as a RefusedError).
-func VerifyFrozenDetailed(reference string, entries []ManifestEntry) (string, []string, []string, error) {
+func VerifyFrozenDetailed(ctx context.Context, reference string, entries []ManifestEntry) (string, []string, []string, error) {
 	document := FrozenDocument(reference)
 	if strings.ContainsRune(document, 0) {
 		// os.stat refuses the name before any system call, and the probe lets that out.
@@ -39,7 +39,7 @@ func VerifyFrozenDetailed(reference string, entries []ManifestEntry) (string, []
 	if err != nil {
 		return "", nil, nil, frozenOSException(err)
 	}
-	return VerifyFrozenDocument(context.Background(), reference, raw, FrozenEntries(entries))
+	return VerifyFrozenDocument(ctx, reference, raw, FrozenEntries(entries))
 }
 
 // FrozenDocument is str(Path(reference) / "MANIFEST.json").

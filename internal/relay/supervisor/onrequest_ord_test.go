@@ -113,14 +113,16 @@ type ordSendHost struct {
 	startedAt float64
 }
 
-func (h *ordSendHost) ListTurnIDs(string, int) ([]any, error) { return []any{h.turnID}, nil }
-func (h *ordSendHost) ReadTurn(_ string, id string) (*delivery.TurnInfo, error) {
+func (h *ordSendHost) ListTurnIDs(context.Context, string, int) ([]any, error) {
+	return []any{h.turnID}, nil
+}
+func (h *ordSendHost) ReadTurn(_ context.Context, _ string, id string) (*delivery.TurnInfo, error) {
 	if id != h.turnID {
 		return nil, nil
 	}
 	return &delivery.TurnInfo{TurnID: id, StartedAt: &h.startedAt}, nil
 }
-func (h *ordSendHost) SendMessage(id, _ string, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
+func (h *ordSendHost) SendMessage(_ context.Context, id, _ string, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
 	return h.accept(id, h.turnID, message, settings), nil
 }
 

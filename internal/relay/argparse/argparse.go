@@ -19,7 +19,6 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
-	"math/big"
 	"regexp"
 	"slices"
 	"strconv"
@@ -169,7 +168,7 @@ type Result struct {
 	// Values are each given option's values by key: the text given (an int or float in its
 	// canonical spelling), "true" or "false" for an option that takes none.
 	Values map[string][]string
-	// Numbers are the int (*big.Int, always within int64) and float (float64) options' values.
+	// Numbers are the int (int64) and float (float64) options' values.
 	Numbers map[string]any
 	Given   map[string]bool
 	// Message is why the line cannot be read; Help, that it asked for help.
@@ -294,7 +293,7 @@ func (r *Result) convert(a Action, value string) string {
 	case a.Type == "int":
 		n, err := strconv.ParseInt(value, 10, 64)
 		valid = err == nil
-		r.Numbers[a.Key()] = big.NewInt(n)
+		r.Numbers[a.Key()] = n
 	case a.Type == "float":
 		f, err := strconv.ParseFloat(value, 64)
 		valid = err == nil
@@ -396,8 +395,8 @@ func (r Result) Error(prog, command string) string {
 // NumberText is the canonical spelling a parsed number's text is kept in (Result.Values); the
 // typed value is in Result.Numbers.
 func NumberText(v any) string {
-	if n, ok := v.(*big.Int); ok {
-		return n.String()
+	if n, ok := v.(int64); ok {
+		return strconv.FormatInt(n, 10)
 	}
 	return strconv.FormatFloat(v.(float64), 'g', -1, 64)
 }

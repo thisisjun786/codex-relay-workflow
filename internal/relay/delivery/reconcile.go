@@ -185,7 +185,7 @@ func (rc *Reconciler) reconcile(ctx context.Context, requestID string, adapter A
 	observation := "missing"
 	var facts *Facts
 	receiptRead := false
-	receipt, err := adapter.GetOperation(requestID)
+	receipt, err := adapter.GetOperation(ctx, requestID)
 	if err != nil {
 		observation = "unreadable: " + errorLabel(err)
 	} else {
@@ -212,7 +212,7 @@ func (rc *Reconciler) reconcile(ctx context.Context, requestID string, adapter A
 	}
 	scanDetail := "not scanned"
 	scanned := false
-	scan, err := adapter.FindToken(delivery.S("recipient_thread_id"), requestID, reconcileScanLimit, true)
+	scan, err := adapter.FindToken(ctx, delivery.S("recipient_thread_id"), requestID, reconcileScanLimit, true)
 	if err != nil {
 		scanDetail = "unreadable: " + errorLabel(err)
 	} else {
@@ -228,7 +228,7 @@ func (rc *Reconciler) reconcile(ctx context.Context, requestID string, adapter A
 		answer = receiptAnswer(facts)
 	}
 	if scanned && answer != "" {
-		reading = readUnknownSend(adapter, rc.Clock, attempt, delivery, answer)
+		reading = readUnknownSend(ctx, adapter, rc.Clock, attempt, delivery, answer)
 		if pyjson.Text(reading.Get("finding")) == Present {
 			turn, _ := reading.Lookup("turnId")
 			out, err := rc.settleFromScan(ctx, attempt, delivery, TokenScan{Found: true, TurnID: turn}, observation, "found since the send in turn "+pyStr(turn), now)
@@ -273,7 +273,7 @@ func receiptAnswer(facts *Facts) string {
 }
 
 func (rc *Reconciler) settleDispatched(ctx context.Context, attempt, delivery Row, facts Facts, observation string, adapter Adapter, now float64, notes any) (Obj, error) {
-	reading := ReadRecipientTurn(adapter, rc.Clock, attempt, delivery, facts.TurnID)
+	reading := ReadRecipientTurn(ctx, adapter, rc.Clock, attempt, delivery, facts.TurnID)
 	out, err := rc.settleFromReceipt(ctx, attempt, delivery, facts, ReceiptTurnID, observation, now, pyjson.Text(reading.Get("finding")) != Unknown, notes, nil)
 	var changed attemptChanged
 	switch {

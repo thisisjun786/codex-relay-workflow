@@ -1,6 +1,7 @@
 package delivery
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,7 +33,7 @@ func TestMRK01_the_first_writer_wins_and_the_rest_are_told_they_lost(t *testing.
 		go func() {
 			defer wg.Done()
 			<-start
-			outcome, err := Publish(target, Obj{{Key: "writer", Value: int64(i)}}, "")
+			outcome, err := Publish(context.Background(), target, Obj{{Key: "writer", Value: int64(i)}}, "")
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {

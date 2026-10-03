@@ -2,9 +2,12 @@ package cli
 
 import (
 	"context"
+	"maps"
 	"math"
 	"os"
 	"os/exec"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -51,8 +54,8 @@ var mergeEvidenceCommand = dispatch.Command{Name: "merge-evidence", Unselected: 
 	forge.PageBudget = args.Integer("page-budget")
 	forge.CallBudget = args.Integer("call-budget")
 	seconds := args.Integer("timeout")
-	forge.TimeoutSeconds = seconds.String()
-	forge.Timeout = subprocessTimeout(seconds.Int64())
+	forge.TimeoutSeconds = strconv.FormatInt(seconds, 10)
+	forge.Timeout = subprocessTimeout(seconds)
 	snapshot, err := evidence.Collect(forge, repository, number)
 	if err != nil {
 		if _, lookupErr := exec.LookPath("gh"); lookupErr != nil {
@@ -89,12 +92,22 @@ var mergeEvidenceCommand = dispatch.Command{Name: "merge-evidence", Unselected: 
 		snapshot["restatement"] = map[string]any{"headSha": head, "current": len(problems) == 0, "problems": items}
 		ready = ready && len(problems) == 0
 	}
-	payload := supervisorOrdered(snapshot).(contract.OrderedObject)
+	payload := sortedObject(answerValue(snapshot).(map[string]any))
 	if !ready {
 		return nil, &dispatch.PayloadExit{Payload: payload, Code: contract.ExitRefused}
 	}
 	return payload, nil
 }}
+
+// sortedObject is m as an ordered object with its keys in sorted order, which is how Emit prints a
+// map; a refusal's payload has to be an ordered object.
+func sortedObject(m map[string]any) contract.OrderedObject {
+	out := make(contract.OrderedObject, 0, len(m))
+	for _, key := range slices.Sorted(maps.Keys(m)) {
+		out = append(out, contract.Field{Key: key, Value: m[key]})
+	}
+	return out
+}
 
 // subprocessTimeout is how long one gh call may take: --timeout seconds, none at all for zero or
 // less (the call times out at once), and the longest a time.Duration holds for more than that.

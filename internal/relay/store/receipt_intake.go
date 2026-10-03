@@ -116,7 +116,7 @@ func (in ReceiptIntake) accept(ctx context.Context, payload []byte, observation 
 	if !allowed {
 		return StoredReceipt{}, refuse(ReasonContradictoryObservation, "the host observed a %q turn, which cannot carry an outcome of %q", claim.Turn.Status, claim.Outcome)
 	}
-	binding, err := in.checkDeliverable(claim, relationship)
+	binding, err := in.checkDeliverable(ctx, claim, relationship)
 	if err != nil {
 		return StoredReceipt{}, err
 	}
@@ -136,7 +136,7 @@ func (in ReceiptIntake) accept(ctx context.Context, payload []byte, observation 
 
 // checkDeliverable branches on OUTCOME before producer: a reviewable receipt must verify its
 // manifest over real bytes; an execution-only one carries no manifest and the sentinel.
-func (in ReceiptIntake) checkDeliverable(claim ReceiptClaim, relationship Relationship) (sql.NullString, error) {
+func (in ReceiptIntake) checkDeliverable(ctx context.Context, claim ReceiptClaim, relationship Relationship) (sql.NullString, error) {
 	if claim.Outcome != ReadyForReview {
 		if manifest, isList := claim.manifest.([]any); claim.manifest != nil && !(isList && len(manifest) == 0) {
 			return sql.NullString{}, refuse(ReasonManifestForbidden, "an execution-only receipt (%s) carries no manifest, for any producer", claim.Outcome)
@@ -166,7 +166,7 @@ func (in ReceiptIntake) checkDeliverable(claim ReceiptClaim, relationship Relati
 			return sql.NullString{}, err
 		}
 	}
-	mode, err := in.verifyBytes(entries, roots, claim.ManifestRef)
+	mode, err := in.verifyBytes(ctx, entries, roots, claim.ManifestRef)
 	if err != nil {
 		return sql.NullString{}, err
 	}
@@ -182,13 +182,20 @@ func (in ReceiptIntake) checkDeliverable(claim ReceiptClaim, relationship Relati
 
 // verifyBytes is _verify_bytes: a lease is requested only when the store requires the enforced
 // tier, and a frozen copy establishes no live binding, so it can only meet best-effort.
-func (in ReceiptIntake) verifyBytes(entries []ManifestEntry, roots []string, manifestRef *string) (PathBinding, error) {
-	problems, mode := verifyAgainstDisk(entries, roots, in.Minimum == LeaseEnforced)
+func (in ReceiptIntake) verifyBytes(ctx context.Context, entries []ManifestEntry, roots []string, manifestRef *string) (PathBinding, error) {
+	problems, mode := verifyAgainstDisk(ctx, entries, roots, in.Minimum == LeaseEnforced)
+	if err := ctx.Err(); err != nil {
+		// The reads a stop ended report as problems; that is no evidence about the bytes.
+		return "", err
+	}
 	if len(problems) > 0 && manifestRef != nil {
 		// A frozen copy that is not a manifest raises in the fence, as it does here: a refusal
 		// only when it is one (a relative path in it), otherwise the host error it is.
-		frozen, err := VerifyFrozen(*manifestRef, entries)
+		frozen, err := VerifyFrozen(ctx, *manifestRef, entries)
 		if err != nil {
+			return "", err
+		}
+		if err := ctx.Err(); err != nil {
 			return "", err
 		}
 		if len(frozen) == 0 {

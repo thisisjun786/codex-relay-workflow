@@ -124,7 +124,7 @@ func runShow(ctx context.Context, services dispatch.Services, args dispatch.Args
 	planID := args.Text("plan")
 	var rev int64
 	if args.Given("revision") {
-		rev = args.Integer("revision").Int64()
+		rev = args.Integer("revision")
 		if rev < 1 {
 			return nil, notFound("revisions start at 1")
 		}
@@ -209,7 +209,7 @@ func runLog(ctx context.Context, services dispatch.Services, args dispatch.Args)
 	defer closeStore()
 	limit := pageDefault
 	if args.Given("limit") {
-		n := args.Integer("limit").Int64()
+		n := args.Integer("limit")
 		if n < 1 || n > MaxPage {
 			return nil, &dispatch.UsageError{Detail: "--limit is between 1 and 1000", Code: contract.ExitUsage}
 		}
@@ -217,7 +217,7 @@ func runLog(ctx context.Context, services dispatch.Services, args dispatch.Args)
 	}
 	after := int64(0)
 	if args.Given("after") {
-		after = args.Integer("after").Int64()
+		after = args.Integer("after")
 		if after < 0 {
 			return nil, &dispatch.UsageError{Detail: "--after is a revision number, 0 or more", Code: contract.ExitUsage}
 		}
