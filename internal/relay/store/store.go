@@ -241,29 +241,143 @@ func open(ctx context.Context, path, socketPath string, options OpenOptions) (_ 
 			result.UnenforcedIndexes = append(result.UnenforcedIndexes, UnenforcedIndex{Index: name, Detail: guardErr.Error()})
 		}
 	}
-	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
-	storeID, err := randomBytes(16)
-	if err != nil {
-		return nil, fmt.Errorf("store identity: %w", err)
+	if err = seedMetadata(ctx, db, socketPath); err != nil {
+		return nil, err
 	}
-	for _, pair := range [][2]string{{"version", SchemaVersion}, {"store_id", hex.EncodeToString(storeID)}, {"store_created_at", now}} {
-		if _, err = db.ExecContext(ctx, "INSERT OR IGNORE INTO schema_meta VALUES (?, ?)", pair[0], pair[1]); err != nil {
-			return nil, fmt.Errorf("seed %s: %w", pair[0], err)
+	return result, nil
+}
+
+// settlementsBackfilledKey is the schema_meta row that records that the assignment_settlements
+// backfill ran to the end. A relay-made store carries it from its creation (it had no observation
+// to backfill); a store from before it (the Python relay's, or an earlier Go build's) gains it on the
+// first writable open that finds it missing. It is stored data: renaming it would run the backfill once
+// more in every store. The daemon writes an observation's settlement in the observation's own
+// transaction, so nothing the backfill covers arrives after the marker.
+const settlementsBackfilledKey = "backfill:assignment_settlements"
+
+// backfillMarkerChecked is a deterministic seam for tests, called after an open found the marker
+// missing and before it asks for the write lock; production leaves it inert.
+var backfillMarkerChecked = func() {}
+
+// seedMetadata gives an open store the schema_meta rows every store has (version, store_id,
+// store_created_at, the backfill marker and, when the open names a socket, socket_path) and runs
+// the settlements backfill the marker stands for. It reads which rows exist first and writes
+// only what is missing, because every INSERT OR IGNORE takes SQLite's write lock even when the
+// row is there: an open of a store that is already seeded and marked then neither waits for the
+// daemon's write transaction nor holds up the daemon's next one.
+func seedMetadata(ctx context.Context, db *sql.DB, socketPath string) error {
+	keys := []string{"version", "store_id", "store_created_at", settlementsBackfilledKey, "socket_path"}
+	present := map[string]bool{}
+	rows, err := db.QueryContext(ctx, "SELECT key FROM schema_meta WHERE key IN (?, ?, ?, ?, ?)", anySlice(keys)...)
+	if err != nil {
+		return fmt.Errorf("read schema_meta: %w", err)
+	}
+	for rows.Next() {
+		var key string
+		if err = rows.Scan(&key); err != nil {
+			break
+		}
+		present[key] = true
+	}
+	if err = errors.Join(err, rows.Err(), rows.Close()); err != nil {
+		return fmt.Errorf("read schema_meta: %w", err)
+	}
+	seed := func(key, value string) error {
+		if present[key] {
+			return nil
+		}
+		if _, err := db.ExecContext(ctx, "INSERT OR IGNORE INTO schema_meta VALUES (?, ?)", key, value); err != nil {
+			return fmt.Errorf("seed %s: %w", key, err)
+		}
+		return nil
+	}
+	if err = seed("version", SchemaVersion); err != nil {
+		return err
+	}
+	if !present["store_id"] {
+		storeID, err := randomBytes(16)
+		if err != nil {
+			return fmt.Errorf("store identity: %w", err)
+		}
+		if err = seed("store_id", hex.EncodeToString(storeID)); err != nil {
+			return err
 		}
 	}
-	if _, err = db.ExecContext(ctx, "INSERT OR IGNORE INTO assignment_settlements (relationship_id, thread_id, turn_id, terminal_status, settled_at) SELECT relationship_id, thread_id, turn_id, terminal_status, observed_at FROM observations WHERE relationship_id IS NOT NULL"); err != nil {
-		return nil, fmt.Errorf("backfill settlements: %w", err)
+	if err = seed("store_created_at", time.Now().UTC().Format("2006-01-02T15:04:05Z")); err != nil {
+		return err
+	}
+	if !present[settlementsBackfilledKey] {
+		if err = backfillSettlements(ctx, db, !ReadOnlyCommand(ctx)); err != nil {
+			return err
+		}
 	}
 	if socketPath != "" {
 		canonical, pathErr := canonicalSocket(socketPath)
 		if pathErr != nil {
-			return nil, pathErr
+			return pathErr
 		}
-		if _, err = db.ExecContext(ctx, "INSERT OR IGNORE INTO schema_meta VALUES ('socket_path', ?)", canonical); err != nil {
-			return nil, fmt.Errorf("seed socket_path: %w", err)
-		}
+		return seed("socket_path", canonical)
 	}
-	return result, nil
+	return nil
+}
+
+func anySlice(values []string) []any {
+	out := make([]any, len(values))
+	for i, value := range values {
+		out[i] = value
+	}
+	return out
+}
+
+// backfillSettlements gives every observation that names an assignment its settlement. A writable
+// open (record true) also records the marker, in the same transaction: the marker is there only if
+// the backfill committed, a failure leaves neither, and the marker is read again once the lock is
+// held, because an opener that was waiting for it may find the backfill done by the one that held
+// it. A command that declares itself read-only records nothing: a read-only command leaves the
+// store's rows as it found them, so it backfills as every open did before the marker and the next
+// writable open records that it is done.
+func backfillSettlements(ctx context.Context, db *sql.DB, record bool) (err error) {
+	backfillMarkerChecked()
+	const backfill = "INSERT OR IGNORE INTO assignment_settlements (relationship_id, thread_id, turn_id, terminal_status, settled_at) SELECT relationship_id, thread_id, turn_id, terminal_status, observed_at FROM observations WHERE relationship_id IS NOT NULL"
+	if !record {
+		if _, err = db.ExecContext(ctx, backfill); err != nil {
+			return fmt.Errorf("backfill settlements: %w", err)
+		}
+		return nil
+	}
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("backfill settlements: %w", err)
+	}
+	defer func() { err = errors.Join(err, conn.Close()) }()
+	if _, err = conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return fmt.Errorf("backfill settlements: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_, e := conn.ExecContext(context.WithoutCancel(ctx), "ROLLBACK")
+			err = errors.Join(err, e)
+		}
+	}()
+	var done int
+	switch e := conn.QueryRowContext(ctx, "SELECT 1 FROM schema_meta WHERE key = ?", settlementsBackfilledKey).Scan(&done); {
+	case e == nil:
+	case errors.Is(e, sql.ErrNoRows):
+		if _, err = conn.ExecContext(ctx, backfill); err != nil {
+			return fmt.Errorf("backfill settlements: %w", err)
+		}
+		if _, err = conn.ExecContext(ctx, "INSERT OR IGNORE INTO schema_meta VALUES (?, '1')", settlementsBackfilledKey); err != nil {
+			return fmt.Errorf("record backfill marker: %w", err)
+		}
+	default:
+		return fmt.Errorf("backfill settlements: %w", e)
+	}
+	if _, err = conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return fmt.Errorf("backfill settlements: %w", err)
+	}
+	committed = true
+	return nil
 }
 
 // refuseLiveState resolves path and, under test isolation (CRW_REFUSE_LIVE_STATE=1), refuses it
